@@ -13,6 +13,7 @@ import {
   IdentitySyncProgress,
   OverCreditRaters,
   ProfileWrites,
+  RowsAfterBlock,
   StatementRow,
   TdhBlock,
   toMillis
@@ -34,6 +35,7 @@ import {
   NotReadyProblem
 } from './identity-export.errors';
 import {
+  CmsFieldsFile,
   IDENTITY_EXPORT_FORMAT,
   IdentityExportDelegation,
   IdentityExportHeader,
@@ -72,11 +74,25 @@ export interface IdentityExportOptions {
   readonly acceptProfileWritesAfterFreeze?: number;
   /** Profile site values for profiles not exported (default 0). */
   readonly acceptUnmatchedCms?: number;
+  /**
+   * Consolidations and delegations rows with a block after the TDH block
+   * acknowledged (default 0).
+   */
+  readonly acceptDelegationsAfterFreeze?: number;
+  /** At the freeze without the waves list, acknowledged (recorded). */
+  readonly acceptNoExtraIds?: boolean;
+  /** At the freeze with a bulk threshold other than 2000 (recorded). */
+  readonly acceptBulk?: number | null;
   /** The waves list's file (count and sha256); null without one. */
   readonly extraIdsFile?: InputFile | null;
-  /** The profile site values' file (count and sha256); null without one. */
-  readonly cmsFieldsFile?: InputFile | null;
+  /**
+   * The profile site values' file (count, sha256 and the manifest that
+   * lists it); null without one.
+   */
+  readonly cmsFieldsFile?: CmsFieldsFile | null;
   readonly exporterRevision: string;
+  /** The caller's notes, written first (the job's build commit). */
+  readonly notes?: readonly string[];
   readonly now?: () => number;
   readonly log?: (message: string) => void;
 }
@@ -106,7 +122,8 @@ export interface IdentityExportDocument extends IdentityExportHeader {
 /** The rules every export is written by; the builder refuses a file without. */
 export function exportRules(
   bulkThreshold: number,
-  cmsFieldsSha256: string | null = null
+  cmsFieldsSha256: string | null = null,
+  delegations: 'included' | 'left_out' = 'included'
 ) {
   return {
     help_bot_credit_category: HELP_BOT_CREDIT_CATEGORY,
@@ -119,7 +136,9 @@ export function exportRules(
     tdh: 'boosted',
     xtdh: 'as_stored',
     bulk_threshold: bulkThreshold,
-    cms_fields_sha256: cmsFieldsSha256
+    cms_fields_sha256: cmsFieldsSha256,
+    /** left_out: the delegations list is empty because it wasn't read. */
+    delegations
   } as const;
 }
 
@@ -153,6 +172,8 @@ export interface ExportReadiness {
   readonly ratingsChangedAfterFreeze: number;
   /** Profile writes and profiles created after the freeze, in all. */
   readonly profileWritesAfterFreeze?: number;
+  /** Consolidations and delegations rows after the TDH block, in all. */
+  readonly delegationsAfterFreeze?: number;
 }
 
 /** Every profile write after the freeze, the profiles created included. */
@@ -164,6 +185,7 @@ export function profileWriteTotal(writes: ProfileWrites): number {
     writes.banner +
     writes.statements +
     writes.archived +
+    writes.saves +
     writes.created
   );
 }
@@ -194,6 +216,7 @@ export function readinessProblems(
     | 'acceptEditsAfterFreeze'
     | 'acceptRatingsChangedAfterFreeze'
     | 'acceptProfileWritesAfterFreeze'
+    | 'acceptDelegationsAfterFreeze'
   >
 ): NotReadyProblem[] {
   // The counts below are gated only at the freeze (--expect-tdh-block).
@@ -236,9 +259,18 @@ export function readinessProblems(
     readiness.profileWritesAfterFreeze ?? 0,
     options.acceptProfileWritesAfterFreeze ?? 0,
     '--accept-profile-writes-after-freeze',
-    'profile writes were logged after the freeze or profiles created (by kind in stats)'
+    'profile writes were made after the freeze: logged, saved to profiles_archive, or profiles created (by kind in stats)'
   );
   if (profiles) problems.push({ cause: 'after_freeze', message: profiles });
+  const delegations = acknowledgementProblem(
+    readiness.delegationsAfterFreeze ?? 0,
+    options.acceptDelegationsAfterFreeze ?? 0,
+    '--accept-delegations-after-freeze',
+    'consolidations and delegations rows have a block after the TDH block (by table in stats)'
+  );
+  if (delegations) {
+    problems.push({ cause: 'after_freeze', message: delegations });
+  }
   return problems;
 }
 
@@ -852,6 +884,15 @@ export async function buildIdentityExport(
   const profileWritesAfterFreeze = profileWrites
     ? profileWriteTotal(profileWrites)
     : 0;
+  // Registered after the TDH was taken: the identities are as of the TDH
+  // block, while the delegations list holds every row read.
+  const rowsAfter: RowsAfterBlock | null =
+    options.freezeMs === null || tdhBlock === null
+      ? null
+      : await source.rowsAfterBlock(tdhBlock);
+  const delegationsAfterFreeze = rowsAfter
+    ? rowsAfter.consolidations + rowsAfter.delegations
+    : 0;
   // Every reason is gathered and reported together once all is read.
   const problems = readinessProblems(
     {
@@ -859,7 +900,8 @@ export async function buildIdentityExport(
       identitySync,
       editsAfterFreeze,
       ratingsChangedAfterFreeze,
-      profileWritesAfterFreeze
+      profileWritesAfterFreeze,
+      delegationsAfterFreeze
     },
     options
   );
@@ -889,6 +931,7 @@ export async function buildIdentityExport(
   // Stored rep without the credits: compared below with the file's ratings.
   const storedMinusCredits = withoutCredits(built.identities, credits);
   const notes = [
+    ...(options.notes ?? []),
     ...(options.wavesListGiven === false
       ? [
           'no --extra-ids: profiles in scope only for waves activity (drops, entries, waves, votes, wave ratings, group lists) are not included'
@@ -1023,12 +1066,17 @@ export async function buildIdentityExport(
   }
   if (profileWrites && profileWritesAfterFreeze) {
     notes.push(
-      `profile writes after the freeze: ${profileWrites.handle} handle, ${profileWrites.classification} classification, ${profileWrites.pfp} pfp, ${profileWrites.banner} banner, ${profileWrites.statements} statement, ${profileWrites.archived} archiving; ${profileWrites.created} profiles created`
+      `profile writes after the freeze: ${profileWrites.handle} handle, ${profileWrites.classification} classification, ${profileWrites.pfp} pfp, ${profileWrites.banner} banner, ${profileWrites.statements} statement, ${profileWrites.archived} archiving logged; ${profileWrites.saves} profile rows saved to profiles_archive (every save, logged or not); ${profileWrites.created} profiles created`
     );
   }
   if (ratingsChangedAfterFreeze) {
     notes.push(
       `${ratingsChangedAfterFreeze} REP and CIC ratings were changed after the freeze (help-bot credits aside, zeros included)`
+    );
+  }
+  if (rowsAfter && delegationsAfterFreeze) {
+    notes.push(
+      `${rowsAfter.consolidations} consolidations and ${rowsAfter.delegations} delegations rows have a block after the TDH block ${tdhBlock}: registered after the TDH was taken. The identities are as of the TDH block; the delegations list holds every row read`
     );
   }
 
@@ -1052,6 +1100,16 @@ export async function buildIdentityExport(
   const delegations = options.includeDelegations
     ? await source.delegations()
     : [];
+  log(
+    options.includeDelegations
+      ? `delegations: ${delegations.length} read`
+      : 'delegations: left out'
+  );
+  notes.push(
+    options.includeDelegations
+      ? `delegations: every row of 6529.io's delegations table (${delegations.length}), ordered by block, then from, to and collection (lowercase, bytewise), use case and token id (rules.delegations included)`
+      : "no delegations: 6529.io's delegations table was left out (--no-delegations), so the empty list says nothing about delegations (rules.delegations left_out)"
+  );
   const byScope = (label: IdentityExportScope) =>
     identities.filter((it) => it.scope.includes(label)).length;
   return {
@@ -1071,8 +1129,11 @@ export async function buildIdentityExport(
       ratings_changed_after_freeze:
         options.acceptRatingsChangedAfterFreeze ?? 0,
       profile_writes_after_freeze: options.acceptProfileWritesAfterFreeze ?? 0,
+      delegations_after_freeze: options.acceptDelegationsAfterFreeze ?? 0,
       missing_extra_ids: options.acceptMissingExtraIds ?? 0,
-      unmatched_cms: options.acceptUnmatchedCms ?? 0
+      unmatched_cms: options.acceptUnmatchedCms ?? 0,
+      no_extra_ids: options.acceptNoExtraIds ?? false,
+      bulk: options.acceptBulk ?? null
     },
     identities,
     reserved_handles: reservedHandles(),
@@ -1081,7 +1142,8 @@ export async function buildIdentityExport(
     notes,
     rules: exportRules(
       options.bulkThreshold,
-      options.cmsFieldsFile?.sha256 ?? null
+      options.cmsFieldsFile?.sha256 ?? null,
+      options.includeDelegations ? 'included' : 'left_out'
     ),
     identity_sync: identitySync,
     ratings_changed_after_freeze: changedAfterFreeze,
@@ -1121,7 +1183,10 @@ export async function buildIdentityExport(
       profile_banner_edits_after_freeze: profileWrites?.banner ?? 0,
       profile_statement_edits_after_freeze: profileWrites?.statements ?? 0,
       profiles_archived_after_freeze: profileWrites?.archived ?? 0,
+      profile_saves_after_freeze: profileWrites?.saves ?? 0,
       profiles_created_after_freeze: profileWrites?.created ?? 0,
+      consolidations_after_tdh_block: rowsAfter?.consolidations ?? 0,
+      delegations_after_tdh_block: rowsAfter?.delegations ?? 0,
       cms_unmatched: cms.unmatched,
       identity_sync_pending_generation: identitySync?.pendingGeneration ?? -1,
       identity_sync_synced_generation: identitySync?.syncedGeneration ?? -1,

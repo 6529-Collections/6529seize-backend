@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -11,7 +12,11 @@ import {
   anAddressConsolidationKeys,
   withAddressConsolidationKeys
 } from '@/tests/fixtures/address-consolidation-key.fixture';
-import { IDENTITY_TDH_SYNC_STATE_TABLE, TDH_BLOCKS_TABLE } from '@/constants';
+import {
+  DELEGATIONS_TABLE,
+  IDENTITY_TDH_SYNC_STATE_TABLE,
+  TDH_BLOCKS_TABLE
+} from '@/constants';
 import { runCli } from './cli';
 
 const W = (n: number) => `0x${n.toString(16).padStart(40, '0')}`;
@@ -99,6 +104,22 @@ describeWithSeed(
         { id: 'synced', generation: 3, block: BLOCK },
         { id: 'full_announce', generation: 0, block: BLOCK }
       ]
+    },
+    {
+      table: DELEGATIONS_TABLE,
+      // Registered in the block after the TDH block: after the freeze.
+      rows: [
+        {
+          block: BLOCK + 1,
+          from_address: W(1),
+          to_address: W(9),
+          collection: W(10),
+          use_case: 1,
+          expiry: 64_060_588_800,
+          all_tokens: true,
+          token_id: 0
+        }
+      ]
     }
   ],
   () => {
@@ -179,50 +200,113 @@ describeWithSeed(
     });
 
     it('writes the export at the freeze, and refuses another day with exit 3', async () => {
+      const sha256 = (bytes: string) =>
+        createHash('sha256').update(Buffer.from(bytes, 'utf8')).digest('hex');
+      const cms = JSON.stringify({ [ALICE]: { primary: {} } });
+      const manifest = JSON.stringify({
+        schema: '6529.profile-site-export.manifest.v1',
+        usable: true,
+        rehearsal: false,
+        stage: 'prod',
+        frozen_at: new Date(FREEZE).toISOString(),
+        files: [{ name: 'cms-fields.json', bytes: 1, sha256: sha256(cms) }]
+      });
+      fs.writeFileSync(path.join(dir, 'cms-fields.json'), cms);
+      fs.writeFileSync(path.join(dir, 'manifest.json'), manifest);
+      fs.writeFileSync(path.join(dir, 'waves.json'), JSON.stringify([BOB]));
       const atFreeze = [
         '--revision',
         REV,
         '--freeze-at',
         new Date(FREEZE).toISOString(),
-        '--no-extra-ids',
-        '--no-cms-fields'
+        '--extra-ids',
+        path.join(dir, 'waves.json'),
+        '--cms-fields',
+        path.join(dir, 'cms-fields.json'),
+        '--cms-manifest',
+        path.join(dir, 'manifest.json')
       ];
-      const out = path.join(dir, 'freeze.json');
-      expect(
-        await run(['--out', out, ...atFreeze, '--expect-tdh-block', `${BLOCK}`])
-      ).toBe(0);
-      const doc = JSON.parse(fs.readFileSync(out, 'utf8'));
-      expect(doc.freeze_ms).toBe(FREEZE);
-      expect(doc.extra_ids).toBeNull();
-      expect(doc.cms_fields).toBeNull();
-      expect(doc.acknowledged).toEqual({
-        over_credit: 0,
-        edits_after_freeze: 0,
-        ratings_changed_after_freeze: 0,
-        profile_writes_after_freeze: 0,
-        missing_extra_ids: 0,
-        unmatched_cms: 0
-      });
-      expect(doc.ratings_changed_after_freeze).toEqual([]);
-      expect(doc.tdh_block_timestamp_ms).toBe(FREEZE - 12_000);
-      expect(doc.stats).toEqual(
-        expect.objectContaining({
-          identity_sync_full_write_block: BLOCK,
-          rating_edits_after_freeze: 0,
-          ratings_modified_after_freeze: 0
-        })
-      );
-      const other = path.join(dir, 'other.json');
-      expect(
-        await run([
-          '--out',
-          other,
-          ...atFreeze,
-          '--expect-tdh-block',
-          `${BLOCK - 1}`
-        ])
-      ).toBe(3);
-      expect(fs.existsSync(other)).toBe(false);
+      const saved = process.env.IDENTITY_FREEZE_AT;
+      process.env.IDENTITY_FREEZE_AT = new Date(FREEZE).toISOString();
+      try {
+        // The delegation registered after the TDH block: refused, exit 5.
+        const refused = path.join(dir, 'refused.json');
+        expect(
+          await run([
+            '--out',
+            refused,
+            ...atFreeze,
+            '--expect-tdh-block',
+            `${BLOCK}`
+          ])
+        ).toBe(5);
+        expect(fs.existsSync(refused)).toBe(false);
+        const out = path.join(dir, 'freeze.json');
+        expect(
+          await run([
+            '--out',
+            out,
+            ...atFreeze,
+            '--expect-tdh-block',
+            `${BLOCK}`,
+            '--accept-delegations-after-freeze',
+            '1'
+          ])
+        ).toBe(0);
+        const doc = JSON.parse(fs.readFileSync(out, 'utf8'));
+        expect(doc.freeze_ms).toBe(FREEZE);
+        expect(doc.extra_ids).toEqual({ count: 1, sha256: expect.any(String) });
+        expect(doc.cms_fields).toEqual({
+          count: 1,
+          sha256: sha256(cms),
+          manifest: { key: null, sha256: sha256(manifest) }
+        });
+        expect(doc.rules.delegations).toBe('included');
+        expect(doc.delegations).toHaveLength(1);
+        expect(doc.acknowledged).toEqual({
+          over_credit: 0,
+          edits_after_freeze: 0,
+          ratings_changed_after_freeze: 0,
+          profile_writes_after_freeze: 0,
+          delegations_after_freeze: 1,
+          missing_extra_ids: 0,
+          unmatched_cms: 0,
+          no_extra_ids: false,
+          bulk: null
+        });
+        expect(doc.stats).toEqual(
+          expect.objectContaining({
+            consolidations_after_tdh_block: 0,
+            delegations_after_tdh_block: 1,
+            profile_saves_after_freeze: 0
+          })
+        );
+        expect(doc.ratings_changed_after_freeze).toEqual([]);
+        expect(doc.tdh_block_timestamp_ms).toBe(FREEZE - 12_000);
+        expect(doc.stats).toEqual(
+          expect.objectContaining({
+            identity_sync_full_write_block: BLOCK,
+            rating_edits_after_freeze: 0,
+            ratings_modified_after_freeze: 0
+          })
+        );
+        const other = path.join(dir, 'other.json');
+        expect(
+          await run([
+            '--out',
+            other,
+            ...atFreeze,
+            '--expect-tdh-block',
+            `${BLOCK - 1}`,
+            '--accept-delegations-after-freeze',
+            '1'
+          ])
+        ).toBe(3);
+        expect(fs.existsSync(other)).toBe(false);
+      } finally {
+        if (saved === undefined) delete process.env.IDENTITY_FREEZE_AT;
+        else process.env.IDENTITY_FREEZE_AT = saved;
+      }
     });
   }
 );

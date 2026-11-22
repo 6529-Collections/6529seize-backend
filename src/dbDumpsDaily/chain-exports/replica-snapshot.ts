@@ -79,6 +79,12 @@ export interface ReadOnlyEvidence {
   readonly innodbReadOnly: boolean | null;
   /** The server's clock (UTC) when the snapshot was taken. */
   readonly snapshotAt: string;
+  /**
+   * How far this Aurora reader was behind the writer at the snapshot, in
+   * milliseconds, from information_schema.replica_host_status; null when
+   * that can't be read (not Aurora, or no row for this server).
+   */
+  readonly replicaLagMs: number | null;
 }
 
 export interface ReadOnlySnapshot {
@@ -223,12 +229,27 @@ export async function openReadOnlySnapshot(
     if (!Number.isSafeInteger(snapshotMs) || snapshotMs <= 0) {
       throw new ReplicaGuardError("The server's clock could not be read");
     }
+    let replicaLagMs: number | null = null;
+    try {
+      const [lag] = await query(
+        connection,
+        'SELECT REPLICA_LAG_IN_MILLISECONDS AS lag FROM information_schema.replica_host_status WHERE SERVER_ID = @@aurora_server_id'
+      );
+      const value = Number(lag?.lag);
+      replicaLagMs =
+        lag?.lag === null || lag?.lag === undefined || !Number.isFinite(value)
+          ? null
+          : value;
+    } catch {
+      replicaLagMs = null;
+    }
     const evidence: ReadOnlyEvidence = {
       host: target.host,
       transactionReadOnly,
       serverReadOnly,
       innodbReadOnly: innodb,
-      snapshotAt: new Date(snapshotMs).toISOString()
+      snapshotAt: new Date(snapshotMs).toISOString(),
+      replicaLagMs
     };
     return {
       executor: new ReadOnlySnapshotExecutor(connection),

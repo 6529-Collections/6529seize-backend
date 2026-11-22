@@ -11,6 +11,7 @@ import {
   chainExportsBucketName,
   exportBucketOf,
   exportStage,
+  isWriteConflict,
   linksLastAtMost,
   PRESIGNED_URL_SECONDS,
   PrivateBucketError,
@@ -157,9 +158,29 @@ describe('the chain exports bucket', () => {
       Key: 'pointer.json',
       ExpectedBucketOwner: OWNER
     });
+    expect(commands[1].input.IfNoneMatch).toBeUndefined();
     // The pointer sits outside the run: it isn't counted as the run's.
     expect(writer.files).toBe(1);
     expect(writer.bytes).toBe(3);
+    await writer.putOutside('pointer.json', '{}', 'application/json', {
+      onlyIfAbsent: true
+    });
+    expect(commands[2].input).toMatchObject({
+      Key: 'pointer.json',
+      IfNoneMatch: '*',
+      ExpectedBucketOwner: OWNER
+    });
+  });
+
+  it.each([
+    [{ name: 'PreconditionFailed' }, true],
+    [{ name: 'Unknown', $metadata: { httpStatusCode: 412 } }, true],
+    [{ name: 'ConditionalRequestConflict' }, true],
+    [{ name: 'Unknown', $metadata: { httpStatusCode: 409 } }, true],
+    [{ name: 'AccessDenied', $metadata: { httpStatusCode: 403 } }, false],
+    [null, false]
+  ])('reads %j as a write conflict: %j', (error, conflict) => {
+    expect(isWriteConflict(error)).toBe(conflict);
   });
 
   it.each([
@@ -195,6 +216,28 @@ describe('the chain exports bucket', () => {
       ExpectedBucketOwner: OWNER
     });
     await expect(writer.read('m.json')).rejects.toThrow('slow');
+  });
+
+  it('reads a key outside the run, as its owner, with the same answers', async () => {
+    const send = jest
+      .fn()
+      .mockResolvedValueOnce({ Body: { transformToString: async () => '{}' } })
+      .mockRejectedValueOnce(
+        Object.assign(new Error('no'), { name: 'NoSuchKey' })
+      );
+    const writer = new PrivateExportWriter({ send } as never, BUCKET, 'p/');
+    await expect(writer.readOutside('x/by-freeze/t.json')).resolves.toEqual({
+      found: true,
+      text: '{}'
+    });
+    expect((send.mock.calls[0][0] as GetObjectCommand).input).toMatchObject({
+      Key: 'x/by-freeze/t.json',
+      ExpectedBucketOwner: OWNER
+    });
+    await expect(writer.readOutside('x/by-freeze/u.json')).resolves.toEqual({
+      found: false,
+      reason: 'missing'
+    });
   });
 
   it('presigns links that carry the expected owner in their query', async () => {

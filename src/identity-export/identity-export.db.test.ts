@@ -14,9 +14,11 @@ import {
 } from '@/tests/fixtures/address-consolidation-key.fixture';
 import {
   CIC_STATEMENTS_TABLE,
+  CONSOLIDATIONS_TABLE,
   DELEGATIONS_TABLE,
   IDENTITY_TDH_SYNC_STATE_TABLE,
   PROFILES_ACTIVITY_LOGS_TABLE,
+  PROFILES_ARCHIVE_TABLE,
   TDH_BLOCKS_TABLE
 } from '@/constants';
 import { SqlIdentityExportSource } from './identity-export.db';
@@ -30,6 +32,39 @@ const LONELY = '00000000-0000-4000-8000-000000000002';
 const PAIR_KEY = `${W(6)}-${W(7)}`;
 const HELP_BOT = '00000000-0000-4000-8000-0000000000b0';
 const FREEZE = Date.UTC(2026, 10, 24);
+// Stored with an upper-case F: bytewise it sorts before ...0e, lower-cased
+// after it.
+const MIXED = `0x${'0'.repeat(39)}F`;
+const LOWER_E = `0x${'0'.repeat(39)}e`;
+
+function archiveRow(createdAt: number) {
+  return {
+    external_id: ALICE,
+    handle: 'Alice',
+    normalised_handle: 'alice',
+    primary_wallet: W(1),
+    created_at: new Date(createdAt),
+    created_by_wallet: W(1)
+  };
+}
+
+function delegation(
+  block: number,
+  from: string,
+  useCase: number,
+  token: number
+) {
+  return {
+    block,
+    from_address: from,
+    to_address: W(9),
+    collection: W(10),
+    use_case: useCase,
+    expiry: 64_060_588_800,
+    all_tokens: token === 0,
+    token_id: token
+  };
+}
 
 function ratingEdit(
   id: string,
@@ -231,29 +266,31 @@ describeWithSeed(
     },
     {
       table: DELEGATIONS_TABLE,
-      // Out of key order: the export reads them in primary key order.
+      // Out of order: the export reads them by block, then lower-cased
+      // addresses bytewise.
       rows: [
-        {
-          block: 20_000_001,
-          from_address: W(1),
-          to_address: W(9),
-          collection: W(10),
-          use_case: 1,
-          expiry: 64_060_588_800,
-          all_tokens: true,
-          token_id: 0
-        },
-        {
-          block: 20_000_000,
-          from_address: W(1),
-          to_address: W(9),
-          collection: W(10),
-          use_case: 2,
-          expiry: 64_060_588_800,
-          all_tokens: false,
-          token_id: 61
-        }
+        delegation(20_000_001, W(1), 1, 0),
+        delegation(20_000_000, W(1), 2, 61),
+        delegation(21_000_000, MIXED, 1, 0),
+        delegation(21_000_000, LOWER_E, 1, 0),
+        // After the TDH block (24,000,000).
+        delegation(24_000_002, W(2), 1, 0)
       ]
+    },
+    {
+      table: CONSOLIDATIONS_TABLE,
+      rows: [
+        { block: 23_999_999, wallet1: W(20), wallet2: W(21), confirmed: true },
+        { block: 24_000_001, wallet1: W(22), wallet2: W(23), confirmed: true },
+        // In the TDH block itself: before the TDH was taken.
+        { block: 24_000_000, wallet1: W(24), wallet2: W(25), confirmed: true }
+      ]
+    },
+    {
+      table: PROFILES_ARCHIVE_TABLE,
+      // A save after the freeze with no activity log (a pfp update), and
+      // one before it.
+      rows: [archiveRow(FREEZE + 5_000), archiveRow(FREEZE - 5_000)]
     }
   ],
   () => {
@@ -336,7 +373,12 @@ describeWithSeed(
         banner: 0,
         statements: 1,
         archived: 0,
+        saves: 1,
         created: 0
+      });
+      expect(await source.rowsAfterBlock(24_000_000)).toEqual({
+        consolidations: 1,
+        delegations: 1
       });
       expect(await source.identitySyncProgress()).toEqual({
         pendingGeneration: 3,
@@ -345,7 +387,8 @@ describeWithSeed(
         fullWriteBlock: 24_000_000
       });
       expect(await source.helpBotProfileId()).toBe(HELP_BOT);
-      expect(await source.delegations()).toEqual([
+      const delegations = await source.delegations();
+      expect(delegations.slice(0, 2)).toEqual([
         {
           from_address: W(1),
           to_address: W(9),
@@ -366,6 +409,13 @@ describeWithSeed(
           token_id: null,
           block: 20_000_001
         }
+      ]);
+      expect(delegations.map((it) => [it.block, it.from_address])).toEqual([
+        [20_000_000, W(1)],
+        [20_000_001, W(1)],
+        [21_000_000, LOWER_E],
+        [21_000_000, MIXED.toLowerCase()],
+        [24_000_002, W(2)]
       ]);
     });
 

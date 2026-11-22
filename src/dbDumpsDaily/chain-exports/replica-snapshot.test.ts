@@ -65,7 +65,8 @@ describe('openReadOnlySnapshot', () => {
     const { pool, connection, statements } = fakePool({
       transaction_read_only: [{ tro: 1, ro: 1 }],
       innodb_read_only: [{ iro: 0 }],
-      'UNIX_TIMESTAMP(NOW(6))': [{ ms: '1795478405123' }]
+      'UNIX_TIMESTAMP(NOW(6))': [{ ms: '1795478405123' }],
+      replica_host_status: [{ lag: 18.5 }]
     });
     const createPool = jest.fn(() => pool);
     const snapshot = await openReadOnlySnapshot(target, createPool);
@@ -83,12 +84,40 @@ describe('openReadOnlySnapshot', () => {
       transactionReadOnly: true,
       serverReadOnly: true,
       innodbReadOnly: false,
-      snapshotAt: '2026-11-24T00:00:05.123Z'
+      snapshotAt: '2026-11-24T00:00:05.123Z',
+      replicaLagMs: 18.5
     });
+    expect(statements).toContain(
+      'SELECT REPLICA_LAG_IN_MILLISECONDS AS lag FROM information_schema.replica_host_status WHERE SERVER_ID = @@aurora_server_id'
+    );
     await snapshot.close();
     expect(statements[statements.length - 1]).toBe('ROLLBACK');
     expect(connection.release).toHaveBeenCalled();
     expect(pool.end).toHaveBeenCalled();
+  });
+
+  it.each([
+    ['no row for this server', undefined],
+    ['a null lag', [{ lag: null }]],
+    ['a table it cannot read', 'error']
+  ])('records the lag as unknown with %s', async (_name, answer) => {
+    const { pool, connection } = fakePool({
+      transaction_read_only: [{ tro: 1, ro: 1 }],
+      innodb_read_only: [{ iro: 0 }],
+      'UNIX_TIMESTAMP(NOW(6))': [{ ms: 1795478405000 }],
+      ...(Array.isArray(answer) ? { replica_host_status: answer } : {})
+    });
+    if (answer === 'error') {
+      const query = connection.query;
+      connection.query = jest.fn((sql: string, callback: any) =>
+        sql.includes('replica_host_status')
+          ? callback(new Error('Unknown table'))
+          : query(sql, callback)
+      );
+    }
+    const snapshot = await openReadOnlySnapshot(target, () => pool);
+    expect(snapshot.evidence.replicaLagMs).toBeNull();
+    expect(snapshot.evidence.snapshotAt).toBe('2026-11-24T00:00:05.000Z');
   });
 
   it('takes an Aurora reader (innodb_read_only) as read-only', async () => {

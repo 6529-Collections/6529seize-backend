@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -5,7 +6,7 @@ import { IdentityExportNotReadyError } from './identity-export.errors';
 
 const buildIdentityExport = jest.fn();
 
-const prepEnvironment = jest.fn(async () => undefined);
+const prepEnvironment = jest.fn(async (): Promise<void> => undefined);
 jest.mock('@/env', () => ({
   ...jest.requireActual('@/env'),
   prepEnvironment: () => prepEnvironment()
@@ -36,6 +37,11 @@ jest.mock('./identity-export.service', () => ({
 import { runCli } from './cli';
 
 const REV = 'f'.repeat(40);
+const T = Date.UTC(2026, 10, 24);
+const ALICE = '00000000-0000-4000-8000-0000000a11ce';
+
+const sha256 = (text: string) =>
+  createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex');
 
 describe('runCli', () => {
   let dir: string;
@@ -78,12 +84,169 @@ describe('runCli', () => {
   it.each([
     ['over_credit', 4],
     ['after_freeze', 5],
-    ['day', 3]
-  ] as const)('exits by its cause: %s', async (cause, code) => {
-    buildIdentityExport.mockRejectedValue(
-      new IdentityExportNotReadyError([{ cause, message: 'not yet' }])
+    ['day', 3],
+    ['missing_extra_ids', 6],
+    ['unmatched_cms', 7]
+  ] as const)(
+    'exits by its cause, writing nothing: %s',
+    async (cause, code) => {
+      buildIdentityExport.mockRejectedValue(
+        new IdentityExportNotReadyError([{ cause, message: 'not yet' }])
+      );
+      const out = path.join(dir, 'export.json');
+      expect(await runCli(args(out))).toBe(code);
+      expect(fs.existsSync(out)).toBe(false);
+    }
+  );
+
+  describe('at the freeze', () => {
+    const saved = process.env.IDENTITY_FREEZE_AT;
+    afterEach(() => {
+      if (saved === undefined) delete process.env.IDENTITY_FREEZE_AT;
+      else process.env.IDENTITY_FREEZE_AT = saved;
+      prepEnvironment.mockReset();
+      prepEnvironment.mockImplementation(async () => undefined);
+    });
+
+    /** The inputs of an export at the freeze; the manifest as given. */
+    const atFreeze = (manifest: (cmsSha: string) => object) => {
+      const cms = JSON.stringify({ [ALICE]: { primary: {} } });
+      fs.writeFileSync(path.join(dir, 'cms-fields.json'), cms);
+      fs.writeFileSync(path.join(dir, 'waves.json'), JSON.stringify([ALICE]));
+      const manifestText = JSON.stringify(manifest(sha256(cms)));
+      fs.writeFileSync(path.join(dir, 'manifest.json'), manifestText);
+      return {
+        manifestSha: sha256(manifestText),
+        cmsSha: sha256(cms),
+        args: [
+          '--out',
+          path.join(dir, 'export.json'),
+          '--revision',
+          REV,
+          '--freeze-at',
+          String(T),
+          '--expect-tdh-block',
+          '1',
+          '--extra-ids',
+          path.join(dir, 'waves.json'),
+          '--cms-fields',
+          path.join(dir, 'cms-fields.json'),
+          '--cms-manifest',
+          path.join(dir, 'manifest.json')
+        ]
+      };
+    };
+    const siteManifest = (cmsSha: string) => ({
+      schema: '6529.profile-site-export.manifest.v1',
+      usable: true,
+      rehearsal: false,
+      stage: 'prod',
+      frozen_at: '2026-11-24T00:00:00.000Z',
+      files: [{ name: 'cms-fields.json', bytes: 1, sha256: cmsSha }]
+    });
+
+    it("takes IDENTITY_FREEZE_AT from the environment's files, and refuses without it", async () => {
+      delete process.env.IDENTITY_FREEZE_AT;
+      const { args: given } = atFreeze(siteManifest);
+      expect(await runCli(given)).toBe(2);
+      const written = stderr.mock.calls.map(([text]) => String(text)).join('');
+      expect(written).toContain('IDENTITY_FREEZE_AT is not set');
+      expect(dbApiCalls).toEqual([]);
+      expect(buildIdentityExport).not.toHaveBeenCalled();
+
+      // The .env file sets it to another day.
+      prepEnvironment.mockImplementation(async () => {
+        process.env.IDENTITY_FREEZE_AT = '2026-11-25T00:00:00Z';
+      });
+      expect(await runCli(given)).toBe(2);
+      expect(dbApiCalls).toEqual([]);
+
+      // ...or to the freeze.
+      delete process.env.IDENTITY_FREEZE_AT;
+      prepEnvironment.mockImplementation(async () => {
+        process.env.IDENTITY_FREEZE_AT = String(T);
+      });
+      buildIdentityExport.mockRejectedValue(
+        new IdentityExportNotReadyError([{ cause: 'day', message: 'not yet' }])
+      );
+      expect(await runCli(given)).toBe(3);
+      expect(buildIdentityExport).toHaveBeenCalled();
+    });
+
+    it("records the profile site run's manifest that lists the values", async () => {
+      process.env.IDENTITY_FREEZE_AT = '2026-11-24T00:00:00Z';
+      const { args: given, manifestSha, cmsSha } = atFreeze(siteManifest);
+      buildIdentityExport.mockRejectedValue(
+        new IdentityExportNotReadyError([{ cause: 'day', message: 'not yet' }])
+      );
+      expect(await runCli(given)).toBe(3);
+      expect(buildIdentityExport.mock.calls[0][1].cmsFieldsFile).toEqual({
+        count: 1,
+        sha256: cmsSha,
+        manifest: { key: null, sha256: manifestSha }
+      });
+    });
+
+    it.each([
+      [
+        'a rehearsal',
+        (sha: string) => ({
+          ...siteManifest(sha),
+          usable: false,
+          rehearsal: true
+        }),
+        'not of a whole, usable run'
+      ],
+      [
+        'another freeze',
+        (sha: string) => ({
+          ...siteManifest(sha),
+          frozen_at: '2026-11-23T00:00:00.000Z'
+        }),
+        'exported the freeze "2026-11-23T00:00:00.000Z", not 2026-11-24T00:00:00.000Z'
+      ],
+      [
+        'another file',
+        (_sha: string) => siteManifest('0'.repeat(64)),
+        'lists cms-fields.json with sha256 0000'
+      ],
+      [
+        'another schema',
+        (sha: string) => ({ ...siteManifest(sha), schema: 'x' }),
+        'schema is "x"'
+      ]
+    ])(
+      'refuses the manifest of %s before reading',
+      async (_name, manifest, message) => {
+        process.env.IDENTITY_FREEZE_AT = '2026-11-24T00:00:00Z';
+        const { args: given } = atFreeze(manifest);
+        expect(await runCli(given)).toBe(2);
+        const written = stderr.mock.calls
+          .map(([text]) => String(text))
+          .join('');
+        expect(written).toContain(message);
+        expect(dbApiCalls).toEqual([]);
+      }
     );
-    expect(await runCli(args(path.join(dir, 'export.json')))).toBe(code);
+  });
+
+  it('says so when --no-freeze leaves IDENTITY_FREEZE_AT aside', async () => {
+    const saved = process.env.IDENTITY_FREEZE_AT;
+    process.env.IDENTITY_FREEZE_AT = '2026-11-24T00:00:00Z';
+    try {
+      buildIdentityExport.mockRejectedValue(
+        new IdentityExportNotReadyError([{ cause: 'day', message: 'no' }])
+      );
+      expect(await runCli(args(path.join(dir, 'r.json')))).toBe(3);
+      const written = stderr.mock.calls.map(([text]) => String(text)).join('');
+      expect(written).toContain(
+        'IDENTITY_FREEZE_AT is set ("2026-11-24T00:00:00Z"), but --no-freeze writes a rehearsal'
+      );
+      expect(buildIdentityExport.mock.calls[0][1].freezeMs).toBeNull();
+    } finally {
+      if (saved === undefined) delete process.env.IDENTITY_FREEZE_AT;
+      else process.env.IDENTITY_FREEZE_AT = saved;
+    }
   });
 
   it('exits 2 on a usage error, and on an existing file before reading', async () => {

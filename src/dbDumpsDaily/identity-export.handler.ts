@@ -1,21 +1,42 @@
 import { createHash } from 'node:crypto';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { Logger } from '@/logging';
-import { parseCmsFields, parseExtraIds } from '@/identity-export/cli-options';
+import {
+  DEFAULT_BULK,
+  identityFreezeSettingProblem,
+  parseCmsFields,
+  parseExtraIds,
+  readIdentityFreezeAt
+} from '@/identity-export/cli-options';
 import { SqlIdentityExportSource } from '@/identity-export/identity-export.db';
 import { IdentityExportNotReadyError } from '@/identity-export/identity-export.errors';
 import {
   buildIdentityExport,
   IdentityExportDocument
 } from '@/identity-export/identity-export.service';
-import { InputFile } from '@/identity-export/identity-export.types';
+import {
+  CmsFieldsFile,
+  InputFile
+} from '@/identity-export/identity-export.types';
 import { jsonDocumentBytes } from '@/identity-export/identity-export.writer';
+import {
+  PROFILE_SITE_CMS_FILE,
+  profileSiteManifestProblem
+} from '@/identity-export/profile-site-manifest';
+import { buildCommit } from './build-commit';
+import {
+  FreshSecretValue,
+  LAMBDAS_SECRET_ID,
+  readFreshSecretValue
+} from './chain-exports/fresh-secret';
 import {
   assertBucketPrivate,
   BucketPrivacy,
   ExportBucket,
   exportBucketOf,
   exportStage,
+  isWriteConflict,
   linksLastAtMost,
   Presigner,
   PRESIGNED_URL_SECONDS,
@@ -36,12 +57,15 @@ const logger = Logger.get('IDENTITY_EXPORT_JOB');
 
 const JOB = 'identityExport';
 const LINKS_JOB = 'identityExportLinks';
-const PREFIX_ROOT = 'identity-export/';
+const JOB_PREFIX = 'identity-export';
+const PREFIX_ROOT = `${JOB_PREFIX}/`;
+/** The profile site export's runs, whose cms-fields.json this job reads. */
+const SITE_JOB_PREFIX = 'profile-site-export';
 /**
- * Where an input may be read from: this job's own prefix (a waves list put
- * there), or a profile site export run (its cms-fields.json).
+ * Where a rehearsal's input may be read from: this job's own prefix (a
+ * waves list put there), or a profile site export run (its cms-fields.json).
  */
-const INPUT_ROOTS = [PREFIX_ROOT, 'profile-site-export/'] as const;
+const INPUT_ROOTS = [PREFIX_ROOT, `${SITE_JOB_PREFIX}/`] as const;
 const EXPORT_FILE = 'identity-export.json';
 const SUMMARY_FILE = 'summary.json';
 const MANIFEST = 'manifest.json';
@@ -56,13 +80,21 @@ const MANIFEST_NAMES = [MANIFEST, UNUSABLE_MANIFEST] as const;
 const MAX_INPUT_BYTES = 16 * 1024 * 1024;
 /** The snapshot may be at most this long after the freeze, unless acknowledged. */
 export const SNAPSHOT_GAP_LIMIT_MINUTES = 90;
+/**
+ * A run at the freeze needs its snapshot at least this long after the
+ * freeze on the replica's clock, so writes made before the freeze have
+ * reached it.
+ */
+export const MIN_SNAPSHOT_GAP_SECONDS = 120;
 /** Below this much time left, the run stops with its progress. */
 const DEADLINE_MARGIN_MS = 60_000;
 
 /**
- * An input the job reads: an object of the private chain exports bucket
+ * A rehearsal's input: an object of the private chain exports bucket
  * (`{ "key": "identity-export/inputs/waves.json" }`), or the content inline
- * (`{ "inline": [...] }`).
+ * (`{ "inline": [...] }`). At the freeze the waves list is given the same
+ * way, and the profile site values are found through the profile site
+ * export's pointer for that freeze.
  */
 export type IdentityExportInput =
   | { readonly key: string }
@@ -75,7 +107,8 @@ export type IdentityExportInput =
  *   the read replica, into the private chain exports bucket under
  *   identity-export/<stage>/, the manifest written last. The event carries
  *   the CLI's options, with the same rules;
- * - `identityExportLinks`: fresh download links for an earlier run.
+ * - `identityExportLinks`: fresh download links for an earlier run, by its
+ *   prefix or by the freeze it exported.
  */
 export type IdentityExportEvent =
   | {
@@ -83,12 +116,17 @@ export type IdentityExportEvent =
       /** Null for a rehearsal (`noFreeze: true`). */
       readonly freezeMs: number | null;
       readonly expectTdhBlock: number | null;
-      readonly revision: string;
+      /** Null: the commit the function was built from. */
+      readonly revision: string | null;
       readonly bulk: number;
       readonly includeDelegations: boolean;
       /** Null with `noExtraIds: true`. */
       readonly extraIds: IdentityExportInput | null;
-      /** Null with `noCmsFields: true`. */
+      /**
+       * A rehearsal's profile site values; null with `noCmsFields: true`,
+       * and at the freeze, where the profile site export's pointer for the
+       * freeze names them.
+       */
       readonly cmsFields: IdentityExportInput | null;
       readonly acceptOverCredit: number;
       readonly acceptEditsAfterFreeze: number;
@@ -96,10 +134,24 @@ export type IdentityExportEvent =
       readonly acceptMissingExtraIds: number;
       readonly acceptProfileWritesAfterFreeze: number;
       readonly acceptUnmatchedCms: number;
+      readonly acceptDelegationsAfterFreeze: number;
+      /** At the freeze without the waves list. */
+      readonly acceptNoExtraIds: boolean;
+      /** At the freeze with a bulk threshold other than 2000. */
+      readonly acceptBulk: number | null;
       /** Accepts a snapshot up to this many minutes after the freeze. */
       readonly acceptSnapshotGapMinutes: number | null;
+      /** Replace the freeze's pointer if a run wrote one already. */
+      readonly replacePointer: boolean;
     }
-  | { readonly job: typeof LINKS_JOB; readonly prefix: string };
+  | {
+      readonly job: typeof LINKS_JOB;
+      readonly prefix: string | null;
+      readonly freezeMs: number | null;
+    };
+
+type ExportEvent = Extract<IdentityExportEvent, { job: typeof JOB }>;
+type LinksEvent = Extract<IdentityExportEvent, { job: typeof LINKS_JOB }>;
 
 export class IdentityExportEventError extends Error {
   constructor(message: string) {
@@ -125,7 +177,7 @@ export class IdentityExportDeadlineError extends Error {
     readonly elapsedSeconds: number
   ) {
     super(
-      `Stopped after "${step}" at ${elapsedSeconds} s, with less than ${DEADLINE_MARGIN_MS / 1000} s of the function's time left. Nothing was written: the export needs longer than one invocation.`
+      `Stopped after "${step}" at ${elapsedSeconds} s, with less than ${DEADLINE_MARGIN_MS / 1000} s of the function's time left. No manifest was written: the export needs longer than one invocation.`
     );
     Object.setPrototypeOf(this, new.target.prototype);
     this.name = 'IdentityExportDeadlineError';
@@ -133,13 +185,15 @@ export class IdentityExportDeadlineError extends Error {
 }
 
 /**
- * Refuses a snapshot taken before the freeze, or longer after it than the
- * limit (90 minutes) or than the invoker acknowledged.
+ * Refuses a snapshot taken before the freeze, sooner after it than
+ * `minGapSeconds`, or longer after it than the limit (90 minutes) or than
+ * the invoker acknowledged.
  */
 export function checkSnapshotTime(
   freezeMs: number,
   snapshotAt: number,
-  acceptGapMinutes: number | null
+  acceptGapMinutes: number | null,
+  minGapSeconds = 0
 ): { readonly gapSeconds: number } {
   if (!Number.isFinite(snapshotAt)) {
     throw new IdentityExportSnapshotError("The snapshot's time is unknown");
@@ -150,6 +204,11 @@ export function checkSnapshotTime(
       `The snapshot (${new Date(snapshotAt).toISOString()}) is before the freeze (${new Date(freezeMs).toISOString()})`
     );
   }
+  if (gapSeconds < minGapSeconds) {
+    throw new IdentityExportSnapshotError(
+      `The snapshot is ${gapSeconds} s after the freeze: wait until at least ${minGapSeconds} s after it, so the replica holds every write made before the freeze`
+    );
+  }
   const limit = Math.max(SNAPSHOT_GAP_LIMIT_MINUTES, acceptGapMinutes ?? 0);
   if (gapSeconds > limit * 60) {
     throw new IdentityExportSnapshotError(
@@ -157,6 +216,51 @@ export function checkSnapshotTime(
     );
   }
   return { gapSeconds };
+}
+
+/**
+ * Refuses a replica as far behind its writer as the snapshot is after the
+ * freeze, or further: it might not yet hold writes made before the freeze.
+ * An unknown lag leaves the minimum gap as the only guard.
+ */
+export function checkReplicaLag(
+  gapSeconds: number,
+  replicaLagMs: number | null
+): void {
+  if (replicaLagMs !== null && replicaLagMs >= gapSeconds * 1000) {
+    throw new IdentityExportSnapshotError(
+      `The replica is ${replicaLagMs} ms behind its writer, not less than the ${gapSeconds} s since the freeze: it may not hold every write made before the freeze. Try again later.`
+    );
+  }
+}
+
+/** IDENTITY_FREEZE_AT as 6529.io's profile site reads it. */
+export interface FreezeSetting {
+  readonly reading: 'unset' | 'not_a_time' | 'time';
+  readonly at: string | null;
+}
+
+export function readFreezeSetting(raw: string | undefined): FreezeSetting {
+  const parsed = readIdentityFreezeAt(raw);
+  if (parsed === undefined) return { reading: 'unset', at: null };
+  if (parsed === null || Math.abs(parsed) > 8.64e15) {
+    return { reading: 'not_a_time', at: null };
+  }
+  return { reading: 'time', at: new Date(parsed).toISOString() };
+}
+
+/**
+ * Why the secret's IDENTITY_FREEZE_AT doesn't name this freeze, or null:
+ * as the CLI's check, naming the secret read.
+ */
+export function freezeSecretProblem(
+  freezeMs: number,
+  secret: FreshSecretValue
+): string | null {
+  const problem = identityFreezeSettingProblem(freezeMs, secret.value);
+  return problem === null
+    ? null
+    : `${problem} (read from the ${secret.secretId} secret of this region at the start of the run; a warm container's environment is not used)`;
 }
 
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?Z$/;
@@ -178,7 +282,11 @@ const EXPORT_FIELDS = [
   'acceptMissingExtraIds',
   'acceptProfileWritesAfterFreeze',
   'acceptUnmatchedCms',
-  'acceptSnapshotGapMinutes'
+  'acceptDelegationsAfterFreeze',
+  'acceptNoExtraIds',
+  'acceptBulk',
+  'acceptSnapshotGapMinutes',
+  'replacePointer'
 ] as const;
 
 function freezeOf(value: unknown): number {
@@ -199,6 +307,16 @@ function freezeOf(value: unknown): number {
   );
 }
 
+function midnightOf(value: unknown): number {
+  const freezeMs = freezeOf(value);
+  if (freezeMs % 86_400_000 !== 0) {
+    throw new IdentityExportEventError(
+      `freezeAt must be 00:00 UTC, got ${new Date(freezeMs).toISOString()}`
+    );
+  }
+  return freezeMs;
+}
+
 function wholeNumber(name: string, value: unknown, fallback: number): number {
   if (value === undefined) return fallback;
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
@@ -211,6 +329,34 @@ function flag(name: string, value: unknown): boolean {
   if (value === undefined || value === false) return false;
   if (value === true) return true;
   throw new IdentityExportEventError(`${name} must be true when given`);
+}
+
+function only(record: Record<string, unknown>, allowed: readonly string[]) {
+  const unknownFields = Object.keys(record).filter(
+    (key) => !allowed.includes(key)
+  );
+  if (unknownFields.length) {
+    throw new IdentityExportEventError(
+      `Unknown fields: ${unknownFields.join(', ')}`
+    );
+  }
+}
+
+/** A run's prefix under `root`, as runPrefix writes it. */
+function runPrefixOf(value: unknown, root: string, name: string): string {
+  if (
+    typeof value !== 'string' ||
+    !value.startsWith(root) ||
+    !value.endsWith('/') ||
+    value.includes('..') ||
+    value.includes('/by-freeze/') ||
+    !/^[A-Za-z0-9/_.-]+$/.test(value)
+  ) {
+    throw new IdentityExportEventError(
+      `${name} must be a run's prefix under ${root}, ending in /`
+    );
+  }
+  return value;
 }
 
 /** An input given as `{ key }` in the bucket or `{ inline }`. */
@@ -259,6 +405,63 @@ function oneOf(
   return given ? inputOf(field, record[field]) : null;
 }
 
+/** The links job: a run by its prefix, or by the freeze its pointer names. */
+function parseLinksEvent(record: Record<string, unknown>): LinksEvent {
+  only(record, ['job', 'prefix', 'freezeAt']);
+  const hasPrefix = record.prefix !== undefined;
+  const hasFreeze = record.freezeAt !== undefined;
+  if (hasPrefix === hasFreeze) {
+    throw new IdentityExportEventError(
+      'Give either prefix (a run) or freezeAt (the run its pointer names)'
+    );
+  }
+  return {
+    job: LINKS_JOB,
+    prefix: hasPrefix
+      ? runPrefixOf(record.prefix, PREFIX_ROOT, 'prefix')
+      : null,
+    freezeMs: hasFreeze ? midnightOf(record.freezeAt) : null
+  };
+}
+
+/**
+ * What an export at the freeze must take: the profile site values from the
+ * site's pointer, the delegations, the waves list unless acknowledged, and
+ * the default bulk threshold unless acknowledged.
+ */
+function checkAtFreeze(record: Record<string, unknown>, bulk: number): void {
+  if (record.cmsFields !== undefined || record.noCmsFields !== undefined) {
+    throw new IdentityExportEventError(
+      "At the freeze the profile site values come from the profile site export's pointer for that freeze: leave cmsFields and noCmsFields out"
+    );
+  }
+  if (record.noDelegations !== undefined) {
+    throw new IdentityExportEventError(
+      'noDelegations is for a rehearsal: an export at the freeze carries the delegations'
+    );
+  }
+  const noExtraIds = flag('noExtraIds', record.noExtraIds);
+  const acceptNoExtraIds = flag('acceptNoExtraIds', record.acceptNoExtraIds);
+  if (noExtraIds !== acceptNoExtraIds) {
+    throw new IdentityExportEventError(
+      noExtraIds
+        ? 'noExtraIds at the freeze leaves out the profiles in scope only for waves activity: acknowledge it with acceptNoExtraIds: true'
+        : 'acceptNoExtraIds is only with noExtraIds'
+    );
+  }
+  const acceptBulk = record.acceptBulk;
+  if (bulk === DEFAULT_BULK && acceptBulk !== undefined) {
+    throw new IdentityExportEventError(
+      `acceptBulk does not match: bulk is the default ${DEFAULT_BULK}; leave acceptBulk out`
+    );
+  }
+  if (bulk !== DEFAULT_BULK && acceptBulk !== bulk) {
+    throw new IdentityExportEventError(
+      `bulk ${bulk} at the freeze is not the default ${DEFAULT_BULK}: acknowledge it with acceptBulk: ${bulk}`
+    );
+  }
+}
+
 /**
  * This module's job for an invocation's event, null when the event isn't
  * one of its jobs. A job it can't read throws: a typo never falls back to
@@ -270,50 +473,17 @@ export function parseIdentityExportEvent(
   if (!event || typeof event !== 'object') return null;
   const record = event as Record<string, unknown>;
   if (record.job === LINKS_JOB) {
-    const unknownFields = Object.keys(record).filter(
-      (key) => key !== 'job' && key !== 'prefix'
-    );
-    if (unknownFields.length) {
-      throw new IdentityExportEventError(
-        `Unknown fields: ${unknownFields.join(', ')}`
-      );
-    }
-    const prefix = record.prefix;
-    if (
-      typeof prefix !== 'string' ||
-      !prefix.startsWith(PREFIX_ROOT) ||
-      !prefix.endsWith('/') ||
-      prefix.includes('..') ||
-      prefix.includes('/by-freeze/') ||
-      !/^[A-Za-z0-9/_.-]+$/.test(prefix)
-    ) {
-      throw new IdentityExportEventError(
-        `prefix must be a run's prefix under ${PREFIX_ROOT}, ending in /`
-      );
-    }
-    return { job: LINKS_JOB, prefix };
+    return parseLinksEvent(record);
   }
   if (record.job !== JOB) return null;
-  const unknownFields = Object.keys(record).filter(
-    (key) => !(EXPORT_FIELDS as readonly string[]).includes(key)
-  );
-  if (unknownFields.length) {
-    throw new IdentityExportEventError(
-      `Unknown fields: ${unknownFields.join(', ')}`
-    );
-  }
+  only(record, EXPORT_FIELDS);
   const noFreeze = flag('noFreeze', record.noFreeze);
   if ((record.freezeAt === undefined) === !noFreeze) {
     throw new IdentityExportEventError(
       'Give freezeAt or noFreeze: true for a rehearsal, one of the two'
     );
   }
-  const freezeMs = noFreeze ? null : freezeOf(record.freezeAt);
-  if (freezeMs !== null && freezeMs % 86_400_000 !== 0) {
-    throw new IdentityExportEventError(
-      `freezeAt must be 00:00 UTC, got ${new Date(freezeMs).toISOString()}`
-    );
-  }
+  const freezeMs = noFreeze ? null : midnightOf(record.freezeAt);
   const expectTdhBlock =
     record.expectTdhBlock === undefined
       ? null
@@ -340,6 +510,12 @@ export function parseIdentityExportEvent(
       'acceptSnapshotGapMinutes is for an export at the freeze'
     );
   }
+  const replacePointer = flag('replacePointer', record.replacePointer);
+  if (replacePointer && freezeMs === null) {
+    throw new IdentityExportEventError(
+      'replacePointer is for an export at the freeze: a rehearsal writes no pointer'
+    );
+  }
   const accepts = EXPORT_FIELDS.filter(
     (field) => field.startsWith('accept') && record[field] !== undefined
   ).filter((field) => field !== 'acceptSnapshotGapMinutes');
@@ -349,20 +525,33 @@ export function parseIdentityExportEvent(
     );
   }
   const revision = record.revision;
-  if (typeof revision !== 'string' || !/^[0-9a-f]{40}$/i.test(revision)) {
+  if (
+    revision !== undefined &&
+    (typeof revision !== 'string' || !/^[0-9a-f]{40}$/i.test(revision))
+  ) {
     throw new IdentityExportEventError(
       "revision must be the exporter's 40-hex git commit"
     );
   }
+  const bulk = wholeNumber('bulk', record.bulk, DEFAULT_BULK);
+  const extraIds = oneOf(record, 'extraIds', 'noExtraIds');
+  if (freezeMs !== null) {
+    checkAtFreeze(record, bulk);
+  }
+  const acceptBulk =
+    record.acceptBulk === undefined
+      ? null
+      : wholeNumber('acceptBulk', record.acceptBulk, 0);
   return {
     job: JOB,
     freezeMs,
     expectTdhBlock,
-    revision: revision.toLowerCase(),
-    bulk: wholeNumber('bulk', record.bulk, 2000),
+    revision: typeof revision === 'string' ? revision.toLowerCase() : null,
+    bulk,
     includeDelegations: !flag('noDelegations', record.noDelegations),
-    extraIds: oneOf(record, 'extraIds', 'noExtraIds'),
-    cmsFields: oneOf(record, 'cmsFields', 'noCmsFields'),
+    extraIds,
+    cmsFields:
+      freezeMs === null ? oneOf(record, 'cmsFields', 'noCmsFields') : null,
     acceptOverCredit: wholeNumber(
       'acceptOverCredit',
       record.acceptOverCredit,
@@ -393,7 +582,15 @@ export function parseIdentityExportEvent(
       record.acceptUnmatchedCms,
       0
     ),
-    acceptSnapshotGapMinutes: gap
+    acceptDelegationsAfterFreeze: wholeNumber(
+      'acceptDelegationsAfterFreeze',
+      record.acceptDelegationsAfterFreeze,
+      0
+    ),
+    acceptNoExtraIds: flag('acceptNoExtraIds', record.acceptNoExtraIds),
+    acceptBulk,
+    acceptSnapshotGapMinutes: gap,
+    replacePointer
   };
 }
 
@@ -405,36 +602,49 @@ export interface IdentityExportScope {
   readonly includeDelegations: boolean;
   /** The waves list's bucket key, `inline`, or null (noExtraIds). */
   readonly extraIds: string | null;
-  /** The profile site values' bucket key, `inline`, or null (noCmsFields). */
+  /**
+   * The profile site values' bucket key (at the freeze, the cms-fields.json
+   * of the run the site's pointer names), `inline`, or null (noCmsFields).
+   */
   readonly cmsFields: string | null;
+  readonly replacePointer: boolean;
 }
 
-function scopeOf(
-  event: Extract<IdentityExportEvent, { job: 'identityExport' }>
-): IdentityExportScope {
-  const source = (input: IdentityExportInput | null) =>
-    input === null ? null : 'key' in input ? input.key : 'inline';
-  return {
-    freezeAt:
-      event.freezeMs === null ? null : new Date(event.freezeMs).toISOString(),
-    expectTdhBlock: event.expectTdhBlock,
-    bulk: event.bulk,
-    includeDelegations: event.includeDelegations,
-    extraIds: source(event.extraIds),
-    cmsFields: source(event.cmsFields)
-  };
+/** The profile site run whose cms-fields.json an export at the freeze took. */
+export interface CmsFieldsSource {
+  /** profile-site-export/<stage>/by-freeze/<freeze>.json */
+  readonly pointer: string;
+  readonly prefix: string;
+  readonly manifest: string;
+  readonly manifestSha256: string;
+  readonly file: string;
+  readonly sha256: string;
 }
 
 export interface IdentityExportResult {
   readonly job: typeof JOB;
   readonly bucket: string;
+  /** prod or staging, from NODE_ENV (production, development). */
+  readonly stage: string;
   readonly prefix: string;
   /** manifest.json, or manifest.unusable.json when `usable` is false. */
   readonly manifestKey: string;
+  /** The manifest's sha256, as stored. */
+  readonly manifestSha256: string;
   /** by-freeze/<freezeAt>.json, pointing at this run; only for manifest.json. */
   readonly pointerKey: string | null;
+  /** Why the pointer couldn't be written, when it couldn't. */
+  readonly pointerError: string | null;
+  /** The pointer this run replaced (replacePointer), as it read it. */
+  readonly replacedPointer: Record<string, unknown> | null;
   readonly exportKey: string;
   readonly scope: IdentityExportScope;
+  /** At the freeze: the profile site run its pointer named. */
+  readonly cmsFieldsSource: CmsFieldsSource | null;
+  /** The exporter revision written in the file. */
+  readonly revision: string;
+  /** The commit the function was built from; null when the build can't tell. */
+  readonly buildCommit: string | null;
   /** Objects written, the manifest and the links file included. */
   readonly files: number;
   readonly bytes: number;
@@ -461,13 +671,18 @@ export interface IdentityExportResult {
   readonly startedAt: string;
   readonly finishedAt: string;
   readonly seconds: number;
-  /** IDENTITY_FREEZE_AT as the function read it, or null when unset. */
+  /** The secret IDENTITY_FREEZE_AT was read from, at the start of the run. */
+  readonly identityFreezeAtSecret: string;
+  /** IDENTITY_FREEZE_AT as the site reads it: unset, not_a_time or time. */
+  readonly identityFreezeAtReading: FreezeSetting['reading'];
   readonly identityFreezeAt: string | null;
   /** The latest the links last (they end sooner with the signing session). */
   readonly linksLastAtMost: string;
   readonly presignedManifestUrl: string;
   /** links.json: a presigned link for every object of the run. */
   readonly presignedLinksUrl: string;
+  /** The pointer this run wrote, to keep with the export; null without one. */
+  readonly presignedPointerUrl: string | null;
 }
 
 export interface IdentityExportLinksResult {
@@ -475,11 +690,15 @@ export interface IdentityExportLinksResult {
   readonly bucket: string;
   readonly prefix: string;
   readonly manifestKey: string;
+  readonly manifestSha256: string;
+  /** The pointer the run was found by, when asked by freezeAt. */
+  readonly pointerKey: string | null;
   readonly linksKey: string;
   readonly usable: boolean;
   readonly linksLastAtMost: string;
   readonly presignedManifestUrl: string;
   readonly presignedLinksUrl: string;
+  readonly presignedPointerUrl: string | null;
 }
 
 export interface IdentityExportContext {
@@ -495,6 +714,13 @@ export interface IdentityExportDeps {
   readonly presign: Presigner;
   readonly openSnapshot: (target: ReplicaTarget) => Promise<ReadOnlySnapshot>;
   readonly now: () => Date;
+  /**
+   * IDENTITY_FREEZE_AT read from the lambdas secret now: the environment a
+   * warm container loaded at its start would miss a fix to the secret.
+   */
+  readonly identityFreezeAt: () => Promise<FreshSecretValue>;
+  /** The commit the function was built from, or null. */
+  readonly buildCommit?: () => string | null;
 }
 
 interface ManifestFile {
@@ -517,15 +743,69 @@ function defaultDeps(): IdentityExportDeps {
       await prepEnvironment();
     },
     env: () => process.env,
+    identityFreezeAt: () =>
+      readFreshSecretValue(
+        new SecretsManagerClient({ region: process.env.AWS_REGION }),
+        'IDENTITY_FREEZE_AT'
+      ),
     s3,
     presign: s3Presigner(s3),
     openSnapshot: (target) => openReadOnlySnapshot(target),
-    now: () => new Date()
+    now: () => new Date(),
+    buildCommit
   };
 }
 
-function sha256(bytes: Buffer): string {
-  return createHash('sha256').update(bytes).digest('hex');
+function sha256(bytes: Buffer | string): string {
+  return createHash('sha256')
+    .update(typeof bytes === 'string' ? Buffer.from(bytes, 'utf8') : bytes)
+    .digest('hex');
+}
+
+function iso(ms: number | null): string | null {
+  return ms === null ? null : new Date(ms).toISOString();
+}
+
+/** The pointer from a freeze to the run that exported it, of a job. */
+function pointerKeyOf(job: string, stage: string, freezeMs: number): string {
+  return `${job}/${stage}/by-freeze/${new Date(freezeMs)
+    .toISOString()
+    .replace(/[:.]/g, '-')}.json`;
+}
+
+function parseJson(text: string, what: string): Record<string, unknown> {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new IdentityExportEventError(`${what} is not JSON`);
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new IdentityExportEventError(`${what} is not a JSON object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+/** An object of the bucket, as its owner's, at most 16 MiB. */
+async function objectBytes(
+  key: string,
+  bucket: ExportBucket,
+  s3: Pick<S3Client, 'send'>
+): Promise<Buffer> {
+  const answer: any = await s3.send(
+    new GetObjectCommand({
+      Bucket: bucket.name,
+      ExpectedBucketOwner: bucket.owner,
+      Key: key
+    })
+  );
+  const bytes = Buffer.from(await answer.Body.transformToByteArray());
+  if (bytes.length > MAX_INPUT_BYTES) {
+    throw new IdentityExportEventError(
+      `${key} is ${bytes.length} bytes: more than ${MAX_INPUT_BYTES}`
+    );
+  }
+  return bytes;
 }
 
 /** An input's bytes: the bucket object's, or the inline content as JSON. */
@@ -537,20 +817,88 @@ async function inputBytes(
   if ('inline' in input) {
     return Buffer.from(JSON.stringify(input.inline), 'utf8');
   }
-  const answer: any = await s3.send(
-    new GetObjectCommand({
-      Bucket: bucket.name,
-      ExpectedBucketOwner: bucket.owner,
-      Key: input.key
-    })
-  );
-  const bytes = Buffer.from(await answer.Body.transformToByteArray());
-  if (bytes.length > MAX_INPUT_BYTES) {
+  return await objectBytes(input.key, bucket, s3);
+}
+
+/**
+ * At the freeze, the profile site values are those of the run the profile
+ * site export's pointer for that freeze names: a whole, usable run of that
+ * freeze and stage, whose manifest has the sha256 the pointer records and
+ * lists cms-fields.json with the sha256 of the file read.
+ */
+async function cmsFieldsAtFreeze(
+  writer: PrivateExportWriter,
+  s3: Pick<S3Client, 'send'>,
+  stage: string,
+  freezeMs: number
+): Promise<{ bytes: Buffer; source: CmsFieldsSource }> {
+  const freeze = new Date(freezeMs).toISOString();
+  const pointerKey = pointerKeyOf(SITE_JOB_PREFIX, stage, freezeMs);
+  const pointerRead = await writer.readOutside(pointerKey);
+  if (!pointerRead.found) {
     throw new IdentityExportEventError(
-      `${input.key} is ${bytes.length} bytes: more than ${MAX_INPUT_BYTES}`
+      `No profile site export for the freeze ${freeze}: ${pointerKey} ${pointerRead.reason === 'forbidden' ? "can't be read (S3 answers 403 for a key that doesn't exist)" : "doesn't exist"}. Run the profile site export for this freeze first: its whole, usable run writes that pointer.`
     );
   }
-  return bytes;
+  const pointer = parseJson(pointerRead.text, pointerKey);
+  if (pointer.frozen_at !== freeze) {
+    throw new IdentityExportEventError(
+      `${pointerKey} is for the freeze ${String(pointer.frozen_at)}, not ${freeze}`
+    );
+  }
+  const prefix = runPrefixOf(
+    pointer.prefix,
+    `${SITE_JOB_PREFIX}/${stage}/`,
+    `${pointerKey}'s prefix`
+  );
+  const manifestKey = `${prefix}manifest.json`;
+  if (pointer.manifest !== manifestKey) {
+    throw new IdentityExportEventError(
+      `${pointerKey} names the manifest ${String(pointer.manifest)}, not its run's ${manifestKey}`
+    );
+  }
+  const manifestRead = await writer.readOutside(manifestKey);
+  if (!manifestRead.found) {
+    throw new IdentityExportEventError(
+      `${pointerKey} names ${manifestKey}, which can't be read`
+    );
+  }
+  const manifestSha256 = sha256(manifestRead.text);
+  if (pointer.manifest_sha256 !== manifestSha256) {
+    throw new IdentityExportEventError(
+      `${pointerKey} records the manifest's sha256 as ${String(pointer.manifest_sha256)}, but ${manifestKey} has ${manifestSha256}`
+    );
+  }
+  const file = `${prefix}${PROFILE_SITE_CMS_FILE}`;
+  const bytes = await objectBytes(file, writer.bucket, s3);
+  const fileSha256 = sha256(bytes);
+  const problem = profileSiteManifestProblem(
+    manifestRead.text,
+    fileSha256,
+    freezeMs,
+    stage
+  );
+  if (problem) {
+    throw new IdentityExportEventError(`${manifestKey}: ${problem}`);
+  }
+  return {
+    bytes,
+    source: {
+      pointer: pointerKey,
+      prefix,
+      manifest: manifestKey,
+      manifestSha256,
+      file,
+      sha256: fileSha256
+    }
+  };
+}
+
+function pointerErrorOf(key: string, error: unknown): string {
+  if (isWriteConflict(error)) {
+    return `${key} names another run for this freeze, written while this one ran, and was kept. Send both runs' prefix and manifestSha256 to the coordinator; to make this run the export, run again with replacePointer: true`;
+  }
+  return String((error as Error)?.message ?? error);
 }
 
 /** Presigns every object and writes the links file. */
@@ -568,16 +916,15 @@ async function writeLinks(
       PRESIGNED_URL_SECONDS
     );
   }
-  const put = await writer.put(
+  return await writer.put(
     linksName,
     JSON.stringify(
-      { expires_in_seconds: PRESIGNED_URL_SECONDS, links },
+      { expires_in_seconds_at_most: PRESIGNED_URL_SECONDS, links },
       null,
       2
     ),
     'application/json'
   );
-  return put;
 }
 
 /** What a run's summary and its manifest say about the export. */
@@ -597,6 +944,35 @@ function summaryOf(document: IdentityExportDocument) {
   };
 }
 
+/**
+ * The revision the file records: the build's commit, which an event's
+ * revision must match; the event's, unchecked, when the build can't tell.
+ */
+function revisionOf(
+  event: ExportEvent,
+  built: string | null
+): { revision: string; notes: string[] } {
+  if (built !== null) {
+    if (event.revision !== null && event.revision !== built) {
+      throw new IdentityExportEventError(
+        `revision ${event.revision} is not the commit this function was built from (${built}): leave revision out, or give that one`
+      );
+    }
+    return { revision: built, notes: [] };
+  }
+  if (event.revision === null) {
+    throw new IdentityExportEventError(
+      "This function's build doesn't record its commit: give revision, the 40-hex commit it was deployed from"
+    );
+  }
+  return {
+    revision: event.revision,
+    notes: [
+      `the function's build commit is unknown: exporter_revision ${event.revision} is the invoker's, unchecked`
+    ]
+  };
+}
+
 export async function runIdentityExportJob(
   event: IdentityExportEvent,
   context: IdentityExportContext,
@@ -608,31 +984,58 @@ export async function runIdentityExportJob(
     context.invokedFunctionArn,
     env.AWS_REGION ?? ''
   );
+  const stage = exportStage(env.NODE_ENV);
   if (event.job === LINKS_JOB) {
-    return await renewLinks(event.prefix, bucket, deps);
+    return await renewLinks(event, stage, bucket, deps);
   }
   const startedAt = deps.now();
-  // The freeze the function runs with (the shared secret's) is the one the
-  // export is held to.
-  const envFreeze = env.IDENTITY_FREEZE_AT?.trim() || null;
-  if (event.freezeMs !== null && envFreeze) {
-    const configured = /^\d{13}$/.test(envFreeze)
-      ? Number(envFreeze)
-      : Date.parse(envFreeze);
-    if (!Number.isFinite(configured)) {
-      throw new IdentityExportEventError(
-        'IDENTITY_FREEZE_AT is set but is not a time: the run cannot tell which freeze it exports'
-      );
-    }
-    if (configured !== event.freezeMs) {
-      throw new IdentityExportEventError(
-        `freezeAt ${new Date(event.freezeMs).toISOString()} is not IDENTITY_FREEZE_AT ${envFreeze}`
-      );
-    }
+  const built = (deps.buildCommit ?? buildCommit)();
+  const { revision, notes } = revisionOf(event, built);
+  // The freeze 6529.io runs with, read from its secret now and as the
+  // profile site reads it, is the one the export is held to.
+  const freezeSecret = await deps.identityFreezeAt();
+  const freezeSetting = readFreezeSetting(freezeSecret.value);
+  if (event.freezeMs !== null) {
+    const problem = freezeSecretProblem(event.freezeMs, freezeSecret);
+    if (problem) throw new IdentityExportEventError(problem);
   }
   const target = replicaTarget(env);
-  logger.info(`[EXPORT START] [READ REPLICA ${target.host}]`);
+  logger.info(
+    `[EXPORT START] [READ REPLICA ${target.host}] [STAGE ${stage}] [REVISION ${revision}] [BUILD ${built ?? 'unknown'}] [IDENTITY_FREEZE_AT ${freezeSetting.reading} ${freezeSetting.at}]`
+  );
   const privacy = await assertBucketPrivate(deps.s3, bucket);
+  const prefix = runPrefix(
+    JOB_PREFIX,
+    stage,
+    startedAt,
+    context.awsRequestId,
+    event.freezeMs === null ? 'rehearsal' : null
+  );
+  const writer = new PrivateExportWriter(deps.s3, bucket, prefix);
+  // A freeze has one export: a second run replaces its pointer only when
+  // asked to. Checked first, so such a run doesn't read for nothing.
+  const pointerKey =
+    event.freezeMs === null
+      ? null
+      : pointerKeyOf(JOB_PREFIX, stage, event.freezeMs);
+  let replacedPointer: Record<string, unknown> | null = null;
+  if (pointerKey !== null) {
+    const existing = await writer.readOutside(pointerKey);
+    if (existing.found) {
+      let previous: Record<string, unknown>;
+      try {
+        previous = parseJson(existing.text, pointerKey);
+      } catch {
+        previous = { unreadable_sha256: sha256(existing.text) };
+      }
+      if (!event.replacePointer) {
+        throw new IdentityExportEventError(
+          `${pointerKey} exists: the run under ${String(previous.prefix)} is this freeze's export. To make a new run the export instead, run again with replacePointer: true`
+        );
+      }
+      replacedPointer = previous;
+    }
+  }
   // The inputs first: a bad list fails before the database is read.
   const extraIdsBytes = event.extraIds
     ? await inputBytes(event.extraIds, bucket, deps.s3)
@@ -640,34 +1043,48 @@ export async function runIdentityExportJob(
   const extraProfileIds = extraIdsBytes
     ? parseExtraIds(extraIdsBytes.toString('utf8'))
     : [];
-  const cmsBytes = event.cmsFields
-    ? await inputBytes(event.cmsFields, bucket, deps.s3)
-    : null;
+  const atFreeze =
+    event.freezeMs === null
+      ? null
+      : await cmsFieldsAtFreeze(writer, deps.s3, stage, event.freezeMs);
+  const cmsBytes =
+    atFreeze?.bytes ??
+    (event.cmsFields
+      ? await inputBytes(event.cmsFields, bucket, deps.s3)
+      : null);
   const cmsFields = cmsBytes
     ? parseCmsFields(cmsBytes.toString('utf8'))
     : undefined;
   const extraIdsFile: InputFile | null = extraIdsBytes
     ? { count: extraProfileIds.length, sha256: sha256(extraIdsBytes) }
     : null;
-  const cmsFieldsFile: InputFile | null = cmsBytes
+  const cmsFieldsFile: CmsFieldsFile | null = cmsBytes
     ? {
         count: Object.keys(cmsFields ?? {}).length,
-        sha256: sha256(cmsBytes)
+        sha256: sha256(cmsBytes),
+        manifest: atFreeze
+          ? {
+              key: atFreeze.source.manifest,
+              sha256: atFreeze.source.manifestSha256
+            }
+          : null
       }
     : null;
-  const prefix = runPrefix(
-    'identity-export',
-    exportStage(env.NODE_ENV),
-    startedAt,
-    context.awsRequestId,
-    event.freezeMs === null ? 'rehearsal' : null
-  );
-  const writer = new PrivateExportWriter(deps.s3, bucket, prefix);
-  const scope = scopeOf(event);
+  const source = (input: IdentityExportInput | null) =>
+    input === null ? null : 'key' in input ? input.key : 'inline';
+  const scope: IdentityExportScope = {
+    freezeAt: iso(event.freezeMs),
+    expectTdhBlock: event.expectTdhBlock,
+    bulk: event.bulk,
+    includeDelegations: event.includeDelegations,
+    extraIds: source(event.extraIds),
+    cmsFields: atFreeze?.source.file ?? source(event.cmsFields),
+    replacePointer: event.replacePointer
+  };
   const elapsed = () =>
     Math.round((deps.now().getTime() - startedAt.getTime()) / 1000);
   // Progress, and the deadline: with under a minute left the run stops with
-  // the step it reached, before anything is written.
+  // the step it reached, before its manifest is written.
   const step = (name: string) => {
     logger.info(`[${name}] [${elapsed()} S]`);
     const left = context.getRemainingTimeInMillis?.();
@@ -677,7 +1094,7 @@ export async function runIdentityExportJob(
   };
   const snapshot = await deps.openSnapshot(target);
   logger.info(
-    `[READ ONLY SNAPSHOT] [HOST ${snapshot.evidence.host}] [AT ${snapshot.evidence.snapshotAt}] [TRANSACTION READ ONLY ${snapshot.evidence.transactionReadOnly}] [SERVER READ ONLY ${snapshot.evidence.serverReadOnly}] [INNODB READ ONLY ${snapshot.evidence.innodbReadOnly}]`
+    `[READ ONLY SNAPSHOT] [HOST ${snapshot.evidence.host}] [AT ${snapshot.evidence.snapshotAt}] [REPLICA LAG ${snapshot.evidence.replicaLagMs ?? 'unknown'} MS] [TRANSACTION READ ONLY ${snapshot.evidence.transactionReadOnly}] [SERVER READ ONLY ${snapshot.evidence.serverReadOnly}] [INNODB READ ONLY ${snapshot.evidence.innodbReadOnly}]`
   );
   let document: IdentityExportDocument;
   let gapSeconds: number | null = null;
@@ -686,8 +1103,10 @@ export async function runIdentityExportJob(
       gapSeconds = checkSnapshotTime(
         event.freezeMs,
         Date.parse(snapshot.evidence.snapshotAt),
-        event.acceptSnapshotGapMinutes
+        event.acceptSnapshotGapMinutes,
+        MIN_SNAPSHOT_GAP_SECONDS
       ).gapSeconds;
+      checkReplicaLag(gapSeconds, snapshot.evidence.replicaLagMs);
     }
     document = await buildIdentityExport(
       new SqlIdentityExportSource(
@@ -708,9 +1127,13 @@ export async function runIdentityExportJob(
         acceptMissingExtraIds: event.acceptMissingExtraIds,
         acceptProfileWritesAfterFreeze: event.acceptProfileWritesAfterFreeze,
         acceptUnmatchedCms: event.acceptUnmatchedCms,
+        acceptDelegationsAfterFreeze: event.acceptDelegationsAfterFreeze,
+        acceptNoExtraIds: event.acceptNoExtraIds,
+        acceptBulk: event.acceptBulk,
         extraIdsFile,
         cmsFieldsFile,
-        exporterRevision: event.revision,
+        exporterRevision: revision,
+        notes,
         log: (message) => step(`IDENTITY EXPORT ${message}`)
       }
     );
@@ -731,18 +1154,20 @@ export async function runIdentityExportJob(
   }
   await snapshot.close();
   step('READ DONE');
+  const { identity_sync: _sync, ...file } = document;
+  const exportBytes = await jsonDocumentBytes(file);
+  step('UPLOADS');
   const written: ManifestFile[] = [];
   const putJson = async (name: string, body: Buffer | string) => {
     const put = await writer.put(name, body, 'application/json');
     written.push({ name, bytes: put.bytes, sha256: put.sha256 });
     return put;
   };
-  const { identity_sync: _sync, ...file } = document;
-  const exportPut = await putJson(EXPORT_FILE, await jsonDocumentBytes(file));
+  const exportPut = await putJson(EXPORT_FILE, exportBytes);
   await putJson(SUMMARY_FILE, JSON.stringify(summaryOf(document), null, 2));
   // Only an export held to the freeze is for the import.
-  const usable = event.freezeMs !== null;
-  const manifestName = usable ? MANIFEST : UNUSABLE_MANIFEST;
+  const manifestName = event.freezeMs === null ? UNUSABLE_MANIFEST : MANIFEST;
+  const usable = manifestName === MANIFEST;
   const links = await writeLinks(
     writer,
     deps.presign,
@@ -762,10 +1187,16 @@ export async function runIdentityExportJob(
     ...(usable
       ? {}
       : { unusable_because: 'a rehearsal: no freeze to hold the export to' }),
+    stage,
     scope,
     format: document.format,
+    exporter_revision: revision,
+    build_commit: built,
     frozen_at: scope.freezeAt,
-    identity_freeze_at: envFreeze,
+    identity_freeze_at: { secret: freezeSecret.secretId, ...freezeSetting },
+    cms_fields_source: atFreeze?.source ?? null,
+    replace_pointer: event.replacePointer,
+    replaced_pointer: replacedPointer,
     snapshot_at: snapshot.evidence.snapshotAt,
     snapshot_gap_seconds: gapSeconds,
     started_at: startedAt.toISOString(),
@@ -784,41 +1215,45 @@ export async function runIdentityExportJob(
   };
   // Last in the run's prefix: a run that stops early has no manifest, and a
   // rehearsal has only manifest.unusable.json.
-  const manifestKey = (
-    await writer.put(
-      manifestName,
-      JSON.stringify(manifest, null, 2),
-      'application/json'
-    )
-  ).key;
-  // Then, for the one run the import takes, a pointer from its freeze.
-  let pointerKey: string | null = null;
-  if (usable && event.freezeMs !== null) {
-    pointerKey = `${PREFIX_ROOT}${exportStage(env.NODE_ENV)}/by-freeze/${new Date(
-      event.freezeMs
-    )
-      .toISOString()
-      .replace(/[:.]/g, '-')}.json`;
-    await writer.putOutside(
-      pointerKey,
-      JSON.stringify(
-        {
-          frozen_at: new Date(event.freezeMs).toISOString(),
-          prefix,
-          manifest: manifestKey,
-          export: exportPut.key,
-          export_sha256: exportPut.sha256,
-          finished_at: finishedAt.toISOString()
-        },
-        null,
-        2
-      ),
-      'application/json'
-    );
+  const manifestPut = await writer.put(
+    manifestName,
+    JSON.stringify(manifest, null, 2),
+    'application/json'
+  );
+  // Then, for the one run the import takes, a pointer from its freeze. It
+  // never replaces another run's pointer unless asked to. The run is whole
+  // without it: a pointer not written is reported, not fatal.
+  let writtenPointer: string | null = null;
+  let pointerError: string | null = null;
+  if (usable && pointerKey !== null) {
+    try {
+      await writer.putOutside(
+        pointerKey,
+        JSON.stringify(
+          {
+            frozen_at: scope.freezeAt,
+            prefix,
+            manifest: manifestPut.key,
+            manifest_sha256: manifestPut.sha256,
+            export: exportPut.key,
+            export_sha256: exportPut.sha256,
+            finished_at: finishedAt.toISOString()
+          },
+          null,
+          2
+        ),
+        'application/json',
+        { onlyIfAbsent: !event.replacePointer }
+      );
+      writtenPointer = pointerKey;
+    } catch (error) {
+      pointerError = pointerErrorOf(pointerKey, error);
+      logger.warn(`[POINTER NOT WRITTEN] [${pointerKey}] ${pointerError}`);
+    }
   }
   const presignedManifestUrl = await deps.presign(
     bucket,
-    manifestKey,
+    manifestPut.key,
     PRESIGNED_URL_SECONDS
   );
   const presignedLinksUrl = await deps.presign(
@@ -826,6 +1261,10 @@ export async function runIdentityExportJob(
     writer.key('links.json'),
     PRESIGNED_URL_SECONDS
   );
+  const presignedPointerUrl =
+    writtenPointer === null
+      ? null
+      : await deps.presign(bucket, writtenPointer, PRESIGNED_URL_SECONDS);
   const seconds = (finishedAt.getTime() - startedAt.getTime()) / 1000;
   logger.info(
     `[EXPORT DONE] [${prefix}] [${manifestName}] [${writer.files} OBJECTS] [${writer.bytes} BYTES] [${seconds} S] [USABLE ${usable}] [${document.identities.length} IDENTITIES] [${document.ratings.length} RATINGS]`
@@ -833,11 +1272,18 @@ export async function runIdentityExportJob(
   return {
     job: JOB,
     bucket: bucket.name,
+    stage,
     prefix,
-    manifestKey,
-    pointerKey,
+    manifestKey: manifestPut.key,
+    manifestSha256: manifestPut.sha256,
+    pointerKey: writtenPointer,
+    pointerError,
+    replacedPointer,
     exportKey: exportPut.key,
     scope,
+    cmsFieldsSource: atFreeze?.source ?? null,
+    revision,
+    buildCommit: built,
     files: writer.files,
     bytes: writer.bytes,
     identities: document.identities.length,
@@ -849,41 +1295,70 @@ export async function runIdentityExportJob(
     evidence: snapshot.evidence,
     bucketPrivacy: privacy,
     frozenAt: scope.freezeAt,
-    identityFreezeAt: envFreeze,
     snapshotAt: snapshot.evidence.snapshotAt,
     snapshotGapSeconds: gapSeconds,
     startedAt: startedAt.toISOString(),
     finishedAt: finishedAt.toISOString(),
     seconds,
+    identityFreezeAtSecret: freezeSecret.secretId,
+    identityFreezeAtReading: freezeSetting.reading,
+    identityFreezeAt: freezeSetting.at,
     linksLastAtMost: lastAtMost.toISOString(),
     presignedManifestUrl,
-    presignedLinksUrl
+    presignedLinksUrl,
+    presignedPointerUrl
   };
 }
 
-/** Fresh links for an earlier run: only a run with a manifest has them. */
+/**
+ * Fresh links for an earlier run: given its prefix, or the freeze whose
+ * pointer names it. Only a run with a manifest has them.
+ */
 async function renewLinks(
-  prefix: string,
+  event: LinksEvent,
+  stage: string,
   bucket: ExportBucket,
   deps: IdentityExportDeps
 ): Promise<IdentityExportLinksResult> {
   await assertBucketPrivate(deps.s3, bucket);
+  let prefix = event.prefix;
+  let pointerKey: string | null = null;
+  let pointed: Record<string, unknown> | null = null;
+  if (prefix === null) {
+    const key = pointerKeyOf(JOB_PREFIX, stage, event.freezeMs!);
+    pointerKey = key;
+    const pointer = await new PrivateExportWriter(
+      deps.s3,
+      bucket,
+      ''
+    ).readOutside(key);
+    if (!pointer.found) {
+      throw new IdentityExportEventError(
+        `No run for that freeze: ${key} isn't there or can't be read. Pass the run's prefix instead.`
+      );
+    }
+    pointed = parseJson(pointer.text, key);
+    prefix = runPrefixOf(pointed.prefix, PREFIX_ROOT, `${key}'s prefix`);
+  }
   const writer = new PrivateExportWriter(deps.s3, bucket, prefix);
-  let found: { name: string; manifest: Manifest } | null = null;
+  let found: { name: string; manifest: Manifest; text: string } | null = null;
   let forbidden = false;
   for (const name of MANIFEST_NAMES) {
     const read = await writer.read(name);
     if (read.found) {
-      const manifest = JSON.parse(read.text) as Manifest;
+      const manifest = parseJson(
+        read.text,
+        writer.key(name)
+      ) as unknown as Manifest;
       if (
-        manifest?.schema !== MANIFEST_SCHEMA ||
+        manifest.schema !== MANIFEST_SCHEMA ||
         !Array.isArray(manifest.files)
       ) {
         throw new IdentityExportEventError(
           `${writer.key(name)} is not a manifest`
         );
       }
-      found = { name, manifest };
+      found = { name, manifest, text: read.text };
       break;
     }
     if (read.reason === 'forbidden') forbidden = true;
@@ -893,6 +1368,18 @@ async function renewLinks(
       forbidden
         ? `No manifest under ${prefix}: S3 refused the read, as it does for a key that doesn't exist when the reader may not list the bucket. That run didn't finish, or the prefix is wrong.`
         : `No manifest under ${prefix}: that run didn't finish, or the prefix is wrong`
+    );
+  }
+  const manifestKey = writer.key(found.name);
+  const manifestSha256 = sha256(found.text);
+  // The pointer names the one manifest the import takes, by its hash.
+  if (
+    pointed &&
+    (pointed.manifest !== manifestKey ||
+      pointed.manifest_sha256 !== manifestSha256)
+  ) {
+    throw new IdentityExportEventError(
+      `The pointer for that freeze names ${String(pointed.manifest)} (sha256 ${String(pointed.manifest_sha256)}), but ${manifestKey} has sha256 ${manifestSha256}`
     );
   }
   const now = deps.now();
@@ -907,19 +1394,25 @@ async function renewLinks(
     job: LINKS_JOB,
     bucket: bucket.name,
     prefix,
-    manifestKey: writer.key(found.name),
+    manifestKey,
+    manifestSha256,
+    pointerKey,
     linksKey: links.key,
     usable: found.name === MANIFEST,
     linksLastAtMost: linksLastAtMost(now).toISOString(),
     presignedManifestUrl: await deps.presign(
       bucket,
-      writer.key(found.name),
+      manifestKey,
       PRESIGNED_URL_SECONDS
     ),
     presignedLinksUrl: await deps.presign(
       bucket,
       links.key,
       PRESIGNED_URL_SECONDS
-    )
+    ),
+    presignedPointerUrl:
+      pointerKey === null
+        ? null
+        : await deps.presign(bucket, pointerKey, PRESIGNED_URL_SECONDS)
   };
 }

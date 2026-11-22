@@ -4,11 +4,14 @@ import { IdentityExportNotReadyError } from './identity-export.errors';
 import {
   IDENTITY_EXPORT_HELP,
   IdentityExportCommand,
+  identityFreezeSettingProblem,
   IdentityExportUsageError,
   parseCmsFields,
   parseExtraIds,
   parseIdentityExportCommand
 } from './cli-options';
+import { profileSiteManifestProblem } from './profile-site-manifest';
+import { CmsFieldsFile } from './identity-export.types';
 
 function sha256(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
@@ -32,6 +35,35 @@ async function runExport(command: IdentityExportCommand) {
   const cmsFields = cmsBytes
     ? parseCmsFields(cmsBytes.toString('utf8'))
     : undefined;
+  // The profile site run that wrote the values vouches for them: at the
+  // freeze, a whole, usable run of that freeze.
+  const manifestBytes = command.cmsManifestFile
+    ? fs.readFileSync(command.cmsManifestFile)
+    : null;
+  if (cmsBytes && manifestBytes) {
+    const problem = profileSiteManifestProblem(
+      manifestBytes.toString('utf8'),
+      sha256(cmsBytes),
+      command.freezeMs
+    );
+    if (problem) {
+      throw new IdentityExportUsageError(
+        `--cms-manifest ${command.cmsManifestFile}: ${problem}`
+      );
+    }
+  }
+  const cmsFieldsFile: CmsFieldsFile | null = cmsBytes
+    ? {
+        count: Object.keys(cmsFields ?? {}).length,
+        sha256: sha256(cmsBytes),
+        manifest: manifestBytes
+          ? { key: null, sha256: sha256(manifestBytes) }
+          : null
+      }
+    : null;
+  if (command.notice) {
+    process.stderr.write(`[identity-export] ${command.notice}\n`);
+  }
   // The shared environment and DB startup log to stdout: keep stdout for the
   // one JSON summary.
   const stdoutWrite = process.stdout.write;
@@ -47,6 +79,14 @@ async function runExport(command: IdentityExportCommand) {
     const { buildIdentityExport } = await import('./identity-export.service');
     const { writeExportFile } = await import('./identity-export.writer');
     await prepEnvironment();
+    // IDENTITY_FREEZE_AT as 6529.io runs with it, the .env file included.
+    if (command.freezeMs !== null) {
+      const problem = identityFreezeSettingProblem(
+        command.freezeMs,
+        process.env.IDENTITY_FREEZE_AT
+      );
+      if (problem) throw new IdentityExportUsageError(problem);
+    }
     // The read pool behind the snapshot is db-api's; its write pool is
     // created but never connected. connect() calls process.exit() without a
     // code when the DB settings are missing.
@@ -77,15 +117,13 @@ async function runExport(command: IdentityExportCommand) {
           acceptProfileWritesAfterFreeze:
             command.acceptProfileWritesAfterFreeze,
           acceptUnmatchedCms: command.acceptUnmatchedCms,
+          acceptDelegationsAfterFreeze: command.acceptDelegationsAfterFreeze,
+          acceptNoExtraIds: command.acceptNoExtraIds,
+          acceptBulk: command.acceptBulk,
           extraIdsFile: extraIdsBytes
             ? { count: extraProfileIds.length, sha256: sha256(extraIdsBytes) }
             : null,
-          cmsFieldsFile: cmsBytes
-            ? {
-                count: Object.keys(cmsFields ?? {}).length,
-                sha256: sha256(cmsBytes)
-              }
-            : null,
+          cmsFieldsFile,
           exporterRevision: command.revision,
           log: (message) =>
             process.stderr.write(`[identity-export] ${message}\n`)
@@ -128,9 +166,12 @@ export async function main(
 }
 
 /**
- * Runs the export and returns the process exit code: 0 written, 1 failed,
- * 2 a usage error, 3 not the freeze day's TDH yet, 4 raters over credit,
- * 5 REP or CIC changed after the freeze (NOT_READY_EXIT_CODES).
+ * Runs the export and returns the process exit code: 0 written; 1 failed;
+ * 2 a usage error; and the reasons the export is not ready
+ * (NOT_READY_EXIT_CODES): 3 not the freeze day's TDH yet, 4 raters over the
+ * chain's cap, 5 a change after the freeze, 6 waves-list ids missing, 7
+ * profile site values unmatched. The file is written only on 0: on 3 to 7
+ * nothing is written.
  */
 export async function runCli(
   args: string[] = process.argv.slice(2)

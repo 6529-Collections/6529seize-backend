@@ -96,16 +96,24 @@ export interface IdentityExportHeader {
   readonly tdh_block_timestamp_ms: number | null;
   /** The waves list given (--extra-ids): its ids and the file's sha256. */
   readonly extra_ids: InputFile | null;
-  /** The profile site values given (--cms-fields): count and sha256. */
-  readonly cms_fields: InputFile | null;
-  /** The counts acknowledged at the freeze (--accept-*), exactly. */
+  /**
+   * The profile site values given (--cms-fields): count, sha256, and the
+   * profile site run's manifest that lists them.
+   */
+  readonly cms_fields: CmsFieldsFile | null;
+  /** What was acknowledged at the freeze (--accept-*), exactly. */
   readonly acknowledged: {
     readonly over_credit: number;
     readonly edits_after_freeze: number;
     readonly ratings_changed_after_freeze: number;
     readonly profile_writes_after_freeze: number;
+    readonly delegations_after_freeze: number;
     readonly missing_extra_ids: number;
     readonly unmatched_cms: number;
+    /** --accept-no-extra-ids: at the freeze without the waves list. */
+    readonly no_extra_ids: boolean;
+    /** --accept-bulk N: a bulk threshold other than 2000; null when not. */
+    readonly bulk: number | null;
   };
 }
 
@@ -113,4 +121,18 @@ export interface IdentityExportHeader {
 export interface InputFile {
   readonly count: number;
   readonly sha256: string;
+}
+
+/** The profile site run's manifest.json that lists the cms fields file. */
+export interface CmsFieldsManifest {
+  /** Its bucket key; null for a local file (the CLI's --cms-manifest). */
+  readonly key: string | null;
+  /** The sha256 of its bytes. */
+  readonly sha256: string;
+}
+
+/** The profile site values' file, and the manifest that lists it. */
+export interface CmsFieldsFile extends InputFile {
+  /** Null only in a rehearsal given no manifest. */
+  readonly manifest: CmsFieldsManifest | null;
 }

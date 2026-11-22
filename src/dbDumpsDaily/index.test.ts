@@ -44,7 +44,11 @@ describe('dbDumpsDaily handler', () => {
       prefix: 'identity-export/staging/run/'
     });
     expect(mockRun).toHaveBeenLastCalledWith(
-      { job: 'identityExportLinks', prefix: 'identity-export/staging/run/' },
+      {
+        job: 'identityExportLinks',
+        prefix: 'identity-export/staging/run/',
+        freezeMs: null
+      },
       context
     );
     expect(mockDoInDbContext).not.toHaveBeenCalled();

@@ -1,10 +1,12 @@
 import {
   ADDRESS_CONSOLIDATION_KEY,
   CIC_STATEMENTS_TABLE,
+  CONSOLIDATIONS_TABLE,
   DELEGATIONS_TABLE,
   IDENTITIES_TABLE,
   IDENTITY_TDH_SYNC_STATE_TABLE,
   PROFILES_ACTIVITY_LOGS_TABLE,
+  PROFILES_ARCHIVE_TABLE,
   PROFILES_TABLE,
   RATINGS_TABLE,
   TDH_BLOCKS_TABLE
@@ -92,7 +94,11 @@ export interface ChangedRating {
   readonly last_modified_ms: number | null;
 }
 
-/** Profile writes logged after the freeze, by kind, and profiles created. */
+/**
+ * Profile writes after the freeze: logged, by kind; profile rows saved to
+ * profiles_archive (every profile save and pfp update writes one, logged
+ * or not); and profiles created.
+ */
 export interface ProfileWrites {
   readonly handle: number;
   readonly classification: number;
@@ -100,12 +106,13 @@ export interface ProfileWrites {
   readonly banner: number;
   readonly statements: number;
   readonly archived: number;
+  readonly saves: number;
   readonly created: number;
 }
 
 /** profile_activity_logs types for each kind of profile write. */
 export const PROFILE_WRITE_TYPES: Readonly<
-  Record<Exclude<keyof ProfileWrites, 'created'>, readonly string[]>
+  Record<Exclude<keyof ProfileWrites, 'created' | 'saves'>, readonly string[]>
 > = {
   handle: ['HANDLE_EDIT'],
   classification: ['CLASSIFICATION_EDIT'],
@@ -120,6 +127,12 @@ export const PROFILE_WRITE_TYPES: Readonly<
   ],
   archived: ['PROFILE_ARCHIVED']
 };
+
+/** Consolidations and delegations rows with a block after the TDH block. */
+export interface RowsAfterBlock {
+  readonly consolidations: number;
+  readonly delegations: number;
+}
 
 /** The latest TDH block 6529.io computed, and its Ethereum timestamp. */
 export interface TdhBlock {
@@ -147,8 +160,16 @@ export interface IdentityExportSource {
    * included, help-bot credits aside.
    */
   ratingsChangedSince(sinceMs: number): Promise<ChangedRating[]>;
-  /** Profile writes logged at or after `sinceMs`, and profiles created. */
+  /**
+   * Profile writes logged at or after `sinceMs`, profile rows saved and
+   * profiles created since.
+   */
   profileWritesSince(sinceMs: number): Promise<ProfileWrites>;
+  /**
+   * Consolidations and delegations rows with a block after `block` (the
+   * TDH block): registered after the TDH was taken.
+   */
+  rowsAfterBlock(block: number): Promise<RowsAfterBlock>;
   /**
    * REP and CIC rating edits logged after `sinceMs`, without the over-rates
    * loop's cuts (LOST_TDH) and the help bot's credits.
@@ -158,6 +179,10 @@ export interface IdentityExportSource {
   identitySyncProgress(): Promise<IdentitySyncProgress | null>;
   /** The help bot's profile id, by its handle; null when it has none. */
   helpBotProfileId(): Promise<string | null>;
+  /**
+   * Every delegations row, by block, then from, to and collection
+   * (lowercase, bytewise), use case and token id.
+   */
   delegations(): Promise<IdentityExportDelegation[]>;
 }
 
@@ -434,6 +459,12 @@ export class SqlIdentityExportSource implements IdentityExportSource {
       `select count(*) as n from ${PROFILES_TABLE} where created_at >= :since`,
       { since: new Date(sinceMs) }
     );
+    // A row per profile save or pfp update, written at the time of the
+    // write (created_at), whether or not the write was logged.
+    const [saves] = await this.query<{ n: number | string }>(
+      `select count(*) as n from ${PROFILES_ARCHIVE_TABLE} where created_at >= :since`,
+      { since: new Date(sinceMs) }
+    );
     return {
       handle: count('handle'),
       classification: count('classification'),
@@ -441,7 +472,24 @@ export class SqlIdentityExportSource implements IdentityExportSource {
       banner: count('banner'),
       statements: count('statements'),
       archived: count('archived'),
+      saves: Number(saves?.n ?? 0),
       created: Number(created?.n ?? 0)
+    };
+  }
+
+  async rowsAfterBlock(block: number): Promise<RowsAfterBlock> {
+    const [row] = await this.query<{
+      consolidations: number | string;
+      delegations: number | string;
+    }>(
+      `select
+         (select count(*) from ${CONSOLIDATIONS_TABLE} where block > :block) as consolidations,
+         (select count(*) from ${DELEGATIONS_TABLE} where block > :block) as delegations`,
+      { block }
+    );
+    return {
+      consolidations: Number(row?.consolidations ?? 0),
+      delegations: Number(row?.delegations ?? 0)
     };
   }
 
@@ -505,7 +553,12 @@ export class SqlIdentityExportSource implements IdentityExportSource {
       `select from_address, to_address, collection, use_case, expiry,
               all_tokens, token_id, block
        from ${DELEGATIONS_TABLE}
-       order by block, from_address, to_address, collection, use_case`
+       order by block,
+                cast(lower(from_address) as binary),
+                cast(lower(to_address) as binary),
+                cast(lower(collection) as binary),
+                use_case,
+                token_id`
     );
     return rows.map((row) => {
       const allTokens = !!Number(row.all_tokens);

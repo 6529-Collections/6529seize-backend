@@ -89,6 +89,7 @@ const NO_PROFILE_WRITES = {
   banner: 0,
   statements: 0,
   archived: 0,
+  saves: 0,
   created: 0
 };
 
@@ -185,6 +186,7 @@ function world(): {
     ratingEditsSince: async () => 0,
     ratingsChangedSince: async () => [],
     profileWritesSince: async () => NO_PROFILE_WRITES,
+    rowsAfterBlock: async () => ({ consolidations: 0, delegations: 0 }),
     identitySyncProgress: async () => ({
       pendingGeneration: 5,
       pendingBlock: 24_000_000,
@@ -612,7 +614,8 @@ describe('buildIdentityExport', () => {
       tdh: 'boosted',
       xtdh: 'as_stored',
       bulk_threshold: 2,
-      cms_fields_sha256: null
+      cms_fields_sha256: null,
+      delegations: 'included'
     });
     expect(doc.rules).toEqual(exportRules(options.bulkThreshold));
     expect(doc.tdh_block_timestamp_ms).toBe(FREEZE - 12_000);
@@ -771,8 +774,11 @@ describe('buildIdentityExport', () => {
       edits_after_freeze: 2,
       ratings_changed_after_freeze: 4,
       profile_writes_after_freeze: 0,
+      delegations_after_freeze: 0,
       missing_extra_ids: 1,
-      unmatched_cms: 0
+      unmatched_cms: 0,
+      no_extra_ids: false,
+      bulk: null
     });
     expect(doc.ratings_changed_after_freeze).toEqual(changed);
     expect(doc.stats).toEqual(
@@ -819,6 +825,8 @@ describe('buildIdentityExport', () => {
       ...NO_PROFILE_WRITES,
       handle: 1,
       statements: 2,
+      // Saves logged or not: a pfp update writes no activity log.
+      saves: 2,
       created: 1
     }));
     const busy = { ...source, profileWritesSince };
@@ -834,17 +842,18 @@ describe('buildIdentityExport', () => {
     );
     expect(refused?.causes).toEqual(['after_freeze']);
     expect(refused?.message).toContain(
-      '4 profile writes were logged after the freeze or profiles created (by kind in stats); acknowledge with --accept-profile-writes-after-freeze 4'
+      '6 profile writes were made after the freeze: logged, saved to profiles_archive, or profiles created (by kind in stats); acknowledge with --accept-profile-writes-after-freeze 6'
     );
     expect(profileWritesSince).toHaveBeenCalledWith(FREEZE);
     const doc = await buildIdentityExport(busy, {
       ...atFreeze,
-      acceptProfileWritesAfterFreeze: 4
+      acceptProfileWritesAfterFreeze: 6
     });
-    expect(doc.acknowledged.profile_writes_after_freeze).toBe(4);
+    expect(doc.acknowledged.profile_writes_after_freeze).toBe(6);
     expect(doc.stats).toEqual(
       expect.objectContaining({
-        profile_writes_after_freeze: 4,
+        profile_writes_after_freeze: 6,
+        profile_saves_after_freeze: 2,
         profile_handle_edits_after_freeze: 1,
         profile_statement_edits_after_freeze: 2,
         profiles_created_after_freeze: 1,
@@ -853,13 +862,109 @@ describe('buildIdentityExport', () => {
     );
     expect(doc.notes).toEqual(
       expect.arrayContaining([
-        'profile writes after the freeze: 1 handle, 0 classification, 0 pfp, 0 banner, 2 statement, 0 archiving; 1 profiles created'
+        'profile writes after the freeze: 1 handle, 0 classification, 0 pfp, 0 banner, 2 statement, 0 archiving logged; 2 profile rows saved to profiles_archive (every save, logged or not); 1 profiles created'
       ])
     );
     // A rehearsal doesn't read them.
     profileWritesSince.mockClear();
     await buildIdentityExport(busy, { ...options, freezeMs: null });
     expect(profileWritesSince).not.toHaveBeenCalled();
+  });
+
+  it('refuses consolidations and delegations after the TDH block unless acknowledged exactly', async () => {
+    const { source } = world();
+    const rowsAfterBlock = jest.fn(async () => ({
+      consolidations: 1,
+      delegations: 2
+    }));
+    const busy = { ...source, rowsAfterBlock };
+    const atFreeze = {
+      ...options,
+      expectTdhBlock: 24_000_000,
+      acceptOverCredit: 2,
+      acceptMissingExtraIds: 1
+    };
+    const refused = await buildIdentityExport(busy, atFreeze).then(
+      () => null,
+      (error: IdentityExportNotReadyError) => error
+    );
+    expect(refused?.causes).toEqual(['after_freeze']);
+    expect(refused?.exitCode).toBe(5);
+    expect(refused?.message).toContain(
+      '3 consolidations and delegations rows have a block after the TDH block (by table in stats); acknowledge with --accept-delegations-after-freeze 3'
+    );
+    expect(rowsAfterBlock).toHaveBeenCalledWith(24_000_000);
+    const wrong = await buildIdentityExport(busy, {
+      ...atFreeze,
+      acceptDelegationsAfterFreeze: 4
+    }).then(
+      () => null,
+      (error: IdentityExportNotReadyError) => error
+    );
+    expect(wrong?.message).toContain(
+      '--accept-delegations-after-freeze 4 does not match: 3 consolidations and delegations rows'
+    );
+    const doc = await buildIdentityExport(busy, {
+      ...atFreeze,
+      acceptDelegationsAfterFreeze: 3
+    });
+    expect(doc.acknowledged.delegations_after_freeze).toBe(3);
+    expect(doc.stats).toEqual(
+      expect.objectContaining({
+        consolidations_after_tdh_block: 1,
+        delegations_after_tdh_block: 2
+      })
+    );
+    expect(doc.notes).toEqual(
+      expect.arrayContaining([
+        '1 consolidations and 2 delegations rows have a block after the TDH block 24000000: registered after the TDH was taken. The identities are as of the TDH block; the delegations list holds every row read'
+      ])
+    );
+    // A rehearsal doesn't count them.
+    rowsAfterBlock.mockClear();
+    const rehearsal = await buildIdentityExport(busy, {
+      ...options,
+      freezeMs: null
+    });
+    expect(rowsAfterBlock).not.toHaveBeenCalled();
+    expect(rehearsal.stats.delegations_after_tdh_block).toBe(0);
+  });
+
+  it('says whether the delegations were read, and records what was acknowledged', async () => {
+    const { source } = world();
+    const log = jest.fn();
+    const doc = await buildIdentityExport(source, {
+      ...options,
+      log,
+      notes: ['a note from the caller'],
+      acceptNoExtraIds: true,
+      acceptBulk: 2
+    });
+    expect(doc.rules.delegations).toBe('included');
+    expect(doc.notes[0]).toBe('a note from the caller');
+    expect(doc.notes).toEqual(
+      expect.arrayContaining([
+        "delegations: every row of 6529.io's delegations table (1), ordered by block, then from, to and collection (lowercase, bytewise), use case and token id (rules.delegations included)"
+      ])
+    );
+    expect(log).toHaveBeenCalledWith('delegations: 1 read');
+    expect(doc.acknowledged).toEqual(
+      expect.objectContaining({ no_extra_ids: true, bulk: 2 })
+    );
+    const without = await buildIdentityExport(source, {
+      ...options,
+      includeDelegations: false
+    });
+    expect(without.delegations).toEqual([]);
+    expect(without.rules.delegations).toBe('left_out');
+    expect(without.notes).toEqual(
+      expect.arrayContaining([
+        "no delegations: 6529.io's delegations table was left out (--no-delegations), so the empty list says nothing about delegations (rules.delegations left_out)"
+      ])
+    );
+    expect(without.acknowledged).toEqual(
+      expect.objectContaining({ no_extra_ids: false, bulk: null })
+    );
   });
 
   it('refuses unmatched profile site values unless acknowledged, and none matching outright', async () => {
@@ -964,12 +1069,26 @@ describe('buildIdentityExport', () => {
       {
         ...options,
         extraIdsFile: { count: 2, sha256: 'e'.repeat(64) },
-        cmsFieldsFile: { count: 1, sha256: 'c'.repeat(64) },
+        cmsFieldsFile: {
+          count: 1,
+          sha256: 'c'.repeat(64),
+          manifest: {
+            key: 'profile-site-export/prod/run/manifest.json',
+            sha256: 'd'.repeat(64)
+          }
+        },
         cmsFields: { [ALICE]: { primary: {} } }
       }
     );
     expect(doc.extra_ids).toEqual({ count: 2, sha256: 'e'.repeat(64) });
-    expect(doc.cms_fields).toEqual({ count: 1, sha256: 'c'.repeat(64) });
+    expect(doc.cms_fields).toEqual({
+      count: 1,
+      sha256: 'c'.repeat(64),
+      manifest: {
+        key: 'profile-site-export/prod/run/manifest.json',
+        sha256: 'd'.repeat(64)
+      }
+    });
     expect(doc.rules.cms_fields_sha256).toBe('c'.repeat(64));
     expect(doc.stats.multi_wallet_keys_without_identity).toBe(1);
     expect(doc.notes).toEqual(
