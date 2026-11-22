@@ -427,9 +427,15 @@ export class GitHubIssueDropService {
 
   /**
    * The device signature of a post, or undefined to post unsigned: when the
-   * bot has no usable key, or when the API it posts to does not hold the
-   * bot's grant (API_BASE_URL may name another deployment, whose database
-   * never stored it).
+   * bot has no usable key, or when the API it posts to lists the bot's
+   * grants and this one is not among them usable. API_BASE_URL may name
+   * another deployment, whose database never stored the grant: that
+   * deployment can't take the bot's signed drops, and refuses its unsigned
+   * ones while it requires device signatures.
+   *
+   * When the list can't be read, the post is signed anyway: an API that
+   * doesn't hold the grant answers INVALID_DEVICE_SIGNATURE, and the post
+   * goes again unsigned (createDrop).
    */
   private async deviceSignature(
     apiBaseUrl: string,
@@ -444,6 +450,7 @@ export class GitHubIssueDropService {
     if (!envelope) {
       return undefined;
     }
+    let grants: unknown;
     try {
       const resp = await fetch(
         this.buildApiUrl(apiBaseUrl, '/api/device-grants', {}),
@@ -455,27 +462,35 @@ export class GitHubIssueDropService {
           method: 'GET'
         }
       );
-      const grants: unknown = resp.ok ? await resp.json() : [];
-      const held =
-        Array.isArray(grants) &&
-        grants.some(
-          (grant) =>
-            isRecord(grant) &&
-            grant.id === envelope.grant_id &&
-            grant.revoked_at === null &&
-            Number(grant.expires_at) > envelope.claimed_time
-        );
-      if (held) {
-        return envelope;
+      if (!resp.ok) {
+        throw new Error(`${resp.status} ${resp.statusText}`);
       }
-      this.logger.warn(
-        `GitHub drop posted unsigned: the API at ${apiBaseUrl} holds no usable device grant ${envelope.grant_id} of the bot`
-      );
+      grants = await resp.json();
     } catch (error) {
       this.logger.warn(
-        `GitHub drop posted unsigned: the bot's device grant could not be checked: ${error}`
+        `GitHub drop signed without knowing whether the API holds the bot's device grant: ${error}`
       );
+      return envelope;
     }
+    if (!Array.isArray(grants)) {
+      this.logger.warn(
+        `GitHub drop signed without knowing whether the API holds the bot's device grant: the list is not an array`
+      );
+      return envelope;
+    }
+    const held = grants.some(
+      (grant) =>
+        isRecord(grant) &&
+        grant.id === envelope.grant_id &&
+        grant.revoked_at === null &&
+        Number(grant.expires_at) > envelope.claimed_time
+    );
+    if (held) {
+      return envelope;
+    }
+    this.logger.warn(
+      `GitHub drop posted unsigned: the API at ${apiBaseUrl} holds no usable device grant ${envelope.grant_id} of the bot`
+    );
     return undefined;
   }
 }

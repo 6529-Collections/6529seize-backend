@@ -1336,7 +1336,11 @@ function wireApp() {
       }
       if (refused) {
         // A failed delivery can be delivered again; answering 200 would lose
-        // the drop.
+        // the drop. GitHub doesn't redeliver by itself: someone does, from
+        // the webhook's delivery log (it keeps recent deliveries only).
+        logger.error(
+          `GitHub webhook delivery ${req.get('x-github-delivery') ?? 'unknown'} for ${webhookEvent.htmlUrl} refused: the API requires a device signature the GitHub bot could not give. Redeliver it from the webhook's delivery log once the bot can sign.`
+        );
         return res
           .status(503)
           .send({ error: 'The drop was refused; deliver it again later' });

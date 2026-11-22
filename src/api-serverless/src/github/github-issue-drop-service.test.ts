@@ -443,17 +443,16 @@ describe('GitHubIssueDropService', () => {
         'holds the grant revoked',
         (grants: Record<string, unknown>[]) =>
           grants.map((grant) => ({ ...grant, revoked_at: 1 }))
-      ],
-      ['cannot list grants', null]
+      ]
     ])('posts unsigned when the API it posts to %s', async (_name, adjust) => {
       const { signer, store } = await signingGitHubBot();
       routeFetch({
-        grants: () => {
-          const stored = Array.from(store.grants.values()).map(
-            toApiDeviceGrant
-          ) as unknown as Record<string, unknown>[];
-          return adjust ? adjust(stored) : failure(500, 'down');
-        }
+        grants: () =>
+          adjust(
+            Array.from(store.grants.values()).map(
+              toApiDeviceGrant
+            ) as unknown as Record<string, unknown>[]
+          )
       });
 
       await new GitHubIssueDropService(aiPrompter, signer).postGhIssueDrop(
@@ -465,6 +464,57 @@ describe('GitHubIssueDropService', () => {
       const bodies = postedBodies();
       expect(bodies).toHaveLength(1);
       expect(bodies[0]).not.toHaveProperty('device_signature');
+    });
+
+    it.each([
+      ['answers 502', () => failure(502, 'Bad Gateway')],
+      ['answers something other than a list', () => ({ grants: [] })],
+      [
+        'cannot be reached',
+        () => {
+          throw new Error('socket hang up');
+        }
+      ]
+    ])(
+      'signs anyway when the grant list %s, so a passing fault never posts unsigned',
+      async (_name, answer) => {
+        const { signer } = await signingGitHubBot();
+        routeFetch({ grants: answer });
+
+        await new GitHubIssueDropService(aiPrompter, signer).postGhIssueDrop(
+          ISSUE_URL,
+          'issue',
+          { action: 'opened' }
+        );
+
+        const bodies = postedBodies();
+        expect(bodies).toHaveLength(1);
+        expect(bodies[0]).toHaveProperty('device_signature');
+      }
+    );
+
+    it('falls back to unsigned when it signed blind and the API lacks the grant', async () => {
+      const { signer } = await signingGitHubBot();
+      routeFetch({
+        grants: () => failure(502, 'Bad Gateway'),
+        posts: [
+          failure(
+            400,
+            '{"error":"Invalid device signature: unknown grant","code":"INVALID_DEVICE_SIGNATURE"}'
+          )
+        ]
+      });
+
+      await new GitHubIssueDropService(aiPrompter, signer).postGhIssueDrop(
+        ISSUE_URL,
+        'issue',
+        { action: 'opened' }
+      );
+
+      const bodies = postedBodies();
+      expect(bodies).toHaveLength(2);
+      expect(bodies[0]).toHaveProperty('device_signature');
+      expect(bodies[1]).not.toHaveProperty('device_signature');
     });
 
     it('posts unsigned when the API refuses the device signature', async () => {
