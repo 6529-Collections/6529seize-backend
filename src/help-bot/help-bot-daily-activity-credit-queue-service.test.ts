@@ -1,13 +1,14 @@
 import { HelpBotDailyActivityCreditRequestStatus } from '@/entities/IHelpBotDailyActivityCreditRequest';
 import { DbPoolName } from '@/db-query.options';
 import { RequestContext } from '@/request.context';
+import { HelpBotCreditsService } from './help-bot-credits.service';
 import {
   HELP_BOT_DAILY_ACTIVITY_CREDITS_QUEUE_NAME,
   HELP_BOT_DAILY_ACTIVITY_CREDITS_MESSAGE_GROUP_ID,
   HelpBotDailyActivityCreditQueueService
 } from './help-bot-daily-activity-credit-queue.service';
 
-function createService() {
+function createService({ creditsEnabled = true } = {}) {
   const connection = { connection: {} };
   const executor = {
     execute: jest.fn(),
@@ -16,6 +17,7 @@ function createService() {
     )
   };
   const creditsService = {
+    isEnabled: jest.fn(() => creditsEnabled),
     grantDailyActivityCredits: jest.fn()
   };
   const sqsClient = {
@@ -60,6 +62,20 @@ describe('HelpBotDailyActivityCreditQueueService', () => {
       },
       { wrappedConnection: connection }
     );
+  });
+
+  it('writes no request while the credit meter is off', async () => {
+    const { connection, executor, service } = createService({
+      creditsEnabled: false
+    });
+
+    await expect(
+      service.enqueueRequest({ profileId: 'profile-1' }, {
+        connection
+      } as RequestContext)
+    ).resolves.toBe(false);
+
+    expect(executor.execute).not.toHaveBeenCalled();
   });
 
   it('reports a duplicate daily request without replacing completed state', async () => {
@@ -146,6 +162,46 @@ describe('HelpBotDailyActivityCreditQueueService', () => {
     expect(executor.execute.mock.calls[0][0]).toContain(
       'ORDER BY attempts ASC'
     );
+  });
+
+  it('completes a request queued before the meter was turned off, without a grant', async () => {
+    const { executor, sqsClient } = createService();
+    const resolveBotProfileId = jest.fn();
+    const service = new HelpBotDailyActivityCreditQueueService(
+      () => executor as never,
+      new HelpBotCreditsService(
+        () => executor as never,
+        { resolveBotProfileId } as never,
+        () => false
+      ),
+      sqsClient as never
+    );
+    executor.execute
+      .mockResolvedValueOnce([
+        {
+          profile_id: 'profile-1',
+          activity_date: '2026-08-29',
+          attempts: 0
+        }
+      ])
+      .mockResolvedValueOnce({ affectedRows: 1 })
+      .mockResolvedValueOnce([]);
+
+    await expect(service.processNextRequest({})).resolves.toEqual({
+      processed: true,
+      failed: false,
+      dead: false,
+      hasMore: false
+    });
+
+    expect(resolveBotProfileId).not.toHaveBeenCalled();
+    expect(executor.execute).toHaveBeenCalledTimes(3);
+    expect(executor.execute.mock.calls[1][0]).toContain(
+      'SET status = :completedStatus'
+    );
+    for (const [sql] of executor.execute.mock.calls) {
+      expect(sql).not.toMatch(/ratings|identities|help_bot_credit_events/i);
+    }
   });
 
   it('treats an already-granted credit event as successful duplicate delivery', async () => {

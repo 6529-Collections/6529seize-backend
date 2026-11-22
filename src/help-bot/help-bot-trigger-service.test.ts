@@ -68,8 +68,10 @@ function createDrop({
 }
 
 function createService({
-  wave
+  wave,
+  creditsEnabled = false
 }: {
+  readonly creditsEnabled?: boolean;
   readonly wave: {
     readonly visibility_group_id: string | null;
     readonly is_direct_message: boolean | null;
@@ -129,6 +131,7 @@ function createService({
     getGroupsUserIsEligibleForByIds: jest.fn().mockResolvedValue([])
   };
   const creditsService = {
+    isEnabled: jest.fn(() => creditsEnabled),
     chargeQuestionCredit: jest.fn().mockResolvedValue({
       charged: true,
       balance: 4,
@@ -402,6 +405,63 @@ describe('HelpBotTriggerService', () => {
     });
   });
 
+  it('answers without charging while the credit meter is off', async () => {
+    const { service, creditsService, interactionsDb, dropWriter, sqs } =
+      createService({
+        wave: {
+          visibility_group_id: null,
+          is_direct_message: false
+        }
+      });
+    creditsService.chargeQuestionCredit.mockResolvedValue({
+      charged: false,
+      balance: 0,
+      botProfileMissing: false
+    });
+    const ctx = {} as never;
+
+    await service.handleCreatedDrop(
+      {
+        createDropRequest: createRequest('@help6529 what is tdh'),
+        createdDrop: createDrop({ id: 'drop-1', authorId: 'user-profile' }),
+        authorProfileId: 'user-profile'
+      },
+      ctx
+    );
+
+    expect(creditsService.chargeQuestionCredit).not.toHaveBeenCalled();
+    expect(interactionsDb.markInsufficientCredits).not.toHaveBeenCalled();
+    expect(dropWriter.reply).not.toHaveBeenCalled();
+    expect(sqs.sendToQueueName).toHaveBeenCalledWith({
+      queueName: 'help-bot-replies',
+      message: { interaction_id: 'interaction-1' }
+    });
+  });
+
+  it('keeps the per-user spam limit while the credit meter is off', async () => {
+    const { service, creditsService, interactionsDb, sqs } = createService({
+      wave: {
+        visibility_group_id: null,
+        is_direct_message: false
+      }
+    });
+    interactionsDb.countRecentByAuthor.mockResolvedValue(6);
+    const ctx = {} as never;
+
+    await service.handleCreatedDrop(
+      {
+        createDropRequest: createRequest('@help6529 what is tdh'),
+        createdDrop: createDrop({ id: 'drop-1', authorId: 'user-profile' }),
+        authorProfileId: 'user-profile'
+      },
+      ctx
+    );
+
+    expect(interactionsDb.markSpamSuppressed).toHaveBeenCalled();
+    expect(creditsService.chargeQuestionCredit).not.toHaveBeenCalled();
+    expect(sqs.sendToQueueName).not.toHaveBeenCalled();
+  });
+
   it('reacts and replies without queueing when the author has no credits', async () => {
     const {
       service,
@@ -411,6 +471,7 @@ describe('HelpBotTriggerService', () => {
       sqs,
       creditsService
     } = createService({
+      creditsEnabled: true,
       wave: {
         visibility_group_id: null,
         is_direct_message: false
@@ -471,6 +532,7 @@ describe('HelpBotTriggerService', () => {
 
   it('refunds the charged credit if enqueueing fails', async () => {
     const { service, creditsService, sqs } = createService({
+      creditsEnabled: true,
       wave: {
         visibility_group_id: null,
         is_direct_message: false
@@ -530,6 +592,7 @@ describe('HelpBotTriggerService', () => {
   it('declines without charging when the help bot is outside the wave chat group', async () => {
     const { service, interactionsDb, creditsService, sqs, userGroups } =
       createService({
+        creditsEnabled: true,
         wave: {
           visibility_group_id: null,
           is_direct_message: false,
@@ -558,6 +621,7 @@ describe('HelpBotTriggerService', () => {
 
   it('declines without charging when chat is disabled in the wave', async () => {
     const { service, interactionsDb, creditsService } = createService({
+      creditsEnabled: true,
       wave: {
         visibility_group_id: null,
         is_direct_message: false,
@@ -651,6 +715,7 @@ describe('HelpBotTriggerService', () => {
   it('declines without charging once the wave daily answer limit is reached', async () => {
     const { service, interactionsDb, creditsService, reactionService, sqs } =
       createService({
+        creditsEnabled: true,
         wave: {
           visibility_group_id: null,
           is_direct_message: false
@@ -689,6 +754,7 @@ describe('HelpBotTriggerService', () => {
 
   it('declines without charging once the global daily answer limit is reached', async () => {
     const { service, interactionsDb, creditsService, sqs } = createService({
+      creditsEnabled: true,
       wave: {
         visibility_group_id: null,
         is_direct_message: false
