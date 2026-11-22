@@ -492,7 +492,7 @@ export const tdhChainDaysDb = new TdhChainDaysDb(dbSupplier);
  * Splits rows into those whose consolidation key fits the columns and the
  * keys that don't. A key that doesn't fit is left out of the whole write,
  * every table at once, and queued on the day's row: never a crash and never
- * half an identity written (coordinator's ruling on the key width, 22 Nov).
+ * half an identity written.
  */
 export function splitByKeyWidth<T extends { consolidation_key: string }>(
   rows: readonly T[],

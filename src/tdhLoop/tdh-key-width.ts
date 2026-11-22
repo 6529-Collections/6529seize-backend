@@ -8,12 +8,12 @@ const logger = Logger.get('TDH_KEY_WIDTH');
 const WIDTH_BEFORE_MIGRATION = 200;
 
 /**
- * The rows whose consolidation key fits the TDH tables' columns. From
- * Wednesday a chain identity can hold up to 16 wallets (687 characters)
+ * The rows whose consolidation key fits the TDH tables' columns. An
+ * identity on the 6529 chain can hold up to 16 wallets (687 characters),
  * while the columns hold 200 until the widening migration is deployed. A
  * consolidation that doesn't fit is left out of the whole write, logged and
  * alerted; the next run writes it once the columns are wide enough. Never a
- * crash and never a half-written identity (coordinator's ruling, 22 Nov).
+ * crash and never a half-written identity.
  */
 export async function keepConsolidationKeysThatFit<
   T extends { consolidation_key: string }

@@ -42,7 +42,7 @@ import { TdhChainSource } from './tdh-chain-source';
 import { TdhChainDay, TdhTokenLeaf, TdhWalletLeaf } from './tdh-chain.types';
 
 /**
- * The rebuild test (DESIGN.md section 5): the old path computes two TDH
+ * The rebuild test: the old path computes two TDH
  * days from a small Ethereum index and writes every TDH table. The chain
  * days are built from what it wrote, as the chain would hold them. Then the
  * TDH tables are emptied and the chain path ingests both days from them.
