@@ -100,7 +100,11 @@ export interface RecordHeadStore {
     order: RecordOrderKey,
     ctx: RequestContext
   ): Promise<void>;
-  /** Runs fn in a transaction, or in the caller's when ctx has one. */
+  /**
+   * Runs fn in a transaction, or in the caller's when ctx has one. Either
+   * way, when fn throws, none of its writes stay: in the caller's
+   * transaction they are rolled back to a savepoint taken before fn.
+   */
   inTransaction<T>(
     ctx: RequestContext,
     fn: (ctx: RequestContext) => Promise<T>
@@ -269,8 +273,8 @@ const refused = (reason: Refused['reason'], error: unknown): Refused => ({
  * PROVIDER-class SEALED items in `pv`; the rest is the lanes'. Bad record
  * content gives `refused`, so one bad record never stops a rebuild; only
  * infrastructure errors (the database, a handler's apply) throw. When ctx
- * already holds a transaction, a `rule` refusal leaves that transaction to
- * the caller, who rolls it back.
+ * already holds a transaction, a `rule` refusal undoes the record's writes
+ * (the heads store's savepoint), so the caller may still commit.
  */
 export class RecordIndexer {
   constructor(

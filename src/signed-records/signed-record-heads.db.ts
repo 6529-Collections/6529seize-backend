@@ -18,16 +18,42 @@ export class SignedRecordHeadsDb
   extends LazyDbAccessCompatibleService
   implements RecordHeadStore
 {
+  private savepoints = 0;
+
+  /**
+   * In the caller's transaction, fn runs after a savepoint and, when it
+   * throws, its writes are rolled back to it: a record refused part way
+   * (a rule) leaves nothing, and the caller may still commit the rest.
+   */
   async inTransaction<T>(
     ctx: RequestContext,
     fn: (ctx: RequestContext) => Promise<T>
   ): Promise<T> {
-    if (ctx.connection) {
-      return fn(ctx);
+    if (!ctx.connection) {
+      return this.executeNativeQueriesInTransaction((connection) =>
+        fn({ ...ctx, connection })
+      );
     }
-    return this.executeNativeQueriesInTransaction((connection) =>
-      fn({ ...ctx, connection })
-    );
+    const options = { wrappedConnection: ctx.connection };
+    const savepoint = `signed_record_${++this.savepoints}`;
+    await this.db.execute(`savepoint ${savepoint}`, undefined, options);
+    let result: T;
+    try {
+      result = await fn(ctx);
+    } catch (error) {
+      try {
+        await this.db.execute(
+          `rollback to savepoint ${savepoint}`,
+          undefined,
+          options
+        );
+      } catch {
+        // The caller's transaction is failing too; its error is fn's.
+      }
+      throw error;
+    }
+    await this.db.execute(`release savepoint ${savepoint}`, undefined, options);
+    return result;
   }
 
   /**
