@@ -286,6 +286,26 @@ describe('executeLegacyDmPurge', () => {
     expect(deleteIndex).toBeGreaterThan(cancelIndex);
   });
 
+  it("deletes the notification view's rows with the old table's", async () => {
+    const { db, statements } = fakeDb({ waves: [WAVE], drops: DROPS });
+    await executeLegacyDmPurge(db, { nowMillis: CUTOFF, cutoffMillis: CUTOFF });
+    const viewDeletes = statements.filter((s) =>
+      s.sql.includes('delete from notification_view')
+    );
+    expect(viewDeletes.map((s) => [s.sql, s.params])).toEqual(
+      expect.arrayContaining([
+        [
+          'delete from notification_view where related_drop_id in (?) or related_drop_2_id in (?)',
+          [
+            ['d1', 'd2', 'd3'],
+            ['d1', 'd2', 'd3']
+          ]
+        ],
+        ['delete from notification_view where wave_id = ?', [WAVE.id]]
+      ])
+    );
+  });
+
   it('reports each purged wave once its deletions have committed', async () => {
     const { db, events } = fakeDb({
       waves: [WAVE, { ...WAVE, id: 'dm-wave-2', serial_no: 6 }],

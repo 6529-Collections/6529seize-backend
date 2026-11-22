@@ -41,6 +41,7 @@ import {
   DROPS_TABLE,
   HELP_BOT_INTERACTIONS_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
+  NOTIFICATION_VIEW_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
   OFFICIAL_WAVES_TABLE,
   PINNED_WAVES_TABLE,
@@ -225,6 +226,8 @@ export const LEGACY_DM_KEPT_TABLES: Readonly<Record<string, string>> = {
   [WS_CONNECTIONS_TABLE]: 'Live socket subscriptions; no content',
   [IDENTITY_NOTIFICATIONS_TABLE]:
     'Deleted by drop and by wave through push cancellation, not by a plain step',
+  [NOTIFICATION_VIEW_TABLE]:
+    'Deleted by drop and by wave with identity_notifications, not by a plain step',
   [PUSH_NOTIFICATION_CANCELLATIONS_TABLE]:
     'Receives the cancelled notification ids so queued pushes are dropped',
   [ATTACHMENTS_TABLE]:

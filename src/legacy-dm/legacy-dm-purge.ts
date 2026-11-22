@@ -6,6 +6,7 @@ import {
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
+  NOTIFICATION_VIEW_TABLE,
   PUSH_NOTIFICATION_CANCELLATIONS_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_METRICS_TABLE,
@@ -171,13 +172,16 @@ export async function planLegacyDmPurge(
       await count(`select count(*) as c from ${step.table} where ${where}`)
     );
   }
-  add(
-    IDENTITY_NOTIFICATIONS_TABLE,
-    await count(
-      `select count(*) as c from ${IDENTITY_NOTIFICATIONS_TABLE}
-       where wave_id in (${DM_WAVES_SQL}) or ${replaceEvery(NOTIFICATIONS_FOR_DROPS, '(?)', `(${dmDropIds})`)}`
-    )
-  );
+  // notification_view has identity_notifications' columns.
+  for (const table of [IDENTITY_NOTIFICATIONS_TABLE, NOTIFICATION_VIEW_TABLE]) {
+    add(
+      table,
+      await count(
+        `select count(*) as c from ${table}
+         where wave_id in (${DM_WAVES_SQL}) or ${replaceEvery(NOTIFICATIONS_FOR_DROPS, '(?)', `(${dmDropIds})`)}`
+      )
+    );
+  }
   for (const step of LEGACY_DM_WAVE_STEPS) {
     const where = replaceEvery(step.where, '= ?', `in (${DM_WAVES_SQL})`);
     add(
@@ -444,6 +448,15 @@ async function cancelNotifications(
   params: readonly unknown[],
   add: (table: string, affected: number) => void
 ): Promise<void> {
+  // The view's rows go too, in every notification mode. A view row's push
+  // is queued by its key, and a key whose row is gone is not pushed.
+  add(
+    NOTIFICATION_VIEW_TABLE,
+    await tx.execute(
+      `delete from ${NOTIFICATION_VIEW_TABLE} where ${where}`,
+      params
+    )
+  );
   const ids = (
     await tx.query<{ id: unknown }>(
       `select id from ${IDENTITY_NOTIFICATIONS_TABLE} where ${where} order by id`,
