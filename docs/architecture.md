@@ -3125,7 +3125,11 @@ the run and catches up on the next. The daily build, phase pulls and the
 read routes fail instead of guessing, and the write routes read the state
 row uncached at every write. After the switch an identity writer's failure
 fails the run, a failed legacy dual write is logged, and redemption warnings
-are posted from the identity side; the legacy loop only logs its own.
+are posted from the identity side; the legacy loop only logs its own. A
+failed legacy step (the redemption run, or the top-up discovery and legacy
+credit) alerts (`SUBSCRIPTIONS_LEGACY_DUAL_WRITE_FAILED`) and the identity
+writer still runs. A fold whose wallet brings no mode leaves the identity's
+mode row as it was.
 Person-made changes (subscribe, count, mode, editions) reach the identity
 tables only as signed records (below); an unsigned change in shadow reaches
 the legacy tables alone, so a shadow list differs for anyone who made one
@@ -3187,8 +3191,10 @@ FAILED on an error; REFUSED when the record itself was not taken (it did
 not verify or state the request, was stale, or the anchor or the author's
 binding was unavailable).
 Nothing on the identity side fails the request. The go-live gate counts
-every DIFF and FAILED, and skips REFUSED, so one person's bad header can't
-hold the switch back. A
+every DIFF and FAILED, and skips REFUSED within a share of all the signed
+records compared (see Switch), so one person's bad header can't hold the
+switch back. A route key whose wallets span identities for now (mid
+re-key) is REFUSED too. A
 rebuild writes a choice back from its journal entry like any other write;
 the event before it can be verified against the grant proof it carries.
 
@@ -3223,13 +3229,28 @@ does.
   step, so `n` follows commit order.
 - **Checkpoint.** After the daily build, the counter is locked for a moment
   while a second connection opens a consistent snapshot; the snapshot is
-  hashed with no locks and the hash is appended for that `n`.
+  hashed with no locks and the hash is appended for that `n`, under the
+  opening the snapshot holds (if the opening changed meanwhile, no
+  checkpoint is written).
+- **Behind the posted journal.** The daily check of the posted journal
+  first compares live's counter with the posted journal's highest `n` for
+  the loaded opening. Behind it, as after a restore from an older backup,
+  live would reuse posted numbers: it sets a marker row, alerts
+  (`SUBSCRIPTIONS_JOURNAL_BEHIND`), and every journaled write refuses until
+  a new opening's load deletes the marker. The check needs a bound records
+  wave reader, so until then the guard is the runbook: after a restore,
+  `suspend`, then `go-live`, before the writers run.
 - **Posting.** Entries reach the records wave when the record log's closer
   seals a segment (every 5 minutes, with `FEATURE_SIGNED_RECORD_LOG=true`).
   Until then they are only in MySQL. go-live refuses unless the closer is on
   and no journal entry has waited unposted more than 10 minutes, and the
-  top-up loop alerts (`SUBSCRIPTIONS_JOURNAL_STALE`) when one has. A failed
-  append fails its write and alerts (`SUBSCRIPTIONS_JOURNAL_APPEND_FAILED`).
+  top-up loop alerts (`SUBSCRIPTIONS_JOURNAL_STALE`) when one has. An entry
+  counts as unposted until its segment's head is posted, sealed into a
+  segment or not. A failed append fails its write and alerts
+  (`SUBSCRIPTIONS_JOURNAL_APPEND_FAILED`).
+- **Suspend.** `subscriptions:opening -- suspend` journals a `suspend`
+  entry in the transaction that sets it; if the entry can't be written the
+  tables are suspended anyway, and it alerts.
 - **Opening.** `go-live` uploads the opening and history files (Arweave,
   tagged with the app name, kind and sha256) and writes the journal's
   `opening` entry, naming both by URI and sha256, in the switch's
@@ -3244,7 +3265,13 @@ minute while it reads, verifies and writes back), takes
 the last `opening` entry, fetches and checks both files, verifies that
 opening's journal (below), loads the files
 suspended (no writer writes meanwhile), and writes back every write of that
-opening in `n` order, each with all its parts. A change's captured `before`
+opening in `n` order, each with all its parts. Every `n` from the
+opening's first write to its last must be in the log, as its own entry or
+another opening's it skips: an `n` with no entry is a write never posted,
+so the rebuild stops before loading anything, and `verify-journal` fails
+on it. A part posted twice with the same contents (entries unposted at a
+restore point are posted again) is read once; posted again with other
+contents, it stops the rebuild. A change's captured `before`
 must equal the rebuilt row, and each checkpoint must match once the writes
 up to its `n` are in, so a write that was never journaled stops the rebuild
 at the first row or checkpoint it shows in. Nothing is read from MySQL
@@ -3254,11 +3281,18 @@ credited to. Each choice entry's signed record order key goes back into
 replayed. When the live database is there, the journal's last `n` is
 compared with live's counter; a missing tail (entries not yet posted) is
 reported and alerted (`SUBSCRIPTIONS_JOURNAL_TAIL_MISSING`), and the tables
-stay suspended. Otherwise they end verified and in shadow, not the truth;
+stay suspended; a last write posted only in part while the live database is
+there is reported with a warning, since the closer posts the rest. Over
+tables that are loaded and not suspended the rebuild suspends them first
+and waits out the writers' 60 s state cache; over tables that are the
+truth it refuses. A rebuild of an opening the journal shows suspended
+leaves the tables suspended. Otherwise they end verified and in shadow, not the truth;
 with `--go-live` they become the truth through go-live's own switch, in the
 same pause, and only if at least one checkpoint matched. `--go-live` is for
 a lost database: it refuses while the state row or any identity row is
-there. While the identity tables are suspended, writes land only in the
+there, while the legacy subscription tables hold rows unless
+`--lost-database` is given, and for an opening the journal shows suspended.
+While the identity tables are suspended, writes land only in the
 legacy tables, with no journal, so after a suspend only `go-live`, which
 cuts from the legacy tables, switches again. `--opening --history`
 rehearses from local files. People's own changes come as signed records,
@@ -3310,8 +3344,17 @@ moves every service. `subscriptions:opening -- go-live --signed-writes-live`
 does it in one step (`go-live.ts`). It refuses unless, for the last minted
 card, the last list comparison matched and at least one phase and one
 redemption comparison exist, with no shadow comparison of any kind
-differing since that card's first list. It then pauses the unsigned write
-routes (503), cuts, verifies, loads, compares, publishes the files,
+differing since that card's first list. In the same window at least
+`SUBSCRIPTIONS_GO_LIVE_MIN_SIGNED_MATCHES` signed records (default 3) must
+have matched, and refused ones must stay under
+`SUBSCRIPTIONS_GO_LIVE_MAX_REFUSED_PERCENT` of the signed records compared
+(default 20): one bad header doesn't block the switch, but a signer failing
+for a group of people does. go-live prints the counts and the refusals by
+reason, and `--accept-report-diffs` overrides these as it does the other
+comparisons. go-live, a rebuild and the CLI's `load` each take the pause
+marker atomically and refuse while another run holds one younger than the
+switch window. go-live then pauses the write routes (503), waits 10 s so a
+write that read its path just before the pause commits, cuts, verifies, loads, compares, publishes the files,
 sets the switch time with the journal's opening entry and reopens the
 routes, which then answer 409 to unsigned writes. The load keeps the pause
 marker; a marker older than the switch window (a go-live that died) is
