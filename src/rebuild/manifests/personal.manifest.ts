@@ -312,5 +312,19 @@ export const personalManifest: AreaManifest = {
   },
   seeds: [PERSONAL_SETTINGS_SEED],
   rebuilders: [PERSONAL_SETTINGS_REBUILD],
-  probes: PROBES
+  probes: PROBES,
+  waivers: {
+    routes: [
+      {
+        target: 'GET /api/signed-records/owners',
+        reason:
+          "Answers 503 OWNERS_UNAVAILABLE until the chain gateway client is wired in (wireSignedRecordsChain); nothing in the API wires it yet. It becomes a probe of the probe wallets' owners in the PR that wires it."
+      },
+      {
+        target: 'GET /api/signed-records/anchor',
+        reason:
+          'Answers 503 ANCHOR_UNAVAILABLE until the chain gateway client is wired in (wireSignedRecordsChain); nothing in the API wires it yet. It becomes a probe in the PR that wires it, against the gateway recording.'
+      }
+    ]
+  }
 };
