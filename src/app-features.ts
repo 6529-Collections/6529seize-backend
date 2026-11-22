@@ -50,6 +50,14 @@ export class AppFeatures {
     return this.isFeatureEnabled('DB_DUMPS_MANIFEST');
   }
 
+  /**
+   * Ethereum index fixes for a rebuild from empty: the NFT volume windows
+   * count by block time instead of by when the transaction row was written.
+   */
+  public isEthIndexRebuildFixesEnabled(): boolean {
+    return this.isFeatureEnabled('ETH_INDEX_REBUILD_FIXES');
+  }
+
   public isProfileCmsWalletGalleryEnabled(): boolean {
     return (
       (process.env.FEATURE_PROFILE_CMS_WALLET_GALLERY ?? 'true') === 'true'
