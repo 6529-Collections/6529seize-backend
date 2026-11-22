@@ -14,12 +14,19 @@ import { Time } from '@/time';
  * in IDENTITY_FREEZE_AT (ISO 8601 UTC such as `2026-11-24T00:00:00Z`, or Unix
  * milliseconds). The time lets a deployment made before the freeze start it
  * at the exact second, with no restart.
+ *
+ * From switch-on (FEATURE_IDENTITY_ON_CHAIN, or the time in
+ * IDENTITY_SWITCH_ON_AT) the chain holds identities for good: the same writes
+ * stay refused, whatever the freeze settings, and the refusals say where the
+ * change is made now. No profile is ever made here implicitly again.
  */
 export const IDENTITY_FROZEN_CODE = 'IDENTITY_FROZEN';
 
 export const IDENTITY_FROZEN_STATUS = 423;
 
 export const IDENTITY_FREEZE_AT_ENV = 'IDENTITY_FREEZE_AT';
+
+export const IDENTITY_SWITCH_ON_AT_ENV = 'IDENTITY_SWITCH_ON_AT';
 
 export const IDENTITY_FROZEN_MESSAGE =
   `Profiles, handles, REP and NIC are moving to the 6529 Network, ` +
@@ -31,10 +38,21 @@ export const IDENTITY_FROZEN_NOMINATION_MESSAGE =
   `while profiles move to the 6529 Network. ` +
   `Nominate a wallet that already has a profile, or try again later.`;
 
+export const IDENTITY_ON_CHAIN_MESSAGE =
+  `Profiles, handles, REP and NIC now live on the 6529 Network. ` +
+  `Change them on the 6529 Network, through this site.`;
+
+export const IDENTITY_ON_CHAIN_NOMINATION_MESSAGE =
+  `This wallet has no identity on the 6529 Network yet. ` +
+  `Nominate a wallet that has one.`;
+
+/** What a refused write was: a profile/REP/NIC write, or a nomination. */
+export type IdentityRefusal = 'write' | 'nomination';
+
 const logger = Logger.get('IDENTITY_FREEZE');
 
 export class IdentityFrozenException extends CustomApiCompliantException {
-  constructor(message: string = IDENTITY_FROZEN_MESSAGE) {
+  constructor(message: string = identityRefusalMessage('write')) {
     super(IDENTITY_FROZEN_STATUS, message, IDENTITY_FROZEN_CODE);
   }
 }
@@ -64,24 +82,20 @@ export function parseIdentityFreezeAt(
   return null;
 }
 
-let warnedAboutBadFreezeAt = false;
+const warnedAboutBadTime = new Set<string>();
 
-export function isIdentityFrozen(
-  nowMillis: number = Time.currentMillis()
-): boolean {
-  if (appFeatures.isIdentityFrozen()) {
-    return true;
-  }
-  const raw = process.env[IDENTITY_FREEZE_AT_ENV];
+/** Whether the time in `env` has come; a malformed time counts as come. */
+function timeHasCome(env: string, nowMillis: number): boolean {
+  const raw = process.env[env];
   const start = parseIdentityFreezeAt(raw);
   if (start === undefined) {
     return false;
   }
   if (start === null) {
-    if (!warnedAboutBadFreezeAt) {
-      warnedAboutBadFreezeAt = true;
+    if (!warnedAboutBadTime.has(env)) {
+      warnedAboutBadTime.add(env);
       logger.error(
-        `[${IDENTITY_FREEZE_AT_ENV} IS NOT A UTC TIME] [VALUE ${raw}] [TREATED AS FROZEN]`
+        `[${env} IS NOT A UTC TIME] [VALUE ${raw}] [TREATED AS COME]`
       );
     }
     return true;
@@ -89,11 +103,45 @@ export function isIdentityFrozen(
   return nowMillis >= start;
 }
 
-/** Throws IdentityFrozenException while identities are frozen. */
-export function assertIdentityNotFrozen(
-  message: string = IDENTITY_FROZEN_MESSAGE
-): void {
-  if (isIdentityFrozen()) {
-    throw new IdentityFrozenException(message);
+/** From switch-on the 6529 chain holds identities for good. */
+export function isIdentityOnChain(
+  nowMillis: number = Time.currentMillis()
+): boolean {
+  return (
+    appFeatures.isIdentityOnChain() ||
+    timeHasCome(IDENTITY_SWITCH_ON_AT_ENV, nowMillis)
+  );
+}
+
+/** Identity writes are refused: frozen, or on the chain since switch-on. */
+export function isIdentityFrozen(
+  nowMillis: number = Time.currentMillis()
+): boolean {
+  return (
+    appFeatures.isIdentityFrozen() ||
+    timeHasCome(IDENTITY_FREEZE_AT_ENV, nowMillis) ||
+    isIdentityOnChain(nowMillis)
+  );
+}
+
+export function identityRefusalMessage(
+  kind: IdentityRefusal,
+  nowMillis: number = Time.currentMillis()
+): string {
+  if (isIdentityOnChain(nowMillis)) {
+    return kind === 'nomination'
+      ? IDENTITY_ON_CHAIN_NOMINATION_MESSAGE
+      : IDENTITY_ON_CHAIN_MESSAGE;
+  }
+  return kind === 'nomination'
+    ? IDENTITY_FROZEN_NOMINATION_MESSAGE
+    : IDENTITY_FROZEN_MESSAGE;
+}
+
+/** Throws IdentityFrozenException while identity writes are refused. */
+export function assertIdentityNotFrozen(kind: IdentityRefusal = 'write'): void {
+  const now = Time.currentMillis();
+  if (isIdentityFrozen(now)) {
+    throw new IdentityFrozenException(identityRefusalMessage(kind, now));
   }
 }

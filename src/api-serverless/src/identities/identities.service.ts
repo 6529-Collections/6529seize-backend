@@ -38,10 +38,7 @@ import { wavesApiDb } from '@/api/waves/waves.api.db';
 import { ApiProfileClassification } from '@/api/generated/models/ApiProfileClassification';
 import { getLevelFromScore } from '@/profiles/profile-level';
 import { equalIgnoreCase } from '@/strings';
-import {
-  assertIdentityNotFrozen,
-  IDENTITY_FROZEN_NOMINATION_MESSAGE
-} from '@/identity-freeze/identity-freeze';
+import { assertIdentityNotFrozen } from '@/identity-freeze/identity-freeze';
 import { enums } from '@/enums';
 import { IdentityEntity } from '@/entities/IIdentity';
 import { Time } from '@/time';
@@ -556,7 +553,7 @@ export class IdentitiesService {
         addressesMissingIdentities.length ||
         Object.values(allIdentitiesAndProfiles).some((it) => !it.profile)
       ) {
-        assertIdentityNotFrozen(IDENTITY_FROZEN_NOMINATION_MESSAGE);
+        assertIdentityNotFrozen('nomination');
       }
       const newIdentities = addressesMissingIdentities.map<IdentityEntity>(
         (address) => ({

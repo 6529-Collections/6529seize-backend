@@ -31,6 +31,11 @@ export class AppFeatures {
     return this.isFeatureEnabled('IDENTITY_FROZEN');
   }
 
+  /** From switch-on the 6529 chain holds identities (src/identity-freeze). */
+  public isIdentityOnChain(): boolean {
+    return this.isFeatureEnabled('IDENTITY_ON_CHAIN');
+  }
+
   /**
    * Large viewer group lists are read from viewer_group_set_members by their
    * hash instead of travelling in each statement (waves/viewer-group-sets).

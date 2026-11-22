@@ -21,7 +21,8 @@ jest.mock('../env', () => ({
 jest.mock('../app-features', () => ({
   appFeatures: {
     isXTdhEnabled: mockIsXTdhEnabled,
-    isIdentityFrozen: mockIsIdentityFrozen
+    isIdentityFrozen: mockIsIdentityFrozen,
+    isIdentityOnChain: () => false
   }
 }));
 
