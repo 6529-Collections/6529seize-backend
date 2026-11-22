@@ -63,6 +63,9 @@ export const LATEST_TDH_GLOBAL_HISTORY_TABLE = 'latest_tdh_global_history';
 export const LATEST_TDH_HISTORY_TABLE = 'latest_tdh_history';
 export const RECENT_TDH_HISTORY_TABLE = 'recent_tdh_history';
 export const NFTDELEGATION_BLOCKS_TABLE = 'nftdelegation_blocks';
+/** NFTDelegation logs after the identity freeze block: recorded, never applied. */
+export const NFTDELEGATION_LOGS_AFTER_FREEZE_TABLE =
+  'nftdelegation_logs_after_freeze';
 export const CONSOLIDATIONS_TABLE = 'consolidations';
 export const DELEGATIONS_TABLE = 'delegations';
 export const DROP_RELATIONS_TABLE = 'drop_relations';

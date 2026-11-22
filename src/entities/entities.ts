@@ -44,7 +44,12 @@ export {
   CompetitionPauseEntity,
   CompetitionVoteEntity
 } from './ICompetition';
-export { Consolidation, Delegation, NFTDelegationBlock } from './IDelegation';
+export {
+  Consolidation,
+  Delegation,
+  NFTDelegationBlock,
+  NFTDelegationLogAfterFreeze
+} from './IDelegation';
 export { DeletedDropEntity } from './IDeletedDrop';
 export { Distribution, DistributionNormalized } from './IDistribution';
 export { DistributionPhoto } from './IDistributionPhoto';

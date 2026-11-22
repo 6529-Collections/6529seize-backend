@@ -26,7 +26,8 @@ import {
   ConsolidationEvent,
   DelegationEvent,
   Event,
-  EventType
+  EventType,
+  NftDelegationLogRecord
 } from './entities/IDelegation';
 import { Logger } from './logging';
 import { sepolia } from '@wagmi/chains';
@@ -399,6 +400,71 @@ export async function scanDelegationLogs(
     registrations,
     revocations: scan.revocations
   };
+}
+
+/** The head of the delegation contract's chain: its number and timestamp. */
+export async function fetchDelegationChainHead(): Promise<{
+  block: number;
+  timestamp: number;
+}> {
+  const client = getEthereumRpcClient(getNetwork());
+  const block = await client.getBlockNumber();
+  return { block, timestamp: await fetchBlockTimestamp(block) };
+}
+
+function lowerOrNull(value: unknown): string | null {
+  return typeof value === 'string' && value ? value.toLowerCase() : null;
+}
+
+/** Decodes an NFTDelegation log for the record, or null for another event. */
+export function toNftDelegationLogRecord(
+  log: Log
+): NftDelegationLogRecord | null {
+  const parsed = DELEGATIONS_IFACE.parseLog(log);
+  if (!parsed) {
+    return null;
+  }
+  const args = parsed.args;
+  const has = (name: string) =>
+    parsed.fragment.inputs.some((input) => input.name === name);
+  const from = lowerOrNull(args.from);
+  const delegator = has('delegator') ? lowerOrNull(args.delegator) : from;
+  if (!delegator) {
+    return null;
+  }
+  const delegate = has('delegationAddress')
+    ? lowerOrNull(args.delegationAddress)
+    : has('newdelegationAddress')
+      ? lowerOrNull(args.newdelegationAddress)
+      : null;
+  return {
+    block: log.blockNumber,
+    log_index: log.logIndex,
+    transaction_hash: log.transactionHash,
+    event_name: parsed.name,
+    delegator,
+    actor: from && from !== delegator ? from : null,
+    delegate,
+    collection: lowerOrNull(args.collectionAddress) ?? '',
+    use_case: Number(args.useCase),
+    all_tokens: has('allTokens') ? Boolean(args.allTokens) : null,
+    token_id: has('_tokenId') ? BigInt(args._tokenId).toString() : null
+  };
+}
+
+/**
+ * Reads NFTDelegation logs in [fromBlock, toBlock] for the record only: no
+ * expiry reads, nothing is resolved or applied.
+ */
+export async function scanDelegationLogsForRecord(
+  fromBlock: number,
+  toBlock: number
+): Promise<NftDelegationLogRecord[]> {
+  rpc = getEthereumRpcClient(getNetwork());
+  const logs = await getAllDelegations(fromBlock, toBlock);
+  return logs
+    .map(toNftDelegationLogRecord)
+    .filter((it): it is NftDelegationLogRecord => it !== null);
 }
 
 /** The transaction behind a delegation log, read from the contract's chain. */
