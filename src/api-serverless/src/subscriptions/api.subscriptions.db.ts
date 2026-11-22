@@ -931,12 +931,16 @@ async function fetchEffectiveUpcomingMemeSubscriptionCounts(
 
   const cutoffMemeId = await getSubscriptionCutoffMemeId();
   const tables = await subscriptionTables();
-  // The rows' key column, read as consolidation_key so the counting below
-  // is the same for both table sets.
-  const keyAs = `${tables.key} AS consolidation_key`;
+  // The identity tables' key column, read as consolidation_key so the
+  // counting below is the same for both table sets. The legacy queries are
+  // unchanged.
+  const columns =
+    tables.key === 'consolidation_key'
+      ? '*'
+      : `*, ${tables.key} AS consolidation_key`;
 
   const autoSubs: SubscriptionMode[] = await sqlExecutor.execute(
-    `SELECT *, ${keyAs} FROM ${tables.mode} WHERE automatic = :automatic`,
+    `SELECT ${columns} FROM ${tables.mode} WHERE automatic = :automatic`,
     { automatic: true }
   );
 
@@ -944,7 +948,7 @@ async function fetchEffectiveUpcomingMemeSubscriptionCounts(
   // to check if someone manually unsubscribed from a specific card
   const subs: NFTSubscription[] = (
     await sqlExecutor.execute<NFTSubscription>(
-      `SELECT *, ${keyAs} FROM ${tables.nfts} WHERE token_id IN (:tokenIds)`,
+      `SELECT ${columns} FROM ${tables.nfts} WHERE token_id IN (:tokenIds)`,
       { tokenIds }
     )
   ).map((s) => ({ ...s, token_id: Number(s.token_id) }));
@@ -958,7 +962,7 @@ async function fetchEffectiveUpcomingMemeSubscriptionCounts(
   const balances: SubscriptionBalance[] =
     allConsolidationKeys.size > 0
       ? await sqlExecutor.execute(
-          `SELECT *, ${keyAs} FROM ${tables.balances} WHERE ${tables.key} IN (:consolidationKeys)`,
+          `SELECT ${columns} FROM ${tables.balances} WHERE ${tables.key} IN (:consolidationKeys)`,
           { consolidationKeys: Array.from(allConsolidationKeys) }
         )
       : [];
