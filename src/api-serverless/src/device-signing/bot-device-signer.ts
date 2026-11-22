@@ -45,10 +45,13 @@ import type { DeviceSigningDb } from './device-signing.db';
 // write. A signed bot write takes the API's signed path: the same checks a
 // client-signed write passes, then device_signed_events and
 // drop_author_signatures. A bot without a usable key, or whose signing fails
-// before its write runs, writes unsigned as before (with a warning), so
-// FEATURE_WAVES_DEVICE_SIGNATURE_REQUIRED never stops a bot. A bot write
-// inside a caller's transaction is signed after the commit
-// (CommittedDropSignatures).
+// before its write runs, writes unsigned as before (with a warning). Bots
+// that write in-process are never stopped by
+// FEATURE_WAVES_DEVICE_SIGNATURE_REQUIRED. The GitHub bot posts through the
+// API, which refuses an unsigned post while that flag is on: the webhook
+// then answers 503, and the delivery has to be sent again from GitHub's
+// delivery log once the bot can sign. A bot write inside a caller's
+// transaction is signed after the commit (CommittedDropSignatures).
 
 const BOT_DEVICE_LABEL = '6529.io bot';
 // App grants are checked on Ethereum mainnet (device-grants.service.ts).
