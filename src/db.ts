@@ -54,6 +54,7 @@ import {
   createDbAuthTokenSource,
   DbAuthTokenSource,
   installMysqlIamAuthSupport,
+  isDbIamAuthRequested,
   resolveDbConnectionTargets,
   sslOptionsFor
 } from './db-iam-auth';
@@ -187,7 +188,13 @@ export async function connect(
   schemaSync?: Pick<SchemaSyncOptions, 'acknowledgedDestructivePlanSha256'>
 ) {
   validateDbConnectionSelection(syncEntities, selection);
+  // The TypeORM data source is write-side only; reads use the db-api pools.
   const writeTarget = resolveDbConnectionTargets().write;
+  if (isDbIamAuthRequested() && !writeTarget.iam) {
+    logger.warn(
+      '[DB IAM AUTH REQUESTED BUT DB_IAM_* INCOMPLETE] [USING PASSWORD]'
+    );
+  }
   const port = parseInt(process.env.DB_PORT!);
   let tokens: DbAuthTokenSource | null = null;
   if (writeTarget.iam) {
@@ -226,7 +233,14 @@ export async function connect(
   try {
     await AppDataSource.initialize();
     if (tokens) {
-      attachDbAuthTokenSource((AppDataSource.driver as any).pool, tokens);
+      attachDbAuthTokenSource(
+        (AppDataSource.driver as any).pool,
+        tokens,
+        (error) =>
+          logger.error(
+            `[DB IAM TOKEN SIGNING FAILED] [${writeTarget.host}] ${error}`
+          )
+      );
     }
   } catch (error) {
     if (selection) {

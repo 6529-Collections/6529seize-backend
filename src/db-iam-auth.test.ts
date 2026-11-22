@@ -262,3 +262,57 @@ describe('attachDbAuthTokenSource', () => {
     pool.end(() => undefined);
   });
 });
+
+describe('review follow-ups', () => {
+  it('refuses to sign without a region instead of guessing one', async () => {
+    const saved = {
+      AWS_REGION: process.env.AWS_REGION,
+      AWS_DEFAULT_REGION: process.env.AWS_DEFAULT_REGION
+    };
+    delete process.env.AWS_REGION;
+    delete process.env.AWS_DEFAULT_REGION;
+    try {
+      const tokens = createDbAuthTokenSource({
+        host: 'h',
+        port: 3306,
+        user: 'u'
+      });
+      await expect(tokens.ensureFresh()).rejects.toThrow('AWS_REGION');
+    } finally {
+      Object.assign(process.env, saved);
+    }
+  });
+
+  it('refuses to patch a driver whose internals changed', () => {
+    expect(() =>
+      installMysqlIamAuthSupport({
+        auth: { auth: () => undefined },
+        clientAuthenticationPacket: { prototype: { write: () => undefined } },
+        connectionConfig: { getDefaultFlags: () => ['+PROTOCOL_41'] },
+        clientPluginAuthFlag: 524288
+      })
+    ).toThrow('mysql@2.18');
+  });
+
+  it('reports token signing failures to the error callback', async () => {
+    const pool = mysql.createPool({ host: 'h', user: 'u' });
+    const onTokenError = jest.fn();
+    attachDbAuthTokenSource(
+      pool,
+      {
+        current: () => '',
+        ensureFresh: async () => {
+          throw new Error('expired credentials');
+        }
+      },
+      onTokenError
+    );
+    await expect(
+      new Promise((resolve, reject) =>
+        pool.getConnection((err, conn) => (err ? reject(err) : resolve(conn)))
+      )
+    ).rejects.toThrow('expired credentials');
+    expect(onTokenError).toHaveBeenCalledTimes(1);
+    pool.end(() => undefined);
+  });
+});

@@ -123,19 +123,23 @@ export function createDbAuthTokenSource(
   } = {}
 ): DbAuthTokenSource {
   const now = options.now ?? Date.now;
+  const region =
+    options.region ?? process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION;
   const sign =
     options.sign ??
     (() =>
-      new Signer({
-        hostname: target.host,
-        port: target.port,
-        username: target.user,
-        region:
-          options.region ??
-          process.env.AWS_REGION ??
-          process.env.AWS_DEFAULT_REGION ??
-          'us-east-1'
-      }).getAuthToken());
+      region
+        ? new Signer({
+            hostname: target.host,
+            port: target.port,
+            username: target.user,
+            region
+          }).getAuthToken()
+        : // A token signed for the wrong region fails with a confusing
+          // access-denied; say what is missing instead.
+          Promise.reject(
+            new Error('DB IAM auth needs AWS_REGION to sign login tokens')
+          ));
   let token = '';
   let issuedAt = 0;
   let pending: Promise<string> | null = null;
@@ -189,6 +193,11 @@ function loadMysqlProtocolModules(): MysqlProtocolModules {
 /**
  * Teaches the `mysql` driver the token login handshake. Idempotent; only
  * called in IAM mode, so password-mode processes keep the stock driver.
+ *
+ * The patch is process-wide. That is safe because IAM mode is all or nothing
+ * per process (resolveDbConnectionTargets switches write and read together),
+ * so no password-mode pool shares the patched driver with a token. It relies
+ * on mysql@2.18 internals and refuses to run if their shape has changed.
  */
 export function installMysqlIamAuthSupport(
   modules: MysqlProtocolModules = loadMysqlProtocolModules()
@@ -196,6 +205,18 @@ export function installMysqlIamAuthSupport(
   const holder = modules.auth as unknown as Record<symbol, boolean>;
   if (holder[PROTOCOL_PATCHED]) {
     return;
+  }
+  if (
+    typeof modules.auth?.auth !== 'function' ||
+    typeof modules.clientAuthenticationPacket?.prototype?.write !==
+      'function' ||
+    typeof modules.connectionConfig?.getDefaultFlags !== 'function' ||
+    typeof modules.clientPluginAuthFlag !== 'number' ||
+    !modules.connectionConfig.getDefaultFlags().includes('-PLUGIN_AUTH')
+  ) {
+    throw new Error(
+      'mysql driver internals are not the ones the IAM login patch was written for (mysql@2.18); review src/db-iam-auth.ts before enabling DB_IAM_AUTH'
+    );
   }
   const originalAuth = modules.auth.auth;
   modules.auth.auth = function (name, data, options) {
@@ -232,10 +253,17 @@ type GetConnection = (
  * Makes every new pool connection log in with a fresh token: the pool's
  * connection settings read the newest token, and taking a connection first
  * refreshes it when it is about to expire.
+ *
+ * In mysql@2.18 a pool opens a physical connection only inside
+ * Pool#getConnection; pool.query, the queue drain after a release and
+ * TypeORM's driver all call `this.getConnection`, so they reach this wrapper.
+ * Connections are never reconnected in place: a broken one is dropped and the
+ * next acquisition opens a new one with a fresh token.
  */
 export function attachDbAuthTokenSource(
   pool: Pool,
-  tokens: DbAuthTokenSource
+  tokens: DbAuthTokenSource,
+  onTokenError?: (error: unknown) => void
 ): void {
   const connectionConfig = (pool as any).config?.connectionConfig;
   if (!connectionConfig) {
@@ -254,7 +282,10 @@ export function attachDbAuthTokenSource(
   ) => {
     tokens.ensureFresh().then(
       () => originalGetConnection(callback),
-      (err) => callback(err, undefined as unknown as PoolConnection)
+      (err) => {
+        onTokenError?.(err);
+        callback(err, undefined as unknown as PoolConnection);
+      }
     );
   };
 }
