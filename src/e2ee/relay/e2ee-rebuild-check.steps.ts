@@ -24,6 +24,11 @@ import {
   e2eeEntryDigest,
   e2eeRevokeDigest
 } from '@/e2ee/e2ee-digests';
+import {
+  E2EE_CHECK_IDS,
+  E2EE_CHECK_KEYS,
+  E2EE_CHECK_PROFILES
+} from '@/e2ee/relay/e2ee-rebuild-check.fixture';
 import { e2eeRecordWriters } from '@/e2ee/relay/e2ee-record-writers';
 import { runE2eeRebuild } from '@/e2ee/relay/e2ee-rebuild-run';
 import { e2eeRelaySettings } from '@/e2ee/relay/e2ee-relay-config';
@@ -35,10 +40,9 @@ import {
   ContentReportStatus
 } from '@/entities/IContentModeration';
 import { dbSupplier } from '@/sql-executor';
-import {
-  randomE2eeGroupHandle,
-  randomE2eeKey
-} from '@/tests/fixtures/e2ee.fixture';
+import { e2eeKeyFromSeed } from '@/tests/fixtures/e2ee.fixture';
+
+type TestKey = ReturnType<typeof e2eeKeyFromSeed>;
 
 const PUBLISH_WAVES = 50;
 
@@ -79,6 +83,9 @@ function deviceRow(deviceKey: string, profileId: string): E2eeDeviceRow {
   };
 }
 
+/** Ids the next `randomHex` calls hand out, so the probes can name them. */
+const plannedIds: string[] = [];
+
 function services() {
   const noEvent = async () => undefined;
   const deps: E2eeServiceDeps = {
@@ -99,7 +106,7 @@ function services() {
     resolveWalletProfileId: async () => null,
     now: () => Date.now(),
     random: () => 1,
-    randomHex: (bytes) => hexBytes(bytes),
+    randomHex: (bytes) => plannedIds.shift() ?? hexBytes(bytes),
     attachmentsEnabled: () => true,
     admission: {
       evaluate: async (_sender, recipients) =>
@@ -152,8 +159,8 @@ async function commit(
   input: {
     readonly group: string;
     readonly epoch: number;
-    readonly key: ReturnType<typeof randomE2eeKey>;
-    readonly next: ReturnType<typeof randomE2eeKey>;
+    readonly key: TestKey;
+    readonly next: TestKey;
     readonly sender: string;
     readonly added: string;
   }
@@ -175,7 +182,7 @@ async function commit(
       targets: [input.added]
     }
   };
-  await groups.submitEntry('pa', input.group, {
+  await groups.submitEntry(E2EE_CHECK_PROFILES.a.profileId, input.group, {
     ...entry,
     signature: input.key.sign(
       e2eeEntryDigest({
@@ -204,12 +211,14 @@ async function insertItem(input: {
         operation, policy_family, policy_version, scope, evidence,
         content_fingerprint, outcome, \`trigger\`, review_status, version,
         created_at, updated_at)
-     values (:id, 'DROP', 'rebuild-check-drop', 'pa', 'pb', :operation,
+     values (:id, 'DROP', 'rebuild-check-drop', :author, :actor, :operation,
         'WAVE_CONTENT', 'rebuild-check', cast(:scope as json),
         cast(:evidence as json), :fingerprint, 'ALLOW', 'REPORT',
         'NEEDS_REVIEW', 1, :now, :now)`,
     {
       ...input,
+      author: E2EE_CHECK_PROFILES.a.profileId,
+      actor: E2EE_CHECK_PROFILES.b.profileId,
       scope: JSON.stringify(input.scope),
       evidence: JSON.stringify({ text: 'reported words' }),
       fingerprint: 'f'.repeat(64),
@@ -229,8 +238,8 @@ async function seedReports(
   const report = await contentModerationDb.createReport(
     {
       dropId: 'rebuild-check-drop',
-      reporterProfileId: 'pb',
-      authorProfileId: 'pa',
+      reporterProfileId: E2EE_CHECK_PROFILES.b.profileId,
+      authorProfileId: E2EE_CHECK_PROFILES.a.profileId,
       reason: ContentReportReason.SPAM,
       notes: 'reporter notes',
       contentSnapshot: { parts: [{ content: 'reported words' }] }
@@ -266,7 +275,8 @@ async function seedReports(
     'ALLOW',
     {}
   );
-  const message = await blobs.report('pb', {
+  plannedIds.push(E2EE_CHECK_IDS.messageReport);
+  const message = await blobs.report(E2EE_CHECK_PROFILES.b.profileId, {
     group: input.group,
     epoch: 1,
     body: randomBytes(64).toString('base64'),
@@ -280,39 +290,66 @@ async function seedReports(
 }
 
 /**
+ * The fixture profiles the probes sign in as: an identity and its wallet's
+ * consolidation key each (identity tables, kept through this check's drop).
+ */
+async function seedIdentities(): Promise<void> {
+  for (const { profileId, wallet } of Object.values(E2EE_CHECK_PROFILES)) {
+    await dbSupplier().execute(
+      `insert ignore into identities
+         (consolidation_key, profile_id, primary_address, handle,
+          normalised_handle, tdh, rep, cic, level_raw, classification,
+          xtdh, produced_xtdh, granted_xtdh, xtdh_rate, basetdh_rate)
+       values (:wallet, :profileId, :wallet, :profileId, :profileId,
+          0, 0, 0, 0, 'PSEUDONYM', 0, 0, 0, 0, 0)`,
+      { wallet, profileId }
+    );
+    await dbSupplier().execute(
+      `insert ignore into address_consolidation_keys (address, consolidation_key)
+       values (:wallet, :wallet)`,
+      { wallet }
+    );
+  }
+}
+
+/**
  * Three devices, a group with two commits and their Welcomes, messages, an
  * attachment, a compacted backup, a revoked device, and reports: every
- * table the records carry.
+ * table the records carry. Keys and ids are the fixture's, so the probes
+ * can name them.
  */
 export async function seedE2ee(): Promise<void> {
+  await seedIdentities();
   const all = services();
   const { groups, devices, blobs, backups } = all;
-  const a = randomE2eeKey().publicKey;
-  const b = randomE2eeKey().publicKey;
-  const cKey = randomE2eeKey();
+  const pa = E2EE_CHECK_PROFILES.a.profileId;
+  const pb = E2EE_CHECK_PROFILES.b.profileId;
+  const pc = E2EE_CHECK_PROFILES.c.profileId;
+  const a = E2EE_CHECK_KEYS.a.publicKey;
+  const b = E2EE_CHECK_KEYS.b.publicKey;
+  const cKey = E2EE_CHECK_KEYS.c;
   const c = cKey.publicKey;
-  await addDevice(a, 'pa');
-  await addDevice(b, 'pb');
-  await addDevice(c, 'pc');
-  await devices.renameDevice('pa', a, 'Laptop');
-  const group = randomE2eeGroupHandle();
-  const keys = [randomE2eeKey(), randomE2eeKey(), randomE2eeKey()];
-  await groups.createGroup('pa', {
+  await addDevice(a, pa);
+  await addDevice(b, pb);
+  await addDevice(c, pc);
+  await devices.renameDevice(pa, a, 'Laptop');
+  const group = E2EE_CHECK_IDS.group;
+  await groups.createGroup(pa, {
     group,
-    commit_key: keys[0].publicKey,
+    commit_key: E2EE_CHECK_KEYS.commit0.publicKey,
     creator_device_key: a
   });
   await commit(groups, {
     group,
     epoch: 0,
-    key: keys[0],
-    next: keys[1],
+    key: E2EE_CHECK_KEYS.commit0,
+    next: E2EE_CHECK_KEYS.commit1,
     sender: a,
     added: b
   });
   for (const [profile, sender] of [
-    ['pb', b],
-    ['pa', a]
+    [pb, b],
+    [pa, a]
   ]) {
     await groups.sendMessage(profile, group, {
       epoch: 1,
@@ -324,14 +361,14 @@ export async function seedE2ee(): Promise<void> {
   await commit(groups, {
     group,
     epoch: 1,
-    key: keys[1],
-    next: keys[2],
+    key: E2EE_CHECK_KEYS.commit1,
+    next: E2EE_CHECK_KEYS.commit2,
     sender: a,
     added: c
   });
   // c is revoked: one directory record and one inbox record.
   const revokedAt = Math.floor(Date.now() / 1000);
-  await devices.revokeDevice('pc', c, {
+  await devices.revokeDevice(pc, c, {
     revoker_device_key: c,
     revoked_at: revokedAt,
     signature: cKey.sign(
@@ -342,34 +379,35 @@ export async function seedE2ee(): Promise<void> {
       })
     )
   });
-  const blob = await blobs.createBlob('pa', {
+  plannedIds.push(E2EE_CHECK_IDS.blob);
+  const blob = await blobs.createBlob(pa, {
     group,
     uploader_device_key: a,
     size: 3000,
     chunk_count: 2
   });
-  await blobs.putChunk('pa', blob.blob_id, 0, {
+  await blobs.putChunk(pa, blob.blob_id, 0, {
     data: randomBytes(2000).toString('base64')
   });
-  await blobs.putChunk('pa', blob.blob_id, 1, {
+  await blobs.putChunk(pa, blob.blob_id, 1, {
     data: randomBytes(1000).toString('base64')
   });
-  await blobs.completeBlob('pa', blob.blob_id);
-  const backupId = hexBytes(16);
-  await backups.createBackup('pa', {
+  await blobs.completeBlob(pa, blob.blob_id);
+  const backupId = E2EE_CHECK_IDS.backup;
+  await backups.createBackup(pa, {
     backup_id: backupId,
     envelope: randomBytes(64).toString('base64'),
     device_key: a
   });
   for (const seq of [1, 2]) {
-    await backups.appendChunk('pa', backupId, {
+    await backups.appendChunk(pa, backupId, {
       device_key: a,
       data: randomBytes(4096).toString('base64'),
       expected_seq: seq
     });
   }
-  await backups.activate('pa', backupId, a);
-  await backups.compact('pa', backupId, { device_key: a, through_seq: 1 });
+  await backups.activate(pa, backupId, a);
+  await backups.compact(pa, backupId, { device_key: a, through_seq: 1 });
   await seedReports(all, { group, a, b });
   // Mirror publishes in the background; wait, then drain what is left.
   await e2eeStreamPublisher.settled();

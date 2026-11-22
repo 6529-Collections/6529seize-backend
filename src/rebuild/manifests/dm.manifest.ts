@@ -1,4 +1,9 @@
-import { AreaManifest } from '@/rebuild/manifest.types';
+import {
+  E2EE_CHECK_IDS,
+  E2EE_CHECK_KEYS,
+  E2EE_CHECK_PROFILES
+} from '@/e2ee/relay/e2ee-rebuild-check.fixture';
+import { AreaManifest, Probe } from '@/rebuild/manifest.types';
 
 const STEPS = 'src/e2ee/relay/e2ee-rebuild-check.steps';
 
@@ -59,6 +64,111 @@ const READER_GRANT = JSON.stringify({
   revoked_at: null
 });
 
+const A = E2EE_CHECK_KEYS.a.publicKey;
+const B = E2EE_CHECK_KEYS.b.publicKey;
+const C = E2EE_CHECK_KEYS.c.publicKey;
+const AS_A = { wallet: E2EE_CHECK_PROFILES.a.wallet };
+const AS_B = { wallet: E2EE_CHECK_PROFILES.b.wallet };
+const ACTIVITY = {
+  reason: 'Activity: the rebuild derives it from the log, and calls move it.'
+};
+
+/**
+ * The answers a person's devices read, as the fixture's members a and b
+ * (the dm tests' `answers()` as routes).
+ */
+const PROBES: Probe[] = [
+  {
+    id: 'dm.e2ee.me',
+    path: '/api/e2ee/me',
+    as: AS_A,
+    ignore: [{ path: '$.devices[*].last_seen_at', ...ACTIVITY }]
+  },
+  {
+    id: 'dm.e2ee.me-b',
+    path: '/api/e2ee/me',
+    as: AS_B,
+    ignore: [{ path: '$.devices[*].last_seen_at', ...ACTIVITY }]
+  },
+  {
+    id: 'dm.e2ee.profile-devices',
+    // The fixture devices use suite 0x004E; the route lists 0x004F unless asked.
+    path: '/api/e2ee/profiles/{profile}/devices?ciphersuite=78',
+    each: {
+      profile: [
+        E2EE_CHECK_PROFILES.a.profileId,
+        E2EE_CHECK_PROFILES.b.profileId
+      ]
+    },
+    as: AS_A,
+    ignore: [{ path: '$[*].last_seen_at', ...ACTIVITY }]
+  },
+  {
+    id: 'dm.e2ee.device',
+    path: '/api/e2ee/devices/{device}',
+    each: { device: [A, B, C] },
+    as: AS_A,
+    ignore: [{ path: '$.last_seen_at', ...ACTIVITY }]
+  },
+  {
+    id: 'dm.e2ee.device-groups',
+    path: `/api/e2ee/devices/${A}/groups`,
+    as: AS_A
+  },
+  {
+    id: 'dm.e2ee.inbox-status',
+    path: `/api/e2ee/devices/${B}/inbox-status`,
+    as: AS_B
+  },
+  {
+    id: 'dm.e2ee.welcomes',
+    path: `/api/e2ee/devices/${B}/welcomes`,
+    as: AS_B
+  },
+  {
+    id: 'dm.e2ee.group-a',
+    path: `/api/e2ee/groups/${E2EE_CHECK_IDS.group}?device_key=${A}`,
+    as: AS_A
+  },
+  {
+    id: 'dm.e2ee.group-b',
+    path: `/api/e2ee/groups/${E2EE_CHECK_IDS.group}?device_key=${B}`,
+    as: AS_B
+  },
+  {
+    id: 'dm.e2ee.log-a',
+    path: `/api/e2ee/groups/${E2EE_CHECK_IDS.group}/log?device_key=${A}`,
+    as: AS_A
+  },
+  {
+    id: 'dm.e2ee.log-b',
+    path: `/api/e2ee/groups/${E2EE_CHECK_IDS.group}/log?device_key=${B}`,
+    as: AS_B
+  },
+  {
+    id: 'dm.e2ee.blob-chunk',
+    path: `/api/e2ee/blobs/${E2EE_CHECK_IDS.blob}/chunks/{index}?device_key=${B}`,
+    each: { index: ['0', '1'] },
+    as: AS_B
+  },
+  { id: 'dm.e2ee.backup-status', path: '/api/e2ee/backup', as: AS_A },
+  {
+    id: 'dm.e2ee.backup',
+    path: `/api/e2ee/backups/${E2EE_CHECK_IDS.backup}`,
+    as: AS_A
+  },
+  {
+    id: 'dm.e2ee.backup-chunks',
+    path: `/api/e2ee/backups/${E2EE_CHECK_IDS.backup}/chunks`,
+    as: AS_A
+  },
+  {
+    id: 'dm.e2ee.backup-chunk',
+    path: `/api/e2ee/backups/${E2EE_CHECK_IDS.backup}/chunks/2`,
+    as: AS_A
+  }
+];
+
 /**
  * Encrypted direct messages and reports to moderators.
  * Classes start from the migration map; this manifest confirms or changes
@@ -67,6 +177,8 @@ const READER_GRANT = JSON.stringify({
 export const dmManifest: AreaManifest = {
   area: 'dm',
   flags: {
+    E2EE_DMS_ENABLED: 'true',
+    E2EE_BACKUPS_ENABLED: 'true',
     E2EE_RELAY_MODE: 'mirror',
     E2EE_RELAY_URLS: '{relays}',
     E2EE_RELAY_NET: '6529-rebuild-check',
@@ -170,7 +282,10 @@ export const dmManifest: AreaManifest = {
         ...RECORD_TABLES,
         'e2ee_relay_outbox',
         // The report path's own audit row (a moderation table).
-        'content_moderation_audit_log'
+        'content_moderation_audit_log',
+        // The fixture profiles the probes sign in as (identity tables).
+        'identities',
+        'address_consolidation_keys'
       ],
       sources: ['relays'],
       timeoutMinutes: 10
@@ -185,5 +300,29 @@ export const dmManifest: AreaManifest = {
       timeoutMinutes: 15
     }
   ],
-  probes: []
+  probes: PROBES,
+  waivers: {
+    unprobedTables: [
+      ...[
+        'content_moderation_items',
+        'content_moderation_reports',
+        'e2ee_report_access_log',
+        'e2ee_reports'
+      ].map((target) => ({
+        target,
+        reason:
+          'Read only by moderators (the moderation developer group). A moderator fixture comes with the group fixtures; until then the run compares these rows table by table.'
+      })),
+      {
+        target: 'e2ee_group_epochs',
+        reason:
+          'No GET route reads it: writes check a commit against the epoch keys. The run compares its rows table by table.'
+      },
+      {
+        target: 'e2ee_streams',
+        reason:
+          "The relay index's stream heads: no GET route reads it. The run compares its rows table by table."
+      }
+    ]
+  }
 };
