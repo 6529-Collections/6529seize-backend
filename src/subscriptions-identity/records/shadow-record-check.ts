@@ -223,22 +223,32 @@ export async function compareShadowChange(input: {
 
 /**
  * A signed change that did not reach the identity tables while today's
- * write went through: a DIFF, with the cause as a code (a refusal's reason
- * or rule code), never the record or the refusal's text.
+ * write went through, with the cause as a code (a refusal's reason or rule
+ * code), never the record or the refusal's text:
+ * - REFUSED: the record itself was not taken (it did not verify, did not
+ *   state the request, was stale, or could not be checked); one person's bad
+ *   record says nothing about the identity tables, so the gate skips it;
+ * - DIFF: the identity side's rules refused what today's write took;
+ * - FAILED: the identity side failed (an error).
  */
 export function failedShadowReport(
   change: SubscriptionChange,
-  cause: string,
+  failure: {
+    readonly verdict: 'REFUSED' | 'DIFF' | 'FAILED';
+    readonly cause: string;
+  },
   eventId: string | null
 ): ComparisonReport {
   return {
     kind: 'RECORD',
     mode: 'SHADOW',
     ...cardOf(change),
-    verdict: 'DIFF',
+    verdict: failure.verdict,
     legacyRows: 0,
     identityRows: 0,
-    diffs: [{ key: 'record not applied', legacy: null, identity: cause }],
-    notes: [`${change.type} ${eventId ?? 'unreadable record'}`, cause]
+    diffs: [
+      { key: 'record not applied', legacy: null, identity: failure.cause }
+    ],
+    notes: [`${change.type} ${eventId ?? 'no event id'}`, failure.cause]
   };
 }

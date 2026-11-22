@@ -474,6 +474,7 @@ describeWithSeed('subscriptions opening file', [], () => {
         subscriptionChangeWriter.write({
           routeKey: PAIR,
           wallet: A,
+          walletInKey: true,
           signedRecords: undefined,
           change: {
             type: 'subs.card',

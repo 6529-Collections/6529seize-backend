@@ -19,7 +19,12 @@ export interface ComparisonReport {
   readonly mode: IdentityWriteMode;
   readonly contract: string | null;
   readonly tokenId: number | null;
-  readonly verdict: 'MATCH' | 'DIFF' | 'FAILED';
+  /**
+   * REFUSED: a signed record that came with a shadow change was not taken
+   * (it did not verify, was stale, or could not be checked); it says nothing
+   * about the identity tables, so the go-live gate does not count it.
+   */
+  readonly verdict: 'MATCH' | 'DIFF' | 'FAILED' | 'REFUSED';
   readonly legacyRows: number;
   readonly identityRows: number;
   readonly diffs: RowDiff[];
@@ -113,7 +118,8 @@ export async function saveReport(report: ComparisonReport): Promise<void> {
  * what on a real mint. For the last minted card it requires a MATCH list
  * from its last build, at least one phase comparison and at least one
  * redemption comparison, all MATCH, and no shadow DIFF of any kind since
- * that card's first list comparison. `checked` says what was looked at.
+ * that card's first list comparison. A REFUSED signed record is counted in
+ * `checked`, not as a problem. `checked` says what was looked at.
  */
 export async function shadowReportsMatch(mintedCard: number): Promise<{
   readonly ok: boolean;
@@ -150,9 +156,14 @@ export async function shadowReportsMatch(mintedCard: number): Promise<{
     problems.push(`no redemption comparison for card ${mintedCard}`);
   }
   const since = lists[0]?.id ?? 0;
-  const diffs = reports.filter((r) => r.id >= since && r.verdict !== 'MATCH');
+  const recent = reports.filter((r) => r.id >= since);
+  const refused = recent.filter((r) => r.verdict === 'REFUSED');
+  const diffs = recent.filter(
+    (r) => r.verdict !== 'MATCH' && r.verdict !== 'REFUSED'
+  );
   checked.push(
-    `${reports.filter((r) => r.id >= since).length} shadow comparisons since card ${mintedCard}'s first list`
+    `${recent.length} shadow comparisons since card ${mintedCard}'s first list`,
+    `${refused.length} signed records refused in shadow (not counted)`
   );
   for (const diff of diffs) {
     problems.push(

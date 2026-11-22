@@ -169,6 +169,7 @@ describe('subscription write routes', () => {
       expect(mockWrite).toHaveBeenCalledWith({
         routeKey: KEY,
         wallet: WALLET,
+        walletInKey: true,
         signedRecords: HEADER,
         change
       });
@@ -207,6 +208,26 @@ describe('subscription write routes', () => {
       ).status
     ).toBe(400);
     expect(mockWrite).not.toHaveBeenCalled();
+  });
+
+  it("hands a principal key on with walletInKey false, for the writer to check the wallet's identity", async () => {
+    const principal = `0x${'c1'.padStart(64, '0')}`;
+    mockConsolidationAddresses.mockResolvedValueOnce([]);
+    const response = await fetch(
+      `${baseUrl}/api/subscriptions/${principal}/subscription-mode`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-test-wallet': WALLET
+        },
+        body: JSON.stringify({ automatic: true })
+      }
+    );
+    expect(response.status).toBe(201);
+    expect(mockWrite).toHaveBeenCalledWith(
+      expect.objectContaining({ routeKey: principal, walletInKey: false })
+    );
   });
 
   it("answers with the writer's refusal", async () => {

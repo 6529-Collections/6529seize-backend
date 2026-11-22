@@ -3130,13 +3130,15 @@ that fails saves a FAILED report, which the go-live gate counts as a
 difference.
 
 **Signed changes.** The four write routes keep their own checks (the key's
-wallet, the body, a released card) and then hand the change to
+wallet, the body, a released card; a principal id the wallet's legacy key
+doesn't name goes on, and is taken only after the switch, from a wallet the
+identity mirror has in that identity) and then hand the change to
 `SubscriptionChangeWriter` (`records/subscription-writes.ts`), which reads
 the path uncached at every write (`subscriptionWritePathNow`): PAUSED (503)
 while go-live runs, IDENTITY after the switch, SHADOW before it with
 `FEATURE_SUBSCRIPTIONS_SHADOW=true` and an opening loaded, else LEGACY
 (today's write; the header is ignored). A change is a kind 9 RECORD in the
-author's `ps` stream (`ps/<principal>`, or `ps/<wallet>` while the wallet
+owner's `ps` stream (`ps/<principal>`, or `ps/<wallet>` while the wallet
 is bound to none) of type `subs.mode`, `subs.all-editions`, `subs.card` or
 `subs.count`, sent in the `x-6529-signed-records` header, one record per
 request. It is verified (device grant with the `post` scope, signature,
@@ -3144,23 +3146,40 @@ anchor within 120 heights of the finalized head, claimed time within 10
 minutes, author bound to the owner at the anchor) and must state the
 request's change, be signed for the signed-in wallet and name the identity
 of the route's key; otherwise 400 `INVALID_SIGNED_RECORD` with the reason.
+A record in a bare wallet's stream whose wallet has bound to a principal
+since its anchor still counts: it writes the rows that hold the wallet's
+state at write time, the wallet's own until the top-up loop's fold moves
+them, then the identity's, and the journal entry names that key
+(`inputs.identity_key`). When it goes to the identity, an empty fold of
+the wallet into the identity is journaled first, in the same transaction,
+unless the opening's key map has the wallet in that identity: a wallet with
+no rows of its own is never folded, so otherwise nothing would tie it to
+the rows. Where the fold writer already folded the wallet, this repeats the
+link, a no-op for the rebuild.
 In one transaction the event goes to the record log (lane `subs`, with
 its grant proof), the record index applies it if it is newer than the
 stored head for its choice (else 409), `makeChoice` works it out with the
 legacy route's checks and words (400 with code BALANCE, CLOSED,
-NOT_SUBSCRIBED or OVER_ELIGIBILITY) and writes it, and its journal entry
+NOT_SUBSCRIBED or OVER_ELIGIBILITY) from the identity's rows read FOR
+UPDATE, writes it, checks the cutoff again, and its journal entry
 (kind `choice`: the record's event id, owner, type, key, anchor and claimed
 time, and the mode, choice and log rows it changed, each before and after)
 follows the event. The event always goes to lane `subs`; the journal entry
 goes to `subs` or `subs-shadow` like any other write. After
 the switch an unsigned change gets 409 `SIGNED_RECORD_REQUIRED`; an applied
 one is then written to the legacy tables under the identity's consolidation
-key (a failure is logged and coverage marked). In shadow today's write goes
+key (a failure alarms, `SUBSCRIPTIONS_LEGACY_DUAL_WRITE_FAILED`, and coverage
+is marked). In shadow today's write goes
 first with its own refusals; a record that came with it is applied to the
 identity tables, and the rows the change is about and the log lines each
 side added are compared. Every signed change in shadow leaves a `RECORD`
-report, MATCH or DIFF, naming rows and fields but no values; nothing on the
-identity side fails the request, and the go-live gate counts every DIFF. A
+report naming rows and fields but no values: MATCH; DIFF when the rows
+differ or the identity side's rules refused what today's write took;
+FAILED on an error; REFUSED when the record itself was not taken (it did
+not verify or state the request, was stale, or the anchor was unavailable).
+Nothing on the identity side fails the request. The go-live gate counts
+every DIFF and FAILED, and skips REFUSED, so one person's bad header can't
+hold the switch back. A
 rebuild writes a choice back from its journal entry like any other write;
 the event before it can be verified against the grant proof it carries.
 

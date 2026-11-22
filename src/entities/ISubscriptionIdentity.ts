@@ -381,7 +381,7 @@ export class SubscriptionIdReportEntity {
   @Column({ type: 'bigint', nullable: true, default: null })
   token_id!: number | null;
 
-  /** MATCH or DIFF. */
+  /** MATCH, DIFF, FAILED or REFUSED. */
   @Column({ type: 'varchar', length: 10 })
   verdict!: string;
 

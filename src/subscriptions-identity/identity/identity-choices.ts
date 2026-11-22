@@ -91,10 +91,17 @@ function q<T>(
   return sqlExecutor.execute<T>(sql, params, scope.options);
 }
 
+/**
+ * The identity's rows are read with FOR UPDATE: a locking read sees the
+ * latest committed row, not the transaction's snapshot, and holds it, so
+ * the rules and the effects are worked out from the rows the write changes.
+ */
+const LOCKED = ' FOR UPDATE';
+
 async function balanceOf(scope: ChoiceScope): Promise<number | null> {
   const [row] = await q<{ balance: number | string }>(
     scope,
-    `SELECT balance FROM ${SUBSCRIPTIONS_ID_BALANCES_TABLE} WHERE identity_key = :identityKey`,
+    `SELECT balance FROM ${SUBSCRIPTIONS_ID_BALANCES_TABLE} WHERE identity_key = :identityKey${LOCKED}`,
     { identityKey: scope.identityKey }
   );
   return row ? Number(row.balance) : null;
@@ -106,7 +113,7 @@ async function modeOf(
   const [row] = await q<{ automatic: Flag; subscribe_all_editions: Flag }>(
     scope,
     `SELECT automatic, subscribe_all_editions FROM ${SUBSCRIPTIONS_ID_MODE_TABLE}
-      WHERE identity_key = :identityKey`,
+      WHERE identity_key = :identityKey${LOCKED}`,
     { identityKey: scope.identityKey }
   );
   return row
@@ -140,7 +147,7 @@ async function cardRowsAfter(
     `SELECT token_id, subscribed, subscribed_count, automatic_subscription
        FROM ${SUBSCRIPTIONS_ID_NFTS_TABLE}
       WHERE identity_key = :identityKey AND contract = :contract AND token_id > :tokenId
-      ORDER BY token_id`,
+      ORDER BY token_id${LOCKED}`,
     { identityKey: scope.identityKey, contract: MEMES_CONTRACT, tokenId }
   );
   return rows.map((row) => ({
@@ -346,7 +353,7 @@ async function countEffects(
     const [row] = await q<{ subscribed: Flag }>(
       scope,
       `SELECT subscribed FROM ${SUBSCRIPTIONS_ID_NFTS_TABLE}
-        WHERE identity_key = :identityKey AND contract = :contract AND token_id = :tokenId`,
+        WHERE identity_key = :identityKey AND contract = :contract AND token_id = :tokenId${LOCKED}`,
       { identityKey: scope.identityKey, contract: change.contract, tokenId }
     );
     if (row && !flag(row.subscribed)) {

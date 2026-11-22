@@ -69,6 +69,7 @@ import {
   ParsedOpening,
   parseOpeningFiles
 } from '../opening/opening-load';
+import { foldBoundWallets } from '../writers/identity-fold';
 import { saveReport } from '../writers/identity-reports';
 import { identityTablesHash, journalBodyOf } from '../timeline/journal';
 import { JournalSource, rebuildIdentityTables } from '../opening/rebuild';
@@ -76,8 +77,12 @@ import { recordContentOf, SubscriptionChange } from './subscription-records';
 import {
   legacySubscriptionWrite,
   SubscriptionChangeWriter,
+  SubscriptionWriteDeps,
   SubscriptionWriteRequest
 } from './subscription-writes';
+import * as cutoffModule from '@/api/subscriptions/subscription-cutoff';
+import { CustomApiCompliantException } from '@/exceptions';
+import { shadowReportsMatch } from '../writers/identity-reports';
 
 jest.mock('@/subscriptionsDaily/subscription-cache', () => ({
   invalidateUpcomingSubscriptionCaches: jest.fn()
@@ -98,6 +103,7 @@ const RELEASED = 100;
 /** Upcoming cards, open on every weekday (the cutoff is 100 or 101). */
 const C1 = 102;
 const C2 = 103;
+const C3 = 104;
 const ANCHOR = 1000;
 
 let fixture: Awaited<ReturnType<typeof appGrantFixture>>;
@@ -214,6 +220,7 @@ function writer(
     readonly shadow?: boolean;
     readonly grants?: readonly VerifiedGrant[];
     readonly bindings?: PrincipalBindingSource;
+    readonly anchors?: SubscriptionWriteDeps['anchors'];
   } = {}
 ): SubscriptionChangeWriter {
   return new SubscriptionChangeWriter({
@@ -222,7 +229,7 @@ function writer(
     grants: grantSource(options.grants ?? [fixture.grant]),
     bindings:
       options.bindings ?? bindingSource([{ wallet: W, principal: P, from: 1 }]),
-    anchors: {
+    anchors: options.anchors ?? {
       getAnchor: async () => ({
         anchor: ANCHOR,
         headHeight: ANCHOR,
@@ -272,7 +279,14 @@ function request(
   signedRecords: string | undefined,
   overrides: Partial<SubscriptionWriteRequest> = {}
 ): SubscriptionWriteRequest {
-  return { routeKey: W, wallet: W, signedRecords, change, ...overrides };
+  return {
+    routeKey: W,
+    wallet: W,
+    walletInKey: true,
+    signedRecords,
+    change,
+    ...overrides
+  };
 }
 
 const card = (token: number, subscribed: boolean): SubscriptionChange => ({
@@ -458,7 +472,8 @@ describeWithSeed('signed subscription changes', [], () => {
             type: 'subs.card',
             key: `${MEMES_CONTRACT.toLowerCase()}:${C1}`,
             anchor: ANCHOR,
-            claimed_time: event.claimed_time
+            claimed_time: event.claimed_time,
+            identity_key: P
           }
         })
       );
@@ -787,17 +802,239 @@ describeWithSeed('signed subscription changes', [], () => {
       expect([result.status, result.reason]).toEqual([400, 'not-bound']);
     });
 
+    /** The mirror binds W to P after the opening (the fold has not run). */
+    async function bindInMirror() {
+      await execute(
+        `INSERT INTO ${IDENTITIES_TABLE} (consolidation_key, profile_id, primary_address, tdh, rep, cic, level_raw)
+          VALUES (:w, 'profile-1', :w, 0, 0, 0, 0)`,
+        { w: W }
+      );
+      await execute(
+        `INSERT INTO identity_chain_principals VALUES (:p, 'profile-1', 'LEGACY', 0)`,
+        { p: P }
+      );
+    }
+
+    it("writes a bare wallet's change to the wallet's own rows until the fold moves them into its identity", async () => {
+      // W was its own identity at the opening. The mirror has bound it to P
+      // since; at the record's anchor the chain had it bound to none, so the
+      // record is W's own.
+      await seedLegacy({ bound: false });
+      await cutAndLoad(true);
+      await bindInMirror();
+      await writer({ bindings: bindingSource([]) }).write(
+        request(MODE_ON, header(record(MODE_ON, { owner: W })))
+      );
+      expect((await rowsOf('identity', W)).mode).toEqual([[1, 0]]);
+      expect((await rowsOf('identity', P)).mode).toEqual([]);
+      const choice = (await logEntries())
+        .map((e) => journalBodyOf(e))
+        .find((body) => body?.kind === 'choice');
+      expect([choice?.inputs.owner, choice?.inputs.identity_key]).toEqual([
+        W,
+        W
+      ]);
+      // The fold brings the change along.
+      expect(await foldBoundWallets()).toBe(1);
+      expect((await rowsOf('identity', W)).mode).toEqual([]);
+      expect((await rowsOf('identity', P)).mode).toEqual([[1, 0]]);
+    });
+
+    it('after a fold of W into its identity, writes a change owned by W to the identity, and a rebuild from the journal holds', async () => {
+      await seedLegacy({ bound: false });
+      const opening = await cutAndLoad(true);
+      await bindInMirror();
+      expect(await foldBoundWallets()).toBe(1);
+      await writer({ bindings: bindingSource([]) }).write(
+        request(MODE_ON, header(record(MODE_ON, { owner: W })))
+      );
+      // W has no rows left, so the change went to P's.
+      expect((await rowsOf('identity', P)).mode).toEqual([[1, 0]]);
+      expect(await rowsOf('identity', W)).toEqual({
+        mode: [],
+        cards: [],
+        lines: []
+      });
+      const bodies = (await logEntries())
+        .map((e) => journalBodyOf(e))
+        .filter((body) => body !== null);
+      // The fold writer's fold, then the change's own link of W to P (the
+      // opening doesn't have W in P; a repeat of a fold is a no-op), then
+      // the change.
+      expect(
+        bodies.map((b) => [b.kind, b.rekeys, b.changes.length > 0])
+      ).toEqual([
+        ['fold', [{ from: W, to: P }], true],
+        ['fold', [{ from: W, to: P }], false],
+        ['choice', [], true]
+      ]);
+      const choice = bodies[2];
+      expect([choice.inputs.owner, choice.inputs.identity_key]).toEqual([W, P]);
+      expect(
+        choice.changes.map((c) => [c.table, c.key.identity_key])
+      ).toContainEqual(['mode', P]);
+      const tablesBefore = await identityTablesHash({});
+      const headsBefore = await heads();
+      for (const table of [
+        ...IDENTITY_DATA_TABLES,
+        SUBSCRIPTIONS_ID_STATE_TABLE,
+        SUBSCRIPTIONS_ID_CURSORS_TABLE,
+        SIGNED_RECORD_HEADS_TABLE
+      ]) {
+        await execute(`DELETE FROM ${table}`);
+      }
+      subscriptionsIdentitySwitch.invalidate();
+      const result = await rebuildIdentityTables({
+        source: journalSource,
+        opening
+      });
+      expect(result).toEqual(
+        expect.objectContaining({ entries: 3, skipped: 0, missing: null })
+      );
+      expect(await identityTablesHash({})).toBe(tablesBefore);
+      expect(await heads()).toEqual(headsBefore);
+    });
+
+    it('links a wallet with no rows of its own to the identity its change goes to, with an empty fold first', async () => {
+      // W has nothing at the opening, binds to P after the record's anchor,
+      // and its change goes to P's rows. Nothing else in the journal would
+      // tie W to P.
+      await seedLegacy({ bound: false });
+      for (const table of [
+        SUBSCRIPTIONS_BALANCES_TABLE,
+        SUBSCRIPTIONS_NFTS_TABLE,
+        SUBSCRIPTIONS_TOP_UP_TABLE
+      ]) {
+        await execute(`DELETE FROM ${table}`);
+      }
+      const opening = await cutAndLoad(true);
+      await bindInMirror();
+      await writer({ bindings: bindingSource([]) }).write(
+        request(ALL_ON, header(record(ALL_ON, { owner: W })))
+      );
+      expect((await rowsOf('identity', P)).mode).toEqual([[0, 1]]);
+      const bodies = (await logEntries())
+        .map((e) => journalBodyOf(e))
+        .filter((body) => body !== null);
+      expect(
+        bodies.map((b) => [b.kind, b.inputs, b.rekeys, b.changes.length])
+      ).toEqual([
+        ['fold', { wallet: W, identity_key: P }, [{ from: W, to: P }], 0],
+        [
+          'choice',
+          expect.objectContaining({ owner: W, identity_key: P }),
+          [],
+          2
+        ]
+      ]);
+      expect(bodies[1].n).toBe(bodies[0].n + 1);
+      const tablesBefore = await identityTablesHash({});
+      for (const table of [
+        ...IDENTITY_DATA_TABLES,
+        SUBSCRIPTIONS_ID_STATE_TABLE,
+        SUBSCRIPTIONS_ID_CURSORS_TABLE
+      ]) {
+        await execute(`DELETE FROM ${table}`);
+      }
+      subscriptionsIdentitySwitch.invalidate();
+      const result = await rebuildIdentityTables({
+        source: journalSource,
+        opening
+      });
+      expect(result).toEqual(
+        expect.objectContaining({ entries: 2, skipped: 0, missing: null })
+      );
+      expect(await identityTablesHash({})).toBe(tablesBefore);
+    });
+
+    it('journals no link for a wallet the opening already has in the identity', async () => {
+      await seedLegacy();
+      await cutAndLoad(true);
+      await writer({ bindings: bindingSource([]) }).write(
+        request(ALL_ON, header(record(ALL_ON, { owner: W })))
+      );
+      const bodies = (await logEntries())
+        .map((e) => journalBodyOf(e))
+        .filter((body) => body !== null);
+      expect(bodies.map((b) => [b.kind, b.inputs.identity_key])).toEqual([
+        ['choice', P]
+      ]);
+    });
+
+    it("takes a principal route key from a wallet of that identity, and refuses anyone else's", async () => {
+      await seedLegacy();
+      await execute(
+        `INSERT INTO ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key) VALUES (:o, :o)`,
+        { o: OTHER }
+      );
+      await cutAndLoad(true);
+      // The route's own check fails for a principal key (no legacy rows).
+      const asPrincipal = (wallet: string) =>
+        request(MODE_ON, header(record(MODE_ON)), {
+          routeKey: P,
+          wallet,
+          walletInKey: false
+        });
+      expect(await writer().write(asPrincipal(W))).toEqual({
+        consolidation_key: P,
+        automatic: true
+      });
+      expect((await rowsOf('identity', P)).mode).toEqual([[1, 0]]);
+      // The dual write goes to the identity's consolidation key.
+      expect((await rowsOf('legacy', W)).mode).toEqual([[1, 0]]);
+      expect(await refusal(writer().write(asPrincipal(OTHER)))).toEqual(
+        expect.objectContaining({ status: 403 })
+      );
+    });
+
+    it('rolls the whole change back when the cutoff passes while it is written', async () => {
+      await seedLegacy();
+      await cutAndLoad(true);
+      const before = [await rowsOf('identity', P), await rowsOf('legacy', W)];
+      // Open when the change is worked out; closed by the re-check after
+      // the write, in the same transaction.
+      const cutoff = jest
+        .spyOn(cutoffModule, 'getSubscriptionCutoffMemeId')
+        .mockResolvedValueOnce(RELEASED)
+        .mockResolvedValueOnce(C1);
+      try {
+        expect(
+          await refusal(
+            writer().write(
+              request(card(C1, true), header(record(card(C1, true))))
+            )
+          )
+        ).toEqual({
+          status: 400,
+          code: 'CLOSED',
+          reason: undefined,
+          message: `Subscriptions are closed for Meme #${C1}.`
+        });
+        expect(cutoff).toHaveBeenCalledTimes(2);
+      } finally {
+        cutoff.mockRestore();
+      }
+      expect([await rowsOf('identity', P), await rowsOf('legacy', W)]).toEqual(
+        before
+      );
+      expect(await logEntries()).toEqual([]);
+      expect(await heads()).toEqual([]);
+    });
+
     it('rebuilds the identity tables from the opening and the journal alone, giving the same API answers', async () => {
       await seedLegacy();
       const opening = await cutAndLoad(true);
       const now = Date.now();
+      // Two unsubscribed cards that automatic mode turns back on together,
+      // and manual mode turns off together again.
       const changes: SubscriptionChange[] = [
+        card(C1, false),
+        card(C3, false),
         MODE_ON,
         ALL_ON,
-        card(C1, true),
         count(C1, 2),
         card(C2, false),
-        card(C1, false),
+        { type: 'subs.mode', automatic: false },
         card(C1, true)
       ];
       let at = now - changes.length * 1000;
@@ -834,6 +1071,10 @@ describeWithSeed('signed subscription changes', [], () => {
       };
       const before = await answers();
       const tablesBefore = await identityTablesHash({});
+      const headsBefore = await heads();
+      // One per choice: the mode, all editions, C1's count, and the C1, C2
+      // and C3 subscriptions.
+      expect(headsBefore).toHaveLength(6);
 
       // The log holds each change's signed event, then its journal entry.
       const entries = (await logEntries()).filter((e) => e.lane === 'subs');
@@ -846,10 +1087,30 @@ describeWithSeed('signed subscription changes', [], () => {
         .map((e) => journalBodyOf(e))
         .flatMap((body) => body?.changes ?? [])
         .filter((c) => c.table === 'mode' || c.table === 'choices');
-      // Six of the seven changed one (the count to x2 repeats the count the
-      // all-editions subscribe already set, so only its log line is new).
-      expect(touched).toHaveLength(6);
       expect(touched.every((c) => c.before !== undefined)).toBe(true);
+      // Each mode change flipped both unsubscribed cards in one entry.
+      const flips = entries
+        .map((e) => journalBodyOf(e))
+        .filter((body) => body?.inputs.type === 'subs.mode')
+        .map((body) =>
+          body!.changes
+            .filter((c) => c.table === 'choices')
+            .map((c) => [
+              Number(c.key.token_id),
+              Number(c.before?.subscribed),
+              Number(c.after?.subscribed)
+            ])
+        );
+      expect(flips).toEqual([
+        [
+          [C1, 0, 1],
+          [C3, 0, 1]
+        ],
+        [
+          [C1, 1, 0],
+          [C3, 1, 0]
+        ]
+      ]);
       // Each event verifies against the grant proof it carries: no grant
       // table and no live window.
       for (const entry of entries) {
@@ -862,12 +1123,13 @@ describeWithSeed('signed subscription changes', [], () => {
         }
       }
 
-      // Lose every identity table, its state and cursors; rebuild from the
-      // opening files and the journal.
+      // Lose every identity table, its state and cursors, and the record
+      // heads; rebuild from the opening files and the journal.
       for (const table of [
         ...IDENTITY_DATA_TABLES,
         SUBSCRIPTIONS_ID_STATE_TABLE,
-        SUBSCRIPTIONS_ID_CURSORS_TABLE
+        SUBSCRIPTIONS_ID_CURSORS_TABLE,
+        SIGNED_RECORD_HEADS_TABLE
       ]) {
         await execute(`DELETE FROM ${table}`);
       }
@@ -884,6 +1146,8 @@ describeWithSeed('signed subscription changes', [], () => {
         })
       );
       expect(await identityTablesHash({})).toBe(tablesBefore);
+      // The heads are back, so an older record is still refused as stale.
+      expect(await heads()).toEqual(headsBefore);
       // The rebuild leaves the tables verified and in shadow; switch to them
       // to read the API's answers.
       expect(
@@ -891,6 +1155,12 @@ describeWithSeed('signed subscription changes', [], () => {
       ).toBe(true);
       subscriptionsIdentitySwitch.invalidate();
       expect(await answers()).toEqual(before);
+      const older = record(card(C1, false), { claimedTime: now - 60_000 });
+      expect(
+        await refusal(writer().write(request(card(C1, false), header(older))))
+      ).toEqual(
+        expect.objectContaining({ status: 409, code: 'STALE_SIGNED_RECORD' })
+      );
     });
   });
 
@@ -966,7 +1236,7 @@ describeWithSeed('signed subscription changes', [], () => {
       );
     });
 
-    it("keeps today's write and reports a DIFF when the record does not verify", async () => {
+    it("keeps today's write and reports it REFUSED when the record does not verify", async () => {
       await seedLegacy();
       await cutAndLoad(false);
       const event = record(card(C1, true));
@@ -980,11 +1250,11 @@ describeWithSeed('signed subscription changes', [], () => {
       const [report] = await reports();
       expect([report.kind, report.verdict, report.token_id]).toEqual([
         'RECORD',
-        'DIFF',
+        'REFUSED',
         C1
       ]);
       expect(report.report.notes).toEqual([
-        'subs.card unreadable record',
+        'subs.card no event id',
         'invalid-record:body'
       ]);
       // No record contents in the report.
@@ -1005,7 +1275,78 @@ describeWithSeed('signed subscription changes', [], () => {
       expect((await rowsOf('legacy', W)).cards).toContainEqual([C1, 1, 1, 0]);
       const [report] = await reports();
       expect(report.verdict).toBe('DIFF');
-      expect(report.report.notes[1]).toBe('refused:BALANCE');
+      expect(report.report.notes[1]).toBe('rule:BALANCE');
+    });
+
+    it("lets the go-live gate skip records refused in shadow, and count the identity side's rule refusals", async () => {
+      await seedLegacy();
+      await cutAndLoad(false);
+      const CARD = 579;
+      const gateReport = (kind: string, verdict: string) =>
+        execute(
+          `INSERT INTO ${SUBSCRIPTIONS_ID_REPORTS_TABLE} (kind, mode, token_id, verdict, report, created_at)
+            VALUES (:kind, 'SHADOW', :card, :verdict, '{}', 0)`,
+          { kind, card: CARD, verdict }
+        );
+      await gateReport('LIST', 'MATCH');
+      // Three records the identity side never took: a bad signature, the same
+      // record sent twice (stale), and one sent while the anchor was down.
+      const event = record(card(C1, true));
+      await writer({ shadow: true }).write(
+        request(
+          card(C1, true),
+          header({ ...event, signature: `0x${'1'.repeat(128)}` })
+        )
+      );
+      await writer({ shadow: true }).write(
+        request(card(C1, true), header(event))
+      );
+      await writer({ shadow: true }).write(
+        request(card(C1, true), header(event))
+      );
+      await writer({
+        shadow: true,
+        anchors: {
+          getAnchor: async () => {
+            throw new CustomApiCompliantException(
+              503,
+              'The chain gateway did not answer, so there is no anchor height',
+              'ANCHOR_UNAVAILABLE'
+            );
+          }
+        }
+      }).write(request(card(C2, false), header(record(card(C2, false)))));
+      await gateReport('PHASE', 'MATCH');
+      await gateReport('REDEMPTIONS', 'MATCH');
+      expect(
+        (await reports())
+          .filter((r) => r.kind === 'RECORD')
+          .map((r) => [r.verdict, r.report.notes[1] ?? null])
+      ).toEqual([
+        ['REFUSED', 'invalid-record:sig'],
+        ['MATCH', null],
+        ['REFUSED', 'refused:STALE_SIGNED_RECORD'],
+        ['REFUSED', 'refused:ANCHOR_UNAVAILABLE']
+      ]);
+      const passing = await shadowReportsMatch(CARD);
+      expect(passing.problems).toEqual([]);
+      expect(passing.ok).toBe(true);
+      expect(passing.checked).toContain(
+        '3 signed records refused in shadow (not counted)'
+      );
+      // The identity side refusing what today's write took is counted.
+      await execute(
+        `UPDATE ${SUBSCRIPTIONS_ID_BALANCES_TABLE} SET balance = 0.01 WHERE identity_key = :p`,
+        { p: P }
+      );
+      await writer({ shadow: true }).write(
+        request(card(C3, true), header(record(card(C3, true))))
+      );
+      const failing = await shadowReportsMatch(CARD);
+      expect(failing.ok).toBe(false);
+      expect(failing.problems).toHaveLength(1);
+      expect(failing.problems[0]).toMatch(/^RECORD comparison \d+ /);
+      expect(failing.problems[0]).toContain(`(card ${C3}) is a DIFF`);
     });
 
     it('reports which rows differ, without their values, when the sides had drifted', async () => {

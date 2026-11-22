@@ -6,12 +6,21 @@ import {
   updateSubscriptionMode
 } from '@/api/subscriptions/api.subscriptions.db';
 import {
+  SUBSCRIPTIONS_ID_BALANCES_TABLE,
+  SUBSCRIPTIONS_ID_KEY_MAP_TABLE,
+  SUBSCRIPTIONS_ID_MODE_TABLE,
+  SUBSCRIPTIONS_ID_NFTS_TABLE
+} from '@/constants';
+import {
   ApiCompliantException,
-  CustomApiCompliantException
+  CustomApiCompliantException,
+  ForbiddenException
 } from '@/exceptions';
 import { Logger } from '@/logging';
 import { canonicalizeJson } from '@/profile-cms/protocol/v1/canonical-json';
+import { DbQueryOptions } from '@/db-query.options';
 import { RequestContext } from '@/request.context';
+import { sqlExecutor } from '@/sql-executor';
 import { markSubscriptionCoverageDirty } from '@/subscription-coverage/subscription-coverage-dirty';
 import {
   RecordAnchor,
@@ -102,6 +111,12 @@ export interface SubscriptionWriteRequest {
   readonly routeKey: string;
   /** The signed-in wallet. */
   readonly wallet: string;
+  /**
+   * Whether the wallet is one of the key's wallets (the route's own check).
+   * When it is not, the key is a principal id, and only the IDENTITY path
+   * takes it, for a wallet of that identity.
+   */
+  readonly walletInKey: boolean;
   /** The `x-6529-signed-records` header as sent, if any. */
   readonly signedRecords: string | undefined;
   readonly change: SubscriptionChange;
@@ -208,19 +223,59 @@ const COVERAGE_REASON: Record<SubscriptionRecordType, string> = {
 interface CheckedRecord {
   readonly record: VerifiedRecord;
   readonly change: SubscriptionChange;
+  /** The identity the route's key and the record's owner both name. */
   readonly identityKey: string;
-  readonly consolidationKey: string;
 }
 
-/** Why a shadow companion did not apply, as a code for its report. */
-function causeOf(error: unknown): string {
+/**
+ * Where an applied change went: the key of the rows it wrote (the identity,
+ * or a bare wallet whose rows the fold has not moved yet), its
+ * consolidation key, and its effects.
+ */
+interface AppliedChange {
+  readonly targetKey: string;
+  readonly consolidationKey: string;
+  readonly effects: ChoiceEffects;
+}
+
+/** Today's rules refused the change on the identity side (a RecordRuleError). */
+class RuleRefusalException extends CustomApiCompliantException {
+  constructor(message: string, code: string | undefined) {
+    super(400, message, code);
+  }
+}
+
+const STALE_SIGNED_RECORD = 'STALE_SIGNED_RECORD';
+const ANCHOR_UNAVAILABLE = 'ANCHOR_UNAVAILABLE';
+
+/**
+ * Why a shadow companion did not apply, as a code, and whether the go-live
+ * gate counts it: the record's own failings (it did not verify or state
+ * the request, it was stale, the anchor could not be had) are REFUSED and
+ * not counted, so one person's bad header can't hold the switch back; a
+ * rule the identity side applied differently is a DIFF; an error FAILED.
+ */
+function failureOf(error: unknown): {
+  readonly verdict: 'REFUSED' | 'DIFF' | 'FAILED';
+  readonly cause: string;
+} {
   if (error instanceof InvalidSignedRecordException) {
-    return `invalid-record:${error.reason}`;
+    return { verdict: 'REFUSED', cause: `invalid-record:${error.reason}` };
+  }
+  if (error instanceof RuleRefusalException) {
+    return { verdict: 'DIFF', cause: `rule:${error.code ?? 'unknown'}` };
   }
   if (error instanceof ApiCompliantException) {
-    return `refused:${error.code ?? error.getStatusCode()}`;
+    const code = error.code ?? String(error.getStatusCode());
+    return {
+      verdict:
+        code === STALE_SIGNED_RECORD || code === ANCHOR_UNAVAILABLE
+          ? 'REFUSED'
+          : 'DIFF',
+      cause: `refused:${code}`
+    };
   }
-  return 'error';
+  return { verdict: 'FAILED', cause: 'error' };
 }
 
 export class SubscriptionChangeWriter {
@@ -229,12 +284,15 @@ export class SubscriptionChangeWriter {
   async write(
     request: SubscriptionWriteRequest
   ): Promise<SubscriptionWriteResponse> {
-    switch (await this.pathNow()) {
-      case 'PAUSED':
-        throw new CustomApiCompliantException(
-          503,
-          'Subscription changes are paused for a few minutes. Try again shortly.'
-        );
+    const path = await this.pathNow();
+    if (path === 'PAUSED') {
+      throw new CustomApiCompliantException(
+        503,
+        'Subscription changes are paused for a few minutes. Try again shortly.'
+      );
+    }
+    await this.assertKeyAccess(request, path);
+    switch (path) {
       case 'LEGACY':
         return this.deps.legacy(request.routeKey, request.change);
       case 'SHADOW':
@@ -242,6 +300,36 @@ export class SubscriptionChangeWriter {
       case 'IDENTITY':
         return this.identity(request);
     }
+  }
+
+  /**
+   * A key the wallet is not in (a principal id) is taken only after the
+   * switch, and only from a wallet the identity mirror has in that identity.
+   * The legacy tables have no principal keys, so before the switch it is 403
+   * as it always was.
+   */
+  private async assertKeyAccess(
+    request: SubscriptionWriteRequest,
+    path: SubscriptionWritePath
+  ): Promise<void> {
+    if (request.walletInKey) {
+      return;
+    }
+    if (path === 'IDENTITY') {
+      const wallet = request.wallet.toLowerCase();
+      const identity =
+        (await this.deps.directory.identitiesOf([wallet])).get(wallet) ??
+        wallet;
+      if (
+        identity ===
+        (await identityOfRouteKey(request.routeKey, this.deps.directory))
+      ) {
+        return;
+      }
+    }
+    throw new ForbiddenException(
+      'User can only change subscription mode for their own consolidation'
+    );
   }
 
   /** A state that can't be read refuses the write rather than guess. */
@@ -265,26 +353,28 @@ export class SubscriptionChangeWriter {
       );
     }
     const checked = await this.check(request, request.signedRecords);
-    const effects = await this.apply(checked);
+    const applied = await this.apply(checked);
     try {
-      await this.deps.legacy(checked.consolidationKey, checked.change);
+      await this.deps.legacy(applied.consolidationKey, checked.change);
     } catch (error) {
-      // The legacy write marks coverage after its own transaction; it did
-      // not get there, so mark it here.
-      logger.error(
+      // The legacy tables (the rollback copy) now lag the identity tables
+      // for this person: alarm. The legacy write marks coverage after its
+      // own transaction; it did not get there, so mark it here.
+      logger.errorWithCode(
+        'SUBSCRIPTIONS_LEGACY_DUAL_WRITE_FAILED',
         `[LEGACY DUAL WRITE FAILED] [${checked.change.type}] [event ${checked.record.event.id}]`,
         error
       );
       try {
         await markSubscriptionCoverageDirty(
-          [checked.consolidationKey],
+          [applied.consolidationKey],
           COVERAGE_REASON[checked.change.type]
         );
       } catch (markError) {
         logger.error('[COVERAGE MARKER FAILED]', markError);
       }
     }
-    return responseOf(request.routeKey, checked.change, effects);
+    return responseOf(request.routeKey, checked.change, applied.effects);
   }
 
   private async shadow(
@@ -320,7 +410,7 @@ export class SubscriptionChangeWriter {
     try {
       const checked = await this.check(request, header);
       eventId = checked.record.event.id;
-      const effects = await this.apply(checked);
+      const { effects } = await this.apply(checked);
       report = await compareShadowChange({
         routeKey: request.routeKey,
         change: checked.change,
@@ -329,18 +419,18 @@ export class SubscriptionChangeWriter {
         eventId
       });
     } catch (error) {
-      const cause = causeOf(error);
-      if (cause === 'error') {
+      const failure = failureOf(error);
+      if (failure.verdict === 'FAILED') {
         logger.error(
           `[SHADOW RECORD FAILED] [${request.change.type}] [event ${eventId ?? '-'}]`,
           error
         );
       }
-      report = failedShadowReport(request.change, cause, eventId);
+      report = failedShadowReport(request.change, failure, eventId);
     }
     if (report.verdict !== 'MATCH') {
       logger.warn(
-        `[SHADOW RECORD DIFF] [${report.notes.join('] [')}] ${report.diffs.map((diff) => diff.key).join(', ')}`
+        `[SHADOW RECORD ${report.verdict}] [${report.notes.join('] [')}] ${report.diffs.map((diff) => diff.key).join(', ')}`
       );
     }
     try {
@@ -425,6 +515,8 @@ export class SubscriptionChangeWriter {
       request.routeKey,
       this.deps.directory
     );
+    // A bare wallet that has bound to a principal since the record's anchor
+    // is that principal's now; its change still counts (see targetKeyOf).
     const owner = record.owner;
     const ownerIdentity = isPrincipalId(owner)
       ? owner
@@ -435,11 +527,78 @@ export class SubscriptionChangeWriter {
         "the record's owner is not the identity of this key"
       );
     }
-    const consolidationKey =
-      (await this.deps.directory.consolidationKeysOf([identityKey])).get(
-        identityKey
-      ) ?? identityKey;
-    return { record, change, identityKey, consolidationKey };
+    return { record, change, identityKey };
+  }
+
+  /**
+   * The key of the rows a change writes, read in its transaction: the
+   * identity, except for a bare-wallet owner whose own rows are still in
+   * the identity tables (it bound since, and the top-up loop's fold has not
+   * moved them yet). Those rows take the change, and the fold brings it
+   * along; writing the identity's rows instead would leave them behind.
+   */
+  private async targetKeyOf(
+    checked: CheckedRecord,
+    options: DbQueryOptions
+  ): Promise<string> {
+    const owner = checked.record.owner;
+    if (isPrincipalId(owner) || owner === checked.identityKey) {
+      return checked.identityKey;
+    }
+    for (const table of [
+      SUBSCRIPTIONS_ID_BALANCES_TABLE,
+      SUBSCRIPTIONS_ID_MODE_TABLE,
+      SUBSCRIPTIONS_ID_NFTS_TABLE
+    ]) {
+      const rows = await sqlExecutor.execute<{ identity_key: string }>(
+        `SELECT identity_key FROM ${table} WHERE identity_key = :owner LIMIT 1 FOR UPDATE`,
+        { owner },
+        options
+      );
+      if (rows.length > 0) {
+        return owner;
+      }
+    }
+    return checked.identityKey;
+  }
+
+  /**
+   * A bare-wallet owner whose change goes to its identity's rows must be
+   * linked to that identity in the journal, or nothing there would tie the
+   * wallet to the rows: the opening names only the wallets it cut, and a
+   * fold is journaled only for a wallet with rows of its own. Unless the
+   * opening's key map already has the wallet in the identity, an empty
+   * fold (no rows, the wallet's history rekeyed to the identity, of which it
+   * has none) goes first, in the same transaction. Folds already posted
+   * can't be seen from here, so after the fold writer's own fold of the
+   * wallet this repeats the link; a rebuild applies either as a no-op.
+   */
+  private async linkWalletToIdentity(
+    wallet: string,
+    identityKey: string,
+    atMs: number,
+    options: DbQueryOptions
+  ): Promise<void> {
+    const linked = await sqlExecutor.execute<{ identity_key: string }>(
+      `SELECT identity_key FROM ${SUBSCRIPTIONS_ID_KEY_MAP_TABLE}
+        WHERE identity_key = :identityKey
+          AND FIND_IN_SET(:wallet, REPLACE(LOWER(consolidation_key), '-', ',')) > 0
+        LIMIT 1`,
+      { identityKey, wallet },
+      options
+    );
+    if (linked.length > 0) {
+      return;
+    }
+    await journal(
+      {
+        kind: 'fold',
+        inputs: { wallet, identity_key: identityKey },
+        rekeys: [{ from: wallet, to: identityKey }],
+        atMs
+      },
+      options
+    );
   }
 
   /**
@@ -449,9 +608,9 @@ export class SubscriptionChangeWriter {
    * identity tables, then its journal entry. Any refusal rolls all of it
    * back.
    */
-  private async apply(checked: CheckedRecord): Promise<ChoiceEffects> {
+  private async apply(checked: CheckedRecord): Promise<AppliedChange> {
     const atMs = this.deps.now();
-    const applied: { effects?: ChoiceEffects } = {};
+    const applied: { change?: AppliedChange } = {};
     const indexer = new RecordIndexer({
       registry: this.registry(checked, atMs, applied),
       heads: this.deps.heads,
@@ -466,11 +625,7 @@ export class SubscriptionChangeWriter {
       const outcome = await indexer.ingest(checked.record, 'live', ctx);
       if (outcome.kind === 'refused') {
         if (outcome.reason === 'rule') {
-          throw new CustomApiCompliantException(
-            400,
-            outcome.detail,
-            outcome.code
-          );
+          throw new RuleRefusalException(outcome.detail, outcome.code);
         }
         throw new InvalidSignedRecordException(outcome.reason, outcome.detail);
       }
@@ -484,13 +639,13 @@ export class SubscriptionChangeWriter {
         throw new CustomApiCompliantException(
           409,
           'A newer change to this choice is already saved.',
-          'STALE_SIGNED_RECORD'
+          STALE_SIGNED_RECORD
         );
       }
-      if (!applied.effects) {
+      if (!applied.change) {
         throw new Error('The subscription record was applied without effects');
       }
-      return applied.effects;
+      return applied.change;
     });
   }
 
@@ -498,7 +653,7 @@ export class SubscriptionChangeWriter {
   private registry(
     checked: CheckedRecord,
     atMs: number,
-    applied: { effects?: ChoiceEffects }
+    applied: { change?: AppliedChange }
   ): RecordRegistry {
     const registry = new RecordRegistry();
     for (const type of Object.values(SubscriptionRecordType)) {
@@ -515,17 +670,30 @@ export class SubscriptionChangeWriter {
               'Subscription records apply live only; a rebuild writes back their journal entries'
             );
           }
+          const options = { wrappedConnection: ctx.connection };
+          const targetKey = await this.targetKeyOf(checked, options);
+          const owner = checked.record.owner;
+          if (!isPrincipalId(owner) && targetKey !== owner) {
+            await this.linkWalletToIdentity(owner, targetKey, atMs, options);
+          }
+          const consolidationKey =
+            (
+              await this.deps.directory.consolidationKeysOf(
+                [targetKey],
+                options
+              )
+            ).get(targetKey) ?? targetKey;
           const scope: ChoiceScope = {
-            identityKey: checked.identityKey,
-            consolidationKey: checked.consolidationKey,
+            identityKey: targetKey,
+            consolidationKey,
             atText: msToDbText(atMs),
-            options: { wrappedConnection: ctx.connection },
+            options,
             rules: true
           };
           const stated = changeOfRecord(change.type, change.key, change.body);
           // The rows the change may write, read FOR UPDATE before it works
           // the change out, so the rebuild can check them.
-          const selection = choiceSelection(checked.identityKey, stated);
+          const selection = choiceSelection(targetKey, stated);
           const before = await journalBefore(selection, scope.options);
           const made = await makeChoice(scope, stated);
           // What the change wrote, before and after, with the record that
@@ -539,7 +707,10 @@ export class SubscriptionChangeWriter {
                 type: change.type,
                 key: change.key,
                 anchor: change.order.anchor,
-                claimed_time: change.order.claimedTime
+                claimed_time: change.order.claimedTime,
+                // The key of the rows it wrote: the owner's identity, or the
+                // owner wallet's own key until the fold moves its rows.
+                identity_key: targetKey
               },
               identities: selection.identities,
               rows: [
@@ -555,7 +726,11 @@ export class SubscriptionChangeWriter {
             },
             scope.options
           );
-          applied.effects = made.effects;
+          applied.change = {
+            targetKey,
+            consolidationKey,
+            effects: made.effects
+          };
         }
       });
     }

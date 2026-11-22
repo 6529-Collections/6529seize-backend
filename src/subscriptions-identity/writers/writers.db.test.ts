@@ -124,6 +124,7 @@ const unsignedUnsubscribe = (key: string) =>
   subscriptionChangeWriter.write({
     routeKey: key,
     wallet: key,
+    walletInKey: true,
     signedRecords: undefined,
     change: {
       type: 'subs.card',
