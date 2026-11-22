@@ -200,9 +200,18 @@ async function commit(
   });
 }
 
-/** A row as it is: objects as JSON. */
+/** A row as it is (objects as JSON), only the columns the table has. */
 async function insertRow(table: string, row: Record<string, unknown>) {
-  const columns = Object.keys(row);
+  const known = new Set(
+    (
+      await dbSupplier().execute<{ name: string }>(
+        `select column_name as name from information_schema.columns
+         where table_schema = database() and table_name = :table`,
+        { table }
+      )
+    ).map((column) => column.name)
+  );
+  const columns = Object.keys(row).filter((column) => known.has(column));
   const params = Object.fromEntries(
     columns.map((column) => {
       const value = row[column];
