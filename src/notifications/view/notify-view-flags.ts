@@ -35,12 +35,16 @@ let reportedValue: string | undefined;
 const INSTANCE_STARTED_AT = Date.now();
 
 /**
- * The causes a production feed adapter derives. A cause joins with its
- * adapter; a derived cause outside this set has its old writer skipped and
- * nothing writing it, which is reported.
+ * The causes a production feed derives (PRODUCTION_FEEDS in
+ * notification-feeds.ts). A cause joins with its feed; a derived cause
+ * outside this set has its old writer skipped and nothing writing it,
+ * which is reported.
  */
 export const CAUSES_WITH_FEEDS: ReadonlySet<IdentityNotificationCause> =
-  new Set<IdentityNotificationCause>([]);
+  new Set<IdentityNotificationCause>([
+    IdentityNotificationCause.IDENTITY_REP,
+    IdentityNotificationCause.IDENTITY_NIC
+  ]);
 
 /**
  * A span in which the deriver owns a cause: from `start` (inclusive) to

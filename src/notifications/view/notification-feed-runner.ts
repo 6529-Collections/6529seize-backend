@@ -16,8 +16,12 @@ import { notifyViewMode } from '@/notifications/view/notify-view-flags';
 
 /** A batch of source events after a cursor, and the cursor after them. */
 export interface FeedBatch<E> {
+  /**
+   * The events read. A feed may skip, as it reads, events no rule would
+   * notify for (an import's), so a batch can be empty and still move on.
+   */
   readonly events: readonly E[];
-  /** The cursor after the last event; null when the batch is empty. */
+  /** The cursor after what was read; null when there was nothing to read. */
   readonly next: string | null;
 }
 
@@ -41,6 +45,8 @@ export interface FeedRunOptions {
   readonly batchSize?: number;
   /** Stop after this many batches, so a run fits its time budget. */
   readonly maxBatches?: number;
+  /** Start no batch after this time (milliseconds since the epoch). */
+  readonly untilMs?: number;
   /** The clock for the push window (tests). */
   readonly now?: number;
 }
@@ -67,7 +73,8 @@ const BATCH_ATTEMPTS = 3;
  * the cursor after it commit in one transaction, so a crash repeats at most
  * that batch, and repeating it writes the same rows. In `on` mode, after a
  * live batch commits, everyone whose rows it wrote or removed is told once
- * (IDENTITY_NOTIFICATIONS_CHANGED), whether or not a push follows.
+ * (IDENTITY_NOTIFICATIONS_CHANGED), whether or not a push follows. In
+ * `shadow` the push worker tells them as it pushes the copies.
  */
 export class NotificationFeedRunner {
   private readonly logger = Logger.get(NotificationFeedRunner.name);
@@ -105,10 +112,13 @@ export class NotificationFeedRunner {
     const batchSize = options.batchSize ?? DEFAULT_BATCH_SIZE;
     const maxBatches = options.maxBatches ?? DEFAULT_MAX_BATCHES;
     await this.cursors.ensure(feed.name);
-    while (batches < maxBatches) {
+    while (
+      batches < maxBatches &&
+      (options.untilMs === undefined || Date.now() < options.untilMs)
+    ) {
       const after = await this.cursors.get(feed.name);
       const batch = await feed.read(after, batchSize);
-      if (!batch.events.length || batch.next === null) break;
+      if (batch.next === null || batch.next === after) break;
       const groups: DerivedGroup[] = [];
       for (const event of batch.events) {
         groups.push(await feed.derive(event));

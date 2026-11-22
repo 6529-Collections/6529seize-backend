@@ -25,7 +25,10 @@ import {
   NotificationFeedRunner
 } from './notification-feed-runner';
 import { notificationViewCursorsDb } from './notification-view-cursors.db';
-import { IdentityRatingsFeed } from './feeds/identity-ratings-feed';
+import {
+  IdentityRatingsFeed,
+  type RatingEventRow
+} from './feeds/identity-ratings-feed';
 import { notificationArchive } from './notification-archive';
 import { notificationSourceKey } from './notification-view-ids';
 import { notificationViewRebuild } from './notification-view-rebuild';
@@ -478,6 +481,8 @@ describe('notification view lifecycle', () => {
     const mirrorRow = {
       id: 1,
       height: 120,
+      rater_principal: '0x00000000000000000000000000000000000000f1',
+      target_principal: '0x00000000000000000000000000000000000000a1',
       block_time_ms: T,
       rater_profile_id: fanId,
       target_profile_id: authorId,
@@ -487,11 +492,13 @@ describe('notification view lifecycle', () => {
       new_rating: 4,
       total_after: 4,
       origin: 'OPERATION' as const,
-      by_import: false
+      by_import: false,
+      created_at: T
     };
     const feed = new IdentityRatingsFeed({
-      readFromHeight: async (height) => (height <= 120 ? [mirrorRow] : []),
-      readAfter: async () => [],
+      scanEnd: async (afterId) => (afterId < 1 ? { id: 1, height: 120 } : null),
+      readNotifying: async (afterId) => (afterId < 1 ? [mirrorRow] : []),
+      readByIds: async () => [],
       heightOf: async (id) => (id === 1 ? 120 : null)
     });
     expect(
@@ -506,6 +513,126 @@ describe('notification view lifecycle', () => {
     ]);
     expect(announced).toHaveBeenCalledWith([authorId]);
     announced.mockRestore();
+  });
+
+  it('derives REP from an earlier cut in shadow: the copy and its push at once, one row at on', async () => {
+    // Ratings leave 6529.io a day before the rest switches: from their cut
+    // the deriver writes them, in shadow, through identity_notifications.
+    const cut = Date.now() - 60_000;
+    const flags = {
+      NOTIFY_DERIVED_CAUSES: `IDENTITY_REP@${cut},IDENTITY_NIC@${cut}`
+    };
+    setFlags({ NOTIFY_VIEW_MODE: 'shadow', ...flags });
+    // The old writer is skipped from the cut.
+    await userNotifier.notifyOfIdentityRep({
+      rater_id: fanId,
+      rated_id: authorId,
+      amount: 3,
+      rater_rating: 3,
+      total: 3,
+      category: 'Art'
+    });
+    expect(
+      await sqlExecutor.execute(
+        `select id from ${IDENTITY_NOTIFICATIONS_TABLE}`
+      )
+    ).toEqual([]);
+    const mirrorRow = (id: number, over: Partial<RatingEventRow> = {}) => ({
+      id,
+      height: 200 + id,
+      block_time_ms: cut + 1_000 * id,
+      rater_principal: `0x${'f'.repeat(39)}${id}`,
+      target_principal: `0x${'a'.repeat(40)}`,
+      rater_profile_id: fanId,
+      target_profile_id: authorId,
+      matter: 'REP',
+      matter_category: 'Art',
+      old_rating: 0,
+      new_rating: 4,
+      total_after: 4,
+      origin: 'OPERATION' as RatingEventRow['origin'],
+      by_import: false,
+      created_at: cut + 1_000 * id,
+      ...over
+    });
+    // A rater's change notifies; the chain's cut and an import don't.
+    const table = [
+      mirrorRow(1),
+      mirrorRow(2, { origin: 'CAP_CUT' }),
+      mirrorRow(3, { origin: 'IMPORT', by_import: true })
+    ];
+    const feed = new IdentityRatingsFeed({
+      scanEnd: async (afterId) => {
+        const last = table.filter((row) => row.id > afterId).at(-1);
+        return last ? { id: last.id, height: last.height } : null;
+      },
+      readNotifying: async (afterId, upToId) =>
+        table.filter(
+          (row) =>
+            row.id > afterId &&
+            row.id <= upToId &&
+            row.origin === 'OPERATION' &&
+            !row.by_import
+        ),
+      readByIds: async () => [],
+      heightOf: async (id) => table.find((row) => row.id === id)?.height ?? null
+    });
+    expect(
+      await notificationFeedRunner.run(feed, { mode: 'live' })
+    ).toMatchObject({ events: 1, derived: { legacyCopies: 1, pushed: 1 } });
+    const [copy] = await sqlExecutor.execute<{ id: number; cause: string }>(
+      `select id, cause from ${IDENTITY_NOTIFICATIONS_TABLE}`
+    );
+    expect(copy.cause).toBe('IDENTITY_REP');
+    expect(
+      (
+        await sqlExecutor.execute<{ notification_id: number }>(
+          `select notification_id from ${PUSH_NOTIFICATION_OUTBOX_TABLE}`
+        )
+      ).map((row) => Number(row.notification_id))
+    ).toEqual([Number(copy.id)]);
+    // What readers see on the day: the copy, by its id.
+    expect((await answers()).page).toEqual([
+      expect.objectContaining({ id: Number(copy.id), cause: 'IDENTITY_REP' })
+    ]);
+
+    // The switch keeps the deriver's row, which names its copy.
+    await userNotifier.notifyOfIdentitySubscription({
+      subscriber_id: fanId,
+      subscribed_to: authorId
+    });
+    while (!(await notificationViewSwitch.copyOldRows()).done) {
+      // the bulk copy
+    }
+    const view = await sqlExecutor.execute<Record<string, any>>(
+      `select origin, cause, legacy_id from ${NOTIFICATION_VIEW_TABLE} order by cause`
+    );
+    expect(
+      view.map((row) => [row.origin, row.cause, Number(row.legacy_id)])
+    ).toEqual([
+      ['DERIVED', 'IDENTITY_REP', Number(copy.id)],
+      ['CARRIED', 'IDENTITY_SUBSCRIBED', expect.any(Number)]
+    ]);
+
+    // At on the row is there once, under its view id, and a mark by the
+    // copy's id (from a push on the day) reads it.
+    setFlags({ NOTIFY_VIEW_MODE: 'on', ...flags });
+    const rep = (await answers()).page.filter(
+      (row) => row.cause === 'IDENTITY_REP'
+    );
+    expect(rep).toEqual([
+      expect.objectContaining({ read_at: null, actor: fanId })
+    ]);
+    expect(rep[0].id).not.toBe(Number(copy.id));
+    await identityNotificationsDb.updateNotificationReadAt({
+      id: Number(copy.id),
+      identity_id: authorId,
+      readAt: Date.now()
+    });
+    expect(
+      (await answers()).page.find((row) => row.cause === 'IDENTITY_REP')
+        ?.read_at
+    ).toEqual(expect.any(Number));
   });
 
   it('refuses a rebuild whose logged cuts differ from the flags', async () => {

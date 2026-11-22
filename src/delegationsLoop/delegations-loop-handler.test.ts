@@ -11,7 +11,8 @@ import { Not } from 'typeorm';
 // Every side-effecting dependency of the delegations loop is mocked, so the
 // test can check which ones the backfill path reaches.
 jest.mock('../sentry.context', () => ({
-  wrapLambdaHandler: (fn: unknown) => fn
+  wrapLambdaHandler: (fn: unknown) => fn,
+  captureException: jest.fn()
 }));
 jest.mock('../secrets', () => ({
   doInDbContext: jest.fn(async (work: () => Promise<void>) => work())
@@ -59,6 +60,14 @@ jest.mock('./reconsolidation', () => ({
 jest.mock('../identity-tdh-sync', () => ({
   resumePendingIdentityTdhSync: jest.fn(),
   startIdentitySyncBudget: jest.fn()
+}));
+// The real safe runner, around a stand-in for the feeds themselves.
+const mockRunFeeds = jest.fn();
+jest.mock('../notifications/view/notification-feeds', () => ({
+  runNotificationFeedsSafely: () =>
+    jest
+      .requireActual('../notifications/view/notification-feeds')
+      .runNotificationFeedsSafely(() => mockRunFeeds())
 }));
 
 import * as db from '../db';
@@ -239,6 +248,7 @@ describe('delegations loop on-demand reconsolidation', () => {
   });
 
   it('still resumes the pending identities sync when the delegations work fails, and fails with the work error', async () => {
+    process.env.NOTIFY_VIEW_MODE = 'shadow';
     jest.mocked(delegations.findDelegationTransactions).mockResolvedValue({
       latestBlock: 26_000_001,
       latestBlockTimestamp: 1,
@@ -257,6 +267,44 @@ describe('delegations loop on-demand reconsolidation', () => {
       'checkpoint failure'
     );
     expect(resumePendingIdentityTdhSync).toHaveBeenCalledTimes(1);
+    // The notification feeds still run after the failed work.
+    expect(mockRunFeeds).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs the notification feeds once, after the delegations work', async () => {
+    process.env.NOTIFY_VIEW_MODE = 'shadow';
+    jest.mocked(delegations.findDelegationTransactions).mockResolvedValue({
+      latestBlock: 26_000_001,
+      latestBlockTimestamp: 1,
+      consolidations: [],
+      registrations: [],
+      revocation: []
+    });
+    let checkpointBefore = false;
+    mockRunFeeds.mockImplementation(async () => {
+      checkpointBefore =
+        jest.mocked(db.persistNftDelegationBlock).mock.calls.length > 0;
+    });
+
+    await invoke({ source: 'aws.events' });
+    expect(mockRunFeeds).toHaveBeenCalledTimes(1);
+    expect(checkpointBefore).toBe(true);
+  });
+
+  it('does not fail the delegations run when the notification feeds fail', async () => {
+    process.env.NOTIFY_VIEW_MODE = 'shadow';
+    jest.mocked(delegations.findDelegationTransactions).mockResolvedValue({
+      latestBlock: 26_000_001,
+      latestBlockTimestamp: 1,
+      consolidations: [],
+      registrations: [],
+      revocation: []
+    });
+    mockRunFeeds.mockRejectedValue(new Error('feeds down'));
+
+    await invoke({ source: 'aws.events' });
+    expect(db.persistNftDelegationBlock).toHaveBeenCalledWith(26_000_001, 1);
+    expect(mockRunFeeds).toHaveBeenCalledTimes(1);
   });
 
   it('fails the invocation when only the resume fails', async () => {
