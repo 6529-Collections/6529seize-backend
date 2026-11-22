@@ -52,6 +52,21 @@ export const NEXTGEN_START_BLOCK = {
   [Network.ETH_MAINNET]: 19133749
 };
 
+/**
+ * Where NextGen discovery starts on an empty database: the core contract's
+ * deploy block, or NEXTGEN_START_BLOCK when set. Only the rebuild check
+ * sets it, for its local chain, which starts at block 0.
+ */
+export function getNextgenStartBlock(network: NextgenNetwork): number {
+  const configured = process.env.NEXTGEN_START_BLOCK?.trim();
+  if (!configured) return NEXTGEN_START_BLOCK[network];
+  const block = Number(configured);
+  if (!/^\d+$/.test(configured) || !Number.isSafeInteger(block)) {
+    throw new Error('NEXTGEN_START_BLOCK must be a block number');
+  }
+  return block;
+}
+
 export const NEXTGEN_MINTER_CONTRACT = {
   [Network.ETH_GOERLI]: '0x1a7040a7d4baf44f136c50626a4e8f4ae5ca170f',
   [Network.ETH_SEPOLIA]: '0xaDA9027EaF134038d3731f677241c4351b799Eb4',

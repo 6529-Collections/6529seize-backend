@@ -11,9 +11,9 @@ import {
 } from '../entities/INextGen';
 import { EntityManager, IsNull } from 'typeorm';
 import {
-  NEXTGEN_START_BLOCK,
   NEXTGEN_TOKENS_TABLE,
-  getNextgenNetwork
+  getNextgenNetwork,
+  getNextgenStartBlock
 } from './nextgen_constants';
 import { sqlExecutor } from '../sql-executor';
 import { Transaction } from '../entities/ITransaction';
@@ -24,7 +24,7 @@ export async function fetchNextGenLatestBlock(manager: EntityManager) {
     .createQueryBuilder()
     .select('MAX(block)', 'max_block')
     .getRawOne();
-  return block.max_block ?? NEXTGEN_START_BLOCK[getNextgenNetwork()];
+  return block.max_block ?? getNextgenStartBlock(getNextgenNetwork());
 }
 
 export async function fetchNextGenCollection(

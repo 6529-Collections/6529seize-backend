@@ -15,12 +15,22 @@ import { processMissingMintData } from './nextgen_pending_mint_data';
 import { processMissingThumbnails } from './nextgen_pending_thumbnails';
 import { withNextgenDbLockRetry } from './nextgen-db-lock-retry';
 import type { NextgenLoopHealth } from '@/nextgenContractLoop/loop-health';
+import { isRebuildingEthereumIndexes } from '@/holdings/rebuild-mode';
 
 const logger = Logger.get('NEXTGEN_CONTRACT');
 
 const BLOCK_THRESHOLD = 100000;
 
-export async function findNextGenTransactions(health?: NextgenLoopHealth) {
+/**
+ * One run of the NextGen contract loop: at most BLOCK_THRESHOLD blocks after
+ * the stored block, up to the latest block (or `toBlock`, for the rebuild
+ * check's mark). `caughtUp` is false when the range was cut short, so a
+ * caller that must reach the end runs it again.
+ */
+export async function findNextGenTransactions(
+  health?: NextgenLoopHealth,
+  options: { readonly toBlock?: number } = {}
+): Promise<{ caughtUp: boolean }> {
   const network = getNextgenNetwork();
   const alchemy = new Alchemy({
     network: network,
@@ -28,10 +38,12 @@ export async function findNextGenTransactions(health?: NextgenLoopHealth) {
     apiKey: process.env.ALCHEMY_API_KEY
   });
 
-  const latestBlock = await withTransientRpcRetry(
-    () => getEthereumRpcClient(network).getBlockNumber(),
-    'nextgen.getBlockNumber'
-  );
+  const latestBlock =
+    options.toBlock ??
+    (await withTransientRpcRetry(
+      () => getEthereumRpcClient(network).getBlockNumber(),
+      'nextgen.getBlockNumber'
+    ));
   const dataSource = getDataSource();
   const checkpoint = await withNextgenDbLockRetry(
     async () =>
@@ -86,9 +98,17 @@ export async function findNextGenTransactions(health?: NextgenLoopHealth) {
             health?.notCompleted()
           );
           await refreshNextgenTokens(entityManager);
-          await processMissingThumbnails(entityManager);
+          // The thumbnails come from the media bucket, not the chain; the
+          // live loop fills them in after a rebuild.
+          if (!isRebuildingEthereumIndexes())
+            await processMissingThumbnails(entityManager);
         }
-        return { startBlock: Number(startBlock), endBlock, blockTimestamp };
+        return {
+          startBlock: Number(startBlock),
+          endBlock,
+          blockTimestamp,
+          blockAdjusted
+        };
       }),
     {
       logger,
@@ -103,4 +123,5 @@ export async function findNextGenTransactions(health?: NextgenLoopHealth) {
     latestBlock,
     checkpoint.blockTimestamp
   );
+  return { caughtUp: !checkpoint.blockAdjusted };
 }
