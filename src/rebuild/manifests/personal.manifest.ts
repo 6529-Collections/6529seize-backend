@@ -1,11 +1,171 @@
-import { AreaManifest } from '@/rebuild/manifest.types';
+import { createHash } from 'node:crypto';
+import { AreaManifest, Probe, RebuildStep } from '@/rebuild/manifest.types';
+import { PROBE_CALLER, PROBE_WALLETS } from '@/rebuild/manifests/probe-fixture';
+
+/** A fake wave, drop and device id the seed uses for its rows. */
+const PROBE_WAVE = '00000000-0000-4000-8000-000000000001';
+const PROBE_DROP = '00000000-0000-4000-8000-000000000002';
+const PROBE_DEVICE = 'rebuild-check-device-1';
+
+/**
+ * The records service identity of a rebuild run: a fake wave, profile and
+ * wallet, and a provider key made only for the rebuild check, derived from
+ * a public label so it can never be mistaken for a real one.
+ */
+const FIXTURE_PROVIDER_KEY = `0x${createHash('sha256')
+  .update('6529 rebuild check: fixture provider key, never a real one')
+  .digest('hex')}`;
+const FIXTURE_RECORDS_FLAGS = {
+  SIGNED_RECORDS_PROVIDER_KEYS: JSON.stringify([
+    { id: 'rebuild-fixture', private_key: FIXTURE_PROVIDER_KEY }
+  ]),
+  SIGNED_RECORDS_WAVE_ID: '00000000-0000-4000-8000-0000000000a1',
+  SIGNED_RECORDS_SERVICE_PROFILE_ID: 'rebuild-records-service',
+  SIGNED_RECORDS_SERVICE_WALLET: '0x00000000000000000000000000000000000000a1'
+};
+
+/** Every GET route that reads a personal settings or Collect plans table. */
+const PROBES: Probe[] = [
+  {
+    id: 'personal.follows-out',
+    path: '/api/identity-subscriptions/outgoing/{type}',
+    each: { type: ['IDENTITY', 'WAVE', 'DROP'] },
+    as: PROBE_CALLER
+  },
+  {
+    id: 'personal.follows-in',
+    path: '/api/identity-subscriptions/incoming/IDENTITY/{wallet}',
+    each: { wallet: PROBE_WALLETS }
+  },
+  {
+    id: 'personal.identity-subscriptions',
+    path: '/api/identities/{wallet}/subscriptions',
+    each: { wallet: PROBE_WALLETS },
+    as: PROBE_CALLER
+  },
+  {
+    id: 'personal.mute',
+    path: '/api/identities/{wallet}/mute',
+    each: { wallet: PROBE_WALLETS },
+    as: PROBE_CALLER
+  },
+  {
+    id: 'personal.artwork-alerts',
+    path: '/api/identities/{wallet}/artwork-alerts',
+    each: { wallet: PROBE_WALLETS },
+    as: PROBE_CALLER
+  },
+  {
+    id: 'personal.preferences',
+    path: '/api/profile-preferences',
+    as: PROBE_CALLER
+  },
+  {
+    id: 'personal.mention-aliases',
+    path: '/api/mention-aliases',
+    as: PROBE_CALLER
+  },
+  {
+    id: 'personal.pinned-waves',
+    path: '/api/v2/waves/pinned',
+    as: PROBE_CALLER
+  },
+  { id: 'personal.bookmarks', path: '/api/drops-bookmarked', as: PROBE_CALLER },
+  {
+    id: 'personal.bookmarks-status',
+    path: `/api/drops-bookmarked/status?drop_id=${PROBE_DROP}`,
+    as: PROBE_CALLER
+  },
+  {
+    id: 'personal.wave-notify',
+    path: `/api/notifications/wave-subscription/${PROBE_WAVE}`,
+    as: PROBE_CALLER
+  },
+  {
+    id: 'personal.blocked-profiles',
+    path: '/api/content-moderation/blocked-profiles',
+    as: PROBE_CALLER
+  },
+  {
+    id: 'personal.push-settings',
+    path: `/api/push-notifications/settings/${PROBE_DEVICE}`,
+    as: PROBE_CALLER
+  },
+  {
+    id: 'personal.eula-consent',
+    path: `/api/policies/eula-consent/${PROBE_DEVICE}`,
+    as: PROBE_CALLER
+  },
+  { id: 'personal.collect-rules', path: '/api/collect/rules', as: PROBE_CALLER }
+];
+
+/**
+ * The personal settings tables rebuildPersonalTables writes
+ * (personal-rebuild.step.ts): the settings, the record heads, the segment
+ * table and the switch state.
+ */
+const PERSONAL_SETTINGS_REBUILD: RebuildStep = {
+  id: 'personal.settings',
+  run: {
+    module: 'src/personal-records/personal-rebuild.step',
+    exportName: 'rebuildPersonalTables'
+  },
+  writes: [
+    'identity_subscriptions',
+    'wave_group_notification_subscriptions',
+    'identity_mutes',
+    'content_moderation_profile_blocks',
+    'content_moderation_hidden_drops',
+    'drop_bookmarks',
+    'artist_artwork_alerts',
+    'pinned_waves',
+    'profile_preferences',
+    'mention_aliases',
+    'mention_alias_members',
+    'push_notification_settings',
+    'eula_consent',
+    'signed_record_heads',
+    'signed_record_log_segments',
+    'personal_records_state'
+  ],
+  // The records wave's drops and the waves index (the waves rebuild's),
+  // and the profiles and identities owners map to.
+  reads: [
+    'drops',
+    'drops_parts',
+    'waves',
+    'profiles',
+    'identities',
+    'address_consolidation_keys'
+  ],
+  sources: ['gateway', 'files', 'ethereum'],
+  timeoutMinutes: 60
+};
 
 /**
  * Personal settings and Collect plans.
+ *
+ * The personal settings tables are rebuilt from the one-time import at the
+ * switch (the record log's `personal-import` entries) and the people's
+ * signed records (its `personal` events): follows of people from public
+ * `ps` records, every other setting (follows of waves and drops too) from
+ * provider-class sealed items in `pv`, opened with 6529.io's provider key
+ * (src/personal-records/personal-import.ts, rebuildPersonalState).
+ * Derived on rebuild, not from records: an author's auto-follow and a
+ * creator's default wave-notify rows (from the waves index), and a block
+ * or hide set through a drop report (from the report records, which keep
+ * the reporter and the hide flag).
+ * The audit rows of people's own blocks and hides belong to the audit
+ * log's rebuild, which takes them from personalModerationAuditRows
+ * (personal-moderation-audit.ts).
  */
 export const personalManifest: AreaManifest = {
   area: 'personal',
-  flags: {},
+  flags: {
+    PERSONAL_RECORDS_MODE: 'primary',
+    FEATURE_SIGNED_RECORD_LOG: 'true',
+    ...FIXTURE_RECORDS_FLAGS
+  },
   tables: {
     collect_plans: { class: 'INDEX' },
     collect_rule_operations: { class: 'INDEX' },
@@ -27,8 +187,18 @@ export const personalManifest: AreaManifest = {
       why: 'Locks on orders in flight.'
     },
     artist_artwork_alerts: { class: 'INDEX' },
-    content_moderation_hidden_drops: { class: 'INDEX' },
-    content_moderation_profile_blocks: { class: 'INDEX' },
+    content_moderation_hidden_drops: {
+      class: 'INDEX',
+      volatileColumns: [
+        { column: 'id', reason: 'Generated row id; the API never returns it.' }
+      ]
+    },
+    content_moderation_profile_blocks: {
+      class: 'INDEX',
+      volatileColumns: [
+        { column: 'id', reason: 'Generated row id; the API never returns it.' }
+      ]
+    },
     cookies_consent: {
       class: 'EPHEMERAL',
       why: "The browser's cookie is the record."
@@ -39,8 +209,24 @@ export const personalManifest: AreaManifest = {
       why: 'A per-person cursor through the quick-vote queue. If lost, quick vote shows a few drops again.'
     },
     eula_consent: { class: 'INDEX' },
-    identity_mutes: { class: 'INDEX' },
-    identity_subscriptions: { class: 'INDEX' },
+    identity_mutes: {
+      class: 'INDEX',
+      volatileColumns: [
+        {
+          column: 'id',
+          reason: 'Auto-increment row id; the API never returns it.'
+        }
+      ]
+    },
+    identity_subscriptions: {
+      class: 'INDEX',
+      volatileColumns: [
+        {
+          column: 'id',
+          reason: 'Auto-increment row id; the API never returns it.'
+        }
+      ]
+    },
     mention_alias_members: { class: 'INDEX' },
     mention_aliases: {
       class: 'INDEX',
@@ -59,11 +245,18 @@ export const personalManifest: AreaManifest = {
     profile_preferences: { class: 'INDEX' },
     push_notification_settings: { class: 'INDEX' },
     wave_group_notification_subscriptions: { class: 'INDEX' },
-    signed_record_heads: { class: 'INDEX', origin: 'planned' },
-    signed_record_log_entries: { class: 'INDEX', origin: 'planned' },
-    signed_record_log_segments: { class: 'INDEX', origin: 'planned' }
+    // The switch state: the rebuild writes it with settings open (not
+    // frozen) and the latest import's order key, from the import's closing
+    // entry in the log (restorePersonalSwitchState).
+    personal_records_state: { class: 'INDEX' },
+    signed_record_heads: { class: 'INDEX' },
+    signed_record_log_entries: {
+      class: 'EPHEMERAL',
+      why: 'The record log queue: entries leave it once their segment is posted.'
+    },
+    signed_record_log_segments: { class: 'INDEX' }
   },
   seeds: [],
-  rebuilders: [],
-  probes: []
+  rebuilders: [PERSONAL_SETTINGS_REBUILD],
+  probes: PROBES
 };

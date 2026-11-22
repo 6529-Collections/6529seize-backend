@@ -10,6 +10,12 @@ import {
   handleDisableArtistArtworkAlert
 } from './artist-artwork-alerts.handlers';
 
+// Settings are open (not frozen at the personal settings switch).
+jest.mock('@/personal-records/personal-records-state.db', () => ({
+  personalRecordsStateDb: {
+    read: async () => ({ frozen: false, importOrder: null })
+  }
+}));
 jest.mock('@/api/auth/auth', () => ({ getAuthenticationContext: jest.fn() }));
 jest.mock('@/identities/identities.db', () => ({
   identitiesDb: { getProfileIdByIdentityKeyFast: jest.fn() }

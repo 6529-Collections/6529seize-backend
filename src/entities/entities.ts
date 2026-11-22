@@ -296,6 +296,7 @@ export { SubscriptionCacheInvalidationEntity } from './ISubscriptionCacheInvalid
 export { DeviceGrantEntity } from './IDeviceGrant';
 export { DeviceSignedEventEntity } from './IDeviceSignedEvent';
 export { DropAuthorSignatureEntity } from './IDropAuthorSignature';
+export { PersonalRecordsStateEntity } from './IPersonalRecordsState';
 export { SignedRecordHeadEntity } from './ISignedRecordHead';
 export {
   SignedRecordLogEntryEntity,

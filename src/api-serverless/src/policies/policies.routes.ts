@@ -2,6 +2,7 @@ import { Request } from 'express';
 import { asyncRouter } from '../async.router';
 import { getIp, getIpInfo, isEUCountry, isLocalhost } from './policies';
 import { deleteCookiesConsent, saveCookiesConsent } from './policies.db';
+import { personalRecordsMode } from '@/personal-records/personal-records.mode';
 
 const router = asyncRouter();
 
@@ -45,7 +46,12 @@ router.post(`/cookies-consent`, function (req: Request, res: any) {
     });
   }
 
-  saveCookiesConsent(ip).then(() => {
+  // In primary mode the browser's cookie is the record; nothing is stored.
+  const stored =
+    personalRecordsMode() === 'primary'
+      ? Promise.resolve()
+      : saveCookiesConsent(ip);
+  stored.then(() => {
     return res.status(200).send({
       message: 'Cookies consent saved'
     });
@@ -61,7 +67,11 @@ router.delete(`/cookies-consent`, function (req: Request, res: any) {
     });
   }
 
-  deleteCookiesConsent(ip).then(() => {
+  const removed =
+    personalRecordsMode() === 'primary'
+      ? Promise.resolve()
+      : deleteCookiesConsent(ip);
+  removed.then(() => {
     return res.status(200).send({
       message: 'Cookies consent deleted'
     });

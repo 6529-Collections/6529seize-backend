@@ -47,13 +47,19 @@ function coerceDbBoolean(value: boolean | number | string | null): boolean {
 }
 
 export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
+  /**
+   * `countWaveSubscribers: false` (a rebuild) leaves wave_metrics to the
+   * waves rebuild, which counts followers from this table.
+   */
   async addIdentitySubscription(
     identitySubscription: Omit<IdentitySubscriptionEntity, 'id'>,
     connection: ConnectionWrapper<any>,
-    timer?: Timer
+    timer?: Timer,
+    opts: { readonly countWaveSubscribers?: boolean } = {}
   ) {
     timer?.start('identitySubscriptionsDb->addIdentitySubscription');
     if (
+      opts.countWaveSubscribers !== false &&
       identitySubscription.target_type === ActivityEventTargetType.WAVE &&
       identitySubscription.target_action === ActivityEventAction.DROP_CREATED
     ) {
@@ -143,9 +149,11 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
       target_id: string;
       target_action: ActivityEventAction;
     },
-    connection: ConnectionWrapper<any>
+    connection: ConnectionWrapper<any>,
+    opts: { readonly countWaveSubscribers?: boolean } = {}
   ) {
     if (
+      opts.countWaveSubscribers !== false &&
       param.target_type === ActivityEventTargetType.WAVE &&
       param.target_action === ActivityEventAction.DROP_CREATED
     ) {

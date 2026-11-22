@@ -11,6 +11,8 @@ import {
 import { artistArtworkAlertsDb } from '@/notifications/artist-artwork-alerts.db';
 import { contentModerationDb } from '@/content-moderation/content-moderation.db';
 import { Timer } from '@/time';
+import { assertLegacySettingsWrite } from '@/personal-records/personal-records.mode';
+import { personalRecordsStateDb } from '@/personal-records/personal-records-state.db';
 
 type AlertRequest =
   | Operations.GetArtistArtworkAlertRequest
@@ -58,6 +60,7 @@ export async function handleGetArtistArtworkAlert(
 export async function handleEnableArtistArtworkAlert(
   req: Operations.EnableArtistArtworkAlertRequest
 ): Promise<Operations.EnableArtistArtworkAlertResponse> {
+  await assertLegacySettingsWrite(personalRecordsStateDb);
   const { pair, ctx } = await resolvePair(req);
   if (
     await contentModerationDb.isProfileBlocked(pair.subscriberId, pair.artistId)
@@ -73,6 +76,7 @@ export async function handleEnableArtistArtworkAlert(
 export async function handleDisableArtistArtworkAlert(
   req: Operations.DisableArtistArtworkAlertRequest
 ): Promise<Operations.DisableArtistArtworkAlertResponse> {
+  await assertLegacySettingsWrite(personalRecordsStateDb);
   const { pair, ctx } = await resolvePair(req);
   await artistArtworkAlertsDb.setEnabled(pair, false, ctx);
   return { enabled: false };

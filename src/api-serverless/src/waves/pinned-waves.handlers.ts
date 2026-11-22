@@ -15,6 +15,8 @@ import { wavesApiDb } from '@/api/waves/waves.api.db';
 import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
 import { Timer } from '@/time';
+import { assertLegacySettingsWrite } from '@/personal-records/personal-records.mode';
+import { personalRecordsStateDb } from '@/personal-records/personal-records-state.db';
 
 const orderIds = Joi.array()
   .items(Joi.string().min(1).max(100))
@@ -100,6 +102,7 @@ export async function handleGetPinnedWaves(
 export async function handleUpdatePinnedWaveOrder(
   req: UpdatePinnedWaveOrderRequest
 ): Promise<UpdatePinnedWaveOrderResponse> {
+  await assertLegacySettingsWrite(personalRecordsStateDb);
   const { previous_wave_ids: previous, wave_ids: desired } =
     getValidatedByJoiOrThrow(req.body, orderSchema);
   const desiredIds = new Set(desired);

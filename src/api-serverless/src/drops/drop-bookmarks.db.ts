@@ -9,7 +9,7 @@ import { Time } from '../../../time';
 
 export class DropBookmarksDb extends LazyDbAccessCompatibleService {
   async insertBookmark(
-    param: { identity_id: string; drop_id: string },
+    param: { identity_id: string; drop_id: string; bookmarked_at?: number },
     connection?: ConnectionWrapper<any>
   ): Promise<void> {
     await this.db.execute(
@@ -21,7 +21,7 @@ export class DropBookmarksDb extends LazyDbAccessCompatibleService {
       {
         identity_id: param.identity_id,
         drop_id: param.drop_id,
-        bookmarked_at: Time.currentMillis()
+        bookmarked_at: param.bookmarked_at ?? Time.currentMillis()
       },
       connection ? { wrappedConnection: connection } : undefined
     );

@@ -44,7 +44,9 @@ describe('EULA policy persistence', () => {
         acceptedAt: NOW,
         eulaVersion: CURRENT_EULA_VERSION,
         profileId: null
-      }
+      },
+      // No transaction: only a signed record passes one.
+      undefined
     );
     expect(executor.execute.mock.calls[0]![0]).toContain(
       'eula_version = :eulaVersion'

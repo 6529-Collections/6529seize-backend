@@ -33,6 +33,7 @@ import { ApiContentModerationProfileListItem } from '@/api/generated/models/ApiC
 import { ApiContentModerationReportWithdrawalResponse } from '@/api/generated/models/ApiContentModerationReportWithdrawalResponse';
 import { ApiContentModerationUserReport } from '@/api/generated/models/ApiContentModerationUserReport';
 import { assertModerationDeveloper } from '@/content-moderation/moderation-developer-access';
+import { legacySettingsWrite } from '@/api/signed-records/legacy-settings-write';
 
 const router = asyncRouter();
 router.use((_req, res, next) => {
@@ -80,6 +81,7 @@ router.get(
 router.put(
   '/profiles/:profile_id/block',
   needsAuthenticatedUser(),
+  legacySettingsWrite,
   async (
     req: Request<{ profile_id: string }>,
     res: Response<ApiProfileBlockState>
@@ -97,6 +99,7 @@ router.put(
 router.delete(
   '/profiles/:profile_id/block',
   needsAuthenticatedUser(),
+  legacySettingsWrite,
   async (
     req: Request<{ profile_id: string }>,
     res: Response<ApiProfileBlockState>
@@ -114,6 +117,7 @@ router.delete(
 router.put(
   '/drops/:drop_id/hide',
   needsAuthenticatedUser(),
+  legacySettingsWrite,
   async (
     req: Request<{ drop_id: string }>,
     res: Response<ApiDropHiddenState>
@@ -135,6 +139,7 @@ router.put(
 router.delete(
   '/drops/:drop_id/hide',
   needsAuthenticatedUser(),
+  legacySettingsWrite,
   async (
     req: Request<{ drop_id: string }>,
     res: Response<ApiDropHiddenState>

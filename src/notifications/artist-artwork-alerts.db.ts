@@ -56,7 +56,9 @@ export class ArtistArtworkAlertsDb extends LazyDbAccessCompatibleService {
   async setEnabled(
     pair: ArtistArtworkAlertPair,
     enabled: boolean,
-    ctx: RequestContext = {}
+    ctx: RequestContext = {},
+    // The enable's time; a signed record passes its own.
+    now: number = Date.now()
   ): Promise<void> {
     // Retrying enable preserves its original cutoff. Disable/re-enable starts
     // a fresh window, so delayed events cannot backfill older submissions.
@@ -68,7 +70,7 @@ export class ArtistArtworkAlertsDb extends LazyDbAccessCompatibleService {
            on duplicate key update subscriber_id = values(subscriber_id)`
         : `delete from ${ARTIST_ARTWORK_ALERTS_TABLE}
            where subscriber_id = :subscriberId and artist_id = :artistId`,
-      { ...pair, now: Date.now() },
+      { ...pair, now },
       ctx
     );
   }

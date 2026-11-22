@@ -20,7 +20,12 @@ export interface IdentityMutePair {
 }
 
 export class IdentityMutesDb extends LazyDbAccessCompatibleService {
-  async muteIdentity(pair: IdentityMutePair, ctx: RequestContext) {
+  /** `at` (ms) is the mute's time; a signed record passes its own. */
+  async muteIdentity(
+    pair: IdentityMutePair,
+    ctx: RequestContext,
+    at: number = Time.currentMillis()
+  ) {
     this.assertNotSelfMute(pair);
     ctx.timer?.start(`${this.constructor.name}->muteIdentity`);
     try {
@@ -37,7 +42,7 @@ export class IdentityMutesDb extends LazyDbAccessCompatibleService {
           )
           on duplicate key update created_at = values(created_at)
         `,
-        { ...pair, created_at: Time.currentMillis() },
+        { ...pair, created_at: at },
         ctx.connection ? { wrappedConnection: ctx.connection } : undefined
       );
       await this.invalidateUnreadSummariesForMuter(pair, ctx);

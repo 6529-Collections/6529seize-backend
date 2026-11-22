@@ -132,9 +132,11 @@ export class ProfilePreferencesDb extends LazyDbAccessCompatibleService {
     return new Map(rows.map((row) => [row.profile_id, mapRow(row)]));
   }
 
+  /** Runs in `connection`'s transaction when given, else in its own. */
   async upsert(
     profileId: string,
-    update: ProfilePreferencesUpdate
+    update: ProfilePreferencesUpdate,
+    connection?: ConnectionWrapper<any>
   ): Promise<ProfilePreferencesData> {
     const notifications = update.notifications ?? {};
     const assignments: string[] = [];
@@ -210,7 +212,7 @@ export class ProfilePreferencesDb extends LazyDbAccessCompatibleService {
         DEFAULT_PROFILE_PREFERENCES.notifications.subscription_coverage
     };
 
-    return this.executeNativeQueriesInTransaction(async (connection) => {
+    const write = async (connection: ConnectionWrapper<any>) => {
       await this.db.execute(
         `select external_id from ${PROFILES_TABLE}
          where external_id = :profileId for update`,
@@ -240,7 +242,10 @@ export class ProfilePreferencesDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: connection }
       );
       return this.get(profileId, connection);
-    });
+    };
+    return connection
+      ? write(connection)
+      : this.executeNativeQueriesInTransaction(write);
   }
 
   /**

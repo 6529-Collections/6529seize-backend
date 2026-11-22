@@ -17,6 +17,7 @@ import { requestInstallationBadgeRefresh } from './push-notifications.service';
 import { registerInstallationDevice } from './push-installation.db';
 
 import { registerPushNotificationTokenRequestSchema } from './register-push-notification.schema';
+import { legacySettingsWrite } from '@/api/signed-records/legacy-settings-write';
 
 const router = asyncRouter();
 
@@ -172,6 +173,7 @@ router.get(
 router.put(
   `/settings/:device_id`,
   needsAuthenticatedUser(),
+  legacySettingsWrite,
   async function (
     req: Request<
       { device_id: string },

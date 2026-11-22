@@ -51,6 +51,7 @@ export const DROP_AUTHOR_SIGNATURES_TABLE = 'drop_author_signatures';
 export const SIGNED_RECORD_HEADS_TABLE = 'signed_record_heads';
 export const SIGNED_RECORD_LOG_ENTRIES_TABLE = 'signed_record_log_entries';
 export const SIGNED_RECORD_LOG_SEGMENTS_TABLE = 'signed_record_log_segments';
+export const PERSONAL_RECORDS_STATE_TABLE = 'personal_records_state';
 export const WALLET_CONNECTION_SHARES_TABLE = 'wallet_connection_shares';
 export const IDENTITIES_TABLE = 'identities';
 export const ADDRESS_CONSOLIDATION_KEY = 'address_consolidation_keys';

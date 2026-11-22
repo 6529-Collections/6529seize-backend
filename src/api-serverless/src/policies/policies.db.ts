@@ -1,5 +1,5 @@
 import { COOKIES_CONSENT_TABLE, EULA_CONSENT_TABLE } from '@/constants';
-import { sqlExecutor } from '../../../sql-executor';
+import { ConnectionWrapper, sqlExecutor } from '../../../sql-executor';
 import { Time } from '../../../time';
 import { EULAConsent } from '@/entities/IEULAPolicy';
 import { CURRENT_EULA_VERSION, EULA_VALIDITY_MS } from './eula-policy';
@@ -31,9 +31,14 @@ export const saveEULAConsent = async (
   deviceId: string,
   platform: string,
   eulaVersion: string,
-  profileId: string | null = null
+  profileId: string | null = null,
+  // A signed record passes its own time and its transaction.
+  opts: {
+    readonly acceptedAt?: number;
+    readonly connection?: ConnectionWrapper<any>;
+  } = {}
 ) => {
-  const acceptedAt = Time.now().toMillis();
+  const acceptedAt = opts.acceptedAt ?? Time.now().toMillis();
   await sqlExecutor.execute(
     `INSERT INTO ${EULA_CONSENT_TABLE} (device_id, platform, accepted_at, eula_version, profile_id)
       VALUES (:deviceId, :platform, :acceptedAt, :eulaVersion, :profileId)
@@ -42,7 +47,8 @@ export const saveEULAConsent = async (
         accepted_at = :acceptedAt,
         eula_version = :eulaVersion
     `,
-    { deviceId, platform, acceptedAt, eulaVersion, profileId }
+    { deviceId, platform, acceptedAt, eulaVersion, profileId },
+    opts.connection ? { wrappedConnection: opts.connection } : undefined
   );
 };
 
@@ -52,13 +58,15 @@ export const saveEULAConsent = async (
  */
 export const deleteOwnedEULAConsent = async (
   deviceId: string,
-  profileId: string
+  profileId: string,
+  connection?: ConnectionWrapper<any>
 ) => {
   await sqlExecutor.execute(
     `DELETE FROM ${EULA_CONSENT_TABLE}
       WHERE device_id = :deviceId
         AND profile_id = :profileId`,
-    { deviceId, profileId }
+    { deviceId, profileId },
+    connection ? { wrappedConnection: connection } : undefined
   );
 };
 
