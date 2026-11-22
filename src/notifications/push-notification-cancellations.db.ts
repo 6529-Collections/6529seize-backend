@@ -4,6 +4,7 @@ import {
   PUSH_NOTIFICATION_CANCELLATIONS_TABLE
 } from '@/constants';
 import { notifyViewMode } from '@/notifications/view/notify-view-flags';
+import { NotificationViewOrigin } from '@/entities/INotificationView';
 import { DbPoolName } from '@/db-query.options';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
@@ -12,11 +13,17 @@ export const CANCELLATION_RETENTION_DAYS = 30;
 const BATCH_SIZE = 1000;
 type NotificationReference = 'drop' | 'wave';
 export class PushNotificationCancellationsDb extends LazyDbAccessCompatibleService {
-  /** Cancels existing rows atomically, locking both drop references in ID order. */
+  /**
+   * Cancels existing rows atomically, locking both drop references in ID
+   * order. `keepDerived` (a drop edit) leaves the deriver's rows and their
+   * identity_notifications copies alone: a rule re-derives them from the
+   * edit, keeping their read state, and a rebuild would bring them back.
+   */
   async cancelAndDelete(
     reference: NotificationReference,
     values: string[],
-    ctx: RequestContext
+    ctx: RequestContext,
+    { keepDerived = false }: { keepDerived?: boolean } = {}
   ): Promise<void> {
     if (!ctx.connection)
       throw new Error('Notification cancellation requires a transaction');
@@ -26,21 +33,32 @@ export class PushNotificationCancellationsDb extends LazyDbAccessCompatibleServi
       reference === 'drop'
         ? '(related_drop_id in (:values) or related_drop_2_id in (:values))'
         : 'wave_id in (:values)';
+    const viewOn = notifyViewMode() !== 'off';
+    const keep = keepDerived && viewOn;
     // The view's rows of a deleted drop or wave go with it.
-    if (notifyViewMode() !== 'off') {
+    if (viewOn) {
       await this.db.execute(
-        `delete from ${NOTIFICATION_VIEW_TABLE} where ${predicate}`,
+        `delete from ${NOTIFICATION_VIEW_TABLE} where ${predicate}${
+          keep ? ` and origin = '${NotificationViewOrigin.CARRIED}'` : ''
+        }`,
         { values },
         options
       );
     }
+    const keptCopies = keep
+      ? ` and not exists (
+          select 1 from ${NOTIFICATION_VIEW_TABLE} v
+          where v.legacy_id = ${IDENTITY_NOTIFICATIONS_TABLE}.id
+            and v.origin = '${NotificationViewOrigin.DERIVED}'
+        )`
+      : '';
     let afterId = 0;
     // Discover the union without locks, then acquire only primary-key locks in
     // ascending order. ORDER BY alone on a secondary-index scan can lock rows
     // before sorting. Keyset pagination also advances past concurrently deleted IDs.
     while (true) {
       const candidates = await this.db.execute<{ id: number }>(
-        `select id from ${IDENTITY_NOTIFICATIONS_TABLE} where ${predicate} and id > :afterId order by id limit ${BATCH_SIZE}`,
+        `select id from ${IDENTITY_NOTIFICATIONS_TABLE} where ${predicate}${keptCopies} and id > :afterId order by id limit ${BATCH_SIZE}`,
         { values, afterId },
         options
       );
@@ -49,7 +67,7 @@ export class PushNotificationCancellationsDb extends LazyDbAccessCompatibleServi
       afterId = lastCandidate.id;
       const rows = await this.db.execute<{ id: number }>(
         `select id from ${IDENTITY_NOTIFICATIONS_TABLE} force index (PRIMARY)
-         where id in (:ids) and ${predicate} order by id for update`,
+         where id in (:ids) and ${predicate}${keptCopies} order by id for update`,
         { ids: candidates.map((row) => row.id), values },
         options
       );

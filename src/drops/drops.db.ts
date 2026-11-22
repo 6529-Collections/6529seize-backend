@@ -2220,10 +2220,17 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop('dropsDb->deleteDropMetadata');
   }
 
-  public async deleteDropNotifications(dropId: string, ctx: RequestContext) {
+  /** `edit`: the drop is being rewritten, not deleted (see cancelAndDelete). */
+  public async deleteDropNotifications(
+    dropId: string,
+    ctx: RequestContext,
+    { edit = false }: { edit?: boolean } = {}
+  ) {
     ctx.timer?.start('dropsDb->deleteDropNotifications');
     const cancellations = new PushNotificationCancellationsDb(() => this.db);
-    await cancellations.cancelAndDelete('drop', [dropId], ctx);
+    await cancellations.cancelAndDelete('drop', [dropId], ctx, {
+      keepDerived: edit
+    });
     ctx.timer?.stop('dropsDb->deleteDropNotifications');
   }
 

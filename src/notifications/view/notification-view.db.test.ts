@@ -1,12 +1,14 @@
 import 'reflect-metadata';
 import { sqlExecutor } from '@/sql-executor';
 import {
+  DELETED_DROPS_TABLE,
   IDENTITIES_TABLE,
   IDENTITY_MUTES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
   NOTIFICATION_VIEW_PUSH_OUTBOX_TABLE,
   NOTIFICATION_VIEW_TABLE,
   PUSH_NOTIFICATION_CANCELLATIONS_TABLE,
+  PROFILE_PREFERENCES_TABLE,
   PUSH_NOTIFICATION_OUTBOX_TABLE,
   SIGNED_RECORD_LOG_ENTRIES_TABLE
 } from '@/constants';
@@ -15,6 +17,7 @@ import { anIdentity } from '@/tests/fixtures/identity.fixture';
 import { identityNotificationsDb } from '@/notifications/identity-notifications.db';
 import { userNotifier } from '@/notifications/user.notifier';
 import { PushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
+import { profilePreferencesDb } from '@/profile-preferences/profile-preferences.db';
 import {
   notificationDeriver,
   PUSH_LIVE_WINDOW_MS
@@ -49,7 +52,9 @@ const TABLES = [
   PUSH_NOTIFICATION_CANCELLATIONS_TABLE,
   IDENTITIES_TABLE,
   IDENTITY_MUTES_TABLE,
-  SIGNED_RECORD_LOG_ENTRIES_TABLE
+  SIGNED_RECORD_LOG_ENTRIES_TABLE,
+  DELETED_DROPS_TABLE,
+  PROFILE_PREFERENCES_TABLE
 ];
 const NOW = 1_795_000_000_000;
 
@@ -149,6 +154,33 @@ const outbox = () =>
 const viewOutbox = () =>
   sqlExecutor.execute<{ identity_id: string; source_key: string }>(
     `select identity_id, source_key from ${NOTIFICATION_VIEW_PUSH_OUTBOX_TABLE} order by identity_id, source_key`
+  );
+const mute = (muter: string, muted: string) =>
+  sqlExecutor.execute(
+    `insert into ${IDENTITY_MUTES_TABLE} (muter_id, muted_identity_id, created_at)
+     values (:muter, :muted, :now)`,
+    { muter, muted, now: NOW }
+  );
+const loggedReads = () =>
+  sqlExecutor
+    .execute<{
+      entry: string;
+    }>(
+      `select entry from ${SIGNED_RECORD_LOG_ENTRIES_TABLE} where lane = 'notify' order by id`
+    )
+    .then((rows) =>
+      rows
+        .map((row) => JSON.parse(row.entry).body)
+        .filter((body) => body.type === 'notify-read')
+    );
+const cancelDrop = (dropId: string, keepDerived = false) =>
+  sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+    new PushNotificationCancellationsDb(() => sqlExecutor).cancelAndDelete(
+      'drop',
+      [dropId],
+      { connection },
+      { keepDerived }
+    )
   );
 const comparable = (row: Record<string, any>) => {
   const { id: _id, created_at: _createdAt, read_at: _readAt, ...rest } = row;
@@ -325,7 +357,8 @@ describe('notification_view', () => {
         vote({ ref: '0xstale', blockTimeMs: NOW - PUSH_LIVE_WINDOW_MS - 1 })
       )
     ]);
-    expect(await oldRows()).toHaveLength(2);
+    // The replay writes no copy; the stale event's copy is not pushed.
+    expect(await oldRows()).toHaveLength(1);
     expect(await outbox()).toEqual([]);
   });
 
@@ -370,19 +403,160 @@ describe('notification_view', () => {
     expect(await outbox()).toHaveLength(2);
   });
 
-  it('applies the old write filters: a muted actor writes no row', async () => {
+  it("applies the old write filters to copies and pushes, not to the view's rows", async () => {
     setFlags({
       NOTIFY_VIEW_MODE: 'shadow',
       NOTIFY_DERIVED_CAUSES: 'IDENTITY_REP@0'
     });
-    await sqlExecutor.execute(
-      `insert into ${IDENTITY_MUTES_TABLE} (muter_id, muted_identity_id, created_at)
-       values (:muter, :muted, :now)`,
-      { muter: targetId, muted: raterId, now: NOW }
+    await mute(targetId, raterId);
+    expect(await apply([deriveRating(rating())])).toMatchObject({
+      written: 1,
+      legacyCopies: 0,
+      pushed: 0
+    });
+    expect(await viewRows()).toEqual([
+      expect.objectContaining({ identity_id: targetId, legacy_id: null })
+    ]);
+    expect(await oldRows()).toEqual([]);
+    expect(await outbox()).toEqual([]);
+  });
+
+  it('keeps a row whose actor is muted later, and writes no late copy when the mute is lifted', async () => {
+    setFlags({
+      NOTIFY_VIEW_MODE: 'shadow',
+      NOTIFY_DERIVED_CAUSES: 'IDENTITY_MENTIONED@0'
+    });
+    await apply([deriveDropCreation(drop([targetId, otherId]))]);
+    await mute(targetId, raterId);
+    for (const mode of ['live', 'replay'] as const) {
+      expect(
+        await apply([deriveDropCreation(drop([targetId, otherId]))], mode)
+      ).toMatchObject({ written: 0, removed: 0, legacyCopies: 0 });
+    }
+    expect((await oldRows()).map((row) => row.identity_id).sort()).toEqual(
+      [targetId, otherId].sort()
     );
-    expect((await apply([deriveRating(rating())])).written).toBe(0);
+
+    // Muted when first derived: a view row, no copy; unmuted later: still none.
+    const second = { ...drop([targetId]), rootEventId: '0xother' };
+    await apply([deriveDropCreation(second)]);
+    await sqlExecutor.execute(`delete from ${IDENTITY_MUTES_TABLE}`);
+    await apply([deriveDropCreation(second)]);
+    expect(await oldRows()).toHaveLength(2);
+    expect(await viewRows()).toHaveLength(3);
+  });
+
+  it('writes no copy for a row the view held before its cause was derived', async () => {
+    setFlags({ NOTIFY_VIEW_MODE: 'shadow' });
+    await apply([deriveVote(vote())]);
+    setFlags({
+      NOTIFY_VIEW_MODE: 'shadow',
+      NOTIFY_DERIVED_CAUSES: 'DROP_VOTED@0'
+    });
+    expect(await apply([deriveVote(vote())])).toMatchObject({
+      legacyCopies: 0,
+      pushed: 0
+    });
+    expect(await oldRows()).toEqual([]);
+  });
+
+  it('shadow: read marks reach the view and the log, so the switch keeps them', async () => {
+    setFlags({
+      NOTIFY_VIEW_MODE: 'shadow',
+      NOTIFY_DERIVED_CAUSES: 'IDENTITY_REP@0,DROP_VOTED@0'
+    });
+    await apply([deriveRating(rating()), deriveVote(vote())]);
+    const voteCopy = (await oldRows()).find(
+      (row) => row.cause === IdentityNotificationCause.DROP_VOTED
+    );
+    // Clients hold old ids in shadow.
+    await identityNotificationsDb.updateNotificationReadAt({
+      id: Number(voteCopy!.id),
+      identity_id: targetId,
+      readAt: 7
+    });
+    await identityNotificationsDb.markAllNotificationsAsRead(targetId, {});
+    expect((await viewRows()).every((row) => row.read_at !== null)).toBe(true);
+    const voteView = (await viewRows()).find(
+      (row) => row.cause === IdentityNotificationCause.DROP_VOTED
+    );
+    expect(Number(voteView!.read_at)).toBe(7);
+    expect(
+      (await loggedReads()).map((body) => [body.scope, body.id ?? null])
+    ).toEqual([
+      ['one', Number(voteView!.id)],
+      ['all', null]
+    ]);
+
+    setFlags({
+      NOTIFY_VIEW_MODE: 'on',
+      NOTIFY_DERIVED_CAUSES: 'IDENTITY_REP@0,DROP_VOTED@0'
+    });
+    expect(
+      await identityNotificationsDb.countUnreadNotificationsForIdentity(
+        targetId,
+        []
+      )
+    ).toBe(0);
+  });
+
+  it('a replay writes only the view, even with legacy output on', async () => {
+    setFlags({
+      NOTIFY_VIEW_MODE: 'on',
+      NOTIFY_DERIVED_CAUSES: 'IDENTITY_REP@0'
+    });
+    await apply([deriveRating(rating())]);
+    await sqlExecutor.execute(`delete from ${NOTIFICATION_VIEW_TABLE}`);
+    expect(await apply([deriveRating(rating())], 'replay')).toMatchObject({
+      written: 1,
+      legacyCopies: 0,
+      pushed: 0
+    });
+    expect(await oldRows()).toHaveLength(1);
+  });
+
+  it("a deleted drop's rows stay gone when a rule names it again; an edit keeps them", async () => {
+    setFlags({
+      NOTIFY_VIEW_MODE: 'on',
+      NOTIFY_DERIVED_CAUSES: 'DROP_REPLIED@0'
+    });
+    const replyToX = (): DropCreationFacts => ({
+      ...drop([]),
+      rootEventId: '0xreply',
+      dropId: 'drop-y',
+      versions: [
+        {
+          eventId: '0xreply',
+          timeMs: NOW,
+          reply: { dropId: 'drop-x', partNo: 1, authorId: targetId },
+          quotes: [],
+          mentionedIds: []
+        }
+      ]
+    });
+    await apply([deriveDropCreation(replyToX())]);
+    expect(await viewRows()).toHaveLength(1);
+    expect(await oldRows()).toHaveLength(1);
+
+    // An edit of drop X rewrites X, not the rows that name it.
+    await cancelDrop('drop-x', true);
+    expect(await viewRows()).toHaveLength(1);
+    expect(await oldRows()).toHaveLength(1);
+
+    await sqlExecutor.execute(
+      `insert into ${DELETED_DROPS_TABLE} (id, wave_id, author_id, created_at, deleted_at)
+       values ('drop-x', 'wave-1', :author, :now, :now)`,
+      { author: targetId, now: NOW }
+    );
+    await cancelDrop('drop-x');
     expect(await viewRows()).toEqual([]);
     expect(await oldRows()).toEqual([]);
+    for (const mode of ['live', 'replay'] as const) {
+      expect(
+        (await apply([deriveDropCreation(replyToX())], mode)).written
+      ).toBe(0);
+    }
+    expect(await viewRows()).toEqual([]);
   });
 
   it('replaces a group: a dropped recipient goes, a kept one keeps its read state', async () => {
@@ -618,6 +792,25 @@ describe('notification_view', () => {
       });
       expect(await outbox()).toHaveLength(1);
       expect(await viewOutbox()).toHaveLength(1);
+    });
+
+    it('hides rows from muted actors and switched-off causes when read, and shows them again', async () => {
+      await apply([deriveRating(rating())]);
+      expect(await unread()).toBe(1);
+      await mute(targetId, raterId);
+      expect(await page()).toEqual([]);
+      expect(await unread()).toBe(0);
+      await sqlExecutor.execute(`delete from ${IDENTITY_MUTES_TABLE}`);
+      await profilePreferencesDb.upsert(targetId, {
+        notifications: { rep_and_nic: false }
+      });
+      expect(await page()).toEqual([]);
+      expect(await unread()).toBe(0);
+      await profilePreferencesDb.upsert(targetId, {
+        notifications: { rep_and_nic: true }
+      });
+      expect(await page()).toHaveLength(1);
+      expect(await unread()).toBe(1);
     });
 
     it('writes no view row for a cause the deriver does not own yet', async () => {

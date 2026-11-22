@@ -233,7 +233,8 @@ describe('notification view lifecycle', () => {
           suppressFollowers: false
         })
       ],
-      { mode: 'replay', now: T },
+      // Live, an hour on: copies are written, and nothing is pushed.
+      { mode: 'live', now: T + 3_600_000 },
       {}
     );
     const mismatched = await sqlExecutor.execute(
@@ -288,6 +289,19 @@ describe('notification view lifecycle', () => {
       NOTIFY_VIEW_MODE: 'shadow',
       NOTIFY_DERIVED_CAUSES: `DROP_VOTED@${T}`
     });
+    // A vote after the cut, still in shadow: the deriver's row, marked read
+    // through its copy's id, as a client in shadow holds it.
+    feed.events.push(vote(3, T + 500));
+    await notificationFeedRunner.run(feed, { mode: 'live', now: T + 500 });
+    const lateCopy = await sqlExecutor.oneOrNull<{ id: number }>(
+      `select id from ${IDENTITY_NOTIFICATIONS_TABLE} where created_at = :at`,
+      { at: T + 500 }
+    );
+    await identityNotificationsDb.updateNotificationReadAt({
+      id: Number(lateCopy!.id),
+      identity_id: authorId,
+      readAt: T + 600
+    });
     while (!(await notificationViewSwitch.copyOldRows(1)).done) {
       // One old row per batch, to cross batch edges.
     }
@@ -302,15 +316,21 @@ describe('notification view lifecycle', () => {
     ).map((row) => Number(row.id));
     const copied = await sqlExecutor.execute<{
       id: number;
-      origin: string;
       source_key: string;
       identity_id: string;
-      read_at: number | null;
     }>(
-      `select id, origin, source_key, identity_id, read_at from ${NOTIFICATION_VIEW_TABLE} order by id`
+      `select id, source_key, identity_id from ${NOTIFICATION_VIEW_TABLE}
+       where origin = 'CARRIED' order by id`
     );
-    expect(copied.map((row) => Number(row.id))).toEqual(oldIds);
-    expect(copied.every((row) => row.origin === 'CARRIED')).toBe(true);
+    // Every old row but the deriver's own copy, under its old id.
+    expect(copied.map((row) => Number(row.id))).toEqual(
+      oldIds.filter((id) => id !== Number(lateCopy!.id))
+    );
+    const late = await sqlExecutor.oneOrNull<{ read_at: number }>(
+      `select read_at from ${NOTIFICATION_VIEW_TABLE} where legacy_id = :id`,
+      { id: Number(lateCopy!.id) }
+    );
+    expect(Number(late!.read_at)).toBe(T + 600);
     for (const row of copied) {
       expect(row.source_key).toBe(
         notificationSourceKey('carried', String(row.id), row.identity_id)
@@ -356,7 +376,7 @@ describe('notification view lifecycle', () => {
       authorId,
       {}
     );
-    expect((await answers()).page).toHaveLength(5);
+    expect((await answers()).page).toHaveLength(6);
 
     // The archive: every copied row, the cuts, and the marks are logged.
     while (!(await notificationArchive.sealCarried(2)).done) {
@@ -376,7 +396,7 @@ describe('notification view lifecycle', () => {
       feeds: [feed]
     });
     expect(result.archivedRows).toBe(4);
-    expect(result.receipts).toBe(2);
+    expect(result.receipts).toBe(3);
     expect(await answers()).toEqual(live);
     // A rebuild queues no push and announces nothing.
     expect(
@@ -385,6 +405,31 @@ describe('notification view lifecycle', () => {
       )
     ).toHaveLength(1);
     expect(announced).toHaveBeenCalledTimes(1);
+    announced.mockRestore();
+  });
+
+  it('a mark-all reads the rows it lists: a row derived later for an earlier time stays unread, live and rebuilt', async () => {
+    setFlags({
+      NOTIFY_VIEW_MODE: 'on',
+      NOTIFY_DERIVED_CAUSES: 'DROP_VOTED@0',
+      NOTIFY_LEGACY_OUTPUT: 'false'
+    });
+    const announced = jest
+      .spyOn(wsListenersNotifier, 'notifyAboutIdentityNotificationsChanged')
+      .mockResolvedValue(undefined);
+    const feed = new ListFeed([vote(0, T)]);
+    await notificationFeedRunner.run(feed, { mode: 'live', now: T });
+    await identityNotificationsDb.markAllNotificationsAsRead(authorId, {});
+    // Its feed ran late: the event is older than the mark.
+    feed.events.push(vote(1, T - 5000));
+    await notificationFeedRunner.run(feed, { mode: 'live', now: T });
+    const live = await answers();
+    expect(live.unread).toBe(1);
+    await notificationViewRebuild.rebuild({
+      entries: loggedEntries(),
+      feeds: [feed]
+    });
+    expect(await answers()).toEqual(live);
     announced.mockRestore();
   });
 

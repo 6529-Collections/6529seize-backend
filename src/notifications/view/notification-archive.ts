@@ -49,12 +49,15 @@ export type NotificationReadReceipt =
       readonly scope: 'all';
       readonly identity_id: string;
       readonly read_at: number;
+      /** The rows the mark read: a row derived later stays unread. */
+      readonly source_keys: readonly string[];
     }
   | {
       readonly scope: 'wave';
       readonly identity_id: string;
       readonly wave_id: string;
       readonly read_at: number;
+      readonly source_keys: readonly string[];
     };
 
 export type NotifyLogBody =
@@ -69,6 +72,9 @@ export type NotifyLogBody =
       readonly cuts: Record<string, number>;
     }
   | ({ readonly type: 'notify-read'; readonly v: 1 } & NotificationReadReceipt);
+
+/** Keys per read-mark entry: about 1.4 MB, under the log's 4 MiB entry limit. */
+const READ_KEYS_PER_ENTRY = 20_000;
 
 /** Rows per archive entry: well under the log's 4 MiB entry limit. */
 const ARCHIVE_ROWS_PER_ENTRY = 1000;
@@ -179,14 +185,30 @@ export class NotificationArchive {
     );
   }
 
-  /** Records a read mark made in `on` mode, in the caller's transaction. */
+  /**
+   * Records a read mark made in `shadow` or `on`, in the caller's
+   * transaction. A mark of many rows is split across entries.
+   */
   async recordRead(
     receipt: NotificationReadReceipt,
     connection: ConnectionWrapper<any>
   ): Promise<void> {
-    await this.log.append([entry({ type: 'notify-read', v: 1, ...receipt })], {
-      connection
-    });
+    const receipts: NotificationReadReceipt[] = [];
+    if (receipt.scope === 'one') {
+      receipts.push(receipt);
+    } else {
+      const keys = receipt.source_keys;
+      for (let i = 0; i === 0 || i < keys.length; i += READ_KEYS_PER_ENTRY) {
+        receipts.push({
+          ...receipt,
+          source_keys: keys.slice(i, i + READ_KEYS_PER_ENTRY)
+        });
+      }
+    }
+    await this.log.append(
+      receipts.map((part) => entry({ type: 'notify-read', v: 1, ...part })),
+      { connection }
+    );
   }
 }
 
@@ -266,15 +288,24 @@ export async function applyReadReceipt(
     );
     return;
   }
-  // A mark-all or mark-wave read everything that existed when it was made.
-  await db.execute(
-    `update ${NOTIFICATION_VIEW_TABLE} set read_at = :read_at
-     where identity_id = :identity_id and read_at is null
-       and created_at <= :read_at${receipt.scope === 'wave' ? ' and wave_id = :wave_id' : ''}`,
-    receipt,
-    options
-  );
+  // A mark-all or mark-wave read the rows it lists, the unread rows when it
+  // was made; a row derived later, even for an earlier time, stays unread.
+  for (let i = 0; i < receipt.source_keys.length; i += READ_KEY_CHUNK) {
+    await db.execute(
+      `update ${NOTIFICATION_VIEW_TABLE} set read_at = :read_at
+       where identity_id = :identity_id and read_at is null
+         and source_key in (:keys)`,
+      {
+        identity_id: receipt.identity_id,
+        read_at: receipt.read_at,
+        keys: receipt.source_keys.slice(i, i + READ_KEY_CHUNK)
+      },
+      options
+    );
+  }
 }
+
+const READ_KEY_CHUNK = 1000;
 
 export const notificationArchive = new NotificationArchive(
   dbSupplier,

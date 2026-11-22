@@ -32,12 +32,14 @@ All are read on every call from the process environment, which each service load
 
 A rule turns one source event into a group: every row for `(family, ref)`. The deriver, in one transaction per batch:
 
-1. applies today's write filters (mutes, blocks, hidden drops, notification preferences) as they stand when the group is applied;
+1. keeps every row the rule derives, except rows that name a deleted drop (`deleted_drops`). Mutes, blocks, moderation and notification preferences are not applied here: they apply when the view is read, so the rows never depend on their state now;
 2. replaces the group's rows in the view: rows the new group lacks are deleted, changed rows are updated, and read state is kept;
-3. for a derived cause, writes a copy into `identity_notifications` once per row (the view remembers its id), updates it when the row changes and deletes it, with a push cancellation, when the row goes;
-4. queues a push for a new row of a live event less than 15 minutes old: the copy's id in `shadow`, the view row in `on`. A replay or a rebuild never pushes.
+3. for a derived cause, writes a copy into `identity_notifications` when a row first appears and today's write filters (mutes, blocks, hidden drops, preferences) let it through, as the old writer would; the view remembers the copy's id, updates it when the row changes and deletes it, with a push cancellation, when the row goes. A row the view held before its cause was derived gets no copy: the old writer's row stands;
+4. queues a push for a new row of a live event less than 15 minutes old that the write filters let through: the copy's id in `shadow`, the view row in `on`.
 
-Applying the same group twice, with the same flags and filter state, changes nothing.
+Applying the same group twice changes nothing, whatever the filters' state. A replay (a rebuild) writes only the view: no copies and no pushes.
+
+Deleting a drop or a wave removes every row that names it from both tables, as before. Editing a drop leaves the deriver's rows and their copies alone, since the rule re-derives them from the edit and keeps their read state; rows of causes not derived yet go and come back from their old writer, as before.
 
 ## Feeds and the runner
 
@@ -45,9 +47,9 @@ A feed reads one index's events after a cursor and names the rule for each (`Not
 
 ## Mode `on`
 
-- `/notifications` reads, unread counts and badges read the view.
+- `/notifications` reads, unread counts and badges read the view. Mutes, blocks, moderation and notification preferences hide rows when they are read, so unmuting someone, or switching a kind of notification back on, shows rows that arrived meanwhile.
 - The deriver writes view rows only for the causes it owns, from their cut; the CARRIED copies stand for the rest.
-- Mark-read by id accepts the view id or the `identity_notifications` id a client got earlier, for example from a push. Mark-read, mark-all-read and mark-wave-read also update `identity_notifications` while `NOTIFY_LEGACY_OUTPUT` is on.
+- Mark-read by id accepts the view id or the `identity_notifications` id a client got earlier, for example from a push. Mark-read, mark-all-read and mark-wave-read also update `identity_notifications` while `NOTIFY_LEGACY_OUTPUT` is on. In `shadow` they update the view too, so the deriver's rows keep their read state at the switch; both modes log them (see Archive and rebuild).
 - A row an old writer adds for a cause not derived yet is copied into the view as `CARRIED`, with a time-ordered id.
 - Pushes and `IDENTITY_NOTIFICATIONS_CHANGED` frames follow the view (next section).
 
@@ -95,23 +97,19 @@ Rows created before the switch keep their `identity_notifications` ids, so clien
 
 A cause that joins later gets its own cut when it is added to `NOTIFY_DERIVED_CAUSES`; in `on` mode nothing needs pruning.
 
-Not ready in this change, so the mode stays at `shadow`: read marks made during `shadow` do not reach the deriver's rows in the view.
-
 ## Archive and rebuild
 
 What the view cannot derive goes into the private record log (`src/signed-records/record-log`), sealed to 6529.io's provider keys, under the lane `notify`:
 
 - `notify-archive`: CARRIED rows, up to 1,000 per entry, with their ids and read state when sealed;
 - `notify-cuts`: the cuts in force;
-- `notify-read`: each read mark made in `on` mode through the routes (one row by its view id, all, or a wave), written in the same transaction as the mark.
+- `notify-read`: each read mark made in `shadow` or `on` through the routes, written in the same transaction as the mark: one row by its view id, or a mark-all or mark-wave with the keys of the rows it read (split across entries past 20,000 keys).
 
-`NotificationViewRebuild` rebuilds the view from empty with the production flags and `NOTIFY_LEGACY_OUTPUT=false`: it restores the archived rows, refuses a log whose cuts differ from the flags, replays every feed from the start, and applies the read marks in the order they were made. A mark-all or mark-wave reads every row that existed at its time.
+`NotificationViewRebuild` rebuilds the view from empty with the production flags and `NOTIFY_LEGACY_OUTPUT=false`: it restores the archived rows, refuses a log whose cuts differ from the flags, replays every feed from the start, and applies the read marks in the order they were made. A mark-all or mark-wave reads the rows it lists, so a row derived after it, even for an earlier time, stays unread there as it did live.
 
-What does not rebuild yet:
+What a rebuild relies on beyond the log and the feeds:
 
-- The write filters read their current state whenever a group is applied, so a mute added after an event removes its row the next time the group is applied, and a rebuild applies today's mutes to old events.
-- Deleting or editing a drop deletes the view rows of other drops that name it (replies and quotes, as `related_drop_2_id`), as it does in `identity_notifications`. The drop rule does not model this, so a rebuild brings those rows back.
-- Read marks made in `shadow` are not logged.
+- Deleted drops come from `deleted_drops`, which the drop index has to keep from its tombstones.
 
 ## Rollback
 

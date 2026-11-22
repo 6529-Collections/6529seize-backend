@@ -558,7 +558,8 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
   ) {
     const params = { id, identity_id, read_at: readAt };
     const options = connection ? { wrappedConnection: connection } : undefined;
-    if (notifyViewMode() !== 'on') {
+    const mode = notifyViewMode();
+    if (mode === 'off') {
       await this.db.execute(
         `
         update ${IDENTITY_NOTIFICATIONS_TABLE}
@@ -578,9 +579,11 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       );
       return;
     }
-    // The view answers by its own id or, for a client that still holds one,
-    // by the identity_notifications id its row was copied from. Ids of the
-    // two tables never overlap. The archive keeps the mark by view id.
+    // The view answers by its own id or, for a client that holds one (every
+    // client in `shadow`), by the identity_notifications id of its copy. Ids
+    // of the two tables never overlap. The archive keeps the mark by view
+    // id, so a rebuild applies it; in `shadow` that covers the deriver's rows
+    // that will stand at the switch.
     const viewRows = await this.db.execute<{ id: number }>(
       `select id from ${NOTIFICATION_VIEW_TABLE}
        where identity_id = :identity_id and (id = :id or legacy_id = :id)
@@ -600,7 +603,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         connection
       );
     }
-    if (legacyOutputEnabled()) {
+    if (mode === 'shadow' || legacyOutputEnabled()) {
       await this.db.execute(
         `update ${IDENTITY_NOTIFICATIONS_TABLE} set read_at = :read_at
          where identity_id = :identity_id and (
@@ -618,7 +621,8 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
 
   async markAllNotificationsAsRead(identity_id: string, ctx: RequestContext) {
     ctx.timer?.start(`${this.constructor.name}->markAllNotificationsAsRead`);
-    if (notifyViewMode() === 'on' && !ctx.connection) {
+    const viewOn = notifyViewMode() !== 'off';
+    if (viewOn && !ctx.connection) {
       await this.db.executeNativeQueriesInTransaction((connection) =>
         this.markAllNotificationsAsRead(identity_id, { ...ctx, connection })
       );
@@ -626,9 +630,18 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       return;
     }
     const readAt = Time.currentMillis();
-    if (notifyViewMode() === 'on' && ctx.connection) {
+    if (viewOn && ctx.connection) {
       await notificationArchive.recordRead(
-        { scope: 'all', identity_id, read_at: readAt },
+        {
+          scope: 'all',
+          identity_id,
+          read_at: readAt,
+          source_keys: await this.unreadViewKeys(
+            identity_id,
+            null,
+            ctx.connection
+          )
+        },
         ctx.connection
       );
     }
@@ -658,7 +671,8 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<number> {
     ctx.timer?.start(`${this.constructor.name}->markWaveNotificationsAsRead`);
-    if (notifyViewMode() === 'on' && !ctx.connection) {
+    const viewOn = notifyViewMode() !== 'off';
+    if (viewOn && !ctx.connection) {
       const marked = await this.db.executeNativeQueriesInTransaction(
         (connection) =>
           this.markWaveNotificationsAsRead(waveId, identityId, {
@@ -670,13 +684,18 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       return marked;
     }
     const readAt = Time.currentMillis();
-    if (notifyViewMode() === 'on' && ctx.connection) {
+    if (viewOn && ctx.connection) {
       await notificationArchive.recordRead(
         {
           scope: 'wave',
           identity_id: identityId,
           wave_id: waveId,
-          read_at: readAt
+          read_at: readAt,
+          source_keys: await this.unreadViewKeys(
+            identityId,
+            waveId,
+            ctx.connection
+          )
         },
         ctx.connection
       );
@@ -706,15 +725,41 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     return counts[0] ?? 0;
   }
 
+  /** The view rows a mark-all (or mark-wave) is about to read, locked. */
+  private async unreadViewKeys(
+    identityId: string,
+    waveId: string | null,
+    connection: ConnectionWrapper<any>
+  ): Promise<string[]> {
+    const rows = await this.db.execute<{ source_key: string }>(
+      `select source_key from ${NOTIFICATION_VIEW_TABLE}
+       where identity_id = :identityId and read_at is null${
+         waveId === null ? '' : ' and wave_id = :waveId'
+       }
+       order by source_key
+       for update`,
+      { identityId, waveId },
+      { wrappedConnection: connection }
+    );
+    return rows.map((row) => row.source_key);
+  }
+
   /**
-   * Where a mark-read goes: the readers' table first, and in `on` mode also
-   * identity_notifications while it is kept current for a rollback.
+   * Where a mark-read goes, the readers' table first: in `shadow` also the
+   * view, so the deriver's rows keep their read state at the switch; in
+   * `on` also identity_notifications while it is kept for a rollback.
    */
   private markReadTables(): string[] {
-    const readTable = notificationsReadTable();
-    return readTable === NOTIFICATION_VIEW_TABLE && legacyOutputEnabled()
-      ? [readTable, IDENTITY_NOTIFICATIONS_TABLE]
-      : [readTable];
+    switch (notifyViewMode()) {
+      case 'off':
+        return [IDENTITY_NOTIFICATIONS_TABLE];
+      case 'shadow':
+        return [IDENTITY_NOTIFICATIONS_TABLE, NOTIFICATION_VIEW_TABLE];
+      case 'on':
+        return legacyOutputEnabled()
+          ? [NOTIFICATION_VIEW_TABLE, IDENTITY_NOTIFICATIONS_TABLE]
+          : [NOTIFICATION_VIEW_TABLE];
+    }
   }
 
   /**
@@ -737,6 +782,26 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       : undefined;
   }
 
+  /**
+   * The causes a person's notification preferences hide. In `on` mode they
+   * apply when the view is read, because the view keeps every derived row
+   * (so a rebuild does not depend on today's preferences). Rows in
+   * identity_notifications were filtered when they were written.
+   */
+  private async causesHiddenByPreferences(
+    identityId: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<IdentityNotificationCause[]> {
+    if (notifyViewMode() !== 'on') return [];
+    const preferences =
+      (await this.profilePreferencesDb.getMany([identityId], connection)).get(
+        identityId
+      ) ?? DEFAULT_PROFILE_PREFERENCES;
+    return Object.values(IdentityNotificationCause).filter(
+      (cause) => !isNotificationEnabled(cause, preferences)
+    );
+  }
+
   async findNotifications(
     param: {
       identity_id: string;
@@ -750,9 +815,16 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     connection?: ConnectionWrapper<any>
   ): Promise<IdentityNotificationDeserialized[]> {
     const causes = param.cause?.split(',').map((it) => it.trim());
-    const causesExclude = param.cause_exclude
-      ?.split(',')
-      .map((it) => it.trim());
+    const hidden = await this.causesHiddenByPreferences(
+      param.identity_id,
+      connection
+    );
+    const requestedExclude =
+      param.cause_exclude?.split(',').map((it) => it.trim()) ?? [];
+    const causesExclude =
+      requestedExclude.length || hidden.length
+        ? [...requestedExclude, ...hidden]
+        : undefined;
     const groups = await this.sharedViewerGroups(param.eligible_group_ids);
     return this.db
       .execute<IdentityNotificationEntity>(
@@ -849,8 +921,12 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     const causeClause = hasEnabledCauses
       ? ` AND n.cause IN (:enabledCauses)`
       : '';
-    const excludedCauses = options?.excludedCauses;
-    const hasExcludedCauses = !!excludedCauses?.length;
+    const hidden = await this.causesHiddenByPreferences(
+      identity_id,
+      connection
+    );
+    const excludedCauses = [...(options?.excludedCauses ?? []), ...hidden];
+    const hasExcludedCauses = excludedCauses.length > 0;
     const excludeCauseClause = hasExcludedCauses
       ? ` AND n.cause NOT IN (:excludedCauses)`
       : '';
