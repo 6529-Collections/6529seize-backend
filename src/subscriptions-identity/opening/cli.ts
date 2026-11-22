@@ -7,6 +7,7 @@ import {
   mirrorIdentityDirectory
 } from '../identity/identity-directory';
 import {
+  openSubscriptionWrites,
   subscriptionsIdentitySwitch,
   suspendIdentityTables
 } from '../identity/identity-switch';
@@ -41,6 +42,8 @@ import {
  *   status   whether the identity tables are the truth, and why
  *   suspend  rollback: every reader is on the legacy tables within 60 s
  *            (API answers can be cached a minute more)
+ *   open-writes  delete go-live's writes-closed marker, after a go-live
+ *            that died before it could reopen the write routes
  *
  * Files name wallets, so they are written outside the repository.
  */
@@ -53,7 +56,8 @@ const USAGE = `usage:
   go-live --out-dir <dir> --signed-writes-live [--accept-report-diffs]
   rebuild --head-uri <uri> --head-sha256 <hex> [--history-uri <uri>] [--identities <json>]
   status
-  suspend`;
+  suspend
+  open-writes`;
 
 type Args = Record<string, string | true>;
 
@@ -212,6 +216,12 @@ async function statusCommand(): Promise<number> {
   return 0;
 }
 
+async function openWritesCommand(): Promise<number> {
+  await openSubscriptionWrites();
+  process.stdout.write('the unsigned write routes are open\n');
+  return 0;
+}
+
 async function suspendCommand(): Promise<number> {
   const suspended = await suspendIdentityTables();
   process.stdout.write(
@@ -243,6 +253,8 @@ export async function main(argv: readonly string[]): Promise<number> {
       return inDb(statusCommand);
     case 'suspend':
       return inDb(suspendCommand);
+    case 'open-writes':
+      return inDb(openWritesCommand);
     default:
       process.stderr.write(`${USAGE}\n`);
       return 1;

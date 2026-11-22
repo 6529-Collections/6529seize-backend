@@ -285,8 +285,13 @@ export async function scheduleIdentitySwitch(
 /**
  * The marker go-live sets before its cut and clears after the switch: while
  * it is there, the unsigned write routes answer 503, so no change lands
- * between the cut and the switch. It lives in subscriptions_id_cursors
- * (block holds the time it was set, in ms), which a load leaves alone.
+ * between the cut and the switch. It is a row of subscriptions_id_cursors
+ * (block holds the time it was set, in ms); the load replaces only the
+ * redemption cursor's row there, so the marker outlasts the load.
+ *
+ * go-live gives up once its cut is older than the switch window, so a
+ * marker older than that is left by a go-live that died: it is ignored,
+ * and `subscriptions:opening -- open-writes` deletes it.
  */
 export const WRITES_CLOSED_ID = 'writes-closed';
 
@@ -319,10 +324,10 @@ export type UnsignedWrites = 'OPEN' | 'PAUSED' | 'SIGNED_ONLY';
 export async function unsignedWritesNow(
   nowMs: number = Date.now()
 ): Promise<UnsignedWrites> {
-  let closed: unknown[];
+  let closed: { block: number | string }[];
   try {
-    closed = await sqlExecutor.execute(
-      `SELECT id FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id = :id`,
+    closed = await sqlExecutor.execute<{ block: number | string }>(
+      `SELECT block FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id = :id`,
       { id: WRITES_CLOSED_ID }
     );
   } catch (error) {
@@ -331,8 +336,14 @@ export async function unsignedWritesNow(
     }
     closed = [];
   }
-  if (Array.isArray(closed) && closed.length > 0) {
-    return 'PAUSED';
+  const closedAtMs = Array.isArray(closed) ? closed[0]?.block : undefined;
+  if (closedAtMs !== undefined) {
+    if (nowMs - Number(closedAtMs) < SWITCH_CUT_WINDOW_MS) {
+      return 'PAUSED';
+    }
+    logger.warn(
+      `[WRITES-CLOSED MARKER IGNORED] set at ${Number(closedAtMs)}, older than the switch window; open-writes deletes it`
+    );
   }
   const reason = switchReason(await readOpeningState(), nowMs);
   return reason === 'IDENTITY_TABLES' ? 'SIGNED_ONLY' : 'OPEN';

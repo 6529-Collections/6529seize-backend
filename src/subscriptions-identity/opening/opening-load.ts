@@ -338,10 +338,12 @@ export async function loadOpeningFiles(
       ]),
       options
     );
-    // The redemption writer goes on from the block the cut was at.
+    // The redemption writer goes on from the block the cut was at. Only
+    // its own row is replaced: go-live's writes-closed marker is in this
+    // table too, and it must stay until the switch.
     await sqlExecutor.execute(
-      `DELETE FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE}`,
-      undefined,
+      `DELETE FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id = :id`,
+      { id: REDEMPTION_CURSOR_ID },
       options
     );
     await sqlExecutor.execute(

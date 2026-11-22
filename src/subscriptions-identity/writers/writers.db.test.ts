@@ -34,7 +34,9 @@ import {
   scheduleIdentitySwitch,
   SHADOW_ENV,
   SubscriptionsIdentitySwitch,
-  subscriptionsIdentitySwitch
+  subscriptionsIdentitySwitch,
+  SWITCH_CUT_WINDOW_MS,
+  unsignedWritesNow
 } from '../identity/identity-switch';
 import { cutOpeningFiles } from '../opening/opening-build';
 import { compareAndMarkVerified } from '../opening/opening-compare';
@@ -563,6 +565,58 @@ describeWithSeed('identity writers after the switch', [], () => {
     await expect(
       updateSubscription(LONE, MEMES_CONTRACT, CARD, false)
     ).rejects.toThrow('signed now');
+  });
+
+  it('keeps unsigned writes paused through the load and the publish, until the switch', async () => {
+    await seedLegacy();
+    // LONE unsubscribes from the open card while go-live uploads the files,
+    // after the load has run.
+    let during = 'not tried';
+    uploadFile.mockImplementation(async (bytes: Buffer) => {
+      if (during === 'not tried') {
+        try {
+          await updateSubscription(LONE, MEMES_CONTRACT, CARD, false);
+          during = 'accepted';
+        } catch (error) {
+          during = (error as Error).message;
+        }
+      }
+      const url = `https://example.test/file-${published.size}`;
+      published.set(url, bytes.toString('utf8'));
+      return { url };
+    });
+    const result = await goLive({
+      signedWritesLive: true,
+      acceptReportDiffs: true,
+      mintedCard: 0
+    });
+    expect(result.switched).toBe(true);
+    expect(during).toContain('paused');
+    // Refused, so both sides still have LONE subscribed.
+    const subscribed = async (table: string, keyColumn: string) =>
+      (
+        await sqlExecutor.execute<{ subscribed: number }>(
+          `SELECT subscribed FROM ${table} WHERE ${keyColumn} = :k AND token_id = :card`,
+          { k: LONE, card: CARD }
+        )
+      ).map((row) => Number(row.subscribed));
+    expect(
+      await subscribed(SUBSCRIPTIONS_NFTS_TABLE, 'consolidation_key')
+    ).toEqual([1]);
+    expect(
+      await subscribed(SUBSCRIPTIONS_ID_NFTS_TABLE, 'identity_key')
+    ).toEqual([1]);
+  });
+
+  it('ignores a writes-closed marker older than the switch window, and open-writes deletes it', async () => {
+    await seedLegacy();
+    const now = Date.now();
+    await closeSubscriptionWrites(now - SWITCH_CUT_WINDOW_MS - 1000);
+    expect(await unsignedWritesNow(now)).toBe('OPEN');
+    await closeSubscriptionWrites(now);
+    expect(await unsignedWritesNow(now)).toBe('PAUSED');
+    await openSubscriptionWrites();
+    expect(await unsignedWritesNow(now)).toBe('OPEN');
   });
 
   it('after the switch, posts redemption warnings from the identity side only', async () => {
