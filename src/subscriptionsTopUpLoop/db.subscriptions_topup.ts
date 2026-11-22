@@ -6,7 +6,6 @@ import {
 } from '@/constants';
 import { getDataSource } from '../db';
 import {
-  SubscriptionBalance,
   SubscriptionTopUp,
   SubscriptionTopUpLatestBlock
 } from '../entities/ISubscription';
@@ -26,6 +25,10 @@ import {
 } from '@/subscription-key-width/subscription-deferred-writes';
 import { markSubscriptionCoverageDirty } from '../subscription-coverage/subscription-coverage-dirty';
 import { invalidateUpcomingSubscriptionCaches } from '@/subscriptionsDaily/subscription-cache';
+import {
+  lockSubscriptionBalance,
+  writeSubscriptionBalance
+} from '@/subscriptionsDaily/db.subscriptions';
 import {
   hasMinimumBalanceForAutomaticMode,
   InsufficientSubscriptionBalanceException
@@ -51,7 +54,6 @@ export async function persistTopUps(
   await sqlExecutor.executeNativeQueriesInTransaction(async (qrHolder) => {
     const queryRunner = qrHolder.connection as QueryRunner;
     const manager = queryRunner.manager;
-    const balancesRepo = manager.getRepository(SubscriptionBalance);
     const topUpsRepo = manager.getRepository(SubscriptionTopUp);
     const sink = executorSink({ wrappedConnection: qrHolder });
     if (options.replaySequence !== undefined) {
@@ -106,9 +108,11 @@ export async function persistTopUps(
         continue;
       }
 
-      let balance = await balancesRepo.findOne({
-        where: { consolidation_key: consolidationKey }
-      });
+      // The key read above can be stale: a merge may have moved its balance
+      // to another key since. lockSubscriptionBalance follows the move.
+      const locked = await lockSubscriptionBalance(consolidationKey, manager);
+      consolidationKey = locked.consolidationKey;
+      let balance = locked.balance;
 
       const setToAutoSubscribe = !balance;
 
@@ -122,7 +126,7 @@ export async function persistTopUps(
         balanceAfter = Math.round(balanceAfter * 100000) / 100000;
         balance.balance = balanceAfter;
       }
-      await balancesRepo.save(balance);
+      await writeSubscriptionBalance(manager, balance, locked.balance !== null);
       await topUpsRepo.save(topUp);
 
       if (setToAutoSubscribe) {
