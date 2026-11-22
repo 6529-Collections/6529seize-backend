@@ -1,6 +1,7 @@
 import {
   BotDeviceSigner,
   botDeviceSigner,
+  CommittedDropSignatures,
   signedBodyOfDropModel
 } from '@/api/device-signing/bot-device-signer';
 import { inSequence } from '@/db/in-sequence';
@@ -25,26 +26,36 @@ export class DeployerDropper {
     private readonly botSigner: BotDeviceSigner = botDeviceSigner
   ) {}
 
+  /**
+   * Posts the message in each wave as the deployer. Inside a caller's
+   * transaction (`ctx.connection`), the posts are signed only when the caller
+   * passes `signatures` and calls its signCommitted() after the commit;
+   * otherwise they stay unsigned.
+   */
   async drop(
     params: {
       message: string;
       mentionedUsers?: string[];
       waves: string[];
     },
-    ctx: RequestContext
+    ctx: RequestContext,
+    signatures?: CommittedDropSignatures
   ): Promise<number[]> {
-    const deployerProfileId =
-      await this.botSigner.profileIdOfWallet(MEMES_DEPLOYER);
     if (!ctx.connection) {
+      const ownSignatures = new CommittedDropSignatures(this.botSigner);
+      const deployerProfileId = await this.deployerProfileId();
       const pendingPushNotificationIds =
         await sqlExecutor.executeNativeQueriesInTransaction(
           async (connection) => {
-            return await this._drop(params, deployerProfileId, {
-              ...ctx,
-              connection
-            });
+            return await this._drop(
+              params,
+              { ...ctx, connection },
+              ownSignatures,
+              deployerProfileId
+            );
           }
         );
+      await ownSignatures.signCommitted(ctx);
       if (params.waves.length) {
         await waveScoreService.requestWaveScoreRefreshBestEffort(
           params.waves,
@@ -55,8 +66,18 @@ export class DeployerDropper {
       await sendIdentityPushNotifications(pendingPushNotificationIds);
       return pendingPushNotificationIds;
     } else {
-      return this._drop(params, deployerProfileId, ctx);
+      return this._drop(
+        params,
+        ctx,
+        signatures,
+        signatures ? await this.deployerProfileId() : null
+      );
     }
+  }
+
+  /** Null without a database read when no bot has a device key. */
+  private deployerProfileId(): Promise<string | null> {
+    return this.botSigner.profileIdOfWallet(MEMES_DEPLOYER);
   }
 
   private async _drop(
@@ -69,8 +90,9 @@ export class DeployerDropper {
       mentionedUsers?: string[];
       waves: string[];
     },
-    deployerProfileId: string | null,
-    ctx: RequestContext
+    ctx: RequestContext,
+    signatures: CommittedDropSignatures | undefined,
+    deployerProfileId: string | null
   ): Promise<number[]> {
     ctx.timer?.start(`${this.constructor.name}->drop`);
     const pendingPushNotificationIds = (
@@ -99,26 +121,23 @@ export class DeployerDropper {
             signature: null,
             is_additional_action_promised: null
           };
-          const { pending_push_notification_ids } =
-            await this.botSigner.createDrop(
-              deployerProfileId,
-              {
-                waveId,
-                replyToDropId: null,
-                body: signedBodyOfDropModel(model)
-              },
-              async () => {
-                const created = await this.createDrop.execute(model, false, {
-                  timer: ctx.timer,
-                  connection: ctx.connection!,
-                  prePublication: { trustedSystem: true },
-                  bypassChatLinkRestrictions: true,
-                  bypassChatSlowModeRestrictions: true
-                });
-                return { ...created, id: created.drop_id };
-              },
-              ctx
-            );
+          const { drop_id, pending_push_notification_ids } =
+            await this.createDrop.execute(model, false, {
+              timer: ctx.timer,
+              connection: ctx.connection!,
+              prePublication: { trustedSystem: true },
+              bypassChatLinkRestrictions: true,
+              bypassChatSlowModeRestrictions: true
+            });
+          // Signed once the transaction committed, so a rollback leaves no
+          // event behind.
+          signatures?.add({
+            botProfileId: deployerProfileId,
+            dropId: drop_id,
+            waveId,
+            replyToDropId: null,
+            body: signedBodyOfDropModel(model)
+          });
           return pending_push_notification_ids;
         })
       )

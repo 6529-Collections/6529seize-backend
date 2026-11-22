@@ -4,15 +4,34 @@ import { Wallet } from 'ethers';
 import fetch from 'node-fetch';
 import { env } from '../../../env';
 import { Logger } from '../../../logging';
+import { sliceWholeCodePoints } from '../../../strings';
 import {
   BotDeviceSigner,
   botDeviceSigner
 } from '../device-signing/bot-device-signer';
 import { DeviceEventKind } from '../device-signing/device-event';
+import type {
+  DeviceSignatureEnvelope,
+  SignedWriteTarget
+} from '../device-signing/device-signed-writes.service';
 import { parseStructuredWalletSignatureMessage } from '../wallet-signatures/structured-wallet-signatures';
 import { GitHubWebhookAction } from './github-webhook-event';
 
 const INVALID_DEVICE_SIGNATURE_CODE = 'INVALID_DEVICE_SIGNATURE';
+const DEVICE_SIGNATURE_REQUIRED_CODE = 'DEVICE_SIGNATURE_REQUIRED';
+
+/**
+ * The API refused the drop because it needs a device signature the bot
+ * could not give. The webhook delivery should fail, so it can be delivered
+ * again once the bot's key is fixed, instead of the drop being lost.
+ */
+export class GitHubDropRefusedError extends Error {
+  constructor(reason: string) {
+    super(`The API refused the GitHub drop: ${reason}`);
+    Object.setPrototypeOf(this, new.target.prototype);
+    this.name = 'GitHubDropRefusedError';
+  }
+}
 
 type GitHubDropTargetKind = 'issue' | 'pull request';
 type PostGitHubDropOptions = {
@@ -79,7 +98,13 @@ export class GitHubIssueDropService {
     const privateKey = env.getStringOrThrow('GH_WEBHOOK_WALLET_PRIVATE_KEY');
     const waveId = env.getStringOrThrow('GH_WEBHOOK_WAVE_ID');
 
-    const wallet = new Wallet(privateKey);
+    let wallet: Wallet;
+    try {
+      wallet = new Wallet(privateKey.trim());
+    } catch {
+      // The library's error repeats the key; never pass it on.
+      throw new Error('GH_WEBHOOK_WALLET_PRIVATE_KEY is not a private key');
+    }
     const clientAddress = wallet.address;
 
     this.logger.info(
@@ -318,7 +343,7 @@ export class GitHubIssueDropService {
       return value;
     }
 
-    return `${value.slice(0, maxLength - 3)}...`;
+    return `${sliceWholeCodePoints(value, maxLength - 3)}...`;
   }
 
   private async createDrop(
@@ -361,8 +386,10 @@ export class GitHubIssueDropService {
 
     // Signed with the bot's device key when it has one, so the drop reaches
     // the 6529 relays.
-    const deviceSignature = await this.botSigner.envelopeFor(
-      await this.botSigner.profileIdOfWallet(signerAddress),
+    const deviceSignature = await this.deviceSignature(
+      API_BASE_URL,
+      token,
+      signerAddress,
       { kind: DeviceEventKind.POST, waveId, refs: [], body }
     );
     let resp = await post(
@@ -383,10 +410,73 @@ export class GitHubIssueDropService {
 
     if (!resp.ok) {
       const errorText = await resp.text();
+      if (
+        resp.status === 403 &&
+        errorText.includes(DEVICE_SIGNATURE_REQUIRED_CODE)
+      ) {
+        this.logger.error(
+          `GitHub drop refused: the API requires a device signature the bot could not give: ${errorText}`
+        );
+        throw new GitHubDropRefusedError(errorText);
+      }
       throw new Error(
         `Create drop failed: ${resp.status} ${resp.statusText} - ${errorText}`
       );
     }
+  }
+
+  /**
+   * The device signature of a post, or undefined to post unsigned: when the
+   * bot has no usable key, or when the API it posts to does not hold the
+   * bot's grant (API_BASE_URL may name another deployment, whose database
+   * never stored it).
+   */
+  private async deviceSignature(
+    apiBaseUrl: string,
+    token: string,
+    signerAddress: string,
+    target: SignedWriteTarget
+  ): Promise<DeviceSignatureEnvelope | undefined> {
+    const envelope = await this.botSigner.envelopeFor(
+      await this.botSigner.profileIdOfWallet(signerAddress),
+      target
+    );
+    if (!envelope) {
+      return undefined;
+    }
+    try {
+      const resp = await fetch(
+        this.buildApiUrl(apiBaseUrl, '/api/device-grants', {}),
+        {
+          headers: {
+            accept: 'application/json',
+            authorization: `Bearer ${token}`
+          },
+          method: 'GET'
+        }
+      );
+      const grants: unknown = resp.ok ? await resp.json() : [];
+      const held =
+        Array.isArray(grants) &&
+        grants.some(
+          (grant) =>
+            isRecord(grant) &&
+            grant.id === envelope.grant_id &&
+            grant.revoked_at === null &&
+            Number(grant.expires_at) > envelope.claimed_time
+        );
+      if (held) {
+        return envelope;
+      }
+      this.logger.warn(
+        `GitHub drop posted unsigned: the API at ${apiBaseUrl} holds no usable device grant ${envelope.grant_id} of the bot`
+      );
+    } catch (error) {
+      this.logger.warn(
+        `GitHub drop posted unsigned: the bot's device grant could not be checked: ${error}`
+      );
+    }
+    return undefined;
   }
 }
 

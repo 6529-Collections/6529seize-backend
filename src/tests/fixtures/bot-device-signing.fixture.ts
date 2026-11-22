@@ -70,6 +70,8 @@ export interface SigningBotStore {
   readonly released: string[];
   /** Reservations to refuse as taken before accepting again. */
   refuseReservations: number;
+  /** Database calls that fail, by name (findGrantById, reserveEvent, ...). */
+  readonly failing: Set<string>;
 }
 
 /**
@@ -103,18 +105,29 @@ export async function signingBot({
     events: [],
     authorSignatures: new Map(),
     released: [],
-    refuseReservations: 0
+    refuseReservations: 0,
+    failing: new Set()
+  };
+  const failIf = (name: string) => {
+    if (store.failing.has(name)) {
+      throw new Error(`${name}: database unavailable`);
+    }
   };
   const db = {
     insertGrant: async (grant: DeviceGrantEntity) => {
+      failIf('insertGrant');
       if (store.grants.has(grant.id)) {
         return false;
       }
       store.grants.set(grant.id, grant);
       return true;
     },
-    findGrantById: async (id: string) => store.grants.get(id) ?? null,
+    findGrantById: async (id: string) => {
+      failIf('findGrantById');
+      return store.grants.get(id) ?? null;
+    },
     reserveEvent: async (event: DeviceSignedEventEntity) => {
+      failIf('reserveEvent');
       const taken = store.events.some(
         (it) =>
           it.id === event.id ||
@@ -167,10 +180,12 @@ export async function signingBot({
     ) => work({})
   };
   const identities = {
-    getProfileIdByWallet: async (wallet: string) =>
-      wallet === TEST_BOT_WALLET
+    getProfileIdByWallet: async (wallet: string) => {
+      failIf('getProfileIdByWallet');
+      return wallet === TEST_BOT_WALLET
         ? walletProfileId
-        : (otherWallets[wallet] ?? null)
+        : (otherWallets[wallet] ?? null);
+    }
   };
   const drops = {
     findWaveIdByDropId: async () => null,

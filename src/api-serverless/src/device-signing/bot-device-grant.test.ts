@@ -12,7 +12,11 @@ import {
   computeAppDeviceGrantId,
   serializeAppDeviceGrantMessage
 } from './app-device-grant';
-import { BotDeviceGrantCliIo, main } from './bot-device-grant.cli';
+import {
+  BotDeviceGrantCliIo,
+  cliErrorMessage,
+  main
+} from './bot-device-grant.cli';
 import {
   botDeviceGrantTypedData,
   buildBotDeviceGrant,
@@ -34,6 +38,8 @@ const SIGNING_SIGNATURE_V2 =
 const STORED_MESSAGE_V2 =
   '{"statement":"Turn on signed messages on this device until 16 Apr 2027. This device will sign your posts, edits, deletes and reactions so anyone can verify they came from your wallet. It can\'t move funds, change your handle, add devices or act as an admin. No transaction, no gas, no token approvals. (Device key d75a9801...f707511a)","wallet":"0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266","deviceKey":"0xd75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a","scopes":"post,edit,delete,react","mlsDeviceKey":"0x0000000000000000000000000000000000000000000000000000000000000000","ciphersuites":[],"issuedAt":1792324800,"expiresAt":1807876800,"origin":"6529 Desktop"}';
 
+const VECTOR_SCOPES = ['post', 'edit', 'delete', 'react'] as const;
+
 describe('bot device grant', () => {
   it('builds the shared signing-only v2 grant', async () => {
     const message = buildAppDeviceGrantMessage(
@@ -41,6 +47,7 @@ describe('bot device grant', () => {
         wallet: TEST_BOT_WALLET,
         deviceKey: TEST_BOT_DEVICE_KEY,
         issuedAt: ISSUED_AT,
+        scopes: VECTOR_SCOPES,
         origin: '6529 Desktop'
       })
     );
@@ -55,7 +62,7 @@ describe('bot device grant', () => {
     ).resolves.toBe(SIGNING_SIGNATURE_V2);
   });
 
-  it('defaults to 6529.io and 180 days', () => {
+  it('defaults to 6529.io, posts and reactions, and 180 days', () => {
     const grant = buildBotDeviceGrant({
       wallet: TEST_BOT_WALLET.toUpperCase().replace('0X', '0x'),
       deviceKey: TEST_BOT_DEVICE_KEY,
@@ -64,7 +71,7 @@ describe('bot device grant', () => {
     expect(grant).toMatchObject({
       wallet: TEST_BOT_WALLET,
       origin: '6529.io',
-      scopes: ['post', 'edit', 'delete', 'react'],
+      scopes: ['post', 'react'],
       issued_at: 1_792_324_812,
       expires_at: 1_807_876_800
     });
@@ -76,6 +83,7 @@ describe('bot device grant', () => {
         wallet: TEST_BOT_WALLET,
         deviceKey: TEST_BOT_DEVICE_KEY,
         issuedAt: ISSUED_AT,
+        scopes: VECTOR_SCOPES,
         origin: '6529 Desktop'
       })
     );
@@ -148,7 +156,8 @@ describe('waves:bot-device-grant', () => {
       wallet: TEST_BOT_WALLET,
       device_key: TEST_BOT_DEVICE_KEY,
       domain: '6529.io',
-      scopes: 'post,edit,delete,react',
+      // Bots post and react; they never edit or delete.
+      scopes: 'post,react',
       expires_at: 1_807_876_800_000
     });
     expect(raw['bot-profile'].device_seed).toBe(TEST_BOT_DEVICE_SEED);
@@ -180,13 +189,68 @@ describe('waves:bot-device-grant', () => {
         '--wallet',
         TEST_BOT_WALLET,
         '--scopes',
-        'post,react'
+        'post,edit,react'
       ],
       cli
     );
 
     const { keys } = entryOf(cli.output);
-    expect(keys.get('bot-profile')!.grant.scopes).toBe('post,react');
+    expect(keys.get('bot-profile')!.grant.scopes).toBe('post,edit,react');
+  });
+
+  it('reads a wallet key with stray spaces or line ends, or without 0x', async () => {
+    for (const padded of [
+      `${TEST_BOT_WALLET_KEY}\r`,
+      `${TEST_BOT_WALLET_KEY}\n`,
+      ` ${TEST_BOT_WALLET_KEY}`,
+      TEST_BOT_WALLET_KEY.slice(2)
+    ]) {
+      const cli = io({ env: { BOT_WALLET_PRIVATE_KEY: padded } });
+      await main(['--profile-id', 'bot-profile'], cli);
+      expect(entryOf(cli.output).keys.get('bot-profile')!.grant.wallet).toBe(
+        TEST_BOT_WALLET
+      );
+    }
+  });
+
+  it.each([
+    ['a character that is not hex', `${TEST_BOT_WALLET_KEY.slice(0, -1)}z`],
+    ['a short key', TEST_BOT_WALLET_KEY.slice(0, -2)],
+    ['a long key', `${TEST_BOT_WALLET_KEY}00`],
+    ['a key outside the curve order', `0x${'ff'.repeat(32)}`],
+    [
+      'a key with a line end inside',
+      `${TEST_BOT_WALLET_KEY.slice(0, 30)}\r\n${TEST_BOT_WALLET_KEY.slice(30)}`
+    ]
+  ])('never repeats the wallet key in an error: %s', async (_name, key) => {
+    const cli = io({ env: { BOT_WALLET_PRIVATE_KEY: key } });
+    const error = await main(['--profile-id', 'p'], cli).then(
+      () => new Error('expected a refusal'),
+      (e: Error) => e
+    );
+    expect(error.message).toBe(
+      'BOT_WALLET_PRIVATE_KEY is not a private key (64 hex digits)'
+    );
+    const hex = key.replace(/^0x/, '').replace(/\s/g, '');
+    expect(error.message).not.toContain(hex.slice(2, 22));
+    expect(cli.messages.join('')).not.toContain(hex.slice(2, 22));
+    expect(cli.output).toEqual([]);
+  });
+
+  it('prints a fixed error for any message that would hold the key', () => {
+    const env = { BOT_WALLET_PRIVATE_KEY: `${TEST_BOT_WALLET_KEY}\r` };
+    expect(
+      cliErrorMessage(
+        new Error(`invalid key ${TEST_BOT_WALLET_KEY.toUpperCase()}`),
+        env
+      )
+    ).toBe('The device grant was not made');
+    expect(cliErrorMessage(new Error('--profile-id is required'), env)).toBe(
+      '--profile-id is required'
+    );
+    expect(cliErrorMessage('not an error', {})).toBe(
+      'The device grant was not made'
+    );
   });
 
   it.each([

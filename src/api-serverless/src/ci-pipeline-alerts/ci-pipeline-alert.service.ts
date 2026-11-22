@@ -453,7 +453,8 @@ export class CiPipelineAlertService {
       {
         waveId,
         replyToDropId: createDropRequest.reply_to?.drop_id ?? null,
-        body: createDropRequest
+        // The drop is stored with link previews hidden.
+        body: { ...createDropRequest, hide_link_preview: true }
       },
       () =>
         this.dropCreationApiService.createDrop(

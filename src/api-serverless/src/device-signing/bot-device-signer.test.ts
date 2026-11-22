@@ -23,6 +23,7 @@ import {
 import {
   BotDeviceKey,
   BotDeviceSigner,
+  CommittedDropSignatures,
   parseBotDeviceKeys,
   signedBodyOfDropModel
 } from './bot-device-signer';
@@ -175,7 +176,7 @@ describe('BotDeviceSigner', () => {
         id: grant.id,
         wallet: TEST_BOT_WALLET,
         device_key: TEST_BOT_DEVICE_KEY,
-        scopes: ['post', 'edit', 'delete', 'react'],
+        scopes: ['post', 'react'],
         domain: '6529.io',
         chain_id: 1
       });
@@ -265,10 +266,18 @@ describe('BotDeviceSigner', () => {
       expect(store.events[0].drop_id).toBe('http-drop');
     });
 
-    it('signs again with the next sequence number when one was taken', async () => {
+    it('signs again past sequence numbers another process took', async () => {
       const { signer, store } = await signingBot({ profileId: BOT });
-      store.refuseReservations = 1;
-      const created = write();
+      // Another instance of the bot wrote three times in this millisecond.
+      for (let i = 0; i < 3; i++) {
+        store.events.push({
+          id: `0x${String(i).padStart(64, '0')}`,
+          device_key: TEST_BOT_DEVICE_KEY,
+          seq: TEST_NOW + i,
+          drop_id: `other-${i}`
+        } as never);
+      }
+      const created = write('mine');
 
       await signer.createDrop(
         BOT,
@@ -278,9 +287,10 @@ describe('BotDeviceSigner', () => {
       );
 
       expect(created).toHaveBeenCalledTimes(1);
-      expect(store.events.map((event) => Number(event.seq))).toEqual([
-        TEST_NOW + 1
-      ]);
+      const mine = store.events.filter((event) => event.drop_id === 'mine');
+      // TEST_NOW and TEST_NOW + 2 were taken; the next try jumps further.
+      expect(mine.map((event) => Number(event.seq))).toEqual([TEST_NOW + 6]);
+      expect(store.authorSignatures.get('mine')).toBe(mine[0].id);
     });
 
     it('gives each write in a process its own sequence number', async () => {
@@ -420,32 +430,220 @@ describe('BotDeviceSigner', () => {
 
       expect(created).toHaveBeenCalledTimes(1);
       expect(store.events).toHaveLength(0);
-      expect(logSpies[2].mock.calls.flat().join('\n')).toContain(
+      expect(logSpies[1].mock.calls.flat().join('\n')).toContain(
         'grant wallet does not belong to the acting profile'
       );
     });
 
-    it('writes unsigned when the grant cannot be stored', async () => {
-      const { deps, setting } = await signingBot({ profileId: BOT });
-      const signer = new BotDeviceSigner(
-        async () => ({
-          ...deps,
-          grants: { insertGrant: () => Promise.reject(new Error('db down')) }
-        }),
-        () => setting,
-        () => TEST_NOW
-      );
+    it.each([
+      'insertGrant',
+      'findGrantById',
+      'getProfileIdByWallet',
+      'reserveEvent'
+    ])(
+      'writes unsigned, with a warning, when %s fails before the write',
+      async (call) => {
+        const { signer, store } = await signingBot({ profileId: BOT });
+        store.failing.add(call);
+        const created = write();
+
+        await expect(
+          signer.createDrop(
+            BOT,
+            { waveId: WAVE_ID, replyToDropId: null, body: {} },
+            created,
+            {}
+          )
+        ).resolves.toEqual({ id: 'new-drop' });
+
+        expect(created).toHaveBeenCalledTimes(1);
+        expect(store.events).toHaveLength(0);
+        expect(logSpies[1].mock.calls.flat().join('\n')).toContain(
+          'database unavailable'
+        );
+      }
+    );
+
+    it('writes unsigned a body relays would refuse: a cut emoji', async () => {
+      const { signer, store } = await signingBot({ profileId: BOT });
+      const cut = 'release notes 😀'.slice(0, 15);
       const created = write();
+
       await signer.createDrop(
         BOT,
-        { waveId: WAVE_ID, replyToDropId: null, body: {} },
+        {
+          waveId: WAVE_ID,
+          replyToDropId: null,
+          body: { parts: [{ content: cut }] }
+        },
         created,
         {}
       );
+
       expect(created).toHaveBeenCalledTimes(1);
-      expect(logSpies[2].mock.calls.flat().join('\n')).toContain(
-        'could not be stored'
+      expect(store.events).toHaveLength(0);
+      expect(logSpies[1].mock.calls.flat().join('\n')).toContain(
+        'half an emoji'
       );
+      await expect(
+        signer.envelopeFor(BOT, {
+          kind: DeviceEventKind.POST,
+          waveId: WAVE_ID,
+          refs: [],
+          body: { content: cut }
+        })
+      ).resolves.toBeUndefined();
+    });
+
+    it('writes a body that is not plain JSON unsigned, with or without a key', async () => {
+      const body = { n: BigInt(1) };
+      const unconfigured = new BotDeviceSigner(
+        () => Promise.reject(new Error('not loaded')),
+        () => undefined,
+        () => TEST_NOW
+      );
+      const created = write();
+      await unconfigured.mutateDrop(
+        null,
+        { kind: DeviceEventKind.REACT, dropId: PARENT, waveId: WAVE_ID, body },
+        created,
+        {}
+      );
+      const { signer, store } = await signingBot({ profileId: BOT });
+      await signer.mutateDrop(
+        BOT,
+        { kind: DeviceEventKind.REACT, dropId: PARENT, waveId: WAVE_ID, body },
+        created,
+        {}
+      );
+      expect(created).toHaveBeenCalledTimes(2);
+      expect(store.events).toHaveLength(0);
+    });
+
+    it('never signs inside a caller transaction', async () => {
+      const { signer, store } = await signingBot({ profileId: BOT });
+      const created = write();
+      for (let i = 0; i < 2; i++) {
+        await signer.createDrop(
+          BOT,
+          { waveId: WAVE_ID, replyToDropId: null, body: {} },
+          created,
+          { connection: {} as never }
+        );
+      }
+      expect(created).toHaveBeenCalledTimes(2);
+      expect(store.events).toHaveLength(0);
+      expect(
+        logSpies[1].mock.calls
+          .flat()
+          .filter((line: string) => line.includes("caller's transaction"))
+      ).toHaveLength(1);
+    });
+  });
+
+  describe('posts written inside a transaction', () => {
+    it('are signed only after the commit, with the committed drop id', async () => {
+      const { signer, store } = await signingBot({ profileId: BOT });
+      const signatures = new CommittedDropSignatures(signer);
+      // Inside the transaction: the post is written, nothing is stored yet.
+      signatures.add({
+        botProfileId: BOT,
+        dropId: 'committed-drop',
+        waveId: WAVE_ID,
+        replyToDropId: null,
+        body: { wave_id: WAVE_ID, parts: [{ content: 'Mint is live' }] }
+      });
+      expect(store.events).toHaveLength(0);
+
+      await signatures.signCommitted({});
+
+      expect(store.events).toHaveLength(1);
+      expect(store.events[0]).toMatchObject({
+        kind: DeviceEventKind.POST,
+        drop_id: 'committed-drop',
+        wave_id: WAVE_ID,
+        refs: '[]'
+      });
+      expect(store.authorSignatures.get('committed-drop')).toBe(
+        store.events[0].id
+      );
+      // Signed once only.
+      await signatures.signCommitted({});
+      expect(store.events).toHaveLength(1);
+    });
+
+    it('leave nothing behind when the transaction rolls back', async () => {
+      const { signer, store } = await signingBot({ profileId: BOT });
+      const signatures = new CommittedDropSignatures(signer);
+      const transaction = async () => {
+        signatures.add({
+          botProfileId: BOT,
+          dropId: 'rolled-back-drop',
+          waveId: WAVE_ID,
+          replyToDropId: null,
+          body: {}
+        });
+        throw new Error('rolled back');
+      };
+      await expect(
+        transaction().then(() => signatures.signCommitted({}))
+      ).rejects.toThrow('rolled back');
+      expect(store.events).toHaveLength(0);
+      expect(store.authorSignatures.size).toBe(0);
+      expect(store.released).toHaveLength(0);
+    });
+
+    it('stay unsigned when signCommitted runs inside an outer transaction', async () => {
+      const { signer, store } = await signingBot({ profileId: BOT });
+      const signatures = new CommittedDropSignatures(signer);
+      signatures.add({
+        botProfileId: BOT,
+        dropId: 'drop',
+        waveId: WAVE_ID,
+        replyToDropId: null,
+        body: {}
+      });
+      await signatures.signCommitted({ connection: {} as never });
+      expect(store.events).toHaveLength(0);
+      expect(logSpies[1].mock.calls.flat().join('\n')).toContain(
+        'outer transaction'
+      );
+    });
+
+    it('never throw: a failed signature is logged', async () => {
+      const { signer, store } = await signingBot({ profileId: BOT });
+      store.failing.add('reserveEvent');
+      await expect(
+        signer.signCommittedDrop(BOT, {
+          dropId: 'drop',
+          waveId: WAVE_ID,
+          replyToDropId: null,
+          body: {}
+        })
+      ).resolves.toBeUndefined();
+      expect(store.events).toHaveLength(0);
+    });
+  });
+
+  describe('the signer object', () => {
+    it('never shows the seeds, alone or inside a service', async () => {
+      const { signer } = await signingBot({ profileId: BOT });
+      await signer.createDrop(
+        BOT,
+        { waveId: WAVE_ID, replyToDropId: null, body: { a: 1 } },
+        write(),
+        {}
+      );
+      const holder = { botSigner: signer, nested: { signer } };
+      for (const shown of [
+        inspect(signer, { depth: 10, showHidden: true }),
+        inspect(holder, { depth: 10 }),
+        JSON.stringify(signer),
+        JSON.stringify(holder),
+        String(signer)
+      ]) {
+        expect(shown).not.toContain(SEED_HEX);
+      }
     });
   });
 
@@ -469,9 +667,27 @@ describe('BotDeviceSigner', () => {
       expect(inspect(key, { depth: 5 })).not.toContain(SEED_HEX);
     });
 
+    it('reads the setting as JSON text, as JSON text inside a string, or as an object', () => {
+      const object = { [BOT]: TEST_ENTRY };
+      for (const raw of [
+        JSON.stringify(object),
+        JSON.stringify(JSON.stringify(object)),
+        object
+      ]) {
+        const { keys, problems } = parseBotDeviceKeys(raw, TEST_NOW);
+        expect(problems).toEqual([]);
+        expect(keys.get(BOT)?.grant.device_key).toBe(TEST_BOT_DEVICE_KEY);
+      }
+    });
+
     it.each([
       ['not JSON', '{', /is not JSON/],
       ['not an object', '[]', /not an object/],
+      [
+        'an object the secret turned into text',
+        '[object Object]',
+        /"\[object Object\]": store it in the secret as one JSON string/
+      ],
       ['an entry without fields', JSON.stringify({ [BOT]: {} }), /needs/]
     ])('reports %s', (_name, raw, problem) => {
       const { keys, problems } = parseBotDeviceKeys(raw, TEST_NOW);

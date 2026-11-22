@@ -1,10 +1,12 @@
 import { KeyObject } from 'node:crypto';
+import { inspect } from 'node:util';
 import { AuthenticationContext } from '@/auth-context';
 import type { CreateOrUpdateDropModel } from '@/drops/create-or-update-drop.model';
 import type { DeviceGrantEntity } from '@/entities/IDeviceGrant';
 import type { IdentitiesDb } from '@/identities/identities.db';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
+import { hasLoneSurrogate } from '@/strings';
 import {
   computeAppDeviceGrantId,
   findAppDeviceGrantProblem,
@@ -42,17 +44,19 @@ import type { DeviceSigningDb } from './device-signing.db';
 // (bot-device-grant.ts), so they reach the 6529 relays like any signed
 // write. A signed bot write takes the API's signed path: the same checks a
 // client-signed write passes, then device_signed_events and
-// drop_author_signatures. A bot without a usable key writes unsigned, as
-// before (logged once), so FEATURE_WAVES_DEVICE_SIGNATURE_REQUIRED never
-// stops a bot.
+// drop_author_signatures. A bot without a usable key, or whose signing fails
+// before its write runs, writes unsigned as before (with a warning), so
+// FEATURE_WAVES_DEVICE_SIGNATURE_REQUIRED never stops a bot. A bot write
+// inside a caller's transaction is signed after the commit
+// (CommittedDropSignatures).
 
 const BOT_DEVICE_LABEL = '6529.io bot';
 // App grants are checked on Ethereum mainnet (device-grants.service.ts).
 const APP_GRANT_CHAIN_ID = 1;
 const RENEW_WARNING_MS = 30 * 24 * 60 * 60 * 1000;
-// A sequence number another process took first: sign again with the next.
-const MAX_SIGN_ATTEMPTS = 3;
-const INVALID_DEVICE_SIGNATURE_CODE = 'INVALID_DEVICE_SIGNATURE';
+// Sequence numbers another process of the bot took first: sign again past
+// them (skipSequences), up to 254 numbers on.
+const MAX_SIGN_ATTEMPTS = 8;
 // verifyAndReserve's reason when the event id or (device key, seq) is taken.
 const SEQUENCE_TAKEN_REASON = 'event or sequence number was already used';
 const WALLET_SIGNATURE_PATTERN = /^0x([0-9a-f]{2})+$/;
@@ -84,30 +88,53 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /**
+ * The setting as an object: JSON text (also JSON text inside a JSON string,
+ * as a secret may hold it) or an object already.
+ */
+function readSettingObject(
+  raw: unknown
+): Record<string, unknown> | null | string {
+  if (isRecord(raw)) {
+    return raw;
+  }
+  if (typeof raw !== 'string' || !raw.trim()) {
+    return null;
+  }
+  if (raw.trim() === '[object Object]') {
+    // A secret that holds an object, not a string, reaches the process so.
+    return `${BOT_DEVICE_KEYS_SETTING} reached the process as "[object Object]": store it in the secret as one JSON string`;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+    if (typeof parsed === 'string') {
+      parsed = JSON.parse(parsed);
+    }
+  } catch {
+    return `${BOT_DEVICE_KEYS_SETTING} is not JSON`;
+  }
+  return isRecord(parsed)
+    ? parsed
+    : `${BOT_DEVICE_KEYS_SETTING} is not an object of profile ids`;
+}
+
+/**
  * Reads WAVES_BOT_DEVICE_KEYS: a JSON object from bot profile id to
  * BotDeviceKeyEntry. An entry is used only when its grant is a signing-only
  * app grant for exactly its device key, signed by the grant wallet's own key.
  * Expiry is checked on every write, not here.
  */
 export function parseBotDeviceKeys(
-  raw: string | undefined,
+  raw: unknown,
   nowMs: number
 ): ParsedBotDeviceKeys {
   const keys = new Map<string, BotDeviceKey>();
-  if (!raw?.trim()) {
+  const parsed = readSettingObject(raw);
+  if (parsed === null) {
     return { keys, problems: [] };
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return { keys, problems: [`${BOT_DEVICE_KEYS_SETTING} is not JSON`] };
-  }
-  if (!isRecord(parsed)) {
-    return {
-      keys,
-      problems: [`${BOT_DEVICE_KEYS_SETTING} is not an object of profile ids`]
-    };
+  if (typeof parsed === 'string') {
+    return { keys, problems: [parsed] };
   }
   const problems: string[] = [];
   for (const [profileId, entry] of Object.entries(parsed)) {
@@ -185,9 +212,37 @@ function readEntry(
   );
 }
 
-/** A body exactly as it is sent and signed: plain JSON, no undefined. */
-function toJsonValue(value: unknown): unknown {
-  return JSON.parse(JSON.stringify(value ?? null));
+function hasLoneSurrogateIn(value: unknown): boolean {
+  if (typeof value === 'string') {
+    return hasLoneSurrogate(value);
+  }
+  if (Array.isArray(value)) {
+    return value.some(hasLoneSurrogateIn);
+  }
+  return (
+    isRecord(value) &&
+    Object.entries(value).some(
+      ([key, item]) => hasLoneSurrogate(key) || hasLoneSurrogateIn(item)
+    )
+  );
+}
+
+/**
+ * The body exactly as it is sent and signed (plain JSON, no undefined), or
+ * why it is not signed. The relays refuse text with a lone surrogate (half
+ * an emoji) for good, so such a body is written unsigned instead.
+ */
+function signableBody(value: unknown): { readonly body: unknown } | string {
+  let body: unknown;
+  try {
+    body = JSON.parse(JSON.stringify(value ?? null));
+    canonicalizeEventBody(body);
+  } catch {
+    return 'the body is not plain JSON';
+  }
+  return hasLoneSurrogateIn(body)
+    ? 'the body holds half an emoji (a lone surrogate), which relays refuse'
+    : { body };
 }
 
 /**
@@ -253,16 +308,18 @@ async function loadDefaultDeps(): Promise<BotDeviceSignerDeps> {
 type SignedWrite<T> = (
   writes: BotDeviceSignerDeps['writes'],
   envelope: DeviceSignatureEnvelope,
+  body: unknown,
   botCtx: RequestContext & { authenticationContext: AuthenticationContext },
   write: () => Promise<T>
 ) => Promise<T>;
 
+// The setting each signer last read. It holds the seeds, so it is kept off
+// the signer's own fields: logging or serializing a signer never shows it.
+const settingsRead = new WeakMap<BotDeviceSigner, unknown>();
+
 export class BotDeviceSigner {
   private readonly logger = Logger.get(this.constructor.name);
-  private parsed: {
-    readonly raw: string | undefined;
-    readonly keys: ReadonlyMap<string, BotDeviceKey>;
-  } | null = null;
+  private parsedKeys: ReadonlyMap<string, BotDeviceKey> | null = null;
   private readonly warned = new Set<string>();
   private readonly storedGrants = new Map<string, Promise<boolean>>();
   private deps: Promise<BotDeviceSignerDeps> | null = null;
@@ -270,10 +327,19 @@ export class BotDeviceSigner {
 
   constructor(
     private readonly loadDeps: () => Promise<BotDeviceSignerDeps> = loadDefaultDeps,
-    private readonly setting: () => string | undefined = () =>
+    /** WAVES_BOT_DEVICE_KEYS: JSON text, or an object. */
+    private readonly setting: () => unknown = () =>
       process.env[BOT_DEVICE_KEYS_SETTING],
     private readonly now: () => number = () => Date.now()
   ) {}
+
+  toJSON(): string {
+    return 'BotDeviceSigner';
+  }
+
+  [inspect.custom](): string {
+    return 'BotDeviceSigner';
+  }
 
   /**
    * Posts a drop as a bot: signed when the bot has a usable device key,
@@ -294,16 +360,15 @@ export class BotDeviceSigner {
     write: () => Promise<T>,
     ctx: RequestContext
   ): Promise<T> {
-    const signedBody = toJsonValue(body);
     return this.signedOrUnsigned(
       botProfileId,
       {
         kind: DeviceEventKind.POST,
         waveId,
         refs: replyToDropId ? [replyToDropId] : [],
-        body: signedBody
+        body
       },
-      (writes, envelope, botCtx, tracked) =>
+      (writes, envelope, signedBody, botCtx, tracked) =>
         writes.createDrop(
           { envelope, waveId, replyToDropId, body: signedBody },
           tracked,
@@ -331,11 +396,10 @@ export class BotDeviceSigner {
     write: () => Promise<T>,
     ctx: RequestContext
   ): Promise<T> {
-    const signedBody = toJsonValue(body);
     return this.signedOrUnsigned(
       botProfileId,
-      { kind, waveId, refs: [dropId], body: signedBody },
-      (writes, envelope, botCtx, tracked) =>
+      { kind, waveId, refs: [dropId], body },
+      (writes, envelope, signedBody, botCtx, tracked) =>
         writes.mutateDrop(
           { envelope, kind, dropId, waveId, body: signedBody },
           tracked,
@@ -344,6 +408,40 @@ export class BotDeviceSigner {
       write,
       ctx
     );
+  }
+
+  /**
+   * Signs a post a bot wrote inside a transaction that has committed since
+   * (see CommittedDropSignatures). The event is stored only now, after the
+   * drop exists. Best effort: a failure is logged, never thrown.
+   */
+  async signCommittedDrop(
+    botProfileId: string | null,
+    {
+      dropId,
+      waveId,
+      replyToDropId,
+      body
+    }: {
+      readonly dropId: string;
+      readonly waveId: string;
+      readonly replyToDropId: string | null;
+      readonly body: unknown;
+    },
+    ctx: RequestContext = {}
+  ): Promise<void> {
+    try {
+      await this.createDrop(
+        botProfileId,
+        { waveId, replyToDropId, body },
+        async () => ({ id: dropId }),
+        { timer: ctx.timer }
+      );
+    } catch (error) {
+      this.logger.warn(
+        `[BOT DROP LEFT UNSIGNED] [DROP ${dropId}] ${(error as Error)?.message ?? error}`
+      );
+    }
   }
 
   /**
@@ -356,9 +454,17 @@ export class BotDeviceSigner {
     target: SignedWriteTarget
   ): Promise<DeviceSignatureEnvelope | undefined> {
     const key = await this.usableKey(botProfileId);
-    return key
-      ? this.envelope(key, { ...target, body: toJsonValue(target.body) })
-      : undefined;
+    if (!key) {
+      return undefined;
+    }
+    const prepared = signableBody(target.body);
+    if (typeof prepared === 'string') {
+      this.logger.warn(
+        `[BOT DROP WRITTEN UNSIGNED] [PROFILE ${key.profileId}] ${prepared}`
+      );
+      return undefined;
+    }
+    return this.envelope(key, { ...target, body: prepared.body });
   }
 
   /**
@@ -373,7 +479,7 @@ export class BotDeviceSigner {
       const { identities } = await this.dependencies();
       return await identities.getProfileIdByWallet(wallet.toLowerCase());
     } catch (error) {
-      this.logger.error(
+      this.logger.warn(
         `[BOT DROPS UNSIGNED] [WALLET ${wallet}] the bot's profile could not be read: ${(error as Error)?.message ?? error}`
       );
       return null;
@@ -395,11 +501,26 @@ export class BotDeviceSigner {
     write: () => Promise<T>,
     ctx: RequestContext
   ): Promise<T> {
+    if (ctx.connection) {
+      // The event would be stored on other connections before the caller's
+      // transaction commits, and stay behind if it rolls back.
+      this.warnOnce(
+        'in transaction',
+        `[BOT DROP WRITTEN UNSIGNED] a bot write ran inside a caller's transaction; sign it after the commit with CommittedDropSignatures`
+      );
+      return write();
+    }
     const key = await this.usableKey(botProfileId);
     if (!key) {
       return write();
     }
-    const { writes } = await this.dependencies();
+    const prepared = signableBody(target.body);
+    if (typeof prepared === 'string') {
+      this.logger.warn(
+        `[BOT DROP WRITTEN UNSIGNED] [PROFILE ${key.profileId}] ${prepared}`
+      );
+      return write();
+    }
     const botCtx = {
       timer: ctx.timer,
       authenticationContext: AuthenticationContext.fromProfileId(key.profileId)
@@ -410,27 +531,41 @@ export class BotDeviceSigner {
         wrote = true;
         return write();
       };
+      let envelope: DeviceSignatureEnvelope | null = null;
       try {
+        const { writes } = await this.dependencies();
+        envelope = this.envelope(key, { ...target, body: prepared.body });
         return await signedWrite(
           writes,
-          this.envelope(key, target),
+          envelope,
+          prepared.body,
           botCtx,
           tracked
         );
       } catch (error) {
-        // Only a refusal before the write ran is handled here.
-        if (wrote || !isInvalidDeviceSignature(error)) {
+        // The write's own errors are the caller's. Anything before it (a
+        // refusal, a database error in the checks) leaves it to run unsigned.
+        if (wrote) {
           throw error;
         }
-        if (isSequenceTaken(error) && attempt < MAX_SIGN_ATTEMPTS) {
+        if (envelope && isSequenceTaken(error) && attempt < MAX_SIGN_ATTEMPTS) {
+          this.skipSequences(envelope.seq, attempt);
           continue;
         }
-        this.logger.error(
-          `[BOT DROP WRITTEN UNSIGNED] [PROFILE ${key.profileId}] [GRANT ${key.grant.id}] [${(error as Error).message}]`
+        this.logger.warn(
+          `[BOT DROP WRITTEN UNSIGNED] [PROFILE ${key.profileId}] [GRANT ${key.grant.id}] [${(error as Error)?.message ?? error}]`
         );
         return write();
       }
     }
+  }
+
+  /**
+   * After a sequence number another process of the bot took first: the next
+   * try lands 2, 4, 8 ... further on, past a burst of that process's numbers.
+   */
+  private skipSequences(taken: number, attempt: number): void {
+    this.lastSeq = Math.max(this.lastSeq, taken + 2 ** attempt - 1);
   }
 
   private async usableKey(
@@ -442,14 +577,15 @@ export class BotDeviceSigner {
 
   private keys(): ReadonlyMap<string, BotDeviceKey> {
     const raw = this.setting();
-    if (!this.parsed || this.parsed.raw !== raw) {
+    if (!this.parsedKeys || settingsRead.get(this) !== raw) {
       const { keys, problems } = parseBotDeviceKeys(raw, this.now());
       for (const problem of problems) {
         this.logger.error(`[BOT DEVICE KEY LEFT OUT] ${problem}`);
       }
-      this.parsed = { raw, keys };
+      settingsRead.set(this, raw);
+      this.parsedKeys = keys;
     }
-    return this.parsed.keys;
+    return this.parsedKeys;
   }
 
   private keyOf(botProfileId: string | null): BotDeviceKey | null {
@@ -516,7 +652,7 @@ export class BotDeviceSigner {
       return true;
     } catch (error) {
       this.storedGrants.delete(key.grant.id);
-      this.logger.error(
+      this.logger.warn(
         `[BOT DROPS UNSIGNED] [PROFILE ${key.profileId}] [GRANT ${key.grant.id}] the device grant could not be stored: ${(error as Error)?.message ?? error}`
       );
       return false;
@@ -556,13 +692,6 @@ export class BotDeviceSigner {
   }
 }
 
-function isInvalidDeviceSignature(error: unknown): boolean {
-  return (
-    (error as { readonly code?: unknown } | null)?.code ===
-    INVALID_DEVICE_SIGNATURE_CODE
-  );
-}
-
 function isSequenceTaken(error: unknown): boolean {
   return String((error as Error)?.message ?? '').endsWith(
     SEQUENCE_TAKEN_REASON
@@ -570,3 +699,46 @@ function isSequenceTaken(error: unknown): boolean {
 }
 
 export const botDeviceSigner = new BotDeviceSigner();
+
+/** A bot post written inside a transaction, to sign once it committed. */
+export interface CommittedDrop {
+  readonly botProfileId: string | null;
+  readonly dropId: string;
+  readonly waveId: string;
+  readonly replyToDropId: string | null;
+  /** The POST /drops request body the post commits to. */
+  readonly body: unknown;
+}
+
+/**
+ * Bot posts written inside a transaction, signed after it commits: add each
+ * post inside the transaction, then call signCommitted() once it committed.
+ * A transaction that rolls back never reaches that call, so no event is
+ * stored for a drop that never existed, and every event is stored after its
+ * drop is visible.
+ */
+export class CommittedDropSignatures {
+  private readonly logger = Logger.get(this.constructor.name);
+  private readonly drops: CommittedDrop[] = [];
+
+  constructor(private readonly signer: BotDeviceSigner = botDeviceSigner) {}
+
+  add(drop: CommittedDrop): void {
+    this.drops.push(drop);
+  }
+
+  /** `ctx` is the caller's own context, outside the committed transaction. */
+  async signCommitted(ctx: RequestContext = {}): Promise<void> {
+    const drops = this.drops.splice(0);
+    if (ctx.connection && drops.length) {
+      // Still inside an outer transaction, whose commit is not known here.
+      this.logger.warn(
+        `[BOT DROPS UNSIGNED] ${drops.length} bot posts were written inside an outer transaction and stay unsigned`
+      );
+      return;
+    }
+    for (const drop of drops) {
+      await this.signer.signCommittedDrop(drop.botProfileId, drop, ctx);
+    }
+  }
+}

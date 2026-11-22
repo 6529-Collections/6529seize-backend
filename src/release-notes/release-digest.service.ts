@@ -272,7 +272,12 @@ export class ReleaseDigestService {
     };
     const drop = await this.botSigner.createDrop(
       botProfileId,
-      { waveId, replyToDropId: null, body: createDropRequest },
+      {
+        waveId,
+        replyToDropId: null,
+        // The drop is stored with link previews hidden.
+        body: { ...createDropRequest, hide_link_preview: true }
+      },
       () =>
         this.dropCreationApiService.createDrop(
           {

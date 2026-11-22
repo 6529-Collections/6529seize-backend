@@ -14,7 +14,6 @@ import {
 } from './app-device-grant';
 import {
   computeGrantExpiresAtSeconds,
-  DEFAULT_DEVICE_GRANT_SCOPES,
   DeviceGrantScope
 } from './device-grant-message';
 
@@ -32,6 +31,12 @@ export const BOT_DEVICE_KEYS_SETTING = 'WAVES_BOT_DEVICE_KEYS';
  * key, and readers recognise this origin, so the bot's drops show as signed.
  */
 export const BOT_GRANT_ORIGIN = '6529.io';
+
+/** What a bot grant allows by default: bots post and react, nothing more. */
+export const BOT_DEFAULT_SCOPES: readonly DeviceGrantScope[] = [
+  'post',
+  'react'
+];
 
 /** One bot's entry in WAVES_BOT_DEVICE_KEYS, keyed by the bot's profile id. */
 export interface BotDeviceKeyEntry {
@@ -92,12 +97,12 @@ export function signEventId(privateKey: KeyObject, eventId: string): string {
   return `0x${signature.toString('hex')}`;
 }
 
-/** The grant a bot's wallet signs: signing only, for 180 days. */
+/** The grant a bot's wallet signs: drops only, for 180 days. */
 export function buildBotDeviceGrant({
   wallet,
   deviceKey,
   issuedAt,
-  scopes = DEFAULT_DEVICE_GRANT_SCOPES,
+  scopes = BOT_DEFAULT_SCOPES,
   origin = BOT_GRANT_ORIGIN
 }: {
   readonly wallet: string;

@@ -14,6 +14,7 @@ import { env } from '@/env';
 import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
+import { sliceWholeCodePoints } from '@/strings';
 import { dropsDb, DropsDb, ReleaseNoteDropReference } from '@/drops/drops.db';
 import { createHash } from 'node:crypto';
 import {
@@ -126,7 +127,7 @@ function normalizeSummary(value: unknown): string | null {
     .replace(/@\[/g, '@(')
     .replace(/[[\]`*_~]/g, '')
     .trim();
-  return summary ? summary.slice(0, MAX_SUMMARY_LENGTH) : null;
+  return summary ? sliceWholeCodePoints(summary, MAX_SUMMARY_LENGTH) : null;
 }
 
 function normalizeDesktopBullet(value: unknown): string | null {
@@ -440,13 +441,20 @@ function sanitizeContext(context: GitHubReleaseContext) {
     current_sha: context.current_sha,
     commit_messages: (context.commit_messages ?? [])
       .slice(0, MAX_COMMIT_MESSAGES)
-      .map((message) => message.slice(0, MAX_COMMIT_MESSAGE_LENGTH)),
+      .map((message) =>
+        sliceWholeCodePoints(message, MAX_COMMIT_MESSAGE_LENGTH)
+      ),
     pull_requests: context.pull_requests.map((pullRequest) => ({
       ...pullRequest,
-      body: pullRequest.body?.slice(0, MAX_BODY_LENGTH) ?? null,
+      body:
+        pullRequest.body === null || pullRequest.body === undefined
+          ? null
+          : sliceWholeCodePoints(pullRequest.body, MAX_BODY_LENGTH),
       commit_messages: pullRequest.commit_messages
         .slice(0, MAX_COMMIT_MESSAGES)
-        .map((message) => message.slice(0, MAX_COMMIT_MESSAGE_LENGTH)),
+        .map((message) =>
+          sliceWholeCodePoints(message, MAX_COMMIT_MESSAGE_LENGTH)
+        ),
       changed_files: pullRequest.changed_files
         .slice(0, MAX_CHANGED_FILES)
         .map(({ filename, additions, deletions, changes }) => ({
@@ -470,7 +478,10 @@ function serializeReleaseContext(context: GitHubReleaseContext): string {
     ...sanitized,
     pull_requests: sanitized.pull_requests.map((pullRequest) => ({
       ...pullRequest,
-      body: pullRequest.body?.slice(0, COMPACT_BODY_LENGTH) ?? null,
+      body:
+        pullRequest.body === null || pullRequest.body === undefined
+          ? null
+          : sliceWholeCodePoints(pullRequest.body, COMPACT_BODY_LENGTH),
       commit_messages: pullRequest.commit_messages.slice(
         0,
         COMPACT_COMMIT_MESSAGES
@@ -488,7 +499,9 @@ function serializeReleaseContext(context: GitHubReleaseContext): string {
     current_sha: context.current_sha,
     commit_messages: (context.commit_messages ?? [])
       .slice(0, COMPACT_COMMIT_MESSAGES)
-      .map((message) => message.slice(0, MAX_COMMIT_MESSAGE_LENGTH)),
+      .map((message) =>
+        sliceWholeCodePoints(message, MAX_COMMIT_MESSAGE_LENGTH)
+      ),
     pull_requests: context.pull_requests.map(({ number, title }) => ({
       number,
       title
@@ -989,7 +1002,8 @@ export class ReleaseNoteGenerationService {
       {
         waveId: createDropRequest.wave_id,
         replyToDropId: createDropRequest.reply_to?.drop_id ?? null,
-        body: createDropRequest
+        // The drop is stored with link previews hidden.
+        body: { ...createDropRequest, hide_link_preview: true }
       },
       () =>
         this.dropCreationApiService.createDrop(

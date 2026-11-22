@@ -125,7 +125,9 @@ describe('CiPipelineAlertService', () => {
       refs: JSON.stringify(['deploy-drop'])
     });
     expect(JSON.parse(event.body!)).toEqual(
-      JSON.parse(JSON.stringify(createDropRequest))
+      JSON.parse(
+        JSON.stringify({ ...createDropRequest, hide_link_preview: true })
+      )
     );
     expect(store.authorSignatures.get('drop-1')).toBe(event.id);
   });

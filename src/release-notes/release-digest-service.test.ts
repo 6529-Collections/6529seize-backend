@@ -127,7 +127,9 @@ describe('ReleaseDigestService', () => {
       profile_id: 'bot-profile'
     });
     expect(JSON.parse(event.body!)).toEqual(
-      JSON.parse(JSON.stringify(createDropRequest))
+      JSON.parse(
+        JSON.stringify({ ...createDropRequest, hide_link_preview: true })
+      )
     );
     expect(store.authorSignatures.get('new-drop')).toBe(event.id);
   });
