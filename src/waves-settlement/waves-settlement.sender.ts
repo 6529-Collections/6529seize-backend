@@ -1,4 +1,4 @@
-import { TypedDataEncoder } from 'ethers';
+import { keccak256 } from 'ethers';
 import {
   chainGatewayClient,
   ChainGatewayClient,
@@ -6,6 +6,12 @@ import {
 } from '@/chain-gateway/chain-gateway.client';
 import { ChainDraft } from '@/chain-gateway/chain-gateway.types';
 import { Logger } from '@/logging';
+import {
+  checkSettlementDraft,
+  SettlementSettings,
+  settlementSettingsFromEnv,
+  SettlementSettingsResult
+} from './settlement-draft';
 import {
   SettlementSigner,
   settlementSignerFromEnv,
@@ -23,28 +29,37 @@ import {
  * counted by a SETTLEMENT_REQUEST that anyone may send; the first that lands
  * counts, and one that arrives after the count closed fails and still pays
  * its fee. Each run reads the decisions due now, and for each one with no
- * request of ours in flight drafts a request, signs its txId with the sender
- * wallet and submits it. A count larger than `maxEntriesPerRequest` takes
- * several requests: the next one goes once the chain shows the last one
- * counted (count.stage `scoring` with a new `next`), at most one a run.
+ * request of ours in flight drafts a request, checks the draft
+ * (settlement-draft.ts), signs its txId with the sender wallet and submits
+ * it. A count larger than `maxEntriesPerRequest` takes several requests: the
+ * next one goes once the chain shows the last one counted (count.stage
+ * `scoring` with a new `next`), at most one a run.
  *
- * At most one request per decision may run at a time. Each request uses a
- * nonce lane of the wallet (16), kept by its decision while the request may
- * run, and expires after SETTLEMENT_VALID_FOR_MS. A request that failed, was
- * refused, or was not seen in a block after SETTLEMENT_RESEND_AFTER_MS (by
- * then expired) is sent again.
+ * At most one request per decision may run at a time. A request expires
+ * after SETTLEMENT_VALID_FOR_MS. One that failed, was refused, or was not
+ * seen in a block after SETTLEMENT_RESEND_AFTER_MS (by then expired) is sent
+ * again, after a wait that doubles each time (SETTLEMENT_BACKOFF_MS); after
+ * SETTLEMENT_MAX_ATTEMPTS requests for one step the sender gives up on it
+ * and logs `[SETTLEMENT GIVEN UP]`.
+ *
+ * Run one sender key in one sending environment per chain. Each decision's
+ * requests use a nonce lane derived from its id, so when a second sender
+ * with the same key (a staging set up with prod's key, say) drafts at the
+ * same time, both requests take the same lane and nonce and only one can
+ * execute. One drafted after the other landed is a new transaction and can
+ * still pay a fee for nothing.
  */
 
 const logger = Logger.get('WAVES_SETTLEMENT_SENDER');
 
-/** SETTLEMENT_REQUEST's operation code. */
-const SETTLEMENT_REQUEST_OP = 0x0609;
-/** Nonce lanes per namespace (a header's nonceLane is 0 to 15). */
-const NONCE_LANES = 16;
 /** A request can't execute after this long (its `expiresAt`). */
 export const SETTLEMENT_VALID_FOR_MS = 5 * 60_000;
 /** A request not seen in a block by then has expired and is sent again. */
 export const SETTLEMENT_RESEND_AFTER_MS = 10 * 60_000;
+/** Requests for one step of a count before the sender gives up on it. */
+export const SETTLEMENT_MAX_ATTEMPTS = 8;
+/** The wait before the second request for one step; it doubles each time. */
+export const SETTLEMENT_BACKOFF_MS = 60_000;
 /** Statuses of a request that may still execute. */
 const MAY_RUN: readonly SettlementSendStatus[] = [
   'submitting',
@@ -52,8 +67,15 @@ const MAY_RUN: readonly SettlementSendStatus[] = [
   'pending',
   'unknown'
 ];
-const DUE_LIMIT = 100;
-const ZERO32 = '0x' + '00'.repeat(32);
+const LANDED: readonly SettlementSendStatus[] = ['in_block', 'final'];
+const TX_STATUSES: readonly SettlementSendStatus[] = [
+  'pending',
+  'in_block',
+  'final',
+  'failed'
+];
+/** The API's largest page; the due list has no cursor. */
+const DUE_LIMIT = 500;
 const HEX32 = /^0x[0-9a-f]{64}$/;
 
 /** A row of GET /v1/decisions/due: a decision's settlement object. */
@@ -86,15 +108,21 @@ export interface ChainSettlement {
 export interface SettlementReport {
   due: number;
   sent: number;
-  /** Due, with a request of ours still in flight or no free nonce lane. */
+  /** Due, with a request of ours in flight, its lane taken, or backing off. */
   waiting: number;
   refused: number;
   errors: number;
+  givenUp: number;
   budgetSpent: boolean;
-  skipped?: 'missing_key' | 'malformed_key';
+  skipped?:
+    | 'missing_key'
+    | 'malformed_key'
+    | 'malformed_settings'
+    | 'no_network'
+    | 'wrong_network';
 }
 
-type Outcome = 'sent' | 'waiting' | 'refused' | 'errors';
+type Outcome = 'sent' | 'waiting' | 'refused' | 'errors' | 'givenUp';
 
 /** One step of a count: what a request is for. */
 interface Step {
@@ -105,6 +133,14 @@ interface Step {
   readonly maxEntries: number;
 }
 
+/** What one run signs for. */
+interface RunContext {
+  readonly signer: SettlementSigner;
+  readonly settings: SettlementSettings;
+  readonly networkId: string;
+  readonly timed: Timed;
+}
+
 export interface SettlementSenderDeps {
   readonly gateway: Pick<
     ChainGatewayClient,
@@ -112,6 +148,7 @@ export interface SettlementSenderDeps {
   >;
   readonly store: SettlementSendStore;
   readonly signer: () => SettlementSignerResult;
+  readonly settings: () => SettlementSettingsResult;
   readonly now: () => number;
 }
 
@@ -124,9 +161,19 @@ class BudgetSpent extends Error {
 
 type Timed = <T>(work: () => Promise<T>) => Promise<T>;
 
+/** The nonce lane every request for this decision uses: keccak(id) mod 16. */
+export function nonceLaneOf(decisionId: string): number {
+  return parseInt(keccak256(decisionId).slice(-1), 16);
+}
+
+/** The wait after `attempts` requests for one step before the next. */
+export function backoffMs(attempts: number): number {
+  return attempts <= 0 ? 0 : SETTLEMENT_BACKOFF_MS * Math.pow(2, attempts - 1);
+}
+
 export class WavesSettlementSender {
-  /** The last key state logged, so each change is logged once. */
-  private noted: string | null = null;
+  /** The last state logged per subject, so each change is logged once. */
+  private readonly noted = new Map<string, string>();
 
   constructor(private readonly deps: SettlementSenderDeps) {}
 
@@ -142,22 +189,59 @@ export class WavesSettlementSender {
       waiting: 0,
       refused: 0,
       errors: 0,
+      givenUp: 0,
       budgetSpent: false
     };
-    const key = this.signer();
-    if (!key.ok) {
-      return { ...report, skipped: `${key.problem}_key` };
-    }
+    const key = this.deps.signer();
+    this.noteOnce(
+      'key',
+      key.ok ? key.signer.address : key.problem,
+      key.ok
+        ? () =>
+            logger.info(`[SETTLEMENT SENDER] [wallet ${key.signer.address}]`)
+        : () =>
+            logger.warn(
+              `[SETTLEMENT SENDER OFF] WAVES_SETTLEMENT_SENDER_KEY is ${key.problem}; nothing is sent`
+            )
+    );
+    if (!key.ok) return { ...report, skipped: `${key.problem}_key` };
+    const settings = this.deps.settings();
+    this.noteOnce('settings', settings.ok ? '' : settings.problem, () => {
+      if (!settings.ok) {
+        logger.warn(`[SETTLEMENT SENDER OFF] ${settings.problem}`);
+      }
+    });
+    if (!settings.ok) return { ...report, skipped: 'malformed_settings' };
     const deadline = this.deps.now() + budgetMs;
     const timed: Timed = (work) => this.beforeDeadline(work, deadline);
     try {
       const due = await timed(() => this.readDue());
-      report.due = due.length;
-      if (!due.length) return report;
-      const rows = await this.loadRows(due, timed);
-      for (const settlement of due) {
+      report.due = due.decisions.length;
+      if (!due.decisions.length) return report;
+      const pinned = settings.settings.networkId;
+      const networkId = pinned ?? due.network;
+      if (!networkId || (due.network && due.network !== networkId)) {
+        this.noteOnce('network', `${due.network}`, () =>
+          logger.warn(
+            `[SETTLEMENT SENDER OFF] the gateway reads network ${due.network}; the sender signs for ${pinned ?? 'the gateway network'}`
+          )
+        );
+        return {
+          ...report,
+          skipped: networkId ? 'wrong_network' : 'no_network'
+        };
+      }
+      this.noted.delete('network');
+      const run: RunContext = {
+        signer: key.signer,
+        settings: settings.settings,
+        networkId,
+        timed
+      };
+      const rows = await this.loadRows(due.decisions, timed);
+      for (const settlement of due.decisions) {
         if (this.deps.now() >= deadline) throw new BudgetSpent();
-        report[await this.settle(settlement, rows, key.signer, timed)]++;
+        report[await this.settle(settlement, rows, run)]++;
       }
     } catch (error) {
       if (!(error instanceof BudgetSpent)) throw error;
@@ -166,20 +250,10 @@ export class WavesSettlementSender {
     return report;
   }
 
-  private signer(): SettlementSignerResult {
-    const key = this.deps.signer();
-    const note = key.ok ? key.signer.address : key.problem;
-    if (note !== this.noted) {
-      this.noted = note;
-      if (key.ok) {
-        logger.info(`[SETTLEMENT SENDER] [wallet ${key.signer.address}]`);
-      } else {
-        logger.warn(
-          `[SETTLEMENT SENDER OFF] WAVES_SETTLEMENT_SENDER_KEY is ${key.problem}; nothing is sent`
-        );
-      }
-    }
-    return key;
+  private noteOnce(subject: string, note: string, log: () => void) {
+    if (this.noted.get(subject) === note) return;
+    this.noted.set(subject, note);
+    log();
   }
 
   /**
@@ -189,14 +263,30 @@ export class WavesSettlementSender {
    * a finalized read lags a few blocks and could ask again for a step
    * already counted. Drafts take their nonce from the head too.
    */
-  private async readDue(): Promise<ChainSettlement[]> {
+  private async readDue(): Promise<{
+    decisions: ChainSettlement[];
+    network: string | null;
+  }> {
     const answer = await this.deps.gateway.read<{
+      count?: number;
       decisions?: ChainSettlement[];
     }>('/v1/decisions/due', { limit: DUE_LIMIT }, { at: 'head' });
-    const decisions = answer?.data?.decisions;
-    return Array.isArray(decisions)
-      ? decisions.filter((it) => it?.due === true)
+    const list = answer?.data?.decisions;
+    const decisions = Array.isArray(list)
+      ? list.filter((it) => it?.due === true)
       : [];
+    const count = answer?.data?.count;
+    if (
+      Array.isArray(list) &&
+      typeof count === 'number' &&
+      count > list.length
+    ) {
+      logger.warn(
+        `[SETTLEMENT DUE LIST CUT] [${count} due] [${list.length} read]`
+      );
+    }
+    const network = lower(answer?.read?.network);
+    return { decisions, network: HEX32.test(network) ? network : null };
   }
 
   /**
@@ -209,19 +299,19 @@ export class WavesSettlementSender {
   ): Promise<Map<string, SettlementSend>> {
     const loaded = await this.deps.store.load(
       due.map((it) => lower(it.decisionId)),
-      [...MAY_RUN, 'in_block'],
+      [...MAY_RUN, ...LANDED],
       this.deps.now() - SETTLEMENT_RESEND_AFTER_MS
     );
     const rows = new Map(loaded.map((row) => [row.decision_id, row]));
     for (const row of loaded) {
-      const open = MAY_RUN.includes(row.status) || row.status === 'in_block';
+      const open = MAY_RUN.includes(row.status) || LANDED.includes(row.status);
       if (!row.tx_id || !open || this.expired(row)) continue;
       const txId = row.tx_id;
       let status: SettlementSendStatus;
       let lastError = row.last_error;
       try {
         const tx = await timed(() => this.deps.gateway.getTx(txId));
-        status = tx?.status ?? 'unknown';
+        status = tx && TX_STATUSES.includes(tx.status) ? tx.status : 'unknown';
         if (tx?.status === 'failed') {
           lastError = `failed in block ${tx.height}: ${tx.result?.code} ${tx.result?.name}`;
           logger.warn(
@@ -243,8 +333,7 @@ export class WavesSettlementSender {
   private async settle(
     settlement: ChainSettlement,
     rows: Map<string, SettlementSend>,
-    signer: SettlementSigner,
-    timed: Timed
+    run: RunContext
   ): Promise<Outcome> {
     const step = stepOf(settlement);
     if (!step) {
@@ -256,23 +345,28 @@ export class WavesSettlementSender {
     // A closed count has nothing left to send.
     if (settlement.count?.stage === 'final') return 'waiting';
     const row = rows.get(step.decisionId);
-    if (!this.shouldSend(row, step)) return 'waiting';
-    const lane = this.freeLane(step.decisionId, row, rows);
-    if (lane === null) return 'waiting';
+    const plan = this.plan(row, step);
+    if (plan === 'wait') return 'waiting';
+    if (plan === 'give_up') return await this.giveUp(row!, rows);
+    const lane = nonceLaneOf(step.decisionId);
+    if (this.laneTaken(step.decisionId, lane, rows)) return 'waiting';
+    const where = `[decision ${step.decisionId}] [occurrence ${step.occurrence}] [next ${step.next}] [lane ${lane}]`;
+    const attempts = row && sameStep(row, step) ? row.attempts : 0;
     const base = {
       decision_id: step.decisionId,
       occurrence: step.occurrence,
       count_next: step.next,
       nonce_lane: lane,
+      attempts,
       sent_at: this.deps.now()
     };
     let draft: ChainDraft;
-    let entry: { role: number; keyType: number };
+    let checked: { txId: string; role: number; keyType: number };
     try {
-      draft = await timed(() =>
+      draft = await run.timed(() =>
         this.deps.gateway.getDraft({
           opType: 'SETTLEMENT_REQUEST',
-          signer: signer.address,
+          signer: run.signer.address,
           body: {
             decisionId: step.decisionId,
             occurrence: step.occurrence,
@@ -282,54 +376,61 @@ export class WavesSettlementSender {
           validForMs: SETTLEMENT_VALID_FOR_MS
         })
       );
-      entry = checkDraft(draft, step, signer.address, lane);
+      checked = checkSettlementDraft(draft, {
+        ...step,
+        signer: run.signer.address,
+        lane,
+        networkId: run.networkId,
+        maxFee: run.settings.maxFee,
+        validForMs: SETTLEMENT_VALID_FOR_MS,
+        now: this.deps.now()
+      });
     } catch (error) {
       if (error instanceof BudgetSpent) throw error;
+      // Not a request: the attempts stay as they were.
       const lastError = `draft: ${describe(error)}`;
-      logger.warn(
-        `[SETTLEMENT NOT SENT] [decision ${step.decisionId}] ${lastError}`
-      );
+      logger.warn(`[SETTLEMENT NOT SENT] ${where} ${lastError}`);
       await this.save(
         { ...base, tx_id: null, status: 'error', last_error: lastError },
         rows
       );
       return 'errors';
     }
-    const txId = draft.txId.toLowerCase();
-    const sig = signer.sign(txId);
+    const sig = run.signer.sign(checked.txId);
     // Saved before the submit: when its answer is lost, the next run asks
     // the gateway about this txId instead of sending again.
     const sending: SettlementSend = {
       ...base,
-      tx_id: txId,
+      attempts: attempts + 1,
+      tx_id: checked.txId,
       status: 'submitting',
       last_error: null
     };
     await this.save(sending, rows);
-    const where = `[decision ${step.decisionId}] [occurrence ${step.occurrence}] [next ${step.next}] [lane ${lane}] [tx ${txId}]`;
+    const sent = `${where} [attempt ${attempts + 1}] [tx ${checked.txId}]`;
     try {
-      const result = await timed(() =>
+      const result = await run.timed(() =>
         this.deps.gateway.submit({
           unsigned: draft.unsigned,
-          signatures: [{ role: entry.role, keyType: entry.keyType, sig }]
+          signatures: [{ role: checked.role, keyType: checked.keyType, sig }]
         })
       );
       if (!result.accepted) {
-        logger.warn(`[SETTLEMENT REFUSED] ${where} not accepted`);
+        logger.warn(`[SETTLEMENT REFUSED] ${sent} not accepted`);
         await this.save(
           { ...sending, status: 'refused', last_error: 'not accepted' },
           rows
         );
         return 'refused';
       }
-      logger.info(`[SETTLEMENT SENT] ${where}`);
+      logger.info(`[SETTLEMENT SENT] ${sent}`);
       await this.save({ ...sending, status: 'submitted' }, rows);
       return 'sent';
     } catch (error) {
       if (error instanceof BudgetSpent) throw error;
       const lastError = `submit: ${describe(error)}`;
       if (isRefusal(error)) {
-        logger.warn(`[SETTLEMENT REFUSED] ${where} ${lastError}`);
+        logger.warn(`[SETTLEMENT REFUSED] ${sent} ${lastError}`);
         await this.save(
           { ...sending, status: 'refused', last_error: lastError },
           rows
@@ -338,45 +439,60 @@ export class WavesSettlementSender {
       }
       // The gateway may have relayed it: it stays `submitting`, and the
       // next run asks the gateway about it.
-      logger.warn(`[SETTLEMENT SUBMIT UNCLEAR] ${where} ${lastError}`);
+      logger.warn(`[SETTLEMENT SUBMIT UNCLEAR] ${sent} ${lastError}`);
       await this.save({ ...sending, last_error: lastError }, rows);
       return 'errors';
     }
   }
 
-  private shouldSend(row: SettlementSend | undefined, step: Step): boolean {
-    // Never sent, or the last attempt ended before it had a transaction.
-    if (!row?.tx_id) return true;
-    if (['refused', 'error', 'failed'].includes(row.status)) return true;
-    if (this.expired(row)) return true;
-    // One request per decision may run at a time.
-    if (MAY_RUN.includes(row.status)) return false;
-    // It landed (in_block or final): the next request goes once the chain
-    // shows the next step.
-    return row.occurrence !== step.occurrence || row.count_next !== step.next;
+  private plan(
+    row: SettlementSend | undefined,
+    step: Step
+  ): 'send' | 'wait' | 'give_up' {
+    if (!row) return 'send';
+    const live = row.tx_id !== null && !this.expired(row);
+    // One request per decision may run at a time, whatever its step.
+    if (live && MAY_RUN.includes(row.status)) return 'wait';
+    // A new step (or occurrence) starts its attempts again.
+    if (!sameStep(row, step)) return 'send';
+    // The same step: the request landed and the read has not caught up...
+    if (live && LANDED.includes(row.status)) return 'wait';
+    // ...or it is sent again, later each time, and only so many times.
+    if (row.status === 'given_up' || row.attempts >= SETTLEMENT_MAX_ATTEMPTS) {
+      return 'give_up';
+    }
+    return this.deps.now() >= row.sent_at + backoffMs(row.attempts)
+      ? 'send'
+      : 'wait';
   }
 
-  /**
-   * The decision's own lane when no other decision's request may run in
-   * it, otherwise the lowest free lane; null when all 16 are taken.
-   */
-  private freeLane(
-    decisionId: string,
-    row: SettlementSend | undefined,
+  private async giveUp(
+    row: SettlementSend,
     rows: Map<string, SettlementSend>
-  ): number | null {
-    const taken = new Set<number>();
-    for (const other of Array.from(rows.values())) {
-      if (other.decision_id === decisionId || !other.tx_id) continue;
-      if (MAY_RUN.includes(other.status) && !this.expired(other)) {
-        taken.add(other.nonce_lane);
-      }
+  ): Promise<Outcome> {
+    if (row.status !== 'given_up') {
+      logger.error(
+        `[SETTLEMENT GIVEN UP] [decision ${row.decision_id}] [occurrence ${row.occurrence}] [next ${row.count_next}] after ${row.attempts} requests, the last: ${row.status} ${row.last_error ?? ''}. The sender tries again at the next step, or once this row of waves_settlement_sends is deleted`
+      );
+      await this.save({ ...row, status: 'given_up' }, rows);
     }
-    if (row && !taken.has(row.nonce_lane)) return row.nonce_lane;
-    for (let lane = 0; lane < NONCE_LANES; lane++) {
-      if (!taken.has(lane)) return lane;
-    }
-    return null;
+    return 'givenUp';
+  }
+
+  /** Whether another decision's request that may still run holds the lane. */
+  private laneTaken(
+    decisionId: string,
+    lane: number,
+    rows: Map<string, SettlementSend>
+  ): boolean {
+    return Array.from(rows.values()).some(
+      (other) =>
+        other.decision_id !== decisionId &&
+        other.nonce_lane === lane &&
+        other.tx_id !== null &&
+        MAY_RUN.includes(other.status) &&
+        !this.expired(other)
+    );
   }
 
   private expired(row: SettlementSend): boolean {
@@ -418,6 +534,10 @@ function isCount(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 0;
 }
 
+function sameStep(row: SettlementSend, step: Step): boolean {
+  return row.occurrence === step.occurrence && row.count_next === step.next;
+}
+
 /** The step a due row asks for, or null when the row can't be read. */
 function stepOf(settlement: ChainSettlement): Step | null {
   const decisionId = lower(settlement?.decisionId);
@@ -428,6 +548,7 @@ function stepOf(settlement: ChainSettlement): Step | null {
   const readable =
     HEX32.test(decisionId) &&
     isCount(occurrence) &&
+    occurrence <= 0xffffffff &&
     (next === null || isCount(next)) &&
     lower(body?.decisionId) === decisionId &&
     body?.occurrence === occurrence &&
@@ -435,79 +556,6 @@ function stepOf(settlement: ChainSettlement): Step | null {
     maxEntries >= 1 &&
     maxEntries <= 0xffff;
   return readable ? { decisionId, occurrence, next, maxEntries } : null;
-}
-
-interface DraftTypedData {
-  readonly domain?: Record<string, unknown>;
-  readonly types?: Record<string, { name: string; type: string }[]>;
-  readonly primaryType?: string;
-  readonly message?: {
-    readonly header?: Record<string, unknown>;
-    readonly body?: Record<string, unknown>;
-  };
-}
-
-/**
- * Checks that the draft is the request asked for and that its txId is its
- * typed data's EIP-712 digest, so the sender key signs nothing else.
- * Returns the signature entry the draft names for the sender.
- */
-function checkDraft(
-  draft: ChainDraft,
-  step: Step,
-  signer: string,
-  lane: number
-): { role: number; keyType: number } {
-  const typed = draft.typedData as DraftTypedData;
-  const header = typed?.message?.header ?? {};
-  const body = typed?.message?.body ?? {};
-  const refuse = (what: string): never => {
-    throw new Error(`the draft is ${what}`);
-  };
-  if (
-    draft.opType !== SETTLEMENT_REQUEST_OP ||
-    typed?.primaryType !== 'SettlementRequest'
-  ) {
-    refuse('not a SETTLEMENT_REQUEST');
-  }
-  if (
-    lower(body.decisionId) !== step.decisionId ||
-    Number(body.occurrence) !== step.occurrence ||
-    Number(body.maxEntries) !== step.maxEntries
-  ) {
-    refuse('for another decision, occurrence or size');
-  }
-  if (
-    lower(header.principal) !== ZERO32 ||
-    Number(header.keyType) !== 1 ||
-    lower(header.keyId) !== '0x' + '00'.repeat(12) + signer.slice(2) ||
-    Number(header.nonceLane) !== lane
-  ) {
-    refuse('for another account, key or nonce lane');
-  }
-  if (String(header.tipPerRU) !== '0') refuse('paying a tip');
-  const types = Object.fromEntries(
-    Object.entries(typed.types ?? {}).filter(
-      ([name]) => name !== 'EIP712Domain'
-    )
-  );
-  const digest = TypedDataEncoder.hash(
-    typed.domain ?? {},
-    types,
-    typed.message ?? {}
-  );
-  if (digest.toLowerCase() !== lower(draft.txId)) {
-    refuse('signing another digest than its typed data');
-  }
-  const entries = draft.signatures ?? [];
-  if (
-    entries.length !== 1 ||
-    lower(entries[0].signer) !== signer ||
-    entries[0].keyType !== 1
-  ) {
-    refuse('asking for another signature');
-  }
-  return { role: entries[0].role, keyType: entries[0].keyType };
 }
 
 /** A refusal: the gateway or the chain read the request and said no. */
@@ -530,5 +578,6 @@ export const wavesSettlementSender = new WavesSettlementSender({
   gateway: chainGatewayClient,
   store: wavesSettlementSendsDb,
   signer: () => settlementSignerFromEnv(),
+  settings: () => settlementSettingsFromEnv(),
   now: () => Date.now()
 });

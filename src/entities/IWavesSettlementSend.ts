@@ -8,14 +8,15 @@ import { WAVES_SETTLEMENT_SENDS_TABLE } from '@/constants';
  *
  * - `occurrence` and `count_next` name the step: the decision's next
  *   occurrence and its count's `next` (null before the count starts).
- * - `nonce_lane` is the sender wallet's nonce lane (0 to 15) the
- *   transaction used. A decision keeps its lane while a transaction may
- *   still run, so one sent again uses the same nonce and only one of them
- *   can execute.
+ * - `nonce_lane` is the sender wallet's nonce lane (0 to 15), derived from
+ *   the decision id, so every request for a decision, from any sender with
+ *   the same key, takes the same lane and nonce and only one executes.
+ * - `attempts`: requests sent for this step; a new step starts again at 1.
  * - `status`: `submitting` (saved before the submit, so a submit whose
- *   answer is lost is still checked), `submitted`, `refused`, `error`, or
- *   the transaction's state as the gateway last gave it (`pending`,
- *   `in_block`, `final`, `failed`, `unknown`).
+ *   answer is lost is still checked), `submitted`, `refused`, `error`,
+ *   `given_up` (no more requests for this step), or the transaction's state
+ *   as the gateway last gave it (`pending`, `in_block`, `final`, `failed`,
+ *   `unknown`).
  */
 @Entity(WAVES_SETTLEMENT_SENDS_TABLE)
 export class WavesSettlementSendEntity {
@@ -30,6 +31,9 @@ export class WavesSettlementSendEntity {
 
   @Column({ type: 'int' })
   readonly nonce_lane!: number;
+
+  @Column({ type: 'int', default: 0 })
+  readonly attempts!: number;
 
   @Column({ type: 'varchar', length: 66, nullable: true, default: null })
   readonly tx_id!: string | null;

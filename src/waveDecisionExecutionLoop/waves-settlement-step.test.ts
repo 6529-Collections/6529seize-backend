@@ -12,6 +12,7 @@ const REPORT = {
   waiting: 0,
   refused: 0,
   errors: 0,
+  givenUp: 0,
   budgetSpent: false
 };
 

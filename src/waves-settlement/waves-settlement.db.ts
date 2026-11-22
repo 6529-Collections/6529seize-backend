@@ -7,6 +7,7 @@ export type SettlementSendStatus =
   | 'submitted'
   | 'refused'
   | 'error'
+  | 'given_up'
   | 'pending'
   | 'in_block'
   | 'final'
@@ -19,6 +20,8 @@ export interface SettlementSend {
   readonly occurrence: number;
   readonly count_next: number | null;
   readonly nonce_lane: number;
+  /** Requests sent for this step (occurrence and count_next). */
+  readonly attempts: number;
   readonly tx_id: string | null;
   readonly sent_at: number;
   readonly status: SettlementSendStatus;
@@ -43,6 +46,7 @@ const COLUMNS = [
   'occurrence',
   'count_next',
   'nonce_lane',
+  'attempts',
   'tx_id',
   'sent_at',
   'status',
@@ -76,6 +80,7 @@ export class WavesSettlementSendsDb
       occurrence: Number(row.occurrence),
       count_next: row.count_next === null ? null : Number(row.count_next),
       nonce_lane: Number(row.nonce_lane),
+      attempts: Number(row.attempts),
       sent_at: Number(row.sent_at)
     }));
   }

@@ -9,6 +9,11 @@ import {
 } from '@/chain-gateway/chain-gateway.types';
 import { Logger } from '@/logging';
 import {
+  settlementDomain,
+  SETTLEMENT_TYPES,
+  settlementSettingsFromEnv
+} from './settlement-draft';
+import {
   settlementSignerFromEnv,
   SettlementSignerResult
 } from './settlement-signer';
@@ -18,7 +23,10 @@ import {
   SettlementSendStore
 } from './waves-settlement.db';
 import {
+  backoffMs,
   ChainSettlement,
+  nonceLaneOf,
+  SETTLEMENT_MAX_ATTEMPTS,
   SETTLEMENT_RESEND_AFTER_MS,
   WavesSettlementSender
 } from './waves-settlement.sender';
@@ -28,56 +36,96 @@ const TEST_KEY =
   '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
 const SENDER = '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266';
 const ZERO32 = '0x' + '00'.repeat(32);
+const NETWORK = '0x' + 'ab'.repeat(32);
 const START = 1_764_000_000_000;
 const MINUTE = 60_000;
 
-const DOMAIN = {
-  name: '6529 Network',
-  version: '1',
-  salt: '0x' + 'ab'.repeat(32)
-};
-const TYPES = {
-  EIP712Domain: [
-    { name: 'name', type: 'string' },
-    { name: 'version', type: 'string' },
-    { name: 'salt', type: 'bytes32' }
-  ],
-  SettlementRequest: [
-    { name: 'header', type: 'TxHeader' },
-    { name: 'body', type: 'SettlementRequestBody' }
-  ],
-  SettlementRequestBody: [
-    { name: 'decisionId', type: 'bytes32' },
-    { name: 'occurrence', type: 'uint32' },
-    { name: 'maxEntries', type: 'uint16' }
-  ],
-  TxHeader: [
-    { name: 'ruleVersion', type: 'uint32' },
-    { name: 'principal', type: 'bytes32' },
-    { name: 'keyType', type: 'uint8' },
-    { name: 'keyId', type: 'bytes32' },
-    { name: 'authRef', type: 'bytes32' },
-    { name: 'nonceLane', type: 'uint32' },
-    { name: 'nonce', type: 'uint64' },
-    { name: 'notBefore', type: 'uint64' },
-    { name: 'expiresAt', type: 'uint64' },
-    { name: 'ethRefNumber', type: 'uint64' },
-    { name: 'ethRefHash', type: 'bytes32' },
-    { name: 'feeMode', type: 'uint8' },
-    { name: 'sponsorRef', type: 'bytes32' },
-    { name: 'maxFee', type: 'uint128' },
-    { name: 'maxWork', type: 'uint64' },
-    { name: 'tipPerRU', type: 'uint128' }
-  ]
-};
+type Types = Record<string, { name: string; type: string }[]>;
 
 function decisionId(n: number): string {
   return '0x' + n.toString(16).padStart(64, '0');
 }
 
+/** `count` decision ids whose nonce lanes differ. */
+function idsOnDistinctLanes(count: number): string[] {
+  const lanes = new Set<number>();
+  const ids: string[] = [];
+  for (let n = 1; ids.length < count; n++) {
+    if (n > 1_000) throw new Error('no decision ids on distinct lanes');
+    const id = decisionId(n);
+    if (lanes.has(nonceLaneOf(id))) continue;
+    lanes.add(nonceLaneOf(id));
+    ids.push(id);
+  }
+  return ids;
+}
+
+/** The header an honest gateway drafts for the sender. */
+function headerFor(request: ChainDraftRequest, now: number, nonce: number) {
+  return {
+    ruleVersion: 7,
+    principal: ZERO32,
+    keyType: 1,
+    keyId: '0x' + '00'.repeat(12) + request.signer!.slice(2),
+    authRef: ZERO32,
+    nonceLane: request.nonceLane ?? 0,
+    nonce: String(nonce),
+    notBefore: String(now - 2_000),
+    expiresAt: String(now + (request.validForMs ?? 3_600_000)),
+    ethRefNumber: '0',
+    ethRefHash: ZERO32,
+    feeMode: 3,
+    sponsorRef: ZERO32,
+    maxFee: '1000000000000000000',
+    maxWork: '6000000',
+    tipPerRU: '0'
+  };
+}
+
+/** A draft whose txId is the digest of its typed data. */
+function draftOf({
+  header,
+  body,
+  signer,
+  types = SETTLEMENT_TYPES,
+  domain = settlementDomain(NETWORK)
+}: {
+  header: Record<string, unknown>;
+  body: Record<string, unknown>;
+  signer: string;
+  types?: Types;
+  domain?: Record<string, unknown>;
+}): ChainDraft {
+  const message = { header, body };
+  const txId = TypedDataEncoder.hash(domain, types, message);
+  return {
+    txId,
+    opType: 0x0609,
+    opName: 'SETTLEMENT_REQUEST',
+    opVersion: 1,
+    typedData: {
+      domain,
+      primaryType: 'SettlementRequest',
+      types: {
+        EIP712Domain: [
+          { name: 'name', type: 'string' },
+          { name: 'version', type: 'string' },
+          { name: 'salt', type: 'bytes32' }
+        ],
+        ...types
+      },
+      message
+    },
+    unsigned: '0x0609' + txId.slice(2),
+    envelope: {},
+    signatures: [{ role: 0, keyType: 1, signer }],
+    fee: {},
+    readAt: 1
+  };
+}
+
 interface FakeDecision {
   occurrence: number;
-  due: boolean;
   count: { status: string; stage: string; next: number } | null;
   maxEntries: number;
 }
@@ -88,13 +136,21 @@ class FakeGateway {
   readonly txs = new Map<string, ChainTx>();
   readonly drafts: ChainDraftRequest[] = [];
   readonly submitted: { txId: string; lane: number; signer: string }[] = [];
+  readonly reads: unknown[] = [];
+  /** The network id the reads name; null: none. */
+  network: string | null = NETWORK;
+  /** The due count the answer gives, when not the list's length. */
+  reportedCount: number | null = null;
   /** How long each call takes on the fake clock. */
   callMs = 0;
   submitAnswer: () => ChainSubmitResult | Error = () => ({
     txId: '',
     accepted: true
   });
-  tamper: (draft: ChainDraft) => ChainDraft = (draft) => draft;
+  /** Lets a test change the honest draft. */
+  tamper: (draft: ChainDraft, request: ChainDraftRequest) => ChainDraft = (
+    draft
+  ) => draft;
   private readonly byUnsigned = new Map<
     string,
     { txId: string; lane: number }
@@ -106,7 +162,6 @@ class FakeGateway {
   due(id: string, decision: Partial<FakeDecision> = {}) {
     this.decisions.set(id, {
       occurrence: 1,
-      due: true,
       count: null,
       maxEntries: 100,
       ...decision
@@ -121,31 +176,33 @@ class FakeGateway {
     this.tick();
     expect(path).toBe('/v1/decisions/due');
     expect(opts).toEqual({ at: 'head' });
-    const decisions: ChainSettlement[] = Array.from(this.decisions.entries())
-      .filter(([, d]) => d.due)
-      .map(([id, d]) => ({
-        decisionId: id,
-        counted: true,
-        due: true,
-        status: 'published',
-        phase: 'open',
-        occurrence: d.occurrence,
-        resultTime: START,
-        activeEntries: 250,
-        count: d.count,
-        maxEntriesPerRequest: d.maxEntries,
-        draft: {
-          opType: 'SETTLEMENT_REQUEST',
-          body: {
-            decisionId: id,
-            occurrence: d.occurrence,
-            maxEntries: d.maxEntries
-          }
+    this.reads.push(query);
+    const decisions: ChainSettlement[] = Array.from(
+      this.decisions.entries()
+    ).map(([id, d]) => ({
+      decisionId: id,
+      counted: true,
+      due: true,
+      status: 'published',
+      phase: 'open',
+      occurrence: d.occurrence,
+      resultTime: START,
+      activeEntries: 250,
+      count: d.count,
+      maxEntriesPerRequest: d.maxEntries,
+      draft: {
+        opType: 'SETTLEMENT_REQUEST',
+        body: {
+          decisionId: id,
+          occurrence: d.occurrence,
+          maxEntries: d.maxEntries
         }
-      }));
+      }
+    }));
+    const count = this.reportedCount ?? decisions.length;
     return {
-      read: {} as never,
-      data: { at: this.clock.now, count: decisions.length, decisions } as T,
+      read: { network: this.network } as never,
+      data: { at: this.clock.now, count, decisions } as T,
       next: null
     };
   }
@@ -156,46 +213,14 @@ class FakeGateway {
     expect(request.opType).toBe('SETTLEMENT_REQUEST');
     expect(request.principal).toBeUndefined();
     const lane = request.nonceLane ?? 0;
-    const header = {
-      ruleVersion: 7,
-      principal: ZERO32,
-      keyType: 1,
-      keyId: '0x' + '00'.repeat(12) + request.signer!.slice(2),
-      authRef: ZERO32,
-      nonceLane: lane,
-      nonce: String(this.nonces.get(lane) ?? 0),
-      notBefore: String(this.clock.now),
-      expiresAt: String(this.clock.now + (request.validForMs ?? 3_600_000)),
-      ethRefNumber: '0',
-      ethRefHash: ZERO32,
-      feeMode: 1,
-      sponsorRef: ZERO32,
-      maxFee: '1000',
-      maxWork: '500000',
-      tipPerRU: '0'
-    };
-    const message = { header, body: request.body };
-    const { EIP712Domain: _, ...types } = TYPES;
-    const txId = TypedDataEncoder.hash(DOMAIN, types, message);
-    const unsigned = '0x0609' + txId.slice(2);
-    this.byUnsigned.set(unsigned, { txId, lane });
-    return this.tamper({
-      txId,
-      opType: 0x0609,
-      opName: 'SETTLEMENT_REQUEST',
-      opVersion: 1,
-      typedData: {
-        domain: DOMAIN,
-        primaryType: 'SettlementRequest',
-        types: TYPES,
-        message
-      },
-      unsigned,
-      envelope: {},
-      signatures: [{ role: 0, keyType: 1, signer: request.signer! }],
-      fee: {},
-      readAt: 1
+    const honest = draftOf({
+      header: headerFor(request, this.clock.now, this.nonces.get(lane) ?? 0),
+      body: request.body,
+      signer: request.signer!
     });
+    const draft = this.tamper(honest, request);
+    this.byUnsigned.set(draft.unsigned, { txId: draft.txId, lane });
+    return draft;
   }
 
   async submit(request: ChainSubmitRequest): Promise<ChainSubmitResult> {
@@ -219,11 +244,18 @@ class FakeGateway {
     return this.txs.get(txId) ?? null;
   }
 
-  /** The request lands: its nonce is spent and the chain moves the count. */
+  /** The request lands: its nonce is spent. */
   land(txId: string, status: ChainTx['status'] = 'in_block') {
     const sent = this.submitted.find((it) => it.txId === txId)!;
     this.nonces.set(sent.lane, (this.nonces.get(sent.lane) ?? 0) + 1);
-    this.txs.set(txId, { status, height: 10 });
+    this.txs.set(txId, {
+      status,
+      height: 10,
+      result:
+        status === 'failed'
+          ? { code: '0x261b', name: 'RESULT_NOT_DUE', feePaid: '900' }
+          : undefined
+    });
   }
 
   lastTx(): string {
@@ -256,15 +288,22 @@ const testSigner = () =>
 
 function setup({
   signer = testSigner,
+  env = {},
   realTime = false
-}: { signer?: () => SettlementSignerResult; realTime?: boolean } = {}) {
-  const clock = { now: START };
+}: {
+  signer?: () => SettlementSignerResult;
+  env?: NodeJS.ProcessEnv;
+  realTime?: boolean;
+} = {}) {
+  // The fake gateway drafts at the clock's time.
+  const clock = { now: realTime ? Date.now() : START };
   const gateway = new FakeGateway(clock);
   const store = new MemoryStore();
   const sender = new WavesSettlementSender({
     gateway,
     store,
     signer,
+    settings: () => settlementSettingsFromEnv(env),
     now: realTime ? () => Date.now() : () => clock.now
   });
   const run = (budgetMs = 20_000) => sender.run({ budgetMs });
@@ -274,19 +313,28 @@ function setup({
   return { gateway, store, sender, run, later };
 }
 
-const D1 = decisionId(1);
-const D2 = decisionId(2);
+const [D1, D2] = idsOnDistinctLanes(2);
 
 let warn: jest.SpyInstance;
+let error: jest.SpyInstance;
 
 beforeEach(() => {
   jest.spyOn(Logger.prototype, 'info').mockImplementation(() => undefined);
   warn = jest
     .spyOn(Logger.prototype, 'warn')
     .mockImplementation(() => undefined);
+  error = jest
+    .spyOn(Logger.prototype, 'error')
+    .mockImplementation(() => undefined);
 });
 
 afterEach(() => jest.restoreAllMocks());
+
+function logged(spy: jest.SpyInstance, marker: string): string[] {
+  return spy.mock.calls
+    .map(([line]) => String(line))
+    .filter((line) => line.includes(marker));
+}
 
 describe('WavesSettlementSender', () => {
   it('sends nothing when nothing is due', async () => {
@@ -305,23 +353,25 @@ describe('WavesSettlementSender', () => {
     expect(await run()).toEqual(
       expect.objectContaining({ due: 1, sent: 1, waiting: 0 })
     );
+    expect(gateway.reads).toEqual([{ limit: 500 }]);
     expect(gateway.drafts).toEqual([
       {
         opType: 'SETTLEMENT_REQUEST',
         signer: SENDER,
         body: { decisionId: D1, occurrence: 3, maxEntries: 40 },
-        nonceLane: 0,
+        nonceLane: nonceLaneOf(D1),
         validForMs: 300_000
       }
     ]);
     expect(gateway.submitted).toEqual([
-      { txId: expect.any(String), lane: 0, signer: SENDER }
+      { txId: expect.any(String), lane: nonceLaneOf(D1), signer: SENDER }
     ]);
     expect(store.rows.get(D1)).toEqual(
       expect.objectContaining({
         occurrence: 3,
         count_next: null,
-        nonce_lane: 0,
+        nonce_lane: nonceLaneOf(D1),
+        attempts: 1,
         tx_id: gateway.lastTx(),
         status: 'submitted',
         last_error: null
@@ -344,18 +394,15 @@ describe('WavesSettlementSender', () => {
     await run();
     const first = gateway.lastTx();
     gateway.land(first, 'failed');
-    gateway.txs.set(first, {
-      status: 'failed',
-      height: 10,
-      result: { code: '0x261b', name: 'RESULT_NOT_DUE' }
-    });
 
     later();
     expect(await run()).toEqual(expect.objectContaining({ sent: 1 }));
     expect(gateway.submitted).toHaveLength(2);
     expect(gateway.lastTx()).not.toBe(first);
-    expect(gateway.submitted[1].lane).toBe(0);
-    expect(store.rows.get(D1)?.status).toBe('submitted');
+    expect(store.rows.get(D1)).toEqual(
+      expect.objectContaining({ status: 'submitted', attempts: 2 })
+    );
+    expect(logged(warn, '[SETTLEMENT FAILED]')[0]).toContain('RESULT_NOT_DUE');
   });
 
   it('sends again once a request was not seen in a block in time', async () => {
@@ -371,9 +418,76 @@ describe('WavesSettlementSender', () => {
 
     later(1);
     expect(await run()).toEqual(expect.objectContaining({ sent: 1 }));
-    expect(gateway.submitted).toHaveLength(2);
-    // The same lane: the expired request and its replacement share a nonce.
-    expect(gateway.submitted[1].lane).toBe(gateway.submitted[0].lane);
+    expect(gateway.submitted.map((it) => it.lane)).toEqual([
+      nonceLaneOf(D1),
+      nonceLaneOf(D1)
+    ]);
+  });
+
+  it('backs off between requests for one step and gives up after the last, logging it once', async () => {
+    const { gateway, store, run, later } = setup();
+    gateway.due(D1);
+    const sentAt: number[] = [];
+    for (let minute = 0; minute < 200; minute++) {
+      const before = gateway.submitted.length;
+      await run();
+      if (gateway.submitted.length > before) {
+        sentAt.push(minute);
+        // Each lands and fails in its block, paying its fee.
+        gateway.land(gateway.lastTx(), 'failed');
+      }
+      later();
+    }
+    // Waits of 1, 2, 4, ... minutes after each request.
+    expect(sentAt).toEqual([0, 1, 3, 7, 15, 31, 63, 127]);
+    expect(sentAt).toHaveLength(SETTLEMENT_MAX_ATTEMPTS);
+    expect(backoffMs(3)).toBe(4 * MINUTE);
+    expect(logged(error, '[SETTLEMENT GIVEN UP]')).toHaveLength(1);
+    expect(store.rows.get(D1)).toEqual(
+      expect.objectContaining({ status: 'given_up', attempts: 8 })
+    );
+    expect(await run()).toEqual(expect.objectContaining({ givenUp: 1 }));
+
+    // Another sender counted the step: the next one starts again.
+    gateway.due(D1, {
+      count: { status: 'counting', stage: 'scoring', next: 100 }
+    });
+    later();
+    expect(await run()).toEqual(expect.objectContaining({ sent: 1 }));
+    expect(store.rows.get(D1)).toEqual(
+      expect.objectContaining({ attempts: 1, count_next: 100 })
+    );
+  });
+
+  it('counts a refusal as an attempt and waits before the next', async () => {
+    const { gateway, store, run, later } = setup();
+    gateway.due(D1);
+    gateway.submitAnswer = () => ({ txId: '', accepted: false });
+    expect(await run()).toEqual(expect.objectContaining({ refused: 1 }));
+    later();
+    expect(await run()).toEqual(expect.objectContaining({ refused: 1 }));
+    later();
+    // The second refusal waits two minutes.
+    expect(await run()).toEqual(expect.objectContaining({ waiting: 1 }));
+    expect(store.rows.get(D1)?.attempts).toBe(2);
+  });
+
+  it('does not count a draft the gateway could not make', async () => {
+    const { gateway, store, run, later } = setup();
+    gateway.due(D1);
+    const getDraft = gateway.getDraft.bind(gateway);
+    gateway.getDraft = async () => {
+      throw new ChainGatewayError('/v1/draft: busy', 503, 'busy', '/v1/draft');
+    };
+    for (let minute = 0; minute < 20; minute++) {
+      expect(await run()).toEqual(expect.objectContaining({ errors: 1 }));
+      later();
+    }
+    expect(store.rows.get(D1)).toEqual(
+      expect.objectContaining({ status: 'error', attempts: 0, tx_id: null })
+    );
+    gateway.getDraft = getDraft;
+    expect(await run()).toEqual(expect.objectContaining({ sent: 1 }));
   });
 
   it('sends one request per step while the count is scoring', async () => {
@@ -396,7 +510,7 @@ describe('WavesSettlementSender', () => {
     expect(await run()).toEqual(expect.objectContaining({ sent: 1 }));
     gateway.land(gateway.lastTx());
     expect(store.rows.get(D1)).toEqual(
-      expect.objectContaining({ count_next: 100, nonce_lane: 0 })
+      expect.objectContaining({ count_next: 100, attempts: 1 })
     );
 
     gateway.due(D1, {
@@ -412,11 +526,6 @@ describe('WavesSettlementSender', () => {
     later();
     expect(await run()).toEqual(expect.objectContaining({ due: 0, sent: 0 }));
     expect(gateway.submitted).toHaveLength(3);
-    expect(gateway.drafts.map((it) => it.body)).toEqual([
-      { decisionId: D1, occurrence: 1, maxEntries: 100 },
-      { decisionId: D1, occurrence: 1, maxEntries: 100 },
-      { decisionId: D1, occurrence: 1, maxEntries: 100 }
-    ]);
   });
 
   it('sends no second request while its own may still run, even when another sender moved the count', async () => {
@@ -442,25 +551,33 @@ describe('WavesSettlementSender', () => {
     expect(await run()).toEqual(expect.objectContaining({ sent: 1 }));
   });
 
-  it('sends a decision again in its own nonce lane', async () => {
-    const { gateway, store, run, later } = setup();
-    gateway.due(D1);
-    gateway.due(D2);
-    await run();
-    expect(gateway.submitted.map((it) => it.lane)).toEqual([0, 1]);
+  it('takes each decision its own lane, keccak of its id mod 16', async () => {
+    expect(nonceLaneOf(decisionId(1))).toBe(6);
+    expect(nonceLaneOf(decisionId(2))).toBe(14);
+    expect(nonceLaneOf(decisionId(3))).toBe(11);
+    expect(nonceLaneOf(decisionId(4))).toBe(11);
 
-    // D1's request counted its result; D2's was lost.
-    gateway.land(gateway.submitted[0].txId, 'final');
-    gateway.decisions.delete(D1);
-    gateway.txs.delete(gateway.submitted[1].txId);
-    later(SETTLEMENT_RESEND_AFTER_MS);
-    expect(await run()).toEqual(expect.objectContaining({ due: 1, sent: 1 }));
-    expect(gateway.submitted[2].lane).toBe(1);
-    expect(store.rows.get(D2)?.nonce_lane).toBe(1);
+    // Two decisions on one lane: one request at a time in it.
+    const { gateway, run, later } = setup();
+    gateway.due(decisionId(3));
+    gateway.due(decisionId(4));
+    expect(await run()).toEqual(
+      expect.objectContaining({ due: 2, sent: 1, waiting: 1 })
+    );
+    gateway.land(gateway.lastTx(), 'final');
+    later();
+    expect(await run()).toEqual(
+      expect.objectContaining({ sent: 1, waiting: 1 })
+    );
+    expect(gateway.drafts.map((it) => it.nonceLane)).toEqual([11, 11]);
+    expect(gateway.drafts.map((it) => it.body.decisionId)).toEqual([
+      decisionId(3),
+      decisionId(4)
+    ]);
   });
 
-  it('saves a refusal, never throws it, and tries again on the next run', async () => {
-    const { gateway, store, run, later } = setup();
+  it('saves a refusal and never throws it', async () => {
+    const { gateway, store, run } = setup();
     gateway.due(D1);
     gateway.due(D2);
     gateway.submitAnswer = () =>
@@ -477,21 +594,11 @@ describe('WavesSettlementSender', () => {
     expect(store.rows.get(D1)).toEqual(
       expect.objectContaining({
         status: 'refused',
+        attempts: 1,
         last_error: expect.stringContaining('INSUFFICIENT_BALANCE')
       })
     );
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('[SETTLEMENT REFUSED]')
-    );
-
-    gateway.submitAnswer = () => ({ txId: '', accepted: false });
-    later();
-    expect(await run()).toEqual(expect.objectContaining({ refused: 2 }));
-    expect(store.rows.get(D2)?.last_error).toBe('not accepted');
-
-    gateway.submitAnswer = () => ({ txId: '', accepted: true });
-    later();
-    expect(await run()).toEqual(expect.objectContaining({ sent: 2 }));
+    expect(logged(warn, '[SETTLEMENT REFUSED]')).toHaveLength(2);
   });
 
   it('keeps a submit with no clear answer and asks the gateway about it next run', async () => {
@@ -524,53 +631,169 @@ describe('WavesSettlementSender', () => {
     expect(store.rows.get(D1)?.status).toBe('pending');
   });
 
-  it('gives each request in flight its own nonce lane, at most 16', async () => {
-    const { gateway, run } = setup();
-    for (let n = 1; n <= 17; n++) gateway.due(decisionId(n));
-
-    expect(await run()).toEqual(
-      expect.objectContaining({ due: 17, sent: 16, waiting: 1 })
-    );
-    expect(
-      gateway.submitted.map((it) => it.lane).sort((a, b) => a - b)
-    ).toEqual(Array.from({ length: 16 }, (_, lane) => lane));
+  it('saves a transaction status it does not know as unknown', async () => {
+    const { gateway, store, run, later } = setup();
+    gateway.due(D1);
+    await run();
+    gateway.txs.set(gateway.lastTx(), {
+      status: 'a status far longer than sixteen characters' as never
+    });
+    later();
+    await run();
+    expect(store.rows.get(D1)?.status).toBe('unknown');
   });
 
-  it('never signs a draft other than the request asked for', async () => {
-    const { gateway, store, run } = setup();
+  it('reads the largest page of due decisions and says when it is cut', async () => {
+    const { gateway, run } = setup();
     gateway.due(D1);
-    gateway.tamper = (draft) => {
-      const typed = draft.typedData as any;
-      return {
-        ...draft,
-        typedData: {
-          ...typed,
-          message: {
-            ...typed.message,
-            header: { ...typed.message.header, tipPerRU: '1000000' }
-          }
-        }
-      };
-    };
-    expect(await run()).toEqual(
-      expect.objectContaining({ errors: 1, sent: 0 })
-    );
-    expect(gateway.submitted).toHaveLength(0);
-    expect(store.rows.get(D1)).toEqual(
-      expect.objectContaining({
-        status: 'error',
-        tx_id: null,
-        last_error: expect.stringContaining('paying a tip')
-      })
-    );
+    gateway.reportedCount = 900;
+    await run();
+    expect(gateway.reads).toEqual([{ limit: 500 }]);
+    expect(logged(warn, '[SETTLEMENT DUE LIST CUT]')).toEqual([
+      expect.stringContaining('[900 due] [1 read]')
+    ]);
+  });
 
-    // Typed data that is not what the txId hashes.
-    gateway.tamper = (draft) => ({ ...draft, txId: '0x' + '22'.repeat(32) });
-    expect(await run()).toEqual(expect.objectContaining({ errors: 1 }));
-    expect(store.rows.get(D1)?.last_error).toContain(
-      'signing another digest than its typed data'
+  describe('never signs a draft other than the request asked for', () => {
+    const TRANSFER_TYPES: Types = {
+      BalanceTransfer: [
+        { name: 'header', type: 'TxHeader' },
+        { name: 'body', type: 'BalanceTransferBody' }
+      ],
+      BalanceTransferBody: [
+        { name: 'assetId', type: 'bytes32' },
+        { name: 'amount', type: 'uint128' },
+        { name: 'recipientKind', type: 'uint8' },
+        { name: 'recipient', type: 'bytes32' }
+      ],
+      TxHeader: SETTLEMENT_TYPES.TxHeader
+    };
+    const header = (draft: ChainDraft) =>
+      (draft.typedData as { message: { header: Record<string, unknown> } })
+        .message.header;
+    const body = (draft: ChainDraft) =>
+      (draft.typedData as { message: { body: Record<string, unknown> } })
+        .message.body;
+
+    it.each<[string, (draft: ChainDraft) => ChainDraft, string]>([
+      [
+        "another operation's types, with the asked-for fields as decoys",
+        (draft) =>
+          draftOf({
+            header: header(draft),
+            body: {
+              ...body(draft),
+              assetId: '0x' + 'cc'.repeat(32),
+              amount: '1000000000000000000000',
+              recipientKind: 2,
+              recipient: '0x' + '00'.repeat(12) + 'bb'.repeat(20)
+            },
+            signer: SENDER,
+            types: TRANSFER_TYPES
+          }),
+        'txId'
+      ],
+      [
+        'another domain',
+        (draft) =>
+          draftOf({
+            header: header(draft),
+            body: body(draft),
+            signer: SENDER,
+            domain: settlementDomain('0x' + 'cd'.repeat(32))
+          }),
+        'txId'
+      ],
+      [
+        'a request valid for a day',
+        (draft) =>
+          draftOf({
+            header: {
+              ...header(draft),
+              expiresAt: String(START + 86_400_000)
+            },
+            body: body(draft),
+            signer: SENDER
+          }),
+        'expiresAt'
+      ],
+      [
+        'a maxFee over the cap',
+        (draft) =>
+          draftOf({
+            header: {
+              ...header(draft),
+              maxFee: '100000000000000000001'
+            },
+            body: body(draft),
+            signer: SENDER
+          }),
+        'maxFee'
+      ],
+      [
+        'a tip',
+        (draft) =>
+          draftOf({
+            header: { ...header(draft), tipPerRU: '1000000' },
+            body: body(draft),
+            signer: SENDER
+          }),
+        'tipPerRU'
+      ]
+    ])('refuses %s, unsigned', async (_, tamper, field) => {
+      const { gateway, store, run } = setup();
+      gateway.due(D1);
+      gateway.tamper = tamper;
+      expect(await run()).toEqual(
+        expect.objectContaining({ errors: 1, sent: 0 })
+      );
+      expect(gateway.submitted).toHaveLength(0);
+      expect(store.rows.get(D1)).toEqual(
+        expect.objectContaining({
+          status: 'error',
+          tx_id: null,
+          attempts: 0,
+          last_error: expect.stringContaining(field)
+        })
+      );
+    });
+  });
+
+  it('signs only for the network a setting pins', async () => {
+    const pinned = '0x' + 'ef'.repeat(32);
+    const { gateway, run } = setup({
+      env: { WAVES_SETTLEMENT_NETWORK_ID: pinned }
+    });
+    gateway.due(D1);
+    expect(await run()).toEqual(
+      expect.objectContaining({ skipped: 'wrong_network', sent: 0 })
     );
-    expect(gateway.submitted).toHaveLength(0);
+    await run();
+    expect(gateway.drafts).toHaveLength(0);
+    expect(logged(warn, 'the gateway reads network')).toHaveLength(1);
+  });
+
+  it('skips the run when no network id is known', async () => {
+    const { gateway, run } = setup();
+    gateway.due(D1);
+    gateway.network = null;
+    expect(await run()).toEqual(
+      expect.objectContaining({ skipped: 'no_network' })
+    );
+    expect(gateway.drafts).toHaveLength(0);
+  });
+
+  it('skips the run with a malformed setting', async () => {
+    const { gateway, run } = setup({
+      env: { WAVES_SETTLEMENT_MAX_FEE: 'lots' }
+    });
+    gateway.due(D1);
+    expect(await run()).toEqual(
+      expect.objectContaining({ skipped: 'malformed_settings' })
+    );
+    expect(logged(warn, 'WAVES_SETTLEMENT_MAX_FEE is malformed')).toHaveLength(
+      1
+    );
   });
 
   it('skips the run with no key, and logs that once', async () => {
@@ -583,11 +806,9 @@ describe('WavesSettlementSender', () => {
     );
     await run();
     expect(gateway.drafts).toHaveLength(0);
-    const offs = warn.mock.calls.filter(([line]) =>
-      String(line).includes('[SETTLEMENT SENDER OFF]')
-    );
+    const offs = logged(warn, '[SETTLEMENT SENDER OFF]');
     expect(offs).toHaveLength(1);
-    expect(offs[0][0]).toContain('missing');
+    expect(offs[0]).toContain('missing');
   });
 
   it('skips the run with a malformed key and never logs the key', async () => {
@@ -606,9 +827,9 @@ describe('WavesSettlementSender', () => {
 
   it('starts nothing past its budget', async () => {
     const { gateway, store, run } = setup();
-    for (let n = 1; n <= 5; n++) gateway.due(decisionId(n));
-    // Each call takes 3 s: a due read, a load, then a draft and a submit
-    // per decision.
+    for (const id of idsOnDistinctLanes(5)) gateway.due(id);
+    // Each call takes 3 s: a due read, then a draft and a submit per
+    // decision.
     gateway.callMs = 3_000;
 
     const report = await run(20_000);
