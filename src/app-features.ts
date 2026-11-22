@@ -31,6 +31,14 @@ export class AppFeatures {
     return this.isFeatureEnabled('VIEWER_GROUP_SET_TABLE');
   }
 
+  /**
+   * The interim record log: signed records batched into hash-chained
+   * segment files whose heads are posted in the records wave.
+   */
+  public isSignedRecordLogEnabled(): boolean {
+    return this.isFeatureEnabled('SIGNED_RECORD_LOG');
+  }
+
   public isProfileCmsWalletGalleryEnabled(): boolean {
     return (
       (process.env.FEATURE_PROFILE_CMS_WALLET_GALLERY ?? 'true') === 'true'
