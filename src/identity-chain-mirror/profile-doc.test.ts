@@ -3,8 +3,14 @@ import {
   decodeProfileDoc,
   PROFILE_DOC_SCHEMA,
   ProfileDocError,
+  profileDocCms,
   toProfileDocFields
 } from './profile-doc';
+
+const CID = (c: string) => `bafkrei${c.repeat(52)}`;
+const CID1 = CID('a');
+const CID2 = CID('b');
+const CID3 = CID('c');
 
 function u32(n: number): Buffer {
   const b = Buffer.alloc(4);
@@ -87,12 +93,13 @@ describe('ProfileDoc.v1', () => {
       toProfileDocFields({
         ...Object.fromEntries(fields),
         displayName: 'Alice',
-        cms: '{"primary":{"package":"bafk1","publication":"bafk2"}}',
+        'cms.primary.publication': CID1,
+        'cms.primary.package': CID2,
         'statement.GENERAL.BIO.0': 'about me',
         'statement.SOCIAL_MEDIA_ACCOUNT.X.2': ''
       })
     ).toEqual({
-      cms: '{"primary":{"package":"bafk1","publication":"bafk2"}}',
+      cms: { primary: { publication: CID1, package: CID2 }, archive: null },
       displayName: 'Alice',
       pfp: 'ipfs://pfp',
       banner1: '#112233',
@@ -117,5 +124,35 @@ describe('ProfileDoc.v1', () => {
         }
       ]
     });
+  });
+});
+
+describe('profileDocCms', () => {
+  it('rebuilds the profile site from its three keys', () => {
+    expect(
+      profileDocCms({
+        'cms.primary.publication': CID1,
+        'cms.primary.package': CID2,
+        'cms.archive': CID3
+      })
+    ).toEqual({
+      primary: { publication: CID1, package: CID2 },
+      archive: CID3
+    });
+    expect(profileDocCms({ 'cms.archive': CID3 })).toEqual({
+      primary: null,
+      archive: CID3
+    });
+  });
+
+  it('serves no site from a lone or malformed CID', () => {
+    expect(profileDocCms({ 'cms.primary.package': CID2 })).toBeNull();
+    expect(
+      profileDocCms({
+        'cms.primary.publication': 'ipfs://x',
+        'cms.primary.package': CID2
+      })
+    ).toBeNull();
+    expect(profileDocCms({})).toBeNull();
   });
 });
