@@ -5,7 +5,7 @@ import {
   scheduleIdentitySwitch,
   SWITCH_CUT_WINDOW_MS
 } from '../identity/identity-switch';
-import { journal } from '../timeline/journal';
+import { journal, journalPosting } from '../timeline/journal';
 import { shadowReportsMatch } from '../writers/identity-reports';
 import { cutOpeningFiles } from './opening-build';
 import { compareAndMarkVerified } from './opening-compare';
@@ -50,6 +50,12 @@ export async function goLive(params: {
     return refuse(
       'signed subscription writes are not live; without them every change gets a 409'
     );
+  }
+  // Until the closer posts them, journal entries live only in this
+  // database; go-live needs them reaching the records wave.
+  const posting = await journalPosting(now());
+  if (!posting.ok) {
+    return refuse(`the journal is not being posted: ${posting.reason}`);
   }
   const reports = await shadowReportsMatch(params.mintedCard);
   steps.push(...reports.checked.map((c) => `checked ${c}`));

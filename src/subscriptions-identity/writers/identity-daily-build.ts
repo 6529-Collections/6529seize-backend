@@ -23,7 +23,7 @@ import {
   mirrorIdentityDirectory
 } from '../identity/identity-directory';
 import { AS_TEXT, flag, msToDbText } from '../opening/legacy-tables';
-import { insertIdentityLog, journal } from '../timeline/journal';
+import { insertIdentityLog, journal, journalBefore } from '../timeline/journal';
 
 /** Where shadow ids for rows only the identity side has begin. */
 export const SHADOW_ONLY_ID_FROM = 1_000_000_000;
@@ -322,6 +322,23 @@ export async function applyBuildEffects(
     const options = { wrappedConnection: connection };
     const q = <T>(sql: string, p: Record<string, unknown>) =>
       sqlExecutor.execute<T>(sql, p, options);
+    // The rows the build changes, as they are before it: the queue-pushed
+    // identities' mode rows and the card's final rows (replaced whole).
+    const before = await journalBefore(
+      {
+        rows: [
+          {
+            table: 'mode',
+            keys: effects.queuePushed.map((key) => ({ identity_key: key }))
+          },
+          {
+            table: 'final',
+            keys: [{ contract: effects.contract, token_id: effects.tokenId }]
+          }
+        ]
+      },
+      options
+    );
     for (const populated of effects.autoPopulated) {
       await q(
         `INSERT INTO ${SUBSCRIPTIONS_ID_NFTS_TABLE}
@@ -403,16 +420,23 @@ export async function applyBuildEffects(
           token_id: effects.tokenId,
           build_at_ms: effects.buildAtMs
         },
-        identities: [
-          ...effects.autoPopulated.map((p) => p.identityKey),
-          ...effects.queuePushed
-        ],
+        before,
         rows: [
-          { table: 'final', keys: rows.map((r) => ({ id: r.id })) },
-          { table: 'logs', keys: logIds.map((id) => ({ id })) }
+          {
+            table: 'choices',
+            keys: effects.autoPopulated.map((p) => ({
+              identity_key: p.identityKey,
+              contract: effects.contract,
+              token_id: effects.tokenId
+            })),
+            inserted: true
+          },
+          {
+            table: 'logs',
+            keys: logIds.map((id) => ({ id })),
+            inserted: true
+          }
         ],
-        clearCard: { contract: effects.contract, tokenId: effects.tokenId },
-        checkpoint: true,
         atMs: effects.buildAtMs
       },
       options
@@ -430,6 +454,17 @@ export async function recordIdentityUpload(upload: {
 }): Promise<void> {
   await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
     const options = { wrappedConnection: connection };
+    const before = await journalBefore(
+      {
+        rows: [
+          {
+            table: 'upload',
+            keys: [{ contract: upload.contract, token_id: upload.token_id }]
+          }
+        ]
+      },
+      options
+    );
     await sqlExecutor.execute(
       `INSERT INTO ${SUBSCRIPTIONS_ID_NFTS_FINAL_UPLOAD_TABLE} (contract, token_id, date, upload_url)
         VALUES (:contract, :tokenId, :date, :url)
@@ -446,12 +481,7 @@ export async function recordIdentityUpload(upload: {
       {
         kind: 'upload',
         inputs: { ...upload, date: upload.date ?? '' },
-        rows: [
-          {
-            table: 'upload',
-            keys: [{ contract: upload.contract, token_id: upload.token_id }]
-          }
-        ]
+        before
       },
       options
     );

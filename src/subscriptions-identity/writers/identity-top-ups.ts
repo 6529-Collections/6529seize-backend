@@ -14,7 +14,7 @@ import {
 } from '../identity/identity-directory';
 import { AS_TEXT, msToDbText } from '../opening/legacy-tables';
 import { turnIdentityAutomaticOn } from '../identity/identity-automatic';
-import { journal } from '../timeline/journal';
+import { journal, journalBefore } from '../timeline/journal';
 
 interface PendingTopUp {
   readonly hash: string;
@@ -133,6 +133,16 @@ export async function creditIdentityTopUps(
           return false;
         }
         let logIds: number[] = [];
+        // The rows this top-up may change, as they are before it.
+        const before = await journalBefore(
+          {
+            rows: [
+              { table: 'balances', keys: [{ identity_key: identityKey }] },
+              { table: 'top_up', keys: [{ hash: topUp.hash }] }
+            ]
+          },
+          options
+        );
         const [balance] = await q<{ balance: number }>(
           `SELECT balance FROM ${SUBSCRIPTIONS_ID_BALANCES_TABLE}
             WHERE identity_key = :identityKey FOR UPDATE`,
@@ -156,6 +166,15 @@ export async function creditIdentityTopUps(
             { identityKey, balance: topUp.amount, at: topUp.transactionDate }
           );
           if (hasMinimumBalanceForAutomaticMode(topUp.amount)) {
+            await before.capture(
+              {
+                rows: [
+                  { table: 'mode', keys: [{ identity_key: identityKey }] },
+                  { table: 'choices', keys: [{ identity_key: identityKey }] }
+                ]
+              },
+              options
+            );
             logIds = await turnIdentityAutomaticOn({
               identityKey,
               consolidationKey: consolidationKeys.get(identityKey) ?? sender,
@@ -190,10 +209,13 @@ export async function creditIdentityTopUps(
               amount: topUp.amount,
               identity_key: identityKey
             },
-            identities: [identityKey],
+            before,
             rows: [
-              { table: 'top_up', keys: [{ hash: topUp.hash }] },
-              { table: 'logs', keys: logIds.map((id) => ({ id })) }
+              {
+                table: 'logs',
+                keys: logIds.map((id) => ({ id })),
+                inserted: true
+              }
             ]
           },
           options

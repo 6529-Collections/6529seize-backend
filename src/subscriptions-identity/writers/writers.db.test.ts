@@ -12,6 +12,7 @@ import {
   SUBSCRIPTIONS_ID_CURSORS_TABLE,
   SUBSCRIPTIONS_ID_STATE_TABLE,
   SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+  SUBSCRIPTIONS_ID_REDEEMED_TABLE,
   SUBSCRIPTIONS_ID_REPORTS_TABLE,
   SIGNED_RECORD_LOG_ENTRIES_TABLE,
   SUBSCRIPTIONS_MODE_TABLE,
@@ -47,7 +48,12 @@ import {
   parseOpeningFiles
 } from '../opening/opening-load';
 import { JournalSource, rebuildIdentityTables } from '../opening/rebuild';
-import { identityTablesHash } from '../timeline/journal';
+import {
+  identityTablesHash,
+  journal,
+  JOURNAL_PART_MAX_BYTES
+} from '../timeline/journal';
+import { creditIdentityTopUps } from './identity-top-ups';
 import {
   fetchDetailsForConsolidationKey,
   fetchFinalSubscription,
@@ -258,7 +264,12 @@ describeWithSeed('identity writers after the switch', [], () => {
       return { url };
     });
   });
+  beforeEach(() => {
+    // The record log's closer is on: go-live needs the journal posted.
+    process.env.FEATURE_SIGNED_RECORD_LOG = 'true';
+  });
   afterEach(() => {
+    delete process.env.FEATURE_SIGNED_RECORD_LOG;
     delete process.env[SHADOW_ENV];
     subscriptionsIdentitySwitch.invalidate();
   });
@@ -586,7 +597,8 @@ describeWithSeed('identity writers after the switch', [], () => {
       source: journalSource,
       fetch: fetchPublished
     });
-    expect(result.checkpoints).toBe(1);
+    // The run stopped at the upload, before its checkpoint.
+    expect(result.checkpoints).toBe(0);
     expect(await identityTablesHash({})).toBe(tablesBefore);
     expect(
       await finalIds(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key')
@@ -610,11 +622,187 @@ describeWithSeed('identity writers after the switch', [], () => {
         fetch: fetchPublished,
         goLive: true
       })
-    ).rejects.toThrow('differ from the checkpoint');
+    ).rejects.toThrow(/differ/);
     // Left suspended and not the truth; the write routes are open again.
     expect(await subscriptionsIdentitySwitch.writeModeOrFail()).toBe('OFF');
     expect(await unsignedWritesNow()).toBe('OPEN');
   });
+
+  it('rebuilds when a top-up commits while a build is under way', async () => {
+    await seedLegacy();
+    expect((await goLiveForTest()).switched).toBe(true);
+    await execute(
+      `INSERT INTO ${SUBSCRIPTIONS_TOP_UP_TABLE} (hash, block, transaction_date, from_wallet, amount)
+        VALUES ('0xa9', 30, '2026-11-26 13:00:00', :a, 0.1)`,
+      { a: A }
+    );
+    await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
+      const options = { wrappedConnection: connection };
+      // The build's first plain read fixes its snapshot.
+      await sqlExecutor.execute(
+        `SELECT balance FROM ${SUBSCRIPTIONS_ID_BALANCES_TABLE} WHERE identity_key = :p`,
+        { p: P1 },
+        options
+      );
+      // Meanwhile the top-up loop credits P1 and commits, journaled.
+      await creditIdentityTopUps();
+      // The build journals P1's rows: the latest committed ones, not its
+      // snapshot's.
+      await journal(
+        {
+          kind: 'build',
+          inputs: { contract: MEMES_CONTRACT, token_id: CARD },
+          identities: [P1]
+        },
+        options
+      );
+    });
+    await updateSubscriptions();
+    const tablesBefore = await identityTablesHash({});
+
+    await loseIdentityTables();
+    const result = await rebuildIdentityTables({
+      source: journalSource,
+      fetch: fetchPublished
+    });
+    expect(result).toEqual(
+      expect.objectContaining({ checkpoints: 1, missing: null })
+    );
+    expect(await identityTablesHash({})).toBe(tablesBefore);
+  });
+
+  it('says what is missing when the posted journal ends before live, and stays suspended', async () => {
+    await seedLegacy();
+    expect((await goLiveForTest()).switched).toBe(true);
+    await execute(
+      `INSERT INTO ${SUBSCRIPTIONS_TOP_UP_TABLE} (hash, block, transaction_date, from_wallet, amount)
+        VALUES ('0xaa', 31, '2026-11-26 13:00:00', :lone, 0.3)`,
+      { lone: LONE }
+    );
+    await creditIdentityTopUps();
+    const rows = await sqlExecutor.execute<{ entry: string }>(
+      `SELECT entry FROM ${SIGNED_RECORD_LOG_ENTRIES_TABLE} WHERE chain = 'public' ORDER BY id`
+    );
+    // The last entry was still in the open segment, not yet posted. The
+    // counter row survives in the live database.
+    for (const table of [
+      ...IDENTITY_DATA_TABLES,
+      SUBSCRIPTIONS_ID_STATE_TABLE
+    ]) {
+      await execute(`DELETE FROM ${table}`);
+    }
+    subscriptionsIdentitySwitch.invalidate();
+    const result = await rebuildIdentityTables({
+      source: {
+        async *walk() {
+          for (const row of rows.slice(0, rows.length - 1)) {
+            yield { entry: JSON.parse(row.entry) };
+          }
+        }
+      },
+      fetch: fetchPublished
+    });
+    expect(result.missing).toContain("live's counter");
+    expect(await subscriptionsIdentitySwitch.writeModeOrFail()).toBe('OFF');
+  });
+
+  it('refuses go-live while the journal is not being posted', async () => {
+    await seedLegacy();
+    delete process.env.FEATURE_SIGNED_RECORD_LOG;
+    const result = await goLiveForTest();
+    expect(result.switched).toBe(false);
+    expect(result.steps.join(' ')).toContain(
+      'FEATURE_SIGNED_RECORD_LOG is off'
+    );
+  });
+
+  it('keeps every journal entry small for a build and a mint over 900 identities with long histories', async () => {
+    await seedLegacy();
+    expect((await goLiveForTest()).switched).toBe(true);
+    const N = 900;
+    const HISTORY = 25;
+    const ids = Array.from({ length: N }, (_, i) => wallet(0x1000 + i));
+    for (let i = 0; i < N; i += 300) {
+      const chunk = ids.slice(i, i + 300);
+      const params = Object.fromEntries(chunk.map((w, j) => [`w${j}`, w]));
+      await execute(
+        `INSERT INTO ${SUBSCRIPTIONS_ID_BALANCES_TABLE} (identity_key, balance) VALUES ${chunk.map((_, j) => `(:w${j}, 1)`).join(', ')}`,
+        params
+      );
+      await execute(
+        `INSERT INTO ${SUBSCRIPTIONS_ID_MODE_TABLE} (identity_key, automatic) VALUES ${chunk.map((_, j) => `(:w${j}, true)`).join(', ')}`,
+        params
+      );
+      // Each has an automatic row for each of the last HISTORY cards.
+      await execute(
+        `INSERT INTO ${SUBSCRIPTIONS_ID_NFTS_TABLE}
+          (identity_key, contract, token_id, subscribed, subscribed_count, automatic_subscription)
+          VALUES ${chunk
+            .flatMap((_, j) =>
+              Array.from(
+                { length: HISTORY },
+                (__, k) => `(:w${j}, :c, ${1000 + k}, true, 1, true)`
+              )
+            )
+            .join(', ')}`,
+        { ...params, c: MEMES_CONTRACT }
+      );
+    }
+    // The seed above is written directly; this test checks entry sizes,
+    // not a rebuild.
+    await updateSubscriptions();
+    const finals = await finalIds(
+      SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+      'identity_key'
+    );
+    expect(finals.length).toBeGreaterThan(N);
+    // The mint: one airdrop to each listed wallet, then the redemption runs.
+    const airdropTo = await sqlExecutor.execute<{ airdrop_address: string }>(
+      `SELECT airdrop_address FROM ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE} WHERE token_id = :card`,
+      { card: CARD }
+    );
+    for (let i = 0; i < airdropTo.length; i += 300) {
+      const chunk = airdropTo.slice(i, i + 300);
+      await execute(
+        `INSERT INTO ${TRANSACTIONS_TABLE}
+          (created_at, transaction, block, transaction_date, from_address, to_address,
+           contract, token_id, token_count, value, primary_proceeds, royalties,
+           gas_gwei, gas_price, gas_price_gwei, gas)
+          VALUES ${chunk
+            .map(
+              (_, j) =>
+                `(NOW(), :tx${j}, ${100 + Math.floor((i + j) / 50)}, '2026-11-26 15:00:00', :null, :to${j}, :c, :card, 1, 0, 0, 0, 0, 0, 0, 0)`
+            )
+            .join(', ')}`,
+        {
+          null: NULL_ADDRESS,
+          c: MEMES_CONTRACT,
+          card: CARD,
+          ...Object.fromEntries(
+            chunk.flatMap((row, j) => [
+              [`tx${j}`, `0x${(i + j).toString(16).padStart(64, '0')}`],
+              [`to${j}`, row.airdrop_address]
+            ])
+          )
+        }
+      );
+    }
+    await execute(
+      `INSERT INTO ${TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE} (created_at, block, timestamp)
+        VALUES (NOW(), 200, 0)`
+    );
+    for (let run = 0; run < 10; run++) {
+      await runIdentityRedemptionWriters();
+    }
+    const [charged] = await sqlExecutor.execute<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM ${SUBSCRIPTIONS_ID_REDEEMED_TABLE}`
+    );
+    expect(Number(charged.n)).toBe(airdropTo.length);
+    const [biggest] = await sqlExecutor.execute<{ bytes: number }>(
+      `SELECT MAX(OCTET_LENGTH(entry)) AS bytes FROM ${SIGNED_RECORD_LOG_ENTRIES_TABLE}`
+    );
+    expect(Number(biggest.bytes)).toBeLessThanOrEqual(JOURNAL_PART_MAX_BYTES);
+  }, 900000);
 
   it('backs the switch only with matching list, phase and redemption comparisons of the minted card', async () => {
     const report = (kind: string, token: number | null, verdict: string) =>

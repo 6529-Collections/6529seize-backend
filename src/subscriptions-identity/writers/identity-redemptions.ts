@@ -20,7 +20,7 @@ import {
 } from '@/transactionsProcessingLoop/subscriptions';
 import { EntityManager } from 'typeorm';
 import { DbQueryOptions } from '@/db-query.options';
-import { journal } from '../timeline/journal';
+import { journal, JournalBefore, journalBefore } from '../timeline/journal';
 import { msToDbText } from '../opening/legacy-tables';
 import { roundSubscriptionBalance } from '../engine/parity-money';
 import { IdentityWriteMode } from '../identity/identity-switch';
@@ -41,10 +41,21 @@ export interface IdentityRedemptionRun {
   readonly notices: SubscriptionWaveNotification[];
 }
 
+/** One token of one airdrop, charged to one identity (the journal's input). */
+interface Charge {
+  readonly transaction: string;
+  readonly contract: string;
+  readonly token_id: number;
+  readonly to_address: string;
+  readonly token_count: number;
+  readonly identity_key: string;
+}
+
 interface ChargeTouches {
-  readonly identities: Set<string>;
-  readonly redeemedIds: Set<number>;
-  readonly finalIds: Set<number>;
+  /** The rows this run changes, captured before it changes each. */
+  readonly before: JournalBefore;
+  readonly insertedRedeemedIds: number[];
+  readonly charges: Charge[];
 }
 
 async function chargeToken(
@@ -81,6 +92,15 @@ async function chargeToken(
     return false;
   }
   const identityKey: string = row.identity_key;
+  await touches.before.capture(
+    {
+      rows: [
+        { table: 'balances', keys: [{ identity_key: identityKey }] },
+        { table: 'final', keys: [{ id: Number(row.id) }] }
+      ]
+    },
+    options
+  );
   const [balanceRow] = await q<{ balance: number }>(
     `SELECT balance FROM ${SUBSCRIPTIONS_ID_BALANCES_TABLE} WHERE identity_key = :identityKey FOR UPDATE`,
     { identityKey }
@@ -122,12 +142,15 @@ async function chargeToken(
     redeemedKey
   );
   if (existing) {
+    await touches.before.capture(
+      { rows: [{ table: 'redeemed', keys: [{ id: Number(existing.id) }] }] },
+      options
+    );
     await q(
       `UPDATE ${SUBSCRIPTIONS_ID_REDEEMED_TABLE}
         SET value = value + :price, count = count + 1, balance_after = :balanceAfter WHERE id = :id`,
       { price: MEMES_MINT_PRICE, balanceAfter, id: existing.id }
     );
-    touches.redeemedIds.add(Number(existing.id));
   } else {
     await q(
       `INSERT INTO ${SUBSCRIPTIONS_ID_REDEEMED_TABLE}
@@ -149,15 +172,52 @@ async function chargeToken(
       `SELECT LAST_INSERT_ID() AS id`,
       {}
     );
-    touches.redeemedIds.add(Number(inserted.id));
+    touches.insertedRedeemedIds.push(Number(inserted.id));
   }
   await q(
     `UPDATE ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE} SET redeemed_count = redeemed_count + 1 WHERE id = :id`,
     { id: row.id }
   );
-  touches.identities.add(identityKey);
-  touches.finalIds.add(Number(row.id));
+  touches.charges.push({
+    transaction: transaction.transaction,
+    contract: transaction.contract,
+    token_id: Number(transaction.token_id),
+    to_address: transaction.to_address.toLowerCase(),
+    token_count: Number(transaction.token_count),
+    identity_key: identityKey
+  });
   return true;
+}
+
+/** A run charges at most this many airdrops (whole blocks), so its journal stays small. */
+export const REDEMPTION_RUN_MAX_AIRDROPS = 200;
+
+/**
+ * The airdrops a run takes: whole blocks, in order, up to
+ * REDEMPTION_RUN_MAX_AIRDROPS (a single larger block is taken whole), and
+ * the block the cursor moves to. The next run goes on from there.
+ */
+function boundedBatch(
+  airdrops: Transaction[],
+  through: number
+): { airdrops: Transaction[]; through: number } {
+  if (airdrops.length <= REDEMPTION_RUN_MAX_AIRDROPS) {
+    return { airdrops, through };
+  }
+  let end = REDEMPTION_RUN_MAX_AIRDROPS;
+  const boundary = Number(airdrops[end].block);
+  while (end > 0 && Number(airdrops[end - 1].block) === boundary) {
+    end--;
+  }
+  if (end === 0) {
+    // One block holds more than the limit: take that block whole.
+    end = airdrops.findIndex((a) => Number(a.block) !== boundary);
+    end = end < 0 ? airdrops.length : end;
+  }
+  return {
+    airdrops: airdrops.slice(0, end),
+    through: Number(airdrops[end - 1].block)
+  };
 }
 
 /**
@@ -218,6 +278,7 @@ export async function redeemIdentityAirdrops(): Promise<IdentityRedemptionRun | 
       nullAddress: NULL_ADDRESS
     }
   );
+  const batch = boundedBatch(airdrops, through);
   let charged = 0;
   let unmatched = 0;
   const notices: SubscriptionWaveNotification[] = [];
@@ -228,12 +289,14 @@ export async function redeemIdentityAirdrops(): Promise<IdentityRedemptionRun | 
   await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
     const options = { wrappedConnection: connection };
     const touches: ChargeTouches = {
-      identities: new Set(),
-      redeemedIds: new Set(),
-      finalIds: new Set()
+      before: await journalBefore(
+        { rows: [{ table: 'cursor', keys: [{ id: REDEMPTION_CURSOR_ID }] }] },
+        options
+      ),
+      insertedRedeemedIds: [],
+      charges: []
     };
-    const charges: Array<{ transaction: string; token_id: number }> = [];
-    for (const airdrop of airdrops) {
+    for (const airdrop of batch.airdrops) {
       const validation = await validateNonSubscriptionAirdrop(
         airdrop,
         inTransactionReads(options)
@@ -252,10 +315,6 @@ export async function redeemIdentityAirdrops(): Promise<IdentityRedemptionRun | 
       for (let i = 0; i < airdrop.token_count; i++) {
         if (await chargeToken(airdrop, options, notices, touches)) {
           charged++;
-          charges.push({
-            transaction: airdrop.transaction,
-            token_id: Number(airdrop.token_id)
-          });
         } else {
           unmatched++;
         }
@@ -263,7 +322,7 @@ export async function redeemIdentityAirdrops(): Promise<IdentityRedemptionRun | 
     }
     await sqlExecutor.execute(
       `UPDATE ${SUBSCRIPTIONS_ID_CURSORS_TABLE} SET block = :through, updated_at = :nowMs WHERE id = :id`,
-      { through, nowMs: Date.now(), id: REDEMPTION_CURSOR_ID },
+      { through: batch.through, nowMs: Date.now(), id: REDEMPTION_CURSOR_ID },
       options
     );
     await journal(
@@ -271,20 +330,16 @@ export async function redeemIdentityAirdrops(): Promise<IdentityRedemptionRun | 
         kind: 'redemption',
         inputs: {
           after_block: Number(cursor.block),
-          through_block: through,
-          charges
+          through_block: batch.through,
+          charges: touches.charges
         },
-        identities: Array.from(touches.identities),
+        before: touches.before,
         rows: [
           {
             table: 'redeemed',
-            keys: Array.from(touches.redeemedIds).map((id) => ({ id }))
-          },
-          {
-            table: 'final',
-            keys: Array.from(touches.finalIds).map((id) => ({ id }))
-          },
-          { table: 'cursor', keys: [{ id: REDEMPTION_CURSOR_ID }] }
+            keys: touches.insertedRedeemedIds.map((id) => ({ id })),
+            inserted: true
+          }
         ]
       },
       options

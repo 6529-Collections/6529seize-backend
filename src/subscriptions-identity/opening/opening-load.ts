@@ -51,12 +51,27 @@ export interface ParsedOpening {
   readonly historySha256: string;
 }
 
-function logIds(
+/**
+ * Each history log line's id, fixed by the file: the first line with a
+ * legacy id keeps it. A line copied to more identities (a key that now
+ * spans them) has the same legacy id on every copy, so each later copy, and
+ * each line from the key-width queue, takes the next id above every legacy
+ * one, in history order.
+ */
+export function logIds(
   logs: ReadonlyArray<{ readonly legacyId: number | null }>
 ): number[] {
   let next =
     logs.reduce((max, l) => Math.max(max, Number(l.legacyId ?? 0)), 0) + 1;
-  return logs.map((l) => (l.legacyId === null ? next++ : Number(l.legacyId)));
+  const used = new Set<number>();
+  return logs.map((l) => {
+    const legacy = l.legacyId === null ? null : Number(l.legacyId);
+    if (legacy !== null && !used.has(legacy)) {
+      used.add(legacy);
+      return legacy;
+    }
+    return next++;
+  });
 }
 
 /** Parses both files and checks that the opening file names this history. */

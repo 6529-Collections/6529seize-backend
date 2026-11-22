@@ -1,4 +1,8 @@
-import { SUBSCRIPTIONS_ID_STATE_TABLE } from '@/constants';
+import {
+  SUBSCRIPTIONS_ID_CURSORS_TABLE,
+  SUBSCRIPTIONS_ID_STATE_TABLE
+} from '@/constants';
+import { Logger } from '@/logging';
 import type { RecordLogEntry } from '@/signed-records/record-log/record-log-format';
 import { sqlExecutor } from '@/sql-executor';
 import {
@@ -13,7 +17,8 @@ import {
   identityTablesHash,
   journal,
   JournalBody,
-  journalBodyOf
+  journalBodyOf,
+  JOURNAL_COUNTER_ID
 } from '../timeline/journal';
 import { sha256Hex } from './opening-file';
 import {
@@ -21,6 +26,8 @@ import {
   ParsedOpening,
   parseOpeningFiles
 } from './opening-load';
+
+const logger = Logger.get('SUBSCRIPTIONS_REBUILD');
 
 /** Fetches a published file's text by URI (a public GET; no credentials). */
 export type Fetcher = (uri: string) => Promise<string>;
@@ -70,6 +77,8 @@ export interface RebuildResult {
   /** Entries of other openings (earlier loads, rehearsals), skipped. */
   readonly skipped: number;
   readonly switched: boolean;
+  /** Set when live's counter is ahead of the posted journal. */
+  readonly missing: string | null;
 }
 
 async function journalOf(source: JournalSource): Promise<JournalBody[]> {
@@ -123,30 +132,83 @@ async function lastSwitchedOpening(
   };
 }
 
-/** Writes stay paused through a rebuild; the marker is renewed as it goes. */
-const MARKER_RENEW_EVERY = 100;
+/** Writes stay paused through a rebuild; the marker is renewed this often. */
+const MARKER_RENEW_MS = 60 * 1000;
+
+/** One journaled write: its parts, in order, all present. */
+interface JournalWriteRecord {
+  readonly n: number;
+  readonly bodies: JournalBody[];
+}
+
+/**
+ * The target opening's writes, in `n` order. Every part of a write must be
+ * there; a write with a missing part is a gap, and the rebuild stops.
+ */
+function writesOf(
+  bodies: readonly JournalBody[],
+  openingSha256: string
+): { writes: JournalWriteRecord[]; skipped: number } {
+  const byN = new Map<number, JournalBody[]>();
+  let skipped = 0;
+  for (const body of bodies) {
+    if (body.opening !== openingSha256) {
+      skipped++;
+      continue;
+    }
+    byN.set(body.n, [...(byN.get(body.n) ?? []), body]);
+  }
+  const writes = Array.from(byN.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([n, parts]) => {
+      const sorted = [...parts].sort((a, b) => a.part - b.part);
+      const expected = sorted[0].parts;
+      if (
+        sorted.length !== expected ||
+        sorted.some((body, i) => body.part !== i || body.parts !== expected)
+      ) {
+        throw new Error(
+          `Journal write n=${n} has ${sorted.length} of its ${expected} parts`
+        );
+      }
+      return { n, bodies: sorted };
+    });
+  return { writes, skipped };
+}
+
+async function liveCounter(): Promise<number | null> {
+  const [row] = await sqlExecutor.execute<{ block: number | string }>(
+    `SELECT block FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id = :id`,
+    { id: JOURNAL_COUNTER_ID }
+  );
+  return row ? Number(row.block) : null;
+}
 
 /**
  * Rebuilds the identity tables from the opening file and the journal alone:
  *
- * 1. pause the unsigned write routes (go-live's marker, renewed while the
- *    rebuild runs);
- * 2. read the journal (lane `subs` of the record log's public chain);
+ * 1. pause the unsigned write routes (go-live's marker, renewed by time
+ *    while the rebuild runs);
+ * 2. read the journal (lanes `subs` and `subs-shadow` of the record log's
+ *    public chain);
  * 3. take the opening of the last `opening` entry (go-live writes it with
  *    the switch), fetch its two files and check their sha256; or take the
  *    files given (a rehearsal);
  * 4. load them into tables that are not the truth, and hold them suspended,
  *    so no identity writer writes while the journal is written back;
- * 5. write back, in log order, every entry made against that opening:
- *    each identity's rows, each history row, each fold's moved rows;
- * 6. at each checkpoint (a build), hash the rebuilt tables and stop at the
- *    first difference.
+ * 5. write back every write made against that opening, in `n` order: each
+ *    change's captured `before` must equal the rebuilt row, then its
+ *    `after` is written;
+ * 6. compare each checkpoint's hash once the writes up to its `n` are in;
+ * 7. when the live database is there, compare the journal's last `n` with
+ *    live's counter: a missing tail leaves the tables suspended, saying
+ *    what's missing.
  *
- * The rebuilt tables are then verified and in shadow, not the truth. With
- * `goLive` they become the truth through go-live's own switch, in the same
- * pause, only if at least one checkpoint matched (the comparison) and the
- * opening came from the journal (so its entry can name the files again).
- * On any failure the routes reopen and the tables are left suspended.
+ * Otherwise the rebuilt tables end verified and in shadow, not the truth.
+ * With `goLive` they become the truth through go-live's own switch, in the
+ * same pause, only if at least one checkpoint matched and the opening came
+ * from the journal (so its entry can name the files again). On any failure
+ * the routes reopen and the tables are left suspended.
  */
 export async function rebuildIdentityTables(params: {
   readonly source: JournalSource;
@@ -158,6 +220,13 @@ export async function rebuildIdentityTables(params: {
 }): Promise<RebuildResult> {
   const now = params.now ?? (() => Date.now());
   await closeSubscriptionWrites(now());
+  let renewedAt = now();
+  const renewPause = async () => {
+    if (now() - renewedAt >= MARKER_RENEW_MS) {
+      await closeSubscriptionWrites(now());
+      renewedAt = now();
+    }
+  };
   try {
     const bodies = await journalOf(params.source);
     const published = params.opening
@@ -169,36 +238,65 @@ export async function rebuildIdentityTables(params: {
         'Only a rebuild from the journal goes live: rehearsal files name no published opening'
       );
     }
+    const { writes, skipped } = writesOf(bodies, opening.openingSha256);
+    const lastSeen = bodies.reduce((max, b) => Math.max(max, b.n), 0);
+    const live = await liveCounter();
     await loadOpeningFiles(opening, now());
     await setSuspended(now());
-    let entries = 0;
-    let checkpoints = 0;
-    let skipped = 0;
-    for (let index = 0; index < bodies.length; index++) {
-      const body = bodies[index];
-      if (body.opening !== opening.openingSha256) {
-        skipped++;
-        continue;
+    const checkpoints = writes
+      .flatMap((w) => w.bodies)
+      .filter((b) => b.checkpoint !== null)
+      .map((b) => b.checkpoint!)
+      .sort((a, b) => a.through_n - b.through_n);
+    let compared = 0;
+    const compareThrough = async (throughBelow: number) => {
+      while (
+        compared < checkpoints.length &&
+        checkpoints[compared].through_n < throughBelow
+      ) {
+        const checkpoint = checkpoints[compared];
+        const rebuilt = await identityTablesHash({});
+        if (rebuilt !== checkpoint.state_sha256) {
+          throw new Error(
+            `The rebuilt tables differ from the checkpoint through journal n=${checkpoint.through_n}`
+          );
+        }
+        compared++;
       }
+    };
+    for (const write of writes) {
+      await compareThrough(write.n);
       await sqlExecutor.executeNativeQueriesInTransaction(
         async (connection) => {
           const options = { wrappedConnection: connection };
-          await applyJournalBody(body, options);
-          if (body.state_sha256 !== null) {
-            const rebuilt = await identityTablesHash(options);
-            if (rebuilt !== body.state_sha256) {
-              throw new Error(
-                `The rebuilt tables differ from the checkpoint of journal entry ${index} (${body.kind} ${JSON.stringify(body.inputs)})`
-              );
-            }
-            checkpoints++;
+          for (const body of write.bodies) {
+            await applyJournalBody(body, options);
           }
         }
       );
-      entries++;
-      if (entries % MARKER_RENEW_EVERY === 0) {
-        await closeSubscriptionWrites(now());
-      }
+      await renewPause();
+    }
+    await compareThrough(Number.POSITIVE_INFINITY);
+    await sqlExecutor.execute(
+      `INSERT INTO ${SUBSCRIPTIONS_ID_CURSORS_TABLE} (id, block, updated_at)
+        VALUES (:id, :n, :now)
+        ON DUPLICATE KEY UPDATE block = GREATEST(block, VALUES(block))`,
+      { id: JOURNAL_COUNTER_ID, n: lastSeen, now: now() }
+    );
+    const missing =
+      live !== null && live > lastSeen
+        ? `The posted journal ends at n=${lastSeen}; live's counter is at n=${live}. Close and post the open segment, then rebuild again.`
+        : null;
+    if (missing) {
+      logger.errorWithCode('SUBSCRIPTIONS_JOURNAL_TAIL_MISSING', missing);
+      return {
+        openingSha256: opening.openingSha256,
+        entries: writes.length,
+        checkpoints: compared,
+        skipped,
+        switched: false,
+        missing
+      };
     }
     // Verified and back in shadow: the identity writers go on from here.
     await sqlExecutor.execute(
@@ -209,7 +307,7 @@ export async function rebuildIdentityTables(params: {
     );
     let switched = false;
     if (params.goLive) {
-      if (checkpoints === 0) {
+      if (compared === 0) {
         throw new Error(
           'No checkpoint was compared; the rebuilt tables stay in shadow'
         );
@@ -218,10 +316,11 @@ export async function rebuildIdentityTables(params: {
     }
     return {
       openingSha256: opening.openingSha256,
-      entries,
-      checkpoints,
+      entries: writes.length,
+      checkpoints: compared,
       skipped,
-      switched
+      switched,
+      missing: null
     };
   } finally {
     subscriptionsIdentitySwitch.invalidate();

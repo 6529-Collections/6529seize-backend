@@ -9,6 +9,7 @@ import {
   reportRedemptionComparison
 } from './identity-redemptions';
 import { creditIdentityTopUps } from './identity-top-ups';
+import { journalPosting } from '../timeline/journal';
 import { sendSubscriptionWaveNotifications } from '@/transactionsProcessingLoop/subscriptions';
 
 const logger = Logger.get('SUBSCRIPTIONS_IDENTITY_WRITERS');
@@ -37,9 +38,21 @@ async function runIdentityWriter(
   }
 }
 
+/** Alerts when journal entries wait unposted (they'd be lost with the database). */
+async function checkJournalPosting(): Promise<void> {
+  const posting = await journalPosting();
+  if (!posting.ok) {
+    logger.errorWithCode(
+      'SUBSCRIPTIONS_JOURNAL_STALE',
+      `[JOURNAL NOT POSTED] ${posting.reason}`
+    );
+  }
+}
+
 /** The top-up loop's identity writers: bound wallets fold in, then top-ups. */
 export function runIdentityTopUpWriters(): Promise<void> {
   return runIdentityWriter('TOP-UPS', async () => {
+    await checkJournalPosting();
     const folded = await foldBoundWallets();
     const credited = await creditIdentityTopUps();
     if (folded || credited) {

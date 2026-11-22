@@ -49,6 +49,7 @@ import {
   saveFailedReport,
   saveReport
 } from '@/subscriptions-identity/writers/identity-reports';
+import { journalCheckpoint } from '@/subscriptions-identity/timeline/journal';
 import { identityOfLegacyKeys } from '@/subscriptions-identity/writers/legacy-key-identities';
 import {
   claimDeferredWrite,
@@ -169,6 +170,17 @@ export async function updateSubscriptions() {
       );
     } catch (error) {
       logger.error('[LIST COMPARISON FAILED]', error);
+    }
+  }
+  // The day's checkpoint of the identity tables, for a rebuild to compare.
+  if (writeMode !== 'OFF') {
+    try {
+      const checkpoint = await journalCheckpoint();
+      logger.info(
+        `[JOURNAL CHECKPOINT] through n=${checkpoint.through_n} ${checkpoint.state_sha256}`
+      );
+    } catch (error) {
+      logger.error('[JOURNAL CHECKPOINT FAILED]', error);
     }
   }
 }

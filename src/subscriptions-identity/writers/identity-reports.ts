@@ -72,9 +72,14 @@ export async function saveFailedReport(
 
 /** Stores a comparison and logs its one-line summary. */
 export async function saveReport(report: ComparisonReport): Promise<void> {
-  logger.info(
-    `[${report.kind} ${report.verdict}] [${report.mode}] card ${report.tokenId ?? '-'}: ${report.identityRows} identity rows, ${report.legacyRows} legacy rows, ${report.diffs.length} differences`
-  );
+  const summary = `[${report.kind} ${report.verdict}] [${report.mode}] card ${report.tokenId ?? '-'}: ${report.identityRows} identity rows, ${report.legacyRows} legacy rows, ${report.diffs.length} differences`;
+  if (report.mode === 'TRUTH' && report.verdict !== 'MATCH') {
+    // After the switch the legacy dual write is the only independent check
+    // of the truth: a difference is someone's money or list, so alert.
+    logger.errorWithCode('SUBSCRIPTIONS_TRUTH_COMPARISON_DIFF', summary);
+  } else {
+    logger.info(summary);
+  }
   await sqlExecutor.execute(
     `INSERT INTO ${SUBSCRIPTIONS_ID_REPORTS_TABLE}
       (kind, mode, contract, token_id, verdict, report, created_at)

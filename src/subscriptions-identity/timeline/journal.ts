@@ -1,4 +1,5 @@
 import {
+  SIGNED_RECORD_LOG_ENTRIES_TABLE,
   SUBSCRIPTIONS_ID_BALANCES_TABLE,
   SUBSCRIPTIONS_ID_CURSORS_TABLE,
   SUBSCRIPTIONS_ID_LOGS_TABLE,
@@ -11,6 +12,7 @@ import {
   SUBSCRIPTIONS_ID_TOP_UP_TABLE
 } from '@/constants';
 import { DbQueryOptions } from '@/db-query.options';
+import { Logger } from '@/logging';
 import type { RecordLogEntry } from '@/signed-records/record-log/record-log-format';
 import { recordLogDb } from '@/signed-records/record-log/record-log.db';
 import { RecordLogWriter } from '@/signed-records/record-log/record-log.service';
@@ -20,35 +22,37 @@ import { AS_TEXT } from '../opening/legacy-tables';
 import { canonicalJson, sha256Hex } from '../opening/opening-file';
 
 /*
- * The identity tables' journal. Every write to them after a load (a
- * top-up, a fold, a build, a phase pull, a redemption run, a person's
- * choice, a list upload) appends one entry to the shared record log, lane
- * `subs`, in the same transaction as the write. So the log holds every
- * change, in the order the changes committed, and an entry exists exactly
- * when its write does.
+ * The identity tables' journal, version 2. Every write to the identity
+ * tables after a load
+ * appends its changed rows, before and after, to the shared record log in
+ * the same transaction as the write: lane `subs` once the tables are the
+ * truth, `subs-shadow` before. So the log holds every change in commit
+ * order, and an entry exists exactly when its write does.
  *
- * An entry carries the facts the write acted on (`inputs`: a top-up's
- * hash, block, wallet and the identity it was credited to; a fold's wallet
- * and identity) and after-images of what it wrote:
- *   - for each identity it touched, its balance, mode and choice rows;
- *   - each history row it wrote, whole (logs, redemptions, final rows, top-up
- *     rows, uploads, the redemption cursor), with its id;
- *   - for a fold, the history rows it moved from the wallet to the identity;
- *   - for a build, that the card's final rows were replaced.
- * A rebuild loads the opening and writes these after-images back in log
- * order, so it never reads a source as it is today: a top-up stays with the
- * identity it was credited to, and times, ids and log order come out as
- * they were.
- *
- * A build entry also carries a checkpoint: the hash of every identity
- * table, read with share locks in the build's transaction, so writes still
- * in flight are either in it or after it in the log. A rebuild compares its
- * own tables with each checkpoint and stops at the first difference; that
- * is how a write that was never journaled shows up.
+ * - Only rows the write changed are journaled: a change is the row's
+ *   `before` (read FOR UPDATE before the write, where the writer captures
+ *   it) and its `after` (read in the write's own transaction, after it).
+ *   Entries stay small however long an identity's history grows; a large
+ *   write is split into parts of at most 1 MB, all in its transaction.
+ * - Every write takes the next `n` from a counter row as its last step, so
+ *   `n` follows commit order. A daily checkpoint hashes one consistent
+ *   snapshot at a known `n` without holding locks.
+ * - A rebuild applies the changes in `n` order and checks each captured
+ *   `before` against the row it has rebuilt, so a write that was never
+ *   journaled, or a wrong one, stops it at the first row it touched.
  */
 
-/** The record log lane of the subscriptions journal (and of the signed subscription records). */
+const logger = Logger.get('SUBSCRIPTIONS_JOURNAL');
+
+/** The record log lanes of the journal: after the switch, and before it. */
 export const JOURNAL_LANE = 'subs';
+export const JOURNAL_SHADOW_LANE = 'subs-shadow';
+
+/** The counter row (in subscriptions_id_cursors) that hands out `n`. */
+export const JOURNAL_COUNTER_ID = 'journal';
+
+/** Parts are at most this many bytes of canonical JSON (the log's limit is 4 MiB). */
+export const JOURNAL_PART_MAX_BYTES = 1_000_000;
 
 export type JournalKind =
   | 'top-up'
@@ -58,10 +62,12 @@ export type JournalKind =
   | 'redemption'
   | 'choice'
   | 'upload'
-  | 'opening';
+  | 'opening'
+  | 'checkpoint';
 
 interface TableSpec {
   readonly table: string;
+  /** The natural key a change is keyed by. */
   readonly key: readonly string[];
   readonly columns: readonly string[];
   /** Datetime columns, read as text so they round-trip exactly. */
@@ -83,7 +89,7 @@ export const JOURNAL_TABLES = {
   },
   choices: {
     table: SUBSCRIPTIONS_ID_NFTS_TABLE,
-    key: ['id'],
+    key: ['identity_key', 'contract', 'token_id'],
     columns: [
       'id',
       'identity_key',
@@ -169,51 +175,103 @@ export const JOURNAL_TABLES = {
 export type JournalTable = keyof typeof JOURNAL_TABLES;
 type Row = Record<string, unknown>;
 
-export interface IdentityImage {
-  readonly key: string;
-  readonly balance: Row | null;
-  readonly mode: Row | null;
-  readonly choices: Row[];
+export interface JournalChange {
+  readonly table: JournalTable;
+  readonly key: Row;
+  /** Absent: not captured. null: the row did not exist. */
+  readonly before?: Row | null;
+  /** null: the row was deleted. */
+  readonly after: Row | null;
 }
 
 export interface JournalBody {
   readonly t: 'journal';
-  readonly v: 1;
+  readonly v: 2;
   readonly kind: JournalKind;
+  readonly n: number;
+  readonly part: number;
+  readonly parts: number;
   /** The sha256 of the opening loaded when the write was made. */
   readonly opening: string;
   readonly mode: 'shadow' | 'truth';
   readonly at_ms: number;
   readonly inputs: Row;
-  readonly identities: IdentityImage[];
-  readonly rows: Array<{ readonly table: JournalTable; readonly row: Row }>;
+  readonly changes: JournalChange[];
   readonly rekeys: Array<{ readonly from: string; readonly to: string }>;
-  readonly clear_card: {
-    readonly contract: string;
-    readonly token_id: number;
+  readonly checkpoint: {
+    readonly through_n: number;
+    readonly state_sha256: string;
   } | null;
-  readonly state_sha256: string | null;
 }
 
-/** The tables of a write that the entry holds whole, by primary key. */
+/**
+ * Rows a write touches: each element matches rows of one table by column
+ * values (a primary or natural key, or a wider match such as all of an
+ * identity's choice rows or a card's final rows). `inserted` says the rows
+ * are new (before is null) without reading them first.
+ */
 export type JournalRowSelection = ReadonlyArray<{
   readonly table: JournalTable;
   readonly keys: ReadonlyArray<Record<string, unknown>>;
+  readonly inserted?: boolean;
 }>;
 
-export interface JournalWrite {
-  readonly kind: JournalKind;
-  readonly inputs: Row;
+export interface JournalSelection {
+  /** Shorthand: these identities' balance and mode rows. */
   readonly identities?: readonly string[];
   readonly rows?: JournalRowSelection;
+}
+
+export interface JournalWrite extends JournalSelection {
+  readonly kind: JournalKind;
+  readonly inputs: Row;
+  /** The rows as they were before the write (journalBefore). */
+  readonly before?: JournalBefore;
   readonly rekeys?: ReadonlyArray<{
     readonly from: string;
     readonly to: string;
   }>;
-  readonly clearCard?: { readonly contract: string; readonly tokenId: number };
-  /** Hash every identity table, under share locks (the daily build). */
-  readonly checkpoint?: boolean;
+  readonly checkpoint?: {
+    readonly through_n: number;
+    readonly state_sha256: string;
+  };
   readonly atMs?: number;
+}
+
+interface Match {
+  readonly table: JournalTable;
+  readonly match: Record<string, unknown>;
+  readonly inserted: boolean;
+}
+
+function matchesOf(selection: JournalSelection): Match[] {
+  const matches: Match[] = [];
+  for (const key of selection.identities ?? []) {
+    matches.push({
+      table: 'balances',
+      match: { identity_key: key },
+      inserted: false
+    });
+    matches.push({
+      table: 'mode',
+      match: { identity_key: key },
+      inserted: false
+    });
+  }
+  for (const rows of selection.rows ?? []) {
+    for (const key of rows.keys) {
+      matches.push({
+        table: rows.table,
+        match: key,
+        inserted: !!rows.inserted
+      });
+    }
+  }
+  return matches;
+}
+
+function matchId(m: Pick<Match, 'table' | 'match'>): string {
+  return `${m.table}|${canonicalJson(m.match)}`;
 }
 
 function selectList(spec: TableSpec): string {
@@ -223,102 +281,155 @@ function selectList(spec: TableSpec): string {
   ].join(', ');
 }
 
-function orderBy(spec: TableSpec): string {
-  return spec.key.map((k) => `\`${k}\``).join(', ');
-}
-
-async function readWhere(
-  table: JournalTable,
-  where: string,
-  params: Record<string, unknown>,
+async function readMatch(
+  m: Pick<Match, 'table' | 'match'>,
   options: DbQueryOptions,
-  lock = ''
+  lock: '' | ' FOR UPDATE' | ' LOCK IN SHARE MODE'
 ): Promise<Row[]> {
-  const spec: TableSpec = JOURNAL_TABLES[table];
+  const spec: TableSpec = JOURNAL_TABLES[m.table];
+  const columns = Object.keys(m.match);
+  const where = columns.length
+    ? columns.map((c, i) => `\`${c}\` = :m${i}`).join(' AND ')
+    : '1 = 1';
   return sqlExecutor.execute<Row>(
-    `SELECT ${selectList(spec)} FROM ${spec.table} WHERE ${where} ORDER BY ${orderBy(spec)}${lock}`,
-    params,
+    `SELECT ${selectList(spec)} FROM ${spec.table} WHERE ${where}
+      ORDER BY ${spec.key.map((k) => `\`${k}\``).join(', ')}${lock}`,
+    Object.fromEntries(columns.map((c, i) => [`m${i}`, m.match[c]])),
     options
   );
 }
 
-/** One identity's balance, mode and choice rows as they are now. */
-export async function identityImage(
-  key: string,
-  options: DbQueryOptions
-): Promise<IdentityImage> {
-  const where = 'identity_key = :key';
-  const [balance] = await readWhere('balances', where, { key }, options);
-  const [mode] = await readWhere('mode', where, { key }, options);
-  return {
-    key,
-    balance: balance ?? null,
-    mode: mode ?? null,
-    choices: await readWhere('choices', where, { key }, options)
-  };
+function keyOf(table: JournalTable, row: Row): Row {
+  const spec: TableSpec = JOURNAL_TABLES[table];
+  return Object.fromEntries(spec.key.map((k) => [k, row[k]]));
 }
 
-async function rowsByKeys(
-  table: JournalTable,
-  keys: ReadonlyArray<Record<string, unknown>>,
-  options: DbQueryOptions
-): Promise<Row[]> {
-  const rows: Row[] = [];
-  for (const key of keys) {
-    const where = Object.keys(key)
-      .map((column) => `\`${column}\` = :${column}`)
-      .join(' AND ');
-    rows.push(...(await readWhere(table, where, key, options)));
+/** Rows as they were before a write, read FOR UPDATE; add to it as the write goes. */
+export class JournalBefore {
+  private readonly captured = new Map<string, Row[]>();
+
+  /** Reads the selected rows FOR UPDATE, unless already captured. Call before writing them. */
+  async capture(
+    selection: JournalSelection,
+    options: DbQueryOptions
+  ): Promise<this> {
+    for (const m of matchesOf(selection)) {
+      const id = matchId(m);
+      if (!this.captured.has(id)) {
+        this.captured.set(
+          id,
+          m.inserted ? [] : await readMatch(m, options, ' FOR UPDATE')
+        );
+      }
+    }
+    return this;
   }
-  return rows;
+
+  rowsOf(m: Pick<Match, 'table' | 'match'>): Row[] | undefined {
+    return this.captured.get(matchId(m));
+  }
+
+  matches(): Array<Pick<Match, 'table' | 'match'>> {
+    return Array.from(this.captured.keys()).map((id) => {
+      const bar = id.indexOf('|');
+      return {
+        table: id.slice(0, bar) as JournalTable,
+        match: JSON.parse(id.slice(bar + 1)) as Record<string, unknown>
+      };
+    });
+  }
 }
 
-/**
- * The hash of every identity table. Each table is summed in the database
- * (its row count, and the XOR of the first 64 bits of each row's SHA-256
- * over every column as text), so a daily checkpoint never loads the tables
- * into memory; rows have unique keys, so none cancel out. With `lock` the
- * rows are read with share locks, so writes in flight finish first and later
- * writes wait: the hash sits exactly at its entry's place in the log.
- */
-export async function identityTablesHash(
-  options: DbQueryOptions,
-  lock = false
-): Promise<string> {
-  const parts: Record<string, { rows: string; xor: string }> = {};
-  for (const table of Object.keys(JOURNAL_TABLES) as JournalTable[]) {
-    const spec: TableSpec = JOURNAL_TABLES[table];
-    const fields = [
-      ...spec.columns.map((c) => `IFNULL(CAST(\`${c}\` AS CHAR), '\\N')`),
-      ...spec.times.map((t) => `IFNULL(${AS_TEXT(t)}, '\\N')`)
-    ].join(', ');
-    // The cursors table also holds go-live's marker, which is not state.
-    const where = table === 'cursor' ? `WHERE id <> 'writes-closed'` : '';
-    const [sum] = await sqlExecutor.execute<{
-      row_count: number | string;
-      row_xor: number | string | null;
-    }>(
-      // Both as text: the XOR is a 64-bit unsigned number, which the driver
-      // would hand back as a BigInt.
-      `SELECT CAST(COUNT(*) AS CHAR) AS row_count,
-              LPAD(HEX(BIT_XOR(CAST(CONV(LEFT(SHA2(CONCAT_WS('|', ${fields}), 256), 16), 16, 10) AS UNSIGNED))), 16, '0') AS row_xor
-         FROM ${spec.table} ${where}${lock ? ' LOCK IN SHARE MODE' : ''}`,
-      {},
-      options
-    );
-    parts[table] = {
-      rows: String(sum.row_count),
-      xor: String(sum.row_xor ?? 0)
-    };
+/** Reads the selected rows FOR UPDATE before a write; pass it to journal(). */
+export function journalBefore(
+  selection: JournalSelection,
+  options: DbQueryOptions
+): Promise<JournalBefore> {
+  return new JournalBefore().capture(selection, options);
+}
+
+/** Rows compare as text: the driver may give a number or a string. */
+function sameRow(
+  a: Row | null | undefined,
+  b: Row | null | undefined
+): boolean {
+  return canonicalJson(asText(a ?? null)) === canonicalJson(asText(b ?? null));
+}
+
+function asText(row: Row | null): Row | null {
+  return row === null
+    ? null
+    : Object.fromEntries(
+        Object.entries(row).map(([k, v]) => [
+          k,
+          v === null || v === undefined ? null : String(v)
+        ])
+      );
+}
+
+/** The changes of a write: the selected rows before and after, where they differ. */
+async function changesOf(
+  write: JournalWrite,
+  options: DbQueryOptions
+): Promise<JournalChange[]> {
+  const matches = matchesOf(write);
+  for (const m of write.before?.matches() ?? []) {
+    if (!matches.some((x) => matchId(x) === matchId(m))) {
+      matches.push({ ...m, inserted: false });
+    }
   }
-  return sha256Hex(canonicalJson(parts));
+  const seen = new Set<string>();
+  const changes: JournalChange[] = [];
+  for (const m of matches) {
+    const id = matchId(m);
+    if (seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    const before = m.inserted ? [] : write.before?.rowsOf(m);
+    // The write's own rows are locked; anything else is read as the latest
+    // committed version and held, so the entry is never older than its place.
+    const after = await readMatch(m, options, ' LOCK IN SHARE MODE');
+    const byKey = new Map<string, { before?: Row | null; after: Row | null }>();
+    for (const row of before ?? []) {
+      byKey.set(canonicalJson(keyOf(m.table, row)), {
+        before: row,
+        after: null
+      });
+    }
+    for (const row of after) {
+      const k = canonicalJson(keyOf(m.table, row));
+      const entry = byKey.get(k);
+      byKey.set(k, {
+        before: before === undefined ? undefined : (entry?.before ?? null),
+        after: row
+      });
+    }
+    for (const [k, change] of Array.from(byKey.entries())) {
+      if (change.before !== undefined && sameRow(change.before, change.after)) {
+        continue;
+      }
+      changes.push({
+        table: m.table,
+        key: JSON.parse(k) as Row,
+        ...(change.before === undefined ? {} : { before: change.before }),
+        after: change.after
+      });
+    }
+  }
+  return changes;
+}
+
+interface OpeningNow {
+  readonly opening: string;
+  readonly mode: 'shadow' | 'truth';
 }
 
 /** The loaded opening, and whether its tables are the truth at `atMs`. */
 async function openingNow(
   options: DbQueryOptions,
   atMs: number
-): Promise<{ opening: string; mode: 'shadow' | 'truth' }> {
+): Promise<OpeningNow> {
   const [state] = await sqlExecutor.execute<{
     opening_sha256: string;
     cut_at: number | string;
@@ -359,48 +470,80 @@ async function openingNow(
   };
 }
 
-/** Builds a write's entry from what its transaction can read now. */
-export async function journalBody(
-  write: JournalWrite,
-  options: DbQueryOptions
-): Promise<JournalBody> {
-  const identities: IdentityImage[] = [];
-  for (const key of Array.from(new Set(write.identities ?? []))) {
-    identities.push(await identityImage(key, options));
-  }
-  const rows: JournalBody['rows'] = [];
-  for (const selection of write.rows ?? []) {
-    for (const row of await rowsByKeys(
-      selection.table,
-      selection.keys,
-      options
-    )) {
-      rows.push({ table: selection.table, row });
+/**
+ * The next `n`, taken as a write's last step: the counter row stays locked
+ * until the write commits, so `n` follows commit order.
+ */
+async function nextN(options: DbQueryOptions): Promise<number> {
+  await sqlExecutor.execute(
+    `INSERT INTO ${SUBSCRIPTIONS_ID_CURSORS_TABLE} (id, block, updated_at)
+      VALUES (:id, 1, :now)
+      ON DUPLICATE KEY UPDATE block = block + 1, updated_at = VALUES(updated_at)`,
+    { id: JOURNAL_COUNTER_ID, now: Date.now() },
+    options
+  );
+  const [row] = await sqlExecutor.execute<{ block: number | string }>(
+    `SELECT block FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id = :id`,
+    { id: JOURNAL_COUNTER_ID },
+    options
+  );
+  return Number(row.block);
+}
+
+function stripUndefined<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+/** Splits a write's changes into bodies of at most JOURNAL_PART_MAX_BYTES. */
+function partsOf(
+  base: Omit<JournalBody, 'part' | 'parts' | 'changes' | 'rekeys'>,
+  changes: readonly JournalChange[],
+  rekeys: JournalBody['rekeys']
+): JournalBody[] {
+  const groups: JournalChange[][] = [[]];
+  // The whole log entry counts: the body inside {t, lane, chain, body}, with
+  // room for part numbers of any size.
+  const envelope = Buffer.byteLength(
+    canonicalJson({
+      t: 'entry',
+      lane: JOURNAL_SHADOW_LANE,
+      chain: 'public',
+      body: stripUndefined({
+        ...base,
+        part: Number.MAX_SAFE_INTEGER,
+        parts: Number.MAX_SAFE_INTEGER,
+        changes: [],
+        rekeys
+      })
+    }),
+    'utf8'
+  );
+  let size = envelope;
+  for (const change of changes) {
+    const bytes =
+      Buffer.byteLength(canonicalJson(stripUndefined(change)), 'utf8') + 1;
+    if (envelope + bytes > JOURNAL_PART_MAX_BYTES) {
+      throw new Error(
+        `A ${change.table} row of ${bytes} bytes does not fit a journal part`
+      );
     }
+    if (
+      size + bytes > JOURNAL_PART_MAX_BYTES &&
+      groups[groups.length - 1].length
+    ) {
+      groups.push([]);
+      size = envelope;
+    }
+    groups[groups.length - 1].push(change);
+    size += bytes;
   }
-  const atMs = write.atMs ?? Date.now();
-  const { opening, mode } = await openingNow(options, atMs);
-  return {
-    t: 'journal',
-    v: 1,
-    kind: write.kind,
-    opening,
-    mode,
-    at_ms: atMs,
-    inputs: write.inputs,
-    identities,
-    rows,
-    rekeys: [...(write.rekeys ?? [])],
-    clear_card: write.clearCard
-      ? {
-          contract: write.clearCard.contract,
-          token_id: write.clearCard.tokenId
-        }
-      : null,
-    state_sha256: write.checkpoint
-      ? await identityTablesHash(options, true)
-      : null
-  };
+  return groups.map((group, part) => ({
+    ...base,
+    part,
+    parts: groups.length,
+    changes: group,
+    rekeys: part === 0 ? rekeys : []
+  }));
 }
 
 /**
@@ -414,34 +557,72 @@ const sharedRecordLog = new RecordLogWriter(recordLogDb, {
 });
 
 /**
- * Appends a write's journal entry in its own transaction (options must
- * carry the transaction's connection).
+ * Appends a write's journal entries in its own transaction (options must
+ * carry the transaction's connection), as the write's last step. Returns
+ * the bodies appended.
  */
 export async function journal(
   write: JournalWrite,
   options: DbQueryOptions
-): Promise<JournalBody> {
+): Promise<JournalBody[]> {
   if (!options.wrappedConnection) {
     throw new Error("A journal entry is written in its write's transaction");
   }
-  const body = await journalBody(write, options);
-  const entry: RecordLogEntry = {
-    t: 'entry',
-    lane: JOURNAL_LANE,
-    chain: 'public',
-    body: stripUndefined(body) as Record<string, unknown>
-  };
-  await sharedRecordLog.append([entry], {
-    connection: options.wrappedConnection
-  });
-  return body;
+  const atMs = write.atMs ?? Date.now();
+  const { opening, mode } = await openingNow(options, atMs);
+  const changes = await changesOf(write, options);
+  const n = await nextN(options);
+  const bodies = partsOf(
+    {
+      t: 'journal',
+      v: 2,
+      kind: write.kind,
+      n,
+      opening,
+      mode,
+      at_ms: atMs,
+      inputs: write.inputs,
+      checkpoint: write.checkpoint ?? null
+    },
+    changes,
+    [...(write.rekeys ?? [])]
+  );
+  const lane = mode === 'truth' ? JOURNAL_LANE : JOURNAL_SHADOW_LANE;
+  try {
+    await sharedRecordLog.append(
+      bodies.map(
+        (body): RecordLogEntry => ({
+          t: 'entry',
+          lane,
+          chain: 'public',
+          body: stripUndefined(body) as unknown as Record<string, unknown>
+        })
+      ),
+      { connection: options.wrappedConnection }
+    );
+  } catch (error) {
+    logger.errorWithCode(
+      'SUBSCRIPTIONS_JOURNAL_APPEND_FAILED',
+      `[JOURNAL APPEND FAILED] ${write.kind} n=${n}: ${(error as Error).message}`
+    );
+    throw error;
+  }
+  return bodies;
 }
 
-function stripUndefined(value: unknown): unknown {
-  return JSON.parse(JSON.stringify(value));
+/** A journal entry's body, if the log entry is one. */
+export function journalBodyOf(entry: RecordLogEntry): JournalBody | null {
+  if (
+    entry.t !== 'entry' ||
+    (entry.lane !== JOURNAL_LANE && entry.lane !== JOURNAL_SHADOW_LANE)
+  ) {
+    return null;
+  }
+  const body = entry.body as Partial<JournalBody>;
+  return body.t === 'journal' && body.v === 2 ? (body as JournalBody) : null;
 }
 
-function insertRow(
+function writeRow(
   table: JournalTable,
   row: Row,
   options: DbQueryOptions
@@ -459,23 +640,14 @@ function insertRow(
 }
 
 /**
- * Writes an entry's after-images back (a rebuild), in the caller's
- * transaction: the card's final rows cleared, history moved by the
- * rekeys, each touched identity's rows replaced, each history row written
- * by its key.
+ * Writes a body back (a rebuild), in the caller's transaction: a fold's
+ * rekeys, then each change. A change's captured `before` must equal the
+ * rebuilt row, or the rebuild stops there.
  */
 export async function applyJournalBody(
   body: JournalBody,
   options: DbQueryOptions
 ): Promise<void> {
-  const run = (sql: string, params: Record<string, unknown>) =>
-    sqlExecutor.execute(sql, params, options);
-  if (body.clear_card) {
-    await run(
-      `DELETE FROM ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE} WHERE contract = :contract AND token_id = :tokenId`,
-      { contract: body.clear_card.contract, tokenId: body.clear_card.token_id }
-    );
-  }
   for (const { from, to } of body.rekeys) {
     for (const table of [
       SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
@@ -487,41 +659,187 @@ export async function applyJournalBody(
         table === SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE
           ? ', updated_at = updated_at'
           : '';
-      await run(
+      await sqlExecutor.execute(
         `UPDATE ${table} SET identity_key = :to${keepTime} WHERE identity_key = :from`,
-        { from, to }
+        { from, to },
+        options
       );
     }
   }
-  for (const image of body.identities) {
-    for (const table of ['balances', 'mode', 'choices'] as const) {
-      await run(
-        `DELETE FROM ${JOURNAL_TABLES[table].table} WHERE identity_key = :key`,
-        { key: image.key }
+  for (const change of body.changes) {
+    if (change.before !== undefined) {
+      const [current] = await readMatch(
+        { table: change.table, match: change.key },
+        options,
+        ''
       );
+      if (!sameRow(current ?? null, change.before)) {
+        throw new Error(
+          `Row ${change.table} ${canonicalJson(change.key)} differs before journal n=${body.n} (${body.kind})`
+        );
+      }
     }
-    if (image.balance) {
-      await insertRow('balances', image.balance, options);
+    if (change.after === null) {
+      const spec: TableSpec = JOURNAL_TABLES[change.table];
+      const columns = Object.keys(change.key);
+      await sqlExecutor.execute(
+        `DELETE FROM ${spec.table} WHERE ${columns.map((c, i) => `\`${c}\` = :k${i}`).join(' AND ')}`,
+        Object.fromEntries(columns.map((c, i) => [`k${i}`, change.key[c]])),
+        options
+      );
+    } else {
+      await writeRow(change.table, change.after, options);
     }
-    if (image.mode) {
-      await insertRow('mode', image.mode, options);
-    }
-    for (const choice of image.choices) {
-      await insertRow('choices', choice, options);
-    }
-  }
-  for (const { table, row } of body.rows) {
-    await insertRow(table, row, options);
   }
 }
 
-/** A journal entry's body, if the log entry is one. */
-export function journalBodyOf(entry: RecordLogEntry): JournalBody | null {
-  if (entry.t !== 'entry' || entry.lane !== JOURNAL_LANE) {
-    return null;
+/**
+ * The hash of every identity table. Each table is summed in the database
+ * (its row count, and the XOR of the first 64 bits of each row's SHA-256
+ * over every column as text), so it never loads the tables into memory;
+ * rows have unique keys, so none cancel out.
+ */
+export async function identityTablesHash(
+  options: DbQueryOptions
+): Promise<string> {
+  const parts: Record<string, { rows: string; xor: string }> = {};
+  for (const table of Object.keys(JOURNAL_TABLES) as JournalTable[]) {
+    const spec: TableSpec = JOURNAL_TABLES[table];
+    const fields = [
+      ...spec.columns.map((c) => `IFNULL(CAST(\`${c}\` AS CHAR), '\\N')`),
+      ...spec.times.map((t) => `IFNULL(${AS_TEXT(t)}, '\\N')`)
+    ].join(', ');
+    // The cursors table also holds go-live's marker and the journal's
+    // counter, which are not state.
+    const where =
+      table === 'cursor'
+        ? `WHERE id NOT IN ('writes-closed', '${JOURNAL_COUNTER_ID}')`
+        : '';
+    // Both as text: the XOR is a 64-bit unsigned number, which the driver
+    // would hand back as a BigInt.
+    const [sum] = await sqlExecutor.execute<{
+      row_count: number | string;
+      row_xor: number | string | null;
+    }>(
+      `SELECT CAST(COUNT(*) AS CHAR) AS row_count,
+              LPAD(HEX(BIT_XOR(CAST(CONV(LEFT(SHA2(CONCAT_WS('|', ${fields}), 256), 16), 16, 10) AS UNSIGNED))), 16, '0') AS row_xor
+         FROM ${spec.table} ${where}`,
+      {},
+      options
+    );
+    parts[table] = {
+      rows: String(sum.row_count),
+      xor: String(sum.row_xor ?? 0)
+    };
   }
-  const body = entry.body as Partial<JournalBody>;
-  return body.t === 'journal' && body.v === 1 ? (body as JournalBody) : null;
+  return sha256Hex(canonicalJson(parts));
+}
+
+/**
+ * The daily checkpoint, with no long lock: lock the counter for a moment
+ * (no write can take an `n` meanwhile), open a consistent snapshot on a
+ * second connection, release the counter, hash the snapshot, then append
+ * `{through_n, state_sha256}` as a write of its own.
+ */
+export async function journalCheckpoint(): Promise<{
+  through_n: number;
+  state_sha256: string;
+}> {
+  let lockHeld!: () => void;
+  const counterLocked = new Promise<void>((resolve) => (lockHeld = resolve));
+  let snapshotOpen!: () => void;
+  const snapshotReady = new Promise<void>(
+    (resolve) => (snapshotOpen = resolve)
+  );
+  let lockReleased!: () => void;
+  const released = new Promise<void>((resolve) => (lockReleased = resolve));
+  const hashing = sqlExecutor.executeNativeQueriesInTransaction(
+    async (connection) => {
+      const options = { wrappedConnection: connection };
+      await counterLocked;
+      // The first plain read opens this transaction's snapshot.
+      await sqlExecutor.execute(
+        `SELECT id FROM ${SUBSCRIPTIONS_ID_STATE_TABLE} LIMIT 1`,
+        {},
+        options
+      );
+      snapshotOpen();
+      await released;
+      return identityTablesHash(options);
+    }
+  );
+  let throughN = 0;
+  try {
+    await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
+      const options = { wrappedConnection: connection };
+      const [row] = await sqlExecutor.execute<{ block: number | string }>(
+        `SELECT block FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id = :id FOR UPDATE`,
+        { id: JOURNAL_COUNTER_ID },
+        options
+      );
+      throughN = Number(row?.block ?? 0);
+      lockHeld();
+      await snapshotReady;
+    });
+  } finally {
+    lockHeld();
+    snapshotOpen();
+    lockReleased();
+  }
+  const stateSha256 = await hashing;
+  await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+    journal(
+      {
+        kind: 'checkpoint',
+        inputs: {},
+        checkpoint: { through_n: throughN, state_sha256: stateSha256 }
+      },
+      { wrappedConnection: connection }
+    )
+  );
+  return { through_n: throughN, state_sha256: stateSha256 };
+}
+
+/** Journal entries must be posted within this long; go-live and the loops check. */
+export const JOURNAL_POSTING_MAX_AGE_MS = 10 * 60 * 1000;
+
+/**
+ * Whether journal entries reach the records wave: the record log's closer
+ * is on, and no journal entry has waited unposted longer than
+ * JOURNAL_POSTING_MAX_AGE_MS. Until an entry is posted, losing the
+ * database loses it.
+ */
+export async function journalPosting(
+  nowMs: number = Date.now(),
+  closerOn: boolean = process.env.FEATURE_SIGNED_RECORD_LOG === 'true'
+): Promise<{ readonly ok: boolean; readonly reason: string | null }> {
+  const [oldest] = await sqlExecutor.execute<{ created_at: number | string }>(
+    `SELECT MIN(created_at) AS created_at FROM ${SIGNED_RECORD_LOG_ENTRIES_TABLE}
+      WHERE chain = 'public' AND segment_seq IS NULL
+        AND lane IN (:lanes)`,
+    { lanes: [JOURNAL_LANE, JOURNAL_SHADOW_LANE] }
+  );
+  const waitingSince =
+    oldest?.created_at === null || oldest?.created_at === undefined
+      ? null
+      : Number(oldest.created_at);
+  if (!closerOn) {
+    return {
+      ok: false,
+      reason:
+        'FEATURE_SIGNED_RECORD_LOG is off: journal entries are never posted'
+    };
+  }
+  if (
+    waitingSince !== null &&
+    nowMs - waitingSince > JOURNAL_POSTING_MAX_AGE_MS
+  ) {
+    return {
+      ok: false,
+      reason: `a journal entry has waited ${Math.round((nowMs - waitingSince) / 60000)} minutes unposted`
+    };
+  }
+  return { ok: true, reason: null };
 }
 
 /** Inserts a log line and returns its id (the journal keeps log ids). */

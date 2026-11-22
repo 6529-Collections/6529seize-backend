@@ -6,6 +6,7 @@ import {
   SUBSCRIPTIONS_BALANCES_TABLE,
   SUBSCRIPTIONS_ID_BALANCES_TABLE,
   SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+  SUBSCRIPTIONS_ID_LOGS_TABLE,
   SUBSCRIPTIONS_ID_STATE_TABLE,
   SUBSCRIPTIONS_LOGS_TABLE,
   SUBSCRIPTIONS_MODE_TABLE,
@@ -294,6 +295,38 @@ describeWithSeed('subscriptions opening file', [], () => {
     await expect(loadOpeningFiles(parsed)).rejects.toThrow(
       'lists 1 blocked keys'
     );
+  });
+
+  it('loads a history log line of a key that now spans identities, once per identity, with distinct ids', async () => {
+    await seedLegacy();
+    // A line written when A and LONE were one consolidation, since split.
+    await execute(
+      `INSERT INTO ${SUBSCRIPTIONS_LOGS_TABLE} (consolidation_key, log, additional_info, created_at)
+        VALUES (:k, 'Subscription Mode set to Manual', NULL, :t1)`,
+      { k: `${A}-${LONE}`, t1: T1 }
+    );
+    const [line] = await sqlExecutor.execute<{ id: number }>(
+      `SELECT id FROM ${SUBSCRIPTIONS_LOGS_TABLE} WHERE consolidation_key = :k`,
+      { k: `${A}-${LONE}` }
+    );
+    const { parsed } = await cutAndParse();
+    await loadOpeningFiles(parsed);
+    const copies = await sqlExecutor.execute<{
+      id: number;
+      legacy_id: number;
+      identity_key: string;
+    }>(
+      `SELECT id, legacy_id, identity_key FROM ${SUBSCRIPTIONS_ID_LOGS_TABLE}
+        WHERE legacy_id = :id ORDER BY id`,
+      { id: line.id }
+    );
+    expect(copies.map((c) => c.identity_key).sort()).toEqual([LONE, P1].sort());
+    // The first copy keeps the legacy id; the other takes one above them all.
+    expect(Number(copies[0].id)).toBe(Number(line.id));
+    const [highest] = await sqlExecutor.execute<{ id: number }>(
+      `SELECT MAX(id) AS id FROM ${SUBSCRIPTIONS_LOGS_TABLE}`
+    );
+    expect(Number(copies[1].id)).toBeGreaterThan(Number(highest.id));
   });
 
   it('keeps final row ids, merges keys the re-key left apart, and credits waiting top-ups', async () => {

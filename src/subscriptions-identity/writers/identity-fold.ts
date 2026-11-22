@@ -16,7 +16,7 @@ import {
 } from '../identity/identity-directory';
 import { MergeState, mergeStates } from '../identity/identity-merge';
 import { AS_TEXT, flag, msToDbText } from '../opening/legacy-tables';
-import { journal } from '../timeline/journal';
+import { journal, journalBefore } from '../timeline/journal';
 
 /*
  * A wallet that binds to an identity after the opening brings its state
@@ -163,6 +163,15 @@ export async function foldBoundWallets(
     }
     await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
       const options = { wrappedConnection: connection };
+      const before = await journalBefore(
+        {
+          rows: (['balances', 'mode', 'choices'] as const).map((table) => ({
+            table,
+            keys: [{ identity_key: identity }, { identity_key: wallet }]
+          }))
+        },
+        options
+      );
       const atText = msToDbText(nowMs());
       const merged = mergeStates(
         [await readState(identity, options), await readState(wallet, options)],
@@ -201,7 +210,7 @@ export async function foldBoundWallets(
         {
           kind: 'fold',
           inputs: { wallet, identity_key: identity, at_text: atText },
-          identities: [identity, wallet],
+          before,
           rekeys: [{ from: wallet, to: identity }]
         },
         options

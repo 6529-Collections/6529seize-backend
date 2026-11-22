@@ -3113,35 +3113,59 @@ was given.
 
 **Journal and rebuild.** Every write to the identity tables after a load
 (a top-up, a fold, a daily build, a phase pull or reset, a redemption run, a
-list upload) appends one entry to the shared record log (lane `subs`, public
-chain) in the same transaction as the write (`timeline/journal.ts`). So the
-log holds every change in commit order, and an entry exists exactly when its
-write does; the log's segments and head drops carry it to the records wave,
-with no gap a reader would not refuse. An entry names the opening it was
-made against and holds the facts the write acted on (a top-up's hash, block,
-wallet and the identity it was credited to; a fold's wallet and identity)
-and after-images: each touched identity's balance, mode and choice rows, and
-each history row it wrote, whole, with its id. A build's entry also holds a
-checkpoint, the hash of every identity table read with share locks, so
-writes in flight are either in it or after it in the log. `go-live` uploads
-the opening and history files (Arweave, tagged with the app name, kind and
-sha256) and writes the journal's `opening` entry, naming both by URI and
-sha256, in the switch's transaction. The load gives every row a fixed id
-(final and log rows their legacy ids), so a reload gives the same ids.
+list upload) appends its changed rows to the shared record log, public
+chain, in the same transaction as the write (`timeline/journal.ts`): lane
+`subs` once the tables are the truth, `subs-shadow` before. So the log holds
+every change in commit order, and an entry exists exactly when its write
+does.
+
+- **What an entry holds.** The facts the write acted on (a top-up's hash,
+  block, wallet and the identity it was credited to; a redemption's charges)
+  and the rows the write changed, each as `before` and `after`. Writers read
+  `before` FOR UPDATE ahead of the write and `after` in their own
+  transaction, so no entry carries a snapshot's stale row. Unchanged rows
+  are not journaled, so entries stay small however long a history grows; a
+  write's changes are split into parts of at most 1 MB, all appended in its
+  transaction. A redemption run charges at most 200 airdrops (whole blocks)
+  and the next run goes on.
+- **Order.** Each write takes the next `n` from a counter row as its last
+  step, so `n` follows commit order.
+- **Checkpoint.** After the daily build, the counter is locked for a moment
+  while a second connection opens a consistent snapshot; the snapshot is
+  hashed with no locks and the hash is appended for that `n`.
+- **Posting.** Entries reach the records wave when the record log's closer
+  seals a segment (every 5 minutes, with `FEATURE_SIGNED_RECORD_LOG=true`).
+  Until then they are only in MySQL. go-live refuses unless the closer is on
+  and no journal entry has waited unposted more than 10 minutes, and the
+  top-up loop alerts (`SUBSCRIPTIONS_JOURNAL_STALE`) when one has. A failed
+  append fails its write and alerts (`SUBSCRIPTIONS_JOURNAL_APPEND_FAILED`).
+- **Opening.** `go-live` uploads the opening and history files (Arweave,
+  tagged with the app name, kind and sha256) and writes the journal's
+  `opening` entry, naming both by URI and sha256, in the switch's
+  transaction. The load gives every row a fixed id: final rows and the first
+  copy of a log line keep their legacy ids, other copies and queued lines
+  take ids above them in file order.
 
 `subscriptions:opening -- rebuild` rebuilds the identity tables from the
 opening and the journal alone, read through a bound record log source (the
-records wave reader): it pauses the write routes, takes the last `opening`
-entry, fetches and checks both files, loads them suspended (no writer writes
-meanwhile), writes back every entry of that opening in log order, and stops
-at the first checkpoint the rebuilt tables don't match, which is how a write
-outside the journal shows up. Nothing is read from MySQL sources or the
-identity mirror: a top-up stays with the identity it was credited to. The
-rebuilt tables end verified and in shadow, not the truth; with `--go-live`
-they become the truth through go-live's own switch, in the same pause, and
-only if at least one checkpoint matched. `--opening --history` rehearses
-from local files. People's own changes will reach the identity tables
-through signed records, journaled the same way.
+records wave reader). It pauses the write routes (renewed by time), takes
+the last `opening` entry, fetches and checks both files, loads them
+suspended (no writer writes meanwhile), and writes back every write of that
+opening in `n` order, each with all its parts. A change's captured `before`
+must equal the rebuilt row, and each checkpoint must match once the writes
+up to its `n` are in, so a write that was never journaled stops the rebuild
+at the first row or checkpoint it shows in. Nothing is read from MySQL
+sources or the identity mirror: a top-up stays with the identity it was
+credited to. When the live database is there, the journal's last `n` is
+compared with live's counter; a missing tail (entries not yet posted) is
+reported and alerted (`SUBSCRIPTIONS_JOURNAL_TAIL_MISSING`), and the tables
+stay suspended. Otherwise they end verified and in shadow, not the truth;
+with `--go-live` they become the truth through go-live's own switch, in the
+same pause, and only if at least one checkpoint matched. `--opening
+--history` rehearses from local files. People's own changes will reach the
+identity tables through signed records, journaled the same way. After the
+switch a comparison with the legacy dual write that isn't a MATCH alerts
+(`SUBSCRIPTIONS_TRUTH_COMPARISON_DIFF`).
 
 **Switch.** The switch is one row, `subscriptions_id_state`, so one write
 moves every service. `subscriptions:opening -- go-live --signed-writes-live`

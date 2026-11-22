@@ -40,7 +40,11 @@ import {
   saveFailedReport,
   saveReport
 } from '@/subscriptions-identity/writers/identity-reports';
-import { journal } from '@/subscriptions-identity/timeline/journal';
+import {
+  journal,
+  JournalBefore,
+  journalBefore
+} from '@/subscriptions-identity/timeline/journal';
 import { DbQueryOptions } from '@/db-query.options';
 
 const shadowLogger = Logger.get('SUBSCRIPTIONS_ALLOWLIST_SHADOW');
@@ -201,24 +205,39 @@ async function writePhases(
     updateParams[`id_${i}`] = row.id;
   });
   const ids = ranked.map((_, i) => `:id_${i}`).join(', ');
-  for (const target of targets) {
-    const batchUpdateQuery = `
-      UPDATE ${target}
-      SET
-        phase = :phaseName,
-        phase_subscriptions = :phaseSubscriptions,
-        phase_position = CASE id
-          ${ranked.map((_, i) => `WHEN :id_${i} THEN :rank_${i}`).join(' ')}
-        END
-      WHERE id IN (${ids})
-    `;
-    if (target !== IDENTITY_SUBSCRIPTION_TABLES.final) {
-      await sqlExecutor.execute(batchUpdateQuery, updateParams);
-      continue;
+  const journaled = targets.includes(IDENTITY_SUBSCRIPTION_TABLES.final);
+  // Every target, and the identity rows' journal entry, in one transaction:
+  // after the switch the rollback copy never misses a phase.
+  await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
+    const options = { wrappedConnection: connection };
+    const before = journaled
+      ? await journalBefore(
+          {
+            rows: [
+              {
+                table: 'final',
+                keys: [{ contract: card.contract, token_id: card.tokenId }]
+              }
+            ]
+          },
+          options
+        )
+      : undefined;
+    for (const target of targets) {
+      await sqlExecutor.execute(
+        `UPDATE ${target}
+          SET
+            phase = :phaseName,
+            phase_subscriptions = :phaseSubscriptions,
+            phase_position = CASE id
+              ${ranked.map((_, i) => `WHEN :id_${i} THEN :rank_${i}`).join(' ')}
+            END
+          WHERE id IN (${ids})`,
+        updateParams,
+        options
+      );
     }
-    await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
-      const options = { wrappedConnection: connection };
-      await sqlExecutor.execute(batchUpdateQuery, updateParams, options);
+    if (before) {
       await journal(
         {
           kind: 'phase',
@@ -227,14 +246,12 @@ async function writePhases(
             token_id: card.tokenId,
             phase: phaseName
           },
-          rows: [
-            { table: 'final', keys: ranked.map((row) => ({ id: row.id })) }
-          ]
+          before
         },
         options
       );
-    });
-  }
+    }
+  });
 }
 
 async function buildAirdropsAndUpdateSubscriptions(
@@ -571,23 +588,30 @@ function filterSubscriptions(
   });
 }
 
+/** The card's identity final rows before a reset, for its journal entry. */
+function phaseResetBefore(
+  contract: string,
+  tokenId: number,
+  options: DbQueryOptions
+): Promise<JournalBefore> {
+  return journalBefore(
+    { rows: [{ table: 'final', keys: [{ contract, token_id: tokenId }] }] },
+    options
+  );
+}
+
 /** Journals a reset of the card's phases on the identity rows. */
 async function journalPhaseReset(
   contract: string,
   tokenId: number,
+  before: JournalBefore,
   options: DbQueryOptions
 ): Promise<void> {
-  const ids = await sqlExecutor.execute<{ id: number }>(
-    `SELECT id FROM ${IDENTITY_SUBSCRIPTION_TABLES.final}
-      WHERE contract = :contract AND token_id = :tokenId`,
-    { contract, tokenId },
-    options
-  );
   await journal(
     {
       kind: 'phase',
       inputs: { contract, token_id: tokenId, phase: null, reset: true },
-      rows: [{ table: 'final', keys: ids.map((row) => ({ id: row.id })) }]
+      before
     },
     options
   );
@@ -605,6 +629,10 @@ export async function resetAllowlist(contract: string, tokenId: number) {
       : [SUBSCRIPTIONS_NFTS_FINAL_TABLE];
   await sqlExecutor.executeNativeQueriesInTransaction(
     async (wrappedConnection) => {
+      const resetBefore =
+        mode === 'TRUTH'
+          ? await phaseResetBefore(contract, tokenId, { wrappedConnection })
+          : null;
       for (const final of finals) {
         await sqlExecutor.execute(
           `UPDATE ${final}
@@ -614,8 +642,10 @@ export async function resetAllowlist(contract: string, tokenId: number) {
           { wrappedConnection }
         );
       }
-      if (mode === 'TRUTH') {
-        await journalPhaseReset(contract, tokenId, { wrappedConnection });
+      if (resetBefore) {
+        await journalPhaseReset(contract, tokenId, resetBefore, {
+          wrappedConnection
+        });
       }
 
       await sqlExecutor.execute(
@@ -671,6 +701,9 @@ export async function resetAllowlist(contract: string, tokenId: number) {
     try {
       await sqlExecutor.executeNativeQueriesInTransaction(
         async (wrappedConnection) => {
+          const resetBefore = await phaseResetBefore(contract, tokenId, {
+            wrappedConnection
+          });
           await sqlExecutor.execute(
             `UPDATE ${IDENTITY_SUBSCRIPTION_TABLES.final}
               SET phase = NULL, phase_subscriptions = -1, phase_position = -1
@@ -678,7 +711,9 @@ export async function resetAllowlist(contract: string, tokenId: number) {
             { contract, tokenId },
             { wrappedConnection }
           );
-          await journalPhaseReset(contract, tokenId, { wrappedConnection });
+          await journalPhaseReset(contract, tokenId, resetBefore, {
+            wrappedConnection
+          });
         }
       );
     } catch (error) {
