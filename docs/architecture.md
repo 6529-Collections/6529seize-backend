@@ -875,6 +875,13 @@ by height; network errors, 429 and 5xx are retried. Settings are read at first
 use, so loops that never call it need none. Loops and API code that read
 identity data from the chain add calls to this client, not their own.
 
+`/api/chain` relays operations people sign with their wallets: `POST
+/chain/submit` passes a signed operation to the gateway's `/v1/submit`, and
+`/chain/pending` holds an operation that needs more than one wallet (an
+identity join) in `chain_pending_operations` and
+`chain_pending_operation_signers` until every signer has signed, checking each
+signature against its signer, then relays it.
+
 ### Ordinary Ethereum RPC boundary
 
 The shared provider in `src/ethereum-rpc/` reads the server-only

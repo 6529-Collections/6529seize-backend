@@ -51,6 +51,10 @@ export const DROP_AUTHOR_SIGNATURES_TABLE = 'drop_author_signatures';
 export const WALLET_CONNECTION_SHARES_TABLE = 'wallet_connection_shares';
 export const IDENTITIES_TABLE = 'identities';
 export const ADDRESS_CONSOLIDATION_KEY = 'address_consolidation_keys';
+/** 6529 chain operations waiting for more signatures (a join's two wallets). */
+export const CHAIN_PENDING_OPERATIONS_TABLE = 'chain_pending_operations';
+export const CHAIN_PENDING_OPERATION_SIGNERS_TABLE =
+  'chain_pending_operation_signers';
 export const TEAM_TABLE = 'team';
 export const DISTRIBUTION_TABLE = 'distribution';
 export const DISTRIBUTION_PHOTO_TABLE = 'distribution_photo';

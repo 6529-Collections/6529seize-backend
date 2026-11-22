@@ -45,6 +45,7 @@ import profileSubClassificationsRoutes from './profiles/profiles-sub-classificat
 import profilesRoutes from './profiles/profiles.routes';
 import repCategorySearchRoutes from './profiles/rep-category-search.routes';
 import proxiesRoutes from './proxies/proxies.routes';
+import chainRoutes from './chain/chain.routes';
 import pushNotificationsRoutes from './push-notifications/push-notifications.routes';
 import bulkRepRoutes from './ratings/bulk-rep.routes';
 import ratingsRoutes from './ratings/ratings.routes';
@@ -1400,6 +1401,7 @@ function wireApp() {
   apiRouter.use(`/ratings`, ratingsRoutes);
   apiRouter.use(`/bulk-rep`, bulkRepRoutes);
   apiRouter.use(`/proxies`, proxiesRoutes);
+  apiRouter.use(`/chain`, chainRoutes);
   apiRouter.use(`/subscriptions`, subscriptionsRoutes);
   apiRouter.use(`/drops`, dropsRoutes);
   apiRouter.use(`/light-drops`, lightDropsRoutes);
