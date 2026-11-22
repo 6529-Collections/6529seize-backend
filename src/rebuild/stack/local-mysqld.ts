@@ -1,4 +1,4 @@
-import { ChildProcess, spawn, spawnSync } from 'node:child_process';
+import { ChildProcess, execFile, spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as net from 'node:net';
@@ -113,28 +113,164 @@ export interface ProcessInfo {
 
 /** How the run looks at other processes; tests replace it. */
 export interface ProcessProbe {
-  info(pid: number): ProcessInfo | null;
+  info(pid: number): Promise<ProcessInfo | null>;
   /** The PID listening on 127.0.0.1:`port`, or null when it can't be read. */
-  listener(port: number): number | null;
+  listener(port: number): Promise<number | null>;
 }
 
-/** PowerShell can take tens of seconds to start on a busy server. */
-function powershell(command: string): string | null {
-  const result = spawnSync(
-    'powershell',
-    ['-NoProfile', '-NonInteractive', '-Command', command],
-    { windowsHide: true, encoding: 'utf8', timeout: 120_000 }
+/** How long one system command may take, and how long a probe keeps trying. */
+const PROBE_COMMAND_MS = 120_000;
+const PROBE_DEADLINE_MS = 300_000;
+const PROBE_RETRY_MS = 2_000;
+
+/** A command's output, or why there is none. */
+type Answer = { stdout: string } | 'timed out' | 'failed' | 'not run';
+
+function run(
+  command: string,
+  args: string[],
+  timeout: number
+): Promise<Answer> {
+  return new Promise((resolve) =>
+    execFile(
+      command,
+      args,
+      {
+        windowsHide: true,
+        encoding: 'utf8',
+        timeout,
+        maxBuffer: 64 * 1024 * 1024
+      },
+      (error, stdout) => {
+        if (!error) resolve({ stdout });
+        else if (error.killed) resolve('timed out');
+        // A string code is a command that could not run (ENOENT and the like).
+        else resolve(typeof error.code === 'string' ? 'not run' : 'failed');
+      }
+    )
   );
-  return result.status === 0 ? result.stdout.trim() : null;
 }
 
-/** Reads processes through Win32_Process and Get-NetTCPConnection, or /proc and lsof. */
+/**
+ * A command's output, or null when it gives no answer. One that runs out of
+ * time, or with `retryFailures` one that fails, is tried again until
+ * PROBE_DEADLINE_MS: a busy server can take minutes to start PowerShell or
+ * answer WMI. A probe with no answer makes the run refuse to touch the
+ * process, never end it.
+ */
+async function output(
+  command: string,
+  args: string[],
+  retryFailures = false
+): Promise<string | null> {
+  const deadline = Date.now() + PROBE_DEADLINE_MS;
+  for (;;) {
+    const left = deadline - Date.now();
+    const answer = await run(command, args, Math.min(PROBE_COMMAND_MS, left));
+    if (typeof answer === 'object') return answer.stdout.trim();
+    const again =
+      answer === 'timed out' || (retryFailures && answer === 'failed');
+    if (!again) return null;
+    if (deadline - Date.now() <= PROBE_RETRY_MS) return null;
+    await sleep(PROBE_RETRY_MS);
+  }
+}
+
+function asPid(text: string | null | undefined): number | null {
+  const pid = Number(text);
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+
+/**
+ * The PID listening on `port` in `netstat -ano -p TCP` output. A listening
+ * socket is the one with no remote end (port 0), which holds in every
+ * Windows language, unlike the state column.
+ */
+export function netstatListener(text: string, port: number): number | null {
+  for (const line of text.split(/\r?\n/)) {
+    const [proto, local, remote, , pid] = line.trim().split(/\s+/);
+    if (
+      /^TCP/i.test(proto ?? '') &&
+      local?.endsWith(`:${port}`) &&
+      /:0$/.test(remote ?? '')
+    ) {
+      return asPid(pid);
+    }
+  }
+  return null;
+}
+
+/** The socket inodes listening on `port` in /proc/net/tcp or tcp6. */
+export function listeningInodes(table: string, port: number): string[] {
+  const portHex = `:${port.toString(16).toUpperCase().padStart(4, '0')}`;
+  return table
+    .split('\n')
+    .slice(1)
+    .map((line) => line.trim().split(/\s+/))
+    .filter(
+      // sl local_address rem_address st ... inode; st 0A is LISTEN.
+      (fields) =>
+        fields.length > 9 &&
+        fields[1].endsWith(portHex) &&
+        fields[3] === '0A' &&
+        fields[9] !== '0'
+    )
+    .map((fields) => fields[9]);
+}
+
+/** The PID that owns the socket listening on `port`, from /proc alone. */
+function procListener(port: number): number | null {
+  const inodes = new Set<string>();
+  for (const table of ['/proc/net/tcp', '/proc/net/tcp6']) {
+    try {
+      listeningInodes(fs.readFileSync(table, 'utf8'), port).forEach((inode) =>
+        inodes.add(inode)
+      );
+    } catch {
+      // No IPv6 table.
+    }
+  }
+  if (!inodes.size) return null;
+  for (const entry of fs.readdirSync('/proc')) {
+    if (!/^\d+$/.test(entry)) continue;
+    let fds: string[] = [];
+    try {
+      fds = fs.readdirSync(`/proc/${entry}/fd`);
+    } catch {
+      continue;
+    }
+    for (const fd of fds) {
+      try {
+        const socket = /^socket:\[(\d+)\]$/.exec(
+          fs.readlinkSync(`/proc/${entry}/fd/${fd}`)
+        );
+        if (socket && inodes.has(socket[1])) return asPid(entry);
+      } catch {
+        // The process or descriptor is gone, or not ours to read.
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Reads processes through netstat and Win32_Process on Windows, /proc on
+ * Linux, and lsof and ps elsewhere.
+ */
 export const systemProcessProbe: ProcessProbe = {
-  info(pid) {
+  async info(pid) {
     if (!Number.isInteger(pid) || pid <= 0) return null;
     if (process.platform === 'win32') {
-      const out = powershell(
-        `Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}' | Select-Object Name,CommandLine | ConvertTo-Json -Compress`
+      // Only WMI has another process's command line on Windows.
+      const out = await output(
+        'powershell',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}' | Select-Object Name,CommandLine | ConvertTo-Json -Compress`
+        ],
+        true
       );
       if (!out) return null;
       try {
@@ -146,34 +282,44 @@ export const systemProcessProbe: ProcessProbe = {
         return null;
       }
     }
-    try {
-      const args = fs
-        .readFileSync(`/proc/${pid}/cmdline`, 'utf8')
-        .split('\0')
-        .filter(Boolean);
-      return args.length
-        ? { image: path.basename(args[0]), commandLine: args.join(' ') }
-        : null;
-    } catch {
-      return null;
+    if (process.platform === 'linux') {
+      try {
+        const args = fs
+          .readFileSync(`/proc/${pid}/cmdline`, 'utf8')
+          .split('\0')
+          .filter(Boolean);
+        return args.length
+          ? { image: path.basename(args[0]), commandLine: args.join(' ') }
+          : null;
+      } catch {
+        return null;
+      }
     }
+    const image = await output('ps', ['-o', 'comm=', '-p', String(pid)]);
+    const commandLine = await output('ps', [
+      '-ww',
+      '-o',
+      'args=',
+      '-p',
+      String(pid)
+    ]);
+    return image && commandLine
+      ? { image: path.basename(image), commandLine }
+      : null;
   },
-  listener(port) {
-    const out =
-      process.platform === 'win32'
-        ? powershell(
-            `Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess`
-          )
-        : (() => {
-            const result = spawnSync(
-              'lsof',
-              ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'],
-              { encoding: 'utf8', timeout: 30_000 }
-            );
-            return result.status === 0 ? result.stdout.trim() : null;
-          })();
-    const pid = out ? Number(out.split(/\s+/)[0]) : NaN;
-    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  async listener(port) {
+    if (process.platform === 'linux') return procListener(port);
+    if (process.platform === 'win32') {
+      const out = await output('netstat', ['-ano', '-p', 'TCP'], true);
+      return out ? netstatListener(out, port) : null;
+    }
+    const out = await output('lsof', [
+      '-nP',
+      `-iTCP:${port}`,
+      '-sTCP:LISTEN',
+      '-t'
+    ]);
+    return asPid(out?.split(/\s+/)[0]);
   }
 };
 
@@ -186,20 +332,22 @@ function dataDirOf(commandLine: string): string | null {
 /**
  * Whether `pid` is this data directory's mysqld and the one listening on
  * `port`: its image is mysqld, its command line names this data directory,
- * and it owns the port. Anything less, and the run must not end it.
+ * and it owns the port. Anything less, and the run must not end it. The
+ * port comes first: it is the cheap look, and most stale PIDs fail it.
  */
-export function isThisRunsServer(
+export async function isThisRunsServer(
   pid: number,
   dataDir: string,
   port: number,
   probe: ProcessProbe = systemProcessProbe
-): boolean {
-  const info = probe.info(pid);
+): Promise<boolean> {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if ((await probe.listener(port)) !== pid) return false;
+  const info = await probe.info(pid);
   if (!info) return false;
   if (!/^mysqld(\.exe)?$/i.test(path.basename(info.image))) return false;
   const dir = dataDirOf(info.commandLine);
-  if (!dir || !sameDirectory(dir, dataDir)) return false;
-  return probe.listener(port) === pid;
+  return !!dir && sameDirectory(dir, dataDir);
 }
 
 /**
@@ -225,7 +373,7 @@ export async function stopLeftover(
       : NaN;
     // Only a process proven to be this data directory's mysqld, listening
     // on this port, is ended; a PID Windows reused for anything else is not.
-    if (isThisRunsServer(pid, dataDir, target.port, probe)) {
+    if (await isThisRunsServer(pid, dataDir, target.port, probe)) {
       log(
         `ending the server pid ${pid} a previous run left on port ${target.port}`
       );
