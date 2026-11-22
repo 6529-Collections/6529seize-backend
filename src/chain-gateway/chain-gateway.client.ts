@@ -106,6 +106,9 @@ export interface ChainGatewayConfig {
 }
 
 export class ChainGatewayError extends Error {
+  /** The read stamp of the node's refusal, when it carried one. */
+  read?: ChainReadStamp;
+
   constructor(
     message: string,
     readonly status: number | null,
@@ -564,6 +567,34 @@ function heightRanges(value: unknown, path: string): [number, number][] {
   });
 }
 
+/** A network id: 32 bytes of hex. */
+const NETWORK_ID = /^0x[0-9a-f]{64}$/i;
+
+/** A read stamp as the node writes it. */
+function isReadStamp(value: unknown): value is ChainReadStamp {
+  const it = value as Partial<ChainReadStamp> | null;
+  const heights = [it?.height, it?.finalizedHeight, it?.headHeight];
+  return (
+    !!it &&
+    typeof it === 'object' &&
+    (it.at === 'finalized' || it.at === 'head') &&
+    heights.every((n) => Number.isSafeInteger(n) && (n as number) >= 0) &&
+    typeof it.network === 'string' &&
+    NETWORK_ID.test(it.network)
+  );
+}
+
+/**
+ * not_found answers of the node rather than of the data:
+ * - a route an older release lacks;
+ * - `/imported` on a node whose release carries no identities file.
+ * The identity's `founder` depends on that file the same way: for an
+ * imported identity the node takes it from the file it carries (reads.rs,
+ * `founder`), so a node without it can name another wallet. That one is
+ * for the API to settle; the client can't tell.
+ */
+const NODE_NOT_FOUND = [/^no such route/i, /imports no identities file/i];
+
 /** An identity whose level the node can't give yet (its TDH lists). */
 function lacksLevel(value: unknown): boolean {
   const it = value as { principalId?: unknown; level?: unknown } | null;
@@ -675,6 +706,7 @@ export class ChainGatewayClient {
   /** Drops the cached head and answers (tests, or after a long pause). */
   clearCache(): void {
     this.head = null;
+    this.pinFloors.clear();
     this.caches?.answers.clear();
     this.caches?.docs.clear();
   }
@@ -888,9 +920,11 @@ export class ChainGatewayClient {
     const notReady = (json?.data as { notReady?: unknown } | undefined)
       ?.notReady;
     const starting = status === 503 && typeof notReady === 'string';
+    // A 200 that can't be read (empty, no data) is the gateway's fault.
+    const fallback = status === 200 ? 'bad_answer' : `http_${status}`;
     const code =
       (typeof error === 'string' ? error : error?.code) ??
-      (starting ? 'starting' : `http_${status}`);
+      (starting ? 'starting' : fallback);
     const message =
       (typeof error === 'string' ? json?.message : error?.message) ??
       (starting ? (notReady as string) : `HTTP ${status}`);
@@ -914,9 +948,13 @@ export class ChainGatewayClient {
     status: number,
     json: Envelope<unknown> | null
   ): Promise<{ read: ChainReadStamp; answer: ChainAnswer<T> | null }> {
-    const read =
-      json?.read && typeof json.read === 'object' ? json.read : undefined;
-    if (read) {
+    const stamp = json?.read;
+    let read: ChainReadStamp | undefined;
+    if (stamp !== undefined && stamp !== null) {
+      if (!isReadStamp(stamp)) {
+        throw badAnswer(path, `a read stamp that can't be read`, status);
+      }
+      read = stamp;
       await this.checkNetwork(path, status, read);
     }
     const error = json?.error;
@@ -925,18 +963,24 @@ export class ChainGatewayClient {
       if (!read || code !== 'not_found') {
         throw badAnswer(path, `a 404 that isn't the node's not_found`, 404);
       }
-      // A node without the route (an older release behind the load
-      // balancer) answers not_found too, told apart only by its message: it
-      // says nothing of the data, so it is never null or cached. A distinct
+      // Some not_found answers are of the node, not of the data: told apart
+      // only by their message, they are never null or cached. A distinct
       // code from the node would be firmer than the message.
       const message = typeof error === 'string' ? '' : (error?.message ?? '');
-      if (/^no such route/i.test(message)) {
-        throw badAnswer(path, `the node that answered has no such route`, 404);
+      const ofTheNode = NODE_NOT_FOUND.find((it) => it.test(message));
+      if (ofTheNode) {
+        throw badAnswer(
+          path,
+          `the node that answered can't say: ${message}`,
+          404
+        );
       }
       return { read, answer: null };
     }
     if (status !== 200 || !json || error) {
-      throw this.errorOf(path, status, json);
+      const failure = this.errorOf(path, status, json);
+      if (read) failure.read = read;
+      throw failure;
     }
     if (!read || json.data === undefined) {
       throw badAnswer(path, 'an answer without its read stamp or data');
@@ -951,11 +995,12 @@ export class ChainGatewayClient {
    * or a gateway mixing nodes across one) is refused, and the head is read
    * again so the reads after it follow a relaunch.
    */
-  private async checkNetwork(path: string, status: number, read: unknown) {
-    const network = (read as { network?: unknown }).network;
-    if (typeof network !== 'string' || !network.trim()) {
-      throw badAnswer(path, 'an answer without its network id', status);
-    }
+  private async checkNetwork(
+    path: string,
+    status: number,
+    read: ChainReadStamp
+  ) {
+    const network = read.network;
     const expected = (await this.getHead()).network;
     if (lower(network) === expected) return;
     await this.getHead(true).catch(() => undefined);
@@ -987,7 +1032,7 @@ export class ChainGatewayClient {
             !Number.isSafeInteger(finalized?.height) ||
             typeof finalized?.time !== 'number' ||
             typeof network !== 'string' ||
-            !network.trim()
+            !NETWORK_ID.test(network)
           ) {
             throw badAnswer(
               '/v1/status',
@@ -1077,7 +1122,7 @@ export class ChainGatewayClient {
     }
     const head = await this.getHead();
     try {
-      return await this.pinnedRead<T>(path, query, this.pinOf(head));
+      return await this.pinnedUntilHeld<T>(path, query, this.pinOf(head));
     } catch (error) {
       if (
         !(error instanceof ChainGatewayError) ||
@@ -1091,7 +1136,7 @@ export class ChainGatewayClient {
     const fresh = await this.getHead(true);
     const pin = this.pinOf(fresh);
     try {
-      return await this.pinnedRead<T>(path, query, pin);
+      return await this.pinnedUntilHeld<T>(path, query, pin);
     } catch (error) {
       if (
         !(error instanceof ChainGatewayError) ||
@@ -1117,6 +1162,35 @@ export class ChainGatewayClient {
       this.raiseFloor(lower(read.network), read.height);
     }
     return answer;
+  }
+
+  /**
+   * A pinned read, waited for while the node that answers says it hasn't
+   * finalized that height yet (its refusal's stamp is below it): two nodes
+   * a block apart behind the load balancer. Up to the client's retries.
+   */
+  private async pinnedUntilHeld<T>(
+    path: string,
+    query: Query,
+    height: number
+  ): Promise<ChainAnswer<T> | null> {
+    const config = this.config();
+    const sleep =
+      config.sleep ??
+      ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.pinnedRead<T>(path, query, height);
+      } catch (error) {
+        const notYet =
+          error instanceof ChainGatewayError &&
+          error.code === 'height_gone' &&
+          error.read !== undefined &&
+          error.read.finalizedHeight < height;
+        if (!notYet || attempt >= config.retries) throw error;
+        await sleep(Math.min(1_000, 250 * 2 ** attempt));
+      }
+    }
   }
 
   /** The height a read without one pins: the head's, never going down. */
@@ -1152,12 +1226,14 @@ export class ChainGatewayClient {
     // A node that has the height only as its head answers from there: not
     // the finalized state pinned, so the height is gone for this read.
     if (read.at !== 'finalized') {
-      throw new ChainGatewayError(
+      const notFinal = new ChainGatewayError(
         `${path}: height ${height} is not finalized on the node that answered`,
         409,
         'height_gone',
         path
       );
+      notFinal.read = read;
+      throw notFinal;
     }
     if (read.height !== height) {
       throw badAnswer(
@@ -1546,16 +1622,23 @@ export class ChainGatewayClient {
         ranges?: unknown;
       }>(path, status, json);
     };
-    let page: Awaited<ReturnType<typeof readPage>>;
-    try {
-      page = await readPage();
-    } catch (error) {
-      // Each node keeps its own feed from its own start: a younger one
-      // behind the load balancer can say gone for a height an older holds.
-      if (!(error instanceof ChainGatewayError) || error.code !== 'gone') {
-        throw error;
+    // Each node keeps its own feed from its own start: a younger one behind
+    // the load balancer can say gone for a height an older one holds, so a
+    // gone is asked again, up to the client's retries.
+    const config = this.config();
+    const sleep =
+      config.sleep ??
+      ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    let page: Awaited<ReturnType<typeof readPage>> | null = null;
+    for (let attempt = 0; page === null; attempt++) {
+      try {
+        page = await readPage();
+      } catch (error) {
+        const gone =
+          error instanceof ChainGatewayError && error.code === 'gone';
+        if (!gone || attempt >= config.retries) throw error;
+        await sleep(this.backoff(attempt + 1, error));
       }
-      page = await readPage();
     }
     const { answer } = page;
     if (!answer) {
@@ -1642,9 +1725,13 @@ export class ChainGatewayClient {
 
   private async post<T>(path: string, body: unknown): Promise<T> {
     const { status, json } = await this.send('POST', path, {}, body);
-    const stamped = !!json?.read && typeof json.read === 'object';
+    const stamp = json?.read;
+    const stamped = stamp !== undefined && stamp !== null;
     if (stamped) {
-      await this.checkNetwork(path, status, json!.read);
+      if (!isReadStamp(stamp)) {
+        throw badAnswer(path, `a read stamp that can't be read`, status);
+      }
+      await this.checkNetwork(path, status, stamp);
     }
     if (status !== 200 || !json || json.error) {
       throw this.errorOf(path, status, json);
@@ -1695,6 +1782,18 @@ export class ChainGatewayClient {
       true
     );
     if (status === 404) {
+      // The store's own "none": its not_found, or the bucket's NoSuchKey.
+      // Anything else (a misrouted request) says nothing of the document.
+      const error = json?.error;
+      const code = typeof error === 'string' ? error : error?.code;
+      const message =
+        (typeof error === 'string' ? json?.message : error?.message) ?? '';
+      const none =
+        code === 'not_found' ||
+        (code === 'http_404' && /<Code>NoSuchKey<\/Code>/.test(message));
+      if (!none) {
+        throw badAnswer(path, `a 404 that isn't the store's`, 404);
+      }
       return null;
     }
     if (status !== 200 || !bytes) {

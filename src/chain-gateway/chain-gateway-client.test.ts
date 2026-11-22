@@ -635,6 +635,117 @@ describe('ChainGatewayClient reads', () => {
     });
   });
 
+  it.each([
+    ['no height', { height: undefined }],
+    ['a height that is not a number', { height: '10' }],
+    ['no finalized height', { finalizedHeight: undefined }],
+    ['an unknown at', { at: 'latest' }],
+    ['a short network id', { network: '0x22' }]
+  ])('refuses a read stamp with %s', async (_name, change) => {
+    const { client } = setup(
+      withStatus(
+        () => ({
+          status: 200,
+          json: {
+            read: { ...stamp(10), ...change },
+            data: { level: 1 },
+            next: null
+          }
+        }),
+        10
+      )
+    );
+    await expect(client.getLevel('0x01', { height: 10 })).rejects.toMatchObject(
+      { code: 'bad_answer' }
+    );
+  });
+
+  it('keeps the pin a number when an unpinned answer has no height', async () => {
+    let unpinnedHeight: number | undefined = undefined;
+    const { client, calls } = setup((call) => {
+      if (path(call) === '/v1/status') return status(50);
+      const height = param(call, 'height');
+      if (height === '50') {
+        return {
+          status: 409,
+          json: {
+            read: stamp(60),
+            error: { code: 'height_gone', message: 'x' }
+          }
+        };
+      }
+      return {
+        status: 200,
+        json: {
+          read: { ...stamp(60), height: unpinnedHeight },
+          data: IDENTITY,
+          next: null
+        }
+      };
+    });
+    await expect(client.getIdentityByPrincipal('0x01')).rejects.toMatchObject({
+      code: 'bad_answer'
+    });
+    unpinnedHeight = 60;
+    await client.getIdentityByPrincipal('0x02');
+    expect(reads(calls).every((it) => param(it, 'height') !== 'NaN')).toBe(
+      true
+    );
+  });
+
+  it('forgets the pins with the cache', async () => {
+    let finalized = 1000;
+    const { client, calls } = setup((call) =>
+      path(call) === '/v1/status'
+        ? status(finalized)
+        : {
+            status: 200,
+            json: {
+              read: stamp(Number(param(call, 'height'))),
+              data: IDENTITY,
+              next: null
+            }
+          }
+    );
+    await client.getIdentityByPrincipal('0x01');
+    client.clearCache();
+    finalized = 900;
+    await client.getIdentityByPrincipal('0x01');
+    expect(reads(calls).map((it) => param(it, 'height'))).toEqual([
+      '1000',
+      '900'
+    ]);
+  });
+
+  it.each([
+    ['the route', 'no such route'],
+    ['the import file', "this node's chain imports no identities file"]
+  ])('refuses a not_found of a node that lacks %s', async (_name, message) => {
+    const { client } = setup(
+      withStatus(
+        () => ({
+          status: 404,
+          json: { read: stamp(10), error: { code: 'not_found', message } }
+        }),
+        10
+      )
+    );
+    await expect(client.getImportedIdentity('0xab')).rejects.toMatchObject({
+      code: 'bad_answer',
+      status: 404
+    });
+  });
+
+  it('refuses an empty 200 as an answer it cannot read', async () => {
+    const { client } = setup(withStatus(() => ({ status: 200 }), 10));
+    await expect(client.getLevel('0x01', { height: 10 })).rejects.toMatchObject(
+      { code: 'bad_answer', status: 200 }
+    );
+    await expect(client.submit({ signed: '0x00' })).rejects.toMatchObject({
+      code: 'bad_answer'
+    });
+  });
+
   it('refuses an answer without data or without its read stamp', async () => {
     let json: unknown = { read: stamp(10), next: null };
     const { client } = setup(withStatus(() => ({ status: 200, json }), 10));
@@ -797,11 +908,12 @@ describe('ChainGatewayClient reads', () => {
     const { client, calls } = setup((call) => {
       if (path(call) === '/v1/status') return status(50);
       if (param(call, 'height') !== null) {
+        // A node past the height that no longer holds it: no waiting.
         return {
           status: 409,
           json: {
-            read: stamp(48),
-            error: { code: 'height_gone', message: 'holds 1..48' }
+            read: stamp(120),
+            error: { code: 'height_gone', message: 'holds 57..120' }
           }
         };
       }
@@ -819,6 +931,33 @@ describe('ChainGatewayClient reads', () => {
     await expect(client.getIdentityByPrincipal('0xAB')).rejects.toMatchObject({
       code: 'height_gone'
     });
+  });
+
+  it('waits for a pin a node has not finalized yet, then reads it', async () => {
+    let tries = 0;
+    const { client, calls, sleeps } = setup((call) => {
+      if (path(call) === '/v1/status') return status(1001);
+      if (tries++ < 2) {
+        return {
+          status: 409,
+          json: {
+            read: stamp(1000),
+            error: { code: 'height_gone', message: 'x' }
+          }
+        };
+      }
+      return {
+        status: 200,
+        json: { read: stamp(1001), data: IDENTITY, next: null }
+      };
+    });
+    expect(await client.getIdentityByPrincipal('0x01')).toEqual(IDENTITY);
+    expect(reads(calls).map((it) => param(it, 'height'))).toEqual([
+      '1001',
+      '1001',
+      '1001'
+    ]);
+    expect(sleeps).toEqual([250, 500]);
   });
 
   it('raises the pin to the height an unpinned read was answered at', async () => {
@@ -845,7 +984,13 @@ describe('ChainGatewayClient reads', () => {
     });
     await client.getIdentityByPrincipal('0x01');
     await client.getIdentityByPrincipal('0x02');
+    // A node behind 1210 is waited for (three tries a pin), then read
+    // unpinned; the answer at 1212 raises the pin.
     expect(reads(calls).map((it) => param(it, 'height'))).toEqual([
+      '1210',
+      '1210',
+      '1210',
+      '1210',
       '1210',
       '1210',
       null,
@@ -1449,7 +1594,7 @@ describe('ChainGatewayClient reads', () => {
     });
   });
 
-  it('throws gone when the feed no longer holds the height, asked twice', async () => {
+  it('throws gone when the feed no longer holds the height, asked up to the retries', async () => {
     const { client, calls } = setup(
       withStatus(() => ({
         status: 410,
@@ -1457,14 +1602,14 @@ describe('ChainGatewayClient reads', () => {
       }))
     );
     await expect(client.getChanges(1)).rejects.toMatchObject({ code: 'gone' });
-    expect(reads(calls)).toHaveLength(2);
+    expect(reads(calls)).toHaveLength(3);
   });
 
   it('asks again when one node says gone: another may hold the height', async () => {
     let n = 0;
     const { client } = setup(
       withStatus(() =>
-        n++ === 0
+        n++ < 2
           ? {
               status: 410,
               json: { read: stamp(130), error: { code: 'gone', message: 'x' } }
@@ -1742,6 +1887,21 @@ describe('ChainGatewayClient writes', () => {
     });
   });
 
+  it('refuses a draft or submit answer with a stamp it cannot read', async () => {
+    const { client } = setup(
+      withStatus(() => ({
+        status: 200,
+        json: {
+          read: { ...stamp(5, 'head'), height: 'five' },
+          data: { txId: '0x' + 'cd'.repeat(32), accepted: true }
+        }
+      }))
+    );
+    await expect(client.submit({ signed: '0x00' })).rejects.toMatchObject({
+      code: 'bad_answer'
+    });
+  });
+
   it('refuses a draft or submit answered by another chain', async () => {
     const { client } = setup(
       withStatus(() => ({
@@ -1849,9 +2009,39 @@ describe('profile documents', () => {
     });
   });
 
-  it('answers null when the store has none', async () => {
-    const { client } = setup(() => ({ status: 404 }));
+  it.each([
+    [
+      "the proxy's not_found",
+      {
+        error: 'not_found',
+        message: 'this store holds no document with that CID'
+      }
+    ],
+    ["the edge's not_found", { error: { code: 'not_found', message: 'x' } }]
+  ])('answers null for %s', async (_name, json) => {
+    const { client } = setup(() => ({ status: 404, json }));
     expect(await client.getProfileDoc(cid)).toBeNull();
+  });
+
+  it("answers null for the bucket's NoSuchKey", async () => {
+    const { client } = setup(() => ({
+      status: 404,
+      bytes: Buffer.from(
+        '<?xml version="1.0"?><Error><Code>NoSuchKey</Code></Error>'
+      )
+    }));
+    expect(await client.getProfileDoc(cid)).toBeNull();
+  });
+
+  it.each([
+    ['an empty 404', undefined],
+    ['a 404 of another kind', { error: 'no_route', message: 'x' }]
+  ])('refuses %s for a document', async (_name, json) => {
+    const { client } = setup(() => ({ status: 404, json }));
+    await expect(client.getProfileDoc(cid)).rejects.toMatchObject({
+      code: 'bad_answer',
+      status: 404
+    });
   });
 
   it('reads a CID in hex or in base32 text', () => {

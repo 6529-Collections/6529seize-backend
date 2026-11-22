@@ -131,8 +131,10 @@ export interface ChainIdentity {
   /** The 6529.io profile id it was imported from, when the API gives it. */
   readonly legacyId?: string | null;
   /**
-   * The wallet that signed IDENTITY_CREATE (never changes), when the
-   * gateway gives it.
+   * The wallet that made the identity, fixed for its life: for one the
+   * import created, the file's `primary` (its anchor at the import); for
+   * one made on the chain, IDENTITY_CREATE's signer. Null when it has
+   * neither; absent from a gateway older than the field.
    */
   readonly founder?: string | null;
 }
