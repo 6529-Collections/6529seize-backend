@@ -225,12 +225,17 @@ export function profileHandle(
   placeholderTaken: boolean
 ): string {
   if (chain.handle) {
+    // The chain's handles are lowercase; the case its owner writes is in the
+    // profile document (displayName), else the case 6529.io had.
     const wanted = chain.handle.toLowerCase();
+    const display = chain.doc?.displayName;
+    if (display?.toLowerCase() === wanted) {
+      return display;
+    }
     if (current?.handle.toLowerCase() === wanted) {
       return current.handle;
     }
-    const display = chain.doc?.displayName;
-    return display?.toLowerCase() === wanted ? display : chain.handle;
+    return chain.handle;
   }
   if (current && isPlaceholderHandle(current.handle)) {
     return current.handle;

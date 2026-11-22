@@ -170,11 +170,12 @@ describeWithSeed(
           {
             principalId: P,
             profileId: ALICE,
-            handle: 'Alice',
+            handle: 'alice',
             wallets: [A, B, C],
             primary: A,
             doc: {
               ...EMPTY_PROFILE_DOC_FIELDS,
+              displayName: 'Alice',
               website: 'https://example.org',
               statements: [
                 { group: 'GENERAL', type: 'BIO', value: 'hi', comment: null }
