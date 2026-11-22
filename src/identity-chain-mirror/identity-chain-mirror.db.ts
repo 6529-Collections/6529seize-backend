@@ -255,9 +255,9 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: conn }
       );
       for (const row of addressRows) {
-        (walletsByKey[row.consolidation_key] ??= []).push(
-          row.address.toLowerCase()
-        );
+        const list = walletsByKey[row.consolidation_key] ?? [];
+        list.push(row.address.toLowerCase());
+        walletsByKey[row.consolidation_key] = list;
       }
     }
     const profile = await this.db.oneOrNull<ProfileRowState>(

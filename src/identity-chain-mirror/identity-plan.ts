@@ -186,7 +186,7 @@ function profileHandle(
   if (chain.handle) {
     return chain.handle;
   }
-  if (current && current.handle.toLowerCase().startsWith('id-0x')) {
+  if (current?.handle.toLowerCase().startsWith('id-0x')) {
     return current.handle;
   }
   return placeholderHandle(chain.primary);
