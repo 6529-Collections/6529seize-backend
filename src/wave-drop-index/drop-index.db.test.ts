@@ -10,7 +10,12 @@ import {
   TEST_GRANT_ID,
   testGrantEntity
 } from '@/tests/fixtures/relay-events.fixture';
-import { DropIndexDb, IngestRow, RejectRow } from './drop-index.db';
+import {
+  DropIndexDb,
+  IngestRow,
+  PENDING_PER_AUTHOR,
+  RejectRow
+} from './drop-index.db';
 
 const eventId = (n: number) => `0x${String(n).padStart(64, '0')}`;
 
@@ -53,6 +58,7 @@ function aReject(n: number, overrides: Partial<RejectRow> = {}): RejectRow {
 }
 
 const AUTHOR = `0x${'a'.repeat(40)}`;
+const NOW = 10_000;
 
 const SITE_EVENT: DeviceSignedEventEntity = {
   id: eventId(2),
@@ -157,7 +163,7 @@ describeWithSeed(
         1
       );
       expect(await db.markSiteWritten()).toBe(1);
-      const pending = await db.pendingRelayEvents(10);
+      const pending = await db.pendingRelayEvents(10, NOW);
       expect(pending.map((e) => [e.event_id, e.apply_attempts])).toEqual([
         [eventId(1), 0],
         [eventId(3), 0]
@@ -181,7 +187,7 @@ describeWithSeed(
         [eventId(3), 'relay', 'refused', 'no', 'drop-3', 2],
         [eventId(4), 'site', 'logged', null, 'drop-4', 0]
       ]);
-      expect(await db.pendingRelayEvents(10)).toEqual([]);
+      expect(await db.pendingRelayEvents(10, NOW)).toEqual([]);
     });
 
     it('keeps a bad copy apart, so the valid copy of the same id is stored', async () => {
@@ -247,15 +253,53 @@ describeWithSeed(
       expect(await db.hasTombstone('drop-1', AUTHOR)).toBe(false);
     });
 
-    it('lets an event wait without counting a try', async () => {
-      await db.ingest([aRow(1)], [], 'r-1', [], 1);
-      const [pending] = await db.pendingRelayEvents(10);
-      await db.markApplied(pending.ingest_seq, 'waiting', 'no post yet', null);
-      await db.markApplied(pending.ingest_seq, 'waiting', 'no post yet', null);
-      const [still] = await db.pendingRelayEvents(10);
-      expect([still.status, still.status_reason, still.apply_attempts]).toEqual(
-        ['logged', 'no post yet', 0]
+    it('lets an event wait without counting a try, and its drop waits with it', async () => {
+      // 1 and 2 are a post and its edit (drop-1); 3 is another drop.
+      await db.ingest(
+        [aRow(1), aRow(2, { kind: 2, drop_id: 'drop-1' }), aRow(3)],
+        [],
+        'r-1',
+        [],
+        1
       );
+      const [first] = await db.pendingRelayEvents(10, NOW);
+      await db.markApplied(first.ingest_seq, 'waiting', 'no post', null, 500);
+      await db.markApplied(first.ingest_seq, 'waiting', 'no post', null, 600);
+      // Until 600 neither the waiting event nor its drop's edit is taken.
+      expect(
+        (await db.pendingRelayEvents(10, 599)).map((e) => e.event_id)
+      ).toEqual([eventId(3)]);
+      const due = await db.pendingRelayEvents(10, 600);
+      expect(due.map((e) => e.event_id)).toEqual([
+        eventId(1),
+        eventId(2),
+        eventId(3)
+      ]);
+      expect([
+        due[0].status,
+        due[0].status_reason,
+        due[0].apply_attempts
+      ]).toEqual(['logged', 'no post', 0]);
+      // Any other outcome clears the wait.
+      await db.markApplied(first.ingest_seq, 'logged', 'down', null, 9_999);
+      expect(
+        (await db.pendingRelayEvents(10, 0)).map((e) => e.event_id)
+      ).toEqual([eventId(1), eventId(2), eventId(3)]);
+    });
+
+    it("takes at most a share of one author's events in a batch", async () => {
+      const many = Array.from({ length: PENDING_PER_AUTHOR + 2 }, (_, i) =>
+        aRow(i + 1)
+      );
+      const other = aRow(99, { author: `0x${'b'.repeat(40)}` });
+      await db.ingest([...many, other], [], 'r-1', [], 1);
+      const batch = await db.pendingRelayEvents(100, NOW);
+      expect(batch).toHaveLength(PENDING_PER_AUTHOR + 1);
+      expect(batch.map((e) => e.event_id)).toEqual([
+        ...many.slice(0, PENDING_PER_AUTHOR).map((r) => r.event_id),
+        eventId(99)
+      ]);
+      expect(await db.pendingRelayEvents(5, NOW)).toHaveLength(5);
     });
 
     it('releases a reservation only once it is stale and unfinished', async () => {

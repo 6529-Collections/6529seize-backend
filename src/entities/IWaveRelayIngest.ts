@@ -109,6 +109,12 @@ export class WaveRelayEventEntity {
   @Column({ type: 'int', nullable: false, default: 0 })
   readonly apply_attempts!: number;
 
+  // A pending event that waits for something else (its post, a stale
+  // reservation) is not tried again before this (ms); the drop's later
+  // events wait with it.
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly next_try_at!: number | null;
+
   @Column({ type: 'bigint', nullable: false })
   readonly received_at!: number;
 }

@@ -15,6 +15,7 @@ import { dropIdOfEvent } from './drop-index.subscriber';
 import {
   MAX_APPLY_ATTEMPTS,
   POST_WAIT_MS,
+  WAIT_RETRY_MS,
   RelayApplyStore,
   RelayDropApplier,
   RelayDropWrites
@@ -81,7 +82,11 @@ class FakeStore implements RelayApplyStore {
     this.released.push(eventId);
   }
 
-  async pendingRelayEvents(limit: number) {
+  readonly asked: number[] = [];
+  readonly waits: [number, number | null][] = [];
+
+  async pendingRelayEvents(limit: number, now: number) {
+    this.asked.push(now);
     return this.events.slice(0, limit);
   }
 
@@ -89,9 +94,11 @@ class FakeStore implements RelayApplyStore {
     ingestSeq: number,
     status: string,
     reason: string | null,
-    dropId: string | null
+    dropId: string | null,
+    nextTryAt: number | null = null
   ) {
     this.marks.push([ingestSeq, status, reason, dropId]);
+    if (status === 'waiting') this.waits.push([ingestSeq, nextTryAt]);
   }
 }
 
@@ -275,6 +282,9 @@ describe('RelayDropApplier', () => {
     expect(store.marks).toEqual([
       [edit.ingest_seq, 'waiting', 'Drop drop-9 not found', null]
     ]);
+    // Out of the batches for a while, so waiting events never fill them.
+    expect(store.asked).toEqual([soon()]);
+    expect(store.waits).toEqual([[edit.ingest_seq, soon() + WAIT_RETRY_MS]]);
     const tired = new FakeStore([
       { ...edit, apply_attempts: MAX_APPLY_ATTEMPTS - 1 }
     ]);

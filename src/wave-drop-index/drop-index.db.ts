@@ -82,6 +82,9 @@ function toIngested(row: StoredRow): IngestedEvent {
   };
 }
 
+/** One author's events a write batch takes at most. */
+export const PENDING_PER_AUTHOR = 20;
+
 /** A signed write finishes in seconds; one this old was cut off. */
 const STALE_RESERVATION_MS = 15 * 60 * 1000;
 
@@ -243,12 +246,29 @@ export class DropIndexDb extends LazyDbAccessCompatibleService {
   }
 
   /** Relay-only events not written into 6529.io's tables yet, in order. */
-  async pendingRelayEvents(limit: number): Promise<IngestedEvent[]> {
+  async pendingRelayEvents(
+    limit: number,
+    now: number
+  ): Promise<IngestedEvent[]> {
+    // Due events only, at most PENDING_PER_AUTHOR of one author's, and
+    // none of a drop that has an earlier event still waiting: one wallet's
+    // waiting events can't fill the batch, and a drop's events stay in order.
     const rows = await this.db.execute<StoredRow>(
-      `select * from ${WAVE_RELAY_EVENTS_TABLE}
-        where origin = 'relay' and status = 'logged'
+      `select * from (
+          select e.*, row_number() over (
+                   partition by e.author order by e.ingest_seq) as author_rank
+            from ${WAVE_RELAY_EVENTS_TABLE} e
+           where e.origin = 'relay' and e.status = 'logged'
+             and (e.next_try_at is null or e.next_try_at <= :now)
+             and not exists (
+               select 1 from ${WAVE_RELAY_EVENTS_TABLE} w
+                where w.drop_id = e.drop_id and w.ingest_seq < e.ingest_seq
+                  and w.origin = 'relay' and w.status = 'logged'
+                  and w.next_try_at > :now)
+        ) due
+        where author_rank <= :perAuthor
         order by ingest_seq limit :limit`,
-      { limit }
+      { limit, now, perAuthor: PENDING_PER_AUTHOR }
     );
     return rows.map(toIngested);
   }
@@ -325,22 +345,26 @@ export class DropIndexDb extends LazyDbAccessCompatibleService {
     ingestSeq: number,
     status: 'applied' | 'refused' | 'failed' | 'logged' | 'waiting',
     reason: string | null,
-    dropId: string | null
+    dropId: string | null,
+    nextTryAt: number | null = null
   ): Promise<void> {
-    // 'waiting' stays pending (as 'logged') without counting a try.
+    // 'waiting' stays pending (as 'logged') without counting a try, and is
+    // not tried again before nextTryAt.
     await this.db.execute(
       `update ${WAVE_RELAY_EVENTS_TABLE}
           set status = :stored, status_reason = :reason,
               drop_id = coalesce(:dropId, drop_id),
               apply_attempts = apply_attempts
-                + if(:status in ('applied', 'waiting'), 0, 1)
+                + if(:status in ('applied', 'waiting'), 0, 1),
+              next_try_at = :nextTryAt
         where ingest_seq = :ingestSeq`,
       {
         ingestSeq,
         status,
         stored: status === 'waiting' ? 'logged' : status,
         reason: reason?.slice(0, 255) ?? null,
-        dropId
+        dropId,
+        nextTryAt: status === 'waiting' ? nextTryAt : null
       }
     );
   }

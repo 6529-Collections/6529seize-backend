@@ -73,7 +73,11 @@ export interface RelayDropWrites {
 
 /** What the applier needs of the index's table. */
 export interface RelayApplyStore {
-  pendingRelayEvents(limit: number): Promise<IngestedEvent[]>;
+  /**
+   * Relay-only events to write, oldest first: those due at `now`, a share
+   * per author, none behind a waiting event of the same drop.
+   */
+  pendingRelayEvents(limit: number, now: number): Promise<IngestedEvent[]>;
   /** Whether the index holds a checked delete of this drop by `author`. */
   hasTombstone(dropId: string, author: string): Promise<boolean>;
   /** Whether 6529.io holds an unfinished reservation of this event. */
@@ -83,11 +87,13 @@ export interface RelayApplyStore {
    * to device_signed_events, never finished), so the event can be written.
    */
   releaseStaleReservation(eventId: string): Promise<void>;
+  /** 'waiting' leaves the event out of the batches until `nextTryAt`. */
   markApplied(
     ingestSeq: number,
     status: 'applied' | 'refused' | 'failed' | 'logged' | 'waiting',
     reason: string | null,
-    dropId: string | null
+    dropId: string | null,
+    nextTryAt?: number | null
   ): Promise<void>;
 }
 
@@ -128,6 +134,8 @@ class Wait extends Error {
 
 /** How long an edit or a reaction waits for its post. */
 export const POST_WAIT_MS = 60 * 60 * 1000;
+/** How long a waiting event stays out of the write batches. */
+export const WAIT_RETRY_MS = 5 * 60 * 1000;
 
 function reasonOf(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
@@ -169,7 +177,10 @@ export class RelayDropApplier {
     };
     // A drop whose event must wait: its later events wait too.
     const waiting = new Set<string>();
-    for (const event of await this.store.pendingRelayEvents(limit)) {
+    for (const event of await this.store.pendingRelayEvents(
+      limit,
+      this.now()
+    )) {
       if (this.now() >= deadline) break;
       if (event.drop_id && waiting.has(event.drop_id)) continue;
       try {
@@ -186,7 +197,8 @@ export class RelayDropApplier {
             event.ingest_seq,
             'waiting',
             reason,
-            null
+            null,
+            this.now() + WAIT_RETRY_MS
           );
           report.retry++;
           if (event.drop_id) waiting.add(event.drop_id);

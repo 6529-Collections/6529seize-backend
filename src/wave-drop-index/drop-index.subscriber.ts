@@ -96,6 +96,8 @@ export interface DropIndexRunOptions {
   readonly flushMs: number;
   /** Events a HIST page asks for (the relay sends at most 500). */
   readonly pageSize: number;
+  /** Arrivals held in memory at most (default MAX_HELD). */
+  readonly maxHeld?: number;
 }
 
 export interface RelayIngestReport {
@@ -104,6 +106,11 @@ export interface RelayIngestReport {
   received: number;
   stored: number;
   held: number;
+  /**
+   * Events not stored this run (past the deadline or past MAX_HELD); the
+   * cursors stay before them, so the next run reads them again.
+   */
+  left: number;
   rejected: number;
   reasons: Record<string, number>;
   resyncs: number;
@@ -118,6 +125,12 @@ export const MAX_SINCE = 800;
 export const SUB_WAVES = 450;
 /** Arrivals checked and stored at once. */
 const STORE_BATCH = 500;
+/**
+ * Arrivals a run holds in memory at most. Past it, the run takes nothing
+ * more from the relay, stores what it holds and ends; every cursor stays
+ * before what it didn't take.
+ */
+export const MAX_HELD = 10 * STORE_BATCH;
 const ALL_SID = 1;
 /** The wave ids the index's tables hold. */
 const MAX_WAVE_CHARS = 255;
@@ -179,6 +192,7 @@ export class DropIndexSubscriber {
       received: 0,
       stored: 0,
       held: 0,
+      left: 0,
       rejected: 0,
       reasons: {},
       resyncs: 0,
@@ -216,7 +230,12 @@ export class DropIndexSubscriber {
         cursors.map((c) => [c.wave, c.logEpoch === relayEpoch ? c.rseq : 0])
       );
       const ahead = new Map<string, Arrival[]>();
+      let aheadCount = 0;
+      let full = false;
       const replayed = new Set<string>();
+      // Once full, nothing more is taken this run: what was taken is, per
+      // wave, a run of its log from the cursor, so cursors stay exact.
+      const maxHeld = options.maxHeld ?? MAX_HELD;
       const handlers = (live: boolean): CrpSubscriptionHandlers => ({
         onEvent: (wave, logEpoch, item) => {
           lastFrameAt = this.now();
@@ -224,6 +243,11 @@ export class DropIndexSubscriber {
           if (live && !known.has(wave)) {
             // A wave first seen live: read it from its start.
             toPage.set(wave, 0);
+            return;
+          }
+          if (full || arrivals.length + aheadCount >= maxHeld) {
+            full = true;
+            report.left++;
             return;
           }
           const arrival = { wave, logEpoch, item };
@@ -237,13 +261,22 @@ export class DropIndexSubscriber {
             arrivals.push(arrival);
           } else {
             ahead.set(wave, [...(ahead.get(wave) ?? []), arrival]);
+            aheadCount++;
           }
         },
         onEose: (wave) => {
           lastFrameAt = this.now();
-          replayed.add(wave);
-          arrivals.push(...(ahead.get(wave) ?? []));
+          const held = ahead.get(wave) ?? [];
           ahead.delete(wave);
+          aheadCount -= held.length;
+          if (full) {
+            // Replay events between the cursor and these may have been
+            // passed over: storing these would skip them.
+            report.left += held.length;
+            return;
+          }
+          replayed.add(wave);
+          arrivals.push(...held);
         },
         onResync: (wave) => {
           lastFrameAt = this.now();
@@ -302,34 +335,21 @@ export class DropIndexSubscriber {
         if (
           !arrivals.length &&
           !toPage.size &&
-          this.now() - lastFrameAt >= options.quietMs
+          (full || this.now() - lastFrameAt >= options.quietMs)
         ) {
           break;
         }
       }
+      report.left += aheadCount;
     } catch (error) {
       report.error = error instanceof Error ? error.message : String(error);
       this.log(`[DROP INDEX] ${relay}: ${report.error}`);
     } finally {
-      // Nothing more arrives once closed; what did is stored below.
       connection?.close();
     }
-    if (arrivals.length && relayId && report.error === null) {
-      try {
-        // What came before the close, at most a few batches.
-        while (arrivals.length) {
-          await this.store_(
-            relayId,
-            arrivals.splice(0, STORE_BATCH),
-            report,
-            grantChecks
-          );
-        }
-      } catch (error) {
-        report.error = error instanceof Error ? error.message : String(error);
-        this.log(`[DROP INDEX] ${relay}: ${report.error}`);
-      }
-    }
+    // What came after the last store waits for the next run, which reads it
+    // again from the cursors (they stay before it).
+    report.left += arrivals.splice(0).length;
     return report;
   }
 

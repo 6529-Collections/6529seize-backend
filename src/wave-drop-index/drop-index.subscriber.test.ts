@@ -21,6 +21,7 @@ import {
   DropIndexStore,
   DropIndexSubscriber,
   dropIdOfEvent,
+  MAX_HELD,
   MAX_SINCE,
   SUB_WAVES
 } from './drop-index.subscriber';
@@ -179,7 +180,7 @@ function aSubscriber(
     reader?: boolean;
   } = {}
 ) {
-  let t = 0;
+  const clock = { t: 0 };
   const logs: string[] = [];
   const subscriber = new DropIndexSubscriber(
     store,
@@ -191,12 +192,12 @@ function aSubscriber(
     () => listeners,
     (message) => logs.push(message),
     reader ? () => ({ grant: { id: 'g' }, sig: '0x01' }) : null,
-    () => t,
+    () => clock.t,
     async (ms) => {
-      t += ms;
+      clock.t += ms;
     }
   );
-  return { subscriber, logs };
+  return { subscriber, logs, clock };
 }
 
 const RUN = { budgetMs: 10_000, quietMs: 1_000, flushMs: 250, pageSize: 2 };
@@ -718,5 +719,73 @@ describe('DropIndexSubscriber', () => {
     expect(report.stored).toBe(1_200);
     expect(batches).toBe(3);
     expect(store.cursorsOf.get('r-1')!.get('wave-1')!.rseq).toBe(1_200);
+  });
+
+  it('leaves what it could not store by the deadline to the next run', async () => {
+    const store = new FakeStore();
+    const events = Array.from({ length: 1_200 }, (_, n) =>
+      item(n + 1, testSignedEvent({ seq: n + 1 }))
+    );
+    const relay = new FakeRelay(
+      'r-1',
+      events.map((it) => ({ t: 'EV' as const, wave: 'wave-1', item: it }))
+    );
+    const { subscriber, clock } = aSubscriber(store, {
+      'wss://a.example': relay
+    });
+    // Each batch takes a second; the run has a second and a half.
+    const ingest = store.ingest.bind(store);
+    store.ingest = async (...args) => {
+      clock.t += 1_000;
+      return ingest(...args);
+    };
+    const [report] = await subscriber.run({
+      ...RUN,
+      budgetMs: 1_500,
+      relays: ['wss://a.example']
+    });
+    expect(report).toMatchObject({ stored: 1_000, left: 200, error: null });
+    expect(clock.t).toBeLessThan(2_500);
+    expect(store.cursorsOf.get('r-1')!.get('wave-1')!.rseq).toBe(1_000);
+  });
+
+  it('takes no more than it may hold, and keeps every cursor before what it left', async () => {
+    expect(MAX_HELD).toBe(5_000);
+    const store = new FakeStore();
+    store.cursorsOf.set(
+      'r-1',
+      new Map([['wave-2', { wave: 'wave-2', logEpoch: 1, rseq: 1 }]])
+    );
+    const one = [1, 2, 3, 4].map((seq) => testSignedEvent({ seq }));
+    const two = [2, 3, 4].map((seq) =>
+      testSignedEvent({ wave: 'wave-2', seq })
+    );
+    const relay = new FakeRelay('r-1', [
+      // wave-2: one ahead of its replay, then the replay, cut by the limit.
+      { t: 'EV', wave: 'wave-2', item: item(4, two[2]) },
+      { t: 'EV', wave: 'wave-1', item: item(1, one[0]) },
+      { t: 'EV', wave: 'wave-2', item: item(2, two[0]) },
+      { t: 'EV', wave: 'wave-1', item: item(2, one[1]) },
+      { t: 'EV', wave: 'wave-2', item: item(3, two[1]) },
+      { t: 'EV', wave: 'wave-1', item: item(3, one[2]) },
+      { t: 'EOSE', wave: 'wave-2', rseq: 4 },
+      { t: 'EV', wave: 'wave-1', item: item(4, one[3]) }
+    ]);
+    const { subscriber } = aSubscriber(store, { 'wss://a.example': relay });
+    const [report] = await subscriber.run({
+      ...RUN,
+      maxHeld: 4,
+      relays: ['wss://a.example']
+    });
+    expect(report).toMatchObject({ stored: 3, left: 4, error: null });
+    expect(store.rows.map((r) => r.event_id)).toEqual([
+      one[0].id,
+      two[0].id,
+      one[1].id
+    ]);
+    expect(Array.from(store.cursorsOf.get('r-1')!.values())).toEqual([
+      { wave: 'wave-2', logEpoch: 1, rseq: 2 },
+      { wave: 'wave-1', logEpoch: 1, rseq: 2 }
+    ]);
   });
 });
