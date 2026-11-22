@@ -10,7 +10,8 @@
  *                 identity_notifications row the view lacks (run before
  *                 and again after setting NOTIFY_VIEW_MODE=on)
  *   seal          write the CARRIED rows not yet archived to the record log
- *   record-cuts   write the cuts in force to the record log
+ *   record-cuts   write each derived cause's windows to the record log
+ *                 (run after every change to NOTIFY_DERIVED_CAUSES)
  */
 import 'reflect-metadata';
 import { doInDbContext } from '../../../src/secrets';
