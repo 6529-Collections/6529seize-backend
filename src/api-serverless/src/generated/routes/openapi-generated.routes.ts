@@ -14,6 +14,7 @@ import { E2eeAcknowledgeDeviceNoticeRequest, E2eeAcknowledgeDeviceNoticeResponse
 import { BeginMarketTransactionAttemptRequest, BeginMarketTransactionAttemptResponse, ContinueMarketOperationRequest, ContinueMarketOperationResponse, GetMarketBatchCapabilitiesRequest, GetMarketBatchCapabilitiesResponse, GetMarketOperationRequest, GetMarketOperationResponse, GetMarketOrderRequest, GetMarketOrderResponse, GetMarketOrdersRequest, GetMarketOrdersResponse, GetMyMarketOperationsRequest, GetMyMarketOperationsResponse, PreflightMarketBatchRequest, PreflightMarketBatchResponse, PrepareMarketOperationRequest, PrepareMarketOperationResponse, PublishMarketOperationRequest, PublishMarketOperationResponse, RejectMarketTransactionAttemptRequest, RejectMarketTransactionAttemptResponse, SubmitMarketOperationRequest, SubmitMarketOperationResponse } from './operations';
 import { GetModerationAccessRequest, GetModerationAccessResponse, GetModerationCheckRequest, GetModerationCheckResponse, GetModerationChecksRequest, GetModerationChecksResponse, GetModerationCountsRequest, GetModerationCountsResponse, GetModerationProfileCheckRequest, GetModerationProfileCheckResponse, GetModerationReportCheckRequest, GetModerationReportCheckResponse, GetModerationReviewCasesRequest, GetModerationReviewCasesResponse, ModerationCheckActionRequest, ModerationCheckActionResponse } from './operations';
 import { GetProfilePreferencesRequest, GetProfilePreferencesResponse, PutProfilePreferencesRequest, PutProfilePreferencesResponse } from './operations';
+import { GetSignedRecordsAnchorRequest, GetSignedRecordsAnchorResponse, GetSignedRecordsOwnersRequest, GetSignedRecordsOwnersResponse } from './operations';
 import { GetTelemetryDiagnosticsBundleRequest, GetTelemetryDiagnosticsBundleResponse, ListTelemetryDiagnosticsRequest, ListTelemetryDiagnosticsResponse } from './operations';
 import { handleAppendMuseumRecord, handleCreateArtworkDossierExport, handleGetArtworkArtistRecord, handleGetArtworkDossier, handleGetArtworkDossierExport, handleListMuseumRecords } from '@/api/artwork-documentation/artwork-documentation-museum.handlers';
 import { handleCancelDocumentationUpload, handleCommentDocumentationThread, handleCompleteDocumentationUpload, handleConfirmDocumentation, handleCreateDocumentationContext, handleCreateDocumentationThread, handleCreateDocumentationWork, handleDownloadDocumentationAsset, handleGetDocumentationContext, handleGetDocumentationProfiles, handleGetDocumentationPublicPreview, handleGetDocumentationRevision, handleGetDocumentationUpload, handleGetDocumentationWork, handleGrantDocumentationAccess, handleImportDocumentationSource, handleLinkDocumentationAsset, handleLinkDocumentationSource, handleListDocumentationGrants, handleListDocumentationProgram, handleListDocumentationRevisions, handleListDocumentationThreads, handleListDocumentationWorks, handlePatchDocumentationAssetLink, handlePatchDocumentationContext, handlePatchDocumentationModule, handlePatchDocumentationThread, handlePinDocumentationArtist, handlePreviewDocumentationSource, handlePreviewDocumentationUpgrade, handleReviewDocumentation, handleRevokeDocumentationAccess, handleSignDocumentationParts, handleStartDocumentationUpload, handleUnlinkDocumentationAsset, handleUpgradeDocumentationProfile } from '@/api/artwork-documentation/artwork-documentation.handlers';
@@ -64,6 +65,7 @@ import { handleGetProfilePreferences, handlePutProfilePreferences } from '@/api/
 import { handleRefreshPushInstallationBadge } from '@/api/push-notifications/refresh-push-installation-badge.handler';
 import { handleRevokePushInstallation } from '@/api/push-notifications/revoke-push-installation.handler';
 import { handleGetGlobalRepCategoryGivers, handleGetGlobalRepCategoryOverview, handleGetGlobalRepCategoryRatings, handleGetGlobalRepCategoryRecipients, handleGetGlobalRepCategoryWaveContributors, handleGetGlobalRepCategoryWaveOverview, handleGetGlobalRepCategoryWaves } from '@/api/rep-categories/global-rep-category.handlers';
+import { handleGetSignedRecordsAnchor, handleGetSignedRecordsOwners } from '@/api/signed-records/signed-records.handlers';
 import { handleGetSubscriptionCoverage } from '@/api/subscriptions/get-subscription-coverage.handler';
 import { handleGetTdhRules } from '@/api/tdh/get-tdh-rules.handler';
 import { handleGetTelemetryDiagnosticsBundle, handleListTelemetryDiagnostics } from '@/api/telemetry/telemetry-diagnostics.handlers';
@@ -2334,6 +2336,26 @@ router.get(
     res: Response<ApiResponse<GetGlobalRepCategoryWavesResponse>>
   ) => {
     res.send(await handleGetGlobalRepCategoryWaves(req));
+  }
+);
+
+router.get(
+  '/signed-records/anchor',
+  async (
+    req: GetSignedRecordsAnchorRequest,
+    res: Response<ApiResponse<GetSignedRecordsAnchorResponse>>
+  ) => {
+    res.send(await handleGetSignedRecordsAnchor(req));
+  }
+);
+
+router.get(
+  '/signed-records/owners',
+  async (
+    req: GetSignedRecordsOwnersRequest,
+    res: Response<ApiResponse<GetSignedRecordsOwnersResponse>>
+  ) => {
+    res.send(await handleGetSignedRecordsOwners(req));
   }
 );
 

@@ -241,3 +241,34 @@ Rollout order: install this policy, deploy `dbMigrationsLoop` (creates
 job kind), `dropWriteOutboxLoop`, then `api`, and only then set
 `WS_POST_OUTBOX=true` on `seizeAPI`. With the flag off nothing writes outbox
 rows and the sweeper finds none, so the order is safe to stop at any step.
+
+## Signed record log worker
+
+`signedRecordLogLoop` runs two scheduled functions in `eu-west-1` on
+`lambda-vpc-role`: `signedRecordLogCloser` every 5 minutes and
+`signedRecordLogArchiver` hourly at minute 7.
+`SignedRecordLogStagingDeployment.json` permits only those two functions and
+their versions, the `signedRecordLogLoop-staging` stack, the
+`signedrecordlogloop-sta*-serverlessdeploy*` deployment-bucket prefix, the two
+log groups with their out-of-memory metric filters, the two schedules
+`signedRecordLogLoop-staging-close` and `signedRecordLogLoop-staging-archive`,
+and the two out-of-memory alarms (`signedRecordLogLoop-staging-<function>-OOM`),
+all in `eu-west-1`. The schedule names are declared in the worker definition,
+because CloudFormation would otherwise truncate the stack name in generated rule
+names (for example, `signedRecordLogLoop-stagi-...`). The bucket prefix allows
+CloudFormation's truncated stack component and generated suffix; it grants no
+application-bucket access and no direct invocation.
+
+`SignedRecordLogStagingDeployment.json` has `ACCOUNT_ID` where the account id
+goes. Replace it with the account id, as in the sibling files, before validating
+and installing. Its manifest entry measures the committed file's compact JSON,
+placeholder included; with the id filled in, the document is 4,889 compact
+characters. The role's inline budget is 10,240 characters in total and the two
+inline worker policies above already use most of it, so install this one as a
+customer-managed policy named `SignedRecordLogStagingDeployment` and attach it
+to this environment's deployment role (the account's managed-policies-per-role
+quota is 20). Customer-managed policy names are account-wide, so the staging and
+production documents have different names. Install it through the administrative
+identity after Access Analyzer validation and positive/negative simulation. The
+existing managed policies, trust policy and runtime role remain unchanged.
+Deploy through the ordinary GitHub workflow afterward.
