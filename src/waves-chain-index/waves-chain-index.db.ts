@@ -1,0 +1,371 @@
+import {
+  CHAIN_DECISION_LEADERBOARDS_TABLE,
+  CHAIN_DECISIONS_TABLE,
+  CHAIN_ENTRIES_TABLE,
+  CHAIN_GROUPS_TABLE,
+  CHAIN_POLLS_TABLE,
+  CHAIN_RESULTS_TABLE,
+  CHAIN_VOTES_TABLE,
+  CHAIN_WAVE_REP_TABLE,
+  CHAIN_WAVE_ROLES_TABLE,
+  CHAIN_WAVES_TABLE,
+  WAVES_CHAIN_INDEX_STATE_TABLE
+} from '@/constants';
+import {
+  ConnectionWrapper,
+  dbSupplier,
+  LazyDbAccessCompatibleService
+} from '@/sql-executor';
+import { VoteChange } from './waves-chain-index.feed';
+import { hasKeys, IndexRow } from './waves-chain-index.rows';
+
+/** One index table: its name and the columns that key a row. */
+export interface IndexTable {
+  readonly name: string;
+  readonly keys: readonly string[];
+}
+
+export const INDEX_TABLES = {
+  groups: { name: CHAIN_GROUPS_TABLE, keys: ['group_id'] },
+  waves: { name: CHAIN_WAVES_TABLE, keys: ['wave_id'] },
+  roles: {
+    name: CHAIN_WAVE_ROLES_TABLE,
+    keys: ['wave_id', 'role', 'principal_id']
+  },
+  polls: { name: CHAIN_POLLS_TABLE, keys: ['poll_id'] },
+  waveRep: {
+    name: CHAIN_WAVE_REP_TABLE,
+    keys: ['wave_id', 'rater', 'category_id']
+  },
+  decisions: { name: CHAIN_DECISIONS_TABLE, keys: ['decision_id'] },
+  entries: { name: CHAIN_ENTRIES_TABLE, keys: ['entry_id'] },
+  votes: {
+    name: CHAIN_VOTES_TABLE,
+    keys: ['decision_id', 'entry_id', 'voter']
+  },
+  results: { name: CHAIN_RESULTS_TABLE, keys: ['decision_id', 'result_time'] },
+  leaderboards: {
+    name: CHAIN_DECISION_LEADERBOARDS_TABLE,
+    keys: ['decision_id']
+  }
+} as const satisfies Record<string, IndexTable>;
+
+export type IndexTableName = keyof typeof INDEX_TABLES;
+
+/** The height a row was read at and the full read it belongs to. */
+export interface RowStamp {
+  readonly height: number;
+  readonly generation: number;
+}
+
+export interface WavesChainIndexState {
+  /** The full read in progress, or the last one completed. */
+  readonly generation: number;
+  /** A full read in progress: its phase and where it got to. */
+  readonly fullPhase: string | null;
+  readonly fullAfter: string | null;
+  readonly fullFromHeight: number | null;
+  /** When the last full read completed (ms); null before the first. */
+  readonly lastFullAt: number | null;
+  /** The next height the change feed is read from. */
+  readonly feedNext: number | null;
+  readonly lastError: string | null;
+}
+
+export const EMPTY_INDEX_STATE: WavesChainIndexState = {
+  generation: 0,
+  fullPhase: null,
+  fullAfter: null,
+  fullFromHeight: null,
+  lastFullAt: null,
+  feedNext: null,
+  lastError: null
+};
+
+const STATE_NAME = 'waves';
+const CHUNK = 200;
+const GUARD_COLUMNS = ['height', 'generation'];
+
+interface StateRow {
+  readonly generation: number | string;
+  readonly full_phase: string | null;
+  readonly full_after: string | null;
+  readonly full_from_height: number | string | null;
+  readonly last_full_at: number | string | null;
+  readonly feed_next: number | string | null;
+  readonly last_error: string | null;
+}
+
+function nullableNumber(
+  value: number | string | null | undefined
+): number | null {
+  return value === null || value === undefined ? null : Number(value);
+}
+
+function sqlValue(value: unknown): unknown {
+  return typeof value === 'boolean' ? (value ? 1 : 0) : value;
+}
+
+function quoted(column: string): string {
+  return `\`${column}\``;
+}
+
+/** The index tables and the index's own state. */
+export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
+  async loadState(): Promise<WavesChainIndexState> {
+    const row = await this.db.oneOrNull<StateRow>(
+      `select * from ${WAVES_CHAIN_INDEX_STATE_TABLE} where name = :name`,
+      { name: STATE_NAME }
+    );
+    if (!row) return EMPTY_INDEX_STATE;
+    return {
+      generation: Number(row.generation),
+      fullPhase: row.full_phase,
+      fullAfter: row.full_after,
+      fullFromHeight: nullableNumber(row.full_from_height),
+      lastFullAt: nullableNumber(row.last_full_at),
+      feedNext: nullableNumber(row.feed_next),
+      lastError: row.last_error
+    };
+  }
+
+  async saveState(state: WavesChainIndexState, now: number): Promise<void> {
+    await this.db.execute(
+      `insert into ${WAVES_CHAIN_INDEX_STATE_TABLE}
+         (name, generation, full_phase, full_after, full_from_height,
+          last_full_at, feed_next, last_error, updated_at)
+       values (:name, :generation, :fullPhase, :fullAfter, :fullFromHeight,
+          :lastFullAt, :feedNext, :lastError, :now)
+       on duplicate key update
+         generation = :generation, full_phase = :fullPhase,
+         full_after = :fullAfter, full_from_height = :fullFromHeight,
+         last_full_at = :lastFullAt, feed_next = :feedNext,
+         last_error = :lastError, updated_at = :now`,
+      {
+        name: STATE_NAME,
+        generation: state.generation,
+        fullPhase: state.fullPhase,
+        fullAfter: state.fullAfter,
+        fullFromHeight: state.fullFromHeight,
+        lastFullAt: state.lastFullAt,
+        feedNext: state.feedNext,
+        lastError: state.lastError?.slice(0, 2000) ?? null,
+        now
+      }
+    );
+  }
+
+  /**
+   * Writes rows, each stamped with the height it was read at and the full
+   * read it belongs to. A row read at a lower height than the stored one
+   * changes nothing but its generation (the reads of one run are pinned to
+   * one height, and runs go up, so this only guards against going back).
+   * Rows missing a key column are dropped.
+   */
+  async upsert(
+    table: IndexTableName,
+    rows: readonly IndexRow[],
+    stamp: RowStamp,
+    connection?: ConnectionWrapper<any>
+  ): Promise<void> {
+    const { name, keys } = INDEX_TABLES[table];
+    const complete = rows.filter((row) => hasKeys(row, keys));
+    if (!complete.length) return;
+    const columns = [
+      ...Object.keys(complete[0]).filter((c) => !GUARD_COLUMNS.includes(c)),
+      ...GUARD_COLUMNS
+    ];
+    const keyed = new Set<string>(keys);
+    // Assignments run left to right: height last, so the others compare
+    // against the stored row's height.
+    const updates = [
+      ...columns
+        .filter((c) => !keyed.has(c) && !GUARD_COLUMNS.includes(c))
+        .map(
+          (c) =>
+            `${quoted(c)} = if(new.height >= ${name}.height, new.${quoted(c)}, ${name}.${quoted(c)})`
+        ),
+      `generation = greatest(${name}.generation, new.generation)`,
+      `height = greatest(${name}.height, new.height)`
+    ].join(', ');
+    for (let start = 0; start < complete.length; start += CHUNK) {
+      const chunk = complete.slice(start, start + CHUNK);
+      const params: Record<string, unknown> = {};
+      const values = chunk.map((row, i) => {
+        const placeholders = columns.map((column, j) => {
+          const param = `p${i}_${j}`;
+          params[param] =
+            column === 'height'
+              ? stamp.height
+              : column === 'generation'
+                ? stamp.generation
+                : column === 'data'
+                  ? JSON.stringify(row.data ?? null)
+                  : sqlValue(row[column]);
+          return `:${param}`;
+        });
+        return `(${placeholders.join(', ')})`;
+      });
+      await this.db.execute(
+        `insert into ${name} (${columns.map(quoted).join(', ')})
+         values ${values.join(', ')} as new
+         on duplicate key update ${updates}`,
+        params,
+        connection ? { wrappedConnection: connection } : undefined
+      );
+    }
+  }
+
+  /** Deletes rows by their keys. */
+  async remove(
+    table: IndexTableName,
+    keyRows: readonly IndexRow[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<void> {
+    const { name, keys } = INDEX_TABLES[table];
+    for (const row of keyRows) {
+      if (!hasKeys(row, keys)) continue;
+      await this.db.execute(
+        `delete from ${name} where ${keys
+          .map((k) => `${quoted(k)} = :${k}`)
+          .join(' and ')}`,
+        Object.fromEntries(keys.map((k) => [k, row[k]])),
+        connection ? { wrappedConnection: connection } : undefined
+      );
+    }
+  }
+
+  /**
+   * Replaces every row under one parent (a wave's roles, a decision's
+   * entries, an entry's votes) with these rows, in one transaction.
+   */
+  async replaceChildren(
+    table: IndexTableName,
+    parentColumn: string,
+    parentId: string,
+    rows: readonly IndexRow[],
+    stamp: RowStamp
+  ): Promise<void> {
+    const { name } = INDEX_TABLES[table];
+    await this.executeNativeQueriesInTransaction(async (connection) => {
+      await this.db.execute(
+        `delete from ${name} where ${quoted(parentColumn)} = :parentId`,
+        { parentId },
+        { wrappedConnection: connection }
+      );
+      await this.upsert(table, rows, stamp, connection);
+    });
+  }
+
+  /**
+   * The feed's vote records, as they are: a vote is set or deleted unless
+   * the stored one is newer (a later full read got there first).
+   */
+  async applyVotes(
+    changes: readonly VoteChange[],
+    stamp: RowStamp
+  ): Promise<void> {
+    const sets = changes.filter((change) => change.value !== null);
+    const deletes = changes.filter((change) => change.value === null);
+    for (let start = 0; start < sets.length; start += CHUNK) {
+      const chunk = sets.slice(start, start + CHUNK);
+      const params: Record<string, unknown> = {
+        height: stamp.height,
+        generation: stamp.generation
+      };
+      const values = chunk.map((change, i) => {
+        params[`d${i}`] = change.decisionId;
+        params[`e${i}`] = change.entryId;
+        params[`v${i}`] = change.voter;
+        params[`x${i}`] = change.value;
+        params[`u${i}`] = change.updatedHeight;
+        return `(:d${i}, :e${i}, :v${i}, :x${i}, :u${i}, :height, :generation)`;
+      });
+      await this.db.execute(
+        `insert into ${CHAIN_VOTES_TABLE}
+           (decision_id, entry_id, voter, value, updated_height, height,
+            generation)
+         values ${values.join(', ')} as new
+         on duplicate key update
+           value = if(new.updated_height >= ${CHAIN_VOTES_TABLE}.updated_height,
+             new.value, ${CHAIN_VOTES_TABLE}.value),
+           generation = greatest(${CHAIN_VOTES_TABLE}.generation, new.generation),
+           height = greatest(${CHAIN_VOTES_TABLE}.height, new.height),
+           updated_height = greatest(${CHAIN_VOTES_TABLE}.updated_height,
+             new.updated_height)`,
+        params
+      );
+    }
+    for (const change of deletes) {
+      await this.db.execute(
+        `delete from ${CHAIN_VOTES_TABLE}
+          where decision_id = :decisionId and entry_id = :entryId
+            and voter = :voter and updated_height <= :updatedHeight`,
+        {
+          decisionId: change.decisionId,
+          entryId: change.entryId,
+          voter: change.voter,
+          updatedHeight: change.updatedHeight
+        }
+      );
+    }
+  }
+
+  /** Removes every row the full read `generation` did not see. */
+  async sweep(generation: number): Promise<Record<string, number>> {
+    const removed: Record<string, number> = {};
+    for (const [key, { name }] of Object.entries(INDEX_TABLES)) {
+      const result = await this.db.execute(
+        `delete from ${name} where generation < :generation`,
+        { generation }
+      );
+      removed[key] = this.db.getAffectedRows(result);
+    }
+    return removed;
+  }
+
+  /**
+   * Objects whose answer moves with time, not only with a transaction: a
+   * live decision's `due`, `phase` and leaderboard scores, an open poll's
+   * status, a role grant past its expiry.
+   */
+  async timeDependent(now: number): Promise<{
+    decisionIds: string[];
+    pollIds: string[];
+    roleWaveIds: string[];
+  }> {
+    const decisions = await this.db.execute<{ decision_id: string }>(
+      `select decision_id from ${CHAIN_DECISIONS_TABLE}
+        where status = 'published' or due = 1
+           or json_unquote(json_extract(data, '$.phase')) = 'settling'
+        order by decision_id`
+    );
+    const polls = await this.db.execute<{ poll_id: string }>(
+      `select poll_id from ${CHAIN_POLLS_TABLE} where status = 'open'
+        order by poll_id`
+    );
+    const roles = await this.db.execute<{ wave_id: string }>(
+      `select distinct wave_id from ${CHAIN_WAVE_ROLES_TABLE}
+        where live = 1
+          and cast(coalesce(json_unquote(json_extract(data, '$.expiresAt')), '0')
+                   as unsigned) between 1 and :now
+        order by wave_id`,
+      { now }
+    );
+    return {
+      decisionIds: decisions.map((row) => row.decision_id),
+      pollIds: polls.map((row) => row.poll_id),
+      roleWaveIds: roles.map((row) => row.wave_id)
+    };
+  }
+
+  /** Every row of a table, key order (tests and the rebuild check). */
+  async dump(table: IndexTableName): Promise<IndexRow[]> {
+    const { name, keys } = INDEX_TABLES[table];
+    return this.db.execute<IndexRow>(
+      `select * from ${name} order by ${keys.map(quoted).join(', ')}`
+    );
+  }
+}
+
+export const wavesChainIndexDb = new WavesChainIndexDb(dbSupplier);
