@@ -194,6 +194,36 @@ export class RecordLogDb extends LazyDbAccessCompatibleService {
     });
   }
 
+  async findSegment(
+    chain: RecordLogChain,
+    seq: number,
+    ctx: RequestContext
+  ): Promise<RecordLogSegmentRow | null> {
+    const rows = await this.db.execute<Record<string, unknown>>(
+      `select * from ${SIGNED_RECORD_LOG_SEGMENTS_TABLE}
+       where chain = :chain and seq = :seq`,
+      { chain, seq },
+      withConnection(ctx)
+    );
+    return rows[0] ? toSegment(rows[0]) : null;
+  }
+
+  /** A row the records wave already holds a head for (RecordLogSegmenter.restore). */
+  async insertRestoredSegment(
+    segment: RecordLogSegmentRow,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.db.execute(
+      `insert into ${SIGNED_RECORD_LOG_SEGMENTS_TABLE}
+         (chain, seq, sha256, cid, prev, entries, opened_at, closed_at,
+          content, head_drop_id, arweave_tx, archive_drop_id)
+       values (:chain, :seq, :sha256, :cid, :prev, :entries, :opened_at,
+          :closed_at, :content, :head_drop_id, :arweave_tx, :archive_drop_id)`,
+      { ...segment },
+      withConnection(ctx)
+    );
+  }
+
   async findSegmentsWithoutHead(
     ctx: RequestContext
   ): Promise<RecordLogSegmentRow[]> {

@@ -69,7 +69,9 @@ export class MemoryRecordLogStore implements RecordLogStore {
   async findLatestSegment(
     chain: RecordLogChain
   ): Promise<RecordLogSegmentRow | null> {
-    const ofChain = this.segments.filter((row) => row.chain === chain);
+    const ofChain = this.segments
+      .filter((row) => row.chain === chain)
+      .sort((a, b) => a.seq - b.seq);
     return ofChain.length ? ofChain[ofChain.length - 1] : null;
   }
 
@@ -120,6 +122,23 @@ export class MemoryRecordLogStore implements RecordLogStore {
       (row) => row.chain === chain && row.seq === seq
     );
     this.segments[index] = { ...this.find(chain, seq), ...changes };
+  }
+
+  async findSegment(
+    chain: RecordLogChain,
+    seq: number
+  ): Promise<RecordLogSegmentRow | null> {
+    return (
+      this.segments.find((row) => row.chain === chain && row.seq === seq) ??
+      null
+    );
+  }
+
+  async insertRestoredSegment(segment: RecordLogSegmentRow): Promise<void> {
+    if (await this.findSegment(segment.chain, segment.seq)) {
+      throw new Error('Duplicate entry for the segment key');
+    }
+    this.segments.push({ ...segment });
   }
 
   async findSegmentsWithoutHead(): Promise<RecordLogSegmentRow[]> {

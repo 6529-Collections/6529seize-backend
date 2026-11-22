@@ -18,6 +18,7 @@ import {
   sha256Hex
 } from './record-log-format';
 import type { RecordLogDb } from './record-log.db';
+import { readRecordsWave, RecordsWaveReader } from './record-log-reader';
 
 export type RecordLogStore = Pick<
   RecordLogDb,
@@ -31,6 +32,8 @@ export type RecordLogStore = Pick<
   | 'setArweaveTx'
   | 'findSegmentsToAnnounce'
   | 'setArchiveDrop'
+  | 'findSegment'
+  | 'insertRestoredSegment'
 >;
 
 export interface GrantProofSource {
@@ -40,9 +43,10 @@ export interface GrantProofSource {
   ): Promise<RecordGrantProof[]>;
 }
 
-/** Adds and pins a file on IPFS; returns its CID. */
+/** Adds and pins a file on IPFS (returns its CID), and reads one back. */
 export interface ContentPinner {
   pin(bytes: Buffer, name: string): Promise<string>;
+  fetch(cid: string): Promise<Buffer>;
 }
 
 /** Uploads a file to Arweave; returns the transaction id. */
@@ -131,6 +135,9 @@ export class RecordLogSegmenter {
       readonly pinner: ContentPinner;
       readonly archiver: ArweaveArchiver;
       readonly poster: RecordsWavePoster;
+      // The records wave as readers see it, and the wallets that post to it.
+      readonly wave: RecordsWaveReader;
+      readonly serviceWallets: readonly string[];
       readonly providers: readonly Pick<ProviderKey, 'id' | 'publicKey'>[];
       readonly now?: () => number;
       readonly maxEntriesPerSegment?: number;
@@ -142,14 +149,80 @@ export class RecordLogSegmenter {
     return this.deps.now?.() ?? Date.now();
   }
 
-  /** Closes every chain's open entries into segments, then posts heads. */
+  /**
+   * Closes every chain's open entries into segments, then posts heads.
+   * Before opening a segment it restores any head the records wave holds
+   * and the segment table lacks, so a chain continues from its real last
+   * head even after the table was emptied or restored from an older backup.
+   */
   async closeSegments(ctx: RequestContext): Promise<RecordLogHead[]> {
     const closed: RecordLogHead[] = [];
+    let restored = false;
     for (const chain of CHAINS) {
+      const open = await this.deps.store.findOpenEntries(chain, 1, 1, ctx);
+      if (open.length && !restored) {
+        await this.restore(ctx);
+        restored = true;
+      }
       closed.push(...(await this.closeChain(chain, ctx)));
     }
     await this.postHeads(ctx);
     return closed;
+  }
+
+  /**
+   * Fills the segment table from the records wave: a row for every head
+   * the wave holds and the table lacks, with its head drop and, when an
+   * archive drop lists it, its Arweave id. A restored row keeps no file
+   * (the archiver reads it back from IPFS) and no open or close time (0).
+   * Throws, changing nothing more, when a row and the wave's head for the
+   * same seq differ: the log has forked and needs a person to look.
+   */
+  async restore(ctx: RequestContext): Promise<number> {
+    const wave = await readRecordsWave(
+      this.deps.wave,
+      this.deps.serviceWallets
+    );
+    let restored = 0;
+    for (const chain of CHAINS) {
+      const { heads, headDrops, archives } = wave[chain];
+      for (const head of heads) {
+        const row = await this.deps.store.findSegment(chain, head.seq, ctx);
+        if (row) {
+          if (row.sha256 !== head.sha256) {
+            throw new RecordLogFormatError(
+              `${chain} segment ${head.seq} differs from its head in the records wave`
+            );
+          }
+          continue;
+        }
+        const archive = archives.get(head.seq);
+        await this.deps.store.insertRestoredSegment(
+          {
+            chain,
+            seq: head.seq,
+            sha256: head.sha256,
+            cid: head.cid,
+            prev: head.prev,
+            entries: head.entries,
+            opened_at: 0,
+            closed_at: 0,
+            content: null,
+            head_drop_id: headDrops.get(head.seq) ?? null,
+            arweave_tx: archive?.arweaveTx ?? null,
+            archive_drop_id: archive?.dropId ?? null
+          },
+          ctx
+        );
+        restored++;
+      }
+    }
+    if (restored > 0) {
+      this.logger.warn(
+        `Restored ${restored} segment rows from the records wave`
+      );
+    }
+    return restored;
   }
 
   private async closeChain(
@@ -263,10 +336,15 @@ export class RecordLogSegmenter {
    */
   async archive(ctx: RequestContext): Promise<number> {
     for (const segment of await this.deps.store.findSegmentsToUpload(ctx)) {
-      if (!segment.content) {
-        continue;
+      // A restored row has no file: read it back from IPFS by its CID.
+      const bytes =
+        segment.content ?? (await this.deps.pinner.fetch(segment.cid));
+      if (sha256Hex(bytes) !== segment.sha256) {
+        throw new RecordLogFormatError(
+          `${segment.chain} segment ${segment.seq} from IPFS does not match its head`
+        );
       }
-      const tx = await this.deps.archiver.upload(segment.content);
+      const tx = await this.deps.archiver.upload(bytes);
       await this.deps.store.setArweaveTx(segment.chain, segment.seq, tx, ctx);
     }
     const announce = await this.deps.store.findSegmentsToAnnounce(ctx);

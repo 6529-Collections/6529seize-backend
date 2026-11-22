@@ -1,8 +1,45 @@
 import 'reflect-metadata';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
+import { DROPS_PARTS_TABLE, DROPS_TABLE } from '@/constants';
+import { DropType } from '@/entities/IDrop';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { RecordLogDb, takeWithinBytes, toBufferOrNull } from './record-log.db';
+import { LocalRecordsWaveReader } from './records-wave-local-reader';
+
+const RECORDS_WAVE = 'records-wave-0000-4000-8000-000000000001';
+const SERVICE_PROFILE = 'service-profile-1';
+const SERVICE_WALLET = `0x${'5'.repeat(40)}`;
+
+const drop = (
+  id: string,
+  serialNo: number,
+  waveId: string,
+  authorId: string
+) => ({
+  id,
+  serial_no: serialNo,
+  wave_id: waveId,
+  author_id: authorId,
+  created_at: 1_000 + serialNo,
+  updated_at: null,
+  title: null,
+  parts_count: 1,
+  reply_to_drop_id: null,
+  reply_to_part_id: null,
+  drop_type: DropType.CHAT,
+  signature: null,
+  hide_link_preview: true
+});
+
+const part = (dropId: string, content: string, waveId: string) => ({
+  drop_id: dropId,
+  drop_part_id: 1,
+  content,
+  quoted_drop_id: null,
+  quoted_drop_part_id: null,
+  wave_id: waveId
+});
 
 const ctx: RequestContext = {};
 
@@ -38,6 +75,50 @@ describe('takeWithinBytes', () => {
     expect(() => toBufferOrNull('text')).toThrow('neither');
   });
 });
+
+describeWithSeed(
+  'LocalRecordsWaveReader',
+  [
+    {
+      table: DROPS_TABLE,
+      rows: [
+        drop('records-drop-2', 12, RECORDS_WAVE, SERVICE_PROFILE),
+        drop('records-drop-1', 11, RECORDS_WAVE, SERVICE_PROFILE),
+        drop('someone-else', 13, RECORDS_WAVE, 'someone-else'),
+        drop('other-wave', 14, 'another-wave', SERVICE_PROFILE)
+      ]
+    },
+    {
+      table: DROPS_PARTS_TABLE,
+      rows: [
+        part('records-drop-1', 'head one', RECORDS_WAVE),
+        part('records-drop-2', 'head two', RECORDS_WAVE),
+        part('someone-else', 'not ours', RECORDS_WAVE),
+        part('other-wave', 'elsewhere', 'another-wave')
+      ]
+    }
+  ],
+  () => {
+    it("reads the service identity's drops in the records wave, oldest first", async () => {
+      const reader = new LocalRecordsWaveReader(
+        {
+          waveId: RECORDS_WAVE,
+          profileId: SERVICE_PROFILE,
+          wallet: SERVICE_WALLET
+        },
+        () => sqlExecutor
+      );
+      const drops = [];
+      for await (const it of reader.drops()) {
+        drops.push(it);
+      }
+      expect(drops).toEqual([
+        { dropId: 'records-drop-1', author: SERVICE_WALLET, text: 'head one' },
+        { dropId: 'records-drop-2', author: SERVICE_WALLET, text: 'head two' }
+      ]);
+    });
+  }
+);
 
 describeWithSeed('RecordLogDb', [], () => {
   const db = new RecordLogDb(() => sqlExecutor);
@@ -93,6 +174,42 @@ describeWithSeed('RecordLogDb', [], () => {
     ).rejects.toThrow('claimed elsewhere');
     expect(await db.findLatestSegment('public', ctx)).toMatchObject({ seq: 1 });
     expect(await db.findOpenEntries('public', 10, 10_000, ctx)).toHaveLength(1);
+  });
+
+  it('finds a segment and inserts a restored one', async () => {
+    expect(await db.findSegment('public', 1, ctx)).toBeNull();
+    await db.insertRestoredSegment(
+      {
+        ...segment(1, 3),
+        opened_at: 0,
+        closed_at: 0,
+        content: null,
+        head_drop_id: 'drop-1',
+        arweave_tx: 'x'.repeat(43),
+        archive_drop_id: 'drop-9'
+      },
+      ctx
+    );
+    expect(await db.findSegment('public', 1, ctx)).toMatchObject({
+      seq: 1,
+      content: null,
+      head_drop_id: 'drop-1',
+      arweave_tx: 'x'.repeat(43),
+      archive_drop_id: 'drop-9'
+    });
+    expect(await db.findLatestSegment('public', ctx)).toMatchObject({ seq: 1 });
+    await expect(
+      db.insertRestoredSegment(
+        {
+          ...segment(1, 3),
+          content: null,
+          head_drop_id: null,
+          arweave_tx: null,
+          archive_drop_id: null
+        },
+        ctx
+      )
+    ).rejects.toThrow();
   });
 
   it('tracks heads, drops posted entries, and archives', async () => {

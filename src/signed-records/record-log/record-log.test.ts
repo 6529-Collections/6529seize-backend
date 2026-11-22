@@ -98,6 +98,17 @@ class FakeNetwork {
       const cid = `bafy${createHash('sha256').update(bytes).digest('hex').slice(0, 40)}`;
       this.ipfs.set(cid, bytes);
       return cid;
+    },
+    fetch: async (cid: string) => this.fetcher.fetchCid(cid)
+  };
+
+  /** The wave as the closer reads it: every drop posted so far. */
+  readonly wave = {
+    drops: (): AsyncIterable<RecordsWaveDrop> => {
+      const drops = [...this.drops];
+      return (async function* () {
+        yield* drops;
+      })();
     }
   };
 
@@ -173,6 +184,8 @@ function setup(
     pinner: network.pinner,
     archiver: network.archiver,
     poster: network.poster,
+    wave: network.wave,
+    serviceWallets: [SERVICE_WALLET],
     providers: [provider],
     now: () => clock++,
     maxEntriesPerSegment,
@@ -522,6 +535,61 @@ describe('the record log', () => {
     expect(
       (await collect(network.reader(), 'public')).map((item) => item.entry)
     ).toEqual([publicEntry]);
+  });
+
+  it('continues the chain from the records wave after the segment table is emptied', async () => {
+    const { store, network, writer, segmenter } = setup(1);
+    await writer.append([publicEntry, serviceEntry], ctx);
+    await segmenter.closeSegments(ctx);
+    expect(store.segments.map((row) => row.seq)).toEqual([1, 2]);
+    // The table is lost (or restored from a backup taken before segment 1).
+    store.segments.length = 0;
+    await writer.append([publicEntry], ctx);
+    const heads = await segmenter.closeSegments(ctx);
+    expect(heads.map((head) => head.seq)).toEqual([3]);
+    expect(store.segments.map((row) => [row.seq, row.head_drop_id])).toEqual([
+      [1, 'drop-1'],
+      [2, 'drop-2'],
+      [3, 'drop-3']
+    ]);
+    // One unbroken chain: the reader takes every head.
+    expect(
+      (await collect(network.reader(), 'public')).map((item) => item.entry)
+    ).toEqual([publicEntry, serviceEntry, publicEntry]);
+  });
+
+  it('restores from an older backup, and archives a restored segment from IPFS', async () => {
+    const { store, network, writer, segmenter } = setup(1);
+    await writer.append([publicEntry, serviceEntry], ctx);
+    await segmenter.closeSegments(ctx);
+    // The backup knew segment 1 only, before its head was posted.
+    store.segments.splice(1, 1);
+    store.segments[0] = { ...store.segments[0], head_drop_id: null };
+    expect(await segmenter.restore(ctx)).toBe(1);
+    expect(store.segments.map((row) => row.seq).sort()).toEqual([1, 2]);
+    const restored = store.segments.find((row) => row.seq === 2)!;
+    expect(restored).toMatchObject({ content: null, closed_at: 0 });
+    // Segment 1's head was posted before the backup's state: posting it
+    // again returns the same text, so readers take it once.
+    expect(await segmenter.archive(ctx)).toBe(1);
+    expect(await segmenter.postHeads(ctx)).toBe(1);
+    expect(await segmenter.archive(ctx)).toBe(1);
+    expect(network.arweave.size).toBe(2);
+    expect(
+      (await collect(network.reader(), 'public')).map((item) => item.entry)
+    ).toEqual([publicEntry, serviceEntry]);
+  });
+
+  it('refuses to close when a segment row and the records wave disagree', async () => {
+    const { store, writer, segmenter, network } = setup();
+    await writer.append([publicEntry], ctx);
+    await segmenter.closeSegments(ctx);
+    store.segments[0] = { ...store.segments[0], sha256: 'f'.repeat(64) };
+    await writer.append([serviceEntry], ctx);
+    await expect(segmenter.closeSegments(ctx)).rejects.toThrow(
+      'differs from its head in the records wave'
+    );
+    expect(network.drops).toHaveLength(1);
   });
 
   it('lets only one of two closers running at once take the entries', async () => {

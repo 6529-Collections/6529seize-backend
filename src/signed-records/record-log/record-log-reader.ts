@@ -46,6 +46,87 @@ export interface RecordLogItem {
   readonly entry: RecordLogEntry;
 }
 
+/** One chain's heads as the records wave holds them. */
+export interface RecordsWaveChain {
+  // Seq 1 to the last, each following its predecessor.
+  readonly heads: RecordLogHead[];
+  // The head drop of each seq.
+  readonly headDrops: Map<number, string>;
+  // The Arweave id of each archived seq, and the archive drop that lists it.
+  readonly archives: Map<
+    number,
+    { readonly arweaveTx: string; readonly dropId: string }
+  >;
+}
+
+/**
+ * Reads the records wave: the head and archive drops the service wallets
+ * posted, per chain. Throws on two different heads for one seq, a missing
+ * seq or a head that does not follow its predecessor: the log must never
+ * be read, or continued, past a fork or a gap.
+ */
+export async function readRecordsWave(
+  wave: RecordsWaveReader,
+  serviceWallets: readonly string[]
+): Promise<Record<RecordLogChain, RecordsWaveChain>> {
+  const wallets = new Set(serviceWallets.map((wallet) => wallet.toLowerCase()));
+  const read: Record<
+    RecordLogChain,
+    {
+      bySeq: Map<number, RecordLogHead>;
+      headDrops: Map<number, string>;
+      archives: RecordsWaveChain['archives'];
+    }
+  > = {
+    public: { bySeq: new Map(), headDrops: new Map(), archives: new Map() },
+    private: { bySeq: new Map(), headDrops: new Map(), archives: new Map() }
+  };
+  for await (const drop of wave.drops()) {
+    if (!wallets.has(drop.author.toLowerCase())) {
+      continue;
+    }
+    const head = parseHeadDrop(drop.text);
+    if (head) {
+      const chain = read[head.chain];
+      const known = chain.bySeq.get(head.seq);
+      if (known && known.sha256 !== head.sha256) {
+        throw new RecordLogFormatError(
+          `two heads for ${head.chain} segment ${head.seq}`
+        );
+      }
+      if (!known) {
+        chain.bySeq.set(head.seq, head);
+        chain.headDrops.set(head.seq, drop.dropId);
+      }
+    }
+    for (const archive of parseArchiveDrop(drop.text) ?? []) {
+      read[archive.chain].archives.set(archive.seq, {
+        arweaveTx: archive.arweaveTx,
+        dropId: drop.dropId
+      });
+    }
+  }
+  const chainOf = (chain: RecordLogChain): RecordsWaveChain => {
+    const { bySeq, headDrops, archives } = read[chain];
+    const heads = Array.from(bySeq.values()).sort((a, b) => a.seq - b.seq);
+    heads.forEach((head, index) => {
+      if (head.seq !== index + 1) {
+        throw new RecordLogFormatError(
+          `${chain} segment ${index + 1} has no head`
+        );
+      }
+      const prev = index === 0 ? null : heads[index - 1].sha256;
+      if (head.prev !== prev) {
+        throw new RecordLogFormatError(
+          `${chain} segment ${head.seq} does not follow its predecessor`
+        );
+      }
+    });
+    return { heads, headDrops, archives };
+  };
+  return { public: chainOf('public'), private: chainOf('private') };
+}
+
 /**
  * Walks a chain of the interim record log from its heads: every head the
  * service identity posted, in seq order, each segment fetched by CID (or
@@ -67,46 +148,17 @@ export class RecordLogReader {
     heads: RecordLogHead[];
     arweave: Map<number, string>;
   }> {
-    const wallets = new Set(
-      this.deps.serviceWallets.map((wallet) => wallet.toLowerCase())
+    const read = await readRecordsWave(
+      this.deps.wave,
+      this.deps.serviceWallets
     );
-    const bySeq = new Map<number, RecordLogHead>();
-    const arweave = new Map<number, string>();
-    for await (const drop of this.deps.wave.drops()) {
-      if (!wallets.has(drop.author.toLowerCase())) {
-        continue;
-      }
-      const head = parseHeadDrop(drop.text);
-      if (head?.chain === chain) {
-        const known = bySeq.get(head.seq);
-        if (known && known.sha256 !== head.sha256) {
-          throw new RecordLogFormatError(
-            `two heads for ${chain} segment ${head.seq}`
-          );
-        }
-        bySeq.set(head.seq, head);
-      }
-      for (const archive of parseArchiveDrop(drop.text) ?? []) {
-        if (archive.chain === chain) {
-          arweave.set(archive.seq, archive.arweaveTx);
-        }
-      }
-    }
-    const heads = Array.from(bySeq.values()).sort((a, b) => a.seq - b.seq);
-    heads.forEach((head, index) => {
-      if (head.seq !== index + 1) {
-        throw new RecordLogFormatError(
-          `${chain} segment ${index + 1} has no head`
-        );
-      }
-      const prev = index === 0 ? null : heads[index - 1].sha256;
-      if (head.prev !== prev) {
-        throw new RecordLogFormatError(
-          `${chain} segment ${head.seq} does not follow its predecessor`
-        );
-      }
-    });
-    return { heads, arweave };
+    const { heads, archives } = read[chain];
+    return {
+      heads,
+      arweave: new Map(
+        Array.from(archives.entries()).map(([seq, it]) => [seq, it.arweaveTx])
+      )
+    };
   }
 
   private async fetch(head: RecordLogHead, arweaveTx: string | undefined) {
