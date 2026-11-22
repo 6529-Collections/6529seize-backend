@@ -4,7 +4,9 @@ import {
 } from '@/constants';
 import { Logger } from '@/logging';
 import type { RecordLogEntry } from '@/signed-records/record-log/record-log-format';
-import { sqlExecutor } from '@/sql-executor';
+import { compareOrderKeys } from '@/signed-records/record-order';
+import { signedRecordHeadsDb } from '@/signed-records/signed-record-heads.db';
+import { ConnectionWrapper, sqlExecutor } from '@/sql-executor';
 import {
   closeSubscriptionWrites,
   OPENING_STATE_ID,
@@ -272,6 +274,7 @@ export async function rebuildIdentityTables(params: {
           for (const body of write.bodies) {
             await applyJournalBody(body, options);
           }
+          await restoreRecordHead(write.bodies[0], connection);
         }
       );
       await renewPause();
@@ -325,6 +328,46 @@ export async function rebuildIdentityTables(params: {
   } finally {
     subscriptionsIdentitySwitch.invalidate();
     await openSubscriptionWrites();
+  }
+}
+
+/**
+ * A choice's signed record is the newest for its (owner, type, key) when it
+ * is applied; the records module keeps that order key in
+ * signed_record_heads, and refuses an older record live. A rebuild puts the
+ * head back from the choice entry, so a lost heads table never lets an old
+ * record be replayed within the live window.
+ */
+async function restoreRecordHead(
+  body: JournalBody,
+  connection: ConnectionWrapper<unknown>
+): Promise<void> {
+  if (body.kind !== 'choice') {
+    return;
+  }
+  const inputs = body.inputs as {
+    event_id: string;
+    owner: string;
+    type: string;
+    key: string;
+    anchor: number;
+    claimed_time: number;
+  };
+  const head = {
+    owner: inputs.owner,
+    family: 'ps' as const,
+    type: inputs.type,
+    key: inputs.key
+  };
+  const order = {
+    anchor: Number(inputs.anchor),
+    claimedTime: Number(inputs.claimed_time),
+    eventId: inputs.event_id
+  };
+  const ctx = { connection };
+  const current = await signedRecordHeadsDb.lock(head, ctx);
+  if (!current || compareOrderKeys(order, current) > 0) {
+    await signedRecordHeadsDb.put(head, order, ctx);
   }
 }
 

@@ -3156,7 +3156,9 @@ must equal the rebuilt row, and each checkpoint must match once the writes
 up to its `n` are in, so a write that was never journaled stops the rebuild
 at the first row or checkpoint it shows in. Nothing is read from MySQL
 sources or the identity mirror: a top-up stays with the identity it was
-credited to. When the live database is there, the journal's last `n` is
+credited to. Each choice entry's signed record order key goes back into
+`signed_record_heads`, so a lost heads table never lets an older record be
+replayed. When the live database is there, the journal's last `n` is
 compared with live's counter; a missing tail (entries not yet posted) is
 reported and alerted (`SUBSCRIPTIONS_JOURNAL_TAIL_MISSING`), and the tables
 stay suspended. Otherwise they end verified and in shadow, not the truth;

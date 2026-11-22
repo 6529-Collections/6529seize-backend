@@ -14,6 +14,7 @@ import {
   SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
   SUBSCRIPTIONS_ID_REDEEMED_TABLE,
   SUBSCRIPTIONS_ID_REPORTS_TABLE,
+  SIGNED_RECORD_HEADS_TABLE,
   SIGNED_RECORD_LOG_ENTRIES_TABLE,
   SUBSCRIPTIONS_MODE_TABLE,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
@@ -803,6 +804,58 @@ describeWithSeed('identity writers after the switch', [], () => {
     );
     expect(Number(biggest.bytes)).toBeLessThanOrEqual(JOURNAL_PART_MAX_BYTES);
   }, 900000);
+
+  it('puts back the signed record heads of the choices it rebuilds', async () => {
+    await seedLegacy();
+    expect((await goLiveForTest()).switched).toBe(true);
+    const eventId = `0x${'ab'.repeat(32)}`;
+    // A choice as the signed write path journals it (here with no row
+    // changed): its record's order key is in the entry.
+    await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+      journal(
+        {
+          kind: 'choice',
+          inputs: {
+            event_id: eventId,
+            owner: P1,
+            type: 'subs.mode',
+            key: '',
+            anchor: 900,
+            claimed_time: 1795694700007
+          }
+        },
+        { wrappedConnection: connection }
+      )
+    );
+    await loseIdentityTables();
+    await execute(`DELETE FROM ${SIGNED_RECORD_HEADS_TABLE}`);
+    await rebuildIdentityTables({
+      source: journalSource,
+      fetch: fetchPublished
+    });
+    const heads = await sqlExecutor.execute<{
+      owner: string;
+      family: string;
+      rtype: string;
+      rkey: string;
+      anchor: number;
+      claimed_time: number;
+      event_id: string;
+    }>(
+      `SELECT owner, family, rtype, rkey, anchor, claimed_time, event_id FROM ${SIGNED_RECORD_HEADS_TABLE}`
+    );
+    expect(
+      heads.map((h) => [
+        h.owner,
+        h.family,
+        h.rtype,
+        h.rkey,
+        Number(h.anchor),
+        Number(h.claimed_time),
+        h.event_id
+      ])
+    ).toEqual([[P1, 'ps', 'subs.mode', '', 900, 1795694700007, eventId]]);
+  });
 
   it('backs the switch only with matching list, phase and redemption comparisons of the minted card', async () => {
     const report = (kind: string, token: number | null, verdict: string) =>
