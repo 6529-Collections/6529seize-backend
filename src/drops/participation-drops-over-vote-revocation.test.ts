@@ -174,6 +174,44 @@ it('never locks a candidate whose unlocked configuration does not apply', async 
   expect(service.reconcileVoterCredit).not.toHaveBeenCalled();
 });
 
+it.each([
+  [
+    'a wave that names the credit category',
+    'Help6529 Credits',
+    'Help6529 Credits',
+    1
+  ],
+  ['a wave with no category, for another category', null, 'Kind', 1],
+  ['a wave with no category, for the credits', null, 'Help6529 Credits', 0]
+])(
+  'from switch-on, a REP change checks %s accordingly',
+  async (_name, waveCategory, changeCategory, locks) => {
+    mockFeatures.onChain = true;
+    try {
+      jest.mocked(runtime.readCompetition).mockResolvedValue({
+        ...competition,
+        voting: {
+          ...competition.voting,
+          credit_type: 'REP',
+          credit_category: waveCategory,
+          credit_creditor: null
+        }
+      } as never);
+      await revokeRepBasedDropOverVotes(
+        {
+          rep_recipient_id: 'voter',
+          rep_giver_id: 'giver',
+          credit_category: changeCategory as string
+        },
+        connection
+      );
+      expect(runtime.lockCompetition).toHaveBeenCalledTimes(locks as number);
+    } finally {
+      mockFeatures.onChain = false;
+    }
+  }
+);
+
 it('leaves REP competitions to the leaderboard snapshotter, also from switch-on', async () => {
   mockFeatures.onChain = true;
   try {

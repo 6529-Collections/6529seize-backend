@@ -31,11 +31,21 @@ export function countsTowardAllCategoryRep(
   matter: string,
   category: string
 ): boolean {
-  return !(
-    isIdentityOnChain() &&
-    matter === 'REP' &&
-    normalised(category) === normalised(HELP_BOT_CREDIT_CATEGORY)
-  );
+  return allCategoryRepRule()(matter, category);
+}
+
+/**
+ * countsTowardAllCategoryRep with the switch-on read once, for a loop over
+ * many ratings.
+ */
+export function allCategoryRepRule(): (
+  matter: string,
+  category: string
+) => boolean {
+  if (!isIdentityOnChain()) return () => true;
+  const credits = normalised(HELP_BOT_CREDIT_CATEGORY);
+  return (matter, category) =>
+    !(matter === 'REP' && normalised(category) === credits);
 }
 
 /**
@@ -47,7 +57,9 @@ export function countsTowardAllCategoryRep(
 export function withoutHelpBotCreditsSql(alias?: string): string {
   if (!isIdentityOnChain()) return '';
   const column = alias ? `${alias}.` : '';
-  return ` and not (${column}matter = 'REP' and lower(trim(${column}matter_category)) = ${mysql.escape(
+  // utf8mb4_bin: compare as the in-memory rule does, without the column's
+  // accent-blind collation.
+  return ` and not (${column}matter = 'REP' and lower(trim(${column}matter_category)) collate utf8mb4_bin = ${mysql.escape(
     normalised(HELP_BOT_CREDIT_CATEGORY)
   )})`;
 }

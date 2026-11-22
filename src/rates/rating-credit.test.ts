@@ -30,7 +30,7 @@ function ratingsDb() {
   return { executor, db: new RatingsDb(() => executor as never) };
 }
 
-const CREDITS = `and not (matter = 'REP' and lower(trim(matter_category)) = 'help6529 credits')`;
+const CREDITS = `and not (matter = 'REP' and lower(trim(matter_category)) collate utf8mb4_bin = 'help6529 credits')`;
 
 describe('rating credit', () => {
   it(
@@ -49,7 +49,7 @@ describe('rating credit', () => {
       expect(creditTdh(10, 5)).toBe(10);
       expect(creditTdhSql('i')).toBe('i.tdh');
       expect(withoutHelpBotCreditsSql('r')).toBe(
-        ` and not (r.matter = 'REP' and lower(trim(r.matter_category)) = 'help6529 credits')`
+        ` and not (r.matter = 'REP' and lower(trim(r.matter_category)) collate utf8mb4_bin = 'help6529 credits')`
       );
     })
   );

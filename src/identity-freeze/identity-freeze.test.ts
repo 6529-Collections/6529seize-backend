@@ -1,3 +1,4 @@
+import { Logger } from '@/logging';
 import {
   assertIdentityNotFrozen,
   IDENTITY_FROZEN_CODE,
@@ -184,6 +185,34 @@ describe('identity freeze flag', () => {
       expect(parseIdentityFreezeAt(raw)).toBeNull();
     }
   );
+
+  it.each([
+    ['Wednesday', 'IS NOT A UTC TIME'],
+    ['2025-11-25T00:00:07Z', 'IS BEFORE 2026-11-24T00:00:00Z'],
+    ['1795564800', 'IS NOT A UTC TIME']
+  ])('logs once why a switch-on time of %s is refused', (value, reason) => {
+    const error = jest.spyOn(Logger.prototype, 'error');
+    try {
+      process.env[SWITCH_ON_AT] = value;
+      expect(isIdentityOnChain(Date.UTC(2026, 10, 26))).toBe(false);
+      expect(isIdentityFrozen(Date.UTC(2026, 10, 26))).toBe(true);
+      isIdentityOnChain(Date.UTC(2026, 10, 26));
+      const lines = error.mock.calls
+        .map(([line]) => String(line))
+        .filter((line) => line.includes(value));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain(reason);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it('switches on from the first second of 24 Nov 2026, not before', () => {
+    process.env[SWITCH_ON_AT] = '2026-11-23T23:59:59Z';
+    expect(isIdentityOnChain(Date.UTC(2026, 10, 25))).toBe(false);
+    process.env[SWITCH_ON_AT] = '2026-11-24T00:00:00Z';
+    expect(isIdentityOnChain(Date.UTC(2026, 10, 25))).toBe(true);
+  });
 
   it('freezes on a malformed switch-on time, but does not switch on', () => {
     for (const value of ['Wednesday', '2026-11-25', '1795564800', '0']) {

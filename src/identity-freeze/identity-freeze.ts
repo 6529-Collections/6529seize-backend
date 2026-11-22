@@ -130,22 +130,35 @@ const EARLIEST_SWITCH_ON_MS = Date.UTC(2026, 10, 24);
  * deploy, which can't be undone).
  */
 function switchOnTimeMalformed(): boolean {
-  const switchOn = parseIdentityFreezeAt(
-    process.env[IDENTITY_SWITCH_ON_AT_ENV]
-  );
-  if (switchOn === null) return true;
+  const raw = process.env[IDENTITY_SWITCH_ON_AT_ENV];
+  const switchOn = parseIdentityFreezeAt(raw);
+  if (switchOn === undefined) return false;
+  if (switchOn === null) {
+    return refuseSwitchOnTime(raw, 'IS NOT A UTC TIME');
+  }
   // No switch-on comes before the freeze day: a wrong year or month set
   // without IDENTITY_FREEZE_AT would otherwise switch on at deploy. Test
   // stages switch on earlier with FEATURE_IDENTITY_ON_CHAIN.
-  if (typeof switchOn === 'number' && switchOn < EARLIEST_SWITCH_ON_MS) {
-    return true;
+  if (switchOn < EARLIEST_SWITCH_ON_MS) {
+    return refuseSwitchOnTime(raw, 'IS BEFORE 2026-11-24T00:00:00Z');
   }
   const freeze = parseIdentityFreezeAt(process.env[IDENTITY_FREEZE_AT_ENV]);
-  return (
-    typeof switchOn === 'number' &&
-    typeof freeze === 'number' &&
-    switchOn < freeze
-  );
+  if (typeof freeze === 'number' && switchOn < freeze) {
+    return refuseSwitchOnTime(raw, `IS BEFORE ${IDENTITY_FREEZE_AT_ENV}`);
+  }
+  return false;
+}
+
+/** Logs, once per value and reason, why a switch-on time is refused. */
+function refuseSwitchOnTime(raw: string | undefined, reason: string): true {
+  const key = `${IDENTITY_SWITCH_ON_AT_ENV}|${raw}|${reason}`;
+  if (!warnedAboutBadTime.has(key)) {
+    warnedAboutBadTime.add(key);
+    logger.error(
+      `[${IDENTITY_SWITCH_ON_AT_ENV} ${reason}] [VALUE ${raw}] [NOT SWITCHING ON, WRITES FROZEN]`
+    );
+  }
+  return true;
 }
 
 /** From switch-on the 6529 chain holds identities for good. */
