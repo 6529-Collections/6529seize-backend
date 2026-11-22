@@ -482,6 +482,26 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /** A draft signed for publishing on the chain: its publication record's CID and receipt. */
+  async recordPublication(
+    id: string,
+    publicationCid: string,
+    receipt: unknown,
+    now: number,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.timedExecute(
+      'recordPublication',
+      `update ${PROFILE_CMS_PACKAGES_TABLE}
+       set publication_cid = :publicationCid,
+           recovery_receipt = :receipt,
+           updated_at = :now
+       where id = :id`,
+      { id, publicationCid, receipt: JSON.stringify(receipt), now },
+      ctx
+    );
+  }
+
   async setRecoveryReceipt(
     id: string,
     receipt: unknown,
