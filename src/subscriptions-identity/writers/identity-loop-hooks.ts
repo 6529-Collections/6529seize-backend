@@ -38,6 +38,32 @@ async function runIdentityWriter(
   }
 }
 
+/**
+ * Runs a legacy loop step (the legacy redemption run, the top-up discovery
+ * and legacy credit). Once the identity tables are the truth, the legacy
+ * tables are the rollback copy: a failure there alerts and the identity
+ * writer after it still runs. Before that a failure fails the run, as it
+ * always has.
+ */
+export async function runLegacySubscriptionStep(
+  name: string,
+  step: () => Promise<unknown>
+): Promise<void> {
+  if ((await subscriptionsIdentitySwitch.writeModeForLegacy()) !== 'TRUTH') {
+    await step();
+    return;
+  }
+  try {
+    await step();
+  } catch (error) {
+    logger.errorWithCode(
+      'SUBSCRIPTIONS_LEGACY_DUAL_WRITE_FAILED',
+      `[LEGACY ${name} FAILED] the identity tables are the truth and go on; the legacy copy lags`,
+      error
+    );
+  }
+}
+
 /** Alerts when journal entries wait unposted (they'd be lost with the database). */
 async function checkJournalPosting(): Promise<void> {
   const posting = await journalPosting();

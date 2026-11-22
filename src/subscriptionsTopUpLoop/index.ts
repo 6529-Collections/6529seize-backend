@@ -14,7 +14,10 @@ import * as priorityAlertsContext from '../priority-alerts.context';
 import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
 import { discoverTopUps } from './subscription_topups';
-import { runIdentityTopUpWriters } from '@/subscriptions-identity/writers/identity-loop-hooks';
+import {
+  runIdentityTopUpWriters,
+  runLegacySubscriptionStep
+} from '@/subscriptions-identity/writers/identity-loop-hooks';
 import { appFeatures } from '../app-features';
 import { replayTopUpLoopDeferredWrites } from '../subscription-key-width/subscription-deferred-replay';
 import { rekeyStaleSubscriptions } from '../subscriptionsDaily/subscription-rekey-fallback';
@@ -60,7 +63,9 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
       if (appFeatures.isSubscriptionRekeyOnMirrorEnabled()) {
         await rekeyOnMirror();
       }
-      await discoverTopUps(process.env.SUBSCRIPTIONS_RESET == 'true');
+      await runLegacySubscriptionStep('TOP-UPS', () =>
+        discoverTopUps(process.env.SUBSCRIPTIONS_RESET == 'true')
+      );
       await runIdentityTopUpWriters();
     }),
     {
