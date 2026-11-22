@@ -31,6 +31,7 @@ import { uploadTDH } from '@/tdhLoop/tdh_upload';
 import { recordTdhMetrics } from '@/tdhLoop/tdh-metrics';
 import { applyChainTokenValues } from './apply-chain-values';
 import {
+  ChainDayRef,
   ChainDayStepRunner,
   ChainTdhIngestDeps,
   ChainTdhRows,
@@ -98,7 +99,14 @@ async function writeDay(
         memesTdh: wallets.memesTdh as TDHMemes[],
         tdhEditions: wallets.tdhEditions as TDHEditions[]
       },
-      afterWrite: (connection) => tdhChainDaysDb.save(record, connection)
+      afterWrite: async (connection) => {
+        await tdhChainDaysDb.save(record, connection);
+        await tdhChainDaysDb.forgetUploads(
+          dateOfCycleDay(day.header.cycleDay),
+          block,
+          connection
+        );
+      }
     }
   );
 }
@@ -110,17 +118,15 @@ async function writeDay(
  * - history: days N-1 (when the day before it is present) and N, from
  *   historic_tdh_consolidation only;
  * - metrics: as a full tdhLoop run records them;
- * - uploads: the two dated CSV files, each skipped if already listed;
+ * - uploads: the two dated CSV files, each skipped if already listed for
+ *   the day's block (a write of the day removes the ones an earlier write
+ *   made, so a day written again is uploaded again);
  * - dayFiles: the chain's day as two day files (`tdh-day-file.ts`), read
  *   again from the gateway and checked, published to Arweave, their URLs
  *   and sha256 kept on the day's record; skipped once published.
  */
-export function siteStepRunner(
-  blockOf: (cycleDay: number) => number,
-  source: TdhChainSource
-): ChainDayStepRunner {
-  async function run(step: ChainDayStep, cycleDay: number) {
-    const block = blockOf(cycleDay);
+export function siteStepRunner(source: TdhChainSource): ChainDayStepRunner {
+  async function run(step: ChainDayStep, { cycleDay, block }: ChainDayRef) {
     const blockTimestamp = new Date(cycleDay * 86_400_000 - 1000);
     switch (step) {
       case 'nfts':
@@ -163,7 +169,11 @@ export function siteStepRunner(
   return {
     run,
     markDone: (cycleDay, step) =>
-      tdhChainDaysDb.markStepDone(cycleDay, step, Date.now())
+      tdhChainDaysDb.markStepDone(cycleDay, step, Date.now()),
+    recordFailure: (cycleDay, step) =>
+      tdhChainDaysDb.recordStepFailure(cycleDay, step, Date.now()),
+    giveUp: (cycleDay, steps) =>
+      tdhChainDaysDb.giveUpSteps(cycleDay, steps, Date.now())
   };
 }
 
@@ -230,7 +240,7 @@ async function rerank(
   return { wallets, consolidated };
 }
 
-export function siteIngestDeps(steps: ChainDayStepRunner): ChainTdhIngestDeps {
+export function siteIngestDeps(): ChainTdhIngestDeps {
   const rpc = getEthereumRpcClient();
   return {
     ethBlocks: {
@@ -256,11 +266,12 @@ export function siteIngestDeps(steps: ChainDayStepRunner): ChainTdhIngestDeps {
       };
     },
     writeDay,
-    steps,
     keyWidth: () => tdhChainDaysDb.consolidationKeyWidth(),
     latestTdhBlock: () => tdhChainDaysDb.latestTdhBlock(),
     transactionsIndexedTo: () => fetchMaxTransactionsBlockNumber(),
-    saveDay: (s) => tdhChainDaysDb.save(s),
+    async saveDay(s) {
+      await tdhChainDaysDb.save(s);
+    },
     now: () => Date.now()
   };
 }
@@ -285,31 +296,17 @@ export function sitePollerDeps(): PollerDeps {
     minIntervalMs: 100,
     userAgent: '6529io-tdh-chain/1'
   });
-  const blocks = new Map<number, number>();
   const source = new GatewayTdhChainSource(gateway, fetcher);
-  const steps = siteStepRunner((cycleDay) => {
-    const block = blocks.get(cycleDay);
-    if (block === undefined) {
-      throw new Error(`no block known for day ${cycleDay}`);
-    }
-    return block;
-  }, source);
-  const ingestDeps = siteIngestDeps(steps);
+  const ingestDeps = siteIngestDeps();
   return {
     mode,
     source,
-    async latestRow() {
-      const row = await tdhChainDaysDb.latest();
-      if (row) blocks.set(row.cycleDay, row.block);
-      return row;
-    },
-    latestWritten: () => tdhChainDaysDb.latestWritten(),
+    latestRow: () => tdhChainDaysDb.latest(),
+    pendingDays: () => tdhChainDaysDb.pendingDays(),
+    latestTdhBlockTime: () => tdhChainDaysDb.latestTdhBlockTime(),
     keyWidth: () => tdhChainDaysDb.consolidationKeyWidth(),
-    ingest(day, m) {
-      blocks.set(day.header.cycleDay, day.header.cutoffNumber);
-      return ingestChainDay(day, m, ingestDeps);
-    },
-    steps,
+    ingest: (day, m) => ingestChainDay(day, m, ingestDeps),
+    steps: siteStepRunner(source),
     alert: (title, message) =>
       priorityAlertsContext.sendPriorityAlert(title, new Error(message)),
     now: () => Date.now()

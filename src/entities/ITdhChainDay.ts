@@ -13,7 +13,14 @@ import { TDH_CHAIN_DAYS_TABLE } from '@/constants/db-tables';
  *   INGESTED (done).
  * - `steps_done`: the follow-up steps of a CHAIN write already run (nfts,
  *   history, metrics, uploads, dayFiles), so a retry resumes instead of
- *   rewriting.
+ *   rewriting. `step_tries` counts each step's failed runs; a step that
+ *   fails too often, or that a newer day's write has made moot, goes to
+ *   `steps_given_up` (with an alert) and the day is done without it.
+ * - `superseded_at`: set when the old path wrote the same block after this
+ *   day (a rollback, or the delegations loop's rerun): the tables no longer
+ *   hold the chain's values for it, and `/api/blocks` says SITE.
+ * - `redo_note`: a later attempt at this written day that failed or was
+ *   skipped. It never replaces the record of what the tables hold.
  * - `deferred_keys`: consolidations left out because their key is wider
  *   than the columns; the day is written again once the columns are wide
  *   enough.
@@ -79,6 +86,18 @@ export class TdhChainDayEntity {
 
   @Column({ type: 'json', nullable: true })
   readonly steps_done!: string[] | null;
+
+  @Column({ type: 'json', nullable: true })
+  readonly step_tries!: Record<string, number> | null;
+
+  @Column({ type: 'json', nullable: true })
+  readonly steps_given_up!: string[] | null;
+
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly superseded_at!: number | null;
+
+  @Column({ type: 'json', nullable: true })
+  readonly redo_note!: unknown;
 
   /** The day files (`tdh-day-file.ts`) as published on Arweave. */
   @Column({ type: 'varchar', length: 200, nullable: true, default: null })

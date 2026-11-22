@@ -20,6 +20,7 @@ import { siteDayFromRows } from './site-day-rows';
 import {
   CHAIN_DAY_STEPS,
   ChainDayStep,
+  ChainDayStepState,
   SaveTdhChainDay,
   splitByKeyWidth,
   TdhChainDayMode,
@@ -49,11 +50,11 @@ import { TdhChainDay } from './tdh-chain.types';
  *    CHAIN: leave out any consolidation whose key is wider than the columns
  *    (queued on the day's record), then write every TDH table, the
  *    tdh_blocks row, the identities sync marker and the day's record (as
- *    WRITTEN) in one transaction. Then run the follow-up steps (NFT totals,
- *    history for days N-1 and N, metrics, the uploads), each once, marking
- *    each done; a retry resumes the steps and never rewrites the tables.
- *    The identities sync and its "TDH calculations done" follow the write
- *    as they do for a full tdhLoop run.
+ *    WRITTEN) in one transaction, and return. The poller sends the day's
+ *    alerts, then runs the follow-up steps (`runFollowUpSteps`); a retry
+ *    resumes the steps and never rewrites the tables. The identities sync
+ *    and its "TDH calculations done" follow the write as they do for a full
+ *    tdhLoop run.
  */
 
 export interface ComputedWallets {
@@ -75,11 +76,23 @@ export interface LiveTdh {
   readonly consolidated: ConsolidatedTDH[];
 }
 
-/** The follow-up steps of a CHAIN write. */
+/** A written day whose follow-up steps run. */
+export interface ChainDayRef {
+  readonly cycleDay: number;
+  /** The cutoff block: the block the write recorded. */
+  readonly block: number;
+}
+
+/** The follow-up steps of a CHAIN write, and where they stand. */
 export interface ChainDayStepRunner {
-  run(step: ChainDayStep, cycleDay: number): Promise<void>;
-  /** Marks the step done and returns the steps done so far. */
-  markDone(cycleDay: number, step: ChainDayStep): Promise<ChainDayStep[]>;
+  run(step: ChainDayStep, day: ChainDayRef): Promise<void>;
+  markDone(cycleDay: number, step: ChainDayStep): Promise<ChainDayStepState>;
+  /** Counts a failed run; returns the step's failed runs so far. */
+  recordFailure(cycleDay: number, step: ChainDayStep): Promise<number>;
+  giveUp(
+    cycleDay: number,
+    steps: readonly ChainDayStep[]
+  ): Promise<ChainDayStepState>;
 }
 
 export interface ChainTdhIngestDeps {
@@ -105,7 +118,6 @@ export interface ChainTdhIngestDeps {
   readLive(block: number): Promise<LiveTdh>;
   /** Writes the day's TDH tables and its record in one transaction. */
   writeDay(rows: ChainTdhRows, record: SaveTdhChainDay): Promise<void>;
-  readonly steps: ChainDayStepRunner;
   keyWidth(): Promise<number>;
   /** The highest block the TDH tables hold, or 0. */
   latestTdhBlock(): Promise<number>;
@@ -238,19 +250,54 @@ function overrideDigest(overrides: readonly ChainOverride[]) {
   return { count: overrides.length, byKind, examples: overrides.slice(0, 20) };
 }
 
-/** The follow-up steps not yet done, run in order, each marked once done. */
+/** Failed runs of one step before it is given up with an alert. */
+export const MAX_STEP_TRIES = 12;
+
+export interface FollowUpOutcome extends ChainDayStepState {
+  /** The steps that failed in this run. */
+  readonly failed: readonly ChainDayStep[];
+}
+
+/**
+ * Runs the day's follow-up steps not yet done or given up, in order, each
+ * marked done once it ran. The steps don't depend on each other, so a step
+ * that fails is counted and the next one runs; the poll after tries the
+ * failed one again. After MAX_STEP_TRIES failed runs a step is given up,
+ * with an alert, and the day is done without it.
+ */
 export async function runFollowUpSteps(
-  cycleDay: number,
-  stepsDone: readonly ChainDayStep[],
-  runner: ChainDayStepRunner
-): Promise<ChainDayStep[]> {
-  let done = [...stepsDone];
+  day: ChainDayRef & {
+    readonly stepsDone: readonly ChainDayStep[];
+    readonly stepsGivenUp: readonly ChainDayStep[];
+  },
+  runner: ChainDayStepRunner,
+  alert: (title: string, message: string) => Promise<void>
+): Promise<FollowUpOutcome> {
+  let state: ChainDayStepState = {
+    done: [...day.stepsDone],
+    givenUp: [...day.stepsGivenUp]
+  };
+  const failed: ChainDayStep[] = [];
   for (const step of CHAIN_DAY_STEPS) {
-    if (done.includes(step)) continue;
-    await runner.run(step, cycleDay);
-    done = await runner.markDone(cycleDay, step);
+    if (state.done.includes(step) || state.givenUp.includes(step)) continue;
+    try {
+      await runner.run(step, day);
+    } catch (e) {
+      const message = (e as Error).message;
+      failed.push(step);
+      const tries = await runner.recordFailure(day.cycleDay, step);
+      if (tries >= MAX_STEP_TRIES) {
+        state = await runner.giveUp(day.cycleDay, [step]);
+        await alert(
+          `TDH day ${day.cycleDay}: the ${step} step was given up`,
+          `it failed ${tries} times; the last error: ${message}`
+        );
+      }
+      continue;
+    }
+    state = await runner.markDone(day.cycleDay, step);
   }
-  return done;
+  return { ...state, failed };
 }
 
 function liveSiteDay(
@@ -421,8 +468,10 @@ export async function ingestChainDay(
     },
     record('WRITTEN', cache.verdict, summary, deferred)
   );
-  const done = await runFollowUpSteps(h.cycleDay, [], deps.steps);
-  const status: TdhChainDayStatus =
-    done.length === CHAIN_DAY_STEPS.length ? 'INGESTED' : 'WRITTEN';
-  return { status, verdict: cache.verdict, deferredKeys: deferred, summary };
+  return {
+    status: 'WRITTEN',
+    verdict: cache.verdict,
+    deferredKeys: deferred,
+    summary
+  };
 }

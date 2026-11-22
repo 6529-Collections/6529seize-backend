@@ -88,7 +88,7 @@ export const handler = sentryContext.wrapLambdaHandler(
 export async function tdhLoop(force?: boolean) {
   if (appFeatures.isTdhFromChainEnabled()) {
     logger.info(
-      `[TDH FROM THE 6529 CHAIN] [tdhChainDayLoop writes each day] [SKIPPING]`
+      `[TDH FROM THE 6529 CHAIN] [the chainPoll events write each day] [SKIPPING]`
     );
     return;
   }

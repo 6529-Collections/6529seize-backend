@@ -1,33 +1,50 @@
 import { Logger } from '@/logging';
-import { ChainTdhIngestResult, runFollowUpSteps } from './chain-tdh-ingest';
-import { ChainDayStepRunner } from './chain-tdh-ingest';
-import { TdhChainDayMode, TdhChainDayRow } from './tdh-chain-days.db';
+import {
+  ChainDayStepRunner,
+  ChainTdhIngestResult,
+  runFollowUpSteps
+} from './chain-tdh-ingest';
+import {
+  CHAIN_DAY_STEPS,
+  ChainDayStep,
+  TABLE_READING_STEPS,
+  TdhChainDayMode,
+  TdhChainDayRow
+} from './tdh-chain-days.db';
 import { readChainDay, TdhChainSource } from './tdh-chain-source';
 import { TdhChainDay, TdhChainDayInfo } from './tdh-chain.types';
 
 /**
  * "The chain applied day N": the replacement for the 00:01 start. Every few
  * minutes the poller reads the newest final TDH day from the gateway and
- * takes it in. One thing a run, since a day is a full TDH computation:
+ * takes it in:
  *
- * - CHAIN, and the newest record is WRITTEN: resume its follow-up steps;
- * - otherwise ingest the day `planDay` picks, if any.
+ * - a day `planDay` picks is ingested first, even while an older day's
+ *   follow-up steps are still due. Its alerts go out as soon as it is
+ *   written, then its steps run. The older day's steps that read the TDH
+ *   tables are given up (the newer day's own steps redo them), with an
+ *   alert; its day files can still be published.
+ * - otherwise, in CHAIN, the follow-up steps still due are run, oldest day
+ *   first. A failing step never holds back a later day.
  *
- * In CHAIN mode it also raises an alert, once an hour, while the newest day
- * written is more than 30 hours past its boundary: the site's TDH is late
- * however the gateway or the chain is failing.
+ * In CHAIN mode it also raises an alert, once an hour, while the newest
+ * TDH day in the tables (`tdh_blocks`) is more than 30 hours old: the
+ * site's TDH is late however the gateway or the chain is failing.
  */
 
 const logger = Logger.get('TDH_CHAIN_DAY_POLLER');
 
-/** The newest day written may lag its boundary this long before an alert. */
+/** The newest TDH day may be this old before an alert. */
 export const STALE_AFTER_MS = 30 * 60 * 60 * 1000;
 
 export interface PollerDeps {
   readonly mode: TdhChainDayMode | null;
   readonly source: TdhChainSource;
   latestRow(): Promise<TdhChainDayRow | null>;
-  latestWritten(): Promise<TdhChainDayRow | null>;
+  /** CHAIN days with follow-up steps still due, oldest first. */
+  pendingDays(): Promise<TdhChainDayRow[]>;
+  /** When the newest TDH day in the tables was taken (ms), or null. */
+  latestTdhBlockTime(): Promise<number | null>;
   keyWidth(): Promise<number>;
   ingest(
     day: TdhChainDay,
@@ -81,60 +98,46 @@ export function isFinal(info: TdhChainDayInfo): boolean {
 }
 
 export interface PollOutcome {
-  readonly resumed?: number;
   readonly ingested?: { cycleDay: number; result: ChainTdhIngestResult };
+  /** The days whose follow-up steps ran. */
+  readonly stepsRun?: readonly number[];
 }
 
 async function alertIfStale(deps: PollerDeps): Promise<void> {
-  const written = await deps.latestWritten();
   const now = deps.now();
   const minute = new Date(now).getUTCMinutes();
   // Once an hour: the :15 run is in both schedules.
   if (minute < 15 || minute >= 20) return;
-  const since = written ? now - written.boundary * 1000 : Infinity;
+  const newest = await deps.latestTdhBlockTime();
+  if (newest === null) return;
+  const since = now - newest;
   if (since > STALE_AFTER_MS) {
     await deps.alert(
       'TDH from the 6529 chain is late',
-      written
-        ? `the newest day written is ${written.cycleDay}, ${Math.floor(since / 3_600_000)} h past its boundary`
-        : 'no day has been written from the chain yet'
+      `the newest TDH day in the tables was taken ${Math.floor(since / 3_600_000)} h ago`
     );
   }
 }
 
-export async function pollChainDays(deps: PollerDeps): Promise<PollOutcome> {
-  if (!deps.mode) {
-    logger.info('[OFF] [neither TDH chain flag is on]');
-    return {};
-  }
-  if (deps.mode === 'CHAIN') {
-    await alertIfStale(deps);
-  }
-  const last = await deps.latestRow();
-  if (
-    deps.mode === 'CHAIN' &&
-    last?.mode === 'CHAIN' &&
-    last.status === 'WRITTEN'
-  ) {
-    logger.info(`[DAY ${last.cycleDay}] [RESUMING ITS FOLLOW-UP STEPS]`);
-    await runFollowUpSteps(last.cycleDay, last.stepsDone, deps.steps);
-    return { resumed: last.cycleDay };
-  }
-
+/** The day planned and read from the gateway, or null. */
+async function dayToIngest(
+  deps: PollerDeps & { mode: TdhChainDayMode },
+  last: TdhChainDayRow | null
+): Promise<TdhChainDay | null> {
   let newest: TdhChainDayInfo | null;
   try {
     newest = await deps.source.latestDay();
   } catch (e) {
     logger.warn(`[GATEWAY UNREACHABLE] [${(e as Error).message}]`);
-    return {};
+    return null;
   }
   if (!newest) {
     logger.info('[NO APPLIED TDH DAY ON THE GATEWAY]');
-    return {};
+    return null;
   }
   if (!isFinal(newest)) {
     logger.info(`[DAY ${newest.header.cycleDay} NOT FINAL YET]`);
-    return {};
+    return null;
   }
   const width =
     deps.mode === 'CHAIN' && last && last.deferredKeys.length > 0
@@ -143,25 +146,26 @@ export async function pollChainDays(deps: PollerDeps): Promise<PollOutcome> {
   const cycleDay = planDay(last, newest.header.cycleDay, deps.mode, width);
   if (cycleDay === null) {
     logger.info(`[UP TO DATE] [DAY ${newest.header.cycleDay}]`);
-    return {};
+    return null;
   }
-  let day: TdhChainDay | null;
   try {
-    day = await readChainDay(deps.source, cycleDay);
+    const day = await readChainDay(deps.source, cycleDay);
+    if (!day) logger.warn(`[DAY ${cycleDay} NOT SERVED]`);
+    return day;
   } catch (e) {
     logger.warn(`[DAY ${cycleDay} NOT READ] [${(e as Error).message}]`);
-    return {};
+    return null;
   }
-  if (!day) {
-    logger.warn(`[DAY ${cycleDay} NOT SERVED]`);
-    return {};
-  }
-  const result = await deps.ingest(day, deps.mode);
-  logger.info(
-    `[DAY ${cycleDay}] [${deps.mode}] [${result.status}] [${result.verdict ?? '-'}]`
-  );
-  const wasFailed = last?.cycleDay === cycleDay && last.status === 'FAILED';
-  if (result.status === 'FAILED' && !wasFailed) {
+}
+
+/** The day's alerts, sent before any follow-up step runs. */
+async function alertOnResult(
+  deps: PollerDeps,
+  cycleDay: number,
+  result: ChainTdhIngestResult,
+  failedBefore: boolean
+): Promise<void> {
+  if (result.status === 'FAILED' && !failedBefore) {
     await deps.alert(
       `TDH day ${cycleDay} from the 6529 chain failed its checks`,
       JSON.stringify(result.summary.failures.slice(0, 5))
@@ -182,5 +186,98 @@ export async function pollChainDays(deps: PollerDeps): Promise<PollOutcome> {
       `${result.deferredKeys.length} keys longer than the consolidation_key columns`
     );
   }
-  return { ingested: { cycleDay, result } };
+}
+
+/**
+ * Day `cycleDay` was just written: older days still due their table steps
+ * can't run them any more. They are given up, with an alert naming them.
+ */
+async function giveUpOlderTableSteps(
+  deps: PollerDeps,
+  pending: readonly TdhChainDayRow[],
+  cycleDay: number
+): Promise<void> {
+  for (const older of pending) {
+    if (older.cycleDay >= cycleDay) continue;
+    const moot: ChainDayStep[] = TABLE_READING_STEPS.filter(
+      (s) => !older.stepsDone.includes(s) && !older.stepsGivenUp.includes(s)
+    );
+    if (moot.length === 0) continue;
+    await deps.steps.giveUp(older.cycleDay, moot);
+    await deps.alert(
+      `TDH day ${older.cycleDay}: ${moot.join(', ')} left undone`,
+      `day ${cycleDay} was written first, and these steps read the TDH tables, which now hold day ${cycleDay}`
+    );
+  }
+}
+
+/** Runs the follow-up steps still due, oldest day first. */
+async function runPendingSteps(deps: PollerDeps): Promise<number[]> {
+  const stepsRun: number[] = [];
+  for (const pending of await deps.pendingDays()) {
+    const due = CHAIN_DAY_STEPS.filter(
+      (s) => !pending.stepsDone.includes(s) && !pending.stepsGivenUp.includes(s)
+    );
+    logger.info(`[DAY ${pending.cycleDay}] [STEPS DUE ${due.join(', ')}]`);
+    await runFollowUpSteps(pending, deps.steps, (title, message) =>
+      deps.alert(title, message)
+    );
+    stepsRun.push(pending.cycleDay);
+  }
+  return stepsRun;
+}
+
+export async function pollChainDays(deps: PollerDeps): Promise<PollOutcome> {
+  const mode = deps.mode;
+  if (!mode) {
+    logger.info('[OFF] [neither TDH chain flag is on]');
+    return {};
+  }
+  if (mode === 'CHAIN') {
+    await alertIfStale(deps);
+  }
+  const last = await deps.latestRow();
+  const day = await dayToIngest({ ...deps, mode }, last);
+  let ingested: PollOutcome['ingested'];
+  if (day) {
+    const cycleDay = day.header.cycleDay;
+    const pendingBefore = mode === 'CHAIN' ? await deps.pendingDays() : [];
+    let result: ChainTdhIngestResult;
+    try {
+      result = await deps.ingest(day, mode);
+    } catch (e) {
+      // The steps still due don't wait on a day that can't be taken in.
+      if (mode === 'CHAIN') await runPendingSteps(deps);
+      throw e;
+    }
+    logger.info(
+      `[DAY ${cycleDay}] [${mode}] [${result.status}] [${result.verdict ?? '-'}]`
+    );
+    const failedBefore =
+      last?.cycleDay === cycleDay &&
+      (last.status === 'FAILED' || last.redoFailed);
+    await alertOnResult(deps, cycleDay, result, failedBefore);
+    ingested = { cycleDay, result };
+    if (result.status === 'WRITTEN') {
+      await giveUpOlderTableSteps(deps, pendingBefore, cycleDay);
+      await runFollowUpSteps(
+        {
+          cycleDay,
+          block: day.header.cutoffNumber,
+          stepsDone: [],
+          stepsGivenUp: []
+        },
+        deps.steps,
+        (title, message) => deps.alert(title, message)
+      );
+      return { ingested, stepsRun: [cycleDay] };
+    }
+    if (result.status === 'INGESTED') {
+      // A SHADOW computation: enough for one run.
+      return { ingested };
+    }
+  }
+  if (mode !== 'CHAIN') return ingested ? { ingested } : {};
+  const stepsRun = await runPendingSteps(deps);
+  return { ...(ingested ? { ingested } : {}), stepsRun };
 }

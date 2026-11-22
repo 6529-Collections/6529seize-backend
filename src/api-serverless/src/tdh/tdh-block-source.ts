@@ -4,7 +4,8 @@ import { ApiBlockItem } from '../generated/models/ApiBlockItem';
 /**
  * Where a TDH block's TDH comes from: the 6529 chain, when the chain-day
  * write recorded it (with the day number and wallet root), else 6529.io's
- * own computation. After a rollback the newer days read SITE again.
+ * own computation. After a rollback the newer days read SITE again, and so
+ * does a block the old path wrote again (`superseded_at`).
  */
 export function blockSource(
   row: Pick<TDHBlockWithChainDay, 'chain_cycle_day' | 'chain_wallet_root'>

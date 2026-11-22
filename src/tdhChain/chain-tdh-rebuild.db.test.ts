@@ -15,6 +15,7 @@ import {
   fetchAllConsolidatedTdh,
   fetchAllTDH
 } from '@/db';
+import { fetchBlocks } from '@/db-api';
 import * as Entities from '@/entities/entities';
 import { ConsolidatedTDH, TDH } from '@/entities/ITDH';
 import { setSqlExecutor, SqlExecutor, sqlExecutor } from '@/sql-executor';
@@ -25,11 +26,16 @@ import { updateTDH } from '@/tdhLoop/tdh';
 import { consolidateAndPersistTDH } from '@/tdhLoop/tdh_consolidation';
 import { uploadTDH } from '@/tdhLoop/tdh_upload';
 import { siteIngestDeps, siteStepRunner } from './chain-tdh-ingest.deps';
-import { ChainTdhIngestDeps, ingestChainDay } from './chain-tdh-ingest';
+import {
+  ChainDayStepRunner,
+  ChainTdhIngestDeps,
+  ingestChainDay,
+  runFollowUpSteps
+} from './chain-tdh-ingest';
 import { parseCsv } from './csv';
 import { cidOf, compareText, tokenRoot, walletRoot } from './p28';
 import { COLLECTION_CONTRACTS, SITE_COLLECTIONS } from './site-day';
-import { CHAIN_DAY_STEPS } from './tdh-chain-days.db';
+import { CHAIN_DAY_STEPS, tdhChainDaysDb } from './tdh-chain-days.db';
 import { pollChainDays } from './tdh-chain-day-poller';
 import { sitePollerDeps } from './chain-tdh-ingest.deps';
 import { TdhChainSource } from './tdh-chain-source';
@@ -324,6 +330,14 @@ const TABLES: { table: string; order: string; skip: string[] }[] = [
   { table: 'tdh_blocks', order: 'block_number', skip: ['created_at'] },
   { table: 'tdh_history', order: 'date, consolidation_key', skip: [] },
   { table: 'tdh_global_history', order: 'date', skip: [] },
+  { table: 'recent_tdh_history', order: 'date, consolidation_key', skip: [] },
+  { table: 'latest_tdh_history', order: 'date, consolidation_key', skip: [] },
+  { table: 'latest_tdh_global_history', order: 'date', skip: [] },
+  {
+    table: 'nextgen_tokens_tdh',
+    order: 'id, consolidation_key',
+    skip: ['created_at', 'updated_at']
+  },
   { table: 'uploads', order: 'date', skip: ['timestamp'] },
   { table: 'uploads_consolidation', order: 'date', skip: ['timestamp'] }
 ];
@@ -350,15 +364,7 @@ async function snapshot(): Promise<Record<string, unknown[]>> {
 
 async function emptyTdhTables() {
   for (const t of TABLES) await sqlExecutor.execute(`delete from ${t.table}`);
-  for (const t of [
-    'tdh_chain_days',
-    'recent_tdh_history',
-    'latest_tdh_history',
-    'latest_tdh_global_history',
-    'nextgen_tokens_tdh'
-  ]) {
-    await sqlExecutor.execute(`delete from ${t}`);
-  }
+  await sqlExecutor.execute(`delete from tdh_chain_days`);
   await sqlExecutor.execute(
     `update ${NFTS_TABLE} set tdh = 0, boosted_tdh = 0, tdh__raw = 0, tdh_rank = 0`
   );
@@ -380,13 +386,12 @@ function memorySource(days: TdhChainDay[]): TdhChainSource {
   };
 }
 
-function chainDeps(days: TdhChainDay[]): ChainTdhIngestDeps {
-  const blocks = new Map(
-    days.map((d) => [d.header.cycleDay, d.header.cutoffNumber])
-  );
-  const steps = siteStepRunner((day) => blocks.get(day)!, memorySource(days));
-  const real = siteIngestDeps(steps);
+function chainDeps(days: TdhChainDay[]): ChainTdhIngestDeps & {
+  steps: ChainDayStepRunner;
+} {
+  const real = siteIngestDeps();
   return {
+    steps: siteStepRunner(memorySource(days)),
     ...real,
     ethBlocks: {
       getBlock: async (n) => {
@@ -403,6 +408,45 @@ function chainDeps(days: TdhChainDay[]): ChainTdhIngestDeps {
     },
     transactionsIndexedTo: async () => Number.MAX_SAFE_INTEGER,
     now: () => DAY_2 * 86_400_000 + 3_600_000
+  };
+}
+
+/** The chain path as the poller runs it: the write, then its steps. */
+async function ingestDay(day: TdhChainDay, deps: ReturnType<typeof chainDeps>) {
+  const r = await ingestChainDay(day, 'CHAIN', deps);
+  if (r.status === 'WRITTEN') {
+    const steps = await runFollowUpSteps(
+      {
+        cycleDay: day.header.cycleDay,
+        block: day.header.cutoffNumber,
+        stepsDone: [],
+        stepsGivenUp: []
+      },
+      deps.steps,
+      async (title) => {
+        throw new Error(title);
+      }
+    );
+    expect(steps.failed).toEqual([]);
+  }
+  return r;
+}
+
+/** Day `day` with one identity's values raised by `by` on the chain. */
+function raised(day: TdhChainDay, wallet: string, by: number): TdhChainDay {
+  const walletLeaves = day.walletLeaves.map((l) =>
+    l.wallet === wallet
+      ? { ...l, walletTdh: l.walletTdh + by, identityTdh: l.identityTdh + by }
+      : l
+  );
+  return {
+    ...day,
+    header: {
+      ...day.header,
+      walletRoot: walletRoot(walletLeaves),
+      totalTdh: day.header.totalTdh + by
+    },
+    walletLeaves
   };
 }
 
@@ -451,10 +495,10 @@ describeWithSeed('rebuilding the TDH tables from the 6529 chain', SEEDS, () => {
 
     await emptyTdhTables();
     const deps = chainDeps([day1, day2]);
-    const r1 = await ingestChainDay(day1, 'CHAIN', deps);
-    const r2 = await ingestChainDay(day2, 'CHAIN', deps);
-    expect([r1.status, r1.verdict]).toEqual(['INGESTED', 'MATCH']);
-    expect([r2.status, r2.verdict]).toEqual(['INGESTED', 'MATCH']);
+    const r1 = await ingestDay(day1, deps);
+    const r2 = await ingestDay(day2, deps);
+    expect([r1.status, r1.verdict]).toEqual(['WRITTEN', 'MATCH']);
+    expect([r2.status, r2.verdict]).toEqual(['WRITTEN', 'MATCH']);
 
     const rebuilt = await snapshot();
     for (const t of Object.keys(old)) {
@@ -472,8 +516,8 @@ describeWithSeed('rebuilding the TDH tables from the 6529 chain', SEEDS, () => {
     // A second rebuild from empty writes the same tables and byte-identical
     // files.
     await emptyTdhTables();
-    await ingestChainDay(day1, 'CHAIN', deps);
-    await ingestChainDay(day2, 'CHAIN', deps);
+    await ingestDay(day1, deps);
+    await ingestDay(day2, deps);
     expect(await snapshot()).toEqual(rebuilt);
     expect(await uploadUrls()).toEqual(firstUrls);
 
@@ -491,6 +535,71 @@ describeWithSeed('rebuilding the TDH tables from the 6529 chain', SEEDS, () => {
     ]);
     expect(JSON.parse(recorded[1].steps_done)).toEqual([...CHAIN_DAY_STEPS]);
     expect(recorded[1].wallets_file_url).toMatch(/^https:\/\/arweave\.net\//);
+  }, 180_000);
+
+  it('writes the chain values where they differ, uploads a day written again, and gives a block the old path writes again back to SITE', async () => {
+    await oldPathDay(DAY_1, BLOCK_1);
+    const day1 = chainDayOf(
+      DAY_1,
+      BLOCK_1,
+      (await fetchAllTDH(BLOCK_1)) as TDH[],
+      await fetchAllConsolidatedTdh()
+    );
+    await oldPathDay(DAY_2, BLOCK_2);
+    const siteW3 = ((await fetchAllTDH(BLOCK_2)) as TDH[]).find(
+      (r) => r.wallet.toLowerCase() === W3
+    )!.boosted_tdh;
+    const day2 = chainDayOf(
+      DAY_2,
+      BLOCK_2,
+      (await fetchAllTDH(BLOCK_2)) as TDH[],
+      await fetchAllConsolidatedTdh()
+    );
+    const day2Raised = raised(day2, W3, 7);
+
+    await emptyTdhTables();
+    const deps = chainDeps([day1, day2]);
+    await ingestDay(day1, deps);
+    await ingestDay(day2, deps);
+    const w3Upload = async () =>
+      (
+        uploadedRows(
+          (
+            await sqlExecutor.execute<{ tdh: string }>(
+              `select tdh from uploads where block = ${BLOCK_2}`
+            )
+          )[0]?.tdh
+        ) as Record<string, string>[]
+      ).find((r) => r.wallet.toLowerCase() === W3)!.boosted_tdh;
+    expect(Number(await w3Upload())).toBe(siteW3);
+
+    // The same day again with other values: written over, uploaded again.
+    const r = await ingestDay(day2Raised, chainDeps([day1, day2Raised]));
+    expect([r.status, r.verdict]).toEqual(['WRITTEN', 'MISMATCH']);
+    const w3 = ((await fetchAllTDH(BLOCK_2)) as TDH[]).find(
+      (x) => x.wallet.toLowerCase() === W3
+    )!;
+    expect(w3.boosted_tdh).toBe(siteW3 + 7);
+    const w3Identity = (await fetchAllConsolidatedTdh()).find(
+      (c) => c.consolidation_key === W3
+    )!;
+    expect(w3Identity.boosted_tdh).toBe(siteW3 + 7);
+    expect(Number(await w3Upload())).toBe(siteW3 + 7);
+    const chainBlock = async () =>
+      (await fetchBlocks(10, 1)).data.find((b) => b.block_number === BLOCK_2)!;
+    expect(Number((await chainBlock()).chain_cycle_day)).toBe(DAY_2);
+
+    // A same-day rollback: the old path writes the chain's block again.
+    await oldPathDay(DAY_2, BLOCK_2);
+    expect((await chainBlock()).chain_cycle_day).toBeNull();
+    expect(
+      ((await fetchAllTDH(BLOCK_2)) as TDH[]).find(
+        (x) => x.wallet.toLowerCase() === W3
+      )!.boosted_tdh
+    ).toBe(siteW3);
+    expect(await tdhChainDaysDb.pendingDays()).toEqual([]);
+    const latest = await tdhChainDaysDb.latest();
+    expect(latest).toMatchObject({ cycleDay: DAY_2, superseded: true });
   }, 180_000);
 
   it('writes a day once: an older day is skipped, and nothing runs while both flags are off', async () => {

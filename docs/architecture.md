@@ -170,19 +170,24 @@ Two flags, both off by default, choose how. `tdhLoop`, `delegationsLoop` and
 every invocation, so a change takes effect without a redeploy.
 
 - `FEATURE_TDH_CHAIN_SHADOW`: compare only. `tdhLoop`'s `chainPoll` schedule
-  events (every 5 minutes from 00:05 to 07:55 UTC, then every 30 minutes) read
-  the newest final day from the gateway and check its roots, counts, totals,
-  clusters and cutoff block. They compute the site's TDH at the chain's cutoff
-  block, grouped by the chain's clusters, and compare it and the live tables
-  with the chain's values exactly. The result goes to `tdh_chain_days`. No TDH
+  events (every 5 minutes from 00:00 to 07:55 UTC, then at :15 and :45 from
+  08:15 to 23:45) read the newest final day from the gateway and check its
+  roots, counts, totals, clusters and cutoff block. They compute the site's
+  TDH at the chain's cutoff block, grouped by the chain's clusters, and
+  compare it and the live tables with the chain's values exactly. The result goes to `tdh_chain_days`. No TDH
   table is written.
 - `FEATURE_TDH_FROM_CHAIN`: the same, then the TDH tables are written with the
   chain's totals over the site's computation, ranked again. The wallet and
   consolidated tables, `tdh_blocks`, the identities sync marker and the day's
-  `tdh_chain_days` record commit in one transaction. Follow-up steps then run
-  once each and are marked on the record: NFT totals, history for days N-1 and
-  N, metrics, the two dated uploads, and the day files. A failed step is
-  resumed by the next poll; the tables are never written twice for a day.
+  `tdh_chain_days` record commit in one transaction. The day's alerts go out,
+  then follow-up steps run once each and are marked on the record: NFT
+  totals, history for days N-1 and N, metrics, the two dated uploads, and the
+  day files. A failed step is tried again by the next poll, and given up with
+  an alert after 12 failed runs; a retry never writes the tables again. A
+  newer day is written even while an older day's steps are due; the older
+  day's steps that read the tables are then given up, with an alert. An
+  alert also fires once an hour while the newest `tdh_blocks` row is more
+  than 30 hours old.
   The 00:01 `tdhLoop` run, `tdhHistoryLoop`'s 00:30 run and the delegations
   loop's within-day TDH rerun stop. "TDH calculations done" follows the
   identities sync as for a full `tdhLoop` run.
@@ -190,10 +195,16 @@ every invocation, so a change takes effect without a redeploy.
 `tdh_chain_days` is an index of the chain: a rebuild reads the same days from
 the gateway. A consolidation whose key is longer than the `consolidation_key`
 columns is left out of the write and queued on the day's record until the
-columns are wider.
+columns are wider; the day is then written and uploaded again. `/api/blocks`
+says which blocks came from the chain (`source`, `cycle_day`, `wallet_root`).
+When the old path writes a block the chain wrote (a rollback, or the
+delegations loop's rerun after one), the day's record is marked
+`superseded_at` in the same transaction and the block reads SITE again.
 
 Rollback: turn `FEATURE_TDH_FROM_CHAIN` off. The next 00:01 `tdhLoop` run
-computes the day as before; set `TDH_RESET` to recompute at once.
+computes the day as before. To recompute today's day at once, invoke
+`tdhLoop` with no event: its config sets `TDH_RESET`, so it recomputes the
+day at the same midnight block, which marks the chain's day superseded.
 
 ## Active TDH voting discovery
 

@@ -3,7 +3,7 @@ import { fetchBlocks } from '@/db-api';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { chainDayFixture } from '@/tests/fixtures/tdh-chain-day.fixture';
-import { CHAIN_DAY_STEPS, TdhChainDaysDb } from './tdh-chain-days.db';
+import { TdhChainDaysDb } from './tdh-chain-days.db';
 
 describeWithSeed(
   'TdhChainDaysDb',
@@ -25,7 +25,10 @@ describeWithSeed(
     },
     {
       table: 'uploads',
-      rows: [{ date: '20261011', block: 500, tdh: 'u', timestamp: 0 }]
+      rows: [
+        { date: '20261011', block: 500, tdh: 'u', timestamp: 0 },
+        { date: '20261010', block: 400, tdh: 'v', timestamp: 0 }
+      ]
     }
   ],
   () => {
@@ -49,21 +52,26 @@ describeWithSeed(
 
     it('has no day before the first ingest', async () => {
       expect(await db.latest()).toBeNull();
-      expect(await db.latestWritten()).toBeNull();
+      expect(await db.pendingDays()).toEqual([]);
     });
 
-    it('saves, overwrites and returns the newest day and the newest written', async () => {
+    it('saves, overwrites and lists the days whose steps are due, oldest first', async () => {
       await save(20737, 'CHAIN', 'WRITTEN', ['k1']);
       await save(20736, 'SHADOW', 'FAILED');
       await save(20738, 'CHAIN', 'FAILED');
+      await save(20735, 'CHAIN', 'WRITTEN');
       expect(await db.latest()).toMatchObject({
         cycleDay: 20738,
         mode: 'CHAIN',
         status: 'FAILED',
-        stepsDone: []
+        stepsDone: [],
+        superseded: false,
+        redoFailed: false
       });
-      expect(await db.latestWritten()).toMatchObject({
-        cycleDay: 20737,
+      expect((await db.pendingDays()).map((r) => r.cycleDay)).toEqual([
+        20735, 20737
+      ]);
+      expect((await db.pendingDays())[1]).toMatchObject({
         status: 'WRITTEN',
         deferredKeys: ['k1'],
         boundary: 20737 * 86400,
@@ -71,20 +79,59 @@ describeWithSeed(
       });
     });
 
-    it('marks steps done and ends the day INGESTED with the last one', async () => {
-      await save(20737, 'CHAIN', 'WRITTEN');
-      expect(await db.markStepDone(20737, 'history', 1)).toEqual(['history']);
-      expect(await db.markStepDone(20737, 'nfts', 2)).toEqual([
-        'nfts',
-        'history'
-      ]);
-      for (const step of CHAIN_DAY_STEPS) await db.markStepDone(20737, step, 3);
+    it('keeps the record of a written day when a later attempt at it fails or is skipped', async () => {
+      await save(20737, 'CHAIN', 'INGESTED', ['k1']);
+      expect(await save(20737, 'CHAIN', 'FAILED')).toBe(false);
       expect(await db.latest()).toMatchObject({
         status: 'INGESTED',
-        stepsDone: [...CHAIN_DAY_STEPS]
+        deferredKeys: ['k1'],
+        redoFailed: true
       });
+      expect(await save(20737, 'CHAIN', 'SKIPPED')).toBe(false);
+      expect(await db.latest()).toMatchObject({
+        status: 'INGESTED',
+        redoFailed: false
+      });
+      // A new write of the day replaces it and clears the note.
+      expect(await save(20737, 'CHAIN', 'WRITTEN')).toBe(true);
+      expect(await db.latest()).toMatchObject({
+        status: 'WRITTEN',
+        deferredKeys: [],
+        redoFailed: false
+      });
+      // A failed SHADOW day is replaced as before.
+      await save(20739, 'SHADOW', 'INGESTED');
+      expect(await save(20739, 'SHADOW', 'FAILED')).toBe(true);
+      expect(await db.latest()).toMatchObject({ status: 'FAILED' });
+    });
+
+    it('marks steps done or given up and ends the day INGESTED once each is one or the other', async () => {
       await save(20737, 'CHAIN', 'WRITTEN');
-      expect((await db.latest())!.stepsDone).toEqual([]);
+      expect(await db.markStepDone(20737, 'history', 1)).toEqual({
+        done: ['history'],
+        givenUp: []
+      });
+      expect(await db.recordStepFailure(20737, 'uploads', 2)).toBe(1);
+      expect(await db.recordStepFailure(20737, 'uploads', 3)).toBe(2);
+      expect(await db.giveUpSteps(20737, ['uploads'], 4)).toEqual({
+        done: ['history'],
+        givenUp: ['uploads']
+      });
+      for (const step of ['nfts', 'metrics', 'dayFiles'] as const) {
+        await db.markStepDone(20737, step, 5);
+      }
+      expect(await db.latest()).toMatchObject({
+        status: 'INGESTED',
+        stepsDone: ['nfts', 'history', 'metrics', 'dayFiles'],
+        stepsGivenUp: ['uploads']
+      });
+      expect(await db.pendingDays()).toEqual([]);
+      await save(20737, 'CHAIN', 'WRITTEN');
+      expect(await db.latest()).toMatchObject({
+        stepsDone: [],
+        stepsGivenUp: []
+      });
+      expect(await db.recordStepFailure(20737, 'uploads', 6)).toBe(1);
     });
 
     it('records and finds the day files', async () => {
@@ -101,10 +148,21 @@ describeWithSeed(
 
     it('reads the newest TDH block, the uploads and the narrowest key column', async () => {
       expect(await db.latestTdhBlock()).toBe(700);
+      expect(await db.latestTdhBlockTime()).toBe(
+        Date.parse('2026-10-11T23:59:59Z')
+      );
       expect(await db.uploadExists(false, '20261011', 500)).toBe(true);
       expect(await db.uploadExists(true, '20261011', 500)).toBe(false);
       expect(await db.uploadExists(false, '20261012', 700)).toBe(false);
       expect(await db.consolidationKeyWidth()).toBe(200);
+    });
+
+    it('forgets the uploads of a block inside a write, and no other', async () => {
+      await sqlExecutor.executeNativeQueriesInTransaction((c) =>
+        db.forgetUploads('20261011', 500, c)
+      );
+      expect(await db.uploadExists(false, '20261011', 500)).toBe(false);
+      expect(await db.uploadExists(false, '20261010', 400)).toBe(true);
     });
 
     it('gives the blocks the chain wrote their day and root, and no other', async () => {

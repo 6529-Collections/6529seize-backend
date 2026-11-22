@@ -6,10 +6,12 @@ import {
   siteFixtureRows
 } from '@/tests/fixtures/tdh-chain-day.fixture';
 import {
+  ChainDayStepRunner,
   ChainTdhIngestDeps,
   ChainTdhRows,
   INDEX_MARGIN_BLOCKS,
   ingestChainDay,
+  MAX_STEP_TRIES,
   runFollowUpSteps
 } from './chain-tdh-ingest';
 import {
@@ -30,14 +32,12 @@ function deps(
     tdhBlock?: number;
     indexed?: number;
     now?: number;
-    failStep?: ChainDayStep;
   } = {}
 ) {
   const day = chainDayFixture();
   const saved: SaveTdhChainDay[] = [];
   const written: { rows: ChainTdhRows; record: SaveTdhChainDay }[] = [];
   const calls: string[] = [];
-  const stepsDone: ChainDayStep[] = [];
   const d: ChainTdhIngestDeps = {
     ethBlocks: {
       getBlock: async (n) =>
@@ -75,16 +75,6 @@ function deps(
       calls.push('write');
       written.push({ rows, record });
     },
-    steps: {
-      async run(step) {
-        if (step === opts.failStep) throw new Error(`${step} failed`);
-        calls.push(`step ${step}`);
-      },
-      async markDone(_cycleDay, step) {
-        stepsDone.push(step);
-        return [...stepsDone];
-      }
-    },
     keyWidth: async () => opts.width ?? 200,
     latestTdhBlock: async () => opts.tdhBlock ?? 0,
     transactionsIndexedTo: async () =>
@@ -94,7 +84,7 @@ function deps(
     },
     now: () => opts.now ?? day.header.boundary * 1000 + 3_600_000
   };
-  return { d, saved, written, calls, day, stepsDone };
+  return { d, saved, written, calls, day };
 }
 
 describe('ingestChainDay', () => {
@@ -139,7 +129,7 @@ describe('ingestChainDay', () => {
       now: day.header.boundary * 1000 + 3 * 3_600_000 + 1
     });
     expect((await ingestChainDay(late.day, 'CHAIN', late.d)).status).toBe(
-      'INGESTED'
+      'WRITTEN'
     );
   });
 
@@ -195,21 +185,18 @@ describe('ingestChainDay', () => {
     expect(r.verdict).toBe('MATCH_WITHOUT_TOKENS');
   });
 
-  it('in CHAIN writes the chain values, records the day in the write, then runs every step once', async () => {
+  it('in CHAIN writes the chain values and records the day in the same write, leaving the steps to the poller', async () => {
     const computed = siteFixture();
     computed.wallets[fixtureWallet('3')].boostedTdh = 401;
     const t = deps({ computed });
     const r = await ingestChainDay(t.day, 'CHAIN', t.d);
     expect(r).toMatchObject({
-      status: 'INGESTED',
+      status: 'WRITTEN',
       verdict: 'MISMATCH',
       deferredKeys: []
     });
     expect(t.calls.filter((c) => c === 'rerank')).toHaveLength(1);
-    expect(t.calls.filter((c) => c.startsWith('step '))).toEqual(
-      CHAIN_DAY_STEPS.map((s) => `step ${s}`)
-    );
-    expect(t.calls.indexOf('write')).toBeLessThan(t.calls.indexOf('step nfts'));
+    expect(t.calls[t.calls.length - 1]).toBe('write');
     const w = t.written[0];
     expect(w.record).toMatchObject({
       mode: 'CHAIN',
@@ -226,25 +213,6 @@ describe('ingestChainDay', () => {
       )
     ).toBe(true);
     expect(t.saved).toEqual([]);
-    expect(t.stepsDone).toEqual([...CHAIN_DAY_STEPS]);
-  });
-
-  it('in CHAIN leaves the day WRITTEN when a step fails, so the next run resumes it', async () => {
-    const t = deps({ failStep: 'uploads' });
-    await expect(ingestChainDay(t.day, 'CHAIN', t.d)).rejects.toThrow(
-      'uploads failed'
-    );
-    expect(t.written).toHaveLength(1);
-    expect(t.stepsDone).toEqual(['nfts', 'history', 'metrics']);
-    const resumed: string[] = [];
-    const done = await runFollowUpSteps(t.day.header.cycleDay, t.stepsDone, {
-      run: async (step) => {
-        resumed.push(step);
-      },
-      markDone: async (_d, step) => [...t.stepsDone, step]
-    });
-    expect(resumed).toEqual(['uploads', 'dayFiles']);
-    expect(done).toContain('dayFiles');
   });
 
   it('in CHAIN leaves out consolidations whose key is too wide and queues them', async () => {
@@ -264,5 +232,92 @@ describe('ingestChainDay', () => {
     const t = deps();
     await ingestChainDay(t.day, 'CHAIN', t.d);
     expect(t.calls).not.toContain('rerank');
+  });
+});
+
+describe('runFollowUpSteps', () => {
+  function runner(failing: Partial<Record<ChainDayStep, number>> = {}) {
+    const ran: string[] = [];
+    const tries: Record<string, number> = {};
+    const done: ChainDayStep[] = [];
+    const givenUp: ChainDayStep[] = [];
+    // In the order of the steps, as the store keeps them.
+    const state = () => ({
+      done: CHAIN_DAY_STEPS.filter((s) => done.includes(s)),
+      givenUp: CHAIN_DAY_STEPS.filter((s) => givenUp.includes(s))
+    });
+    const r: ChainDayStepRunner = {
+      async run(step, day) {
+        ran.push(`${step} ${day.cycleDay} ${day.block}`);
+        if ((failing[step] ?? 0) > 0) {
+          failing[step]!--;
+          throw new Error(`${step} failed`);
+        }
+      },
+      async markDone(_d, step) {
+        done.push(step);
+        return state();
+      },
+      async recordFailure(_d, step) {
+        tries[step] = (tries[step] ?? 0) + 1;
+        return tries[step];
+      },
+      async giveUp(_d, steps) {
+        givenUp.push(...steps);
+        return state();
+      }
+    };
+    return { r, ran, tries };
+  }
+  const day = {
+    cycleDay: 20737,
+    block: 1000,
+    stepsDone: [] as readonly ChainDayStep[],
+    stepsGivenUp: [] as readonly ChainDayStep[]
+  };
+  const noAlert = async (title: string) => {
+    throw new Error(`unexpected alert: ${title}`);
+  };
+
+  it('runs every step once, in order, with the day and its block', async () => {
+    const t = runner();
+    const out = await runFollowUpSteps(day, t.r, noAlert);
+    expect(t.ran).toEqual(CHAIN_DAY_STEPS.map((s) => `${s} 20737 1000`));
+    expect(out).toEqual({
+      done: [...CHAIN_DAY_STEPS],
+      givenUp: [],
+      failed: []
+    });
+  });
+
+  it('counts a failed step and still runs the steps after it', async () => {
+    const t = runner({ uploads: 1 });
+    const out = await runFollowUpSteps(day, t.r, noAlert);
+    expect(out.failed).toEqual(['uploads']);
+    expect(out.done).toEqual(['nfts', 'history', 'metrics', 'dayFiles']);
+    expect(t.tries).toEqual({ uploads: 1 });
+    const again = await runFollowUpSteps(
+      { ...day, stepsDone: out.done },
+      t.r,
+      noAlert
+    );
+    expect(again.done).toEqual([...CHAIN_DAY_STEPS]);
+  });
+
+  it(`gives a step up after ${MAX_STEP_TRIES} failed runs, with an alert`, async () => {
+    const t = runner({ metrics: MAX_STEP_TRIES });
+    const alerts: string[] = [];
+    let state = { ...day };
+    for (let i = 0; i < MAX_STEP_TRIES; i++) {
+      const out = await runFollowUpSteps(state, t.r, async (title) => {
+        alerts.push(title);
+      });
+      state = { ...state, stepsDone: out.done, stepsGivenUp: out.givenUp };
+    }
+    expect(alerts).toEqual(['TDH day 20737: the metrics step was given up']);
+    expect(state.stepsGivenUp).toEqual(['metrics']);
+    const before = t.ran.length;
+    await runFollowUpSteps(state, t.r, noAlert);
+    expect(t.ran.length).toBe(before);
   });
 });

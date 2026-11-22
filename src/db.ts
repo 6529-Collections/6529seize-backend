@@ -43,6 +43,7 @@ import {
   NFTS_TABLE,
   PROFILES_TABLE,
   TDH_BLOCKS_TABLE,
+  TDH_CHAIN_DAYS_TABLE,
   TDH_NFT_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
@@ -1507,6 +1508,15 @@ export async function persistConsolidatedTDH(
       { writeAllRows }
     );
     await persistTDHBlock(block, blockTimestamp, tdh, manager);
+    // The tables no longer hold the 6529 chain's values for this block if
+    // the chain wrote it: /api/blocks says SITE again. The chain's own write
+    // records its day after this, in `afterWrite`, which clears the mark.
+    await dbSupplier().execute(
+      `update ${TDH_CHAIN_DAYS_TABLE} set superseded_at = :now
+       where block = :block and mode = 'CHAIN' and superseded_at is null`,
+      { block, now: Date.now() },
+      { wrappedConnection: qrHolder }
+    );
     // A full rewrite (tdhLoop) leaves the sync to delegationsLoop and has its
     // completion announced once the sync is done.
     const generation = await identityTdhSyncStateDb.markPending(
