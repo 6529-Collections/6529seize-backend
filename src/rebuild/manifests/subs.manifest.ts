@@ -138,6 +138,11 @@ export const subsManifest: AreaManifest = {
       why: "Redemption cursor; restarts from the opening's redemption block.",
       origin: 'planned'
     },
+    subscription_rekey_fallback_state: {
+      class: 'EPHEMERAL',
+      why: "The re-key fallback's run state; without it the next run starts over.",
+      origin: 'planned'
+    },
     subscriptions_id_reports: {
       class: 'EPHEMERAL',
       why: 'Comparison evidence; running the comparisons again writes it.',
