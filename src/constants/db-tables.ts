@@ -51,6 +51,10 @@ export const DROP_AUTHOR_SIGNATURES_TABLE = 'drop_author_signatures';
 export const WALLET_CONNECTION_SHARES_TABLE = 'wallet_connection_shares';
 export const IDENTITIES_TABLE = 'identities';
 export const ADDRESS_CONSOLIDATION_KEY = 'address_consolidation_keys';
+/** 6529 chain principal id -> the 6529.io profile id it is mirrored as. */
+export const IDENTITY_CHAIN_PRINCIPALS_TABLE = 'identity_chain_principals';
+/** Where the identity mirror is in the chain gateway's change feed. */
+export const IDENTITY_CHAIN_MIRROR_STATE_TABLE = 'identity_chain_mirror_state';
 export const TEAM_TABLE = 'team';
 export const DISTRIBUTION_TABLE = 'distribution';
 export const DISTRIBUTION_PHOTO_TABLE = 'distribution_photo';

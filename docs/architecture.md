@@ -875,6 +875,18 @@ by height; network errors, 429 and 5xx are retried. Settings are read at first
 use, so loops that never call it need none. Loops and API code that read
 identity data from the chain add calls to this client, not their own.
 
+From switch-on the delegations loop also runs the identity mirror
+(`src/identity-chain-mirror`, `FEATURE_IDENTITY_CHAIN_MIRROR`) after its
+NFTDelegation work. It keeps `profiles`, `identities`,
+`address_consolidation_keys`, `consolidations` (confirmed pairs),
+`delegations`, REP and CIC `ratings`, `cic_statements` and the
+`rep`/`cic`/`level_raw` aggregates equal to the chain, so the SQL readers keep
+working: a full sync (every six hours, and when the feed no longer holds its
+height) walks every identity, delegation and pair; between full syncs it
+follows the gateway's change feed. `identity_chain_principals` maps each
+principal to the 6529.io profile id its rows use; `identity_chain_mirror_state`
+holds its place in the feed. Profile documents come from the gateway's store.
+
 ### Ordinary Ethereum RPC boundary
 
 The shared provider in `src/ethereum-rpc/` reads the server-only

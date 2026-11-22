@@ -24,6 +24,14 @@ export class AppFeatures {
   }
 
   /**
+   * The delegations loop also mirrors the 6529 chain's identities into
+   * 6529.io's identity tables (src/identity-chain-mirror).
+   */
+  public isIdentityChainMirrorEnabled(): boolean {
+    return this.isFeatureEnabled('IDENTITY_CHAIN_MIRROR');
+  }
+
+  /**
    * Large viewer group lists are read from viewer_group_set_members by their
    * hash instead of travelling in each statement (waves/viewer-group-sets).
    */

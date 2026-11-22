@@ -317,3 +317,7 @@ export { IdentityTdhSyncStateEntity } from './IIdentityTdhSyncState';
 export { IdentityTdhSyncScopeEntity } from './IIdentityTdhSyncScope';
 
 export * from './ICompetitionScoreReset';
+export {
+  IdentityChainMirrorStateEntity,
+  IdentityChainPrincipalEntity
+} from './IIdentityChainMirror';

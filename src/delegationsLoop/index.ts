@@ -67,6 +67,8 @@ import {
 import { readReconsolidationAction } from './reconsolidation-action';
 import { DelegationsLoopHealth } from './delegations-loop-health';
 import { collectGarbageAfter } from './heap-release';
+import { appFeatures } from '../app-features';
+import { identityChainMirror } from '../identity-chain-mirror/identity-chain-mirror.service';
 import {
   resumePendingIdentityTdhSync,
   startIdentitySyncBudget
@@ -145,6 +147,7 @@ export const handler = sentryContext.wrapLambdaHandler(
             );
             health.completed(delegationsResponse.blockTimestamp);
           });
+          await mirrorChainIdentities();
         },
         {
           logger,
@@ -246,6 +249,25 @@ async function handleDelegations(
   await updatePrimaryAddresses(primaryAddressEvents);
 
   return delegationsResponse;
+}
+
+/** The run's share of time for the identity mirror (a run is 15 minutes). */
+const IDENTITY_MIRROR_BUDGET_MS = Time.minutes(6).toMillis();
+
+/**
+ * From switch-on, 6529.io's identity tables follow the 6529 chain
+ * (FEATURE_IDENTITY_CHAIN_MIRROR). Runs after the delegations work, so a
+ * mirror failure never holds NFTDelegation's record back; it still fails the
+ * run, so it is seen.
+ */
+async function mirrorChainIdentities() {
+  if (!appFeatures.isIdentityChainMirrorEnabled()) {
+    return;
+  }
+  const report = await identityChainMirror.run({
+    budgetMs: IDENTITY_MIRROR_BUDGET_MS
+  });
+  logger.info(`[IDENTITY CHAIN MIRROR] ${JSON.stringify(report)}`);
 }
 
 async function handleENS() {
