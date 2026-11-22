@@ -250,6 +250,7 @@ describe('notification view lifecycle', () => {
           deleted: false,
           versions: [
             {
+              origin: 'OPERATION',
               eventId: '0xbig',
               timeMs: T,
               reply: null,

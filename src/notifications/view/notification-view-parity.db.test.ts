@@ -188,6 +188,7 @@ const cases: Case[] = [
         waveId: WAVE,
         visibilityGroupId: GROUP,
         pollDropId: 'poll-1',
+        origin: 'OPERATION',
         pollAuthorId: targetId,
         voterId,
         anonymous: false,
@@ -214,7 +215,8 @@ const cases: Case[] = [
           waveId: WAVE,
           creatorId: actorId,
           isDirectMessage: false,
-          groupIds: [GROUP]
+          groupIds: [GROUP],
+          origin: 'OPERATION'
         },
         {
           followersListedInGroups: async () => [targetId, otherId, actorId],
@@ -256,6 +258,7 @@ const cases: Case[] = [
           visibilityGroupId: GROUP,
           title: 'Main Stage',
           status: 'DECIDED',
+          origin: 'SCAN',
           winnerCount: 1
         },
         { waveFollowers: async () => [targetId] }
@@ -302,6 +305,7 @@ const cases: Case[] = [
           submissionTitle: 'Artwork',
           reason: 'WIN',
           creditType: 'TDH',
+          origin: 'SCAN',
           creditScope: 'WAVE'
         },
         { entryVoters: async () => [{ voterId, value: -20 }] }
@@ -334,6 +338,7 @@ const cases: Case[] = [
           entryId: 'entry-1',
           chainDecisionId: MAIN_STAGE,
           decisionId: COMPETITION,
+          origin: 'OPERATION',
           decisionTitle: 'Main Stage',
           waveId: WAVE,
           visibilityGroupId: GROUP,
@@ -381,6 +386,7 @@ const cases: Case[] = [
           eventId: '0xreact',
           timeMs: NOW,
           waveId: WAVE,
+          origin: 'OPERATION',
           visibilityGroupId: GROUP,
           dropId: 'drop-1',
           dropAuthorId: targetId,
@@ -438,6 +444,7 @@ const cases: Case[] = [
         dropId: 'alert-1',
         waveId: WAVE,
         authorId: actorId,
+        origin: 'OPERATION',
         timeMs: NOW,
         deleted: false,
         memberIds: [targetId, otherId, actorId]
@@ -498,6 +505,7 @@ const dropCase: Case & { readonly causes: IdentityNotificationCause[] } = {
       versions: [
         {
           eventId: '0xdrop',
+          origin: 'OPERATION',
           timeMs: NOW,
           reply: { dropId: 'drop-target', partNo: 1, authorId: targetId },
           quotes: [

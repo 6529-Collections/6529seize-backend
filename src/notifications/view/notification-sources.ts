@@ -19,11 +19,24 @@ export interface ChainPosition {
 }
 
 /**
- * Imported state never notifies; system cuts (scans) notify only where
- * today's code does. UNKNOWN: a change whose writer the index can't name
- * (the identity mirror's rows before nodes record it); it never notifies.
+ * Who made a chain change. OPERATION: someone's transaction. SCAN: the
+ * chain's own work (a cap's cut, a decision falling due); it notifies only
+ * where today's code does. IMPORT: state copied in from 6529.io, or history
+ * read again; it never notifies, as 6529.io notified it when it happened.
+ * UNKNOWN: a change whose writer the index can't name; it never notifies.
  */
 export type ChainOrigin = 'OPERATION' | 'IMPORT' | 'SCAN' | 'UNKNOWN';
+
+/** Whether a chain change of this origin may notify anyone. */
+export function originNotifies(origin: ChainOrigin): boolean {
+  return origin === 'OPERATION' || origin === 'SCAN';
+}
+
+/**
+ * Who made a drop index event. IMPORT: a post, edit or reaction copied in
+ * from 6529.io, or history read again; it never notifies.
+ */
+export type RelayOrigin = 'OPERATION' | 'IMPORT';
 
 /** One applied rating change, from the identity mirror's log. */
 export interface RatingChangedEvent extends ChainPosition {
@@ -67,6 +80,7 @@ export interface PollChoice {
 /** POLL_BALLOT_SET. */
 export interface PollBallotEvent extends ChainPosition {
   readonly txId: string;
+  readonly origin: ChainOrigin;
   readonly waveId: string;
   readonly visibilityGroupId: string | null;
   readonly pollDropId: string;
@@ -79,6 +93,7 @@ export interface PollBallotEvent extends ChainPosition {
 
 /** WAVE_CREATE. */
 export interface WaveCreatedEvent extends ChainPosition {
+  readonly origin: ChainOrigin;
   readonly waveId: string;
   readonly creatorId: string;
   readonly isDirectMessage: boolean;
@@ -88,6 +103,8 @@ export interface WaveCreatedEvent extends ChainPosition {
 
 /** A decision's result became FINAL. */
 export interface DecisionResultEvent extends ChainPosition {
+  /** SCAN when the decision fell due; IMPORT when copied from 6529.io. */
+  readonly origin: ChainOrigin;
   /** The decision's 6529.io competition id (the waves index's id map), shown as competition_id. */
   readonly decisionId: string;
   readonly occurrence: number;
@@ -104,6 +121,7 @@ export interface DecisionResultEvent extends ChainPosition {
 
 /** An entry left ACTIVE: it won, or its submitter withdrew it. */
 export interface EntryReleasedEvent extends ChainPosition {
+  readonly origin: ChainOrigin;
   /** The entry's 6529.io id. */
   readonly entryId: string;
   /** The decision's 6529.io competition id, shown as competition_id. */
@@ -121,6 +139,7 @@ export interface EntryReleasedEvent extends ChainPosition {
 
 /** SUBMISSION_CREATE. */
 export interface SubmissionCreatedEvent extends ChainPosition {
+  readonly origin: ChainOrigin;
   readonly entryId: string;
   /** The decision's chain id, matched against MAIN_STAGE_DECISION_IDS. */
   readonly chainDecisionId: string;
@@ -138,6 +157,7 @@ export interface SubmissionCreatedEvent extends ChainPosition {
 /** One REACT event from the drop index, with the reactor's state before it. */
 export interface DropReactionEvent {
   readonly eventId: string;
+  readonly origin: RelayOrigin;
   /** P33 3.6's effective time. */
   readonly timeMs: number;
   readonly waveId: string;

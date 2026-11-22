@@ -109,6 +109,7 @@ const drop = (mentionedIds: string[]): DropCreationFacts => ({
   deleted: false,
   versions: [
     {
+      origin: 'OPERATION',
       eventId: '0xroot',
       timeMs: NOW,
       reply: null,
@@ -526,6 +527,7 @@ describe('notification_view', () => {
       dropId: 'drop-y',
       versions: [
         {
+          origin: 'OPERATION',
           eventId: '0xreply',
           timeMs: NOW,
           reply: { dropId: 'drop-x', partNo: 1, authorId: targetId },

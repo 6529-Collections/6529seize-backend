@@ -5,7 +5,8 @@ import type {
 } from '@/notifications/view/derived-notification';
 import type {
   DropReactionEvent,
-  FollowChangedEvent
+  FollowChangedEvent,
+  RelayOrigin
 } from '@/notifications/view/notification-sources';
 
 /** The reserved P33 reaction that carries a boost. */
@@ -31,12 +32,18 @@ const base = (
  * DROP_REACTED and DROP_BOOSTED (`reactions.service.ts`,
  * `drops.api.service.ts`): a reaction turned on notifies the drop's author,
  * unless it repeats the reactor's previous state or the author reacted.
- * Turning it off removes nothing, as today.
+ * Turning it off removes nothing, as today. An imported reaction notifies
+ * nobody.
  */
 export function deriveReaction(event: DropReactionEvent): DerivedGroup {
   const repeats =
     event.previous?.on === true && event.previous.reaction === event.reaction;
-  if (!event.on || repeats || event.reactorId === event.dropAuthorId) {
+  if (
+    event.origin === 'IMPORT' ||
+    !event.on ||
+    repeats ||
+    event.reactorId === event.dropAuthorId
+  ) {
     return { family: 'reaction', ref: event.eventId, rows: [] };
   }
   const boost = event.reaction === BOOST_REACTION;
@@ -99,6 +106,7 @@ export interface QuoteFacts {
 /** One visible version of a drop (the root POST or an EDIT). */
 export interface DropVersionFacts {
   readonly eventId: string;
+  readonly origin: RelayOrigin;
   /** P33 3.6's effective time. */
   readonly timeMs: number;
   readonly reply: ReplyFacts | null;
@@ -241,24 +249,25 @@ function mentionedRecipients(
  * recipient per drop. The latest visible version decides who and why;
  * group mentions come from the root only, as today. A row shows at the time
  * of the first version that named its recipient, so an edit never makes a
- * notification new again. A deleted drop has no rows.
+ * notification new again. A recipient first named by an imported version
+ * gets no row: 6529.io notified them then. A deleted drop has no rows.
  */
 export function deriveDropCreation(facts: DropCreationFacts): DerivedGroup {
   const latest = facts.versions.at(-1);
   if (facts.deleted || !latest) {
     return { family: 'drop', ref: facts.rootEventId, rows: [] };
   }
-  const firstSeen = new Map<string, number>();
+  const firstSeen = new Map<string, DropVersionFacts>();
   for (const version of facts.versions) {
     for (const recipientId of Array.from(versionRows(facts, version).keys())) {
-      if (!firstSeen.has(recipientId))
-        firstSeen.set(recipientId, version.timeMs);
+      if (!firstSeen.has(recipientId)) firstSeen.set(recipientId, version);
     }
   }
   const rows = Array.from(versionRows(facts, latest).values())
+    .filter((row) => firstSeen.get(row.identity_id)?.origin !== 'IMPORT')
     .map((row) => ({
       ...row,
-      created_at: firstSeen.get(row.identity_id) ?? latest.timeMs
+      created_at: firstSeen.get(row.identity_id)?.timeMs ?? latest.timeMs
     }))
     .sort((a, b) => a.identity_id.localeCompare(b.identity_id));
   return { family: 'drop', ref: facts.rootEventId, rows };
@@ -267,6 +276,7 @@ export function deriveDropCreation(facts: DropCreationFacts): DerivedGroup {
 /** A priority alert drop, as the drop index resolved it. */
 export interface PriorityAlertFacts {
   readonly rootEventId: string;
+  readonly origin: RelayOrigin;
   readonly dropId: string;
   readonly waveId: string;
   readonly authorId: string;
@@ -279,9 +289,10 @@ export interface PriorityAlertFacts {
 /**
  * PRIORITY_ALERT (`priority-alerts.context.ts`): an alert drop in the
  * configured wave notifies the members of the wave's groups, not its author.
+ * An imported alert notifies nobody.
  */
 export function derivePriorityAlert(facts: PriorityAlertFacts): DerivedGroup {
-  if (facts.deleted) {
+  if (facts.deleted || facts.origin === 'IMPORT') {
     return { family: 'priority-alert', ref: facts.rootEventId, rows: [] };
   }
   return {

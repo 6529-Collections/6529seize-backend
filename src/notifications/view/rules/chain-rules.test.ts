@@ -135,6 +135,7 @@ describe('chain notification rules', () => {
 
   describe('poll ballots', () => {
     const ballot = (over: Partial<PollBallotEvent> = {}): PollBallotEvent => ({
+      origin: 'OPERATION',
       ...at,
       txId: '0xtx3',
       waveId: 'wave',
@@ -183,10 +184,17 @@ describe('chain notification rules', () => {
     ])('derives nothing for %s', (_label, over) => {
       expect(derivePollBallot(ballot(over)).rows).toEqual([]);
     });
+
+    it('derives nothing for an imported ballot or an unknown writer', () => {
+      for (const origin of ['IMPORT', 'UNKNOWN'] as const) {
+        expect(derivePollBallot(ballot({ origin })).rows).toEqual([]);
+      }
+    });
   });
 
   describe('wave created', () => {
     const wave = (over: Partial<WaveCreatedEvent> = {}): WaveCreatedEvent => ({
+      origin: 'OPERATION',
       ...at,
       waveId: 'wave',
       creatorId: 'creator',
@@ -227,12 +235,31 @@ describe('chain notification rules', () => {
         (await deriveWaveCreated(wave({ groupIds: [] }), lookups)).rows
       ).toEqual([]);
     });
+
+    it('notifies nobody for an imported wave, without looking anyone up', async () => {
+      lookups.followersListedInGroups.mockClear();
+      lookups.membersListedInGroups.mockClear();
+      for (const isDirectMessage of [false, true]) {
+        const group = await deriveWaveCreated(
+          wave({ origin: 'IMPORT', isDirectMessage }),
+          lookups
+        );
+        expect(group).toEqual({
+          family: 'wave-created',
+          ref: 'wave',
+          rows: []
+        });
+      }
+      expect(lookups.followersListedInGroups).not.toHaveBeenCalled();
+      expect(lookups.membersListedInGroups).not.toHaveBeenCalled();
+    });
   });
 
   describe('decision results', () => {
     const result = (
       over: Partial<DecisionResultEvent> = {}
     ): DecisionResultEvent => ({
+      origin: 'SCAN',
       ...at,
       decisionId: COMPETITION,
       occurrence: 3,
@@ -246,6 +273,18 @@ describe('chain notification rules', () => {
       ...over
     });
     const lookups = { waveFollowers: jest.fn(async () => ['f2', 'f1']) };
+
+    it('notifies nobody for an imported result', async () => {
+      const group = await deriveDecisionResult(
+        result({ origin: 'IMPORT' }),
+        lookups
+      );
+      expect(group).toEqual({
+        family: 'decision-result',
+        ref: `${COMPETITION}:3`,
+        rows: []
+      });
+    });
 
     it('notifies the wave followers of a decided result', async () => {
       const group = await deriveDecisionResult(result(), lookups);
@@ -296,6 +335,7 @@ describe('chain notification rules', () => {
     const released = (
       over: Partial<EntryReleasedEvent> = {}
     ): EntryReleasedEvent => ({
+      origin: 'SCAN',
       ...at,
       entryId: 'entry',
       decisionId: COMPETITION,
@@ -316,6 +356,19 @@ describe('chain notification rules', () => {
         { voterId: 'v3', value: 0 }
       ])
     };
+
+    it('notifies nobody for an imported release', async () => {
+      for (const reason of ['WIN', 'AUTHOR_DELETED'] as const) {
+        expect(
+          (
+            await deriveEntryReleased(
+              released({ origin: 'IMPORT', reason }),
+              lookups
+            )
+          ).rows
+        ).toEqual([]);
+      }
+    });
 
     it('returns the absolute vote to every voter with a vote', async () => {
       const group = await deriveEntryReleased(released(), lookups);
@@ -358,6 +411,7 @@ describe('chain notification rules', () => {
     const submission = (
       over: Partial<SubmissionCreatedEvent> = {}
     ): SubmissionCreatedEvent => ({
+      origin: 'OPERATION',
       ...at,
       entryId: 'entry',
       chainDecisionId: MAIN_STAGE.toUpperCase().replace('0X', '0x'),
@@ -408,6 +462,18 @@ describe('chain notification rules', () => {
           }
         })
       );
+    });
+
+    it('notifies nobody for an imported submission', async () => {
+      process.env.MAIN_STAGE_DECISION_IDS = MAIN_STAGE;
+      expect(
+        (
+          await deriveSubmissionCreated(
+            submission({ origin: 'IMPORT' }),
+            lookups
+          )
+        ).rows
+      ).toEqual([]);
     });
 
     it('notifies nobody outside the Main Stage list or for an anonymous entry', async () => {

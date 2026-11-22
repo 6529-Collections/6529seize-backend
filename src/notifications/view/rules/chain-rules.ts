@@ -7,14 +7,15 @@ import type {
   DerivedGroup,
   DerivedNotification
 } from '@/notifications/view/derived-notification';
-import type {
-  DecisionResultEvent,
-  EntryReleasedEvent,
-  PollBallotEvent,
-  RatingChangedEvent,
-  SubmissionCreatedEvent,
-  VoteChangedEvent,
-  WaveCreatedEvent
+import {
+  originNotifies,
+  type DecisionResultEvent,
+  type EntryReleasedEvent,
+  type PollBallotEvent,
+  type RatingChangedEvent,
+  type SubmissionCreatedEvent,
+  type VoteChangedEvent,
+  type WaveCreatedEvent
 } from '@/notifications/view/notification-sources';
 import type { NotificationLookups } from '@/notifications/view/rules/notification-lookups';
 
@@ -118,8 +119,7 @@ export function deriveRating(event: RatingChangedEvent): DerivedGroup {
 export function deriveVote(event: VoteChangedEvent): DerivedGroup {
   const ref = `${event.ref}:${event.voterId}:${event.entryDropId}`;
   if (
-    event.origin === 'IMPORT' ||
-    event.origin === 'UNKNOWN' ||
+    !originNotifies(event.origin) ||
     event.newValue === event.oldValue ||
     event.voterId === event.entryAuthorId
   ) {
@@ -162,10 +162,12 @@ const sameChoices = (
 /**
  * DROP_POLL_VOTED (`drop-polls.api.service.ts`): changed choices notify the
  * poll's author, except in anonymous polls and for the author's own ballot.
+ * Imported ballots don't notify.
  */
 export function derivePollBallot(event: PollBallotEvent): DerivedGroup {
   const ref = event.txId;
   if (
+    !originNotifies(event.origin) ||
     event.anonymous ||
     event.voterId === event.pollAuthorId ||
     sameChoices(event.oldChoices, event.newChoices)
@@ -203,7 +205,8 @@ const distinctSorted = (ids: readonly string[]) =>
  * WAVE_CREATED (`wave.api.service.ts`): a DM wave notifies everyone listed
  * in its groups; any other wave notifies the creator's followers listed by
  * name in one of its groups (today's query reads include lists only, so a
- * wave without groups notifies nobody). Never the creator.
+ * wave without groups notifies nobody). Never the creator, and nobody for
+ * an imported wave.
  */
 export async function deriveWaveCreated(
   event: WaveCreatedEvent,
@@ -212,6 +215,9 @@ export async function deriveWaveCreated(
     'followersListedInGroups' | 'membersListedInGroups'
   >
 ): Promise<DerivedGroup> {
+  if (!originNotifies(event.origin)) {
+    return { family: 'wave-created', ref: event.waveId, rows: [] };
+  }
   const recipients = event.groupIds.length
     ? event.isDirectMessage
       ? await lookups.membersListedInGroups(event.groupIds, event.height)
@@ -238,14 +244,19 @@ export async function deriveWaveCreated(
 
 /**
  * COMPETITION_LIFECYCLE (`competition-event-dispatcher.ts`): a decided
- * result with a winner notifies the wave's followers.
+ * result with a winner notifies the wave's followers. An imported result
+ * notifies nobody.
  */
 export async function deriveDecisionResult(
   event: DecisionResultEvent,
   lookups: Pick<NotificationLookups, 'waveFollowers'>
 ): Promise<DerivedGroup> {
   const ref = `${event.decisionId}:${event.occurrence}`;
-  if (event.status !== 'DECIDED' || event.winnerCount < 1) {
+  if (
+    !originNotifies(event.origin) ||
+    event.status !== 'DECIDED' ||
+    event.winnerCount < 1
+  ) {
     return { family: 'decision-result', ref, rows: [] };
   }
   const followers = await lookups.waveFollowers(event.waveId, event.height);
@@ -276,14 +287,15 @@ export async function deriveDecisionResult(
 /**
  * VOTING_CREDITS_RETURNED (`voting-credit-return-notifications.service.ts`):
  * when an entry wins or its submitter withdraws it, every voter with a
- * non-zero vote on it gets its credit back. Only wave-scoped credit returns.
+ * non-zero vote on it gets its credit back. Only wave-scoped credit returns;
+ * an imported release notifies nobody.
  */
 export async function deriveEntryReleased(
   event: EntryReleasedEvent,
   lookups: Pick<NotificationLookups, 'entryVoters'>
 ): Promise<DerivedGroup> {
   const ref = event.entryId;
-  if (event.creditScope !== 'WAVE') {
+  if (!originNotifies(event.origin) || event.creditScope !== 'WAVE') {
     return { family: 'credit-return', ref, rows: [] };
   }
   const voters = await lookups.entryVoters(event.entryId, event.height);
@@ -332,7 +344,8 @@ export function mainStageDecisionIds(): ReadonlySet<string> {
 /**
  * ARTIST_ARTWORK_SUBMITTED (`artist-artwork-notifications.ts`): a public
  * Main Stage submission notifies those whose alert on the artist was on
- * before it, who can read the wave and haven't muted it. Never the artist.
+ * before it, who can read the wave and haven't muted it. Never the artist,
+ * and nobody for an imported submission.
  */
 export async function deriveSubmissionCreated(
   event: SubmissionCreatedEvent,
@@ -343,6 +356,7 @@ export async function deriveSubmissionCreated(
 ): Promise<DerivedGroup> {
   const ref = event.entryId;
   if (
+    !originNotifies(event.origin) ||
     event.anonymous ||
     !mainStageDecisionIds().has(event.chainDecisionId.toLowerCase())
   ) {

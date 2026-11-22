@@ -19,6 +19,7 @@ describe('relay notification rules', () => {
     const react = (
       over: Partial<DropReactionEvent> = {}
     ): DropReactionEvent => ({
+      origin: 'OPERATION',
       eventId: '0xevent',
       timeMs: T0,
       waveId: 'wave',
@@ -75,7 +76,9 @@ describe('relay notification rules', () => {
         'a repeat of the same reaction',
         { previous: { reaction: ':fire:', on: true } }
       ],
-      ['the author reacting', { reactorId: 'author' }]
+      ['the author reacting', { reactorId: 'author' }],
+      ['an imported reaction', { origin: 'IMPORT' as const }],
+      ['an imported boost', { origin: 'IMPORT' as const, reaction: 'boost' }]
     ])('derives nothing for %s', (_label, over) => {
       expect(deriveReaction(react(over)).rows).toEqual([]);
     });
@@ -119,6 +122,7 @@ describe('relay notification rules', () => {
     const version = (
       over: Partial<DropVersionFacts> = {}
     ): DropVersionFacts => ({
+      origin: 'OPERATION',
       eventId: '0xroot',
       timeMs: T0,
       reply: null,
@@ -299,6 +303,39 @@ describe('relay notification rules', () => {
       expect(removed.rows.map((row) => row.identity_id)).toEqual(['m2']);
     });
 
+    it('notifies nobody an imported version named, and whoever a later edit adds', () => {
+      const imported = facts({
+        versions: [
+          version({
+            origin: 'IMPORT',
+            reply: { dropId: 'parent', partNo: 1, authorId: 'r1' },
+            mentionedIds: ['m1']
+          })
+        ],
+        followers: [{ identityId: 'f1', allDrops: true, groupOptIn: false }]
+      });
+      expect(deriveDropCreation(imported).rows).toEqual([]);
+      const edited = deriveDropCreation(
+        facts({
+          ...imported,
+          versions: [
+            ...imported.versions,
+            version({
+              eventId: '0xedit',
+              timeMs: T0 + 60_000,
+              reply: { dropId: 'parent', partNo: 1, authorId: 'r1' },
+              mentionedIds: ['m1', 'm2']
+            })
+          ]
+        })
+      );
+      expect(
+        edited.rows.map((row) => [row.identity_id, row.cause, row.created_at])
+      ).toEqual([
+        ['m2', IdentityNotificationCause.IDENTITY_MENTIONED, T0 + 60_000]
+      ]);
+    });
+
     it('has no rows for a deleted drop', () => {
       expect(
         deriveDropCreation(
@@ -311,9 +348,25 @@ describe('relay notification rules', () => {
     });
   });
 
+  it('notifies nobody for an imported alert', () => {
+    expect(
+      derivePriorityAlert({
+        rootEventId: '0xalert',
+        origin: 'IMPORT',
+        dropId: 'alert-drop',
+        waveId: 'alerts',
+        authorId: 'ops',
+        timeMs: T0,
+        deleted: false,
+        memberIds: ['a', 'b']
+      }).rows
+    ).toEqual([]);
+  });
+
   it('notifies alert wave members except the author', () => {
     const group = derivePriorityAlert({
       rootEventId: '0xalert',
+      origin: 'OPERATION',
       dropId: 'alert-drop',
       waveId: 'alerts',
       authorId: 'ops',
