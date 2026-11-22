@@ -105,13 +105,100 @@ function sameDirectory(a: string, b: string): boolean {
   return norm(a) === norm(b);
 }
 
-function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
+/** A process's image name and command line, or null when it can't be read. */
+export interface ProcessInfo {
+  readonly image: string;
+  readonly commandLine: string;
+}
+
+/** How the run looks at other processes; tests replace it. */
+export interface ProcessProbe {
+  info(pid: number): ProcessInfo | null;
+  /** The PID listening on 127.0.0.1:`port`, or null when it can't be read. */
+  listener(port: number): number | null;
+}
+
+function powershell(command: string): string | null {
+  const result = spawnSync(
+    'powershell',
+    ['-NoProfile', '-NonInteractive', '-Command', command],
+    { windowsHide: true, encoding: 'utf8', timeout: 30_000 }
+  );
+  return result.status === 0 ? result.stdout.trim() : null;
+}
+
+/** Reads processes through Win32_Process and Get-NetTCPConnection, or /proc and lsof. */
+export const systemProcessProbe: ProcessProbe = {
+  info(pid) {
+    if (!Number.isInteger(pid) || pid <= 0) return null;
+    if (process.platform === 'win32') {
+      const out = powershell(
+        `Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}' | Select-Object Name,CommandLine | ConvertTo-Json -Compress`
+      );
+      if (!out) return null;
+      try {
+        const row = JSON.parse(out) as { Name?: string; CommandLine?: string };
+        return row.Name
+          ? { image: row.Name, commandLine: row.CommandLine ?? '' }
+          : null;
+      } catch {
+        return null;
+      }
+    }
+    try {
+      const args = fs
+        .readFileSync(`/proc/${pid}/cmdline`, 'utf8')
+        .split('\0')
+        .filter(Boolean);
+      return args.length
+        ? { image: path.basename(args[0]), commandLine: args.join(' ') }
+        : null;
+    } catch {
+      return null;
+    }
+  },
+  listener(port) {
+    const out =
+      process.platform === 'win32'
+        ? powershell(
+            `Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess`
+          )
+        : (() => {
+            const result = spawnSync(
+              'lsof',
+              ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'],
+              { encoding: 'utf8', timeout: 30_000 }
+            );
+            return result.status === 0 ? result.stdout.trim() : null;
+          })();
+    const pid = out ? Number(out.split(/\s+/)[0]) : NaN;
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
   }
+};
+
+/** The `--datadir=` value of a command line, unquoted. */
+function dataDirOf(commandLine: string): string | null {
+  const match = /--datadir=(?:"([^"]+)"|(\S+))/.exec(commandLine);
+  return match ? (match[1] ?? match[2]) : null;
+}
+
+/**
+ * Whether `pid` is this data directory's mysqld and the one listening on
+ * `port`: its image is mysqld, its command line names this data directory,
+ * and it owns the port. Anything less, and the run must not end it.
+ */
+export function isThisRunsServer(
+  pid: number,
+  dataDir: string,
+  port: number,
+  probe: ProcessProbe = systemProcessProbe
+): boolean {
+  const info = probe.info(pid);
+  if (!info) return false;
+  if (!/^mysqld(\.exe)?$/i.test(path.basename(info.image))) return false;
+  const dir = dataDirOf(info.commandLine);
+  if (!dir || !sameDirectory(dir, dataDir)) return false;
+  return probe.listener(port) === pid;
 }
 
 /**
@@ -120,11 +207,12 @@ function processAlive(pid: number): boolean {
  * that run), or by SHUTDOWN when it still has the empty password of a fresh
  * data directory and serves this run's data directory.
  */
-async function stopLeftover(
+export async function stopLeftover(
   target: AdminTarget,
   dataDir: string,
   pidFile: string,
-  log: (line: string) => void
+  log: (line: string) => void,
+  probe: ProcessProbe = systemProcessProbe
 ): Promise<void> {
   if (!(await portOpen(target.port))) return;
   let admin: MysqlAdmin;
@@ -134,15 +222,20 @@ async function stopLeftover(
     const pid = fs.existsSync(pidFile)
       ? Number(fs.readFileSync(pidFile, 'utf8').trim())
       : NaN;
-    if (Number.isInteger(pid) && pid > 0 && processAlive(pid)) {
+    // Only a process proven to be this data directory's mysqld, listening
+    // on this port, is ended; a PID Windows reused for anything else is not.
+    if (isThisRunsServer(pid, dataDir, target.port, probe)) {
       log(
         `ending the server pid ${pid} a previous run left on port ${target.port}`
       );
       endProcess(pid);
-      if (await waitPortClosed(target.port)) return;
+      if (await waitPortClosed(target.port)) {
+        fs.rmSync(pidFile, { force: true });
+        return;
+      }
     }
     throw new Error(
-      `127.0.0.1:${target.port} is in use, and not by this run's server (${String(error)}); choose another port`
+      `127.0.0.1:${target.port} is in use, and not by a server of this run's data directory (${String(error)}); refusing to touch it, choose another port`
     );
   }
   const [row] = await admin.query<{ dir: string }>('SELECT @@datadir AS dir');
@@ -270,6 +363,7 @@ export async function startLocalMysqld(
     await waitReady(child, target, logDir);
   } catch (error) {
     if (child.exitCode === null) endProcess(pid);
+    fs.rmSync(pidFile, { force: true });
     throw error;
   } finally {
     fs.rmSync(initFile, { force: true });
@@ -292,6 +386,8 @@ export async function startLocalMysqld(
         endProcess(pid);
         await waitExit(child, STOP_TIMEOUT_MS);
       }
+      // A pid file must never outlive its process: Windows reuses PIDs.
+      fs.rmSync(pidFile, { force: true });
       options.log(`mysqld pid ${pid} stopped`);
     }
   };

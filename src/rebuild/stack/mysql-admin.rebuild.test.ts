@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { acquireHomeLock } from '@/rebuild/stack/home-lock';
 import { LocalMysqld, startLocalMysqld } from '@/rebuild/stack/local-mysqld';
@@ -52,9 +53,7 @@ describe('MysqlAdmin on the private mysqld', () => {
   afterAll(
     async () => {
       try {
-        await admin?.query(`DROP DATABASE IF EXISTS ${FROM}`);
-        await admin?.query(`DROP DATABASE IF EXISTS ${TO}`);
-        await admin?.close();
+        // The last test stops the server; this covers a failure before it.
         await server?.stop();
       } finally {
         release?.();
@@ -88,5 +87,15 @@ describe('MysqlAdmin on the private mysqld', () => {
         doubled_stored: 42
       }
     ]);
+  });
+
+  it('leaves no pid file once the server stops', async () => {
+    const pidFile = path.join(HOME, 'mysql', 'harness-mysqld.pid');
+    expect(fs.readFileSync(pidFile, 'utf8').trim()).toBe(String(server.pid));
+    await admin.query(`DROP DATABASE IF EXISTS ${FROM}`);
+    await admin.query(`DROP DATABASE IF EXISTS ${TO}`);
+    await admin.close();
+    await server.stop();
+    expect(fs.existsSync(pidFile)).toBe(false);
   });
 });
