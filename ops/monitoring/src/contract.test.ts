@@ -85,6 +85,18 @@ test('push conditions are finite safe labels; arbitrary condition text is discar
   assert.equal(unknown.condition, undefined);
   assert.doesNotMatch(JSON.stringify(renderAlert(unknown)), /PRIVATE_TOKEN/);
 });
+test('a profile site change that waits too long is named with its cause', () => {
+  const alert = parseAlert({
+    ...fixture,
+    service: 'delegationsLoop',
+    condition: 'PROFILE_SITE_CHANGE_STALLED',
+    diagnostic: { category: 'UNKNOWN', operation: 'ProfileCmsChainFollower' }
+  });
+  assert.equal(alert.condition, 'PROFILE_SITE_CHANGE_STALLED');
+  const rendered = JSON.stringify(renderAlert(alert));
+  assert.match(rendered, /PROFILE_SITE_CHANGE_STALLED/);
+  assert.match(rendered, /waited more than 30 minutes/);
+});
 test('validated diagnostics render amber only for explicit remaining retries', () => {
   const alert = parseAlert({
     ...fixture,

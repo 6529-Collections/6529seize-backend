@@ -166,6 +166,29 @@ describe('operational error envelopes', () => {
     );
   });
 
+  it('names the conditions the monitoring contract knows', () => {
+    operationalError(
+      'ProfileCmsChainFollower',
+      ['Profile site change has waited 30 minutes'],
+      undefined,
+      'APPLICATION_ERROR',
+      'PROFILE_SITE_CHANGE_STALLED'
+    );
+    operationalError(
+      'PUSH',
+      ['retries used'],
+      undefined,
+      'APPLICATION_ERROR',
+      'PUSH_RETRY_EXHAUSTED'
+    );
+    const values = output.mock.calls.map(([raw]) => JSON.parse(String(raw)));
+    expect(values.map((value) => value.condition)).toEqual([
+      'PROFILE_SITE_CHANGE_STALLED',
+      'PUSH_RETRY_EXHAUSTED'
+    ]);
+    expect(JSON.stringify(values)).not.toMatch(/waited|retries used/);
+  });
+
   it('excludes typed client errors while still reporting server errors', () => {
     operationalError('API', [
       new BadRequestException('private moderation reason')

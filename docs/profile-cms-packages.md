@@ -490,6 +490,15 @@ time. Archiving no longer hides anything from the chain: every package that
 was ever primary stays named by the person's ProfileDoc history, whatever its
 status on 6529.io.
 
+When `PROFILE_SITE_CHANGE_STALLED` fires, `profile_cms_chain_parked` shows
+the change that waits (principal, height, version) and the reason of its
+last try. A reason ending in `_retry_later` waits on the identity mirror (a
+wallet it hasn't mapped at that height yet, or a gateway answer it can't use
+yet): check the mirror's own runs. `profile_doc_not_found` or a missing file
+waits on the document store. The change applies on its own once the read
+succeeds. Don't delete parked rows: the cursor is past them, so only a
+rebuild would read that change again.
+
 With the flag on, `publish` checks the signature and storage as before and
 uploads the signed publication record, then stops before the pointer: it puts
 the content core and the record in the gateway's document store, stores the
