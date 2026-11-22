@@ -359,6 +359,43 @@ function bindingChanges(
   });
 }
 
+/**
+ * A feed page holds together: block heights rise and none is past the
+ * block after `through`; a `next` inside a block names the last block,
+ * which says it is not complete; any other last block is whole.
+ */
+function checkFeedPage(
+  path: string,
+  through: number,
+  blocks: ChainFeedPage['blocks'],
+  next: string | null
+) {
+  let previous = -1;
+  for (const block of blocks) {
+    const height = Number(block.height);
+    if (
+      !Number.isSafeInteger(height) ||
+      height < previous ||
+      height > through + 1
+    ) {
+      throw badAnswer(path, 'blocks out of order or past the page');
+    }
+    previous = height;
+  }
+  const last = blocks[blocks.length - 1];
+  const inside = next !== null && String(next).includes(':');
+  const cut = last?.complete === false;
+  const fits = inside
+    ? cut && feedCursorHeight(next) === Number(last.height)
+    : !cut;
+  if (!fits) {
+    throw badAnswer(
+      path,
+      'a next inside a block that the page does not end in'
+    );
+  }
+}
+
 /** The height a feed cursor (a height, or `height:index`) starts in. */
 export function feedCursorHeight(cursor: ChainFeedCursor): number {
   return Number(String(cursor).split(':')[0]);
@@ -766,7 +803,13 @@ export class ChainGatewayClient {
     }
     const { status, json } = await this.send('GET', path, { ...query, height });
     const answer = this.toAnswer<T>(path, status, json);
-    this.answers.set(key, answer as ChainAnswer<unknown> | null);
+    // Kept only when read from the chain the head names: an answer from
+    // another (a relaunch, or one in flight across it) is not reused.
+    const network = this.head?.value.network ?? null;
+    const readFrom = answer?.read?.network ?? null;
+    if (!network || !readFrom || network === readFrom) {
+      this.answers.set(key, answer as ChainAnswer<unknown> | null);
+    }
     return answer;
   }
 
@@ -1075,6 +1118,7 @@ export class ChainGatewayClient {
       throw badAnswer(path, 'a page without its through height or blocks');
     }
     const blocks = answer.data.blocks;
+    checkFeedPage(path, through, blocks, answer.next);
     const nextHeight = through + 1;
     return {
       ...answer.data,
