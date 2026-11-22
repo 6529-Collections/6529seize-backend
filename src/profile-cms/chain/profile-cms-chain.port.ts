@@ -40,6 +40,14 @@ export interface ProfileCmsIdentityImport {
   readonly done_height: number | null;
 }
 
+/**
+ * A page of changes in whole blocks. The gateway's feed (`GET /v1/feed`)
+ * caps pages at 4 MiB and can end inside a block (`complete: false`, `next`
+ * of `height:index`); the adapter passes that `next` back as `from` exactly
+ * until the block is complete, so a page here never ends inside a block. A
+ * page may hold no changes while more remain: read on while `next_height`
+ * is not null.
+ */
 export interface ProfileCmsProfileChangesPage {
   readonly changes: readonly ProfileCmsProfileChange[];
   /** The next height to ask from; null when the page reached the finalized head. */

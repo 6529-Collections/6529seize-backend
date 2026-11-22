@@ -100,8 +100,10 @@ class RetryableChainReadError extends Error {
  * rebuild from empty replays the feed from the switch height. Both run the
  * same transition, so they leave the same rows.
  *
- * A change whose document or files are not in the store yet is retried, at
- * most {@link PROFILE_CMS_MAX_CHANGE_ATTEMPTS} times; meanwhile the person's
+ * A change whose document or files are not in the store yet, or whose port
+ * read fails in any way (a gateway error, a wallet whose principal at that
+ * height isn't known yet), is retried, at most
+ * {@link PROFILE_CMS_MAX_CHANGE_ATTEMPTS} times; meanwhile the person's
  * later changes wait and everyone else's go on. Live, the last try applies it
  * as it reads: an unreadable document or a missing site file serves no site.
  * In `rebuild` mode the last try fails the rebuild instead.
@@ -172,8 +174,18 @@ export class ProfileCmsChainFollower {
       applied += result.applied;
       firstRetry = firstRetry ?? result.retryAt;
       lastHeight = page.changes.at(-1)?.height ?? lastHeight;
-      if (page.next_height === null || page.next_height <= height) {
+      if (page.next_height === null) {
         break;
+      }
+      if (page.next_height <= height) {
+        if (page.changes.length === 0) {
+          break;
+        }
+        // A height cursor can't resume inside a block, so a page that ends
+        // inside one would lose the rest of it: the port gives whole blocks.
+        throw new Error(
+          `The chain port's page from height ${height} ends inside a block (next height ${page.next_height}); it must give whole blocks`
+        );
       }
       height = page.next_height;
     }
@@ -226,9 +238,14 @@ export class ProfileCmsChainFollower {
     const lastTry =
       this.mode === 'live' && attempt >= PROFILE_CMS_MAX_CHANGE_ATTEMPTS;
     try {
-      const identity = await this.port.getIdentityByPrincipal(
-        change.principal,
-        { height: change.height }
+      const identity = await this.read(
+        'identity',
+        () =>
+          this.port.getIdentityByPrincipal(change.principal, {
+            height: change.height
+          }),
+        lastTry,
+        null
       );
       if (!identity) {
         if (!lastTry) {
@@ -320,7 +337,7 @@ export class ProfileCmsChainFollower {
     if (!archiveCid || archiveCid === appliedArchiveCid) {
       return null;
     }
-    if (!(await this.isImportWrite(change, identity))) {
+    if (!(await this.isImportWrite(change, identity, lastTry))) {
       this.logger.warn(
         `Profile ${identity.profile_id} names a site archive outside the import; ignored`
       );
@@ -357,7 +374,8 @@ export class ProfileCmsChainFollower {
    */
   private async isImportWrite(
     change: ProfileCmsProfileChange,
-    identity: ProfileCmsChainIdentity
+    identity: ProfileCmsChainIdentity,
+    lastTry: boolean
   ): Promise<boolean> {
     if (change.version !== 1 || !identity.imported) {
       return false;
@@ -365,8 +383,7 @@ export class ProfileCmsChainFollower {
     if (change.source !== undefined) {
       return change.source === 'import';
     }
-    this.identityImport ??= this.port.getIdentityImport();
-    const identityImport = await this.identityImport;
+    const identityImport = await this.importHeights(lastTry);
     if (identityImport === null || identityImport.done_height === null) {
       throw new RetryableChainReadError('identity_import_running', false);
     }
@@ -382,8 +399,67 @@ export class ProfileCmsChainFollower {
     return (
       change.doc_cid !== null &&
       change.doc_cid ===
-        (await this.port.getImportedProfileDocCid(change.principal))
+        (await this.read(
+          'imported_doc',
+          () => this.port.getImportedProfileDocCid(change.principal),
+          lastTry,
+          null
+        ))
     );
+  }
+
+  /**
+   * The import's heights, read once per pass; a failed read isn't kept, and
+   * on the last try reads as no import yet (the change then waits).
+   */
+  private async importHeights(
+    lastTry: boolean
+  ): Promise<ProfileCmsIdentityImport | null> {
+    this.identityImport ??= this.port.getIdentityImport();
+    try {
+      return await this.identityImport;
+    } catch (error) {
+      this.identityImport = null;
+      return this.giveUpOr(error, 'identity_import', lastTry, null);
+    }
+  }
+
+  /**
+   * A port read. Any error it throws is one try at the change (retried
+   * later), as a document not in the store yet is. On the live index's last
+   * try the read gives `fallback` instead (a missing identity, document or
+   * file), and the change is applied as it reads.
+   */
+  private async read<T>(
+    what: string,
+    fn: () => Promise<T>,
+    lastTry: boolean,
+    fallback: T
+  ): Promise<T> {
+    try {
+      return await fn();
+    } catch (error) {
+      return this.giveUpOr(error, what, lastTry, fallback);
+    }
+  }
+
+  private giveUpOr<T>(
+    error: unknown,
+    what: string,
+    lastTry: boolean,
+    fallback: T
+  ): T {
+    if (error instanceof RetryableChainReadError) {
+      throw error;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    if (!lastTry) {
+      throw new RetryableChainReadError(`${what}_read_failed: ${message}`);
+    }
+    this.logger.error(
+      `Profile site chain read ${what} failed on the last try; applied as it reads: ${message}`
+    );
+    return fallback;
   }
 
   private async readCms(
@@ -393,7 +469,13 @@ export class ProfileCmsChainFollower {
     if (!change.doc_cid) {
       return { ok: true, cms: null };
     }
-    const doc = await this.port.getProfileDoc(change.doc_cid);
+    const docCid = change.doc_cid;
+    const doc = await this.read(
+      'profile_doc',
+      () => this.port.getProfileDoc(docCid),
+      lastTry,
+      { status: 'missing' } as const
+    );
     if (doc.status === 'missing') {
       if (!lastTry) {
         throw new RetryableChainReadError('profile_doc_not_found');
@@ -433,8 +515,18 @@ export class ProfileCmsChainFollower {
         ctx
       ));
     const [publicationBytes, packageBytes] = await Promise.all([
-      this.port.getDocBytes(primary.publication),
-      this.port.getDocBytes(primary.package)
+      this.read(
+        'publication',
+        () => this.port.getDocBytes(primary.publication),
+        lastTry,
+        null
+      ),
+      this.read(
+        'package',
+        () => this.port.getDocBytes(primary.package),
+        lastTry,
+        null
+      )
     ]);
     const check = await checkProfileCmsPublication(
       {
@@ -461,7 +553,12 @@ export class ProfileCmsChainFollower {
     cid: string,
     profileId: string
   ): Promise<LoadedArchive> {
-    const bytes = await this.port.getDocBytes(cid);
+    const bytes = await this.read(
+      'archive',
+      () => this.port.getDocBytes(cid),
+      false,
+      null
+    );
     if (!bytes) {
       throw new RetryableChainReadError('archive_not_found');
     }
@@ -497,7 +594,12 @@ export class ProfileCmsChainFollower {
   }
 
   private async readJsonFile(cid: string): Promise<Record<string, unknown>> {
-    const bytes = await this.port.getDocBytes(cid);
+    const bytes = await this.read(
+      'archive_file',
+      () => this.port.getDocBytes(cid),
+      false,
+      null
+    );
     if (!bytes) {
       throw new RetryableChainReadError(`file_not_found_${cid}`);
     }

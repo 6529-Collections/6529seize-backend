@@ -126,8 +126,16 @@ async function allChanges(
   for (;;) {
     const page = await port.getChanges(height);
     changes.push(...page.changes);
-    if (page.next_height === null || page.next_height <= height) {
+    if (page.next_height === null) {
       return changes;
+    }
+    if (page.next_height <= height) {
+      if (page.changes.length === 0) {
+        return changes;
+      }
+      throw new Error(
+        `The chain port's page from height ${height} ends inside a block (next height ${page.next_height}); it must give whole blocks`
+      );
     }
     height = page.next_height;
   }

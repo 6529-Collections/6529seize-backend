@@ -456,14 +456,19 @@ Event ids (keyed on the principal, the document version and the event's
 place), times (the block time) and rows follow from the chain and the files
 alone, so a rebuild from empty tables writes the same public rows.
 
-A change whose document or files are not in the store yet, or whose Safe
-check fails on the network, is retried up to five times; meanwhile that
-person's later changes wait and everyone else's go on. Live, the last try
-applies it as it reads: no site. A rebuild (`profile-cms:chain-sync` and the
-rebuild-check steps) retries until nothing waits and fails on a change still
-unreadable after its tries, instead of serving no site. Safe (EIP-1271)
-signatures are checked at the last Ethereum block before the change, so a
-rebuild gets the same answer.
+A change whose document or files are not in the store yet, whose Safe
+check fails on the network, or whose read through the chain port fails in
+any way (a gateway error, a wallet whose principal at that height isn't
+known yet) is retried up to five times; meanwhile that person's later
+changes wait and everyone else's go on. Live, the last try applies it as it
+reads: no site. A rebuild (`profile-cms:chain-sync` and the rebuild-check
+steps) retries until nothing waits and fails on a change still unreadable
+after its tries, instead of serving no site. Safe (EIP-1271) signatures are
+checked at the last Ethereum block before the change, so a rebuild gets the
+same answer. The port gives the change feed in whole blocks (the adapter
+follows the gateway's `height:index` cursor through a block cut across
+pages); the follower reads on while there is a next page, and stops with an
+error at a page that ends inside a block rather than skip the rest of it.
 The index keeps its own cursor in `profile_cms_chain_heads` (the lowest
 waiting change, else one past the last applied), so turning the flag off and
 on again catches up instead of losing changes. Draft-only
