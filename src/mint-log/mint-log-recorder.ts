@@ -538,6 +538,7 @@ export class MintLogRecorder {
     entries.push({
       t: 'entry',
       lane: MINT_LOG_LANE,
+      chain: 'public',
       body: entry as unknown as Record<string, unknown>
     });
     await ports.log.append(entries, { connection });

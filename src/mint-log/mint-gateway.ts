@@ -37,3 +37,23 @@ export function getMintGateway(): MintGatewayPort | null {
 export function setMintGateway(next: MintGatewayPort | null): void {
   gateway = next;
 }
+
+/**
+ * The principal a wallet was bound to at a finalized height (the shared
+ * gateway client's call). The signed-record verifier needs it.
+ */
+export interface MintPrincipalBindings {
+  principalAt(wallet: string, height: number): Promise<string | null>;
+}
+
+let principalBindings: MintPrincipalBindings | null = null;
+
+export function getMintPrincipalBindings(): MintPrincipalBindings | null {
+  return principalBindings;
+}
+
+export function setMintPrincipalBindings(
+  next: MintPrincipalBindings | null
+): void {
+  principalBindings = next;
+}

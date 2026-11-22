@@ -1,4 +1,5 @@
 import type { RequestContext } from '@/request.context';
+import { defaultMintLogPorts } from './mint-log-signed-records';
 
 /**
  * What the mint log uses from the shared signed-records module
@@ -41,6 +42,8 @@ export type MintRecordLogEntry =
   | {
       readonly t: 'entry';
       readonly lane: string;
+      /** Mint entries hold public data only. */
+      readonly chain: 'public';
       readonly body: Record<string, unknown>;
     };
 
@@ -57,13 +60,10 @@ export interface MintLogPorts {
   readonly log: MintRecordLogPort | null;
 }
 
-let ports: MintLogPorts = { records: null, log: null };
-
+/**
+ * The ports in use: the shared module's. Read on each write, so a verifier
+ * bound later (once the gateway client is set) takes effect at once.
+ */
 export function getMintLogPorts(): MintLogPorts {
-  return ports;
-}
-
-/** Binds the shared module; tests bind fakes. */
-export function setMintLogPorts(next: MintLogPorts): void {
-  ports = next;
+  return defaultMintLogPorts();
 }

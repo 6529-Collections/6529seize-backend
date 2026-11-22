@@ -237,6 +237,7 @@ export async function runMintGenesis(
           {
             t: 'entry',
             lane: MINT_LOG_LANE,
+            chain: 'public',
             body: entry as unknown as Record<string, unknown>
           }
         ],
