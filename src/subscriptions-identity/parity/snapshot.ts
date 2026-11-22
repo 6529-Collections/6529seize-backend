@@ -198,6 +198,13 @@ function countFromInfo(info: string | null): number | null {
   return m ? Number(m[1]) : null;
 }
 
+/**
+ * The public routes cache answers for a minute, so a read can miss a line
+ * written in the minute before it. Lines from that minute are applied again;
+ * applying one twice leaves the same state.
+ */
+const READ_CACHE_MS = 60 * 1000;
+
 interface ModeLine {
   readonly at: number;
   readonly id: number;
@@ -297,7 +304,11 @@ function modeAt(
       notes
     );
   }
-  for (const line of modeLines(logs, subscriber.collectedAtMs + 1, buildAtMs)) {
+  for (const line of modeLines(
+    logs,
+    subscriber.collectedAtMs - READ_CACHE_MS,
+    buildAtMs
+  )) {
     const event = line.event;
     if (event.kind === 'AUTOMATIC' && event.automatic !== state.automatic) {
       state.automatic = event.automatic;
@@ -405,7 +416,7 @@ function cardAt(
     card = rollCardForward(
       initialCard(subscriber, events.length > 0),
       events
-        .filter((e) => e.at > subscriber.collectedAtMs)
+        .filter((e) => e.at > subscriber.collectedAtMs - READ_CACHE_MS)
         .sort((a, b) => a.entry.id - b.entry.id)
     );
   }

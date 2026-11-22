@@ -27,6 +27,7 @@ export type DiffCause =
   | 'no-wallets'
   | 'distribution-input'
   | 'read-after-build'
+  | 'key-map'
   | 'unknown';
 
 export interface ParityDiff {

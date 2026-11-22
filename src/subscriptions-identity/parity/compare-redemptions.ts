@@ -126,6 +126,11 @@ export function compareRedemptions(
   const notChecked = [
     'phase membership (copied; it orders redemptions to a shared airdrop address)'
   ];
+  if (!list.inputs.airdropChecked) {
+    notChecked.push(
+      'airdropAddress (copied in run 1; mints are matched to rows by it)'
+    );
+  }
   if (list.inputs.balanceChecked) {
     checked.push('balanceAfter');
   } else {

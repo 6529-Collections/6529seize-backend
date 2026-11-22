@@ -89,6 +89,16 @@ export interface LegacyNormalizedDistribution {
   }> | null;
 }
 
+export interface LegacyWaveDrop {
+  readonly serial_no: number;
+  readonly created_at: number;
+  readonly parts: ReadonlyArray<{ readonly content: string | null }>;
+}
+
+export interface LegacyIdentity {
+  readonly consolidation_key: string;
+}
+
 export interface LegacyTransaction {
   readonly transaction: string;
   readonly block: number;
@@ -242,6 +252,22 @@ export class LegacySubscriptionsApi {
       { contract, id: tokenId, filter: 'airdrops' },
       DEFAULT_PAGE_SIZE
     );
+  }
+
+  /** A page of a public wave's drops, newest first, older than a serial. */
+  async waveDrops(
+    waveId: string,
+    serialNoLessThan?: number
+  ): Promise<LegacyWaveDrop[]> {
+    const result = await this.client.getJson<{ drops: LegacyWaveDrop[] }>(
+      `/waves/${enc(waveId)}/drops`,
+      { limit: 50, serial_no_less_than: serialNoLessThan }
+    );
+    return result?.drops ?? [];
+  }
+
+  identityByWallet(wallet: string): Promise<LegacyIdentity | null> {
+    return this.client.getJson(`/identities/by-wallet/${enc(wallet)}`);
   }
 
   async cardCount(tokenId: number): Promise<number | null> {

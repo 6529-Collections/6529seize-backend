@@ -17,6 +17,12 @@ import {
 import { InputNote } from './snapshot';
 
 const TOPUP_TIMING_WINDOW_MS = 10 * 60 * 1000;
+/**
+ * The legacy loop applies a top-up a minute or two after its block and the
+ * details route is cached for a minute, so a read can show a top-up dated a
+ * little after it, or miss one dated a little before it.
+ */
+const TOPUP_NEAR_READ_MS = 3 * 60 * 1000;
 
 export interface ListComparison {
   readonly report: ParityReport;
@@ -65,9 +71,14 @@ export function rekeyedAfterBuild(
   );
 }
 
+interface RekeyedRow {
+  readonly from: string;
+  readonly to: string;
+}
+
 function listRows(params: ParityParams): {
   rows: LegacyCsvRow[];
-  rekeyed: number;
+  rekeyed: RekeyedRow[];
 } {
   const rows = params.legacy.csv?.rows ?? [];
   const added = new Set(
@@ -82,7 +93,7 @@ function listRows(params: ParityParams): {
   );
   return {
     rows: rows.map((r) => ({ ...r, key: rekey.get(r.key) ?? r.key })),
-    rekeyed: rekey.size
+    rekeyed: Array.from(rekey.entries()).map(([from, to]) => ({ from, to }))
   };
 }
 
@@ -108,6 +119,7 @@ class Causes {
   private readonly decisions: Map<string, FinalListDecision>;
   private readonly notes: Map<string, InputNote[]>;
   private readonly collected: Set<string>;
+  private readonly readAt: Map<string, number>;
 
   constructor(
     private readonly params: ParityParams,
@@ -118,6 +130,12 @@ class Causes {
     this.notes = notesByIdentity(inputs);
     this.collected = new Set(
       params.snapshot.subscribers.map((s) => inputs.mapper.toIdentity(s.key))
+    );
+    this.readAt = new Map(
+      params.snapshot.subscribers.map((s) => [
+        inputs.mapper.toIdentity(s.key),
+        s.collectedAtMs
+      ])
     );
   }
 
@@ -198,12 +216,16 @@ class Causes {
       if (this.inputs.mapper.toIdentity(legacyKey) !== key) {
         continue;
       }
+      const readAt = this.readAt.get(key);
       if (
-        topUps.some(
-          (t) =>
-            Math.abs(Date.parse(t.transaction_date) - this.params.buildAtMs) <=
-            TOPUP_TIMING_WINDOW_MS
-        )
+        topUps.some((t) => {
+          const at = Date.parse(t.transaction_date);
+          return (
+            Math.abs(at - this.params.buildAtMs) <= TOPUP_TIMING_WINDOW_MS ||
+            (readAt !== undefined &&
+              Math.abs(at - readAt) <= TOPUP_NEAR_READ_MS)
+          );
+        })
       ) {
         return true;
       }
@@ -254,6 +276,30 @@ function compareRow(
   return diffs;
 }
 
+function keysWithNote(inputs: EngineInputs, note: InputNote): string[] {
+  return Array.from(inputs.build.notes.entries())
+    .filter(([, notes]) => notes.includes(note))
+    .map(([key]) => inputs.mapper.toIdentity(key))
+    .sort(compareText);
+}
+
+/** Each per-key input note, with the number of keys that carry it. */
+function noteCounts(inputs: EngineInputs): string | null {
+  const counts = new Map<string, number>();
+  for (const notes of Array.from(inputs.build.notes.values())) {
+    for (const note of notes) {
+      counts.set(note, (counts.get(note) ?? 0) + 1);
+    }
+  }
+  if (counts.size === 0) {
+    return null;
+  }
+  const parts = Array.from(counts.entries())
+    .sort(([a], [b]) => compareText(a, b))
+    .map(([note, count]) => `${note} ${count}`);
+  return `input notes (keys): ${parts.join(', ')}`;
+}
+
 function checkedFields(inputs: EngineInputs): {
   checked: string[];
   notChecked: string[];
@@ -271,6 +317,12 @@ function checkedFields(inputs: EngineInputs): {
     notChecked.push(`airdropAddress (copied from ${inputs.airdropSource})`);
   }
   notChecked.push('order (subscribed_at; positions reported)');
+  const fromBuildLine = keysWithNote(inputs, 'COUNT_FROM_BUILD_LINE');
+  if (fromBuildLine.length) {
+    notChecked.push(
+      `count for ${fromBuildLine.length} keys taken from an earlier build line: ${fromBuildLine.join(', ')}`
+    );
+  }
   return { checked, notChecked };
 }
 
@@ -351,6 +403,30 @@ export function compareFinalList(params: ParityParams): ListComparison {
     });
   }
 
+  for (const identity of Array.from(inputs.missingWallets).sort(compareText)) {
+    diffs.push({
+      key: identity,
+      field: 'identityWallets',
+      old: null,
+      new: null,
+      cause: 'no-wallets'
+    });
+  }
+
+  if (inputs.mode === 'gate') {
+    for (const { from, to } of list.rekeyed) {
+      if (toIdentity(from) !== toIdentity(to)) {
+        diffs.push({
+          key: toIdentity(to),
+          field: 'listKey',
+          old: from,
+          new: to,
+          cause: 'key-map'
+        });
+      }
+    }
+  }
+
   const oldCards = list.rows.reduce((sum, r) => sum + r.count, 0);
   const newCards = build.rows.reduce((sum, r) => sum + r.subscribedCount, 0);
   if (oldCards !== newCards) {
@@ -375,14 +451,12 @@ export function compareFinalList(params: ParityParams): ListComparison {
   if (!params.legacy.csv) {
     notes.push('no published list for the card');
   }
-  if (list.rekeyed) {
-    notes.push(`list keys re-keyed after the build: ${list.rekeyed}`);
+  if (list.rekeyed.length) {
+    notes.push(`list keys re-keyed after the build: ${list.rekeyed.length}`);
   }
-  const ambiguous = Array.from(inputs.build.notes.values()).filter((n) =>
-    n.includes('ROW_FLAG_AMBIGUOUS')
-  ).length;
-  if (ambiguous) {
-    notes.push(`row flag ambiguous for ${ambiguous} keys`);
+  const counted = noteCounts(inputs);
+  if (counted) {
+    notes.push(counted);
   }
   if (inputs.ties.size) {
     notes.push(`ties left to the database's order: ${inputs.ties.size} keys`);

@@ -8,14 +8,18 @@ import { LegacySubscriptionsApi } from './legacy-api';
 import { collectLegacyOutputs, LegacyOutputs } from './legacy-outputs';
 import { InputMode, ParityRun, summaryLine } from './parity-report';
 import { PublicApiClient } from './public-api-client';
+import { collectTopUpSenderKeys } from './topup-senders';
+import { readMirrorKeyMap } from './mirror-key-map';
 import { candidateKeys, collectSnapshot, ParitySnapshot } from './snapshot';
 
 /**
  * The subscriptions side-by-side check from public data (Plan B).
  *
+ *   topup-keys  the keys of recent top-up senders, from the subscriptions wave
  *   keys      list candidate keys from recent published lists
  *   snapshot  read each key's state before the build
  *   legacy    read what the legacy build, phases and redemptions produced
+ *   keymap    the keys the identity mirror moved, as chain inputs for compare
  *   compare   run the engine and diff it with the legacy outputs
  *
  * Makes only unauthenticated GETs, at most 2 a second (redirect hops
@@ -29,9 +33,11 @@ import { candidateKeys, collectSnapshot, ParitySnapshot } from './snapshot';
  */
 
 const USAGE = `usage:
+  topup-keys --api <base> --wave <id> --since <iso> --out <txt>
   keys     --api <base> [--recent-lists 12] [--keys-file <txt>] --out <json>
   snapshot --api <base> --card <id> --cutoff <iso> --keys <json> [--logs-days 30] --out <json>
   legacy   --api <base> --card <id> --build-date <yyyy-mm-dd> --build-at <iso> --snapshot <json> --out <json>
+  keymap   --api <base> --snapshot <json> --build-at <iso> [--chain-base <json>] --out <json>
   compare  --snapshot <json> --legacy <json> --build-at <iso> [--run run1|run2] [--mode gate|pinned] [--chain <json>] [--transfers <json>] --out <json>
   --file-hosts <host,host> overrides the list-file hosts`;
 
@@ -163,6 +169,17 @@ async function keysCommand(args: Args) {
   process.stdout.write(`${keys.length} keys\n`);
 }
 
+async function topUpKeysCommand(args: Args) {
+  const keys = await collectTopUpSenderKeys(api(args), {
+    waveId: required(args, 'wave'),
+    sinceMs: timeArg(args, 'since')
+  });
+  const out = required(args, 'out');
+  assertOutsideRepository(out);
+  writeFileSync(out, `${keys.join('\n')}\n`);
+  process.stdout.write(`${keys.length} keys\n`);
+}
+
 async function snapshotCommand(args: Args) {
   const cutoffMs = timeArg(args, 'cutoff');
   const keys = readJson<string[]>(required(args, 'keys'));
@@ -192,6 +209,29 @@ async function legacyCommand(args: Args) {
   writeJson(required(args, 'out'), legacy);
   process.stdout.write(
     `list rows ${legacy.csv?.rows.length ?? 0}, redeemed ${legacy.redeemed.length}, airdrop mints ${legacy.airdropTransfers.length}\n`
+  );
+}
+
+async function keyMapCommand(args: Args) {
+  const snapshot = readJson<ParitySnapshot>(required(args, 'snapshot'));
+  const mirror = await readMirrorKeyMap(api(args), snapshot);
+  const basePath = optional(args, 'chain-base');
+  const base: ChainInputs = basePath
+    ? readJson<ChainInputs>(basePath)
+    : {
+        version: 1,
+        source: 'no chain records (key map only)',
+        nowSeconds: Math.floor(timeArg(args, 'build-at') / 1000),
+        delegations: [],
+        boostedTdhByWallet: {}
+      };
+  writeJson(required(args, 'out'), {
+    ...base,
+    keyMap: { ...(base.keyMap ?? {}), ...mirror.keyMap },
+    splits: mirror.splits
+  });
+  process.stdout.write(
+    `${Object.keys(mirror.keyMap).length} keys moved, ${Object.keys(mirror.splits).length} split\n`
   );
 }
 
@@ -227,6 +267,9 @@ function compareCommand(args: Args) {
 export async function main(argv: readonly string[]): Promise<number> {
   const { command, args } = parseArgs(argv);
   switch (command) {
+    case 'topup-keys':
+      await topUpKeysCommand(args);
+      return 0;
     case 'keys':
       await keysCommand(args);
       return 0;
@@ -235,6 +278,9 @@ export async function main(argv: readonly string[]): Promise<number> {
       return 0;
     case 'legacy':
       await legacyCommand(args);
+      return 0;
+    case 'keymap':
+      await keyMapCommand(args);
       return 0;
     case 'compare':
       return compareCommand(args) ? 0 : 2;

@@ -159,6 +159,13 @@ describe('runParity in gate mode', () => {
         old: A4,
         new: null,
         cause: 'no-wallets'
+      },
+      {
+        key: P4,
+        field: 'identityWallets',
+        old: null,
+        new: null,
+        cause: 'no-wallets'
       }
     ]);
   });
@@ -350,6 +357,101 @@ describe('a snapshot read after the build', () => {
   });
 });
 
+describe('notes and timing', () => {
+  it('counts per-key notes and names keys whose count came from a build line', () => {
+    const snapshot = paritySnapshot();
+    const { report } = compareFinalList({
+      snapshot: {
+        ...snapshot,
+        subscribers: snapshot.subscribers.map((s) =>
+          s.key === K1
+            ? {
+                ...s,
+                upcoming: null,
+                logs: [
+                  {
+                    id: 1,
+                    createdAtMs: BUILD_AT - 86_400_000,
+                    log: 'Added to Final Subscription for Meme #500 on 2026-11-24',
+                    additionalInfo: `Airdrop Address: ${A1} - Subscription Count: x2 - Balance: 0.5 ETH`
+                  }
+                ]
+              }
+            : s
+        )
+      },
+      legacy: legacyOutputs(),
+      run: 'run1',
+      mode: 'pinned',
+      buildAtMs: BUILD_AT
+    });
+    expect(report.notes).toContain(
+      'input notes (keys): CARD_FROM_LOGS 1, COUNT_FROM_BUILD_LINE 1, LATER_LOGS_APPLIED 3, ROW_FLAG_UNKNOWN 1, ROW_TIME_UNKNOWN 1'
+    );
+    expect(report.notChecked).toContain(
+      `count for 1 keys taken from an earlier build line: ${K1}`
+    );
+  });
+
+  it('names a top-up within three minutes of the read as timing', () => {
+    const legacy = legacyOutputs();
+    const readAt = paritySnapshot().subscribers[0].collectedAtMs;
+    const { report } = compareFinalList({
+      snapshot: paritySnapshot(),
+      legacy: {
+        ...legacy,
+        topUps: {
+          ...legacy.topUps,
+          [K1]: [
+            {
+              hash: '0x' + 'e'.repeat(64),
+              block: 1,
+              transaction_date: new Date(readAt + 60_000).toISOString(),
+              from_wallet: K1,
+              amount: 0.1
+            }
+          ]
+        }
+      },
+      run: 'run1',
+      buildAtMs: BUILD_AT
+    });
+    expect(report.diffs).toEqual([
+      { key: K1, field: 'balance', old: 0.5, new: 0.6, cause: 'topup-timing' }
+    ]);
+  });
+
+  it('applies a mode line from the cached minute before the read', () => {
+    const snapshot = paritySnapshot();
+    const k4 = snapshot.subscribers.find((s) => s.key === K4)!;
+    const { report } = compareFinalList({
+      snapshot: {
+        ...snapshot,
+        subscribers: snapshot.subscribers.map((s) =>
+          s.key === K4 && s.details
+            ? {
+                ...s,
+                details: { ...s.details, automatic: false, last_update: 0 },
+                logs: [
+                  {
+                    id: 7000,
+                    createdAtMs: k4.collectedAtMs - 30_000,
+                    log: 'Subscription Mode set to Automatic',
+                    additionalInfo: null
+                  }
+                ]
+              }
+            : s
+        )
+      },
+      legacy: legacyOutputs(),
+      run: 'run1',
+      buildAtMs: BUILD_AT
+    });
+    expect(report.diffs.map((d) => d.key)).not.toContain(K4);
+  });
+});
+
 describe('pinned mode', () => {
   it('copies balances and run 1 airdrop addresses and checks neither', () => {
     const snapshot = paritySnapshot();
@@ -392,16 +494,49 @@ describe('rekeyedAfterBuild', () => {
       rekeyedAfterBuild([single, K1], [single, K1, K2], new Set([K1, K2]))
     ).toEqual(new Map([[single, K2]]));
     const rows = legacyOutputs().csv!.rows;
-    const { report } = compareFinalList({
+    const legacy = withListRows(
+      rows.map((r) => (r.key === K2 ? { ...r, key: single } : r))
+    );
+    const pinned = compareFinalList({
       snapshot: paritySnapshot(),
-      legacy: withListRows(
-        rows.map((r) => (r.key === K2 ? { ...r, key: single } : r))
-      ),
+      legacy,
+      run: 'run1',
+      mode: 'pinned',
+      buildAtMs: BUILD_AT
+    }).report;
+    expect(pinned.verdict).toBe('MATCH');
+    expect(pinned.notes).toContain('list keys re-keyed after the build: 1');
+  });
+
+  it('in gate mode, needs a key map to explain a re-keyed list row', () => {
+    const rows = legacyOutputs().csv!.rows;
+    const legacy = withListRows(
+      rows.map((r) => (r.key === K2 ? { ...r, key: single } : r))
+    );
+    const unexplained = compareFinalList({
+      snapshot: paritySnapshot(),
+      legacy,
       run: 'run1',
       buildAtMs: BUILD_AT
-    });
-    expect(report.verdict).toBe('MATCH');
-    expect(report.notes).toContain('list keys re-keyed after the build: 1');
+    }).report;
+    expect(unexplained.diffs).toEqual([
+      { key: K2, field: 'listKey', old: single, new: K2, cause: 'key-map' }
+    ]);
+    const explained = compareFinalList({
+      snapshot: paritySnapshot(),
+      legacy,
+      run: 'run1',
+      buildAtMs: BUILD_AT,
+      chain: {
+        version: 1,
+        source: 'key map',
+        nowSeconds: BUILD_AT / 1000,
+        delegations: [],
+        boostedTdhByWallet: {},
+        keyMap: { [single]: K2 }
+      }
+    }).report;
+    expect(explained.verdict).toBe('MATCH');
   });
 
   it('refuses a holder that has its own list row or that two keys claim', () => {
