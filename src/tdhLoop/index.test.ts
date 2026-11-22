@@ -114,6 +114,19 @@ describe('tdhLoop xTDH completion trigger', () => {
     expect(mockNotifyTdhCalculationsDone).not.toHaveBeenCalled();
   });
 
+  it('computes nothing when TDH comes from the 6529 chain', async () => {
+    process.env.FEATURE_TDH_FROM_CHAIN = 'true';
+    try {
+      await tdhLoop(true);
+    } finally {
+      delete process.env.FEATURE_TDH_FROM_CHAIN;
+    }
+    expect(mockUpdateTdh).not.toHaveBeenCalled();
+    expect(mockConsolidateAndPersistTdh).not.toHaveBeenCalled();
+    expect(mockFindNftTdh).not.toHaveBeenCalled();
+    expect(mockNotifyTdhCalculationsDone).not.toHaveBeenCalled();
+  });
+
   it('preserves completion notification on skipped retry attempts', async () => {
     mockNotifyTdhCalculationsDone
       .mockRejectedValueOnce(new Error('notification failed'))

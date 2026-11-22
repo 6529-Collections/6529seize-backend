@@ -1,4 +1,5 @@
 import { keccak256, toUtf8Bytes } from 'ethers';
+import { ConsolidatedTDH, TDH } from '@/entities/ITDH';
 import { csvField } from '@/tdhChain/csv';
 import { cidOf, tokenRoot, walletRoot } from '@/tdhChain/p28';
 import { COLLECTION_CONTRACTS } from '@/tdhChain/site-day';
@@ -295,5 +296,75 @@ export function chainDayFixture(): TdhChainDay {
     },
     walletLeaves,
     tokenLeaves
+  };
+}
+
+function tokenRows(tokens: FixtureToken[] | undefined) {
+  return (tokens ?? []).map((t) => ({
+    id: t.id,
+    balance: t.balance,
+    hodl_rate: 1,
+    tdh: t.tdh,
+    tdh__raw: t.tdh,
+    days_held_per_edition: [t.tdh]
+  }));
+}
+
+function rowFields(site: SiteFixture, row: FixtureRow) {
+  const memes = tokenRows(row.memes);
+  const gradients = tokenRows(row.gradients);
+  const nextgen = tokenRows(row.nextgen);
+  const sum = (list: { tdh: number }[]) => list.reduce((a, t) => a + t.tdh, 0);
+  const boosted = (list: { tdh: number }[]) =>
+    list.reduce((a, t) => a + Math.round(t.tdh * row.boost), 0);
+  return {
+    block: site.block,
+    date: new Date(FIXTURE_CYCLE_DAY * 86400000 - 1000),
+    boosted_tdh: row.boostedTdh,
+    boost: row.boost,
+    tdh: sum(memes) + sum(gradients) + sum(nextgen),
+    tdh__raw: sum(memes) + sum(gradients) + sum(nextgen),
+    balance: [...memes, ...gradients, ...nextgen].reduce(
+      (a, t) => a + t.balance,
+      0
+    ),
+    tdh_rank: 0,
+    tdh_rank_memes: 0,
+    tdh_rank_gradients: 0,
+    tdh_rank_nextgen: 0,
+    boosted_memes_tdh: boosted(memes),
+    boosted_gradients_tdh: boosted(gradients),
+    boosted_nextgen_tdh: boosted(nextgen),
+    memes_tdh: sum(memes),
+    gradients_tdh: sum(gradients),
+    nextgen_tdh: sum(nextgen),
+    memes,
+    gradients,
+    nextgen,
+    memes_ranks: [],
+    gradients_ranks: [],
+    nextgen_ranks: []
+  };
+}
+
+/** The same day as TDH table rows, as the TDH loop builds them. */
+export function siteFixtureRows(site: SiteFixture = siteFixture()): {
+  wallets: TDH[];
+  consolidated: ConsolidatedTDH[];
+} {
+  return {
+    wallets: Object.entries(site.wallets).map(
+      ([wallet, row]) => ({ ...rowFields(site, row), wallet }) as unknown as TDH
+    ),
+    consolidated: site.identities.map((identity) => {
+      const wallets = identity.wallets.slice().sort();
+      return {
+        ...rowFields(site, identity),
+        consolidation_key: wallets.join('-'),
+        consolidation_display: wallets.join(' - '),
+        wallets,
+        boosted_tdh_rate: 0
+      } as unknown as ConsolidatedTDH;
+    })
   };
 }

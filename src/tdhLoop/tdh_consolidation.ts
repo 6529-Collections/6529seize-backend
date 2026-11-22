@@ -15,6 +15,7 @@ import { MemesSeason } from '../entities/ISeason';
 import {
   ConsolidatedTDH,
   ConsolidatedTDHMemes,
+  TDH,
   TDHENS,
   TokenTDH
 } from '../entities/ITDH';
@@ -33,6 +34,8 @@ import { getConsolidationWallets } from './consolidation-wallets';
 import { calculateMemesTdh } from './tdh_memes';
 import { calculateNftTDH } from './tdh_nft';
 import { syncIdentitiesAfterTdhOrLeavePending } from '../identity-tdh-sync';
+import { TdhClusterSource } from './tdh-cluster-source';
+import { keepConsolidationKeysThatFit } from './tdh-key-width';
 
 const logger = Logger.get('TDH_CONSOLIDATION');
 
@@ -46,7 +49,8 @@ export type TdhConsolidationRequest =
 
 export async function consolidateTDHForWallets(
   tdh: TDHENS[],
-  MEMES_COUNT: number
+  MEMES_COUNT: number,
+  clusters?: TdhClusterSource
 ) {
   const consolidatedTdh: ConsolidatedTDH[] = [];
   const allGradientsTDH: any[] = [];
@@ -54,8 +58,9 @@ export async function consolidateTDHForWallets(
 
   logger.info(`Starting to consolidate TDH for ${tdh.length} wallets`);
   const allWallets = tdh.map((t) => t.wallet.toLowerCase());
-  const consolidationsForWallets =
-    await retrieveConsolidationsForWallets(allWallets);
+  const consolidationsForWallets = clusters
+    ? clusters.keysFor(allWallets)
+    : await retrieveConsolidationsForWallets(allWallets);
   const allConsolidationKeys = Object.values(consolidationsForWallets);
   const allConsolidationDisplays =
     await fetchConsolidationDisplays(allConsolidationKeys);
@@ -274,13 +279,16 @@ export const consolidateAndPersistTDH = async (
     request.mode === 'PARTIAL' ? request.wallets : undefined;
   const currentConsolidatedTdh =
     request.mode === 'PARTIAL' ? request.currentConsolidatedTdh : undefined;
-  const { adjustedSeasons, consolidatedTdh, consolidationKeysToReplace } =
-    await consolidateTDH(
-      block,
-      blockTimestamp,
-      startingWallets,
-      currentConsolidatedTdh
-    );
+  const computed = await consolidateTDH(
+    block,
+    blockTimestamp,
+    startingWallets,
+    currentConsolidatedTdh
+  );
+  const { adjustedSeasons, consolidationKeysToReplace } = computed;
+  const consolidatedTdh = await keepConsolidationKeysThatFit(
+    computed.consolidatedTdh
+  );
   const memesTdh = (await calculateMemesTdh(
     adjustedSeasons,
     consolidatedTdh,
@@ -418,6 +426,38 @@ export const consolidateTDH = async (
     consolidationKeysToReplace
   };
 };
+
+/**
+ * Consolidates wallet rows held in memory, grouped by `clusters`, without
+ * reading or writing the TDH tables: the chain-day ingest's path. The rows
+ * passed in are copied first, since consolidating merges token objects in
+ * place.
+ */
+export async function consolidateTDHInMemory(
+  walletTdh: TDH[],
+  blockTimestamp: Date,
+  clusters: TdhClusterSource
+): Promise<{
+  adjustedSeasons: MemesSeason[];
+  consolidatedTdh: ConsolidatedTDH[];
+}> {
+  const tdh = structuredClone(walletTdh) as TDHENS[];
+  const NEXTGEN_NFTS: NextGenToken[] = await fetchNextgenTokens();
+  const { ADJUSTED_NFTS, MEMES_COUNT, ADJUSTED_SEASONS } =
+    await getAdjustedMemesAndSeasons(blockTimestamp);
+  const { consolidatedTdh, allGradientsTDH, allNextgenTDH } =
+    await consolidateTDHForWallets(tdh, MEMES_COUNT, clusters);
+  const boosted = await calculateBoosts(ADJUSTED_SEASONS, consolidatedTdh);
+  const ranked = await calculateRanks(
+    allGradientsTDH,
+    allNextgenTDH,
+    boosted,
+    ADJUSTED_NFTS,
+    NEXTGEN_NFTS
+  );
+  assertNoOverlappingConsolidationWallets(ranked);
+  return { adjustedSeasons: ADJUSTED_SEASONS, consolidatedTdh: ranked };
+}
 
 export function assertNoOverlappingConsolidationWallets(
   consolidations: ConsolidatedTDH[]

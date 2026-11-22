@@ -1,4 +1,3 @@
-import { CONSOLIDATED_WALLETS_TDH_TABLE, IDENTITIES_TABLE } from '@/constants';
 import { fetchLatestTDHBDate } from '../db';
 import { NextGenTokenTDH } from '../entities/INextGen';
 import { NFT } from '../entities/INFT';
@@ -20,58 +19,77 @@ import {
   TDHMemes
 } from '../entities/ITDH';
 import { ConsolidatedTDHUpload } from '../entities/IUpload';
-import { env } from '../env';
 import { Logger } from '../logging';
-import { metricsRecorder } from '../metrics/MetricsRecorder';
 import * as notifier from '../notifier';
-import { numbers } from '../numbers';
 import * as priorityAlertsContext from '../priority-alerts.context';
 import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
-import { dbSupplier } from '../sql-executor';
-import { competitionMainStageRepository } from '@/competitions/competition-main-stage.repository';
 import { Time } from '../time';
 import { findNftTDH } from './nft_tdh';
 import { updateTDH } from './tdh';
 import { consolidateAndPersistTDH } from './tdh_consolidation';
 import { identityTdhSyncStateDb } from '../identity-tdh-sync-state.db';
 import { uploadTDH } from './tdh_upload';
+import { recordTdhMetrics } from './tdh-metrics';
+import { appFeatures } from '@/app-features';
+import { TdhChainDayEntity } from '@/entities/ITdhChainDay';
+import { sitePollerDeps } from '@/tdhChain/chain-tdh-ingest.deps';
+import { pollChainDays } from '@/tdhChain/tdh-chain-day-poller';
 
 const logger = Logger.get('TDH_LOOP');
 const ALERT_TITLE = 'TDH Loop';
 
-export const handler = sentryContext.wrapLambdaHandler(async () => {
-  await doInDbContext(
-    priorityAlertsContext.wrapAsyncFunction(ALERT_TITLE, async () => {
-      const force = process.env.TDH_RESET == 'true';
-      logger.info(`[force=${force}]`);
-      await tdhLoop(force);
-    }),
-    {
-      logger,
-      entities: [
-        TDH,
-        ConsolidatedTDH,
-        TDHMemes,
-        ConsolidatedTDHMemes,
-        NextGenTokenTDH,
-        ConsolidatedTDHUpload,
-        NFT,
-        MemesSeason,
-        NFTOwner,
-        NftTDH,
-        OwnerBalances,
-        ConsolidatedOwnerBalances,
-        TDHBlock,
-        TDHEditions,
-        ConsolidatedTDHEditions,
-        HistoricConsolidatedTDH
-      ]
-    }
-  );
-});
+/**
+ * The daily 00:01 event computes TDH as before (unless it comes from the
+ * chain). The `chainPoll` events, every few minutes, read the 6529 chain's
+ * TDH days when FEATURE_TDH_CHAIN_SHADOW or FEATURE_TDH_FROM_CHAIN is on,
+ * and do nothing otherwise. One function, so the two never run at once.
+ */
+export const handler = sentryContext.wrapLambdaHandler(
+  async (event?: { chainPoll?: boolean }) => {
+    await doInDbContext(
+      priorityAlertsContext.wrapAsyncFunction(ALERT_TITLE, async () => {
+        if (event?.chainPoll) {
+          await pollChainDays(sitePollerDeps());
+          return;
+        }
+        const force = process.env.TDH_RESET == 'true';
+        logger.info(`[force=${force}]`);
+        await tdhLoop(force);
+      }),
+      {
+        logger,
+        entities: [
+          TDH,
+          ConsolidatedTDH,
+          TDHMemes,
+          ConsolidatedTDHMemes,
+          NextGenTokenTDH,
+          ConsolidatedTDHUpload,
+          NFT,
+          MemesSeason,
+          NFTOwner,
+          NftTDH,
+          OwnerBalances,
+          ConsolidatedOwnerBalances,
+          TDHBlock,
+          TDHEditions,
+          ConsolidatedTDHEditions,
+          HistoricConsolidatedTDH,
+          TdhChainDayEntity
+        ]
+      }
+    );
+  }
+);
 
 export async function tdhLoop(force?: boolean) {
+  if (appFeatures.isTdhFromChainEnabled()) {
+    logger.info(
+      `[TDH FROM THE 6529 CHAIN] [tdhChainDayLoop writes each day] [SKIPPING]`
+    );
+    return;
+  }
   const computed = await tdh(force);
   await findNftTDH();
   if (computed) {
@@ -91,48 +109,6 @@ export async function tdhLoop(force?: boolean) {
   await notifier.notifyTdhCalculationsDone();
 }
 
-async function recordMetrics() {
-  const mainStageWaveId = env.getStringOrNull(`MAIN_STAGE_WAVE_ID`);
-  const tdhOnMainStageSubmissions =
-    await competitionMainStageRepository.totalActiveVotes(mainStageWaveId, {});
-  await metricsRecorder.recordTdhOnMainStageSubmissions(
-    { tdhOnMainStageSubmissions },
-    {}
-  );
-  if (mainStageWaveId) {
-    const db = dbSupplier();
-    await Promise.all([
-      db
-        .oneOrNull<{
-          cnt: number;
-        }>(
-          `select count(*) as cnt from ${CONSOLIDATED_WALLETS_TDH_TABLE} where consolidation_key like ('%-%')`
-        )
-        .then(async (consolidationsFormedRow) => {
-          const consolidationsFormed = numbers.parseNumberOrThrow(
-            consolidationsFormedRow?.cnt ?? 0
-          );
-          await metricsRecorder.recordConsolidationsFormed(
-            { consolidationsFormed },
-            {}
-          );
-        }),
-      db
-        .oneOrNull<{
-          cnt: number;
-        }>(
-          `select count(*) as cnt from ${IDENTITIES_TABLE} where normalised_handle is not null and normalised_handle not like 'id-0x%'`
-        )
-        .then(async (profileCountRow) => {
-          const profileCount = numbers.parseNumberOrThrow(
-            profileCountRow?.cnt ?? 0
-          );
-          await metricsRecorder.recordProfileCount({ profileCount }, {});
-        })
-    ]);
-  }
-}
-
 /** True when this run computed and wrote today's TDH. */
 async function tdh(force?: boolean): Promise<boolean> {
   const lastTDHCalc = Time.latestUtcMidnight().toDate();
@@ -147,7 +123,7 @@ async function tdh(force?: boolean): Promise<boolean> {
       blockTimestamp,
       { mode: 'FULL' }
     );
-    await recordMetrics();
+    await recordTdhMetrics();
     await uploadTDH(block, blockTimestamp, tdh, false, true);
     await uploadTDH(block, blockTimestamp, consolidatedTdh, true, true);
     return true;

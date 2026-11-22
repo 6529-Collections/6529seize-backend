@@ -8,6 +8,7 @@ import {
   compareTokenTdh,
   shouldIncludeWalletTdh
 } from '@/tdhLoop/tdh-ranking';
+import { TdhComputeOptions } from '@/tdhLoop/tdh-cluster-source';
 import {
   GRADIENT_CONTRACT,
   MEME_8_BURN_TRANSACTION,
@@ -42,7 +43,7 @@ import {
 import { ConnectionWrapper, sqlExecutor } from '../sql-executor';
 import { equalIgnoreCase } from '../strings';
 import { Time } from '../time';
-import { calculateTdhEditions } from './tdh_editions';
+import { calculateTdhEditions, TDHEditionsRow } from './tdh_editions';
 import { snapshotRows, StoredRows } from './tdh-row-diff';
 import { calculateMemesTdh } from './tdh_memes';
 import { extractMemesEditionSizes, extractNFTOwners } from './tdh_objects';
@@ -164,14 +165,24 @@ export function buildMemeCalculationEditionSizes(
 
 export const updateTDH = async (
   lastTDHCalc: Date,
-  startingWallets?: string[]
-): Promise<{ block: number; blockTimestamp: Date; tdh: TDH[] }> => {
-  const provider = getEthereumRpcProvider();
-  const beforeBlock = await findLatestBlockBeforeTimestamp(
-    provider,
-    lastTDHCalc.getTime() / 1000
-  );
-  const block = beforeBlock.number;
+  startingWallets?: string[],
+  options: TdhComputeOptions = {}
+): Promise<{
+  block: number;
+  blockTimestamp: Date;
+  tdh: TDH[];
+  memesTdh: TDHMemes[];
+  tdhEditions: TDHEditionsRow[];
+}> => {
+  const block =
+    options.block?.number ??
+    (
+      await findLatestBlockBeforeTimestamp(
+        getEthereumRpcProvider(),
+        lastTDHCalc.getTime() / 1000
+      )
+    ).number;
+  const clusters = options.clusters;
 
   const NEXTGEN_NFTS: NextGenToken[] = await fetchNextgenTokens();
   const nextgenNetwork = getNextgenNetwork();
@@ -200,8 +211,9 @@ export const updateTDH = async (
     startingWallets.forEach((w) => combinedAddresses.add(w));
     logger.info(`[STARTING UNIQUE WALLETS ${combinedAddresses.size}]`);
   } else {
-    const consolidationAddresses: { wallet: string }[] =
-      await fetchAllConsolidationAddresses();
+    const consolidationAddresses: { wallet: string }[] = clusters
+      ? clusters.multiWalletAddresses()
+      : await fetchAllConsolidationAddresses();
     consolidationAddresses.forEach((w) =>
       combinedAddresses.add(w.wallet.toLowerCase())
     );
@@ -211,9 +223,9 @@ export const updateTDH = async (
 
   logger.info(`[UNIQUE WALLETS ${combinedAddresses.size}]`);
 
-  const blockTimestamp = new Date(
-    (await getEthereumRpcClient().getBlock(block)).timestamp * 1000
-  );
+  const blockTimestamp =
+    options.block?.timestamp ??
+    new Date((await getEthereumRpcClient().getBlock(block)).timestamp * 1000);
 
   const { ADJUSTED_NFTS, MEMES_COUNT, ADJUSTED_SEASONS } =
     await getAdjustedMemesAndSeasons(blockTimestamp);
@@ -241,7 +253,9 @@ export const updateTDH = async (
   await Promise.all(
     Array.from(combinedAddresses).map(async (owner) => {
       const wallet = owner.toLowerCase();
-      const consolidations = await retrieveWalletConsolidations(wallet);
+      const consolidations = clusters
+        ? clusters.walletsOf(wallet)
+        : await retrieveWalletConsolidations(wallet);
 
       const walletMemes: any[] = [];
       let unique_memes = 0;
@@ -480,14 +494,18 @@ export const updateTDH = async (
   )) as TDHMemes[];
 
   const tdhEditions = await calculateTdhEditions(rankedTdh);
-  await persistTDH(block, rankedTdh, memesTdh, tdhEditions, startingWallets, {
-    storedTdh
-  });
+  if (options.persist !== false) {
+    await persistTDH(block, rankedTdh, memesTdh, tdhEditions, startingWallets, {
+      storedTdh
+    });
+  }
 
   return {
     block: block,
     blockTimestamp,
-    tdh: rankedTdh
+    tdh: rankedTdh,
+    memesTdh,
+    tdhEditions
   };
 };
 

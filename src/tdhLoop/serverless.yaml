@@ -28,6 +28,15 @@ functions:
     reservedConcurrency: 1
     events:
       - schedule: cron(1 0 * * ? *)
+      # Reads the 6529 chain's TDH days; a no-op while both TDH chain flags are off.
+      - schedule:
+          rate: cron(0/5 0-7 * * ? *)
+          input:
+            chainPoll: true
+      - schedule:
+          rate: cron(15/30 8-23 * * ? *)
+          input:
+            chainPoll: true
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
@@ -36,6 +45,7 @@ functions:
       SENTRY_ENVIRONMENT: 'tdhLoop_${opt:stage, self:provider.stage}'
       NEXTGEN_CHAIN_ID: ${self:custom.chainIDs.${opt:stage, self:provider.stage}, 1}
       TDH_RESET: true
+      TDH_CHAIN_GATEWAY_URL: ${env:TDH_CHAIN_GATEWAY_URL, ''}
 
 resources:
   Resources:

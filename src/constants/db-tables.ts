@@ -360,6 +360,8 @@ export const VIEWER_GROUP_SET_MEMBERS_TABLE = 'viewer_group_set_members';
 export const IDENTITY_TDH_SYNC_STATE_TABLE = 'identity_tdh_sync_state';
 /** What each consolidated-TDH write changed, for the scoped metrics sync. */
 export const IDENTITY_TDH_SYNC_SCOPE_TABLE = 'identity_tdh_sync_scope';
+/** TDH days read from the 6529 chain (see src/tdhChain). */
+export const TDH_CHAIN_DAYS_TABLE = 'tdh_chain_days';
 
 export const COMPETITION_SCORE_RESETS_TABLE = 'competition_score_resets';
 export const COMPETITION_SCORE_RESET_STATE_TABLE =

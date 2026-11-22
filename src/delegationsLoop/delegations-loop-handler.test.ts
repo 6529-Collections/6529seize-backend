@@ -128,7 +128,9 @@ describe('delegations loop on-demand reconsolidation', () => {
     jest.mocked(updateTDH).mockResolvedValue({
       block: 26_000_000,
       blockTimestamp,
-      tdh: []
+      tdh: [],
+      memesTdh: [],
+      tdhEditions: []
     });
   });
 
@@ -189,6 +191,21 @@ describe('delegations loop on-demand reconsolidation', () => {
       affected_wallets: [COLD, HOT],
       block: 26_000_000
     });
+  });
+
+  it('skips the within-day TDH rerun when TDH comes from the 6529 chain', async () => {
+    process.env.FEATURE_TDH_FROM_CHAIN = 'true';
+    const result = await invoke({ action: 'reconsolidate', wallets: [COLD] });
+    expect(updateTDH).not.toHaveBeenCalled();
+    expect(consolidateAndPersistTDH).not.toHaveBeenCalled();
+    [
+      consolidateNftOwners,
+      consolidateOwnerBalances,
+      consolidateActivity,
+      consolidateSubscriptions,
+      identitiesService.updatePrimaryAddresses
+    ].forEach((fn) => expect(fn).toHaveBeenCalledWith(affected));
+    expect(result).toMatchObject({ status: 'completed', block: null });
   });
 
   it('keeps the chain-event path on the same reconsolidation pipeline', async () => {
