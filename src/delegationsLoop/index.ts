@@ -235,36 +235,58 @@ async function handleDelegations(
     ? await fetchBlockTimestamp(startBlock)
     : undefined;
   const delegationsResponse = await findNewDelegations(startBlock);
+  await applyDelegationEvents(
+    startBlock,
+    resetBlockTimestamp,
+    delegationsResponse,
+    health
+  );
+  return delegationsResponse;
+}
+
+/**
+ * Applies one scan's events: consolidation and delegation rows (rewound
+ * first on a reset block), ENS, reconsolidation of the affected wallets,
+ * primary addresses.
+ */
+async function applyDelegationEvents(
+  startBlock: number | undefined,
+  resetBlockTimestamp: number | undefined,
+  events: {
+    consolidations: ConsolidationEvent[];
+    registrations: DelegationEvent[];
+    revocation: DelegationEvent[];
+  },
+  health: DelegationsLoopHealth
+) {
   await persistConsolidations(
     startBlock,
-    delegationsResponse.consolidations,
+    events.consolidations,
     resetBlockTimestamp
   );
-  await persistDelegations(
-    startBlock,
-    delegationsResponse.registrations,
-    delegationsResponse.revocation
-  );
+  await persistDelegations(startBlock, events.registrations, events.revocation);
   if (
-    delegationsResponse.consolidations.length ||
-    delegationsResponse.registrations.length ||
-    delegationsResponse.revocation.length
+    events.consolidations.length ||
+    events.registrations.length ||
+    events.revocation.length
   )
     health.committedStage();
 
   await handleENS();
 
-  if (delegationsResponse.consolidations.length > 0) {
-    await reconsolidateWallets(delegationsResponse.consolidations, health);
+  if (events.consolidations.length > 0) {
+    await reconsolidateWallets(events.consolidations, health);
   }
 
   const primaryAddressEvents = [
-    ...delegationsResponse.registrations,
-    ...delegationsResponse.revocation
+    ...events.registrations,
+    ...events.revocation
   ].filter((e) => e.use_case === USE_CASE_PRIMARY_ADDRESS);
   await updatePrimaryAddresses(primaryAddressEvents);
+}
 
-  return delegationsResponse;
+function describeRange(range: { from: number; to: number } | null): string {
+  return range ? `${range.from}-${range.to}` : 'NONE';
 }
 
 /**
@@ -289,36 +311,16 @@ async function handleDelegationsWithFreeze(
   );
   const { apply, record } = splitAtFreeze(start, head.block, freezeBlock);
   logger.info(
-    `[NFTDELEGATION FREEZE ${freeze.kind}] [FREEZE BLOCK ${freezeBlock}] [START ${start}] [HEAD ${head.block}] [APPLY ${apply ? `${apply.from}-${apply.to}` : 'NONE'}] [RECORD ${record ? `${record.from}-${record.to}` : 'NONE'}]`
+    `[NFTDELEGATION FREEZE ${freeze.kind}] [FREEZE BLOCK ${freezeBlock}] [START ${start}] [HEAD ${head.block}] [APPLY ${describeRange(apply)}] [RECORD ${describeRange(record)}]`
   );
 
   if (apply) {
-    const delegationsResponse = await findNewDelegations(apply.from, apply.to);
-    await persistConsolidations(
+    await applyDelegationEvents(
       startBlock,
-      delegationsResponse.consolidations,
-      resetBlockTimestamp
+      resetBlockTimestamp,
+      await findNewDelegations(apply.from, apply.to),
+      health
     );
-    await persistDelegations(
-      startBlock,
-      delegationsResponse.registrations,
-      delegationsResponse.revocation
-    );
-    if (
-      delegationsResponse.consolidations.length ||
-      delegationsResponse.registrations.length ||
-      delegationsResponse.revocation.length
-    )
-      health.committedStage();
-    await handleENS();
-    if (delegationsResponse.consolidations.length > 0) {
-      await reconsolidateWallets(delegationsResponse.consolidations, health);
-    }
-    const primaryAddressEvents = [
-      ...delegationsResponse.registrations,
-      ...delegationsResponse.revocation
-    ].filter((e) => e.use_case === USE_CASE_PRIMARY_ADDRESS);
-    await updatePrimaryAddresses(primaryAddressEvents);
   } else {
     await handleENS();
   }

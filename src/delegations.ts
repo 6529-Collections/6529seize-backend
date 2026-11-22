@@ -432,11 +432,12 @@ export function toNftDelegationLogRecord(
   if (!delegator) {
     return null;
   }
-  const delegate = has('delegationAddress')
-    ? lowerOrNull(args.delegationAddress)
-    : has('newdelegationAddress')
-      ? lowerOrNull(args.newdelegationAddress)
-      : null;
+  let delegate: string | null = null;
+  if (has('delegationAddress')) {
+    delegate = lowerOrNull(args.delegationAddress);
+  } else if (has('newdelegationAddress')) {
+    delegate = lowerOrNull(args.newdelegationAddress);
+  }
   return {
     block: log.blockNumber,
     log_index: log.logIndex,
