@@ -73,6 +73,7 @@ import {
   AbusivenessCheckService
 } from '../profiles/abusiveness-check.service';
 import { calculateLevel } from '../profiles/profile-level';
+import { creditTdh } from './rating-credit';
 import { profilesService } from '../profiles/profiles.service';
 import { RequestContext } from '../request.context';
 import { ConnectionWrapper } from '../sql-executor';
@@ -1012,7 +1013,7 @@ export class RatingsService {
     return result.map((it) => ({
       ...it,
       level: calculateLevel({
-        tdh: it.tdh + it.xtdh,
+        tdh: creditTdh(it.tdh, it.xtdh),
         rep: profileReps[it.profile_id] ?? 0
       })
     }));
@@ -1057,7 +1058,7 @@ export class RatingsService {
           data: page.data.map<ApiRatingWithProfileInfoAndLevel>((result) => ({
             ...result,
             level: calculateLevel({
-              tdh: result.tdh + result.xtdh,
+              tdh: creditTdh(result.tdh, result.xtdh),
               rep: profileReps[result.profile_id] ?? 0
             })
           }))

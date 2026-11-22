@@ -313,6 +313,35 @@ describe('HelpBotCreditsService', () => {
     );
   });
 
+  it("leaves identities' REP and level alone from switch-on", async () => {
+    const original = process.env.FEATURE_IDENTITY_ON_CHAIN;
+    process.env.FEATURE_IDENTITY_ON_CHAIN = 'true';
+    try {
+      const { service, executor } = createService({
+        executeResults: [{ affectedRows: 1 }, { affectedRows: 1 }],
+        executeQueryResults: [[{ rating: 3 }]]
+      });
+      const result = await service.chargeQuestionCredit(
+        { profileId: 'profile-1', interactionId: 'interaction-1' },
+        ctx
+      );
+      expect(result.charged).toBe(true);
+      expect(executor.execute).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE ratings'),
+        expect.objectContaining({ delta: -1 }),
+        expect.anything()
+      );
+      expect(executor.execute).not.toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE identities'),
+        expect.anything(),
+        expect.anything()
+      );
+    } finally {
+      if (original === undefined) delete process.env.FEATURE_IDENTITY_ON_CHAIN;
+      else process.env.FEATURE_IDENTITY_ON_CHAIN = original;
+    }
+  });
+
   it('refunds a previously charged question once', async () => {
     const { service, executor } = createService({
       executeResults: [{ affectedRows: 1 }],

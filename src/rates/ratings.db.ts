@@ -10,6 +10,7 @@ import {
   HELP_BOT_HANDLE
 } from '@/help-bot/help-bot.config';
 import { revokeRepBasedDropOverVotes } from '../drops/participation-drops-over-vote-revocation';
+import { creditTdhSql, withoutHelpBotCreditsSql } from './rating-credit';
 import { RateMatter, Rating } from '../entities/IRating';
 import { RatingsSnapshot } from '../entities/IRatingsSnapshots';
 import { RequestContext } from '../request.context';
@@ -112,6 +113,7 @@ with general_stats as (select matter_category                  as category,
                    where rating <> 0
                      and matter = :matter
                      and matter_target_id = :matter_target_id
+                     ${withoutHelpBotCreditsSql()}
                    group by 1),
  rater_stats as (select matter_category as category,
                         sum(rating)     as rating
@@ -120,6 +122,7 @@ with general_stats as (select matter_category                  as category,
                    and matter = :matter
                    and matter_target_id = :matter_target_id
                    and rater_profile_id = :rater_profile_id
+                   ${withoutHelpBotCreditsSql()}
                  group by 1)
 select general_stats.category,
        general_stats.rating,
@@ -399,10 +402,10 @@ from general_stats
                                 where r.matter in ('REP', 'CIC', 'WAVE_REP')
                                   and not (${helpBotCreditOverRateExclusion('r')})
                                 group by 1, 2)
-          select rt.rater_profile_id, rt.matter, rt.tally, coalesce(i.tdh + i.xtdh, 0) as rater_credit
+          select rt.rater_profile_id, rt.matter, rt.tally, coalesce(${creditTdhSql('i')}, 0) as rater_credit
           from rate_tallies rt
                    left join ${IDENTITIES_TABLE} i on rt.rater_profile_id = i.profile_id
-          where floor(coalesce(i.tdh + i.xtdh, 0)) < abs(rt.tally)
+          where floor(coalesce(${creditTdhSql('i')}, 0)) < abs(rt.tally)
       `,
       HELP_BOT_CREDIT_OVERRATE_PARAMS
     );
@@ -501,7 +504,7 @@ from general_stats
       return [];
     }
     return this.db.execute(
-      `select matter_target_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = :matter and matter_target_id in (:matter_target_ids) group by 1`,
+      `select matter_target_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = :matter and matter_target_id in (:matter_target_ids)${withoutHelpBotCreditsSql()} group by 1`,
       param
     );
   }
@@ -549,7 +552,7 @@ from general_stats
       .oneOrNull<{
         cnt: number;
       }>(
-        `select count(distinct rater_profile_id) as cnt from ${RATINGS_TABLE} where matter_target_id = :profile_id and matter = :matter and rating <> 0`,
+        `select count(distinct rater_profile_id) as cnt from ${RATINGS_TABLE} where matter_target_id = :profile_id and matter = :matter and rating <> 0${withoutHelpBotCreditsSql()}`,
         param
       )
       .then((result) => result?.cnt ?? 0);
@@ -589,7 +592,7 @@ from general_stats
                                    ${
                                      param.category
                                        ? `and r.matter_category = :category`
-                                       : ''
+                                       : withoutHelpBotCreditsSql('r')
                                    }
                                  group by 1),
                rater_cic_ratings as (select matter_target_id as profile_id, sum(rating) as cic
@@ -659,6 +662,7 @@ from grouped_rates r
       where matter = :matter
         and matter_target_id in (:targetIds)
         and rating <> 0
+        ${withoutHelpBotCreditsSql()}
       group by 1
       `,
       { targetIds, matter },
@@ -708,6 +712,7 @@ from grouped_rates r
                join ${IDENTITIES_TABLE} target_profile on target_profile.profile_id = r.matter_target_id
       where r.matter = :matter
         and r.rating <> 0
+        ${withoutHelpBotCreditsSql('r')}
       order by 2
       `,
       {
@@ -813,6 +818,8 @@ from grouped_rates r
     if (param.category) {
       sqlParam.category = param.category;
       sql += ` and matter_category = :category`;
+    } else {
+      sql += withoutHelpBotCreditsSql();
     }
     return this.db
       .execute(sql, sqlParam, { wrappedConnection: ctx.connection })
@@ -837,6 +844,8 @@ from grouped_rates r
     if (param.category) {
       sqlParam.category = param.category;
       sql += ` and matter_category = :category`;
+    } else {
+      sql += withoutHelpBotCreditsSql();
     }
     return this.db
       .execute(sql, sqlParam)
@@ -944,6 +953,7 @@ from grouped_rates r
             where matter = :matter
               and matter_target_id in (:targetIds)
               and rating <> 0
+              ${withoutHelpBotCreditsSql()}
             group by 1, 2
           ),
           ranked_categories as (
@@ -1028,7 +1038,7 @@ from grouped_rates r
       `
       select * from ${RATINGS_TABLE} where matter_target_id = :contextProfileId and matter = 'REP' and rating <> 0 ${
         restrictions.rater_id ? ` and rater_profile_id = :rater_id ` : ``
-      } ${restrictions.category ? ` and matter_category = :category ` : ``}
+      } ${restrictions.category ? ` and matter_category = :category ` : withoutHelpBotCreditsSql()}
     `,
       {
         contextProfileId,

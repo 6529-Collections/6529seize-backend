@@ -7,6 +7,7 @@ import { HelpBotCreditEventType } from '@/entities/IHelpBotCreditEvent';
 import { ProfileActivityLogType } from '@/entities/IProfileActivityLog';
 import { RateMatter } from '@/entities/IRating';
 import { revokeRepBasedDropOverVotes } from '@/drops/participation-drops-over-vote-revocation';
+import { isIdentityOnChain } from '@/identity-freeze/identity-freeze';
 import { profileActivityLogsDb } from '@/profileActivityLogs/profile-activity-logs.db';
 import { RequestContext } from '@/request.context';
 import {
@@ -605,19 +606,23 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
       },
       { wrappedConnection: connection }
     );
-    await this.db.execute(
-      `
+    // From switch-on REP and levels come from the chain only; the credit
+    // stays a 6529.io site feature in the ratings table.
+    if (!isIdentityOnChain()) {
+      await this.db.execute(
+        `
         UPDATE ${IDENTITIES_TABLE}
         SET rep = rep + :delta,
             level_raw = level_raw + :delta
         WHERE profile_id = :profileId
       `,
-      {
-        profileId,
-        delta
-      },
-      { wrappedConnection: connection }
-    );
+        {
+          profileId,
+          delta
+        },
+        { wrappedConnection: connection }
+      );
+    }
     await profileActivityLogsDb.insert(
       {
         profile_id: botProfileId,

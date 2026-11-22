@@ -4,6 +4,7 @@ import {
   RATINGS_TABLE
 } from '@/constants';
 import { DbPoolName } from '@/db-query.options';
+import { isIdentityOnChain } from '@/identity-freeze/identity-freeze';
 import {
   querySqlInListChunks,
   SQL_IN_LIST_CHUNK_BYTES,
@@ -235,6 +236,12 @@ function partitionScopedRows(
  * sources (REP and CIC ratings, consolidated TDH), the same values the old
  * all-rows reset and recompute produced, without a long transaction.
  *
+ * From switch-on (isIdentityOnChain) the identity mirror writes rep and cic
+ * from the chain, and the ratings table keeps the help bot's credits, which
+ * are not REP: a chunk then writes tdh, basetdh_rate and level_raw = rep + tdh
+ * only (the chain's level, REP + TDH), reads no ratings and takes no ratings
+ * locks. The level then follows each TDH day at once.
+ *
  * `syncAll` walks every identity in primary-key order; `syncScoped` covers
  * only the listed identities. Each chunk is one short transaction that writes
  * every row's final values at once, so no reader ever sees a reset or
@@ -411,20 +418,38 @@ export class IdentityMetricsSync extends LazyDbAccessCompatibleService {
     // only ratings index records this chunk already holds: a rating write
     // that has changed another index and waits on this one can't block it.
     const profileIds = chunk.profileIds.length ? chunk.profileIds : [null];
-    await this.db.execute(
-      `select count(*) as n from ${RATINGS_TABLE} force index (${RATINGS_SUM_INDEX})
+    const onChain = isIdentityOnChain();
+    if (!onChain) {
+      await this.db.execute(
+        `select count(*) as n from ${RATINGS_TABLE} force index (${RATINGS_SUM_INDEX})
        where matter in ('REP', 'CIC') and matter_target_id in (:profileIds)
        for share`,
-      { profileIds },
-      { wrappedConnection: connection }
-    );
+        { profileIds },
+        { wrappedConnection: connection }
+      );
+    }
     await settings.afterSourcesLocked?.(chunkNumber);
     // 2. Final values for every row of the chunk, written only where they
     // differ. level_raw is written from the new values explicitly: a
     // multi-table UPDATE does not promise left-to-right assignment.
     const identityRows = keyCondition('i.consolidation_key');
-    const update = await this.db.execute(
-      `update ${IDENTITIES_TABLE} i
+    const update = onChain
+      ? await this.db.execute(
+          `update ${IDENTITIES_TABLE} i
+       left join ${CONSOLIDATED_WALLETS_TDH_TABLE} c
+         on c.consolidation_key = i.consolidation_key
+       set i.tdh = coalesce(c.boosted_tdh, 0),
+           i.basetdh_rate = coalesce(c.boosted_tdh_rate, 0),
+           i.level_raw = i.rep + coalesce(c.boosted_tdh, 0)
+       where ${identityRows.sql}
+         and (i.tdh <> coalesce(c.boosted_tdh, 0)
+           or i.basetdh_rate <> coalesce(c.boosted_tdh_rate, 0)
+           or i.level_raw <> i.rep + coalesce(c.boosted_tdh, 0))`,
+          identityRows.params,
+          { wrappedConnection: connection }
+        )
+      : await this.db.execute(
+          `update ${IDENTITIES_TABLE} i
        left join (
          select matter_target_id as profile_id,
                 sum(case when matter = 'REP' then rating else 0 end) as rep,
@@ -446,9 +471,9 @@ export class IdentityMetricsSync extends LazyDbAccessCompatibleService {
            or i.tdh <> coalesce(c.boosted_tdh, 0)
            or i.basetdh_rate <> coalesce(c.boosted_tdh_rate, 0)
            or i.level_raw <> coalesce(r.rep, 0) + coalesce(c.boosted_tdh, 0) + i.xtdh)`,
-      { ...identityRows.params, profileIds },
-      { wrappedConnection: connection }
-    );
+          { ...identityRows.params, profileIds },
+          { wrappedConnection: connection }
+        );
     // 3. The UPDATE locked the chunk's rows (a whole key range for the walk).
     // If its rows are not the ones read in step 0 (a row was added or
     // removed, or a profile id changed), some row may have been summed

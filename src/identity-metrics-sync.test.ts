@@ -131,6 +131,24 @@ describe('IdentityMetricsSync chunks', () => {
     }
   });
 
+  it("from switch-on writes tdh and the chain's level only, without the ratings", async () => {
+    const original = process.env.FEATURE_IDENTITY_ON_CHAIN;
+    process.env.FEATURE_IDENTITY_ON_CHAIN = 'true';
+    try {
+      const db = new FakeExecutor(identities(5));
+      await new IdentityMetricsSync(() => db).syncAll({ chunkRows: 10 });
+      expect(db.statements.some((it) => /from ratings/i.test(it))).toBe(false);
+      const update = db.statements.find(isUpdate)!;
+      expect(update).toContain(
+        'i.level_raw = i.rep + coalesce(c.boosted_tdh, 0)'
+      );
+      expect(update).not.toMatch(/i\.rep =|i\.cic =|xtdh/);
+    } finally {
+      if (original === undefined) delete process.env.FEATURE_IDENTITY_ON_CHAIN;
+      else process.env.FEATURE_IDENTITY_ON_CHAIN = original;
+    }
+  });
+
   it('redoes a chunk after a deadlock, a lock wait timeout or a changed row set', async () => {
     const rows = identities(4);
     const db = new FakeExecutor(rows);
