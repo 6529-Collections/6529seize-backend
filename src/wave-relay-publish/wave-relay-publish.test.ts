@@ -23,8 +23,15 @@ describe('waveRelayPublishConfig', () => {
   it('reads the relays, once each, and the network', () => {
     expect(waveRelayPublishConfig(on)).toEqual({
       relays: ['wss://a.example/crp', 'wss://b.example'],
-      net: '6529-chain-1'
+      net: '6529-chain-1',
+      includeMembersOnly: false
     });
+    expect(
+      waveRelayPublishConfig({
+        ...on,
+        FEATURE_WAVES_RELAY_PUBLISH_MEMBERS_ONLY: 'true'
+      })?.includeMembersOnly
+    ).toBe(true);
   });
 
   it.each([

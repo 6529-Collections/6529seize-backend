@@ -2,6 +2,7 @@ import * as Joi from 'joi';
 import { AuthenticationContext } from '@/auth-context';
 import { dropsDb, DropsDb } from '@/drops/drops.db';
 import { DeviceGrantEntity } from '@/entities/IDeviceGrant';
+import { DropType } from '@/entities/IDrop';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { DeviceSignedEventEntity } from '@/entities/IDeviceSignedEvent';
 import { ApiCompliantException, NotFoundException } from '@/exceptions';
@@ -41,6 +42,10 @@ export const DEVICE_SIGNATURE_REQUIRED_MESSAGE =
   `Posts in waves are now signed by your device. ` +
   `Sign in again on this device to set it up, then post again.`;
 
+export const DEVICE_SIGNATURE_REQUIRED_PROXY_MESSAGE =
+  `Posts in waves are now signed by the author's own device, ` +
+  `so a proxy can't post, edit or react for them.`;
+
 export function isDeviceSignatureRequired(
   env: Record<string, string | undefined> = process.env
 ): boolean {
@@ -48,8 +53,8 @@ export function isDeviceSignatureRequired(
 }
 
 export class DeviceSignatureRequiredException extends ApiCompliantException {
-  constructor() {
-    super(DEVICE_SIGNATURE_REQUIRED_MESSAGE, DEVICE_SIGNATURE_REQUIRED_CODE);
+  constructor(message: string = DEVICE_SIGNATURE_REQUIRED_MESSAGE) {
+    super(message, DEVICE_SIGNATURE_REQUIRED_CODE);
   }
 
   getStatusCode(): number {
@@ -244,7 +249,9 @@ export class DeviceSignedWritesService {
     ctx: SignedWriteContext
   ): Promise<T> {
     if (envelope === undefined) {
-      await this.assertUnsignedWriteAllowed(waveId, ctx);
+      if (isDeviceSignatureRequired()) {
+        await this.assertUnsignedWriteAllowed({ waveId }, ctx);
+      }
       return write();
     }
     const reservation = await this.verifyAndReserve(
@@ -283,13 +290,7 @@ export class DeviceSignedWritesService {
   ): Promise<T> {
     if (envelope === undefined) {
       if (isDeviceSignatureRequired()) {
-        const unsignedWaveId =
-          waveId ?? (await this.drops.findWaveIdByDropId(dropId, ctx));
-        // A missing drop's write answers as it does today (not found, or a
-        // delete that does nothing).
-        if (unsignedWaveId) {
-          await this.assertUnsignedWriteAllowed(unsignedWaveId, ctx);
-        }
+        await this.assertUnsignedWriteAllowed({ waveId, dropId }, ctx);
       }
       return this.runUnsigned(kind, dropId, write, ctx);
     }
@@ -485,17 +486,53 @@ export class DeviceSignedWritesService {
    * except in a direct message.
    */
   private async assertUnsignedWriteAllowed(
-    waveId: string,
-    ctx: RequestContext
+    target: { readonly waveId?: string; readonly dropId?: string },
+    ctx: SignedWriteContext
+  ): Promise<void> {
+    // On the writer: a drop or direct message made a moment ago counts.
+    const wave = await this.db.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const waveId =
+          target.waveId ??
+          (target.dropId
+            ? (await this.drops.findDropById(target.dropId, connection))
+                ?.wave_id
+            : undefined);
+        return waveId
+          ? this.drops.findWaveByIdOrNull(waveId, connection)
+          : null;
+      }
+    );
+    // A missing drop or wave answers as it does today (not found, or a
+    // delete that does nothing); a direct message stays open.
+    if (!wave || wave.is_direct_message) {
+      return;
+    }
+    throw new DeviceSignatureRequiredException(
+      ctx.authenticationContext.isAuthenticatedAsProxy()
+        ? DEVICE_SIGNATURE_REQUIRED_PROXY_MESSAGE
+        : DEVICE_SIGNATURE_REQUIRED_MESSAGE
+    );
+  }
+
+  /**
+   * A rating of a chat drop is the rater's +1 or -1 reaction, written with
+   * no signature: refused in a wave once signatures are required. Ratings
+   * of entries are votes, not reactions, and pass.
+   */
+  async assertUnsignedChatRatingAllowed(
+    dropId: string,
+    ctx: SignedWriteContext
   ): Promise<void> {
     if (!isDeviceSignatureRequired()) {
       return;
     }
-    const wave = await this.drops.findWaveByIdOrNull(waveId, ctx.connection);
-    if (wave?.is_direct_message) {
-      return;
+    const drop = await this.db.executeNativeQueriesInTransaction((connection) =>
+      this.drops.findDropById(dropId, connection)
+    );
+    if (drop?.drop_type === DropType.CHAT) {
+      await this.assertUnsignedWriteAllowed({ waveId: drop.wave_id }, ctx);
     }
-    throw new DeviceSignatureRequiredException();
   }
 
   private async runUnsigned<T>(

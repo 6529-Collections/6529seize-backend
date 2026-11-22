@@ -235,8 +235,9 @@ export class CrpConnection {
           `Relay ${this.url}: ${String(frame.reason ?? 'error')}`
         );
         if (frame.rid === null || frame.rid === undefined) {
-          // A connection-level error: the relay ends the session.
-          this.fail(error);
+          // A frame the relay could not read ("frame too large",
+          // "unreadable frame"): the session goes on; the publish it was
+          // for gets no ACK and times out.
           return;
         }
         const pending = this.pending.get(Number(frame.rid));

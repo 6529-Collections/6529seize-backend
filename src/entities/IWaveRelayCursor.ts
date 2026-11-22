@@ -22,13 +22,24 @@ export class WaveRelayCursorEntity {
   @Column({ type: 'bigint', nullable: false, default: 0 })
   readonly published!: number;
 
-  // Events the relay refused for good (logged).
+  // Events the relay refused for good, or too large or stuck (logged).
   @Column({ type: 'bigint', nullable: false, default: 0 })
   readonly rejected!: number;
+
+  // Events passed over here: not what 6529.io shows, or abandoned writes.
+  @Column({ type: 'bigint', nullable: false, default: 0 })
+  readonly skipped!: number;
 
   // Why the last run stopped early, if it did.
   @Column({ type: 'text', nullable: true, default: null })
   readonly last_error!: string | null;
+
+  // The event runs keep stopping at, and how many runs in a row.
+  @Column({ type: 'varchar', length: 66, nullable: true, default: null })
+  readonly stuck_event_id!: string | null;
+
+  @Column({ type: 'int', nullable: false, default: 0 })
+  readonly stuck_count!: number;
 
   @Column({ type: 'bigint', nullable: false })
   readonly updated_at!: number;

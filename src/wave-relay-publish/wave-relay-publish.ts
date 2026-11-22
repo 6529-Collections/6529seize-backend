@@ -15,10 +15,17 @@ import {
  *   (`wss://...`). Each relay gets every event, from its own cursor.
  * - WAVES_RELAY_NET: the network the relays serve, the chain's id (such as
  *   `6529-chain-1`); a relay on another network is refused.
+ * - FEATURE_WAVES_RELAY_PUBLISH_MEMBERS_ONLY=true also publishes members-only
+ *   waves (a read group, or under a wave with one). Turn it on only when
+ *   every listed relay runs with chain rights (`--api`), so it serves them
+ *   to their members alone; a relay without rights serves every wave to
+ *   anyone.
  */
 export interface WaveRelayPublishConfig {
   readonly relays: string[];
   readonly net: string;
+  /** FEATURE_WAVES_RELAY_PUBLISH_MEMBERS_ONLY: members-only waves too. */
+  readonly includeMembersOnly: boolean;
 }
 
 export class WaveRelayPublishConfigError extends Error {
@@ -62,7 +69,11 @@ export function waveRelayPublishConfig(
       'FEATURE_WAVES_RELAY_PUBLISH is on but WAVES_RELAY_NET is not set'
     );
   }
-  return { relays, net };
+  return {
+    relays,
+    net,
+    includeMembersOnly: env.FEATURE_WAVES_RELAY_PUBLISH_MEMBERS_ONLY === 'true'
+  };
 }
 
 /** One run's limits: about half a minute in a loop that runs every minute. */
@@ -70,9 +81,15 @@ export const DEFAULT_PUBLISH_RUN: Omit<WaveRelayPublisherOptions, 'relays'> = {
   budgetMs: 30_000,
   batchSize: 500,
   graceMs: 60_000,
+  // A write still unfinished after 15 minutes failed to record its drop.
+  abandonAfterMs: 15 * 60_000,
   window: 20,
-  // A relay takes 50 publishes a second from one connection; stay under.
-  minIntervalMs: 25
+  // A relay takes 50 publishes a second from one connection, and 5 a second
+  // (bursts of 60) from one grant; stay under both.
+  minIntervalMs: 25,
+  grantRate: 4.5,
+  grantBurst: 50,
+  maxStuckRuns: 10
 };
 
 const logger = Logger.get('WAVE_RELAY_PUBLISH');
@@ -97,7 +114,9 @@ export async function runWaveRelayPublishing({
     return null;
   }
   const publisher = new WaveRelayPublisher(
-    waveRelayPublishDb,
+    waveRelayPublishDb.source({
+      includeMembersOnly: config.includeMembersOnly
+    }),
     waveRelayPublishDb,
     (relay) => CrpConnection.open(relay, config.net, { factory }),
     (message) => logger.info(message)

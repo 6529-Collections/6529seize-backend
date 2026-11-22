@@ -1,8 +1,11 @@
 import 'reflect-metadata';
 import {
   DEVICE_GRANTS_TABLE,
-  DEVICE_SIGNED_EVENTS_TABLE
+  DEVICE_SIGNED_EVENTS_TABLE,
+  DROP_AUTHOR_SIGNATURES_TABLE,
+  DROPS_TABLE
 } from '@/constants/db-tables';
+import { DropType } from '@/entities/IDrop';
 import { DeviceGrantEntity } from '@/entities/IDeviceGrant';
 import { DeviceSignedEventEntity } from '@/entities/IDeviceSignedEvent';
 import { sqlExecutor } from '@/sql-executor';
@@ -71,23 +74,67 @@ function anEvent(
   };
 }
 
+const MEMBERS = aWave(
+  { visibility_group_id: 'members-group' },
+  { id: 'relay-members', name: 'Members', serial_no: 3 }
+);
+
+function dropRow(id: string, waveId: string = WAVE.id) {
+  return {
+    id,
+    serial_no: Number(id.replace(/\D/g, '')) || 1,
+    wave_id: waveId,
+    author_id: 'author',
+    created_at: 1,
+    updated_at: null,
+    title: null,
+    parts_count: 1,
+    reply_to_drop_id: null,
+    reply_to_part_id: null,
+    drop_type: DropType.CHAT,
+    signature: null,
+    hide_link_preview: false
+  };
+}
+
 describeWithSeed(
   'WaveRelayPublishDb',
   [
-    withWaves([WAVE, DM]),
+    withWaves([WAVE, DM, MEMBERS]),
     { table: DEVICE_GRANTS_TABLE, rows: [GRANT] },
+    {
+      table: DROPS_TABLE,
+      rows: [
+        dropRow('drop-1'),
+        dropRow('drop-2'),
+        dropRow('drop-3'),
+        dropRow('drop-4')
+      ]
+    },
+    {
+      table: DROP_AUTHOR_SIGNATURES_TABLE,
+      rows: [
+        { drop_id: 'drop-1', event_id: eventId(1), signed_at: 100 },
+        { drop_id: 'drop-3', event_id: eventId(3), signed_at: 300 },
+        { drop_id: 'drop-4', event_id: eventId(4), signed_at: 300 }
+      ]
+    },
     {
       table: DEVICE_SIGNED_EVENTS_TABLE,
       rows: [
         anEvent(1, 100),
+        // drop-2 was edited unsigned since: no current signature.
         anEvent(2, 200),
         // Same time: ordered by id.
         anEvent(4, 300),
         anEvent(3, 300),
-        // A write still in flight (no drop yet): never published.
+        // A write still in flight (no drop yet).
         anEvent(5, 400, { drop_id: null }),
-        // A direct message: never published.
+        // A delete of a drop gone.
+        anEvent(8, 450, { kind: 3, drop_id: 'drop-gone' }),
+        // A direct message, and a members-only wave.
         anEvent(6, 500, { wave_id: DM.id }),
+        anEvent(9, 550, { wave_id: MEMBERS.id }),
         // Too recent for this read.
         anEvent(7, 10_000)
       ]
@@ -95,11 +142,26 @@ describeWithSeed(
   ],
   () => {
     const db = new WaveRelayPublishDb(() => sqlExecutor);
+    const publicOnly = { includeMembersOnly: false };
 
-    it('reads finished events of waves after the cursor, oldest first', async () => {
-      const first = await db.eventsAfter(START_CURSOR, 5_000, 2);
-      expect(first.map((event) => event.id)).toEqual([eventId(1), eventId(2)]);
-      expect(first[0]).toMatchObject({
+    it('reads events after the cursor with what decides their sending', async () => {
+      const read = await db.candidatesAfter(
+        START_CURSOR,
+        5_000,
+        20,
+        publicOnly
+      );
+      expect(
+        read.map((c) => [c.event.id, c.finalized, c.dropVisible, c.dropSigned])
+      ).toEqual([
+        [eventId(1), true, true, true],
+        [eventId(2), true, true, false],
+        [eventId(3), true, true, true],
+        [eventId(4), true, true, true],
+        [eventId(5), false, false, false],
+        [eventId(8), true, false, false]
+      ]);
+      expect(read[0].event).toMatchObject({
         id: eventId(1),
         kind: 1,
         wave: WAVE.id,
@@ -107,15 +169,20 @@ describeWithSeed(
         body: '{"n":1}',
         created_at: 100
       });
-      const next = await db.eventsAfter(
-        { createdAt: 200, eventId: eventId(2) },
+      const page = await db.candidatesAfter(
+        { createdAt: 300, eventId: eventId(3) },
         5_000,
-        10
+        1,
+        publicOnly
       );
-      expect(next.map((event) => event.id)).toEqual([eventId(3), eventId(4)]);
-      expect(
-        await db.eventsAfter({ createdAt: 300, eventId: eventId(4) }, 5_000, 10)
-      ).toEqual([]);
+      expect(page.map((c) => c.event.id)).toEqual([eventId(4)]);
+      const withMembers = await db.candidatesAfter(
+        { createdAt: 450, eventId: eventId(8) },
+        5_000,
+        20,
+        { includeMembersOnly: true }
+      );
+      expect(withMembers.map((c) => c.event.id)).toEqual([eventId(9)]);
 
       const grants = await db.grants([GRANT_ID, `0x${'2'.repeat(64)}`]);
       expect(Array.from(grants.keys())).toEqual([GRANT_ID]);
@@ -135,15 +202,21 @@ describeWithSeed(
         eventId: eventId(4),
         published: 4,
         rejected: 1,
-        lastError: 'publish rate limit'
+        skipped: 2,
+        lastError: 'publish rate limit',
+        stuckEventId: eventId(5),
+        stuckCount: 3
       };
       await db.save('wss://a.example', cursor);
       expect(await db.load('wss://a.example')).toEqual(cursor);
-      await db.save('wss://a.example', { ...cursor, lastError: null });
-      expect(await db.load('wss://a.example')).toEqual({
+      const cleared = {
         ...cursor,
-        lastError: null
-      });
+        lastError: null,
+        stuckEventId: null,
+        stuckCount: 0
+      };
+      await db.save('wss://a.example', cleared);
+      expect(await db.load('wss://a.example')).toEqual(cleared);
       expect(await db.load('wss://b.example')).toEqual(START_CURSOR);
     });
   }

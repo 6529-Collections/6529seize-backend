@@ -138,11 +138,23 @@ describe('CrpConnection', () => {
   it('fails every waiting publish when the connection ends', async () => {
     const { connection, socket } = await opened();
     const publish = connection.publish({ id: 'e1' }, { id: 'g1' });
-    socket.relay({ t: 'ERR', rid: null, reason: 'going away' });
+    socket.emit('close', { reason: 'going away' });
     await expect(publish).rejects.toBeInstanceOf(CrpError);
     await expect(connection.publish({ id: 'e2' }, {})).rejects.toThrow(
       'going away'
     );
+  });
+
+  it('goes on after an ERR that names no publish', async () => {
+    // The relay answers a frame it could not read ("frame too large") so;
+    // the session stays open and that publish gets no ACK.
+    const { connection, socket } = await opened();
+    const lost = connection.publish({ id: 'e1' }, {}, 20);
+    socket.relay({ t: 'ERR', rid: null, reason: 'frame too large' });
+    const next = connection.publish({ id: 'e2' }, {});
+    socket.relay({ t: 'ACK', rid: 2, event_id: 'e2', status: 'accepted' });
+    await expect(next).resolves.toMatchObject({ status: 'accepted' });
+    await expect(lost).rejects.toThrow('no ACK for rid 1');
   });
 
   it('gives up on a publish without an ACK', async () => {
