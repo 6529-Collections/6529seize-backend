@@ -5,6 +5,7 @@ import {
 } from '@/chain-gateway/chain-gateway.client';
 import {
   ChainDelegation,
+  ChainFeedBlock,
   ChainFeedRecord,
   ChainIdentity,
   ChainRating
@@ -21,9 +22,16 @@ import {
   MirrorState,
   NO_RETRY,
   numberOrNull,
-  RatingEventContext,
-  RatingRowWrite
+  RatingEventRow,
+  RatingRowWrite,
+  ratingValueKey
 } from './identity-chain-mirror.db';
+import {
+  categoryKey,
+  ratingChangesOf,
+  ratingEventOrigin,
+  writerText
+} from './rating-events';
 import {
   CHAIN_BLOCK_BASE,
   ChainIdentityView,
@@ -154,6 +162,7 @@ type Gateway = Pick<
   | 'getChanges'
   | 'getLevelRanking'
   | 'getTdh'
+  | 'getState'
 >;
 
 export interface MirrorRunReport {
@@ -194,6 +203,8 @@ export interface MirrorRunReport {
   gatewayNotReady?: string;
   /** Keys a feed page left for later runs (the page's place moved on). */
   deferred: number;
+  /** Rating event rows the feed's Rating records gave (new ones written). */
+  ratingEvents: number;
 }
 
 /** A 32-byte word holding an address: 12 zero bytes, then the address. */
@@ -252,7 +263,7 @@ function retrySize(retry: MirrorRetry): number {
 /** Where the mirror is reading: the height and how it got there. */
 export interface MirrorAt {
   readonly height: number;
-  readonly source: RatingEventContext['source'];
+  readonly source: 'FEED' | 'FULL_SYNC';
 }
 
 export interface FeedEffects {
@@ -362,6 +373,8 @@ export class IdentityChainMirror {
   private seenTdhDayHeight: number | null = null;
   /** When the current pin was taken. */
   private pinnedAt = 0;
+  /** REP category names by id (a category's name never changes). */
+  private readonly categoryNames = new Map<string, string>();
   private readonly ids: ProfileIds;
   private readonly bindings: WalletBindingsFollower;
 
@@ -415,6 +428,7 @@ export class IdentityChainMirror {
       levelsSwept: 0,
       levelSweepDay: null,
       deferred: 0,
+      ratingEvents: 0,
       skippedInactive: [],
       failed: [],
       retryLeft: 0,
@@ -1242,7 +1256,12 @@ export class IdentityChainMirror {
       }
       if (!read) {
         logger.warn(`[FEED GONE AT ${from}] [STARTING A FULL SYNC]`);
-        return await this.startFullSync(state, true);
+        const restarted = await this.startFullSync(state, true);
+        // The full sync writes no rating events: these heights have none.
+        logger.warn(
+          `[NO RATING EVENTS FOR HEIGHTS ${from} TO ${Number(restarted.next_height) - 1}]`
+        );
+        return restarted;
       }
       if (read.atHead || read.nextHeight <= from) {
         return state;
@@ -1251,14 +1270,17 @@ export class IdentityChainMirror {
       // The identities a page touches are read again for each page, all at
       // one height that includes it.
       const records = read.blocks.flatMap((block) => block.records);
-      const applied = await this.unlessHeightGone(() =>
-        this.applyEffects(
+      // The page's rating events first, in their own transaction: its place
+      // is saved after both, so a page read again writes no row twice.
+      const applied = await this.unlessHeightGone(async () => {
+        await this.writeRatingEvents(read.blocks, report);
+        await this.applyEffects(
           feedEffects(records),
           report,
           { height: read.nextHeight - 1, source: 'FEED' },
           deadline
-        )
-      );
+        );
+      });
       if (!applied) return state;
       report.feedBlocks += read.blocks.length;
       state = await this.save({ ...state, next_height: read.nextHeight });
@@ -1520,6 +1542,108 @@ export class IdentityChainMirror {
     }
   }
 
+  /**
+   * The rating event rows of feed blocks: a row per Rating record, with the
+   * value 6529.io had before (its ratings row, or within the page the
+   * record before for the same key), the rater's and target's profile ids
+   * when mapped (none is made here), the REP category's name (from the
+   * blocks, the names known, else the chain's Category record at the pin)
+   * and the origin from the record's writer. A record that changes nothing,
+   * or of the help bot's credit category, is left out.
+   */
+  private async writeRatingEvents(
+    blocks: readonly ChainFeedBlock[],
+    report: MirrorRunReport
+  ) {
+    const { changes, categoryNames, unreadable } = ratingChangesOf(blocks);
+    categoryNames.forEach((name, id) => this.categoryNames.set(id, name));
+    if (unreadable) {
+      logger.warn(`[RATING RECORDS LEFT OUT OF THE EVENTS] [${unreadable}]`);
+    }
+    if (!changes.length) return;
+    for (const change of changes) {
+      const id = change.categoryId;
+      if (id === null || this.categoryNames.has(id)) continue;
+      const record = await this.gateway.getState<{
+        valueFields?: { name?: unknown } | null;
+      }>(categoryKey(id), this.pin());
+      const name = record?.valueFields?.name;
+      if (typeof name !== 'string') {
+        throw new Error(`No name for the REP category ${id}`);
+      }
+      this.categoryNames.set(id, name);
+    }
+    const mapped = await this.db.profileIdsOfPrincipals(
+      changes.flatMap((it) => [it.rater, it.target])
+    );
+    const categoryOf = (it: (typeof changes)[number]) =>
+      it.categoryId === null ? '' : this.categoryNames.get(it.categoryId)!;
+    // 6529.io keeps NIC as CIC with the category 'CIC'.
+    const rowCategory = (it: (typeof changes)[number]) =>
+      it.matter === 'CIC' ? 'CIC' : categoryOf(it);
+    const known = changes.flatMap((it) => {
+      const rater = mapped.get(it.rater);
+      const target = mapped.get(it.target);
+      return rater && target
+        ? [
+            {
+              rater_profile_id: rater,
+              target_profile_id: target,
+              matter: it.matter,
+              matter_category: rowCategory(it)
+            }
+          ]
+        : [];
+    });
+    const before = await this.db.ratingsOf(known);
+    const last = new Map<string, number>();
+    const rows: RatingEventRow[] = [];
+    for (const change of changes) {
+      const category = categoryOf(change);
+      if (change.matter === 'REP' && isHelpBotCreditCategory(category)) {
+        continue;
+      }
+      const key = JSON.stringify([
+        change.rater,
+        change.target,
+        change.matter,
+        category
+      ]);
+      const raterProfile = mapped.get(change.rater) ?? null;
+      const targetProfile = mapped.get(change.target) ?? null;
+      const old =
+        last.get(key) ??
+        (raterProfile && targetProfile
+          ? (before.get(
+              ratingValueKey({
+                rater_profile_id: raterProfile,
+                target_profile_id: targetProfile,
+                matter: change.matter,
+                matter_category: rowCategory(change)
+              })
+            ) ?? 0)
+          : 0);
+      last.set(key, change.value);
+      if (old === change.value) continue;
+      rows.push({
+        height: change.height,
+        block_time_ms: change.blockTimeMs,
+        rater_principal: change.rater,
+        rater_profile_id: raterProfile,
+        target_principal: change.target,
+        target_profile_id: targetProfile,
+        matter: change.matter,
+        matter_category: category,
+        old_rating: old,
+        new_rating: change.value,
+        origin: ratingEventOrigin(change.writer, change.byImport),
+        by_import: change.byImport,
+        writer: writerText(change.writer)
+      });
+    }
+    report.ratingEvents += await this.db.insertRatingEvents(rows, this.now());
+  }
+
   // ---------------------------------------------------------------- one identity
 
   private async identity(principalId: string): Promise<ChainIdentity | null> {
@@ -1754,20 +1878,10 @@ export class IdentityChainMirror {
         `[RATERS NOT SETTLED] [${identity.principalId}] [${unsettled.join(', ')}] [TRIED AGAIN]`
       );
     }
-    const events: RatingEventContext = {
-      targetPrincipal: identity.principalId.toLowerCase(),
-      height: at.height,
-      source: at.source
-    };
     await this.db.executeNativeQueriesInTransaction((conn) =>
-      this.db.replaceTargetRatings(
-        targetProfileId,
-        rows,
-        this.now(),
-        events,
-        conn,
-        { keepRaters }
-      )
+      this.db.replaceTargetRatings(targetProfileId, rows, this.now(), conn, {
+        keepRaters
+      })
     );
     report.ratingTargets++;
     return unsettled.length ? ['targets'] : [];

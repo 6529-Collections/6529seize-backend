@@ -140,22 +140,21 @@ export interface RatingRowWrite {
   readonly height?: number | null;
 }
 
-/** Where a target's ratings were read: for the rating event log. */
-export interface RatingEventContext {
-  readonly targetPrincipal: string;
-  /** The height the ratings were read at: a removed rating's event height. */
+/** A row of identity_chain_rating_events. */
+export interface RatingEventRow {
   readonly height: number;
-  readonly source: 'FEED' | 'FULL_SYNC';
-}
-
-interface RatingEvent {
-  readonly rater_profile_id: string;
-  readonly matter: string;
+  readonly block_time_ms: number;
+  readonly rater_principal: string;
+  readonly rater_profile_id: string | null;
+  readonly target_principal: string;
+  readonly target_profile_id: string | null;
+  readonly matter: 'REP' | 'CIC';
   readonly matter_category: string;
   readonly old_rating: number;
   readonly new_rating: number;
-  readonly rater_principal: string | null;
-  readonly height: number;
+  readonly origin: string;
+  readonly by_import: boolean;
+  readonly writer: string | null;
 }
 
 function ratingKey(it: {
@@ -166,8 +165,19 @@ function ratingKey(it: {
   return JSON.stringify([it.rater_profile_id, it.matter, it.matter_category]);
 }
 
-function totalKey(it: { matter: string; matter_category: string }): string {
-  return JSON.stringify([it.matter, it.matter_category]);
+/** The key of a 6529.io rating value (rater, target, matter, category). */
+export function ratingValueKey(it: {
+  readonly rater_profile_id: string;
+  readonly target_profile_id: string;
+  readonly matter: string;
+  readonly matter_category: string;
+}): string {
+  return JSON.stringify([
+    it.rater_profile_id.toLowerCase(),
+    it.target_profile_id.toLowerCase(),
+    it.matter,
+    it.matter_category
+  ]);
 }
 
 const STATE_ID = 'identity';
@@ -1142,13 +1152,12 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
 
   /**
    * A target's REP and CIC ratings become `wanted` (help-bot credits kept).
-   * Each change is also written to the rating event log.
+   * The rating event log is written from the feed's records, not here.
    */
   async replaceTargetRatings(
     targetProfileId: string,
     wanted: RatingRowWrite[],
     now: number,
-    events: RatingEventContext,
     conn: Conn,
     /**
      * Raters (profile ids) whose rows not in `wanted` stay: raters the
@@ -1171,24 +1180,12 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     );
     const want = new Map(wanted.map((it) => [ratingKey(it), it]));
     const have = new Map(existing.map((it) => [ratingKey(it), it]));
-    const log: RatingEvent[] = [];
     const kept = new Set(keepRaters.map((it) => it.toLowerCase()));
     const stays = (row: RatingRowWrite) =>
       kept.has(row.rater_profile_id.toLowerCase());
     const removed = Array.from(have.entries())
       .filter(([k, row]) => !want.has(k) && !stays(row))
       .map(([, row]) => row);
-    // The target's rows once this is written: the totals of the event log.
-    const after = [
-      ...existing
-        .filter((it) => !want.has(ratingKey(it)) && stays(it))
-        .map((it) => ({ ...it, rating: Number(it.rating) })),
-      ...wanted
-    ];
-    const removedPrincipals = await this.principalsOfProfiles(
-      removed.map((it) => it.rater_profile_id),
-      conn
-    );
     for (const row of removed) {
       await this.db.execute(
         `delete from ${RATINGS_TABLE}
@@ -1202,15 +1199,6 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
         },
         opts
       );
-      log.push({
-        rater_profile_id: row.rater_profile_id,
-        matter: row.matter,
-        matter_category: row.matter_category,
-        old_rating: Number(row.rating),
-        new_rating: 0,
-        rater_principal: removedPrincipals.get(row.rater_profile_id) ?? null,
-        height: events.height
-      });
     }
     let inserted = 0;
     let updated = 0;
@@ -1232,91 +1220,110 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
         },
         opts
       );
-      log.push({
-        rater_profile_id: row.rater_profile_id,
-        matter: row.matter,
-        matter_category: row.matter_category,
-        old_rating: old ? Number(old.rating) : 0,
-        new_rating: row.rating,
-        rater_principal: row.rater_principal ?? null,
-        height: row.height ?? events.height
-      });
       if (old) updated++;
       else inserted++;
     }
-    await this.insertRatingEvents(
-      { targetProfileId, wanted: after, log, now, events },
-      conn
-    );
     return { inserted, updated, deleted: removed.length };
   }
 
-  /** Principal ids of mapped profiles. */
-  private async principalsOfProfiles(
-    profileIds: string[],
-    conn: Conn
-  ): Promise<Map<string, string>> {
-    const result = new Map<string, string>();
-    if (!profileIds.length) return result;
-    const rows = await this.db.execute<{
-      profile_id: string;
-      principal_id: string;
-    }>(
-      `select profile_id, principal_id from ${IDENTITY_CHAIN_PRINCIPALS_TABLE}
-       where profile_id in (:profileIds)`,
-      { profileIds },
-      { wrappedConnection: conn }
-    );
-    rows.forEach((it) => result.set(it.profile_id, it.principal_id));
+  /**
+   * 6529.io's REP and CIC ratings for these keys (rater and target as
+   * profile ids), keyed by ratingValueKey; a key without a row is absent.
+   */
+  async ratingsOf(
+    keys: {
+      readonly rater_profile_id: string;
+      readonly target_profile_id: string;
+      readonly matter: string;
+      readonly matter_category: string;
+    }[]
+  ): Promise<Map<string, number>> {
+    const result = new Map<string, number>();
+    for (let i = 0; i < keys.length; i += 500) {
+      const params: Record<string, unknown> = {};
+      const tuples = keys
+        .slice(i, i + 500)
+        .map((it, j) => {
+          params[`r${j}`] = it.rater_profile_id;
+          params[`t${j}`] = it.target_profile_id;
+          params[`m${j}`] = it.matter;
+          params[`c${j}`] = it.matter_category;
+          return `(:r${j}, :t${j}, :m${j}, :c${j})`;
+        })
+        .join(', ');
+      const rows = await this.db.execute<{
+        rater_profile_id: string;
+        matter_target_id: string;
+        matter: string;
+        matter_category: string;
+        rating: number | string;
+      }>(
+        `select rater_profile_id, matter_target_id, matter, matter_category, rating
+         from ${RATINGS_TABLE}
+         where (rater_profile_id, matter_target_id, matter, matter_category) in (${tuples})`,
+        params
+      );
+      rows.forEach((it) =>
+        result.set(
+          ratingValueKey({
+            rater_profile_id: it.rater_profile_id,
+            target_profile_id: it.matter_target_id,
+            matter: it.matter,
+            matter_category: it.matter_category
+          }),
+          Number(it.rating)
+        )
+      );
+    }
     return result;
   }
 
-  private async insertRatingEvents(
-    input: {
-      targetProfileId: string;
-      wanted: RatingRowWrite[];
-      log: RatingEvent[];
-      now: number;
-      events: RatingEventContext;
-    },
-    conn: Conn
-  ) {
-    const { targetProfileId, wanted, log, now, events } = input;
-    if (!log.length) return;
-    const totals = new Map<string, number>();
-    for (const it of wanted) {
-      totals.set(totalKey(it), (totals.get(totalKey(it)) ?? 0) + it.rating);
-    }
-    for (let i = 0; i < log.length; i += 500) {
-      const params: Record<string, unknown> = {
-        target: targetProfileId,
-        targetPrincipal: events.targetPrincipal.toLowerCase(),
-        source: events.source,
-        now
-      };
-      const values = log
-        .slice(i, i + 500)
-        .map((it, j) => {
-          params[`h${j}`] = it.height;
-          params[`rp${j}`] = it.rater_principal?.toLowerCase() ?? null;
-          params[`r${j}`] = it.rater_profile_id;
-          params[`m${j}`] = it.matter;
-          params[`c${j}`] = it.matter_category;
-          params[`o${j}`] = it.old_rating;
-          params[`n${j}`] = it.new_rating;
-          params[`t${j}`] = totals.get(totalKey(it)) ?? 0;
-          return `(:h${j}, :rp${j}, :r${j}, :targetPrincipal, :target, :m${j}, :c${j}, :o${j}, :n${j}, :t${j}, :source, :now)`;
-        })
-        .join(', ');
-      await this.db.execute(
-        `insert into ${IDENTITY_CHAIN_RATING_EVENTS_TABLE}
-           (height, rater_principal, rater_profile_id, target_principal, target_profile_id,
-            matter, matter_category, old_rating, new_rating, total_after, source, created_at)
-         values ${values}`,
-        params,
-        { wrappedConnection: conn }
-      );
-    }
+  /**
+   * Rating event rows, in their own transaction, 500 a statement; a row
+   * already there (the same height, rater, target, matter and category: a
+   * page read again) is left as it is. Returns the rows written.
+   */
+  async insertRatingEvents(
+    rows: readonly RatingEventRow[],
+    now: number
+  ): Promise<number> {
+    if (!rows.length) return 0;
+    return await this.executeNativeQueriesInTransaction(async (conn) => {
+      let written = 0;
+      for (let i = 0; i < rows.length; i += 500) {
+        const params: Record<string, unknown> = { now };
+        const values = rows
+          .slice(i, i + 500)
+          .map((it, j) => {
+            params[`h${j}`] = it.height;
+            params[`bt${j}`] = it.block_time_ms;
+            params[`rp${j}`] = it.rater_principal.toLowerCase();
+            params[`r${j}`] = it.rater_profile_id;
+            params[`tp${j}`] = it.target_principal.toLowerCase();
+            params[`t${j}`] = it.target_profile_id;
+            params[`m${j}`] = it.matter;
+            params[`c${j}`] = it.matter_category;
+            params[`o${j}`] = it.old_rating;
+            params[`n${j}`] = it.new_rating;
+            params[`or${j}`] = it.origin;
+            params[`bi${j}`] = it.by_import ? 1 : 0;
+            params[`w${j}`] = it.writer;
+            return `(:h${j}, :bt${j}, :rp${j}, :r${j}, :tp${j}, :t${j}, :m${j}, :c${j}, :o${j}, :n${j}, :or${j}, :bi${j}, :w${j}, 'FEED', :now)`;
+          })
+          .join(', ');
+        const result = await this.db.execute(
+          `insert ignore into ${IDENTITY_CHAIN_RATING_EVENTS_TABLE}
+             (height, block_time_ms, rater_principal, rater_profile_id, target_principal,
+              target_profile_id, matter, matter_category, old_rating, new_rating, origin,
+              by_import, writer, source, created_at)
+           values ${values}`,
+          params,
+          { wrappedConnection: conn }
+        );
+        written += this.db.getAffectedRows(result);
+      }
+      return written;
+    });
   }
 
   // ---------------------------------------------------------------- wallets

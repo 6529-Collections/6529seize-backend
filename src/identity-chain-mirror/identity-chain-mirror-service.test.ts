@@ -3,6 +3,7 @@ import { ChainGatewayError } from '@/chain-gateway/chain-gateway.client';
 import {
   ChainDelegation,
   ChainFeedPage,
+  ChainFeedRecord,
   ChainIdentity,
   ChainRating
 } from '@/chain-gateway/chain-gateway.types';
@@ -11,7 +12,8 @@ import {
   FirstBinding,
   IdentityChainMirrorDb,
   MirrorState,
-  RatingEventContext,
+  RatingEventRow,
+  ratingValueKey,
   RatingRowWrite
 } from './identity-chain-mirror.db';
 import { IdentityChainLookups } from './identity-chain-lookups';
@@ -79,7 +81,45 @@ class FakeDb {
   ratings = new Map<string, RatingRowWrite[]>();
   delegations = new Map<string, DelegationRowWrite[]>();
   pairs: { wallet1: string; wallet2: string }[] = [];
-  ratingReads: { target: string; events: RatingEventContext }[] = [];
+  ratingReads: { target: string }[] = [];
+  ratingEvents: RatingEventRow[] = [];
+  async insertRatingEvents(rows: RatingEventRow[]) {
+    let written = 0;
+    for (const row of rows) {
+      const key = (it: RatingEventRow) =>
+        JSON.stringify([
+          it.height,
+          it.rater_principal,
+          it.target_principal,
+          it.matter,
+          it.matter_category
+        ]);
+      if (this.ratingEvents.some((it) => key(it) === key(row))) continue;
+      this.ratingEvents.push(row);
+      written++;
+    }
+    return written;
+  }
+  async ratingsOf(
+    keys: {
+      rater_profile_id: string;
+      target_profile_id: string;
+      matter: string;
+      matter_category: string;
+    }[]
+  ) {
+    const result = new Map<string, number>();
+    for (const key of keys) {
+      const row = (this.ratings.get(key.target_profile_id) ?? []).find(
+        (it) =>
+          it.rater_profile_id === key.rater_profile_id &&
+          it.matter === key.matter &&
+          it.matter_category === key.matter_category
+      );
+      if (row) result.set(ratingValueKey(key), row.rating);
+    }
+    return result;
+  }
   keyWidth: number | null = null;
   bindings = new Map<string, WalletBindingRow>();
   firstBindings = new Map<string, FirstBinding>();
@@ -399,7 +439,6 @@ class FakeDb {
     target: string,
     rows: RatingRowWrite[],
     _now: number,
-    events: RatingEventContext,
     _conn?: unknown,
     { keepRaters = [] }: { keepRaters?: readonly string[] } = {}
   ) {
@@ -410,7 +449,7 @@ class FakeDb {
       (it) => !listed.has(key(it)) && keepRaters.includes(it.rater_profile_id)
     );
     this.ratings.set(target, [...kept, ...rows]);
-    this.ratingReads.push({ target, events });
+    this.ratingReads.push({ target });
     return { inserted: rows.length, updated: 0, deleted: 0 };
   }
   async replaceWalletDelegations(
@@ -535,7 +574,8 @@ function world(followers: ProfileSiteFollower[] = []) {
     network: null as string | null,
     headHeldAt: null as number | null,
     finalized: 100,
-    tdhDay: 25
+    tdhDay: 25,
+    categories: new Map<string, string>()
   };
   const gateway = {
     // The gateway's finalized height reaches what its feed gives, unless a
@@ -611,6 +651,12 @@ function world(followers: ProfileSiteFollower[] = []) {
     getIdentityByPrincipal: jest.fn(
       async (p: string) => chain.identities.get(p) ?? null
     ),
+    getState: jest.fn(async (key: string) => {
+      const name = chain.categories.get(`0x${key.slice(6)}`);
+      return name === undefined
+        ? null
+        : { family: '0x0705', valueFields: { name, createdHeight: 1 } };
+    }),
     getTdh: jest.fn(async () => ({
       read: { height: chain.finalized } as never,
       data: { day: chain.tdhDay },
@@ -848,14 +894,9 @@ describe('IdentityChainMirror', () => {
         height: 30
       }
     ]);
-    // Found by a full pass at the height it started from.
-    expect(
-      db.ratingReads.find((it) => it.target === ALICE_PROFILE)?.events
-    ).toEqual({
-      targetPrincipal: alice.principalId,
-      height: 100,
-      source: 'FULL_SYNC'
-    });
+    // A full sync writes no rating events.
+    expect(db.ratingReads.map((it) => it.target)).toContain(ALICE_PROFILE);
+    expect(db.ratingEvents).toEqual([]);
     // The identity's delegation covers each of its wallets.
     expect(db.delegations.get(A)).toEqual([
       expect.objectContaining({
@@ -960,38 +1001,171 @@ describe('IdentityChainMirror', () => {
     expect(changes).toEqual([]);
   });
 
-  it('logs a rating change found on the feed at the feed height', async () => {
-    const { mirror, db, chain, alice, bob } = world();
+  const CATEGORY = '0x' + '0c'.repeat(32);
+  const CREDITS = '0x' + 'cc'.repeat(32);
+  const ratingRecord = (
+    rater: string,
+    target: string,
+    value: number | null,
+    writer: ChainFeedRecord['writer'],
+    category = CATEGORY,
+    byImport: boolean | null = false
+  ): ChainFeedRecord => ({
+    family: '0x0701',
+    name: 'Rating',
+    key: '0x',
+    value: value === null ? null : '0x01',
+    keyFields: { rater, matter: 1, targetKind: 1, target, category },
+    valueFields:
+      value === null
+        ? null
+        : { value, updatedHeight: 1, viaGrant: null, index: 0 },
+    byImport,
+    writer
+  });
+  const ratingSet = {
+    kind: 'tx' as const,
+    txId: '0x' + '11'.repeat(32),
+    opType: 0x0701,
+    opName: 'RATING_SET'
+  };
+  const ratingScan = { kind: 'system' as const, step: 'RATING_SCAN' as const };
+  const timed = (height: number, records: ChainFeedRecord[]) => ({
+    height,
+    slot: height,
+    root: '0x',
+    time: 1_764_000_000_000 + height * 12_000,
+    records
+  });
+
+  it("writes a row per Rating record of a page, chaining each key's old value", async () => {
+    const { mirror, db, chain, alice, bob, gateway } = world();
     await mirror.run({ budgetMs: 60_000 });
-    db.ratingReads = [];
+    chain.categories.set(CATEGORY, 'Kind');
     chain.feed.push({
       from: 101,
-      through: 103,
-      next: 104,
+      through: 102,
+      next: 103,
       blocks: [
-        {
-          height: 102,
-          slot: 0,
-          root: '0x',
-          time: 0,
-          records: [
-            {
-              family: '0x0301',
-              name: 'Rating',
-              key: '0x',
-              value: null,
-              keyFields: { rater: bob.principalId, target: alice.principalId }
-            }
-          ]
-        }
+        timed(101, [
+          ratingRecord(bob.principalId, alice.principalId, 7, ratingSet)
+        ]),
+        timed(102, [
+          ratingRecord(bob.principalId, alice.principalId, 6, ratingScan),
+          ratingRecord(
+            alice.principalId,
+            bob.principalId,
+            null,
+            null,
+            CATEGORY,
+            true
+          )
+        ])
+      ]
+    });
+    const report = await mirror.run({ budgetMs: 60_000 });
+    const bobProfile = db.mapping.get(bob.principalId)!.profile;
+    expect(db.ratingEvents).toEqual([
+      {
+        height: 101,
+        block_time_ms: 1_764_000_000_000 + 101 * 12_000,
+        rater_principal: bob.principalId,
+        rater_profile_id: bobProfile,
+        target_principal: alice.principalId,
+        target_profile_id: ALICE_PROFILE,
+        matter: 'REP',
+        matter_category: 'Kind',
+        // 6529.io's value before the page: the full sync's 5.
+        old_rating: 5,
+        new_rating: 7,
+        origin: 'OPERATION',
+        by_import: false,
+        writer: 'tx:RATING_SET'
+      },
+      expect.objectContaining({
+        height: 102,
+        old_rating: 7,
+        new_rating: 6,
+        origin: 'CAP_CUT',
+        writer: 'system:RATING_SCAN'
+      })
+    ]);
+    // Alice's rating of Bob was removed but 6529.io had none: no change.
+    expect(report.ratingEvents).toBe(2);
+    expect(gateway.getState).toHaveBeenCalledWith(
+      `0x0705${'0c'.repeat(32)}`,
+      expect.anything()
+    );
+  });
+
+  it('writes the rows before the page is saved, and none twice when it is read again', async () => {
+    const { mirror, db, chain, alice, bob } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    chain.categories.set(CATEGORY, 'Kind');
+    chain.feed.push({
+      from: 101,
+      through: 101,
+      next: 102,
+      blocks: [
+        timed(101, [
+          ratingRecord(bob.principalId, alice.principalId, 7, ratingSet)
+        ])
+      ]
+    });
+    const save = db.saveState.bind(db);
+    const saves = jest
+      .spyOn(db, 'saveState')
+      .mockImplementation(async (state: MirrorState) => {
+        if (state.next_height === 102) throw new Error('lost connection');
+        return save(state);
+      });
+    const inserts = jest.spyOn(db, 'insertRatingEvents');
+    const writes = jest.spyOn(db, 'replaceTargetRatings');
+    const first = await mirror.run({ budgetMs: 60_000 });
+    expect(first.error).toBe('lost connection');
+    expect(db.ratingEvents).toHaveLength(1);
+    // Before the page's effects (the target's ratings), too.
+    expect(inserts.mock.invocationCallOrder[0]).toBeLessThan(
+      writes.mock.invocationCallOrder[0]
+    );
+    const failedSave = saves.mock.calls.findIndex(
+      ([state]) => (state as MirrorState).next_height === 102
+    );
+    expect(inserts.mock.invocationCallOrder[0]).toBeLessThan(
+      saves.mock.invocationCallOrder[failedSave]
+    );
+    saves.mockRestore();
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.next_height).toBe(102);
+    expect(db.ratingEvents).toHaveLength(1);
+  });
+
+  it("leaves out the help bot's credit category and records that change nothing", async () => {
+    const { mirror, db, chain, alice, bob } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    chain.categories.set(CREDITS, ' help6529 CREDITS ');
+    chain.categories.set(CATEGORY, 'Kind');
+    chain.feed.push({
+      from: 101,
+      through: 101,
+      next: 102,
+      blocks: [
+        timed(101, [
+          ratingRecord(
+            bob.principalId,
+            alice.principalId,
+            3,
+            ratingSet,
+            CREDITS
+          ),
+          // The value 6529.io has: an index moved, nothing else.
+          ratingRecord(bob.principalId, alice.principalId, 5, ratingScan)
+        ])
       ]
     });
     await mirror.run({ budgetMs: 60_000 });
-    expect(db.ratingReads.map((it) => it.events)).toContainEqual({
-      targetPrincipal: alice.principalId,
-      height: 103,
-      source: 'FEED'
-    });
+    expect(db.state?.next_height).toBe(102);
+    expect(db.ratingEvents).toEqual([]);
   });
 
   it('starts a full sync when the feed no longer holds its height', async () => {

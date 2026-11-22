@@ -1006,11 +1006,30 @@ after into `transfer_reconciliations` for the holdings loops. In the same
 transaction the regrouped wallets go to `identity_chain_regroups`; the
 delegations loop re-keys TDH, owners, balances, activity and subscriptions for
 them (up to 5,000 a run) and only then takes them off, so a run cut short
-loses none. Each REP and NIC rating change the mirror applies is written, in
-the same transaction, to `identity_chain_rating_events` (rater, target,
-matter, category, old and new value, total after, chain height, FEED or
-FULL_SYNC) for notifications. The pairs of identities it doesn't write
-(merged, closing, too many wallets for a key) stay as they are.
+loses none. The pairs of identities it doesn't write (merged, closing, too
+many wallets for a key) stay as they are.
+
+From switch-on `identity_chain_rating_events` is the source of REP and NIC
+notifications (`src/identity-chain-mirror/rating-events.ts`): one row per
+Rating record (family 0x0701) of each feed block, as the feed gives each key's
+final value in a block with its last writer. A row has the block's height and
+time (`block_time_ms`, the block's slot start), the rater and target
+principals and, when mapped then, their profile ids (none is made here), the
+matter (REP, or CIC for NIC), the REP category's name (`''` for CIC; from the
+chain's Category records), the value 6529.io had before (its ratings row, or
+within a page the record before for the same key) and the new one (0 when
+removed), the record's `byImport` and raw `writer` (`tx:<op>` or
+`system:<step>`), and `origin`: OPERATION for a RATING_SET transaction,
+CAP_CUT for the daily rating reduction (RATING_SCAN), IMPORT for the import
+(or no writer on a record the import wrote), UNKNOWN otherwise. Only
+OPERATION notifies. A page's rows are written with `insert ignore` in their
+own transaction before the page's other effects, and its place is saved
+after, so a page read again writes no row twice (one row per height, rater,
+target, matter and category) and a run cut short loses none. A record that
+changes nothing (6529.io had that value) or of the help bot's credit category
+writes no row. A full sync writes none, nor does a retry of keys; when a
+gone feed starts a full sync, the heights it skips have no rows (logged with
+the range).
 
 `identity_chain_wallets` holds each bound wallet's principal and the chain
 height it has been bound to that principal since

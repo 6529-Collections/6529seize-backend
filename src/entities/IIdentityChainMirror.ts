@@ -248,50 +248,64 @@ export class IdentityChainMirrorStateEntity {
 }
 
 /**
- * One REP or NIC rating change the identity mirror applied to `ratings`, in
- * the same transaction: what the notifications read now that ratings are set
- * on the chain. The mirror finds changes by comparing a target's ratings on
- * the chain with 6529.io's rows, so it has no transaction id. `source` says
- * how: FEED (following the chain's change feed) or FULL_SYNC (a full pass,
- * including the first one after the import; such a row repairs drift and is
- * not news unless its height is after the import).
+ * One rating change on the 6529 chain, from the feed's Rating records: a
+ * row per record per block (the feed gives each key's final value in a
+ * block, with its last writer), written before the mirror applies the
+ * block's other effects. From switch-on the source of REP and NIC
+ * notifications; only `origin` OPERATION (a rater's RATING_SET) notifies.
  */
 @Entity(IDENTITY_CHAIN_RATING_EVENTS_TABLE)
-@Index('identity_chain_rating_events_height_idx', ['height', 'id'])
-@Index('identity_chain_rating_events_target_idx', ['target_profile_id', 'id'])
+@Index(
+  'uq_identity_chain_rating_events_key',
+  [
+    'height',
+    'rater_principal',
+    'target_principal',
+    'matter',
+    'matter_category'
+  ],
+  { unique: true }
+)
+@Index('idx_identity_chain_rating_events_target', [
+  'target_profile_id',
+  'height'
+])
+@Index('idx_identity_chain_rating_events_time', ['block_time_ms'])
 export class IdentityChainRatingEventEntity {
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })
   readonly id!: number;
 
-  /**
-   * The chain height of the change: the rating's last set height, or for a
-   * removed rating the height the mirror read the target's ratings at.
-   */
+  /** The block of the record. */
   @Column({ type: 'bigint', nullable: false })
   readonly height!: number;
 
-  /** Null when the rater is not mapped to a chain identity. */
-  @Column({ type: 'varchar', length: 66, nullable: true, default: null })
-  readonly rater_principal!: string | null;
+  /** The block's time (its slot start), Unix ms. */
+  @Column({ type: 'bigint', nullable: false })
+  readonly block_time_ms!: number;
 
-  @Column({ type: 'varchar', length: 50, nullable: false })
-  readonly rater_profile_id!: string;
+  @Column({ type: 'varchar', length: 66, nullable: false })
+  readonly rater_principal!: string;
+
+  /** The rater's 6529.io profile id when mapped then; null when not. */
+  @Column({ type: 'varchar', length: 50, nullable: true, default: null })
+  readonly rater_profile_id!: string | null;
 
   @Column({ type: 'varchar', length: 66, nullable: false })
   readonly target_principal!: string;
 
-  @Column({ type: 'varchar', length: 50, nullable: false })
-  readonly target_profile_id!: string;
+  /** The target's 6529.io profile id when mapped then; null when not. */
+  @Column({ type: 'varchar', length: 50, nullable: true, default: null })
+  readonly target_profile_id!: string | null;
 
   /** REP or CIC (6529.io's name for NIC). */
   @Column({ type: 'varchar', length: 50, nullable: false })
   readonly matter!: string;
 
-  /** The REP category; CIC for NIC. */
+  /** The REP category's name; '' for CIC. */
   @Column({ type: 'varchar', length: 100, nullable: false })
   readonly matter_category!: string;
 
-  /** 0: there was no rating. */
+  /** 6529.io's value before (0: none); within a page, the record before. */
   @Column({ type: 'int', nullable: false })
   readonly old_rating!: number;
 
@@ -299,11 +313,19 @@ export class IdentityChainRatingEventEntity {
   @Column({ type: 'int', nullable: false })
   readonly new_rating!: number;
 
-  /** The target's total in this matter and category after the change. */
-  @Column({ type: 'bigint', nullable: false })
-  readonly total_after!: number;
+  /** OPERATION, CAP_CUT, IMPORT or UNKNOWN (ratingEventOrigin). */
+  @Column({ type: 'varchar', length: 16, nullable: false })
+  readonly origin!: string;
 
-  /** FEED or FULL_SYNC. */
+  /** The record's import marker; 0 when not given. */
+  @Column({ type: 'tinyint', width: 1, nullable: false, default: 0 })
+  readonly by_import!: number;
+
+  /** The record's last writer as given (tx:<op> or system:<step>). */
+  @Column({ type: 'varchar', length: 40, nullable: true, default: null })
+  readonly writer!: string | null;
+
+  /** FEED. */
   @Column({ type: 'varchar', length: 20, nullable: false })
   readonly source!: string;
 

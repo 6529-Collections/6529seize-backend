@@ -416,15 +416,7 @@ describeWithSeed(
          where matter_category = :helpBot`,
         { helpBot: HELP_BOT_CREDIT_CATEGORY }
       );
-      await inTx((conn) =>
-        db.replaceTargetRatings(
-          ALICE,
-          [],
-          1,
-          { targetPrincipal: Q, height: 90, source: 'FEED' },
-          conn
-        )
-      );
+      await inTx((conn) => db.replaceTargetRatings(ALICE, [], 1, conn));
       const rows = await sqlExecutor.execute<any>(
         `select matter_category from ${RATINGS_TABLE} where matter_target_id = :id`,
         { id: ALICE }
@@ -457,64 +449,15 @@ describeWithSeed(
             }
           ],
           1_700_000_000_000,
-          { targetPrincipal: Q, height: 90, source: 'FEED' },
           conn
         )
       );
       expect(result).toEqual({ inserted: 1, updated: 1, deleted: 1 });
-      // One event per change, in the same transaction.
-      const events = await sqlExecutor.execute<any>(
-        `select height, rater_principal, rater_profile_id, target_principal, target_profile_id,
-                matter, matter_category, old_rating, new_rating, total_after, source
-         from ${IDENTITY_CHAIN_RATING_EVENTS_TABLE} order by matter, matter_category`
+      // The event log is the feed's: nothing is written to it here.
+      const [events] = await sqlExecutor.execute<any>(
+        `select count(*) as n from ${IDENTITY_CHAIN_RATING_EVENTS_TABLE}`
       );
-      expect(
-        events.map((it: any) => ({
-          ...it,
-          height: Number(it.height),
-          total_after: Number(it.total_after)
-        }))
-      ).toEqual([
-        {
-          height: 89,
-          rater_principal: P,
-          rater_profile_id: BOB,
-          target_principal: Q,
-          target_profile_id: ALICE,
-          matter: 'CIC',
-          matter_category: 'CIC',
-          old_rating: 0,
-          new_rating: 2,
-          total_after: 2,
-          source: 'FEED'
-        },
-        {
-          height: 88,
-          rater_principal: P,
-          rater_profile_id: BOB,
-          target_principal: Q,
-          target_profile_id: ALICE,
-          matter: 'REP',
-          matter_category: 'Kind',
-          old_rating: 3,
-          new_rating: 4,
-          total_after: 4,
-          source: 'FEED'
-        },
-        {
-          height: 90,
-          rater_principal: null,
-          rater_profile_id: PLACE,
-          target_principal: Q,
-          target_profile_id: ALICE,
-          matter: 'REP',
-          matter_category: 'Old',
-          old_rating: 1,
-          new_rating: 0,
-          total_after: 0,
-          source: 'FEED'
-        }
-      ]);
+      expect(Number(events.n)).toBe(0);
       const rows = await sqlExecutor.execute<any>(
         `select rater_profile_id, matter, matter_category, rating from ${RATINGS_TABLE}
          where matter_target_id = :id order by matter, matter_category`,
@@ -542,7 +485,7 @@ describeWithSeed(
       ]);
     });
 
-    it("keeps the given raters' rows it is not given, counting them in totals", async () => {
+    it("keeps the given raters' rows it is not given", async () => {
       const result = await inTx((conn) =>
         db.replaceTargetRatings(
           ALICE,
@@ -557,7 +500,6 @@ describeWithSeed(
             }
           ],
           1_700_000_000_000,
-          { targetPrincipal: Q, height: 92, source: 'FEED' },
           conn,
           { keepRaters: [PLACE] }
         )
@@ -577,20 +519,69 @@ describeWithSeed(
         ])
       );
       expect(rows).toHaveLength(3);
+    });
+
+    it('writes a rating event once per key and height, and reads 6529.io values', async () => {
+      const row = (height: number, newRating: number) => ({
+        height,
+        block_time_ms: 1_764_000_000_000 + height,
+        rater_principal: P,
+        rater_profile_id: BOB,
+        target_principal: Q,
+        target_profile_id: ALICE,
+        matter: 'REP' as const,
+        matter_category: 'Kind',
+        old_rating: 3,
+        new_rating: newRating,
+        origin: 'OPERATION',
+        by_import: false,
+        writer: 'tx:RATING_SET'
+      });
+      expect(await db.insertRatingEvents([row(90, 4), row(91, 6)], 1)).toBe(2);
+      // A page read again: the same key and height are left as they are.
+      expect(await db.insertRatingEvents([row(90, 5), row(92, 7)], 2)).toBe(1);
       const events = await sqlExecutor.execute<any>(
-        `select matter_category, new_rating, total_after
-         from ${IDENTITY_CHAIN_RATING_EVENTS_TABLE} order by matter_category`
+        `select height, block_time_ms, new_rating, origin, by_import, writer, source
+         from ${IDENTITY_CHAIN_RATING_EVENTS_TABLE} order by height`
       );
       expect(
         events.map((it: any) => [
-          it.matter_category,
+          Number(it.height),
           Number(it.new_rating),
-          Number(it.total_after)
+          it.origin,
+          Number(it.by_import),
+          it.writer,
+          it.source
         ])
       ).toEqual([
-        ['Kind', 0, 0],
-        ['Old', 2, 3]
+        [90, 4, 'OPERATION', 0, 'tx:RATING_SET', 'FEED'],
+        [91, 6, 'OPERATION', 0, 'tx:RATING_SET', 'FEED'],
+        [92, 7, 'OPERATION', 0, 'tx:RATING_SET', 'FEED']
       ]);
+      expect(Number(events[0].block_time_ms)).toBe(1_764_000_000_090);
+      // A row without profiles is kept too.
+      expect(
+        await db.insertRatingEvents(
+          [{ ...row(93, 1), rater_profile_id: null, target_profile_id: null }],
+          3
+        )
+      ).toBe(1);
+      // The seeded ratings of Alice, by key.
+      const values = await db.ratingsOf([
+        {
+          rater_profile_id: BOB,
+          target_profile_id: ALICE,
+          matter: 'REP',
+          matter_category: 'Kind'
+        },
+        {
+          rater_profile_id: BOB,
+          target_profile_id: ALICE,
+          matter: 'REP',
+          matter_category: 'Nothing'
+        }
+      ]);
+      expect(Array.from(values.values())).toEqual([3]);
     });
 
     it('replaces a wallet delegations and all pairs', async () => {
