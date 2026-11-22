@@ -247,6 +247,25 @@ describe('ChainGatewayClient reads', () => {
     expect(param(reads(calls)[0], 'height')).toBe('900');
   });
 
+  it("throws not_held for a transaction the node's chain and pool don't hold", async () => {
+    const { client } = setup(
+      withStatus(() => ({
+        status: 404,
+        json: {
+          read: stamp(5, 'head'),
+          error: {
+            code: 'not_found',
+            message:
+              "neither a block on this node's chain nor its pool holds that transaction"
+          }
+        }
+      }))
+    );
+    await expect(client.getTx('0xaa')).rejects.toMatchObject({
+      code: 'not_held'
+    });
+  });
+
   it('reads the head unpinned and uncached', async () => {
     const { client, calls } = setup(
       withStatus(() => ({
@@ -626,7 +645,7 @@ describe('ChainGatewayClient reads', () => {
       )
     );
     await expect(client.getImportedIdentity('0xab')).rejects.toMatchObject({
-      code: 'bad_answer',
+      code: 'not_held',
       status: 404
     });
     known = true;
@@ -718,11 +737,18 @@ describe('ChainGatewayClient reads', () => {
   });
 
   it.each([
+    ['the route', '/v1/identities/0xab/imported', 'no such route', 'not_held'],
     [
-      'the route',
-      '/v1/identities/0xab/imported',
-      'no such route',
-      'bad_answer'
+      "the read's TDH day lists",
+      '/v1/tdh/wallets/0x01',
+      "this node holds no lists of the read's TDH day",
+      'not_held'
+    ],
+    [
+      'a transaction',
+      '/v1/tx/0xaa',
+      "neither a block on this node's chain nor its pool holds that transaction",
+      'not_held'
     ],
     [
       'the import file',
@@ -795,8 +821,29 @@ describe('ChainGatewayClient reads', () => {
     await expect(client.getLevel('0x01', { height: 10 })).rejects.toMatchObject(
       { code: 'bad_answer' }
     );
-    // A null level is an answer: the node lacks that day's lists.
+    // No level: the node lacks that day's lists, another node may not.
     json = { read: stamp(10), data: null, next: null };
+    await expect(client.getLevel('0x01', { height: 10 })).rejects.toMatchObject(
+      { code: 'not_held', read: expect.objectContaining({ height: 10 }) }
+    );
+  });
+
+  it('answers null for the level of a principal no identity has', async () => {
+    const { client } = setup(
+      withStatus(
+        () => ({
+          status: 404,
+          json: {
+            read: stamp(10),
+            error: {
+              code: 'not_found',
+              message: 'no identity has that principal id'
+            }
+          }
+        }),
+        10
+      )
+    );
     expect(await client.getLevel('0x01', { height: 10 })).toBeNull();
   });
 
@@ -1117,6 +1164,22 @@ describe('ChainGatewayClient reads', () => {
     ]);
   });
 
+  it("keeps the head's height at least the pin", async () => {
+    let finalized = 1000;
+    const { client, advance } = setup(() => {
+      const answer = status(finalized);
+      // A node behind: its head is below the height already pinned.
+      answer.json.data.head = stamp(finalized + 2, 'head');
+      return answer;
+    });
+    await client.getHead();
+    finalized = 990;
+    advance(2_500);
+    expect(await client.getHead()).toEqual(
+      expect.objectContaining({ headHeight: 1000, finalizedHeight: 1000 })
+    );
+  });
+
   it('never pins a read below a finalized height already seen', async () => {
     let finalized = 1000;
     const { client, calls, advance } = setup((call) =>
@@ -1135,11 +1198,15 @@ describe('ChainGatewayClient reads', () => {
     // A node behind the others answers the next status.
     finalized = 997;
     advance(2_500);
-    // The head reports the pin, and what the node said beside it.
+    // The head reports the pin, and what the node said beside it: its head
+    // height is never below the pin, its time is the node's alone.
     expect(await client.getHead()).toEqual(
       expect.objectContaining({
         finalizedHeight: 1000,
-        nodeFinalizedHeight: 997
+        nodeFinalizedHeight: 997,
+        headHeight: 1000,
+        finalizedTime: null,
+        nodeFinalizedTime: stamp(997).time
       })
     );
     await client.getIdentityByPrincipal('0x02');
@@ -1814,7 +1881,7 @@ describe('ChainGatewayClient status and unpinned routes', () => {
     const { client, calls } = setup(
       withStatus(() => ({
         status: 200,
-        json: { read: stamp(10), data: ranking, next: 'cursor' }
+        json: { read: stamp(1000), data: ranking, next: 'cursor' }
       }))
     );
     const answer = await client.getLevelRanking({ after: 'a', limit: 5 });
@@ -1825,6 +1892,23 @@ describe('ChainGatewayClient status and unpinned routes', () => {
     expect(param(read, 'height')).toBeNull();
     expect(param(read, 'at')).toBeNull();
     expect(param(read, 'after')).toBe('a');
+  });
+
+  it('refuses a ranking from a node behind the height already read', async () => {
+    const { client } = setup(
+      withStatus(() => ({
+        status: 200,
+        json: {
+          read: stamp(990),
+          data: { rankedAt: 990, count: 0, rows: [] },
+          next: null
+        }
+      }))
+    );
+    await client.getHead();
+    await expect(client.getLevelRanking()).rejects.toMatchObject({
+      code: 'height_gone'
+    });
   });
 
   it('refuses a read of the head at a height', async () => {
@@ -2417,16 +2501,25 @@ describe('import and membership history', () => {
         ? status(50)
         : { status: 200, json: { read: stamp(50), data: history, next: null } }
     );
-    // Only the first range is exact: later ones and their changes go.
+    // Only the first range is kept, exact from the wallet's first change.
     expect(await client.getMembershipWalletHistory(W)).toEqual({
       wallet: W,
       changes: [
         { height: 3, principalId: P },
         { height: 9, principalId: null }
       ],
-      ranges: [[1, 20]],
+      ranges: [[3, 20]],
       readHeight: 50
     });
+    // From its start when no wallet was bound before it.
+    expect(
+      (await client.getMembershipWalletHistory(W, { noBindingsBefore: 1 }))
+        ?.ranges
+    ).toEqual([[1, 20]]);
+    expect(
+      (await client.getMembershipWalletHistory(W, { noBindingsBefore: 0 }))
+        ?.ranges
+    ).toEqual([[3, 20]]);
   });
 
   it('keeps nothing of a history past its read height', async () => {
@@ -2452,9 +2545,53 @@ describe('import and membership history', () => {
     expect(await client.getMembershipWalletHistory(W)).toEqual({
       wallet: W,
       changes: [{ height: 3, principalId: P }],
-      ranges: [[1, 50]],
+      ranges: [[3, 50]],
       readHeight: 50
     });
+  });
+
+  it('is exact only from the first change of a feed that began after a binding', async () => {
+    // Bound to P at 50; this node's feed began at 500 and saw it unbound at 700.
+    const { client } = setup((call) =>
+      path(call) === '/v1/status'
+        ? status(900)
+        : {
+            status: 200,
+            json: {
+              read: stamp(900),
+              data: {
+                wallet: W,
+                changes: [{ height: 700, principalId: null }],
+                ranges: [[500, 900]]
+              },
+              next: null
+            }
+          }
+    );
+    expect(
+      (await client.getMembershipWalletHistory(W, { noBindingsBefore: 10 }))
+        ?.ranges
+    ).toEqual([[700, 900]]);
+  });
+
+  it('gives no range for a wallet with no change, unless none was bound before the feed', async () => {
+    const { client } = setup((call) =>
+      path(call) === '/v1/status'
+        ? status(900)
+        : {
+            status: 200,
+            json: {
+              read: stamp(900),
+              data: { wallet: W, changes: [], ranges: [[500, 900]] },
+              next: null
+            }
+          }
+    );
+    expect((await client.getMembershipWalletHistory(W))?.ranges).toEqual([]);
+    expect(
+      (await client.getMembershipWalletHistory(W, { noBindingsBefore: 600 }))
+        ?.ranges
+    ).toEqual([[500, 900]]);
   });
 
   it('drops the changes after a gap in the feed', async () => {
@@ -2483,7 +2620,7 @@ describe('import and membership history', () => {
     expect(await client.getMembershipWalletHistory(W)).toEqual({
       wallet: W,
       changes: [{ height: 3, principalId: P }],
-      ranges: [[1, 20]],
+      ranges: [[3, 20]],
       readHeight: 50
     });
   });
@@ -2502,13 +2639,15 @@ describe('import and membership history', () => {
             }
           }
     );
-    expect((await client.getMembershipWalletHistory(W))?.ranges).toEqual([
-      [1, 40]
-    ]);
+    expect(
+      (await client.getMembershipWalletHistory(W, { noBindingsBefore: 1 }))
+        ?.ranges
+    ).toEqual([[1, 40]]);
     to = 50;
-    expect((await client.getMembershipWalletHistory(W))?.ranges).toEqual([
-      [1, 50]
-    ]);
+    expect(
+      (await client.getMembershipWalletHistory(W, { noBindingsBefore: 1 }))
+        ?.ranges
+    ).toEqual([[1, 50]]);
   });
 
   it('answers null for a history it does not have, and no ranges as none', async () => {

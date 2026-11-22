@@ -62,8 +62,13 @@ export interface ChainHead {
   readonly finalizedHeight: number;
   /** The finalized height the node that answered the status is at. */
   readonly nodeFinalizedHeight?: number;
+  /**
+   * The finalized block's slot start, Unix ms, when the pin is the
+   * answering node's own finalized height; null when the pin is above it.
+   */
+  readonly finalizedTime: number | null;
   /** The answering node's finalized block's slot start, Unix ms. */
-  readonly finalizedTime: number;
+  readonly nodeFinalizedTime?: number;
   /** Heights `?height=` can still pin. */
   readonly pinnable: { readonly from: number; readonly to: number } | null;
   /** The chain's network id; another one means another chain (a relaunch). */
@@ -132,6 +137,10 @@ export interface ChainIdentity {
   } | null;
   readonly rep: { readonly total: string; readonly raters: number };
   readonly nic: { readonly total: string; readonly raters: number };
+  /**
+   * Null when the answering node hasn't copied the read's TDH day lists
+   * yet: not "no level", so a caller keeps the value it had.
+   */
   readonly level: ChainLevel | null;
   readonly mergedInto: string | null;
   /** The 6529.io profile id it was imported from, when the API gives it. */
