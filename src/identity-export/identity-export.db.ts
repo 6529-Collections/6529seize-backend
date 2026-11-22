@@ -4,11 +4,15 @@ import {
   DELEGATIONS_TABLE,
   IDENTITIES_TABLE,
   IDENTITY_TDH_SYNC_STATE_TABLE,
+  PROFILES_ACTIVITY_LOGS_TABLE,
   PROFILES_TABLE,
   RATINGS_TABLE,
   TDH_BLOCKS_TABLE
 } from '@/constants';
-import { HELP_BOT_HANDLE } from '@/help-bot/help-bot.config';
+import {
+  HELP_BOT_CREDIT_CATEGORY,
+  HELP_BOT_HANDLE
+} from '@/help-bot/help-bot.config';
 import {
   IdentityExportDelegation,
   IdentityExportRating
@@ -65,6 +69,12 @@ export interface IdentitySyncProgress {
   readonly syncedGeneration: number;
 }
 
+/** The latest TDH block 6529.io computed, and its Ethereum timestamp. */
+export interface TdhBlock {
+  readonly block: number;
+  readonly timestampMs: number | null;
+}
+
 /** Everything the export reads. Implemented over SQL below, faked in tests. */
 export interface IdentityExportSource {
   realHandleProfileIds(): Promise<string[]>;
@@ -74,7 +84,17 @@ export interface IdentityExportSource {
   identitiesByConsolidationKeys(keys: string[]): Promise<IdentityRow[]>;
   walletsByConsolidationKeys(keys: string[]): Promise<Map<string, string[]>>;
   statementsByProfileIds(profileIds: string[]): Promise<StatementRow[]>;
-  latestTdhBlock(): Promise<number | null>;
+  latestTdhBlock(): Promise<TdhBlock | null>;
+  /**
+   * Raters whose REP or CIC given is over their credit (TDH + xTDH), as the
+   * over-rates loop counts them: the help bot's credits left out.
+   */
+  overCreditRaters(): Promise<number>;
+  /**
+   * REP and CIC rating edits logged after `sinceMs`, without the over-rates
+   * loop's cuts (LOST_TDH) and the help bot's credits.
+   */
+  ratingEditsSince(sinceMs: number): Promise<number>;
   /** Null when the state rows are missing. */
   identitySyncProgress(): Promise<IdentitySyncProgress | null>;
   /** The help bot's profile id, by its handle; null when it has none. */
@@ -251,12 +271,68 @@ export class SqlIdentityExportSource implements IdentityExportSource {
     );
   }
 
-  async latestTdhBlock(): Promise<number | null> {
-    const rows = await this.query<{ block: number | string | null }>(
-      `select max(block_number) as block from ${TDH_BLOCKS_TABLE}`
+  async latestTdhBlock(): Promise<TdhBlock | null> {
+    const rows = await this.query<{
+      block_number: number | string;
+      timestamp: Date | string | number | null;
+    }>(
+      `select block_number, timestamp from ${TDH_BLOCKS_TABLE}
+       order by block_number desc limit 1`
     );
-    const block = rows[0]?.block;
-    return block === null || block === undefined ? null : Number(block);
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      block: Number(row.block_number),
+      timestampMs: toMillis(row.timestamp)
+    };
+  }
+
+  /** As ratingsDb.getOverRateMatters, for REP and CIC only. */
+  async overCreditRaters(): Promise<number> {
+    const rows = await this.query<{ n: number | string }>(
+      `with rate_tallies as (select r.rater_profile_id,
+                                    r.matter,
+                                    sum(abs(r.rating)) as tally
+                             from ${RATINGS_TABLE} r
+                             where r.matter in ('REP', 'CIC')
+                               and not (
+                                 r.matter = 'REP'
+                                 and r.matter_category = :helpBotCreditCategory
+                                 and exists (
+                                   select 1
+                                   from ${IDENTITIES_TABLE} help_bot_identity
+                                   where help_bot_identity.profile_id = r.rater_profile_id
+                                     and (
+                                       help_bot_identity.normalised_handle = :helpBotHandle
+                                       or lower(help_bot_identity.handle) = :helpBotHandle
+                                     )
+                                 )
+                               )
+                             group by 1, 2)
+       select count(*) as n
+       from rate_tallies rt
+                left join ${IDENTITIES_TABLE} i on rt.rater_profile_id = i.profile_id
+       where floor(coalesce(i.tdh + i.xtdh, 0)) < abs(rt.tally)`,
+      {
+        helpBotCreditCategory: HELP_BOT_CREDIT_CATEGORY,
+        helpBotHandle: HELP_BOT_HANDLE
+      }
+    );
+    return Number(rows[0]?.n ?? 0);
+  }
+
+  async ratingEditsSince(sinceMs: number): Promise<number> {
+    const rows = await this.query<{ n: number | string }>(
+      `select count(*) as n
+       from ${PROFILES_ACTIVITY_LOGS_TABLE}
+       where type = 'RATING_EDIT'
+         and additional_data_1 in ('REP', 'CIC')
+         and created_at > :since
+         and coalesce(json_unquote(json_extract(contents, '$.change_reason')), '') <> 'LOST_TDH'
+         and left(coalesce(json_unquote(json_extract(contents, '$.change_reason')), ''), 9) <> 'HELP_BOT_'`,
+      { since: new Date(sinceMs) }
+    );
+    return Number(rows[0]?.n ?? 0);
   }
 
   async identitySyncProgress(): Promise<IdentitySyncProgress | null> {

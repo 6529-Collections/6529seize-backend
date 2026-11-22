@@ -1,7 +1,8 @@
 export const IDENTITY_EXPORT_HELP = `Usage: 6529 run identity:export -- --out FILE --revision HEX
-         (--freeze-at TIME | --no-freeze) (--extra-ids FILE | --no-extra-ids)
-         [--expect-tdh-block N] [--bulk N] [--no-delegations]
-         [--cms-fields FILE]
+         (--freeze-at TIME --expect-tdh-block N | --no-freeze)
+         (--extra-ids FILE | --no-extra-ids) [--bulk N] [--no-delegations]
+         [--cms-fields FILE] [--accept-over-credit N]
+         [--accept-edits-after-freeze N] [--overwrite]
 
 Writes 6529.io's identities, profiles, REP and CIC ratings and reserved
 handles as a 6529.identity-export.v1 JSON file, the input of the Identities
@@ -20,16 +21,24 @@ Options:
                          {"profile_ids": [...]}, or whitespace separated
   --no-extra-ids         export without the waves list (noted in the file)
   --expect-tdh-block N   fail, before the long reads, unless 6529.io's latest
-                         TDH block is N (B_T at the freeze) and the identities
-                         sync has caught up with that TDH write, so wallets,
-                         TDH and levels are all the freeze day's; required
+                         TDH block is N (B_T at the freeze), taken in the hour
+                         before the freeze, the identities sync has caught up
+                         with that TDH write, no rater is over credit and no
+                         REP or CIC edit was logged after the freeze; required
                          with a freeze time
+  --accept-over-credit N accept up to N raters over their credit (TDH + xTDH),
+                         exported as they are
+  --accept-edits-after-freeze N
+                         accept up to N REP or CIC edits logged after the
+                         freeze (over-rate cuts and help-bot credits aside)
   --bulk N               a rater's REP category with more than N targets brings
                          no target in by itself (default 2000; 0 turns it off)
   --no-delegations       leave out 6529.io's delegations table
   --cms-fields FILE      the profile site export's cms-fields.json (profile id
                          -> the ProfileDoc cms value): each identity of those
                          profiles gets that value as "cms"
+  --overwrite            replace FILE if it exists (it is written to FILE.tmp
+                         and renamed at the end)
   --help                 this text
 `;
 
@@ -46,6 +55,9 @@ export interface IdentityExportCommand {
   readonly includeDelegations: boolean;
   /** The profile site export's cms-fields.json; null without --cms-fields. */
   readonly cmsFieldsFile: string | null;
+  readonly acceptOverCredit: number;
+  readonly acceptEditsAfterFreeze: number;
+  readonly overwrite: boolean;
 }
 
 export type IdentityExportCliCommand =
@@ -140,6 +152,9 @@ interface Draft {
   revision: string | null;
   includeDelegations: boolean;
   cmsFieldsFile: string | null;
+  acceptOverCredit: number;
+  acceptEditsAfterFreeze: number;
+  overwrite: boolean;
 }
 
 function wholeNumber(flag: string, raw: string): number {
@@ -194,6 +209,15 @@ function readOption(
     case '--cms-fields':
       draft.cmsFieldsFile = value();
       return 2;
+    case '--accept-over-credit':
+      draft.acceptOverCredit = wholeNumber(arg, value());
+      return 2;
+    case '--accept-edits-after-freeze':
+      draft.acceptEditsAfterFreeze = wholeNumber(arg, value());
+      return 2;
+    case '--overwrite':
+      draft.overwrite = true;
+      return 1;
     default:
       throw new IdentityExportUsageError(`Unknown argument "${arg}"`);
   }
@@ -237,7 +261,10 @@ function checkDraft(draft: Draft): IdentityExportCommand {
     expectTdhBlock: draft.expectTdhBlock,
     revision: draft.revision.toLowerCase(),
     includeDelegations: draft.includeDelegations,
-    cmsFieldsFile: draft.cmsFieldsFile
+    cmsFieldsFile: draft.cmsFieldsFile,
+    acceptOverCredit: draft.acceptOverCredit,
+    acceptEditsAfterFreeze: draft.acceptEditsAfterFreeze,
+    overwrite: draft.overwrite
   };
 }
 
@@ -260,7 +287,10 @@ export function parseIdentityExportCommand(
     expectTdhBlock: null,
     revision: env.EXPORTER_REVISION?.trim() || null,
     includeDelegations: true,
-    cmsFieldsFile: null
+    cmsFieldsFile: null,
+    acceptOverCredit: 0,
+    acceptEditsAfterFreeze: 0,
+    overwrite: false
   };
   for (let i = 0; i < args.length; ) {
     i += readOption(draft, args[i], args[i + 1]);

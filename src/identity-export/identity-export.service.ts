@@ -11,6 +11,7 @@ import {
   IdentityRow,
   IdentitySyncProgress,
   StatementRow,
+  TdhBlock,
   toMillis
 } from './identity-export.db';
 import {
@@ -52,6 +53,10 @@ export interface IdentityExportOptions {
    * unless the TDH block is this one and the identities sync caught up.
    */
   readonly expectTdhBlock?: number | null;
+  /** Raters over their credit acknowledged at the freeze (default 0). */
+  readonly acceptOverCredit?: number;
+  /** REP and CIC edits after the freeze acknowledged (default 0). */
+  readonly acceptEditsAfterFreeze?: number;
   readonly exporterRevision: string;
   readonly now?: () => number;
   readonly log?: (message: string) => void;
@@ -72,19 +77,93 @@ export interface IdentityExportDocument extends IdentityExportHeader {
   }[];
   readonly stats: Record<string, number>;
   /** The rules the file was written by, for the builder to check. */
-  readonly rules: typeof IDENTITY_EXPORT_RULES;
+  readonly rules: ReturnType<typeof exportRules>;
   /** The identities sync's state read with everything else (null: unread). */
   readonly identity_sync: IdentitySyncProgress | null;
 }
 
 /** The rules every export is written by; the builder refuses a file without. */
-export const IDENTITY_EXPORT_RULES = {
-  help_bot_credit_category: HELP_BOT_CREDIT_CATEGORY,
-  help_bot_credits: 'excluded',
-  level: 'rep+tdh',
-  tdh: 'boosted',
-  xtdh: 'as_stored'
-} as const;
+export function exportRules(bulkThreshold: number) {
+  return {
+    help_bot_credit_category: HELP_BOT_CREDIT_CATEGORY,
+    help_bot_credit_match: 'trim_casefold',
+    help_bot_credits: 'excluded',
+    rep: 'stored_minus_credits',
+    level: 'rep+tdh',
+    tdh: 'boosted',
+    xtdh: 'as_stored',
+    bulk_threshold: bulkThreshold
+  } as const;
+}
+
+/** A TDH block is the freeze day's when taken within this before the freeze. */
+const TDH_BLOCK_WINDOW_MS = 60 * 60 * 1000;
+
+/**
+ * Why the TDH block can't be the freeze day's, or null: 6529.io takes the
+ * last Ethereum block at or before 00:00 UTC (tdhLoop), so the freeze day's
+ * block is at most an hour before the freeze and never after it.
+ */
+export function tdhBlockTimingProblem(
+  tdh: TdhBlock | null,
+  freezeMs: number
+): string | null {
+  const at = tdh?.timestampMs ?? null;
+  if (at === null) return 'the TDH block has no timestamp';
+  if (at > freezeMs || at <= freezeMs - TDH_BLOCK_WINDOW_MS) {
+    return `the TDH block ${tdh!.block} is of ${new Date(at).toISOString()}, not of the hour before the freeze ${new Date(freezeMs).toISOString()}`;
+  }
+  return null;
+}
+
+/** What the export checks first, in the same snapshot, before the long reads. */
+export interface ExportReadiness {
+  readonly tdh: TdhBlock | null;
+  readonly identitySync: IdentitySyncProgress | null;
+  readonly overCreditRaters: number;
+  readonly editsAfterFreeze: number;
+}
+
+/** Every reason the export is not the freeze day's (empty when it is). */
+export function readinessProblems(
+  readiness: ExportReadiness,
+  options: Pick<
+    IdentityExportOptions,
+    | 'freezeMs'
+    | 'expectTdhBlock'
+    | 'acceptOverCredit'
+    | 'acceptEditsAfterFreeze'
+  >
+): string[] {
+  const problems: string[] = [];
+  if (options.freezeMs !== null) {
+    const timing = tdhBlockTimingProblem(readiness.tdh, options.freezeMs);
+    if (timing) problems.push(timing);
+  }
+  const expected = options.expectTdhBlock ?? null;
+  if (expected === null) return problems;
+  const day = freezeDayProblem(
+    {
+      tdh_block: readiness.tdh?.block ?? null,
+      identity_sync: readiness.identitySync
+    },
+    expected
+  );
+  if (day) problems.push(day);
+  const acceptOver = options.acceptOverCredit ?? 0;
+  if (readiness.overCreditRaters > acceptOver) {
+    problems.push(
+      `${readiness.overCreditRaters} raters give more REP or CIC than their credit (TDH + xTDH), which the over-rates loop would still cut; acknowledge with --accept-over-credit ${readiness.overCreditRaters} to export them as they are`
+    );
+  }
+  const acceptEdits = options.acceptEditsAfterFreeze ?? 0;
+  if (readiness.editsAfterFreeze > acceptEdits) {
+    problems.push(
+      `${readiness.editsAfterFreeze} REP and CIC rating edits were logged after the freeze (over-rate cuts and help-bot credits aside); acknowledge with --accept-edits-after-freeze ${readiness.editsAfterFreeze}`
+    );
+  }
+  return problems;
+}
 
 /**
  * Each identity whose profile has a profile site gets its `cms` value. A
@@ -602,15 +681,20 @@ export async function buildIdentityExport(
 
   // The day first, in the same snapshot: a wrong one is refused before the
   // long reads.
-  const tdhBlock = await source.latestTdhBlock();
+  const tdh = await source.latestTdhBlock();
+  const tdhBlock = tdh?.block ?? null;
   const identitySync = await source.identitySyncProgress();
-  const expected = options.expectTdhBlock ?? null;
-  if (expected !== null) {
-    const problem = freezeDayProblem(
-      { tdh_block: tdhBlock, identity_sync: identitySync },
-      expected
-    );
-    if (problem) throw new IdentityExportNotReadyError(problem);
+  const overCreditRaters = await source.overCreditRaters();
+  const editsAfterFreeze =
+    options.freezeMs === null
+      ? 0
+      : await source.ratingEditsSince(options.freezeMs);
+  const problems = readinessProblems(
+    { tdh, identitySync, overCreditRaters, editsAfterFreeze },
+    options
+  );
+  if (problems.length) {
+    throw new IdentityExportNotReadyError(problems.join('; '));
   }
 
   const index = new IdentityIndex(source);
@@ -681,7 +765,17 @@ export async function buildIdentityExport(
   const repFromFile = repMismatches(identities, ratings);
   if (repFromFile) {
     notes.push(
-      `${repFromFile} exported profiles have a rep that is not the sum of the REP ratings to them in this file: the chain counts REP from the file's ratings, so theirs will differ (ratings from raters left out of the export, or a stored rep that drifted)`
+      `${repFromFile} exported profiles have a rep that is not the sum of the REP ratings to them in this file: the chain counts REP from the file's ratings, so theirs will differ (ratings from raters left out of the export, or a stored rep that drifted). rep is 6529.io's stored rep minus the help-bot credits (rules.rep); the builder should recompute REP and level from the file's ratings where they differ`
+    );
+  }
+  if (overCreditRaters) {
+    notes.push(
+      `${overCreditRaters} raters give more REP or CIC than their credit (TDH + xTDH); their ratings are exported as they are`
+    );
+  }
+  if (editsAfterFreeze) {
+    notes.push(
+      `${editsAfterFreeze} REP and CIC rating edits were logged after the freeze (over-rate cuts and help-bot credits aside)`
     );
   }
   const afterFreeze = modifiedAfter(edges, options.freezeMs);
@@ -721,12 +815,13 @@ export async function buildIdentityExport(
     finished_at_ms: now(),
     freeze_ms: options.freezeMs,
     tdh_block: tdhBlock,
+    tdh_block_timestamp_ms: tdh?.timestampMs ?? null,
     identities,
     reserved_handles: reservedHandles(),
     ratings,
     delegations,
     notes,
-    rules: IDENTITY_EXPORT_RULES,
+    rules: exportRules(options.bulkThreshold),
     identity_sync: identitySync,
     bulk_rep: bulkCategories.map((it) => ({
       profile_id: it.rater_profile_id,
@@ -749,6 +844,8 @@ export async function buildIdentityExport(
       rep_mismatch: repMismatch,
       rep_differs_from_file_ratings: repFromFile,
       ratings_modified_after_freeze: afterFreeze,
+      over_credit_raters: overCreditRaters,
+      rating_edits_after_freeze: editsAfterFreeze,
       identity_sync_pending_generation: identitySync?.pendingGeneration ?? -1,
       identity_sync_synced_generation: identitySync?.syncedGeneration ?? -1,
       identity_sync_pending_block: identitySync?.pendingBlock ?? -1,

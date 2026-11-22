@@ -12,6 +12,9 @@ import {
 async function runExport(command: IdentityExportCommand) {
   // Dates read from MySQL (statements, ratings) in UTC, whatever the host.
   process.env.TZ = 'UTC';
+  // An existing file is refused before any read.
+  const { checkOutPath } = await import('./identity-export.writer');
+  checkOutPath(command.out, command.overwrite);
   const extraProfileIds = command.extraIdsFile
     ? parseExtraIds(fs.readFileSync(command.extraIdsFile, 'utf8'))
     : [];
@@ -29,7 +32,7 @@ async function runExport(command: IdentityExportCommand) {
     const { sqlExecutor } = await import('@/sql-executor');
     const { SqlIdentityExportSource } = await import('./identity-export.db');
     const { buildIdentityExport } = await import('./identity-export.service');
-    const { writeJsonDocument } = await import('./identity-export.writer');
+    const { writeExportFile } = await import('./identity-export.writer');
     return await doInDbContext(
       () =>
         withReadOnlySnapshot(async (connection) => {
@@ -47,13 +50,17 @@ async function runExport(command: IdentityExportCommand) {
             cmsFields,
             freezeMs: command.freezeMs,
             expectTdhBlock: command.expectTdhBlock,
+            acceptOverCredit: command.acceptOverCredit,
+            acceptEditsAfterFreeze: command.acceptEditsAfterFreeze,
             exporterRevision,
             log: (message) =>
               process.stderr.write(`[identity-export] ${message}\n`)
           });
-          // The sync's state was checked first; the file carries it in stats.
-          const { identity_sync: _sync, ...file } = document;
-          await writeJsonDocument(command.out, file);
+          await writeExportFile(
+            command.out,
+            { ...document },
+            command.overwrite
+          );
           return {
             out: command.out,
             format: document.format,
@@ -79,24 +86,42 @@ export async function main(
     return;
   }
   const summary = await runExport(command);
-  process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(summary, null, 2)}
+`);
+}
+
+/**
+ * Runs the export and returns the process exit code: 0 done, 1 failed,
+ * 2 a usage error, 3 the database is not at the freeze day asked for.
+ */
+export async function runCli(
+  args: string[] = process.argv.slice(2)
+): Promise<number> {
+  try {
+    await main(args);
+    return 0;
+  } catch (error) {
+    if (error instanceof IdentityExportNotReadyError) {
+      process.stderr.write(
+        `${error.message}: wait for the freeze day's TDH run and its identity sync, then export again
+`
+      );
+      return 3;
+    }
+    if (error instanceof IdentityExportUsageError) {
+      process.stderr.write(`${error.message}
+
+${IDENTITY_EXPORT_HELP}`);
+      return 2;
+    }
+    process.stderr.write(`${(error as Error)?.stack ?? error}
+`);
+    return 1;
+  }
 }
 
 if (require.main === module) {
-  main().catch((error) => {
-    if (error instanceof IdentityExportNotReadyError) {
-      process.stderr.write(
-        `${error.message}: wait for the freeze day's TDH run and its identity sync, then export again\n`
-      );
-      process.exitCode = 3;
-      return;
-    }
-    if (error instanceof IdentityExportUsageError) {
-      process.stderr.write(`${error.message}\n\n${IDENTITY_EXPORT_HELP}`);
-      process.exitCode = 2;
-      return;
-    }
-    process.stderr.write(`${error?.stack ?? error}\n`);
-    process.exitCode = 1;
+  runCli().then((code) => {
+    process.exitCode = code;
   });
 }

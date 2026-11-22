@@ -85,4 +85,6 @@ export interface IdentityExportHeader {
   readonly finished_at_ms: number;
   readonly freeze_ms: number | null;
   readonly tdh_block: number | null;
+  /** The TDH block's Ethereum timestamp. */
+  readonly tdh_block_timestamp_ms: number | null;
 }

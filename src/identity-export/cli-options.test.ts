@@ -25,8 +25,42 @@ describe('parseIdentityExportCommand', () => {
       expectTdhBlock: null,
       revision: REV,
       includeDelegations: true,
-      cmsFieldsFile: null
+      cmsFieldsFile: null,
+      acceptOverCredit: 0,
+      acceptEditsAfterFreeze: 0,
+      overwrite: false
     });
+  });
+
+  it('reads the acknowledgements and --overwrite', () => {
+    const rehearsal = ['--revision', REV, '--no-freeze', '--no-extra-ids'];
+    expect(
+      parseIdentityExportCommand(
+        [
+          '--out',
+          'x.json',
+          ...rehearsal,
+          '--accept-over-credit',
+          '4',
+          '--accept-edits-after-freeze',
+          '2',
+          '--overwrite'
+        ],
+        {}
+      )
+    ).toEqual(
+      expect.objectContaining({
+        acceptOverCredit: 4,
+        acceptEditsAfterFreeze: 2,
+        overwrite: true
+      })
+    );
+    expect(() =>
+      parseIdentityExportCommand(
+        ['--out', 'x', ...rehearsal, '--accept-over-credit', 'all'],
+        {}
+      )
+    ).toThrow('--accept-over-credit must be a whole number');
   });
 
   it('reads the export at the freeze, from options and the environment', () => {
@@ -59,7 +93,10 @@ describe('parseIdentityExportCommand', () => {
       expectTdhBlock: 24_000_000,
       revision: 'a'.repeat(40),
       includeDelegations: false,
-      cmsFieldsFile: 'cms-fields.json'
+      cmsFieldsFile: 'cms-fields.json',
+      acceptOverCredit: 0,
+      acceptEditsAfterFreeze: 0,
+      overwrite: false
     });
     expect(
       parseIdentityExportCommand(

@@ -1,7 +1,12 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { writeJsonDocument } from './identity-export.writer';
+import { IdentityExportUsageError } from './cli-options';
+import {
+  checkOutPath,
+  writeExportFile,
+  writeJsonDocument
+} from './identity-export.writer';
 
 describe('writeJsonDocument', () => {
   let dir: string;
@@ -35,5 +40,37 @@ describe('writeJsonDocument', () => {
     expect(
       text.split('\n').filter((it) => it.startsWith('    {'))
     ).toHaveLength(2);
+  });
+
+  it('writes the file through a temporary one, without the sync state', async () => {
+    const file = path.join(dir, 'export.json');
+    await writeExportFile(
+      file,
+      {
+        format: '6529.identity-export.v1',
+        identity_sync: { pendingGeneration: 1 },
+        stats: { identity_sync_pending_generation: 1 }
+      },
+      false
+    );
+    const written = JSON.parse(fs.readFileSync(file, 'utf8'));
+    expect(written).toEqual({
+      format: '6529.identity-export.v1',
+      stats: { identity_sync_pending_generation: 1 }
+    });
+    expect(fs.existsSync(`${file}.tmp`)).toBe(false);
+  });
+
+  it('refuses an existing file unless told to replace it', async () => {
+    const file = path.join(dir, 'export.json');
+    fs.writeFileSync(file, 'old');
+    expect(() => checkOutPath(file, false)).toThrow(IdentityExportUsageError);
+    await expect(writeExportFile(file, { a: 1 }, false)).rejects.toThrow(
+      'pass --overwrite to replace it'
+    );
+    expect(fs.readFileSync(file, 'utf8')).toBe('old');
+    await writeExportFile(file, { a: 1 }, true);
+    expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({ a: 1 });
+    expect(() => checkOutPath(path.join(dir, 'new.json'), false)).not.toThrow();
   });
 });

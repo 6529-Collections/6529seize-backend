@@ -7,8 +7,10 @@ import {
   buildIdentityExport,
   freezeDayProblem,
   HELP_BOT_CREDIT_RULE_NOTE,
-  IDENTITY_EXPORT_RULES,
+  exportRules,
   identitySyncProblem,
+  readinessProblems,
+  tdhBlockTimingProblem,
   modifiedAfter,
   leaveOutHelpBotCredits,
   repMismatches,
@@ -76,6 +78,7 @@ const P3 = P('3');
 const WAVER = P('4');
 const GHOST = P('dead');
 const BOT = P('b07');
+const FREEZE = Date.UTC(2026, 10, 24);
 
 /** A small world: every kind of identity the scope rules decide on. */
 function world(): {
@@ -162,7 +165,12 @@ function world(): {
       new Map(keys.map((key) => [key, wallets.get(key) ?? []])),
     statementsByProfileIds: async (ids) =>
       statements.filter((it) => ids.includes(it.profile_id)),
-    latestTdhBlock: async () => 24_000_000,
+    latestTdhBlock: async () => ({
+      block: 24_000_000,
+      timestampMs: FREEZE - 12_000
+    }),
+    overCreditRaters: async () => 0,
+    ratingEditsSince: async () => 0,
     identitySyncProgress: async () => ({
       pendingGeneration: 5,
       pendingBlock: 24_000_000,
@@ -573,12 +581,16 @@ describe('buildIdentityExport', () => {
     expect(doc.format).toBe('6529.identity-export.v1');
     expect(doc.rules).toEqual({
       help_bot_credit_category: 'Help6529 Credits',
+      help_bot_credit_match: 'trim_casefold',
       help_bot_credits: 'excluded',
+      rep: 'stored_minus_credits',
       level: 'rep+tdh',
       tdh: 'boosted',
-      xtdh: 'as_stored'
+      xtdh: 'as_stored',
+      bulk_threshold: 2
     });
-    expect(doc.rules).toBe(IDENTITY_EXPORT_RULES);
+    expect(doc.rules).toEqual(exportRules(options.bulkThreshold));
+    expect(doc.tdh_block_timestamp_ms).toBe(FREEZE - 12_000);
   });
 
   it('refuses another day before the long reads, and goes on with the right one', async () => {
@@ -613,6 +625,107 @@ describe('buildIdentityExport', () => {
     expect(doc.tdh_block).toBe(24_000_000);
   });
 
+  it('refuses a TDH block not taken in the hour before the freeze', async () => {
+    const at = (timestampMs: number | null) =>
+      tdhBlockTimingProblem({ block: 7, timestampMs }, FREEZE);
+    expect(at(FREEZE)).toBeNull();
+    expect(at(FREEZE - 12_000)).toBeNull();
+    expect(at(FREEZE - 3_600_000 + 1)).toBeNull();
+    expect(at(FREEZE - 3_600_000)).toContain('not of the hour before');
+    expect(at(FREEZE + 1)).toContain('not of the hour before');
+    expect(at(FREEZE - 86_400_000)).toContain('2026-11-23T00:00:00.000Z');
+    expect(at(null)).toBe('the TDH block has no timestamp');
+    const { source } = world();
+    const ratingEdges = jest.fn(source.ratingEdges);
+    await expect(
+      buildIdentityExport(
+        {
+          ...source,
+          ratingEdges,
+          latestTdhBlock: async () => ({
+            block: 24_000_000,
+            timestampMs: FREEZE - 86_400_000
+          })
+        },
+        options
+      )
+    ).rejects.toThrow(IdentityExportNotReadyError);
+    expect(ratingEdges).not.toHaveBeenCalled();
+    // A rehearsal has no freeze time to hold it to.
+    const rehearsal = await buildIdentityExport(
+      {
+        ...source,
+        latestTdhBlock: async () => ({ block: 1, timestampMs: 0 })
+      },
+      { ...options, freezeMs: null }
+    );
+    expect(rehearsal.tdh_block).toBe(1);
+  });
+
+  it('refuses raters over credit and edits after the freeze unless acknowledged', async () => {
+    const { source } = world();
+    const ratingEditsSince = jest.fn(async () => 2);
+    const busy = {
+      ...source,
+      overCreditRaters: async () => 3,
+      ratingEditsSince
+    };
+    const atFreeze = { ...options, expectTdhBlock: 24_000_000 };
+    await expect(buildIdentityExport(busy, atFreeze)).rejects.toThrow(
+      '3 raters give more REP or CIC than their credit'
+    );
+    await expect(
+      buildIdentityExport(busy, { ...atFreeze, acceptOverCredit: 3 })
+    ).rejects.toThrow(
+      '2 REP and CIC rating edits were logged after the freeze'
+    );
+    await expect(
+      buildIdentityExport(busy, {
+        ...atFreeze,
+        acceptOverCredit: 2,
+        acceptEditsAfterFreeze: 2
+      })
+    ).rejects.toThrow('--accept-over-credit 3');
+    const doc = await buildIdentityExport(busy, {
+      ...atFreeze,
+      acceptOverCredit: 3,
+      acceptEditsAfterFreeze: 2
+    });
+    expect(ratingEditsSince).toHaveBeenCalledWith(FREEZE);
+    expect(doc.stats).toEqual(
+      expect.objectContaining({
+        over_credit_raters: 3,
+        rating_edits_after_freeze: 2
+      })
+    );
+    expect(doc.notes).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('3 raters give more REP or CIC'),
+        expect.stringContaining('2 REP and CIC rating edits were logged')
+      ])
+    );
+    // Without a freeze time (a rehearsal) they are only counted.
+    const counted = await buildIdentityExport(busy, {
+      ...options,
+      freezeMs: null
+    });
+    expect(counted.stats.over_credit_raters).toBe(3);
+    expect(counted.stats.rating_edits_after_freeze).toBe(0);
+    expect(
+      readinessProblems(
+        {
+          tdh: { block: 24_000_000, timestampMs: FREEZE },
+          identitySync: null,
+          overCreditRaters: 0,
+          editsAfterFreeze: 0
+        },
+        { freezeMs: FREEZE, expectTdhBlock: 24_000_000 }
+      )
+    ).toEqual([
+      "the identities sync's state (identity_tdh_sync_state) could not be read"
+    ]);
+  });
+
   it("counts reps the file's own ratings don't add up to", async () => {
     const { source } = world();
     const edges = await source.ratingEdges();
@@ -642,6 +755,9 @@ describe('buildIdentityExport', () => {
       expect.arrayContaining([
         expect.stringContaining(
           "1 exported profiles have a rep that is not the sum of the REP ratings to them in this file: the chain counts REP from the file's ratings"
+        ),
+        expect.stringContaining(
+          "the builder should recompute REP and level from the file's ratings where they differ"
         )
       ])
     );

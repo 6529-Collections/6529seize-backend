@@ -16,6 +16,7 @@ import {
   CIC_STATEMENTS_TABLE,
   DELEGATIONS_TABLE,
   IDENTITY_TDH_SYNC_STATE_TABLE,
+  PROFILES_ACTIVITY_LOGS_TABLE,
   TDH_BLOCKS_TABLE
 } from '@/constants';
 import { SqlIdentityExportSource } from './identity-export.db';
@@ -28,6 +29,31 @@ const PLACE = '00000000-0000-4000-8000-000000000001';
 const LONELY = '00000000-0000-4000-8000-000000000002';
 const PAIR_KEY = `${W(6)}-${W(7)}`;
 const HELP_BOT = '00000000-0000-4000-8000-0000000000b0';
+const FREEZE = Date.UTC(2026, 10, 24);
+
+function ratingEdit(
+  id: string,
+  matter: string,
+  reason: string,
+  createdAt: number
+) {
+  return {
+    id,
+    profile_id: ALICE,
+    target_id: BOB,
+    contents: JSON.stringify({
+      old_rating: 0,
+      new_rating: 1,
+      rating_matter: matter,
+      rating_category: 'Good',
+      change_reason: reason
+    }),
+    type: 'RATING_EDIT',
+    additional_data_1: matter,
+    additional_data_2: 'Good',
+    created_at: new Date(createdAt)
+  };
+}
 
 const identities = [
   anIdentity(
@@ -169,6 +195,22 @@ describeWithSeed(
       ]
     },
     {
+      table: PROFILES_ACTIVITY_LOGS_TABLE,
+      rows: [
+        ratingEdit('edit-1', 'REP', 'USER_EDIT', FREEZE + 60_000),
+        ratingEdit('edit-2', 'CIC', 'USER_EDIT', FREEZE + 60_000),
+        ratingEdit('edit-3', 'REP', 'LOST_TDH', FREEZE + 60_000),
+        ratingEdit(
+          'edit-4',
+          'REP',
+          'HELP_BOT_AUTOMATIC_GRANT',
+          FREEZE + 60_000
+        ),
+        ratingEdit('edit-5', 'WAVE_REP', 'USER_EDIT', FREEZE + 60_000),
+        ratingEdit('edit-6', 'REP', 'USER_EDIT', FREEZE - 60_000)
+      ]
+    },
+    {
       table: IDENTITY_TDH_SYNC_STATE_TABLE,
       rows: [
         { id: 'pending', generation: 3, block: 24_000_000 },
@@ -235,7 +277,17 @@ describeWithSeed(
       const source = new SqlIdentityExportSource(query);
       const statements = await source.statementsByProfileIds([ALICE, BOB]);
       expect(statements.map((it) => it.id)).toEqual(['statement-1']);
-      expect(await source.latestTdhBlock()).toBe(24_000_000);
+      expect(await source.latestTdhBlock()).toEqual({
+        block: 24_000_000,
+        timestampMs: Date.UTC(2026, 10, 23)
+      });
+      // BOB's CIC 9 is over his TDH 0; the help bot's credit counts too here,
+      // as the over-rates loop would count it, because its profile has no
+      // identity row in this seed.
+      expect(await source.overCreditRaters()).toBe(2);
+      // A REP and a CIC edit after the freeze; not the over-rate cut, the
+      // help bot's grant, the wave REP edit or the edit before.
+      expect(await source.ratingEditsSince(FREEZE)).toBe(2);
       expect(await source.identitySyncProgress()).toEqual({
         pendingGeneration: 3,
         pendingBlock: 24_000_000,
@@ -285,6 +337,7 @@ describeWithSeed(
       expect(doc.stats.help_bot_credits_left_out).toBe(1);
       expect(doc.stats.help_bot_credits_from_others).toBe(0);
       expect(doc.tdh_block).toBe(24_000_000);
+      expect(doc.tdh_block_timestamp_ms).toBe(Date.UTC(2026, 10, 23));
       expect(doc.stats).toEqual(
         expect.objectContaining({
           identity_sync_pending_generation: 3,
