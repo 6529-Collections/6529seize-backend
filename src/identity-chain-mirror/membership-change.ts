@@ -40,7 +40,7 @@ export const queueHoldings: MembershipChangeHandler = async (change, ctx) => {
 };
 
 /**
- * The handlers the mirror calls on every membership change, in order. A lane
+ * The handlers the mirror calls on every membership change, in order. Code
  * that keys its own rows by consolidation key adds its handler here.
  */
 export const MEMBERSHIP_CHANGE_HANDLERS: readonly MembershipChangeHandler[] = [

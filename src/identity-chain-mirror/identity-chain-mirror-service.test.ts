@@ -330,16 +330,24 @@ function world(followers: ProfileSiteFollower[] = []) {
     importDone: null as number | null,
     fileHash: '0x' + 'f1'.repeat(32),
     network: null as string | null,
+    headHeldAt: null as number | null,
     finalized: 100
   };
   const gateway = {
-    getHead: jest.fn(async () => ({
-      headHeight: chain.finalized + 2,
-      finalizedHeight: chain.finalized,
-      finalizedTime: 0,
-      pinnable: null,
-      network: chain.network
-    })),
+    // The gateway's finalized height reaches what its feed gives, unless a
+    // test holds it back.
+    getHead: jest.fn(async () => {
+      const finalized =
+        chain.headHeldAt ??
+        Math.max(chain.finalized, ...chain.feed.map((it) => it.through));
+      return {
+        headHeight: finalized + 2,
+        finalizedHeight: finalized,
+        finalizedTime: 0,
+        pinnable: null,
+        network: chain.network
+      };
+    }),
     getMembership: jest.fn(async () => ({
       import: {
         completed: chain.importCompleted,
@@ -981,6 +989,8 @@ describe('IdentityChainMirror', () => {
       root: '0x',
       time: 0,
       complete,
+      // The rest of the block starts where the cursor `2:1` says.
+      recordsFrom: complete ? 1 : 0,
       records
     });
     gateway.getChanges.mockImplementation(
@@ -1060,6 +1070,131 @@ describe('IdentityChainMirror', () => {
     expect(gateway.getImportedIdentity).toHaveBeenCalledTimes(2);
   });
 
+  it('reads an identity again for each feed page, at a height that includes it', async () => {
+    const { mirror, db, chain, alice, gateway } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    const touch = (height: number) => ({
+      from: height,
+      through: height,
+      next: height + 1,
+      blocks: [
+        block(height, [
+          {
+            family: '0x0201',
+            name: 'Principal',
+            key: '0x',
+            value: null,
+            keyFields: { principal: alice.principalId }
+          }
+        ])
+      ]
+    });
+    chain.finalized = 102;
+    chain.feed.push(touch(101), touch(102));
+    // Alice's REP changes in block 102: the second page must read it again.
+    let aliceReads = 0;
+    gateway.getIdentityByPrincipal.mockImplementation(async (p: string) => {
+      const identity = chain.identities.get(p) ?? null;
+      if (!identity || p !== alice.principalId) return identity;
+      aliceReads++;
+      return aliceReads >= 2
+        ? { ...identity, rep: { total: '50', raters: 1 } }
+        : identity;
+    });
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.next_height).toBe(103);
+    expect(db.rows.get(`${A}-${B}`)?.rep).toBe(50);
+  });
+
+  it('waits for the next run when the reads lag behind the feed', async () => {
+    const { mirror, db, chain } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    chain.feed.push({
+      from: 101,
+      through: 105,
+      next: 106,
+      blocks: [block(104, [])]
+    });
+    // The gateway's finalized height is still 100.
+    chain.headHeldAt = 100;
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.next_height).toBe(101);
+    chain.headHeldAt = null;
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.next_height).toBe(106);
+  });
+
+  it('maps an identity later when its founder history does not reach back', async () => {
+    const { mirror, db, gateway, chain } = world();
+    chain.importStart = 1;
+    await mirror.run({ budgetMs: 60_000 });
+    db.placeholders.set(W(99), 'p-maybe');
+    gateway.getMembershipWalletHistory.mockResolvedValue({
+      wallet: W(99),
+      changes: [{ height: 20, principalId: PID(99) }],
+      ranges: [[5, 100]],
+      readHeight: 100
+    } as never);
+    const made = chainIdentity(PID(99), [W(99)], {
+      legacyId: null,
+      founder: W(99),
+      createdHeight: 20
+    });
+    await expect(mirror.profileIdOf(made)).rejects.toMatchObject({
+      retryLater: true,
+      reason: 'history_short'
+    });
+    expect(db.mapping.has(PID(99))).toBe(false);
+    // A binding to another identity first says no, whatever the gap.
+    gateway.getMembershipWalletHistory.mockResolvedValue({
+      wallet: W(99),
+      changes: [
+        { height: 6, principalId: PID(98) },
+        { height: 10, principalId: null },
+        { height: 20, principalId: PID(99) }
+      ],
+      ranges: [[5, 100]],
+      readHeight: 100
+    } as never);
+    expect(await mirror.profileIdOf(made)).toBe(principalProfileId(PID(99)));
+  });
+
+  it('stops reading bindings at a page that does not move on', async () => {
+    const { mirror, db, chain, gateway } = world();
+    chain.importStart = 1;
+    gateway.getChanges.mockImplementation(
+      async (from: string | number, opts: { families?: string[] } = {}) =>
+        opts.families
+          ? {
+              from,
+              through: 0,
+              next: '1:5',
+              nextHeight: 1,
+              atHead: false,
+              blocks: [
+                {
+                  height: 1,
+                  slot: 0,
+                  root: '0x',
+                  time: 0,
+                  complete: false,
+                  records: []
+                }
+              ]
+            }
+          : {
+              from,
+              through: 100,
+              blocks: [],
+              next: 101,
+              nextHeight: 101,
+              atHead: true
+            }
+    );
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.bindings_next_height).toBe(1);
+  });
+
   it('halves the page when the gateway says the answer is too large', async () => {
     const { mirror, db, chain, gateway, alice } = world();
     chain.importStart = 1;
@@ -1116,6 +1251,7 @@ describe('IdentityChainMirror', () => {
 
   it("gives an identity made on the chain its founding wallet's placeholder profile", async () => {
     const { mirror, db, chain } = world();
+    chain.importStart = 1;
     const founder = W(40);
     const placeholder = '00000000-0000-4000-8000-00000000f00d';
     db.profiles.set(placeholder, {
@@ -1176,7 +1312,9 @@ describe('IdentityChainMirror', () => {
   });
 
   it('takes the founder the gateway names over the anchor, and not an imported profile', async () => {
-    const { mirror, db, gateway } = world();
+    const { mirror, db, gateway, chain } = world();
+    chain.importStart = 1;
+    await mirror.run({ budgetMs: 60_000 });
     db.placeholders.set(W(90), 'p-founder');
     db.placeholders.set(W(91), 'p-anchor');
     const made = chainIdentity(PID(90), [W(91), W(90)], {
@@ -1184,6 +1322,8 @@ describe('IdentityChainMirror', () => {
       anchor: W(91),
       founder: W(90)
     });
+    // The founder's history: bound to this identity at its creation, first.
+    chain.identities.set(made.principalId, made);
     expect(await mirror.profileIdOf(made)).toBe('p-founder');
     db.placeholders.set(W(92), 'p-imported');
     gateway.getIdentityByLegacyProfileId.mockImplementation(

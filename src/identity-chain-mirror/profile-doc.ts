@@ -1,9 +1,9 @@
 /**
- * Profile documents (P37 4.2): what a chain identity's profile says, kept off
+ * Profile documents: what a chain identity's profile says, kept off
  * the chain and named by CID. The chain holds only the CID; the gateway's
  * document store serves the bytes.
  *
- * ProfileDoc.v1 in canonical encoding (CE, P28 2.6), as the import writes it:
+ * ProfileDoc.v1 in the chain's canonical encoding, as the import writes it:
  *   string schema ("6529.ProfileDoc.v1") || bytes32 principal || uint32 version
  *   || bytes prev (<= 64) || bytes32 nonce
  *   || list<(string key, string value)> fields (keys ascending) || bytes sig
@@ -25,7 +25,7 @@ export interface ProfileDocStatement {
 }
 
 /**
- * The profile site (P37 4.2): three flat keys in the document,
+ * The profile site: three flat keys in the document,
  * `cms.primary.publication`, `cms.primary.package` and `cms.archive`, each a
  * raw-codec sha2-256 CIDv1 in base32 (`b` prefix). Publication and package
  * come together or not at all; only the import sets the archive.

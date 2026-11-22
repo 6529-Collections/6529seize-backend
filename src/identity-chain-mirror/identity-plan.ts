@@ -85,11 +85,6 @@ export interface CurrentIdentityState {
   } | null;
   /** Whether another profile holds the placeholder `id-<primary>`. */
   readonly placeholderTaken: boolean;
-  /**
-   * The help bot's credits the profile received (REP in its reserved
-   * category): not on the chain, kept on 6529.io and added to its totals.
-   */
-  readonly helpBotCredits?: number;
 }
 
 export type ProfileWrite = Omit<ProfileRowState, 'external_id'> & {
@@ -363,18 +358,16 @@ export function planIdentity(
   const doc = chain.doc;
   const ownRow = state.rows.find((it) => it.profile_id === chain.profileId);
   const metrics = carriedMetrics(chain, state.rows);
-  const credits = state.helpBotCredits ?? 0;
   // The chain's level is REP + TDH (no xTDH); without one from the gateway,
   // the same from the chain's REP and 6529.io's TDH.
-  const levelRaw =
-    (chain.levelRaw ?? chain.rep + Number(metrics.tdh)) + credits;
+  const levelRaw = chain.levelRaw ?? chain.rep + Number(metrics.tdh);
   const identity: IdentityRowState = {
     consolidation_key: key,
     profile_id: chain.profileId,
     primary_address: primary,
     handle,
     normalised_handle: normalised,
-    rep: chain.rep + credits,
+    rep: chain.rep,
     cic: chain.cic,
     level_raw: levelRaw,
     pfp: docColumn(

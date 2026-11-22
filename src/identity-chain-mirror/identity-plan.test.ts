@@ -298,16 +298,13 @@ describe('principalProfileId', () => {
     expect(() => principalProfileId('0x1234')).toThrow('Not a principal id');
   });
 
-  it("adds the help bot's credits kept on 6529.io to rep and level", () => {
-    const plan = planIdentity(chain(), state({ helpBotCredits: 7 }));
-    expect(plan.identity.rep).toBe(30 + 7);
-    expect(plan.identity.level_raw).toBe(1234 + 7);
-    const noLevel = planIdentity(
-      chain({ levelRaw: null }),
-      state({ helpBotCredits: 7 })
-    );
+  it('takes rep and level from the chain only', () => {
+    const plan = planIdentity(chain(), state());
+    expect(plan.identity.rep).toBe(30);
+    expect(plan.identity.level_raw).toBe(1234);
+    const noLevel = planIdentity(chain({ levelRaw: null }), state());
     // REP + TDH, no xTDH (5 here), as the chain counts it.
-    expect(noLevel.identity.level_raw).toBe(30 + 1000 + 7);
+    expect(noLevel.identity.level_raw).toBe(30 + 1000);
   });
 
   it("keeps another identity's row on its remaining wallets", () => {

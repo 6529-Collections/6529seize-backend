@@ -159,8 +159,6 @@ describeWithSeed(
         );
         expect(state.handleHolder).toBeNull();
         expect(state.placeholderTaken).toBe(false);
-        // The help bot's credit to Alice stays on 6529.io and counts.
-        expect(state.helpBotCredits).toBe(10);
         expect(state.rows.map((it) => it.consolidation_key).sort()).toEqual(
           [AB, C].sort()
         );
@@ -199,7 +197,8 @@ describeWithSeed(
           handle: 'Alice'
         })
       ]);
-      expect(Number(rows[0].level_raw)).toBe(503 + 10);
+      // The chain's level only: the help bot's credit to Alice isn't added.
+      expect(Number(rows[0].level_raw)).toBe(503);
       expect(Number(rows[0].tdh)).toBe(500);
       const keys = await sqlExecutor.execute<any>(
         `select address, consolidation_key from ${ADDRESS_CONSOLIDATION_KEY} order by address`
@@ -364,9 +363,9 @@ describeWithSeed(
         basetdh_rate: 0,
         xtdh: 0,
         xtdh_rate: 0,
-        rep: 7 + 10,
+        rep: 7,
         cic: 2,
-        level_raw: 507 + 10
+        level_raw: 507
       });
     });
 

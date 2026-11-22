@@ -109,6 +109,12 @@ export class WalletBindingsFollower {
         return await this.rebuild(state, report);
       }
       if (page.atHead || page.nextHeight <= from) break;
+      if (state.chain_id && page.network && page.network !== state.chain_id) {
+        logger.warn(
+          `[FEED PAGE OF ANOTHER CHAIN] [${page.network}] [NEXT RUN]`
+        );
+        break;
+      }
       const read = bindingChangesOf(page.blocks);
       if (read.stoppedAt !== null) {
         this.reportMalformed(read, report);

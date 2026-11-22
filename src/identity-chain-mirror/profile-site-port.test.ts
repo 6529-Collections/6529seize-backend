@@ -213,6 +213,51 @@ describe('GatewayProfileSitePort', () => {
     expect((await port.getChanges(10)).changes[0].source).toBe('operation');
   });
 
+  it('tries a change again when a wallet history answer cannot be read', async () => {
+    const { gateway, port, walletPrincipalAt } = setup();
+    gateway.getIdentityByPrincipal
+      .mockResolvedValueOnce(now)
+      .mockRejectedValueOnce(
+        new ChainGatewayError('gone', 409, 'height_gone', '/v1/identities')
+      );
+    walletPrincipalAt.mockRejectedValueOnce(
+      new ChainGatewayError('bad', 200, 'bad_answer', '/v1/membership')
+    );
+    await expect(
+      port.getIdentityByPrincipal(P, { height: 7 })
+    ).rejects.toMatchObject({ retryLater: true, reason: 'bad_answer' });
+  });
+
+  it('takes Profile writes by their family', async () => {
+    const { gateway, port } = setup();
+    gateway.getChanges.mockResolvedValueOnce(
+      feedPage({
+        from: 10,
+        through: 10,
+        next: 11,
+        blocks: [
+          {
+            height: 10,
+            slot: 0,
+            root: '0x',
+            time: 1,
+            records: [
+              {
+                ...profileRecord({ version: 1, docCid: DOC }, false),
+                name: 'ProfileV2'
+              },
+              {
+                ...profileRecord({ version: 1, docCid: DOC }, false),
+                family: '0x0105'
+              }
+            ]
+          }
+        ]
+      })
+    );
+    expect((await port.getChanges(10)).changes).toHaveLength(1);
+  });
+
   it('ends a page at a whole block once it holds 100 changes', async () => {
     const { gateway, port } = setup();
     const many = (height: number) => ({

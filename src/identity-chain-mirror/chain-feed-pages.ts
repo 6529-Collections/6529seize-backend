@@ -13,6 +13,27 @@ export function messageOf(error: unknown): string {
   return (error as Error)?.message ?? String(error);
 }
 
+/**
+ * A read the port can't answer now, which the follower should try again
+ * later: it counts as one attempt at that change, the person's later
+ * changes wait, and everyone else's go on. Thrown when a wallet's identity
+ * at the change's height is unknown, when the store's bytes don't match
+ * their CID, and when an identity's profile id can't be settled yet.
+ * Gateway outages throw their own errors.
+ */
+export class ChainReadRetryLater extends Error {
+  readonly retryLater = true;
+
+  constructor(
+    message: string,
+    readonly reason: string
+  ) {
+    super(message);
+    Object.setPrototypeOf(this, new.target.prototype);
+    this.name = 'ChainReadRetryLater';
+  }
+}
+
 export type Sleep = (ms: number) => Promise<void>;
 
 export const realSleep: Sleep = (ms) =>
@@ -68,6 +89,25 @@ export async function readFeedPage(
   }
 }
 
+/**
+ * Whether a page carries on the block a page ended inside: it moves on, and
+ * starts with that block, from the position the cursor named.
+ */
+function continues(
+  cut: ChainFeedBlock,
+  cursor: ChainFeedCursor,
+  rest: ChainFeedPage
+): boolean {
+  const head = rest.blocks[0];
+  const position = Number(String(cursor).split(':')[1]);
+  return (
+    String(rest.next) !== String(cursor) &&
+    !!head &&
+    Number(head.height) === Number(cut.height) &&
+    Number(head.recordsFrom ?? 0) === position
+  );
+}
+
 /** Whole blocks of the feed, and the height to read next. */
 export interface WholeBlocks {
   /** Each with all its records (the family filter's). */
@@ -76,6 +116,8 @@ export interface WholeBlocks {
   readonly nextHeight: number;
   /** Nothing past the start: the finalized head is reached. */
   readonly atHead: boolean;
+  /** The network id of the chain the pages were read from. */
+  readonly network: string | null;
 }
 
 /**
@@ -93,28 +135,27 @@ export async function readWholeBlocks(
 ): Promise<WholeBlocks | null> {
   const first = await readFeedPage(gateway, from, opts);
   if (!first) return null;
-  if (first.atHead) return { blocks: [], nextHeight: from, atHead: true };
+  const network = first.network ?? null;
+  if (first.atHead) {
+    return { blocks: [], nextHeight: from, atHead: true, network };
+  }
   const blocks = [...first.blocks];
   let page = first;
   for (;;) {
     const cut = blocks[blocks.length - 1];
     if (!cut || cut.complete !== false) {
-      return { blocks, nextHeight: page.nextHeight, atHead: false };
+      return { blocks, nextHeight: page.nextHeight, atHead: false, network };
     }
     const rest = await readFeedPage(gateway, page.next, opts);
-    const head = rest?.blocks[0];
-    if (
-      !rest ||
-      String(rest.next) === String(page.next) ||
-      !head ||
-      Number(head.height) !== Number(cut.height)
-    ) {
+    if (!rest || !continues(cut, page.next, rest)) {
       return {
         blocks: blocks.slice(0, -1),
         nextHeight: Number(cut.height),
-        atHead: false
+        atHead: false,
+        network
       };
     }
+    const head = rest.blocks[0];
     blocks[blocks.length - 1] = {
       ...head,
       records: [...cut.records, ...head.records],

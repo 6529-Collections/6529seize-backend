@@ -9,7 +9,13 @@ import {
   ChainIdentity
 } from '@/chain-gateway/chain-gateway.types';
 import { RequestContext } from '@/request.context';
-import { messageOf, readWholeBlocks } from './chain-feed-pages';
+import {
+  ChainReadRetryLater,
+  messageOf,
+  readWholeBlocks
+} from './chain-feed-pages';
+
+export { ChainReadRetryLater };
 import { WalletPrincipalUnknownError } from './identity-chain-lookups';
 import { numberOrNull } from './identity-chain-mirror.db';
 import { decodeProfileDoc } from './profile-doc';
@@ -79,26 +85,6 @@ export interface ProfileSiteChainPort {
 }
 
 /**
- * A read the port can't answer now, which the follower should try again
- * later: it counts as one attempt at that change, the person's later
- * changes wait, and everyone else's go on. Thrown when a wallet's identity
- * at the change's height is unknown, and when the store's bytes don't
- * match their CID. Gateway outages throw their own errors.
- */
-export class ChainReadRetryLater extends Error {
-  readonly retryLater = true;
-
-  constructor(
-    message: string,
-    readonly reason: string
-  ) {
-    super(message);
-    Object.setPrototypeOf(this, new.target.prototype);
-    this.name = 'ChainReadRetryLater';
-  }
-}
-
-/**
  * Runs at the end of a mirror run: the profile site index's
  * `followProfileCmsChanges(port, ctx)` goes in `PROFILE_SITE_FOLLOWERS`
  * (identity-chain-mirror.service.ts).
@@ -159,6 +145,20 @@ function toChange(
     doc_cid: typeof cid === 'string' && cid.length > 2 ? cidPath(cid) : null,
     ...(source ? { source } : {})
   };
+}
+
+/**
+ * A wallet whose identity at a height is unknown, or whose history the
+ * gateway answered in a way that can't be read, is tried again later.
+ */
+function retryOnUnknown(error: unknown): unknown {
+  if (error instanceof WalletPrincipalUnknownError) {
+    return new ChainReadRetryLater(error.message, 'wallet_unknown');
+  }
+  if (error instanceof ChainGatewayError && error.code === 'bad_answer') {
+    return new ChainReadRetryLater(error.message, 'bad_answer');
+  }
+  return error;
 }
 
 /** Bytes that don't match their CID are the store's fault: try again later. */
@@ -235,7 +235,9 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
   /** A block's Profile writes as changes, the source settled when unmarked. */
   private async collect(block: ChainFeedBlock, changes: ProfileSiteChange[]) {
     for (const record of block.records) {
-      const change = record.name === 'Profile' && toChange(block, record);
+      const change =
+        record.family.toLowerCase() === PROFILE_FAMILY &&
+        toChange(block, record);
       if (!change) continue;
       changes.push(
         record.byImport === null ? await this.settleSource(change) : change
@@ -359,8 +361,7 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
       try {
         then = await this.walletPrincipalAt(wallet, height);
       } catch (error) {
-        if (!(error instanceof WalletPrincipalUnknownError)) throw error;
-        throw new ChainReadRetryLater(error.message, 'wallet_unknown');
+        throw retryOnUnknown(error);
       }
       if (then === principal) wallets.push(wallet.toLowerCase());
     }

@@ -1,5 +1,6 @@
 import { ChainGatewayError } from '@/chain-gateway/chain-gateway.client';
 import { ChainFeedBlock } from '@/chain-gateway/chain-gateway.types';
+import { covers } from './identity-chain-mirror.service';
 import { readFeedPage, readWholeBlocks } from './chain-feed-pages';
 
 function record(key: string) {
@@ -48,7 +49,10 @@ describe('readWholeBlocks', () => {
         page(10, 11, '12:2', [block(11, ['a']), block(12, ['b', 'c'], false)])
       )
       .mockResolvedValueOnce(
-        page('12:2', 13, 14, [block(12, ['d']), block(13, ['e'])])
+        page('12:2', 13, 14, [
+          { ...block(12, ['d']), recordsFrom: 2 },
+          block(13, ['e'])
+        ])
       );
     const read = await readWholeBlocks({ getChanges }, 10, { limit: 200 });
     expect(read?.nextHeight).toBe(14);
@@ -65,7 +69,11 @@ describe('readWholeBlocks', () => {
   it.each([
     ['a node behind', page('12:2', 11, '12:2', [])],
     ['a page that does not move on', page('12:2', 11, '12:2', [block(12, [])])],
-    ['another block', page('12:2', 13, 14, [block(13, ['e'])])]
+    ['another block', page('12:2', 13, 14, [block(13, ['e'])])],
+    [
+      'the block again from another position',
+      page('12:2', 12, 13, [{ ...block(12, ['b', 'c']), recordsFrom: 0 }])
+    ]
   ])('leaves a cut block out, to read again, after %s', async (_name, rest) => {
     const getChanges = jest
       .fn()
@@ -77,7 +85,8 @@ describe('readWholeBlocks', () => {
     expect(read).toEqual({
       blocks: [block(11, ['a'])],
       nextHeight: 12,
-      atHead: false
+      atHead: false,
+      network: null
     });
   });
 
@@ -91,14 +100,19 @@ describe('readWholeBlocks', () => {
       limit: 200,
       sleep: noWait
     });
-    expect(read).toEqual({ blocks: [], nextHeight: 12, atHead: false });
+    expect(read).toEqual({
+      blocks: [],
+      nextHeight: 12,
+      atHead: false,
+      network: null
+    });
   });
 
   it('says the head is reached, and null when the start is gone', async () => {
     const atHead = jest.fn().mockResolvedValueOnce(page(20, 19, 20, []));
     expect(
       await readWholeBlocks({ getChanges: atHead }, 20, { limit: 5 })
-    ).toEqual({ blocks: [], nextHeight: 20, atHead: true });
+    ).toEqual({ blocks: [], nextHeight: 20, atHead: true, network: null });
     const gone = jest
       .fn()
       .mockRejectedValue(
@@ -111,6 +125,35 @@ describe('readWholeBlocks', () => {
       })
     ).toBeNull();
     expect(gone).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('covers', () => {
+  it('needs every height from the start to the end without a gap', () => {
+    expect(covers([[1, 100]], 1, 50)).toBe(true);
+    expect(
+      covers(
+        [
+          [1, 10],
+          [11, 60]
+        ],
+        1,
+        50
+      )
+    ).toBe(true);
+    expect(
+      covers(
+        [
+          [1, 10],
+          [12, 60]
+        ],
+        1,
+        50
+      )
+    ).toBe(false);
+    expect(covers([[5, 100]], 1, 50)).toBe(false);
+    expect(covers([[1, 40]], 1, 50)).toBe(false);
+    expect(covers([], 1, 1)).toBe(false);
   });
 });
 

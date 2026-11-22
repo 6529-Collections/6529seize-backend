@@ -43,6 +43,7 @@ import { IdentityChainLookups } from './identity-chain-lookups';
 import { HEX20, HEX32 } from './wallet-bindings';
 import { WalletBindingsFollower } from './wallet-bindings-follower';
 import {
+  ChainReadRetryLater,
   messageOf,
   readWholeBlocks,
   realSleep,
@@ -93,7 +94,6 @@ type Gateway = Pick<
   | 'getMembershipWalletHistory'
   | 'getImportedIdentity'
   | 'getMembershipWallet'
-  | 'getMembershipWalletHistory'
   | 'getDocument'
   | 'putDocument'
   | 'listIdentities'
@@ -208,6 +208,24 @@ export function feedEffects(records: readonly ChainFeedRecord[]): FeedEffects {
     }
   }
   return effects;
+}
+
+/**
+ * Whether height ranges (`[from, to]`, ascending) cover every height from
+ * `from` to `to` without a gap.
+ */
+export function covers(
+  ranges: readonly [number, number][],
+  from: number,
+  to: number
+): boolean {
+  let next = from;
+  for (const [start, end] of ranges) {
+    if (start > next) break;
+    next = Math.max(next, end + 1);
+    if (next > to) return true;
+  }
+  return next > to;
 }
 
 /** Merged, closing or walletless: nothing of it is written. */
@@ -635,6 +653,10 @@ export class IdentityChainMirror {
       if (read.atHead || read.nextHeight <= from) {
         return state;
       }
+      if (!(await this.readsReach(state, read))) return state;
+      // The identities a page touches are read again for each page, at a
+      // height that includes it.
+      this.identities.clear();
       const records = read.blocks.flatMap((block) => block.records);
       await this.applyEffects(feedEffects(records), report, {
         height: read.nextHeight - 1,
@@ -644,6 +666,30 @@ export class IdentityChainMirror {
       state = await this.save({ ...state, next_height: read.nextHeight });
     }
     return state;
+  }
+
+  /**
+   * Whether the identity reads that follow a feed page see it: the page is
+   * of the mirror's chain, and the finalized height the gateway client pins
+   * its reads to has reached the page's last height (a node behind is
+   * waited for until the next run).
+   */
+  private async readsReach(
+    state: MirrorState,
+    read: { nextHeight: number; network: string | null }
+  ): Promise<boolean> {
+    if (state.chain_id && read.network && read.network !== state.chain_id) {
+      logger.warn(`[FEED PAGE OF ANOTHER CHAIN] [${read.network}] [NEXT RUN]`);
+      return false;
+    }
+    const needed = read.nextHeight - 1;
+    let head = await this.gateway.getHead();
+    if (head.finalizedHeight < needed) head = await this.gateway.getHead(true);
+    if (head.finalizedHeight < needed) {
+      logger.warn(`[READS BEHIND THE FEED AT ${needed}] [NEXT RUN]`);
+      return false;
+    }
+    return true;
   }
 
   /** Runs one identity's work; a failure is logged and reported, not thrown. */
@@ -750,12 +796,14 @@ export class IdentityChainMirror {
   /**
    * The 6529.io profile id of a chain identity: its mapping, else
    * - an imported identity's legacy id (its 6529.io profile id);
-   * - for an identity made on the chain, the placeholder profile of its
-   *   founding wallet (the anchor) when no principal holds it, so that
-   *   wallet's follows and history stay with it;
+   * - for an identity made on the chain, the listed placeholder profile of
+   *   the wallet that made it, when no principal holds it, the import didn't
+   *   take it, and this is the first identity that wallet was bound to, so
+   *   the wallet's follows and history stay with it;
    * - else the principal id's first 16 bytes written as a UUID.
-   * 6529.io makes no placeholder profiles from switch-on, so a rebuild from
-   * the chain gives the same ids.
+   * The placeholders are listed before the mirror's first write and 6529.io
+   * makes none from switch-on, so a rebuild from the chain gives the same
+   * ids.
    */
   async profileIdOf(identity: ChainIdentity): Promise<string> {
     const principalId = identity.principalId.toLowerCase();
@@ -781,50 +829,48 @@ export class IdentityChainMirror {
     const principalId = identity.principalId.toLowerCase();
     const legacy = await this.legacyIdOf(identity);
     if (legacy) return { profileId: legacy, origin: 'LEGACY' };
-    const foundingWallet = await this.foundingWalletOf(identity);
-    const founder = foundingWallet
-      ? await this.db.unmappedPlaceholderProfile(foundingWallet)
+    const wallet = await this.foundingWalletOf(identity);
+    const placeholder = wallet
+      ? await this.db.unmappedPlaceholderProfile(wallet)
       : null;
-    if (
-      founder &&
-      !(await this.gateway.getIdentityByLegacyProfileId(founder))
-    ) {
-      return { profileId: founder.toLowerCase(), origin: 'FOUNDER' };
-    }
-    return { profileId: principalProfileId(principalId), origin: 'NEW' };
+    const takesIt =
+      !!wallet &&
+      !!placeholder &&
+      !(await this.gateway.getIdentityByLegacyProfileId(placeholder)) &&
+      (await this.firstBoundTo(wallet, principalId, identity.createdHeight));
+    return takesIt
+      ? { profileId: placeholder!.toLowerCase(), origin: 'FOUNDER' }
+      : { profileId: principalProfileId(principalId), origin: 'NEW' };
   }
 
   /**
-   * The wallet whose placeholder profile the identity takes: the wallet that
-   * made it (the gateway's founder field; until the gateway gives it, the
-   * anchor when it has been bound to the identity since its creation), and
-   * only when this identity is the first the wallet was ever bound to, so
-   * that a wallet that made two identities gives its profile to the first
-   * whatever order a rebuild reads them in; else none.
+   * The wallet that made the identity: the gateway's founder field; until
+   * the gateway gives it, the anchor when it has been bound to the identity
+   * since its creation; else none. Its placeholder goes to this identity
+   * only when it is the first the wallet was ever bound to (firstBoundTo),
+   * so that a wallet that made two identities gives it to the first
+   * whatever order a rebuild reads them in.
    */
   private async foundingWalletOf(
     identity: ChainIdentity
   ): Promise<string | null> {
-    const principal = identity.principalId.toLowerCase();
-    let wallet = identity.founder?.toLowerCase() ?? null;
-    if (!wallet && identity.anchor) {
-      const binding = await this.gateway.getMembershipWallet(identity.anchor);
-      const sinceCreation =
-        binding?.principalId?.toLowerCase() === principal &&
-        Number(binding?.firstBoundHeight) === Number(identity.createdHeight);
-      wallet = sinceCreation ? identity.anchor.toLowerCase() : null;
-    }
-    if (!wallet) return null;
-    return (await this.firstBoundTo(wallet, principal, identity.createdHeight))
-      ? wallet
-      : null;
+    if (identity.founder) return identity.founder.toLowerCase();
+    if (!identity.anchor) return null;
+    const binding = await this.gateway.getMembershipWallet(identity.anchor);
+    const sinceCreation =
+      binding?.principalId?.toLowerCase() ===
+        identity.principalId.toLowerCase() &&
+      Number(binding?.firstBoundHeight) === Number(identity.createdHeight);
+    return sinceCreation ? identity.anchor.toLowerCase() : null;
   }
 
   /**
    * Whether `principal` is the first identity `wallet` was ever bound to,
-   * from its creation. When the gateway's history doesn't reach back to the
-   * import (a node that started later), it can't say, and the wallet's own
-   * founding is taken as enough.
+   * from its creation. A binding to another identity seen before then says
+   * no. Otherwise the history must cover every height from the import's
+   * start to the creation without a gap; when it doesn't (a gateway node
+   * that started later), the identity is not mapped now and is tried again
+   * next run, rather than given a guess a rebuild might not repeat.
    */
   private async firstBoundTo(
     wallet: string,
@@ -832,17 +878,20 @@ export class IdentityChainMirror {
     createdHeight: number
   ): Promise<boolean> {
     const history = await this.gateway.getMembershipWalletHistory(wallet);
+    const first = history?.changes.find((it) => it.principalId !== null);
+    if (first && first.principalId !== principal) return false;
     const start = this.importStartHeight;
-    const reachesBack =
-      !!history?.ranges.length &&
-      start !== null &&
-      history.ranges[0][0] <= start;
-    if (!history || !reachesBack) return true;
-    const first = history.changes.find((it) => it.principalId !== null);
-    return (
-      first?.principalId === principal &&
-      Number(first.height) === Number(createdHeight)
-    );
+    if (
+      !history ||
+      start === null ||
+      !covers(history.ranges, start, createdHeight)
+    ) {
+      throw new ChainReadRetryLater(
+        `The history of ${wallet} doesn't reach back to the import: its identity is mapped later`,
+        'history_short'
+      );
+    }
+    return !!first && Number(first.height) === Number(createdHeight);
   }
 
   /**

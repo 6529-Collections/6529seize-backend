@@ -895,9 +895,10 @@ and logged; its ratings and follows are not moved; `identity_chain_mirror_state`
 holds its place in the feed. Profile documents come from the gateway's store.
 
 One writer per `identities` column: the mirror writes `rep`, `cic`,
-`level_raw` and the profile columns (`rep` and `level_raw` are the chain's
-plus the help bot's credits, which stay on 6529.io and not on the chain); it never updates `tdh`, `basetdh_rate`
-or the xTDH columns of a row that exists (the TDH and xTDH loops own them),
+`level_raw` and the profile columns, all from the chain (the level is REP +
+TDH); the help bot's credit category stays in 6529.io's ratings table as a
+site feature, not counted as REP, and the mirror never touches it. It never
+updates `tdh`, `basetdh_rate` or the xTDH columns of a row that exists (the TDH and xTDH loops own them),
 and a row it creates for a new consolidation key starts from the profile's
 previous values. When wallets change keys, the mirror calls the handlers in
 `src/identity-chain-mirror/membership-change.ts` in its own transaction; the

@@ -428,13 +428,6 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       profileId,
       conn
     ));
-    const credits = await this.db.oneOrNull<{ total: number | string | null }>(
-      `select sum(rating) as total from ${RATINGS_TABLE}
-       where matter_target_id = :profileId and matter = 'REP'
-         and matter_category = :helpBot`,
-      { profileId, helpBot: HELP_BOT_CREDIT_CATEGORY },
-      { wrappedConnection: conn }
-    );
     return {
       rows: rows.map((row) => ({
         ...row,
@@ -451,8 +444,7 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       walletsByKey,
       profile,
       handleHolder,
-      placeholderTaken,
-      helpBotCredits: numberOf(credits?.total)
+      placeholderTaken
     };
   }
 
