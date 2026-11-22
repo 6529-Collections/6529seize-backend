@@ -30,6 +30,8 @@ describe('replicaTarget', () => {
     [{ DB_HOST_READ: '  ' }],
     [{ DB_HOST_READ: 'primary-host' }],
     [{ DB_HOST_READ: 'Primary-Host ' }],
+    [{ DB_HOST: undefined }],
+    [{ DB_HOST: ' ' }],
     [{ DB_USER_READ: undefined }],
     [{ DB_PASS_READ: undefined }],
     [{ DB_PORT: 'x' }],
@@ -62,7 +64,8 @@ describe('openReadOnlySnapshot', () => {
   it('starts a UTC, read-only transaction with a consistent snapshot and checks it', async () => {
     const { pool, connection, statements } = fakePool({
       transaction_read_only: [{ tro: 1, ro: 1 }],
-      innodb_read_only: [{ iro: 0 }]
+      innodb_read_only: [{ iro: 0 }],
+      'UNIX_TIMESTAMP(NOW(6))': [{ ms: '1795478405123' }]
     });
     const createPool = jest.fn(() => pool);
     const snapshot = await openReadOnlySnapshot(target, createPool);
@@ -79,12 +82,51 @@ describe('openReadOnlySnapshot', () => {
       host: 'replica-host',
       transactionReadOnly: true,
       serverReadOnly: true,
-      innodbReadOnly: false
+      innodbReadOnly: false,
+      snapshotAt: '2026-11-24T00:00:05.123Z'
     });
     await snapshot.close();
     expect(statements[statements.length - 1]).toBe('ROLLBACK');
     expect(connection.release).toHaveBeenCalled();
     expect(pool.end).toHaveBeenCalled();
+  });
+
+  it('takes an Aurora reader (innodb_read_only) as read-only', async () => {
+    const { pool } = fakePool({
+      transaction_read_only: [{ tro: 1, ro: 0 }],
+      innodb_read_only: [{ iro: 1 }],
+      'UNIX_TIMESTAMP(NOW(6))': [{ ms: 1795478405000 }]
+    });
+    const snapshot = await openReadOnlySnapshot(target, () => pool);
+    expect(snapshot.evidence.innodbReadOnly).toBe(true);
+  });
+
+  it('refuses a server that is not read-only: a reader endpoint routed to the writer', async () => {
+    const { pool, connection } = fakePool({
+      transaction_read_only: [{ tro: 1, ro: 0 }],
+      innodb_read_only: [{ iro: 0 }],
+      'UNIX_TIMESTAMP(NOW(6))': [{ ms: 1795478405000 }]
+    });
+    await expect(openReadOnlySnapshot(target, () => pool)).rejects.toThrow(
+      /not a read-only server/
+    );
+    expect(connection.release).toHaveBeenCalled();
+  });
+
+  it('keeps the refusal when the rollback also fails', async () => {
+    const { pool, connection } = fakePool({
+      transaction_read_only: [{ tro: 0, ro: 1 }]
+    });
+    const query = connection.query;
+    connection.query = jest.fn((sql: string, callback: any) =>
+      sql === 'ROLLBACK'
+        ? callback(new Error('connection lost'))
+        : query(sql, callback)
+    );
+    await expect(openReadOnlySnapshot(target, () => pool)).rejects.toThrow(
+      /did not start READ ONLY/
+    );
+    expect(connection.release).toHaveBeenCalled();
   });
 
   it('refuses and closes when the transaction is not read-only', async () => {

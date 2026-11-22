@@ -6,6 +6,7 @@ import {
   S3Client
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { createHash } from 'node:crypto';
 
 /**
  * The chain exports' private bucket, made once per account and region by
@@ -104,6 +105,13 @@ export async function assertBucketPrivate(
   return { bucket, publicAccessBlocked: true, policyPublic: false };
 }
 
+/** One object a run wrote. */
+export interface PutResult {
+  readonly key: string;
+  readonly bytes: number;
+  readonly sha256: string;
+}
+
 /** Writes objects under one run's prefix and counts them. */
 export class PrivateExportWriter {
   private count = 0;
@@ -123,9 +131,10 @@ export class PrivateExportWriter {
     name: string,
     body: Buffer | string,
     contentType: string
-  ): Promise<string> {
+  ): Promise<PutResult> {
     const key = this.key(name);
     const bytes = typeof body === 'string' ? Buffer.from(body, 'utf8') : body;
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
     await this.s3.send(
       new PutObjectCommand({
         Bucket: this.bucket,
@@ -137,7 +146,7 @@ export class PrivateExportWriter {
     );
     this.count++;
     this.total += bytes.length;
-    return key;
+    return { key, bytes: bytes.length, sha256 };
   }
 
   get files(): number {
@@ -162,17 +171,58 @@ export function s3Presigner(s3: S3Client): Presigner {
     });
 }
 
-/** A run's prefix: `<job>/<stage>/<UTC time>-<request id start>/`. */
+/**
+ * The stage a run's prefix names, from NODE_ENV as 6529.io sets it
+ * (production, development), so a prefix says prod or staging plainly.
+ */
+export function exportStage(nodeEnv: string | undefined): string {
+  const value = (nodeEnv ?? '').trim().toLowerCase();
+  if (value === 'production') return 'prod';
+  if (value === 'development') return 'staging';
+  return value || 'unknown';
+}
+
+/**
+ * A run's prefix: `<job>/<stage>/<UTC time>-<request id start>[-<scope>]/`.
+ * A run of part of the export (one profile) names that part in its prefix.
+ */
 export function runPrefix(
   job: string,
   stage: string | undefined,
   startedAt: Date,
-  requestId: string | undefined
+  requestId: string | undefined,
+  scope: string | null = null
 ): string {
   const safeStage = (stage ?? 'unknown')
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, '');
   const time = startedAt.toISOString().replace(/[:.]/g, '-');
   const run = (requestId ?? 'local').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8);
-  return `${job}/${safeStage || 'unknown'}/${time}-${run}/`;
+  const part = scope ? `-${scope.replace(/[^a-zA-Z0-9-]/g, '')}` : '';
+  return `${job}/${safeStage || 'unknown'}/${time}-${run}${part}/`;
+}
+
+/**
+ * When the run's presigned links stop working: after PRESIGNED_URL_SECONDS,
+ * or earlier when the credentials that signed them expire first.
+ */
+export function linksExpireAt(
+  now: Date,
+  credentialsExpireAt: Date | null
+): { readonly at: Date; readonly limitedByCredentials: boolean } {
+  const byLife = new Date(now.getTime() + PRESIGNED_URL_SECONDS * 1000);
+  if (credentialsExpireAt && credentialsExpireAt < byLife) {
+    return { at: credentialsExpireAt, limitedByCredentials: true };
+  }
+  return { at: byLife, limitedByCredentials: false };
+}
+
+/** The signing credentials' expiry, when the SDK knows it. */
+export async function credentialsExpiry(s3: S3Client): Promise<Date | null> {
+  try {
+    const credentials = await s3.config.credentials();
+    return credentials.expiration ?? null;
+  } catch {
+    return null;
+  }
 }

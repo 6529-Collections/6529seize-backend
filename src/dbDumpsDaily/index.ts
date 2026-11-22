@@ -12,23 +12,42 @@ const logger = Logger.get('DB_DUMPS_DAILY');
 const s3 = new S3Client({ region: 'eu-west-1' });
 
 /**
- * The daily dump on its schedule. An invocation whose event names a `job`
- * runs that job instead (the chain exports, invoked by hand); a job no
- * module knows fails, so a typo never runs the daily dump.
+ * The daily dump runs for its schedule's event (source aws.events) or an
+ * empty event. An event naming a `job` runs that job (the chain exports,
+ * invoked by hand). Anything else fails, so a misspelled job never runs
+ * the dump.
  */
+export function isDailyDumpEvent(event: unknown): boolean {
+  if (!event || typeof event !== 'object' || Array.isArray(event)) {
+    return false;
+  }
+  const record = event as Record<string, unknown>;
+  return (
+    Object.keys(record).length === 0 ||
+    (record.source === 'aws.events' && !('job' in record))
+  );
+}
+
 export const handler = sentryContext.wrapLambdaHandler(
   async (event: unknown, context: Context) => {
-    if (event && typeof event === 'object' && 'job' in event) {
-      // Loaded only for a job, so the export's modules never touch the dump.
-      const { parseProfileSiteExportEvent, runProfileSiteExportJob } =
-        await import('./profile-site-export.handler');
-      const profileSiteExport = parseProfileSiteExportEvent(event);
-      if (profileSiteExport) {
-        return await runProfileSiteExportJob(profileSiteExport, context);
-      }
-      throw new Error(`Unknown dbDumpsDaily job: ${String(event.job)}`);
+    if (isDailyDumpEvent(event)) {
+      await dumpDaily();
+      return;
     }
-    await dumpDaily();
+    // Loaded only for a job, so the export's modules never touch the dump.
+    const { parseProfileSiteExportEvent, runProfileSiteExportJob } =
+      await import('./profile-site-export.handler');
+    const profileSiteExport = parseProfileSiteExportEvent(event);
+    if (profileSiteExport) {
+      return await runProfileSiteExportJob(profileSiteExport, context);
+    }
+    const job =
+      event && typeof event === 'object' && 'job' in event
+        ? String((event as { job: unknown }).job)
+        : 'none';
+    throw new Error(
+      `Not a dbDumpsDaily event: unknown job ${job}. The daily dump runs only for its schedule or an empty event.`
+    );
   }
 );
 

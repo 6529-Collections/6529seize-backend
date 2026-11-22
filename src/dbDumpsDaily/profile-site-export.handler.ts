@@ -1,5 +1,4 @@
-import { S3Client } from '@aws-sdk/client-s3';
-import { GetObjectCommand } from '@aws-sdk/client-s3';
+import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { Logger } from '@/logging';
 import {
   ProfileCmsExportDb,
@@ -19,6 +18,9 @@ import {
   assertBucketPrivate,
   BucketPrivacy,
   chainExportsBucketName,
+  credentialsExpiry,
+  exportStage,
+  linksExpireAt,
   Presigner,
   PRESIGNED_URL_SECONDS,
   PrivateExportWriter,
@@ -35,13 +37,26 @@ import {
 
 const logger = Logger.get('PROFILE_SITE_EXPORT');
 
-/** One file of the export is never larger than the store's largest file. */
+/**
+ * The chain's document store takes files of at most 2 MiB: every
+ * `files/<cid>` becomes a chain document, so each is held to it.
+ * cms-fields.json, report.json, links.json and the manifest are read by the
+ * import's builder and by people, never stored on the chain, so they are
+ * exempt (S3 takes them at any size).
+ */
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const JOB = 'profileSiteExport';
 const LINKS_JOB = 'profileSiteExportLinks';
 const PREFIX_ROOT = 'profile-site-export/';
 const MANIFEST = 'manifest.json';
+/** A run with a publication record it couldn't fetch must not be imported. */
+const UNUSABLE_MANIFEST = 'manifest.unusable.json';
 const MANIFEST_SCHEMA = '6529.profile-site-export.manifest.v1';
+/** The snapshot may be at most this long after the freeze, unless acknowledged. */
+export const SNAPSHOT_GAP_LIMIT_MINUTES = 90;
+/** Below this much time left, the run stops with its progress. */
+const DEADLINE_MARGIN_MS = 60_000;
+const PROGRESS_EVERY = 25;
 
 /**
  * Invoke-only jobs of the dbDumpsDaily function (its schedule sends no
@@ -57,6 +72,8 @@ export type ProfileSiteExportEvent =
       readonly frozenAt: number;
       readonly profile: string | null;
       readonly publicApi: string | null;
+      /** Accepts a snapshot up to this many minutes after the freeze. */
+      readonly acceptSnapshotGapMinutes: number | null;
     }
   | { readonly job: typeof LINKS_JOB; readonly prefix: string };
 
@@ -65,6 +82,30 @@ export class ProfileSiteExportEventError extends Error {
     super(message);
     Object.setPrototypeOf(this, new.target.prototype);
     this.name = 'ProfileSiteExportEventError';
+  }
+}
+
+/** The run stopped before the function's time ran out; nothing was finished. */
+export class ProfileSiteExportDeadlineError extends Error {
+  constructor(
+    readonly done: number,
+    readonly total: number,
+    readonly elapsedSeconds: number
+  ) {
+    super(
+      `Stopped at ${done}/${total} profiles after ${elapsedSeconds} s, with less than ${DEADLINE_MARGIN_MS / 1000} s of the function's time left. No manifest was written: the export needs longer than one invocation.`
+    );
+    Object.setPrototypeOf(this, new.target.prototype);
+    this.name = 'ProfileSiteExportDeadlineError';
+  }
+}
+
+/** The snapshot can't stand for the freeze. */
+export class ProfileSiteExportSnapshotError extends Error {
+  constructor(message: string) {
+    super(message);
+    Object.setPrototypeOf(this, new.target.prototype);
+    this.name = 'ProfileSiteExportSnapshotError';
   }
 }
 
@@ -127,7 +168,13 @@ export function parseProfileSiteExportEvent(
     return { job: LINKS_JOB, prefix };
   }
   if (record.job !== JOB) return null;
-  only(record, ['job', 'frozenAt', 'profile', 'publicApi']);
+  only(record, [
+    'job',
+    'frozenAt',
+    'profile',
+    'publicApi',
+    'acceptSnapshotGapMinutes'
+  ]);
   const profile = record.profile ?? null;
   if (
     profile !== null &&
@@ -142,19 +189,67 @@ export function parseProfileSiteExportEvent(
   ) {
     throw new ProfileSiteExportEventError('publicApi must be an https URL');
   }
+  const accept = record.acceptSnapshotGapMinutes ?? null;
+  if (
+    accept !== null &&
+    (typeof accept !== 'number' ||
+      !Number.isSafeInteger(accept) ||
+      accept < 0 ||
+      accept > 7 * 24 * 60)
+  ) {
+    throw new ProfileSiteExportEventError(
+      'acceptSnapshotGapMinutes must be a whole number of minutes'
+    );
+  }
   return {
     job: JOB,
     frozenAt: frozenAtOf(record.frozenAt),
     profile,
-    publicApi
+    publicApi,
+    acceptSnapshotGapMinutes: accept
   };
+}
+
+/**
+ * Refuses a snapshot taken before the freeze, or longer after it than the
+ * limit (90 minutes) or than the invoker acknowledged.
+ */
+export function checkSnapshotTime(
+  frozenAt: number,
+  snapshotAt: number,
+  acceptGapMinutes: number | null
+): { readonly gapSeconds: number } {
+  if (!Number.isFinite(snapshotAt)) {
+    throw new ProfileSiteExportSnapshotError("The snapshot's time is unknown");
+  }
+  const gapSeconds = Math.round((snapshotAt - frozenAt) / 1000);
+  if (gapSeconds < 0) {
+    throw new ProfileSiteExportSnapshotError(
+      `The snapshot (${new Date(snapshotAt).toISOString()}) is before the freeze (${new Date(frozenAt).toISOString()})`
+    );
+  }
+  const limit = Math.max(SNAPSHOT_GAP_LIMIT_MINUTES, acceptGapMinutes ?? 0);
+  if (gapSeconds > limit * 60) {
+    throw new ProfileSiteExportSnapshotError(
+      `The snapshot is ${Math.ceil(gapSeconds / 60)} minutes after the freeze, over the ${limit}-minute limit: it would carry changes made since. Pass acceptSnapshotGapMinutes to accept that.`
+    );
+  }
+  return { gapSeconds };
+}
+
+export interface ProfileSiteExportScope {
+  /** One profile only, or null for every profile with a site. */
+  readonly profile: string | null;
+  readonly publicApi: string | null;
 }
 
 export interface ProfileSiteExportResult {
   readonly job: typeof JOB;
   readonly bucket: string;
   readonly prefix: string;
+  /** manifest.json, or manifest.unusable.json when `usable` is false. */
   readonly manifestKey: string;
+  readonly scope: ProfileSiteExportScope;
   /** Objects written, the manifest and the links file included. */
   readonly files: number;
   readonly bytes: number;
@@ -171,10 +266,16 @@ export interface ProfileSiteExportResult {
   readonly evidence: ReadOnlyEvidence;
   readonly bucketPrivacy: BucketPrivacy;
   readonly frozenAt: string;
+  /** The server's clock when the snapshot was taken. */
+  readonly snapshotAt: string;
+  /** Seconds from the freeze to the snapshot. */
+  readonly snapshotGapSeconds: number;
   readonly startedAt: string;
   readonly finishedAt: string;
   readonly seconds: number;
+  /** When the links stop working: 6 hours, or the signing credentials' end. */
   readonly linksExpireAt: string;
+  readonly linksLimitedByCredentials: boolean;
   readonly presignedManifestUrl: string;
   /** links.json: a presigned link for every object of the run. */
   readonly presignedLinksUrl: string;
@@ -185,7 +286,9 @@ export interface ProfileSiteExportLinksResult {
   readonly bucket: string;
   readonly prefix: string;
   readonly linksKey: string;
+  readonly usable: boolean;
   readonly linksExpireAt: string;
+  readonly linksLimitedByCredentials: boolean;
   readonly presignedManifestUrl: string;
   readonly presignedLinksUrl: string;
 }
@@ -193,6 +296,7 @@ export interface ProfileSiteExportLinksResult {
 export interface ProfileSiteExportContext {
   readonly invokedFunctionArn?: string;
   readonly awsRequestId?: string;
+  readonly getRemainingTimeInMillis?: () => number;
 }
 
 export interface ProfileSiteExportDeps {
@@ -204,11 +308,13 @@ export interface ProfileSiteExportDeps {
   readonly exporter: (frozenAt: number) => Promise<ProfileCmsExporter>;
   readonly getJson: JsonGetter;
   readonly now: () => Date;
+  readonly credentialsExpiry: () => Promise<Date | null>;
 }
 
 interface ManifestFile {
   readonly name: string;
   readonly bytes: number;
+  readonly sha256: string;
 }
 
 interface Manifest {
@@ -238,7 +344,8 @@ function defaultDeps(): ProfileSiteExportDeps {
       );
     },
     getJson,
-    now: () => new Date()
+    now: () => new Date(),
+    credentialsExpiry: () => credentialsExpiry(s3)
   };
 }
 
@@ -252,7 +359,7 @@ function bucketOf(
   );
 }
 
-/** Presigns every object and writes links.json; returns its key. */
+/** Presigns every object and writes the links file; returns its key. */
 async function writeLinks(
   writer: PrivateExportWriter,
   presign: Presigner,
@@ -267,7 +374,7 @@ async function writeLinks(
       PRESIGNED_URL_SECONDS
     );
   }
-  return await writer.put(
+  const put = await writer.put(
     linksName,
     JSON.stringify(
       { expires_in_seconds: PRESIGNED_URL_SECONDS, links },
@@ -276,6 +383,7 @@ async function writeLinks(
     ),
     'application/json'
   );
+  return put.key;
 }
 
 export async function runProfileSiteExportJob(
@@ -293,21 +401,32 @@ export async function runProfileSiteExportJob(
   const target = replicaTarget(env);
   logger.info(`[EXPORT START] [READ REPLICA ${target.host}]`);
   const privacy = await assertBucketPrivate(deps.s3, bucket);
+  const scope: ProfileSiteExportScope = {
+    profile: event.profile,
+    publicApi: event.publicApi
+  };
   const prefix = runPrefix(
     'profile-site-export',
-    env.NODE_ENV,
+    exportStage(env.NODE_ENV),
     startedAt,
-    context.awsRequestId
+    context.awsRequestId,
+    event.profile ? `profile-${event.profile}` : null
   );
   const writer = new PrivateExportWriter(deps.s3, bucket, prefix);
   const exporter = await deps.exporter(event.frozenAt);
   const written: ManifestFile[] = [];
   const snapshot = await deps.openSnapshot(target);
   logger.info(
-    `[READ ONLY SNAPSHOT] [HOST ${snapshot.evidence.host}] [TRANSACTION READ ONLY ${snapshot.evidence.transactionReadOnly}] [SERVER READ ONLY ${snapshot.evidence.serverReadOnly}] [INNODB READ ONLY ${snapshot.evidence.innodbReadOnly}]`
+    `[READ ONLY SNAPSHOT] [HOST ${snapshot.evidence.host}] [AT ${snapshot.evidence.snapshotAt}] [TRANSACTION READ ONLY ${snapshot.evidence.transactionReadOnly}] [SERVER READ ONLY ${snapshot.evidence.serverReadOnly}] [INNODB READ ONLY ${snapshot.evidence.innodbReadOnly}]`
   );
   let run;
+  let gapSeconds = 0;
   try {
+    gapSeconds = checkSnapshotTime(
+      event.frozenAt,
+      Date.parse(snapshot.evidence.snapshotAt),
+      event.acceptSnapshotGapMinutes
+    ).gapSeconds;
     run = await runProfileCmsExport(
       {
         frozenAt: event.frozenAt,
@@ -326,52 +445,87 @@ export async function runProfileSiteExportJob(
               throw new Error(`File ${cid} is ${bytes.length} bytes`);
             }
             const name = `files/${cid}`;
-            await writer.put(name, bytes, 'application/octet-stream');
-            written.push({ name, bytes: bytes.length });
+            const put = await writer.put(
+              name,
+              bytes,
+              'application/octet-stream'
+            );
+            written.push({ name, bytes: put.bytes, sha256: put.sha256 });
           }
         },
-        getJson: deps.getJson
+        getJson: deps.getJson,
+        progress: (done, total) => {
+          const elapsed = Math.round(
+            (deps.now().getTime() - startedAt.getTime()) / 1000
+          );
+          if (done === 0) {
+            logger.info(`[EXPORTING ${total} PROFILES]`);
+          } else if (done % PROGRESS_EVERY === 0 || done === total) {
+            logger.info(`[PROFILES ${done}/${total}] [${elapsed} S]`);
+          }
+          const left = context.getRemainingTimeInMillis?.();
+          if (left !== undefined && left < DEADLINE_MARGIN_MS && done < total) {
+            throw new ProfileSiteExportDeadlineError(done, total, elapsed);
+          }
+        }
       }
     );
-  } finally {
-    await snapshot.close();
+  } catch (error) {
+    // The run's own error is the one that matters: a failed close is only
+    // logged here.
+    await snapshot
+      .close()
+      .catch((closeError: unknown) =>
+        logger.warn(`[SNAPSHOT CLOSE FAILED] ${String(closeError)}`)
+      );
+    throw error;
   }
-  const fields = cmsFieldsJson(run);
-  await writer.put('cms-fields.json', fields, 'application/json');
-  written.push({ name: 'cms-fields.json', bytes: Buffer.byteLength(fields) });
-  const report = reportJson(event.frozenAt, run);
-  await writer.put('report.json', report, 'application/json');
-  written.push({ name: 'report.json', bytes: Buffer.byteLength(report) });
+  await snapshot.close();
+  const putJson = async (name: string, text: string) => {
+    const put = await writer.put(name, text, 'application/json');
+    written.push({ name, bytes: put.bytes, sha256: put.sha256 });
+  };
+  await putJson('cms-fields.json', cmsFieldsJson(run));
+  await putJson('report.json', reportJson(event.frozenAt, run));
+  const usable = run.unavailableProfiles === 0;
+  const manifestName = usable ? MANIFEST : UNUSABLE_MANIFEST;
   await writeLinks(
     writer,
     deps.presign,
-    [...written.map((file) => file.name), MANIFEST],
+    [...written.map((file) => file.name), manifestName],
     'links.json'
   );
   const finishedAt = deps.now();
-  const usable = run.unavailableProfiles === 0;
+  const expiry = linksExpireAt(finishedAt, await deps.credentialsExpiry());
   const manifest: Manifest = {
     schema: MANIFEST_SCHEMA,
+    usable,
+    scope,
     frozen_at: new Date(event.frozenAt).toISOString(),
+    snapshot_at: snapshot.evidence.snapshotAt,
+    snapshot_gap_seconds: gapSeconds,
     started_at: startedAt.toISOString(),
     finished_at: finishedAt.toISOString(),
     profiles: run.profiles,
     profiles_with_cms: Object.keys(run.fields).length,
-    usable,
     rebuilt_refused: run.rebuiltRefused,
     unavailable_profiles: run.unavailableProfiles,
     read: { ...snapshot.evidence, read_only: true },
     cms_fields: 'cms-fields.json',
     report: 'report.json',
     links: 'links.json',
+    links_expire_at: expiry.at.toISOString(),
     files: written
   };
-  // Last: a run that stops early has no manifest.
-  const manifestKey = await writer.put(
-    MANIFEST,
-    JSON.stringify(manifest, null, 2),
-    'application/json'
-  );
+  // Last: a run that stops early has no manifest, and an unusable one has
+  // only manifest.unusable.json.
+  const manifestKey = (
+    await writer.put(
+      manifestName,
+      JSON.stringify(manifest, null, 2),
+      'application/json'
+    )
+  ).key;
   const presignedManifestUrl = await deps.presign(
     bucket,
     manifestKey,
@@ -391,6 +545,7 @@ export async function runProfileSiteExportJob(
     bucket,
     prefix,
     manifestKey,
+    scope,
     files: writer.files,
     bytes: writer.bytes,
     profiles: run.profiles,
@@ -403,15 +558,40 @@ export async function runProfileSiteExportJob(
     evidence: snapshot.evidence,
     bucketPrivacy: privacy,
     frozenAt: new Date(event.frozenAt).toISOString(),
+    snapshotAt: snapshot.evidence.snapshotAt,
+    snapshotGapSeconds: gapSeconds,
     startedAt: startedAt.toISOString(),
     finishedAt: finishedAt.toISOString(),
     seconds,
-    linksExpireAt: new Date(
-      finishedAt.getTime() + PRESIGNED_URL_SECONDS * 1000
-    ).toISOString(),
+    linksExpireAt: expiry.at.toISOString(),
+    linksLimitedByCredentials: expiry.limitedByCredentials,
     presignedManifestUrl,
     presignedLinksUrl
   };
+}
+
+async function readManifest(
+  deps: ProfileSiteExportDeps,
+  bucket: string,
+  key: string
+): Promise<Manifest | null> {
+  let answer: any;
+  try {
+    answer = await deps.s3.send(
+      new GetObjectCommand({ Bucket: bucket, Key: key })
+    );
+  } catch (error) {
+    const name = (error as { name?: string })?.name;
+    if (name === 'NoSuchKey' || name === 'NotFound') return null;
+    throw error;
+  }
+  const manifest = JSON.parse(
+    await answer.Body.transformToString('utf8')
+  ) as Manifest;
+  if (manifest?.schema !== MANIFEST_SCHEMA || !Array.isArray(manifest.files)) {
+    throw new ProfileSiteExportEventError(`${key} is not a manifest`);
+  }
+  return manifest;
 }
 
 /** Fresh links for an earlier run: only a run with a manifest has them. */
@@ -422,15 +602,15 @@ async function renewLinks(
 ): Promise<ProfileSiteExportLinksResult> {
   await assertBucketPrivate(deps.s3, bucket);
   const writer = new PrivateExportWriter(deps.s3, bucket, prefix);
-  const answer: any = await deps.s3.send(
-    new GetObjectCommand({ Bucket: bucket, Key: writer.key(MANIFEST) })
-  );
-  const manifest = JSON.parse(
-    await answer.Body.transformToString('utf8')
-  ) as Manifest;
-  if (manifest?.schema !== MANIFEST_SCHEMA || !Array.isArray(manifest.files)) {
+  let manifestName = MANIFEST;
+  let manifest = await readManifest(deps, bucket, writer.key(MANIFEST));
+  if (!manifest) {
+    manifestName = UNUSABLE_MANIFEST;
+    manifest = await readManifest(deps, bucket, writer.key(UNUSABLE_MANIFEST));
+  }
+  if (!manifest) {
     throw new ProfileSiteExportEventError(
-      `${prefix}${MANIFEST} is not a manifest`
+      `No manifest under ${prefix}: that run didn't finish, or the prefix is wrong`
     );
   }
   const now = deps.now();
@@ -438,20 +618,21 @@ async function renewLinks(
   const linksKey = await writeLinks(
     writer,
     deps.presign,
-    [...manifest.files.map((file) => file.name), MANIFEST],
+    [...manifest.files.map((file) => file.name), manifestName],
     linksName
   );
+  const expiry = linksExpireAt(now, await deps.credentialsExpiry());
   return {
     job: LINKS_JOB,
     bucket,
     prefix,
     linksKey,
-    linksExpireAt: new Date(
-      now.getTime() + PRESIGNED_URL_SECONDS * 1000
-    ).toISOString(),
+    usable: manifestName === MANIFEST,
+    linksExpireAt: expiry.at.toISOString(),
+    linksLimitedByCredentials: expiry.limitedByCredentials,
     presignedManifestUrl: await deps.presign(
       bucket,
-      writer.key(MANIFEST),
+      writer.key(manifestName),
       PRESIGNED_URL_SECONDS
     ),
     presignedLinksUrl: await deps.presign(

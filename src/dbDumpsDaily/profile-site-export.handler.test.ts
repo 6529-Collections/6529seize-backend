@@ -5,8 +5,11 @@ import {
   PutObjectCommand
 } from '@aws-sdk/client-s3';
 import { ProfileCmsExportReport } from '@/profile-cms/chain/profile-cms-export';
+import { createHash } from 'node:crypto';
 import {
+  checkSnapshotTime,
   parseProfileSiteExportEvent,
+  ProfileSiteExportDeadlineError,
   ProfileSiteExportDeps,
   ProfileSiteExportEventError,
   ProfileSiteExportResult,
@@ -46,6 +49,9 @@ function setup(
     failPutOf?: string;
     publicBlock?: boolean;
     unavailable?: boolean;
+    snapshotAt?: number;
+    closeFails?: boolean;
+    remainingMs?: () => number;
   } = {}
 ) {
   const order: string[] = [];
@@ -76,7 +82,11 @@ function setup(
     }
     if (command instanceof GetObjectCommand) {
       const body = bodies.get(command.input.Key!);
-      if (body === undefined) throw new Error('NoSuchKey');
+      if (body === undefined) {
+        throw Object.assign(new Error('The specified key does not exist.'), {
+          name: 'NoSuchKey'
+        });
+      }
       return { Body: { transformToString: async () => body } };
     }
     throw new Error(`unexpected ${command.constructor.name}`);
@@ -96,7 +106,9 @@ function setup(
     oneOrNull: async (sql: string, params?: Record<string, unknown>) =>
       (await executor.execute(sql))[0] ?? null
   };
-  const close = jest.fn(async () => undefined);
+  const close = jest.fn(async () => {
+    if (options.closeFails) throw new Error('rollback failed');
+  });
   const exportProfile = jest.fn(async (profileId: string) => ({
     profile_id: profileId,
     handle: profileId === 'profile-a' ? 'alice' : null,
@@ -127,7 +139,7 @@ function setup(
       DB_PASS_READ: 'secret',
       DB_NAME: 'app',
       AWS_REGION: 'eu-west-1',
-      NODE_ENV: 'staging',
+      NODE_ENV: 'development',
       ...options.env
     }),
     s3: { send } as never,
@@ -139,7 +151,8 @@ function setup(
         host: target.host,
         transactionReadOnly: true,
         serverReadOnly: true,
-        innodbReadOnly: null
+        innodbReadOnly: null,
+        snapshotAt: new Date(options.snapshotAt ?? T + 30_000).toISOString()
       },
       close
     })),
@@ -148,7 +161,8 @@ function setup(
     now: (() => {
       let tick = T + 60_000;
       return () => new Date((tick += 1_000));
-    })()
+    })(),
+    credentialsExpiry: async () => null
   };
   return { deps, send, order, bodies, queries, close, exportProfile };
 }
@@ -157,7 +171,8 @@ const event = {
   job: 'profileSiteExport',
   frozenAt: T,
   profile: null,
-  publicApi: null
+  publicApi: null,
+  acceptSnapshotGapMinutes: null
 } as const;
 
 describe('parseProfileSiteExportEvent', () => {
@@ -203,12 +218,24 @@ describe('parseProfileSiteExportEvent', () => {
       { job: 'profileSiteExport', frozenAt: T, publicApi: 'http://api.example' }
     ],
     [{ job: 'profileSiteExport', frozenAt: T, profile: 'a b' }],
+    [{ job: 'profileSiteExport', frozenAt: T, acceptSnapshotGapMinutes: -1 }],
+    [{ job: 'profileSiteExport', frozenAt: T, acceptSnapshotGapMinutes: '90' }],
     [{ job: 'profileSiteExportLinks', prefix: 'identity-export/x/' }],
     [{ job: 'profileSiteExportLinks', prefix: 'profile-site-export/../x/' }]
   ])('refuses %j', (bad) => {
     expect(() => parseProfileSiteExportEvent(bad)).toThrow(
       ProfileSiteExportEventError
     );
+  });
+});
+
+describe('checkSnapshotTime', () => {
+  it('measures the gap from the freeze to the snapshot', () => {
+    expect(checkSnapshotTime(T, T, null)).toEqual({ gapSeconds: 0 });
+    expect(checkSnapshotTime(T, T + 90 * 60_000, null)).toEqual({
+      gapSeconds: 5400
+    });
+    expect(() => checkSnapshotTime(T, Number.NaN, null)).toThrow(/unknown/);
   });
 });
 
@@ -236,7 +263,10 @@ describe('runProfileSiteExportJob', () => {
       usable: true,
       profiles: 2,
       profilesWithCms: 1,
-      bucketPrivacy: { publicAccessBlocked: true, policyPublic: false }
+      bucketPrivacy: { publicAccessBlocked: true, policyPublic: false },
+      scope: { profile: null, publicApi: null },
+      snapshotAt: new Date(T + 30_000).toISOString(),
+      snapshotGapSeconds: 30
     });
     expect(result.prefix).toMatch(
       /^profile-site-export\/staging\/2026-11-24T00-01-01-000Z-abcdef12\/$/
@@ -256,6 +286,19 @@ describe('runProfileSiteExportJob', () => {
     expect(manifest.files.map((file: { name: string }) => file.name)).toEqual(
       names.slice(0, 5)
     );
+    // Every entry carries the digest of exactly what was stored.
+    for (const file of manifest.files) {
+      const body = bodies.get(result.prefix + file.name)!;
+      expect(file.sha256).toBe(
+        createHash('sha256').update(Buffer.from(body)).digest('hex')
+      );
+      expect(file.bytes).toBe(Buffer.byteLength(body));
+    }
+    expect(manifest).toMatchObject({
+      scope: { profile: null, publicApi: null },
+      snapshot_at: new Date(T + 30_000).toISOString(),
+      snapshot_gap_seconds: 30
+    });
     expect(manifest.read).toMatchObject({
       host: 'replica-host',
       read_only: true
@@ -302,8 +345,8 @@ describe('runProfileSiteExportJob', () => {
     expect(order).toEqual([]);
   });
 
-  it('marks an export whose publication records could not be fetched as unusable', async () => {
-    const { deps, bodies } = setup({ unavailable: true });
+  it('names an unusable run manifest.unusable.json, never manifest.json', async () => {
+    const { deps, bodies, order } = setup({ unavailable: true });
     const result = (await runProfileSiteExportJob(
       event,
       { invokedFunctionArn: ARN },
@@ -311,7 +354,113 @@ describe('runProfileSiteExportJob', () => {
     )) as ProfileSiteExportResult;
     expect(result.usable).toBe(false);
     expect(result.unavailableProfiles).toBe(1);
+    expect(result.manifestKey).toBe(result.prefix + 'manifest.unusable.json');
+    expect(order.some((key) => key.endsWith('/manifest.json'))).toBe(false);
     expect(JSON.parse(bodies.get(result.manifestKey)!).usable).toBe(false);
+    const again = await runProfileSiteExportJob(
+      { job: 'profileSiteExportLinks', prefix: result.prefix },
+      { invokedFunctionArn: ARN },
+      deps
+    );
+    expect(again).toMatchObject({ usable: false });
+  });
+
+  it('puts a one-profile run in its own prefix and records the scope', async () => {
+    const { deps, bodies } = setup();
+    const result = (await runProfileSiteExportJob(
+      { ...event, profile: 'profile-a' },
+      { invokedFunctionArn: ARN, awsRequestId: 'abcdef12' },
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.prefix).toMatch(/-abcdef12-profile-profile-a\/$/);
+    expect(result.scope).toEqual({ profile: 'profile-a', publicApi: null });
+    expect(JSON.parse(bodies.get(result.manifestKey)!).scope).toEqual({
+      profile: 'profile-a',
+      publicApi: null
+    });
+  });
+
+  it.each([
+    ['before the freeze', T - 1_000, null, /before the freeze/],
+    ['91 minutes after it', T + 91 * 60_000, null, /over the 90-minute limit/],
+    ['3 hours after, acknowledged 120', T + 180 * 60_000, 120, /120-minute/]
+  ])(
+    'refuses a snapshot %s, and writes nothing',
+    async (_name, snapshotAt, accept, message) => {
+      const { deps, order, close } = setup({ snapshotAt });
+      await expect(
+        runProfileSiteExportJob(
+          { ...event, acceptSnapshotGapMinutes: accept },
+          { invokedFunctionArn: ARN },
+          deps
+        )
+      ).rejects.toThrow(message);
+      expect(order).toEqual([]);
+      expect(close).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('accepts a later snapshot when the gap is acknowledged', async () => {
+    const { deps } = setup({ snapshotAt: T + 180 * 60_000 });
+    const result = (await runProfileSiteExportJob(
+      { ...event, acceptSnapshotGapMinutes: 200 },
+      { invokedFunctionArn: ARN },
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.snapshotGapSeconds).toBe(180 * 60);
+  });
+
+  it('stops with its progress when the function is about to time out', async () => {
+    const { deps, order, close } = setup();
+    const left = [120_000, 30_000];
+    const error = await runProfileSiteExportJob(
+      event,
+      {
+        invokedFunctionArn: ARN,
+        getRemainingTimeInMillis: () => left.shift() ?? 0
+      },
+      deps
+    ).catch((e) => e);
+    expect(error).toBeInstanceOf(ProfileSiteExportDeadlineError);
+    expect(error).toMatchObject({ done: 1, total: 2 });
+    expect(error.message).toMatch(/1\/2 profiles/);
+    expect(order.some((key) => key.includes('manifest'))).toBe(false);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the run error when closing the snapshot also fails', async () => {
+    const { deps } = setup({ failPutOf: 'files/bafyb', closeFails: true });
+    await expect(
+      runProfileSiteExportJob(event, { invokedFunctionArn: ARN }, deps)
+    ).rejects.toThrow('upload failed');
+  });
+
+  it('limits the links to the signing credentials when they end first', async () => {
+    const { deps } = setup();
+    const soon = new Date(T + 2 * 60 * 60_000);
+    const result = (await runProfileSiteExportJob(
+      event,
+      { invokedFunctionArn: ARN },
+      { ...deps, credentialsExpiry: async () => soon }
+    )) as ProfileSiteExportResult;
+    expect(result.linksExpireAt).toBe(soon.toISOString());
+    expect(result.linksLimitedByCredentials).toBe(true);
+  });
+
+  it('says plainly when an earlier run has no manifest', async () => {
+    const { deps } = setup();
+    await expect(
+      runProfileSiteExportJob(
+        {
+          job: 'profileSiteExportLinks',
+          prefix: 'profile-site-export/staging/missing/'
+        },
+        { invokedFunctionArn: ARN },
+        deps
+      )
+    ).rejects.toThrow(
+      /No manifest under profile-site-export\/staging\/missing\//
+    );
   });
 
   it('gives fresh links for an earlier run from its manifest', async () => {

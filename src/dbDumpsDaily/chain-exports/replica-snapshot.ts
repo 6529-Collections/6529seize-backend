@@ -32,7 +32,7 @@ type Env = Readonly<Record<string, string | undefined>>;
 
 /**
  * The read replica's connection settings from the shared secret. Refuses
- * unless DB_HOST_READ is set and is not the primary's DB_HOST.
+ * unless DB_HOST and DB_HOST_READ are both set and differ.
  */
 export function replicaTarget(env: Env = process.env): ReplicaTarget {
   const host = env.DB_HOST_READ?.trim();
@@ -42,7 +42,12 @@ export function replicaTarget(env: Env = process.env): ReplicaTarget {
       'DB_HOST_READ is not set: the export runs only on the read replica'
     );
   }
-  if (primary && host.toLowerCase() === primary.toLowerCase()) {
+  if (!primary) {
+    throw new ReplicaGuardError(
+      'DB_HOST is not set: without it the export cannot tell the replica from the primary'
+    );
+  }
+  if (host.toLowerCase() === primary.toLowerCase()) {
     throw new ReplicaGuardError(
       'DB_HOST_READ is the primary (DB_HOST): the export runs only on the read replica'
     );
@@ -72,6 +77,8 @@ export interface ReadOnlyEvidence {
   readonly serverReadOnly: boolean | null;
   /** Aurora readers report innodb_read_only; null when not available. */
   readonly innodbReadOnly: boolean | null;
+  /** The server's clock (UTC) when the snapshot was taken. */
+  readonly snapshotAt: string;
 }
 
 export interface ReadOnlySnapshot {
@@ -193,24 +200,44 @@ export async function openReadOnlySnapshot(
     } catch {
       innodb = null;
     }
-    const evidence: ReadOnlyEvidence = {
-      host: target.host,
-      transactionReadOnly: flag(mode?.tro) === true,
-      serverReadOnly: flag(mode?.ro),
-      innodbReadOnly: innodb
-    };
-    if (!evidence.transactionReadOnly) {
+    const transactionReadOnly = flag(mode?.tro) === true;
+    const serverReadOnly = flag(mode?.ro);
+    if (!transactionReadOnly) {
       throw new ReplicaGuardError(
         'The export transaction did not start READ ONLY'
       );
     }
+    // A reader endpoint can route to the writer when no reader is up: only
+    // a server that is itself read-only is the replica.
+    if (serverReadOnly !== true && innodb !== true) {
+      throw new ReplicaGuardError(
+        `${target.host} is not a read-only server (read_only and innodb_read_only both off): the export runs only on the read replica`
+      );
+    }
+    // The snapshot's moment on the server's clock (the session is in UTC).
+    const [clock] = await query(
+      connection,
+      'SELECT ROUND(UNIX_TIMESTAMP(NOW(6)) * 1000) AS ms'
+    );
+    const snapshotMs = Number(clock?.ms);
+    if (!Number.isSafeInteger(snapshotMs) || snapshotMs <= 0) {
+      throw new ReplicaGuardError("The server's clock could not be read");
+    }
+    const evidence: ReadOnlyEvidence = {
+      host: target.host,
+      transactionReadOnly,
+      serverReadOnly,
+      innodbReadOnly: innodb,
+      snapshotAt: new Date(snapshotMs).toISOString()
+    };
     return {
       executor: new ReadOnlySnapshotExecutor(connection),
       evidence,
       close: release
     };
   } catch (error) {
-    await release();
+    // A failed rollback or close must not hide why the snapshot was refused.
+    await release().catch(() => undefined);
     throw error;
   }
 }

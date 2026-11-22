@@ -36,9 +36,26 @@ describe('dbDumpsDaily handler', () => {
     expect(mockDoInDbContext).not.toHaveBeenCalled();
   });
 
+  it('runs the dump for an empty event', async () => {
+    await invoke({});
+    expect(mockDoInDbContext).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [{ Job: 'profileSiteExport', frozenAt: '2026-11-24T00:00:00Z' }],
+    [{ source: 'manual' }],
+    [{ source: 'aws.events', job: 'nothing' }],
+    [null],
+    [[]]
+  ])('refuses %j without running the dump', async (event) => {
+    await expect(invoke(event)).rejects.toThrow();
+    expect(mockDoInDbContext).not.toHaveBeenCalled();
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
   it('fails an unknown or unreadable job without running the dump', async () => {
     await expect(invoke({ job: 'profileSiteExprt' })).rejects.toThrow(
-      /Unknown dbDumpsDaily job/
+      /unknown job profileSiteExprt/
     );
     await expect(invoke({ job: 'profileSiteExport' })).rejects.toThrow(
       /frozenAt/

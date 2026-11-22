@@ -91,6 +91,11 @@ export async function runProfileCmsExport(
     readonly exporter: Pick<ProfileCmsExporter, 'exportProfile'>;
     readonly sink: ProfileCmsExportSink;
     readonly getJson?: JsonGetter;
+    /**
+     * Called with (0, total) before the first profile and (done, total)
+     * after each; a throw stops the run there.
+     */
+    readonly progress?: (done: number, total: number) => void;
   }
 ): Promise<ProfileCmsExportRun> {
   const checkEntries: PublicPrimaryCheckEntry[] = [];
@@ -101,6 +106,7 @@ export async function runProfileCmsExport(
   const profileIds = options.profile
     ? [options.profile]
     : await deps.db.listProfileIds();
+  deps.progress?.(0, profileIds.length);
   for (const profileId of profileIds) {
     const source = await deps.db.loadSource(profileId);
     const entry = await deps.exporter.exportProfile(
@@ -127,6 +133,7 @@ export async function runProfileCmsExport(
         ? entry.report.primary_package_hash
         : null
     });
+    deps.progress?.(checkEntries.length, profileIds.length);
   }
   if (options.publicApi && !deps.getJson) {
     throw new Error('A public API check needs a JSON getter');
