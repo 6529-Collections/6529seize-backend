@@ -5,7 +5,7 @@ import { PROBE_CALLER, PROBE_WALLETS } from '@/rebuild/manifests/probe-fixture';
 /** A fake wave, drop and device id the seed uses for its rows. */
 const PROBE_WAVE = '00000000-0000-4000-8000-000000000001';
 const PROBE_DROP = '00000000-0000-4000-8000-000000000002';
-const PROBE_DEVICE = 'rebuild-check-device-1';
+const PROBE_DEVICE = 'rebuild-check-settings-device';
 
 /**
  * The records service identity of a rebuild run: a fake wave, profile and
@@ -40,7 +40,8 @@ const PROBES: Probe[] = [
   {
     id: 'personal.identity-subscriptions',
     path: '/api/identities/{wallet}/subscriptions',
-    each: { wallet: PROBE_WALLETS },
+    // The caller's own profile has no follow of itself to show.
+    each: { wallet: [PROBE_WALLETS[1]] },
     as: PROBE_CALLER
   },
   {
@@ -53,7 +54,8 @@ const PROBES: Probe[] = [
   {
     id: 'personal.artwork-alerts',
     path: '/api/identities/{wallet}/artwork-alerts',
-    each: { wallet: PROBE_WALLETS },
+    // Artwork alerts for one's own profile are refused.
+    each: { wallet: [PROBE_WALLETS[1]] },
     as: PROBE_CALLER
   },
   {
@@ -302,13 +304,42 @@ export const personalManifest: AreaManifest = {
     // The switch state: the rebuild writes it with settings open (not
     // frozen) and the latest import's order key, from the import's closing
     // entry in the log (restorePersonalSwitchState).
-    personal_records_state: { class: 'INDEX' },
+    personal_records_state: {
+      class: 'INDEX',
+      volatileColumns: [
+        {
+          column: 'updated_at',
+          reason: 'Row housekeeping; the API never returns it.'
+        }
+      ]
+    },
     signed_record_heads: { class: 'INDEX' },
     signed_record_log_entries: {
       class: 'EPHEMERAL',
       why: 'The record log queue: entries leave it once their segment is posted.'
     },
-    signed_record_log_segments: { class: 'INDEX' }
+    signed_record_log_segments: {
+      class: 'INDEX',
+      // A segment restored from the records wave keeps its head, not its
+      // file or its open and close times: the file is on IPFS and Arweave.
+      volatileColumns: [
+        {
+          column: 'content',
+          reason:
+            'A restored segment keeps no copy of its file; the file is on IPFS and Arweave, and the archiver reads it back from there.'
+        },
+        {
+          column: 'opened_at',
+          reason:
+            'A restored segment has no open time: the head drop does not carry it. No route returns it.'
+        },
+        {
+          column: 'closed_at',
+          reason:
+            'A restored segment has no close time: the head drop does not carry it. No route returns it.'
+        }
+      ]
+    }
   },
   seeds: [PERSONAL_SETTINGS_SEED],
   rebuilders: [PERSONAL_SETTINGS_REBUILD],

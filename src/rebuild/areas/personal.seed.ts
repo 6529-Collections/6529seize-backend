@@ -53,7 +53,11 @@ import { recordOwnerDirectory } from '@/personal-records/record-owner-directory'
 /** The wave and drop the probes name (personal.manifest.ts). */
 export const PERSONAL_PROBE_WAVE = '00000000-0000-4000-8000-000000000001';
 export const PERSONAL_PROBE_DROP = '00000000-0000-4000-8000-000000000002';
-export const PERSONAL_PROBE_DEVICE = 'rebuild-check-device-1';
+// Its own device id: another area's seed has devices of its own.
+export const PERSONAL_PROBE_DEVICE = 'rebuild-check-settings-device';
+// Each wave's description drop, as wave creation makes one.
+const PROBE_WAVE_DESCRIPTION = '00000000-0000-4000-8000-000000000003';
+const RECORDS_WAVE_DESCRIPTION = '00000000-0000-4000-8000-0000000000a2';
 
 // Fixed, so a second pass minutes later answers the same.
 const SEEDED_AT = 1_767_225_600_000;
@@ -91,12 +95,28 @@ async function insertRow(
   );
 }
 
-async function insertWave(id: string, createdBy: string): Promise<void> {
+async function insertWave(
+  id: string,
+  createdBy: string,
+  descriptionDropId: string
+): Promise<void> {
   const { serial_no: _serial, ...wave } = aWave(
-    { is_direct_message: false, created_by: createdBy, created_at: SEEDED_AT },
+    {
+      is_direct_message: false,
+      created_by: createdBy,
+      created_at: SEEDED_AT,
+      description_drop_id: descriptionDropId
+    },
     { id, name: id }
   );
   await insertRow(WAVES_TABLE, wave);
+  await insertDrop({
+    id: descriptionDropId,
+    waveId: id,
+    authorId: createdBy,
+    createdAt: SEEDED_AT,
+    content: 'A wave for the rebuild check.'
+  });
 }
 
 async function insertDrop(drop: {
@@ -359,7 +379,7 @@ export async function seedPersonalSettings(
     const profileId = probeProfileId(index + 1);
     await insertProfile(profileId, profileId, PROBE_WALLETS[index]);
   }
-  await insertWave(PERSONAL_PROBE_WAVE, other);
+  await insertWave(PERSONAL_PROBE_WAVE, other, PROBE_WAVE_DESCRIPTION);
   await insertDrop({
     id: PERSONAL_PROBE_DROP,
     waveId: PERSONAL_PROBE_WAVE,
@@ -367,7 +387,7 @@ export async function seedPersonalSettings(
     createdAt: SEEDED_AT,
     content: 'A drop the probe caller follows and bookmarks.'
   });
-  await insertWave(waveId, serviceProfileId);
+  await insertWave(waveId, serviceProfileId, RECORDS_WAVE_DESCRIPTION);
 
   await dbSupplier().executeNativeQueriesInTransaction((connection) =>
     seedSettings(me, other, serviceProfileId, { connection })
