@@ -54,15 +54,15 @@ export const NEXTGEN_START_BLOCK = {
 
 /**
  * Where NextGen discovery starts on an empty database: the core contract's
- * deploy block, or NEXTGEN_START_BLOCK when set. Only the rebuild check
+ * deploy block, or NEXTGEN_START_BLOCK_OVERRIDE when set. Only the rebuild check
  * sets it, for its local chain, which starts at block 0.
  */
 export function getNextgenStartBlock(network: NextgenNetwork): number {
-  const configured = process.env.NEXTGEN_START_BLOCK?.trim();
+  const configured = process.env.NEXTGEN_START_BLOCK_OVERRIDE?.trim();
   if (!configured) return NEXTGEN_START_BLOCK[network];
   const block = Number(configured);
   if (!/^\d+$/.test(configured) || !Number.isSafeInteger(block)) {
-    throw new Error('NEXTGEN_START_BLOCK must be a block number');
+    throw new Error('NEXTGEN_START_BLOCK_OVERRIDE must be a block number');
   }
   return block;
 }

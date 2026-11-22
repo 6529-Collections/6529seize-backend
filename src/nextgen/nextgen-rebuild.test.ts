@@ -91,19 +91,19 @@ describe('the NextGen start block', () => {
     process.env = env;
   });
 
-  it("is the core contract's deploy block unless NEXTGEN_START_BLOCK is set", () => {
+  it("is the core contract's deploy block unless NEXTGEN_START_BLOCK_OVERRIDE is set", () => {
     process.env = { ...env };
-    delete process.env.NEXTGEN_START_BLOCK;
+    delete process.env.NEXTGEN_START_BLOCK_OVERRIDE;
     expect(getNextgenStartBlock(Network.ETH_MAINNET)).toBe(19133749);
 
-    process.env = { ...env, NEXTGEN_START_BLOCK: '0' };
+    process.env = { ...env, NEXTGEN_START_BLOCK_OVERRIDE: '0' };
     expect(getNextgenStartBlock(Network.ETH_MAINNET)).toBe(0);
   });
 
   it.each(['-1', '1.5', 'latest'])('refuses %s', (value) => {
-    process.env = { ...env, NEXTGEN_START_BLOCK: value };
+    process.env = { ...env, NEXTGEN_START_BLOCK_OVERRIDE: value };
     expect(() => getNextgenStartBlock(Network.ETH_MAINNET)).toThrow(
-      'NEXTGEN_START_BLOCK must be a block number'
+      'NEXTGEN_START_BLOCK_OVERRIDE must be a block number'
     );
   });
 });

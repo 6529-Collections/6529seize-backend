@@ -108,7 +108,7 @@ describe('NextGen rebuilt from empty', () => {
       ...env,
       ETHEREUM_RPC_URL: cassette.url,
       ALCHEMY_API_KEY: 'cassette',
-      NEXTGEN_START_BLOCK: '0'
+      NEXTGEN_START_BLOCK_OVERRIDE: '0'
     };
     const fetch = global.fetch;
     jest
