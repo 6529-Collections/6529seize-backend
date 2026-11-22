@@ -246,7 +246,15 @@ describe('relayDropWrites', () => {
       await relayDropWrites.react(anInput(notify), 'drop-1', ':fire:');
       expect(
         jest.mocked(dropCreationService.createDrop).mock.calls[0][0]
-      ).toMatchObject({ newDropId: 'drop-new', notify });
+      ).toMatchObject({
+        newDropId: 'drop-new',
+        notify,
+        requestDailyActivityCredit: notify
+      });
+      // History wakes no help bot.
+      expect(
+        jest.mocked(helpBotTriggerService.handleCreatedDrop).mock.calls
+      ).toHaveLength(notify ? 1 : 0);
       expect(
         jest.mocked(dropCreationService.updateDrop).mock.calls[0][0]
       ).toMatchObject({ dropId: 'drop-1', notify });

@@ -164,7 +164,9 @@ export const relayDropWrites: RelayDropWrites = {
               authorId: input.profileId,
               representativeId: input.profileId,
               hideLinkPreview: newDrop.hide_link_preview,
-              requestDailyActivityCredit: true,
+              // History (before WAVES_DROP_INDEX_LIVE_FROM) earns no
+              // activity credit and wakes no help bot: it happened before.
+              requestDailyActivityCredit: input.notify !== false,
               newDropId: dropId,
               notify: input.notify
             },
@@ -180,6 +182,7 @@ export const relayDropWrites: RelayDropWrites = {
         }
         throw error;
       });
+    if (input.notify === false) return created.id;
     try {
       await helpBotTriggerService.handleCreatedDrop(
         {
