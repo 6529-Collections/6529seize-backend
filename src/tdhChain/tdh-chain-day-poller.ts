@@ -65,7 +65,9 @@ export interface PollerDeps {
  * - CHAIN, the last record WRITTEN or INGESTED with deferred keys that now
  *   fit the columns, and nothing newer: that day again.
  * A shadowed day is never written again when CHAIN mode starts: the site
- * already holds it, and writing it again would announce it twice.
+ * already holds it, and writing it again would announce it twice. A day the
+ * old path wrote over (`superseded`, a rollback) is never written again
+ * either: the next day comes from the chain.
  */
 export function planDay(
   last: TdhChainDayRow | null,
@@ -78,6 +80,7 @@ export function planDay(
     return newest - last.cycleDay > 1 ? newest : last.cycleDay + 1;
   }
   if (newest < last.cycleDay) return null;
+  if (last.superseded) return null;
   if (last.status === 'FAILED') return last.cycleDay;
   if (
     mode === 'CHAIN' &&

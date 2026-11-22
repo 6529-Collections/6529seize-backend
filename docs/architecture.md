@@ -174,8 +174,8 @@ every invocation, so a change takes effect without a redeploy.
   08:15 to 23:45) read the newest final day from the gateway and check its
   roots, counts, totals, clusters and cutoff block. They compute the site's
   TDH at the chain's cutoff block, grouped by the chain's clusters, and
-  compare it and the live tables with the chain's values exactly. The result goes to `tdh_chain_days`. No TDH
-  table is written.
+  compare it and the live tables with the chain's values exactly. The
+  result goes to `tdh_chain_days`. No TDH table is written.
 - `FEATURE_TDH_FROM_CHAIN`: the same, then the TDH tables are written with the
   chain's totals over the site's computation, ranked again. The wallet and
   consolidated tables, `tdh_blocks`, the identities sync marker and the day's
@@ -200,6 +200,13 @@ says which blocks came from the chain (`source`, `cycle_day`, `wallet_root`).
 When the old path writes a block the chain wrote (a rollback, or the
 delegations loop's rerun after one), the day's record is marked
 `superseded_at` in the same transaction and the block reads SITE again.
+
+Deploy order: `dbMigrationsLoop` with the full schema scope first. It
+creates `tdh_chain_days` and its columns, which the old path's TDH write
+updates and `/api/blocks` joins, so `tdhLoop`, `delegationsLoop` and `api`
+fail without them. Then `tdhLoop`, `delegationsLoop`, `tdhHistoryLoop` and
+`api`, with both flags off. Put `TDH_CHAIN_GATEWAY_URL` in the secret
+before turning a flag on.
 
 Rollback: turn `FEATURE_TDH_FROM_CHAIN` off. The next 00:01 `tdhLoop` run
 computes the day as before. To recompute today's day at once, invoke

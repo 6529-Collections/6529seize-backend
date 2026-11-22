@@ -59,6 +59,16 @@ describe('planDay', () => {
     expect(planDay(row(20781), 20781, 'CHAIN', 0)).toBeNull();
   });
 
+  it('never writes a day the old path wrote over, even with deferred keys that now fit', () => {
+    const superseded = row(20783, {
+      mode: 'CHAIN',
+      deferredKeys: ['k'.repeat(214)],
+      superseded: true
+    });
+    expect(planDay(superseded, 20783, 'CHAIN', 700)).toBeNull();
+    expect(planDay(superseded, 20784, 'CHAIN', 700)).toBe(20784);
+  });
+
   it('writes a day with deferred keys again once the columns are wide enough', () => {
     const deferred = row(20783, {
       mode: 'CHAIN',
