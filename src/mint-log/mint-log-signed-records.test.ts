@@ -1,17 +1,16 @@
-import {
-  encodeSignedRecordsHeader,
-  signRecordEvent
-} from '@/signed-records/record-event';
+import { encodeSignedRecordsHeader } from '@/signed-records/record-event';
 import { familyWave } from '@/signed-records/record-families';
 import { RecordKind } from '@/signed-records/record-kinds';
 import { checkLogEntry } from '@/signed-records/record-log/record-log-format';
 import {
+  appGrantFixture,
   bindingSource,
   grantSource,
-  VECTOR_GRANT,
-  VECTORS,
-  vectorDeviceKey
+  signedRecord,
+  VECTORS
 } from '@/signed-records/record-test-fixtures';
+import type { RecordGrantProof } from '@/signed-records/record-event';
+import type { VerifiedGrant } from '@/signed-records/record-verify';
 import {
   adminRecordBody,
   MINT_ADMIN_RECORD_TYPE,
@@ -23,7 +22,7 @@ import { MintLogRecorder } from './mint-log-recorder';
 import { signedRecordsPort } from './mint-log-signed-records';
 import { MINT_LOG_LANE } from './mint-log.types';
 
-const { author, authRef, deviceKey, principal } = VECTORS.inputs;
+const { principal } = VECTORS.inputs;
 
 const intent: MintIntent = {
   route: 'POST /distributions/:contract/:id/normalize',
@@ -31,35 +30,35 @@ const intent: MintIntent = {
   body: null
 };
 
-function adminRecord(body: object | null, wave = familyWave('ps', principal)) {
-  return signRecordEvent(
-    {
-      kind: RecordKind.RECORD,
-      wave,
-      refs: [MINT_ADMIN_RECORD_TYPE, 'request-1'],
-      body,
-      author,
-      deviceKey,
-      authRef,
-      seq: 1,
-      anchor: 1000,
-      claimedTime: 1795694700007
-    },
-    vectorDeviceKey()
-  );
-}
+// A real app grant for the vectors' device key, and its proof.
+let grant: VerifiedGrant;
+let proof: RecordGrantProof;
 
-const proofs = {
-  findGrantProofs: jest.fn(async (ids: readonly string[]) =>
-    ids.map((id) => ({ id, wallet: author }) as any)
-  )
-};
+beforeAll(async () => {
+  ({ grant, proof } = await appGrantFixture());
+});
+
+function adminRecord(body: object | null) {
+  return signedRecord(grant, {
+    kind: RecordKind.RECORD,
+    wave: familyWave('ps', principal),
+    refs: [MINT_ADMIN_RECORD_TYPE, 'request-1'],
+    body,
+    seq: 1,
+    anchor: 1000,
+    claimedTime: 1795694700007
+  });
+}
 
 function port(boundFrom = 0) {
   return signedRecordsPort({
-    grants: grantSource([VECTOR_GRANT]),
-    bindings: bindingSource([{ wallet: author, principal, from: boundFrom }]),
-    proofs
+    grants: grantSource([grant]),
+    bindings: bindingSource([
+      { wallet: grant.wallet, principal, from: boundFrom }
+    ]),
+    proofs: {
+      findGrantProofs: async (ids) => (ids.includes(proof.id) ? [proof] : [])
+    }
   });
 }
 
@@ -72,15 +71,13 @@ describe('mint admin records through the shared module', () => {
     if (!result.ok) throw new Error(result.detail);
     expect(result.record).toMatchObject({
       eventId: event.id,
-      author,
+      author: grant.wallet,
       refs: [MINT_ADMIN_RECORD_TYPE, 'request-1']
     });
     expect(
-      recordMismatch(result.record, 'dist.normalize', intent, author)
+      recordMismatch(result.record, 'dist.normalize', intent, grant.wallet)
     ).toBeNull();
-    await expect(records.grantProof(result.record)).resolves.toMatchObject({
-      id: authRef
-    });
+    await expect(records.grantProof(result.record)).resolves.toEqual(proof);
   });
 
   it('refuses a record whose author is not bound to the stream owner', async () => {
@@ -130,7 +127,7 @@ describe('mint admin records through the shared module', () => {
       {
         kind: 'dist.normalize',
         card: { contract: '0xabc', card_id: 100 },
-        actor: { type: 'admin', wallet: author, authority: 'test' },
+        actor: { type: 'admin', wallet: grant.wallet, authority: 'test' },
         intent,
         signedRecords: encodeSignedRecordsHeader([event])
       },
