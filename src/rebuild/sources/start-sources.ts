@@ -4,7 +4,7 @@ import { startAnvil } from '@/rebuild/sources/anvil';
 import { startCrpRelay } from '@/rebuild/sources/crp-relay';
 import { startFileServer } from '@/rebuild/sources/file-server';
 import { startHttpRecording } from '@/rebuild/sources/http-recording';
-import { RunningSource } from '@/rebuild/sources/running-source';
+import { redactUrl, RunningSource } from '@/rebuild/sources/running-source';
 import {
   SourceSpec,
   SourceSpecs,
@@ -12,11 +12,20 @@ import {
   UrlSource
 } from '@/rebuild/sources/source-spec';
 
+/**
+ * A live URL: its answers aren't recorded, so a later run can't replay
+ * them, and the proof can't count it.
+ */
 function live(name: UrlSource, url: string): RunningSource {
   return {
     name,
     url,
-    info: { url, mode: 'live', provenance: url, provisional: false },
+    info: {
+      url: redactUrl(url),
+      mode: 'live',
+      provenance: 'a live URL, not a recording',
+      provisional: true
+    },
     problems: () => [],
     stop: () => Promise.resolve()
   };

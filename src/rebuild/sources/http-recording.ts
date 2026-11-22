@@ -9,6 +9,7 @@ import {
   listenLoopback,
   readBody,
   readProvenance,
+  redactUrl,
   RunningSource,
   writeProvenance
 } from '@/rebuild/sources/running-source';
@@ -167,9 +168,11 @@ export async function startHttpRecording(options: {
 }): Promise<RunningSource> {
   const recording = loadRecording(options.dir);
   const unrecorded: string[] = [];
-  if (options.upstream) {
+  // Recording adds to the files; a recording someone marked as written by
+  // hand stays marked so, whatever this run adds to it.
+  if (options.upstream && readProvenance(options.dir)?.made_by !== 'hand') {
     writeProvenance(options.dir, {
-      made_by: `record of ${options.upstream}`,
+      made_by: `record of ${redactUrl(options.upstream)}`,
       recorded_at: new Date().toISOString()
     });
   }
@@ -226,7 +229,8 @@ export async function startHttpRecording(options: {
       url,
       mode: options.upstream ? 'record' : 'replay',
       provenance: provenance?.made_by ?? null,
-      provisional: isProvisional(provenance)
+      // Recording reaches a live URL this run; a later replay can count.
+      provisional: !!options.upstream || isProvisional(provenance)
     },
     problems: () =>
       unrecorded.length

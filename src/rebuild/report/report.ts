@@ -5,6 +5,7 @@ import { RegistryProblem } from '@/rebuild/registry-check';
 import { SourceViolation } from '@/rebuild/guard/source-guard';
 import { ProbeDifference } from '@/rebuild/probes/probe-runner';
 import { TableDiff } from '@/rebuild/snapshot/table-snapshot';
+import { redactUrl } from '@/rebuild/sources/running-source';
 
 export interface StepOutcome {
   readonly kind: 'schema' | 'seed' | 'rebuilder' | 'api';
@@ -155,10 +156,10 @@ function areaTable(areas: readonly AreaSummary[]): string[] {
 
 function sourceLines(sources: RunReport['sources']): string[] {
   return Object.entries(sources).map(([name, info]) => {
-    const where = info.url ? ` at ${info.url}` : '';
+    const where = info.url ? ` at ${redactUrl(info.url)}` : '';
     const from = info.provenance ? `, from ${info.provenance}` : '';
     const flag = info.provisional
-      ? " (provisional: not a devnet's recording)"
+      ? ' (provisional: a final run fails on it)'
       : '';
     return `- ${name}: ${info.mode}${where}${from}${flag}`;
   });

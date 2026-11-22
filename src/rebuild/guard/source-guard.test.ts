@@ -59,6 +59,22 @@ describe('source guard', () => {
     }
   });
 
+  it('refuses a connect call whose target it cannot read', () => {
+    const violations: SourceViolation[] = [];
+    const uninstall = installSourceGuard({
+      allowed: new Set(),
+      onViolation: (v) => violations.push(v)
+    });
+    try {
+      const socket = new net.Socket();
+      socket.on('error', () => undefined);
+      (socket.connect as unknown as (...args: unknown[]) => net.Socket)({});
+      expect(violations.map((v) => v.target)).toEqual(['an unreadable target']);
+    } finally {
+      uninstall();
+    }
+  });
+
   it('lets an allowed loopback connection through', async () => {
     const server = http.createServer((_req, res) => res.end('ok'));
     await new Promise<void>((resolve) =>

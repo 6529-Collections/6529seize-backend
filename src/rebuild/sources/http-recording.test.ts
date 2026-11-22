@@ -7,7 +7,13 @@ import {
   startHttpRecording,
   withRequestIds
 } from '@/rebuild/sources/http-recording';
-import { closeServer, listenLoopback } from '@/rebuild/sources/running-source';
+import {
+  closeServer,
+  listenLoopback,
+  readProvenance,
+  redactUrl,
+  writeProvenance
+} from '@/rebuild/sources/running-source';
 
 const rpc = (id: number, method: string) =>
   Buffer.from(JSON.stringify({ jsonrpc: '2.0', id, method, params: [] }));
@@ -107,5 +113,34 @@ describe('HTTP recording', () => {
     } finally {
       await replay.stop();
     }
+  });
+
+  it('counts a recording run as provisional and keeps a hand-written provenance', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rebuild-hand-'));
+    try {
+      writeProvenance(dir, { made_by: 'hand' });
+      const recorder = await startHttpRecording({
+        name: 'gateway',
+        dir,
+        upstream: 'http://192.0.2.1/v1?key=secret'
+      });
+      expect(recorder.info.provisional).toBe(true);
+      await recorder.stop();
+      expect(readProvenance(dir)).toEqual({ made_by: 'hand' });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('redactUrl', () => {
+  it('drops credentials, query values and key-like path segments', () => {
+    expect(
+      redactUrl(
+        'https://user:pw@eth.example/v2/abcdefghijklmnopqrstuvwxyz?apikey=k&a=1'
+      )
+    ).toBe('https://eth.example/v2/REDACTED?apikey=REDACTED&a=REDACTED');
+    expect(redactUrl('http://127.0.0.1:8545')).toBe('http://127.0.0.1:8545');
+    expect(redactUrl('not a url')).toBe('REDACTED');
   });
 });

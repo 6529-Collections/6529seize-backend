@@ -817,6 +817,12 @@ class RebuildRun {
         `${stepViolations.length} connections to sources outside the list (see Source violations)`
       );
     }
+    const unguarded = this.steps.filter((s) => !s.guarded).map((s) => s.id);
+    if (unguarded.length) {
+      (this.o.final ? this.failures : this.notes).push(
+        `${unguarded.length} command steps don't run Node, so the source guard can't watch them: ${unguarded.join(', ')}`
+      );
+    }
     const apiViolations = violations.length - stepViolations.length;
     if (apiViolations) {
       this.notes.push(

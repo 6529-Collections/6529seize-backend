@@ -40,6 +40,30 @@ export function writeProvenance(dir: string, provenance: Provenance): void {
   );
 }
 
+/**
+ * A URL fit for a report: no user or password, every query value and every
+ * long token-like path segment (an API key in `/v2/<key>`) replaced.
+ */
+export function redactUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    parsed.username = '';
+    parsed.password = '';
+    for (const key of Array.from(new Set(parsed.searchParams.keys()))) {
+      parsed.searchParams.set(key, 'REDACTED');
+    }
+    parsed.pathname = parsed.pathname
+      .split('/')
+      .map((part) => (/^[A-Za-z0-9_-]{20,}$/.test(part) ? 'REDACTED' : part))
+      .join('/');
+    const text = parsed.toString();
+    // URL adds a `/` to a bare origin; keep the URL as it was written.
+    return text.endsWith('/') && !url.endsWith('/') ? text.slice(0, -1) : text;
+  } catch {
+    return 'REDACTED';
+  }
+}
+
 /** A recording counts for the final proof unless it was written by hand. */
 export function isProvisional(provenance: Provenance | null): boolean {
   return !provenance || provenance.made_by === 'hand';

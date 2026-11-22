@@ -159,7 +159,7 @@ describe('rebuild report', () => {
       '| mint | 3 | 2 | 1 | 1 | 1 | 1 | 2 | 0 | 1 | 0 |'
     );
     expect(markdown).toContain(
-      "- relays: local at ws://127.0.0.1:9, from the harness relay (provisional: not a devnet's recording)"
+      '- relays: local at ws://127.0.0.1:9, from the harness relay (provisional: a final run fails on it)'
     );
     expect(markdown).toContain('- mint.team (mint) reads ens, PROVIDER');
     expect(markdown).toContain('- tdh (1): tdh_chain_days');

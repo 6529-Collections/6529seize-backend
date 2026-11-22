@@ -4,7 +4,6 @@ import * as http from 'node:http';
 import * as path from 'node:path';
 import {
   closeServer,
-  isProvisional,
   listenLoopback,
   readProvenance,
   RunningSource
@@ -355,7 +354,8 @@ export async function startCrpRelay(dir: string): Promise<RunningSource> {
       provenance:
         provenance?.made_by ??
         `the harness relay, ${store.size} events in ${dir}`,
-      provisional: isProvisional(provenance)
+      // The harness relay checks no signatures: never a final source.
+      provisional: true
     },
     problems: () =>
       errors.length

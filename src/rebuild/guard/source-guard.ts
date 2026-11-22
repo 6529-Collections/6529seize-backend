@@ -89,9 +89,12 @@ export function installSourceGuard(options: {
     this: net.Socket,
     ...args: unknown[]
   ) {
+    // A call whose target can't be read is refused too: fail closed.
     const target = connectTarget(args);
-    if (target && !isAllowedTarget(options.allowed, target)) {
-      const described = describeTarget(target);
+    if (!target || !isAllowedTarget(options.allowed, target)) {
+      const described = target
+        ? describeTarget(target)
+        : 'an unreadable target';
       options.onViolation({
         target: described,
         pid: process.pid,
