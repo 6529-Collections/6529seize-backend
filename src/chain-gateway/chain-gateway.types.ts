@@ -55,8 +55,14 @@ export interface ChainPage<T> {
 
 export interface ChainHead {
   readonly headHeight: number;
+  /**
+   * The finalized height reads pin to: the highest seen on this network,
+   * never going back when a node behind the others answers the status.
+   */
   readonly finalizedHeight: number;
-  /** The finalized block's slot start, Unix ms. */
+  /** The finalized height the node that answered the status is at. */
+  readonly nodeFinalizedHeight?: number;
+  /** The answering node's finalized block's slot start, Unix ms. */
   readonly finalizedTime: number;
   /** Heights `?height=` can still pin. */
   readonly pinnable: { readonly from: number; readonly to: number } | null;

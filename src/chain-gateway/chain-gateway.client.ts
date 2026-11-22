@@ -57,8 +57,9 @@ import {
  *   Retry-After). The node's `not_found` 404 is `null`. An answer that can't
  *   be read (a 404 without the node's refusal, no read stamp or data, a list
  *   that isn't one, a feed page that doesn't hold together, past 16 MiB)
- *   throws `bad_answer`; other refusals throw ChainGatewayError carrying the
- *   API's code (`height_gone`, `inadmissible`, ...).
+ *   throws `bad_answer`; a not_found of data the answering node doesn't
+ *   hold (another may) throws `not_held`; other refusals throw
+ *   ChainGatewayError carrying the API's code (`height_gone`, ...).
  * - Documents are fetched by CID from the gateway's document store and
  *   checked against their CID; those up to a profile document's size are
  *   cached.
@@ -585,15 +586,27 @@ function isReadStamp(value: unknown): value is ChainReadStamp {
 }
 
 /**
- * not_found answers of the node rather than of the data:
- * - a route an older release lacks;
- * - `/imported` on a node whose release carries no identities file.
- * The identity's `founder` depends on that file the same way: for an
- * imported identity the node takes it from the file it carries (reads.rs,
- * `founder`), so a node without it can name another wallet. That one is
- * for the API to settle; the client can't tell.
+ * not_found answers of the node rather than of the data, told apart only by
+ * their message (the node's texts, routes.rs): never null, never cached.
+ * The node should send codes of its own for these (such as `not_held`).
+ * - A route an older release lacks: `bad_answer`.
+ * - Data this node doesn't hold, which another node may: `not_held`. The
+ *   import's entry on a node whose release carries no identities file, a
+ *   membership day it didn't save or has no record of, a TDH day's lists
+ *   it doesn't keep, token rows it never computed.
+ * The identity's `founder` depends on the identities file the same way:
+ * for an imported identity the node takes it from the file it carries
+ * (reads.rs, `founder`), so a node without it can name another wallet.
+ * That one is for the API to settle; the client can't tell.
  */
-const NODE_NOT_FOUND = [/^no such route/i, /imports no identities file/i];
+const NO_SUCH_ROUTE = /^no such route/i;
+const NOT_HELD = [
+  /^this node's chain imports no identities file/i,
+  /^this node didn't save day \d+/i,
+  /^no MembershipDay record of day \d+ here/i,
+  /^this node holds no lists of TDH day \d+/i,
+  /^this node has no token rows/i
+];
 
 /** An identity whose level the node can't give yet (its TDH lists). */
 function lacksLevel(value: unknown): boolean {
@@ -963,17 +976,25 @@ export class ChainGatewayClient {
       if (!read || code !== 'not_found') {
         throw badAnswer(path, `a 404 that isn't the node's not_found`, 404);
       }
-      // Some not_found answers are of the node, not of the data: told apart
-      // only by their message, they are never null or cached. A distinct
-      // code from the node would be firmer than the message.
+      // Some not_found answers are of the node, not of the data (see
+      // NOT_HELD): never null or cached.
       const message = typeof error === 'string' ? '' : (error?.message ?? '');
-      const ofTheNode = NODE_NOT_FOUND.find((it) => it.test(message));
-      if (ofTheNode) {
+      if (NO_SUCH_ROUTE.test(message)) {
         throw badAnswer(
           path,
           `the node that answered can't say: ${message}`,
           404
         );
+      }
+      if (NOT_HELD.some((it) => it.test(message))) {
+        const notHeld = new ChainGatewayError(
+          `${path}: not_held: ${message}`,
+          404,
+          'not_held',
+          path
+        );
+        notHeld.read = read;
+        throw notHeld;
       }
       return { read, answer: null };
     }
@@ -1056,10 +1077,16 @@ export class ChainGatewayClient {
             this.caches?.answers.clear();
           }
           // Reads never pin below a finalized height already seen on this
-          // network (a node behind the others can answer the status).
+          // network (a node behind the others can answer the status), and
+          // the head says so: its finalized height never goes back.
           this.raiseFloor(value.network!, value.finalizedHeight);
-          this.head = { value, at: this.now() };
-          return value;
+          const steady: ChainHead = {
+            ...value,
+            finalizedHeight: this.pinOf(value),
+            nodeFinalizedHeight: value.finalizedHeight
+          };
+          this.head = { value: steady, at: this.now() };
+          return steady;
         } finally {
           this.headInFlight = null;
         }
@@ -1118,7 +1145,7 @@ export class ChainGatewayClient {
       return (await this.toAnswer<T>(path, status, json)).answer;
     }
     if (opts.height !== undefined) {
-      return await this.pinnedRead<T>(path, query, opts.height);
+      return await this.pinnedUntilHeld<T>(path, query, opts.height);
     }
     const head = await this.getHead();
     try {
@@ -1332,7 +1359,12 @@ export class ChainGatewayClient {
     );
   }
 
-  /** Wallet to identity (null: unbound), 100 wallets a call, one height. */
+  /**
+   * Wallet to identity (null: unbound), 100 wallets a call. Every chunk is
+   * read at one height, except with `at: 'head'`: each chunk then reads the
+   * head as of its call (the node pins no head), so chunks can differ by a
+   * block.
+   */
   async getIdentitiesByWallets(
     wallets: string[],
     opts: ChainReadOptions = {}
@@ -1444,8 +1476,8 @@ export class ChainGatewayClient {
   }
 
   /**
-   * Every binding change of a wallet the gateway's feed holds, the height
-   * ranges it is exact within, and the height of the read.
+   * A wallet's binding changes, exact within the returned range (the first
+   * the feed holds, to the read height; see below), and the read height.
    */
   async getMembershipWalletHistory(
     wallet: string,
@@ -1468,17 +1500,28 @@ export class ChainGatewayClient {
         `the answer is for another wallet or has no read height`
       );
     }
-    // The node reads the history from its feed whatever the height asked:
-    // nothing past the read height is kept.
+    // Only the first range the feed holds is exact, and only to the read
+    // height (the node reads the history from its feed whatever the height
+    // asked). The node builds a history from feed blocks alone: after a gap
+    // it starts again from the membership without writing it into the
+    // history (feed.rs, Start), and a change back to the principal it last
+    // noted before the gap is skipped (feed.rs, note). So a later range can
+    // hold wrong values: it is dropped, with every change past the first.
+    // For the API: an `exactFrom`, or Start writing the bindings it loads
+    // into the history, would make later ranges usable.
     const height = readHeight as number;
+    const first = heightRanges(answer.data.ranges, path)[0];
+    const ranges: [number, number][] =
+      first && first[0] <= height
+        ? [[first[0], Math.min(first[1], height)]]
+        : [];
+    const end = ranges.length ? ranges[0][1] : -1;
     return {
       wallet: lower(wallet),
       changes: bindingChanges(answer.data.changes, path).filter(
-        (it) => it.height <= height
+        (it) => it.height <= end
       ),
-      ranges: heightRanges(answer.data.ranges, path)
-        .filter(([from]) => from <= height)
-        .map(([from, to]): [number, number] => [from, Math.min(to, height)]),
+      ranges,
       readHeight: height
     };
   }
@@ -1649,6 +1692,16 @@ export class ChainGatewayClient {
     // The feed is cut at the finalized height the answer is stamped with.
     if (Number.isSafeInteger(through) && through > answer.read.height) {
       throw badAnswer(path, `a page through ${through}, past its read height`);
+    }
+    const past = Array.isArray(data.blocks)
+      ? (data.blocks as { height?: unknown }[]).some(
+          (block) =>
+            typeof block?.height === 'number' &&
+            block.height > answer.read.height
+        )
+      : false;
+    if (past) {
+      throw badAnswer(path, 'a block past the read height');
     }
     const blocks = checkFeedPage(
       path,
