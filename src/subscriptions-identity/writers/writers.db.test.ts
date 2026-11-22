@@ -676,6 +676,7 @@ describeWithSeed('identity writers after the switch', [], () => {
       source: journalSource,
       fetch: fetchPublished,
       goLive: true,
+      lostDatabase: true,
       ethereum
     });
     expect(result).toEqual(
@@ -707,6 +708,7 @@ describeWithSeed('identity writers after the switch', [], () => {
         source: journalSource,
         fetch: fetchPublished,
         goLive: true,
+        lostDatabase: true,
         ethereum
       })
     ).rejects.toThrow(
@@ -727,6 +729,7 @@ describeWithSeed('identity writers after the switch', [], () => {
         source: journalSource,
         fetch: fetchPublished,
         goLive: true,
+        lostDatabase: true,
         ethereum
       })
     ).rejects.toThrow('still holds rows');
@@ -736,6 +739,7 @@ describeWithSeed('identity writers after the switch', [], () => {
       source: journalSource,
       fetch: fetchPublished,
       goLive: true,
+      lostDatabase: true,
       ethereum
     });
     expect(result.switched).toBe(true);
@@ -793,6 +797,33 @@ describeWithSeed('identity writers after the switch', [], () => {
     expect(
       await finalIds(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key')
     ).toHaveLength(0);
+  });
+
+  it('refuses to go live from a rebuild while the legacy tables hold rows, unless told the database is lost', async () => {
+    await seedLegacy();
+    expect((await goLiveForTest()).switched).toBe(true);
+    await updateSubscriptions();
+    const ethereum = await ethereumAsRecorded();
+    await loseIdentityTables();
+    await expect(
+      rebuildIdentityTables({
+        source: journalSource,
+        fetch: fetchPublished,
+        goLive: true,
+        ethereum
+      })
+    ).rejects.toThrow('The legacy subscription tables hold rows');
+    expect(
+      await finalIds(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key')
+    ).toHaveLength(0);
+    const result = await rebuildIdentityTables({
+      source: journalSource,
+      fetch: fetchPublished,
+      goLive: true,
+      lostDatabase: true,
+      ethereum
+    });
+    expect(result.switched).toBe(true);
   });
 
   it('rebuilds a top-up with the identity it was credited to, after the wallet leaves', async () => {
@@ -886,7 +917,8 @@ describeWithSeed('identity writers after the switch', [], () => {
       rebuildIdentityTables({
         source: journalSource,
         fetch: fetchPublished,
-        goLive: true
+        goLive: true,
+        lostDatabase: true
       })
     ).rejects.toThrow('checked against Ethereum');
     await expect(
@@ -894,6 +926,7 @@ describeWithSeed('identity writers after the switch', [], () => {
         source: journalSource,
         fetch: fetchPublished,
         goLive: true,
+        lostDatabase: true,
         ethereum
       })
     ).rejects.toThrow(/differ/);

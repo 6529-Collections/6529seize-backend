@@ -53,8 +53,10 @@ import {
  *            went live and the journal in the record log (or, rehearsing,
  *            from given files); --go-live is for a lost database: it
  *            refuses unless the identity tables and their state row are
- *            empty, and switches if the checkpoints match. After a suspend,
- *            switch with go-live, which cuts from the legacy tables
+ *            empty, and, while the legacy tables hold rows, unless
+ *            --lost-database is given; it switches if the checkpoints
+ *            match. After a suspend, switch with go-live, which cuts from
+ *            the legacy tables
  *   verify-journal  check the journal of an opening against the money
  *            rules, from the opening file's balances on, and its top-ups
  *            and mints against Ethereum (rebuild runs the same check
@@ -75,7 +77,7 @@ const USAGE = `usage:
   load    --opening <json> --history <json>
   compare --opening <json> --history <json> [--identities <json>] --out <json>
   go-live --out-dir <dir> --signed-writes-live [--accept-report-diffs]
-  rebuild [--opening <json> --history <json>] [--go-live | --no-ethereum]
+  rebuild [--opening <json> --history <json>] [--go-live [--lost-database] | --no-ethereum]
   verify-journal [--opening-sha256 <sha256> | --opening <json> --history <json>] [--no-ethereum] [--out <json>]
   status
   suspend
@@ -237,6 +239,7 @@ async function rebuildCommand(args: Args): Promise<number> {
     source: boundJournalSource(),
     opening: rehearsal,
     goLive,
+    lostDatabase: args['lost-database'] === true,
     ethereum: await ethereumFrom(args)
   });
   process.stdout.write(`${JSON.stringify(result)}\n`);

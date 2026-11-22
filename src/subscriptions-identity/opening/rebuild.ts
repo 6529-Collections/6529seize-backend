@@ -1,4 +1,5 @@
 import {
+  SUBSCRIPTIONS_BALANCES_TABLE,
   SUBSCRIPTIONS_ID_CURSORS_TABLE,
   SUBSCRIPTIONS_ID_STATE_TABLE
 } from '@/constants';
@@ -438,6 +439,14 @@ function writesOf(
   return { writes, skipped, partial };
 }
 
+/** Whether the legacy subscription balances table holds any row. */
+async function legacyTablesHoldRows(): Promise<boolean> {
+  const [row] = await sqlExecutor.execute<{ one: number }>(
+    `SELECT 1 AS one FROM ${SUBSCRIPTIONS_BALANCES_TABLE} LIMIT 1`
+  );
+  return !!row;
+}
+
 /**
  * Why the identity tables are not lost, or null when they and their state
  * row are empty.
@@ -503,7 +512,9 @@ async function liveCounter(): Promise<number | null> {
  * tables are left suspended.
  *
  * `goLive` is for a lost database only: it refuses unless the identity
- * tables and their state row are empty when the rebuild starts. While the
+ * tables and their state row are empty when the rebuild starts, and, while
+ * the legacy subscription tables still hold rows (go-live could cut a new
+ * opening from them), unless `lostDatabase` says to rebuild anyway. While the
  * identity tables are suspended, or before the switch, writes land in the
  * legacy tables with no journal, so a rebuild from the journal would miss
  * them; after a suspend, only go-live, which cuts from the legacy tables,
@@ -515,6 +526,11 @@ export async function rebuildIdentityTables(params: {
   /** A rehearsal: these files instead of the last switched opening. */
   readonly opening?: ParsedOpening;
   readonly goLive?: boolean;
+  /**
+   * With `goLive`: rebuild from the journal even though the legacy
+   * subscription tables hold rows (the CLI's --lost-database).
+   */
+  readonly lostDatabase?: boolean;
   /** Checks the journal's top-ups and mints against Ethereum (network calls). */
   readonly ethereum?: EthereumFacts;
   readonly now?: () => number;
@@ -531,6 +547,11 @@ export async function rebuildIdentityTables(params: {
       throw new Error(
         `A rebuild goes live only over lost identity tables, and ${held}. ` +
           'Writes made while they were suspended, or before the switch, are in the legacy tables and not in the journal; switch with go-live, which cuts from the legacy tables.'
+      );
+    }
+    if (!params.lostDatabase && (await legacyTablesHoldRows())) {
+      throw new Error(
+        'The legacy subscription tables hold rows, so go-live can cut a new opening from them. Rebuild from the journal to go live only with --lost-database.'
       );
     }
   }
