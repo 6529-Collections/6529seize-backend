@@ -1,0 +1,235 @@
+import * as fs from 'node:fs';
+import * as http from 'node:http';
+import * as path from 'node:path';
+import {
+  exchangeKey,
+  RecordedExchange
+} from '@/rebuild/sources/http-recording';
+import {
+  closeServer,
+  listenLoopback,
+  readBody,
+  writeProvenance
+} from '@/rebuild/sources/running-source';
+import {
+  gatewayChainIndexSource,
+  indexChainTo
+} from '@/rebuild/steps/waves-chain-index.steps';
+import { FakeIndexDb } from '@/tests/fixtures/waves-chain-index.fixture';
+
+/**
+ * Records, from a devnet's API-mode node, every gateway answer the waves
+ * rebuild reads, so a run replays them (`--source gateway=replay:<dir>`).
+ *
+ * The rebuild reads at two heights: the one the waves import completed at
+ * and the mark. A node keeps only its last few heights, so the capture
+ * reads the import's height as soon as the import is final (phase 1), then
+ * waits until the native writes are final (phase 2): the node's finalized
+ * height then is the mark, read once and kept as the recording's
+ * /v1/status. Phase 2 reads from empty, as a rebuild does: what phase 1
+ * recorded is answered from the recording, the rest from the node.
+ *
+ * The index runs in memory: the capture needs the node, Node.js and this
+ * repository's code, not MySQL.
+ */
+export interface GatewayCaptureOptions {
+  /** The API-mode node's base URL (loopback on the devnet). */
+  readonly gateway: string;
+  readonly dir: string;
+  /** How the recording was made, for PROVENANCE.json. */
+  readonly madeBy: string;
+  /** Resolves when the native writes are final: phase 2 starts. */
+  readonly waitForMark: () => Promise<void>;
+  readonly pollMs?: number;
+  readonly log?: (message: string) => void;
+}
+
+export interface GatewayCaptureResult {
+  readonly doneHeight: number;
+  readonly markHeight: number;
+  readonly exchanges: number;
+}
+
+const RECORDING_FILE = 'recording.jsonl';
+const STATUS_PATH = '/v1/status';
+
+/** Forwards to the node and keeps what it answered, by the harness's key. */
+async function startRecorder(upstream: string, dir: string) {
+  const file = path.join(dir, RECORDING_FILE);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(file, '');
+  const kept = new Map<string, RecordedExchange>();
+  const state = { keepStatus: false };
+  const server = http.createServer(async (request, response) => {
+    try {
+      const body = await readBody(request);
+      const method = request.method ?? 'GET';
+      const url = request.url ?? '/';
+      const key = exchangeKey(method, url, body);
+      const isStatus = url.split('?')[0] === STATUS_PATH;
+      let exchange = kept.get(key);
+      if (!exchange) {
+        const answer = await fetch(`${upstream.replace(/\/$/, '')}${url}`, {
+          method,
+          headers: { accept: 'application/json' },
+          body: body.length ? body : undefined
+        });
+        exchange = {
+          key,
+          method,
+          path: url,
+          status: answer.status,
+          contentType: answer.headers.get('content-type'),
+          body: await answer.text(),
+          encoding: 'utf8'
+        };
+        // The status is kept once, at the mark: before it, the node's
+        // finalized height is not the mark's.
+        if (!isStatus || state.keepStatus) {
+          kept.set(key, exchange);
+          fs.appendFileSync(file, `${JSON.stringify(exchange)}\n`);
+        }
+      }
+      response.writeHead(exchange.status, {
+        'content-type': exchange.contentType ?? 'application/json'
+      });
+      response.end(exchange.body);
+    } catch (error) {
+      response.writeHead(502, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ error: String(error) }));
+    }
+  });
+  const { url } = await listenLoopback(server);
+  return { url, state, kept, stop: () => closeServer(server) };
+}
+
+async function json(url: string): Promise<Record<string, unknown> | null> {
+  const answer = await fetch(url, { headers: { accept: 'application/json' } });
+  return answer.ok ? ((await answer.json()) as Record<string, unknown>) : null;
+}
+
+/**
+ * The waves import's completion height, once the node has finalized it:
+ * the import's state and the status read unpinned (the node's latest
+ * finalized height), every `pollMs`.
+ */
+async function waitForImport(
+  gateway: string,
+  pollMs: number,
+  log: (message: string) => void
+): Promise<number> {
+  const base = gateway.replace(/\/$/, '');
+  for (;;) {
+    const status = (await json(`${base}${STATUS_PATH}`))?.data as
+      | { finalized?: { height?: number } }
+      | undefined;
+    const finalized = Number(status?.finalized?.height);
+    const imported = (await json(`${base}/v1/waves/import`))?.data as
+      | { completed?: boolean; doneHeight?: number }
+      | undefined;
+    const done = Number(imported?.doneHeight);
+    if (
+      imported?.completed === true &&
+      Number.isSafeInteger(done) &&
+      Number.isSafeInteger(finalized) &&
+      finalized >= done
+    ) {
+      log(
+        `[GATEWAY CAPTURE] waves import done at ${done}, finalized ${finalized}`
+      );
+      return done;
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+}
+
+export async function captureWavesGateway(
+  options: GatewayCaptureOptions
+): Promise<GatewayCaptureResult> {
+  const log = options.log ?? (() => undefined);
+  const recorder = await startRecorder(options.gateway, options.dir);
+  try {
+    const doneHeight = await waitForImport(
+      options.gateway,
+      options.pollMs ?? 2000,
+      log
+    );
+    // Phase 1: everything at the import's height, while the node holds it.
+    await indexChainTo(
+      gatewayChainIndexSource(recorder.url),
+      new FakeIndexDb().asDb(),
+      doneHeight
+    );
+    log(`[GATEWAY CAPTURE] phase 1 done: ${recorder.kept.size} answers`);
+    await options.waitForMark();
+    // Phase 2: as a rebuild reads, from empty, to the node's finalized
+    // height now (the mark), kept as the recording's status.
+    recorder.state.keepStatus = true;
+    const heights = await indexChainTo(
+      gatewayChainIndexSource(recorder.url),
+      new FakeIndexDb().asDb(),
+      null
+    );
+    const markHeight = heights[heights.length - 1];
+    if (heights[0] !== doneHeight || markHeight === undefined) {
+      throw new Error(
+        `The rebuild's heights ${heights.join(', ')} don't start at the import's ${doneHeight}`
+      );
+    }
+    writeProvenance(options.dir, {
+      made_by: options.madeBy,
+      note: `The waves import completed at height ${doneHeight}; the mark is height ${markHeight}.`,
+      recorded_at: new Date().toISOString()
+    });
+    log(
+      `[GATEWAY CAPTURE] done: ${recorder.kept.size} answers, heights ${doneHeight} and ${markHeight}`
+    );
+    return { doneHeight, markHeight, exchanges: recorder.kept.size };
+  } finally {
+    await recorder.stop();
+  }
+}
+
+function argOf(args: string[], name: string): string | undefined {
+  const at = args.indexOf(name);
+  return at >= 0 ? args[at + 1] : undefined;
+}
+
+// `... gateway-capture.ts --gateway <url> --dir <dir> --made-by <text>`:
+// phase 2 starts when <dir>/MARK exists (create it once the native writes
+// are final).
+if (require.main === module) {
+  const args = process.argv.slice(2);
+  const gateway = argOf(args, '--gateway');
+  const dir = argOf(args, '--dir');
+  const madeBy = argOf(args, '--made-by');
+  if (!gateway || !dir || !madeBy) {
+    // eslint-disable-next-line no-console
+    console.error(
+      'Usage: gateway-capture --gateway <url> --dir <dir> --made-by <text>'
+    );
+    process.exit(2);
+  }
+  const markFile = path.join(dir, 'MARK');
+  // eslint-disable-next-line no-console
+  const log = (message: string) => console.log(message);
+  captureWavesGateway({
+    gateway,
+    dir,
+    madeBy,
+    log,
+    waitForMark: async () => {
+      log(`[GATEWAY CAPTURE] waiting for ${markFile}`);
+      while (!fs.existsSync(markFile)) {
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+      }
+      fs.rmSync(markFile);
+    }
+  })
+    .then(() => process.exit(0))
+    .catch((error) => {
+      // eslint-disable-next-line no-console
+      console.error(error);
+      process.exit(1);
+    });
+}
