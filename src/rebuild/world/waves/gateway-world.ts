@@ -16,9 +16,9 @@ import { WAVES_WORLD_IDS } from './world-ids';
  * The waves area's hand-written chain for the rebuild check: a gateway in
  * small, serving the waves read routes the chain index uses from the chain
  * index's test chain (src/tests/fixtures/waves-chain-index.fixture.ts), at
- * every height. Made-up ids only. A run records it once (`record:<dir>@<url>`) and replays the
- * recording; the report marks it provisional until a devnet recording
- * replaces it.
+ * every height. Made-up ids only. The tests use it (the chain index step,
+ * the gateway capture); the runs replay a devnet's recording
+ * (src/rebuild/world/waves/gateway), made with gateway-capture.
  *
  * Heights: the imported waves are written first and the waves import
  * completes at `doneHeight`; native writes follow (votes, a ballot, a

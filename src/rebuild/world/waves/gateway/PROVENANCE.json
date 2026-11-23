@@ -1,4 +1,5 @@
 {
-  "made_by": "hand",
-  "note": "Recorded from the waves gateway world (src/rebuild/world/waves/gateway-world.ts): made-up ids, the chain index's test chain served over the gateway's read routes. Replaced by a devnet recording for the final run."
+  "made_by": "a 6529 chain devnet's API-mode node at rule version 7: a made-up waves import (waves, groups, decisions, entries, votes, a poll), then native votes, a ballot, a wave rating, a group replaced, a role, settled results and a released vote, all final; read from the import's done height to a later finalized height",
+  "note": "The waves import completed at height 2160; the mark is height 2798. Captured with the one-file gateway capture bundle of sha256 68799c669050591bd4a3acc2eb3f0ac78052137979e0fdfc98938fc97a5619e6.",
+  "recorded_at": "2026-11-23T05:44:05.056Z"
 }
