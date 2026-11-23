@@ -183,6 +183,31 @@ const MINT_STATS_REBUILD: RebuildStep = {
   timeoutMinutes: 10
 };
 
+/**
+ * The announcement loop's done markers, one row per card and announcement:
+ * written in the same transaction as the deployer's announcement drop, so
+ * they follow from the announcement drops. A loss would repeat a public
+ * announcement. Planned until the waves drop index is rebuilt; the step then
+ * derives the rows from the deployer's drops in the announcement waves.
+ */
+const MINT_ANNOUNCEMENTS_REBUILD: RebuildStep = {
+  id: 'mint.announcements',
+  run: {
+    module: 'src/mintAnnouncementsLoop/announcements-done.rebuild',
+    exportName: 'rebuildAnnouncementsDone'
+  },
+  writes: [
+    'mint_announcements_done_meme_tokens',
+    'mint_end_announcements_done_meme_tokens',
+    'public_phase_ending_soon_announcements_done_meme_tokens'
+  ],
+  reads: ['drops', 'drops_parts', 'nfts'],
+  after: ['holdings.ethereum'],
+  sources: ['repo'],
+  timeoutMinutes: 10,
+  origin: 'planned'
+};
+
 /** The mint answers: stats, distributions, claims and rememes. */
 const PROBES: Probe[] = [
   { id: 'mint.stats', path: '/api/memes-mint-stats?page_size=20' },
@@ -322,6 +347,10 @@ const PROBES: Probe[] = [
   }
 ];
 
+/** Why a card's winning drop is neither seeded nor probed yet. */
+const NO_MAIN_STAGE_WINNER =
+  'Needs a Main Stage winner drop; the waves fixture has none yet.';
+
 /**
  * Distributions, claims, NextGen allowlists, team, collaborations,
  * announcements, royalty uploads and rememes. Artists and the Meme Lab
@@ -448,11 +477,22 @@ export const mintManifest: AreaManifest = {
   rebuilders: [
     saveTeamFromFile('mint.team'),
     MINT_LOG_REBUILD,
-    MINT_STATS_REBUILD
+    MINT_STATS_REBUILD,
+    MINT_ANNOUNCEMENTS_REBUILD
   ],
   probes: PROBES,
   waivers: {
+    routes: [
+      {
+        target: 'GET /api/meme-cards/{meme_card_id}/drop',
+        reason: NO_MAIN_STAGE_WINNER
+      }
+    ],
+    unseededTables: [
+      { target: 'meme_card_drop_mappings', reason: NO_MAIN_STAGE_WINNER }
+    ],
     unprobedTables: [
+      { target: 'meme_card_drop_mappings', reason: NO_MAIN_STAGE_WINNER },
       {
         target: 'team',
         reason:
