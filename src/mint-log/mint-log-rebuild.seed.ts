@@ -46,6 +46,7 @@ import { distributionCursorBlock } from './mint-log-inputs';
 import { mintCard } from './mint-log-parts';
 import { logPublicationReceipt } from './mint-log-receipts';
 import { getMintLogPorts } from './mint-log-ports';
+import { seedCollaboration } from './mint-log-rebuild.seed-collab';
 import {
   insertDrop,
   insertWave,
@@ -71,7 +72,9 @@ import {
  * 3. logged writes, each wrapped by the mint log as a live write is: card
  *    1's photos and a second claim action, card 2 whole, a rememe on
  *    0x..03, an upload of each kind, NextGen collection 1's phase and
- *    collection 2's burn phase and burn registration;
+ *    collection 2's burn phase and burn registration, and a Main Stage
+ *    artwork's collaboration invitation and its acceptance
+ *    (mint-log-rebuild.seed-collab.ts);
  * 4. the record log's queue closed into a segment, as the record log loop
  *    closes it: the file in the run's seed files, its head drop in the
  *    records wave, where the mint rebuild reads the entries back;
@@ -553,6 +556,7 @@ export async function seedMintProbes(
   await seedRememe(REMEME_CONTRACT, 'Probe rememes', seedWrite);
   await seedUploads();
   await seedNextgen();
+  await seedCollaboration();
 
   await closeRecordLog(dir, env);
 

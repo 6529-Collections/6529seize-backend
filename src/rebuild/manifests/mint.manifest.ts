@@ -1,4 +1,8 @@
 import { createHash } from 'node:crypto';
+import {
+  PROBE_COLLAB_DROP,
+  PROBE_MAIN_STAGE_WAVE
+} from '@/mint-log/mint-log-rebuild.ids';
 import { AreaManifest, Probe, RebuildStep } from '@/rebuild/manifest.types';
 import {
   PROBE_CALLER,
@@ -74,8 +78,8 @@ const MINT_LOG_TABLES = [
  * upload before the log; the genesis (files in the run's seed files, entries
  * in the record log); logged writes through the minting writers with the
  * area's flags on (card 1's photos and a claim action, card 2, a rememe, an
- * upload of each kind, NextGen collections 1 and 2); the record log
- * closed into a segment in the records wave;
+ * upload of each kind, NextGen collections 1 and 2, a Main Stage
+ * collaboration); the record log closed into a segment in the records wave;
  * then mint stats and the minted counts from the NFT and transactions loops.
  */
 const MINT_PROBES_SEED: RebuildStep = {
@@ -90,8 +94,10 @@ const MINT_PROBES_SEED: RebuildStep = {
     'signed_record_log_entries',
     'signed_record_log_segments',
     // The records service (identity, profile, records wave) when it is
-    // missing, as personal's seed writes it, and the records wave's head
-    // drops with their author's follow.
+    // missing, as personal's seed writes it; the Main Stage wave, the
+    // collaboration's artwork and the records wave's head drops, with what
+    // creating them writes (follows, the creator's group); and the
+    // collaboration's notifications.
     'identities',
     'address_consolidation_keys',
     'profiles',
@@ -99,7 +105,8 @@ const MINT_PROBES_SEED: RebuildStep = {
     'drops',
     'drops_parts',
     'identity_subscriptions',
-    'wave_group_notification_subscriptions'
+    'wave_group_notification_subscriptions',
+    'identity_notifications'
   ],
   reads: ['nfts', 'transactions', 'subscriptions_redeemed', 'drops_metadatas'],
   // The holdings fixture's mints first: the mint stats and the minted
@@ -290,6 +297,11 @@ const PROBES: Probe[] = [
     each: { id: PROBE_MEME_IDS },
     as: PROBE_CALLER
   },
+  {
+    id: 'mint.collaboration',
+    path: `/api/drops/${PROBE_COLLAB_DROP}/collaborations`,
+    as: PROBE_CALLER
+  },
   { id: 'mint.rememes-uploads', path: '/api/rememes_uploads' },
   { id: 'mint.royalties-uploads', path: '/api/royalties/uploads' },
   { id: 'mint.nextgen-phases', path: '/api/nextgen/allowlist_phases' },
@@ -321,6 +333,8 @@ export const mintManifest: AreaManifest = {
   // the chain's decision ids.
   flags: {
     ...FIXTURE_RECORDS_FLAGS,
+    // The seed's Main Stage wave, where collaborations are invited.
+    MAIN_STAGE_WAVE_ID: PROBE_MAIN_STAGE_WAVE,
     FEATURE_MINT_LOG_SHADOW: 'true',
     FEATURE_MINT_LOG_PRIMARY: 'true',
     FEATURE_MINT_LOG_REPLAY_CHECK: 'true',
