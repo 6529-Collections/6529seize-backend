@@ -577,6 +577,24 @@ class RebuildRun {
   }
 
   /**
+   * For each kept table that rebuilders running here write by partition,
+   * those writers' partitions. A table with a writer of the whole table
+   * running here is never kept beside a partition writer: the registry
+   * refuses the pair.
+   */
+  private runningPartitionsOf(
+    kept: readonly string[]
+  ): Map<string, Partitions> {
+    const keptSet = new Set(kept);
+    const running = this.partitionedTables(
+      this.scopeManifests
+        .flatMap((m) => m.rebuilders)
+        .filter((step) => this.stepRunsHere(step))
+    );
+    return new Map(Array.from(running).filter(([table]) => keptSet.has(table)));
+  }
+
+  /**
    * The partitions of tables every writer writes in part: the column and
    * each writer's values. Tables with a whole writer are left out (the
    * registry refuses them beside a partition).
@@ -943,20 +961,31 @@ class RebuildRun {
       await admin.truncate(MAIN_DB, kept);
       for (const table of kept) await admin.copyRows(KEPT_DB, MAIN_DB, table);
     }
+    // A table kept because a skipped rebuilder writes part of it keeps
+    // only the parts no rebuilder running here writes: the copy put every
+    // row back, so the running writers' partitions are emptied for them to
+    // rebuild.
+    const running = this.runningPartitionsOf(kept);
+    for (const [table, { columns, values }] of Array.from(running)) {
+      await admin.deletePartition(MAIN_DB, table, columns, values);
+    }
     const keptSet = new Set(kept);
     const entries = this.entries();
     const mustBeEmpty = this.o.area
       ? this.rebuiltTables
-      : this.live
-          .filter(
-            (t) =>
-              t.type === 'BASE TABLE' &&
-              !keptSet.has(t.name) &&
-              entries.get(t.name)?.entry.class === 'INDEX'
-          )
-          .map((t) => t.name);
+      : [
+          ...this.live
+            .filter(
+              (t) =>
+                t.type === 'BASE TABLE' &&
+                !keptSet.has(t.name) &&
+                entries.get(t.name)?.entry.class === 'INDEX'
+            )
+            .map((t) => t.name),
+          ...Array.from(running.keys())
+        ];
     for (const table of mustBeEmpty) {
-      const own = ownPartitions.get(table);
+      const own = running.get(table) ?? ownPartitions.get(table);
       const rows = own
         ? await admin.partitionRowCount(
             MAIN_DB,

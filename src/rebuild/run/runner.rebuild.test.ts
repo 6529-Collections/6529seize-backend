@@ -40,6 +40,10 @@ function run(
     final?: boolean;
     /** Rebuilders other areas declare (not run in this area's run). */
     others?: Readonly<Record<string, RebuildStep[]>>;
+    /** More rebuilders of the area, after `rebuilder`. */
+    more?: RebuildStep[];
+    /** A full run of every area, instead of the area's run. */
+    full?: boolean;
   }
 ) {
   // Only the self-check's own steps and probe: the areas' steps and probes
@@ -50,7 +54,7 @@ function run(
       ? {
           ...manifest,
           seeds: [parts.seed],
-          rebuilders: [parts.rebuilder],
+          rebuilders: [parts.rebuilder, ...(parts.more ?? [])],
           probes: parts.probes ?? []
         }
       : {
@@ -64,7 +68,7 @@ function run(
     repoRoot: path.resolve(__dirname, '..', '..', '..'),
     home: HOME,
     manifests,
-    area,
+    area: parts.full ? null : area,
     mark: 'head',
     final: parts.final ?? false,
     mysqlPort: PORT,
@@ -175,19 +179,20 @@ describe('rebuild check, end to end', () => {
     );
   });
 
+  const partition = (collection: string) => ({
+    table: 'team',
+    partition: {
+      columns: ['collection'],
+      values: [[collection]],
+      reason: `the ${collection} rows`
+    }
+  });
+  const memes: RebuildStep = {
+    ...step('self-check.memes', 'rebuildMemesTeam', []),
+    writes: [partition('MEMES')]
+  };
+
   it('rebuilds only its own partition of a shared table in an area run, and notes rows no partition owns', async () => {
-    const partition = (collection: string) => ({
-      table: 'team',
-      partition: {
-        columns: ['collection'],
-        values: [[collection]],
-        reason: `the ${collection} rows`
-      }
-    });
-    const memes: RebuildStep = {
-      ...step('self-check.memes', 'rebuildMemesTeam', []),
-      writes: [partition('MEMES')]
-    };
     // Another area's writer of the 6529 rows: not run in a mint-only run,
     // so those rows must stay as seeded.
     const other: RebuildStep = {
@@ -235,6 +240,38 @@ describe('rebuild check, end to end', () => {
     expect(overlap.report.failures).toContain(
       "team's partitions overlap under its collation: self-check.memes's (ss) and self-check.other's (\u00df)"
     );
+  });
+
+  it("empties a running writer's partition of a table kept for a skipped writer", async () => {
+    // The 6529 rows' writer waits for a table no code creates yet, so it is
+    // skipped and team is kept for it. The MEMES writer inserts its rows:
+    // a duplicate key, unless the kept copy's MEMES rows were deleted
+    // first. In an area run and in a full one.
+    const skipped: RebuildStep = {
+      ...step('self-check.skipped', 'rebuildTeam', []),
+      writes: [partition('6529')],
+      needs: [
+        {
+          table: 'identity_chain_principals',
+          reason: 'the identity mirror creates it'
+        }
+      ]
+    };
+    for (const full of [false, true]) {
+      const { report } = await run('mint', {
+        seed: teamSeed,
+        rebuilder: memes,
+        more: [skipped],
+        full
+      });
+      expect([full, report.failures]).toEqual([full, []]);
+      expect(report.verdict).toBe('PASS');
+      expect(report.steps.map((s) => s.id)).toContain('self-check.memes');
+      expect(report.steps.map((s) => s.id)).not.toContain('self-check.skipped');
+      expect(
+        report.tables.diffs.map((d) => [d.table, d.same, d.rowsAfter])
+      ).toEqual([['team', true, 3]]);
+    }
   });
 
   it('fails a rebuilder that calls a host outside the sources', async () => {
