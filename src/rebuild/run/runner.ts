@@ -86,6 +86,7 @@ import {
   stopSources
 } from '@/rebuild/sources/start-sources';
 import { judge, WaitingStep } from '@/rebuild/run/verdict';
+import { stepContext } from '@/rebuild/run/step-context';
 import { waitForApi } from '@/rebuild/stack/api-ready';
 
 /** A table's partition columns and every tuple its writers own. */
@@ -456,20 +457,19 @@ class RebuildRun {
       kind === 'rebuilder'
         ? await this.outsideDigests(step, baseNames)
         : new Map<string, string>();
-    const context: RebuildContext = {
+    const context: RebuildContext = stepContext({
       area: area.area,
       stepId: step.id,
+      kind,
       sources: this.sourceUrls(),
-      seedFilesDir:
-        kind === 'seed' && this.sourceUrl('files')
-          ? seedFilesDir(this.runDir)
-          : null,
+      seedFilesDir: seedFilesDir(this.runDir),
       mark: {
         name: this.o.mark,
         chainHeight: this.o.chainHeight,
         ethBlock: this.o.ethBlock
-      }
-    };
+      },
+      final: this.o.final
+    });
     const own: Record<string, string> = {
       REBUILD_AREA: area.area,
       REBUILD_STEP_ID: step.id
