@@ -732,7 +732,7 @@ export function mentionAliasId(ownerId: string, alias: string): string {
     .digest('hex');
   // UUID-shaped, version nibble 8 (custom).
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${(
-    (parseInt(hex[16], 16) & 0x3) |
+    (Number.parseInt(hex[16], 16) & 0x3) |
     0x8
   ).toString(16)}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
@@ -1130,19 +1130,13 @@ export function personalRecordHandlers(
   ];
 }
 
-/**
- * Registers every personal type. With `apply: false` (shadow mode) records
- * are checked and their heads kept, and no table changes.
- */
+/** Registers every personal type. */
 export function registerPersonalRecordTypes(
   registry: RecordRegistry,
-  deps: PersonalHandlerDeps,
-  opts: { readonly apply: boolean } = { apply: true }
+  deps: PersonalHandlerDeps
 ): RecordRegistry {
   for (const handler of personalRecordHandlers(deps)) {
-    registry.register(
-      opts.apply ? handler : { ...handler, apply: () => Promise.resolve() }
-    );
+    registry.register(handler);
   }
   return registry;
 }
