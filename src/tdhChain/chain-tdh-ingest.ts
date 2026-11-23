@@ -7,14 +7,17 @@ import {
   compareChainDay,
   CompareReport,
   CompareVerdict,
-  DIFF_CLASSES
+  DIFF_CLASSES,
+  DiffClass
 } from './chain-day-compare';
 import {
+  ChainCluster,
   ChainDayFailure,
   EthBlockReader,
   verifyChainDay,
   verifyCutoff
 } from './chain-day-verify';
+import { cidOf, compareText } from './p28';
 import { dateOfCycleDay, SiteDay } from './site-day';
 import { siteDayFromRows } from './site-day-rows';
 import {
@@ -44,9 +47,13 @@ import { TdhChainDay } from './tdh-chain.types';
  *    editions) the chain doesn't carry. Compare it with the leaves exactly.
  * 5. Write the chain's values over it (`applyChainValues`) and rank again
  *    on them.
- * 6. SHADOW: compare the chain's day with the live tables too, and diff the
- *    rows the switch would write against them. Record the day; write no TDH
- *    table.
+ * 6. SHADOW: the day's verdict is step 4's comparison, at the chain's
+ *    cutoff block and grouping. Compare the chain's day with the live tables
+ *    too, counting apart the differences on identities grouped otherwise
+ *    than at the cutoff (the delegations loop reruns TDH at the same block
+ *    when a consolidation changes after midnight; the chain takes such a
+ *    change up the next day), and diff the rows the switch would write
+ *    against them. Record the day; write no TDH table.
  *    CHAIN: leave out any consolidation whose key is wider than the columns
  *    (queued on the day's record), then write every TDH table, the
  *    tdh_blocks row, the identities sync marker and the day's record (as
@@ -148,6 +155,7 @@ export interface IngestSummary {
   readonly note?: string;
   readonly cache?: ReportDigest;
   readonly live?: ReportDigest | { readonly error: string };
+  readonly liveByGrouping?: LiveByGrouping;
   readonly rowDiff?: RowDiff;
   readonly overrides?: {
     readonly count: number;
@@ -175,6 +183,103 @@ function digest(r: CompareReport): ReportDigest {
     counts,
     walletRootFromSite: r.site.walletRootFromSite,
     notes: r.notes
+  };
+}
+
+/** Day-wide differences: no one identity explains them. */
+const DAY_CLASSES: ReadonlySet<DiffClass> = new Set<DiffClass>([
+  'BLOCK',
+  'DATE',
+  'TOTAL_TDH',
+  'IDENTITY_COUNT',
+  'WALLET_COUNT'
+]);
+
+const IDENTITY_CLASSES: ReadonlySet<DiffClass> = new Set<DiffClass>([
+  'IDENTITY_MISSING_ON_SITE',
+  'IDENTITY_EXTRA_ON_SITE',
+  'IDENTITY_TDH'
+]);
+
+const TOKEN_CLASSES: ReadonlySet<DiffClass> = new Set<DiffClass>([
+  'TOKEN_MISSING_ON_SITE',
+  'TOKEN_EXTRA_ON_SITE',
+  'TOKEN_TDH'
+]);
+
+/**
+ * The live comparison's differences, by whether a grouping change explains
+ * them. `regrouped`: on an identity the live tables group otherwise than the
+ * chain did at the cutoff (a key only one side has), its wallets or its
+ * tokens. `day`: day-wide counts and totals, which a regrouping can move
+ * too. `other`: the rest, which a regrouping doesn't explain.
+ */
+export interface LiveByGrouping {
+  readonly regroupedKeys: number;
+  readonly regroupedWallets: number;
+  readonly regrouped: Record<string, number>;
+  readonly day: Record<string, number>;
+  readonly other: Record<string, number>;
+}
+
+/** Splits a live comparison (kept whole) by grouping changes since the cutoff. */
+export function liveByGrouping(
+  report: CompareReport,
+  clusters: ReadonlyMap<string, ChainCluster>,
+  liveKeys: readonly string[]
+): LiveByGrouping {
+  // A wallet both sides hold, grouped under different keys, was regrouped
+  // since the cutoff; so are the keys holding it on either side. A wallet
+  // only one side holds is a difference of its own, not a regrouping.
+  const chainKeyOf = new Map<string, string>();
+  clusters.forEach((c) => {
+    const key = c.key.toLowerCase();
+    c.wallets.forEach((w) => chainKeyOf.set(w.toLowerCase(), key));
+  });
+  const liveKeyOf = new Map<string, string>();
+  for (const k of liveKeys) {
+    const key = k.toLowerCase();
+    key.split('-').forEach((w) => liveKeyOf.set(w, key));
+  }
+  const regroupedKeys = new Set<string>();
+  const regroupedWallets = new Set<string>();
+  liveKeyOf.forEach((liveKey, wallet) => {
+    const chainKey = chainKeyOf.get(wallet);
+    if (chainKey === undefined || chainKey === liveKey) return;
+    regroupedWallets.add(wallet);
+    regroupedKeys.add(chainKey);
+    regroupedKeys.add(liveKey);
+  });
+  // Token rows name their identity by cid, on both sides.
+  const regroupedCids = new Set<string>();
+  regroupedKeys.forEach((k) =>
+    regroupedCids.add(cidOf(k.split('-').sort(compareText)).toLowerCase())
+  );
+  const isRegrouped = (cls: DiffClass, subject: string): boolean => {
+    const s = subject.toLowerCase();
+    if (IDENTITY_CLASSES.has(cls)) return regroupedKeys.has(s);
+    if (TOKEN_CLASSES.has(cls)) return regroupedCids.has(s.split('/')[0]);
+    return regroupedWallets.has(s);
+  };
+  const regrouped: Record<string, number> = {};
+  const day: Record<string, number> = {};
+  const other: Record<string, number> = {};
+  const add = (into: Record<string, number>, cls: DiffClass) => {
+    into[cls] = (into[cls] ?? 0) + 1;
+  };
+  for (const cls of DIFF_CLASSES) {
+    for (const d of report.differences[cls]) {
+      if (DAY_CLASSES.has(cls)) add(day, cls);
+      else if (isRegrouped(cls, d.subject)) add(regrouped, cls);
+      else add(other, cls);
+    }
+  }
+  return {
+    regroupedKeys: regroupedKeys.size,
+    regroupedWallets: regroupedWallets.size,
+    regrouped,
+    day,
+    other
   };
 }
 
@@ -435,10 +540,23 @@ export async function ingestChainDay(
   if (mode === 'SHADOW') {
     const live = await deps.readLive(h.cutoffNumber);
     const site = liveSiteDay(day, live);
-    const liveReport = 'error' in site ? null : compareChainDay(day, site);
+    // Kept whole, so every difference can be told apart by grouping.
+    const liveReport =
+      'error' in site
+        ? null
+        : compareChainDay(day, site, {
+            keepPerClass: Number.MAX_SAFE_INTEGER
+          });
     const summary: IngestSummary = {
       ...base,
       live: liveReport ? digest(liveReport) : { error: (site as any).error },
+      ...(liveReport && {
+        liveByGrouping: liveByGrouping(
+          liveReport,
+          verification.clusters,
+          live.consolidated.map((r) => r.consolidation_key)
+        )
+      }),
       rowDiff: {
         wallets: diffTable(walletRows, live.wallets, (r) =>
           r.wallet.toLowerCase()
@@ -448,7 +566,9 @@ export async function ingestChainDay(
         )
       }
     };
-    const verdict = liveReport?.verdict ?? 'MISMATCH';
+    // The day as the chain computed it: at its cutoff block, with its
+    // grouping. The live tables can hold groupings changed since.
+    const verdict = cache.verdict;
     await deps.saveDay(record('INGESTED', verdict, summary));
     return { status: 'INGESTED', verdict, deferredKeys: [], summary };
   }

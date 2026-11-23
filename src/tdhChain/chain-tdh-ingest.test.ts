@@ -152,17 +152,72 @@ describe('ingestChainDay', () => {
     expect(r.summary.rowDiff!.wallets.byField).toEqual({});
   });
 
-  it('in SHADOW reports a live table that differs from the chain', async () => {
+  it('in SHADOW reports a live table that differs from the chain, without making it the verdict', async () => {
     const live = siteFixture();
     live.wallets[fixtureWallet('2')].boostedTdh = 251;
     const t = deps({ live });
     const r = await ingestChainDay(t.day, 'SHADOW', t.d);
-    expect(r.verdict).toBe('MISMATCH');
+    // The day is judged at the chain's cutoff and grouping, which agree.
+    expect(r.verdict).toBe('MATCH');
+    expect((r.summary.live as any).verdict).toBe('MISMATCH');
     expect((r.summary.live as any).counts).toEqual({ WALLET_TDH: 1 });
+    expect(r.summary.liveByGrouping).toEqual({
+      regroupedKeys: 0,
+      regroupedWallets: 0,
+      regrouped: {},
+      day: {},
+      other: { WALLET_TDH: 1 }
+    });
     expect(r.summary.rowDiff!.wallets.byField).toEqual({ boosted_tdh: 1 });
   });
 
-  it('in SHADOW records live tables it cannot read as a mismatch instead of failing', async () => {
+  it('in SHADOW the verdict is the computation at the chain cutoff, even when the live tables agree', async () => {
+    const computed = siteFixture();
+    computed.wallets[fixtureWallet('3')].boostedTdh = 401;
+    const t = deps({ computed });
+    const r = await ingestChainDay(t.day, 'SHADOW', t.d);
+    expect(r.verdict).toBe('MISMATCH');
+    expect((r.summary.cache as any).verdict).toBe('MISMATCH');
+    expect((r.summary.live as any).verdict).toBe('MATCH');
+    expect(t.saved[0]).toMatchObject({ verdict: 'MISMATCH' });
+  });
+
+  it('in SHADOW counts apart the live differences of identities regrouped since the cutoff', async () => {
+    // After midnight wallet 3 left wallet 1's consolidation: the delegations
+    // loop reran TDH at the same block with the new grouping.
+    const live = siteFixture();
+    const [joined, ...rest] = live.identities;
+    live.identities = [
+      {
+        wallets: [fixtureWallet('1')],
+        boostedTdh: 1000,
+        boost: 1.25,
+        memes: [{ id: 1, balance: 1, tdh: 800 }]
+      },
+      {
+        wallets: [fixtureWallet('3')],
+        boostedTdh: 400,
+        boost: 1.1,
+        memes: [{ id: 1, balance: 1, tdh: 200 }],
+        gradients: [{ id: 5, balance: 1, tdh: 200 }]
+      },
+      ...rest
+    ];
+    expect(joined.wallets).toEqual([fixtureWallet('1'), fixtureWallet('3')]);
+    const t = deps({ live });
+    const r = await ingestChainDay(t.day, 'SHADOW', t.d);
+    expect(r.verdict).toBe('MATCH');
+    expect((r.summary.live as any).verdict).toBe('MISMATCH');
+    const split = r.summary.liveByGrouping!;
+    // The chain's key and the two live keys: three keys, two wallets.
+    expect(split.regroupedKeys).toBe(3);
+    expect(split.regroupedWallets).toBe(2);
+    expect(Object.keys(split.regrouped).length).toBeGreaterThan(0);
+    // Nothing the regrouping doesn't explain.
+    expect(split.other).toEqual({});
+  });
+
+  it('in SHADOW records live tables it cannot read in the summary instead of failing', async () => {
     const live = siteFixture();
     live.identities.push({
       wallets: [fixtureWallet('2')],
@@ -171,8 +226,9 @@ describe('ingestChainDay', () => {
     });
     const t = deps({ live });
     const r = await ingestChainDay(t.day, 'SHADOW', t.d);
-    expect(r.verdict).toBe('MISMATCH');
+    expect(r.verdict).toBe('MATCH');
     expect((r.summary.live as any).error).toMatch(/twice|also in/);
+    expect(r.summary.liveByGrouping).toBeUndefined();
   });
 
   it('reports MATCH_WITHOUT_TOKENS when the chain side has no token list', async () => {

@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { CONSOLIDATION_KEY_LENGTH } from '@/constants';
 import { fetchBlocks } from '@/db-api';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
@@ -160,7 +161,9 @@ describeWithSeed(
       expect(await db.uploadExists(false, '20261011', 500)).toBe(true);
       expect(await db.uploadExists(true, '20261011', 500)).toBe(false);
       expect(await db.uploadExists(false, '20261012', 700)).toBe(false);
-      expect(await db.consolidationKeyWidth()).toBe(200);
+      // The narrowest consolidation_key column of the TDH tables, at the
+      // schema's width.
+      expect(await db.consolidationKeyWidth()).toBe(CONSOLIDATION_KEY_LENGTH);
     });
 
     it('forgets the uploads of a block inside a write, and no other', async () => {
