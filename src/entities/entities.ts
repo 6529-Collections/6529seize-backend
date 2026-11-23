@@ -187,6 +187,7 @@ export {
 } from './IReleaseNotePublication';
 export { ReleaseNoteStreamStateEntity } from './IReleaseNoteStreamState';
 export { Rememe, RememeUpload } from './IRememe';
+export { RepRatingRemovalEntity } from './IRepRatingRemoval';
 export { ProfileTotalRepScoreAggregation } from './IRepScoreAggregations';
 export { RoyaltiesUpload } from './IRoyalties';
 export { MemesSeason } from './ISeason';
