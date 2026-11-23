@@ -26,6 +26,8 @@ test shards and fails when:
 - a table other than INDEX has no `why`;
 - a rebuilder writes a table that isn't one of its area's INDEX tables, two
   rebuilders write one table, or steps wait on each other;
+- a step reads a table no manifest has, or needs one that no later branch
+  adds or without a reason;
 - a probe repeats an id, has a path without a leading `/`, or a placeholder
   with no values.
 
@@ -99,6 +101,16 @@ export const mintManifest: AreaManifest = {
   - A step with `origin: 'planned'` names a module a branch adds later.
     Until it is in the tree, runs skip the step and note it, and keep a
     skipped rebuilder's tables like pending ones; a final run fails.
+  - A step (seed or rebuilder) with `needs: [{ table, reason }]` runs only
+    when every table it needs is in the run's schema. While one is missing
+    (a table another branch creates), runs skip it the same way, and the
+    report names the step, the table and the reason; a final run fails.
+    A step waits only for a table a later branch adds: one marked planned,
+    or one no entity in this tree creates yet. The registry refuses any
+    other (an entity's table, a view, a retired or a schema table) and a
+    needed table without a reason.
+    A step that waits on a skipped one and touches the same tables should
+    declare the same needs.
 - `probes`: API requests whose answers must match before and after. `ignore`
   and `unordered` paths each need a reason, which the registry checks. A
   probe with `origin: 'planned'` and `needs: [tables]` reads tables a later

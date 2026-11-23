@@ -5,6 +5,7 @@ import * as net from 'node:net';
 import * as path from 'node:path';
 import {
   AreaManifest,
+  NeededTable,
   RebuildContext,
   RebuildSource,
   RebuildStep,
@@ -82,7 +83,7 @@ import {
   startSources,
   stopSources
 } from '@/rebuild/sources/start-sources';
-import { judge } from '@/rebuild/run/verdict';
+import { judge, WaitingStep } from '@/rebuild/run/verdict';
 import { waitForApi } from '@/rebuild/stack/api-ready';
 
 export interface RunOptions {
@@ -206,6 +207,10 @@ class RebuildRun {
   private unreadTables: string[] = [];
   /** Planned steps skipped because their module isn't in this tree. */
   private plannedSteps: string[] = [];
+  /** Steps skipped as planned because a table they need isn't in the schema. */
+  private waitingSteps: WaitingStep[] = [];
+  /** The fresh schema's base tables. */
+  private baseTables: ReadonlySet<string> = new Set();
   /** Planned probes held because a table they need isn't in the schema. */
   private heldProbes: string[] = [];
   /** Tables only a skipped planned rebuilder writes: kept like pending ones. */
@@ -528,6 +533,18 @@ class RebuildRun {
         this.plannedSteps.push(step.id);
         continue;
       }
+      const missing = this.missingNeeds(step);
+      if (missing.length) {
+        this.o.log(
+          `${kind} ${step.id}: planned, it needs ${missing
+            .map((need) => need.table)
+            .join(', ')}, not in the schema`
+        );
+        missing.forEach((need) =>
+          this.waitingSteps.push({ step: step.id, ...need })
+        );
+        continue;
+      }
       this.o.log(`${kind} ${step.id}`);
       if (!(await this.runStep(kind, areaOf.get(step.id)!, step))) return false;
     }
@@ -539,6 +556,18 @@ class RebuildRun {
     if (step.origin !== 'planned' || !('module' in step.run)) return true;
     const base = path.join(this.o.repoRoot, step.run.module);
     return ['.ts', '.js'].some((ext) => fs.existsSync(`${base}${ext}`));
+  }
+
+  /** The tables a step needs that the fresh schema doesn't have. */
+  private missingNeeds(step: RebuildStep): NeededTable[] {
+    return (step.needs ?? []).filter(
+      (need) => !this.baseTables.has(need.table)
+    );
+  }
+
+  /** Whether a step runs here: its code is here and its tables are. */
+  private stepRunsHere(step: RebuildStep): boolean {
+    return this.stepCodeHere(step) && this.missingNeeds(step).length === 0;
   }
 
   /** The API bundled once per run, as its deploy bundles it. */
@@ -784,6 +813,7 @@ class RebuildRun {
     const base = new Set(
       this.live.filter((t) => t.type === 'BASE TABLE').map((t) => t.name)
     );
+    this.baseTables = base;
     const all = expandAll(this.o.manifests);
     const waits = (call: ProbeCall) =>
       call.probe.origin === 'planned' &&
@@ -793,13 +823,13 @@ class RebuildRun {
     const rebuilders = this.scopeManifests.flatMap((m) => m.rebuilders);
     this.rebuiltTables = Array.from(
       new Set(
-        rebuilders.filter((s) => this.stepCodeHere(s)).flatMap((s) => s.writes)
+        rebuilders.filter((s) => this.stepRunsHere(s)).flatMap((s) => s.writes)
       )
     )
       .filter((t) => base.has(t))
       .sort((a, b) => a.localeCompare(b));
     this.plannedWrites = new Set(
-      rebuilders.filter((s) => !this.stepCodeHere(s)).flatMap((s) => s.writes)
+      rebuilders.filter((s) => !this.stepRunsHere(s)).flatMap((s) => s.writes)
     );
     if (!(await this.runSteps('seed', this.o.manifests))) return;
     this.seededRows = await this.countIndexRows(base);
@@ -860,6 +890,7 @@ class RebuildRun {
         .map((source) => source.name),
       plannedTables: (this.registry?.plannedAbsent ?? []).length,
       plannedSteps: this.plannedSteps,
+      waitingSteps: this.waitingSteps,
       heldProbes: this.heldProbes,
       notInSchema: this.notInSchema().map((a) => a.table),
       openRoutes: this.routes().open.length

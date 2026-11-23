@@ -19,7 +19,7 @@ export type RegistryProblemKind =
   | 'NO_REASON'
   /** The live schema disagrees with the class (a retired name as a table, a view classed as a table). */
   | 'WRONG_CLASS'
-  /** A step that writes outside its area's INDEX tables, reads an unknown table, or repeats an id. */
+  /** A step that writes outside its area's INDEX tables, reads or needs an unknown table, or repeats an id. */
   | 'BAD_STEP'
   /** Two rebuilders write one table. */
   | 'DOUBLE_WRITER'
@@ -149,11 +149,42 @@ function liveProblems(input: RegistryInput): RegistryProblem[] {
   return problems;
 }
 
+/** Classes a step never waits for: never a base table a branch adds. */
+const NEVER_NEEDED: ReadonlySet<TableClass> = new Set<TableClass>([
+  'VIEW',
+  'RETIRED',
+  'SCHEMA'
+]);
+
+/**
+ * Why a step can't wait for `table`, or null when it can: a step waits
+ * only for a table a later branch adds, one marked planned or one no
+ * entity in this tree creates yet.
+ */
+function needRefusal(
+  table: string,
+  input: RegistryInput
+): 'unknown' | string | null {
+  const entry = input.manifests
+    .map((manifest) => manifest.tables[table])
+    .find(Boolean);
+  if (!entry) return 'unknown';
+  if (NEVER_NEEDED.has(entry.class)) {
+    return `a ${entry.class} table, never one a branch adds`;
+  }
+  if (entry.origin === 'planned') return null;
+  if (input.codeTables.get(table)?.has('entity')) {
+    return 'an entity in this tree creates it, so the schema always has it';
+  }
+  return null;
+}
+
 function stepProblems(
   manifest: AreaManifest,
   steps: readonly RebuildStep[],
   kind: 'seed' | 'rebuilder',
-  allTables: ReadonlySet<string>
+  allTables: ReadonlySet<string>,
+  input: RegistryInput
 ): RegistryProblem[] {
   const problems: RegistryProblem[] = [];
   for (const step of steps) {
@@ -184,6 +215,24 @@ function stepProblems(
           table,
           detail: `${kind} ${step.id} reads unknown table ${table}`
         });
+      }
+    }
+    for (const need of step.needs ?? []) {
+      const refusal = needRefusal(need.table, input);
+      const problem = (detail: string) =>
+        problems.push({
+          kind: 'BAD_STEP',
+          area: manifest.area,
+          table: need.table,
+          detail
+        });
+      if (refusal === 'unknown') {
+        problem(`${kind} ${step.id} needs unknown table ${need.table}`);
+      } else if (refusal) {
+        problem(`${kind} ${step.id} needs ${need.table}, ${refusal}`);
+      }
+      if (!need.reason?.trim()) {
+        problem(`${kind} ${step.id} needs ${need.table} without a reason`);
       }
     }
     if (step.timeoutMinutes <= 0) {
@@ -373,8 +422,14 @@ export function checkRegistry(input: RegistryInput): RegistryResult {
     ...tableProblems(input),
     ...liveProblems(input),
     ...input.manifests.flatMap((manifest) => [
-      ...stepProblems(manifest, manifest.seeds, 'seed', allTables),
-      ...stepProblems(manifest, manifest.rebuilders, 'rebuilder', allTables),
+      ...stepProblems(manifest, manifest.seeds, 'seed', allTables, input),
+      ...stepProblems(
+        manifest,
+        manifest.rebuilders,
+        'rebuilder',
+        allTables,
+        input
+      ),
       ...probeProblems(manifest, manifest.probes, seenProbes, allTables),
       ...protectedFlagNames(manifest.flags).map(
         (name): RegistryProblem => ({

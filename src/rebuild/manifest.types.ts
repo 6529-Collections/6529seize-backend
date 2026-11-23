@@ -78,6 +78,18 @@ export interface RebuildStep {
    * here, runs skip the step and note it, and a final run fails.
    */
   readonly origin?: 'planned';
+  /**
+   * Tables the step needs in the run's schema, each with its reason (a
+   * table another branch creates). While one is missing, runs skip the
+   * step as planned and name the table and the reason; a final run fails.
+   */
+  readonly needs?: readonly NeededTable[];
+}
+
+/** A table a step needs in the run's schema, and why. */
+export interface NeededTable {
+  readonly table: string;
+  readonly reason: string;
 }
 
 export type ProbeCaller = 'anonymous' | { readonly wallet: string };

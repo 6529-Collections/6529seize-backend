@@ -175,13 +175,59 @@ describe('checkRegistry', () => {
       ],
       codeTables: code('t1')
     });
-    expect(result.problems.map((p) => p.kind).sort()).toEqual([
+    expect(
+      result.problems
+        .map((p) => p.kind)
+        .sort((a, b) => (a < b ? -1 : Number(a > b)))
+    ).toEqual([
       'BAD_ORDER',
       'BAD_ORDER',
       'BAD_STEP',
       'BAD_STEP',
       'BAD_STEP',
       'DOUBLE_WRITER'
+    ]);
+  });
+
+  it('lets a step wait only for a table a later branch adds, with a reason', () => {
+    const result = checkRegistry({
+      manifests: [
+        area(
+          'a',
+          {
+            t1: index(),
+            later: { class: 'INDEX', origin: 'planned' },
+            // Named in code with no entity behind it yet.
+            named: index(),
+            v: { class: 'VIEW', why: 'a facade view' }
+          },
+          {
+            seeds: [
+              step('a.seed', {
+                writes: ['t1'],
+                needs: [
+                  { table: 'later', reason: 'a later branch creates it' },
+                  { table: 'named', reason: ' ' },
+                  { table: 'nope', reason: 'x' },
+                  { table: 't1', reason: 'x' },
+                  { table: 'v', reason: 'x' }
+                ]
+              })
+            ]
+          }
+        )
+      ],
+      codeTables: new Map([
+        ...Array.from(code('t1')),
+        ['named', new Set<CodeOrigin>(['constant'])],
+        ['v', new Set<CodeOrigin>(['view'])]
+      ])
+    });
+    expect(result.problems.map((p) => p.detail)).toEqual([
+      'seed a.seed needs named without a reason',
+      'seed a.seed needs unknown table nope',
+      'seed a.seed needs t1, an entity in this tree creates it, so the schema always has it',
+      'seed a.seed needs v, a VIEW table, never one a branch adds'
     ]);
   });
 
