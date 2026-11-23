@@ -199,12 +199,6 @@ const CATALOGUE_TABLES = [
   'artists'
 ];
 
-/**
- * The probe fixture's world on the run's anvil (cards 1-4 of the Memes,
- * card 4 through a Manifold claim, Meme Lab card 1, NextGen collection 1,
- * wallets 1 and 2), then the holdings tables from it. Its contracts are
- * test fixtures; holdings-seed.ts says what each stands for.
- */
 /** Every table the seed writes, each whole. */
 const SEEDED_TABLES = [
   'transactions',
@@ -220,6 +214,12 @@ const SEEDED_TABLES = [
   ...WALLET_TRANSFER_TABLES
 ];
 
+/**
+ * The probe fixture's world on the run's anvil (cards 1-4 of the Memes,
+ * card 4 through a Manifold claim, Meme Lab card 1, NextGen collection 1,
+ * wallets 1 and 2), then the holdings tables from it. Its contracts are
+ * test fixtures; holdings-seed.ts says what each stands for.
+ */
 const HOLDINGS_SEED: RebuildStep = {
   id: 'holdings.seed',
   run: step('src/holdings/rebuild-seed/holdings-seed', 'seedHoldings'),
@@ -227,6 +227,25 @@ const HOLDINGS_SEED: RebuildStep = {
   reads: ['eth_price', 'address_consolidation_keys', 'tdh_nft'],
   // The fixture wallets' consolidation keys first.
   after: ['identity.probe-profiles'],
+  sources: ['ethereum', 'files', 'repo'],
+  timeoutMinutes: 30
+};
+
+/**
+ * After every other seed: holdings' steps again to the mark, so the blocks
+ * later seeds mine are indexed before the first pass, as the rebuild indexes
+ * them. Transactions, NextGen, NFT history and the wallet transfer analysis
+ * resume from their cursors; the owners, the catalogue, activity and
+ * balances are recomputed by reset. TDH's seed must wait on it, as TDH's
+ * rebuilder runs after holdings.ethereum (holdings-catch-up.ts says why).
+ */
+const HOLDINGS_CATCH_UP: RebuildStep = {
+  id: 'holdings.catch-up',
+  run: step('src/holdings/rebuild-seed/holdings-catch-up', 'catchUpHoldings'),
+  writes: SEEDED_TABLES,
+  reads: HOLDINGS_SEED.reads,
+  after: ['holdings.seed'],
+  last: true,
   sources: ['ethereum', 'files', 'repo'],
   timeoutMinutes: 30
 };
@@ -297,7 +316,15 @@ export const holdingsManifest: AreaManifest = {
     nfts_history: { class: 'INDEX', ...CREATED },
     // The checkpoint of what nfts_history holds; rebuilt with it, since the
     // history step resumes after it.
-    nfts_history_blocks: { class: 'INDEX', ...CREATED },
+    nfts_history_blocks: {
+      class: 'INDEX',
+      ...CREATED,
+      checkpoint: {
+        column: 'block',
+        reason:
+          "Every reader takes only the newest row: fetchLatestNftHistoryBlockNumber's MAX(block), for the live loop and the rebuild step. A seed that indexed twice keeps older rows that a rebuild that indexed once doesn't."
+      }
+    },
     nfts_history_claims: { class: 'INDEX', ...CREATED },
     nfts_history_events: { class: 'INDEX', ...CREATED },
     nfts_history_replay_jobs: {
@@ -305,7 +332,15 @@ export const holdingsManifest: AreaManifest = {
       why: 'Replay job queue.'
     },
     // The block the NextGen tables reflect; rebuilt with them.
-    nextgen_blocks: { class: 'INDEX', ...CREATED },
+    nextgen_blocks: {
+      class: 'INDEX',
+      ...CREATED,
+      checkpoint: {
+        column: 'block',
+        reason:
+          "Every reader takes only the newest row: fetchNextGenLatestBlock and collecting.db.ts take MAX(block), and the NextGen loop's health reads the newest row's timestamp. A seed that indexed twice keeps older rows that a rebuild that indexed once doesn't."
+      }
+    },
     nextgen_collections: { class: 'INDEX', ...CREATED_UPDATED },
     nextgen_logs: { class: 'INDEX', ...CREATED },
     nextgen_token_listings: {
@@ -367,7 +402,7 @@ export const holdingsManifest: AreaManifest = {
     artists: { class: 'INDEX', ...CREATED },
     meme_lab_royalties: { class: 'INDEX' }
   },
-  seeds: [HOLDINGS_SEED],
+  seeds: [HOLDINGS_SEED, HOLDINGS_CATCH_UP],
   rebuilders: HOLDINGS_REBUILDERS,
   probes: PROBES,
   waivers: {
