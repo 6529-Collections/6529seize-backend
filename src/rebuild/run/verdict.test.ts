@@ -1,0 +1,109 @@
+import { judge, VerdictInput } from '@/rebuild/run/verdict';
+
+const clean: VerdictInput = {
+  final: false,
+  stepViolations: 0,
+  apiViolations: 0,
+  unguardedSteps: [],
+  differences: 0,
+  unproven: 0,
+  pending: 0,
+  unreadTables: [],
+  differingTables: 0,
+  unseededTables: [],
+  exemptTables: 0,
+  sourceProblems: [],
+  provisionalSources: [],
+  plannedTables: 0,
+  plannedSteps: [],
+  heldProbes: [],
+  notInSchema: [],
+  openRoutes: 0
+};
+
+/** One finding at a time, in a normal run and in a final one. */
+const findings: [string, Partial<VerdictInput>, RegExp][] = [
+  [
+    'rows that differ',
+    { differingTables: 2 },
+    /2 rebuilt tables differ row by row/
+  ],
+  [
+    'unseeded rebuilt tables',
+    { unseededTables: ['t'] },
+    /had no rows after the seeds/
+  ],
+  [
+    "command steps the guard can't watch",
+    { unguardedSteps: ['s'] },
+    /don't run Node/
+  ],
+  ['unproven probes', { unproven: 3 }, /3 probes answered 4xx or with no data/],
+  ['pending tables', { pending: 4 }, /4 INDEX tables have no rebuilder/],
+  [
+    'provisional sources',
+    { provisionalSources: ['relays'] },
+    /Provisional sources/
+  ],
+  [
+    'planned tables',
+    { plannedTables: 1 },
+    /planned tables are not in this tree/
+  ],
+  [
+    'skipped planned steps',
+    { plannedSteps: ['a.seed'] },
+    /planned steps were skipped/
+  ],
+  ['held probes', { heldProbes: ['a.p'] }, /planned probes were held/],
+  [
+    'tables a fresh schema lacks',
+    { notInSchema: ['t'] },
+    /not in a fresh schema/
+  ]
+];
+
+describe('the verdict', () => {
+  it('passes a clean run with nothing to note', () => {
+    expect(judge(clean)).toEqual({ failures: [], notes: [] });
+    expect(judge({ ...clean, final: true })).toEqual({
+      failures: [],
+      notes: []
+    });
+  });
+
+  it.each(findings)(
+    'notes %s, and fails a final run on them',
+    (_name, finding, text) => {
+      const normal = judge({ ...clean, ...finding });
+      expect(normal.failures).toEqual([]);
+      expect(normal.notes).toEqual([expect.stringMatching(text)]);
+      const final = judge({ ...clean, ...finding, final: true });
+      expect(final.failures).toEqual([expect.stringMatching(text)]);
+      expect(final.notes).toEqual([]);
+    }
+  );
+
+  it('fails every run on differences, source problems and outside connections', () => {
+    const verdict = judge({
+      ...clean,
+      differences: 1,
+      sourceProblems: ['gateway: 1 requests not in the recording'],
+      stepViolations: 2
+    });
+    expect(verdict.failures).toEqual([
+      '2 connections to sources outside the list (see Source violations)',
+      '1 probes failed or answer differently',
+      'gateway: 1 requests not in the recording'
+    ]);
+  });
+
+  it('fails only a final run on unread rebuilt tables and open routes', () => {
+    const finding = { unreadTables: ['t'], openRoutes: 5 };
+    expect(judge({ ...clean, ...finding }).failures).toEqual([]);
+    expect(judge({ ...clean, ...finding, final: true }).failures).toEqual([
+      '1 rebuilt tables were read by no probe',
+      '5 documented GET routes have no probe and no waiver'
+    ]);
+  });
+});
