@@ -403,9 +403,9 @@ type ChainPlace =
 
 /**
  * A chain result in the words a refusal of the node has: its code as 0x and
- * four hex digits, its name, and its detail when it has one ("0x2101
- * REJOIN_WAIT, detail 3"), which is what callers read a refusal's name and
- * detail from.
+ * four capital hex digits, its name, and its detail when it has one
+ * ("0x210E REJOIN_WAIT, detail 1"), which is what callers read a refusal's
+ * name and detail from.
  */
 function resultWords(tx: ChainTx): string {
   const name = tx.result?.name ?? 'failed';
@@ -420,7 +420,7 @@ function resultWords(tx: ChainTx): string {
   const detail = tx.result?.detail;
   const words =
     Number.isSafeInteger(code) && code >= 0 && code <= 0xffff
-      ? `0x${code.toString(16).padStart(4, '0')} ${name}`
+      ? `0x${code.toString(16).toUpperCase().padStart(4, '0')} ${name}`
       : name;
   return Number.isSafeInteger(detail) ? `${words}, detail ${detail}` : words;
 }
@@ -754,16 +754,22 @@ export class ChainRelayService {
       await this.checkMembership(join);
     }
     const now = this.now();
-    // Read committed, so the count below sees a post that committed while
-    // this one waited on the wallet's lock, and the locks take no gaps.
+    // Read committed, so what is read after the wallet's lock sees a post
+    // that committed while this one waited, and the locks take no gaps.
     const hold = () =>
       this.db.executeNativeQueriesInTransaction(
         async (conn) => {
-          const existing = await this.db.find(txId, conn);
+          let existing = await this.db.find(txId, conn);
           if (!existing) {
             // One new join of a wallet at a time, so two posts at once can't
-            // both pass the cap at four.
+            // both pass the cap at four (see lockHeldBy for a wallet's first).
             await this.db.lockHeldBy(me, conn);
+            // A post of this same join may have landed while this one
+            // waited: then this one is a repeat, answered with its state,
+            // not a sixth join.
+            existing = await this.db.find(txId, conn);
+          }
+          if (!existing) {
             const open = await this.db.countOpenCreatedBy(me, now, conn);
             if (open >= MAX_OPEN_PER_CREATOR) {
               throw new CustomApiCompliantException(

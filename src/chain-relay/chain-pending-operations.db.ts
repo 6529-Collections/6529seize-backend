@@ -181,8 +181,13 @@ export class ChainPendingOperationsDb extends LazyDbAccessCompatibleService {
    * which is who creates them, until the transaction ends: two of its posts
    * then count its open joins one after the other. In a read committed
    * transaction this locks only those signer rows, found by the signer
-   * index, and no gaps, so other wallets' posts never wait on it. A wallet
-   * with no join yet locks nothing, and needs no lock: the cap is far.
+   * index, and no gaps, so other wallets' posts never wait on it.
+   *
+   * A wallet that has never held a join has no row to lock, so its first
+   * posts are not taken one at a time: a burst of them sent at once each
+   * counts only what has committed, and can go over five. From its first
+   * join on, the cap holds. Closing that would take a row per wallet to
+   * lock, a new table and a migration.
    */
   async lockHeldBy(wallet: string, conn: Conn) {
     await this.db.execute(

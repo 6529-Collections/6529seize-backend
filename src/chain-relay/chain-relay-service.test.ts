@@ -106,12 +106,17 @@ class FakeDb {
     ) {
       return false;
     }
-    if (
-      change.ifCheckedAt !== undefined &&
-      (JSON.parse(op.result_json ?? 'null')?.checkedAt ?? null) !==
-        change.ifCheckedAt
-    ) {
-      return false;
+    if (change.ifCheckedAt !== undefined) {
+      // As MySQL compares json_extract(result_json, '$.checkedAt') <=> it:
+      // a missing key is SQL NULL, a JSON null is a value, not NULL.
+      const result = JSON.parse(op.result_json ?? 'null');
+      const stored =
+        result && 'checkedAt' in result ? result.checkedAt : undefined;
+      const same =
+        change.ifCheckedAt === null
+          ? stored === undefined
+          : stored === change.ifCheckedAt;
+      if (!same) return false;
     }
     this.ops.set(txId, {
       ...op,
@@ -122,8 +127,11 @@ class FakeDb {
     });
     return true;
   }
+  /** Runs once a post takes a wallet's lock, as if another post committed. */
+  onLock: (() => void) | null = null;
   async lockHeldBy(wallet: string) {
     this.calls.push(`lock ${wallet}`);
+    this.onLock?.();
   }
   async countOpenCreatedBy(wallet: string, now: number) {
     this.calls.push(`count ${wallet}`);
@@ -634,7 +642,7 @@ describe('ChainRelayService pending operations', () => {
   it('marks an operation the chain refuses as failed', async () => {
     for (const error of [
       new ChainGatewayError(
-        '0x2101 ALREADY_BOUND',
+        '0x2101 ADDRESS_BOUND, detail 0',
         422,
         'inadmissible',
         '/v1/submit'
@@ -978,6 +986,30 @@ describe('ChainRelayService holding a join: its limits and the identity check', 
     ]);
   });
 
+  it('answers a repeat of a fifth join with its state, when the first landed while it waited', async () => {
+    const { service, gateway, db } = setup();
+    for (let n = 0; n < 4; n++) {
+      await service.createPending(otherJoin(n), ANCHOR.address);
+    }
+    const fifth = otherJoin(4);
+    const first = await service.createPending(fifth, ANCHOR.address);
+    expect(first.status).toBe('PENDING');
+    // The repeat found no row, then waited on the wallet's lock while the
+    // first post committed: it now finds the join, and answers it.
+    const landed = db.ops.get(fifth.txId)!;
+    db.ops.delete(fifth.txId);
+    db.onLock = () => {
+      db.ops.set(fifth.txId, landed);
+      db.onLock = null;
+    };
+    const repeat = await service
+      .createPending(fifth, ANCHOR.address)
+      .catch((e: unknown) => e);
+    expect(repeat).toMatchObject({ tx_id: fifth.txId, status: 'PENDING' });
+    expect(db.ops.size).toBe(5);
+    expect(gateway.submit).not.toHaveBeenCalled();
+  });
+
   it('holds at most five pending joins a wallet created', async () => {
     const { service } = setup();
     for (let n = 0; n < 5; n++) {
@@ -1063,7 +1095,7 @@ describe('ChainRelayService.get, of a sent join the chain has yet to settle', ()
       txId: TX,
       status: 'failed',
       height: 12,
-      result: { code: '0x2101', name: 'ALREADY_BOUND' }
+      result: { code: '0x2101', name: 'ADDRESS_BOUND' }
     };
     gateway.getTx.mockResolvedValueOnce(tx);
     const op = await service.get(TX);
@@ -1071,10 +1103,10 @@ describe('ChainRelayService.get, of a sent join the chain has yet to settle', ()
     expect(resultOf(op)).toEqual({
       txId: TX,
       outcome: 'refused',
-      code: 'ALREADY_BOUND',
+      code: 'ADDRESS_BOUND',
       tx
     });
-    expect(op.last_error).toContain('0x2101 ALREADY_BOUND');
+    expect(op.last_error).toContain('0x2101 ADDRESS_BOUND');
   });
 
   it('words a failure found later as a refusal is worded, so a caller reads its name and detail', async () => {
@@ -1083,10 +1115,10 @@ describe('ChainRelayService.get, of a sent join the chain has yet to settle', ()
     const NAMED_CODE = /\b0x[0-9a-fA-F]{4} ([A-Z][A-Z0-9_]+)\b/;
     const DETAIL = /\b0x[0-9a-fA-F]{4} [A-Z][A-Z0-9_]+, detail (\d+)\b/;
     const cases = [
-      [{ code: 0x0b07, name: 'REJOIN_WAIT' }, 'REJOIN_WAIT', null],
-      [{ code: '0x0B07', name: 'REJOIN_WAIT' }, 'REJOIN_WAIT', null],
-      [{ code: '2817', name: 'REJOIN_WAIT' }, 'REJOIN_WAIT', null],
-      [{ code: 0x0a01, name: 'FEE_UNCOVERED', detail: 3 }, 'FEE_UNCOVERED', '3']
+      [{ code: 0x210e, name: 'REJOIN_WAIT' }, 'REJOIN_WAIT', null],
+      [{ code: '0x210e', name: 'REJOIN_WAIT' }, 'REJOIN_WAIT', null],
+      [{ code: '8462', name: 'REJOIN_WAIT', detail: 1 }, 'REJOIN_WAIT', '1'],
+      [{ code: 0x0305, name: 'FEE_UNCOVERED', detail: 3 }, 'FEE_UNCOVERED', '3']
     ] as const;
     for (const [result, name, detail] of cases) {
       const { service, gateway } = await unknownJoin();
@@ -1098,6 +1130,8 @@ describe('ChainRelayService.get, of a sent join the chain has yet to settle', ()
       });
       const op = await service.get(TX);
       expect(op.status).toBe('FAILED');
+      // The code in capitals, as the node writes it.
+      expect(op.last_error).toMatch(/\b0x(210E|0305) [A-Z_]+/);
       expect(NAMED_CODE.exec(op.last_error!)?.[1]).toBe(name);
       expect(DETAIL.exec(op.last_error!)?.[1] ?? null).toBe(detail);
     }

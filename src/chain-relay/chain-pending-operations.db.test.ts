@@ -79,15 +79,15 @@ async function untilWaitingForALock(
   }
 }
 
-/** Resolves once any transaction is blocked waiting for a row lock. */
-async function untilAnyWaitsForALock(): Promise<void> {
+/** Resolves once `count` transactions are blocked waiting for a row lock. */
+async function untilAnyWaitsForALock(count = 1): Promise<void> {
   const deadline = Date.now() + 20_000;
   for (;;) {
     const row = await sqlExecutor.oneOrNull<{ n: number }>(
       `select count(*) as n from information_schema.innodb_trx
        where trx_state = 'LOCK WAIT'`
     );
-    if (Number(row?.n) > 0) return;
+    if (Number(row?.n) >= count) return;
     if (Date.now() > deadline) {
       throw new Error('No post waited for the lock');
     }
@@ -179,6 +179,38 @@ describeWithSeed('ChainPendingOperationsDb', [], () => {
     expect(await count(A, 2_000)).toBe(2);
     expect(await count(B, 2_000)).toBe(0);
     expect(await count(A, 6_000)).toBe(0);
+  });
+
+  it("moves a status only while the result's checkedAt is the one given, as MySQL compares it", async () => {
+    const result = (checkedAt?: number | null) =>
+      JSON.stringify({
+        txId: TX,
+        outcome: 'accepted',
+        ...(checkedAt === undefined ? {} : { checkedAt })
+      });
+    await sqlExecutor.executeNativeQueriesInTransaction((conn) =>
+      db.insert(
+        { ...join(), status: 'SUBMITTED', result_json: result(2_000) },
+        conn
+      )
+    );
+    const moved = (ifCheckedAt: number | null, next: string) =>
+      db.setStatus(
+        TX,
+        { from: 'SUBMITTED', to: 'SUBMITTED', ifCheckedAt },
+        { result_json: next },
+        3_000
+      );
+    // A number: only the same one.
+    expect(await moved(1_999, result(3_000))).toBe(false);
+    expect(await moved(null, result(3_000))).toBe(false);
+    expect(await moved(2_000, result())).toBe(true);
+    // No checkedAt: only null.
+    expect(await moved(2_000, result(3_000))).toBe(false);
+    expect(await moved(null, result(null))).toBe(true);
+    // A JSON null is a value, not a missing key: null doesn't match it.
+    expect(await moved(null, result(4_000))).toBe(false);
+    expect((await db.find(TX))?.result_json).toBe(result(null));
   });
 
   it("moves a status only while the result's outcome is the one given", async () => {
@@ -352,6 +384,98 @@ describeWithSeed('ChainPendingOperationsDb', [], () => {
     expect(op?.signers.map((it) => !!it.sig)).toEqual([true, true]);
     expect(gateway.submit).toHaveBeenCalledTimes(1);
   });
+  it('answers a repeat of a fifth join with its state, when the first post landed while it waited', async () => {
+    const anchor = new Wallet('0x' + '11'.repeat(32));
+    const me = anchor.address.toLowerCase();
+    const expiresAt = Date.now() + 3_600_000;
+    await sqlExecutor.executeNativeQueriesInTransaction(async (conn) => {
+      for (let n = 0; n < 4; n++) {
+        await db.insert(
+          {
+            ...join('0x' + (0x60 + n).toString(16).repeat(32)),
+            created_by: me,
+            expires_at: expiresAt,
+            signers: [
+              {
+                role: 0,
+                key_type: 1,
+                signer: me,
+                sig: '0x' + 'aa'.repeat(65),
+                signed_at: 1_000
+              },
+              { role: 4, key_type: 1, signer: B, sig: null, signed_at: null }
+            ]
+          },
+          conn
+        );
+      }
+    });
+    const relay = new ChainRelayService(
+      {
+        submit: jest.fn(),
+        getTx: jest.fn(),
+        getOps: jest.fn(async () => ({ maxValidityMs: 86_400_000 })),
+        getIdentityByWallet: jest.fn(async () => ({
+          principalId: JOIN_PRINCIPAL
+        }))
+      } as never,
+      db
+    );
+    const joiner = '0x' + '77'.repeat(20);
+    const fifth = joinFixture({ signer: anchor.address, joiner, expiresAt });
+    const post = () =>
+      relay
+        .createPending(
+          {
+            txId: fifth.txId,
+            opType: 'IDENTITY_JOIN',
+            principal: JOIN_PRINCIPAL,
+            unsigned: '0x0102',
+            typedData: fifth.typedData,
+            expiresAt,
+            required: [
+              { role: 0, keyType: 1, signer: anchor.address },
+              { role: 4, keyType: 1, signer: joiner }
+            ],
+            signatures: [{ role: 0, keyType: 1, sig: fifth.sign(anchor) }]
+          },
+          anchor.address
+        )
+        .catch((e: unknown) => e);
+    // Another post of this wallet holds its lock, so both posts of the
+    // fifth join find no row and wait on it; then they go one at a time.
+    let locked!: () => void;
+    const lockTaken = new Promise<void>((resolve) => {
+      locked = resolve;
+    });
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const other = sqlExecutor.executeNativeQueriesInTransaction(
+      async (conn) => {
+        await db.lockHeldBy(me, conn);
+        locked();
+        await released;
+      },
+      { isolationLevel: 'READ COMMITTED' }
+    );
+    await lockTaken;
+    const posts = [post(), post()];
+    await untilAnyWaitsForALock(2);
+    release();
+    await other;
+    const answers = (await Promise.all(posts)) as PendingOperation[];
+    expect(answers.map((it) => [it.tx_id, it.status])).toEqual([
+      [fifth.txId, 'PENDING'],
+      [fifth.txId, 'PENDING']
+    ]);
+    const open = await sqlExecutor.executeNativeQueriesInTransaction((conn) =>
+      db.countOpenCreatedBy(me, Date.now(), conn)
+    );
+    expect(open).toBe(5);
+  });
+
   it("counts one wallet's open joins one post at a time, under its lock", async () => {
     const anchor = new Wallet('0x' + '11'.repeat(32));
     const me = anchor.address.toLowerCase();

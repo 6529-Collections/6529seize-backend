@@ -905,8 +905,11 @@ the chain takes (at most `maxValidityMs` from `GET /v1/ops`, a day when
 unreadable), its envelope is at most 4 KiB and its typed data 8 KiB, and
 the wallet holding it has fewer than five pending joins (429
 `TOO_MANY_PENDING`; counted under a lock on that wallet's joins, so two
-posts at once can't both pass at four). Posting a join again once it was sent answers its
-state, also after its expiry. No signature is ever returned
+posts at once can't both pass at four, and a repeat of one that landed
+meanwhile answers its state. A wallet that has never held a join has no
+row to lock: a first burst of posts sent at once can go over five).
+Posting a join again once it was sent answers its state, also after its
+expiry. No signature is ever returned
 (`signers[].sig` is always null; `signed` says who has signed): the relay
 submits, and a signature handed out could finish a join its signer had
 withdrawn. A pending join past its expiry shows as `EXPIRED`. The list of
@@ -939,7 +942,7 @@ is lost. A read of a sent join (`GET /chain/pending/:tx_id`) asks the
 chain, bounded, at most every 10 s (the time is kept in `result.checkedAt`),
 until it is final: held in a block or the pool, `accepted` with the
 chain's `tx`; run and failed, `FAILED`, with `last_error` worded as the
-node words a refusal (`0x0b07 REJOIN_WAIT`, and `, detail N` when it has
+node words a refusal (`0x210E REJOIN_WAIT`, and `, detail N` when it has
 one); held nowhere as of a chain time
 five minutes past its expiry (the answer's read time, not this backend's
 clock), `FAILED` (`expired`). Each of these writes applies only while
