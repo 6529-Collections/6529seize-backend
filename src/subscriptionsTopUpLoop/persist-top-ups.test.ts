@@ -48,7 +48,11 @@ jest.mock('@/subscriptionsDaily/subscription-cache', () => ({
   invalidateUpcomingSubscriptionCaches: jest.fn()
 }));
 
-const balancesRepo = { findOne: jest.fn(), save: jest.fn() };
+const balancesRepo = {
+  findOne: jest.fn(),
+  insert: jest.fn(),
+  update: jest.fn()
+};
 const topUpsRepo = { save: jest.fn() };
 const manager = {
   query: jest.fn(),
@@ -110,7 +114,7 @@ it('rejects the transaction after a mode/quantity synchronization lock timeout, 
 
   await expect(persistTopUps([topUp])).rejects.toBe(lockTimeout);
 
-  expect(balancesRepo.save).toHaveBeenCalled();
+  expect(balancesRepo.insert).toHaveBeenCalled();
   expect(topUpsRepo.save).toHaveBeenCalledWith(topUp);
   expect(updateSubscriptionMode).toHaveBeenCalledWith(
     'wallet',
@@ -148,10 +152,15 @@ describe('first top-up for a consolidation without a balance', () => {
     await persistTopUps([small]);
 
     expect(updateSubscriptionMode).not.toHaveBeenCalled();
-    expect(balancesRepo.save).toHaveBeenCalledWith({
+    expect(balancesRepo.findOne).toHaveBeenCalledWith({
+      where: { consolidation_key: 'wallet' },
+      lock: { mode: 'pessimistic_write' }
+    });
+    expect(balancesRepo.insert).toHaveBeenCalledWith({
       consolidation_key: 'wallet',
       balance: MEMES_MINT_PRICE / 2
     });
+    expect(balancesRepo.update).not.toHaveBeenCalled();
     expect(topUpsRepo.save).toHaveBeenCalledWith(small);
     expect(events).toEqual(['commit', 'evict']);
     expect(sendDiscordUpdate).toHaveBeenCalledTimes(1);
@@ -203,6 +212,11 @@ describe('first top-up for a consolidation without a balance', () => {
     await persistTopUps([{ ...topUp, amount: MEMES_MINT_PRICE }]);
 
     expect(updateSubscriptionMode).not.toHaveBeenCalled();
+    expect(balancesRepo.update).toHaveBeenCalledWith(
+      { consolidation_key: 'wallet' },
+      { balance: 0.07529 }
+    );
+    expect(balancesRepo.insert).not.toHaveBeenCalled();
     expect(events).toEqual(['commit', 'evict']);
   });
 });
@@ -248,7 +262,8 @@ describe('keys that must wait', () => {
 
     await expect(persistTopUps([topUp])).resolves.toBe(true);
 
-    expect(balancesRepo.save).not.toHaveBeenCalled();
+    expect(balancesRepo.insert).not.toHaveBeenCalled();
+    expect(balancesRepo.update).not.toHaveBeenCalled();
     expect(topUpsRepo.save).not.toHaveBeenCalled();
     expect(updateSubscriptionMode).not.toHaveBeenCalled();
     expect(queued()).toHaveLength(1);
@@ -270,7 +285,8 @@ describe('keys that must wait', () => {
 
     await persistTopUps([topUp]);
 
-    expect(balancesRepo.save).not.toHaveBeenCalled();
+    expect(balancesRepo.insert).not.toHaveBeenCalled();
+    expect(balancesRepo.update).not.toHaveBeenCalled();
     expect(topUpsRepo.save).not.toHaveBeenCalled();
     expect(queued()).toHaveLength(1);
     expect(queued()[0][1]).toEqual(
@@ -290,7 +306,7 @@ describe('keys that must wait', () => {
     // Only entries queued before this one hold it back.
     const pending = calls.find(([sql]) => sql.includes('replayed_at IS NULL'));
     expect(pending?.[0]).toContain('sequence < ');
-    expect(balancesRepo.save).toHaveBeenCalledTimes(1);
+    expect(balancesRepo.insert).toHaveBeenCalledTimes(1);
     expect(topUpsRepo.save).toHaveBeenCalledWith(topUp);
     expect(events).toEqual(['commit', 'evict']);
   });
@@ -303,7 +319,8 @@ describe('keys that must wait', () => {
     );
 
     expect(manager.query).not.toHaveBeenCalled();
-    expect(balancesRepo.save).not.toHaveBeenCalled();
+    expect(balancesRepo.insert).not.toHaveBeenCalled();
+    expect(balancesRepo.update).not.toHaveBeenCalled();
     expect(topUpsRepo.save).not.toHaveBeenCalled();
     expect(sendDiscordUpdate).not.toHaveBeenCalled();
   });
