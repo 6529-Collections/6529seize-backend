@@ -17,6 +17,7 @@ import {
   UNKNOWN_SCAN
 } from './waves-chain-index.events';
 import { fullReadCovers, WavesChainIndex } from './waves-chain-index.service';
+import { compareCodeUnits } from './waves-chain-index.order';
 
 const BIG = 1_000_000;
 const G1 = id('91');
@@ -804,8 +805,8 @@ describe('the chain index event log', () => {
       db
         .rows('roles')
         .filter((r) => r.wave_id === W1)
-        .map((r) => r.principal_id)
-        .sort()
+        .map((r) => String(r.principal_id))
+        .sort(compareCodeUnits)
     ).toEqual([V(4), V(5)]);
   });
 

@@ -5,6 +5,7 @@ import {
 } from '@/chain-gateway/chain-gateway.types';
 import { Logger } from '@/logging';
 import { Time } from '@/time';
+import { compareCodeUnits } from './waves-chain-index.order';
 import {
   ChainObject,
   GatewayWavesChainApi,
@@ -502,8 +503,8 @@ export class WavesChainIndex {
     };
     const reread = new Set<string>(state.voteRereads.entries);
     const rereads = () => ({
-      entries: Array.from(reread).sort(),
-      votes: Array.from(carry.value.unknownVotes).sort()
+      entries: Array.from(reread).sort(compareCodeUnits),
+      votes: Array.from(carry.value.unknownVotes).sort(compareCodeUnits)
     });
     feed: while (next <= height && this.now() < deadline) {
       const page = await this.readFeed(next);
@@ -622,8 +623,8 @@ export class WavesChainIndex {
     return this.save({
       ...initial,
       voteRereads: {
-        entries: Array.from(reread).sort(),
-        votes: Array.from(unknown).sort()
+        entries: Array.from(reread).sort(compareCodeUnits),
+        votes: Array.from(unknown).sort(compareCodeUnits)
       }
     });
   }
