@@ -103,6 +103,7 @@ import {
   ProfilePreferencesDb
 } from '@/profile-preferences/profile-preferences.db';
 import { ConnectionWrapper } from '@/sql-executor';
+import { inSequence } from '@/db/in-sequence';
 import { DirectMessageAdmissionService } from '@/api/direct-messages/direct-message-admission.service';
 
 import { performance } from 'node:perf_hooks';
@@ -258,7 +259,7 @@ async function resolveEligibilityReads<T extends readonly unknown[]>(reads: {
 type GroupVisibilityChange = ApiChangeGroupVisibility & {
   group_id: string;
   profile_id: string;
-  idempotencyKey?: string | undefined;
+  idempotencyKey?: string;
 };
 
 type BeforeGroupReplacement = (
@@ -1749,8 +1750,12 @@ export class UserGroupsService {
             if (left > right) return 1;
             return 0;
           });
-          for (const id of groupIdsToLock)
-            await this.userGroupsDb.lockForVisibilityChange(id, connection);
+          await inSequence(
+            groupIdsToLock.map(
+              (id) => () =>
+                this.userGroupsDb.lockForVisibilityChange(id, connection)
+            )
+          );
 
           const legacyReplay = await this.findLegacyVisibilityRequest(
             change,
