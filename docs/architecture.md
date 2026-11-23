@@ -763,12 +763,12 @@ reset behavior, and the required writer-before-collector deployment order.
 
 ### Manual Or One-Off Lambdas
 
-| Lambda                            | Purpose                                                                                                                                                              |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dbMigrationsLoop`                | TypeORM entity synchronization, usually run from deploy workflow; plans that drop data are classified first ([schema sync plan check](./schema-sync-plan-check.md)). |
-| `customReplayLoop`                | Controlled replay job.                                                                                                                                               |
-| `populateHistoricConsolidatedTdh` | Historic consolidated TDH backfill.                                                                                                                                  |
-| `teamLoop`                        | Team CSV and Arweave upload.                                                                                                                                         |
+| Lambda                            | Purpose                                                                                                                                                                                        |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dbMigrationsLoop`                | TypeORM entity synchronization, usually run from deploy workflow; plans that drop data are classified first ([schema sync plan check](./schema-sync-plan-check.md)).                           |
+| `customReplayLoop`                | Operator-invoked one-off jobs, chosen by the payload's `job`; `REP_RATINGS_REMOVE` deletes one rater's REP ratings in given categories and recomputes the targets (`src/rep-ratings-removal`). |
+| `populateHistoricConsolidatedTdh` | Historic consolidated TDH backfill.                                                                                                                                                            |
+| `teamLoop`                        | Team CSV and Arweave upload.                                                                                                                                                                   |
 
 ## Runtime Shape
 
