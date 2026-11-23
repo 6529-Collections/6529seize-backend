@@ -2,11 +2,19 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { startCrpRelay } from '@/rebuild/sources/crp-relay';
+import { RelayRules } from '@/rebuild/sources/relay-rules';
 import { RunningSource } from '@/rebuild/sources/running-source';
 import { buildRelayWorld } from '@/rebuild/world/waves/relay-world';
 import { DropIndexRunReport } from '@/wave-drop-index/drop-index';
 import { RelayIngestReport } from '@/wave-drop-index/drop-index.subscriber';
 import { checkRelayEvent } from '@/wave-drop-index/relay-event-check';
+import {
+  dropIndexConfig,
+  readerAuthAnswer
+} from '@/wave-drop-index/drop-index';
+import { TEST_WALLET } from '@/tests/fixtures/relay-events.fixture';
+import { wavesManifest } from '@/rebuild/manifests/waves.manifest';
+import { RELAY_WORLD_WALLET } from '@/rebuild/world/waves/world-ids';
 import {
   dropIndexEnv,
   indexRelays,
@@ -58,8 +66,33 @@ describe('the waves drop index rebuild step', () => {
       WAVES_RELAY_URLS: 'ws://127.0.0.1:9',
       WAVES_RELAY_NET: REBUILD_RELAY_NET,
       WAVES_DROP_INDEX_BUDGET_MS: '20000',
-      WAVES_DROP_INDEX_LIVE_FROM: REBUILD_LIVE_FROM
+      WAVES_DROP_INDEX_LIVE_FROM: REBUILD_LIVE_FROM,
+      WAVES_DROP_INDEX_READER: expect.any(String)
     });
+  });
+
+  it("reads as the site reader the manifest declares, with the test grant's own key", () => {
+    const reader = JSON.parse(
+      dropIndexEnv('ws://127.0.0.1:9').WAVES_DROP_INDEX_READER
+    );
+    expect(reader.grant.wallet).toBe(RELAY_WORLD_WALLET);
+    expect(reader.grant.wallet).toBe(TEST_WALLET);
+    expect(dropIndexConfig(dropIndexEnv('ws://127.0.0.1:9'))?.reader).toEqual({
+      deviceSeed: reader.device_seed,
+      grant: reader.grant
+    });
+    expect(() =>
+      readerAuthAnswer(
+        dropIndexConfig(dropIndexEnv('ws://127.0.0.1:9'))!.reader!
+      )
+    ).not.toThrow();
+    const declared = wavesManifest.relayAccess?.readers ?? [];
+    expect(declared).toEqual([
+      expect.objectContaining({
+        wallet: RELAY_WORLD_WALLET,
+        roles: ['site-reader']
+      })
+    ]);
   });
 
   it('runs the index until a run stores nothing new', async () => {
@@ -90,7 +123,8 @@ describe('the waves drop index rebuild step', () => {
 
     beforeEach(async () => {
       dir = fs.mkdtempSync(path.join(os.tmpdir(), 'waves-relay-world-'));
-      relay = await startCrpRelay(dir);
+      // The relay as the run starts it: the waves area's declared access.
+      relay = await startCrpRelay(dir, RelayRules.of([wavesManifest]));
     });
 
     afterEach(async () => {

@@ -19,3 +19,10 @@ export const WAVES_WORLD_IDS = {
   firstDrop: '00000000-0000-4000-8000-0000000002a2',
   secondDrop: '00000000-0000-4000-8000-0000000003a2'
 } as const;
+
+/**
+ * The wallet whose device grant signs the relay world's events, and which
+ * the run's relays know as 6529.io's site reader: Hardhat's first test
+ * account (the shared test grant in src/tests/fixtures/relay-events).
+ */
+export const RELAY_WORLD_WALLET = '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266';

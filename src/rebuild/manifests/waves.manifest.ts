@@ -1,5 +1,8 @@
 import { AreaManifest, Probe, TableEntry } from '@/rebuild/manifest.types';
-import { WAVES_WORLD_IDS } from '@/rebuild/world/waves/world-ids';
+import {
+  RELAY_WORLD_WALLET,
+  WAVES_WORLD_IDS
+} from '@/rebuild/world/waves/world-ids';
 
 /** The chain index's tables and its state, and its event log. */
 export const WAVES_CHAIN_INDEX_TABLES = [
@@ -29,7 +32,7 @@ const LEGACY_STEPS = 'src/rebuild/steps/waves-legacy.steps';
 /** The drop index read from the relays. */
 const DROP_INDEX_STEPS = 'src/rebuild/steps/waves-drop-index.steps';
 
-/** The drop index's log of checked relay events, its rejects and its relay cursors. */
+/** The drop index's checked relay events, its rejects and its relay cursors. */
 export const WAVES_DROP_INDEX_TABLES = [
   'wave_relay_events',
   'wave_relay_rejects',
@@ -360,7 +363,7 @@ export const wavesManifest: AreaManifest = {
     content_moderation_roles: { class: 'INDEX' },
     art_curation_token_watch_drops: { class: 'INDEX' },
     art_curation_token_watches: { class: 'INDEX' },
-    // The chain index: 6529.io's index of the chain's waves and its event log
+    // 6529.io's index of the chain's waves and its event log
     // (src/waves-chain-index), rebuilt by waves.chain-index from the gateway.
     ...CHAIN_INDEX_TABLE_ENTRIES,
     chain_claim_builds: {
@@ -484,6 +487,20 @@ export const wavesManifest: AreaManifest = {
       }
     }
   ],
+  // As the chain and the relays' operator would have it: the world's public
+  // wave is open; its members-only wave is read by 6529.io's site reader,
+  // as the drop index reads members-only waves in production.
+  relayAccess: {
+    openWaves: [WAVES_WORLD_IDS.publicWave],
+    readers: [
+      {
+        wallet: RELAY_WORLD_WALLET,
+        roles: ['site-reader'],
+        reason:
+          "6529.io's site reader (WAVES_DROP_INDEX_READER): the drop index reads members-only waves with it. The test grant's wallet."
+      }
+    ]
+  },
   waivers: {
     unprobedTables: [
       ...WAVES_CHAIN_INDEX_TABLES.map((target) => ({

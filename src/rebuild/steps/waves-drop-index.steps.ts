@@ -4,6 +4,10 @@ import {
   buildRelayWorld,
   RelayWorldEvent
 } from '@/rebuild/world/waves/relay-world';
+import {
+  testGrantProof,
+  TEST_DEVICE_SEED
+} from '@/tests/fixtures/relay-events.fixture';
 import { runDropIndex } from '@/wave-drop-index/drop-index';
 import { CrpConnection } from '@/wave-relay-publish/crp-client';
 
@@ -20,7 +24,8 @@ const MAX_RUNS = 20;
 
 /**
  * The drop index's settings for the run's relays: the drop index reads every wave the
- * relays carry into wave_relay_events. Applying relay-only events to
+ * relays carry into wave_relay_events, open waves and, as the site reader,
+ * members-only ones. Applying relay-only events to
  * 6529.io's drop tables (FEATURE_WAVES_DROP_INDEX_APPLY) is the drops
  * step's, not this one's.
  */
@@ -32,7 +37,14 @@ export function dropIndexEnv(relays: string): Record<string, string> {
     WAVES_DROP_INDEX_BUDGET_MS: '20000',
     // Switch-on: the world's events are claimed before it, so they are
     // history (IMPORT), as the switch's first run reads them.
-    WAVES_DROP_INDEX_LIVE_FROM: REBUILD_LIVE_FROM
+    WAVES_DROP_INDEX_LIVE_FROM: REBUILD_LIVE_FROM,
+    // 6529.io reads members-only waves as the relays' site reader: here the
+    // shared test device key under its grant, which the waves manifest
+    // declares a site reader of the run's relays.
+    WAVES_DROP_INDEX_READER: JSON.stringify({
+      device_seed: TEST_DEVICE_SEED,
+      grant: testGrantProof()
+    })
   };
 }
 
