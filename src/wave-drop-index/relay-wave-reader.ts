@@ -3,8 +3,8 @@ import { checkRelayEvent, RelayEvent, RelayGrant } from './relay-event-check';
 
 /**
  * Reads one wave's log from a relay, oldest first, every event checked as
- * every reader checks it (the sweep's RecordsWaveReader: a rebuild walks
- * the "6529.io records" wave's segment heads with it). Events that fail a
+ * every reader checks it (the rebuild check's RecordsWaveReader: a rebuild
+ * walks the "6529.io records" wave's segment heads with it). Events that fail a
  * check are passed to `onRejected` and left out.
  */
 

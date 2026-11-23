@@ -231,7 +231,7 @@ const listeners: DropIndexListener[] = [];
 
 /**
  * Hears every batch the index stores, after its commit, in the index's
- * order (the notify lane's in-process hook). Returns the way to stop.
+ * order (the notifications' in-process hook). Returns the way to stop.
  */
 export function onDropIndexStored(listener: DropIndexListener): () => void {
   listeners.push(listener);

@@ -68,7 +68,7 @@ export const relayDropWrites: RelayDropWrites = {
     const message = String(proof.message ?? '');
     // The event's check verified this grant (relay-event-check.ts); stored
     // like any grant, so 6529.io serves it with the drop's signed events
-    // and the wallet's owner is told of the device.
+    // and whoever holds the wallet is told of the device.
     await deviceSigningDb.insertGrant(
       {
         id,
