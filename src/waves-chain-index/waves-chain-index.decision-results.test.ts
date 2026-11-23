@@ -19,8 +19,9 @@ const V = (n: number) => id(`f${n}`);
 const manifest = (entryId: string) => id(`fe${entryId.slice(-8)}`);
 
 /**
- * The mint lane's check (verifyChainClaim): a FINAL result whose rank-1
- * winner is the claim's entry with the claim's manifest.
+ * The mint log's check (verifyChainClaim in src/mint-log/mint-claim-build.ts):
+ * a FINAL result whose rank-1 winner is the claim's entry with the claim's
+ * manifest.
  */
 function claimChecks(
   result: ChainDecisionResult | null,

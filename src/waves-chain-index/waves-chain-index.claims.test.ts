@@ -25,9 +25,9 @@ const DROP = (n: number) => `0000000${n}-0000-4000-8000-00000000000${n}`;
 const manifest = (entryId: string) => id(`fe${entryId.slice(-8)}`);
 
 /**
- * The claim builder's check of `chain` (the mint lane's
- * parseChainClaimContext): ids 0x and 64 lowercase hex, an occurrence of 0
- * or more, a height above 0.
+ * The claim builder's check of `chain` (parseChainClaimContext in
+ * src/mint-log/mint-claim-build.ts): ids 0x and 64 lowercase hex, an
+ * occurrence of 0 or more, a height above 0.
  */
 function claimBuilderAccepts(message: ClaimBuildMessage): boolean {
   const hex = /^0x[0-9a-f]{64}$/;

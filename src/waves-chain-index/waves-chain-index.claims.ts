@@ -4,13 +4,12 @@ import { sqs } from '@/sqs';
 import { ChainEvent } from './waves-chain-index.events';
 
 /**
- * Claim builds for the Main Stage (D:/t/sweep/mint/MAIN-STAGE-CONFIG.md):
- * the chain has no Main Stage designation yet, so MAIN_STAGE_DECISION_IDS
- * names its decisions. When the event log records a decided RESULT_FINAL
- * of one of them, the index queues one claim build on the claims-builder
- * queue for the result's rank-1 entry, with the result's reference in
- * `chain`. The claim builder rereads the result on the gateway before it
- * builds anything.
+ * Claim builds for the Main Stage: the chain has no Main Stage designation
+ * yet, so MAIN_STAGE_DECISION_IDS names its decisions. When the event log
+ * records a decided RESULT_FINAL of one of them, the index queues one claim
+ * build on the claims-builder queue for the result's rank-1 entry, with the
+ * result's reference in `chain`. The claim builder rereads the result on
+ * the gateway before it builds anything.
  *
  * Exactly one a (network, decision, occurrence): the build is written to
  * chain_claim_builds in the transaction that writes the block's events
@@ -63,8 +62,9 @@ function logOnce(key: string, message: string) {
 
 /**
  * MAIN_STAGE_DECISION_IDS: comma-separated chain decision ids, each `0x`
- * and 64 hex digits, read in lowercase as the mint lane reads them; empty,
- * none. One of another form is logged once and left out.
+ * and 64 hex digits, read in lowercase as the mint log's claim build reads
+ * them (src/mint-log/mint-claim-build.ts); empty, none. One of another
+ * form is logged once and left out.
  */
 export function parseMainStageDecisionIds(
   value: string | undefined | null

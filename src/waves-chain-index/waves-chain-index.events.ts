@@ -1120,7 +1120,8 @@ class BlockEvents {
       if (next === null) this.overlay.unknownVotes.add(key);
       else this.overlay.unknownVotes.delete(key);
     });
-    // A record the node could not decode: W4 reads the entry's votes whole.
+    // A record the node could not decode: the index reads the entry's votes
+    // whole.
     if (next === null) return;
     // Its value and updatedHeight as stored: it only moved in its voter's
     // list (another vote's removal), so nothing changed.

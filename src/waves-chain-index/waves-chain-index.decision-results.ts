@@ -6,8 +6,8 @@ import {
 
 /**
  * A decision's result for one occurrence, read from the chain: the claim
- * builder's port (the mint lane's MintGatewayPort, src/mint-log/
- * mint-gateway.ts on its branch), which checks that a Main Stage claim's
+ * builder's port (the mint log's MintGatewayPort in src/mint-log/
+ * mint-gateway.ts), which checks that a Main Stage claim's
  * entry is the rank-1 winner of a final result before it builds anything.
  * The shapes below are that port's; bind it in the claims builder with
  * `setMintGateway(chainDecisionResults)`.
