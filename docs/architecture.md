@@ -3359,11 +3359,13 @@ grants waiting for review (default 50); the next one gets 409
 
 xTDH is retired when identities move to the 6529 Network; the chain takes no
 xTDH and no grants over. `src/xtdh/xtdh-retired.ts` follows the identity
-freeze's settings (`FEATURE_IDENTITY_FROZEN`, `IDENTITY_FREEZE_AT`), which stay
-on for good from the switch-on. From then on the grant POSTs answer 423 with
-the retirement message, `xTdhLoop`'s universe phase returns at once, and
-`xTdhGrantsReviewerLoop` reviews nothing. The xTDH columns keep their last
-values for reads; nothing recalculates them.
+freeze (`isIdentityFrozen`): the freeze's own settings
+(`FEATURE_IDENTITY_FROZEN`, `IDENTITY_FREEZE_AT`), or the switch-on's
+(`FEATURE_IDENTITY_ON_CHAIN`, `IDENTITY_SWITCH_ON_AT`), which keeps it on for
+good. From then on the grant POSTs answer 423 with the retirement message,
+`xTdhLoop`'s universe phase returns at once, and `xTdhGrantsReviewerLoop`
+reviews nothing. The xTDH columns keep their last values for reads; nothing
+recalculates them.
 
 ### Transfer reconciliation after late indexing
 
