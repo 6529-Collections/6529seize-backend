@@ -24,25 +24,33 @@ const FIXTURE_RECORDS_FLAGS = {
   SIGNED_RECORDS_SERVICE_WALLET: '0x00000000000000000000000000000000000000a1'
 };
 
+// The follow lists read actions with group_concat, one target with a plain
+// select: neither has an ORDER BY, live or after a rebuild.
+const FOLLOW_ACTIONS_UNORDERED =
+  "A follow's actions are a set, read with no ORDER BY: MySQL's plan decides their order.";
+
 /** Every GET route that reads a personal settings or Collect plans table. */
 const PROBES: Probe[] = [
   {
     id: 'personal.follows-out',
     path: '/api/identity-subscriptions/outgoing/{type}',
     each: { type: ['IDENTITY', 'WAVE', 'DROP'] },
-    as: PROBE_CALLER
+    as: PROBE_CALLER,
+    unordered: [{ path: '$.data[*].actions', reason: FOLLOW_ACTIONS_UNORDERED }]
   },
   {
     id: 'personal.follows-in',
     path: '/api/identity-subscriptions/incoming/IDENTITY/{wallet}',
-    each: { wallet: PROBE_WALLETS }
+    each: { wallet: PROBE_WALLETS },
+    unordered: [{ path: '$.data[*].actions', reason: FOLLOW_ACTIONS_UNORDERED }]
   },
   {
     id: 'personal.identity-subscriptions',
     path: '/api/identities/{wallet}/subscriptions',
     // The caller's own profile has no follow of itself to show.
     each: { wallet: [PROBE_WALLETS[1]] },
-    as: PROBE_CALLER
+    as: PROBE_CALLER,
+    unordered: [{ path: '$.actions', reason: FOLLOW_ACTIONS_UNORDERED }]
   },
   {
     id: 'personal.mute',

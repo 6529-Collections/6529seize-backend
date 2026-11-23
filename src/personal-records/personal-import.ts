@@ -426,14 +426,14 @@ export class PersonalImportBuilder {
         add(sub, 'ps', {
           t: PersonalRecordType.FOLLOW,
           k: `identity:${target}`,
-          // In row order: the API lists a follow's actions so.
+          // In row order, as live inserted them.
           b: { actions: [...actions] }
         });
       } else {
         add(sub, 'pv', {
           t: PersonalRecordType.FOLLOW,
           k: `${type.toLowerCase()}:${row.target_id}`,
-          // In row order: the API lists a follow's actions so.
+          // In row order, as live inserted them.
           b: { actions: [...actions] }
         });
       }
