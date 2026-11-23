@@ -33,6 +33,7 @@ functions:
 resources:
   Resources:
     DiscoverEnsLoopOOMFilter:
+      DependsOn: DiscoverEnsLoopLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/discoverEnsLoop

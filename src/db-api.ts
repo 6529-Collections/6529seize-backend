@@ -51,7 +51,16 @@ import { getConsolidationsSql } from './sql_helpers';
 import { Nft } from '@/alchemy-sdk';
 import { createHash, randomUUID } from 'node:crypto';
 import * as mysql from 'mysql';
-import { mysqlSslConnectionOptions } from './db-ssl';
+import {
+  attachDbAuthTokenSource,
+  createDbAuthTokenSource,
+  DbConnectionTarget,
+  installMysqlIamAuthSupport,
+  isDbConnectionTargetComplete,
+  isDbIamAuthRequested,
+  resolveDbConnectionTargets,
+  sslOptionsFor
+} from './db-iam-auth';
 import {
   DEFAULT_PAGE_SIZE,
   NFTSearchResult,
@@ -156,53 +165,59 @@ export async function connect() {
     await disconnect();
   }
 
-  if (
-    !process.env.DB_HOST ||
-    !process.env.DB_USER ||
-    !process.env.DB_PASS ||
-    !process.env.DB_PORT
-  ) {
+  const targets = resolveDbConnectionTargets();
+  if (isDbIamAuthRequested() && !targets.write.iam) {
+    logger.warn(
+      '[DB IAM AUTH REQUESTED BUT DB_IAM_* INCOMPLETE] [USING PASSWORD]'
+    );
+  }
+  if (!isDbConnectionTargetComplete(targets.write) || !process.env.DB_PORT) {
     logger.error('[MISSING CONFIGURATION FOR WRITE DB] [EXITING]');
     process.exit();
   }
-  if (
-    !process.env.DB_HOST_READ ||
-    !process.env.DB_USER_READ ||
-    !process.env.DB_PASS_READ ||
-    !process.env.DB_PORT
-  ) {
+  if (!isDbConnectionTargetComplete(targets.read) || !process.env.DB_PORT) {
     logger.error('[MISSING CONFIGURATION FOR READ DB] [EXITING]');
     process.exit();
   }
   const port = +process.env.DB_PORT;
-  write_pool = mysql.createPool({
-    connectionLimit: 5,
-    connectTimeout: Time.seconds(30).toMillis(),
-    acquireTimeout: Time.seconds(30).toMillis(),
-    timeout: Time.seconds(30).toMillis(),
-    host: process.env.DB_HOST,
-    port: port,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASS,
-    charset: 'utf8mb4',
-    database: process.env.DB_NAME,
-    typeCast: CustomTypeCaster,
-    ...mysqlSslConnectionOptions()
-  });
-  read_pool = mysql.createPool({
-    connectionLimit: 10,
-    connectTimeout: Time.seconds(30).toMillis(),
-    acquireTimeout: Time.seconds(30).toMillis(),
-    timeout: Time.seconds(30).toMillis(),
-    host: process.env.DB_HOST_READ,
-    port: port,
-    user: process.env.DB_USER_READ,
-    password: process.env.DB_PASS_READ,
-    charset: 'utf8mb4',
-    database: process.env.DB_NAME,
-    typeCast: CustomTypeCaster,
-    ...mysqlSslConnectionOptions()
-  });
+  if (targets.write.iam || targets.read.iam) {
+    installMysqlIamAuthSupport();
+  }
+  const createPool = (
+    target: DbConnectionTarget,
+    connectionLimit: number
+  ): mysql.Pool => {
+    const pool = mysql.createPool({
+      connectionLimit,
+      connectTimeout: Time.seconds(30).toMillis(),
+      acquireTimeout: Time.seconds(30).toMillis(),
+      timeout: Time.seconds(30).toMillis(),
+      host: target.host,
+      port: port,
+      user: target.user,
+      password: target.password,
+      charset: 'utf8mb4',
+      database: process.env.DB_NAME,
+      typeCast: CustomTypeCaster,
+      ...sslOptionsFor(target)
+    });
+    if (target.iam) {
+      attachDbAuthTokenSource(
+        pool,
+        createDbAuthTokenSource({ host: target.host, port, user: target.user }),
+        (error) =>
+          logger.error(
+            `[DB IAM TOKEN SIGNING FAILED] [${target.host}] ${error}`
+          )
+      );
+    }
+    return pool;
+  };
+  write_pool = createPool(targets.write, 5);
+  read_pool = createPool(targets.read, 10);
+  logger.info(
+    `[DB POOLS CREATED] [AUTH ${targets.write.iam ? 'IAM' : 'PASSWORD'}]`
+  );
   class DbImpl extends SqlExecutor {
     async execute<T>(
       sql: string,

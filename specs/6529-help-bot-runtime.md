@@ -105,26 +105,21 @@ The hardcoded `@help6529` handle is resolved to the current profile id at
 runtime. Successful resolutions cache for five minutes; missing-profile lookups
 cache for 30 seconds so manual profile creation becomes active quickly.
 
-### 2.4 Help6529 Credits
+### 2.4 Asking is free
 
-The bot uses the reserved `Help6529 Credits` REP category to gate questions.
-Automatic signup, profile setup, and daily activity grants all use the same
-grant amount from `HELP_BOT_CREDIT_GRANT`. When the env var is missing, the
-default grant is 10 credits. `HELP_BOT_QUESTION_CREDIT_COST` remains a fixed
-hardcoded cost of 1 credit per question.
-
-The credit is charged when the trigger is accepted. It is refunded only when
-the worker fails before or while producing the answer (knowledge source,
-calendar, public data, or model failure, or an enqueue failure). Once an answer
-or no-reliable-source outcome has been produced, a failure to post it keeps the
-charge; the interaction is marked `FAILED` with a `Failed to post produced
-answer` reason.
+Asking help6529 is free. Help6529 Credits were a question meter stored as REP
+in the `Help6529 Credits` category. They are removed: the bot grants, charges
+and refunds nothing, and gives no REP. A question that passes the trigger's
+checks (public wave, chat eligibility, size, and the spam and daily limits in
+section 10) is queued for an answer. Asked about credits, the bot says asking
+is free and it no longer uses Help6529 Credits. `Help6529 Credits` is now an
+ordinary REP category name, checked like any other.
 
 Before creating an interaction, the trigger checks that the bot profile can
 reply in the wave with the same chat eligibility the reply writer applies:
 chat must be enabled, and the bot must belong to the wave chat group unless
 replies are open. When it cannot, the trigger is skipped without an
-interaction row, credit charge, reaction, or model call.
+interaction row, reaction, or model call.
 
 ## 3. Non-Goals
 
@@ -440,6 +435,10 @@ help job fails or source confidence is too low
   -> post failure reply
 ```
 
+If an answer or no-reliable-source outcome was produced but posting it fails,
+the interaction is marked `FAILED` with a `Failed to post produced answer`
+reason.
+
 ## 6. State and Idempotency
 
 Add an interaction record to prevent duplicate bot replies.
@@ -622,8 +621,8 @@ Initial controls:
   over a rolling 24 hours. Above `HELP_BOT_WAVE_DAILY_ANSWER_LIMIT` (default
   300 per wave) or `HELP_BOT_GLOBAL_DAILY_ANSWER_LIMIT` (default 3000 across
   all waves), the trigger records `DAILY_LIMIT_REACHED`, reacts `⛔️`, and does
-  not charge a credit, queue work, or reply. Both limits are read by the API
-  that accepts triggers.
+  not queue work or reply. Both limits are read by the API that accepts
+  triggers.
 - Global bot concurrency limit (reply worker reserved concurrency).
 - Maximum prompt/context token budget. The question text passed to the models
   is capped at `HELP_BOT_MAX_QUESTION_CHARS` (default 2,000 characters, counted
@@ -713,7 +712,7 @@ Explicit local-Desktop support questions and scoped follow-ups retrieve the
 corpus before calendar/public-data planning. A public total-TDH query cannot
 diagnose local node state. If the loaded corpus has no matching Desktop knowledge,
 fail closed and escalate rather than substitute public database values. A cold
-corpus-load failure propagates to the processor technical-failure/refund path.
+corpus-load failure propagates to the processor technical-failure path.
 Explicit mobile/browser
 questions do not inherit Desktop scope, including Core questions aimed at those
 platforms. Explicit Mobile wallet questions normalize the former Core name and

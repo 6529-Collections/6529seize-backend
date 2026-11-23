@@ -42,6 +42,7 @@
     "competition:capability": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/competitions/competition-capability.cli.ts",
     "calendar:check": "node scripts/require-6529-command.cjs && node scripts/memes-calendar.mjs check",
     "ws:delivery-probe": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/ws-delivery/delivery-probe/delivery-probe.cli.ts",
+    "signed-records:service-setup": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/signed-records/record-log/service-setup.cli.ts",
     "tdh:chain-compare": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/tdhChain/cli/tdh-chain-compare.cli.ts"
   },
   "keywords": [],
@@ -102,6 +103,7 @@
     "@aws-sdk/client-sfn": "^3.984.0",
     "@aws-sdk/client-sns": "^3.980.0",
     "@aws-sdk/client-sqs": "^3.980.0",
+    "@aws-sdk/rds-signer": "^3.984.0",
     "@aws-sdk/s3-request-presigner": "^3.980.0",
     "@contentauth/c2pa-node": "file:vendor/c2pa-node/c2pa-node-0.9.5-6529.1.tgz",
     "@emoji-mart/data": "^1.2.1",

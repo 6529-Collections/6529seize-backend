@@ -56,10 +56,6 @@ import { Logger } from '../logging';
 import { metricsRecorder, MetricsRecorder } from '../metrics/MetricsRecorder';
 import { userNotifier } from '../notifications/user.notifier';
 import {
-  HELP_BOT_RESERVED_CREDIT_CATEGORY_MESSAGE,
-  isHelpBotCreditCategory
-} from '../help-bot/help-bot.config';
-import {
   profileProxiesDb,
   ProfileProxiesDb
 } from '../profile-proxies/profile-proxies.db';
@@ -73,6 +69,7 @@ import {
   AbusivenessCheckService
 } from '../profiles/abusiveness-check.service';
 import { calculateLevel } from '../profiles/profile-level';
+import { creditTdh } from './rating-credit';
 import { profilesService } from '../profiles/profiles.service';
 import { RequestContext } from '../request.context';
 import { ConnectionWrapper } from '../sql-executor';
@@ -211,7 +208,6 @@ export class RatingsService {
       if (!authenticatedProfileId) {
         throw new ForbiddenException(`Create a profile before you rate`);
       }
-      this.assertUserCanRateCategory(request.matter, request.matter_category);
       if (!request.authenticationContext.isAuthenticatedAsProxy()) {
         const { identityUpdate } = await this.updateRatingUnsafe({
           request,
@@ -1012,7 +1008,7 @@ export class RatingsService {
     return result.map((it) => ({
       ...it,
       level: calculateLevel({
-        tdh: it.tdh + it.xtdh,
+        tdh: creditTdh(it.tdh, it.xtdh),
         rep: profileReps[it.profile_id] ?? 0
       })
     }));
@@ -1057,7 +1053,7 @@ export class RatingsService {
           data: page.data.map<ApiRatingWithProfileInfoAndLevel>((result) => ({
             ...result,
             level: calculateLevel({
-              tdh: result.tdh + result.xtdh,
+              tdh: creditTdh(result.tdh, result.xtdh),
               rep: profileReps[result.profile_id] ?? 0
             })
           }))
@@ -1144,7 +1140,6 @@ export class RatingsService {
           throw new ForbiddenException(`Create a profile before you rate`);
         }
         const matter = enums.resolve(RateMatter, apiRequest.matter)!;
-        this.assertUserCanRateCategory(matter, apiRequest.category);
         // First lock of the transaction, before the rater's ratings are read.
         await this.ratingsDb.lockRaterCreditOnMatter(
           { rater_profile_id: actingAsId, matter },
@@ -1406,9 +1401,6 @@ export class RatingsService {
     const repAction = this.getBulkRepProxyAction(authenticationContext);
     const proposedCategories = collections.distinct(
       targets.map((target) => target.category)
-    );
-    proposedCategories.forEach((category) =>
-      this.assertUserCanRateCategory(RateMatter.REP, category)
     );
     await this.abusivenessCheckService.bulkCheckRepPhrases(
       proposedCategories,
@@ -1700,15 +1692,6 @@ export class RatingsService {
       targetAddresses.some((address) => raterWallets.has(address.toLowerCase()))
     ) {
       throw new BadRequestException(`User can't rate themselves`);
-    }
-  }
-
-  private assertUserCanRateCategory(
-    matter: RateMatter,
-    category: string | null | undefined
-  ): void {
-    if (matter === RateMatter.REP && isHelpBotCreditCategory(category)) {
-      throw new BadRequestException(HELP_BOT_RESERVED_CREDIT_CATEGORY_MESSAGE);
     }
   }
 }

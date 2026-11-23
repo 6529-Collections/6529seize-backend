@@ -178,9 +178,44 @@ Before this policy, roughly 1M events, 90K reconciliation rows and 300
 snapshots a day accumulated without deletion. In October 2026 they filled the
 staging database's storage.
 
+## Archive
+
+Production keeps the history that retention removes. Before retention runs,
+each `marketStatsLoop` run uploads its contract's completed hours to the S3
+bucket `6529-market-depth-archive-<account>` (6529-infra stack
+`Prod-MarketArchive`, us-east-1), within a three-minute budget and up to 48
+hours per kind:
+
+- `market-depth/v1/events/contract=<c>/date=<YYYY-MM-DD>/hour=<HH>/part-<NNNN>.jsonl.gz`:
+  every event observed in that hour, one JSON object per line with all columns,
+  including the provider payload (`raw`), at most 50,000 events per part;
+- `market-depth/v1/snapshots/contract=<c>/date=<YYYY-MM-DD>/hour=<HH>/`: each
+  snapshot completed in that hour as `<completed_at>_<id>.raw.json.gz` and
+  `.normalized.json.gz` (the stored archives, byte for byte), plus
+  `manifest.jsonl.gz` with every snapshot's metadata and keys.
+
+An hour is archived once it ended at least 20 minutes ago: the stream
+collector writes events up to one invocation (15 minutes) after receiving them. Hours without rows
+produce no files. After each hour, the collector records how far it got in
+`market-depth/v1/_state/<kind>/contract=<c>.json` (`archived_through`).
+Retention never deletes events or snapshots at or after that watermark, and
+deletes none of a kind before its first archived hour. If the archive or its
+watermark fails, the run reports the error, and retention keeps everything not
+yet archived. The reconciliation queue is not archived: snapshots show when
+each order disappeared.
+
+Objects move to Glacier Instant Retrieval after 30 days (still readable
+immediately) and to Deep Archive after a year. The bucket is versioned, and
+replaced versions expire after 30 days. Staging sets no bucket
+(`MARKET_DEPTH_ARCHIVE_BUCKET` empty), so its retention is not gated.
+
+To reconstruct an order's history, combine its listing or offer event (expiry
+in `raw.payload.expiration_date`) with any later cancel, invalidate or sale
+event. The snapshot sequence shows when the order left the book.
+
 Monitor snapshot count and compressed byte growth, reconciliation backlog and
 oldest due retry, and last completed capture per partition. The collectors log
-a retention summary per run. Combined compressed archives are
+an archive summary and a retention summary per run. Combined compressed archives are
 limited to 6 MiB per snapshot, with 4 MiB per archive. This keeps driver
 hex-encoding below a conservative 16 MiB SQL packet budget, including headroom.
 Oversize capture fails visibly instead of truncating depth.
