@@ -20,6 +20,7 @@ const clean: VerdictInput = {
   staleNeeds: [],
   unownedRows: [],
   unrunOwnedColumns: [],
+  plannedRowsMissing: [],
   heldProbes: [],
   notInSchema: [],
   openRoutes: 0
@@ -86,6 +87,15 @@ const findings: [string, Partial<VerdictInput>, RegExp][] = [
     'owned columns no owner rebuilt',
     { unrunOwnedColumns: ['identities.tdh (tdh.rebuild)'] },
     /1 owned columns were left out of the row comparison.*identities\.tdh \(tdh\.rebuild\)/
+  ],
+  [
+    'planned rows missing',
+    {
+      plannedRowsMissing: [
+        'identities: 2 rows (identity.mirror, until the derived ids)'
+      ]
+    },
+    /Planned rows are missing from the rebuild in 1 tables.*identities: 2 rows \(identity\.mirror, until the derived ids\)/
   ],
   ['held probes', { heldProbes: ['a.p'] }, /planned probes were held/],
   [

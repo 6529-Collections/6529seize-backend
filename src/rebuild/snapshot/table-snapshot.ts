@@ -18,6 +18,13 @@ export interface TableDiff {
   readonly same: boolean;
   /** Up to `limit` keys each: only before, only after, changed. */
   readonly missing: string[];
+  /**
+   * Up to `limit` keys of rows only before that are planned (a later
+   * change rebuilds them), left out of `missing` and of `same`.
+   */
+  readonly planned: string[];
+  /** How many rows only before are planned. */
+  readonly plannedRows: number;
   readonly extra: string[];
   readonly changed: string[];
 }
@@ -101,17 +108,24 @@ export async function snapshotTable(
   return snapshotRows(table, rows, primaryKey, new Set(volatileColumns));
 }
 
-/** Compares two snapshots of one table by key. */
+/**
+ * Compares two snapshots of one table by key. A row only before whose key
+ * is `planned` (one a later change rebuilds) is listed apart and doesn't
+ * make the table differ; extra and changed rows always do.
+ */
 export function diffSnapshots(
   before: TableSnapshot,
   after: TableSnapshot,
-  limit = 20
+  limit = 20,
+  planned: ReadonlySet<string> = new Set()
 ): TableDiff {
   const index = (snapshot: TableSnapshot) =>
     new Map(snapshot.keys.map((key, i) => [key, snapshot.hashes[i]]));
   const a = index(before);
   const b = index(after);
-  const missing = before.keys.filter((key) => !b.has(key));
+  const gone = before.keys.filter((key) => !b.has(key));
+  const missing = gone.filter((key) => !planned.has(key));
+  const plannedGone = gone.filter((key) => planned.has(key));
   const extra = after.keys.filter((key) => !a.has(key));
   const changed = before.keys.filter(
     (key) => b.has(key) && b.get(key) !== a.get(key)
@@ -120,8 +134,18 @@ export function diffSnapshots(
     table: before.table,
     rowsBefore: before.rows,
     rowsAfter: after.rows,
-    same: before.digest === after.digest,
+    same:
+      before.digest === after.digest ||
+      // Only planned rows gone: the same once they are left out. Row
+      // counts too, since rows without a key match by hash.
+      (plannedGone.length > 0 &&
+        !missing.length &&
+        !extra.length &&
+        !changed.length &&
+        before.rows - plannedGone.length === after.rows),
     missing: missing.slice(0, limit),
+    planned: plannedGone.slice(0, limit),
+    plannedRows: plannedGone.length,
     extra: extra.slice(0, limit),
     changed: changed.slice(0, limit)
   };

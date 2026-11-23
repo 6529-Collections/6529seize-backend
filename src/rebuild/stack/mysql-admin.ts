@@ -299,6 +299,17 @@ export class MysqlAdmin {
     return io;
   }
 
+  /** A table's rows matching an SQL condition on its columns. */
+  async rowsWhere(
+    database: string,
+    table: string,
+    where: string
+  ): Promise<Row[]> {
+    return this.query(
+      `SELECT * FROM ${mysql.escapeId(database)}.${mysql.escapeId(table)} WHERE (${where})`
+    );
+  }
+
   /**
    * A table's rows in `orderBy` order. With `newestBy`, only the rows
    * whose column holds its largest value, as MySQL compares it (MAX).

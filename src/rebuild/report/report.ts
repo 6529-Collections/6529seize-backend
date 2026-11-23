@@ -123,6 +123,23 @@ export interface RunReport {
       owner: string;
       why: string;
     }[];
+    /**
+     * Seeded rows missing from the rebuild that a rebuilder planned (a
+     * later change rebuilds them): how many, up to 20 keys, and the plans.
+     */
+    readonly plannedRows: {
+      table: string;
+      rows: number;
+      keys: string[];
+      plans: {
+        step: string;
+        where: string;
+        reason: string;
+        until: string;
+        /** Seeded rows the plan's condition matched. */
+        seeded: number;
+      }[];
+    }[];
   };
   readonly failures: string[];
   readonly notes: string[];
@@ -148,12 +165,13 @@ export function headline(report: RunReport): string[] {
   const differing = report.tables.diffs.filter((d) => !d.same).length;
   const failed = report.steps.filter((s) => s.exitCode !== 0).length;
   const leftOut = report.tables.ownedColumnsLeftOut.length;
+  const planned = report.tables.plannedRows.reduce((n, p) => n + p.rows, 0);
   const provisional = Object.entries(report.sources)
     .filter(([, info]) => info.provisional)
     .map(([name]) => name);
   return [
     `${report.scope}, mark ${report.mark}${report.final ? ', final' : ''}, backend ${report.backendHead ?? 'unknown'}: ${report.verdict}`,
-    `tables ${total}: ${classes}; rebuilt ${rebuilt}, pending ${report.pending.length}, planned ${report.planned.length}, differing ${differing}${leftOut ? `; owned columns left out ${leftOut}` : ''}`,
+    `tables ${total}: ${classes}; rebuilt ${rebuilt}, pending ${report.pending.length}, planned ${report.planned.length}, differing ${differing}${leftOut ? `; owned columns left out ${leftOut}` : ''}${planned ? `; planned rows missing ${planned}` : ''}`,
     report.probes.stoppedBefore === null
       ? `probes ${report.probes.calls}: differ ${report.probes.differences.length}, unproven ${report.probes.unproven.length}; INDEX tables no probe read ${report.probes.unreadTables.length}`
       : `probes ${report.probes.calls}: not compared: the run stopped before pass B (${report.probes.stoppedBefore})`,
@@ -290,6 +308,18 @@ export function renderMarkdown(report: RunReport): string {
     ...section(
       'GET routes no probe calls and no waiver names',
       report.routes.open.length ? [report.routes.open.join(', ')] : []
+    ),
+    ...section(
+      'Planned rows missing from the rebuild',
+      report.tables.plannedRows.map(
+        (p) =>
+          `- ${p.table}: ${p.rows} rows, keys ${p.keys.join(' ')}; ${p.plans
+            .map(
+              (plan) =>
+                `planned by ${plan.step} until ${plan.until} (${plan.reason}; where ${plan.where}, matching ${plan.seeded} seeded rows)`
+            )
+            .join('; ')}`
+      )
     ),
     ...section(
       'Owned columns left out: their owner does not run here',

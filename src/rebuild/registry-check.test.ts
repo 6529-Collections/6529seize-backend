@@ -1,6 +1,7 @@
 import * as fc from 'fast-check';
 import {
   AreaManifest,
+  PlannedRows,
   RebuildStep,
   TableEntry
 } from '@/rebuild/manifest.types';
@@ -576,6 +577,46 @@ describe('checkRegistry', () => {
         "rebuilder b.none's columns of ids name no columns"
       ]);
     });
+  });
+
+  it('keeps planned rows to a rebuilder of the rows, with where, reason and until', () => {
+    const plan = (parts: Partial<PlannedRows> = {}): PlannedRows => ({
+      table: 'ids',
+      where: 'NOT EXISTS (SELECT 1 FROM map m WHERE m.id = ids.id)',
+      reason: 'rows only a later step creates',
+      until: 'the derived ids',
+      ...parts
+    });
+    const check = (rebuilders: RebuildStep[], seeds: RebuildStep[] = []) =>
+      checkRegistry({
+        manifests: [
+          area('a', { ids: index(), other: index() }, { rebuilders, seeds })
+        ],
+        codeTables: code('ids', 'other')
+      }).problems.map((p) => p.detail);
+    expect(
+      check([step('a.rows', { writes: ['ids'], plannedRows: [plan()] })])
+    ).toEqual([]);
+    expect(
+      check(
+        [
+          step('a.rows', {
+            writes: ['ids'],
+            plannedRows: [
+              plan({ table: 'other' }),
+              plan({ where: ' ', reason: '', until: ' ' })
+            ]
+          })
+        ],
+        [step('a.seed', { writes: ['ids'], plannedRows: [plan()] })]
+      )
+    ).toEqual([
+      'seed a.seed plans rows of ids; only a rebuilder plans rows',
+      "rebuilder a.rows plans rows of other, whose rows it doesn't write",
+      "rebuilder a.rows's planned rows of ids have no where",
+      "rebuilder a.rows's planned rows of ids have no reason",
+      "rebuilder a.rows's planned rows of ids name no change they wait for (until)"
+    ]);
   });
 
   it('keeps a checkpoint to INDEX tables, with a column and a reason', () => {

@@ -70,6 +70,7 @@ import {
 import {
   canonicalRow,
   diffSnapshots,
+  snapshotRows,
   snapshotTable,
   TableDiff,
   TableSnapshot
@@ -256,6 +257,17 @@ class RebuildRun {
    * the area or skipped: left out of the row comparison.
    */
   private unrunOwnedColumns: OwnedColumnLeftOut[] = [];
+  /**
+   * Seeded rows of the rebuilt tables that only a later change rebuilds:
+   * by table, their keys as the snapshots key them, and who planned them.
+   */
+  private plannedRows = new Map<
+    string,
+    {
+      keys: Set<string>;
+      plans: RunReport['tables']['plannedRows'][number]['plans'];
+    }
+  >();
   private tableDiffs: TableDiff[] = [];
   private notEmptyAfterDrop: string[] = [];
   private rebuiltTables: string[] = [];
@@ -1214,32 +1226,82 @@ class RebuildRun {
     );
   }
 
+  /** The columns the row comparison leaves out of a table. */
+  private volatileOf(table: string): string[] {
+    const entry = this.entries().get(table)?.entry;
+    return [
+      ...(entry?.volatileColumns ?? []).map((c) => c.column),
+      ...(entry?.exemptColumns ?? []).map((c) => c.column),
+      ...this.unrunOwnedColumns
+        .filter((owned) => owned.table === table)
+        .map((owned) => owned.column)
+    ];
+  }
+
   private async snapshots(
     tables: readonly string[]
   ): Promise<Map<string, TableSnapshot>> {
     const entries = this.entries();
     const result = new Map<string, TableSnapshot>();
     for (const table of tables) {
-      const entry = entries.get(table)?.entry;
-      const volatile = [
-        ...(entry?.volatileColumns ?? []).map((c) => c.column),
-        ...(entry?.exemptColumns ?? []).map((c) => c.column),
-        ...this.unrunOwnedColumns
-          .filter((owned) => owned.table === table)
-          .map((owned) => owned.column)
-      ];
       result.set(
         table,
         await snapshotTable(
           this.admin!,
           MAIN_DB,
           table,
-          volatile,
-          entry?.checkpoint?.column
+          this.volatileOf(table),
+          entries.get(table)?.entry.checkpoint?.column
         )
       );
     }
     return result;
+  }
+
+  /**
+   * The seeded rows the running rebuilders plan (`plannedRows`): each
+   * plan's `where` on the seeded tables, keyed as the snapshots key the
+   * rows. A condition MySQL can't evaluate fails the run.
+   */
+  private async findPlannedRows(): Promise<boolean> {
+    const running = this.scopeManifests
+      .flatMap((m) => m.rebuilders)
+      .filter((step) => this.stepRunsHere(step));
+    for (const step of running) {
+      for (const plan of step.plannedRows ?? []) {
+        if (!this.rebuiltTables.includes(plan.table)) continue;
+        let rows;
+        try {
+          rows = await this.admin!.rowsWhere(MAIN_DB, plan.table, plan.where);
+        } catch (error) {
+          this.failures.push(
+            `${step.id}'s planned rows of ${plan.table} can't be read (where ${plan.where}): ${error instanceof Error ? error.message : String(error)}`
+          );
+          return false;
+        }
+        const primaryKey = await this.admin!.primaryKey(MAIN_DB, plan.table);
+        const { keys } = snapshotRows(
+          plan.table,
+          rows,
+          primaryKey,
+          new Set(this.volatileOf(plan.table))
+        );
+        const found = this.plannedRows.get(plan.table) ?? {
+          keys: new Set<string>(),
+          plans: []
+        };
+        keys.forEach((key) => found.keys.add(key));
+        found.plans.push({
+          step: step.id,
+          where: plan.where,
+          reason: plan.reason,
+          until: plan.until,
+          seeded: keys.length
+        });
+        this.plannedRows.set(plan.table, found);
+      }
+    }
+    return true;
   }
 
   /**
@@ -1473,6 +1535,7 @@ class RebuildRun {
     if (!before) return;
     await this.findUnreadTables();
     const snapshotsBefore = await this.snapshots(this.rebuiltTables);
+    if (!(await this.findPlannedRows())) return;
     if (!(await this.drop(kept))) return;
     if (!(await this.runSteps('rebuilder', this.scopeManifests))) return;
     const after = await this.probePass('b', flags);
@@ -1483,7 +1546,12 @@ class RebuildRun {
     this.compared = true;
     const snapshotsAfter = await this.snapshots(this.rebuiltTables);
     this.tableDiffs = this.rebuiltTables.map((t) =>
-      diffSnapshots(snapshotsBefore.get(t)!, snapshotsAfter.get(t)!)
+      diffSnapshots(
+        snapshotsBefore.get(t)!,
+        snapshotsAfter.get(t)!,
+        20,
+        this.plannedRows.get(t)?.keys
+      )
     );
   }
 
@@ -1523,6 +1591,12 @@ class RebuildRun {
       waitingSteps: this.waitingSteps,
       staleNeeds: this.staleNeeds,
       unownedRows: this.unownedRows,
+      plannedRowsMissing: this.plannedRowsMissing().map(
+        (p) =>
+          `${p.table}: ${p.rows} rows (${p.plans
+            .map((plan) => `${plan.step}, until ${plan.until}`)
+            .join('; ')})`
+      ),
       unrunOwnedColumns: this.unrunOwnedColumns.map(
         (owned) =>
           `${owned.table}.${owned.column} (${owned.owner}, ${owned.why})`
@@ -1668,6 +1742,18 @@ class RebuildRun {
     });
   }
 
+  /** Planned rows missing from the rebuild, by table. */
+  private plannedRowsMissing(): RunReport['tables']['plannedRows'] {
+    return this.tableDiffs
+      .filter((diff) => diff.plannedRows > 0)
+      .map((diff) => ({
+        table: diff.table,
+        rows: diff.plannedRows,
+        keys: diff.planned,
+        plans: this.plannedRows.get(diff.table)?.plans ?? []
+      }));
+  }
+
   /** Rebuilders that declare reads of kept tables. */
   private keptReads(): KeptRead[] {
     const entries = this.entries();
@@ -1756,7 +1842,8 @@ class RebuildRun {
         notEmptyAfterDrop: this.notEmptyAfterDrop,
         seededRows: this.seededRows,
         volatileColumns: this.volatileColumns(),
-        ownedColumnsLeftOut: this.unrunOwnedColumns
+        ownedColumnsLeftOut: this.unrunOwnedColumns,
+        plannedRows: this.plannedRowsMissing()
       },
       failures: this.failures,
       notes: this.notes

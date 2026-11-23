@@ -355,6 +355,39 @@ function stepProblems(
         problem(`${kind} ${step.id} needs ${need.table} without a reason`);
       }
     }
+    for (const plan of step.plannedRows ?? []) {
+      const problem = (detail: string) =>
+        problems.push({
+          kind: 'BAD_STEP',
+          area: manifest.area,
+          table: plan.table,
+          detail
+        });
+      if (kind === 'seed') {
+        problem(
+          `seed ${step.id} plans rows of ${plan.table}; only a rebuilder plans rows`
+        );
+      } else if (!rowWrittenTables(step).includes(plan.table)) {
+        problem(
+          `rebuilder ${step.id} plans rows of ${plan.table}, whose rows it doesn't write`
+        );
+      }
+      if (!plan.where.trim()) {
+        problem(
+          `${kind} ${step.id}'s planned rows of ${plan.table} have no where`
+        );
+      }
+      if (!plan.reason.trim()) {
+        problem(
+          `${kind} ${step.id}'s planned rows of ${plan.table} have no reason`
+        );
+      }
+      if (!plan.until.trim()) {
+        problem(
+          `${kind} ${step.id}'s planned rows of ${plan.table} name no change they wait for (until)`
+        );
+      }
+    }
     if (step.timeoutMinutes <= 0) {
       problems.push({
         kind: 'BAD_STEP',

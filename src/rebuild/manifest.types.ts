@@ -122,6 +122,26 @@ export interface RebuildStep {
    * mined after it first ran.
    */
   readonly last?: boolean;
+  /**
+   * Rebuilders only: rows of a table the step writes that only a later
+   * change rebuilds. Seeded rows matching `where` may be missing from the
+   * rebuild; each one is named in the report, and a final run fails on
+   * them. A row the rebuild adds or changes still differs, whether or not
+   * it matches.
+   */
+  readonly plannedRows?: readonly PlannedRows[];
+}
+
+export interface PlannedRows {
+  readonly table: string;
+  /**
+   * An SQL condition on the table's columns, such as a NOT EXISTS against
+   * another table, evaluated on the seeded rows only.
+   */
+  readonly where: string;
+  readonly reason: string;
+  /** The later change that rebuilds these rows. */
+  readonly until: string;
 }
 
 /** A table a step writes: all of it, or a rebuilder's partition of it. */

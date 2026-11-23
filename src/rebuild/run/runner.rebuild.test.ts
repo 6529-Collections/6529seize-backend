@@ -666,6 +666,71 @@ describe('rebuild check, end to end', () => {
     });
   });
 
+  describe('planned rows', () => {
+    const PLAN = {
+      table: 'team',
+      where: "collection = '6529'",
+      reason: 'a later change writes the 6529 rows',
+      until: 'the 6529 writer'
+    };
+    const planning = (id: string, exportName: string): RebuildStep => ({
+      ...step(id, exportName, ['team']),
+      plannedRows: [PLAN]
+    });
+
+    it('names a planned row missing from the rebuild, and fails a final run on it', async () => {
+      // The rebuilder writes only the MEMES rows; the 6529 row is planned.
+      const { report } = await teamRun(
+        planning('self-check.planned', 'rebuildMemesTeam')
+      );
+      expect(report.failures).toEqual([]);
+      expect(report.verdict).toBe('PASS');
+      expect(
+        report.tables.diffs.map((d) => [d.table, d.same, d.plannedRows])
+      ).toEqual([['team', true, 1]]);
+      expect(report.tables.plannedRows).toEqual([
+        {
+          table: 'team',
+          rows: 1,
+          keys: [
+            JSON.stringify(['0x0000000000000000000000000000000000000002'])
+          ],
+          plans: [
+            {
+              step: 'self-check.planned',
+              where: PLAN.where,
+              reason: PLAN.reason,
+              until: PLAN.until,
+              seeded: 1
+            }
+          ]
+        }
+      ]);
+      expect(report.notes.join(' ')).toContain(
+        'Planned rows are missing from the rebuild in 1 tables'
+      );
+      const final = await teamRun(
+        planning('self-check.planned-final', 'rebuildMemesTeam'),
+        true
+      );
+      expect(final.report.verdict).toBe('FAIL');
+      expect(final.report.failures.join(' ')).toContain(
+        'Planned rows are missing from the rebuild in 1 tables: seeded rows only a later change rebuilds; a final run fails on them: team: 1 rows (self-check.planned-final, until the 6529 writer)'
+      );
+    });
+
+    it('still differs on a planned row the rebuild writes differently', async () => {
+      const { report } = await teamRun(
+        planning('self-check.planned-changed', 'rebuildTeamDifferently')
+      );
+      const [diff] = report.tables.diffs;
+      expect(diff.same).toBe(false);
+      expect(diff.changed).toHaveLength(3);
+      expect(diff.plannedRows).toBe(0);
+      expect(report.tables.plannedRows).toEqual([]);
+    });
+  });
+
   it('fails a rebuilder that calls a host outside the sources', async () => {
     const { report } = await teamRun(
       step('self-check.outside', 'callOutsideSource', ['team'])

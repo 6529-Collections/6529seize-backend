@@ -95,6 +95,8 @@ function report(parts: Partial<RunReport> = {}): RunReport {
           rowsAfter: 3,
           same: true,
           missing: [],
+          planned: [],
+          plannedRows: 0,
           extra: [],
           changed: []
         }
@@ -108,7 +110,8 @@ function report(parts: Partial<RunReport> = {}): RunReport {
           reason: 'Set when the loop writes the row.'
         }
       ],
-      ownedColumnsLeftOut: []
+      ownedColumnsLeftOut: [],
+      plannedRows: []
     },
     failures: [],
     notes: [],
@@ -171,6 +174,36 @@ describe('rebuild report', () => {
     expect(headline(base)[1]).not.toContain('owned columns');
     expect(renderMarkdown(leftOut)).toContain(
       '## Owned columns left out: their owner does not run here\n\n- identities.tdh: tdh.identity-columns, planned, its code is not in this tree'
+    );
+  });
+
+  it('counts and lists planned rows missing from the rebuild', () => {
+    const base = report();
+    const planned = report({
+      tables: {
+        ...base.tables,
+        plannedRows: [
+          {
+            table: 'identities',
+            rows: 2,
+            keys: ['["k1"]', '["k2"]'],
+            plans: [
+              {
+                step: 'identity.mirror',
+                where: 'profile_id IS NULL',
+                reason: 'TDH-only identities',
+                until: 'the derived ids',
+                seeded: 2
+              }
+            ]
+          }
+        ]
+      }
+    });
+    expect(headline(planned)[1]).toMatch(/; planned rows missing 2$/);
+    expect(headline(base)[1]).not.toContain('planned rows');
+    expect(renderMarkdown(planned)).toContain(
+      '## Planned rows missing from the rebuild\n\n- identities: 2 rows, keys ["k1"] ["k2"]; planned by identity.mirror until the derived ids (TDH-only identities; where profile_id IS NULL, matching 2 seeded rows)'
     );
   });
 

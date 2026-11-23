@@ -31,6 +31,8 @@ test shards and fails when:
   checkpoint column, or columns of a table no rebuilder writes the rows of,
   or doesn't run after that row writer; a step both writes a table's rows
   and owns columns of it; a write names both columns and a partition;
+- a step plans rows while it is a seed, of a table whose rows it doesn't
+  write, or without a `where`, a reason or an `until`;
 - a step reads a table no manifest has, or needs an unknown table, a
   VIEW, RETIRED or SCHEMA table, or one without a reason; a rebuilder is
   marked `last`, or a seed that isn't last waits on one that is;
@@ -167,6 +169,14 @@ export const mintManifest: AreaManifest = {
     API's answers keep them; they are still left out of the comparison and
     listed with why (another area's, planned, or waiting for a table), as
     planned tables are, and a final run fails on them.
+  - A rebuilder can list `plannedRows: [{ table, where, reason, until }]`:
+    rows of a table it writes that only a later change rebuilds, such as
+    rows another step creates once their ids change. `where` is an SQL
+    condition on the table's columns, which may use a `NOT EXISTS` against
+    other tables, evaluated on the seeded rows; `until` names the later
+    change. A seeded row it matches that the rebuild lacks is listed as
+    planned with its key, doesn't make the table differ, and fails a final
+    run. A row the rebuild adds or changes still differs, matching or not.
   - A step with `origin: 'planned'` names a module a branch adds later.
     Until it is in the tree, runs skip the step and note it, and keep a
     skipped rebuilder's tables like pending ones; a final run fails.
