@@ -17,6 +17,7 @@ const clean: VerdictInput = {
   plannedTables: 0,
   plannedSteps: [],
   waitingSteps: [],
+  unownedRows: [],
   heldProbes: [],
   notInSchema: [],
   openRoutes: 0
@@ -64,6 +65,11 @@ const findings: [string, Partial<VerdictInput>, RegExp][] = [
       ]
     },
     /1 steps were skipped as planned because a table they need is not in the schema yet.*a\.seed needs t \(a later branch creates it\)/
+  ],
+  [
+    'rows no partition owns',
+    { unownedRows: ["heads (1 rows whose type is in no writer's partition)"] },
+    /1 partitioned tables hold rows no rebuilder owns after the seeds: heads/
   ],
   ['held probes', { heldProbes: ['a.p'] }, /planned probes were held/],
   [

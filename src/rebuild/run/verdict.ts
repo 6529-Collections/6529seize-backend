@@ -36,6 +36,8 @@ export interface VerdictInput {
   readonly plannedSteps: readonly string[];
   /** Steps skipped as planned, one entry per table they need and lack. */
   readonly waitingSteps: readonly WaitingStep[];
+  /** Partitioned tables with rows no writer's partition owns. */
+  readonly unownedRows: readonly string[];
   /** Planned probes held because a table they read isn't in the schema. */
   readonly heldProbes: readonly string[];
   /** Tables a manifest keeps or rebuilds that a fresh schema lacks. */
@@ -139,6 +141,11 @@ export function judge(input: VerdictInput): Verdict {
       `${steps.size} steps were skipped as planned because a table they need is not in the schema yet, and ${skippedTables}: ${input.waitingSteps
         .map((w) => `${w.step} needs ${w.table} (${w.reason})`)
         .join('; ')}`
+    );
+  }
+  if (input.unownedRows.length) {
+    finalOnly(
+      `${input.unownedRows.length} partitioned tables hold rows no rebuilder owns after the seeds: ${input.unownedRows.join(', ')}`
     );
   }
   if (input.heldProbes.length) {

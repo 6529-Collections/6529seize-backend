@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as net from 'node:net';
 import * as path from 'node:path';
@@ -14,6 +14,7 @@ import {
 } from '@/rebuild/manifest.types';
 import { checkRegistry, RegistryResult } from '@/rebuild/registry-check';
 import { orderSeeds, orderSteps } from '@/rebuild/step-order';
+import { partitionsOf, writersOf, writtenTables } from '@/rebuild/step-writes';
 import {
   CodeTables,
   discoverCodeTables,
@@ -55,6 +56,7 @@ import {
   runProbes
 } from '@/rebuild/probes/probe-runner';
 import {
+  canonicalRow,
   diffSnapshots,
   snapshotTable,
   TableDiff,
@@ -85,6 +87,12 @@ import {
 } from '@/rebuild/sources/start-sources';
 import { judge, WaitingStep } from '@/rebuild/run/verdict';
 import { waitForApi } from '@/rebuild/stack/api-ready';
+
+/** A table's partition columns and every tuple its writers own. */
+interface Partitions {
+  readonly columns: readonly string[];
+  readonly values: readonly (readonly string[])[];
+}
 
 export interface RunOptions {
   readonly repoRoot: string;
@@ -217,6 +225,8 @@ class RebuildRun {
   private plannedWrites = new Set<string>();
   /** Rows in each INDEX table of the schema after the seeds ran. */
   private seededRows: Record<string, number> = {};
+  /** Partitioned tables with rows no writer's partition owns, after the seeds. */
+  private unownedRows: string[] = [];
   private tableDiffs: TableDiff[] = [];
   private notEmptyAfterDrop: string[] = [];
   private rebuiltTables: string[] = [];
@@ -432,12 +442,18 @@ class RebuildRun {
           user,
           password,
           database: MAIN_DB,
-          writes: step.writes.filter((t) => baseNames.has(t)),
+          writes: writtenTables(step).filter((t) => baseNames.has(t)),
           reads: (step.reads ?? []).filter((t) => liveNames.has(t))
         })
       );
       account = { ...account, user, password };
     }
+    // A partitioned rebuilder may change only its own rows: the rest of
+    // the table must come out as it went in.
+    const outside =
+      kind === 'rebuilder'
+        ? await this.outsideDigests(step, baseNames)
+        : new Map<string, string>();
     const context: RebuildContext = {
       area: area.area,
       stepId: step.id,
@@ -492,8 +508,16 @@ class RebuildRun {
       });
     }
     if (user) await admin.query(dropUserStatement(user));
+    const outsideAfter = await this.outsideDigests(step, baseNames);
+    outside.forEach((digest, table) => {
+      if (outsideAfter.get(table) !== digest) {
+        this.failures.push(
+          `rebuilder ${step.id} changed rows of ${table} outside its partition`
+        );
+      }
+    });
     const rowsWritten: Record<string, number> = {};
-    for (const table of step.writes.filter((t) => baseNames.has(t))) {
+    for (const table of writtenTables(step).filter((t) => baseNames.has(t))) {
       rowsWritten[table] = await admin.rowCount(MAIN_DB, table);
     }
     const outcome = this.record(
@@ -552,11 +576,137 @@ class RebuildRun {
     return true;
   }
 
+  /**
+   * The partitions of tables every writer writes in part: the column and
+   * each writer's values. Tables with a whole writer are left out (the
+   * registry refuses them beside a partition).
+   */
+  private partitionedTables(
+    rebuilders: readonly RebuildStep[]
+  ): Map<string, Partitions> {
+    const result = new Map<string, Partitions>();
+    writersOf(rebuilders).forEach((writers, table) => {
+      const partitions = writers.map((w) => w.partition);
+      if (partitions.some((p) => p === null)) return;
+      result.set(table, {
+        columns: partitions[0]!.columns,
+        values: partitions.flatMap((p) => p!.values)
+      });
+    });
+    return result;
+  }
+
+  /**
+   * For each table a rebuilder writes in part: a digest of the rows outside
+   * its partition, the same whatever order MySQL returns them in.
+   */
+  private async outsideDigests(
+    step: RebuildStep,
+    baseNames: ReadonlySet<string>
+  ): Promise<Map<string, string>> {
+    const digests = new Map<string, string>();
+    for (const { table, partition } of partitionsOf(step)) {
+      if (!baseNames.has(table)) continue;
+      const rows = await this.admin!.partitionRows(
+        MAIN_DB,
+        table,
+        partition.columns,
+        partition.values,
+        false
+      );
+      const hashes = rows
+        .map((row) =>
+          createHash('sha256').update(canonicalRow(row)).digest('hex')
+        )
+        .sort((a, b) => (a < b ? -1 : Number(a > b)));
+      digests.set(
+        table,
+        createHash('sha256').update(hashes.join('\n')).digest('hex')
+      );
+    }
+    return digests;
+  }
+
+  /**
+   * Partitioned tables holding rows no writer's partition owns after the
+   * seeds: rows no rebuilder rebuilds.
+   */
+  private async findUnownedRows(base: ReadonlySet<string>): Promise<string[]> {
+    const found: string[] = [];
+    const partitioned = this.partitionedTables(
+      this.o.manifests.flatMap((m) => m.rebuilders)
+    );
+    for (const [table, { columns, values }] of Array.from(partitioned)) {
+      if (!base.has(table)) continue;
+      const rows = await this.admin!.partitionRowCount(
+        MAIN_DB,
+        table,
+        columns,
+        values,
+        false
+      );
+      if (rows) {
+        found.push(
+          `${table} (${rows} rows whose (${columns.join(', ')}) is in no writer's partition)`
+        );
+      }
+    }
+    return found;
+  }
+
   /** False for a planned module step whose module isn't in this tree. */
   private stepCodeHere(step: RebuildStep): boolean {
     if (step.origin !== 'planned' || !('module' in step.run)) return true;
     const base = path.join(this.o.repoRoot, step.run.module);
     return ['.ts', '.js'].some((ext) => fs.existsSync(`${base}${ext}`));
+  }
+
+  /**
+   * MySQL decides whether two partitions' tuples are one value: before the
+   * seeds, every pair of tuples from different writers of a table is
+   * compared under its columns' own collations, and any equal pair fails
+   * the run (the registry's fold is only an early warning).
+   */
+  private async partitionsDisjointInMysql(): Promise<boolean> {
+    const problems: string[] = [];
+    const writers = writersOf(this.o.manifests.flatMap((m) => m.rebuilders));
+    for (const [table, list] of Array.from(writers)) {
+      if (list.length < 2 || list.some((w) => !w.partition)) continue;
+      if (!this.baseTables.has(table)) continue;
+      // By step id, so a report names the pair the same way every run.
+      const sorted = [...list].sort((x, y) =>
+        x.step < y.step ? -1 : Number(x.step > y.step)
+      );
+      const columns = sorted[0].partition!.columns;
+      for (let i = 0; i < sorted.length; i++) {
+        for (const other of sorted.slice(i + 1)) {
+          const a = sorted[i].partition!.values;
+          const b = other.partition!.values;
+          let overlaps: [number, number][];
+          try {
+            overlaps = await this.admin!.overlappingTuples(
+              MAIN_DB,
+              table,
+              columns,
+              a,
+              b
+            );
+          } catch (error) {
+            problems.push(
+              `${table}'s partitions can't be compared in MySQL: ${String(error)}`
+            );
+            continue;
+          }
+          for (const [x, y] of overlaps) {
+            problems.push(
+              `${table}'s partitions overlap under its collation: ${sorted[i].step}'s (${a[x].join(', ')}) and ${other.step}'s (${b[y].join(', ')})`
+            );
+          }
+        }
+      }
+    }
+    this.failures.push(...problems);
+    return problems.length === 0;
   }
 
   /**
@@ -754,11 +904,32 @@ class RebuildRun {
 
   private async drop(kept: readonly string[]): Promise<boolean> {
     const admin = this.admin!;
+    // In an area run, a table this area shares with another area's writer
+    // loses only this area's partition; the other's rows stay as seeded.
+    const ownPartitions = new Map<string, Partitions>();
+    if (this.o.area) {
+      const all = this.partitionedTables(
+        this.o.manifests.flatMap((m) => m.rebuilders)
+      );
+      this.partitionedTables(
+        this.scopeManifests.flatMap((m) => m.rebuilders)
+      ).forEach((own, table) => {
+        if (all.get(table)!.values.length > own.values.length) {
+          ownPartitions.set(table, own);
+        }
+      });
+    }
     if (this.o.area) {
       this.o.log(
         `truncating ${this.rebuiltTables.length} tables of ${this.o.area}`
       );
-      await admin.truncate(MAIN_DB, this.rebuiltTables);
+      await admin.truncate(
+        MAIN_DB,
+        this.rebuiltTables.filter((t) => !ownPartitions.has(t))
+      );
+      for (const [table, { columns, values }] of Array.from(ownPartitions)) {
+        await admin.deletePartition(MAIN_DB, table, columns, values);
+      }
       // Kept rows go back to their state before the first probe pass.
       await admin.truncate(MAIN_DB, kept);
       for (const table of kept) await admin.copyRows(KEPT_DB, MAIN_DB, table);
@@ -785,8 +956,17 @@ class RebuildRun {
           )
           .map((t) => t.name);
     for (const table of mustBeEmpty) {
-      if ((await admin.rowCount(MAIN_DB, table)) > 0)
-        this.notEmptyAfterDrop.push(table);
+      const own = ownPartitions.get(table);
+      const rows = own
+        ? await admin.partitionRowCount(
+            MAIN_DB,
+            table,
+            own.columns,
+            own.values,
+            true
+          )
+        : await admin.rowCount(MAIN_DB, table);
+      if (rows > 0) this.notEmptyAfterDrop.push(table);
     }
     if (this.notEmptyAfterDrop.length) {
       this.failures.push(
@@ -848,6 +1028,7 @@ class RebuildRun {
     );
     this.baseTables = base;
     if (!(await this.checkpointColumnsHold())) return;
+    if (!(await this.partitionsDisjointInMysql())) return;
     const all = expandAll(this.o.manifests);
     const waits = (call: ProbeCall) =>
       call.probe.origin === 'planned' &&
@@ -857,16 +1038,17 @@ class RebuildRun {
     const rebuilders = this.scopeManifests.flatMap((m) => m.rebuilders);
     this.rebuiltTables = Array.from(
       new Set(
-        rebuilders.filter((s) => this.stepRunsHere(s)).flatMap((s) => s.writes)
+        rebuilders.filter((s) => this.stepRunsHere(s)).flatMap(writtenTables)
       )
     )
       .filter((t) => base.has(t))
       .sort((a, b) => a.localeCompare(b));
     this.plannedWrites = new Set(
-      rebuilders.filter((s) => !this.stepRunsHere(s)).flatMap((s) => s.writes)
+      rebuilders.filter((s) => !this.stepRunsHere(s)).flatMap(writtenTables)
     );
     if (!(await this.runSteps('seed', this.o.manifests))) return;
     this.seededRows = await this.countIndexRows(base);
+    this.unownedRows = await this.findUnownedRows(base);
     const kept = this.keptTables();
     this.o.log(`copying ${kept.length} kept tables aside`);
     await this.admin!.copyTables(MAIN_DB, KEPT_DB, kept);
@@ -925,6 +1107,7 @@ class RebuildRun {
       plannedTables: (this.registry?.plannedAbsent ?? []).length,
       plannedSteps: this.plannedSteps,
       waitingSteps: this.waitingSteps,
+      unownedRows: this.unownedRows,
       heldProbes: this.heldProbes,
       notInSchema: this.notInSchema().map((a) => a.table),
       openRoutes: this.routes().open.length

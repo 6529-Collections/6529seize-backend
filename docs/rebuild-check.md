@@ -25,7 +25,8 @@ test shards and fails when:
   `origin: 'runtime'`);
 - a table other than INDEX has no `why`;
 - a rebuilder writes a table that isn't one of its area's INDEX tables, two
-  rebuilders write one table, or steps wait on each other;
+  rebuilders write one table (unless each writes a disjoint partition of
+  it), or steps wait on each other;
 - a step reads a table no manifest has, or needs one that no later branch
   adds or without a reason; a rebuilder is marked `last`, or a seed that
   isn't last waits on one that is;
@@ -109,6 +110,21 @@ export const mintManifest: AreaManifest = {
   - A preload refuses every socket except MySQL and the run's sources.
   - Any id the API shows must come from the source, never from
     auto-increment or a random UUID, or the answers change.
+  - Rebuilders of different areas can share an INDEX table by partition:
+    each lists it in `writes` as
+    `{ table, partition: { columns, values, reason } }`, its rows being
+    those whose `columns` hold one of the tuples in `values` (for example
+    columns `['family', 'type']`, values `[['pv', 'follow']]`). The
+    registry allows several writers on one table only when every one
+    declares a partition on the same columns and no two share a tuple (an
+    early warning, folding case and accents as the default collation does,
+    with trailing spaces significant); a writer of the whole table excludes
+    all others. Before the seeds, the run compares every pair of tuples
+    from different writers in MySQL, under each column's own collation,
+    and fails on any pair MySQL takes as one value. After the seeds, rows in no writer's partition are noted, and
+    a final run fails on them. A rebuilder that changes any row outside
+    its partition fails the run. The rows are compared as one table; an
+    area run empties and rebuilds only the area's own partitions.
   - A step with `origin: 'planned'` names a module a branch adds later.
     Until it is in the tree, runs skip the step and note it, and keep a
     skipped rebuilder's tables like pending ones; a final run fails.

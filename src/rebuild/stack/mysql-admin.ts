@@ -11,6 +11,18 @@ export interface AdminTarget {
 export type Row = Record<string, unknown>;
 
 /** A root connection to the run's private server. Values come back as strings. */
+/**
+ * Rows whose `columns` hold one of the tuples bound to its `?`
+ * (`inside`), or none of them: a NULL in any column is none.
+ */
+function partitionWhere(columns: readonly string[], inside: boolean): string {
+  const ids = columns.map((column) => mysql.escapeId(column));
+  const tuple = `(${ids.join(', ')}) IN (?)`;
+  return inside
+    ? tuple
+    : [...ids.map((id) => `${id} IS NULL`), `NOT (${tuple})`].join(' OR ');
+}
+
 export class MysqlAdmin {
   private constructor(private readonly connection: mysql.Connection) {}
 
@@ -95,6 +107,52 @@ export class MysqlAdmin {
       `SELECT COUNT(*) AS n FROM ${mysql.escapeId(database)}.${mysql.escapeId(table)}`
     );
     return Number(row.n);
+  }
+
+  /**
+   * The rows whose `columns` hold one of the tuples in `values`
+   * (`inside`), or none of them (a NULL in any column is none).
+   */
+  async partitionRowCount(
+    database: string,
+    table: string,
+    columns: readonly string[],
+    values: readonly (readonly string[])[],
+    inside: boolean
+  ): Promise<number> {
+    const [row] = await this.query<{ n: string }>(
+      `SELECT COUNT(*) AS n FROM ${mysql.escapeId(database)}.${mysql.escapeId(table)} WHERE ${partitionWhere(columns, inside)}`,
+      [values.map((v) => [...v])]
+    );
+    return Number(row.n);
+  }
+
+  /** The rows of a partition (`inside`), or of everything outside it. */
+  async partitionRows(
+    database: string,
+    table: string,
+    columns: readonly string[],
+    values: readonly (readonly string[])[],
+    inside: boolean
+  ): Promise<Row[]> {
+    return this.query(
+      `SELECT * FROM ${mysql.escapeId(database)}.${mysql.escapeId(table)} WHERE ${partitionWhere(columns, inside)}`,
+      [values.map((v) => [...v])]
+    );
+  }
+
+  /** Deletes the rows whose `columns` hold one of the tuples in `values`. */
+  async deletePartition(
+    database: string,
+    table: string,
+    columns: readonly string[],
+    values: readonly (readonly string[])[]
+  ): Promise<void> {
+    const ids = columns.map((column) => mysql.escapeId(column));
+    await this.query(
+      `DELETE FROM ${mysql.escapeId(database)}.${mysql.escapeId(table)} WHERE (${ids.join(', ')}) IN (?)`,
+      [values.map((v) => [...v])]
+    );
   }
 
   /**
@@ -200,6 +258,56 @@ export class MysqlAdmin {
       ? ` ORDER BY ${orderBy.map((column) => mysql.escapeId(column)).join(', ')}`
       : '';
     return this.query(`SELECT * FROM ${from}${where}${order}`);
+  }
+
+  /**
+   * The pairs of tuples (index in `a`, index in `b`) that MySQL takes as
+   * one value in `columns` of `table`: both sides are written into
+   * temporary copies of those columns, with their types and collations,
+   * and joined on them.
+   */
+  async overlappingTuples(
+    database: string,
+    table: string,
+    columns: readonly string[],
+    a: readonly (readonly string[])[],
+    b: readonly (readonly string[])[]
+  ): Promise<[number, number][]> {
+    const ids = columns.map((column) => mysql.escapeId(column));
+    const db = mysql.escapeId(database);
+    const from = `${db}.${mysql.escapeId(table)}`;
+    // Temporary tables belong to the connection; the database names them.
+    const left = `${db}.rebuild_partition_a`;
+    const right = `${db}.rebuild_partition_b`;
+    const copy = async (
+      name: string,
+      tuples: readonly (readonly string[])[]
+    ) => {
+      await this.query(`DROP TEMPORARY TABLE IF EXISTS ${name}`);
+      await this.query(
+        `CREATE TEMPORARY TABLE ${name} SELECT 0 AS rebuild_index, ${ids.join(', ')} FROM ${from} LIMIT 0`
+      );
+      if (tuples.length) {
+        await this.query(
+          `INSERT INTO ${name} (rebuild_index, ${ids.join(', ')}) VALUES ?`,
+          [tuples.map((tuple, i) => [i, ...tuple])]
+        );
+      }
+    };
+    try {
+      await copy(left, a);
+      await copy(right, b);
+      const rows = await this.query<{ ai: number; bi: number }>(
+        `SELECT x.rebuild_index AS ai, y.rebuild_index AS bi
+           FROM ${left} x JOIN ${right} y
+             ON ${ids.map((id) => `x.${id} = y.${id}`).join(' AND ')}
+          ORDER BY ai, bi`
+      );
+      return rows.map((row) => [Number(row.ai), Number(row.bi)]);
+    } finally {
+      await this.query(`DROP TEMPORARY TABLE IF EXISTS ${left}`);
+      await this.query(`DROP TEMPORARY TABLE IF EXISTS ${right}`);
+    }
   }
 
   /** Whether a column may hold NULL; null when the table has no such column. */

@@ -145,6 +145,38 @@ describe('MysqlAdmin on the private mysqld', () => {
     expect(await admin.columnNullable(FROM, 'checkpoints', 'nope')).toBeNull();
   });
 
+  it('compares partition tuples under each column own collation', async () => {
+    await admin.query(
+      `CREATE TABLE ${FROM}.heads (
+         family VARCHAR(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
+         n INT
+       )`
+    );
+    // utf8mb4_0900_ai_ci: case and accents fold, and 'ss' equals U+00DF;
+    // NO PAD, so a trailing space differs. INT compares as numbers.
+    expect(
+      await admin.overlappingTuples(
+        FROM,
+        'heads',
+        ['family'],
+        [['\u00e9'], ['\u00df'], ['a '], ['X']],
+        [['E'], ['ss'], ['a'], ['y']]
+      )
+    ).toEqual([
+      [0, 0],
+      [1, 1]
+    ]);
+    expect(
+      await admin.overlappingTuples(
+        FROM,
+        'heads',
+        ['family', 'n'],
+        [['a', '1']],
+        [['A', '01']]
+      )
+    ).toEqual([[0, 0]]);
+  });
+
   it('leaves no pid file once the server stops', async () => {
     const pidFile = path.join(HOME, 'mysql', 'harness-mysqld.pid');
     expect(fs.readFileSync(pidFile, 'utf8').trim()).toBe(String(server.pid));

@@ -247,6 +247,120 @@ describe('checkRegistry', () => {
     ]);
   });
 
+  describe('partitioned writers', () => {
+    const write = (table: string, columns: string[], values: string[][]) => ({
+      table,
+      partition: { columns, values, reason: 'its records' }
+    });
+    const check = (
+      a: RebuildStep['writes'],
+      b: RebuildStep['writes'],
+      seeds: RebuildStep[] = []
+    ) =>
+      checkRegistry({
+        manifests: [
+          area(
+            'a',
+            { heads: index() },
+            {
+              seeds,
+              rebuilders: [step('a.rebuild', { writes: a })]
+            }
+          ),
+          // b writes a partition of a's table.
+          area('b', {}, { rebuilders: [step('b.rebuild', { writes: b })] })
+        ],
+        codeTables: code('heads')
+      }).problems.map((p) => [p.kind, p.detail]);
+    const cols = ['family', 'type'];
+
+    it('lets two rebuilders write disjoint partitions of one table', () => {
+      expect(
+        check(
+          [
+            write('heads', cols, [
+              ['pv', 'follow'],
+              ['pv', '~keys']
+            ])
+          ],
+          [write('heads', cols, [['ps', '~keys']])]
+        )
+      ).toEqual([]);
+    });
+
+    it('refuses overlapping partitions, a whole writer beside one, and other columns', () => {
+      expect(
+        check(
+          [write('heads', cols, [['ps', '~keys']])],
+          [write('heads', cols, [['ps', '~keys']])]
+        )
+      ).toEqual([
+        [
+          'DOUBLE_WRITER',
+          "heads's partitions overlap: a.rebuild and b.rebuild both write (family, type) ('ps', '~keys')"
+        ]
+      ]);
+      // Folded as the default collation folds: case and accents, while
+      // trailing spaces count (NO PAD).
+      expect(
+        check(
+          [
+            write('heads', cols, [
+              ['ps', '~keys'],
+              ['pv', 'a']
+            ])
+          ],
+          [
+            write('heads', cols, [
+              ['PS', '~K\u00e9ys'],
+              ['pv', 'a ']
+            ])
+          ]
+        )
+      ).toEqual([
+        [
+          'DOUBLE_WRITER',
+          "heads's partitions overlap: a.rebuild and b.rebuild both write (family, type) ('PS', '~K\u00e9ys')"
+        ]
+      ]);
+      expect(
+        check(['heads'], [write('heads', cols, [['ps', '~keys']])])
+      ).toEqual([
+        [
+          'DOUBLE_WRITER',
+          'heads is written by a.rebuild, b.rebuild; with more than one writer, each writes a partition'
+        ]
+      ]);
+      expect(
+        check(
+          [write('heads', ['type'], [['~keys']])],
+          [write('heads', cols, [['ps', '~keys']])]
+        )
+      ).toEqual([
+        [
+          'DOUBLE_WRITER',
+          "heads's writers partition it on different columns: (type) by a.rebuild, (family, type) by b.rebuild"
+        ]
+      ]);
+    });
+
+    it("checks a partition is well formed and a rebuilder's", () => {
+      expect(
+        check(
+          [write('heads', cols, [['pv']])],
+          [write('heads', [], [])],
+          [step('a.seed', { writes: [write('heads', cols, [['x', 'y']])] })]
+        ).map(([, detail]) => detail)
+      ).toEqual([
+        "seed a.seed declares a partition of heads; only a rebuilder's write has one",
+        "rebuilder a.rebuild's partition of heads has a value that doesn't match its 2 columns",
+        "rebuilder b.rebuild's partition of heads names no columns",
+        "rebuilder b.rebuild's partition of heads has no values",
+        "heads's writers partition it on different columns: (family, type) by a.rebuild, () by b.rebuild"
+      ]);
+    });
+  });
+
   it('keeps a checkpoint to INDEX tables, with a column and a reason', () => {
     const result = checkRegistry({
       manifests: [

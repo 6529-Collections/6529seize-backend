@@ -77,8 +77,11 @@ export interface RebuildStep {
   /** Unique across all manifests, for example `identity.mirror`. */
   readonly id: string;
   readonly run: StepRun;
-  /** Tables the step writes. A rebuilder may write only its area's INDEX tables. */
-  readonly writes: readonly string[];
+  /**
+   * Tables the step writes. A rebuilder may write only its area's INDEX
+   * tables, and may write only its partition of a table it shares.
+   */
+  readonly writes: readonly WrittenTable[];
   /** Tables the step reads besides those it writes. */
   readonly reads?: readonly string[];
   /** Step ids that must finish first. */
@@ -108,6 +111,25 @@ export interface RebuildStep {
    * mined after it first ran.
    */
   readonly last?: boolean;
+}
+
+/** A table a step writes: all of it, or a rebuilder's partition of it. */
+export type WrittenTable = string | PartitionedWrite;
+
+/**
+ * A rebuilder's part of a table other rebuilders write too: the rows whose
+ * `columns` hold one of the tuples in `values` (for example columns
+ * family and type, values [['pv', 'follow']]). Every writer of such a
+ * table declares a partition on the same columns, and no two share a
+ * tuple.
+ */
+export interface PartitionedWrite {
+  readonly table: string;
+  readonly partition: {
+    readonly columns: readonly string[];
+    readonly values: readonly (readonly string[])[];
+    readonly reason: string;
+  };
 }
 
 /** A table a step needs in the run's schema, and why. */
