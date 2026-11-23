@@ -74,7 +74,10 @@ export interface RelayCursor {
   /** Events passed over here (not what 6529.io shows, or abandoned). */
   readonly skipped: number;
   readonly lastError: string | null;
-  /** The event runs keep stopping at, and how many runs in a row. */
+  /**
+   * The event runs keep failing at (an exception or a lost connection while
+   * sending it), and how many runs. A "not now" refusal never counts.
+   */
   readonly stuckEventId: string | null;
   readonly stuckCount: number;
 }
@@ -127,7 +130,12 @@ export interface WaveRelayPublisherOptions {
   /** One grant's publishes a second, and its burst (under a relay's limit). */
   readonly grantRate: number;
   readonly grantBurst: number;
-  /** After this many runs in a row stopped at the same event, pass it over. */
+  /**
+   * After this many runs failed at the same event (an exception or a lost
+   * connection while sending it), pass it over. Runs stopped by a "not now"
+   * refusal (isRetryableRejection) don't count: that event is sent again,
+   * however long the relay keeps saying it.
+   */
   readonly maxStuckRuns: number;
 }
 
@@ -218,6 +226,7 @@ export class WaveRelayPublisher {
     const totals = { published: 0, duplicates: 0, rejected: 0, skipped: 0 };
     let stoppedBy: string | null = null;
     let stoppedAt: string | null = null;
+    let stoppedNotNow = false;
     let connection: RelayConnection | null = null;
     const pacer = new GrantPacer(options.grantRate, options.grantBurst);
     try {
@@ -265,6 +274,7 @@ export class WaveRelayPublisher {
         if (outcome.stoppedBy) {
           stoppedBy = outcome.stoppedBy;
           stoppedAt = batch[outcome.done]?.event.id ?? null;
+          stoppedNotNow = outcome.notNow;
           break;
         }
         if (outcome.done < batch.length) break;
@@ -274,7 +284,13 @@ export class WaveRelayPublisher {
     } finally {
       (connection as RelayConnection | null)?.close();
     }
-    if (stoppedBy) {
+    if (stoppedBy && stoppedNotNow) {
+      // The relay said "not now" (rate limit, chain unreadable, store error,
+      // a wave it doesn't know yet): the event is sent again next run, and
+      // the run counts nothing toward passing it over.
+      cursor = { ...cursor, lastError: stoppedBy };
+      await this.cursors.save(relay, cursor);
+    } else if (stoppedBy) {
       const stuckCount =
         stoppedAt && stoppedAt === cursor.stuckEventId
           ? cursor.stuckCount + 1
@@ -318,6 +334,8 @@ export class WaveRelayPublisher {
       skipped: number;
     };
     stoppedBy: string | null;
+    /** Stopped by a "not now" refusal, not a failure. */
+    notNow: boolean;
   }> {
     const counts = { published: 0, duplicates: 0, rejected: 0, skipped: 0 };
     const settle = (outcome: Outcome) => {
@@ -384,11 +402,11 @@ export class WaveRelayPublisher {
       }
       if (!window.length) {
         if (waiting) {
-          return { done, counts, stoppedBy: null };
+          return { done, counts, stoppedBy: null, notNow: false };
         }
         if (done < batch.length && index === done) {
           // Nothing fits before the deadline.
-          return { done, counts, stoppedBy: null };
+          return { done, counts, stoppedBy: null, notNow: false };
         }
         continue;
       }
@@ -407,12 +425,13 @@ export class WaveRelayPublisher {
           return {
             done,
             counts,
-            stoppedBy: String(answer.reason?.message ?? answer.reason)
+            stoppedBy: String(answer.reason?.message ?? answer.reason),
+            notNow: false
           };
         }
         const ack = answer.value;
         if (ack.status === 'rejected' && isRetryableRejection(ack.reason)) {
-          return { done, counts, stoppedBy: ack.reason };
+          return { done, counts, stoppedBy: ack.reason, notNow: true };
         }
         if (ack.status === 'accepted') settle('published');
         else if (ack.status === 'duplicate') settle('duplicate');
@@ -425,10 +444,10 @@ export class WaveRelayPublisher {
         done++;
       }
       if (waiting) {
-        return { done, counts, stoppedBy: null };
+        return { done, counts, stoppedBy: null, notNow: false };
       }
     }
-    return { done, counts, stoppedBy: null };
+    return { done, counts, stoppedBy: null, notNow: false };
   }
 
   /** The event as the relay reads it: its signed fields, no stored time. */

@@ -327,8 +327,9 @@ describe('WaveRelayPublisher', () => {
     expect(cursors.saved['wss://a.example']).toMatchObject({
       eventId: event(2).id,
       lastError: reason,
-      stuckEventId: event(3).id,
-      stuckCount: 1
+      // "Not now" counts nothing toward passing the event over.
+      stuckEventId: null,
+      stuckCount: 0
     });
     refusing = false;
     const [second] = await instance.publishPending(OPTIONS);
@@ -340,6 +341,84 @@ describe('WaveRelayPublisher', () => {
       stuckEventId: null,
       stuckCount: 0
     });
+  });
+
+  it.each([
+    'no such wave',
+    'publish rate limit',
+    'rights: the chain could not be read (timeout)'
+  ])(
+    'never passes over an event a relay answers %p for 30 runs; all arrive once it takes them',
+    async (reason) => {
+      const events = new FakeEvents(
+        [1, 2, 3, 4, 5].map((n) => candidate(event(n)))
+      );
+      const cursors = new FakeCursors();
+      let refusing = true;
+      const relay = new FakeRelay((e) =>
+        refusing ? { eventId: e.id, status: 'rejected', reason } : accept(e)
+      );
+      const { instance, log } = publisher(events, cursors, {
+        'wss://a.example': relay
+      });
+      for (let run = 1; run <= 30; run++) {
+        const [result] = await instance.publishPending(OPTIONS);
+        expect(result).toMatchObject({
+          published: 0,
+          rejected: 0,
+          stoppedBy: reason
+        });
+      }
+      expect(cursors.saved['wss://a.example']).toMatchObject({
+        ...START_CURSOR,
+        lastError: reason
+      });
+      refusing = false;
+      relay.received.length = 0;
+      const [last] = await instance.publishPending(OPTIONS);
+      expect(last).toMatchObject({
+        published: 5,
+        rejected: 0,
+        stoppedBy: null
+      });
+      expect(relay.received.map((e) => e.id)).toEqual(
+        [1, 2, 3, 4, 5].map((n) => event(n).id)
+      );
+      expect(cursors.saved['wss://a.example']).toMatchObject({
+        eventId: event(5).id,
+        published: 5,
+        rejected: 0,
+        lastError: null,
+        stuckCount: 0
+      });
+      expect(log.some((line) => line.includes('PASSED OVER'))).toBe(false);
+    }
+  );
+
+  it('counts failures, not "not now" refusals, toward passing an event over', async () => {
+    const events = new FakeEvents([1, 2].map((n) => candidate(event(n))));
+    const cursors = new FakeCursors();
+    let run = 0;
+    // Runs 1-2 fail at event 1, runs 3-6 are told "not now", runs 7 on fail.
+    const relay = new FakeRelay((e) =>
+      e.id !== event(1).id
+        ? accept(e)
+        : run >= 3 && run <= 6
+          ? { eventId: e.id, status: 'rejected', reason: 'no such wave' }
+          : new Error('no ACK for rid 1')
+    );
+    const { instance } = publisher(events, cursors, {
+      'wss://a.example': relay
+    });
+    const counts: number[] = [];
+    for (run = 1; run <= 7; run++) {
+      await instance.publishPending(OPTIONS);
+      counts.push(cursors.saved['wss://a.example'].stuckCount);
+    }
+    expect(counts).toEqual([1, 2, 2, 2, 2, 2, 3]);
+    // The next run passes it over (maxStuckRuns 3) and sends what follows.
+    const [last] = await instance.publishPending(OPTIONS);
+    expect(last).toMatchObject({ published: 1, rejected: 1, stoppedBy: null });
   });
 
   it('passes over an event runs keep stopping at', async () => {

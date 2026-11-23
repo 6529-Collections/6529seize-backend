@@ -34,7 +34,8 @@ export class WaveRelayCursorEntity {
   @Column({ type: 'text', nullable: true, default: null })
   readonly last_error!: string | null;
 
-  // The event runs keep stopping at, and how many runs in a row.
+  // The event runs keep failing at, and how many runs ("not now" refusals
+  // don't count).
   @Column({ type: 'varchar', length: 66, nullable: true, default: null })
   readonly stuck_event_id!: string | null;
 
