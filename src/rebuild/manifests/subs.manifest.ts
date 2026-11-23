@@ -524,9 +524,9 @@ export const subsManifest: AreaManifest = {
     // - CONSOLIDATION rows queued after the switch: their regroups are the
     //   identity mirror's, which neither the journal nor the identity
     //   tables keep;
-    // - every row's replayed_at and outcome: a replay writes only the
-    //   legacy copy and is not journaled, so a replayed row can't be told
-    //   from a write that never waited.
+    // - replayed rows: a replay runs only once the key fits, so the
+    //   rebuild gives that top-up its row and queues nothing; the whole
+    //   replayed queue row is missing.
     // And in the legacy tables: a key that fits but has an earlier write
     // still waiting gets its rows copied where production holds them until
     // the replay (subs.legacy-history applies the guard's width rule only).
