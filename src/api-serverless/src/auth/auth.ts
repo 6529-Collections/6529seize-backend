@@ -13,6 +13,10 @@ import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 import { Time, Timer } from '../../../time';
 import * as mcache from 'memory-cache';
 import { identitiesDb } from '../../../identities/identities.db';
+import {
+  chainIdentityReads,
+  identityReadsFromChain
+} from '@/identity-chain-mirror/chain-identity-reads';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { enums } from '../../../enums';
 import { loggerContext } from '../../../logger-context';
@@ -157,10 +161,10 @@ export async function getAuthenticationContext(
     return cachedContext;
   }
   timer?.start('getAuthenticationContext');
-  const authenticatedProfileId = await identitiesDb.getProfileIdByWallet(
-    authenticatedWallet,
-    timer
-  );
+  const authenticatedProfileId = identityReadsFromChain()
+    ? ((await chainIdentityReads.byWallet(authenticatedWallet.toLowerCase()))
+        ?.profile_id ?? null)
+    : await identitiesDb.getProfileIdByWallet(authenticatedWallet, timer);
   let activeProxyActions: AuthenticatedProxyAction[] = [];
   const isAuthenticatedAsProxy =
     authenticatedProfileId &&

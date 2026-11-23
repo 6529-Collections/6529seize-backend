@@ -1,9 +1,11 @@
+import { CicStatementGroup } from '@/entities/ICICStatement';
+import { ProfileClassification } from '@/entities/IProfile';
 /**
- * Profile documents (P37 4.2): what a chain identity's profile says, kept off
+ * Profile documents: what a chain identity's profile says, kept off
  * the chain and named by CID. The chain holds only the CID; the gateway's
  * document store serves the bytes.
  *
- * ProfileDoc.v1 in canonical encoding (CE, P28 2.6), as the import writes it:
+ * ProfileDoc.v1 in the chain's canonical encoding, as the import writes it:
  *   string schema ("6529.ProfileDoc.v1") || bytes32 principal || uint32 version
  *   || bytes prev (<= 64) || bytes32 nonce
  *   || list<(string key, string value)> fields (keys ascending) || bytes sig
@@ -25,7 +27,7 @@ export interface ProfileDocStatement {
 }
 
 /**
- * The profile site (P37 4.2): three flat keys in the document,
+ * The profile site: three flat keys in the document,
  * `cms.primary.publication`, `cms.primary.package` and `cms.archive`, each a
  * raw-codec sha2-256 CIDv1 in base32 (`b` prefix). Publication and package
  * come together or not at all; only the import sets the archive.
@@ -254,34 +256,83 @@ function nonEmpty(value: string | undefined): string | null {
 }
 
 /**
+ * The widths of the 6529.io columns a document's values go to, in
+ * characters. A TEXT column holds 65,535 bytes: 16,000 characters fit at
+ * four bytes each.
+ */
+export const PROFILE_DOC_WIDTHS = {
+  displayName: 100,
+  text: 16_000,
+  classification: 255,
+  subClassification: 255,
+  statementType: 250
+} as const;
+
+const CLASSIFICATIONS = new Set<string>(Object.values(ProfileClassification));
+const STATEMENT_GROUPS = new Set<string>(Object.values(CicStatementGroup));
+
+/**
  * The 6529.io columns from a document's fields. Statements are
  * `statement.<group>.<type>.<n>` with an optional `....<n>.comment`,
  * in n order within a group and type; `bio` is the first GENERAL/BIO
- * statement (the import writes it so).
+ * statement (the import writes it so). A value 6529.io can't hold (longer
+ * than its column, or a classification or statement group it doesn't know)
+ * is left out and named in `problems`; the rest is written.
  */
 export function toProfileDocFields(
-  fields: Record<string, string>
+  fields: Record<string, string>,
+  problems: string[] = []
 ): ProfileDocFields {
+  const fit = (
+    name: string,
+    value: string | null,
+    width: number
+  ): string | null => {
+    if (value === null || value.length <= width) return value;
+    problems.push(`${name}: ${value.length} characters, over ${width}`);
+    return null;
+  };
   const statements: (ProfileDocStatement & { order: number })[] = [];
-  if (fields.bio) {
+  const statement = (
+    name: string,
+    group: string,
+    type: string,
+    value: string,
+    comment: string | null,
+    order: number
+  ) => {
+    if (!STATEMENT_GROUPS.has(group)) {
+      problems.push(`${name}: no statement group ${group} on 6529.io`);
+      return;
+    }
+    if (
+      fit(`${name} type`, type, PROFILE_DOC_WIDTHS.statementType) === null ||
+      fit(name, value, PROFILE_DOC_WIDTHS.text) === null
+    ) {
+      return;
+    }
     statements.push({
-      group: 'GENERAL',
-      type: 'BIO',
-      value: fields.bio,
-      comment: null,
-      order: -1
+      group,
+      type,
+      value,
+      comment: fit(`${name}.comment`, comment, PROFILE_DOC_WIDTHS.text),
+      order
     });
+  };
+  if (fields.bio) {
+    statement('bio', 'GENERAL', 'BIO', fields.bio, null, -1);
   }
   for (const [key, value] of Object.entries(fields)) {
     const match = STATEMENT_KEY.exec(key);
     if (!match || !value) continue;
-    statements.push({
-      group: match[1],
-      type: match[2],
+    statement(
+      key,
+      match[1],
+      match[2],
       value,
-      comment: nonEmpty(fields[`${key}.comment`]),
-      order: Number(match[3])
-    });
+      nonEmpty(fields[`${key}.comment`]),
+      Number(match[3])
+    );
   }
   statements.sort(
     (a, b) =>
@@ -289,14 +340,32 @@ export function toProfileDocFields(
       (a.type < b.type ? -1 : Number(a.type > b.type)) ||
       a.order - b.order
   );
+  const classification = nonEmpty(fields.classification);
+  if (classification !== null && !CLASSIFICATIONS.has(classification)) {
+    problems.push(
+      `classification: ${classification.slice(0, 50)} isn't one 6529.io has`
+    );
+  }
+  const { text } = PROFILE_DOC_WIDTHS;
   return {
-    displayName: nonEmpty(fields.displayName),
-    pfp: nonEmpty(fields.avatar),
-    banner1: nonEmpty(fields.banner1),
-    banner2: nonEmpty(fields.banner2),
-    website: nonEmpty(fields.website),
-    classification: nonEmpty(fields.classification),
-    subClassification: nonEmpty(fields.subClassification),
+    displayName: fit(
+      'displayName',
+      nonEmpty(fields.displayName),
+      PROFILE_DOC_WIDTHS.displayName
+    ),
+    pfp: fit('avatar', nonEmpty(fields.avatar), text),
+    banner1: fit('banner1', nonEmpty(fields.banner1), text),
+    banner2: fit('banner2', nonEmpty(fields.banner2), text),
+    website: fit('website', nonEmpty(fields.website), text),
+    classification:
+      classification !== null && CLASSIFICATIONS.has(classification)
+        ? classification
+        : null,
+    subClassification: fit(
+      'subClassification',
+      nonEmpty(fields.subClassification),
+      PROFILE_DOC_WIDTHS.subClassification
+    ),
     statements: statements.map(({ order: _order, ...rest }) => rest),
     cms: profileDocCms(fields)
   };

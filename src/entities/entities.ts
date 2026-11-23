@@ -44,7 +44,12 @@ export {
   CompetitionPauseEntity,
   CompetitionVoteEntity
 } from './ICompetition';
-export { Consolidation, Delegation, NFTDelegationBlock } from './IDelegation';
+export {
+  Consolidation,
+  Delegation,
+  NFTDelegationBlock,
+  NFTDelegationLogAfterFreeze
+} from './IDelegation';
 export { DeletedDropEntity } from './IDeletedDrop';
 export { Distribution, DistributionNormalized } from './IDistribution';
 export { DistributionPhoto } from './IDistributionPhoto';
@@ -182,6 +187,7 @@ export {
 } from './IReleaseNotePublication';
 export { ReleaseNoteStreamStateEntity } from './IReleaseNoteStreamState';
 export { Rememe, RememeUpload } from './IRememe';
+export { RepRatingRemovalEntity } from './IRepRatingRemoval';
 export { ProfileTotalRepScoreAggregation } from './IRepScoreAggregations';
 export { RoyaltiesUpload } from './IRoyalties';
 export { MemesSeason } from './ISeason';
@@ -207,6 +213,7 @@ export {
 } from './ISubscription';
 export { SubscriptionCoverageAlertStateEntity } from './ISubscriptionCoverageAlertState';
 export { SubscriptionCoverageRefreshRequestEntity } from './ISubscriptionCoverageRefreshRequest';
+export { SubscriptionDeferredWriteEntity } from './ISubscriptionDeferredWrite';
 export {
   ConsolidatedTDH,
   ConsolidatedTDHEditions,
@@ -295,6 +302,11 @@ export { SubscriptionCacheInvalidationEntity } from './ISubscriptionCacheInvalid
 export { DeviceGrantEntity } from './IDeviceGrant';
 export { DeviceSignedEventEntity } from './IDeviceSignedEvent';
 export { DropAuthorSignatureEntity } from './IDropAuthorSignature';
+export { SignedRecordHeadEntity } from './ISignedRecordHead';
+export {
+  SignedRecordLogEntryEntity,
+  SignedRecordLogSegmentEntity
+} from './ISignedRecordLog';
 export * from './IE2ee';
 export {
   MemeCollaborationEntity,
@@ -318,7 +330,18 @@ export { IdentityTdhSyncScopeEntity } from './IIdentityTdhSyncScope';
 
 export * from './ICompetitionScoreReset';
 export {
+  ChainPendingOperationEntity,
+  ChainPendingOperationSignerEntity
+} from './IChainPendingOperation';
+export {
+  IdentityChainFirstBindingEntity,
+  IdentityChainFounderWaitEntity,
   IdentityChainMirrorStateEntity,
   IdentityChainPrincipalEntity,
-  IdentityChainRatingEventEntity
+  IdentityChainPlaceholderEntity,
+  IdentityChainRatingCategoryEntity,
+  IdentityChainRatingEventEntity,
+  IdentityChainRatingLedgerEntity,
+  IdentityChainRegroupEntity,
+  IdentityChainWalletEntity
 } from './IIdentityChainMirror';

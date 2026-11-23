@@ -5,9 +5,16 @@ import {
   CONSOLIDATIONS_TABLE,
   DELEGATIONS_TABLE,
   IDENTITIES_TABLE,
+  IDENTITY_CHAIN_FIRST_BINDINGS_TABLE,
+  IDENTITY_CHAIN_FOUNDER_WAITS_TABLE,
   IDENTITY_CHAIN_MIRROR_STATE_TABLE,
+  IDENTITY_CHAIN_PLACEHOLDERS_TABLE,
   IDENTITY_CHAIN_PRINCIPALS_TABLE,
+  IDENTITY_CHAIN_RATING_CATEGORIES_TABLE,
   IDENTITY_CHAIN_RATING_EVENTS_TABLE,
+  IDENTITY_CHAIN_RATING_LEDGER_TABLE,
+  IDENTITY_CHAIN_REGROUPS_TABLE,
+  IDENTITY_CHAIN_WALLETS_TABLE,
   PROFILES_TABLE,
   RATINGS_TABLE,
   USE_CASE_CONSOLIDATION
@@ -26,6 +33,8 @@ import {
   WalletPair
 } from './identity-plan';
 import { ProfileDocStatement } from './profile-doc';
+import { WalletBindingRow } from './wallet-bindings';
+import { ledgerKeyOf, totalKeyOf } from './rating-events';
 import type { DelegationRowWrite } from './delegation-rows';
 
 export type { DelegationRowWrite };
@@ -38,6 +47,102 @@ export interface MirrorState {
   readonly sync_phase: string | null;
   readonly sync_after: string | null;
   readonly last_full_sync_at: number | null;
+  /** The next feed height the wallet bindings read (exact before it). */
+  readonly bindings_next_height: number | null;
+  /** The network id of the chain the mirror read. */
+  readonly chain_id: string | null;
+  /** When the placeholder profiles were listed; null before. */
+  readonly placeholders_at: number | null;
+  /**
+   * The bindings have followed the feed without a break from the import's
+   * start: identity_chain_first_bindings is exact below their cursor.
+   */
+  readonly bindings_exact: boolean;
+  /** The latest TDH day seen on the chain's levels; null before. */
+  readonly levels_tdh_day: number | null;
+  /** A level sweep under way: the TDH day it is for, null when none. */
+  readonly level_sweep_day: number | null;
+  /** The sweep's place in the chain's level ranking (null: from the top). */
+  readonly level_sweep_after: string | null;
+  /** The chain height the latest TDH day was first seen at. */
+  readonly levels_day_height: number | null;
+  /** The full sync's delegation phase: the next use case to walk. */
+  readonly sync_use_case: number | null;
+  /** Within that use case, the last wallet written. */
+  readonly sync_wallet_after: string | null;
+  /** The rows off the chain's level fix: the last key it got to. */
+  readonly off_chain_after: string | null;
+  /** The highest finalized height reads were pinned to. */
+  readonly pin_floor: number | null;
+  /**
+   * The next feed height the rating events follower reads; with the other
+   * events_ columns, written only by saveRatingEventsCursor.
+   */
+  readonly events_next_height: number | null;
+  /** A ledger rebuild under way at this pinned height (null: none). */
+  readonly events_rebuild_height: number | null;
+  /** Where the rebuild's walk over the identities is. */
+  readonly events_rebuild_after: string | null;
+  /** The height the feed was first found gone at (a second run confirms). */
+  readonly events_gone_at: number | null;
+  /** Runs in a row the follower didn't move while behind. */
+  readonly events_stuck_runs: number;
+  /** What the mirror could not write, tried again by the next run. */
+  readonly retry: MirrorRetry;
+}
+
+/** A wallet's first-ever principal, as the bindings recorded it. */
+export interface FirstBinding {
+  readonly wallet: string;
+  readonly principal_id: string;
+  readonly height: number;
+}
+
+/**
+ * Identities whose rows, targets whose ratings and wallets whose delegations
+ * failed to be written, by key (lowercase).
+ */
+export interface MirrorRetry {
+  readonly principals: readonly string[];
+  readonly targets: readonly string[];
+  readonly wallets: readonly string[];
+}
+
+export const NO_RETRY: MirrorRetry = {
+  principals: [],
+  targets: [],
+  wallets: []
+};
+
+/** The retry column's lists; anything unreadable is an empty list. */
+export function retryOf(json: string | null | undefined): MirrorRetry {
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = json ? (JSON.parse(json) ?? {}) : {};
+  } catch {
+    parsed = {};
+  }
+  const list = (value: unknown): string[] =>
+    Array.isArray(value)
+      ? value.filter((it): it is string => typeof it === 'string')
+      : [];
+  return {
+    principals: list(parsed.principals),
+    targets: list(parsed.targets),
+    wallets: list(parsed.wallets)
+  };
+}
+
+/** A nullable number column. */
+export function numberOrNull(value: unknown): number | null {
+  return value === null || value === undefined ? null : Number(value);
+}
+
+function retryJson(retry: MirrorRetry | undefined): string | null {
+  const { principals = [], targets = [], wallets = [] } = retry ?? NO_RETRY;
+  return principals.length || targets.length || wallets.length
+    ? JSON.stringify({ principals, targets, wallets })
+    : null;
 }
 
 export interface RatingRowWrite {
@@ -51,22 +156,47 @@ export interface RatingRowWrite {
   readonly height?: number | null;
 }
 
-/** Where a target's ratings were read: for the rating event log. */
-export interface RatingEventContext {
-  readonly targetPrincipal: string;
-  /** The height the ratings were read at: a removed rating's event height. */
-  readonly height: number;
-  readonly source: 'FEED' | 'FULL_SYNC';
+/** A rating ledger key: the Rating record's own key fields. */
+export interface RatingLedgerKey {
+  readonly rater: string;
+  readonly matterCode: number;
+  readonly targetKind: number;
+  readonly target: string;
+  readonly category: string;
 }
 
-interface RatingEvent {
-  readonly rater_profile_id: string;
-  readonly matter: string;
+/** A rating ledger row: the value, its height, and whether it is stale. */
+export interface RatingLedgerRow {
+  readonly value: number;
+  readonly height: number;
+  readonly stale: boolean;
+}
+
+/** The rating events follower's place: its own columns of the state. */
+export interface RatingEventsCursor {
+  readonly next: number;
+  readonly rebuildHeight: number | null;
+  readonly rebuildAfter: string | null;
+  readonly goneAt: number | null;
+  readonly stuckRuns: number;
+}
+
+/** A row of identity_chain_rating_events. */
+export interface RatingEventRow {
+  readonly height: number;
+  readonly block_time_ms: number;
+  readonly rater_principal: string;
+  readonly rater_profile_id: string | null;
+  readonly target_principal: string;
+  readonly target_profile_id: string | null;
+  readonly matter: 'REP' | 'CIC';
   readonly matter_category: string;
   readonly old_rating: number;
   readonly new_rating: number;
-  readonly rater_principal: string | null;
-  readonly height: number;
+  readonly total_after: number;
+  readonly origin: string;
+  readonly by_import: boolean;
+  readonly writer: string | null;
 }
 
 function ratingKey(it: {
@@ -77,11 +207,9 @@ function ratingKey(it: {
   return JSON.stringify([it.rater_profile_id, it.matter, it.matter_category]);
 }
 
-function totalKey(it: { matter: string; matter_category: string }): string {
-  return JSON.stringify([it.matter, it.matter_category]);
-}
-
 const STATE_ID = 'identity';
+/** Rating event ids a statement of the fill looks at. */
+const RATING_EVENT_FILL_CHUNK = 5_000;
 const IDENTITY_COLUMNS = [
   'consolidation_key',
   'profile_id',
@@ -161,37 +289,90 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
   // ---------------------------------------------------------------- state
 
   async getState(conn?: Conn): Promise<MirrorState | null> {
-    const row = await this.db.oneOrNull<MirrorState>(
-      `select next_height, sync_from_height, sync_phase, sync_after, last_full_sync_at
+    const row = await this.db.oneOrNull<
+      Omit<MirrorState, 'retry' | 'bindings_exact'> & {
+        retry_json: string | null;
+        bindings_exact: number | boolean | null;
+      }
+    >(
+      `select next_height, sync_from_height, sync_phase, sync_after, last_full_sync_at,
+              bindings_next_height, chain_id, placeholders_at, bindings_exact,
+              levels_tdh_day, level_sweep_day, level_sweep_after, levels_day_height,
+              sync_use_case, sync_wallet_after, pin_floor, off_chain_after,
+              events_next_height, events_rebuild_height, events_rebuild_after,
+              events_gone_at, events_stuck_runs, retry_json
        from ${IDENTITY_CHAIN_MIRROR_STATE_TABLE} where id = :id`,
       { id: STATE_ID },
       conn ? { wrappedConnection: conn } : undefined
     );
     if (!row) return null;
-    const num = (value: unknown) =>
-      value === null || value === undefined ? null : Number(value);
     return {
-      next_height: num(row.next_height),
-      sync_from_height: num(row.sync_from_height),
+      next_height: numberOrNull(row.next_height),
+      sync_from_height: numberOrNull(row.sync_from_height),
       sync_phase: row.sync_phase ?? null,
       sync_after: row.sync_after ?? null,
-      last_full_sync_at: num(row.last_full_sync_at)
+      last_full_sync_at: numberOrNull(row.last_full_sync_at),
+      bindings_next_height: numberOrNull(row.bindings_next_height),
+      chain_id: row.chain_id ?? null,
+      placeholders_at: numberOrNull(row.placeholders_at),
+      bindings_exact: !!Number(row.bindings_exact ?? 0),
+      levels_tdh_day: numberOrNull(row.levels_tdh_day),
+      level_sweep_day: numberOrNull(row.level_sweep_day),
+      level_sweep_after: row.level_sweep_after ?? null,
+      levels_day_height: numberOrNull(row.levels_day_height),
+      sync_use_case: numberOrNull(row.sync_use_case),
+      sync_wallet_after: row.sync_wallet_after ?? null,
+      pin_floor: numberOrNull(row.pin_floor),
+      off_chain_after: row.off_chain_after ?? null,
+      events_next_height: numberOrNull(row.events_next_height),
+      events_rebuild_height: numberOrNull(row.events_rebuild_height),
+      events_rebuild_after: row.events_rebuild_after ?? null,
+      events_gone_at: numberOrNull(row.events_gone_at),
+      events_stuck_runs: Number(row.events_stuck_runs ?? 0),
+      retry: retryOf(row.retry_json)
     };
   }
 
   async saveState(state: MirrorState, now: number, conn?: Conn) {
     await this.db.execute(
       `insert into ${IDENTITY_CHAIN_MIRROR_STATE_TABLE}
-         (id, next_height, sync_from_height, sync_phase, sync_after, last_full_sync_at, updated_at)
-       values (:id, :next_height, :sync_from_height, :sync_phase, :sync_after, :last_full_sync_at, :now)
+         (id, next_height, sync_from_height, sync_phase, sync_after, last_full_sync_at,
+          bindings_next_height, chain_id, placeholders_at, bindings_exact,
+          levels_tdh_day, level_sweep_day, level_sweep_after, levels_day_height,
+          sync_use_case, sync_wallet_after, pin_floor, off_chain_after,
+          retry_json, updated_at)
+       values (:id, :next_height, :sync_from_height, :sync_phase, :sync_after, :last_full_sync_at,
+          :bindings_next_height, :chain_id, :placeholders_at, :bindings_exact,
+          :levels_tdh_day, :level_sweep_day, :level_sweep_after, :levels_day_height,
+          :sync_use_case, :sync_wallet_after, :pin_floor, :off_chain_after,
+          :retry_json, :now)
        on duplicate key update
+         off_chain_after = values(off_chain_after),
          next_height = values(next_height),
+         sync_wallet_after = values(sync_wallet_after),
+         pin_floor = values(pin_floor),
+         levels_day_height = values(levels_day_height),
+         sync_use_case = values(sync_use_case),
+         levels_tdh_day = values(levels_tdh_day),
+         level_sweep_day = values(level_sweep_day),
+         level_sweep_after = values(level_sweep_after),
+         bindings_next_height = values(bindings_next_height),
+         bindings_exact = values(bindings_exact),
+         chain_id = values(chain_id),
+         placeholders_at = values(placeholders_at),
+         retry_json = values(retry_json),
          sync_from_height = values(sync_from_height),
          sync_phase = values(sync_phase),
          sync_after = values(sync_after),
          last_full_sync_at = values(last_full_sync_at),
          updated_at = values(updated_at)`,
-      { id: STATE_ID, ...state, now },
+      {
+        id: STATE_ID,
+        ...state,
+        bindings_exact: state.bindings_exact ? 1 : 0,
+        retry_json: retryJson(state.retry),
+        now
+      },
       conn ? { wrappedConnection: conn } : undefined
     );
   }
@@ -228,6 +409,250 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     return row?.profile_id ?? null;
   }
 
+  /**
+   * The chain's levels of mapped identities as of chain height `height`,
+   * as one statement: only level_raw of each profile's identities row
+   * changes, and only where no later level was written (the mapping's
+   * level_height, set to `height` with it). A profile without a row is left
+   * alone.
+   */
+  async writeLevels(
+    levels: { readonly profile_id: string; readonly level_raw: number }[],
+    height: number
+  ): Promise<void> {
+    if (!levels.length) return;
+    const params: Record<string, unknown> = {
+      ids: levels.map((it) => it.profile_id),
+      height
+    };
+    const cases = levels
+      .map((it, i) => {
+        params[`p${i}`] = it.profile_id;
+        params[`l${i}`] = it.level_raw;
+        return `when :p${i} then :l${i}`;
+      })
+      .join(' ');
+    await this.db.execute(
+      `update ${IDENTITIES_TABLE} i
+       join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} m on m.profile_id = i.profile_id
+       set i.level_raw = case i.profile_id ${cases} else i.level_raw end,
+           m.level_height = :height
+       where i.profile_id in (:ids)
+         and (m.level_height is null or m.level_height <= :height)`,
+      params
+    );
+  }
+
+  /**
+   * Identities rows of profiles that are not chain identities (no mapping)
+   * keep 6529.io's REP and CIC, without the help bot's credits, and a level
+   * of REP + TDH: the REP of a credited profile (a small set, from the
+   * ratings) becomes its REP ratings outside the credit category, then
+   * level_raw becomes rep + tdh where it differs (no xTDH, no credits).
+   * Bounded statements: profile ids 500 at a time, rows `chunk` keys at a
+   * time. Idempotent. Returns the rows changed of each kind.
+   */
+  async fixRowsOffTheChain({
+    chunk = 1_000,
+    repToo = true,
+    leaveOut = []
+  }: {
+    readonly chunk?: number;
+    /** With false, only the levels (REP is already without credits). */
+    readonly repToo?: boolean;
+    /** Profile ids not taken for ones off the chain (identities waiting). */
+    readonly leaveOut?: readonly string[];
+  } = {}): Promise<{ rep: number; level: number }> {
+    const helpBot = HELP_BOT_CREDIT_CATEGORY.toLowerCase();
+    const left = new Set(leaveOut.map((it) => it.toLowerCase()));
+    // `not in` needs one value at least.
+    const skip = left.size ? Array.from(left) : [''];
+    const credited = repToo
+      ? (
+          await this.db.execute<{ profile_id: string }>(
+            `select distinct matter_target_id as profile_id from ${RATINGS_TABLE}
+             where matter = 'REP' and lower(trim(matter_category)) = :helpBot`,
+            { helpBot }
+          )
+        )
+          .map((it) => it.profile_id)
+          .filter((it) => !left.has(it.toLowerCase()))
+      : [];
+    let rep = 0;
+    for (let i = 0; i < credited.length; i += 500) {
+      const result = await this.db.execute(
+        `update ${IDENTITIES_TABLE} i
+         left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} m on m.profile_id = i.profile_id
+         join (
+           select matter_target_id as profile_id,
+                  sum(case when lower(trim(matter_category)) = :helpBot
+                           then 0 else rating end) as rep
+           from ${RATINGS_TABLE}
+           where matter = 'REP' and matter_target_id in (:ids)
+           group by matter_target_id
+         ) r on r.profile_id = i.profile_id
+         set i.rep = r.rep
+         where m.principal_id is null and i.rep <> r.rep`,
+        { helpBot, ids: credited.slice(i, i + 500) }
+      );
+      rep += this.db.getAffectedRows(result);
+    }
+    let level = 0;
+    let after: string | null = '';
+    while (after !== null) {
+      const step = await this.fixLevelsOffTheChain({
+        after,
+        chunks: Number.POSITIVE_INFINITY,
+        chunk,
+        leaveOut: Array.from(left)
+      });
+      level += step.level;
+      after = step.after;
+    }
+    return { rep, level };
+  }
+
+  /**
+   * The level part of fixRowsOffTheChain from the key `after` (''
+   * from the first), at most `chunks` chunks of `chunk` rows: level_raw
+   * becomes rep + tdh for rows of profiles that are not chain identities
+   * (a row without a profile included), but for the profile ids left out.
+   * Returns the rows changed and the key to go on from (null: the end).
+   */
+  async fixLevelsOffTheChain({
+    after,
+    chunks,
+    chunk = 1_000,
+    leaveOut = []
+  }: {
+    readonly after: string;
+    readonly chunks: number;
+    readonly chunk?: number;
+    readonly leaveOut?: readonly string[];
+  }): Promise<{ level: number; after: string | null }> {
+    // `not in` needs one value at least.
+    const skip = leaveOut.length
+      ? leaveOut.map((it) => it.toLowerCase())
+      : [''];
+    let level = 0;
+    let from = after;
+    for (let i = 0; i < chunks; i++) {
+      const bound = await this.db.oneOrNull<{ consolidation_key: string }>(
+        `select consolidation_key from ${IDENTITIES_TABLE}
+         where consolidation_key > :from
+         order by consolidation_key limit 1 offset :last`,
+        { from, last: chunk - 1 }
+      );
+      const result = await this.db.execute(
+        `update ${IDENTITIES_TABLE} i
+         left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} m on m.profile_id = i.profile_id
+         set i.level_raw = i.rep + i.tdh
+         where m.principal_id is null
+           and i.consolidation_key > :from
+           ${bound ? 'and i.consolidation_key <= :upTo' : ''}
+           and (i.profile_id is null or i.profile_id not in (:skip))
+           and i.level_raw <> i.rep + i.tdh`,
+        { from, upTo: bound?.consolidation_key, skip }
+      );
+      level += this.db.getAffectedRows(result);
+      if (!bound) return { level, after: null };
+      from = bound.consolidation_key;
+    }
+    return { level, after: from };
+  }
+
+  /** The chain height of an identity's last level write, when known. */
+  async levelHeightOf(
+    principalId: string,
+    conn?: Conn
+  ): Promise<number | null> {
+    const row = await this.db.oneOrNull<{
+      level_height: number | string | null;
+    }>(
+      `select level_height from ${IDENTITY_CHAIN_PRINCIPALS_TABLE} where principal_id = :principalId`,
+      { principalId: principalId.toLowerCase() },
+      conn ? { wrappedConnection: conn } : undefined
+    );
+    return numberOrNull(row?.level_height);
+  }
+
+  /** An identity's level was written as of `height` (never moved back). */
+  async setLevelHeight(principalId: string, height: number, conn: Conn) {
+    await this.db.execute(
+      `update ${IDENTITY_CHAIN_PRINCIPALS_TABLE} set level_height = :height
+       where principal_id = :principalId
+         and (level_height is null or level_height < :height)`,
+      { principalId: principalId.toLowerCase(), height },
+      { wrappedConnection: conn }
+    );
+  }
+
+  /**
+   * Since when no history could tell an identity's founder: the first
+   * time asked is now.
+   */
+  async founderWaitSince(principalId: string, now: number): Promise<number> {
+    await this.db.execute(
+      `insert ignore into ${IDENTITY_CHAIN_FOUNDER_WAITS_TABLE} (principal_id, since)
+       values (:principalId, :now)`,
+      { principalId: principalId.toLowerCase(), now }
+    );
+    const row = await this.db.oneOrNull<{ since: number | string }>(
+      `select since from ${IDENTITY_CHAIN_FOUNDER_WAITS_TABLE} where principal_id = :principalId`,
+      { principalId: principalId.toLowerCase() }
+    );
+    return Number(row?.since ?? now);
+  }
+
+  /** The profile id decided for an identity filed without a mapping. */
+  async founderDecisionOf(principalId: string): Promise<string | null> {
+    const row = await this.db.oneOrNull<{ profile_id: string | null }>(
+      `select profile_id from ${IDENTITY_CHAIN_FOUNDER_WAITS_TABLE} where principal_id = :principalId`,
+      { principalId: principalId.toLowerCase() }
+    );
+    return row?.profile_id ?? null;
+  }
+
+  /** Keeps the profile id decided for an identity filed without a mapping. */
+  async founderDecided(principalId: string, profileId: string, now: number) {
+    await this.db.execute(
+      `insert into ${IDENTITY_CHAIN_FOUNDER_WAITS_TABLE} (principal_id, since, profile_id)
+       values (:principalId, :now, :profileId)
+       on duplicate key update profile_id = values(profile_id)`,
+      { principalId: principalId.toLowerCase(), profileId, now }
+    );
+  }
+
+  /** The founder is told (or the wait is over): no more waiting. */
+  async founderWaitDone(principalId: string) {
+    await this.db.execute(
+      `delete from ${IDENTITY_CHAIN_FOUNDER_WAITS_TABLE} where principal_id = :principalId`,
+      { principalId: principalId.toLowerCase() }
+    );
+  }
+
+  /** The mapped profile ids of these principals (lowercase keys). */
+  async profileIdsOfPrincipals(
+    principalIds: string[]
+  ): Promise<Map<string, string>> {
+    const result = new Map<string, string>();
+    const ids = Array.from(new Set(principalIds.map((it) => it.toLowerCase())));
+    for (let i = 0; i < ids.length; i += 1000) {
+      const rows = await this.db.execute<{
+        principal_id: string;
+        profile_id: string;
+      }>(
+        `select principal_id, profile_id from ${IDENTITY_CHAIN_PRINCIPALS_TABLE}
+         where principal_id in (:ids)`,
+        { ids: ids.slice(i, i + 1000) }
+      );
+      rows.forEach((it) =>
+        result.set(it.principal_id.toLowerCase(), it.profile_id)
+      );
+    }
+    return result;
+  }
+
   async principalOfProfile(
     profileId: string,
     conn?: Conn
@@ -240,34 +665,84 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     return row?.principal_id ?? null;
   }
 
-  async profileExists(profileId: string, conn?: Conn): Promise<boolean> {
-    const row = await this.db.oneOrNull<{ n: number }>(
-      `select 1 as n from ${PROFILES_TABLE} where external_id = :profileId limit 1`,
-      { profileId },
-      conn ? { wrappedConnection: conn } : undefined
+  /**
+   * Lists one chunk of 6529.io's placeholder profiles (handle
+   * `id-<wallet>`) that no chain identity holds: the profiles after `after`
+   * in id order, up to `limit` of them. Returns the chunk's last profile id,
+   * or null after the last chunk. Short transactions, so profile writes
+   * aren't held up while the list is taken.
+   */
+  async listPlaceholderProfiles(
+    after: string,
+    limit: number
+  ): Promise<string | null> {
+    const last = await this.db.oneOrNull<{ external_id: string }>(
+      `select external_id from ${PROFILES_TABLE}
+       where external_id > :after order by external_id limit 1 offset :skip`,
+      { after, skip: limit - 1 }
     );
-    return !!row;
+    await this.db.executeNativeQueriesInTransaction((conn) =>
+      this.db.execute(
+        `insert ignore into ${IDENTITY_CHAIN_PLACEHOLDERS_TABLE} (wallet, profile_id)
+         select lower(p.primary_wallet), p.external_id from ${PROFILES_TABLE} p
+         left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} m on m.profile_id = p.external_id
+         where p.external_id > :after
+           ${last ? 'and p.external_id <= :last' : ''}
+           and p.normalised_handle = concat('id-', lower(p.primary_wallet))
+           and m.principal_id is null`,
+        { after, last: last?.external_id ?? null },
+        { wrappedConnection: conn }
+      )
+    );
+    return last?.external_id ?? null;
   }
 
   /**
-   * Profiles of the wallets' current identity rows that no principal holds
-   * yet, with each one's handle and wallet.
+   * On another chain the mappings of identities made on the old one go (an
+   * imported identity's mapping is its legacy id on any chain).
    */
-  async unmappedProfilesOfWallets(
-    wallets: string[],
+  /**
+   * Every mapping's level height goes (a relaunched chain's heights start
+   * again): the new chain's levels are written.
+   */
+  async clearLevelHeights(conn: Conn) {
+    await this.db.execute(
+      `update ${IDENTITY_CHAIN_PRINCIPALS_TABLE} set level_height = null
+       where level_height is not null`,
+      undefined,
+      { wrappedConnection: conn }
+    );
+  }
+
+  async clearChainMadeMappings(conn: Conn) {
+    await this.db.execute(
+      `delete from ${IDENTITY_CHAIN_PRINCIPALS_TABLE} where origin <> 'LEGACY'`,
+      undefined,
+      { wrappedConnection: conn }
+    );
+    await this.db.execute(
+      `delete from ${IDENTITY_CHAIN_FOUNDER_WAITS_TABLE}`,
+      undefined,
+      { wrappedConnection: conn }
+    );
+  }
+
+  /**
+   * A wallet's listed placeholder profile, when no principal holds it:
+   * what an identity made on the chain takes when that wallet founded it.
+   */
+  async unmappedPlaceholderProfile(
+    wallet: string,
     conn?: Conn
-  ): Promise<{ profile_id: string; handle: string; address: string }[]> {
-    if (!wallets.length) return [];
-    return await this.db.execute(
-      `select i.profile_id, p.handle, a.address
-       from ${ADDRESS_CONSOLIDATION_KEY} a
-       join ${IDENTITIES_TABLE} i on i.consolidation_key = a.consolidation_key
-       join ${PROFILES_TABLE} p on p.external_id = i.profile_id
-       left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} m on m.profile_id = i.profile_id
-       where a.address in (:wallets) and m.principal_id is null`,
-      { wallets },
+  ): Promise<string | null> {
+    const row = await this.db.oneOrNull<{ profile_id: string }>(
+      `select c.profile_id from ${IDENTITY_CHAIN_PLACEHOLDERS_TABLE} c
+       left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} m on m.profile_id = c.profile_id
+       where c.wallet = :wallet and m.principal_id is null`,
+      { wallet: wallet.toLowerCase() },
       conn ? { wrappedConnection: conn } : undefined
     );
+    return row?.profile_id ?? null;
   }
 
   async insertMapping(
@@ -683,19 +1158,31 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
   }
 
   /** Every confirmed pair, replaced by the chain's (full sync only). */
+  /**
+   * Every confirmed pair becomes `pairs`, but for pairs with a wallet in
+   * `keepWallets` (identities the mirror doesn't write), which stay as
+   * they are.
+   */
   async replaceAllPairs(
     pairs: WalletPair[],
     block: number,
     now: number,
-    conn: Conn
+    conn: Conn,
+    keepWallets: string[] = []
   ) {
     const wallets = Array.from(
       new Set(pairs.flatMap((it) => [it.wallet1, it.wallet2]))
     );
     const times = await this.pairTimes(wallets, conn);
-    await this.db.execute(`delete from ${CONSOLIDATIONS_TABLE}`, undefined, {
-      wrappedConnection: conn
-    });
+    const keep = Array.from(new Set(keepWallets.map((it) => it.toLowerCase())));
+    await this.db.execute(
+      keep.length
+        ? `delete from ${CONSOLIDATIONS_TABLE}
+           where wallet1 not in (:keep) and wallet2 not in (:keep)`
+        : `delete from ${CONSOLIDATIONS_TABLE}`,
+      keep.length ? { keep } : undefined,
+      { wrappedConnection: conn }
+    );
     await this.insertPairs(pairs, times, block, now, conn);
   }
 
@@ -703,35 +1190,40 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
 
   /**
    * A target's REP and CIC ratings become `wanted` (help-bot credits kept).
-   * Each change is also written to the rating event log.
+   * The rating event log is written from the feed's records, not here.
    */
   async replaceTargetRatings(
     targetProfileId: string,
     wanted: RatingRowWrite[],
     now: number,
-    events: RatingEventContext,
-    conn: Conn
+    conn: Conn,
+    /**
+     * Raters (profile ids) whose rows not in `wanted` stay: raters the
+     * chain has but whose profile id can't be settled yet.
+     */
+    { keepRaters = [] }: { keepRaters?: readonly string[] } = {}
   ): Promise<{ inserted: number; updated: number; deleted: number }> {
     const opts = { wrappedConnection: conn };
     const existing = await this.db.execute<RatingRowWrite>(
       `select rater_profile_id, matter, matter_category, rating
        from ${RATINGS_TABLE}
        where matter_target_id = :target and matter in ('REP', 'CIC')
-         and not (matter = 'REP' and matter_category = :helpBot)
+         and not (matter = 'REP' and lower(trim(matter_category)) = :helpBot)
        for update`,
-      { target: targetProfileId, helpBot: HELP_BOT_CREDIT_CATEGORY },
+      {
+        target: targetProfileId,
+        helpBot: HELP_BOT_CREDIT_CATEGORY.toLowerCase()
+      },
       opts
     );
     const want = new Map(wanted.map((it) => [ratingKey(it), it]));
     const have = new Map(existing.map((it) => [ratingKey(it), it]));
-    const log: RatingEvent[] = [];
+    const kept = new Set(keepRaters.map((it) => it.toLowerCase()));
+    const stays = (row: RatingRowWrite) =>
+      kept.has(row.rater_profile_id.toLowerCase());
     const removed = Array.from(have.entries())
-      .filter(([k]) => !want.has(k))
+      .filter(([k, row]) => !want.has(k) && !stays(row))
       .map(([, row]) => row);
-    const removedPrincipals = await this.principalsOfProfiles(
-      removed.map((it) => it.rater_profile_id),
-      conn
-    );
     for (const row of removed) {
       await this.db.execute(
         `delete from ${RATINGS_TABLE}
@@ -745,15 +1237,6 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
         },
         opts
       );
-      log.push({
-        rater_profile_id: row.rater_profile_id,
-        matter: row.matter,
-        matter_category: row.matter_category,
-        old_rating: Number(row.rating),
-        new_rating: 0,
-        rater_principal: removedPrincipals.get(row.rater_profile_id) ?? null,
-        height: events.height
-      });
     }
     let inserted = 0;
     let updated = 0;
@@ -775,86 +1258,522 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
         },
         opts
       );
-      log.push({
-        rater_profile_id: row.rater_profile_id,
-        matter: row.matter,
-        matter_category: row.matter_category,
-        old_rating: old ? Number(old.rating) : 0,
-        new_rating: row.rating,
-        rater_principal: row.rater_principal ?? null,
-        height: row.height ?? events.height
-      });
       if (old) updated++;
       else inserted++;
     }
-    await this.insertRatingEvents(
-      { targetProfileId, wanted, log, now, events },
-      conn
-    );
     return { inserted, updated, deleted: removed.length };
   }
 
-  /** Principal ids of mapped profiles. */
-  private async principalsOfProfiles(
-    profileIds: string[],
-    conn: Conn
-  ): Promise<Map<string, string>> {
-    const result = new Map<string, string>();
-    if (!profileIds.length) return result;
-    const rows = await this.db.execute<{
-      profile_id: string;
-      principal_id: string;
+  /**
+   * Rating event rows written since `createdSince` whose rater or target
+   * wasn't mapped get the profile id now mapped. The rows are taken by
+   * primary key from the window's first id (ids grow with created_at; each
+   * statement still checks created_at), `chunk` ids a statement, from
+   * `after` (exclusive; the window's first row when behind it or past the
+   * last row), until `maxIds` ids are looked at or `inTime` says stop.
+   * Neither null column is indexed: by primary key, each statement reads
+   * and locks one short range, however many null rows the window holds.
+   * Returns the rows changed and where the next call goes on from (null:
+   * the window's end was reached, start again from its first row).
+   */
+  async fillRatingEventProfiles(
+    createdSince: number,
+    {
+      after = null,
+      maxIds = Number.POSITIVE_INFINITY,
+      chunk = RATING_EVENT_FILL_CHUNK,
+      inTime = () => true
+    }: {
+      after?: number | null;
+      maxIds?: number;
+      chunk?: number;
+      inTime?: () => boolean;
+    } = {}
+  ): Promise<{ filled: number; after: number | null }> {
+    // Both from the indexes alone (created_at, and the primary key).
+    const [bounds] = await this.db.execute<{
+      first: number | string | null;
+      last: number | string | null;
     }>(
-      `select profile_id, principal_id from ${IDENTITY_CHAIN_PRINCIPALS_TABLE}
-       where profile_id in (:profileIds)`,
-      { profileIds },
-      { wrappedConnection: conn }
+      `select (select min(id) from ${IDENTITY_CHAIN_RATING_EVENTS_TABLE}
+               where created_at >= :createdSince) as first,
+              (select max(id) from ${IDENTITY_CHAIN_RATING_EVENTS_TABLE}) as last`,
+      { createdSince }
     );
-    rows.forEach((it) => result.set(it.profile_id, it.principal_id));
-    return result;
+    if (bounds?.first === null || bounds?.first === undefined) {
+      return { filled: 0, after: null };
+    }
+    const first = Number(bounds.first);
+    const last = Number(bounds.last);
+    let from =
+      after === null || after < first - 1 || after >= last ? first - 1 : after;
+    let filled = 0;
+    let looked = 0;
+    while (from < last && looked < maxIds && inTime()) {
+      const to = Math.min(from + chunk, last);
+      const result = await this.db.execute(
+        `update ${IDENTITY_CHAIN_RATING_EVENTS_TABLE} e
+         left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} r on r.principal_id = e.rater_principal
+         left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} t on t.principal_id = e.target_principal
+         set e.rater_profile_id = coalesce(e.rater_profile_id, r.profile_id),
+             e.target_profile_id = coalesce(e.target_profile_id, t.profile_id)
+         where e.id > :from and e.id <= :to
+           and e.created_at >= :createdSince
+           and ((e.rater_profile_id is null and r.profile_id is not null)
+             or (e.target_profile_id is null and t.profile_id is not null))`,
+        { from, to, createdSince }
+      );
+      filled += this.db.getAffectedRows(result);
+      looked += to - from;
+      from = to;
+    }
+    return { filled, after: from >= last ? null : from };
   }
 
-  private async insertRatingEvents(
-    input: {
-      targetProfileId: string;
-      wanted: RatingRowWrite[];
-      log: RatingEvent[];
-      now: number;
-      events: RatingEventContext;
-    },
+  /**
+   * Rating event rows, in the caller's transaction, 500 a statement; a row
+   * already there (the same height, rater, target, matter and category: a
+   * page read again) is left as it is. Returns the affected rows; when the
+   * driver reports found rows, a row already there counts too.
+   */
+  async insertRatingEvents(
+    rows: readonly RatingEventRow[],
+    now: number,
     conn: Conn
-  ) {
-    const { targetProfileId, wanted, log, now, events } = input;
-    if (!log.length) return;
-    const totals = new Map<string, number>();
-    for (const it of wanted) {
-      totals.set(totalKey(it), (totals.get(totalKey(it)) ?? 0) + it.rating);
-    }
-    for (let i = 0; i < log.length; i += 500) {
-      const params: Record<string, unknown> = {
-        target: targetProfileId,
-        targetPrincipal: events.targetPrincipal.toLowerCase(),
-        source: events.source,
-        now
-      };
-      const values = log
+  ): Promise<number> {
+    let written = 0;
+    for (let i = 0; i < rows.length; i += 500) {
+      const params: Record<string, unknown> = { now };
+      const values = rows
         .slice(i, i + 500)
         .map((it, j) => {
           params[`h${j}`] = it.height;
-          params[`rp${j}`] = it.rater_principal?.toLowerCase() ?? null;
+          params[`bt${j}`] = it.block_time_ms;
+          params[`rp${j}`] = it.rater_principal.toLowerCase();
           params[`r${j}`] = it.rater_profile_id;
+          params[`tp${j}`] = it.target_principal.toLowerCase();
+          params[`t${j}`] = it.target_profile_id;
           params[`m${j}`] = it.matter;
           params[`c${j}`] = it.matter_category;
           params[`o${j}`] = it.old_rating;
           params[`n${j}`] = it.new_rating;
-          params[`t${j}`] = totals.get(totalKey(it)) ?? 0;
-          return `(:h${j}, :rp${j}, :r${j}, :targetPrincipal, :target, :m${j}, :c${j}, :o${j}, :n${j}, :t${j}, :source, :now)`;
+          params[`ta${j}`] = it.total_after;
+          params[`or${j}`] = it.origin;
+          params[`bi${j}`] = it.by_import ? 1 : 0;
+          params[`w${j}`] = it.writer;
+          return `(:h${j}, :bt${j}, :rp${j}, :r${j}, :tp${j}, :t${j}, :m${j}, :c${j}, :o${j}, :n${j}, :ta${j}, :or${j}, :bi${j}, :w${j}, 'FEED', :now)`;
+        })
+        .join(', ');
+      const result = await this.db.execute(
+        `insert into ${IDENTITY_CHAIN_RATING_EVENTS_TABLE}
+             (height, block_time_ms, rater_principal, rater_profile_id, target_principal,
+              target_profile_id, matter, matter_category, old_rating, new_rating, total_after,
+              origin, by_import, writer, source, created_at)
+           values ${values}
+           on duplicate key update id = id`,
+        params,
+        { wrappedConnection: conn }
+      );
+      written += this.db.getAffectedRows(result);
+    }
+    return written;
+  }
+
+  /**
+   * The rating events follower's place, in its own columns of the state row
+   * (the rest of the state is left as it is; saveState never writes them).
+   */
+  async saveRatingEventsCursor(
+    cursor: RatingEventsCursor,
+    now: number,
+    conn?: Conn
+  ) {
+    await this.db.execute(
+      `update ${IDENTITY_CHAIN_MIRROR_STATE_TABLE}
+       set events_next_height = :next, events_rebuild_height = :rebuildHeight,
+           events_rebuild_after = :rebuildAfter, events_gone_at = :goneAt,
+           events_stuck_runs = :stuckRuns, updated_at = :now
+       where id = :id`,
+      { id: STATE_ID, ...cursor, now },
+      conn ? { wrappedConnection: conn } : undefined
+    );
+  }
+
+  /** The rating ledger's rows of these keys (by ledgerKeyOf). */
+  async ratingLedgerOf(
+    keys: readonly RatingLedgerKey[],
+    conn?: Conn
+  ): Promise<Map<string, RatingLedgerRow>> {
+    const result = new Map<string, RatingLedgerRow>();
+    for (let i = 0; i < keys.length; i += 500) {
+      const params: Record<string, unknown> = {};
+      const tuples = keys
+        .slice(i, i + 500)
+        .map((it, j) => {
+          params[`r${j}`] = it.rater;
+          params[`m${j}`] = it.matterCode;
+          params[`k${j}`] = it.targetKind;
+          params[`t${j}`] = it.target;
+          params[`c${j}`] = it.category;
+          return `(:r${j}, :m${j}, :k${j}, :t${j}, :c${j})`;
+        })
+        .join(', ');
+      const rows = await this.db.execute<{
+        rater_principal: string;
+        matter: number | string;
+        target_kind: number | string;
+        target_principal: string;
+        category: string;
+        value: number | string;
+        height: number | string;
+        stale: number | string | boolean;
+      }>(
+        `select rater_principal, matter, target_kind, target_principal, category, value, height, stale
+         from ${IDENTITY_CHAIN_RATING_LEDGER_TABLE}
+         where (rater_principal, matter, target_kind, target_principal, category) in (${tuples})`,
+        params,
+        conn ? { wrappedConnection: conn } : undefined
+      );
+      rows.forEach((it) =>
+        result.set(
+          ledgerKeyOf({
+            rater: it.rater_principal,
+            matterCode: Number(it.matter),
+            targetKind: Number(it.target_kind),
+            target: it.target_principal,
+            category: it.category
+          }),
+          {
+            value: Number(it.value),
+            height: Number(it.height),
+            stale: !!Number(it.stale)
+          }
+        )
+      );
+    }
+    return result;
+  }
+
+  /**
+   * The ledger's totals of targets by matter and category (totalKeyOf),
+   * with how many of their rows are stale.
+   */
+  async ratingLedgerTotalsOf(
+    keys: readonly {
+      readonly targetKind: number;
+      readonly target: string;
+      readonly matterCode: number;
+      readonly category: string;
+    }[],
+    conn?: Conn
+  ): Promise<Map<string, { total: number; stale: number }>> {
+    const result = new Map<string, { total: number; stale: number }>();
+    for (let i = 0; i < keys.length; i += 500) {
+      const params: Record<string, unknown> = {};
+      const tuples = keys
+        .slice(i, i + 500)
+        .map((it, j) => {
+          params[`k${j}`] = it.targetKind;
+          params[`t${j}`] = it.target;
+          params[`m${j}`] = it.matterCode;
+          params[`c${j}`] = it.category;
+          return `(:k${j}, :t${j}, :m${j}, :c${j})`;
+        })
+        .join(', ');
+      const rows = await this.db.execute<{
+        target_kind: number | string;
+        target_principal: string;
+        matter: number | string;
+        category: string;
+        total: number | string;
+        stale: number | string;
+      }>(
+        `select target_kind, target_principal, matter, category, sum(value) as total,
+                sum(stale) as stale
+         from ${IDENTITY_CHAIN_RATING_LEDGER_TABLE}
+         where (target_kind, target_principal, matter, category) in (${tuples})
+         group by target_kind, target_principal, matter, category`,
+        params,
+        conn ? { wrappedConnection: conn } : undefined
+      );
+      rows.forEach((it) =>
+        result.set(
+          totalKeyOf({
+            targetKind: Number(it.target_kind),
+            target: it.target_principal,
+            matterCode: Number(it.matter),
+            category: it.category
+          }),
+          { total: Number(it.total), stale: Number(it.stale) }
+        )
+      );
+    }
+    return result;
+  }
+
+  /** Ledger rows set (a value, or a stale mark) and taken away (a removal). */
+  async writeRatingLedger(
+    upserts: readonly (RatingLedgerKey & RatingLedgerRow)[],
+    deletes: readonly RatingLedgerKey[],
+    conn: Conn
+  ) {
+    const opts = { wrappedConnection: conn };
+    for (let i = 0; i < upserts.length; i += 500) {
+      const params: Record<string, unknown> = {};
+      const values = upserts
+        .slice(i, i + 500)
+        .map((it, j) => {
+          params[`r${j}`] = it.rater;
+          params[`m${j}`] = it.matterCode;
+          params[`k${j}`] = it.targetKind;
+          params[`t${j}`] = it.target;
+          params[`c${j}`] = it.category;
+          params[`v${j}`] = it.value;
+          params[`h${j}`] = it.height;
+          params[`s${j}`] = it.stale ? 1 : 0;
+          return `(:r${j}, :m${j}, :k${j}, :t${j}, :c${j}, :v${j}, :h${j}, :s${j})`;
         })
         .join(', ');
       await this.db.execute(
-        `insert into ${IDENTITY_CHAIN_RATING_EVENTS_TABLE}
-           (height, rater_principal, rater_profile_id, target_principal, target_profile_id,
-            matter, matter_category, old_rating, new_rating, total_after, source, created_at)
+        `insert into ${IDENTITY_CHAIN_RATING_LEDGER_TABLE}
+           (rater_principal, matter, target_kind, target_principal, category, value, height, stale)
+         values ${values}
+         on duplicate key update value = values(value), height = values(height),
+           stale = values(stale)`,
+        params,
+        opts
+      );
+    }
+    for (let i = 0; i < deletes.length; i += 500) {
+      const params: Record<string, unknown> = {};
+      const tuples = deletes
+        .slice(i, i + 500)
+        .map((it, j) => {
+          params[`r${j}`] = it.rater;
+          params[`m${j}`] = it.matterCode;
+          params[`k${j}`] = it.targetKind;
+          params[`t${j}`] = it.target;
+          params[`c${j}`] = it.category;
+          return `(:r${j}, :m${j}, :k${j}, :t${j}, :c${j})`;
+        })
+        .join(', ');
+      await this.db.execute(
+        `delete from ${IDENTITY_CHAIN_RATING_LEDGER_TABLE}
+         where (rater_principal, matter, target_kind, target_principal, category)
+           in (${tuples})`,
+        params,
+        opts
+      );
+    }
+  }
+
+  /**
+   * The rating events start again (a relaunched chain, or the follower's
+   * first start): the ledger, the events, the category names and the
+   * follower's place.
+   */
+  async clearRatingEvents(conn: Conn) {
+    const opts = { wrappedConnection: conn };
+    for (const table of [
+      IDENTITY_CHAIN_RATING_LEDGER_TABLE,
+      IDENTITY_CHAIN_RATING_EVENTS_TABLE,
+      IDENTITY_CHAIN_RATING_CATEGORIES_TABLE
+    ]) {
+      await this.db.execute(`delete from ${table}`, undefined, opts);
+    }
+    await this.db.execute(
+      `update ${IDENTITY_CHAIN_MIRROR_STATE_TABLE}
+       set events_next_height = null, events_rebuild_height = null,
+           events_rebuild_after = null, events_gone_at = null, events_stuck_runs = 0
+       where id = :id`,
+      { id: STATE_ID },
+      opts
+    );
+  }
+
+  /** The rating ledger emptied, for a rebuild at one height. */
+  async clearRatingLedger(conn: Conn) {
+    await this.db.execute(
+      `delete from ${IDENTITY_CHAIN_RATING_LEDGER_TABLE}`,
+      undefined,
+      { wrappedConnection: conn }
+    );
+  }
+
+  /** The stored names of these REP categories, by id. */
+  async ratingCategoryNamesOf(
+    ids: readonly string[]
+  ): Promise<Map<string, string>> {
+    const result = new Map<string, string>();
+    for (let i = 0; i < ids.length; i += 500) {
+      const rows = await this.db.execute<{
+        category_id: string;
+        name: string;
+      }>(
+        `select category_id, name from ${IDENTITY_CHAIN_RATING_CATEGORIES_TABLE}
+         where category_id in (:ids)`,
+        { ids: ids.slice(i, i + 500) }
+      );
+      rows.forEach((it) => result.set(it.category_id.toLowerCase(), it.name));
+    }
+    return result;
+  }
+
+  /** REP category names read from the chain (a name already there stays). */
+  async writeRatingCategories(
+    names: readonly { readonly id: string; readonly name: string }[],
+    conn: Conn
+  ) {
+    for (let i = 0; i < names.length; i += 500) {
+      const params: Record<string, unknown> = {};
+      const values = names
+        .slice(i, i + 500)
+        .map((it, j) => {
+          params[`i${j}`] = it.id;
+          params[`n${j}`] = it.name;
+          return `(:i${j}, :n${j})`;
+        })
+        .join(', ');
+      await this.db.execute(
+        `insert into ${IDENTITY_CHAIN_RATING_CATEGORIES_TABLE} (category_id, name)
+         values ${values}
+         on duplicate key update category_id = category_id`,
+        params,
+        { wrappedConnection: conn }
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------- wallets
+
+  /** The stored bindings of these wallets (locked inside a transaction). */
+  async walletBindings(
+    wallets: string[],
+    conn?: Conn
+  ): Promise<Map<string, WalletBindingRow>> {
+    const result = new Map<string, WalletBindingRow>();
+    for (let i = 0; i < wallets.length; i += 1000) {
+      const rows = await this.db.execute<WalletBindingRow>(
+        `select wallet, principal_id, bound_from_height
+         from ${IDENTITY_CHAIN_WALLETS_TABLE} where wallet in (:wallets)
+         ${conn ? 'for update' : ''}`,
+        { wallets: wallets.slice(i, i + 1000) },
+        conn ? { wrappedConnection: conn } : undefined
+      );
+      rows.forEach((row) =>
+        result.set(row.wallet, {
+          wallet: row.wallet,
+          principal_id: row.principal_id,
+          bound_from_height: Number(row.bound_from_height)
+        })
+      );
+    }
+    return result;
+  }
+
+  async writeWalletBindings(
+    upserts: WalletBindingRow[],
+    deletes: string[],
+    now: number,
+    conn: Conn
+  ) {
+    const opts = { wrappedConnection: conn };
+    for (let i = 0; i < deletes.length; i += 1000) {
+      await this.db.execute(
+        `delete from ${IDENTITY_CHAIN_WALLETS_TABLE} where wallet in (:wallets)`,
+        { wallets: deletes.slice(i, i + 1000) },
+        opts
+      );
+    }
+    for (let i = 0; i < upserts.length; i += 500) {
+      const params: Record<string, unknown> = { now };
+      const values = upserts
+        .slice(i, i + 500)
+        .map((row, j) => {
+          params[`w${j}`] = row.wallet;
+          params[`p${j}`] = row.principal_id;
+          params[`h${j}`] = row.bound_from_height;
+          return `(:w${j}, :p${j}, :h${j}, :now)`;
+        })
+        .join(', ');
+      await this.db.execute(
+        `insert into ${IDENTITY_CHAIN_WALLETS_TABLE}
+           (wallet, principal_id, bound_from_height, updated_at)
+         values ${values}
+         on duplicate key update principal_id = values(principal_id),
+           bound_from_height = values(bound_from_height),
+           updated_at = values(updated_at)`,
+        params,
+        opts
+      );
+    }
+  }
+
+  /**
+   * A wallet's binding and the next height the bindings read (they are exact
+   * before it), in one read, so the two agree.
+   */
+  async walletBindingAt(wallet: string): Promise<{
+    binding: WalletBindingRow | null;
+    nextHeight: number | null;
+    chainId: string | null;
+  }> {
+    const row = await this.db.oneOrNull<{
+      bindings_next_height: number | string | null;
+      chain_id: string | null;
+      wallet: string | null;
+      principal_id: string | null;
+      bound_from_height: number | string | null;
+    }>(
+      `select s.bindings_next_height, s.chain_id, w.wallet, w.principal_id, w.bound_from_height
+       from ${IDENTITY_CHAIN_MIRROR_STATE_TABLE} s
+       left join ${IDENTITY_CHAIN_WALLETS_TABLE} w on w.wallet = :wallet
+       where s.id = :id`,
+      { wallet, id: STATE_ID }
+    );
+    const binding =
+      row?.wallet && row.principal_id
+        ? {
+            wallet: row.wallet,
+            principal_id: row.principal_id,
+            bound_from_height: Number(row.bound_from_height)
+          }
+        : null;
+    return {
+      binding,
+      nextHeight: numberOrNull(row?.bindings_next_height),
+      chainId: row?.chain_id ?? null
+    };
+  }
+
+  /** Every binding goes (the bindings start again). */
+  /** Empties the wallet bindings and the first bindings recorded with them. */
+  async clearWalletBindings(conn: Conn) {
+    for (const table of [
+      IDENTITY_CHAIN_WALLETS_TABLE,
+      IDENTITY_CHAIN_FIRST_BINDINGS_TABLE
+    ]) {
+      await this.db.execute(`delete from ${table}`, undefined, {
+        wrappedConnection: conn
+      });
+    }
+  }
+
+  /** Records first bindings; a wallet that has one keeps it. */
+  async recordFirstBindings(rows: FirstBinding[], conn: Conn) {
+    for (let i = 0; i < rows.length; i += 500) {
+      const params: Record<string, unknown> = {};
+      const values = rows
+        .slice(i, i + 500)
+        .map((it, j) => {
+          params[`w${j}`] = it.wallet.toLowerCase();
+          params[`p${j}`] = it.principal_id.toLowerCase();
+          params[`h${j}`] = it.height;
+          return `(:w${j}, :p${j}, :h${j})`;
+        })
+        .join(', ');
+      await this.db.execute(
+        `insert ignore into ${IDENTITY_CHAIN_FIRST_BINDINGS_TABLE} (wallet, principal_id, height)
          values ${values}`,
         params,
         { wrappedConnection: conn }
@@ -862,21 +1781,146 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  /**
+   * A wallet's recorded first binding, and whether the bindings are exact
+   * (followed from the import's start) and how far: with no record, an
+   * exact table followed past a height says the wallet was bound to none
+   * up to it.
+   */
+  async firstBindingOf(wallet: string): Promise<{
+    first: FirstBinding | null;
+    exact: boolean;
+    nextHeight: number | null;
+  }> {
+    const row = await this.db.oneOrNull<{
+      bindings_exact: number | boolean | null;
+      bindings_next_height: number | string | null;
+      wallet: string | null;
+      principal_id: string | null;
+      height: number | string | null;
+    }>(
+      `select s.bindings_exact, s.bindings_next_height, f.wallet, f.principal_id, f.height
+       from ${IDENTITY_CHAIN_MIRROR_STATE_TABLE} s
+       left join ${IDENTITY_CHAIN_FIRST_BINDINGS_TABLE} f on f.wallet = :wallet
+       where s.id = :id`,
+      { wallet: wallet.toLowerCase(), id: STATE_ID }
+    );
+    return {
+      first:
+        row?.wallet && row.principal_id
+          ? {
+              wallet: row.wallet,
+              principal_id: row.principal_id.toLowerCase(),
+              height: Number(row.height)
+            }
+          : null,
+      exact: !!Number(row?.bindings_exact ?? 0),
+      nextHeight: numberOrNull(row?.bindings_next_height)
+    };
+  }
+
+  /** Queues regrouped wallets for re-keying, in the mirror's transaction. */
+  async queueRegroups(wallets: string[], now: number, conn: Conn) {
+    for (let i = 0; i < wallets.length; i += 500) {
+      const params: Record<string, unknown> = { now };
+      const values = wallets
+        .slice(i, i + 500)
+        .map((it, j) => {
+          params[`w${j}`] = it.toLowerCase();
+          return `(:w${j}, :now)`;
+        })
+        .join(', ');
+      await this.db.execute(
+        `insert into ${IDENTITY_CHAIN_REGROUPS_TABLE} (wallet, queued_at) values ${values}
+         on duplicate key update queued_at = values(queued_at), started_at = null`,
+        params,
+        { wrappedConnection: conn }
+      );
+    }
+  }
+
+  /** Wallets waiting to be re-keyed, oldest first. */
+  async pendingRegroups(limit: number): Promise<string[]> {
+    const rows = await this.db.execute<{ wallet: string }>(
+      `select wallet from ${IDENTITY_CHAIN_REGROUPS_TABLE}
+       order by queued_at asc, wallet asc limit :limit`,
+      { limit }
+    );
+    return rows.map((it) => it.wallet);
+  }
+
+  /** Wallets a re-keying batch took up and didn't finish. */
+  async unfinishedRegroups(): Promise<number> {
+    const row = await this.db.oneOrNull<{ n: number | string }>(
+      `select count(*) as n from ${IDENTITY_CHAIN_REGROUPS_TABLE}
+       where started_at is not null`
+    );
+    return Number(row?.n ?? 0);
+  }
+
+  /** A re-keying batch takes these wallets up. */
+  async regroupsStarted(wallets: string[], now: number) {
+    // Only this batch is marked: the count of marks is the last batch's.
+    await this.db.execute(
+      `update ${IDENTITY_CHAIN_REGROUPS_TABLE} set started_at = null
+       where started_at is not null`
+    );
+    for (let i = 0; i < wallets.length; i += 1000) {
+      await this.db.execute(
+        `update ${IDENTITY_CHAIN_REGROUPS_TABLE} set started_at = :now
+         where wallet in (:wallets)`,
+        { wallets: wallets.slice(i, i + 1000), now }
+      );
+    }
+  }
+
+  /** Re-keyed: off the queue, unless queued again since `before`. */
+  async regroupsDone(wallets: string[], before: number) {
+    for (let i = 0; i < wallets.length; i += 1000) {
+      await this.db.execute(
+        `delete from ${IDENTITY_CHAIN_REGROUPS_TABLE}
+         where wallet in (:wallets) and queued_at <= :before`,
+        { wallets: wallets.slice(i, i + 1000), before }
+      );
+    }
+    // A batch finished: the next one is full size again.
+    await this.db.execute(
+      `update ${IDENTITY_CHAIN_REGROUPS_TABLE} set started_at = null
+       where started_at is not null`
+    );
+  }
+
+  /** Every wallet with a stored binding (a rebuild's reconciliation). */
+  async boundWallets(conn?: Conn): Promise<string[]> {
+    const rows = await this.db.execute<{ wallet: string }>(
+      `select wallet from ${IDENTITY_CHAIN_WALLETS_TABLE}`,
+      undefined,
+      conn ? { wrappedConnection: conn } : undefined
+    );
+    return rows.map((it) => it.wallet);
+  }
+
   // ---------------------------------------------------------------- delegations
 
   /** A wallet's delegation rows (not consolidations) become `wanted`. */
+  /**
+   * A wallet's delegation rows (not consolidations) become `wanted`; with
+   * `useCase`, only that use case's rows.
+   */
   async replaceWalletDelegations(
     wallet: string,
     wanted: DelegationRowWrite[],
-    conn: Conn
+    conn: Conn,
+    useCase?: number
   ): Promise<{ written: number; deleted: number }> {
     const opts = { wrappedConnection: conn };
     const existing = await this.db.execute<DelegationRowWrite>(
       `select block, from_address, to_address, collection, use_case, expiry, all_tokens, token_id
        from ${DELEGATIONS_TABLE}
        where from_address = :wallet and use_case <> :consolidation
+         ${useCase === undefined ? '' : 'and use_case = :useCase'}
        for update`,
-      { wallet, consolidation: USE_CASE_CONSOLIDATION },
+      { wallet, consolidation: USE_CASE_CONSOLIDATION, useCase },
       opts
     );
     const want = new Map(wanted.map((it) => [delegationKey(it), it]));
@@ -920,14 +1964,31 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     return { written, deleted };
   }
 
-  /** Wallets holding delegation rows (not consolidations): for a full sync. */
-  async walletsWithDelegations(conn?: Conn): Promise<string[]> {
+  /**
+   * Wallets holding delegation rows (not consolidations), of one use case
+   * when given: for a full sync.
+   */
+  async walletsWithDelegations(
+    conn?: Conn,
+    useCase?: number
+  ): Promise<string[]> {
     const rows = await this.db.execute<{ from_address: string }>(
-      `select distinct from_address from ${DELEGATIONS_TABLE} where use_case <> :consolidation`,
-      { consolidation: USE_CASE_CONSOLIDATION },
+      `select distinct from_address from ${DELEGATIONS_TABLE}
+       where use_case <> :consolidation
+         ${useCase === undefined ? '' : 'and use_case = :useCase'}`,
+      { consolidation: USE_CASE_CONSOLIDATION, useCase },
       conn ? { wrappedConnection: conn } : undefined
     );
     return rows.map((it) => it.from_address.toLowerCase());
+  }
+
+  /** Delegation rows of a use case the chain doesn't have go. */
+  async deleteDelegationsOutside(useCases: readonly number[]) {
+    await this.db.execute(
+      `delete from ${DELEGATIONS_TABLE}
+       where use_case <> :consolidation and use_case not in (:useCases)`,
+      { consolidation: USE_CASE_CONSOLIDATION, useCases }
+    );
   }
 
   /** Principals whose 6529.io rows hold these wallets now. */

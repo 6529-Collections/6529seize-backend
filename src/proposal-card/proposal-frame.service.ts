@@ -13,7 +13,7 @@ import {
   IpfsFileUploader,
   ipfsFileUploader
 } from '@/attachments/ipfs-file-uploader';
-import { CLOUDFRONT_LINK } from '@/constants';
+import { isAcceptedMediaOrigin } from '@/constants';
 import {
   parseDecentralizedMediaRef,
   to6529ResolverUrl
@@ -90,7 +90,7 @@ export class ProposalFrameService {
       );
     }
     if (
-      url.origin !== CLOUDFRONT_LINK ||
+      !isAcceptedMediaOrigin(url.origin) ||
       url.search ||
       url.hash ||
       !url.pathname.startsWith('/drops/')

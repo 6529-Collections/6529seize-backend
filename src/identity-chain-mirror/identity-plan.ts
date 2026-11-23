@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { consolidationTools } from '@/consolidation-tools';
 import type { MembershipChange } from './membership-change';
 import { ProfileDocFields, ProfileDocStatement } from './profile-doc';
@@ -124,6 +123,12 @@ export interface IdentityPlan {
    * identity's row re-keyed): 6529.io's consolidated tables re-key them.
    */
   readonly regroupedWallets: string[];
+  /**
+   * Other profiles whose every wallet joined this identity (usually a
+   * joining wallet's placeholder profile): left with no identity row. Their
+   * ratings and follows are not moved; the mirror logs them.
+   */
+  readonly orphanedProfiles: string[];
 }
 
 export interface WalletPair {
@@ -156,18 +161,15 @@ export function placeholderHandle(wallet: string): string {
 }
 
 /**
- * The 6529.io profile id of a chain identity that has none (one made on the
- * chain): a UUID derived from the principal id, so a rebuild gives the same.
+ * The 6529.io profile id of an identity made on the chain (an imported one
+ * keeps its legacy id): the principal id's first 16 bytes written as a UUID,
+ * so a rebuild from the chain gives the same ids.
  */
 export function principalProfileId(principalId: string): string {
-  const digest = createHash('sha256')
-    .update('6529.ChainProfileId.v1')
-    .update(Buffer.from(principalId.toLowerCase().replace(/^0x/, ''), 'hex'))
-    .digest();
-  const bytes = Buffer.from(digest.subarray(0, 16));
-  bytes[6] = (bytes[6] & 0x0f) | 0x80; // version 8: custom
-  bytes[8] = (bytes[8] & 0x3f) | 0x80; // RFC 4122 variant
-  const hex = bytes.toString('hex');
+  const hex = principalId.toLowerCase().replace(/^0x/, '').slice(0, 32);
+  if (!/^[0-9a-f]{32}$/.test(hex)) {
+    throw new Error(`Not a principal id: ${principalId}`);
+  }
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
@@ -282,9 +284,14 @@ function rekeyOtherRows(
   chain: ChainIdentityView,
   state: CurrentIdentityState,
   ours: ReadonlySet<string>
-): { rows: IdentityRowState[]; wallets: Record<string, string[]> } {
+): {
+  rows: IdentityRowState[];
+  wallets: Record<string, string[]>;
+  orphaned: string[];
+} {
   const rows: IdentityRowState[] = [];
   const wallets: Record<string, string[]> = {};
+  const orphaned: string[] = [];
   for (const row of state.rows) {
     if (!row.profile_id || row.profile_id === chain.profileId) continue;
     const remaining = uniqueSorted(
@@ -292,7 +299,10 @@ function rekeyOtherRows(
         (it) => !ours.has(it.toLowerCase())
       )
     );
-    if (!remaining.length) continue;
+    if (!remaining.length) {
+      orphaned.push(row.profile_id);
+      continue;
+    }
     const key = consolidationKeyOf(remaining);
     const primary = row.primary_address.toLowerCase();
     rows.push({
@@ -302,7 +312,7 @@ function rekeyOtherRows(
     });
     wallets[key] = remaining;
   }
-  return { rows, wallets };
+  return { rows, wallets, orphaned };
 }
 
 /** The wallets whose key differs from the row they were in. */
@@ -348,8 +358,9 @@ export function planIdentity(
   const doc = chain.doc;
   const ownRow = state.rows.find((it) => it.profile_id === chain.profileId);
   const metrics = carriedMetrics(chain, state.rows);
-  const levelRaw =
-    chain.levelRaw ?? chain.rep + Number(metrics.tdh) + Number(metrics.xtdh);
+  // The chain's level (REP + TDH); without one from the gateway (a node that
+  // lacks the day's lists), the level the row has, rather than a mix.
+  const levelRaw = chain.levelRaw ?? Number(ownRow?.level_raw ?? 0);
   const identity: IdentityRowState = {
     consolidation_key: key,
     profile_id: chain.profileId,
@@ -414,6 +425,7 @@ export function planIdentity(
     profile,
     releaseHandle,
     statements: doc === undefined ? null : (doc?.statements ?? []),
+    orphanedProfiles: uniqueSorted(rekeyed.orphaned),
     pairWallets: uniqueSorted([...wallets, ...oldWallets]),
     pairs: [
       ...pairsOf(wallets),

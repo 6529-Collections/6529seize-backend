@@ -29,6 +29,10 @@ import { enums } from '../../../enums';
 import { profileWavesDb } from '@/profiles/profile-waves.db';
 import { ApiIdentityOverview } from '@/api/generated/models/ApiIdentityOverview';
 import { isError } from 'ethers';
+import {
+  chainIdentityReads,
+  identityReadsFromChain
+} from '@/identity-chain-mirror/chain-identity-reads';
 
 export type CommunityMemberMinimalSearchSort = 'level';
 
@@ -489,7 +493,9 @@ export class IdentityFetcher {
     handle: string,
     ctx: RequestContext
   ): Promise<ApiIdentity | null> {
-    const identity = await this.identitiesDb.getIdentityByHandle(handle, ctx);
+    const identity = identityReadsFromChain()
+      ? await chainIdentityReads.byHandle(handle)
+      : await this.identitiesDb.getIdentityByHandle(handle, ctx);
     if (!identity) {
       return null;
     }
@@ -500,10 +506,9 @@ export class IdentityFetcher {
     id: string,
     ctx: RequestContext
   ): Promise<ApiIdentity | null> {
-    const identity = await this.identitiesDb.getIdentityByProfileId(
-      id,
-      ctx.connection
-    );
+    const identity = identityReadsFromChain()
+      ? await chainIdentityReads.byProfileId(id)
+      : await this.identitiesDb.getIdentityByProfileId(id, ctx.connection);
     if (!identity) {
       return null;
     }
@@ -548,10 +553,9 @@ export class IdentityFetcher {
     ctx: RequestContext
   ): Promise<ApiIdentity | null> {
     const wallet = query.toLowerCase();
-    const identity = await this.identitiesDb.getIdentityByWallet(
-      wallet,
-      ctx.connection
-    );
+    const identity = identityReadsFromChain()
+      ? await chainIdentityReads.byWallet(wallet)
+      : await this.identitiesDb.getIdentityByWallet(wallet, ctx.connection);
     if (!identity) {
       return {
         id: null,

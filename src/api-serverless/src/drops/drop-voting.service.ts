@@ -1,3 +1,4 @@
+import { allCategoryRepRule } from '@/rates/rating-credit';
 import { RequestContext } from '../../../request.context';
 import { identitiesDb, IdentitiesDb } from '../../../identities/identities.db';
 import { wavesApiDb, WavesApiDb } from '../waves/waves.api.db';
@@ -58,16 +59,19 @@ export class DropVotingService {
     cardSetCredits: Record<string, number>;
   }): number {
     switch (wave.voting_credit_type) {
-      case WaveCreditType.REP:
+      case WaveCreditType.REP: {
+        const countsTowardAllCategories = allCategoryRepRule();
         return repRatings
           .filter(
             (it) =>
               (wave.voting_credit_creditor === null ||
                 wave.voting_credit_creditor === it.rater_profile_id) &&
-              (wave.voting_credit_category === null ||
-                wave.voting_credit_category === it.matter_category)
+              (wave.voting_credit_category === null
+                ? countsTowardAllCategories(it.matter, it.matter_category)
+                : wave.voting_credit_category === it.matter_category)
           )
           .reduce((acc, it) => acc + it.rating, 0);
+      }
       case WaveCreditType.TDH:
         return tdh;
       case WaveCreditType.XTDH:
