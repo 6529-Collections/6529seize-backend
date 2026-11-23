@@ -232,8 +232,7 @@ const CHAIN_FLAG_OFF: ProfileCmsChainPort = {
   getIdentityImport: chainFlagOff,
   getImportedProfileDocCid: chainFlagOff,
   getProfileDoc: chainFlagOff,
-  getDocBytes: chainFlagOff,
-  putDocBytes: chainFlagOff
+  getDocBytes: chainFlagOff
 };
 
 async function chainFlagOff(): Promise<never> {
