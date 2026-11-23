@@ -183,40 +183,37 @@ describe('openReadOnlySnapshot', () => {
       'a server refusal naming user and host',
       Object.assign(
         new Error(
-          "ER_ACCESS_DENIED_ERROR: Access denied for user 'reader'@'10.0.0.5'"
+          "ER_ACCESS_DENIED_ERROR: Access denied for user 'reader'@'192.0.2.10'"
         ),
         {
           code: 'ER_ACCESS_DENIED_ERROR',
           errno: 1045,
-          sqlMessage: "Access denied for user 'reader'@'10.0.0.5'"
+          sqlMessage: "Access denied for user 'reader'@'192.0.2.10'"
         }
       ),
       'ER_ACCESS_DENIED_ERROR 1045'
     ],
     [
       'a lookup naming the host',
-      Object.assign(
-        new Error('getaddrinfo ENOTFOUND reader.example.internal'),
-        {
-          code: 'ENOTFOUND',
-          errno: -3008,
-          hostname: 'reader.example.internal'
-        }
-      ),
+      Object.assign(new Error('getaddrinfo ENOTFOUND reader.example.invalid'), {
+        code: 'ENOTFOUND',
+        errno: -3008,
+        hostname: 'reader.example.invalid'
+      }),
       'ENOTFOUND -3008'
     ],
     [
       'a code repeated as errno',
-      Object.assign(new Error('connect ECONNREFUSED 10.0.0.5:3306'), {
+      Object.assign(new Error('connect ECONNREFUSED 192.0.2.10:3306'), {
         code: 'ECONNREFUSED',
         errno: 'ECONNREFUSED'
       }),
       'ECONNREFUSED'
     ],
-    ['an error with no code', new Error('reader.example.internal'), 'Error'],
+    ['an error with no code', new Error('reader.example.invalid'), 'Error'],
     [
       'a bare string naming the host',
-      'lost reader.example.internal',
+      'lost reader.example.invalid',
       'unknown error'
     ]
   ])('keeps only the code and number of %s', async (_name, error, code) => {
@@ -232,7 +229,7 @@ describe('openReadOnlySnapshot', () => {
       unknown: 'unreadable'
     });
     expect(JSON.stringify(reading)).not.toMatch(
-      /reader\.example|10\.0\.0\.5|'reader'/
+      /reader\.example|192\.0\.2\.10|'reader'/
     );
   });
 

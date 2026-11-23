@@ -321,20 +321,25 @@ about 600, Tuesday's run may not fit one invocation. Check in `out.json`:
 - `buildCommit` is the commit deployed. If it is `null`, the deployed build
   doesn't record its commit, and Tuesday's event needs
   `"revision":"<40-hex commit deployed to production>"`.
+- `replicaLagCase` is `null`: the lag and its row's age could be trusted.
+  Otherwise it names the case a real run would refuse on: `unreadable`,
+  `dated_ahead` or `older_than_gap` (a rehearsal holds the row's age to the
+  2-minute minimum gap). Write that name down; it is the only one Tuesday
+  may accept.
 - `evidence.replicaLagMs` and `evidence.replicaLagAgeMs` are numbers, the
-  age well under a minute on a healthy reader. An age of hours, or
-  `evidence.replicaLagUnknown` `dated_ahead`, means `LAST_UPDATE_TIMESTAMP`
-  isn't in UTC. If they are `null` (`replicaLagUnknown` `unreadable`),
-  `evidence.replicaLagError` says why.
-- Read the lag twice: a few minutes after this run, read it again, by
-  running this a second time or from the profile site export's rehearsal
-  (both read the same reader endpoint), and compare
-  `evidence.replicaLagAgeMs`. If the row's age grew by about the wait, the
-  reader stopped updating its row: report it, and never accept it on
-  Tuesday.
-- If either reading is untrusted, tell the identity lead and settle it
-  before Tuesday: Tuesday can accept only a case this rehearsal also
-  showed, by its name, as in the README's "An unknown replica lag".
+  age well under a minute on a healthy reader. An age of hours, or the case
+  `dated_ahead`, means `LAST_UPDATE_TIMESTAMP` isn't in UTC. With the case
+  `unreadable`, `evidence.replicaLagError` says why.
+- Read the lag twice: a few minutes after this run, take a quick second
+  reading with a one-profile profile site rehearsal
+  (`"rehearsal":true,"profile":"<a profile id>"`, which reads the same
+  reader endpoint in seconds), or run this rehearsal again. Compare
+  `evidence.replicaLagAgeMs` and `replicaLagCase`. If the row's age grew by
+  about the wait, the reader stopped updating its row: report it, and
+  never accept it on Tuesday.
+- If either reading names a case, tell the identity lead and settle it
+  before Tuesday: Tuesday can accept only a case Monday showed, by its
+  name, as in the README's "An unknown replica lag".
 
 ## Tuesday: the run at the freeze (us-east-1)
 
@@ -419,10 +424,10 @@ replaced.
   - `transactionReadOnly` is true;
   - `serverReadOnly` or `innodbReadOnly` is true;
   - `replicaLagMs` plus `replicaLagAgeMs`, plus 1 500 ms, is below
-    `snapshotGapMs`, and `replicaLagAccepted` is `null`. Otherwise
-    `replicaLagAccepted` names the case accepted, which must be in
-    `acceptUnknownReplicaLag`; any lag the row reported, plus 1 500 ms, is
-    still below `snapshotGapMs`.
+    `snapshotGapMs`, and `replicaLagCase` and `replicaLagAccepted` are
+    `null`. Otherwise both name the case accepted, which must be in
+    `acceptUnknownReplicaLag` and be the case Monday showed; any lag the
+    row reported, plus 1 500 ms, is still below `snapshotGapMs`.
 - `bucketPrivacy.owner` is the function's own account.
 - `identityFreezeAtSecret` is `prod/lambdas`, `identityFreezeAtReading` is
   `time`, and `identityFreezeAt` equals `frozenAt`.
@@ -456,6 +461,12 @@ A failed run returns a function error and leaves no manifest: the CLI
 prints `"FunctionError": "Unhandled"` with its `StatusCode`, and `out.json`
 holds the `errorMessage`. Fix what it names and run again; every run has its
 own prefix.
+
+When the read replica itself fails (a connection, a login, a `SELECT`),
+`errorMessage` gives only the error's code and number, such as
+`ER_ACCESS_DENIED_ERROR 1045` or `ENOTFOUND -3008`: the server's message can
+name the user and host. The full message is in the function's log, as
+`[READ REPLICA FAILED]`.
 
 A `TooManyRequestsException` means the call was refused before any run
 started: see "When to call it". Call again; none of the steps below apply.

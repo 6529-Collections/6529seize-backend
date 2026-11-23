@@ -301,20 +301,23 @@ Check in `out.json`:
   another time), and the rehearsal hasn't passed: ask 6529.io to fix the
   secret (see "The freeze setting"), then run the rehearsal again. Each run
   reads the secret afresh.
+- `replicaLagCase` is `null`: the lag and its row's age could be trusted.
+  Otherwise it names the case a real run would refuse on: `unreadable`,
+  `dated_ahead` or `older_than_gap`. Write that name down; it is the only
+  one Tuesday may accept.
 - `evidence.replicaLagMs` and `evidence.replicaLagAgeMs` are numbers, the
-  age well under a minute on a healthy reader. An age of hours, or
-  `evidence.replicaLagUnknown` `dated_ahead`, means `LAST_UPDATE_TIMESTAMP`
-  isn't in UTC. If they are `null` (`replicaLagUnknown` `unreadable`),
-  `evidence.replicaLagError` says why.
-- Read the lag twice: run the rehearsal a second time a few minutes after
-  the first (the concurrency-1 rehearsal counts, if Monday needs one), and
-  compare `evidence.replicaLagAgeMs`. If the row's age grew by about the
-  wait, the reader stopped updating its row: report it, and never accept
-  it on Tuesday.
-- If either reading is untrusted, tell the identity lead and settle it
-  before Tuesday: Tuesday can accept only a case this rehearsal also
-  showed, by its name, as in "An unknown replica lag" (top of this
-  file).
+  age well under a minute on a healthy reader. An age of hours, or the case
+  `dated_ahead`, means `LAST_UPDATE_TIMESTAMP` isn't in UTC. With the case
+  `unreadable`, `evidence.replicaLagError` says why.
+- Read the lag twice: a few minutes after the first rehearsal, run a
+  one-profile rehearsal (`"rehearsal":true,"profile":"<a profile id>"`),
+  which reads the same lag in seconds, and compare
+  `evidence.replicaLagAgeMs` and `replicaLagCase`. If the row's age grew by
+  about the wait, the reader stopped updating its row: report it, and never
+  accept it on Tuesday.
+- If either reading names a case, tell the identity lead and settle it
+  before Tuesday: Tuesday can accept only a case Monday showed, by its
+  name, as in "An unknown replica lag" (top of this file).
 
 Then test the download links: fetch the manifest and `links.json`, then one
 file by its link, and check each against its sha256.
@@ -440,10 +443,10 @@ time. The manifest and the response record the writes
 - `snapshotAt` and `snapshotGapMs`: the snapshot came at least 120 000 ms
   after the freeze (`snapshotGapSeconds` is the same, rounded).
 - `evidence.replicaLagMs` plus `evidence.replicaLagAgeMs`, plus 1 500 ms,
-  is below `snapshotGapMs`, and `replicaLagAccepted` is `null`. Otherwise
-  `replicaLagAccepted` names the case accepted, which must be in
-  `acceptUnknownReplicaLag`; any lag the row reported, plus 1 500 ms, is
-  still below `snapshotGapMs`.
+  is below `snapshotGapMs`, and `replicaLagCase` and `replicaLagAccepted`
+  are `null`. Otherwise both name the case accepted, which must be in
+  `acceptUnknownReplicaLag` and be the case Monday showed; any lag the row
+  reported, plus 1 500 ms, is still below `snapshotGapMs`.
 - `latestSiteWrites` (publication, archive and pointer change) and
   `writesAfterFreeze`: no site writes after the freeze, except those listed
   in `acceptedWritesAfterFreeze`.
@@ -552,6 +555,12 @@ folder, which keeps only what its manifest lists.
 A failed run returns a function error and leaves no manifest. The CLI then
 prints `"FunctionError": "Unhandled"` with its `StatusCode`, and `out.json`
 holds the `errorMessage`. Run it again; every run has its own prefix.
+
+When the read replica itself fails (a connection, a login, a `SELECT`),
+`errorMessage` gives only the error's code and number, such as
+`ER_ACCESS_DENIED_ERROR 1045` or `ENOTFOUND -3008`: the server's message
+can name the user and host. The full message is in the function's log, as
+`[READ REPLICA FAILED]`.
 
 ### If the CLI fails
 

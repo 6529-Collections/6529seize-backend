@@ -1445,12 +1445,126 @@ describe('runIdentityExportJob', () => {
       expect(
         warn.mock.calls.some(([line]) =>
           String(line).includes(
-            '[REPLICA LAG ACCEPTED older_than_gap] [RELYING ON THE 120 S MINIMUM GAP]'
+            "[REPLICA LAG ACCEPTED older_than_gap] [THE ROW'S REPORTED LAG, 5 MS, STILL CHECKED] [THE 120 S MINIMUM GAP HELD]"
           )
         )
       ).toBe(true);
     } finally {
       warn.mockRestore();
+    }
+  });
+
+  it('names the lag case in every run, a rehearsal against the minimum gap', async () => {
+    mockBuild.mockResolvedValue(document());
+    const clean = await run(setup().deps);
+    expect(clean.replicaLagCase).toBeNull();
+    const accepted = setup({
+      snapshotAt: '2026-11-24T00:05:00.000Z',
+      replicaLagMs: 5,
+      replicaLagAgeMs: 3_600_000
+    });
+    const result = await run(accepted.deps, {
+      ...atFreeze,
+      acceptUnknownReplicaLag: 'older_than_gap'
+    });
+    expect([result.replicaLagCase, result.replicaLagAccepted]).toEqual([
+      'older_than_gap',
+      'older_than_gap'
+    ]);
+    expect(
+      JSON.parse(accepted.bodies.get(result.manifestKey)!).replica_lag_case
+    ).toBe('older_than_gap');
+    // A rehearsal checks no lag, but names the case a real run would refuse
+    // on, so Monday can write it down.
+    mockBuild.mockResolvedValue(document({ freeze_ms: null }));
+    for (const [options, expected] of [
+      [{ replicaLagMs: null }, 'unreadable'],
+      [
+        {
+          replicaLagMs: 5,
+          replicaLagAgeMs: null,
+          replicaLagUnknown: 'dated_ahead' as const
+        },
+        'dated_ahead'
+      ],
+      // Older than the 2-minute minimum gap.
+      [{ replicaLagMs: 5, replicaLagAgeMs: 180_000 }, 'older_than_gap'],
+      [{ replicaLagMs: 5, replicaLagAgeMs: 2_000 }, null]
+    ] as const) {
+      const { deps, bodies } = setup(options);
+      const rehearsed = await run(deps, rehearsal);
+      expect(rehearsed.replicaLagCase).toBe(expected);
+      expect(rehearsed.replicaLagAccepted).toBeNull();
+      expect(
+        JSON.parse(bodies.get(rehearsed.manifestKey)!).replica_lag_case
+      ).toBe(expected);
+    }
+  });
+
+  it("gives a failed read replica's error by its code only, its message to the log", async () => {
+    const error = jest.spyOn(Logger.prototype, 'error');
+    try {
+      // The lookup names the host.
+      const lookup = setup();
+      (lookup.deps.openSnapshot as jest.Mock).mockRejectedValue(
+        Object.assign(
+          new Error('getaddrinfo ENOTFOUND reader.example.invalid'),
+          {
+            code: 'ENOTFOUND',
+            errno: -3008,
+            hostname: 'reader.example.invalid'
+          }
+        )
+      );
+      const lost = await run(lookup.deps).then(
+        () => null,
+        (e: Error) => e
+      );
+      expect(lost?.name).toBe('IdentityExportDatabaseError');
+      expect(lost?.message).toBe(
+        "The read replica failed while opening the read-only snapshot: ENOTFOUND -3008. Its message, which can name the host or user, is in the function's log."
+      );
+      expect(lost?.message).not.toContain('reader.example');
+      // A SELECT refused, naming the user and host.
+      mockBuild.mockRejectedValue(
+        Object.assign(
+          new Error(
+            "ER_TABLEACCESS_DENIED_ERROR: SELECT command denied to user 'reader'@'192.0.2.10' for table 'ratings'"
+          ),
+          {
+            code: 'ER_TABLEACCESS_DENIED_ERROR',
+            errno: 1142,
+            sqlMessage:
+              "SELECT command denied to user 'reader'@'192.0.2.10' for table 'ratings'"
+          }
+        )
+      );
+      const denied = setup();
+      const refused = await run(denied.deps).then(
+        () => null,
+        (e: Error) => e
+      );
+      expect(refused?.message).toBe(
+        "The read replica failed while reading the snapshot: ER_TABLEACCESS_DENIED_ERROR 1142. Its message, which can name the host or user, is in the function's log."
+      );
+      expect(refused?.message).not.toMatch(/'reader'|192\.0\.2\.10/);
+      expect(denied.close).toHaveBeenCalledTimes(1);
+      expect(denied.order).toEqual([]);
+      // The full messages are in the log.
+      const logged = error.mock.calls.map(([line]) => String(line)).join('\n');
+      expect(logged).toContain(
+        '[READ REPLICA FAILED] [opening the read-only snapshot] getaddrinfo ENOTFOUND reader.example.invalid'
+      );
+      expect(logged).toContain("'reader'@'192.0.2.10'");
+      // An export refusal is not a database error: it is kept as it is.
+      mockBuild.mockRejectedValue(
+        new IdentityExportNotReadyError([{ cause: 'day', message: 'not yet' }])
+      );
+      await expect(run(setup().deps)).rejects.toBeInstanceOf(
+        IdentityExportNotReadyError
+      );
+    } finally {
+      error.mockRestore();
     }
   });
 
