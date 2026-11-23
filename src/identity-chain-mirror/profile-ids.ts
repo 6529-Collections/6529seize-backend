@@ -210,7 +210,32 @@ export class ProfileIds {
     return chosen;
   }
 
-  private async chooseProfileId(identity: ChainIdentity): Promise<{
+  /**
+   * The profile id profileIdOf gives the identity now, read only: its
+   * mapping, else the same choice (its legacy id; the founding wallet's
+   * unmapped placeholder when this is that wallet's first identity; else
+   * the derived id), storing nothing and starting no founder wait. Null
+   * while the choice can't be made yet (a founder wait, a history not read
+   * yet, the bindings behind): an id answered now is never one the mirror
+   * won't store.
+   */
+  async chosenProfileId(identity: ChainIdentity): Promise<string | null> {
+    const mapped = await this.db.profileIdOfPrincipal(
+      identity.principalId.toLowerCase()
+    );
+    if (mapped) return mapped;
+    try {
+      return (await this.chooseProfileId(identity, true)).profileId;
+    } catch (error) {
+      if (error instanceof ChainReadRetryLater) return null;
+      throw error;
+    }
+  }
+
+  private async chooseProfileId(
+    identity: ChainIdentity,
+    readOnly = false
+  ): Promise<{
     profileId: string;
     origin: string;
     left?: string;
@@ -240,6 +265,14 @@ export class ProfileIds {
       Number(identity.createdHeight)
     );
     if (first === 'unknowable') {
+      // Read only, the wait isn't started, and when it ends is the
+      // mirror's to say (it maps the identity then).
+      if (readOnly) {
+        throw new ChainReadRetryLater(
+          `No history tells whether ${wallet} was first bound to ${principalId} yet`,
+          'founder_unknown_yet'
+        );
+      }
       // One node's answer decides nothing: tried again for a while, and
       // mapped to the derived id only when it stays so.
       const since = await this.db.founderWaitSince(principalId, this.now());

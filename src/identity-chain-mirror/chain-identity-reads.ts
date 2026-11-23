@@ -16,9 +16,9 @@ import {
 import {
   consolidationKeyOf,
   isPlaceholderHandle,
-  placeholderHandle,
-  principalProfileId
+  placeholderHandle
 } from './identity-plan';
+import { ProfileIds } from './profile-ids';
 import {
   decodeProfileDoc,
   ProfileDocFields,
@@ -35,7 +35,14 @@ type Gateway = Pick<
   | 'getIdentityByLegacyProfileId'
   | 'getProfileDoc'
   | 'getHandle'
+  | 'getMembership'
+  | 'getMembershipWallet'
+  | 'getMembershipWalletHistory'
+  | 'getImportedIdentity'
 >;
+
+/** The identity mirror's choice of profile ids, read only. */
+type Ids = Pick<ProfileIds, 'chosenProfileId' | 'setImportHeights'>;
 
 type MappingDb = Pick<
   IdentityChainMirrorDb,
@@ -68,24 +75,66 @@ function toNumber(value: string | number | null | undefined): number {
  * imported) is answered from those tables as before.
  */
 export class ChainIdentityReads {
+  /** The import's heights were read (they don't change once it completed). */
+  private importKnown = false;
+
   constructor(
     private readonly gateway: Gateway = chainGatewayClient,
     private readonly mapping: MappingDb = identityChainMirrorDb,
-    private readonly rows: RowsDb = identitiesDb
+    private readonly rows: RowsDb = identitiesDb,
+    private readonly ids: Ids = new ProfileIds(
+      gateway,
+      identityChainMirrorDb,
+      () => Date.now()
+    )
   ) {}
 
-  /** The 6529.io profile id the identity's rows use. */
-  async profileIdOf(identity: ChainIdentity): Promise<string> {
+  /**
+   * The 6529.io profile id the identity's rows use: its mapping, else the
+   * id the identity mirror will store for it, chosen as the mirror chooses
+   * (ProfileIds, read only: legacy id, the founding wallet's placeholder
+   * when it is that wallet's first identity, else the derived id). Null
+   * while the mirror can't choose yet (a founder wait, a history it can't
+   * read yet): the identity is then answered as none, never with an id the
+   * mirror won't store.
+   */
+  async profileIdOf(identity: ChainIdentity): Promise<string | null> {
     const principalId = identity.principalId.toLowerCase();
     const mapped = await this.mapping.profileIdOfPrincipal(principalId);
     if (mapped) return mapped;
-    if (identity.legacyId) return identity.legacyId.toLowerCase();
-    // Not mirrored yet: the profile of its anchor wallet's row, as the
-    // mirror would choose it, else the id derived from the principal.
-    const row = await this.rows.getIdentityByWallet(
-      (identity.anchor ?? identity.wallets[0]).toLowerCase()
+    await this.readImportHeights();
+    const chosen = await this.ids.chosenProfileId(identity);
+    if (chosen === null) {
+      logger.info(
+        `[IDENTITY ${principalId} NOT PLACED YET] [ANSWERED AS NONE UNTIL THE MIRROR CHOOSES ITS PROFILE ID]`
+      );
+    }
+    return chosen;
+  }
+
+  /** The import's heights for the choice, once the import has completed. */
+  private async readImportHeights() {
+    if (this.importKnown) return;
+    const membership = await this.gateway.getMembership();
+    const state = membership?.import as
+      | {
+          completed?: boolean;
+          startHeight?: number | null;
+          doneHeight?: number | null;
+        }
+      | undefined;
+    if (!state?.completed) return;
+    const height = (value: number | null | undefined) =>
+      value === null ||
+      value === undefined ||
+      !Number.isSafeInteger(Number(value))
+        ? null
+        : Number(value);
+    this.ids.setImportHeights(
+      height(state.startHeight),
+      height(state.doneHeight)
     );
-    return row?.profile_id ?? principalProfileId(principalId);
+    this.importKnown = true;
   }
 
   private async docOf(
@@ -104,8 +153,13 @@ export class ChainIdentityReads {
     }
   }
 
-  /** A chain identity as a 6529.io identity row. */
-  async toIdentityEntity(identity: ChainIdentity): Promise<IdentityEntity> {
+  /**
+   * A chain identity as a 6529.io identity row; null while its profile id
+   * can't be chosen yet (answered as no identity).
+   */
+  async toIdentityEntity(
+    identity: ChainIdentity
+  ): Promise<IdentityEntity | null> {
     const wallets = identity.wallets.map((it) => it.toLowerCase());
     const primary = (
       identity.primary ??
@@ -116,6 +170,7 @@ export class ChainIdentityReads {
       this.profileIdOf(identity),
       this.docOf(identity)
     ]);
+    if (profileId === null) return null;
     const indexRow = await this.rows.getIdentityByProfileId(profileId);
     let handle: string;
     if (identity.handle) {
