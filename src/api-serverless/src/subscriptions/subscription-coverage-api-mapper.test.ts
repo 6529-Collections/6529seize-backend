@@ -79,9 +79,33 @@ describe('mapSubscriptionCoverageToApi', () => {
         horizon_drop_count: 7,
         calculation_version: 2,
         unknown_reason: null
-      }
+      },
+      funded_drops_at_current_settings: 0,
+      funded_drops_at_current_settings_capped: false
     });
     expect(result.forecast.forecast_fingerprint).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('maps the funded count past a truncated forecast', () => {
+    const forecast = forecastSubscriptionCoverage({
+      consolidationKey: '0xabc',
+      calculatedAtMs: CALCULATED_AT,
+      hasDemonstratedIntent: true,
+      mode: SubscriptionCoverageMode.Automatic,
+      subscribeAllEditions: false,
+      eligibilityCount: 1,
+      balanceWei: MEMES_MINT_PRICE_WEI * BigInt(30),
+      mintPriceWei: MEMES_MINT_PRICE_WEI,
+      selections: [],
+      schedule: schedule(24),
+      scheduleTruncated: true
+    });
+
+    expect(mapSubscriptionCoverageToApi(forecast)).toMatchObject({
+      fully_funded_drops: 24,
+      funded_drops_at_current_settings: 30,
+      funded_drops_at_current_settings_capped: false
+    });
   });
 
   it('maps missing mode to an explicit unavailable reason', () => {
@@ -105,7 +129,9 @@ describe('mapSubscriptionCoverageToApi', () => {
       subscribe_all_editions: null,
       forecast: {
         unknown_reason: ApiSubscriptionCoverageUnknownReason.ModeUnavailable
-      }
+      },
+      funded_drops_at_current_settings: null,
+      funded_drops_at_current_settings_capped: null
     });
   });
 });

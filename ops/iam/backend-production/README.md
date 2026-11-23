@@ -154,3 +154,33 @@ The stack also owns the `drop-video-template-read-prod` inline policy on
 write role policies, so the stack's first creation (or any change to that
 policy) is an administrative deployment. Later code and configuration updates
 use the ordinary `Deploy a service` workflow.
+
+## Signed record log worker
+
+`signedRecordLogLoop` runs two scheduled functions in `us-east-1` on
+`lambda-vpc-role`: `signedRecordLogCloser` every 5 minutes and
+`signedRecordLogArchiver` hourly at minute 7.
+`SignedRecordLogProductionDeployment.json` permits only those two functions and
+their versions, the `signedRecordLogLoop-prod` stack, the
+`signedrecordlogloop-pro*-serverlessdeploy*` deployment-bucket prefix, the two
+log groups with their out-of-memory metric filters, the two schedules
+`signedRecordLogLoop-prod-close` and `signedRecordLogLoop-prod-archive`, and the
+two out-of-memory alarms (`signedRecordLogLoop-prod-<function>-OOM`), all in
+`us-east-1`. The schedule names are declared in the worker definition, because
+CloudFormation would otherwise truncate the stack name in generated rule names.
+The bucket prefix allows CloudFormation's truncated stack component and
+generated suffix; it grants no application-bucket access and no direct
+invocation.
+
+`SignedRecordLogProductionDeployment.json` has `ACCOUNT_ID` where the account id
+goes. Replace it with the account id, as in the sibling files, before validating
+and installing. Its manifest entry measures the committed file's compact JSON,
+placeholder included; with the id filled in, the document is 4,877 compact
+characters. The role's inline budget is 10,240 characters in total and the two
+inline worker policies above already use most of it, so install this one as a
+customer-managed policy named `SignedRecordLogProductionDeployment` and attach
+it to this environment's deployment role (the account's
+managed-policies-per-role quota is 20). Install it through the administrative
+identity after Access Analyzer validation and positive/negative simulation. The
+existing managed policies, trust policy and runtime role remain unchanged.
+Deploy through the ordinary GitHub workflow afterward.

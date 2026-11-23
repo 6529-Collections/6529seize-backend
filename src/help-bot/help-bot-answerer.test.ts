@@ -182,6 +182,18 @@ function answerer(
   );
 }
 
+/** Runs `fn` with FEATURE_HELP_BOT_CREDITS set to `on`, then restores it. */
+async function withCreditMeter<T>(on: boolean, fn: () => Promise<T>) {
+  const original = process.env.FEATURE_HELP_BOT_CREDITS;
+  process.env.FEATURE_HELP_BOT_CREDITS = on ? 'true' : 'false';
+  try {
+    return await fn();
+  } finally {
+    if (original === undefined) delete process.env.FEATURE_HELP_BOT_CREDITS;
+    else process.env.FEATURE_HELP_BOT_CREDITS = original;
+  }
+}
+
 describe('HelpBotAnswerer', () => {
   it('uses dedicated Stream evidence before generic FAQ matching and public-data planning', async () => {
     const renderer: HelpBotLlmRenderer = {
@@ -941,12 +953,14 @@ describe('HelpBotAnswerer', () => {
     }
   });
 
-  it('answers compound capability prompts with credits and product areas', async () => {
-    const answer = await answerer().answer({
-      question:
-        '@help6529 what are your capabilities? What can you help me with? tell me about yourself',
-      baseUrl: BASE_URL
-    });
+  it('answers compound capability prompts with credits and product areas while the meter is on', async () => {
+    const answer = await withCreditMeter(true, () =>
+      answerer().answer({
+        question:
+          '@help6529 what are your capabilities? What can you help me with? tell me about yourself',
+        baseUrl: BASE_URL
+      })
+    );
 
     expect(answer.type).toBe('ANSWER');
     if (answer.type === 'ANSWER') {
@@ -957,11 +971,49 @@ describe('HelpBotAnswerer', () => {
     }
   });
 
-  it('answers direct credit-system prompts', async () => {
-    const answer = await answerer().answer({
-      question: '@help6529 how do your credits work',
-      baseUrl: BASE_URL
-    });
+  it('answers capability prompts without credits while the meter is off', async () => {
+    const answer = await withCreditMeter(false, () =>
+      answerer().answer({
+        question:
+          '@help6529 what are your capabilities? What can you help me with? tell me about yourself',
+        baseUrl: BASE_URL
+      })
+    );
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('help-bot.capabilities');
+      expect(answer.answer).not.toMatch(/credit/i);
+      expect(answer.answer).toContain('Gradients');
+      expect(answer.record.facts.join(' ')).not.toMatch(/credit/i);
+    }
+  });
+
+  it.each([
+    '@help6529 how do your credits work',
+    'tell me more about this credit system',
+    'why am I out of help6529 credits'
+  ])('says questions are free while the meter is off: %s', async (question) => {
+    const answer = await withCreditMeter(false, () =>
+      answerer().answer({ question, baseUrl: BASE_URL })
+    );
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('help-bot.credits');
+      expect(answer.answer).toBe(
+        'Asking help6529 is free. It no longer uses Help6529 Credits.'
+      );
+    }
+  });
+
+  it('answers direct credit-system prompts while the meter is on', async () => {
+    const answer = await withCreditMeter(true, () =>
+      answerer().answer({
+        question: '@help6529 how do your credits work',
+        baseUrl: BASE_URL
+      })
+    );
 
     expect(answer.type).toBe('ANSWER');
     if (answer.type === 'ANSWER') {
@@ -990,11 +1042,13 @@ describe('HelpBotAnswerer', () => {
     }
   });
 
-  it('answers credit-system follow-up prompts', async () => {
-    const answer = await answerer().answer({
-      question: 'tell me more about this credit system',
-      baseUrl: BASE_URL
-    });
+  it('answers credit-system follow-up prompts while the meter is on', async () => {
+    const answer = await withCreditMeter(true, () =>
+      answerer().answer({
+        question: 'tell me more about this credit system',
+        baseUrl: BASE_URL
+      })
+    );
 
     expect(answer.type).toBe('ANSWER');
     if (answer.type === 'ANSWER') {
