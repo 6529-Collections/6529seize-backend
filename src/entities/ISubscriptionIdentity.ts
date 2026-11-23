@@ -9,6 +9,7 @@ import {
   UpdateDateColumn
 } from 'typeorm';
 import {
+  CONSOLIDATION_KEY_LENGTH,
   SUBSCRIPTIONS_ID_BALANCES_TABLE,
   SUBSCRIPTIONS_ID_CURSORS_TABLE,
   SUBSCRIPTIONS_ID_KEY_MAP_TABLE,
@@ -286,7 +287,7 @@ export class SubscriptionIdRedeemedEntity {
 /** Every consolidation key in the opening file and where it went. */
 @Entity(SUBSCRIPTIONS_ID_KEY_MAP_TABLE)
 export class SubscriptionIdKeyMapEntity {
-  @PrimaryColumn({ type: 'varchar', length: 700 })
+  @PrimaryColumn({ type: 'varchar', length: CONSOLIDATION_KEY_LENGTH })
   consolidation_key!: string;
 
   /** The identity its current state (balance, mode, choices) went to. */

@@ -7,6 +7,7 @@ import { consolidationTools } from '@/consolidation-tools';
 import {
   IDENTITY_TDH_SYNC_SCOPE_TABLE,
   IDENTITY_TDH_SYNC_STATE_TABLE,
+  SUBSCRIPTIONS_ID_KEY_MAP_TABLE,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
   SUBSCRIPTIONS_NFTS_TABLE,
   SUBSCRIPTIONS_REDEEMED_TABLE
@@ -35,6 +36,10 @@ const INDEX_CAPPED: Record<string, number> = {
   [SUBSCRIPTIONS_REDEEMED_TABLE]: 567
 };
 
+// Tables created after the widening, at the full key width from the start:
+// the migration has nothing to widen in them.
+const BORN_WIDE = new Set<string>([SUBSCRIPTIONS_ID_KEY_MAP_TABLE]);
+
 interface KeyColumn {
   table: string;
   column: string;
@@ -43,7 +48,7 @@ interface KeyColumn {
 }
 
 /** Every entity column that stores a consolidation key, at its entity length. */
-function entityKeyColumns(): KeyColumn[] {
+function allKeyColumns(): KeyColumn[] {
   // Only the registered entities: the metadata storage is process-global and
   // can also hold classes another module instance loaded.
   const registered = new Set<unknown>(Object.values(Entities));
@@ -79,6 +84,11 @@ function entityKeyColumns(): KeyColumn[] {
         }))
     )
     .sort((a, b) => a.table.localeCompare(b.table));
+}
+
+/** The key columns the widening migration covers: all but the born-wide. */
+function entityKeyColumns(): KeyColumn[] {
+  return allKeyColumns().filter((key) => !BORN_WIDE.has(key.table));
 }
 
 interface CurrentColumn {
@@ -187,6 +197,17 @@ describe('consolidation key widening migration', () => {
     const key = consolidationTools.buildConsolidationKey(wallets);
     expect(key).toHaveLength(687);
     expect(key.length).toBeLessThanOrEqual(CONSOLIDATION_KEY_LENGTH);
+  });
+
+  it('creates the tables made after the widening at the full key width', () => {
+    expect(allKeyColumns().filter((key) => BORN_WIDE.has(key.table))).toEqual([
+      {
+        table: SUBSCRIPTIONS_ID_KEY_MAP_TABLE,
+        column: 'consolidation_key',
+        length: CONSOLIDATION_KEY_LENGTH,
+        nullable: false
+      }
+    ]);
   });
 
   it('gives every key column its full width unless an index caps it', () => {
