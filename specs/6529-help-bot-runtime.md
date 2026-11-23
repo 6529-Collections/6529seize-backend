@@ -130,11 +130,22 @@ or no-reliable-source outcome has been produced, a failure to post it keeps the
 charge; the interaction is marked `FAILED` with a `Failed to post produced
 answer` reason.
 
-Before creating an interaction, the trigger checks that the bot profile can
-reply in the wave with the same chat eligibility the reply writer applies:
-chat must be enabled, and the bot must belong to the wave chat group unless
-replies are open. When it cannot, the trigger is skipped without an
-interaction row, credit charge, reaction, or model call.
+The trigger checks, in this order:
+
+1. The drop is not the bot's own, and it mentions the bot or replies to a
+   drop. Every other drop is skipped before anything is read.
+2. The wave is public (section 3). This is decided before a parent drop is
+   read.
+3. A trigger is detected (section 2.1 and 2.2), reading the parent drop for
+   replies.
+4. The bot profile can reply in the wave with the same chat eligibility the
+   reply writer applies: chat must be enabled, and the bot must belong to the
+   wave chat group unless replies are open.
+
+When step 4 fails, the trigger is skipped without an interaction row, credit
+charge, reaction, or model call, and the API logs `help bot cannot post in
+wave`. That line is written only for detected triggers, so it counts
+questions the bot could not answer.
 
 ## 3. Non-Goals
 

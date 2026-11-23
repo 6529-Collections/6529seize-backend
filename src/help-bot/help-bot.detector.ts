@@ -214,6 +214,24 @@ function detectExplicitMentionTrigger({
   return null;
 }
 
+/**
+ * Whether the drop can be a help bot trigger at all, from what is already in
+ * memory (the request and the created drop): it is not the bot's own, and it
+ * mentions the bot or replies to a drop (which may be the bot's). Every other
+ * drop is skipped before any wave, group or parent drop is read.
+ */
+export function mayTriggerHelpBot(
+  input: Omit<HelpBotTriggerDetectionInput, 'parentDrop'>
+): boolean {
+  if (input.authorProfileId === input.botProfileId) {
+    return false;
+  }
+  return (
+    hasExplicitMention(input, extractText(input.request)) ||
+    !!input.request.reply_to?.drop_id
+  );
+}
+
 export function detectHelpBotTrigger(
   input: HelpBotTriggerDetectionInput
 ): HelpBotTriggerDetection | null {

@@ -1,3 +1,4 @@
+import { HelpBotInteractionTriggerType } from '@/entities/IHelpBotInteraction';
 import { ApiCreateDropRequest } from '@/api/generated/models/ApiCreateDropRequest';
 import { ApiDrop } from '@/api/generated/models/ApiDrop';
 import {
@@ -587,6 +588,124 @@ describe('HelpBotTriggerService', () => {
       }),
       ctx
     );
+  });
+
+  it.each([
+    [
+      'restricted',
+      { visibility_group_id: 'private-group', is_direct_message: false }
+    ],
+    ['direct-message', { visibility_group_id: null, is_direct_message: true }]
+  ])(
+    'reads no parent drop or group for a reply in a %s wave',
+    async (_, wave) => {
+      const { service, dropsService, userGroups, interactionsDb } =
+        createService({ wave });
+
+      await service.handleCreatedDrop(
+        {
+          createDropRequest: createRequest('@help6529 is this right?', {
+            replyToDropId: 'original-question'
+          }),
+          createdDrop: createDrop({ id: 'drop-1' }),
+          authorProfileId: 'user-profile'
+        },
+        {} as never
+      );
+
+      expect(dropsService.findDropByIdOrThrow).not.toHaveBeenCalled();
+      expect(userGroups.getGroupsUserIsEligibleForByIds).not.toHaveBeenCalled();
+      expect(interactionsDb.insertSeen).not.toHaveBeenCalled();
+    }
+  );
+
+  it('queues a reply to a bot drop that does not mention the bot', async () => {
+    const { service, dropsService, interactionsDb, sqs } = createService({
+      wave: {
+        visibility_group_id: null,
+        is_direct_message: false
+      }
+    });
+    dropsService.findDropByIdOrThrow.mockResolvedValue(
+      createDrop({
+        id: 'bot-answer',
+        authorId: 'bot-profile',
+        content: 'TDH is total days held.'
+      })
+    );
+
+    await service.handleCreatedDrop(
+      {
+        createDropRequest: createRequest('and how is it boosted?', {
+          replyToDropId: 'bot-answer'
+        }),
+        createdDrop: createDrop({ id: 'drop-1' }),
+        authorProfileId: 'user-profile'
+      },
+      {} as never
+    );
+
+    expect(interactionsDb.insertSeen).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parentBotDropId: 'bot-answer',
+        triggerType: HelpBotInteractionTriggerType.BOT_REPLY
+      }),
+      {}
+    );
+    expect(sqs.sendToQueueName).toHaveBeenCalled();
+  });
+
+  it('reads nothing for a drop that neither mentions the bot nor replies', async () => {
+    const { service, wavesDb, userGroups, dropsService, interactionsDb } =
+      createService({
+        wave: {
+          visibility_group_id: null,
+          is_direct_message: false,
+          chat_group_id: 'chat-group'
+        }
+      });
+
+    await service.handleCreatedDrop(
+      {
+        createDropRequest: createRequest('gm everyone'),
+        createdDrop: createDrop({ id: 'drop-1' }),
+        authorProfileId: 'user-profile'
+      },
+      {} as never
+    );
+
+    expect(wavesDb.findWavesByIds).not.toHaveBeenCalled();
+    expect(userGroups.getGroupsUserIsEligibleForByIds).not.toHaveBeenCalled();
+    expect(dropsService.findDropByIdOrThrow).not.toHaveBeenCalled();
+    expect(interactionsDb.insertSeen).not.toHaveBeenCalled();
+  });
+
+  it('checks the wave chat rights only for a detected trigger', async () => {
+    const { service, wavesDb, userGroups, dropsService, interactionsDb } =
+      createService({
+        wave: {
+          visibility_group_id: null,
+          is_direct_message: false,
+          chat_group_id: 'chat-group'
+        }
+      });
+
+    // A reply to someone else's drop, without a mention: not a trigger.
+    await service.handleCreatedDrop(
+      {
+        createDropRequest: createRequest('agreed, what is tdh', {
+          replyToDropId: 'original-question'
+        }),
+        createdDrop: createDrop({ id: 'drop-1' }),
+        authorProfileId: 'user-profile'
+      },
+      {} as never
+    );
+
+    expect(wavesDb.findWavesByIds).toHaveBeenCalled();
+    expect(dropsService.findDropByIdOrThrow).toHaveBeenCalled();
+    expect(userGroups.getGroupsUserIsEligibleForByIds).not.toHaveBeenCalled();
+    expect(interactionsDb.insertSeen).not.toHaveBeenCalled();
   });
 
   it('declines without charging when the help bot is outside the wave chat group', async () => {

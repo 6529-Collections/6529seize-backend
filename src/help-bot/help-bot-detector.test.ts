@@ -1,7 +1,8 @@
 import { ApiCreateDropRequest } from '@/api/generated/models/ApiCreateDropRequest';
 import { ApiDrop } from '@/api/generated/models/ApiDrop';
+import fc from 'fast-check';
 import { HelpBotInteractionTriggerType } from '@/entities/IHelpBotInteraction';
-import { detectHelpBotTrigger } from './help-bot.detector';
+import { detectHelpBotTrigger, mayTriggerHelpBot } from './help-bot.detector';
 
 function createRequest(
   content: string,
@@ -251,5 +252,106 @@ describe('detectHelpBotTrigger', () => {
         botProfileId: 'bot-profile'
       })
     ).toBeNull();
+  });
+});
+
+describe('mayTriggerHelpBot', () => {
+  const base = {
+    createdDrop: createDrop({ id: 'drop-1' }),
+    authorProfileId: 'user-profile',
+    botProfileId: 'bot-profile'
+  };
+
+  it.each([
+    ['a raw text mention', createRequest('@help6529 what is tdh')],
+    ['a bracketed mention', createRequest('@[help6529] what is tdh')],
+    [
+      'a payload mention',
+      createRequest('what is tdh', { mentionedHandle: 'help6529' })
+    ],
+    ['a reply to any drop', createRequest('thanks', { replyToDropId: 'p-1' })]
+  ])('passes %s', (_, request) => {
+    expect(mayTriggerHelpBot({ ...base, request })).toBe(true);
+  });
+
+  it('passes a persisted mention on the created drop', () => {
+    expect(
+      mayTriggerHelpBot({
+        ...base,
+        request: createRequest('what is tdh'),
+        createdDrop: createDrop({ id: 'drop-1', mentionedHandle: 'help6529' })
+      })
+    ).toBe(true);
+  });
+
+  it('skips a drop that neither mentions the bot nor replies', () => {
+    expect(
+      mayTriggerHelpBot({
+        ...base,
+        request: createRequest('what is tdh @someoneelse help6529')
+      })
+    ).toBe(false);
+  });
+
+  it("skips the bot's own drops", () => {
+    expect(
+      mayTriggerHelpBot({
+        ...base,
+        authorProfileId: 'bot-profile',
+        request: createRequest('@help6529 what is tdh')
+      })
+    ).toBe(false);
+  });
+
+  it('passes every drop that detectHelpBotTrigger detects', () => {
+    const word = fc.constantFrom(
+      'what',
+      'is',
+      'tdh',
+      'gm',
+      'thanks',
+      'help6529',
+      '@help6529',
+      '@[help6529]',
+      '@someone',
+      'is this right?'
+    );
+    fc.assert(
+      fc.property(
+        fc.array(word, { maxLength: 6 }),
+        fc.boolean(),
+        fc.boolean(),
+        fc.constantFrom('bot-profile', 'user-profile', 'other-profile'),
+        fc.option(fc.constantFrom('bot-profile', 'other-profile'), {
+          nil: undefined
+        }),
+        (words, payloadMention, persistedMention, author, parentAuthor) => {
+          const request = createRequest(words.join(' '), {
+            replyToDropId: parentAuthor ? 'parent-drop' : undefined,
+            mentionedHandle: payloadMention ? 'help6529' : undefined
+          });
+          const input = {
+            request,
+            createdDrop: createDrop({
+              id: 'drop-1',
+              mentionedHandle: persistedMention ? 'help6529' : undefined
+            }),
+            authorProfileId: author,
+            botProfileId: 'bot-profile'
+          };
+          const parentDrop = parentAuthor
+            ? createDrop({
+                id: 'parent-drop',
+                authorId: parentAuthor,
+                content: 'what is tdh'
+              })
+            : null;
+          if (detectHelpBotTrigger({ ...input, parentDrop })) {
+            expect(mayTriggerHelpBot(input)).toBe(true);
+          }
+        }
+      ),
+      { numRuns: 500 }
+    );
   });
 });
