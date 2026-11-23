@@ -1,3 +1,10 @@
+/** A step skipped as planned: a table it needs isn't in the schema. */
+export interface WaitingStep {
+  readonly step: string;
+  readonly table: string;
+  readonly reason: string;
+}
+
 /** What a run found, for the verdict. */
 export interface VerdictInput {
   readonly final: boolean;
@@ -27,6 +34,8 @@ export interface VerdictInput {
   readonly plannedTables: number;
   /** Planned steps skipped because their module isn't in the tree. */
   readonly plannedSteps: readonly string[];
+  /** Steps skipped as planned, one entry per table they need and lack. */
+  readonly waitingSteps: readonly WaitingStep[];
   /** Planned probes held because a table they read isn't in the schema. */
   readonly heldProbes: readonly string[];
   /** Tables a manifest keeps or rebuilds that a fresh schema lacks. */
@@ -117,6 +126,14 @@ export function judge(input: VerdictInput): Verdict {
   if (input.plannedSteps.length) {
     finalOnly(
       `${input.plannedSteps.length} planned steps were skipped because their code is not in this tree, and their rebuilders' tables were kept: ${input.plannedSteps.join(', ')}`
+    );
+  }
+  if (input.waitingSteps.length) {
+    const steps = new Set(input.waitingSteps.map((w) => w.step));
+    finalOnly(
+      `${steps.size} steps were skipped as planned because a table they need is not in the schema yet, and their rebuilders' tables were kept: ${input.waitingSteps
+        .map((w) => `${w.step} needs ${w.table} (${w.reason})`)
+        .join('; ')}`
     );
   }
   if (input.heldProbes.length) {

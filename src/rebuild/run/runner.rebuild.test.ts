@@ -141,6 +141,33 @@ describe('rebuild check, end to end', () => {
     expect(report.verdict).toBe('PASS');
   });
 
+  it('skips a step as planned while a table it needs is not in the schema', async () => {
+    // A manifest table (identity's planned mirror table) no code creates yet.
+    const waiting = (id: string): RebuildStep => ({
+      ...step(id, 'rebuildTeam', ['team']),
+      needs: [
+        {
+          table: 'identity_chain_principals',
+          reason: 'the identity mirror creates it'
+        }
+      ]
+    });
+    const { report } = await teamRun(waiting('self-check.waiting'));
+    expect(report.failures).toEqual([]);
+    expect(report.verdict).toBe('PASS');
+    expect(report.steps.map((s) => s.id)).not.toContain('self-check.waiting');
+    // Its table was kept, like a planned rebuilder's.
+    expect(report.tables.rebuilt).toEqual([]);
+    expect(report.notes.join(' ')).toContain(
+      'self-check.waiting needs identity_chain_principals (the identity mirror creates it)'
+    );
+    const final = await teamRun(waiting('self-check.waiting-final'), true);
+    expect(final.report.verdict).toBe('FAIL');
+    expect(final.report.failures.join(' ')).toContain(
+      'self-check.waiting-final needs identity_chain_principals'
+    );
+  });
+
   it('fails a rebuilder that calls a host outside the sources', async () => {
     const { report } = await teamRun(
       step('self-check.outside', 'callOutsideSource', ['team'])

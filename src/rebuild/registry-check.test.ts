@@ -185,6 +185,34 @@ describe('checkRegistry', () => {
     ]);
   });
 
+  it('checks the tables a step needs: known, each with a reason', () => {
+    const result = checkRegistry({
+      manifests: [
+        area(
+          'a',
+          { t1: index(), later: { class: 'INDEX', origin: 'planned' } },
+          {
+            seeds: [
+              step('a.seed', {
+                writes: ['t1'],
+                needs: [
+                  { table: 'later', reason: 'a later branch creates it' },
+                  { table: 'nope', reason: 'x' },
+                  { table: 't1', reason: ' ' }
+                ]
+              })
+            ]
+          }
+        )
+      ],
+      codeTables: code('t1')
+    });
+    expect(result.problems.map((p) => p.detail)).toEqual([
+      'seed a.seed needs unknown table nope',
+      'seed a.seed needs t1 without a reason'
+    ]);
+  });
+
   it('checks probe ids, paths, placeholders and reasons', () => {
     const result = checkRegistry({
       manifests: [

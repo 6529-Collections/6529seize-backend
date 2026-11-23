@@ -19,7 +19,7 @@ export type RegistryProblemKind =
   | 'NO_REASON'
   /** The live schema disagrees with the class (a retired name as a table, a view classed as a table). */
   | 'WRONG_CLASS'
-  /** A step that writes outside its area's INDEX tables, reads an unknown table, or repeats an id. */
+  /** A step that writes outside its area's INDEX tables, reads or needs an unknown table, or repeats an id. */
   | 'BAD_STEP'
   /** Two rebuilders write one table. */
   | 'DOUBLE_WRITER'
@@ -183,6 +183,23 @@ function stepProblems(
           area: manifest.area,
           table,
           detail: `${kind} ${step.id} reads unknown table ${table}`
+        });
+      }
+    }
+    for (const need of step.needs ?? []) {
+      if (!allTables.has(need.table)) {
+        problems.push({
+          kind: 'BAD_STEP',
+          area: manifest.area,
+          table: need.table,
+          detail: `${kind} ${step.id} needs unknown table ${need.table}`
+        });
+      } else if (!need.reason?.trim()) {
+        problems.push({
+          kind: 'BAD_STEP',
+          area: manifest.area,
+          table: need.table,
+          detail: `${kind} ${step.id} needs ${need.table} without a reason`
         });
       }
     }

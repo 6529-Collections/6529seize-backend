@@ -16,6 +16,7 @@ const clean: VerdictInput = {
   provisionalSources: [],
   plannedTables: 0,
   plannedSteps: [],
+  waitingSteps: [],
   heldProbes: [],
   notInSchema: [],
   openRoutes: 0
@@ -54,6 +55,15 @@ const findings: [string, Partial<VerdictInput>, RegExp][] = [
     'skipped planned steps',
     { plannedSteps: ['a.seed'] },
     /planned steps were skipped/
+  ],
+  [
+    'steps waiting for a table',
+    {
+      waitingSteps: [
+        { step: 'a.seed', table: 't', reason: 'a later branch creates it' }
+      ]
+    },
+    /1 steps were skipped as planned because a table they need is not in the schema yet.*a\.seed needs t \(a later branch creates it\)/
   ],
   ['held probes', { heldProbes: ['a.p'] }, /planned probes were held/],
   [
