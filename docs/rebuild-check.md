@@ -27,9 +27,9 @@ test shards and fails when:
 - a rebuilder writes a table that isn't one of its area's INDEX tables, two
   rebuilders write one table (unless each writes a disjoint partition of
   it), or steps wait on each other;
-- a step reads a table no manifest has, or needs one that no later branch
-  adds or without a reason; a rebuilder is marked `last`, or a seed that
-  isn't last waits on one that is;
+- a step reads a table no manifest has, or needs an unknown table, a
+  VIEW, RETIRED or SCHEMA table, or one without a reason; a rebuilder is
+  marked `last`, or a seed that isn't last waits on one that is;
 - a probe repeats an id, has a path without a leading `/`, or a placeholder
   with no values.
 
@@ -132,10 +132,11 @@ export const mintManifest: AreaManifest = {
     when every table it needs is in the run's schema. While one is missing
     (a table another branch creates), runs skip it the same way, and the
     report names the step, the table and the reason; a final run fails.
-    A step waits only for a table a later branch adds: one marked planned,
-    or one no entity in this tree creates yet. The registry refuses any
-    other (an entity's table, a view, a retired or a schema table) and a
-    needed table without a reason.
+    A step waits for a table a later branch adds. The registry refuses a
+    view, a retired or a schema table, and a needed table without a reason.
+    A need on a table the schema already has (its branch landed first)
+    holds nothing back: the step runs, the run notes the need as one to
+    drop, and a final run fails on it.
     A step that waits on a skipped one and touches the same tables should
     declare the same needs.
   - A seed with `last: true` runs after every seed without it, in the
@@ -277,9 +278,12 @@ Each `--source <name>=<spec>`:
   writes them into `ctx.seedFilesDir` and lists them in that directory's own
   `files.json`; the server checks each one's hash when it is asked for.
   The seeds' files are the run's own world. Files in `<dir>` come from
-  outside the run, and nothing checks their ids against their bytes yet,
-  so a directory that holds any is provisional ("ids not verified"),
-  whatever its `PROVENANCE.json` says.
+  outside the run. A file named by the SHA-256 of its bytes, as lowercase
+  hex or as a raw CIDv1 with a sha2-256 multihash (`bafkrei...`, the
+  document store's naming), has its id checked against its bytes, and one
+  with other bytes fails the run. For any other file nothing checks its id
+  yet, so a directory that holds one is provisional ("ids not verified",
+  naming the files), whatever its `PROVENANCE.json` says.
 - A flag value may name a source: `{gateway}`, `{relays}`, `{ethereum}`
   or `{files}` become its URL in the run.
 

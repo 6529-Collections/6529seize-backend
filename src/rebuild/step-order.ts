@@ -1,9 +1,16 @@
 import { RebuildStep } from '@/rebuild/manifest.types';
 
+/** An id a step names in `after` or `before` that no step has. */
+export interface UnknownStep {
+  readonly step: string;
+  readonly field: 'after' | 'before';
+  readonly id: string;
+}
+
 export interface OrderedSteps<T extends RebuildStep> {
   readonly order: T[];
   /** Ids named in `after` or `before` that no step has. */
-  readonly unknown: string[];
+  readonly unknown: UnknownStep[];
   /** Step ids on a cycle; empty when the order is complete. */
   readonly cyclic: string[];
 }
@@ -34,8 +41,10 @@ export function orderSteps<T extends RebuildStep>(
 ): OrderedSteps<T> {
   const byId = new Map(steps.map((step) => [step.id, step]));
   const unknown = steps.flatMap((step) =>
-    [...(step.after ?? []), ...(step.before ?? [])].filter(
-      (id) => !byId.has(id)
+    (['after', 'before'] as const).flatMap((field) =>
+      (step[field] ?? [])
+        .filter((id) => !byId.has(id))
+        .map((id): UnknownStep => ({ step: step.id, field, id }))
     )
   );
   const waits = waitsOn(steps);
@@ -58,7 +67,7 @@ export function orderSteps<T extends RebuildStep>(
   const cyclic = steps
     .filter((step) => !done.has(step.id))
     .map((step) => step.id);
-  return { order, unknown: Array.from(new Set(unknown)), cyclic };
+  return { order, unknown, cyclic };
 }
 
 /**
