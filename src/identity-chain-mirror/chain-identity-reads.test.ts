@@ -28,13 +28,11 @@ function chainIdentity(other: Partial<ChainIdentity> = {}): ChainIdentity {
     },
     rep: { total: '500', raters: 3 },
     nic: { total: '-20', raters: 1 },
-    xtdh: '12',
     level: {
       level: 8,
       raw: '4734',
       rep: '500',
       tdh: '3000',
-      xtdh: '12',
       tdhDay: 25
     },
     mergedInto: null,

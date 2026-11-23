@@ -1,3 +1,4 @@
+import { creditTdh } from '@/rates/rating-credit';
 import { calculateLevel } from '../../../profiles/profile-level';
 import { RequestContext } from '../../../request.context';
 import { ApiCommunityMemberOverview } from '../generated/models/ApiCommunityMemberOverview';
@@ -46,7 +47,7 @@ export class CommunityMembersService {
           display: member.display,
           detail_view_key: member.detail_view_key,
           level: calculateLevel({
-            tdh: member.tdh + member.xtdh,
+            tdh: creditTdh(member.tdh, member.xtdh),
             rep: member.rep
           }),
           tdh: member.tdh,

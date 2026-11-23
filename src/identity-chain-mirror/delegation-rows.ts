@@ -17,7 +17,7 @@ export interface DelegationRowWrite {
 /**
  * A chain delegation record as the delegations row of one wallet: imported
  * records keep their Ethereum block, records set on the chain sit above
- * CHAIN_BLOCK_BASE; "never" expires at 6529.io's never date. Null for a
+ * CHAIN_BLOCK_BASE; "never" (0) expires at 6529.io's never date. Null for a
  * token id the column can't hold.
  */
 export function toDelegationRow(
@@ -34,10 +34,14 @@ export function toDelegationRow(
       return null;
     }
   }
+  // Expiry 0 means never, as on NFTDelegation.
   let expiry = NEVER_EXPIRES;
   try {
     const big = BigInt(record.expiry);
-    expiry = big < BigInt(NEVER_EXPIRES) ? Number(big) : NEVER_EXPIRES;
+    expiry =
+      big > BigInt(0) && big < BigInt(NEVER_EXPIRES)
+        ? Number(big)
+        : NEVER_EXPIRES;
   } catch {
     expiry = NEVER_EXPIRES;
   }

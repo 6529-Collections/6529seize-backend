@@ -49,9 +49,6 @@ describe('HelpBotProcessorService', () => {
     const profileResolver = {
       resolveBotProfileId: jest.fn().mockResolvedValue('bot-profile')
     };
-    const creditsService = {
-      refundQuestionCredit: jest.fn()
-    };
     const answer = jest.fn().mockResolvedValue({
       type: 'NO_RELIABLE_SOURCE',
       escalateToTechTeam: true
@@ -62,8 +59,7 @@ describe('HelpBotProcessorService', () => {
       dropWriter as never,
       {} as never,
       profileResolver as never,
-      () => ({ answer }) as never,
-      creditsService as never
+      () => ({ answer }) as never
     );
 
     await service.processInteraction('interaction-1', ctx);
@@ -137,9 +133,6 @@ describe('HelpBotProcessorService', () => {
     const profileResolver = {
       resolveBotProfileId: jest.fn().mockResolvedValue('bot-profile')
     };
-    const creditsService = {
-      refundQuestionCredit: jest.fn()
-    };
     const answer = jest.fn().mockResolvedValue({
       type: 'NO_RELIABLE_SOURCE',
       escalateToTechTeam: false
@@ -150,8 +143,7 @@ describe('HelpBotProcessorService', () => {
       dropWriter as never,
       {} as never,
       profileResolver as never,
-      () => ({ answer }) as never,
-      creditsService as never
+      () => ({ answer }) as never
     );
 
     await service.processInteraction('interaction-1', ctx);
@@ -205,9 +197,6 @@ describe('HelpBotProcessorService', () => {
     const profileResolver = {
       resolveBotProfileId: jest.fn().mockResolvedValue('bot-profile')
     };
-    const creditsService = {
-      refundQuestionCredit: jest.fn()
-    };
     const answer = jest.fn().mockResolvedValue({
       type: 'ANSWER',
       answer:
@@ -221,8 +210,7 @@ describe('HelpBotProcessorService', () => {
       dropWriter as never,
       {} as never,
       profileResolver as never,
-      () => ({ answer }) as never,
-      creditsService as never
+      () => ({ answer }) as never
     );
 
     await service.processInteraction('interaction-1', ctx);
@@ -282,9 +270,6 @@ describe('HelpBotProcessorService', () => {
     const profileResolver = {
       resolveBotProfileId: jest.fn().mockResolvedValue('bot-profile')
     };
-    const creditsService = {
-      refundQuestionCredit: jest.fn()
-    };
     const answer = jest.fn().mockResolvedValue({
       type: 'ANSWER',
       answer: 'TDH stands for Total Days Held.'
@@ -295,8 +280,7 @@ describe('HelpBotProcessorService', () => {
       dropWriter as never,
       {} as never,
       profileResolver as never,
-      () => ({ answer }) as never,
-      creditsService as never
+      () => ({ answer }) as never
     );
 
     await service.processInteraction('interaction-1', ctx);
@@ -354,9 +338,6 @@ describe('HelpBotProcessorService', () => {
     const profileResolver = {
       resolveBotProfileId: jest.fn().mockResolvedValue('bot-profile')
     };
-    const creditsService = {
-      refundQuestionCredit: jest.fn()
-    };
     const answerError = new Error('db timeout');
     const answer = jest.fn().mockRejectedValue(answerError);
     const service = new HelpBotProcessorService(
@@ -365,8 +346,7 @@ describe('HelpBotProcessorService', () => {
       dropWriter as never,
       {} as never,
       profileResolver as never,
-      () => ({ answer }) as never,
-      creditsService as never
+      () => ({ answer }) as never
     );
 
     await service.processInteraction('interaction-1', ctx);
@@ -395,13 +375,6 @@ describe('HelpBotProcessorService', () => {
         dropId: 'question-drop',
         waveId: 'wave-1',
         reaction: HELP_BOT_FAILURE_REACTION
-      },
-      ctx
-    );
-    expect(creditsService.refundQuestionCredit).toHaveBeenCalledWith(
-      {
-        profileId: 'profile-1',
-        interactionId: 'interaction-1'
       },
       ctx
     );
@@ -447,9 +420,6 @@ describe('HelpBotProcessorService', () => {
       markNoReliableSource: jest.fn(),
       markFailed: jest.fn()
     };
-    const creditsService = {
-      refundQuestionCredit: jest.fn()
-    };
     const service = new HelpBotProcessorService(
       interactionsDb as never,
       { setReaction: jest.fn() } as never,
@@ -458,13 +428,12 @@ describe('HelpBotProcessorService', () => {
       {
         resolveBotProfileId: jest.fn().mockResolvedValue('bot-profile')
       } as never,
-      () => ({ answer }) as never,
-      creditsService as never
+      () => ({ answer }) as never
     );
-    return { service, interactionsDb, creditsService };
+    return { service, interactionsDb };
   }
 
-  it('keeps the credit when the produced answer cannot be posted', async () => {
+  it('records a produced answer that cannot be posted as a post failure', async () => {
     const ctx = {} as never;
     const answer = jest.fn().mockResolvedValue({
       type: 'ANSWER',
@@ -474,7 +443,7 @@ describe('HelpBotProcessorService', () => {
     const reply = jest
       .fn()
       .mockRejectedValue(new Error('User is not eligible for this wave'));
-    const { service, interactionsDb, creditsService } = createProcessor({
+    const { service, interactionsDb } = createProcessor({
       interaction: createInteraction(),
       answer,
       reply
@@ -483,7 +452,6 @@ describe('HelpBotProcessorService', () => {
     await service.processInteraction('interaction-1', ctx);
 
     expect(answer).toHaveBeenCalledTimes(1);
-    expect(creditsService.refundQuestionCredit).not.toHaveBeenCalled();
     expect(interactionsDb.markFailed).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 'interaction-1',
@@ -495,21 +463,29 @@ describe('HelpBotProcessorService', () => {
     );
   });
 
-  it('keeps the credit when the no-reliable-source reply cannot be posted', async () => {
+  it('records a no-reliable-source reply that cannot be posted as a post failure', async () => {
     const answer = jest.fn().mockResolvedValue({
       type: 'NO_RELIABLE_SOURCE',
       escalateToTechTeam: false
     });
     const reply = jest.fn().mockRejectedValue(new Error('slow mode'));
-    const { service, creditsService } = createProcessor({
+    const { service, interactionsDb } = createProcessor({
       interaction: createInteraction(),
       answer,
       reply
     });
+    const ctx = {} as never;
 
-    await service.processInteraction('interaction-1', {} as never);
+    await service.processInteraction('interaction-1', ctx);
 
-    expect(creditsService.refundQuestionCredit).not.toHaveBeenCalled();
+    expect(interactionsDb.markFailed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'interaction-1',
+        replyDropId: null,
+        failureReason: 'Failed to post produced answer: slow mode'
+      }),
+      ctx
+    );
   });
 
   it('passes at most the configured number of question characters to the answerer', async () => {

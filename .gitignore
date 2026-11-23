@@ -22,3 +22,6 @@ src/*/.serverless-offline
 .staging-db-dump/
 **/.release-coordinator/runs/
 **/.release-coordinator/outbox/
+
+# Records service key files (signed-records:service-setup) hold secrets.
+records-service-*.json*

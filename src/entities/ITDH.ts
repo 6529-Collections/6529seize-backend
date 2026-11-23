@@ -9,6 +9,7 @@ import {
   CONSOLIDATED_TDH_EDITIONS_TABLE,
   CONSOLIDATED_WALLETS_TDH_MEMES_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
+  CONSOLIDATION_KEY_LENGTH,
   HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE,
   TDH_BLOCKS_TABLE,
   TDH_EDITIONS_TABLE,
@@ -141,7 +142,7 @@ export class BaseConsolidatedTDH extends BaseTDH {
   @Index()
   consolidation_display!: string;
 
-  @PrimaryColumn({ type: 'varchar', length: 200 })
+  @PrimaryColumn({ type: 'varchar', length: CONSOLIDATION_KEY_LENGTH })
   consolidation_key!: string;
 
   @Column({ type: 'double', nullable: false, default: 0 })
@@ -169,7 +170,7 @@ export class TDHMemes extends BaseTDHFields {
 
 @Entity(CONSOLIDATED_WALLETS_TDH_MEMES_TABLE)
 export class ConsolidatedTDHMemes extends BaseTDHFields {
-  @PrimaryColumn({ type: 'varchar', length: 500 })
+  @PrimaryColumn({ type: 'varchar', length: CONSOLIDATION_KEY_LENGTH })
   consolidation_key!: string;
 
   @PrimaryColumn({ type: 'int' })
@@ -184,7 +185,7 @@ export class NftTDH {
   @PrimaryColumn({ type: 'varchar', length: 50 })
   contract!: string;
 
-  @PrimaryColumn({ type: 'varchar', length: 200 })
+  @PrimaryColumn({ type: 'varchar', length: CONSOLIDATION_KEY_LENGTH })
   consolidation_key!: string;
 
   @Column({ type: 'int', nullable: false })
@@ -251,7 +252,7 @@ export class TDHEditions extends BaseTDHEditionsFields {
 @Entity(CONSOLIDATED_TDH_EDITIONS_TABLE)
 export class ConsolidatedTDHEditions extends BaseTDHEditionsFields {
   @Index()
-  @PrimaryColumn({ type: 'varchar', length: 500 })
+  @PrimaryColumn({ type: 'varchar', length: CONSOLIDATION_KEY_LENGTH })
   consolidation_key!: string;
 }
 

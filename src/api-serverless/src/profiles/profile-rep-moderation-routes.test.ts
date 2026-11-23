@@ -75,7 +75,7 @@ describe('REP moderation before target creation', () => {
   });
   afterEach(() => jest.restoreAllMocks());
 
-  it.each(['disallowed', 'reserved', 'unauthenticated'])(
+  it.each(['disallowed', 'unauthenticated'])(
     'does not create a missing target for a %s request',
     async (kind) => {
       if (kind === 'unauthenticated')
@@ -96,11 +96,9 @@ describe('REP moderation before target creation', () => {
       const create = jest.spyOn(profilesService, 'createOrUpdateProfile');
       const update = jest.spyOn(ratingsService, 'updateRating');
 
-      expect(
-        await postRating(
-          kind === 'reserved' ? 'Help6529 Credits' : 'Test category'
-        )
-      ).toBe(kind === 'unauthenticated' ? 404 : 400);
+      expect(await postRating('Test category')).toBe(
+        kind === 'unauthenticated' ? 404 : 400
+      );
       expect(lookup).not.toHaveBeenCalled();
       expect(create).not.toHaveBeenCalled();
       expect(update).not.toHaveBeenCalled();
@@ -138,6 +136,35 @@ describe('REP moderation before target creation', () => {
     );
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({ matter_target_id: 'target' }),
+      expect.anything()
+    );
+  });
+
+  it('checks Help6529 Credits like any other category', async () => {
+    const check = jest
+      .spyOn(abusivenessCheckService, 'checkRepPhrase')
+      .mockResolvedValue({
+        status: 'ALLOWED',
+        explanation: null,
+        text: 'Help6529 Credits',
+        external_check_performed_at: new Date(0)
+      });
+    jest
+      .spyOn(identityFetcher, 'getIdentityAndConsolidationsByIdentityKey')
+      .mockResolvedValue(null);
+    jest
+      .spyOn(profilesService, 'createOrUpdateProfile')
+      .mockResolvedValue({ id: 'target' } as Awaited<
+        ReturnType<typeof profilesService.createOrUpdateProfile>
+      >);
+    const update = jest
+      .spyOn(ratingsService, 'updateRating')
+      .mockResolvedValue(undefined);
+
+    expect(await postRating('Help6529 Credits')).toBe(200);
+    expect(check).toHaveBeenCalledWith('Help6529 Credits', expect.anything());
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ matter_category: 'Help6529 Credits' }),
       expect.anything()
     );
   });

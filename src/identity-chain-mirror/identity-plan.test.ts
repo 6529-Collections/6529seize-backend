@@ -274,25 +274,45 @@ describe('planIdentity', () => {
     const plan = planIdentity(
       chain({ doc: undefined, levelRaw: null }),
       state({
-        rows: [row(AB, U, { pfp: 'old-pfp', tdh: 100, xtdh: 2 })],
+        rows: [
+          row(AB, U, { pfp: 'old-pfp', tdh: 100, xtdh: 2, level_raw: 777 })
+        ],
         profile: profile(U, 'Alice', { website: 'old-site' })
       })
     );
     expect(plan.identity.pfp).toBe('old-pfp');
     expect(plan.profile.website).toBe('old-site');
     expect(plan.statements).toBeNull();
-    expect(plan.identity.level_raw).toBe(30 + 100 + 2);
+    // No level from the gateway: the row's own, not a mix of sources.
+    expect(plan.identity.level_raw).toBe(777);
   });
 });
 
 describe('principalProfileId', () => {
-  it('derives the same UUID for the same principal', () => {
-    const id = principalProfileId(P);
-    expect(id).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+  it("writes the principal id's first 16 bytes as a UUID", () => {
+    const principal = '0x00112233445566778899aabbccddeeff' + 'ab'.repeat(16);
+    expect(principalProfileId(principal)).toBe(
+      '00112233-4455-6677-8899-aabbccddeeff'
     );
-    expect(principalProfileId(P.toUpperCase().replace('0X', '0x'))).toBe(id);
-    expect(principalProfileId('0x' + 'cd'.repeat(32))).not.toBe(id);
+    expect(
+      principalProfileId(principal.toUpperCase().replace('0X', '0x'))
+    ).toBe('00112233-4455-6677-8899-aabbccddeeff');
+    expect(() => principalProfileId('0x1234')).toThrow('Not a principal id');
+  });
+
+  it('takes rep and level from the chain only', () => {
+    const plan = planIdentity(chain(), state());
+    expect(plan.identity.rep).toBe(30);
+    expect(plan.identity.level_raw).toBe(1234);
+    // Without the chain's level, the row's own; a new row starts at 0.
+    const noLevel = planIdentity(chain({ levelRaw: null }), state());
+    expect(noLevel.identity.level_raw).toBe(0);
+    const kept = planIdentity(
+      chain({ levelRaw: null }),
+      state({ rows: [row(AB, U, { level_raw: 1500 })] })
+    );
+    expect(kept.identity.level_raw).toBe(1500);
+    expect(kept.identity.rep).toBe(30);
   });
 
   it("keeps another identity's row on its remaining wallets", () => {

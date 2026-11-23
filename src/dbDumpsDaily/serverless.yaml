@@ -33,6 +33,7 @@ functions:
 resources:
   Resources:
     DbDumpsDailyOOMFilter:
+      DependsOn: DbDumpsDailyLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/dbDumpsDaily

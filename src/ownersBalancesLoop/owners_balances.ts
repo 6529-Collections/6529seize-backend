@@ -1,5 +1,8 @@
 import { transferReconciliationDb } from '@/transactions/transfer-reconciliation.db';
+import { deferGroupsThatDoNotFit } from '@/holdings/consolidation-key-fit';
 import {
+  CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE,
+  CONSOLIDATED_OWNERS_BALANCES_TABLE,
   GRADIENT_CONTRACT,
   MEME_8_EDITION_BURN_ADJUSTMENT,
   MEMELAB_CONTRACT,
@@ -441,8 +444,17 @@ export async function consolidateOwnerBalances(
     }
   });
 
+  const fittingGroups = await deferGroupsThatDoNotFit(
+    consolidationAddressesByKey,
+    [
+      CONSOLIDATED_OWNERS_BALANCES_TABLE,
+      CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE
+    ],
+    'balances'
+  );
+
   await Promise.all(
-    Array.from(consolidationAddressesByKey.entries()).map(
+    Array.from(fittingGroups.entries()).map(
       async ([consolidationKey, consolidationAddresses]) => {
         const consolidatedBalances = await getConsolidatedBalances(
           seasons,

@@ -1,3 +1,4 @@
+import { withoutHelpBotCreditsSql } from '@/rates/rating-credit';
 import { inSequence } from '@/db/in-sequence';
 import {
   ConnectionWrapper,
@@ -544,7 +545,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
         matter: string;
         rating: number;
       }>(
-        `select matter, sum(rating) as rating from ratings where rater_profile_id = :profileId group by 1`,
+        `select matter, sum(rating) as rating from ratings where rater_profile_id = :profileId${withoutHelpBotCreditsSql()} group by 1`,
         { profileId },
         { wrappedConnection: ctx?.connection }
       )

@@ -7,7 +7,7 @@ describe('helpBotReplyLoop daily activity credit infrastructure', () => {
     'utf8'
   );
 
-  it('isolates serialized credit work from normal reply capacity', () => {
+  it('isolates the serialized leftover-request worker from normal reply capacity', () => {
     expect(serverless).toContain('handler: index.dailyActivityCreditHandler');
     expect(serverless).toContain('name: helpBotDailyActivityCreditLoop');
     expect(serverless).toMatch(/^ {4}reservedConcurrency: 1$/m);
@@ -20,7 +20,7 @@ describe('helpBotReplyLoop daily activity credit infrastructure', () => {
     );
   });
 
-  it('uses an EventBridge queue wakeup when post-commit publication fails', () => {
+  it('wakes the queue every minute from EventBridge', () => {
     expect(serverless).toContain('Type: AWS::Events::Rule');
     expect(serverless).toContain('ScheduleExpression: rate(1 minute)');
     expect(serverless).toContain('Service: events.amazonaws.com');
