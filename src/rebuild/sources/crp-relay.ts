@@ -87,6 +87,14 @@ const LOG_EPOCH = 1;
 /** A CHALLENGE's life, as on the relays. */
 const CHALLENGE_MS = 5 * 60 * 1000;
 
+/**
+ * Strings by UTF-16 code unit, the order a sort with no compare function
+ * gives, so what a recording holds stays byte for byte the same.
+ */
+export function byCodeUnit(a: string, b: string): number {
+  return a < b ? -1 : Number(a > b);
+}
+
 /** JSON with object keys sorted, so equal values print the same. */
 export function canonicalJson(value: unknown): string {
   const sort = (v: unknown): unknown => {
@@ -94,7 +102,7 @@ export function canonicalJson(value: unknown): string {
     if (v && typeof v === 'object') {
       return Object.fromEntries(
         Object.keys(v as Record<string, unknown>)
-          .sort()
+          .sort(byCodeUnit)
           .map((key) => [key, sort((v as Record<string, unknown>)[key])])
       );
     }

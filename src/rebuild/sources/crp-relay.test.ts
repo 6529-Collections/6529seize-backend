@@ -3,6 +3,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
+  byCodeUnit,
+  canonicalJson,
   CrpRelayStore,
   payloadRefs,
   startCrpRelay
@@ -37,6 +39,26 @@ describe('harness relay', () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rebuild-relay-'));
   });
   afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  it('orders strings by UTF-16 code unit, as a sort with no compare function does', () => {
+    const words = ['b', 'B', '_', '0', 'a', 'é', '\u{1f600}', '￿'];
+    // A surrogate pair (U+1F600) sorts before U+FFFF: code units, not points.
+    expect([...words, 'ab', 'a'].sort(byCodeUnit)).toEqual([
+      '0',
+      'B',
+      '_',
+      'a',
+      'a',
+      'ab',
+      'b',
+      'é',
+      '\u{1f600}',
+      '￿'
+    ]);
+    expect(canonicalJson({ b: 1, B: { z: 1, _: 2 }, a: [3] })).toBe(
+      '{"B":{"_":2,"z":1},"a":[3],"b":1}'
+    );
+  });
 
   it('finds payload references at any depth', () => {
     expect(payloadRefs('{"h":"0xaa","x":[{"h":"bb"}]}')).toEqual([
