@@ -3244,6 +3244,60 @@ describe('ChainGatewayClient writes', () => {
     }
   );
 
+  it.each([
+    [
+      'a user name and password',
+      { CHAIN_GATEWAY_URL: 'https://user:secret@gateway.test' }
+    ],
+    ['a user name', { CHAIN_GATEWAY_URL: 'https://user@gateway.test' }],
+    [
+      'a key with a line break',
+      {
+        CHAIN_GATEWAY_URL: BASE,
+        CHAIN_GATEWAY_SERVICE_KEY: 'ab' + String.fromCharCode(10) + 'cd'
+      }
+    ],
+    [
+      'a key past ASCII',
+      {
+        CHAIN_GATEWAY_URL: BASE,
+        CHAIN_GATEWAY_SERVICE_KEY: 'ab' + String.fromCharCode(0x100)
+      }
+    ],
+    [
+      'a key with a space',
+      { CHAIN_GATEWAY_URL: BASE, CHAIN_GATEWAY_SERVICE_KEY: 'ab cd' }
+    ]
+  ])('refuses settings with %s as not configured', (_name, env) => {
+    expect(() => chainGatewayConfigFromEnv(env)).toThrow(
+      expect.objectContaining({ code: 'not_configured' })
+    );
+  });
+
+  it('takes a plain service key', () => {
+    expect(
+      chainGatewayConfigFromEnv({
+        CHAIN_GATEWAY_URL: BASE,
+        CHAIN_GATEWAY_SERVICE_KEY: ' key-1_2.3~ '
+      }).serviceKey
+    ).toBe('key-1_2.3~');
+  });
+
+  it('takes a 502 whose body says bad_request as an unknown outcome', async () => {
+    const { client } = setup(
+      withStatus(() => ({
+        status: 502,
+        json: { error: { code: 'bad_request', message: 'upstream said so' } }
+      }))
+    );
+    await expect(
+      client.submit({ signed: '0x00', txId: TX })
+    ).rejects.toMatchObject({
+      code: 'outcome_unknown',
+      txId: TX
+    });
+  });
+
   it('refuses a TDH list page whose rows are not a list', async () => {
     const { client } = setup(
       withStatus(
