@@ -19,10 +19,11 @@ import {
 import { sqlExecutor } from '../sql-executor';
 import {
   claimDeferredWrite,
+  DeferralReason,
   deferralReason,
+  DeferredWriteSink,
   deferSubscriptionWrites,
-  executorSink,
-  isWriteWaiting
+  executorSink
 } from '@/subscription-key-width/subscription-deferred-writes';
 import { markSubscriptionCoverageDirty } from '../subscription-coverage/subscription-coverage-dirty';
 import { invalidateUpcomingSubscriptionCaches } from '@/subscriptionsDaily/subscription-cache';
@@ -40,35 +41,106 @@ const logger = Logger.get('SUBSCRIPTIONS_TOP_UP_DB');
 const SUBSCRIPTIONS_TOP_UP_LATEST_BLOCK_ID = 'subscription_top_up_latest_block';
 
 /**
- * The top-up rows alone, as discovery found them: no balance credit, log
- * line or mode change. A rebuild of the rows from Ethereum, where the
- * credit is kept elsewhere (the identity tables after the switch). A hash
- * already there is left as it is. A top-up whose write waits in the
- * deferred writes queue is left out: persistTopUps queued it whole, and
- * its row is written only when the queue replays it.
+ * The top-up rows alone, as discovery found them, for a rebuild from
+ * Ethereum where the credit is kept elsewhere (the identity tables after
+ * the switch): no balance credit, log line or mode change. Each top-up goes
+ * where persistTopUps puts it, by its own rule (topUpTarget): a key the
+ * key-width guard holds back gets the whole top-up queued (queueTopUp),
+ * and any other gets its row. A hash already there is left as it is.
  */
 export async function recordTopUps(topUps: SubscriptionTopUp[]): Promise<void> {
-  for (const topUp of topUps) {
-    if (await isWriteWaiting('TOP_UP', topUp.hash)) {
-      logger.info(
-        `[TOP UP ${topUp.hash} WAITS IN THE DEFERRED WRITES QUEUE] [ROW LEFT OUT]`
+  await sqlExecutor.executeNativeQueriesInTransaction(async (qrHolder) => {
+    const manager = (qrHolder.connection as QueryRunner).manager;
+    const sink = executorSink({ wrappedConnection: qrHolder });
+    for (const topUp of topUps) {
+      const { consolidationKey, reason } = await topUpTarget(
+        topUp,
+        manager,
+        sink
       );
-      continue;
-    }
-    await sqlExecutor.execute(
-      `INSERT INTO ${SUBSCRIPTIONS_TOP_UP_TABLE}
-        (created_at, hash, block, transaction_date, from_wallet, amount)
-        VALUES (NOW(), :hash, :block, :transactionDate, :fromWallet, :amount)
-        ON DUPLICATE KEY UPDATE hash = hash`,
-      {
-        hash: topUp.hash,
-        block: topUp.block,
-        transactionDate: topUp.transaction_date,
-        fromWallet: topUp.from_wallet,
-        amount: topUp.amount
+      if (reason) {
+        await queueTopUp(topUp, consolidationKey, reason, sink);
+        continue;
       }
-    );
+      await sqlExecutor.execute(
+        `INSERT INTO ${SUBSCRIPTIONS_TOP_UP_TABLE}
+          (created_at, hash, block, transaction_date, from_wallet, amount)
+          VALUES (NOW(), :hash, :block, :transactionDate, :fromWallet, :amount)
+          ON DUPLICATE KEY UPDATE hash = hash`,
+        {
+          hash: topUp.hash,
+          block: topUp.block,
+          transactionDate: topUp.transaction_date,
+          fromWallet: topUp.from_wallet,
+          amount: topUp.amount
+        },
+        { wrappedConnection: qrHolder }
+      );
+    }
+  });
+}
+
+/**
+ * The key a top-up is written to, its balance row read FOR UPDATE, and why
+ * its write must wait now (null when it can be made): the sender's
+ * consolidation key, followed to the key a merge moved its balance to,
+ * under the key-width guard's rule. persistTopUps' own rule, and
+ * recordTopUps' for a rebuild.
+ */
+async function topUpTarget(
+  topUp: SubscriptionTopUp,
+  manager: EntityManager,
+  sink: DeferredWriteSink,
+  replaySequence?: number
+): Promise<{
+  consolidationKey: string;
+  locked: Awaited<ReturnType<typeof lockSubscriptionBalance>>;
+  reason: DeferralReason | null;
+}> {
+  let consolidationKey = (
+    await manager.query(
+      `SELECT consolidation_key FROM ${ADDRESS_CONSOLIDATION_KEY} WHERE address = '${topUp.from_wallet}'`
+    )
+  )[0]?.consolidation_key;
+
+  if (!consolidationKey) {
+    consolidationKey = topUp.from_wallet;
   }
+
+  // The key read above can be stale: a merge may have moved its balance
+  // to another key since. lockSubscriptionBalance follows the move.
+  const locked = await lockSubscriptionBalance(consolidationKey, manager);
+  consolidationKey = locked.consolidationKey;
+
+  // A key that must wait (too long for a subscription table, or with
+  // earlier writes waiting) has the whole top-up queued: no balance and
+  // no top-up row, so the top-up is applied, once, when it is replayed.
+  // Checked on the key the top-up would be written to, after the move.
+  const reason = await deferralReason(consolidationKey, sink, replaySequence, {
+    locking: true
+  });
+  return { consolidationKey, locked, reason };
+}
+
+/** Queues a whole top-up whose key must wait, to be applied on replay. */
+async function queueTopUp(
+  topUp: SubscriptionTopUp,
+  consolidationKey: string,
+  reason: DeferralReason,
+  sink: DeferredWriteSink
+): Promise<void> {
+  await deferSubscriptionWrites(
+    [
+      {
+        kind: 'TOP_UP',
+        consolidationKey,
+        dedupe: topUp.hash,
+        payload: { topUp },
+        reason
+      }
+    ],
+    sink
+  );
 }
 
 /**
@@ -106,44 +178,14 @@ export async function persistTopUps(
         continue;
       }
 
-      let consolidationKey = (
-        await manager.query(
-          `SELECT consolidation_key FROM ${ADDRESS_CONSOLIDATION_KEY} WHERE address = '${topUp.from_wallet}'`
-        )
-      )[0]?.consolidation_key;
-
-      if (!consolidationKey) {
-        consolidationKey = topUp.from_wallet;
-      }
-
-      // The key read above can be stale: a merge may have moved its balance
-      // to another key since. lockSubscriptionBalance follows the move.
-      const locked = await lockSubscriptionBalance(consolidationKey, manager);
-      consolidationKey = locked.consolidationKey;
-
-      // A key that must wait (too long for a subscription table, or with
-      // earlier writes waiting) has the whole top-up queued: no balance and
-      // no top-up row, so the top-up is applied, once, when it is replayed.
-      // Checked on the key the top-up would be written to, after the move.
-      const reason = await deferralReason(
-        consolidationKey,
+      const { consolidationKey, locked, reason } = await topUpTarget(
+        topUp,
+        manager,
         sink,
-        options.replaySequence,
-        { locking: true }
+        options.replaySequence
       );
       if (reason) {
-        await deferSubscriptionWrites(
-          [
-            {
-              kind: 'TOP_UP',
-              consolidationKey,
-              dedupe: topUp.hash,
-              payload: { topUp },
-              reason
-            }
-          ],
-          sink
-        );
+        await queueTopUp(topUp, consolidationKey, reason, sink);
         continue;
       }
 

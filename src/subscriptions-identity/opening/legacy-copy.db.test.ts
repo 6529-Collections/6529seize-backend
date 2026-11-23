@@ -1,7 +1,6 @@
 import 'reflect-metadata';
 import {
   MEMES_CONTRACT,
-  SUBSCRIPTION_DEFERRED_WRITES_TABLE,
   SUBSCRIPTIONS_BALANCES_TABLE,
   SUBSCRIPTIONS_ID_BALANCES_TABLE,
   SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
@@ -13,9 +12,9 @@ import { connect, disconnect } from '@/db';
 import * as Entities from '@/entities/entities';
 import { sqlExecutor } from '@/sql-executor';
 import {
-  claimDeferredWrite,
   deferSubscriptionWrites,
-  executorSink
+  executorSink,
+  SUBSCRIPTION_WRITE_TABLES
 } from '@/subscription-key-width/subscription-deferred-writes';
 import { subscriptionKeyWidths } from '@/subscription-key-width/subscription-key-width';
 import { describeWithSeed } from '@/tests/_setup/seed';
@@ -25,7 +24,7 @@ import { copyLegacyHistory, copyLegacyState } from './legacy-copy';
 const wallet = (n: number) => `0x${n.toString(16).padStart(40, '0')}`;
 /** A key the legacy tables hold. */
 const FITS = wallet(1);
-/** A key with a write waiting in the deferred writes queue. */
+/** A key that fits but has an earlier write waiting in the queue. */
 const WAITING = wallet(2);
 /** A key wider than the narrowest legacy key column. */
 const WIDE = Array.from({ length: 20 }, (_, i) => wallet(100 + i)).join('-');
@@ -51,6 +50,42 @@ async function waitOn(key: string): Promise<void> {
   );
 }
 
+/** A final row and a redemption for a key, on the identity side. */
+async function identityHistory(key: string): Promise<void> {
+  await sqlExecutor.execute(
+    `INSERT INTO ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE}
+      (identity_key, consolidation_key, contract, token_id, subscribed_count,
+       airdrop_address, balance)
+      VALUES (:identity, :key, :contract, 1, 1, :airdrop, 0.5)`,
+    {
+      identity: key.slice(0, 42),
+      key,
+      contract: MEMES_CONTRACT,
+      airdrop: key.slice(0, 42)
+    }
+  );
+  await sqlExecutor.execute(
+    `INSERT INTO ${SUBSCRIPTIONS_ID_REDEEMED_TABLE}
+      (identity_key, contract, token_id, address, \`transaction\`,
+       transaction_date, consolidation_key, value, balance_after, count)
+      VALUES (:identity, :contract, 1, :address, :hash, NOW(), :key, 0.06, 0.44, 1)`,
+    {
+      identity: key.slice(0, 42),
+      contract: MEMES_CONTRACT,
+      address: key.slice(0, 42),
+      hash: `0x${key.slice(2, 42)}`,
+      key
+    }
+  );
+}
+
+const keysIn = async (table: string) =>
+  (
+    await sqlExecutor.execute<{ consolidation_key: string }>(
+      `SELECT consolidation_key FROM ${table} ORDER BY consolidation_key`
+    )
+  ).map((row) => row.consolidation_key);
+
 beforeAll(async () => {
   await connect(
     Object.values(Entities).filter((e) => typeof e === 'function') as never
@@ -64,61 +99,34 @@ afterAll(async () => {
 describeWithSeed('the rollback copy and the key-width guard', [], () => {
   beforeEach(async () => {
     subscriptionKeyWidths.invalidate();
-    const narrowest = await subscriptionKeyWidths.minWidth([
-      SUBSCRIPTIONS_NFTS_FINAL_TABLE,
-      SUBSCRIPTIONS_REDEEMED_TABLE,
-      SUBSCRIPTIONS_BALANCES_TABLE
-    ]);
+    const narrowest = await subscriptionKeyWidths.minWidth(
+      SUBSCRIPTION_WRITE_TABLES
+    );
     expect(WIDE.length).toBeGreaterThan(narrowest);
+    expect(WAITING.length).toBeLessThanOrEqual(narrowest);
     await waitOn(WAITING);
   });
 
-  it('leaves out the final rows and redemptions of keys the guard holds back, and counts them', async () => {
+  it('leaves out the final rows and redemptions of keys wider than the legacy columns, and counts them', async () => {
     for (const key of [FITS, WAITING, WIDE]) {
-      await sqlExecutor.execute(
-        `INSERT INTO ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE}
-          (identity_key, consolidation_key, contract, token_id, subscribed_count,
-           airdrop_address, balance)
-          VALUES (:identity, :key, :contract, 1, 1, :airdrop, 0.5)`,
-        {
-          identity: key.slice(0, 42),
-          key,
-          contract: MEMES_CONTRACT,
-          airdrop: key.slice(0, 42)
-        }
-      );
-      await sqlExecutor.execute(
-        `INSERT INTO ${SUBSCRIPTIONS_ID_REDEEMED_TABLE}
-          (identity_key, contract, token_id, address, \`transaction\`,
-           transaction_date, consolidation_key, value, balance_after, count)
-          VALUES (:identity, :contract, 1, :address, :hash, NOW(), :key, 0.06, 0.44, 1)`,
-        {
-          identity: key.slice(0, 42),
-          contract: MEMES_CONTRACT,
-          address: key.slice(0, 42),
-          hash: `0x${key.slice(2, 42)}`,
-          key
-        }
-      );
+      await identityHistory(key);
     }
 
     expect(await copyLegacyHistory()).toEqual({
-      finals: 1,
+      finals: 2,
       uploads: 0,
-      redemptions: 1,
-      leftOut: 4
+      redemptions: 2,
+      leftOut: 2
     });
     for (const table of [
       SUBSCRIPTIONS_NFTS_FINAL_TABLE,
       SUBSCRIPTIONS_REDEEMED_TABLE
     ]) {
-      expect(
-        await sqlExecutor.execute(`SELECT consolidation_key FROM ${table}`)
-      ).toEqual([{ consolidation_key: FITS }]);
+      expect(await keysIn(table)).toEqual([FITS, WAITING]);
     }
   });
 
-  it('leaves out the balances, modes and choices of keys the guard holds back, and counts them', async () => {
+  it('leaves out the balances, modes and choices of keys wider than the legacy columns, and counts them', async () => {
     const wideDirectory: IdentityDirectory = {
       ...directory,
       // The third identity's consolidation key is wider than the tables.
@@ -134,70 +142,49 @@ describeWithSeed('the rollback copy and the key-width guard', [], () => {
     }
 
     expect(await copyLegacyState(wideDirectory)).toEqual({
-      balances: 1,
+      balances: 2,
       modes: 0,
       choices: 0,
-      leftOut: 2
+      leftOut: 1
     });
-    expect(
-      await sqlExecutor.execute(
-        `SELECT consolidation_key FROM ${SUBSCRIPTIONS_BALANCES_TABLE}`
-      )
-    ).toEqual([{ consolidation_key: FITS }]);
+    expect(await keysIn(SUBSCRIPTIONS_BALANCES_TABLE)).toEqual([FITS, WAITING]);
   });
 
-  it('copies the rows of a key whose waiting writes were all replayed', async () => {
-    const replayed = wallet(4);
-    await waitOn(replayed);
-    // The queue's replay claims each of the key's writes as done.
-    const queued = await sqlExecutor.execute<{ sequence: number }>(
-      `SELECT sequence FROM ${SUBSCRIPTION_DEFERRED_WRITES_TABLE}
-        WHERE consolidation_key = :key ORDER BY sequence`,
-      { key: replayed }
-    );
-    expect(queued).toHaveLength(1);
-    for (const { sequence } of queued) {
-      expect(
-        await claimDeferredWrite(Number(sequence), 'DONE', executorSink())
-      ).toBe(true);
+  it('copies the rows of a fitting key with an earlier write still waiting, which production holds until the replay, so the rows compare differently', async () => {
+    // Production's rollback copy: the waiting key's writes are held back,
+    // so only the fitting key has legacy rows.
+    for (const key of [FITS, WAITING]) {
+      await identityHistory(key);
     }
+    await copyLegacyHistory();
     await sqlExecutor.execute(
-      `INSERT INTO ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE}
-        (identity_key, consolidation_key, contract, token_id, subscribed_count,
-         airdrop_address, balance)
-        VALUES (:key, :key, :contract, 1, 1, :key, 0.5)`,
-      { key: replayed, contract: MEMES_CONTRACT }
+      `DELETE FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} WHERE consolidation_key = :key`,
+      { key: WAITING }
     );
     await sqlExecutor.execute(
-      `INSERT INTO ${SUBSCRIPTIONS_ID_REDEEMED_TABLE}
-        (identity_key, contract, token_id, address, \`transaction\`,
-         transaction_date, consolidation_key, value, balance_after, count)
-        VALUES (:key, :contract, 1, :key, :hash, NOW(), :key, 0.06, 0.44, 1)`,
-      { key: replayed, contract: MEMES_CONTRACT, hash: `0x${'d4'.repeat(32)}` }
+      `DELETE FROM ${SUBSCRIPTIONS_REDEEMED_TABLE} WHERE consolidation_key = :key`,
+      { key: WAITING }
     );
-    await sqlExecutor.execute(
-      `INSERT INTO ${SUBSCRIPTIONS_ID_BALANCES_TABLE} (identity_key, balance)
-        VALUES (:key, 0.44)`,
-      { key: replayed }
-    );
+    const production = {
+      finals: await keysIn(SUBSCRIPTIONS_NFTS_FINAL_TABLE),
+      redemptions: await keysIn(SUBSCRIPTIONS_REDEEMED_TABLE)
+    };
+    expect(production).toEqual({ finals: [FITS], redemptions: [FITS] });
 
-    expect(await copyLegacyHistory()).toMatchObject({
-      finals: 1,
-      redemptions: 1,
-      leftOut: 0
+    // The rebuild's copy applies the width rule only, without the queue.
+    await sqlExecutor.execute(`DELETE FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}`);
+    await sqlExecutor.execute(`DELETE FROM ${SUBSCRIPTIONS_REDEEMED_TABLE}`);
+    await copyLegacyHistory();
+    const rebuilt = {
+      finals: await keysIn(SUBSCRIPTIONS_NFTS_FINAL_TABLE),
+      redemptions: await keysIn(SUBSCRIPTIONS_REDEEMED_TABLE)
+    };
+    // The waiting key's rows are extra, so a row comparison of the two
+    // sides shows them rather than hiding them.
+    expect(rebuilt).toEqual({
+      finals: [FITS, WAITING],
+      redemptions: [FITS, WAITING]
     });
-    expect(await copyLegacyState(directory)).toMatchObject({
-      balances: 1,
-      leftOut: 0
-    });
-    for (const table of [
-      SUBSCRIPTIONS_NFTS_FINAL_TABLE,
-      SUBSCRIPTIONS_REDEEMED_TABLE,
-      SUBSCRIPTIONS_BALANCES_TABLE
-    ]) {
-      expect(
-        await sqlExecutor.execute(`SELECT consolidation_key FROM ${table}`)
-      ).toEqual([{ consolidation_key: replayed }]);
-    }
+    expect(rebuilt).not.toEqual(production);
   });
 });

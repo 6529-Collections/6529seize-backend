@@ -227,8 +227,11 @@ const SUBS_REBUILD: RebuildStep = {
 };
 
 /**
- * subscriptions_top_up from Ethereum: the top-up loop's own discovery from
- * genesis to the mark, writing the rows alone (no credit, no cursor)
+ * subscriptions_top_up and the deferred writes queue's top-ups from
+ * Ethereum: the top-up loop's own discovery from genesis to the mark, each
+ * top-up written where persistTopUps puts it by its own rule (the row, or
+ * the whole top-up queued when the key-width guard holds its key back),
+ * with no credit and no cursor
  * (src/subscriptionsTopUpLoop/top-ups-rebuild-check.steps.ts).
  */
 const SUBS_TOP_UPS_REBUILD: RebuildStep = {
@@ -237,17 +240,43 @@ const SUBS_TOP_UPS_REBUILD: RebuildStep = {
     module: 'src/subscriptionsTopUpLoop/top-ups-rebuild-check.steps',
     exportName: 'rebuildTopUpsInCheck'
   },
-  writes: ['subscriptions_top_up'],
-  // A top-up whose write waits there has no row, as in the loop.
-  reads: ['subscription_deferred_writes'],
+  writes: [
+    'subscriptions_top_up',
+    {
+      table: 'subscription_deferred_writes',
+      partition: {
+        columns: ['kind'],
+        values: [['TOP_UP']],
+        reason:
+          "The queued top-ups, which persistTopUps' rule rebuilds from Ethereum; the legacy writers' kinds are rebuilt elsewhere"
+      }
+    }
+  ],
+  reads: [
+    // persistTopUps' rule: the sender's key, the balance a merge moved it
+    // to (read FOR UPDATE), and the key-width guard's column widths.
+    'address_consolidation_keys',
+    'subscriptions_balances',
+    'subscriptions_mode',
+    'subscriptions_nfts',
+    'subscriptions_nfts_final',
+    'subscriptions_logs',
+    'subscriptions_redeemed'
+  ],
+  // The rule reads the legacy tables as the copy-back leaves them.
+  after: ['subs.legacy-history'],
   sources: ['ethereum'],
   timeoutMinutes: 15
 };
 
 /**
- * The rollback copy's final rows, list uploads and redemptions, copied
- * back from the rebuilt identity tables: same key, same final-row id, the
- * same published list.
+ * The whole rollback copy from the rebuilt identity tables, in one step so
+ * the key-width guard's rule sees every legacy key column: final rows,
+ * list uploads and redemptions (same key, same final-row id, the same
+ * published list), then balances, modes and choices under each identity's
+ * consolidation key as the dual write uses it, which reads the identity
+ * mirror. It leaves out the keys the guard's width rule holds back, and
+ * does not read the queue.
  */
 const SUBS_LEGACY_HISTORY_REBUILD: RebuildStep = {
   id: 'subs.legacy-history',
@@ -258,44 +287,15 @@ const SUBS_LEGACY_HISTORY_REBUILD: RebuildStep = {
   writes: [
     'subscriptions_nfts_final',
     'subscriptions_nfts_final_upload',
-    'subscriptions_redeemed'
-  ],
-  reads: [
-    'subscriptions_id_nfts_final',
-    'subscriptions_id_nfts_final_upload',
-    'subscriptions_id_redeemed',
-    // The keys the key-width guard holds back are left out.
-    'subscription_deferred_writes'
-  ],
-  after: ['subs.identity'],
-  sources: ['repo'],
-  needs: [
-    {
-      table: 'identity_chain_principals',
-      reason:
-        'It copies the identity tables subs.identity rebuilds, which waits for the identity mirror table (#2516)'
-    }
-  ],
-  timeoutMinutes: 10
-};
-
-/**
- * The rollback copy's balances, modes and choices, under each identity's
- * consolidation key as the dual write uses it, which reads the identity
- * mirror.
- */
-const SUBS_LEGACY_STATE_REBUILD: RebuildStep = {
-  id: 'subs.legacy-state',
-  run: {
-    module: 'src/subscriptions-identity/opening/rebuild-check.steps',
-    exportName: 'rebuildLegacyStateInCheck'
-  },
-  writes: [
+    'subscriptions_redeemed',
     'subscriptions_balances',
     'subscriptions_mode',
     'subscriptions_nfts'
   ],
   reads: [
+    'subscriptions_id_nfts_final',
+    'subscriptions_id_nfts_final_upload',
+    'subscriptions_id_redeemed',
     'subscriptions_id_balances',
     'subscriptions_id_mode',
     'subscriptions_id_nfts',
@@ -303,8 +303,8 @@ const SUBS_LEGACY_STATE_REBUILD: RebuildStep = {
     'identity_chain_principals',
     'identities',
     'address_consolidation_keys',
-    // The keys the key-width guard holds back are left out.
-    'subscription_deferred_writes'
+    // The sixth key column the guard's width rule measures.
+    'subscriptions_logs'
   ],
   after: ['subs.identity'],
   sources: ['repo'],
@@ -513,9 +513,37 @@ export const subsManifest: AreaManifest = {
     // column. Since the rework the API refuses such a change instead of
     // queuing it, so every entry comes back from Ethereum, the daily build
     // or the membership tables.
+    // The key-width guard's queue of held-back writes. After the switch the
+    // identity top-up writer reads its pending top-ups, so it is rebuilt,
+    // not exempt. subs.top-ups rebuilds its TOP_UP rows. Not rebuilt, and
+    // so failing a final run, until the legacy tables and this queue are
+    // dropped after the rollback window:
+    // - the other kinds' rows (FINAL_ROW, LOG, AUTO_SUBSCRIPTION,
+    //   REDEMPTION), until a rebuilder writes them from the copy-back's
+    //   held-back keys;
+    // - CONSOLIDATION rows queued after the switch: their regroups are the
+    //   identity mirror's, which neither the journal nor the identity
+    //   tables keep;
+    // - every row's replayed_at and outcome: a replay writes only the
+    //   legacy copy and is not journaled, so a replayed row can't be told
+    //   from a write that never waited.
+    // And in the legacy tables: a key that fits but has an earlier write
+    // still waiting gets its rows copied where production holds them until
+    // the replay (subs.legacy-history applies the guard's width rule only).
     subscription_deferred_writes: {
       class: 'INDEX',
-      origin: 'planned'
+      volatileColumns: [
+        {
+          column: 'sequence',
+          reason:
+            'Each side numbers its own queue rows; a replay uses the order only within a key, and no route shows it.'
+        },
+        {
+          column: 'created_at',
+          reason:
+            "When the row was queued: each side's own write time; no route shows it."
+        }
+      ]
     },
     // The identity-keyed tables: `subscriptions:opening -- load` from the
     // opening and history files, then the identity writers.
@@ -575,12 +603,7 @@ export const subsManifest: AreaManifest = {
     }
   },
   seeds: [SUBS_SEED, SUBS_SWITCH_SEED, SUBS_REDEMPTIONS_SEED],
-  rebuilders: [
-    SUBS_REBUILD,
-    SUBS_TOP_UPS_REBUILD,
-    SUBS_LEGACY_HISTORY_REBUILD,
-    SUBS_LEGACY_STATE_REBUILD
-  ],
+  rebuilders: [SUBS_REBUILD, SUBS_TOP_UPS_REBUILD, SUBS_LEGACY_HISTORY_REBUILD],
   probes: PROBES,
   waivers: {
     routes: [

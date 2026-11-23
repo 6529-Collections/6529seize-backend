@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   IDENTITIES_TABLE,
+  SUBSCRIPTION_DEFERRED_WRITES_TABLE,
   MEMES_CONTRACT,
   NULL_ADDRESS,
   SUBSCRIPTIONS_ADDRESS,
@@ -28,10 +29,22 @@ import {
   TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE,
   TRANSACTIONS_TABLE
 } from '@/constants';
-import { connect, disconnect } from '@/db';
+import { connect, disconnect, execSQLWithParams, getDataSource } from '@/db';
+import { DbQueryOptions } from '@/db-query.options';
 import { Logger } from '@/logging';
 import * as Entities from '@/entities/entities';
-import { sqlExecutor } from '@/sql-executor';
+import {
+  ConnectionWrapper,
+  setSqlExecutor,
+  SqlExecutor,
+  sqlExecutor
+} from '@/sql-executor';
+import {
+  deferralReason,
+  deferSubscriptionWrites,
+  executorSink
+} from '@/subscription-key-width/subscription-deferred-writes';
+import { recordTopUps } from '@/subscriptionsTopUpLoop/db.subscriptions_topup';
 import { getPublicSubscriptions } from '@/api/subscriptions/api.subscriptions.allowlist';
 import { updateSubscriptions } from '@/subscriptionsDaily/subscriptions';
 import { describeWithSeed } from '@/tests/_setup/seed';
@@ -129,6 +142,39 @@ jest.mock('@/subscriptionsDaily/subscription-cache', () => ({
 }));
 
 const wallet = (n: number) => `0x${n.toString(16).padStart(40, '0')}`;
+
+/**
+ * The top-up loop's write runs on a TypeORM query runner, as in the loop
+ * (doInDbContext); this runs the production executor's statements on the
+ * test's data source.
+ */
+class TypeOrmExecutor extends SqlExecutor {
+  execute<T>(
+    sql: string,
+    params?: Record<string, any>,
+    options?: DbQueryOptions
+  ): Promise<T[]> {
+    return execSQLWithParams(sql, params, options);
+  }
+
+  async executeNativeQueriesInTransaction<T>(
+    executable: (connection: ConnectionWrapper<any>) => Promise<T>
+  ): Promise<T> {
+    const runner = getDataSource().createQueryRunner();
+    await runner.connect();
+    await runner.startTransaction();
+    try {
+      const result = await executable({ connection: runner });
+      await runner.commitTransaction();
+      return result;
+    } catch (error) {
+      await runner.rollbackTransaction();
+      throw error;
+    } finally {
+      await runner.release();
+    }
+  }
+}
 const P1 = `0x${'b1'.padStart(64, '0')}`;
 /** Bound to P1; its key is itself. */
 const A = wallet(1);
@@ -2553,6 +2599,135 @@ describeWithSeed('identity writers after the switch', [], () => {
       "1 airdrop transaction(s) after the legacy loop's block 40: not compared; the legacy loop had not charged them",
       `balance of ${LONE} not compared: charged after the legacy loop's block too`
     ]);
+  });
+
+  it('credits a top-up queued for a wide key exactly once, live and after the identity tables and the queue are rebuilt', async () => {
+    await seedLegacy();
+    // An identity of 15 wallets bound to one principal: its consolidation
+    // key (644 characters) fits address_consolidation_keys but not the
+    // narrowest legacy key column, so the key-width guard queues its
+    // top-ups whole.
+    const W = wallet(9);
+    const P9 = `0x${'b9'.padStart(64, '0')}`;
+    const wallets = [
+      W,
+      ...Array.from({ length: 14 }, (_, i) => wallet(400 + i))
+    ];
+    const wideKey = wallets.join('-');
+    for (const address of wallets) {
+      await execute(
+        `INSERT INTO ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key) VALUES (:address, :k)`,
+        { address, k: wideKey }
+      );
+    }
+    await execute(
+      `INSERT INTO ${IDENTITIES_TABLE} (consolidation_key, profile_id, primary_address, tdh, rep, cic, level_raw)
+        VALUES (:k, 'profile-9', :w, 0, 0, 0, 0)`,
+      { k: wideKey, w: W }
+    );
+    await execute(
+      `INSERT INTO identity_chain_principals VALUES (:p, 'profile-9', 'LEGACY', 0)`,
+      { p: P9 }
+    );
+    const topUp = (hash: string, block: number, amount: number) => ({
+      hash,
+      block,
+      transaction_date: new Date('2026-11-25T10:00:00Z'),
+      from_wallet: W,
+      amount
+    });
+    const afterSwitch = topUp(`0x${'e2'.repeat(32)}`, 70, 0.2);
+    const queued = () =>
+      sqlExecutor.execute(
+        `SELECT kind, consolidation_key, key_hash, key_length, dedupe_key,
+                payload, reason, replayed_at, outcome
+           FROM ${SUBSCRIPTION_DEFERRED_WRITES_TABLE}
+          WHERE kind = 'TOP_UP' ORDER BY dedupe_key`
+      );
+    const credited = () =>
+      sqlExecutor.execute<{ hash: string; amount: number }>(
+        `SELECT hash, amount FROM ${SUBSCRIPTIONS_ID_TOP_UP_TABLE}
+          WHERE from_wallet = :w ORDER BY block`,
+        { w: W }
+      );
+    const journaledCredits = async () =>
+      (
+        await sqlExecutor.execute<{ entry: string }>(
+          `SELECT entry FROM ${SIGNED_RECORD_LOG_ENTRIES_TABLE} WHERE chain = 'public' ORDER BY id`
+        )
+      )
+        .map((row) => journalBodyOf(JSON.parse(row.entry)))
+        .filter((body) => body?.kind === 'top-up')
+        .map((body) => (body!.inputs as { hash: string }).hash);
+    const expectCreditedOnce = async () => {
+      expect(await credited()).toEqual([
+        { hash: afterSwitch.hash, amount: 0.2 }
+      ]);
+      expect(
+        await balance(SUBSCRIPTIONS_ID_BALANCES_TABLE, 'identity_key', P9)
+      ).toBeCloseTo(0.2, 10);
+      // The writer's credit, journaled once.
+      expect(await journaledCredits()).toEqual([afterSwitch.hash]);
+    };
+
+    expect((await goLiveForTest()).switched).toBe(true);
+    // After the switch the loop's write queues the top-up whole (no
+    // legacy row), as persistTopUps does for a key the guard holds back,
+    // and the identity writer credits it.
+    const reason = await deferralReason(wideKey, executorSink());
+    expect(reason?.narrow.length).toBeGreaterThan(0);
+    await deferSubscriptionWrites(
+      [
+        {
+          kind: 'TOP_UP',
+          consolidationKey: wideKey,
+          dedupe: afterSwitch.hash,
+          payload: { topUp: afterSwitch },
+          reason: reason!
+        }
+      ],
+      executorSink()
+    );
+    await runIdentityTopUpWriters();
+    await runIdentityTopUpWriters();
+    await expectCreditedOnce();
+    const queuedBefore = await queued();
+    expect(queuedBefore).toHaveLength(1);
+
+    // The rebuild: the identity tables from the opening and the journal,
+    // and the queue's top-ups from the same top-ups through the loop's
+    // own rule.
+    await loseIdentityTables();
+    await rebuildIdentityTables({
+      source: journalSource,
+      fetch: fetchPublished
+    });
+    await execute(
+      `DELETE FROM ${SUBSCRIPTION_DEFERRED_WRITES_TABLE} WHERE kind = 'TOP_UP'`
+    );
+    // recordTopUps runs on a TypeORM query runner, as the rebuild step
+    // does; only around it, so no service built for the other writes
+    // keeps that executor.
+    const executor = sqlExecutor;
+    setSqlExecutor(new TypeOrmExecutor());
+    try {
+      await recordTopUps([afterSwitch]);
+    } finally {
+      setSqlExecutor(executor);
+    }
+    expect(await queued()).toEqual(queuedBefore);
+    expect(
+      await sqlExecutor.execute(
+        `SELECT hash FROM ${SUBSCRIPTIONS_TOP_UP_TABLE} WHERE from_wallet = :w`,
+        { w: W }
+      )
+    ).toEqual([]);
+    await expectCreditedOnce();
+
+    // The writer runs again over the rebuilt tables and queue: nothing is
+    // credited twice.
+    await runIdentityTopUpWriters();
+    await expectCreditedOnce();
   });
 
   it("credits a new top-up to the sender's identity once", async () => {

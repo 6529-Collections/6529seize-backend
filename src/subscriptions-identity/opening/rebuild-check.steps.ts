@@ -177,25 +177,17 @@ export async function rebuildSubscriptionsInCheck(
 }
 
 /**
- * The rollback copy's final rows, list uploads and redemptions, copied back
- * from the rebuilt identity tables (legacy-copy.ts). Runs after
+ * The whole rollback copy from the rebuilt identity tables (legacy-copy.ts):
+ * final rows, list uploads and redemptions, then balances, modes and
+ * choices under each identity's consolidation key as the dual write uses
+ * it, which reads the identity mirror for the keys. One step, so the
+ * key-width guard's rule sees every legacy key column. Runs after
  * subs.identity.
  */
 export async function rebuildLegacyHistoryInCheck(): Promise<void> {
-  const { finals, uploads, redemptions, leftOut } = await copyLegacyHistory();
+  const history = await copyLegacyHistory();
+  const state = await copyLegacyState();
   logger.info(
-    `[SUBSCRIPTIONS_LEGACY_HISTORY] [finals ${finals}] [uploads ${uploads}] [redemptions ${redemptions}] [left out ${leftOut}]`
-  );
-}
-
-/**
- * The rollback copy's balances, modes and choices, under each identity's
- * consolidation key as the dual write uses it (legacy-copy.ts). Runs after
- * subs.identity, and reads the identity mirror for the keys.
- */
-export async function rebuildLegacyStateInCheck(): Promise<void> {
-  const { balances, modes, choices, leftOut } = await copyLegacyState();
-  logger.info(
-    `[SUBSCRIPTIONS_LEGACY_STATE] [balances ${balances}] [modes ${modes}] [choices ${choices}] [left out ${leftOut}]`
+    `[SUBSCRIPTIONS_LEGACY_COPY] [finals ${history.finals}] [uploads ${history.uploads}] [redemptions ${history.redemptions}] [balances ${state.balances}] [modes ${state.modes}] [choices ${state.choices}] [left out ${history.leftOut + state.leftOut}]`
   );
 }

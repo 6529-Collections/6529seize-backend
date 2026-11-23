@@ -172,4 +172,49 @@ describeWithSeed('the top-up writes discovery can use', [], () => {
     await recordTopUps([queued]);
     expect(await rows()).toEqual([{ hash: queued.hash }]);
   });
+
+  it("queues a top-up for a key the guard holds back exactly as the loop's write does", async () => {
+    // A sender whose consolidation key (15 wallets, 644 characters) fits
+    // address_consolidation_keys but not the narrowest legacy key column.
+    const wallets = [
+      '0x00000000000000000000000000000000000000c5',
+      ...Array.from(
+        { length: 14 },
+        (_, i) => `0x${(0x500 + i).toString(16).padStart(40, '0')}`
+      )
+    ];
+    const wideKey = wallets.join('-');
+    for (const address of wallets) {
+      await sqlExecutor.execute(
+        `INSERT INTO ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key) VALUES (:address, :key)`,
+        { address, key: wideKey }
+      );
+    }
+    const queued = topUp(`0x${'c'.repeat(63)}5`, wallets[0]);
+    const rows = () =>
+      sqlExecutor.execute(
+        `SELECT kind, consolidation_key, key_hash, key_length, dedupe_key,
+                payload, reason, replayed_at, outcome
+           FROM ${SUBSCRIPTION_DEFERRED_WRITES_TABLE} WHERE kind = 'TOP_UP'`
+      );
+    const legacyRows = () =>
+      sqlExecutor.execute(
+        `SELECT hash FROM ${SUBSCRIPTIONS_TOP_UP_TABLE} WHERE from_wallet = :wallet`,
+        { wallet: wallets[0] }
+      );
+
+    await persistTopUps([queued]);
+    const byTheLoop = await rows();
+    expect(byTheLoop).toEqual([
+      expect.objectContaining({ consolidation_key: wideKey, replayed_at: null })
+    ]);
+    expect(await legacyRows()).toEqual([]);
+
+    await sqlExecutor.execute(
+      `DELETE FROM ${SUBSCRIPTION_DEFERRED_WRITES_TABLE} WHERE kind = 'TOP_UP'`
+    );
+    await recordTopUps([queued]);
+    expect(await rows()).toEqual(byTheLoop);
+    expect(await legacyRows()).toEqual([]);
+  });
 });

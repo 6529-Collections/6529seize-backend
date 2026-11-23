@@ -1,6 +1,4 @@
-import { createHash } from 'node:crypto';
 import {
-  SUBSCRIPTION_DEFERRED_WRITES_TABLE,
   SUBSCRIPTIONS_BALANCES_TABLE,
   SUBSCRIPTIONS_ID_BALANCES_TABLE,
   SUBSCRIPTIONS_ID_MODE_TABLE,
@@ -16,6 +14,7 @@ import {
 } from '@/constants';
 import { Logger } from '@/logging';
 import { sqlExecutor } from '@/sql-executor';
+import { SUBSCRIPTION_WRITE_TABLES } from '@/subscription-key-width/subscription-deferred-writes';
 import { subscriptionKeyWidths } from '@/subscription-key-width/subscription-key-width';
 import {
   IdentityDirectory,
@@ -36,21 +35,19 @@ const logger = Logger.get('SUBSCRIPTIONS_LEGACY_COPY');
  * identities, has no row of its own here, and the rows' own times are the
  * identity side's.
  *
- * The key-width guard writes a key to the legacy tables only when they can
- * all hold it and none of its writes waits; otherwise the key's writes wait
- * in the deferred writes queue (src/subscription-key-width). The copy
- * leaves out the same keys: a key with a write waiting there (every key too
- * wide for a legacy table has one), or one wider than a table the copy
- * writes, so no insert fails on a key column's width.
+ * The key-width guard writes a key to the legacy tables only when every
+ * subscription table can hold it (SUBSCRIPTION_WRITE_TABLES) and none of its
+ * writes waits; otherwise the key's writes wait in the deferred writes queue
+ * (src/subscription-key-width). The copy leaves out the keys the width rule
+ * holds back, so no insert fails on a key column's width. It does not read
+ * the queue: a key that fits but has an earlier write still waiting gets its
+ * rows copied where production holds them until the replay.
  */
 
-/** sha256 of each key with a write waiting in the deferred writes queue. */
-const WAITING_KEY_HASHES = `SELECT key_hash FROM ${SUBSCRIPTION_DEFERRED_WRITES_TABLE} WHERE replayed_at IS NULL`;
-
-/** The widest key every one of these legacy tables can hold, read now. */
-function widestKey(tables: readonly string[]): Promise<number> {
+/** The widest key every subscription table can hold, read now. */
+function widestKey(): Promise<number> {
   subscriptionKeyWidths.invalidate();
-  return subscriptionKeyWidths.minWidth(tables);
+  return subscriptionKeyWidths.minWidth(SUBSCRIPTION_WRITE_TABLES);
 }
 
 const FINAL_COLUMNS = [
@@ -104,12 +101,8 @@ export async function copyLegacyHistory(): Promise<{
   readonly redemptions: number;
   readonly leftOut: number;
 }> {
-  const width = await widestKey([
-    SUBSCRIPTIONS_NFTS_FINAL_TABLE,
-    SUBSCRIPTIONS_REDEEMED_TABLE
-  ]);
-  const fits = `CHAR_LENGTH(consolidation_key) <= :width
-    AND SHA2(LOWER(consolidation_key), 256) NOT IN (${WAITING_KEY_HASHES})`;
+  const width = await widestKey();
+  const fits = `CHAR_LENGTH(consolidation_key) <= :width`;
   return sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
     const options = { wrappedConnection: connection };
     await sqlExecutor.execute(
@@ -150,7 +143,7 @@ export async function copyLegacyHistory(): Promise<{
     const leftOut = Number(counts.left_out);
     if (leftOut) {
       logger.warn(
-        `[LEFT OUT ${leftOut} FINAL AND REDEEMED ROWS] the key-width guard holds their keys back (over ${width} characters, or with writes waiting)`
+        `[LEFT OUT ${leftOut} FINAL AND REDEEMED ROWS] the key-width guard holds their keys back (over ${width} characters)`
       );
     }
     return {
@@ -197,23 +190,13 @@ export async function copyLegacyState(
     }
     byKey.set(key, identity);
   }
-  const width = await widestKey([
-    SUBSCRIPTIONS_BALANCES_TABLE,
-    SUBSCRIPTIONS_MODE_TABLE,
-    SUBSCRIPTIONS_NFTS_TABLE
-  ]);
-  const waiting = new Set(
-    (await sqlExecutor.execute<{ key_hash: string }>(WAITING_KEY_HASHES)).map(
-      (row) => row.key_hash.toLowerCase()
-    )
-  );
+  const width = await widestKey();
   const written = { balances: 0, modes: 0, choices: 0 };
   let leftOut = 0;
   /** The row's legacy key, or null when the guard holds the key back. */
   const legacyKey = (identityKey: string): string | null => {
     const key = keyOf(identityKey);
-    const hash = createHash('sha256').update(key.toLowerCase()).digest('hex');
-    if (key.length > width || waiting.has(hash)) {
+    if (key.length > width) {
       leftOut++;
       return null;
     }
@@ -321,7 +304,7 @@ export async function copyLegacyState(
     }
     if (leftOut) {
       logger.warn(
-        `[LEFT OUT ${leftOut} BALANCE, MODE AND CHOICE ROWS] the key-width guard holds their keys back (over ${width} characters, or with writes waiting)`
+        `[LEFT OUT ${leftOut} BALANCE, MODE AND CHOICE ROWS] the key-width guard holds their keys back (over ${width} characters)`
       );
     }
     return { ...written, leftOut };

@@ -29,7 +29,7 @@ export type DeferredWriteKind =
  * all of them can hold it, so an identity is either fully on the legacy
  * tables or fully waiting: never listed without being charged.
  */
-const SUBSCRIPTION_WRITE_TABLES = [
+export const SUBSCRIPTION_WRITE_TABLES = [
   SUBSCRIPTIONS_BALANCES_TABLE,
   SUBSCRIPTIONS_MODE_TABLE,
   SUBSCRIPTIONS_NFTS_TABLE,
@@ -121,33 +121,6 @@ async function hasPendingWrite(
       beforeSequence === undefined
         ? [keyHash(key)]
         : [keyHash(key), beforeSequence]
-    );
-  } catch (error) {
-    if (isMissingTable(error)) {
-      return false;
-    }
-    throw error;
-  }
-  return Array.isArray(rows) && rows.length > 0;
-}
-
-/**
- * Whether the write queued under this kind and dedupe key is still waiting
- * for its replay. As for a key's waiting writes, a missing queue table
- * reads as none.
- */
-export async function isWriteWaiting(
-  kind: DeferredWriteKind,
-  dedupe: string,
-  sink: DeferredWriteSink = executorSink()
-): Promise<boolean> {
-  let rows: unknown;
-  try {
-    rows = await sink.query(
-      `SELECT sequence FROM ${SUBSCRIPTION_DEFERRED_WRITES_TABLE}
-        WHERE dedupe_key = ? AND replayed_at IS NULL
-        LIMIT 1`,
-      [sha256(`${kind}|${dedupe}`)]
     );
   } catch (error) {
     if (isMissingTable(error)) {

@@ -23,7 +23,6 @@ import { parseSegmentFile } from '@/signed-records/record-log/record-log-format'
 import { journalBodyOf } from '@/subscriptions-identity/timeline/journal';
 import {
   rebuildLegacyHistoryInCheck,
-  rebuildLegacyStateInCheck,
   rebuildSubscriptionsInCheck
 } from '@/subscriptions-identity/opening/rebuild-check.steps';
 import { splitAllowlistResults } from '@/api/subscriptions/api.subscriptions.allowlist';
@@ -453,7 +452,6 @@ describeWithSeed('the subscriptions rebuild check', [], () => {
     expect(await subscriptionsIdentitySwitch.writeModeOrFail()).toBe('TRUTH');
 
     await rebuildLegacyHistoryInCheck();
-    await rebuildLegacyStateInCheck();
     expect(await snapshot(LEGACY_TABLES)).toEqual(legacyBefore);
   });
 
