@@ -592,10 +592,12 @@ Anyone with read access to the bucket can also use
 `aws s3 cp --recursive s3://<bucket>/<prefix> ./profile-site-export-<run>/`.
 
 Every `files/<cid>` is at most 2 MiB, the chain's document limit, since each
-becomes a chain document. `cms-fields.json`, `report.json`, `links.json` and
-the manifest are read by the import's builder and by people, never stored on
-the chain, so they have no such limit. `links.json` grows with every file
-and can pass 2 MiB; that is expected.
+becomes a chain document. `cms-fields.json` is read by the import's builder,
+with the `files/`. `report.json` is read by people, and by the identity
+export when its values are made by hand. `links.json` and the manifest are
+read by people and download scripts. None of them is stored on the chain,
+so they have no such limit. `links.json` grows with every file and can pass
+2 MiB; that is expected.
 
 ### Fresh links for an earlier run
 

@@ -137,16 +137,27 @@ deployed, or it fails), the values can come from files made by hand:
    this freeze afterwards. If a site run for the freeze finishes after a
    hand-run export was written anyway, run the identity export again
    without `cmsFieldsAtFreeze`, with `"replacePointer":true`, so the
-   freeze's export takes the site run's values.
+   freeze's export takes the site run's values, and tell the switch owner
+   that the hand-run tgz (step 5) no longer applies.
 2. Make the files with the profile site export's CLI on the production
-   database, after the freeze, the freeze in milliseconds:
-   `6529 run profile-cms:export -- --out <dir> --frozen-at 1795478400000`.
-   It writes `cms-fields.json` and `report.json`: upload the two from the
-   same run, never one remade alone. If it says "Do not use this export",
-   make both again.
-3. Take each file's sha256 (`Get-FileHash -Algorithm SHA256`, or
-   `sha256sum`), in lower case, and upload them to the chain exports bucket
-   as `identity-export/inputs/cms-fields-2026-11-24.json` and
+   database, after the freeze. The CLI comes with the profile site export's
+   pull request, not the identity export's:
+   [#2544](https://github.com/6529-Collections/6529seize-backend/pull/2544).
+   Get it with `git fetch origin pull/2544/head` and
+   `git checkout FETCH_HEAD` (or use main once that pull request has
+   merged), then install with `./bin/6529 ci`, the install step of the
+   repository's README.
+   Run it into a new, empty folder, the freeze in milliseconds:
+   `6529 run profile-cms:export -- --out <a new, empty folder> --frozen-at 1795478400000`.
+   It writes `cms-fields.json`, `report.json` and a `files` folder. It
+   doesn't clear `files`, and the import's builder takes every file there,
+   so the folder must start empty. Use all three from one run, never one
+   remade alone. If it says "Do not use this export", make them all again
+   in one run, into a new, empty folder, then do steps 3 to 5 again.
+3. Take the sha256 of `cms-fields.json` and of `report.json`
+   (`(Get-FileHash -Algorithm SHA256 <file>).Hash.ToLower()`, or
+   `sha256sum <file>`), and upload the two to the chain exports bucket as
+   `identity-export/inputs/cms-fields-2026-11-24.json` and
    `identity-export/inputs/report-2026-11-24.json`.
 4. Run the export at the freeze with `cmsFieldsAtFreeze`, adding the
    acknowledgements a refusal names as usual:
@@ -176,12 +187,13 @@ The run refuses, before reading the database:
   list, a profile with a primary in one and not the other (the report's
   `primary_carried`), or a profile with an archive in the file and no
   `packages` or `legacy_packages` in the report, or `packages` and no
-  archive. Make both again in one run and upload both. This is all the two
-  files can show: the report carries no hash of the file, and an archive is
-  only a CID in the file, its `frozen_at` inside the archive's own bytes,
-  which this path doesn't upload. A `cms-fields.json` from another run in
-  which the same profiles had primaries and archives passes. So the two
-  files must come from the same run, as step 2 says;
+  archive. Make them all again in one run, into a new, empty folder, then
+  do steps 3 to 5 again. This is all the two files can show: the report
+  carries no hash of the file, and an archive is only a CID in the file,
+  its `frozen_at` inside the archive's own bytes, which travel in step 5's
+  tgz and which the identity export doesn't read. A `cms-fields.json` from
+  another run in which the same profiles had primaries and archives passes.
+  So the files must all come from the same run, as step 2 says;
 - if the file is `{}`, unless `"acceptNoCmsFields":true`, as for a site
   run with no sites.
 
@@ -192,7 +204,33 @@ pointer appeared after the manifest, writes no pointer: run again without
 `cmsFieldsAtFreeze`. If that second read fails, it writes no pointer and
 says so in `pointerError`: run again. A site pointer that appears after
 the hand-run export's pointer is written isn't seen by this run: then run
-again without `cmsFieldsAtFreeze`, with `"replacePointer":true`.
+again without `cmsFieldsAtFreeze`, with `"replacePointer":true`. Whenever
+the export is run again without `cmsFieldsAtFreeze` after the tgz of step
+5 was sent, tell the switch owner that the tgz no longer applies.
+
+5. Once that run is usable and its pointer written, hand over right away
+   the files `cms-fields.json` names (the `files` folder) with the two JSON
+   files. The import's builder (`identity-snapshot build --cms DIR`) runs
+   soon after the export, on Tuesday: it reads `DIR/cms-fields.json` and
+   every file in `DIR/files`, and puts each file into the import. It doesn't
+   read `report.json`, which goes along for the check below. From the same
+   CLI run's folder:
+
+```text
+tar -czf profile-site-export-hand-run-2026-11-24.tgz -C <the CLI's folder> cms-fields.json report.json files
+(Get-FileHash -Algorithm SHA256 profile-site-export-hand-run-2026-11-24.tgz).Hash.ToLower()
+aws s3 cp profile-site-export-hand-run-2026-11-24.tgz s3://6529-chain-exports-<account id>-us-east-1/identity-export/inputs/profile-site-export-hand-run-2026-11-24.tgz --expected-bucket-owner <account id> --region us-east-1
+aws s3 presign s3://6529-chain-exports-<account id>-us-east-1/identity-export/inputs/profile-site-export-hand-run-2026-11-24.tgz --expires-in 21600 --region us-east-1
+```
+
+On Linux or macOS, `sha256sum <tgz>` gives the same sha256. A presigned
+link lasts no longer than the credentials that sign it: sign it with a
+session that has at least 6 hours left, or presign it again when asked.
+
+Send the link and the tgz's sha256 to the switch owner, with the export's
+`out.json`. The tgz's `cms-fields.json` and `report.json` must be the same
+bytes as the two files uploaded in step 3: the switch owner checks them
+against `sha256` and `reportSha256` in `out.json`'s `cmsFieldsSource`.
 
 `cmsFieldsSource` in the response, and `cms_fields_source` in the manifest,
 record the files as `"kind":"hand_run"`: the file's `key` and `sha256`, the
@@ -554,7 +592,9 @@ replaced.
   (or `null`, with the revision you gave).
 - `cmsFieldsSource` names the profile site run at the freeze and its
   manifest's sha256 (`"kind":"site_run"`), or, only if that job didn't run,
-  the hand-run file and its sha256 (`"kind":"hand_run"`).
+  the hand-run file and its sha256 (`"kind":"hand_run"`). For a hand run,
+  the handed-over tgz's `cms-fields.json` and `report.json` have its
+  `sha256` and `reportSha256`.
 - `endpoint` is `reader`, with `readOnly: true` and `evidence`: the export
   read DB_HOST_READ. The reader's hostname is in neither the response, the
   manifest (whose `read.endpoint` is the same label) nor the pointer; it is
