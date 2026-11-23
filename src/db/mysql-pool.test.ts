@@ -1,6 +1,7 @@
 import { performance } from 'node:perf_hooks';
 import * as mysql from 'mysql2';
 import { DataSource } from 'typeorm';
+import type { MysqlDriver } from 'typeorm/driver/mysql/MysqlDriver';
 import { mysql2TypeOrmOptions } from './mysql-driver-compat';
 import { createMysqlPool } from './mysql-pool';
 import {
@@ -67,6 +68,16 @@ const ONE_ROW: FakeReply = {
   columns: [{ name: '1', type: FIELD_TYPE.LONGLONG }],
   rows: [['1']]
 };
+
+/** Answers TypeORM's startup query and anything else with one row. */
+function typeOrmReplies(sql: string): FakeReply {
+  return sql === 'SELECT version()'
+    ? {
+        columns: [{ name: 'version()', type: FIELD_TYPE.VAR_STRING }],
+        rows: [['8.0.36']]
+      }
+    : ONE_ROW;
+}
 
 describe('createMysqlPool login timeout', () => {
   it('fails a stalled login after connectTimeout and serves the next queued request', async () => {
@@ -172,6 +183,22 @@ describe('createMysqlPool ping on reuse', () => {
     replacement.release();
   });
 
+  it('pings once when a dropped connection wakes a waiting request', async () => {
+    const target = await start({});
+    const first = await acquire(target);
+    const second = await acquire(target);
+    // The pool is full, so this request waits in mysql2's queue.
+    const waiting = acquire(target);
+    // Dropping a connection hands the waiter back to getConnection on the
+    // next tick; by then the second connection is idle and is reused.
+    first.destroy();
+    second.release();
+    const woken = await waiting;
+    expect(woken).toBe(second);
+    expect(server!.pings).toEqual([2]);
+    woken.release();
+  });
+
   it('keeps listening for errors on pooled connections', async () => {
     const target = await start({});
     const connection = await acquire(target);
@@ -180,5 +207,34 @@ describe('createMysqlPool ping on reuse', () => {
       connection.emit('error', new Error('first'));
       connection.emit('error', new Error('second'));
     }).not.toThrow();
+  });
+});
+
+describe('createMysqlPool under TypeORM', () => {
+  it('gives the connection initialize() opens the permanent error listener', async () => {
+    const port = await startServer({ onQuery: typeOrmReplies });
+    const source = new DataSource({
+      type: 'mysql',
+      host: '127.0.0.1',
+      port,
+      username: 'u',
+      password: 'p',
+      database: 'd',
+      ...mysql2TypeOrmOptions()
+    });
+    await source.initialize();
+    try {
+      const driverPool = (source.driver as MysqlDriver).pool as mysql.Pool;
+      const initial = await acquire(driverPool);
+      // Still the connection initialize() logged in with.
+      expect(server!.logins).toHaveLength(1);
+      expect(() => {
+        initial.emit('error', new Error('first'));
+        initial.emit('error', new Error('second'));
+      }).not.toThrow();
+      initial.release();
+    } finally {
+      await source.destroy();
+    }
   });
 });

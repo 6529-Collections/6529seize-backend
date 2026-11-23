@@ -60,6 +60,8 @@ export function createMysqlPool(
       openSocket(config, opening)
   });
   const justOpened = new WeakSet<PoolConnection>();
+  // Registered before the pool opens anything, so the first connection, such
+  // as the one TypeORM opens inside initialize(), gets the listener too.
   pool.on('connection', (connection: PoolConnection) => {
     justOpened.add(connection);
     connection.on('error', () => {
@@ -69,8 +71,9 @@ export function createMysqlPool(
   const acquisitions = new WeakMap<GetConnectionCallback, Acquisition>();
   const getConnection = pool.getConnection.bind(pool);
   const acquire = (callback: GetConnectionCallback): void => {
-    // mysql2 hands a queued callback back to getConnection when the
-    // connection it waited for was dropped; it then keeps its acquisition.
+    // mysql2 hands a queued callback back to getConnection when a connection
+    // is dropped. It is not wrapped again: it keeps its acquisition, and a
+    // checkout pings the connection it receives at most once.
     let handOut = callback;
     let acquisition = acquisitions.get(callback);
     if (!acquisition) {
