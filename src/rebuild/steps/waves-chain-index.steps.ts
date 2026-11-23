@@ -105,10 +105,16 @@ export async function indexAtHeight(
   db: WavesChainIndexDb,
   head: WavesChainHead
 ): Promise<number> {
+  const time = head.finalizedTime;
+  if (time === null) {
+    throw new Error(
+      `No block time for height ${head.finalizedHeight}: the index's clock needs it`
+    );
+  }
   const index = new WavesChainIndex(
     pinnedTo(api, head),
     db,
-    () => head.finalizedTime,
+    () => time,
     FULL_READ_EVERY_MS,
     NO_CLAIM_BUILDS
   );

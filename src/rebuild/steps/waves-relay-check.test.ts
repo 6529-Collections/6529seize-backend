@@ -18,7 +18,7 @@ describe('the waves relay check', () => {
     const edited = {
       ...event,
       body: String(event.body).replace('First', 'Edited')
-    } as { id: string; wave: string };
+    } as unknown as { id: string; wave: string };
     expect(checkWavesRelayEvent({ event: edited, grant })).toMatchObject({
       ok: false
     });
