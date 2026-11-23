@@ -862,6 +862,382 @@ this API support while new clients are deployed; roll back the frontend first.
 
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
 
+### 6529 chain gateway boundary
+
+Identities (profiles, handles, consolidations, delegations, REP, NIC and
+levels) move to the 6529 chain. `src/chain-gateway/chain-gateway.client.ts`
+(`chainGatewayClient`) is the backend's one client for it: reads through the
+chain gateway's service access (`CHAIN_GATEWAY_URL`, bearer
+`CHAIN_GATEWAY_SERVICE_KEY`), relays signed operations (`POST /v1/draft`,
+`POST /v1/submit`), and fetches profile documents from the gateway's document
+store by CID, checking each against its CID. Reads are pinned to the latest
+finalized height it knows (refreshed every two seconds, never going back)
+and cached in memory by network and height, except answers of the node's
+own data (wallet histories, saved days, TDH lists, the feed), which can
+change at one height and are never cached. Reads retry network errors, 429
+and 5xx. A submit is sent again only after a 503, a 429 or a connection that
+never opened; after anything else it throws `outcome_unknown` with its txId,
+and callers ask `getTx` rather than wrapping it in a retry of their own.
+Uploads to the document store go through the gateway's public name, not
+service access. Every answer must name the chain the gateway's status names
+(`wrong_network` otherwise), and answers that can't be read, such as feed
+pages that don't hold together, throw `bad_answer` rather than reading as
+empty. Settings are read at first
+use, so loops that never call it need none. Loops and API code that read
+identity data from the chain add calls to this client, not their own.
+
+`/api/chain` relays operations people sign with their wallets: `POST
+/chain/submit` passes a signed operation to the gateway's `/v1/submit`, and
+`/chain/pending` holds an identity join, which needs two wallets, in
+`chain_pending_operations` and `chain_pending_operation_signers` until both
+have signed, checking each signature against its signer, then relays it.
+
+Only identity joins are held, and only the identity's wallet (role 0)
+holds one (`POST /chain/pending`, signed; 403 for any other wallet); the
+joining wallet signs it after (`POST /chain/pending/:tx_id/signatures`).
+What is held is read from the join's typed data, which must hash to its
+`tx_id`: the principal, the window, and the signers (role 0, the wallet the
+header's key id names; role 4, the body's joining wallet). A given
+`principal`, `expires_at` or `required` that says otherwise is refused. A
+new join is held only when the role-0 wallet belongs to that principal now,
+read through the gateway at the latest finalized height (400 if not; 503
+when the chain can't be read, or doesn't answer in 5 s), its window is one
+the chain takes (at most `maxValidityMs` from `GET /v1/ops`, a day when
+unreadable), its envelope is at most 4 KiB and its typed data 8 KiB, and
+the wallet holding it has fewer than five pending joins (429
+`TOO_MANY_PENDING`; counted under a lock on that wallet's joins, so two
+posts at once can't both pass at four, and a repeat of one that landed
+meanwhile answers its state. A wallet that has never held a join has no
+row to lock: a first burst of posts sent at once can go over five).
+Posting a join again once it was sent answers its state, also after its
+expiry. No signature is ever returned
+(`signers[].sig` is always null; `signed` says who has signed): the relay
+submits, and a signature handed out could finish a join its signer had
+withdrawn. A pending join past its expiry shows as `EXPIRED`. The list of
+joins waiting for a wallet (`GET /chain/pending`, one query, at most 50)
+carries each join's `unsigned` and `typed_data`, which the joining wallet
+checks and signs.
+
+Every operation the API answers has `final`: true once nothing about it
+will change (the chain's tx is final, or it is `FAILED`, `CANCELLED` or
+`EXPIRED`). Poll `GET /chain/pending/:tx_id` until it is final.
+
+Every submit carries its draft's txId, the digest every signer signed: a
+direct submit's body needs `tx_id` (400 without it), and a held operation
+uses its own. The client checks that the node's answer is of that
+transaction. A direct submit answers the node's answer with `outcome:
+'accepted'`; a failure answers `tx_id` and an `outcome`: `refused` (422
+`CHAIN_REFUSED`), `not_taken` (502 `CHAIN_UNAVAILABLE`, safe to send again)
+or `unknown` (502 `CHAIN_OUTCOME_UNKNOWN`, with `node_tx_id` when the node
+took another transaction): it may have landed, so ask the chain rather than
+send it again.
+
+A held operation is sent at most once. It is claimed under its row lock,
+moving from `PENDING` to `SUBMITTED` before anything is sent. Its `result`
+always says its `outcome`: `accepted` (the node's answer, and the chain's
+`tx` once a read has asked), `unknown` (with `txId`, and `nodeTxId` when the
+node named another), or `refused` (with the node's `code`, the chain's
+result name for a join that ran and failed, or `expired`). It stays
+`SUBMITTED` with an unknown outcome while it is sent, and when the answer
+is lost. A read of a sent join (`GET /chain/pending/:tx_id`) asks the
+chain, bounded, at most every 10 s (the time is kept in `result.checkedAt`),
+until it is final: held in a block or the pool, `accepted` with the
+chain's `tx`; run and failed, `FAILED`, with `last_error` worded as the
+node words a refusal (`0x210E REJOIN_WAIT`, and `, detail N` when it has
+one); held nowhere as of a chain time
+five minutes past its expiry (the answer's read time, not this backend's
+clock), `FAILED` (`expired`). Each of these writes applies only while
+the outcome and `checkedAt` are still the ones read (every one moves
+`checkedAt` on), so a slower read never undoes a faster one; the send's
+own applies only while the outcome is still unknown. Only an answer that
+the node surely didn't take it puts it back to `PENDING` for a retry, and a
+refusal of the operation marks it `FAILED`. A cancel takes the same lock
+and moves it only from `PENDING`, so a withdrawn join is never sent and a
+sent one is never shown as withdrawn; a cancel also drops the signatures it
+held, and is tried once more when MySQL rolls it back to break a deadlock
+with a post of the same wallet.
+
+From switch-on the delegations loop also runs the identity mirror
+(`src/identity-chain-mirror`, `FEATURE_IDENTITY_CHAIN_MIRROR`) after its
+NFTDelegation work, also when that work failed (the failure still fails the
+run). From switch-on, with the flag on, NFTDelegation's events are read so
+the checkpoint moves on but not applied, before the freeze block as after it (on the freeze
+path too, which records the logs past the freeze block as before):
+consolidations, delegations, re-keying and primary addresses come from the
+chain; ENS still runs. Each step's
+time comes from what the Lambda has left: the mirror (at most six minutes),
+the re-keying (as many wallets as the time left allows, at 50 ms each, and
+half the last batch when that one didn't finish, the marks counting the last
+batch only; a failure there is logged,
+and a mirror error stays the run's), then the
+profile site followers (once a first full sync has ended). A gateway node
+that says it isn't ready is logged and still read (its finalized state); a
+feed page of another chain ends the run without moving on. Another network id
+than the mirror's is a misconfiguration in production: the run stops with an
+error and nothing is wiped; only a test stage with
+`IDENTITY_CHAIN_MIRROR_RELAUNCH_ALLOWED=true` starts again on a relaunched
+chain.
+
+The mirror keeps `profiles`, `identities`, `address_consolidation_keys`,
+`consolidations` (confirmed pairs), `delegations`, REP and CIC `ratings`,
+`cic_statements` and the `rep`/`cic`/`level_raw` aggregates equal to the
+chain, so the SQL readers keep working. It follows the gateway's change feed;
+a full sync (the first time, every six hours, and when the feed no longer
+holds its height) walks every identity, delegation and pair over several runs,
+and the feed goes first in each of those runs with its share of the time, so
+a full sync never holds the site's changes back (it never moves the feed's
+place back either). Delegations are walked one use case at a time, only the
+use cases the chain's records take (1 to 17, 997, 998), the wallets of each in
+order, with the use case and the last wallet written saved (a new full sync
+starts from the first); rows of other use cases go at the end. Every chain
+identity's `rep`, `cic` and `level_raw` are written from the chain by each
+full sync, the first one at switch-on included (an imported identity with too
+many wallets for a key is still mapped to its profile); a full sync page
+stops at the run's deadline or an old pin, and the next run goes on from the
+identity after the last one written. Profiles that are not chain identities
+keep 6529.io's REP and CIC, without the help bot's credits, and a level of
+REP + TDH: when a full sync has written every chain identity, the REP of a
+profile with credits becomes its REP ratings outside the credit category, and
+then, after each level sweep and, 20,000 rows a run from where the last run
+got to, every run (so the levels follow 6529.io's TDH days), `level_raw`
+becomes `rep + tdh` where it differs, a row without a profile included; the
+ids an identity waiting to be retried could have are left out. A feed page
+writes the identities, rating targets and wallets it touches (a rating touches
+its target, not its rater, and a rater's own records touch nothing; a
+delegation of use case 997 touches its holder identity too, whose `primary`
+it sets; a 997 record that only expires is caught by the next full sync)
+until the run's deadline, for at most 2,000 keys and while its pin is under
+eight minutes old; the keys it doesn't reach go to the retry list, and its
+place moves on. Each key's reads are its own: one that fails is tried again
+and the page goes on (a refused pin still stops it).
+Each feed page, retry batch and full sync page reads the identities, ratings
+and delegations it touches pinned to one finalized height at or past the one
+it needs, and never below a height read before, in this run or an earlier one
+(`pin_floor`), so another gateway node behind can't make it write older
+state; a pinned read the gateway refuses (a height it no longer holds, about
+13 minutes on, or an answer from another chain) ends the run without moving
+on. A run that fails part way returns what it did, with the error.
+
+`identity_chain_principals` maps each principal to the 6529.io profile id its
+rows use: an imported identity's legacy id; for an identity made on the
+chain, its founding wallet's placeholder profile when no principal holds it,
+the import didn't take it, and the identity is the first the wallet was ever
+bound to (from its creation); else the principal id's first 16 bytes written
+as a UUID. Which identity a wallet was first bound to comes from the mirror's
+own `identity_chain_first_bindings`, recorded while the wallet bindings follow
+the feed without a break from the import's start, else from the gateway's
+history of the wallet (the gateway client keeps its first range, up to the
+read, counted from the import's start, before which no wallet was bound). When neither can say (the import's start unknown, or the node's
+history starting after it, or ending before a read past the creation: a gap),
+the identity is tried
+again for six hours (`identity_chain_founder_waits`), since another gateway
+node may answer meanwhile; when it stays so, it is mapped to its derived id
+and the placeholder is logged and reported as orphaned, for the later merge.
+A merged or closed identity is filed under its mapping, else the id the same
+rule gives, without a mapping: an id decided from its founder is kept
+(`identity_chain_founder_waits`), so it is filed under one id only. An
+answer the gateway's node doesn't hold (`not_held`) or gives unreadably
+(`bad_answer`) for these reads is tried again later, as another node may
+give it. The
+placeholder profiles are listed once, before the mirror's first write
+(`identity_chain_placeholders`), and 6529.io makes none from switch-on, so a
+rebuild from the chain gives the same ids. A placeholder profile whose wallets
+all join an identity is left without an identity row and logged; its ratings
+and follows are not moved.
+
+`identity_chain_mirror_state` holds the mirror's place in the feed. An
+identity, a rating target or a wallet whose rows fail to be written is logged
+and kept in the state (`retry_json`), saved with the feed's place, and tried
+again by later runs, up to 500 keys a run (one that fails again goes to the
+back), until it is written; a full sync starts that list again, and with more
+than 10,000 keys left the mirror starts one instead. A rater whose profile id can't be settled yet is left as it is:
+its rows under the ids it could get stay, the target's other ratings
+(removals included) are written, and the target is kept to try again. Raters
+already mapped are named from the mapping without reading their identity. A
+delegation expiry of 0 never expires. Profile documents come from the
+gateway's store; a value 6529.io can't hold (longer than its column, or a
+classification or statement group it doesn't have) is left out and reported
+in the run's `docProblems`, and the rest of the identity is written.
+
+One writer per `identities` column: from switch-on the mirror alone writes
+`rep`, `cic`, `level_raw` and the profile columns, all from the chain (the
+level is REP + TDH), and the TDH sync writes only `tdh` and `basetdh_rate`. A
+level changes with REP, which the feed carries, and with each TDH day, which
+it doesn't: when the chain's TDH day (`/v1/tdh`, read once a run) or the
+identities a run reads show a day later than the last one seen
+(`levels_tdh_day`, with the height it was first seen at), the mirror sweeps
+the chain's level ranking (`/v1/identities/by-level`, its latest finalized
+state, 500 identities a page), writing only `level_raw` of the mapped
+identities, one statement a page. A page ranked below the height the day was
+first seen at, or with a level of an earlier day, stops the sweep for the run
+without saving. Every level write (feed, full sync or sweep) records the
+chain height it was read at on the mapping (`level_height`; a sweep's is the
+height its answer was read at, and a level the ranking leaves out is read
+there), and no write puts an older level over a newer one. The sweep goes first in each run with a quarter of the time,
+keeps its place in the state across runs, and starts again from the top for a
+newer day. The help bot's credit category stays in 6529.io's ratings table as
+a site feature, not counted as REP, and the mirror never touches it (written
+in any case or spacing). It never
+updates `tdh`, `basetdh_rate` or the xTDH columns of a row that exists (the
+TDH and xTDH loops own them), and a row it creates for a new consolidation
+key starts from the profile's previous values. When wallets change keys, the
+mirror calls the handlers in `src/identity-chain-mirror/membership-change.ts`
+in its own transaction; the first queues every wallet of the rows before and
+after into `transfer_reconciliations` for the holdings loops. In the same
+transaction the regrouped wallets go to `identity_chain_regroups`; the
+delegations loop re-keys TDH, owners, balances, activity and subscriptions for
+them (up to 5,000 a run) and only then takes them off, so a run cut short
+loses none. The pairs of identities it doesn't write (merged, closing, too
+many wallets for a key) stay as they are.
+
+From switch-on `identity_chain_rating_events` is the source of REP and NIC
+notifications. The rating events follower
+(`src/identity-chain-mirror/rating-events-follower.ts`, reading with
+`rating-events.ts`) writes it. Like the wallet bindings follower it reads the
+feed from the import's first block, whole blocks of the mirror's chain, only
+the rating families: Rating (0x0701), RatingTotal (0x0704) and Category
+(0x0705). Its place is in the `events_` columns of the mirror's state, which
+only it writes: the next height (`events_next_height`), a ledger rebuild
+under way (`events_rebuild_height`, `events_rebuild_after`), a gone height
+seen once (`events_gone_at`) and the runs it has been stuck
+(`events_stuck_runs`). It starts once the import has completed and the
+identity sync has a place (`next_height`, set when the first full sync
+starts), never goes past that place, and doesn't wait for the first full sync
+to end: during one the feed goes first in every run and moves the place on.
+So REP and NIC rating rows start once the import completes and the follower
+reaches its end, normally within a run or two; the rows of ratings made
+during the import come then. For the rows that notify (origin OPERATION) the
+follower maps a rater or target the identity sync hasn't mapped yet itself,
+up to 200 a page: it reads the identity at a finalized height at or past the
+page and takes the identity sync's own id (`ProfileIds.profileIdOf`, stored,
+so the sync later finds the same one; a merged, closing or walletless one
+named without storing, as the sync names such a rater). The two never map at
+the same time: the follower runs after the identity steps, and one Lambda runs
+at a time. A failure that passes on its own (of the gateway: a height not
+held, a timeout, the network, 429 or 5xx; of the database, by its MySQL
+code: a deadlock, a lock wait, too many connections, read-only during a
+failover, a new connection's handshake or connect timing out, refused,
+reset, broken or lost, a host not found, or any error the driver marks fatal)
+ends the follower's run before the page is written; one that keeps
+coming back for a principal holds the page, and the stuck alarm calls a
+person. When more than 200 are left to map
+after some were newly named, the page is read again while time is left, going
+on from there; ids named without storing (merged, closing or walletless
+identities) are kept for the page in memory (forgotten when the chain
+changes), not read or counted again, and
+only ids stored count as a step on for the stuck alarm. An id that can't be settled yet
+(a chain-made identity in its founder wait, an answer another node may give),
+one whose mapping fails some other way (reported with the principal, as the
+identity sync isolates such an identity), and the rows of other origins (the
+import's above all) are written with a null id, which the fill below sets
+once the identity sync maps it. Each page's rows, ledger
+changes, category names and place are written in one transaction. The
+follower keeps its own copy of every rating in
+`identity_chain_rating_ledger`, keyed by the record's key fields (rater,
+matter, target kind, target, category) with the value, the height it was set
+at and a `stale` mark, and the REP category names it has read in
+`identity_chain_rating_categories`, so a cold start reads none again. Nothing
+comes from 6529.io's ratings table, which the identity sync writes at newer
+heights, so that sync can't change an event. Each run fills in profile ids,
+then runs the follower last, after the identity steps (which leave it a
+quarter of the time, and at least a minute when they run into it, never more
+than a minute past the mirror's budget), also when one of them threw. Its first start clears the
+ledger, the rows and the names in the transaction that saves its first place;
+without the import's start it logs an error and builds the ledger at the
+latest finalized height (as after a gap), with no rows before it.
+
+Each Rating record of an identity gives one row: the block's height and time
+(`block_time_ms`, the block's slot start), the rater and target principals
+and, when mapped, their profile ids (made here only for the rows that notify,
+as above; each run fills in those of the rows whose principal is mapped since,
+by primary key, 5,000 ids a statement, at most 500,000 ids and a quarter of
+the follower's time a run, going on next run from where it got to: every row
+until a whole pass has run after a full sync ended, since the import's rows
+wait on the first one, which can take more than a day, then the rows written
+in the last day. Where a pass got to, and whether that whole pass has run,
+are kept in memory only: a cold start begins again from the window's first
+row, and runs one whole pass again. A principal never mapped, merged or
+closed, can leave one null), the matter
+(REP, or CIC for NIC), the REP category's name (`''` for CIC; cut to 100
+characters, noted), the value before and the new one (`old_rating` and
+`new_rating`, bigint; 0 when removed), `total_after`, the record's `byImport`
+and raw `writer` (`tx:<op>` or `system:<step>`), and `origin`: IMPORT below
+the height the import ended at, and from it OPERATION for a RATING_SET
+transaction, CAP_CUT for the daily rating reduction (RATING_SCAN), IMPORT for
+no writer on a record the import wrote, UNKNOWN otherwise. Only OPERATION
+notifies.
+
+The value before is the ledger's (0 without a row). A key whose ledger row is
+marked stale (a record of it the follower couldn't read) reads it from the
+chain at the height before; when the gateway no longer holds that height the
+row is still written, with the ledger's value and origin UNKNOWN, and noted
+in the report. `total_after` is the target's total in that matter and
+category after the block: its RatingTotal record; without one, the ledger's
+total plus the change when none of its rows is stale, else the chain's
+totals of the target read at that height (when the gateway no longer holds
+those, the ledger's guess, noted). The node serves pinned reads of its last
+64 views only, so these reads work only for recent heights; a refusal from a
+node that hasn't finalized the height yet is not taken for gone: the page
+waits.
+
+When the gateway no longer holds the follower's place, the follower notes
+the height, and only when the next run finds it gone too (one answer may be
+a node's) does it rebuild the ledger: it empties it and lists every rating
+of the identities with raters at the latest finalized height (500
+identities a page, eight targets read at once, a page per transaction, all
+pinned to that height, its time logged); then it goes on from the next one. The heights from the gap to that height give no rows (logged).
+When the gateway drops the pin during the rebuild, it starts again at a
+newer one.
+
+Rows are written with `on duplicate key update id = id` (one row per height,
+rater, target, matter and category), so a page read again writes no row
+twice and a run cut short loses none. A record that changes nothing (a value
+before equal to the new one) or of the help bot's credit category writes no
+row but still updates the ledger. A record whose key can't be read, or a REP
+category the chain has no name for, is left out, logged and listed in the
+run's report, and the place moves on; a value without its fields, or one it
+can't hold exactly, is never taken for a removal and marks its key stale.
+Any other read that fails (a category name, a value before, a total), or a
+run's time running out before a read, ends the follower's run before the
+page is written, so the page waits; that failure goes to the run's report
+(the first 50 problems listed, the rest counted) and doesn't fail the run.
+When the follower hasn't moved for five runs while behind the identity sync
+(or in a gap), it logs an error and the delegations loop fails the run, so it
+alarms, once the profile site followers have run. A Rating
+record from the import's end on with no writer (an old gateway) has origin
+UNKNOWN and notifies no one; the run logs one error and counts them in its
+report. A full sync and a retry of keys write no rows. A relaunch clears the
+ledger, the rows, the names and the place, and the follower starts again
+from the new import.
+
+`identity_chain_wallets` holds each bound wallet's principal and the chain
+height it has been bound to that principal since
+(`wallet-bindings-follower.ts`). It follows the feed's AddressBinding records
+with its own cursor (`bindings_next_height`) from the import's first block;
+rows and cursor are written in one transaction. When the gateway no longer
+holds the cursor's height, the import's start is unknown, or a record's wallet
+can't be read, it lists the membership at one pinned height and stores every
+wallet as bound since then: later than the truth, never earlier; from then on
+no first binding is recorded (nor after a binding whose principal can't be
+read). The mirror names its chain by the network id (`chain_id`); on another
+one, read three times a second apart (one answer from a node of another chain
+wipes nothing; while the answers differ the mirror doesn't run), as after a
+relaunch, which only test chains have, the bindings and first bindings start
+again empty, the mappings of identities made on the old chain go (and every
+mapping's level height), and a full
+sync rewrites the identities of the new chain; rows of identities only the old
+chain had are not deleted. `IdentityChainLookups` (`identity-chain-lookups.ts`)
+answers "the principal of wallet W at height H" from that table below its
+cursor, on the chain the gateway serves, else from the wallet's history on the
+chain where that history is exact (a history held from the import's start
+says "bound to none" before a wallet's first change), and throws
+`WalletPrincipalUnknownError` when neither can say; and "the principal of
+profile id X" from the mapping or the import. As its last step the delegations
+loop calls `followProfileSites()`, which runs the followers in
+`PROFILE_SITE_FOLLOWERS` with `GatewayProfileSitePort` (`profile-site-port.ts`)
+for at most four minutes: the profile site index's chain reads, served from
+the gateway client and the mirror's profile ids.
+
 ### Ordinary Ethereum RPC boundary
 
 The shared provider in `src/ethereum-rpc/` reads the server-only

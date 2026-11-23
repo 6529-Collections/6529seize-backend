@@ -1,3 +1,4 @@
+import { withoutHelpBotCreditsSql } from '@/rates/rating-credit';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   EXTERNAL_INDEXED_OWNERSHIP_721_TABLE,
@@ -2959,6 +2960,8 @@ export class UserGroupsService {
       if (repGroup.category !== null) {
         groupedRepQuery += ` and matter_category = :rep_category`;
         params.rep_category = repGroup.category;
+      } else {
+        groupedRepQuery += withoutHelpBotCreditsSql();
       }
       groupedRepQuery += `${memberSearchPart} group by 1)`;
       repPart = `${groupedRepQuery}, rep_exchanges as (select i.profile_id from ${IDENTITIES_TABLE} i left join grouped_reps r on r.profile_id = i.profile_id where true `;
