@@ -1,4 +1,5 @@
-import { AreaManifest, TableEntry } from '@/rebuild/manifest.types';
+import { AreaManifest, Probe, TableEntry } from '@/rebuild/manifest.types';
+import { WAVES_WORLD_IDS } from '@/rebuild/world/waves/world-ids';
 
 /** The chain index's tables and its state, and its event log. */
 export const WAVES_CHAIN_INDEX_TABLES = [
@@ -21,6 +22,60 @@ export const WAVES_CHAIN_INDEX_TABLES = [
 
 /** The chain index read from the gateway (src/rebuild/steps). */
 const CHAIN_INDEX_STEPS = 'src/rebuild/steps/waves-chain-index.steps';
+
+/** 6529.io's rows at the freeze for the world's waves. */
+const LEGACY_STEPS = 'src/rebuild/steps/waves-legacy.steps';
+
+const PUBLIC_WAVE = WAVES_WORLD_IDS.publicWave;
+const RANK_WAVE = WAVES_WORLD_IDS.rankWave;
+const MEMBERS_WAVE = WAVES_WORLD_IDS.membersWave;
+const WORLD_DROPS = [WAVES_WORLD_IDS.firstDrop, WAVES_WORLD_IDS.secondDrop];
+
+/**
+ * The main waves routes over the world's waves, anonymous: a wave, the
+ * lists, its drops, a rank wave's decisions, leaderboard and competitions,
+ * a drop, groups. The members-only wave is asked for too: anonymous, it
+ * must stay hidden the same way in both passes.
+ */
+const PROBES: Probe[] = [
+  {
+    id: 'waves.wave',
+    path: '/api/waves/{wave}',
+    each: { wave: [PUBLIC_WAVE, MEMBERS_WAVE, RANK_WAVE] }
+  },
+  { id: 'waves.wave-v3', path: `/api/v3/waves/${PUBLIC_WAVE}` },
+  { id: 'waves.list', path: '/api/waves?limit=20' },
+  { id: 'waves.list-v2', path: '/api/v2/waves?page_size=20' },
+  {
+    id: 'waves.overview',
+    path: '/api/waves-overview?type=RECENTLY_DROPPED_TO&limit=20'
+  },
+  { id: 'waves.drops', path: `/api/waves/${PUBLIC_WAVE}/drops?limit=20` },
+  { id: 'waves.drops-v2', path: `/api/v2/waves/${PUBLIC_WAVE}/drops?limit=20` },
+  { id: 'waves.drop', path: '/api/drops/{drop}', each: { drop: WORLD_DROPS } },
+  {
+    id: 'waves.drop-v2',
+    path: '/api/v2/drops/{drop}',
+    each: { drop: WORLD_DROPS }
+  },
+  {
+    id: 'waves.drop-signed-events',
+    path: `/api/drops/${WAVES_WORLD_IDS.firstDrop}/signed-events`
+  },
+  { id: 'waves.decisions', path: `/api/waves/${RANK_WAVE}/decisions` },
+  { id: 'waves.decisions-v2', path: `/api/v2/waves/${RANK_WAVE}/decisions` },
+  { id: 'waves.leaderboard', path: `/api/waves/${RANK_WAVE}/leaderboard` },
+  {
+    id: 'waves.leaderboard-v2',
+    path: `/api/v2/waves/${RANK_WAVE}/leaderboard`
+  },
+  {
+    id: 'waves.competitions-v3',
+    path: `/api/v3/waves/${RANK_WAVE}/competitions`
+  },
+  { id: 'waves.groups', path: '/api/groups' },
+  { id: 'waves.og-wave', path: `/api/og-metadata/waves/${PUBLIC_WAVE}` }
+];
 
 const CHAIN_INDEX_TABLE_ENTRIES: Record<string, TableEntry> =
   Object.fromEntries(
@@ -345,6 +400,22 @@ export const wavesManifest: AreaManifest = {
   },
   seeds: [
     {
+      id: 'waves.legacy.seed',
+      run: { module: LEGACY_STEPS, exportName: 'seedWavesLegacy' },
+      writes: [
+        'waves',
+        'drops',
+        'drops_parts',
+        'community_groups',
+        'competitions',
+        'competition_config_versions'
+      ],
+      // The fixture profiles the waves and drops name.
+      after: ['identity.probe-profiles'],
+      sources: ['repo'],
+      timeoutMinutes: 5
+    },
+    {
       id: 'waves.chain-index.seed',
       run: { module: CHAIN_INDEX_STEPS, exportName: 'seedWavesChainIndex' },
       writes: [...WAVES_CHAIN_INDEX_TABLES],
@@ -361,7 +432,7 @@ export const wavesManifest: AreaManifest = {
       timeoutMinutes: 30
     }
   ],
-  probes: [],
+  probes: PROBES,
   waivers: {
     unprobedTables: WAVES_CHAIN_INDEX_TABLES.map((target) => ({
       target,
