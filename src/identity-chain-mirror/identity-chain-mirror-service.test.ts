@@ -1,4 +1,4 @@
-import { isHelpBotCreditCategory } from '@/help-bot/help-bot.config';
+import { isHelpBotCreditCategory } from './help-bot-credit-category';
 import { ChainGatewayError } from '@/chain-gateway/chain-gateway.client';
 import { Logger } from '@/logging';
 import {

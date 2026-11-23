@@ -7,7 +7,7 @@ import {
   ChainRating,
   ChainRatingTotal
 } from '@/chain-gateway/chain-gateway.types';
-import { isHelpBotCreditCategory } from '@/help-bot/help-bot.config';
+import { isHelpBotCreditCategory } from './help-bot-credit-category';
 import { Logger } from '@/logging';
 import {
   isOtherChain,

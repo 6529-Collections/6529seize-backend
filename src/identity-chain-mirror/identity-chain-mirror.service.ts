@@ -11,7 +11,7 @@ import {
   ChainRating
 } from '@/chain-gateway/chain-gateway.types';
 import { USE_CASE_PRIMARY_ADDRESS } from '@/constants';
-import { isHelpBotCreditCategory } from '@/help-bot/help-bot.config';
+import { isHelpBotCreditCategory } from './help-bot-credit-category';
 import { Logger } from '@/logging';
 import { ConnectionWrapper } from '@/sql-executor';
 import {
