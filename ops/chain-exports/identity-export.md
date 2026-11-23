@@ -162,8 +162,9 @@ import. The manifest records:
   commit;
 - `IDENTITY_FREEZE_AT` as read, and the secret it was read from;
 - the profile site run the values came from;
-- the snapshot's time, its gap from the freeze, the replica's lag, and
-  whether an unknown lag was accepted;
+- the snapshot's time, its gap from the freeze (`snapshot_gap_ms`, and
+  rounded, `snapshot_gap_seconds`), the replica's lag, and whether an
+  unknown lag was accepted;
 - whether the run replaced a pointer, and the pointer it replaced;
 - the size and sha256 of every object, `links.json` included.
 
@@ -296,6 +297,10 @@ replaced.
     that other run stays the export. Send both runs' `prefix` and
     `manifestSha256` to the coordinator. Only if the coordinator picks this
     run, run again with `"replacePointer":true`.
+  - it says reading the pointer back failed: it is unknown which run the
+    pointer names. Ask for links by `freezeAt`: `links-out.json` names that
+    run's prefix and manifest sha256. If they are this run's, it is the
+    export. Otherwise do as in the case above.
   - Any other `pointerError`: send the coordinator this run's `prefix` and
     `manifestSha256`, and fetch fresh links by `prefix`, not `freezeAt`.
 - `revision` is the commit deployed, and `buildCommit` is the same commit
@@ -305,12 +310,15 @@ replaced.
 - `host`, `readOnly: true` and `evidence`:
   - `transactionReadOnly` is true;
   - `serverReadOnly` or `innodbReadOnly` is true;
-  - `replicaLagMs` is below `snapshotGapSeconds` × 1000, or `null` only in a
+  - `replicaLagMs` is below `snapshotGapMs`, or `null` only in a
     run given `acceptUnknownReplicaLag`.
 - `bucketPrivacy.owner` is the function's own account.
 - `identityFreezeAtSecret` is `prod/lambdas`, `identityFreezeAtReading` is
   `time`, and `identityFreezeAt` equals `frozenAt`.
-- `snapshotAt` and `snapshotGapSeconds` (at least 120).
+- `snapshotAt` and `snapshotGapMs`: at least 120000. The run compares the
+  gap in milliseconds; `snapshotGapSeconds` is the same gap, rounded.
+- `acceptUnknownReplicaLag` and `replacePointer`: true only if you gave
+  them.
 - `identities`, `ratings` and `tdhBlock`.
 - `seconds`.
 - `presignedManifestUrl`, `presignedLinksUrl`, `presignedPointerUrl` and

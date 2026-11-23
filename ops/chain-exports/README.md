@@ -249,6 +249,7 @@ Then test the download links: fetch the manifest and `links.json`, then one
 file by its link, and check each against its sha256.
 
 ```text
+$ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = 'Tls12'
 $out = Get-Content out.json -Raw | ConvertFrom-Json
 Invoke-WebRequest -UseBasicParsing $out.presignedManifestUrl -OutFile manifest.json
@@ -378,24 +379,30 @@ for `links-out.json` from the links job too: put its name in place of
 PowerShell:
 
 ```text
-[Net.ServicePointManager]::SecurityProtocol = 'Tls12'
-$ProgressPreference = 'SilentlyContinue'
-$out = Get-Content out.json -Raw | ConvertFrom-Json
-$dir = 'profile-site-export'
-New-Item -ItemType Directory -Force "$dir\files" | Out-Null
-Invoke-WebRequest -UseBasicParsing $out.presignedLinksUrl -OutFile links-now.json
-$links = (Get-Content links-now.json -Raw | ConvertFrom-Json).links
-foreach ($p in $links.PSObject.Properties) { Invoke-WebRequest -UseBasicParsing $p.Value -OutFile (Join-Path $dir $p.Name) }
-if (-not (Test-Path "$dir\links.json")) { Copy-Item links-now.json "$dir\links.json" }
-if ($out.presignedPointerUrl) { Invoke-WebRequest -UseBasicParsing $out.presignedPointerUrl -OutFile pointer.json }
-$manifestFile = Join-Path $dir (Split-Path $out.manifestKey -Leaf)
-$manifest = Get-Content $manifestFile -Raw | ConvertFrom-Json
-$wrong = @($manifest.files | Where-Object { (Get-FileHash (Join-Path $dir $_.name) -Algorithm SHA256).Hash.ToLower() -ne $_.sha256 })
-"$($manifest.files.Count) files, $($wrong.Count) wrong"
-(Get-FileHash $manifestFile -Algorithm SHA256).Hash.ToLower() -eq $out.manifestSha256
+$ErrorActionPreference = 'Stop'
+& {
+  [Net.ServicePointManager]::SecurityProtocol = 'Tls12'
+  $ProgressPreference = 'SilentlyContinue'
+  $out = Get-Content out.json -Raw | ConvertFrom-Json
+  $dir = 'profile-site-export'
+  New-Item -ItemType Directory -Force "$dir\files" | Out-Null
+  Invoke-WebRequest -UseBasicParsing $out.presignedLinksUrl -OutFile links-now.json
+  $links = (Get-Content links-now.json -Raw | ConvertFrom-Json).links
+  foreach ($p in $links.PSObject.Properties) { Invoke-WebRequest -UseBasicParsing $p.Value -OutFile (Join-Path $dir $p.Name) }
+  if (-not (Test-Path "$dir\links.json")) { Copy-Item links-now.json "$dir\links.json" }
+  if ($out.presignedPointerUrl) { Invoke-WebRequest -UseBasicParsing $out.presignedPointerUrl -OutFile pointer.json }
+  $manifestFile = Join-Path $dir (Split-Path $out.manifestKey -Leaf)
+  $manifest = Get-Content $manifestFile -Raw | ConvertFrom-Json
+  $wrong = @($manifest.files | Where-Object { $f = Join-Path $dir $_.name; -not (Test-Path -LiteralPath $f) -or (Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash.ToLower() -ne $_.sha256 })
+  "$($manifest.files.Count) files, $($wrong.Count) wrong"
+  (Get-FileHash $manifestFile -Algorithm SHA256).Hash.ToLower() -eq $out.manifestSha256
+}
 ```
 
-It must print `<n> files, 0 wrong` and then `True`.
+It must print `<n> files, 0 wrong` and then `True`. A download that fails
+stops it with an error and no count; a file the links don't name counts as
+wrong. Either way, fetch it again within the links' 6 hours, or ask for
+fresh links first.
 
 bash, with `curl` and `jq` (`shasum -a 256 -c` instead of `sha256sum -c` on
 macOS):

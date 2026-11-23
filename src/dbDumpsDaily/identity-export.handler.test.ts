@@ -7,6 +7,8 @@ import {
 } from '@aws-sdk/client-s3';
 import { IdentityExportNotReadyError } from '@/identity-export/identity-export.errors';
 import {
+  checkReplicaLag,
+  checkSnapshotTime,
   IdentityExportDeps,
   IdentityExportEventError,
   IdentityExportLinksResult,
@@ -116,6 +118,11 @@ function setup(
     failPutOf?: string;
     /** The pointer's write lands, but its answer is lost and the retry refused. */
     pointerAnswerLost?: boolean;
+    /**
+     * The pointer's write is refused (412), and reading it back finds it
+     * missing or is refused (403).
+     */
+    pointerConflictUnread?: 'missing' | 'forbidden';
     publicBlock?: boolean;
     snapshotAt?: string;
     replicaLagMs?: number | null;
@@ -164,6 +171,12 @@ function setup(
       if (command.input.ChecksumSHA256 !== sum) {
         throw new Error(`bad checksum for ${key}`);
       }
+      if (options.pointerConflictUnread && key.includes('/by-freeze/')) {
+        throw Object.assign(new Error('At least one precondition failed'), {
+          name: 'PreconditionFailed',
+          $metadata: { httpStatusCode: 412 }
+        });
+      }
       if (options.pointerAnswerLost && key.includes('/by-freeze/')) {
         bodies.set(key, Buffer.from(command.input.Body as Buffer).toString());
         order.push(key);
@@ -186,7 +199,11 @@ function setup(
     if (command instanceof GetObjectCommand) {
       const body = bodies.get(command.input.Key!);
       if (body === undefined) {
-        throw options.missingAs403
+        const forbidden =
+          options.missingAs403 ||
+          (options.pointerConflictUnread === 'forbidden' &&
+            command.input.Key!.startsWith('identity-export/'));
+        throw forbidden
           ? Object.assign(new Error('Access Denied'), {
               name: 'AccessDenied',
               $metadata: { httpStatusCode: 403 }
@@ -874,6 +891,24 @@ describe('runIdentityExportJob', () => {
       });
     });
 
+    it.each([
+      ['missing', 'it is missing'],
+      ['forbidden', 'S3 refused the read']
+    ] as const)(
+      'says it is unknown whose run the pointer names when it reads back %s',
+      async (unread, reason) => {
+        mockBuild.mockResolvedValue(document());
+        const { deps } = setup({ pointerConflictUnread: unread });
+        const result = await run(deps);
+        expect(result.usable).toBe(true);
+        expect(result.pointerKey).toBeNull();
+        expect(result.presignedPointerUrl).toBeNull();
+        expect(result.pointerError).toBe(
+          `S3 refused to write ${POINTER} because one is there, and reading it back failed (${reason}): whether it names this run is unknown. Ask for links by freezeAt to see which run it names.`
+        );
+      }
+    );
+
     it('reports a pointer that could not be written; the run stays whole', async () => {
       mockBuild.mockResolvedValue(document());
       const { deps } = setup({ failPutOf: '2026-11-24T00-00-00-000Z.json' });
@@ -990,6 +1025,24 @@ describe('runIdentityExportJob', () => {
       'The snapshot is 119 s after the freeze: wait until at least 120 s after it'
     ],
     [
+      '400 ms before the freeze',
+      '2026-11-23T23:59:59.600Z',
+      40,
+      /is before the freeze/
+    ],
+    [
+      '119.6 s after it',
+      '2026-11-24T00:01:59.600Z',
+      40,
+      'The snapshot is 119.6 s after the freeze: wait until at least 120 s after it'
+    ],
+    [
+      'from a replica as far behind as the gap, to the millisecond',
+      '2026-11-24T00:05:00.400Z',
+      300_400,
+      'The replica is 300400 ms behind its writer, not less than the 300400 ms since the freeze'
+    ],
+    [
       'too long after it',
       '2026-11-24T02:00:00.000Z',
       40,
@@ -999,7 +1052,7 @@ describe('runIdentityExportJob', () => {
       'from a replica as far behind as the gap',
       '2026-11-24T00:05:00.000Z',
       300_000,
-      'The replica is 300000 ms behind its writer, not less than the 300 s since the freeze'
+      'The replica is 300000 ms behind its writer, not less than the 300000 ms since the freeze'
     ]
   ])(
     'refuses a snapshot %s, writing nothing',
@@ -1012,6 +1065,49 @@ describe('runIdentityExportJob', () => {
       expect(close).toHaveBeenCalledTimes(1);
     }
   );
+
+  it('checks the gap in milliseconds and reports it both ways', async () => {
+    const T0 = Date.UTC(2026, 10, 24);
+    expect(checkSnapshotTime(T0, T0 + 120_000, null, 120)).toEqual({
+      gapMs: 120_000,
+      gapSeconds: 120
+    });
+    expect(checkSnapshotTime(T0, T0 + 300_400, null, 120)).toEqual({
+      gapMs: 300_400,
+      gapSeconds: 300
+    });
+    expect(() => checkSnapshotTime(T0, T0 - 400, null)).toThrow(
+      'before the freeze'
+    );
+    expect(() => checkSnapshotTime(T0, T0 + 119_600, null, 120)).toThrow(
+      'The snapshot is 119.6 s after the freeze'
+    );
+    // Just over the limit, by half a second.
+    expect(() => checkSnapshotTime(T0, T0 + 90 * 60_000 + 500, null)).toThrow(
+      'over the 90-minute limit'
+    );
+    expect(() => checkReplicaLag(300_400, 300_400)).toThrow(
+      'not less than the 300400 ms since the freeze'
+    );
+    expect(() => checkReplicaLag(300_400, 300_399)).not.toThrow();
+    mockBuild.mockResolvedValue(document());
+    const { deps, bodies } = setup({
+      snapshotAt: '2026-11-24T00:05:00.400Z',
+      replicaLagMs: 300_399
+    });
+    const result = await run(deps);
+    expect([result.snapshotGapMs, result.snapshotGapSeconds]).toEqual([
+      300_400, 300
+    ]);
+    expect(result).toMatchObject({
+      acceptUnknownReplicaLag: false,
+      replacePointer: false
+    });
+    const manifest = JSON.parse(bodies.get(result.manifestKey)!);
+    expect([manifest.snapshot_gap_ms, manifest.snapshot_gap_seconds]).toEqual([
+      300_400, 300
+    ]);
+  });
 
   it('refuses a replica lag it can not read, unless told to rely on the gap alone', async () => {
     mockBuild.mockResolvedValue(document());
