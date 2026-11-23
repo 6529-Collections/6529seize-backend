@@ -22,6 +22,13 @@ jest.mock('@/market-depth/market-depth.db', () => ({ marketDepthDb: {} }));
 jest.mock('@/market-depth/market-depth-retention', () => ({
   purgeMarketDepthHistory: jest.fn()
 }));
+jest.mock('@/market-depth/market-depth-archive', () => ({
+  archiveMarketDepthHistory: jest.fn(),
+  readArchivedThrough: jest.fn()
+}));
+jest.mock('@/market-depth/market-depth-archive-store', () => ({
+  marketDepthArchiveStoreFromEnv: jest.fn()
+}));
 
 import { MEMES_CONTRACT } from '@/constants';
 import { handler } from './index';
@@ -29,6 +36,11 @@ import { findNftMarketStats } from './nft_market_stats';
 import { findNextgenMarketStats } from './nft_market_stats_nextgen';
 import { pollOpenSeaMarketDepthForContract } from '@/market-depth/opensea-poller';
 import { purgeMarketDepthHistory } from '@/market-depth/market-depth-retention';
+import {
+  archiveMarketDepthHistory,
+  readArchivedThrough
+} from '@/market-depth/market-depth-archive';
+import { marketDepthArchiveStoreFromEnv } from '@/market-depth/market-depth-archive-store';
 import { marketDepthDb } from '@/market-depth/market-depth.db';
 
 // The Sentry wrapper is mocked to expose the original async handler.
@@ -45,6 +57,7 @@ describe('market refresh scheduling', () => {
     jest.mocked(findNftMarketStats).mockResolvedValue(undefined);
     jest.mocked(findNextgenMarketStats).mockResolvedValue(undefined);
     jest.mocked(pollOpenSeaMarketDepthForContract).mockResolvedValue([]);
+    jest.mocked(marketDepthArchiveStoreFromEnv).mockReturnValue(null);
     jest.mocked(purgeMarketDepthHistory).mockResolvedValue({
       snapshots: 0,
       reconciliations: 0,
@@ -197,5 +210,88 @@ describe('market refresh scheduling', () => {
       invoke({}, { getRemainingTimeInMillis: () => 900_000 })
     ).rejects.toThrow('fixture retention failure');
     expect(mockCleanup).toHaveBeenCalledTimes(1);
+  });
+
+  describe('with an archive configured', () => {
+    const store = {
+      getArchivedThrough: jest.fn(),
+      setArchivedThrough: jest.fn(),
+      putObject: jest.fn()
+    };
+    const archived = {
+      snapshots: new Date('2026-11-21T00:00:00.000Z'),
+      events: new Date('2026-11-20T00:00:00.000Z')
+    };
+
+    beforeEach(() => {
+      process.env.MARKET_STATS_CONTRACT = MEMES_CONTRACT;
+      jest.mocked(marketDepthArchiveStoreFromEnv).mockReturnValue(store);
+      jest.mocked(archiveMarketDepthHistory).mockResolvedValue({
+        snapshots: {
+          hours: 0,
+          rows: 0,
+          archived_through: null,
+          complete: true
+        },
+        events: { hours: 0, rows: 0, archived_through: null, complete: true }
+      });
+      jest.mocked(readArchivedThrough).mockResolvedValue(archived);
+    });
+
+    it('archives before retention and gates retention on the archive', async () => {
+      const started = Date.now();
+      await expect(
+        invoke({}, { getRemainingTimeInMillis: () => 900_000 })
+      ).resolves.toBeUndefined();
+      expect(archiveMarketDepthHistory).toHaveBeenCalledWith({
+        contract: MEMES_CONTRACT.toLowerCase(),
+        db: marketDepthDb,
+        store,
+        deadlineMs: started + 180_000
+      });
+      expect(purgeMarketDepthHistory).toHaveBeenCalledWith(
+        expect.objectContaining({ archivedThrough: archived })
+      );
+      expect(
+        jest.mocked(archiveMarketDepthHistory).mock.invocationCallOrder[0]
+      ).toBeLessThan(
+        jest.mocked(purgeMarketDepthHistory).mock.invocationCallOrder[0]
+      );
+    });
+
+    it('still purges up to the stored watermarks when archiving fails, and reports it', async () => {
+      jest
+        .mocked(archiveMarketDepthHistory)
+        .mockRejectedValue(new Error('fixture archive failure'));
+      await expect(
+        invoke({}, { getRemainingTimeInMillis: () => 900_000 })
+      ).rejects.toThrow('fixture archive failure');
+      expect(purgeMarketDepthHistory).toHaveBeenCalledWith(
+        expect.objectContaining({ archivedThrough: archived })
+      );
+    });
+
+    it('keeps archived kinds when the watermark cannot be read', async () => {
+      jest
+        .mocked(readArchivedThrough)
+        .mockRejectedValue(new Error('fixture state failure'));
+      await expect(
+        invoke({}, { getRemainingTimeInMillis: () => 900_000 })
+      ).rejects.toThrow('fixture state failure');
+      expect(purgeMarketDepthHistory).toHaveBeenCalledWith(
+        expect.objectContaining({
+          archivedThrough: { snapshots: null, events: null }
+        })
+      );
+    });
+  });
+
+  it('does not archive or gate retention without an archive bucket', async () => {
+    process.env.MARKET_STATS_CONTRACT = MEMES_CONTRACT;
+    await invoke({}, { getRemainingTimeInMillis: () => 900_000 });
+    expect(archiveMarketDepthHistory).not.toHaveBeenCalled();
+    expect(
+      jest.mocked(purgeMarketDepthHistory).mock.calls[0][0].archivedThrough
+    ).toBeUndefined();
   });
 });

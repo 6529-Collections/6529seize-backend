@@ -852,9 +852,18 @@ export async function fetchMaxTransactionsBlockNumber(): Promise<number> {
   return r.length > 0 ? r[0].max_block : 0;
 }
 
-export async function fetchMaxTransactionByBlockNumber(): Promise<Transaction | null> {
-  const sql = `SELECT * FROM ${TRANSACTIONS_TABLE} WHERE block = (SELECT MAX(block) FROM ${TRANSACTIONS_TABLE});`;
-  const r = await sqlExecutor.execute(sql);
+/** The transfer in the highest block, of one contract when one is given. */
+export async function fetchMaxTransactionByBlockNumber(
+  contract?: string
+): Promise<Transaction | null> {
+  const r = contract
+    ? await sqlExecutor.execute(
+        `SELECT * FROM ${TRANSACTIONS_TABLE} WHERE contract = :contract AND block = (SELECT MAX(block) FROM ${TRANSACTIONS_TABLE} WHERE contract = :contract);`,
+        { contract: contract.toLowerCase() }
+      )
+    : await sqlExecutor.execute(
+        `SELECT * FROM ${TRANSACTIONS_TABLE} WHERE block = (SELECT MAX(block) FROM ${TRANSACTIONS_TABLE});`
+      );
   return r.length > 0 ? r[0] : null;
 }
 
