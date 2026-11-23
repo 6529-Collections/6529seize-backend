@@ -427,6 +427,7 @@ describe('parseIdentityExportEvent', () => {
       includeDelegations: true,
       extraIds: { inline: [ALICE] },
       cmsFields: null,
+      cmsFieldsAtFreeze: null,
       acceptOverCredit: 0,
       acceptEditsAfterFreeze: 0,
       acceptRatingsChangedAfterFreeze: 0,
@@ -718,6 +719,7 @@ describe('runIdentityExportJob', () => {
       })
     );
     const cmsSource = {
+      kind: 'site_run',
       pointer: SITE_POINTER,
       prefix: SITE_PREFIX,
       manifest: `${SITE_PREFIX}manifest.json`,
@@ -926,12 +928,166 @@ describe('runIdentityExportJob', () => {
     expect(result.scope.cmsFields).toBe('identity-export/inputs/cms.json');
   });
 
+  describe("a hand-run cms-fields.json at the freeze, when the profile site export didn't run", () => {
+    const HAND = 'identity-export/inputs/cms-fields-2026-11-24.json';
+    const handCms = '{"00000000-0000-4000-8000-0000000a11ce": {"primary": {}}}';
+    const handRun = (over: Record<string, unknown> = {}) => ({
+      ...atFreeze,
+      cmsFieldsAtFreeze: { key: HAND, sha256: sha(handCms), ...over }
+    });
+
+    it('takes it only at the freeze, as a key under identity-export/inputs/ and a sha256', () => {
+      expect(
+        parseIdentityExportEvent(
+          handRun({ sha256: sha(handCms).toUpperCase() })
+        )
+      ).toEqual(
+        expect.objectContaining({
+          cmsFieldsAtFreeze: { key: HAND, sha256: sha(handCms) }
+        })
+      );
+      const shape =
+        'cmsFieldsAtFreeze must be {"key": "identity-export/inputs/<file>.json", "sha256": "<its 64-hex sha256>"}';
+      for (const bad of [
+        { key: 'profile-site-export/prod/x/cms-fields.json' },
+        { key: 'identity-export/inputs/../prod/x.json' },
+        { key: 'identity-export/inputs/' },
+        { sha256: 'abc' },
+        { sha256: 'g'.repeat(64) },
+        { extra: 1 }
+      ]) {
+        expect(() => parseIdentityExportEvent(handRun(bad))).toThrow(shape);
+      }
+      expect(() =>
+        parseIdentityExportEvent({ ...atFreeze, cmsFieldsAtFreeze: HAND })
+      ).toThrow(shape);
+      // A rehearsal takes cmsFields (or noCmsFields), never this.
+      for (const event of [
+        {
+          ...rehearsal,
+          cmsFieldsAtFreeze: { key: HAND, sha256: sha(handCms) }
+        },
+        {
+          ...rehearsal,
+          noCmsFields: undefined,
+          cmsFields: { key: HAND },
+          cmsFieldsAtFreeze: { key: HAND, sha256: sha(handCms) }
+        }
+      ]) {
+        expect(() => parseIdentityExportEvent(event)).toThrow(
+          "cmsFieldsAtFreeze is for an export at the freeze whose profile site export didn't run: a rehearsal takes cmsFields or noCmsFields"
+        );
+      }
+    });
+
+    it('refuses it when the profile site export ran for the freeze, before reading the database', async () => {
+      mockBuild.mockResolvedValue(document());
+      const { deps, order } = setup({
+        objects: { ...siteRun(), [HAND]: handCms }
+      });
+      await expect(run(deps, handRun())).rejects.toThrow(
+        `The profile site export ran for the freeze ${FREEZE_ISO}: ${SITE_POINTER} names its run, and its values are the ones taken. Leave cmsFieldsAtFreeze out: a hand-run file never overrides them.`
+      );
+      expect(deps.openSnapshot).not.toHaveBeenCalled();
+      expect(order).toEqual([]);
+    });
+
+    it("refuses a file whose sha256 isn't the one given, before reading the database", async () => {
+      mockBuild.mockResolvedValue(document());
+      const { deps, order } = setup({
+        objects: { [HAND]: handCms.replace('primary', 'primarx') }
+      });
+      await expect(run(deps, handRun())).rejects.toThrow(
+        `${HAND} has the sha256 ${sha(handCms.replace('primary', 'primarx'))}, not the ${sha(handCms)} given in cmsFieldsAtFreeze: upload the file that was made, and give its sha256`
+      );
+      expect(deps.openSnapshot).not.toHaveBeenCalled();
+      expect(order).toEqual([]);
+    });
+
+    it('takes it when no site pointer exists, and records it as hand_run', async () => {
+      mockBuild.mockResolvedValue(document());
+      const warn = jest.spyOn(Logger.prototype, 'warn');
+      try {
+        const { deps, bodies } = setup({ objects: { [HAND]: handCms } });
+        const result = await run(deps, handRun());
+        const source = {
+          kind: 'hand_run',
+          key: HAND,
+          sha256: sha(handCms),
+          sitePointer: SITE_POINTER,
+          sitePointerRead: 'missing'
+        };
+        expect(result.cmsFieldsSource).toEqual(source);
+        expect(result.scope.cmsFields).toBe(HAND);
+        expect(result.pointerKey).toBe(POINTER);
+        const manifest = JSON.parse(bodies.get(result.manifestKey)!);
+        expect(manifest.cms_fields_source).toEqual(source);
+        expect(manifest.scope.cmsFields).toBe(HAND);
+        // The export's header has no site manifest, and its notes say why.
+        const options = mockBuild.mock.calls[0][1];
+        expect(options.cmsFields).toEqual({
+          '00000000-0000-4000-8000-0000000a11ce': { primary: {} }
+        });
+        expect(options.cmsFieldsFile).toEqual({
+          count: 1,
+          sha256: sha(handCms),
+          manifest: null
+        });
+        expect(options.notes).toContain(
+          `cms: the profile site export didn't run for this freeze: the profile site values are a hand-run cms-fields.json (${HAND}, sha256 ${sha(handCms)})`
+        );
+        expect(
+          warn.mock.calls.some(([line]) =>
+            String(line).includes(
+              `[CMS FIELDS HAND RUN] [${HAND}] [SHA256 ${sha(handCms)}] [NO SITE POINTER: MISSING]`
+            )
+          )
+        ).toBe(true);
+        // Where S3 answers 403 for a key that isn't there.
+        const hidden = setup({
+          objects: { [HAND]: handCms },
+          missingAs403: true
+        });
+        const forbidden = await run(hidden.deps, handRun());
+        expect(forbidden.cmsFieldsSource).toEqual({
+          ...source,
+          sitePointerRead: 'forbidden'
+        });
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('takes an empty file only with acceptNoCmsFields, as a site run', async () => {
+      mockBuild.mockResolvedValue(document());
+      const event = {
+        ...atFreeze,
+        cmsFieldsAtFreeze: { key: HAND, sha256: sha('{}') }
+      };
+      const empty = setup({ objects: { [HAND]: '{}' } });
+      await expect(run(empty.deps, event)).rejects.toThrow(
+        'the profile site export has no profile site values (its cms-fields.json is empty), so no identity would carry one. Only if that site export really has no sites, acknowledge it with "acceptNoCmsFields": true'
+      );
+      expect(empty.deps.openSnapshot).not.toHaveBeenCalled();
+      const accepted = setup({ objects: { [HAND]: '{}' } });
+      const result = await run(accepted.deps, {
+        ...event,
+        acceptNoCmsFields: true
+      });
+      expect(result.cmsFieldsSource).toMatchObject({
+        kind: 'hand_run',
+        sha256: sha('{}')
+      });
+      expect(mockBuild.mock.calls.pop()![1].cmsFields).toEqual({});
+    });
+  });
+
   describe("the profile site run at the freeze, through the site's pointer", () => {
     it.each([
       [
         'no pointer',
         {},
-        `No profile site export for the freeze ${FREEZE_ISO}: ${SITE_POINTER} doesn't exist`
+        `No profile site export for the freeze ${FREEZE_ISO}: ${SITE_POINTER} doesn't exist. Run the profile site export for this freeze first: its whole, usable run writes that pointer. Only if it can't run, give a hand-run cms-fields.json as cmsFieldsAtFreeze.`
       ],
       [
         'a pointer for another freeze',

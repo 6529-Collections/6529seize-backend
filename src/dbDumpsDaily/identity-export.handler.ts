@@ -111,6 +111,20 @@ export type IdentityExportInput =
   | { readonly key: string }
   | { readonly inline: unknown };
 
+/** Where a hand-run cms-fields.json must be uploaded. */
+const HAND_RUN_ROOT = `${PREFIX_ROOT}inputs/`;
+
+/**
+ * At the freeze, when the profile site export didn't run: a cms-fields.json
+ * made by hand with the profile site export's CLI, uploaded under
+ * identity-export/inputs/, and its sha256. Taken only when no profile site
+ * pointer exists for the freeze: a site run's values always win.
+ */
+export interface CmsFieldsAtFreeze {
+  readonly key: string;
+  readonly sha256: string;
+}
+
 /**
  * Invoke-only jobs of the dbDumpsDaily function (its schedule sends no
  * `job`):
@@ -139,6 +153,11 @@ export type IdentityExportEvent =
        * freeze names them.
        */
       readonly cmsFields: IdentityExportInput | null;
+      /**
+       * At the freeze, a hand-run cms-fields.json, only when the profile
+       * site export didn't run (no pointer for the freeze); null otherwise.
+       */
+      readonly cmsFieldsAtFreeze: CmsFieldsAtFreeze | null;
       readonly acceptOverCredit: number;
       readonly acceptEditsAfterFreeze: number;
       readonly acceptRatingsChangedAfterFreeze: number;
@@ -708,6 +727,7 @@ const EXPORT_FIELDS = [
   'noExtraIds',
   'cmsFields',
   'noCmsFields',
+  'cmsFieldsAtFreeze',
   'acceptOverCredit',
   'acceptEditsAfterFreeze',
   'acceptRatingsChangedAfterFreeze',
@@ -823,6 +843,32 @@ function inputOf(name: string, value: unknown): IdentityExportInput {
   );
 }
 
+/** cmsFieldsAtFreeze as given: an inputs key and the file's sha256. */
+function handRunOf(value: unknown): CmsFieldsAtFreeze {
+  const record =
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+  const keys = record ? Object.keys(record).sort() : [];
+  const key = record?.key;
+  const hex = record?.sha256;
+  if (
+    keys.join(',') !== 'key,sha256' ||
+    typeof key !== 'string' ||
+    !key.startsWith(HAND_RUN_ROOT) ||
+    key.endsWith('/') ||
+    key.includes('..') ||
+    !/^[A-Za-z0-9/_.-]+$/.test(key) ||
+    typeof hex !== 'string' ||
+    !/^[0-9a-fA-F]{64}$/.test(hex)
+  ) {
+    throw new IdentityExportEventError(
+      `cmsFieldsAtFreeze must be {"key": "${HAND_RUN_ROOT}<file>.json", "sha256": "<its 64-hex sha256>"}: the hand-run cms-fields.json uploaded to the chain exports bucket`
+    );
+  }
+  return { key, sha256: hex.toLowerCase() };
+}
+
 /** One of the two, as the CLI's `--x FILE` or `--no-x`. */
 function oneOf(
   record: Record<string, unknown>,
@@ -866,7 +912,7 @@ function parseLinksEvent(record: Record<string, unknown>): LinksEvent {
 function checkAtFreeze(record: Record<string, unknown>, bulk: number): void {
   if (record.cmsFields !== undefined || record.noCmsFields !== undefined) {
     throw new IdentityExportEventError(
-      "At the freeze the profile site values come from the profile site export's pointer for that freeze: leave cmsFields and noCmsFields out"
+      "At the freeze the profile site values come from the profile site export's pointer for that freeze, or, only if that export didn't run, from cmsFieldsAtFreeze: leave cmsFields and noCmsFields out"
     );
   }
   if (record.noDelegations !== undefined) {
@@ -939,6 +985,15 @@ export function parseIdentityExportEvent(
       'acceptSnapshotGapMinutes must be a whole number of minutes'
     );
   }
+  const cmsFieldsAtFreeze =
+    record.cmsFieldsAtFreeze === undefined
+      ? null
+      : handRunOf(record.cmsFieldsAtFreeze);
+  if (cmsFieldsAtFreeze !== null && freezeMs === null) {
+    throw new IdentityExportEventError(
+      "cmsFieldsAtFreeze is for an export at the freeze whose profile site export didn't run: a rehearsal takes cmsFields or noCmsFields"
+    );
+  }
   if (gap !== null && freezeMs === null) {
     throw new IdentityExportEventError(
       'acceptSnapshotGapMinutes is for an export at the freeze'
@@ -986,6 +1041,7 @@ export function parseIdentityExportEvent(
     extraIds,
     cmsFields:
       freezeMs === null ? oneOf(record, 'cmsFields', 'noCmsFields') : null,
+    cmsFieldsAtFreeze,
     acceptOverCredit: wholeNumber(
       'acceptOverCredit',
       record.acceptOverCredit,
@@ -1046,16 +1102,31 @@ export interface IdentityExportScope {
   readonly replacePointer: boolean;
 }
 
-/** The profile site run whose cms-fields.json an export at the freeze took. */
-export interface CmsFieldsSource {
-  /** profile-site-export/<stage>/by-freeze/<freeze>.json */
-  readonly pointer: string;
-  readonly prefix: string;
-  readonly manifest: string;
-  readonly manifestSha256: string;
-  readonly file: string;
-  readonly sha256: string;
-}
+/**
+ * Where an export at the freeze took its profile site values: the profile
+ * site run its pointer names (`site_run`), or, only when there was no
+ * pointer for the freeze, a hand-run cms-fields.json (`hand_run`).
+ */
+export type CmsFieldsSource =
+  | {
+      readonly kind: 'site_run';
+      /** profile-site-export/<stage>/by-freeze/<freeze>.json */
+      readonly pointer: string;
+      readonly prefix: string;
+      readonly manifest: string;
+      readonly manifestSha256: string;
+      readonly file: string;
+      readonly sha256: string;
+    }
+  | {
+      readonly kind: 'hand_run';
+      /** identity-export/inputs/<file>.json */
+      readonly key: string;
+      readonly sha256: string;
+      /** The site pointer that wasn't there, and how its read answered. */
+      readonly sitePointer: string;
+      readonly sitePointerRead: 'missing' | 'forbidden';
+    };
 
 export interface IdentityExportResult {
   readonly job: typeof JOB;
@@ -1285,14 +1356,41 @@ async function cmsFieldsAtFreeze(
   writer: PrivateExportWriter,
   s3: Pick<S3Client, 'send'>,
   stage: string,
-  freezeMs: number
+  freezeMs: number,
+  handRun: CmsFieldsAtFreeze | null
 ): Promise<{ bytes: Buffer; source: CmsFieldsSource }> {
   const freeze = new Date(freezeMs).toISOString();
   const pointerKey = pointerKeyOf(SITE_JOB_PREFIX, stage, freezeMs);
   const pointerRead = await writer.readOutside(pointerKey);
+  if (handRun !== null) {
+    // A site run's values always win: a hand-run file is only for a
+    // freeze the profile site export didn't run.
+    if (pointerRead.found) {
+      throw new IdentityExportEventError(
+        `The profile site export ran for the freeze ${freeze}: ${pointerKey} names its run, and its values are the ones taken. Leave cmsFieldsAtFreeze out: a hand-run file never overrides them.`
+      );
+    }
+    const bytes = await objectBytes(handRun.key, writer.bucket, s3);
+    const fileSha256 = sha256(bytes);
+    if (fileSha256 !== handRun.sha256) {
+      throw new IdentityExportEventError(
+        `${handRun.key} has the sha256 ${fileSha256}, not the ${handRun.sha256} given in cmsFieldsAtFreeze: upload the file that was made, and give its sha256`
+      );
+    }
+    return {
+      bytes,
+      source: {
+        kind: 'hand_run',
+        key: handRun.key,
+        sha256: fileSha256,
+        sitePointer: pointerKey,
+        sitePointerRead: pointerRead.reason
+      }
+    };
+  }
   if (!pointerRead.found) {
     throw new IdentityExportEventError(
-      `No profile site export for the freeze ${freeze}: ${pointerKey} ${pointerRead.reason === 'forbidden' ? "can't be read (S3 answers 403 for a key that doesn't exist)" : "doesn't exist"}. Run the profile site export for this freeze first: its whole, usable run writes that pointer.`
+      `No profile site export for the freeze ${freeze}: ${pointerKey} ${pointerRead.reason === 'forbidden' ? "can't be read (S3 answers 403 for a key that doesn't exist)" : "doesn't exist"}. Run the profile site export for this freeze first: its whole, usable run writes that pointer. Only if it can't run, give a hand-run cms-fields.json as cmsFieldsAtFreeze.`
     );
   }
   const pointer = parseJson(pointerRead.text, pointerKey);
@@ -1339,6 +1437,7 @@ async function cmsFieldsAtFreeze(
   return {
     bytes,
     source: {
+      kind: 'site_run',
       pointer: pointerKey,
       prefix,
       manifest: manifestKey,
@@ -1569,7 +1668,22 @@ async function runJob(
   const atFreeze =
     event.freezeMs === null
       ? null
-      : await cmsFieldsAtFreeze(writer, deps.s3, stage, event.freezeMs);
+      : await cmsFieldsAtFreeze(
+          writer,
+          deps.s3,
+          stage,
+          event.freezeMs,
+          event.cmsFieldsAtFreeze
+        );
+  if (atFreeze?.source.kind === 'hand_run') {
+    logger.warn(
+      `[CMS FIELDS HAND RUN] [${atFreeze.source.key}] [SHA256 ${atFreeze.source.sha256}] [NO SITE POINTER: ${atFreeze.source.sitePointerRead.toUpperCase()}]`
+    );
+    // The export file says so too.
+    notes.push(
+      `cms: the profile site export didn't run for this freeze: the profile site values are a hand-run cms-fields.json (${atFreeze.source.key}, sha256 ${atFreeze.source.sha256})`
+    );
+  }
   const cmsBytes =
     atFreeze?.bytes ??
     (event.cmsFields
@@ -1599,12 +1713,13 @@ async function runJob(
     ? {
         count: Object.keys(cmsFields ?? {}).length,
         sha256: sha256(cmsBytes),
-        manifest: atFreeze
-          ? {
-              key: atFreeze.source.manifest,
-              sha256: atFreeze.source.manifestSha256
-            }
-          : null
+        manifest:
+          atFreeze?.source.kind === 'site_run'
+            ? {
+                key: atFreeze.source.manifest,
+                sha256: atFreeze.source.manifestSha256
+              }
+            : null
       }
     : null;
   const source = (input: IdentityExportInput | null) =>
@@ -1615,7 +1730,11 @@ async function runJob(
     bulk: event.bulk,
     includeDelegations: event.includeDelegations,
     extraIds: source(event.extraIds),
-    cmsFields: atFreeze?.source.file ?? source(event.cmsFields),
+    cmsFields: atFreeze
+      ? atFreeze.source.kind === 'site_run'
+        ? atFreeze.source.file
+        : atFreeze.source.key
+      : source(event.cmsFields),
     replacePointer: event.replacePointer
   };
   const elapsed = () =>

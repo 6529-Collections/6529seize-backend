@@ -32,6 +32,11 @@ The event carries the CLI's options, under the same rules.
 - `cmsFields` (`--cms-fields`), or `noCmsFields: true` (`--no-cms-fields`):
   a rehearsal only, `{ "key": "<object key>" }` or `{ "inline": {...} }`. At
   the freeze leave both out: see below.
+- `cmsFieldsAtFreeze`: at the freeze, and only if the profile site export
+  job didn't run for it,
+  `{"key":"identity-export/inputs/<file>.json","sha256":"<hex>"}`: a
+  hand-run `cms-fields.json`, as in "If the profile site export job didn't
+  run" below. The CLI has no such option.
 - `acceptNoCmsFields: true` (`--accept-no-cms-fields`): at the freeze, the
   profile site export's `cms-fields.json` is empty because it has no sites
   (below).
@@ -87,8 +92,9 @@ An inline input is hashed as its JSON text.
 
 ### The profile site values at the freeze
 
-At the freeze the job takes the profile site values only from the profile
-site export of the same freeze and stage. It reads that job's pointer,
+At the freeze the job takes the profile site values from the profile site
+export of the same freeze and stage, or, only when that job didn't run, from
+a hand-run file (next section). It reads that job's pointer,
 `profile-site-export/<stage>/by-freeze/<freezeAt>.json`, then the run it
 names. It refuses, before reading the database, unless:
 
@@ -117,6 +123,45 @@ the site run's `manifest.json`. At the freeze both are required.
 If none of the values is for a profile in the export, the run refuses even
 with `acceptUnmatchedCms`: the values are of another database or stage. Run
 the profile site export for this freeze on the same stage, then this one.
+
+### If the profile site export job didn't run
+
+Only if the profile site export job can't run for the freeze (it isn't
+deployed, or it fails), the values can come from a file made by hand:
+
+1. Make it with the profile site export's CLI on the production database,
+   after the freeze, the freeze in milliseconds:
+   `6529 run profile-cms:export -- --out <dir> --frozen-at 1795478400000`.
+   Its `cms-fields.json` is the file.
+2. Take its sha256 (`Get-FileHash -Algorithm SHA256`, or `sha256sum`), in
+   lower case, and upload it to the chain exports bucket as
+   `identity-export/inputs/cms-fields-2026-11-24.json`.
+3. Run the export at the freeze with `cmsFieldsAtFreeze`, adding the
+   acknowledgements a refusal names as usual:
+
+```text
+$env:AWS_MAX_ATTEMPTS='1'
+Set-Content -Encoding ascii event.json '{"job":"identityExport","freezeAt":"2026-11-24T00:00:00Z","expectTdhBlock":<B_T>,"cmsFieldsAtFreeze":{"key":"identity-export/inputs/cms-fields-2026-11-24.json","sha256":"<hex>"},"extraIds":{"key":"identity-export/inputs/waves.json"}}'
+aws lambda invoke --region us-east-1 --function-name dbDumpsDaily --cli-read-timeout 960 --cli-binary-format raw-in-base64-out --payload file://event.json out.json
+```
+
+The run refuses, before reading the database:
+
+- if the profile site export's pointer for the freeze exists: that run's
+  values win, and a hand-run file never overrides them. Leave
+  `cmsFieldsAtFreeze` out;
+- if the file's sha256 isn't the one given;
+- if the file is `{}`, unless `"acceptNoCmsFields":true`, as for a site
+  run with no sites.
+
+`cmsFieldsSource` in the response, and `cms_fields_source` in the manifest,
+record the file as `"kind":"hand_run"` with its `key` and `sha256`, and the
+site pointer that wasn't there (`sitePointer`; `sitePointerRead` is
+`missing`, or `forbidden` where S3 answers 403 for a key that doesn't
+exist). A site run's source is `"kind":"site_run"`, with its pointer,
+prefix and manifest. The export's header has `cms_fields.manifest` null,
+and its notes say the values are a hand-run file. A rehearsal takes
+`cmsFields` and refuses `cmsFieldsAtFreeze`.
 
 ### Delegations and consolidations after the TDH block
 
@@ -463,7 +508,8 @@ replaced.
 - `revision` is the commit deployed, and `buildCommit` is the same commit
   (or `null`, with the revision you gave).
 - `cmsFieldsSource` names the profile site run at the freeze and its
-  manifest's sha256.
+  manifest's sha256 (`"kind":"site_run"`), or, only if that job didn't run,
+  the hand-run file and its sha256 (`"kind":"hand_run"`).
 - `endpoint` is `reader`, with `readOnly: true` and `evidence`: the export
   read DB_HOST_READ. The reader's hostname is in neither the response, the
   manifest (whose `read.endpoint` is the same label) nor the pointer; it is
