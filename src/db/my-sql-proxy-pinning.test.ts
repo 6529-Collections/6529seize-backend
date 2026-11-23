@@ -189,6 +189,22 @@ describe('RDS Proxy pin containment outside a request scope', () => {
     expect(JSON.stringify(records())).not.toContain('e2ee_devices');
   });
 
+  it('keeps signed record statements and their values out of logs', async () => {
+    const records = captureEmf();
+    const driver = fakeConnection();
+    await execSQLWithParams(
+      'select * from signed_record_heads where rkey in (:ids)',
+      driver.connection,
+      true,
+      { ids: manyIds }
+    );
+    const [record] = records();
+    expect(record.fingerprint).toMatch(
+      /^\[private signed records query #[0-9a-f]{8}\]$/
+    );
+    expect(JSON.stringify(records())).not.toContain('signed_record_heads');
+  });
+
   it('defers a transaction connection to transaction release', async () => {
     const records = captureEmf();
     const driver = fakeConnection();

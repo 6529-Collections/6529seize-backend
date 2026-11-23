@@ -11,11 +11,6 @@ import {
 import { sqs, SQS } from '@/sqs';
 import { Time } from '@/time';
 import { randomUUID } from 'node:crypto';
-import {
-  getHelpBotDailyActivitySourceId,
-  helpBotCreditsService,
-  HelpBotCreditsService
-} from './help-bot-credits.service';
 
 export const HELP_BOT_DAILY_ACTIVITY_CREDITS_QUEUE_NAME =
   'help-bot-daily-activity-credits.fifo';
@@ -33,14 +28,6 @@ interface PendingRequestRow {
   readonly attempts: number | string;
 }
 
-class InvalidHelpBotActivityDateError extends Error {
-  public constructor(activityDate: string) {
-    super(`Invalid help bot activity date: ${activityDate}`);
-    this.name = InvalidHelpBotActivityDateError.name;
-    Object.setPrototypeOf(this, InvalidHelpBotActivityDateError.prototype);
-  }
-}
-
 export interface ProcessDailyActivityCreditRequestResult {
   readonly processed: boolean;
   readonly failed: boolean;
@@ -48,51 +35,19 @@ export interface ProcessDailyActivityCreditRequestResult {
   readonly hasMore: boolean;
 }
 
+/**
+ * Help6529 Credits are gone, and drop creation no longer writes daily-activity
+ * requests. The worker only completes requests left from before, without
+ * granting anything, until its queue and Lambda are removed.
+ */
 export class HelpBotDailyActivityCreditQueueService extends LazyDbAccessCompatibleService {
   private readonly logger = Logger.get(this.constructor.name);
 
   public constructor(
     sqlExecutorGetter: () => SqlExecutor = dbSupplier,
-    private readonly creditsService: HelpBotCreditsService = helpBotCreditsService,
     private readonly sqsClient: SQS = sqs
   ) {
     super(sqlExecutorGetter);
-  }
-
-  public async enqueueRequest(
-    {
-      profileId,
-      requestedAt = Time.currentMillis()
-    }: {
-      readonly profileId: string;
-      readonly requestedAt?: number;
-    },
-    ctx: RequestContext = {}
-  ): Promise<boolean> {
-    const timerName = `${this.constructor.name}->enqueueRequest`;
-    ctx.timer?.start(timerName);
-    try {
-      const result = await this.db.execute(
-        `
-          INSERT IGNORE INTO ${HELP_BOT_DAILY_ACTIVITY_CREDIT_REQUESTS_TABLE}
-            (profile_id, activity_date, status, attempts, next_attempt_at,
-             last_error, requested_at, updated_at, completed_at)
-          VALUES
-            (:profileId, :activityDate, :status, 0, :requestedAt,
-             NULL, :requestedAt, :requestedAt, NULL)
-        `,
-        {
-          profileId,
-          activityDate: getHelpBotDailyActivitySourceId(requestedAt),
-          status: HelpBotDailyActivityCreditRequestStatus.PENDING,
-          requestedAt
-        },
-        { wrappedConnection: ctx.connection }
-      );
-      return this.db.getAffectedRows(result) > 0;
-    } finally {
-      ctx.timer?.stop(timerName);
-    }
   }
 
   public async sendWakeup(ctx: RequestContext = {}): Promise<void> {
@@ -112,17 +67,6 @@ export class HelpBotDailyActivityCreditQueueService extends LazyDbAccessCompatib
     }
   }
 
-  public async sendWakeupBestEffort(ctx: RequestContext = {}): Promise<void> {
-    try {
-      await this.sendWakeup(ctx);
-    } catch (error) {
-      this.logger.error(
-        'Failed to wake help bot daily activity credit worker; durable requests remain queued',
-        { error }
-      );
-    }
-  }
-
   public async processNextRequest(
     ctx: RequestContext = {}
   ): Promise<ProcessDailyActivityCreditRequestResult> {
@@ -135,16 +79,6 @@ export class HelpBotDailyActivityCreditQueueService extends LazyDbAccessCompatib
       }
 
       try {
-        const result = await this.creditsService.grantDailyActivityCredits(
-          {
-            profileId: row.profile_id,
-            nowMillis: this.activityDateToMillis(row.activity_date)
-          },
-          ctx
-        );
-        if (result.botProfileMissing) {
-          throw new Error('Help bot profile could not be resolved');
-        }
         await this.markCompleted(row, ctx);
         return {
           processed: true,
@@ -153,9 +87,7 @@ export class HelpBotDailyActivityCreditQueueService extends LazyDbAccessCompatib
           hasMore: await this.hasPendingRequests(ctx)
         };
       } catch (error) {
-        const dead =
-          error instanceof InvalidHelpBotActivityDateError ||
-          Number(row.attempts) + 1 >= MAX_PROCESSING_ATTEMPTS;
+        const dead = Number(row.attempts) + 1 >= MAX_PROCESSING_ATTEMPTS;
         await this.recordFailure(row, error, dead, ctx);
         this.logger.error('Failed to process help bot daily activity credit', {
           profileId: row.profile_id,
@@ -315,18 +247,6 @@ export class HelpBotDailyActivityCreditQueueService extends LazyDbAccessCompatib
         forcePool: DbPoolName.WRITE
       }
     );
-  }
-
-  private activityDateToMillis(activityDate: string): number {
-    const millis = Date.parse(`${activityDate}T00:00:00.000Z`);
-    if (
-      !/^\d{4}-\d{2}-\d{2}$/.test(activityDate) ||
-      !Number.isFinite(millis) ||
-      getHelpBotDailyActivitySourceId(millis) !== activityDate
-    ) {
-      throw new InvalidHelpBotActivityDateError(activityDate);
-    }
-    return millis;
   }
 
   private errorToString(error: unknown): string {

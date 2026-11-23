@@ -44,6 +44,10 @@ import {
   MarketDepthEventPurgeBatch,
   MarketDepthEventPurgeKey
 } from './market-depth-retention';
+import {
+  MarketDepthArchiveKind,
+  MarketDepthArchivedEvent
+} from './market-depth-archive';
 
 type DbConnection = ConnectionWrapper<unknown>;
 const logger = Logger.get('MARKET_DEPTH_DB');
@@ -1002,6 +1006,121 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
       }
     );
     return this.db.getAffectedRows(result) === 1;
+  }
+
+  async getFirstArchivableAtOrAfter(input: {
+    kind: MarketDepthArchiveKind;
+    contract: string;
+    from: Date;
+  }): Promise<Date | null> {
+    const contract = normalizeContract(input.contract);
+    if (input.kind === 'events') {
+      const row = (
+        await this.query<{ at: Date }>(
+          `SELECT observed_at AS at FROM ${MARKET_DEPTH_EVENTS_TABLE}
+           FORCE INDEX (idx_market_depth_events_contract_observed)
+           WHERE chain_id=:chainId AND contract=:contract AND observed_at>=:from
+           ORDER BY observed_at ASC LIMIT 1`,
+          { chainId: MARKET_DEPTH_CHAIN_ID, contract, from: input.from }
+        )
+      )[0];
+      return row ? new Date(row.at) : null;
+    }
+    let first: Date | null = null;
+    for (const partition of await this.getPurgePartitions(contract)) {
+      const row = (
+        await this.query<{ at: Date }>(
+          `SELECT completed_at AS at FROM ${MARKET_DEPTH_SNAPSHOTS_TABLE}
+           FORCE INDEX (idx_market_depth_snapshots_collection_completed)
+           WHERE source=:source AND chain_id=:chainId AND contract=:contract
+             AND collection_slug=:collectionSlug AND completed_at>=:from
+           ORDER BY completed_at ASC LIMIT 1`,
+          {
+            source: partition.source,
+            chainId: MARKET_DEPTH_CHAIN_ID,
+            contract,
+            collectionSlug: partition.collection_slug,
+            from: input.from
+          }
+        )
+      )[0];
+      const at = row ? new Date(row.at) : null;
+      if (at && (first === null || at < first)) first = at;
+    }
+    return first;
+  }
+
+  async getEventsObservedBetween(input: {
+    contract: string;
+    from: Date;
+    to: Date;
+    after: { observed_at: Date; event_id: string } | null;
+    limit: number;
+  }): Promise<MarketDepthArchivedEvent[]> {
+    assertPurgeLimit(input.limit);
+    const afterClause = input.after
+      ? 'AND (observed_at>:afterAt OR (observed_at=:afterAt AND event_id>:afterId))'
+      : '';
+    const rows = await this.query<MarketDepthArchivedEvent>(
+      `SELECT ${EVENT_COLUMNS.join(', ')}, occurred_at
+       FROM ${MARKET_DEPTH_EVENTS_TABLE}
+       FORCE INDEX (idx_market_depth_events_contract_observed)
+       WHERE chain_id=:chainId AND contract=:contract
+         AND observed_at>=:from AND observed_at<:to ${afterClause}
+       ORDER BY observed_at ASC, event_id ASC LIMIT :limit`,
+      {
+        chainId: MARKET_DEPTH_CHAIN_ID,
+        contract: normalizeContract(input.contract),
+        from: input.from,
+        to: input.to,
+        afterAt: input.after?.observed_at,
+        afterId: input.after?.event_id,
+        limit: input.limit
+      }
+    );
+    return rows.map((row) => ({
+      ...row,
+      provider_at: row.provider_at ? new Date(row.provider_at) : null,
+      observed_at: new Date(row.observed_at),
+      occurred_at: new Date(row.occurred_at)
+    }));
+  }
+
+  async getSnapshotsCompletedBetween(input: {
+    contract: string;
+    from: Date;
+    to: Date;
+  }): Promise<MarketDepthSnapshotMetadata[]> {
+    const contract = normalizeContract(input.contract);
+    const snapshots: MarketDepthSnapshotMetadata[] = [];
+    for (const partition of await this.getPurgePartitions(contract)) {
+      const rows = await this.query<SnapshotRow>(
+        `SELECT id, chain, chain_id, source, contract, collection_slug,
+                collection_id, schema_version, normalizer_version, started_at,
+                completed_at, raw_order_count, order_count, ask_count,
+                bid_count, unsupported_count, skipped_count, event_count
+         FROM ${MARKET_DEPTH_SNAPSHOTS_TABLE}
+         FORCE INDEX (idx_market_depth_snapshots_collection_completed)
+         WHERE source=:source AND chain_id=:chainId AND contract=:contract
+           AND collection_slug=:collectionSlug
+           AND completed_at>=:from AND completed_at<:to
+         ORDER BY completed_at ASC, id ASC`,
+        {
+          source: partition.source,
+          chainId: MARKET_DEPTH_CHAIN_ID,
+          contract,
+          collectionSlug: partition.collection_slug,
+          from: input.from,
+          to: input.to
+        }
+      );
+      snapshots.push(...rows.map(mapSnapshotRow));
+    }
+    return snapshots.sort(
+      (a, b) =>
+        a.completed_at.getTime() - b.completed_at.getTime() ||
+        a.id.localeCompare(b.id)
+    );
   }
 
   private async getPurgePartitions(

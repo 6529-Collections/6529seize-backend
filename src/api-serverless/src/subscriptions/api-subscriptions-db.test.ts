@@ -1,6 +1,7 @@
 import * as dbApi from '@/db-api';
 import * as nftsDb from '@/nftsLoop/db.nfts';
 import {
+  SUBSCRIPTION_DEFERRED_WRITES_TABLE,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
   MEMES_MINT_PRICE,
@@ -15,7 +16,8 @@ import {
   fetchMemeSubscriptionCount,
   fetchPastMemeSubscriptionCounts,
   fetchRedeemedMemeSubscriptionCountsDownload,
-  fetchUpcomingMemeSubscriptionCounts
+  fetchUpcomingMemeSubscriptionCounts,
+  updateSubscriptionMode
 } from './api.subscriptions.db';
 
 // These aggregate tests cover open future cards; cutoff behavior has its own suite.
@@ -221,5 +223,34 @@ describe('fetchRedeemedMemeSubscriptionCountsDownload', () => {
       mintPrice: MEMES_MINT_PRICE,
       szn: 14
     });
+  });
+});
+
+describe('the key-width check on a subscription change', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('reads the waiting writes without a lock, outside any transaction', async () => {
+    const execute = jest
+      .spyOn(sqlExecutor, 'execute')
+      .mockResolvedValue([] as never);
+    jest
+      .spyOn(sqlExecutor, 'executeNativeQueriesInTransaction')
+      .mockResolvedValue(undefined as never);
+
+    await updateSubscriptionMode(
+      '0x00000000000000000000000000000000000000a1',
+      false
+    );
+
+    // With no connection the executor may send this read to the read
+    // replica, so it must not be a locking read.
+    const queueReads = execute.mock.calls.filter(([sql]) =>
+      String(sql).includes(SUBSCRIPTION_DEFERRED_WRITES_TABLE)
+    );
+    expect(queueReads).toHaveLength(1);
+    expect(queueReads[0][0]).not.toContain('FOR SHARE');
+    expect(queueReads[0][2]).toBeUndefined();
   });
 });

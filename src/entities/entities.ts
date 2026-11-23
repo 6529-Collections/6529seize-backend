@@ -182,6 +182,7 @@ export {
 } from './IReleaseNotePublication';
 export { ReleaseNoteStreamStateEntity } from './IReleaseNoteStreamState';
 export { Rememe, RememeUpload } from './IRememe';
+export { RepRatingRemovalEntity } from './IRepRatingRemoval';
 export { ProfileTotalRepScoreAggregation } from './IRepScoreAggregations';
 export { RoyaltiesUpload } from './IRoyalties';
 export { MemesSeason } from './ISeason';
@@ -207,6 +208,7 @@ export {
 } from './ISubscription';
 export { SubscriptionCoverageAlertStateEntity } from './ISubscriptionCoverageAlertState';
 export { SubscriptionCoverageRefreshRequestEntity } from './ISubscriptionCoverageRefreshRequest';
+export { SubscriptionDeferredWriteEntity } from './ISubscriptionDeferredWrite';
 export {
   ConsolidatedTDH,
   ConsolidatedTDHEditions,
@@ -295,6 +297,11 @@ export { SubscriptionCacheInvalidationEntity } from './ISubscriptionCacheInvalid
 export { DeviceGrantEntity } from './IDeviceGrant';
 export { DeviceSignedEventEntity } from './IDeviceSignedEvent';
 export { DropAuthorSignatureEntity } from './IDropAuthorSignature';
+export { SignedRecordHeadEntity } from './ISignedRecordHead';
+export {
+  SignedRecordLogEntryEntity,
+  SignedRecordLogSegmentEntity
+} from './ISignedRecordLog';
 export * from './IE2ee';
 export {
   MemeCollaborationEntity,

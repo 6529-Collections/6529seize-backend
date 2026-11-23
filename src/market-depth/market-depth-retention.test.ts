@@ -207,4 +207,65 @@ describe('market-depth retention', () => {
     // Snapshots and reconciliations finish instantly; events get all 90s.
     expect(db.purgeEventsObservedBefore).toHaveBeenCalledTimes(9);
   });
+
+  describe('archive gate', () => {
+    const fullBatches = () =>
+      database({
+        purgeSnapshotsCompletedBefore: jest.fn().mockResolvedValue(0),
+        purgeReconciliationsDueBefore: jest.fn().mockResolvedValue(0),
+        purgeEventsObservedBefore: jest
+          .fn()
+          .mockResolvedValue({ scanned: 0, deleted: 0, last: null })
+      });
+
+    function runGated(
+      db: MarketDepthRetentionDb,
+      archivedThrough: { snapshots: Date | null; events: Date | null }
+    ) {
+      return purgeMarketDepthHistory({
+        contract: CONTRACT,
+        db,
+        archivedThrough,
+        deadlineMs: Infinity,
+        now: () => NOW,
+        pause: jest.fn().mockResolvedValue(undefined)
+      });
+    }
+
+    it('keeps every event and snapshot until the first archive run', async () => {
+      const db = fullBatches();
+      await expect(
+        runGated(db, { snapshots: null, events: null })
+      ).resolves.toEqual({
+        snapshots: 0,
+        reconciliations: 0,
+        events: 0,
+        complete: true
+      });
+      expect(db.purgeSnapshotsCompletedBefore).not.toHaveBeenCalled();
+      expect(db.purgeEventsObservedBefore).not.toHaveBeenCalled();
+      // The reconciliation queue is not archived and keeps its own window.
+      expect(db.purgeReconciliationsDueBefore).toHaveBeenCalled();
+    });
+
+    it('never deletes at or after the archive watermark', async () => {
+      const db = fullBatches();
+      const archivedEvents = new Date(NOW.getTime() - 40 * DAY_MS);
+      const archivedSnapshots = new Date(NOW.getTime() - DAY_MS);
+      await runGated(db, {
+        snapshots: archivedSnapshots,
+        events: archivedEvents
+      });
+      // Events: the watermark is older than the 30-day cutoff, so it wins.
+      expect(db.purgeEventsObservedBefore).toHaveBeenCalledWith(
+        expect.objectContaining({ cutoff: archivedEvents })
+      );
+      // Snapshots: the 14-day cutoff is older than the watermark.
+      expect(db.purgeSnapshotsCompletedBefore).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cutoff: new Date(NOW.getTime() - 14 * DAY_MS)
+        })
+      );
+    });
+  });
 });
