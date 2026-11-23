@@ -310,6 +310,30 @@ export class MysqlAdmin {
     }
   }
 
+  /** A table's columns, in order; empty when there is no such table. */
+  async columnNames(database: string, table: string): Promise<string[]> {
+    const rows = await this.query<{ name: string }>(
+      `SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+        ORDER BY ORDINAL_POSITION`,
+      [database, table]
+    );
+    return rows.map((row) => row.name);
+  }
+
+  /** Sets `columns` of every row of a table back to their defaults. */
+  async resetColumns(
+    database: string,
+    table: string,
+    columns: readonly string[]
+  ): Promise<void> {
+    await this.query(
+      `UPDATE ${mysql.escapeId(database)}.${mysql.escapeId(table)} SET ${columns
+        .map((column) => `${mysql.escapeId(column)} = DEFAULT`)
+        .join(', ')}`
+    );
+  }
+
   /** Whether a column may hold NULL; null when the table has no such column. */
   async columnNullable(
     database: string,

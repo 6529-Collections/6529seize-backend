@@ -19,6 +19,7 @@ const clean: VerdictInput = {
   waitingSteps: [],
   staleNeeds: [],
   unownedRows: [],
+  unrunOwnedColumns: [],
   heldProbes: [],
   notInSchema: [],
   openRoutes: 0
@@ -80,6 +81,11 @@ const findings: [string, Partial<VerdictInput>, RegExp][] = [
       ]
     },
     /1 needs name tables the schema already has, so they hold nothing back: subs\.switch needs identity_chain_principals/
+  ],
+  [
+    'owned columns no owner rebuilt',
+    { unrunOwnedColumns: ['identities.tdh (tdh.rebuild)'] },
+    /1 owned columns were left out of the row comparison.*identities\.tdh \(tdh\.rebuild\)/
   ],
   ['held probes', { heldProbes: ['a.p'] }, /planned probes were held/],
   [

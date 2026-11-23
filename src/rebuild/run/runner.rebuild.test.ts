@@ -1,5 +1,10 @@
 import * as path from 'node:path';
-import { AreaManifest, Probe, RebuildStep } from '@/rebuild/manifest.types';
+import {
+  AreaManifest,
+  Probe,
+  RebuildStep,
+  TableEntry
+} from '@/rebuild/manifest.types';
 import { AREA_MANIFESTS } from '@/rebuild/manifests';
 import { headline } from '@/rebuild/report/report';
 import { runRebuildCheck } from '@/rebuild/run/runner';
@@ -44,8 +49,17 @@ function run(
     more?: RebuildStep[];
     /** A full run of every area, instead of the area's run. */
     full?: boolean;
+    /** Table entries that replace the manifests' own. */
+    tables?: Readonly<Record<string, TableEntry>>;
   }
 ) {
+  const tables = (manifest: AreaManifest) =>
+    Object.fromEntries(
+      Object.entries(manifest.tables).map(([table, entry]) => [
+        table,
+        parts.tables?.[table] ?? entry
+      ])
+    );
   // Only the self-check's own steps and probe: the areas' steps and probes
   // answer for the areas, in area and integration runs, not for the
   // harness, and one area's steps may wait on another's.
@@ -53,12 +67,14 @@ function run(
     manifest.area === area
       ? {
           ...manifest,
+          tables: tables(manifest),
           seeds: [parts.seed],
           rebuilders: [parts.rebuilder, ...(parts.more ?? [])],
           probes: parts.probes ?? []
         }
       : {
           ...manifest,
+          tables: tables(manifest),
           seeds: [],
           rebuilders: parts.others?.[manifest.area] ?? [],
           probes: []
@@ -297,6 +313,211 @@ describe('rebuild check, end to end', () => {
         report.tables.diffs.map((d) => [d.table, d.same, d.rowsAfter])
       ).toEqual([['team', true, 3]]);
     }
+  });
+
+  describe('column owners', () => {
+    const dated = (id: string, exportName: string): RebuildStep => ({
+      ...step(id, exportName, []),
+      writes: [
+        {
+          table: 'team',
+          columns: ['created_at'],
+          reason: 'the owner dates every row'
+        }
+      ],
+      after: ['self-check.undated']
+    });
+    const undated = step('self-check.undated', 'rebuildTeamUndated', ['team']);
+    // team's manifest leaves created_at out of the comparison: here it is
+    // compared, so a run passes only if the owner filled it.
+    const tables = { team: { class: 'INDEX' as const } };
+    const ownedRun = (rows: RebuildStep, owner: RebuildStep) =>
+      run('mint', { seed: teamSeed, rebuilder: rows, more: [owner], tables });
+
+    it('passes when the row writer leaves the column to its owner', async () => {
+      const { report } = await ownedRun(
+        undated,
+        dated('self-check.dated', 'dateTeam')
+      );
+      expect(report.failures).toEqual([]);
+      expect(report.verdict).toBe('PASS');
+      expect(report.tables.diffs.map((d) => [d.table, d.same])).toEqual([
+        ['team', true]
+      ]);
+    });
+
+    it('lets the row writer delete rows under column grants', async () => {
+      const { report } = await ownedRun(
+        {
+          ...undated,
+          run: { module: MODULE, exportName: 'rebuildTeamUndatedAfterDelete' }
+        },
+        dated('self-check.dated', 'dateTeam')
+      );
+      expect(report.failures).toEqual([]);
+      expect(report.verdict).toBe('PASS');
+    });
+
+    it("keeps the rows when the row writer doesn't run, and refills the owned column", async () => {
+      // A tdh-only run: team's row writer is mint's, so team keeps its
+      // seeded rows and created_at goes back to its default for the owner.
+      const rows = { mint: [undated] };
+      const owner = (id: string, exportName: string) =>
+        run('tdh', {
+          seed: teamSeed,
+          rebuilder: dated(id, exportName),
+          others: rows,
+          tables
+        });
+      const refilled = await owner('self-check.dated', 'dateTeam');
+      expect(refilled.report.failures).toEqual([]);
+      expect(refilled.report.verdict).toBe('PASS');
+      expect(
+        refilled.report.tables.diffs.map((d) => [d.table, d.same, d.rowsAfter])
+      ).toEqual([['team', true, 3]]);
+      // Dating only the MEMES rows leaves the other at the default: the
+      // column was reset, not kept as seeded, and the rows differ.
+      const partly = await owner('self-check.memes-dated', 'dateMemesTeam');
+      expect(
+        partly.report.tables.diffs.map((d) => [d.table, d.rowsAfter, d.changed])
+      ).toEqual([
+        // The changed row's key, as the report writes it.
+        [
+          'team',
+          3,
+          [JSON.stringify(['0x0000000000000000000000000000000000000002'])]
+        ]
+      ]);
+      // A mint-only run leaves the tdh owner's column out, and says so.
+      const { report } = await run('mint', {
+        seed: teamSeed,
+        rebuilder: undated,
+        others: { tdh: [dated('self-check.dated', 'dateTeam')] },
+        tables
+      });
+      expect(report.failures).toEqual([]);
+      expect(report.verdict).toBe('PASS');
+      expect(report.notes.join(' ')).toContain(
+        "team.created_at (self-check.dated, another area's)"
+      );
+      expect(report.tables.ownedColumnsLeftOut).toEqual([
+        {
+          table: 'team',
+          column: 'created_at',
+          owner: 'self-check.dated',
+          why: "another area's"
+        }
+      ]);
+      // A planned owner whose code isn't here: its column is left out the
+      // same way, says why, and fails a final run.
+      const planned = await run('mint', {
+        seed: teamSeed,
+        rebuilder: undated,
+        more: [
+          {
+            ...dated('self-check.later', 'dateTeam'),
+            origin: 'planned',
+            run: { module: 'src/rebuild/run/not-here', exportName: 'dateTeam' }
+          }
+        ],
+        final: true,
+        tables
+      });
+      expect(planned.report.verdict).toBe('FAIL');
+      expect(planned.report.failures.join(' ')).toContain(
+        'team.created_at (self-check.later, planned, its code is not in this tree)'
+      );
+    });
+
+    it('refills the owned column of a table kept for a skipped row writer', async () => {
+      // The row writer waits for a table no code creates yet, so team is
+      // kept for it, and the kept copy brings back the seeded dates. The
+      // owner's column still goes back to its default after the copy:
+      // dating only the MEMES rows leaves the other row at the default.
+      const { report } = await run('mint', {
+        seed: teamSeed,
+        rebuilder: {
+          ...undated,
+          needs: [
+            {
+              table: 'identity_chain_principals',
+              reason: 'the identity mirror creates it'
+            }
+          ]
+        },
+        more: [dated('self-check.memes-dated', 'dateMemesTeam')],
+        tables
+      });
+      expect(report.failures).toEqual([]);
+      expect(report.steps.map((s) => s.id)).not.toContain('self-check.undated');
+      expect(
+        report.tables.diffs.map((d) => [d.table, d.rowsAfter, d.changed])
+      ).toEqual([
+        [
+          'team',
+          3,
+          [JSON.stringify(['0x0000000000000000000000000000000000000002'])]
+        ]
+      ]);
+    });
+
+    it('leaves an exempt column out of the comparison, with its reason', async () => {
+      const { report } = await run('mint', {
+        seed: teamSeed,
+        rebuilder: undated,
+        tables: {
+          team: {
+            class: 'INDEX',
+            exemptColumns: [
+              { column: 'created_at', reason: 'no step rebuilds it' }
+            ]
+          }
+        }
+      });
+      expect(report.failures).toEqual([]);
+      expect(report.verdict).toBe('PASS');
+      expect(report.tables.diffs.map((d) => [d.table, d.same])).toEqual([
+        ['team', true]
+      ]);
+      expect(report.tables.volatileColumns).toContainEqual({
+        table: 'team',
+        column: 'created_at',
+        reason: 'exempt: no step rebuilds it'
+      });
+    });
+
+    it('fails a row writer that writes an owned column', async () => {
+      const { report } = await ownedRun(
+        { ...undated, run: { module: MODULE, exportName: 'rebuildTeam' } },
+        dated('self-check.dated', 'dateTeam')
+      );
+      expect(report.verdict).toBe('FAIL');
+      expect(report.failures).toContain(
+        "self-check.undated may not INSERT column created_at of team: it isn't the step's to write"
+      );
+    });
+
+    it('fails an owner that adds a row', async () => {
+      const { report } = await ownedRun(
+        undated,
+        dated('self-check.adds', 'dateTeamAndAddRow')
+      );
+      expect(report.verdict).toBe('FAIL');
+      expect(report.failures).toContain(
+        'self-check.adds may not INSERT rows of team: it owns only columns there'
+      );
+    });
+
+    it('fails an owner that writes another column', async () => {
+      const { report } = await ownedRun(
+        undated,
+        dated('self-check.renames', 'dateTeamAndRename')
+      );
+      expect(report.verdict).toBe('FAIL');
+      expect(report.failures).toContain(
+        "self-check.renames may not UPDATE column name of team: it isn't the step's to write"
+      );
+    });
   });
 
   it('fails a rebuilder that calls a host outside the sources', async () => {

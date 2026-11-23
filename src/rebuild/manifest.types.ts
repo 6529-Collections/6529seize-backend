@@ -45,6 +45,16 @@ export interface TableEntry {
     readonly reason: string;
   }[];
   /**
+   * INDEX only: columns no step rebuilds, each with why (for example a
+   * retired feature's last values, which backups keep). The row comparison
+   * leaves them out like volatile ones, and the report lists each with its
+   * reason. A column can't be both exempt and owned by a column owner.
+   */
+  readonly exemptColumns?: readonly {
+    readonly column: string;
+    readonly reason: string;
+  }[];
+  /**
    * INDEX only, for a table whose readers take only its one newest row by
    * `column` (a checkpoint each run writes): the row diff compares only
    * the rows holding the column's largest value (MAX, as MySQL compares
@@ -114,7 +124,19 @@ export interface RebuildStep {
 }
 
 /** A table a step writes: all of it, or a rebuilder's partition of it. */
-export type WrittenTable = string | PartitionedWrite;
+export type WrittenTable = string | PartitionedWrite | ColumnsWrite;
+
+/**
+ * A column owner's write: only `columns` of the rows another step (the
+ * table's row writer) writes. The owner runs after the row writer and may
+ * only update its own columns on existing rows; the row writer may not
+ * touch them.
+ */
+export interface ColumnsWrite {
+  readonly table: string;
+  readonly columns: readonly string[];
+  readonly reason: string;
+}
 
 /**
  * A rebuilder's part of a table other rebuilders write too: the rows whose

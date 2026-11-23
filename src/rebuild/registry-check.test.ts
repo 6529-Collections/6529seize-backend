@@ -361,6 +361,122 @@ describe('checkRegistry', () => {
     });
   });
 
+  describe('column owners', () => {
+    const owner = (
+      id: string,
+      columns: string[],
+      parts: Partial<RebuildStep> = {}
+    ) =>
+      step(id, {
+        writes: [{ table: 'ids', columns, reason: 'its sync writes them' }],
+        ...parts
+      });
+    const check = (rebuilders: RebuildStep[], seeds: RebuildStep[] = []) =>
+      checkRegistry({
+        manifests: [
+          area(
+            'a',
+            { ids: index() },
+            {
+              rebuilders: rebuilders.filter((s) => s.id.startsWith('a.')),
+              seeds
+            }
+          ),
+          area(
+            'b',
+            {},
+            {
+              rebuilders: rebuilders.filter((s) => s.id.startsWith('b.'))
+            }
+          )
+        ],
+        codeTables: code('ids')
+      }).problems.map((p) => [p.kind, p.detail]);
+    const rows = step('a.rows', { writes: ['ids'] });
+
+    it("lets another area own columns of a row writer's table, after it", () => {
+      expect(
+        check([rows, owner('b.tdh', ['tdh', 'xtdh'], { after: ['a.rows'] })])
+      ).toEqual([]);
+    });
+
+    it('refuses overlapping owners, an owner with no row writer, and one that runs first', () => {
+      expect(
+        check([
+          rows,
+          owner('b.tdh', ['tdh'], { after: ['a.rows'] }),
+          owner('b.again', ['tdh', 'level'], { after: ['a.rows'] })
+        ])
+      ).toEqual([
+        [
+          'DOUBLE_WRITER',
+          "ids's column owners overlap: b.tdh and b.again both own tdh"
+        ]
+      ]);
+      expect(check([owner('b.tdh', ['tdh'])])).toEqual([
+        ['DOUBLE_WRITER', 'ids has column owners (b.tdh) but no row writer']
+      ]);
+      expect(check([rows, owner('b.tdh', ['tdh'])])).toEqual([
+        [
+          'BAD_ORDER',
+          "column owner b.tdh of ids must run after its row writer; add after: ['a.rows']"
+        ]
+      ]);
+    });
+
+    it('lets a writer read its table without waiting on the column owners', () => {
+      // The row writer reads its rows, and two owners read the table: none
+      // waits on an owner, and each owner waits on the row writer only.
+      expect(
+        check([
+          step('a.rows', { writes: ['ids'], reads: ['ids'] }),
+          owner('b.tdh', ['tdh'], { after: ['a.rows'], reads: ['ids'] }),
+          owner('b.xtdh', ['xtdh'], { after: ['a.rows'], reads: ['ids'] })
+        ])
+      ).toEqual([]);
+      // Another reader of the table waits on every writer of it.
+      expect(
+        check([
+          rows,
+          owner('b.tdh', ['tdh'], { after: ['a.rows'] }),
+          step('b.reader', { reads: ['ids'], after: ['a.rows'] })
+        ])
+      ).toEqual([
+        [
+          'BAD_ORDER',
+          "rebuilder b.reader reads ids, which b.tdh rebuilds; add after: ['b.tdh']"
+        ]
+      ]);
+    });
+
+    it('refuses a step that writes the rows and owns columns of one table', () => {
+      expect(
+        check([
+          step('a.rows', {
+            writes: ['ids', { table: 'ids', columns: ['tdh'], reason: 'x' }]
+          })
+        ])
+      ).toEqual([
+        [
+          'DOUBLE_WRITER',
+          'a.rows both writes the rows of ids and owns columns of it; a step does one or the other'
+        ]
+      ]);
+    });
+
+    it('checks an owner is a rebuilder with columns and a reason', () => {
+      expect(
+        check(
+          [rows, owner('b.none', [], { after: ['a.rows'] })],
+          [owner('a.seed', ['tdh'])]
+        ).map(([, detail]) => detail)
+      ).toEqual([
+        'seed a.seed declares columns of ids; only a rebuilder owns columns',
+        "rebuilder b.none's columns of ids name no columns"
+      ]);
+    });
+  });
+
   it('keeps a checkpoint to INDEX tables, with a column and a reason', () => {
     const result = checkRegistry({
       manifests: [
@@ -386,6 +502,55 @@ describe('checkRegistry', () => {
       ],
       ['BAD_CHECKPOINT', "bare's checkpoint names no column"],
       ['BAD_CHECKPOINT', "bare's checkpoint has no reason"]
+    ]);
+  });
+
+  it('keeps exempt columns to INDEX tables, with a reason, and no owner', () => {
+    const result = checkRegistry({
+      manifests: [
+        area(
+          'a',
+          {
+            ids: {
+              class: 'INDEX',
+              exemptColumns: [
+                {
+                  column: 'xtdh',
+                  reason: 'the retired feature, kept by backups'
+                },
+                { column: 'tdh', reason: 'no step rebuilds it' },
+                { column: 'level', reason: ' ' }
+              ]
+            },
+            kept: {
+              class: 'EPHEMERAL',
+              why: 'a cache',
+              exemptColumns: [{ column: 'x', reason: 'y' }]
+            }
+          },
+          {
+            rebuilders: [
+              step('a.rows', { writes: ['ids'] }),
+              step('a.tdh', {
+                writes: [{ table: 'ids', columns: ['tdh'], reason: 'x' }],
+                after: ['a.rows']
+              })
+            ]
+          }
+        )
+      ],
+      codeTables: code('ids', 'kept')
+    });
+    expect(result.problems.map((p) => [p.kind, p.detail])).toEqual([
+      ['BAD_EXEMPT', 'ids.level is exempt without a reason'],
+      [
+        'BAD_EXEMPT',
+        'kept is EPHEMERAL; only an INDEX table has exempt columns'
+      ],
+      [
+        'BAD_EXEMPT',
+        'ids.tdh is exempt and owned by a.tdh; an exempt column has no owner'
+      ]
     ]);
   });
 

@@ -107,7 +107,8 @@ function report(parts: Partial<RunReport> = {}): RunReport {
           column: 'created_at',
           reason: 'Set when the loop writes the row.'
         }
-      ]
+      ],
+      ownedColumnsLeftOut: []
     },
     failures: [],
     notes: [],
@@ -147,6 +148,30 @@ describe('rebuild report', () => {
     expect(markdown).not.toContain('differ 0, unproven 0');
     expect(statusLine(stopped, 'runs/x')).toContain('probes not compared');
     expect(statusLine(report(), 'runs/x')).toContain('probe differences 0');
+  });
+
+  it('counts and lists owned columns left out, with why', () => {
+    const base = report();
+    const leftOut = report({
+      tables: {
+        ...base.tables,
+        ownedColumnsLeftOut: [
+          {
+            table: 'identities',
+            column: 'tdh',
+            owner: 'tdh.identity-columns',
+            why: 'planned, its code is not in this tree'
+          }
+        ]
+      }
+    });
+    expect(headline(leftOut)[1]).toMatch(
+      /differing 0; owned columns left out 1$/
+    );
+    expect(headline(base)[1]).not.toContain('owned columns');
+    expect(renderMarkdown(leftOut)).toContain(
+      '## Owned columns left out: their owner does not run here\n\n- identities.tdh: tdh.identity-columns, planned, its code is not in this tree'
+    );
   });
 
   it('says why a source is provisional when it knows', () => {

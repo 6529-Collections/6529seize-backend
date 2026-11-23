@@ -113,6 +113,16 @@ export interface RunReport {
       column: string;
       reason: string;
     }[];
+    /**
+     * Owned columns of the rebuilt tables left out of the comparison
+     * because their owner doesn't run here, with why.
+     */
+    readonly ownedColumnsLeftOut: {
+      table: string;
+      column: string;
+      owner: string;
+      why: string;
+    }[];
   };
   readonly failures: string[];
   readonly notes: string[];
@@ -137,12 +147,13 @@ export function headline(report: RunReport): string[] {
   const rebuilt = report.tables.rebuilt.length;
   const differing = report.tables.diffs.filter((d) => !d.same).length;
   const failed = report.steps.filter((s) => s.exitCode !== 0).length;
+  const leftOut = report.tables.ownedColumnsLeftOut.length;
   const provisional = Object.entries(report.sources)
     .filter(([, info]) => info.provisional)
     .map(([name]) => name);
   return [
     `${report.scope}, mark ${report.mark}${report.final ? ', final' : ''}, backend ${report.backendHead ?? 'unknown'}: ${report.verdict}`,
-    `tables ${total}: ${classes}; rebuilt ${rebuilt}, pending ${report.pending.length}, planned ${report.planned.length}, differing ${differing}`,
+    `tables ${total}: ${classes}; rebuilt ${rebuilt}, pending ${report.pending.length}, planned ${report.planned.length}, differing ${differing}${leftOut ? `; owned columns left out ${leftOut}` : ''}`,
     report.probes.stoppedBefore === null
       ? `probes ${report.probes.calls}: differ ${report.probes.differences.length}, unproven ${report.probes.unproven.length}; INDEX tables no probe read ${report.probes.unreadTables.length}`
       : `probes ${report.probes.calls}: not compared: the run stopped before pass B (${report.probes.stoppedBefore})`,
@@ -279,6 +290,12 @@ export function renderMarkdown(report: RunReport): string {
     ...section(
       'GET routes no probe calls and no waiver names',
       report.routes.open.length ? [report.routes.open.join(', ')] : []
+    ),
+    ...section(
+      'Owned columns left out: their owner does not run here',
+      report.tables.ownedColumnsLeftOut.map(
+        (o) => `- ${o.table}.${o.column}: ${o.owner}, ${o.why}`
+      )
     ),
     ...section(
       'Planned tables whose code is not in this tree',

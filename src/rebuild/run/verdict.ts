@@ -40,6 +40,8 @@ export interface VerdictInput {
   readonly staleNeeds: readonly string[];
   /** Partitioned tables with rows no writer's partition owns. */
   readonly unownedRows: readonly string[];
+  /** Owned columns left out because their owner doesn't run here. */
+  readonly unrunOwnedColumns: readonly string[];
   /** Planned probes held because a table they read isn't in the schema. */
   readonly heldProbes: readonly string[];
   /** Tables a manifest keeps or rebuilds that a fresh schema lacks. */
@@ -153,6 +155,11 @@ export function judge(input: VerdictInput): Verdict {
   if (input.unownedRows.length) {
     finalOnly(
       `${input.unownedRows.length} partitioned tables hold rows no rebuilder owns after the seeds: ${input.unownedRows.join(', ')}`
+    );
+  }
+  if (input.unrunOwnedColumns.length) {
+    finalOnly(
+      `${input.unrunOwnedColumns.length} owned columns were left out of the row comparison because their owner doesn't run here (another area, or skipped); a full run with every owner compares them: ${input.unrunOwnedColumns.join(', ')}`
     );
   }
   if (input.heldProbes.length) {

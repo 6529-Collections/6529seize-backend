@@ -5,7 +5,12 @@ import {
   TableClass
 } from '@/rebuild/manifest.types';
 import { orderSteps, waitsOn } from '@/rebuild/step-order';
-import { partitionsOf, writersOf, writtenTables } from '@/rebuild/step-writes';
+import {
+  partitionsOf,
+  rowWrittenTables,
+  writersOf,
+  writtenTables
+} from '@/rebuild/step-writes';
 import { CodeTables, LiveTable } from '@/rebuild/table-discovery';
 import { protectedFlagNames } from '@/rebuild/stack/child-env';
 
@@ -34,7 +39,12 @@ export type RegistryProblemKind =
   /** A flag that would set one of the run's own variables. */
   | 'BAD_FLAG'
   /** A checkpoint on a table that isn't INDEX, or without a column or reason. */
-  | 'BAD_CHECKPOINT';
+  | 'BAD_CHECKPOINT'
+  /**
+   * An exempt column on a table that isn't INDEX, without a column or a
+   * reason, or owned by a column owner.
+   */
+  | 'BAD_EXEMPT';
 
 export interface RegistryProblem {
   readonly kind: RegistryProblemKind;
@@ -141,6 +151,26 @@ function tableProblems(input: RegistryInput): RegistryProblem[] {
           bad(`${table}'s checkpoint has no reason`);
         }
       }
+      const exempt = entry.exemptColumns ?? [];
+      const badExempt = (detail: string) =>
+        problems.push({
+          kind: 'BAD_EXEMPT',
+          area: manifest.area,
+          table,
+          detail
+        });
+      if (exempt.length && entry.class !== 'INDEX') {
+        badExempt(
+          `${table} is ${entry.class}; only an INDEX table has exempt columns`
+        );
+      }
+      for (const { column, reason } of exempt) {
+        if (!/^[A-Za-z0-9_]+$/.test(column)) {
+          badExempt(`${table}'s exempt column '${column}' names no column`);
+        } else if (!reason.trim()) {
+          badExempt(`${table}.${column} is exempt without a reason`);
+        }
+      }
     }
   }
   return problems;
@@ -216,9 +246,36 @@ function stepProblems(
   for (const step of steps) {
     for (const write of step.writes) {
       const table = typeof write === 'string' ? write : write.table;
-      const partition = typeof write === 'string' ? null : write.partition;
+      const partition =
+        typeof write !== 'string' && 'partition' in write
+          ? write.partition
+          : null;
+      const owned =
+        typeof write !== 'string' && 'columns' in write ? write : null;
       const bad = (detail: string) =>
         problems.push({ kind: 'BAD_STEP', area: manifest.area, table, detail });
+      if (owned) {
+        // A column owner may own columns of any area's INDEX table.
+        if (kind === 'seed') {
+          bad(
+            `seed ${step.id} declares columns of ${table}; only a rebuilder owns columns`
+          );
+        } else if (classOf(table) !== 'INDEX') {
+          bad(
+            `rebuilder ${step.id} owns columns of ${table}, not an INDEX table`
+          );
+        }
+        if (
+          !owned.columns.length ||
+          !owned.columns.every((column) => /^[A-Za-z0-9_]+$/.test(column))
+        ) {
+          bad(`rebuilder ${step.id}'s columns of ${table} name no columns`);
+        }
+        if (!owned.reason.trim()) {
+          bad(`rebuilder ${step.id}'s columns of ${table} have no reason`);
+        }
+        continue;
+      }
       if (partition) {
         // A partition may be of any area's INDEX table: its writers share it.
         if (kind === 'seed') {
@@ -317,7 +374,15 @@ function readOrderProblems(
   const problems: RegistryProblem[] = [];
   for (const step of rebuilders) {
     for (const table of step.reads ?? []) {
-      for (const { step: writer } of writers.get(table) ?? []) {
+      const writesIt = writtenTables(step).includes(table);
+      for (const { step: writer, columns } of writers.get(table) ?? []) {
+        // A writer of the table that reads it waits on none of its column
+        // owners (they run after the row writer, and in their own `after`
+        // order), and an owner's wait on the row writer is checked with
+        // the owners.
+        if (writesIt && (columns || !rowWrittenTables(step).includes(table))) {
+          continue;
+        }
         if (
           writer !== step.id &&
           !(waits.get(step.id) ?? []).includes(writer)
@@ -465,15 +530,86 @@ function foldLikeCollation(value: string): string {
 }
 
 /**
+ * A column owner updates rows its table's row writer wrote, so it runs
+ * after every row writer of the table.
+ */
+function columnOrderProblems(
+  rebuilders: readonly RebuildStep[]
+): RegistryProblem[] {
+  const waits = waitsOn(rebuilders);
+  const problems: RegistryProblem[] = [];
+  writersOf(rebuilders).forEach((writers, table) => {
+    const rowWriters = writers.filter((w) => !w.columns);
+    for (const owner of writers.filter((w) => w.columns)) {
+      for (const writer of rowWriters) {
+        if (writer.step === owner.step) continue;
+        if (!(waits.get(owner.step) ?? []).includes(writer.step)) {
+          problems.push({
+            kind: 'BAD_ORDER',
+            table,
+            detail: `column owner ${owner.step} of ${table} must run after its row writer; add after: ['${writer.step}']`
+          });
+        }
+      }
+    }
+  });
+  return problems;
+}
+
+/**
  * One rebuilder per table, unless every writer of the table declares a
  * partition on the same columns and no two partitions share a tuple.
  */
 function writerProblems(manifests: readonly AreaManifest[]): RegistryProblem[] {
-  const writers = writersOf(manifests.flatMap((m) => m.rebuilders));
+  const all = writersOf(manifests.flatMap((m) => m.rebuilders));
   const problems: RegistryProblem[] = [];
   const double = (table: string, detail: string) =>
     problems.push({ kind: 'DOUBLE_WRITER', table, detail });
-  for (const [table, list] of Array.from(writers)) {
+  for (const [table, writers] of Array.from(all)) {
+    // Column owners: disjoint columns, and a row writer for the rows.
+    const owners = writers.filter((w) => w.columns);
+    const list = writers.filter((w) => !w.columns);
+    if (owners.length && !list.length) {
+      double(
+        table,
+        `${table} has column owners (${owners.map((w) => w.step).join(', ')}) but no row writer`
+      );
+    }
+    for (const owner of owners) {
+      if (list.some((w) => w.step === owner.step)) {
+        double(
+          table,
+          `${owner.step} both writes the rows of ${table} and owns columns of it; a step does one or the other`
+        );
+      }
+    }
+    const ownerOf = new Map<string, string>();
+    for (const owner of owners) {
+      for (const column of owner.columns!) {
+        const other = ownerOf.get(column);
+        if (other && other !== owner.step) {
+          double(
+            table,
+            `${table}'s column owners overlap: ${other} and ${owner.step} both own ${column}`
+          );
+        }
+        ownerOf.set(column, owner.step);
+      }
+    }
+    const exempt = new Set(
+      (
+        manifests.map((m) => m.tables[table]).find(Boolean)?.exemptColumns ?? []
+      ).map((e) => e.column)
+    );
+    ownerOf.forEach((owner, column) => {
+      if (exempt.has(column)) {
+        problems.push({
+          kind: 'BAD_EXEMPT',
+          table,
+          detail: `${table}.${column} is exempt and owned by ${owner}; an exempt column has no owner`
+        });
+      }
+    });
     if (list.length < 2) continue;
     const ids = list.map((w) => w.step).join(', ');
     if (list.some((w) => !w.partition)) {
@@ -527,8 +663,10 @@ function pendingTables(
     )
   );
   for (const manifest of manifests) {
+    // Owning columns rebuilds no rows: only a row writer makes a table
+    // written.
     const written = new Set([
-      ...manifest.rebuilders.flatMap(writtenTables),
+      ...manifest.rebuilders.flatMap(rowWrittenTables),
       ...Array.from(partitioned)
     ]);
     for (const [table, entry] of Object.entries(manifest.tables)) {
@@ -599,6 +737,9 @@ export function checkRegistry(input: RegistryInput): RegistryResult {
     ),
     ...lastProblems(input.manifests),
     ...readOrderProblems(
+      input.manifests.flatMap((manifest) => manifest.rebuilders)
+    ),
+    ...columnOrderProblems(
       input.manifests.flatMap((manifest) => manifest.rebuilders)
     ),
     ...orderProblems(

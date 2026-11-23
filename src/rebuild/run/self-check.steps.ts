@@ -57,6 +57,65 @@ export async function rebuildMemesTeam(): Promise<void> {
   await insertTeam(false, 'MEMES');
 }
 
+/**
+ * Restores the rows without their created_at, which a column owner sets:
+ * the column takes its default until then.
+ */
+async function insertTeamUndated(): Promise<void> {
+  for (const row of ROWS) {
+    await dbSupplier().execute(
+      `INSERT INTO ${TEAM_TABLE} (wallet, collection, name)
+       VALUES (:wallet, :collection, :name)`,
+      row
+    );
+  }
+}
+
+/** A row writer that leaves created_at to its owner. */
+export async function rebuildTeamUndated(): Promise<void> {
+  await insertTeamUndated();
+}
+
+/** The same, deleting every row first, as a writer that starts over does. */
+export async function rebuildTeamUndatedAfterDelete(): Promise<void> {
+  await dbSupplier().execute(`DELETE FROM ${TEAM_TABLE}`);
+  await insertTeamUndated();
+}
+
+/** created_at's owner: dates every row. */
+export async function dateTeam(): Promise<void> {
+  await dbSupplier().execute(
+    `UPDATE ${TEAM_TABLE} SET created_at = :created_at`,
+    { created_at: CREATED_AT }
+  );
+}
+
+/** An owner that dates only the MEMES rows. */
+export async function dateMemesTeam(): Promise<void> {
+  await dbSupplier().execute(
+    `UPDATE ${TEAM_TABLE} SET created_at = :created_at WHERE collection = 'MEMES'`,
+    { created_at: CREATED_AT }
+  );
+}
+
+/** An owner that also adds a row. */
+export async function dateTeamAndAddRow(): Promise<void> {
+  await dateTeam();
+  await dbSupplier().execute(
+    `INSERT INTO ${TEAM_TABLE} (wallet, collection, name, created_at)
+     VALUES ('0x0000000000000000000000000000000000000009', 'MEMES', 'Extra', :created_at)`,
+    { created_at: CREATED_AT }
+  );
+}
+
+/** An owner that also renames rows: a column it doesn't own. */
+export async function dateTeamAndRename(): Promise<void> {
+  await dateTeam();
+  await dbSupplier().execute(
+    `UPDATE ${TEAM_TABLE} SET name = CONCAT(name, ' renamed')`
+  );
+}
+
 /** Restores the MEMES rows, and renames another partition's row. */
 export async function rebuildMemesTeamTouchingOthers(): Promise<void> {
   await insertTeam(false, 'MEMES');
