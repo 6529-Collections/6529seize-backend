@@ -1,4 +1,5 @@
 const mockFetchConsolidatedMetrics = jest.fn();
+const mockFetchTDH = jest.fn();
 
 jest.mock('@/api/request-cache', () => ({
   cacheRequest: () => (_req: unknown, _res: unknown, next: () => void) => next()
@@ -8,13 +9,15 @@ jest.mock('@/api/tdh/api.tdh.db', () => {
   const actual = jest.requireActual('@/api/tdh/api.tdh.db');
   return {
     ...actual,
-    fetchConsolidatedMetrics: mockFetchConsolidatedMetrics
+    fetchConsolidatedMetrics: mockFetchConsolidatedMetrics,
+    fetchTDH: mockFetchTDH
   };
 });
 
 import express, { NextFunction, Request, Response } from 'express';
 import { Server } from 'http';
 import { BadRequestException, ApiCompliantException } from '@/exceptions';
+import { WALLETS_TDH_TABLE } from '@/constants';
 import { resolveMetricsSort } from '@/api/tdh/api.tdh.metrics-sort';
 import { MetricsConsolidatedTdhView } from '@/api/tdh/api.tdh.db';
 import router, {
@@ -80,6 +83,48 @@ async function getRoute(path: string) {
 }
 
 describe('api.tdh.routes', () => {
+  describe('GET /api/tdh/wallet/:wallet', () => {
+    // A made-up test wallet.
+    const wallet = '0x0000000000000000000000000000000000000001';
+
+    beforeEach(() => {
+      mockFetchTDH.mockReset();
+    });
+
+    it("reads the wallet's row at the newest TDH block", async () => {
+      mockFetchTDH.mockResolvedValue({
+        wallet,
+        block: 24_007_300,
+        tdh: 250,
+        memes: '[]'
+      });
+
+      const response = await getRoute(`/api/tdh/wallet/${wallet}`);
+
+      expect(mockFetchTDH).toHaveBeenCalledWith(
+        'wallet',
+        wallet,
+        WALLETS_TDH_TABLE,
+        { atLatestTdhBlock: true }
+      );
+      expect(response.status).toBe(200);
+      expect(JSON.parse(response.body)).toEqual({
+        wallet,
+        block: 24_007_300,
+        tdh: 250,
+        memes: []
+      });
+    });
+
+    it('answers 404 when the wallet has no row at the newest TDH block', async () => {
+      mockFetchTDH.mockResolvedValue(null);
+
+      const response = await getRoute(`/api/tdh/wallet/${wallet}`);
+
+      expect(response.status).toBe(404);
+    });
+  });
+
   describe('resolveMetricsSort', () => {
     it('defaults to level when sort is omitted', () => {
       expect(resolveMetricsSort(undefined)).toBe('level');

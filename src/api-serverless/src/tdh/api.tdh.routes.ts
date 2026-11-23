@@ -271,7 +271,9 @@ router.get(
   ) {
     const wallet = req.params.wallet;
 
-    const result = await fetchTDH('wallet', wallet, WALLETS_TDH_TABLE);
+    const result = await fetchTDH('wallet', wallet, WALLETS_TDH_TABLE, {
+      atLatestTdhBlock: true
+    });
     if (result) {
       const parsedResult = parseTdhDataFromDB(result);
       return res.json(parsedResult);
