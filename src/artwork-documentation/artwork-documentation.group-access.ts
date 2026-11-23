@@ -1,7 +1,6 @@
 import { UserGroupsService } from '@/api/community-members/user-groups.service';
 import { DbQueryOptions } from '@/db-query.options';
 import { metricsRecorder } from '@/metrics/MetricsRecorder';
-import { abusivenessCheckService } from '@/profiles/abusiveness-check.service';
 import { RequestContext } from '@/request.context';
 import { SqlExecutor } from '@/sql-executor';
 import { UserGroupsDb } from '@/user-groups/user-groups.db';
@@ -39,7 +38,6 @@ export function documentationViewerGroups(
   const executor = new DocumentationGroupReadExecutor(db, ctx);
   return new UserGroupsService(
     new UserGroupsDb(() => executor),
-    abusivenessCheckService,
     metricsRecorder
   );
 }
