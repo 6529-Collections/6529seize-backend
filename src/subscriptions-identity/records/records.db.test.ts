@@ -90,6 +90,7 @@ import {
   SubscriptionWriteRequest
 } from './subscription-writes';
 import * as cutoffModule from '@/api/subscriptions/subscription-cutoff';
+import { SubscriptionKeyHeldBackException } from '@/api/subscriptions/subscription-key-held-back.exception';
 import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
 import { shadowReportsMatch } from '../writers/identity-reports';
 
@@ -488,7 +489,7 @@ describeWithSeed('signed subscription changes', [], () => {
         expect(await rowsOf('legacy', W)).toEqual(legacyBefore);
         expect(alarm).not.toHaveBeenCalled();
         expect(info).toHaveBeenCalledWith(
-          `[LEGACY DUAL WRITE HELD BACK] [subs.card] [key of ${W.length} characters] [an earlier write is waiting]`
+          `[LEGACY DUAL WRITE HELD BACK] [subs.card] [event ${event.id}] [key of ${W.length} characters] [an earlier write is waiting]`
         );
         expect(heldBackCounts(stdout)).toEqual([
           expect.objectContaining({
@@ -501,6 +502,44 @@ describeWithSeed('signed subscription changes', [], () => {
                 }
               ]
             }),
+            ChangeType: 'subs.card',
+            LegacyDualWriteHeldBack: 1
+          })
+        ]);
+      } finally {
+        info.mockRestore();
+        alarm.mockRestore();
+        stdout.mockRestore();
+      }
+    });
+
+    it('names a key too long for a legacy table in the held-back line', async () => {
+      await seedLegacy();
+      await cutAndLoad(true);
+      const info = jest.spyOn(Logger.prototype, 'info');
+      const alarm = jest.spyOn(Logger.prototype, 'errorWithCode');
+      const stdout = jest.spyOn(process.stdout, 'write');
+      try {
+        const event = record(card(C1, true));
+        await writer({
+          // The guard's refusal for a key wider than a legacy column.
+          legacy: async () => {
+            throw new SubscriptionKeyHeldBackException(
+              'Subscriptions for identities with more than 13 wallets resume after the identity switch.',
+              {
+                narrow: [{ table: 'subscriptions_redeemed', width: 567 }],
+                pendingEarlier: false
+              }
+            );
+          }
+        }).write(request(card(C1, true), header(event)));
+
+        expect(alarm).not.toHaveBeenCalled();
+        expect(info).toHaveBeenCalledWith(
+          `[LEGACY DUAL WRITE HELD BACK] [subs.card] [event ${event.id}] [key of ${W.length} characters] [too long for a legacy table]`
+        );
+        expect(heldBackCounts(stdout)).toEqual([
+          expect.objectContaining({
             ChangeType: 'subs.card',
             LegacyDualWriteHeldBack: 1
           })

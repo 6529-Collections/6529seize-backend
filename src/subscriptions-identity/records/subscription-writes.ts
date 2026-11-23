@@ -401,9 +401,10 @@ export class SubscriptionChangeWriter {
     } catch (error) {
       if (error instanceof SubscriptionKeyHeldBackException) {
         // The key-width guard holds this key's legacy writes back, as it
-        // did before the switch: expected, so counted, not alarmed.
+        // did before the switch: expected, so counted, not alarmed. The
+        // rollback copy never gets this change; the event id says which.
         logger.info(
-          `[LEGACY DUAL WRITE HELD BACK] [${checked.change.type}] [key of ${applied.consolidationKey.length} characters] [${error.reason.narrow.length ? 'too long for a legacy table' : 'an earlier write is waiting'}]`
+          `[LEGACY DUAL WRITE HELD BACK] [${checked.change.type}] [event ${checked.record.event.id}] [key of ${applied.consolidationKey.length} characters] [${error.reason.narrow.length ? 'too long for a legacy table' : 'an earlier write is waiting'}]`
         );
         recordLegacyDualWriteHeldBack(checked.change.type);
       } else {
