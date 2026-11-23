@@ -6,14 +6,20 @@ import {
 } from '@/signed-records/record-log/record-log-reader';
 import { LocalRecordsWaveReader } from '@/signed-records/record-log/records-wave-local-reader';
 import { loadProviderKeys } from '@/signed-records/sealed-crypto';
+import { writeClosedMemesMintStats } from '@/memes-mint-stats/memes-mint-stats.rebuild';
 import { ipfsMintContent } from './mint-log-content';
+import { chainHeadTime } from './mint-log-rebuild.chain-clock';
 import { rebuildMintLogFromRecordLog } from './mint-log-rebuild.run';
 
 const logger = Logger.get('MINT_LOG_REBUILD_CHECK');
 
 /** What the rebuild check's runner passes a step (src/rebuild/manifest.types.ts). */
 interface CheckStepContext {
-  readonly sources: { readonly files: string | null };
+  readonly sources: {
+    readonly files: string | null;
+    readonly ethereum: string | null;
+  };
+  readonly mark?: { readonly ethBlock: number | null };
 }
 
 /** Segment files from the run's files source (`/ipfs/<cid>`, `/ar/<id>`). */
@@ -76,5 +82,26 @@ export async function rebuildMintLogInCheck(
   }
   logger.info(
     `[MINT_LOG_REBUILD_CHECK] [entries ${result.entries}] [heads ${Object.keys(result.heads).join(', ')}]`
+  );
+}
+
+/**
+ * The rebuild check's rebuilder for mint stats: the production rebuild
+ * (writeClosedMemesMintStats) on the chain's clock, the time of the run's
+ * mark block or head block on its ethereum source, as the seed wrote them. Without an ethereum
+ * source there are no NFTs to write stats for.
+ */
+export async function rebuildMemesMintStatsInCheck(
+  ctx: CheckStepContext
+): Promise<void> {
+  const ethereum = ctx.sources.ethereum;
+  if (!ethereum) {
+    logger.info('[MINT_STATS_REBUILD_CHECK] no ethereum source, no stats');
+    return;
+  }
+  const now = await chainHeadTime(ethereum, ctx.mark?.ethBlock ?? null);
+  const written = await writeClosedMemesMintStats(now);
+  logger.info(
+    `[MINT_STATS_REBUILD_CHECK] [rows ${written}] [chain time ${now.toIsoString()}]`
   );
 }

@@ -80,7 +80,8 @@ const MINT_LOG_TABLES = [
  * area's flags on (card 1's photos and a claim action, card 2, a rememe, an
  * upload of each kind, NextGen collections 1 and 2, a Main Stage
  * collaboration); the record log closed into a segment in the records wave;
- * then mint stats and the minted counts from the NFT and transactions loops.
+ * then mint stats, on the chain's clock, and the minted counts from the NFT
+ * and transactions loops.
  */
 const MINT_PROBES_SEED: RebuildStep = {
   id: 'mint.probes.seed',
@@ -112,7 +113,7 @@ const MINT_PROBES_SEED: RebuildStep = {
   // The holdings fixture's mints first: the mint stats and the minted
   // counts count them.
   after: ['holdings.seed'],
-  sources: ['files'],
+  sources: ['files', 'ethereum'],
   timeoutMinutes: 10
 };
 
@@ -158,13 +159,15 @@ const CARD_2_PHASE_1_ROOT =
 /**
  * Mint stats, as the NFT loop writes them once a card's mint closes: for
  * each closed mint in the NFT index, from its paid mints, its redeemed
- * subscriptions and its claim's payment details.
+ * subscriptions and its claim's payment details. In the check a mint closes
+ * on the chain's clock, the ethereum source's head block time, as in the
+ * seed; production's rebuild (rebuildMemesMintStats) uses the wall clock.
  */
 const MINT_STATS_REBUILD: RebuildStep = {
   id: 'mint.stats',
   run: {
-    module: 'src/memes-mint-stats/memes-mint-stats.rebuild',
-    exportName: 'rebuildMemesMintStats'
+    module: 'src/mint-log/mint-log-rebuild-check.steps',
+    exportName: 'rebuildMemesMintStatsInCheck'
   },
   writes: ['memes_mint_stats'],
   reads: [
@@ -179,7 +182,7 @@ const MINT_STATS_REBUILD: RebuildStep = {
   // (waves) have no rebuilder yet; the registry asks for theirs here once
   // they do.
   after: ['holdings.ethereum', 'mint.log'],
-  sources: [],
+  sources: ['ethereum'],
   timeoutMinutes: 10
 };
 

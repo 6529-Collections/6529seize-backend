@@ -46,6 +46,7 @@ import { distributionCursorBlock } from './mint-log-inputs';
 import { mintCard } from './mint-log-parts';
 import { logPublicationReceipt } from './mint-log-receipts';
 import { getMintLogPorts } from './mint-log-ports';
+import { chainHeadTime } from './mint-log-rebuild.chain-clock';
 import { seedCollaboration } from './mint-log-rebuild.seed-collab';
 import {
   insertDrop,
@@ -79,9 +80,9 @@ import {
  *    closes it: the file in the run's seed files, its head drop in the
  *    records wave, where the mint rebuild reads the entries back;
  * 5. what the log leaves to other writers: mint stats (the NFT loop's
- *    writer, for every closed mint in the NFT index) and the minted counts
- *    (the transactions loop's distribution pass, which also sets its
- *    cursor).
+ *    writer, for every mint in the NFT index that has closed on the chain's
+ *    clock) and the minted counts (the transactions loop's distribution
+ *    pass, which also sets its cursor).
  * The writes are logged only while FEATURE_MINT_LOG_SHADOW or
  * FEATURE_MINT_LOG_PRIMARY is on.
  *
@@ -520,6 +521,8 @@ async function closeRecordLog(
 /** What the seed step receives from the rebuild check's runner. */
 interface SeedContext {
   readonly seedFilesDir: string | null;
+  readonly sources: { readonly ethereum: string | null };
+  readonly mark?: { readonly ethBlock: number | null };
 }
 
 /**
@@ -560,7 +563,12 @@ export async function seedMintProbes(
 
   await closeRecordLog(dir, env);
 
-  await writeClosedMemesMintStats();
+  // Mints close on the chain's clock (see mint-log-rebuild.chain-clock.ts).
+  if (ctx.sources.ethereum) {
+    await writeClosedMemesMintStats(
+      await chainHeadTime(ctx.sources.ethereum, ctx.mark?.ethBlock ?? null)
+    );
+  }
   // The loop needs a transaction to count up to; without the holdings
   // seed's there are no mints to count.
   if (await fetchMaxTransactionByBlockNumber()) {
