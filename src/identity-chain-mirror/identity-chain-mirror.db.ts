@@ -1496,18 +1496,24 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
         opts
       );
     }
-    for (const it of deletes) {
+    for (let i = 0; i < deletes.length; i += 500) {
+      const params: Record<string, unknown> = {};
+      const tuples = deletes
+        .slice(i, i + 500)
+        .map((it, j) => {
+          params[`r${j}`] = it.rater;
+          params[`m${j}`] = it.matterCode;
+          params[`k${j}`] = it.targetKind;
+          params[`t${j}`] = it.target;
+          params[`c${j}`] = it.category;
+          return `(:r${j}, :m${j}, :k${j}, :t${j}, :c${j})`;
+        })
+        .join(', ');
       await this.db.execute(
         `delete from ${IDENTITY_CHAIN_RATING_LEDGER_TABLE}
-         where rater_principal = :rater and matter = :matter and target_kind = :kind
-           and target_principal = :target and category = :category`,
-        {
-          rater: it.rater,
-          matter: it.matterCode,
-          kind: it.targetKind,
-          target: it.target,
-          category: it.category
-        },
+         where (rater_principal, matter, target_kind, target_principal, category)
+           in (${tuples})`,
+        params,
         opts
       );
     }

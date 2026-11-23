@@ -40,8 +40,10 @@ import {
 const logger = Logger.get('IDENTITY_CHAIN_RATING_EVENTS');
 
 const PAGE_BLOCKS = 200;
-/** Identities a step of a ledger rebuild's walk. */
-const REBUILD_PAGE = 100;
+/** Identities a step of a ledger rebuild's walk (the most a page gives). */
+const REBUILD_PAGE = 500;
+/** Targets whose ratings a rebuild reads at once. */
+const REBUILD_READS_AT_ONCE = 8;
 /** Runs in a row without moving, behind the identities, before the alarm. */
 export const RATING_EVENTS_STUCK_RUNS = 5;
 /** Problems listed in a run's report; past these they are only counted. */
@@ -91,8 +93,11 @@ export interface RatingEventsReport {
   ratingRecordsWithoutWriter: number;
   /** Where the follower stopped: the next feed height it reads. */
   eventsNextHeight: number | null;
-  /** Set when the follower is stuck behind the identities: the run fails. */
-  error?: string;
+  /**
+   * Set when the follower is stuck behind the identities: the run fails
+   * once the profile site followers have run.
+   */
+  ratingEventsStuck?: string;
 }
 
 /** A problem for the run's report: the first ones listed, the rest counted. */
@@ -245,7 +250,7 @@ export class RatingEventsFollower {
       if (stuckRuns >= RATING_EVENTS_STUCK_RUNS) {
         const message = `Rating events stuck at ${now.next} for ${stuckRuns} runs: ${report.ratingEventProblems[0] ?? 'no page written'}`;
         logger.error(`[RATING EVENTS STUCK] ${message}`);
-        report.error = report.error ?? message;
+        report.ratingEventsStuck = message;
       }
     } catch (error) {
       const message = messageOf(error);
@@ -266,27 +271,32 @@ export class RatingEventsFollower {
       this.forgetNames(state.chain_id);
     }
     report.eventsNextHeight = state.events_next_height;
-    // The identity sync's place: rows wait for it, so their raters and
-    // targets are mapped when they are written.
-    if (state.next_height === null) {
-      logger.warn('[NO IDENTITY SYNC PLACE YET] [RATING EVENTS WAIT]');
+    // Rows wait for the first full sync to end and for the identity sync's
+    // place, so their raters and targets are mapped when they are written.
+    if (state.last_full_sync_at === null || state.next_height === null) {
+      logger.info('[RATING EVENTS WAIT FOR THE FIRST FULL SYNC]');
       return;
     }
     const until = Number(state.next_height);
     let cursor: RatingEventsCursor;
     if (state.events_next_height === null) {
-      if (importStart === null) {
-        logger.error('[NO IMPORT START] [RATING EVENTS WAIT]');
-        return;
-      }
-      // From the import's start, with nothing left of an earlier start.
-      const first = {
-        next: importStart,
+      // From the import's start, with nothing left of an earlier start;
+      // without one, from a ledger built at the latest finalized height.
+      let first: RatingEventsCursor = {
+        next: Number(importStart),
         rebuildHeight: null,
         rebuildAfter: null,
         goneAt: null,
         stuckRuns: 0
       };
+      if (importStart === null) {
+        const head = await this.gateway.getHead(true);
+        const pin = Number(head.finalizedHeight);
+        logger.error(
+          `[NO IMPORT START] [NO RATING EVENTS UP TO ${pin}] [THE LEDGER IS BUILT AT ${pin}]`
+        );
+        first = { ...first, next: pin + 1, rebuildHeight: pin };
+      }
       await this.db.executeNativeQueriesInTransaction(async (conn) => {
         await this.db.clearRatingEvents(conn);
         await this.db.saveRatingEventsCursor(first, this.now(), conn);
@@ -441,6 +451,10 @@ export class RatingEventsFollower {
   ): Promise<RatingEventsCursor> {
     let cursor = initial;
     const pin = Number(cursor.rebuildHeight);
+    const started = this.now();
+    let identities = 0;
+    const took = () =>
+      `[${identities} IDENTITIES IN ${this.now() - started} MS THIS RUN]`;
     while (this.now() < deadline) {
       const rows: (RatingLedgerKey & RatingLedgerRow)[] = [];
       const names = new Map<string, string>();
@@ -453,33 +467,43 @@ export class RatingEventsFollower {
           limit: REBUILD_PAGE
         });
         if (!page) throw new Error(`No identity list at ${pin}`);
-        for (const identity of page.items) {
-          if ((identity.rep?.raters ?? 0) + (identity.nic?.raters ?? 0) === 0) {
+        const targets = page.items
+          .filter((it) => (it.rep?.raters ?? 0) + (it.nic?.raters ?? 0) > 0)
+          .map((it) => it.principalId);
+        const lists: ChainRating[][] = [];
+        for (let i = 0; i < targets.length; i += REBUILD_READS_AT_ONCE) {
+          lists.push(
+            ...(await Promise.all(
+              targets
+                .slice(i, i + REBUILD_READS_AT_ONCE)
+                .map((target) => this.ratingsAt(target, pin, deadline))
+            ))
+          );
+        }
+        for (const rating of lists.flat()) {
+          const row = ledgerRowOfRating(rating, pin);
+          if (!row) {
+            noteRatingEventProblem(
+              report,
+              `${pin}: a rating of ${rating.target} not read`
+            );
             continue;
           }
-          for (const rating of await this.ratingsAt(
-            identity.principalId,
-            pin,
-            deadline
-          )) {
-            const row = ledgerRowOfRating(rating, pin);
-            if (!row) {
-              noteRatingEventProblem(
-                report,
-                `${pin}: a rating of ${identity.principalId} not read`
-              );
-              continue;
-            }
-            rows.push(row);
-            const name = rating.category?.name;
-            if (row.matterCode === 1 && typeof name === 'string') {
-              names.set(row.category, name);
-            }
+          rows.push(row);
+          const name = rating.category?.name;
+          if (row.matterCode === 1 && typeof name === 'string') {
+            names.set(row.category, name);
           }
         }
         next = page.next;
+        identities += page.items.length;
       } catch (error) {
-        if (error instanceof OutOfTime) return cursor;
+        if (error instanceof OutOfTime) {
+          logger.info(
+            `[RATING LEDGER REBUILD AT ${pin} GOES ON NEXT RUN] ${took()}`
+          );
+          return cursor;
+        }
         if (isGoneForGood(error, pin)) {
           return await this.startRebuild(
             cursor,
@@ -513,11 +537,12 @@ export class RatingEventsFollower {
       cursor = after;
       if (done) {
         logger.info(
-          `[RATING LEDGER REBUILT AT ${pin}] [GOING ON FROM ${pin + 1}]`
+          `[RATING LEDGER REBUILT AT ${pin}] [GOING ON FROM ${pin + 1}] ${took()}`
         );
         return cursor;
       }
     }
+    logger.info(`[RATING LEDGER REBUILD AT ${pin} GOES ON NEXT RUN] ${took()}`);
     return cursor;
   }
 

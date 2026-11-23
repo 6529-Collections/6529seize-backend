@@ -680,7 +680,8 @@ describeWithSeed(
       await inTx((conn) =>
         db.writeRatingLedger(
           [{ ...key(P, kind), value: 7, height: 13, stale: false }],
-          [key(P, other)],
+          // Removals go 500 a statement: two at once here.
+          [key(P, other), key(W(5) + '0'.repeat(24), kind)],
           conn
         )
       );
@@ -692,7 +693,7 @@ describeWithSeed(
         { targetKind: 1, target: Q, matterCode: 1, category: kind },
         { targetKind: 1, target: Q, matterCode: 1, category: other }
       ]);
-      expect(Array.from(totals.values())).toEqual([{ total: 5, stale: 1 }]);
+      expect(Array.from(totals.values())).toEqual([{ total: 7, stale: 0 }]);
       // Category names: one stored stays as it is.
       await inTx((conn) =>
         db.writeRatingCategories(

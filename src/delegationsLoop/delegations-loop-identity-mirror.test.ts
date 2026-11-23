@@ -187,6 +187,18 @@ describe('delegations loop and the identity mirror', () => {
     expect(identityChainMirror.followProfileSites).not.toHaveBeenCalled();
   });
 
+  it('runs the profile site followers before a stuck rating events follower fails the run', async () => {
+    process.env.FEATURE_IDENTITY_CHAIN_MIRROR = 'true';
+    jest.mocked(identityChainMirror.run).mockResolvedValue({
+      ...report([]),
+      ratingEventsStuck: 'Rating events stuck at 101 for 5 runs: down'
+    } as never);
+    await expect(invoke()).rejects.toThrow(
+      'Identity chain mirror: Rating events stuck at 101 for 5 runs: down'
+    );
+    expect(identityChainMirror.followProfileSites).toHaveBeenCalledTimes(1);
+  });
+
   it('re-keys wallets an earlier run queued but did not re-key', async () => {
     process.env.FEATURE_IDENTITY_CHAIN_MIRROR = 'true';
     // This run regroups nothing; a run killed after its commits left C.

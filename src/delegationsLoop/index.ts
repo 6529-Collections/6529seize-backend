@@ -357,14 +357,19 @@ async function mirrorChainIdentities(timeLeft: () => number) {
     logger.info(
       '[PROFILE SITE FOLLOWERS WAIT FOR THE NEXT RUN] [NO TIME LEFT]'
     );
-    return;
+  } else {
+    const problems = await identityChainMirror.followProfileSites(
+      undefined,
+      followersBudget
+    );
+    if (problems.length) {
+      logger.error(`[PROFILE SITE FOLLOWERS] ${JSON.stringify(problems)}`);
+    }
   }
-  const problems = await identityChainMirror.followProfileSites(
-    undefined,
-    followersBudget
-  );
-  if (problems.length) {
-    logger.error(`[PROFILE SITE FOLLOWERS] ${JSON.stringify(problems)}`);
+  // A stuck rating events follower fails the run (an alarm), after the
+  // profile site followers had their turn.
+  if (report?.ratingEventsStuck) {
+    throw new Error(`Identity chain mirror: ${report.ratingEventsStuck}`);
   }
 }
 

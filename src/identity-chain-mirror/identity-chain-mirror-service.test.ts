@@ -1916,7 +1916,45 @@ describe('IdentityChainMirror', () => {
     });
     // A row the chain no longer has: gone with the rebuild.
     db.ledger.set('not-on-the-chain', { value: 1, height: 1, stale: false });
+    // One page of identities; their ratings are read at once.
+    const listOf = gateway.listIdentities.getMockImplementation()!;
+    gateway.listIdentities.mockImplementation((async (opts: {
+      height?: number;
+      limit?: number;
+    }) =>
+      opts?.limit === 500
+        ? {
+            items: Array.from(chain.identities.values()),
+            next: null,
+            read: {} as never
+          }
+        : await (listOf as (o: unknown) => Promise<unknown>)(opts)) as never);
+    let reading = 0;
+    let most = 0;
+    const ratingsOf = gateway.getRatings.getMockImplementation()!;
+    gateway.getRatings.mockImplementation((async (
+      query: { target: string },
+      opts?: { height?: number }
+    ) => {
+      reading++;
+      most = Math.max(most, reading);
+      await new Promise((resolve) => setImmediate(resolve));
+      reading--;
+      return await (ratingsOf as (q: unknown, o?: unknown) => Promise<unknown>)(
+        query,
+        opts
+      );
+    }) as never);
+    const infos = jest.spyOn(
+      Logger.get('IDENTITY_CHAIN_RATING_EVENTS'),
+      'info'
+    );
     const after = await mirror.run({ budgetMs: 60_000 });
+    expect(most).toBe(2);
+    expect(infos).toHaveBeenCalledWith(
+      '[RATING LEDGER REBUILT AT 300] [GOING ON FROM 301] [2 IDENTITIES IN 0 MS THIS RUN]'
+    );
+    infos.mockRestore();
     expect(db.state).toMatchObject({
       events_next_height: 301,
       events_rebuild_height: null,
@@ -1926,7 +1964,7 @@ describe('IdentityChainMirror', () => {
     });
     expect(after.eventsNextHeight).toBe(301);
     expect(gateway.listIdentities).toHaveBeenCalledWith(
-      expect.objectContaining({ height: 300 })
+      expect.objectContaining({ height: 300, limit: 500 })
     );
     expect(gateway.getRatings).toHaveBeenCalledWith(
       { target: alice.principalId },
@@ -2066,7 +2104,7 @@ describe('IdentityChainMirror', () => {
     ).toEqual([[102, 5, 5, 'UNKNOWN']]);
   });
 
-  it('fails the run when the follower is stuck behind the identities', async () => {
+  it('reports a follower stuck behind the identities for the run to fail', async () => {
     const { mirror, db, chain, alice, bob, gateway } = ratedWorld();
     await mirror.run({ budgetMs: 60_000 });
     const errors = jest.spyOn(
@@ -2105,25 +2143,28 @@ describe('IdentityChainMirror', () => {
       }) as never);
       for (let run = 1; run < RATING_EVENTS_STUCK_RUNS; run++) {
         const report = await mirror.run({ budgetMs: 60_000 });
-        expect(report.error).toBeUndefined();
+        expect(report.ratingEventsStuck).toBeUndefined();
         expect(db.state?.events_stuck_runs).toBe(run);
       }
       const stuck = await mirror.run({ budgetMs: 60_000 });
-      expect(stuck.error).toBe(
+      expect(stuck.error).toBeUndefined();
+      expect(stuck.ratingEventsStuck).toBe(
         `Rating events stuck at 101 for ${RATING_EVENTS_STUCK_RUNS} runs: down`
       );
       expect(errors).toHaveBeenCalledWith(
-        `[RATING EVENTS STUCK] ${stuck.error}`
+        `[RATING EVENTS STUCK] ${stuck.ratingEventsStuck}`
       );
       // Moving again clears it.
       gateway.getState.mockImplementation(stateOf);
       const moving = await mirror.run({ budgetMs: 60_000 });
-      expect(moving.error).toBeUndefined();
+      expect(moving.ratingEventsStuck).toBeUndefined();
       expect(db.state?.events_stuck_runs).toBe(0);
       expect(feedRows(db.ratingEvents)).toEqual([[101, 0, 4, 4]]);
       // Caught up with the identities, runs that read nothing are not stuck.
       for (let run = 0; run <= RATING_EVENTS_STUCK_RUNS; run++) {
-        expect((await mirror.run({ budgetMs: 60_000 })).error).toBeUndefined();
+        expect(
+          (await mirror.run({ budgetMs: 60_000 })).ratingEventsStuck
+        ).toBeUndefined();
       }
       expect(db.state?.events_stuck_runs).toBe(0);
     } finally {
@@ -2217,24 +2258,11 @@ describe('IdentityChainMirror', () => {
     ]);
   });
 
-  it('starts from the import with an empty ledger and log, and waits without an import start', async () => {
+  it('starts from the import with an empty ledger and log', async () => {
     const { mirror, db, chain } = ratedWorld();
-    const errors = jest.spyOn(
-      Logger.get('IDENTITY_CHAIN_RATING_EVENTS'),
-      'error'
-    );
-    chain.importStart = null;
-    try {
-      const waiting = await mirror.run({ budgetMs: 60_000 });
-      expect(waiting.eventsNextHeight).toBeNull();
-      expect(errors).toHaveBeenCalledWith(
-        '[NO IMPORT START] [RATING EVENTS WAIT]'
-      );
-    } finally {
-      errors.mockRestore();
-    }
-    expect(db.ratingEvents).toEqual([]);
+    await mirror.run({ budgetMs: 60_000 });
     // Left from an earlier start: cleared with the first place.
+    db.state = { ...db.state!, events_next_height: null };
     db.ledger.set('left-over', { value: 3, height: 1, stale: false });
     db.ratingEvents = [{ height: 1 } as never];
     db.categoryNames.set(OTHER, 'Old');
@@ -2244,6 +2272,63 @@ describe('IdentityChainMirror', () => {
     expect(db.categoryNames.has(OTHER)).toBe(false);
     expect(db.ratingEvents.map((it) => it.height)).toEqual([60]);
     expect(db.state?.events_next_height).toBe(101);
+  });
+
+  it('builds the ledger at the latest height without an import start', async () => {
+    const { mirror, db, chain, alice } = ratedWorld();
+    const errors = jest.spyOn(
+      Logger.get('IDENTITY_CHAIN_RATING_EVENTS'),
+      'error'
+    );
+    chain.importStart = null;
+    chain.ratings.set(alice.principalId, [
+      {
+        ...chain.ratings.get(alice.principalId)![0],
+        category: { id: CATEGORY, name: 'Kind' }
+      }
+    ]);
+    try {
+      const report = await mirror.run({ budgetMs: 60_000 });
+      expect(errors).toHaveBeenCalledWith(
+        '[NO IMPORT START] [NO RATING EVENTS UP TO 100] [THE LEDGER IS BUILT AT 100]'
+      );
+      expect(report.eventsNextHeight).toBe(101);
+    } finally {
+      errors.mockRestore();
+    }
+    expect(db.state).toMatchObject({
+      events_next_height: 101,
+      events_rebuild_height: null
+    });
+    expect(db.ratingEvents).toEqual([]);
+    expect(Array.from(db.ledger.values())).toEqual([
+      { value: 5, height: 30, stale: false }
+    ]);
+  });
+
+  it('writes no rows before the first full sync has ended', async () => {
+    const { mirror, db, gateway, bob } = ratedWorld();
+    // The first full sync stops after setting the feed's place.
+    gateway.listIdentities.mockRejectedValueOnce(new Error('timeout'));
+    const first = await mirror.run({ budgetMs: 60_000 });
+    expect(first.error).toBe('timeout');
+    expect(db.state).toMatchObject({
+      last_full_sync_at: null,
+      next_height: 101,
+      events_next_height: null
+    });
+    expect(db.ratingEvents).toEqual([]);
+    const second = await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.last_full_sync_at).not.toBeNull();
+    // Written once both are mapped: nothing to fill.
+    expect(db.ratingEvents).toEqual([
+      expect.objectContaining({
+        height: 60,
+        rater_profile_id: db.mapping.get(bob.principalId)?.profile ?? null,
+        target_profile_id: ALICE_PROFILE
+      })
+    ]);
+    expect(second.ratingEventsFilled).toBe(0);
   });
 
   it('follows the rating events when an identity step throws', async () => {

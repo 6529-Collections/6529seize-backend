@@ -1019,9 +1019,11 @@ the rating families: Rating (0x0701), RatingTotal (0x0704) and Category
 only it writes: the next height (`events_next_height`), a ledger rebuild
 under way (`events_rebuild_height`, `events_rebuild_after`), a gone height
 seen once (`events_gone_at`) and the runs it has been stuck
-(`events_stuck_runs`). It never reads past the identity sync's place
-(`next_height`), and reads nothing before there is one, so raters and
-targets are mapped when their rows are written. Each page's rows, ledger
+(`events_stuck_runs`). It reads nothing until the first full sync has ended,
+and never past the identity sync's place (`next_height`), so raters and
+targets are mostly mapped when their rows are written; a chain-made identity
+in its founder wait, or one on the retry list, can still leave a profile id
+null until the fill below. Each page's rows, ledger
 changes, category names and place are written in one transaction. The
 follower keeps its own copy of every rating in
 `identity_chain_rating_ledger`, keyed by the record's key fields (rater,
@@ -1033,7 +1035,8 @@ heights, so that sync can't change an event. Each run fills in profile ids,
 then runs the follower last, after the identity steps (which leave it a
 quarter of the time), also when one of them threw. Its first start clears the
 ledger, the rows and the names in the transaction that saves its first place;
-without the import's start it logs an error and waits.
+without the import's start it logs an error and builds the ledger at the
+latest finalized height (as after a gap), with no rows before it.
 
 Each Rating record of an identity gives one row: the block's height and time
 (`block_time_ms`, the block's slot start), the rater and target principals
@@ -1065,9 +1068,9 @@ waits.
 When the gateway no longer holds the follower's place, the follower notes
 the height, and only when the next run finds it gone too (one answer may be
 a node's) does it rebuild the ledger: it empties it and lists every rating
-of the identities with raters at the latest finalized height, a page of
-identities per transaction, all pinned to that height; then it goes on from
-the next one. The heights from the gap to that height give no rows (logged).
+of the identities with raters at the latest finalized height (500
+identities a page, eight targets read at once, a page per transaction, all
+pinned to that height, its time logged); then it goes on from the next one. The heights from the gap to that height give no rows (logged).
 When the gateway drops the pin during the rebuild, it starts again at a
 newer one.
 
@@ -1084,7 +1087,8 @@ run's time running out before a read, ends the follower's run before the
 page is written, so the page waits; that failure goes to the run's report
 (the first 50 problems listed, the rest counted) and doesn't fail the run.
 When the follower hasn't moved for five runs while behind the identity sync
-(or in a gap), it logs an error and fails the run, so it alarms. A Rating
+(or in a gap), it logs an error and the delegations loop fails the run, so it
+alarms, once the profile site followers have run. A Rating
 record from the import's end on with no writer (an old gateway) has origin
 UNKNOWN and notifies no one; the run logs one error and counts them in its
 report. A full sync and a retry of keys write no rows. A relaunch clears the

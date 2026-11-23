@@ -209,6 +209,11 @@ export interface MirrorRunReport {
   ratingEvents: number;
   /** The rating events follower's first 50 problems of the run. */
   ratingEventProblems: string[];
+  /**
+   * The rating events follower hasn't moved for runs while behind: the
+   * caller fails the run once the profile site followers have run.
+   */
+  ratingEventsStuck?: string;
   /** Rating event problems past the listed ones, only counted. */
   ratingEventProblemsLeftOut: number;
   /** Rating records after the import without a writer (an old gateway). */
