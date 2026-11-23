@@ -463,7 +463,9 @@ export class WavesSettlementSender {
       const result = await run.timed(() =>
         this.deps.gateway.submit({
           unsigned: draft.unsigned,
-          signatures: [{ role: checked.role, keyType: checked.keyType, sig }]
+          signatures: [{ role: checked.role, keyType: checked.keyType, sig }],
+          // Not sent: the client holds the answer to this transaction.
+          txId: checked.txId
         })
       );
       if (!result.accepted) {

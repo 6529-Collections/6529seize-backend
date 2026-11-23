@@ -230,10 +230,14 @@ class FakeGateway {
     return draft;
   }
 
-  async submit(request: ChainSubmitRequest): Promise<ChainSubmitResult> {
+  async submit(
+    request: ChainSubmitRequest & { readonly txId: string }
+  ): Promise<ChainSubmitResult> {
     this.tick();
     if (!('unsigned' in request)) throw new Error('expected unsigned');
     const { txId, lane } = this.byUnsigned.get(request.unsigned)!;
+    // The client ties the answer to the draft's txId.
+    expect(request.txId).toBe(txId);
     expect(request.signatures).toHaveLength(1);
     expect(request.signatures[0]).toEqual(
       expect.objectContaining({ role: 0, keyType: 1 })
