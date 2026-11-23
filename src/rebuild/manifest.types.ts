@@ -71,6 +71,12 @@ export interface RebuildStep {
   readonly reads?: readonly string[];
   /** Step ids that must finish first. */
   readonly after?: readonly string[];
+  /**
+   * Step ids that must wait for this one: the mirror of `after`, so an
+   * area can order its step ahead of another area's without editing that
+   * area's manifest.
+   */
+  readonly before?: readonly string[];
   readonly sources: readonly RebuildSource[];
   readonly timeoutMinutes: number;
   /**
@@ -84,6 +90,12 @@ export interface RebuildStep {
    * step as planned and name the table and the reason; a final run fails.
    */
   readonly needs?: readonly NeededTable[];
+  /**
+   * Seeds only: run after every seed without it, in the usual order among
+   * themselves. A chain indexer uses it to catch up on blocks other seeds
+   * mined after it first ran.
+   */
+  readonly last?: boolean;
 }
 
 /** A table a step needs in the run's schema, and why. */

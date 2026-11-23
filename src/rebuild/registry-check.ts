@@ -4,7 +4,7 @@ import {
   RebuildStep,
   TableClass
 } from '@/rebuild/manifest.types';
-import { orderSteps } from '@/rebuild/step-order';
+import { orderSteps, waitsOn } from '@/rebuild/step-order';
 import { CodeTables, LiveTable } from '@/rebuild/table-discovery';
 import { protectedFlagNames } from '@/rebuild/stack/child-env';
 
@@ -258,6 +258,7 @@ function readOrderProblems(
   for (const step of rebuilders) {
     for (const table of step.writes) writerOf.set(table, step.id);
   }
+  const waits = waitsOn(rebuilders);
   const problems: RegistryProblem[] = [];
   for (const step of rebuilders) {
     for (const table of step.reads ?? []) {
@@ -265,7 +266,7 @@ function readOrderProblems(
       if (
         writer &&
         writer !== step.id &&
-        !(step.after ?? []).includes(writer)
+        !(waits.get(step.id) ?? []).includes(writer)
       ) {
         problems.push({
           kind: 'BAD_ORDER',
@@ -275,6 +276,53 @@ function readOrderProblems(
     }
   }
   return problems;
+}
+
+/**
+ * `last` is for seeds, and a seed that waits on a last one (its `after`,
+ * or the last seed's `before`) must be last too, or it would have to run
+ * before the seed it waits on.
+ */
+function lastProblems(manifests: readonly AreaManifest[]): RegistryProblem[] {
+  const seeds = manifests.flatMap((manifest) => manifest.seeds);
+  const last = new Set(seeds.filter((s) => s.last).map((s) => s.id));
+  return [
+    ...manifests.flatMap((manifest) =>
+      manifest.rebuilders
+        .filter((step) => step.last)
+        .map(
+          (step): RegistryProblem => ({
+            kind: 'BAD_STEP',
+            area: manifest.area,
+            detail: `rebuilder ${step.id} is marked last; only seeds run last`
+          })
+        )
+    ),
+    ...seeds
+      .filter((seed) => !seed.last)
+      .flatMap((seed) =>
+        (seed.after ?? [])
+          .filter((id) => last.has(id))
+          .map(
+            (id): RegistryProblem => ({
+              kind: 'BAD_ORDER',
+              detail: `seed ${seed.id} waits on last seed ${id}; mark it last too`
+            })
+          )
+      ),
+    ...seeds
+      .filter((seed) => seed.last)
+      .flatMap((seed) =>
+        (seed.before ?? [])
+          .filter((id) => !last.has(id) && seeds.some((s) => s.id === id))
+          .map(
+            (id): RegistryProblem => ({
+              kind: 'BAD_ORDER',
+              detail: `last seed ${seed.id} runs before seed ${id}, which isn't last; mark it last too`
+            })
+          )
+      )
+  ];
 }
 
 function orderProblems(
@@ -443,6 +491,7 @@ export function checkRegistry(input: RegistryInput): RegistryResult {
       'seed',
       input.manifests.flatMap((manifest) => manifest.seeds)
     ),
+    ...lastProblems(input.manifests),
     ...readOrderProblems(
       input.manifests.flatMap((manifest) => manifest.rebuilders)
     ),

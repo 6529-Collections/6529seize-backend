@@ -189,6 +189,64 @@ describe('checkRegistry', () => {
     ]);
   });
 
+  it('keeps last to seeds, and never lets a seed that is not last wait on one', () => {
+    const result = checkRegistry({
+      manifests: [
+        area(
+          'a',
+          { t1: index() },
+          {
+            seeds: [
+              step('a.seed'),
+              step('a.catch-up', { after: ['a.seed'], last: true }),
+              step('a.after-catch-up', { after: ['a.catch-up'] }),
+              step('a.last-too', { after: ['a.catch-up'], last: true }),
+              // A seed may run before a last one, never a last one before
+              // a seed that isn't.
+              step('a.early', { before: ['a.seed', 'a.catch-up'] }),
+              step('a.last-first', { before: ['a.seed'], last: true })
+            ],
+            rebuilders: [step('a.rebuild', { writes: ['t1'], last: true })]
+          }
+        )
+      ],
+      codeTables: code('t1')
+    });
+    expect(result.problems.map((p) => [p.kind, p.detail])).toEqual([
+      ['BAD_STEP', 'rebuilder a.rebuild is marked last; only seeds run last'],
+      [
+        'BAD_ORDER',
+        'seed a.after-catch-up waits on last seed a.catch-up; mark it last too'
+      ],
+      [
+        'BAD_ORDER',
+        "last seed a.last-first runs before seed a.seed, which isn't last; mark it last too"
+      ]
+    ]);
+  });
+
+  it('takes a writer that runs before its reader as ordered', () => {
+    const result = checkRegistry({
+      manifests: [
+        area(
+          'a',
+          { t1: index(), t2: index() },
+          {
+            rebuilders: [
+              step('a.reader', { writes: ['t2'], reads: ['t1'] }),
+              step('a.writer', { writes: ['t1'], before: ['a.reader'] }),
+              step('a.ghost', { writes: [], before: ['nowhere'] })
+            ]
+          }
+        )
+      ],
+      codeTables: code('t1', 't2')
+    });
+    expect(result.problems.map((p) => p.detail)).toEqual([
+      'a rebuilder waits on unknown step nowhere'
+    ]);
+  });
+
   it('lets a step wait only for a table a later branch adds, with a reason', () => {
     const result = checkRegistry({
       manifests: [

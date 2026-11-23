@@ -13,7 +13,7 @@ import {
   TableEntry
 } from '@/rebuild/manifest.types';
 import { checkRegistry, RegistryResult } from '@/rebuild/registry-check';
-import { orderSteps } from '@/rebuild/step-order';
+import { orderSeeds, orderSteps } from '@/rebuild/step-order';
 import {
   CodeTables,
   discoverCodeTables,
@@ -527,7 +527,8 @@ class RebuildRun {
         all.push(step);
       }
     }
-    for (const step of orderSteps(all).order) {
+    const order = kind === 'seed' ? orderSeeds(all) : orderSteps(all);
+    for (const step of order.order) {
       if (!this.stepCodeHere(step)) {
         this.o.log(`${kind} ${step.id}: planned, its module is not here`);
         this.plannedSteps.push(step.id);

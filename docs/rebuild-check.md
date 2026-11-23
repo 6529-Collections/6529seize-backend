@@ -27,7 +27,8 @@ test shards and fails when:
 - a rebuilder writes a table that isn't one of its area's INDEX tables, two
   rebuilders write one table, or steps wait on each other;
 - a step reads a table no manifest has, or needs one that no later branch
-  adds or without a reason;
+  adds or without a reason; a rebuilder is marked `last`, or a seed that
+  isn't last waits on one that is;
 - a probe repeats an id, has a path without a leading `/`, or a placeholder
   with no values.
 
@@ -111,6 +112,18 @@ export const mintManifest: AreaManifest = {
     needed table without a reason.
     A step that waits on a skipped one and touches the same tables should
     declare the same needs.
+  - A seed with `last: true` runs after every seed without it, in the
+    usual order among the last ones. A chain indexer uses it to catch up
+    on blocks other seeds mined after it first ran, so the tables it seeds
+    reach the chain's head before the first pass. The registry refuses
+    `last` on a rebuilder, and an `after` from a seed that isn't last onto
+    one that is.
+  - `before: [step ids]` is the mirror of `after`: the named steps wait for
+    this one, so an area can order its step ahead of another area's
+    without editing that area's manifest. The registry refuses an unknown
+    id (a planned step counts as known), a cycle across `before` and
+    `after`, and a last seed's `before` onto a seed that isn't last; a
+    seed may run before a last one.
 - `probes`: API requests whose answers must match before and after. `ignore`
   and `unordered` paths each need a reason, which the registry checks. A
   probe with `origin: 'planned'` and `needs: [tables]` reads tables a later
