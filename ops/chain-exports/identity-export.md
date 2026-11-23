@@ -140,23 +140,22 @@ deployed, or it fails), the values can come from files made by hand:
    freeze's export takes the site run's values, and tell the switch owner
    that the hand-run tgz (step 5) no longer applies.
 2. Make the files with the profile site export's CLI on the production
-   database, after the freeze. The CLI comes with the profile site export's
-   pull request, not the identity export's:
-   [#2544](https://github.com/6529-Collections/6529seize-backend/pull/2544).
-   Get it with `git fetch origin pull/2544/head` and
-   `git checkout FETCH_HEAD` (or use main once that pull request has
-   merged), then install with `./bin/6529 ci`, the install step of the
-   repository's README.
+   database, after the freeze. The CLI came with the profile site export
+   ([#2544](https://github.com/6529-Collections/6529seize-backend/pull/2544))
+   and is on main: run it from a checkout of main, installed with
+   `./bin/6529 ci`, the install step of the repository's README.
    Run it into a new, empty folder, the freeze in milliseconds:
-   `6529 run profile-cms:export -- --out <a new, empty folder> --frozen-at 1795478400000`.
+   `./bin/6529 run profile-cms:export -- --out <a new, empty folder> --frozen-at 1795478400000`.
    It writes `cms-fields.json`, `report.json` and a `files` folder. It
    doesn't clear `files`, and the import's builder takes every file there,
    so the folder must start empty. Use all three from one run, never one
    remade alone. If it says "Do not use this export", make them all again
-   in one run, into a new, empty folder, then do steps 3 to 5 again.
+   in one run, into a new, empty folder, then go on with step 3 (or, if
+   steps 3 to 5 were already done with the old files, do them again).
 3. Take the sha256 of `cms-fields.json` and of `report.json`
-   (`(Get-FileHash -Algorithm SHA256 <file>).Hash.ToLower()`, or
-   `sha256sum <file>`), and upload the two to the chain exports bucket as
+   (`(Get-FileHash -Algorithm SHA256 <file>).Hash.ToLower()`,
+   `sha256sum <file>` on Linux, or `shasum -a 256 <file>` on macOS), and
+   upload the two to the chain exports bucket as
    `identity-export/inputs/cms-fields-2026-11-24.json` and
    `identity-export/inputs/report-2026-11-24.json`.
 4. Run the export at the freeze with `cmsFieldsAtFreeze`, adding the
@@ -223,7 +222,8 @@ aws s3 cp profile-site-export-hand-run-2026-11-24.tgz s3://6529-chain-exports-<a
 aws s3 presign s3://6529-chain-exports-<account id>-us-east-1/identity-export/inputs/profile-site-export-hand-run-2026-11-24.tgz --expires-in 21600 --region us-east-1
 ```
 
-On Linux or macOS, `sha256sum <tgz>` gives the same sha256. A presigned
+On Linux, `sha256sum <tgz>` gives the same sha256; on macOS,
+`shasum -a 256 <tgz>`. A presigned
 link lasts no longer than the credentials that sign it: sign it with a
 session that has at least 6 hours left, or presign it again when asked.
 

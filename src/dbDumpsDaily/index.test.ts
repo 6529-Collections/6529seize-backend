@@ -69,6 +69,17 @@ describe('dbDumpsDaily handler', () => {
       expect.objectContaining({ job: 'profileSiteExport' }),
       context
     );
+    await invoke({
+      job: 'profileSiteExportLinks',
+      prefix: 'profile-site-export/staging/run/'
+    });
+    expect(mockSiteRun).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        job: 'profileSiteExportLinks',
+        prefix: 'profile-site-export/staging/run/'
+      }),
+      context
+    );
     expect(mockIdentityRun).not.toHaveBeenCalled();
     expect(mockDoInDbContext).not.toHaveBeenCalled();
   });
