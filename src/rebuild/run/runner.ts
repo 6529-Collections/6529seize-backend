@@ -83,6 +83,11 @@ import {
   stopSources
 } from '@/rebuild/sources/start-sources';
 import { judge } from '@/rebuild/run/verdict';
+import {
+  guardedVerifier,
+  relayCheckSpecs,
+  RelayVerification
+} from '@/rebuild/sources/relay-checks';
 import { waitForApi } from '@/rebuild/stack/api-ready';
 
 export interface RunOptions {
@@ -115,6 +120,15 @@ const KEPT_CLASSES: ReadonlySet<TableClass> = new Set<TableClass>([
 ]);
 const SCHEMA_TIMEOUT_MS = 20 * 60_000;
 const API_READY_TIMEOUT_MS = 5 * 60_000;
+const RELAY_CHECK_TIMEOUT_MS = 5 * 60_000;
+/** For a child that needs no database: nothing listens there. */
+const NO_DATABASE = {
+  host: '127.0.0.1',
+  port: 1,
+  user: 'none',
+  password: 'none',
+  database: 'none'
+};
 /** The key the run gives the app for the ethereum source's Alchemy shim. */
 const SHIM_ALCHEMY_KEY = 'rebuild';
 
@@ -534,6 +548,43 @@ class RebuildRun {
     return true;
   }
 
+  /**
+   * Checks replayed relay recordings in a child under the source guard,
+   * with every area's relay checks (a recording may hold any area's
+   * events): the signed-event check, then the area's. A planned check not
+   * in this tree is noted.
+   */
+  private async verifyRelayRecordings(
+    dirs: readonly string[]
+  ): Promise<RelayVerification[]> {
+    const { specs, skipped } = relayCheckSpecs(
+      this.o.manifests,
+      this.o.repoRoot
+    );
+    for (const name of skipped) {
+      this.o.log(`relay check ${name}: planned, its module is not here`);
+    }
+    this.o.log('checking the replayed relay recordings');
+    return guardedVerifier({
+      repoRoot: this.o.repoRoot,
+      specs,
+      workDir: path.join(this.runDir, 'sources'),
+      logFile: path.join(this.runDir, 'logs', 'relay-checks.log'),
+      // No database and no source: the checks need neither.
+      env: childEnv({
+        parent: process.env,
+        home: path.resolve(this.o.home),
+        db: NO_DATABASE,
+        jwtSecret: this.jwtSecret,
+        extra: {
+          REBUILD_VIOLATIONS_FILE: this.violationsFile,
+          REBUILD_ALLOWED_ENDPOINTS: ''
+        }
+      }),
+      timeoutMs: RELAY_CHECK_TIMEOUT_MS
+    })(dirs);
+  }
+
   /** False for a planned module step whose module isn't in this tree. */
   private stepCodeHere(step: RebuildStep): boolean {
     if (step.origin !== 'planned' || !('module' in step.run)) return true;
@@ -747,7 +798,9 @@ class RebuildRun {
     fs.mkdirSync(path.join(this.runDir, 'logs'), { recursive: true });
     this.releaseLock = acquireHomeLock(path.resolve(this.o.home));
     this.apiPort = this.o.apiPort || (await freePort());
-    this.running = await startSources(this.o.sources, this.runDir);
+    this.running = await startSources(this.o.sources, this.runDir, {
+      verifyRelays: (dirs) => this.verifyRelayRecordings(dirs)
+    });
     for (const source of this.running) {
       this.o.log(`${source.name}: ${source.info.mode} at ${source.url}`);
     }

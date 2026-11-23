@@ -28,7 +28,12 @@ export type RegistryProblemKind =
   /** A probe with a repeated id, a bad path or a placeholder without values. */
   | 'BAD_PROBE'
   /** A flag that would set one of the run's own variables. */
-  | 'BAD_FLAG';
+  | 'BAD_FLAG'
+  /**
+   * A relay check with a bad module, export or wave prefix, or a prefix
+   * two areas claim.
+   */
+  | 'BAD_RELAY';
 
 export interface RegistryProblem {
   readonly kind: RegistryProblemKind;
@@ -364,6 +369,57 @@ function classCounts(
  * manifest, with a reason for every kept table, and that steps and probes are
  * well formed.
  */
+const MODULE = /^src\/[\w./-]+$/;
+const EXPORT = /^[A-Za-z_$][\w$]*$/;
+
+/**
+ * The areas' relay checks: a module path (`src/..`, no extension) and
+ * export name each check runs, and non-empty wave prefixes no two areas
+ * share or nest.
+ */
+function relayProblems(manifests: readonly AreaManifest[]): RegistryProblem[] {
+  const problems: RegistryProblem[] = [];
+  const bad = (area: string, detail: string) =>
+    problems.push({ kind: 'BAD_RELAY', area, detail });
+  const prefixes: { area: string; prefix: string }[] = [];
+  for (const manifest of manifests) {
+    for (const check of manifest.relayChecks ?? []) {
+      const name = `${check.run.module}#${check.run.exportName}`;
+      if (!MODULE.test(check.run.module) || /\.[jt]s$/.test(check.run.module)) {
+        bad(
+          manifest.area,
+          `relay check ${name}: the module must be a path under src/ with no extension`
+        );
+      }
+      if (!EXPORT.test(check.run.exportName)) {
+        bad(manifest.area, `relay check ${name}: the export is not a name`);
+      }
+      if (!check.waves.length) {
+        bad(manifest.area, `relay check ${name} covers no wave`);
+      }
+      for (const prefix of check.waves) {
+        if (!prefix)
+          bad(manifest.area, `relay check ${name} has an empty wave prefix`);
+        else prefixes.push({ area: manifest.area, prefix });
+      }
+    }
+  }
+  prefixes.forEach((a, i) =>
+    prefixes.slice(i + 1).forEach((b) => {
+      if (
+        a.area !== b.area &&
+        (a.prefix.startsWith(b.prefix) || b.prefix.startsWith(a.prefix))
+      ) {
+        bad(
+          a.area,
+          `relay wave prefix ${a.prefix} overlaps ${b.area}'s ${b.prefix}`
+        );
+      }
+    })
+  );
+  return problems;
+}
+
 export function checkRegistry(input: RegistryInput): RegistryResult {
   const allTables = new Set(
     input.manifests.flatMap((manifest) => Object.keys(manifest.tables))
@@ -395,7 +451,8 @@ export function checkRegistry(input: RegistryInput): RegistryResult {
       'rebuilder',
       input.manifests.flatMap((manifest) => manifest.rebuilders)
     ),
-    ...writerProblems(input.manifests)
+    ...writerProblems(input.manifests),
+    ...relayProblems(input.manifests)
   ];
   return {
     problems,

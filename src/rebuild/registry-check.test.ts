@@ -54,6 +54,39 @@ describe('checkRegistry', () => {
     expect(result.classes.INDEX).toBe(2);
   });
 
+  it('checks the relay checks an area declares', () => {
+    const relay = (name: string, parts: Partial<AreaManifest>) =>
+      area(name, {}, parts);
+    const result = checkRegistry({
+      manifests: [
+        relay('dm', {
+          relayChecks: [
+            {
+              waves: ['dv/'],
+              run: { module: 'src/e2ee/check', exportName: 'ok' }
+            },
+            { waves: [''], run: { module: 'e2ee/check.ts', exportName: '1x' } }
+          ]
+        }),
+        relay('waves', {
+          relayChecks: [
+            { waves: ['dv/0'], run: { module: 'src/w', exportName: 'c' } }
+          ]
+        })
+      ],
+      codeTables: code()
+    });
+    expect(result.problems.map((p) => p.detail)).toEqual([
+      'relay check e2ee/check.ts#1x: the module must be a path under src/ with no extension',
+      'relay check e2ee/check.ts#1x: the export is not a name',
+      'relay check e2ee/check.ts#1x has an empty wave prefix',
+      "relay wave prefix dv/ overlaps waves's dv/0"
+    ]);
+    expect(new Set(result.problems.map((p) => p.kind))).toEqual(
+      new Set(['BAD_RELAY'])
+    );
+  });
+
   it('reports a table in no manifest, in two, or named nowhere in code', () => {
     const result = checkRegistry({
       manifests: [

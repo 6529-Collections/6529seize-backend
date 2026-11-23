@@ -2,15 +2,21 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
 import * as path from 'node:path';
+import { RelayItem } from '@/rebuild/manifest.types';
+import {
+  RecordingVerifier,
+  RelayVerification
+} from '@/rebuild/sources/relay-checks';
 import {
   closeServer,
   listenLoopback,
+  Provenance,
   readProvenance,
   RunningSource
 } from '@/rebuild/sources/running-source';
 
 // `ws` is a root devDependency without its types; only the calls used here are typed.
-interface WsSocket {
+export interface WsSocket {
   send(data: string | Buffer): void;
   close(): void;
   on(event: 'message', listener: (data: Buffer, binary: boolean) => void): void;
@@ -24,9 +30,9 @@ const { WebSocketServer } = require('ws') as {
   WebSocketServer: new (options: { server: http.Server }) => WsServer;
 };
 
-type Frame = Record<string, unknown> & { t: string };
+export type Frame = Record<string, unknown> & { t: string };
 
-interface StoredEvent {
+export interface StoredEvent {
   readonly rseq: number;
   readonly event: {
     id: string;
@@ -35,6 +41,20 @@ interface StoredEvent {
     body?: string | null;
   };
   readonly grant: { wallet?: string } & Record<string, unknown>;
+  /** In a recording: the other fields the relay sent with the event. */
+  readonly extra?: Record<string, unknown>;
+  /** In a recording: when the recorded run first saw the event (ms). */
+  readonly recorded_at?: number;
+}
+
+/** What EV frames and HIST items carry beside the event: recorded as sent. */
+function served(stored: StoredEvent): Record<string, unknown> {
+  return {
+    ...(stored.extra ?? {}),
+    ...(stored.recorded_at === undefined
+      ? {}
+      : { recorded_at: stored.recorded_at })
+  };
 }
 
 interface Session {
@@ -43,13 +63,31 @@ interface Session {
   roles: string[];
 }
 
-const EVENTS_FILE = 'events.jsonl';
-const PAYLOADS_DIR = 'payloads';
-const ROLES_FILE = 'roles.json';
+export const EVENTS_FILE = 'events.jsonl';
+export const PAYLOADS_DIR = 'payloads';
+export const ROLES_FILE = 'roles.json';
 /** `{ "head": n }`: the finalized chain height WELCOME reports. */
-const RELAY_FILE = 'relay.json';
+export const RELAY_FILE = 'relay.json';
+/** The waves a recorded run read (SUB or HIST); a replay serves only these. */
+export const READS_FILE = 'reads.json';
 const DEFAULT_HEAD = 1;
 const ALL_ROLES = ['orderer', 'site-reader'];
+
+/** JSON with object keys sorted, so equal values print the same. */
+export function canonicalJson(value: unknown): string {
+  const sort = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(sort);
+    if (v && typeof v === 'object') {
+      return Object.fromEntries(
+        Object.keys(v as Record<string, unknown>)
+          .sort()
+          .map((key) => [key, sort((v as Record<string, unknown>)[key])])
+      );
+    }
+    return v;
+  };
+  return JSON.stringify(sort(value));
+}
 
 /** Payload hashes a record body names (`h` at any depth). */
 export function payloadRefs(body: string | null | undefined): string[] {
@@ -69,11 +107,15 @@ export function payloadRefs(body: string | null | undefined): string[] {
   return refs;
 }
 
-function bareHash(hash: string): string {
+export function bareHash(hash: string): string {
   return hash.replace(/^0x/, '').toLowerCase();
 }
 
-function decodeBinary(data: Buffer): { header: Frame; bytes: Buffer } {
+export function sha256Hex(bytes: Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+export function decodeBinary(data: Buffer): { header: Frame; bytes: Buffer } {
   const length = data.readUInt32BE(0);
   const header = JSON.parse(data.subarray(4, 4 + length).toString('utf8'));
   return { header, bytes: data.subarray(4 + length) };
@@ -93,18 +135,28 @@ function encodeBinary(header: Record<string, unknown>, bytes: Buffer): Buffer {
  * the relays' clients depend on (one copy per event id, a LOG `seq` taken
  * once per wave, payloads before the records that name them) but not
  * signatures: it is a store for the run, not a trust boundary.
+ *
+ * With `replay`, the directory is a recording and the store never changes:
+ * a PUB is taken only when it repeats a recorded event and its grant (as
+ * canonical JSON), and a payload only when it is recorded.
  */
 export class CrpRelayStore {
   private readonly events: StoredEvent[] = [];
-  private readonly byId = new Set<string>();
+  private readonly byId = new Map<string, StoredEvent>();
   private readonly logSeqs = new Map<string, string>();
   private readonly roles: Record<string, string[]>;
+  /** In a replay, the waves the recorded run read; null when unknown. */
+  private readonly reads: Set<string> | null;
   /** The chain height the relay says is final (clients anchor records to it). */
   readonly head: number;
   private rseq = 0;
 
-  constructor(private readonly dir: string) {
-    fs.mkdirSync(path.join(dir, PAYLOADS_DIR), { recursive: true });
+  constructor(
+    private readonly dir: string,
+    readonly replay = false
+  ) {
+    if (!replay)
+      fs.mkdirSync(path.join(dir, PAYLOADS_DIR), { recursive: true });
     const rolesFile = path.join(dir, ROLES_FILE);
     this.roles = fs.existsSync(rolesFile)
       ? JSON.parse(fs.readFileSync(rolesFile, 'utf8'))
@@ -113,6 +165,10 @@ export class CrpRelayStore {
     this.head = fs.existsSync(relayFile)
       ? Number(JSON.parse(fs.readFileSync(relayFile, 'utf8')).head)
       : DEFAULT_HEAD;
+    const readsFile = path.join(dir, READS_FILE);
+    this.reads = fs.existsSync(readsFile)
+      ? new Set(JSON.parse(fs.readFileSync(readsFile, 'utf8')) as string[])
+      : null;
     const eventsFile = path.join(dir, EVENTS_FILE);
     if (fs.existsSync(eventsFile)) {
       for (const line of fs.readFileSync(eventsFile, 'utf8').split('\n')) {
@@ -125,9 +181,17 @@ export class CrpRelayStore {
     return this.events.length;
   }
 
+  /** Every stored event with its grant, in relay order. */
+  items(): RelayItem[] {
+    return this.events.map((stored) => ({
+      event: stored.event,
+      grant: stored.grant
+    }));
+  }
+
   private remember(stored: StoredEvent): void {
     this.events.push(stored);
-    this.byId.add(stored.event.id);
+    this.byId.set(stored.event.id, stored);
     this.rseq = Math.max(this.rseq, stored.rseq);
     if (stored.event.kind === 11) {
       this.logSeqs.set(this.seqKey(stored.event), stored.event.id);
@@ -143,6 +207,11 @@ export class CrpRelayStore {
     return this.roles[wallet.toLowerCase()] ?? ALL_ROLES;
   }
 
+  /** In a replay, whether the recorded run read `wave` (or every wave). */
+  wasRead(wave: string): boolean {
+    return (this.reads?.has(wave) || this.reads?.has('*')) ?? false;
+  }
+
   hasPayload(hash: string): boolean {
     return fs.existsSync(path.join(this.dir, PAYLOADS_DIR, bareHash(hash)));
   }
@@ -152,21 +221,41 @@ export class CrpRelayStore {
     return fs.existsSync(file) ? fs.readFileSync(file) : null;
   }
 
+  /** Payload files whose bytes don't hash to their name. */
+  badPayloads(): string[] {
+    const dir = path.join(this.dir, PAYLOADS_DIR);
+    if (!fs.existsSync(dir)) return [];
+    return fs
+      .readdirSync(dir)
+      .filter(
+        (name) => sha256Hex(fs.readFileSync(path.join(dir, name))) !== name
+      );
+  }
+
   /** Stores a payload whose bytes hash to `hash`. */
   putPayload(
     hash: string,
     bytes: Buffer
   ): 'accepted' | 'duplicate' | 'rejected' {
-    const digest = createHash('sha256').update(bytes).digest('hex');
+    const digest = sha256Hex(bytes);
     if (digest !== bareHash(hash)) return 'rejected';
     if (this.hasPayload(hash)) return 'duplicate';
+    if (this.replay) return 'rejected';
     fs.writeFileSync(path.join(this.dir, PAYLOADS_DIR, digest), bytes);
     return 'accepted';
   }
 
   /** Stores an event: `accepted`, `duplicate`, or a rejection reason. */
   publish(event: StoredEvent['event'], grant: StoredEvent['grant']): string {
-    if (this.byId.has(event.id)) return 'duplicate';
+    const known = this.byId.get(event.id);
+    if (this.replay) {
+      if (!known) return 'not in the recording';
+      const same =
+        canonicalJson(known.event) === canonicalJson(event) &&
+        canonicalJson(known.grant) === canonicalJson(grant ?? {});
+      return same ? 'duplicate' : 'differs from the recording';
+    }
+    if (known) return 'duplicate';
     const missing = payloadRefs(event.body).find(
       (ref) => !this.hasPayload(ref)
     );
@@ -184,11 +273,16 @@ export class CrpRelayStore {
     return 'accepted';
   }
 
-  /** Events of a wave and its sub-waves after `after`, in relay order. */
+  /**
+   * Events of a wave and its sub-waves (`*`: every wave) after `after`,
+   * in relay order.
+   */
   matching(wave: string, after = 0): StoredEvent[] {
     return this.events.filter(
       (e) =>
-        (e.event.wave === wave || e.event.wave.startsWith(`${wave}/`)) &&
+        (wave === '*' ||
+          e.event.wave === wave ||
+          e.event.wave.startsWith(`${wave}/`)) &&
         e.rseq > after
     );
   }
@@ -198,10 +292,37 @@ export class CrpRelayStore {
   }
 }
 
-function handleFrame(store: CrpRelayStore, session: Session, frame: Frame) {
+/** Problems a replay finds, counted by kind with the first of each. */
+class ReplayProblems {
+  private readonly kinds = new Map<string, { count: number; first: string }>();
+
+  add(kind: string, first: string): void {
+    const seen = this.kinds.get(kind);
+    if (seen) seen.count += 1;
+    else this.kinds.set(kind, { count: 1, first });
+  }
+
+  list(): string[] {
+    return Array.from(this.kinds.entries()).map(
+      ([kind, { count, first }]) => `relays: ${count} ${kind}, first ${first}`
+    );
+  }
+}
+
+function handleFrame(
+  store: CrpRelayStore,
+  session: Session,
+  frame: Frame,
+  problems: ReplayProblems | null
+) {
   const send = (reply: Record<string, unknown>) =>
     session.socket.send(JSON.stringify(reply));
   const mayRead = session.roles.length > 0;
+  const noteRead = (wave: string) => {
+    if (problems && !store.wasRead(wave)) {
+      problems.add('reads of waves the recorded run never read', wave);
+    }
+  };
   switch (frame.t) {
     case 'HELLO':
       send({
@@ -233,6 +354,12 @@ function handleFrame(store: CrpRelayStore, session: Session, frame: Frame) {
       const event = frame.event as StoredEvent['event'];
       const result = store.publish(event, frame.grant as StoredEvent['grant']);
       const accepted = result === 'accepted' || result === 'duplicate';
+      if (problems && !accepted) {
+        problems.add(
+          'published events the recording does not hold',
+          `${event.id} in ${event.wave} (${result})`
+        );
+      }
       send({
         t: 'ACK',
         rid: frame.rid,
@@ -246,6 +373,10 @@ function handleFrame(store: CrpRelayStore, session: Session, frame: Frame) {
     case 'PAYLOAD_GET': {
       const bytes = mayRead ? store.payload(String(frame.sha256)) : null;
       if (!bytes) {
+        problems?.add(
+          'payloads asked for and not recorded',
+          String(frame.sha256)
+        );
         send({ t: 'ERR', rid: frame.rid, reason: 'not found' });
         return;
       }
@@ -262,9 +393,17 @@ function handleFrame(store: CrpRelayStore, session: Session, frame: Frame) {
       );
       return;
     }
-    case 'SUB':
+    case 'SUB': {
+      // A cursor per wave (`since`) starts that wave after its rseq.
+      const since = new Map(
+        ((frame.since as { wave?: string; rseq?: number }[]) ?? []).map(
+          (cursor) => [String(cursor.wave), Number(cursor.rseq ?? 0)]
+        )
+      );
       for (const wave of (frame.waves as string[]) ?? []) {
+        noteRead(wave);
         for (const item of mayRead ? store.matching(wave) : []) {
+          if (item.rseq <= (since.get(item.event.wave) ?? 0)) continue;
           send({
             t: 'EV',
             sid: frame.sid,
@@ -273,13 +412,16 @@ function handleFrame(store: CrpRelayStore, session: Session, frame: Frame) {
             rseq: item.rseq,
             event: item.event,
             grant: item.grant,
-            receipts: []
+            receipts: [],
+            ...served(item)
           });
         }
         send({ t: 'EOSE', sid: frame.sid, wave, rseq: store.lastSeq });
       }
       return;
+    }
     case 'HIST': {
+      noteRead(String(frame.wave));
       const limit = Number(frame.limit);
       const items = mayRead
         ? store.matching(
@@ -291,7 +433,12 @@ function handleFrame(store: CrpRelayStore, session: Session, frame: Frame) {
         t: 'RES',
         rid: frame.rid,
         log_epoch: 1,
-        items: items.slice(0, limit),
+        items: items.slice(0, limit).map((item) => ({
+          rseq: item.rseq,
+          event: item.event,
+          grant: item.grant,
+          ...served(item)
+        })),
         more: items.length > limit
       });
       return;
@@ -303,10 +450,15 @@ function handleFrame(store: CrpRelayStore, session: Session, frame: Frame) {
   }
 }
 
-/** The harness's relay on loopback, keeping what is published in `dir`. */
-export async function startCrpRelay(dir: string): Promise<RunningSource> {
-  const store = new CrpRelayStore(dir);
-  const provenance = readProvenance(dir);
+/** Serves a store on loopback over CRP v1. */
+async function serveStore(
+  store: CrpRelayStore,
+  problems: ReplayProblems | null
+): Promise<{
+  url: string;
+  errors: string[];
+  stop(): Promise<void>;
+}> {
   const errors: string[] = [];
   const server = http.createServer((_request, response) => {
     response.writeHead(426);
@@ -322,6 +474,12 @@ export async function startCrpRelay(dir: string): Promise<RunningSource> {
           const status = session.wallet
             ? store.putPayload(String(header.sha256), bytes)
             : 'rejected';
+          if (problems && status === 'rejected') {
+            problems.add(
+              'payloads put that the recording does not hold',
+              String(header.sha256)
+            );
+          }
           socket.send(
             JSON.stringify({
               t: 'ACK',
@@ -334,7 +492,12 @@ export async function startCrpRelay(dir: string): Promise<RunningSource> {
           );
           return;
         }
-        handleFrame(store, session, JSON.parse(data.toString('utf8')) as Frame);
+        handleFrame(
+          store,
+          session,
+          JSON.parse(data.toString('utf8')) as Frame,
+          problems
+        );
       } catch (error) {
         errors.push(String(error));
         socket.send(
@@ -344,12 +507,26 @@ export async function startCrpRelay(dir: string): Promise<RunningSource> {
     });
   });
   const { port } = await listenLoopback(server);
-  const url = `ws://127.0.0.1:${port}`;
+  return {
+    url: `ws://127.0.0.1:${port}`,
+    errors,
+    stop: async () => {
+      await new Promise<void>((resolve) => sockets.close(() => resolve()));
+      await closeServer(server);
+    }
+  };
+}
+
+/** The harness's relay on loopback, keeping what is published in `dir`. */
+export async function startCrpRelay(dir: string): Promise<RunningSource> {
+  const store = new CrpRelayStore(dir);
+  const provenance = readProvenance(dir);
+  const served = await serveStore(store, null);
   return {
     name: 'relays',
-    url,
+    url: served.url,
     info: {
-      url,
+      url: served.url,
       mode: 'local',
       provenance:
         provenance?.made_by ??
@@ -358,12 +535,171 @@ export async function startCrpRelay(dir: string): Promise<RunningSource> {
       provisional: true
     },
     problems: () =>
-      errors.length
-        ? [`relays: ${errors.length} bad frames, first ${errors[0]}`]
+      served.errors.length
+        ? [
+            `relays: ${served.errors.length} bad frames, first ${served.errors[0]}`
+          ]
         : [],
-    stop: async () => {
-      await new Promise<void>((resolve) => sockets.close(() => resolve()));
-      await closeServer(server);
+    stop: served.stop
+  };
+}
+
+/** Why one replayed recording counts for a final run, or why it doesn't. */
+interface RecordingJudgement {
+  readonly text: string;
+  readonly final: boolean;
+}
+
+/**
+ * A recording counts for a final run only when it has events and every
+ * one passes the signed-event check (its id recomputed, its device key's
+ * signature verified) and its area's relay check. PROVENANCE.json's
+ * `made_by` and `devnet_scenario` are labels for the report, never a basis.
+ */
+function judgeRecording(
+  dir: string,
+  verification: RelayVerification,
+  store: CrpRelayStore,
+  problems: ReplayProblems
+): RecordingJudgement {
+  const provenance = readProvenance(dir) as
+    | (Provenance & { devnet_scenario?: unknown })
+    | null;
+  for (const failure of verification.failed) {
+    problems.add(
+      'recorded events that fail their checks',
+      `${failure.id} in ${failure.wave}: ${failure.reason}`
+    );
+  }
+  for (const name of store.badPayloads()) {
+    problems.add("recorded payloads that don't match their hash", name);
+  }
+  const unchecked = Object.entries(verification.unchecked);
+  const uncheckedCount = unchecked.reduce((n, [, count]) => n + count, 0);
+  const checked = [
+    `${verification.verified} of ${verification.events} events pass the signed-event check and their area's`,
+    ...(uncheckedCount
+      ? [
+          `${uncheckedCount} in waves no area's check covers (${unchecked
+            .map(([wave]) => wave)
+            .slice(0, 5)
+            .join(', ')})`
+        ]
+      : [])
+  ].join(', ');
+  const final =
+    verification.events > 0 && verification.verified === verification.events;
+  const label = [
+    typeof provenance?.made_by === 'string' && provenance.made_by.trim()
+      ? provenance.made_by.trim()
+      : 'no made_by',
+    typeof provenance?.devnet_scenario === 'string'
+      ? `devnet scenario ${provenance.devnet_scenario}`
+      : null
+  ]
+    .filter(Boolean)
+    .join(', ');
+  return {
+    text: `${label} (${final ? 'final' : 'provisional'}; ${checked})`,
+    final
+  };
+}
+
+/**
+ * One recording made of several (`a+b`) in `dir`: each one's events in its
+ * own order after the one before, with their payloads, reads and roles.
+ */
+function mergeRecordings(dirs: readonly string[], dir: string): void {
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(path.join(dir, PAYLOADS_DIR), { recursive: true });
+  const events: string[] = [];
+  const reads = new Set<string>();
+  const roles: Record<string, string[]> = {};
+  let head = DEFAULT_HEAD;
+  for (const from of dirs) {
+    const store = new CrpRelayStore(from, true);
+    for (const stored of store.matching('*')) {
+      events.push(JSON.stringify({ ...stored, rseq: events.length + 1 }));
     }
+    head = Math.max(head, store.head);
+    const readsFile = path.join(from, READS_FILE);
+    if (fs.existsSync(readsFile)) {
+      (JSON.parse(fs.readFileSync(readsFile, 'utf8')) as string[]).forEach(
+        (wave) => reads.add(wave)
+      );
+    }
+    const rolesFile = path.join(from, ROLES_FILE);
+    if (fs.existsSync(rolesFile)) {
+      Object.assign(roles, JSON.parse(fs.readFileSync(rolesFile, 'utf8')));
+    }
+    const payloads = path.join(from, PAYLOADS_DIR);
+    if (fs.existsSync(payloads)) {
+      for (const name of fs.readdirSync(payloads)) {
+        fs.copyFileSync(
+          path.join(payloads, name),
+          path.join(dir, PAYLOADS_DIR, name)
+        );
+      }
+    }
+  }
+  fs.writeFileSync(
+    path.join(dir, EVENTS_FILE),
+    events.map((line) => `${line}\n`).join('')
+  );
+  fs.writeFileSync(
+    path.join(dir, READS_FILE),
+    JSON.stringify(Array.from(reads))
+  );
+  fs.writeFileSync(path.join(dir, ROLES_FILE), JSON.stringify(roles));
+  fs.writeFileSync(path.join(dir, RELAY_FILE), JSON.stringify({ head }));
+}
+
+/**
+ * Relay recordings served read-only. Each is judged on its own (see
+ * judgeRecording): an event that fails a check is a problem, and a
+ * recording that isn't final keeps the source provisional. Several
+ * recordings (an area's each) are merged into `mergeDir` for the run.
+ */
+export async function startCrpRelayReplay(
+  dirs: readonly string[],
+  verify: RecordingVerifier,
+  mergeDir: string
+): Promise<RunningSource> {
+  for (const dir of dirs) {
+    if (!fs.existsSync(path.join(dir, EVENTS_FILE))) {
+      throw new Error(`relays: no recording at ${dir}`);
+    }
+  }
+  const problems = new ReplayProblems();
+  const verifications = await verify(dirs);
+  const judgements = dirs.map((dir, i) =>
+    judgeRecording(
+      dir,
+      verifications[i],
+      new CrpRelayStore(dir, true),
+      problems
+    )
+  );
+  if (dirs.length > 1) mergeRecordings(dirs, mergeDir);
+  const store = new CrpRelayStore(dirs.length > 1 ? mergeDir : dirs[0], true);
+  const served = await serveStore(store, problems);
+  return {
+    name: 'relays',
+    url: served.url,
+    info: {
+      url: served.url,
+      mode: 'replay',
+      provenance: judgements.map((j) => j.text).join(' + '),
+      provisional: judgements.some((j) => !j.final)
+    },
+    problems: () => [
+      ...problems.list(),
+      ...(served.errors.length
+        ? [
+            `relays: ${served.errors.length} bad frames, first ${served.errors[0]}`
+          ]
+        : [])
+    ],
+    stop: served.stop
   };
 }

@@ -14,8 +14,15 @@ export const URL_SOURCES: readonly UrlSource[] = [
 export type SourceSpec =
   /** A devnet endpoint someone else runs. */
   | { readonly kind: 'live'; readonly url: string }
-  /** Answers from a recording directory; anything unrecorded fails. */
-  | { readonly kind: 'replay'; readonly dir: string }
+  /**
+   * Answers from a recording directory; anything unrecorded fails. Relays
+   * may name several (`replay:a+b`), merged for the run: `also` holds the rest.
+   */
+  | {
+      readonly kind: 'replay';
+      readonly dir: string;
+      readonly also?: readonly string[];
+    }
   /** A proxy to `upstream` that saves every answer into `dir`. */
   | { readonly kind: 'record'; readonly dir: string; readonly upstream: string }
   /** files: a directory of content-addressed files. */
@@ -32,7 +39,7 @@ export type SourceSpecs = Partial<Record<UrlSource, SourceSpec>>;
 
 const ALLOWED: Record<UrlSource, readonly SourceSpec['kind'][]> = {
   gateway: ['live', 'replay', 'record'],
-  relays: ['live', 'relay'],
+  relays: ['live', 'relay', 'replay', 'record'],
   ethereum: ['live', 'replay', 'record', 'anvil'],
   files: ['live', 'files']
 };
@@ -40,7 +47,7 @@ const ALLOWED: Record<UrlSource, readonly SourceSpec['kind'][]> = {
 /**
  * Parses `name=value`: a URL (`live`), `replay:<dir>`, `record:<dir>@<url>`,
  * `anvil` or `anvil:<state file>` for ethereum, `relay` or `relay:<dir>`
- * for relays,
+ * for relays (whose `record:<dir>@relay` records a fresh harness relay),
  * or a directory for files.
  */
 export function parseSourceArg(arg: string): [UrlSource, SourceSpec] {
@@ -62,7 +69,16 @@ export function parseSourceArg(arg: string): [UrlSource, SourceSpec] {
 function parseSpec(name: UrlSource, value: string): SourceSpec {
   if (/^(https?|wss?):\/\//.test(value)) return { kind: 'live', url: value };
   if (value.startsWith('replay:')) {
-    return { kind: 'replay', dir: path.resolve(value.slice(7)) };
+    const [dir, ...also] = value
+      .slice(7)
+      .split('+')
+      .map((d) => path.resolve(d));
+    if (also.length && name !== 'relays') {
+      throw new Error(`Only relays replay several recordings, not ${name}`);
+    }
+    return also.length
+      ? { kind: 'replay', dir, also }
+      : { kind: 'replay', dir };
   }
   if (value.startsWith('record:')) {
     const rest = value.slice(7);
