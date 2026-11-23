@@ -433,7 +433,7 @@ export class IdentityChainRatingEventEntity {
   readonly origin!: string;
 
   /** The record's import marker; 0 when not given. */
-  @Column({ type: 'tinyint', width: 1, nullable: false, default: 0 })
+  @Column({ type: 'tinyint', nullable: false, default: 0 })
   readonly by_import!: number;
 
   /** The record's last writer as given (tx:<op> or system:<step>). */
