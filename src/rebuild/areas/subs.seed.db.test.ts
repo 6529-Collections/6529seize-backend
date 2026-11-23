@@ -19,6 +19,8 @@ import {
   sqlExecutor
 } from '@/sql-executor';
 import { subscriptionsIdentitySwitch } from '@/subscriptions-identity/identity/identity-switch';
+import { parseSegmentFile } from '@/signed-records/record-log/record-log-format';
+import { journalBodyOf } from '@/subscriptions-identity/timeline/journal';
 import {
   rebuildLegacyHistoryInCheck,
   rebuildLegacyStateInCheck,
@@ -241,6 +243,31 @@ async function openLanes(): Promise<string[]> {
   ).map((row) => row.lane);
 }
 
+/**
+ * The kinds of the subscriptions journal's entries in the record log's
+ * public chain: in its closed segments (whose entries leave the entries
+ * table once their head drop is posted), then its open entries.
+ */
+async function journalKinds(): Promise<string[]> {
+  const segments = await sqlExecutor.execute<{ content: Buffer }>(
+    `select content from signed_record_log_segments
+      where chain = 'public' order by seq`
+  );
+  const open = await sqlExecutor.execute<{ entry: string }>(
+    `select entry from signed_record_log_entries
+      where chain = 'public' and segment_seq is null order by id`
+  );
+  return [
+    ...segments.flatMap(
+      (row) => parseSegmentFile(Buffer.from(row.content), []).entries
+    ),
+    ...open.map((row) => JSON.parse(row.entry))
+  ]
+    .map((entry) => journalBodyOf(entry))
+    .filter((body) => body !== null)
+    .map((body) => body!.kind);
+}
+
 /** Inserts a row, filling NOT NULL columns without a default with zeros. */
 async function insertFilled(
   table: string,
@@ -387,6 +414,14 @@ describeWithSeed('the subscriptions rebuild check', [], () => {
     expect(Number(charged.legacy)).toBe(Number(charged.identity));
 
     const before = await snapshot();
+    // Card 1's subscription phase is in the identity final rows the rebuild
+    // must give back, from the journal's phase entry.
+    expect(await journalKinds()).toContain('phase');
+    expect(
+      before.subscriptions_id_nfts_final.map(
+        (row) => JSON.parse(row as string).phase
+      )
+    ).toEqual(['Phase 0']);
     expect(before.subscriptions_id_balances).toHaveLength(2);
     expect(before.subscriptions_id_top_up).toHaveLength(3);
     // The signed choice after the switch: its head, in the subscriptions'
@@ -481,7 +516,7 @@ describeWithSeed('the subscriptions rebuild check', [], () => {
     );
   });
 
-  it("after the switch, another area's phase split of card 1 journals in lane `subs`, for the seed that ran it to close", async () => {
+  it("pulls card 1's subscriptions into a phase on both sides, journaled, and another area's later split for wallets nobody subscribes leaves it alone", async () => {
     const env = subsManifest.flags;
     const deps = creditedTopUps();
     await seedProbeIdentities();
@@ -491,47 +526,55 @@ describeWithSeed('the subscriptions rebuild check', [], () => {
       env,
       deps
     );
+    const phases = (table: string) =>
+      sqlExecutor.execute<{ phase: string | null }>(
+        `select phase from ${table} where token_id = 1`
+      );
+    const expectPhase0 = async () => {
+      expect(await phases('subscriptions_id_nfts_final')).toEqual([
+        { phase: 'Phase 0' }
+      ]);
+      expect(await phases('subscriptions_nfts_final')).toEqual([
+        { phase: 'Phase 0' }
+      ]);
+      // The final-phase route answers the first wallet under that phase.
+      expect(
+        await fetchFinalSubscriptionsByPhase(MEMES_CONTRACT, 1, 'Phase 0')
+      ).toEqual([{ wallet: PROBE_CONSOLIDATION_KEYS[0], amount: 1 }]);
+    };
+    await expectPhase0();
+    expect(await journalKinds()).toContain('phase');
     expect(await openLanes()).toEqual([]);
-    // The distribution's phase split, as the mint seed runs it for card 1:
-    // the subscriptions module writes the phase to the identity final rows
-    // and journals it.
+
+    // The mint seed's split of card 1, for allowlist wallets nobody
+    // subscribes: no subscription is in it, so no phase is written and
+    // nothing is journaled.
+    const phaseCount = (await journalKinds()).filter(
+      (kind) => kind === 'phase'
+    ).length;
     await splitAllowlistResults(MEMES_CONTRACT, 1, 'Phase 1', [
       {
-        id: 'phase-split-1',
-        wallet: PROBE_CONSOLIDATION_KEYS[0],
+        id: 'other-split-1',
+        wallet: '0x00000000000000000000000000000000000000c3',
         phaseId: 'phase-1',
         allowlistId: 'allowlist-1',
         phaseComponentId: 'component-1',
         amount: 1
       },
       {
-        id: 'phase-split-2',
-        wallet: PROBE_CONSOLIDATION_KEYS[1],
+        id: 'other-split-2',
+        wallet: '0x00000000000000000000000000000000000000c4',
         phaseId: 'phase-1',
         allowlistId: 'allowlist-1',
         phaseComponentId: 'component-1',
         amount: 3
       }
     ]);
-    expect(await openLanes()).toEqual(['subs']);
-    // The split names card 1's phase on both sides, and the final-phase
-    // route answers it under that name, not under any other.
-    const phases = (table: string) =>
-      sqlExecutor.execute<{ phase: string | null }>(
-        `select phase from ${table} where token_id = 1`
-      );
-    expect(await phases('subscriptions_id_nfts_final')).toEqual([
-      { phase: 'Phase 1' }
-    ]);
-    expect(await phases('subscriptions_nfts_final')).toEqual([
-      { phase: 'Phase 1' }
-    ]);
+    await expectPhase0();
     expect(
-      await fetchFinalSubscriptionsByPhase(MEMES_CONTRACT, 1, 'Phase 1')
-    ).toEqual([{ wallet: PROBE_CONSOLIDATION_KEYS[0], amount: 1 }]);
-    expect(
-      await fetchFinalSubscriptionsByPhase(MEMES_CONTRACT, 1, 'Subscriptions')
-    ).toEqual([]);
+      (await journalKinds()).filter((kind) => kind === 'phase')
+    ).toHaveLength(phaseCount);
+    expect(await openLanes()).toEqual([]);
   });
 
   it("fails the redemption seed, naming the order, when cards are minted but card 1's airdrop was not charged", async () => {

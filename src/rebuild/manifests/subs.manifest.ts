@@ -312,10 +312,10 @@ const SUBS_LEGACY_STATE_REBUILD: RebuildStep = {
   timeoutMinutes: 10
 };
 
-/** The subscription answers, for the probe fixture's consolidations. */
 /** The card the seeds build a list for and charge the airdrop of. */
 const CARD_WITH_LIST = PROBE_MEME_IDS[0];
 
+/** The subscription answers, for the probe fixture's consolidations. */
 const PROBES: Probe[] = [
   {
     id: 'subs.details',
@@ -366,10 +366,8 @@ const PROBES: Probe[] = [
   },
   {
     id: 'subs.final-phase',
-    // The phase the mint seed's distribution split names for card 1 (in a
-    // run without that seed the list has no phase and the probe proves
-    // nothing).
-    path: `/api/subscriptions/final/${PROBE_MEMES_CONTRACT}/{id}/phases/${encodeURIComponent('Phase 1')}`,
+    // The allowlist phase subs.switch pulls card 1's subscriptions into.
+    path: `/api/subscriptions/final/${PROBE_MEMES_CONTRACT}/{id}/phases/${encodeURIComponent('Phase 0')}`,
     each: { id: [CARD_WITH_LIST] }
   },
   {

@@ -45,6 +45,7 @@ import {
 import { loadProviderKeys } from '@/signed-records/sealed-crypto';
 import { signedRecordHeadsDb } from '@/signed-records/signed-record-heads.db';
 import { sqlExecutor } from '@/sql-executor';
+import { splitAllowlistResults } from '@/api/subscriptions/api.subscriptions.allowlist';
 import { updateSubscribeAllEditions } from '@/api/subscriptions/api.subscriptions.db';
 import { mirrorIdentityDirectory } from '@/subscriptions-identity/identity/identity-directory';
 import { subscriptionWritePathNow } from '@/subscriptions-identity/identity/identity-switch';
@@ -97,6 +98,8 @@ import { redeemSubscriptions } from '@/transactionsProcessingLoop/subscriptions'
  * - the daily build of the next card's list: the identity tables build it
  *   and publish it into the seed files, and the legacy tables get the same
  *   rows;
+ * - card 1's subscriptions pulled into an allowlist phase, as an admin does
+ *   before the mint;
  * - a checkpoint, and the journal into the records wave: a closed segment,
  *   its file in the seed files and its head drop.
  *
@@ -373,6 +376,12 @@ async function closeJournalSegments(
         throw new Error('The seed archives nothing');
       }
     },
+    // Posts a head drop as the records service, as a drop of the records
+    // wave: the drop, its part and the author's follow. Drop creation also
+    // records the activity event, the profile activity log line and the
+    // deferred drop metrics; no area rebuilds those from the records wave
+    // today, so the seed leaves them out. Posting through the drop creation
+    // service is the better end state, a follow-up.
     poster: {
       post: async (text) => {
         const id = randomUUID();
@@ -430,6 +439,9 @@ async function closeJournalSegments(
 
 /** The card whose list the switch seed builds and whose airdrop is charged. */
 const LIST_CARD = 1;
+
+/** The allowlist phase card 1's subscriptions are pulled into. */
+const LIST_PHASE = 'Phase 0';
 
 /** The 6529 chain height the seed's signed choice is anchored at. */
 const CHOICE_ANCHOR = 1;
@@ -506,8 +518,8 @@ export async function seedSubscriptions(
 /**
  * The switch and the journal: go-live with the opening files in the run's
  * seed files, a top-up after it through the identity writer, a signed
- * choice, the next card's list, a checkpoint, and the journal's closed
- * segment in the records wave.
+ * choice, the next card's list and its subscription phase, a checkpoint,
+ * and the journal's closed segment in the records wave.
  */
 export async function seedSubscriptionsSwitch(
   ctx: RebuildContext,
@@ -563,6 +575,21 @@ export async function seedSubscriptionsSwitch(
       `The subscriptions switch seed's daily build published no list for card ${LIST_CARD}`
     );
   }
+
+  // Before the mint, as an admin does: card 1's subscriptions pulled into
+  // an allowlist phase, through the subscriptions module's split, for the
+  // first wallet, which is on the list. It writes the phase to the final
+  // rows on both sides and journals it.
+  await splitAllowlistResults(MEMES_CONTRACT, LIST_CARD, LIST_PHASE, [
+    {
+      id: 'rebuild-subs-phase-0',
+      wallet: PROBE_CONSOLIDATION_KEYS[0],
+      phaseId: 'subs-phase-0',
+      allowlistId: 'subs-allowlist',
+      phaseComponentId: 'subs-component-0',
+      amount: 1
+    }
+  ]);
 
   await journalCheckpoint();
   await closeJournalSegments(dir, records);
