@@ -3221,6 +3221,44 @@ describe('ChainGatewayClient writes', () => {
     });
   });
 
+  it.each([
+    ['no gateway URL', {}],
+    ['a gateway URL that is not one', { CHAIN_GATEWAY_URL: 'not a url' }]
+  ])(
+    'throws not_configured for a submit with %s, never an unknown outcome',
+    async (_name, env) => {
+      let sent = 0;
+      const client = new ChainGatewayClient(() => ({
+        ...chainGatewayConfigFromEnv(env),
+        fetchImpl: async () => {
+          sent++;
+          throw new Error('not sent');
+        }
+      }));
+      await expect(
+        client.submit({ signed: '0x00', txId: TX })
+      ).rejects.toMatchObject({
+        code: 'not_configured'
+      });
+      expect(sent).toBe(0);
+    }
+  );
+
+  it('refuses a TDH list page whose rows are not a list', async () => {
+    const { client } = setup(
+      withStatus(
+        () => ({
+          status: 200,
+          json: { read: stamp(10), data: { day: 3, rows: null }, next: null }
+        }),
+        10
+      )
+    );
+    await expect(
+      client.getTdh({ day: 3, list: 'wallets' }, { height: 10 })
+    ).rejects.toMatchObject({ code: 'bad_answer' });
+  });
+
   it('refuses a submit without its txId before sending', async () => {
     const { client, calls } = setup(withStatus(() => new Error('not asked')));
     await expect(

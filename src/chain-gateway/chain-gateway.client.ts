@@ -130,6 +130,15 @@ function intOr(raw: string | undefined, fallback: number): number {
     : fallback;
 }
 
+function isHttpUrl(text: string): boolean {
+  try {
+    const url = new URL(text);
+    return url.protocol === 'https:' || url.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
 export function chainGatewayConfigFromEnv(
   env: Record<string, string | undefined> = process.env
 ): ChainGatewayConfig {
@@ -137,6 +146,14 @@ export function chainGatewayConfigFromEnv(
   if (!baseUrl) {
     throw new ChainGatewayError(
       'CHAIN_GATEWAY_URL is not set',
+      null,
+      'not_configured',
+      ''
+    );
+  }
+  if (!isHttpUrl(baseUrl)) {
+    throw new ChainGatewayError(
+      'CHAIN_GATEWAY_URL is not an http(s) URL',
       null,
       'not_configured',
       ''
@@ -595,18 +612,18 @@ function isReadStamp(value: unknown): value is ChainReadStamp {
  * not_found answers of the node rather than of the data, told apart only by
  * their message (the node's texts, routes.rs and draft.rs): `not_held`,
  * never null, never cached, as another node may hold what this one lacks.
- * The node should send a code of its own for these (such as `not_held`),
- * and not mark them cacheable for an hour (Cache-Control max-age=3600,
- * which the gateway honours): both are node-side fixes. They are:
+ * The node marks these cacheable for an hour (Cache-Control max-age=3600),
+ * which the gateway's cache honours, so one can outlive what it says. They
+ * are:
  * a route an older release lacks; the import's entry on a node whose
  * release carries no identities file; a membership day it didn't save or
  * has no record of; a TDH day's lists it doesn't keep (by day, or the
  * read's); token rows it never computed; a transaction neither its chain
  * nor its pool holds.
  * The identity's `founder` depends on the identities file the same way:
- * for an imported identity the node takes it from the file it carries
- * (reads.rs, `founder`), so a node without it can name another wallet.
- * That one is for the API to settle; the client can't tell.
+ * for an imported identity the node takes it from the file it carries, so
+ * a node without the file can name another wallet. The client can't tell
+ * these apart, so it takes `founder` as the node gives it.
  */
 const NOT_HELD = [
   /^no such route/i,
@@ -812,6 +829,9 @@ function listOnly<T>(path: string): AnswerCheck<T> {
     }
   };
 }
+
+/** Errors raised before a request leaves the process. */
+const NEVER_LEFT = ['not_configured', 'bad_request'];
 
 /** Refusals of a submit that say the transaction wasn't taken. */
 const REFUSALS = [
@@ -2059,12 +2079,10 @@ export class ChainGatewayClient {
     // range is exact. A node restarted from a checkpoint in the middle of
     // the import can report a later import.startHeight than the chain's:
     // take noBindingsBefore from the chain's record, not one node's word.
-    // For the API: an `exactFrom`, or Start writing the
-    // bindings it loads into the history, would let more be kept. Also
-    // node-side: the route reads the changes and the ranges under two
-    // locks (routes.rs, the history route), so one answer can pair them
-    // from two moments; and node-local answers, 404s included, carry
-    // Cache-Control max-age=3600, which the gateway's cache honours.
+    // The node reads a history's changes and its ranges one after the
+    // other, so one answer can pair them from two moments, and marks it
+    // cacheable for an hour at the gateway: keeping only the first range,
+    // to the read height, from the wallet's first change, stays exact.
     const height = readHeight as number;
     const first = heightRanges(answer.data.ranges, path)[0];
     const end = first && first[0] <= height ? Math.min(first[1], height) : -1;
@@ -2283,6 +2301,10 @@ export class ChainGatewayClient {
         ) {
           throw badAnswer(path, 'an answer of something other than was asked');
         }
+        // A list page's rows are a list, or it would read as empty.
+        if (query.list && !Array.isArray((data as { rows?: unknown }).rows)) {
+          throw badAnswer(path, 'a list that is not a list');
+        }
       }
     );
   }
@@ -2464,7 +2486,7 @@ export class ChainGatewayClient {
    * The typed data to sign for one operation (POST /v1/draft). Leave
    * `maxWork` out: the draft then reserves step 9's bound plus 150,000 RU
    * (the client margin), enough for the records a handler writes. One
-   * below the bound is refused (400) from rc.27; before that the node
+   * below the bound is refused (400) from 0.27.0; before that the node
    * raised it to the bound alone, which can fall short. The draft must be of the operation
    * asked for, and reserve at least the `maxWork` given, else bad_answer.
    */
@@ -2521,6 +2543,17 @@ export class ChainGatewayClient {
     const txId = lower(
       arg(given, 'a transaction id', (v) => PRINCIPAL_ARG.test(v))
     );
+    // Settings are read, and the URL built, before anything is sent: a
+    // request that never left the process is never "unknown".
+    const url = this.url(path, {});
+    if (!isHttpUrl(url)) {
+      throw new ChainGatewayError(
+        `${path}: the gateway URL ${url} is not an http(s) URL`,
+        null,
+        'not_configured',
+        path
+      );
+    }
     let answered: { status: number; json: Envelope<unknown> | null };
     try {
       answered = await this.send(
@@ -2533,7 +2566,13 @@ export class ChainGatewayClient {
         notTaken
       );
     } catch (error) {
-      if (!(error instanceof ChainGatewayError) || notTaken(error)) throw error;
+      if (
+        !(error instanceof ChainGatewayError) ||
+        notTaken(error) ||
+        NEVER_LEFT.indexOf(error.code) >= 0
+      ) {
+        throw error;
+      }
       throw outcomeUnknown(path, error, txIdIn(error.message) ?? txId);
     }
     // The node answered, not with 503 or 429: from here only its refusals
@@ -2715,7 +2754,7 @@ export class ChainGatewayClient {
   /**
    * Uploads are not served over service access: the gateway's proxy, which
    * the backend reaches, doesn't serve POST /v1/docs (its own function
-   * does, on the public name, with the public lane's limits). So this
+   * does, on the public name, with the gateway's public limits). So this
    * fails at once with `not_available`, sending nothing; an upload goes
    * through the public name (POST /v1/docs with the bytes, at most 2 MiB,
    * `?cid=` checked, answering `{ cid, cid_hex, codec, size, url }`).
