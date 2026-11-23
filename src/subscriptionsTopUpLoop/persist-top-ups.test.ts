@@ -10,6 +10,7 @@ import { sqlExecutor } from '@/sql-executor';
 import { markSubscriptionCoverageDirty } from '@/subscription-coverage/subscription-coverage-dirty';
 import { sendSubscriptionTopUpWaveUpdate } from '@/subscription-wave-notifier';
 import { invalidateUpcomingSubscriptionCaches } from '@/subscriptionsDaily/subscription-cache';
+import { subscriptionKeyWidths } from '@/subscription-key-width/subscription-key-width';
 import { persistTopUps } from './db.subscriptions_topup';
 
 jest.mock('@/api/subscriptions/api.subscriptions.db', () => ({
@@ -17,11 +18,19 @@ jest.mock('@/api/subscriptions/api.subscriptions.db', () => ({
 }));
 jest.mock('@/db', () => ({ getDataSource: jest.fn() }));
 jest.mock('@/sql-executor', () => ({
-  sqlExecutor: { executeNativeQueriesInTransaction: jest.fn() }
+  sqlExecutor: {
+    executeNativeQueriesInTransaction: jest.fn(),
+    execute: jest.fn()
+  }
 }));
 jest.mock('@/logging', () => ({
   Logger: {
-    get: () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn() })
+    get: () => ({
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      errorWithCode: jest.fn()
+    })
   }
 }));
 jest.mock('@/eth-tools', () => ({
@@ -39,7 +48,11 @@ jest.mock('@/subscriptionsDaily/subscription-cache', () => ({
   invalidateUpcomingSubscriptionCaches: jest.fn()
 }));
 
-const balancesRepo = { findOne: jest.fn(), save: jest.fn() };
+const balancesRepo = {
+  findOne: jest.fn(),
+  insert: jest.fn(),
+  update: jest.fn()
+};
 const topUpsRepo = { save: jest.fn() };
 const manager = {
   query: jest.fn(),
@@ -101,7 +114,7 @@ it('rejects the transaction after a mode/quantity synchronization lock timeout, 
 
   await expect(persistTopUps([topUp])).rejects.toBe(lockTimeout);
 
-  expect(balancesRepo.save).toHaveBeenCalled();
+  expect(balancesRepo.insert).toHaveBeenCalled();
   expect(topUpsRepo.save).toHaveBeenCalledWith(topUp);
   expect(updateSubscriptionMode).toHaveBeenCalledWith(
     'wallet',
@@ -139,10 +152,15 @@ describe('first top-up for a consolidation without a balance', () => {
     await persistTopUps([small]);
 
     expect(updateSubscriptionMode).not.toHaveBeenCalled();
-    expect(balancesRepo.save).toHaveBeenCalledWith({
+    expect(balancesRepo.findOne).toHaveBeenCalledWith({
+      where: { consolidation_key: 'wallet' },
+      lock: { mode: 'pessimistic_write' }
+    });
+    expect(balancesRepo.insert).toHaveBeenCalledWith({
       consolidation_key: 'wallet',
       balance: MEMES_MINT_PRICE / 2
     });
+    expect(balancesRepo.update).not.toHaveBeenCalled();
     expect(topUpsRepo.save).toHaveBeenCalledWith(small);
     expect(events).toEqual(['commit', 'evict']);
     expect(sendDiscordUpdate).toHaveBeenCalledTimes(1);
@@ -194,6 +212,116 @@ describe('first top-up for a consolidation without a balance', () => {
     await persistTopUps([{ ...topUp, amount: MEMES_MINT_PRICE }]);
 
     expect(updateSubscriptionMode).not.toHaveBeenCalled();
+    expect(balancesRepo.update).toHaveBeenCalledWith(
+      { consolidation_key: 'wallet' },
+      { balance: 0.07529 }
+    );
+    expect(balancesRepo.insert).not.toHaveBeenCalled();
     expect(events).toEqual(['commit', 'evict']);
+  });
+});
+
+describe('keys that must wait', () => {
+  const longKey = [1, 2, 3, 4, 5]
+    .map((n) => `0x${String(n).padStart(40, '0')}`)
+    .join('-');
+  let claimRows: unknown[];
+  let pendingRows: unknown[];
+
+  beforeEach(() => {
+    claimRows = [{ replayed_at: null }];
+    pendingRows = [];
+    subscriptionKeyWidths.invalidate();
+    jest.mocked(sqlExecutor.execute).mockImplementation((async (
+      sql: string
+    ) => {
+      if (sql.includes('FOR UPDATE')) {
+        return claimRows;
+      }
+      if (sql.includes('replayed_at IS NULL')) {
+        return pendingRows;
+      }
+      if (sql.includes('information_schema')) {
+        // The catalogue lists no widened column: every key column holds
+        // the pre-migration 200 characters.
+        return [];
+      }
+      return undefined;
+    }) as never);
+  });
+
+  const queued = () =>
+    jest
+      .mocked(sqlExecutor.execute)
+      .mock.calls.filter(([sql]) =>
+        sql.includes('INSERT INTO subscription_deferred_writes')
+      );
+
+  it('queues a top-up whose key a subscription table cannot hold and applies none of it', async () => {
+    manager.query.mockResolvedValue([{ consolidation_key: longKey }]);
+
+    await expect(persistTopUps([topUp])).resolves.toBe(true);
+
+    expect(balancesRepo.insert).not.toHaveBeenCalled();
+    expect(balancesRepo.update).not.toHaveBeenCalled();
+    expect(topUpsRepo.save).not.toHaveBeenCalled();
+    expect(updateSubscriptionMode).not.toHaveBeenCalled();
+    expect(queued()).toHaveLength(1);
+    expect(queued()[0][1]).toEqual(
+      expect.objectContaining({
+        p0: 'TOP_UP',
+        p1: longKey,
+        p3: longKey.length
+      })
+    );
+    expect(queued()[0][2]).toEqual({ wrappedConnection: connection });
+    expect(events).toEqual(['commit', 'evict']);
+    expect(sendDiscordUpdate).not.toHaveBeenCalled();
+    expect(sendSubscriptionTopUpWaveUpdate).not.toHaveBeenCalled();
+  });
+
+  it('queues a top-up for a key that fits while the key has earlier writes waiting', async () => {
+    pendingRows = [{ sequence: 1 }];
+
+    await persistTopUps([topUp]);
+
+    expect(balancesRepo.insert).not.toHaveBeenCalled();
+    expect(balancesRepo.update).not.toHaveBeenCalled();
+    expect(topUpsRepo.save).not.toHaveBeenCalled();
+    expect(queued()).toHaveLength(1);
+    expect(queued()[0][1]).toEqual(
+      expect.objectContaining({ p0: 'TOP_UP', p1: 'wallet' })
+    );
+  });
+
+  it('replays a queued top-up once: claimed and credited in one transaction', async () => {
+    await expect(persistTopUps([topUp], { replaySequence: 7 })).resolves.toBe(
+      true
+    );
+
+    const calls = jest.mocked(sqlExecutor.execute).mock.calls;
+    const claim = calls.findIndex(([sql]) => sql.includes('FOR UPDATE'));
+    expect(calls[claim][1]).toEqual({ p0: 7 });
+    expect(calls[claim + 1][0]).toContain('SET replayed_at');
+    // Only entries queued before this one hold it back.
+    const pending = calls.find(([sql]) => sql.includes('replayed_at IS NULL'));
+    expect(pending?.[0]).toContain('sequence < ');
+    expect(balancesRepo.insert).toHaveBeenCalledTimes(1);
+    expect(topUpsRepo.save).toHaveBeenCalledWith(topUp);
+    expect(events).toEqual(['commit', 'evict']);
+  });
+
+  it('makes no write for an entry another run already claimed', async () => {
+    claimRows = [{ replayed_at: 5 }];
+
+    await expect(persistTopUps([topUp], { replaySequence: 7 })).resolves.toBe(
+      false
+    );
+
+    expect(manager.query).not.toHaveBeenCalled();
+    expect(balancesRepo.insert).not.toHaveBeenCalled();
+    expect(balancesRepo.update).not.toHaveBeenCalled();
+    expect(topUpsRepo.save).not.toHaveBeenCalled();
+    expect(sendDiscordUpdate).not.toHaveBeenCalled();
   });
 });

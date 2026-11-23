@@ -45,6 +45,10 @@ export const CONSOLIDATIONS_LIMIT = 4;
 // after the configured activation time, so older registrations never form a group
 // of four on their own.
 export const CONSOLIDATIONS_UNGATED_LIMIT = 3;
+// Width of the columns that hold a consolidation key: the identity's wallets,
+// lowercased, sorted and joined by '-'. A 6529 chain identity binds up to 16
+// wallets, so its key is up to 16 * 42 + 15 = 687 characters.
+export const CONSOLIDATION_KEY_LENGTH = 700;
 export const NEVER_DATE = 64060588800;
 
 export const WALLET_REGEX = /^0x[a-fA-F0-9]{40}$/;
