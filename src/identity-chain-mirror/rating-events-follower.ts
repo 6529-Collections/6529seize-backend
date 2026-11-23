@@ -81,6 +81,7 @@ type Db = Pick<
   | 'clearRatingEvents'
   | 'clearRatingLedger'
   | 'profileIdsOfPrincipals'
+  | 'profileIdOfPrincipal'
   | 'ratingLedgerOf'
   | 'ratingLedgerTotalsOf'
   | 'writeRatingLedger'
@@ -156,27 +157,38 @@ const PASSING_CODES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * MySQL (and its driver's) codes of failures that pass on their own: a
- * deadlock or lock wait, the pool's acquire or handshake timing out, and a
- * connection timed out, refused, reset, broken or lost.
+ * MySQL (and its driver's) codes of failures that pass on their own. With
+ * this pool, PROTOCOL_SEQUENCE_TIMEOUT is a query past its 30-second
+ * timeout, and a connection the pool can't acquire in time comes back as
+ * ETIMEDOUT.
  */
 const PASSING_DB_CODES: ReadonlySet<string> = new Set([
   'ER_LOCK_DEADLOCK',
   'ER_LOCK_WAIT_TIMEOUT',
+  'ER_CON_COUNT_ERROR',
+  'ER_OPTION_PREVENTS_STATEMENT',
   'PROTOCOL_SEQUENCE_TIMEOUT',
+  'PROTOCOL_CONNECTION_LOST',
+  'PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR',
   'ETIMEDOUT',
   'ECONNREFUSED',
   'ECONNRESET',
   'EPIPE',
-  'PROTOCOL_CONNECTION_LOST'
+  'ENOTFOUND',
+  'EAI_AGAIN'
 ]);
 
 /**
- * A failure that passes on its own: of the gateway (a height not held yet
- * or any more, a timeout, the network, 429 or 5xx, an answer of another
- * chain), or of the database (a deadlock, a lock wait, a connection reset
- * or lost). The page waits for the next run. Anything else may fail the
- * same way every run.
+ * A failure that passes on its own, so the page waits for the next run.
+ * Of the gateway: height_gone, timeout, network, starting, wrong_network,
+ * 429 or 5xx. Of the database: ER_LOCK_DEADLOCK and ER_LOCK_WAIT_TIMEOUT,
+ * ER_CON_COUNT_ERROR (too many connections), ER_OPTION_PREVENTS_STATEMENT
+ * (read-only during a failover), PROTOCOL_SEQUENCE_TIMEOUT (a query past
+ * its timeout), PROTOCOL_CONNECTION_LOST and
+ * PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR, ETIMEDOUT (also the pool's acquire
+ * timeout), ECONNREFUSED, ECONNRESET, EPIPE, ENOTFOUND and EAI_AGAIN, and
+ * any error the driver marks fatal (its connection is gone). Anything else
+ * may fail the same way every run.
  */
 function passesOnItsOwn(error: unknown): boolean {
   if (error instanceof ChainGatewayError) {
@@ -186,8 +198,9 @@ function passesOnItsOwn(error: unknown): boolean {
       (error.status !== null && error.status >= 500)
     );
   }
-  const code = (error as { code?: unknown } | null)?.code;
-  return typeof code === 'string' && PASSING_DB_CODES.has(code);
+  const it = error as { code?: unknown; fatal?: unknown } | null;
+  if (it?.fatal === true) return true;
+  return typeof it?.code === 'string' && PASSING_DB_CODES.has(it.code);
 }
 
 /**
@@ -959,12 +972,21 @@ export class RatingEventsFollower {
         );
         return null;
       }
-      return isInactive(identity)
-        ? {
-            profileId: (await this.ids.profileIdForSites(identity)).profileId,
-            stored: false
-          }
-        : { profileId: await this.ids.profileIdOf(identity), stored: true };
+      if (isInactive(identity)) {
+        return {
+          profileId: (await this.ids.profileIdForSites(identity)).profileId,
+          stored: false
+        };
+      }
+      // Stored only when it had no mapping before: one already there is no
+      // step on for the stuck alarm.
+      const had = await this.db.profileIdOfPrincipal(
+        identity.principalId.toLowerCase()
+      );
+      return {
+        profileId: had ?? (await this.ids.profileIdOf(identity)),
+        stored: had === null
+      };
     } catch (error) {
       if (error instanceof ChainReadRetryLater) {
         logger.warn(

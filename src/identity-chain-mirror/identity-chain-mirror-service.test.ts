@@ -2747,30 +2747,35 @@ describe('IdentityChainMirror', () => {
   });
 
   it.each([
-    'ER_LOCK_DEADLOCK',
-    'PROTOCOL_CONNECTION_LOST',
-    'PROTOCOL_SEQUENCE_TIMEOUT',
-    'ETIMEDOUT'
-  ])('leaves the page for the next run on %s while mapping', async (code) => {
-    const w = ratedWorld();
-    const { mirror, db, gateway, bob } = w;
-    bobRatesAliceAt70(w);
-    firstSyncStops(gateway, 2);
-    const insert = db.insertMapping.bind(db);
-    db.insertMapping = jest
-      .fn()
-      .mockRejectedValueOnce(Object.assign(new Error('locked'), { code }))
-      .mockImplementation(insert) as never;
-    const first = await mirror.run({ budgetMs: 60_000 });
-    expect(first.ratingEventProblems).toContain('locked');
-    expect(db.ratingEvents).toEqual([]);
-    await mirror.run({ budgetMs: 60_000 });
-    const bobId = principalProfileId(bob.principalId);
-    expect(idsOf(db.ratingEvents)).toEqual([
-      [60, 'IMPORT', bobId, ALICE_PROFILE],
-      [70, 'OPERATION', bobId, ALICE_PROFILE]
-    ]);
-  });
+    ['ER_LOCK_DEADLOCK', { code: 'ER_LOCK_DEADLOCK' }],
+    ['PROTOCOL_CONNECTION_LOST', { code: 'PROTOCOL_CONNECTION_LOST' }],
+    ['PROTOCOL_SEQUENCE_TIMEOUT', { code: 'PROTOCOL_SEQUENCE_TIMEOUT' }],
+    ['ETIMEDOUT', { code: 'ETIMEDOUT' }],
+    ['ER_OPTION_PREVENTS_STATEMENT', { code: 'ER_OPTION_PREVENTS_STATEMENT' }],
+    ['a fatal error', { code: 'ER_UNKNOWN_ERROR', fatal: true }]
+  ])(
+    'leaves the page for the next run on %s while mapping',
+    async (_, failure) => {
+      const w = ratedWorld();
+      const { mirror, db, gateway, bob } = w;
+      bobRatesAliceAt70(w);
+      firstSyncStops(gateway, 2);
+      const insert = db.insertMapping.bind(db);
+      db.insertMapping = jest
+        .fn()
+        .mockRejectedValueOnce(Object.assign(new Error('locked'), failure))
+        .mockImplementation(insert) as never;
+      const first = await mirror.run({ budgetMs: 60_000 });
+      expect(first.ratingEventProblems).toContain('locked');
+      expect(db.ratingEvents).toEqual([]);
+      await mirror.run({ budgetMs: 60_000 });
+      const bobId = principalProfileId(bob.principalId);
+      expect(idsOf(db.ratingEvents)).toEqual([
+        [60, 'IMPORT', bobId, ALICE_PROFILE],
+        [70, 'OPERATION', bobId, ALICE_PROFILE]
+      ]);
+    }
+  );
 
   it('holds the page for a principal that keeps failing in passing, and raises the stuck alarm', async () => {
     const w = ratedWorld();
@@ -2791,6 +2796,33 @@ describe('IdentityChainMirror', () => {
     expect(db.ratingEvents).toEqual([]);
     expect(db.state?.events_stuck_runs).toBe(RATING_EVENTS_STUCK_RUNS);
     expect(report?.ratingEventsStuck).toMatch(/^Rating events stuck at 101/);
+  });
+
+  it('counts no step on for an id that was stored before the call', async () => {
+    const w = ratedWorld();
+    const { db } = w;
+    w.db.mapping.set(w.alice.principalId, {
+      profile: ALICE_PROFILE,
+      origin: 'LEGACY'
+    });
+    // Three raters mapped already, which the page's read of the mappings
+    // doesn't see: each is named from its mapping, nothing stored.
+    const raters = ratersAt101(w, 3);
+    raters.forEach((it) =>
+      db.mapping.set(it.principalId, {
+        profile: principalProfileId(it.principalId),
+        origin: 'NEW'
+      })
+    );
+    const hidden = new Set(raters.map((it) => it.principalId));
+    const mappingsOf = db.profileIdsOfPrincipals.bind(db);
+    db.profileIdsOfPrincipals = (async (principals: string[]) =>
+      await mappingsOf(principals.filter((it) => !hidden.has(it)))) as never;
+    const { follow } = followerAt101(w, { readMs: 1_000 });
+    // Time for two reads: out of time before the third.
+    await follow(1_500);
+    expect(db.ratingEvents).toEqual([]);
+    expect(db.state?.events_stuck_runs).toBe(1);
   });
 
   it('forgets the names of a page it is on when the chain changes', async () => {

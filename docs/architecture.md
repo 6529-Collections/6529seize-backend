@@ -1033,9 +1033,11 @@ so the sync later finds the same one; a merged, closing or walletless one
 named without storing, as the sync names such a rater). The two never map at
 the same time: the follower runs after the identity steps, and one Lambda runs
 at a time. A failure that passes on its own (of the gateway: a height not
-held, a timeout, the network, 429 or 5xx; of the database: a deadlock, a lock
-wait, the pool timing out, a connection timed out, refused, reset, broken or
-lost) ends the follower's run before the page is written; one that keeps
+held, a timeout, the network, 429 or 5xx; of the database, by its MySQL
+code: a deadlock, a lock wait, too many connections, read-only during a
+failover, a query or the pool timing out, a connection timed out, refused,
+reset, broken or lost, a host not found, or any error the driver marks fatal)
+ends the follower's run before the page is written; one that keeps
 coming back for a principal holds the page, and the stuck alarm calls a
 person. When more than 200 are left to map
 after some were newly named, the page is read again while time is left, going
