@@ -27,9 +27,10 @@ test shards and fails when:
 - a rebuilder writes a table that isn't one of its area's INDEX tables, two
   rebuilders write one table (unless each writes a disjoint partition of
   it), or steps wait on each other;
-- a column owner owns a column another owner owns, owns columns of a table
-  no rebuilder writes the rows of, or doesn't run after that row writer; a
-  step both writes a table's rows and owns columns of it;
+- a column owner owns a column another owner owns, a partition or
+  checkpoint column, or columns of a table no rebuilder writes the rows of,
+  or doesn't run after that row writer; a step both writes a table's rows
+  and owns columns of it; a write names both columns and a partition;
 - a step reads a table no manifest has, or needs an unknown table, a
   VIEW, RETIRED or SCHEMA table, or one without a reason; a rebuilder is
   marked `last`, or a seed that isn't last waits on one that is;
@@ -94,9 +95,10 @@ export const mintManifest: AreaManifest = {
   such as an auto-increment id the API never shows, also stops keying the
   rows: they match by their other columns.
 - An INDEX table's `exemptColumns` (each with its `reason`) are columns no
-  step rebuilds, such as a retired feature's last values that backups keep.
-  The comparison leaves them out like volatile ones, and the report lists
-  each with its reason. A column can't be both exempt and owned by a column
+  step rebuilds: named clock or random columns a step can't reproduce, each
+  until a dated follow-up derives it from block times. The comparison
+  leaves them out like volatile ones, and the report lists each with its
+  reason. A column can't be both exempt and owned by a column
   owner, and a run fails at its start when the schema lacks one.
 - An INDEX table whose readers take only its one newest row, such as a
   checkpoint each indexing run writes, can set
@@ -142,21 +144,29 @@ export const mintManifest: AreaManifest = {
     writer) writes the rows of, for example columns other loops keep up to
     date on rows one area writes: it lists `{ table, columns, reason }` in
     `writes` and runs after the row writer (`after`). MySQL holds both to
-    it with column grants: the row writer may insert and update every other
-    column and delete rows; the owner may only update its columns. Each
-    owned column needs a default, which the rows hold until the owner runs.
-    A step that writes outside them fails, and the run names the step, the
-    column and the table. The run also digests the owner's table without its
-    columns (the row set and every other column) before and after it runs,
-    and fails on any change. An owned column the schema lacks fails the run
-    at its start. A writer of the table that reads it doesn't wait on its
+    it with column grants: the row writer may insert every column (its live
+    insert may carry values into the owned ones), update every other
+    column, and delete rows; the owner may only update its columns. A step
+    that writes outside them fails, and the run names the step, the column
+    and the table. Once the table's last running row writer is done, the
+    run resets the running owners' columns on every row, to the default,
+    NULL, or a NOT NULL column's zero (0, or an empty string), so the owners
+    fill them again whatever the row writer, a kept copy or another area
+    left there. The run digests the owner's table without its columns (the
+    row set and every other column, leaving out what MySQL writes itself:
+    ON UPDATE and generated columns) before and after it runs, and fails on
+    any change. At its start the run fails on an owned column the schema
+    lacks, one in the primary key, one it can't reset (NOT NULL, with no
+    default, of a type with no zero), and on a table with owners but no
+    primary key. A writer of the table that reads it doesn't wait on its
     owners; owners run in their `after` order, so one that reads another's
     columns names it there. When a table's row writer doesn't run (it is
-    another area's, or skipped), the table keeps its rows, and the columns
-    of the owners that do run go back to their defaults for them to fill
-    again. Columns whose owner doesn't run are left out of the comparison
-    and listed with why (another area's, planned, or waiting for a table),
-    as planned tables are; a final run fails on them.
+    another area's, or skipped), the table keeps its rows. When an owner
+    doesn't run, the run saves its columns with each row's key before the
+    drop and puts them back after the last running row writer, so the
+    API's answers keep them; they are still left out of the comparison and
+    listed with why (another area's, planned, or waiting for a table), as
+    planned tables are, and a final run fails on them.
   - A step with `origin: 'planned'` names a module a branch adds later.
     Until it is in the tree, runs skip the step and note it, and keep a
     skipped rebuilder's tables like pending ones; a final run fails.

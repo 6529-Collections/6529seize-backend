@@ -45,10 +45,11 @@ export interface TableEntry {
     readonly reason: string;
   }[];
   /**
-   * INDEX only: columns no step rebuilds, each with why (for example a
-   * retired feature's last values, which backups keep). The row comparison
-   * leaves them out like volatile ones, and the report lists each with its
-   * reason. A column can't be both exempt and owned by a column owner.
+   * INDEX only: columns no step rebuilds, each with why: named clock or
+   * random columns a step can't reproduce, each until a dated follow-up
+   * derives it from block times. The row comparison leaves them out like
+   * volatile ones, and the report lists each with its reason. A column
+   * can't be both exempt and owned by a column owner.
    */
   readonly exemptColumns?: readonly {
     readonly column: string;

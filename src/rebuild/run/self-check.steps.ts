@@ -71,6 +71,57 @@ async function insertTeamUndated(): Promise<void> {
   }
 }
 
+/** The MEMES rows without their created_at: one partition's row writer. */
+export async function rebuildMemesTeamUndated(): Promise<void> {
+  for (const row of ROWS.filter((r) => r.collection === 'MEMES')) {
+    await dbSupplier().execute(
+      `INSERT INTO ${TEAM_TABLE} (wallet, collection, name)
+       VALUES (:wallet, :collection, :name)`,
+      row
+    );
+  }
+}
+
+/** A row writer that also updates created_at, which an owner owns. */
+export async function rebuildTeamThenDate(): Promise<void> {
+  await insertTeamUndated();
+  await dbSupplier().execute(
+    `UPDATE ${TEAM_TABLE} SET created_at = :created_at`,
+    { created_at: CREATED_AT }
+  );
+}
+
+/** Restores team, then writes a table its writes don't name. */
+export async function rebuildTeamAndWriteUndeclared(): Promise<void> {
+  await insertTeam(false);
+  await dbSupplier().execute(
+    `INSERT INTO ${MEMES_SEASONS_TABLE}
+       (id, created_at, start_index, end_index, count, name, display, boost)
+     VALUES (99, :created_at, 1, 2, 2, 'X', 'X', 0)`,
+    { created_at: CREATED_AT }
+  );
+}
+
+/** name's owner: names every row, as the seed does. */
+export async function nameTeam(): Promise<void> {
+  for (const row of ROWS) {
+    await dbSupplier().execute(
+      `UPDATE ${TEAM_TABLE} SET name = :name WHERE wallet = :wallet`,
+      row
+    );
+  }
+}
+
+/** An owner of name that names only the MEMES rows. */
+export async function nameMemesTeam(): Promise<void> {
+  for (const row of ROWS.filter((r) => r.collection === 'MEMES')) {
+    await dbSupplier().execute(
+      `UPDATE ${TEAM_TABLE} SET name = :name WHERE wallet = :wallet`,
+      row
+    );
+  }
+}
+
 /** A row writer that leaves created_at to its owner. */
 export async function rebuildTeamUndated(): Promise<void> {
   await insertTeamUndated();
@@ -174,6 +225,26 @@ async function insertSeasons(endShift: number): Promise<void> {
       }
     );
   }
+}
+
+/** The seasons without created_at, left to its owner. */
+export async function rebuildSeasonsUndated(): Promise<void> {
+  for (const season of SEASONS) {
+    await dbSupplier().execute(
+      `INSERT INTO ${MEMES_SEASONS_TABLE}
+         (id, start_index, end_index, count, name, display, boost)
+       VALUES (:id, :start_index, :end_index, :count, :name, :name, :boost)`,
+      season
+    );
+  }
+}
+
+/** created_at's owner for the seasons. */
+export async function dateSeasons(): Promise<void> {
+  await dbSupplier().execute(
+    `UPDATE ${MEMES_SEASONS_TABLE} SET created_at = :created_at`,
+    { created_at: CREATED_AT }
+  );
 }
 
 /** Memes seasons for the probe check: the "before" state. */

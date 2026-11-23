@@ -486,14 +486,160 @@ describe('rebuild check, end to end', () => {
       });
     });
 
-    it('fails a row writer that writes an owned column', async () => {
+    it('lets a row writer insert an owned column, and resets it before the owner', async () => {
+      // name is NOT NULL with no default: its reset is the empty string.
+      const naming = (id: string, exportName: string): RebuildStep => ({
+        ...step(id, exportName, []),
+        writes: [
+          { table: 'team', columns: ['name'], reason: 'it names the rows' }
+        ],
+        after: ['self-check.rows']
+      });
+      const rows = step('self-check.rows', 'rebuildTeam', ['team']);
+      const named = await ownedRun(
+        rows,
+        naming('self-check.named', 'nameTeam')
+      );
+      expect(named.report.failures).toEqual([]);
+      expect(named.report.tables.diffs.map((d) => [d.table, d.same])).toEqual([
+        ['team', true]
+      ]);
+      // The row writer's own names were reset: the owner that names only
+      // the MEMES rows leaves the other row empty.
+      const partly = await ownedRun(
+        rows,
+        naming('self-check.memes-named', 'nameMemesTeam')
+      );
+      expect(partly.report.failures).toEqual([]);
+      expect(
+        partly.report.tables.diffs.map((d) => [d.table, d.changed])
+      ).toEqual([
+        [
+          'team',
+          [JSON.stringify(['0x0000000000000000000000000000000000000002'])]
+        ]
+      ]);
+    });
+
+    it('fails a row writer that updates an owned column', async () => {
       const { report } = await ownedRun(
-        { ...undated, run: { module: MODULE, exportName: 'rebuildTeam' } },
+        {
+          ...undated,
+          run: { module: MODULE, exportName: 'rebuildTeamThenDate' }
+        },
         dated('self-check.dated', 'dateTeam')
       );
       expect(report.verdict).toBe('FAIL');
       expect(report.failures).toContain(
-        "self-check.undated may not INSERT column created_at of team: it isn't the step's to write"
+        'self-check.undated may not UPDATE column created_at of team: a column owner owns it'
+      );
+    });
+
+    it('resets owned columns on rows kept for a skipped partition writer, or left by another area', async () => {
+      const part = (collection: string) => ({
+        table: 'team',
+        partition: {
+          columns: ['collection'],
+          values: [[collection]],
+          reason: `the ${collection} rows`
+        }
+      });
+      const memesRows: RebuildStep = {
+        ...step('self-check.memes-rows', 'rebuildMemesTeamUndated', []),
+        writes: [part('MEMES')]
+      };
+      const otherRows: RebuildStep = {
+        ...step('self-check.other-rows', 'rebuildTeam', []),
+        writes: [part('6529')]
+      };
+      const owner = (after: string[]): RebuildStep => ({
+        ...dated('self-check.memes-dated', 'dateMemesTeam'),
+        after
+      });
+      const sixFiveTwoNine = [
+        'team',
+        [JSON.stringify(['0x0000000000000000000000000000000000000002'])]
+      ];
+      // The 6529 writer is skipped, so team is kept for it: the owner's
+      // column is still reset on the kept 6529 row.
+      const kept = await run('mint', {
+        seed: teamSeed,
+        rebuilder: memesRows,
+        more: [
+          {
+            ...otherRows,
+            needs: [
+              {
+                table: 'identity_chain_principals',
+                reason: 'the identity mirror creates it'
+              }
+            ]
+          },
+          owner(['self-check.memes-rows', 'self-check.other-rows'])
+        ],
+        tables
+      });
+      expect(kept.report.failures).toEqual([]);
+      expect(kept.report.tables.diffs.map((d) => [d.table, d.changed])).toEqual(
+        [sixFiveTwoNine]
+      );
+      // The 6529 writer is another area's: the same in a final area run.
+      const other = await run('mint', {
+        seed: teamSeed,
+        rebuilder: memesRows,
+        more: [owner(['self-check.memes-rows', 'self-check.other-rows'])],
+        others: { tdh: [otherRows] },
+        tables,
+        final: true
+      });
+      expect(
+        other.report.tables.diffs.map((d) => [d.table, d.changed])
+      ).toEqual([sixFiveTwoNine]);
+    });
+
+    it("keeps an absent owner's column for the API: a probe that reads it passes", async () => {
+      const seasonsSeed = step('self-check.seasons-seed', 'seedSeasons', [
+        'memes_seasons'
+      ]);
+      const dater: RebuildStep = {
+        ...step('self-check.seasons-dater', 'dateSeasons', []),
+        writes: [
+          {
+            table: 'memes_seasons',
+            columns: ['created_at'],
+            reason: 'the owner dates the seasons'
+          }
+        ],
+        after: ['self-check.seasons-undated']
+      };
+      const { report } = await run('holdings', {
+        seed: seasonsSeed,
+        rebuilder: step('self-check.seasons-undated', 'rebuildSeasonsUndated', [
+          'memes_seasons'
+        ]),
+        others: { tdh: [dater] },
+        probes: [{ id: 'self-check.seasons', path: '/api/new_memes_seasons' }]
+      });
+      expect(report.failures).toEqual([]);
+      expect(report.verdict).toBe('PASS');
+      expect(report.probes.differences).toEqual([]);
+      expect(report.tables.ownedColumnsLeftOut).toEqual([
+        {
+          table: 'memes_seasons',
+          column: 'created_at',
+          owner: 'self-check.seasons-dater',
+          why: "another area's"
+        }
+      ]);
+    });
+
+    it("names a table a step's writes don't name", async () => {
+      const { report } = await teamRun(
+        step('self-check.undeclared', 'rebuildTeamAndWriteUndeclared', ['team'])
+      );
+      expect(report.verdict).toBe('FAIL');
+      expect(report.failures).toContain(
+        "self-check.undeclared may not INSERT memes_seasons: the table isn't in its writes"
       );
     });
 
@@ -504,7 +650,7 @@ describe('rebuild check, end to end', () => {
       );
       expect(report.verdict).toBe('FAIL');
       expect(report.failures).toContain(
-        'self-check.adds may not INSERT rows of team: it owns only columns there'
+        'self-check.adds may not INSERT team: it owns only columns there'
       );
     });
 
@@ -515,7 +661,7 @@ describe('rebuild check, end to end', () => {
       );
       expect(report.verdict).toBe('FAIL');
       expect(report.failures).toContain(
-        "self-check.renames may not UPDATE column name of team: it isn't the step's to write"
+        'self-check.renames may not UPDATE column name of team: it owns only created_at there'
       );
     });
   });

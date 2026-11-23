@@ -464,6 +464,107 @@ describe('checkRegistry', () => {
       ]);
     });
 
+    it('refuses a write with both columns and a partition, and owning a partition or checkpoint column', () => {
+      const both = {
+        table: 'ids',
+        columns: ['tdh'],
+        reason: 'x',
+        partition: { columns: ['kind'], values: [['a']], reason: 'x' }
+      };
+      expect(
+        check([
+          rows,
+          step('b.both', { writes: [both], after: ['a.rows'] })
+        ]).map(([, detail]) => detail)
+      ).toContain(
+        'rebuilder b.both declares both columns and a partition of ids; a write is one or the other'
+      );
+      const partitioned = (id: string, value: string) =>
+        step(id, {
+          writes: [
+            {
+              table: 'ids',
+              partition: { columns: ['kind'], values: [[value]], reason: 'x' }
+            }
+          ]
+        });
+      expect(
+        check([
+          partitioned('a.one', 'a'),
+          partitioned('a.two', 'b'),
+          owner('b.kind', ['kind'], { after: ['a.one', 'a.two'] })
+        ])
+      ).toEqual([
+        [
+          'DOUBLE_WRITER',
+          'b.kind owns ids.kind, which says which rows are which (a partition or checkpoint column); only the row writer writes it'
+        ]
+      ]);
+      expect(
+        checkRegistry({
+          manifests: [
+            area(
+              'a',
+              {
+                ids: {
+                  class: 'INDEX',
+                  checkpoint: { column: 'block', reason: 'the newest row' }
+                }
+              },
+              {
+                rebuilders: [
+                  rows,
+                  step('a.block', {
+                    writes: [{ table: 'ids', columns: ['block'], reason: 'x' }],
+                    after: ['a.rows']
+                  })
+                ]
+              }
+            )
+          ],
+          codeTables: code('ids')
+        }).problems.map((p) => p.detail)
+      ).toEqual([
+        'a.block owns ids.block, which says which rows are which (a partition or checkpoint column); only the row writer writes it'
+      ]);
+    });
+
+    it("refuses an owner of a table that isn't INDEX, or without a reason", () => {
+      expect(
+        checkRegistry({
+          manifests: [
+            area(
+              'a',
+              { ids: index(), cache: { class: 'EPHEMERAL', why: 'a cache' } },
+              {
+                rebuilders: [
+                  rows,
+                  step('a.cache', {
+                    writes: [{ table: 'cache', columns: ['x'], reason: 'x' }]
+                  }),
+                  owner('a.bare', ['tdh'], { after: ['a.rows'] })
+                ].map((s) =>
+                  s.id === 'a.bare'
+                    ? {
+                        ...s,
+                        writes: [
+                          { table: 'ids', columns: ['tdh'], reason: ' ' }
+                        ]
+                      }
+                    : s
+                )
+              }
+            )
+          ],
+          codeTables: code('ids', 'cache')
+        }).problems.map((p) => p.detail)
+      ).toEqual([
+        'rebuilder a.cache owns columns of cache, not an INDEX table',
+        "rebuilder a.bare's columns of ids have no reason",
+        'cache has column owners (a.cache) but no row writer'
+      ]);
+    });
+
     it('checks an owner is a rebuilder with columns and a reason', () => {
       expect(
         check(

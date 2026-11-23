@@ -50,7 +50,12 @@ import {
   portOpen,
   startLocalMysqld
 } from '@/rebuild/stack/local-mysqld';
-import { MysqlAdmin } from '@/rebuild/stack/mysql-admin';
+import {
+  ColumnInfo,
+  MysqlAdmin,
+  resetValue,
+  writtenByMysql
+} from '@/rebuild/stack/mysql-admin';
 import { acquireHomeLock } from '@/rebuild/stack/home-lock';
 import { bundleApi } from '@/rebuild/stack/api-bundle';
 import { STEP_SPEC_ENV, StepSpec } from '@/rebuild/run/step-spec';
@@ -93,46 +98,13 @@ import {
   stopSources
 } from '@/rebuild/sources/start-sources';
 import { judge, WaitingStep } from '@/rebuild/run/verdict';
+import { refusalsIn } from '@/rebuild/run/refusals';
 import { waitForApi } from '@/rebuild/stack/api-ready';
 
 /** A table's partition columns and every tuple its writers own. */
 interface Partitions {
   readonly columns: readonly string[];
   readonly values: readonly (readonly string[])[];
-}
-
-/**
- * What MySQL refused a step for writing columns or rows it doesn't own,
- * from the step's log: the column, the table and the step, so a missing
- * owned column is named rather than left to the log.
- */
-export function refusedColumns(step: RebuildStep, logFile: string): string[] {
-  let log: string;
-  try {
-    log = fs.readFileSync(logFile, 'utf8');
-  } catch {
-    return [];
-  }
-  const found = new Set<string>();
-  for (const match of Array.from(
-    log.matchAll(
-      /(INSERT|UPDATE|DELETE) command denied to user '[^']*'@'[^']*' for column '([^']+)' in table '([^']+)'/g
-    )
-  )) {
-    found.add(
-      `${step.id} may not ${match[1]} column ${match[2]} of ${match[3]}: it isn't the step's to write`
-    );
-  }
-  for (const match of Array.from(
-    log.matchAll(
-      /(INSERT|UPDATE|DELETE) command denied to user '[^']*'@'[^']*' for table '([^']+)'/g
-    )
-  )) {
-    found.add(
-      `${step.id} may not ${match[1]} ${match[1] === 'UPDATE' ? '' : 'rows of '}${match[2]}: it owns only columns there`
-    );
-  }
-  return Array.from(found);
 }
 
 /** An owned column the row comparison leaves out: its owner doesn't run. */
@@ -579,8 +551,15 @@ class RebuildRun {
         );
       }
     });
-    if (result.exitCode !== 0)
-      this.failures.push(...refusedColumns(step, result.logFile));
+    if (result.exitCode !== 0) {
+      let log = '';
+      try {
+        log = fs.readFileSync(result.logFile, 'utf8');
+      } catch {
+        log = '';
+      }
+      this.failures.push(...refusalsIn(step, log));
+    }
     const outsideAfter = await this.outsideDigests(step, baseNames);
     outside.forEach((digest, table) => {
       if (outsideAfter.get(table) !== digest) {
@@ -645,6 +624,7 @@ class RebuildRun {
       }
       this.o.log(`${kind} ${step.id}`);
       if (!(await this.runStep(kind, areaOf.get(step.id)!, step))) return false;
+      if (kind === 'rebuilder') await this.rowWriterDone(step);
     }
     return true;
   }
@@ -715,7 +695,9 @@ class RebuildRun {
   /**
    * The grants that hold a step to its columns: a column owner reads the
    * table and updates only its columns; a row writer of a table with column
-   * owners inserts and updates every other column, and deletes rows.
+   * owners inserts every column (its live insert may carry values into the
+   * owned ones, which the run resets before the owners run), updates every
+   * other column, and deletes rows.
    */
   private async columnGrants(
     step: RebuildStep,
@@ -735,10 +717,9 @@ class RebuildRun {
     for (const table of rowWrittenTables(step)) {
       const owned = (owners.get(table) ?? []).flatMap((o) => o.columns);
       if (!owned.length || !baseNames.has(table)) continue;
-      const free = (await this.admin!.insertableColumns(MAIN_DB, table)).filter(
-        (column) => !owned.includes(column)
-      );
-      grants.push({ table, insert: free, update: free, delete: true });
+      const insertable = await this.admin!.insertableColumns(MAIN_DB, table);
+      const free = insertable.filter((column) => !owned.includes(column));
+      grants.push({ table, insert: insertable, update: free, delete: true });
     }
     return grants;
   }
@@ -756,7 +737,14 @@ class RebuildRun {
     for (const { table, columns } of columnWritesOf(step)) {
       if (!baseNames.has(table)) continue;
       const rows = await this.admin!.orderedRows(MAIN_DB, table, []);
-      const skip = new Set(columns);
+      // MySQL itself changes an ON UPDATE or generated column when the
+      // owner updates a row: not the owner's change.
+      const skip = new Set([
+        ...columns,
+        ...(await this.admin!.columnInfo(MAIN_DB, table))
+          .filter(writtenByMysql)
+          .map((column) => column.name)
+      ]);
       const hashes = rows
         .map((row) =>
           createHash('sha256').update(canonicalRow(row, skip)).digest('hex')
@@ -792,7 +780,108 @@ class RebuildRun {
     return result;
   }
 
-  /** Every owned and exempt column must be in the schema. */
+  /**
+   * For each table with column owners whose rows this run rebuilds: the
+   * row writers that run here and haven't yet, the running owners'
+   * columns to reset once they have, and the absent owners' columns saved
+   * before the drop to put back. Set in the drop.
+   */
+  private ownedAfterRows = new Map<
+    string,
+    {
+      waiting: Set<string>;
+      reset: string[];
+      restore: string[];
+      saved: string | null;
+    }
+  >();
+
+  /**
+   * Before the drop: for each rebuilt table with column owners, what its
+   * row writers leave to them, and the absent owners' columns saved (with
+   * the key) for tables whose rows the run rewrites.
+   */
+  private async planOwnedColumns(): Promise<void> {
+    const running = this.scopeManifests
+      .flatMap((m) => m.rebuilders)
+      .filter((step) => this.stepRunsHere(step));
+    for (const [table, owners] of Array.from(this.columnOwners())) {
+      if (!this.rebuiltTables.includes(table)) continue;
+      const runningIds = new Set(running.map((step) => step.id));
+      const waiting = new Set(
+        running
+          .filter((step) => rowWrittenTables(step).includes(table))
+          .map((step) => step.id)
+      );
+      const reset = owners
+        .filter((owner) => runningIds.has(owner.step))
+        .flatMap((owner) => owner.columns);
+      const restore = this.unrunOwnedColumns
+        .filter((owned) => owned.table === table)
+        .map((owned) => owned.column);
+      let saved: string | null = null;
+      if (restore.length && waiting.size) {
+        saved = `owned_${createHash('sha256').update(table).digest('hex').slice(0, 24)}`;
+        await this.admin!.saveColumns(
+          MAIN_DB,
+          table,
+          await this.admin!.primaryKey(MAIN_DB, table),
+          restore,
+          KEPT_DB,
+          saved
+        );
+      }
+      this.ownedAfterRows.set(table, { waiting, reset, restore, saved });
+    }
+  }
+
+  /**
+   * Once a table's running row writers are done (or at the drop's end when
+   * none runs): the absent owners' columns go back where their rows'
+   * keys still are, and the running owners' columns are reset on every
+   * row, so they fill them again whatever the row writer, the kept copy or
+   * another area left there.
+   */
+  private async afterRowWriters(table: string): Promise<void> {
+    const plan = this.ownedAfterRows.get(table);
+    if (!plan) return;
+    const admin = this.admin!;
+    if (plan.saved) {
+      await admin.restoreColumns(
+        MAIN_DB,
+        table,
+        await admin.primaryKey(MAIN_DB, table),
+        plan.restore,
+        KEPT_DB,
+        plan.saved
+      );
+    }
+    if (plan.reset.length) {
+      const info = await admin.columnInfo(MAIN_DB, table);
+      await admin.resetColumns(
+        MAIN_DB,
+        table,
+        info.filter((column) => plan.reset.includes(column.name))
+      );
+    }
+    this.ownedAfterRows.delete(table);
+  }
+
+  /** After a rebuilder: the tables whose last running row writer it was. */
+  private async rowWriterDone(step: RebuildStep): Promise<void> {
+    for (const table of rowWrittenTables(step)) {
+      const plan = this.ownedAfterRows.get(table);
+      if (!plan || !plan.waiting.delete(step.id) || plan.waiting.size) continue;
+      await this.afterRowWriters(table);
+    }
+  }
+
+  /**
+   * At run start, for each table with column owners: a primary key (the
+   * run carries owned columns across a rebuild by it), and every owned
+   * column present, outside that key, and one the run can reset (a default,
+   * NULL, or a numeric or text type's zero). Exempt columns must be there.
+   */
   private async ownedColumnsExist(): Promise<boolean> {
     const problems: string[] = [];
     for (const [table, { entry }] of Array.from(this.entries())) {
@@ -808,12 +897,29 @@ class RebuildRun {
     }
     for (const [table, owners] of Array.from(this.columnOwners())) {
       if (!this.baseTables.has(table)) continue;
-      const names = new Set(await this.admin!.columnNames(MAIN_DB, table));
+      const info = new Map<string, ColumnInfo>(
+        (await this.admin!.columnInfo(MAIN_DB, table)).map((c) => [c.name, c])
+      );
+      const key = await this.admin!.primaryKey(MAIN_DB, table);
+      if (!key.length) {
+        problems.push(
+          `${table} has column owners but no primary key: the run carries owned columns across a rebuild by the key`
+        );
+      }
       for (const owner of owners) {
         for (const column of owner.columns) {
-          if (!names.has(column)) {
+          const found = info.get(column);
+          if (!found) {
             problems.push(
               `column owner ${owner.step} owns ${table}.${column}, which the schema doesn't have`
+            );
+          } else if (key.includes(column)) {
+            problems.push(
+              `column owner ${owner.step} owns ${table}.${column}, part of the primary key: only the row writer writes keys`
+            );
+          } else if (resetValue(found) === null) {
+            problems.push(
+              `column owner ${owner.step} owns ${table}.${column}, a NOT NULL ${found.dataType} with no default: the run can't reset it for its owner`
             );
           }
         }
@@ -1173,6 +1279,7 @@ class RebuildRun {
       });
     }
     const ownedOnly = this.ownedOnlyTables();
+    await this.planOwnedColumns();
     if (this.o.area) {
       this.o.log(
         `truncating ${this.rebuiltTables.length} tables of ${this.o.area}`
@@ -1207,9 +1314,11 @@ class RebuildRun {
     for (const [table, { columns, values }] of Array.from(running)) {
       await admin.deletePartition(MAIN_DB, table, columns, values);
     }
-    // After any kept rows are back, so the owners fill the columns again.
-    for (const [table, columns] of Array.from(ownedOnly)) {
-      await admin.resetColumns(MAIN_DB, table, columns);
+    // A table no running row writer rewrites (its rows kept, or left as
+    // seeded) is ready for its owners now, after the kept copy and the
+    // partition deletes; the others once their row writers are done.
+    for (const [table, plan] of Array.from(this.ownedAfterRows)) {
+      if (!plan.waiting.size) await this.afterRowWriters(table);
     }
     const keptSet = new Set(kept);
     const entries = this.entries();

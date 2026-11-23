@@ -256,6 +256,11 @@ function stepProblems(
         problems.push({ kind: 'BAD_STEP', area: manifest.area, table, detail });
       if (owned) {
         // A column owner may own columns of any area's INDEX table.
+        if ('partition' in owned) {
+          bad(
+            `${kind} ${step.id} declares both columns and a partition of ${table}; a write is one or the other`
+          );
+        }
         if (kind === 'seed') {
           bad(
             `seed ${step.id} declares columns of ${table}; only a rebuilder owns columns`
@@ -581,6 +586,23 @@ function writerProblems(manifests: readonly AreaManifest[]): RegistryProblem[] {
           table,
           `${owner.step} both writes the rows of ${table} and owns columns of it; a step does one or the other`
         );
+      }
+    }
+    // Columns no owner may take: the partition writers' and the
+    // checkpoint's, which say which rows are which.
+    const entry = manifests.map((m) => m.tables[table]).find(Boolean);
+    const rowColumns = new Set([
+      ...list.flatMap((w) => w.partition?.columns ?? []),
+      ...(entry?.checkpoint ? [entry.checkpoint.column] : [])
+    ]);
+    for (const owner of owners) {
+      for (const column of owner.columns!) {
+        if (rowColumns.has(column)) {
+          double(
+            table,
+            `${owner.step} owns ${table}.${column}, which says which rows are which (a partition or checkpoint column); only the row writer writes it`
+          );
+        }
       }
     }
     const ownerOf = new Map<string, string>();

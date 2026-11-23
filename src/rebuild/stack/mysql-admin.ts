@@ -10,6 +10,65 @@ export interface AdminTarget {
 
 export type Row = Record<string, unknown>;
 
+/** A column as information_schema describes it. */
+export interface ColumnInfo {
+  readonly name: string;
+  /** DATA_TYPE, lower case: int, varchar, datetime, ... */
+  readonly dataType: string;
+  readonly nullable: boolean;
+  /** Whether it has a default, a literal or an expression. */
+  readonly hasDefault: boolean;
+  /** EXTRA: auto_increment, DEFAULT_GENERATED, on update ..., ... GENERATED. */
+  readonly extra: string;
+}
+
+const NUMERIC = new Set([
+  'tinyint',
+  'smallint',
+  'mediumint',
+  'int',
+  'bigint',
+  'decimal',
+  'float',
+  'double',
+  'bit'
+]);
+const TEXTUAL = new Set([
+  'char',
+  'varchar',
+  'tinytext',
+  'text',
+  'mediumtext',
+  'longtext',
+  'binary',
+  'varbinary',
+  'tinyblob',
+  'blob',
+  'mediumblob',
+  'longblob'
+]);
+
+/**
+ * The SQL a column is reset to for its owner to fill again: its default,
+ * NULL for a nullable column without one, and for a NOT NULL column
+ * without one its type's zero (0, or an empty string). A NOT NULL column
+ * of another type without a default has none: null.
+ */
+export function resetValue(column: ColumnInfo): string | null {
+  if (column.hasDefault) return 'DEFAULT';
+  if (column.nullable) return 'NULL';
+  if (NUMERIC.has(column.dataType)) return '0';
+  if (TEXTUAL.has(column.dataType)) return "''";
+  return null;
+}
+
+/** Whether MySQL writes a column itself: on update, or generated. */
+export function writtenByMysql(column: ColumnInfo): boolean {
+  return /on update|generated/i.test(
+    column.extra.replace(/DEFAULT_GENERATED/i, '')
+  );
+}
+
 /** A root connection to the run's private server. Values come back as strings. */
 /**
  * Rows whose `columns` hold one of the tuples bound to its `?`
@@ -321,16 +380,87 @@ export class MysqlAdmin {
     return rows.map((row) => row.name);
   }
 
-  /** Sets `columns` of every row of a table back to their defaults. */
+  /** What a table's columns are: type, NULL, default, and EXTRA. */
+  async columnInfo(database: string, table: string): Promise<ColumnInfo[]> {
+    const rows = await this.query<{
+      name: string;
+      dataType: string;
+      nullable: string;
+      columnDefault: string | null;
+      extra: string;
+    }>(
+      `SELECT COLUMN_NAME AS name, DATA_TYPE AS dataType,
+              IS_NULLABLE AS nullable, COLUMN_DEFAULT AS columnDefault,
+              EXTRA AS extra
+         FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+        ORDER BY ORDINAL_POSITION`,
+      [database, table]
+    );
+    return rows.map((row) => ({
+      name: row.name,
+      dataType: row.dataType.toLowerCase(),
+      nullable: row.nullable === 'YES',
+      hasDefault: row.columnDefault !== null,
+      extra: row.extra ?? ''
+    }));
+  }
+
+  /** Sets `columns` of every row of a table to what `resetValue` gives. */
   async resetColumns(
     database: string,
     table: string,
-    columns: readonly string[]
+    columns: readonly ColumnInfo[]
   ): Promise<void> {
     await this.query(
       `UPDATE ${mysql.escapeId(database)}.${mysql.escapeId(table)} SET ${columns
-        .map((column) => `${mysql.escapeId(column)} = DEFAULT`)
+        .map(
+          (column) => `${mysql.escapeId(column.name)} = ${resetValue(column)}`
+        )
         .join(', ')}`
+    );
+  }
+
+  /**
+   * Copies a table's key and `columns` into `into` (in `toDb`), to put
+   * them back later with `restoreColumns`.
+   */
+  async saveColumns(
+    database: string,
+    table: string,
+    key: readonly string[],
+    columns: readonly string[],
+    toDb: string,
+    into: string
+  ): Promise<void> {
+    const target = `${mysql.escapeId(toDb)}.${mysql.escapeId(into)}`;
+    await this.query(`DROP TABLE IF EXISTS ${target}`);
+    await this.query(
+      `CREATE TABLE ${target} AS SELECT ${[...key, ...columns]
+        .map((column) => mysql.escapeId(column))
+        .join(', ')} FROM ${mysql.escapeId(database)}.${mysql.escapeId(table)}`
+    );
+  }
+
+  /**
+   * Puts saved `columns` back on the rows whose key the copy holds; rows
+   * it doesn't hold keep theirs.
+   */
+  async restoreColumns(
+    database: string,
+    table: string,
+    key: readonly string[],
+    columns: readonly string[],
+    fromDb: string,
+    from: string
+  ): Promise<void> {
+    const t = mysql.escapeId('t');
+    const s = mysql.escapeId('s');
+    await this.query(
+      `UPDATE ${mysql.escapeId(database)}.${mysql.escapeId(table)} ${t}
+         JOIN ${mysql.escapeId(fromDb)}.${mysql.escapeId(from)} ${s}
+           ON ${key.map((c) => `${t}.${mysql.escapeId(c)} = ${s}.${mysql.escapeId(c)}`).join(' AND ')}
+          SET ${columns.map((c) => `${t}.${mysql.escapeId(c)} = ${s}.${mysql.escapeId(c)}`).join(', ')}`
     );
   }
 
