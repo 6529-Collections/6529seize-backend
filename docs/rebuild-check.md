@@ -296,12 +296,36 @@ Each `--source <name>=<spec>`:
   devnet scenario, an anvil state, or `hand`), as a label for the report.
   Provisional, so `--final` fails on them: a live URL, a `record` run (it
   reaches a live URL), the harness relay, every gateway or ethereum
-  recording, and a files directory that holds any file. Nothing verifies
-  a recording's answers yet, and a label is never a basis, so the report
-  says "answers not verified" whatever `PROVENANCE.json` says; checking
-  the node's proofs (for ethereum, the blocks' hash chain and receipt
-  proofs) is what will let one count. `anvil` from a state file records
-  nothing and counts.
+  recording but a frozen gateway one that passes its checks (below), and a
+  files directory that holds any file. A label is never a basis, so the
+  report says "answers not verified" whatever `PROVENANCE.json` says;
+  checking the node's proofs (for ethereum, the blocks' hash chain and
+  receipt proofs) is what will let an ethereum recording count. `anvil`
+  from a state file records nothing and counts.
+- A gateway recording made through the frozen-snapshot API node
+  (`validator run --api-frozen-snapshot`) can count. Its `PROVENANCE.json`
+  lists each snapshot under `frozen` (phase, height, block root, app state
+  root, the data-dir copy's hash and its archive's, the copied node, and
+  the live nodes' answers at that height), and every line of
+  `recording.jsonl` names the snapshot that served it. A failed check
+  fails the run. Without the validator the recording stays provisional
+  ("frozen copies not re-served"), and it stays so until
+  `--frozen-reviewed <commit>` names the header's `validatorCommit`, so a
+  reviewer's score of the capture's code stands behind a final one. The
+  run checks:
+  1. each snapshot's fields, and that `answers` and `answersServedFrozen`
+     count every line;
+  2. that at least two live nodes other than the copied one reported the
+     snapshot's block root and app state root at its height;
+  3. with `--validator-bin <file>` and `--frozen-port <n>`: the binary's
+     SHA-256 against the header's for this platform and its
+     `--api-frozen-snapshot` option, then for each snapshot the kept copy
+     (`<dir>/snapshots/<hash>.tar.gz`) against both hashes, unpacked into
+     the run's folder beside `<dir>/devnet.toml`, served by the validator
+     with the frozen option on 127.0.0.1 and no peers, one such node on
+     the machine at a time, its `/v1/status` against the header, and every
+     answer the snapshot served replayed to the same status, content type
+     and bytes.
 - The report shows source URLs without credentials, query values or
   key-like path segments.
 - The harness relay speaks CRP v1 over WebSocket (HELLO, AUTH, PUB, payloads,

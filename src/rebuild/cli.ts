@@ -17,7 +17,13 @@ const USAGE = `Usage: rebuild:check -- [options]
                         record:<dir>@<url>, files: <dir>, ethereum: anvil[:<state>],
                         relays: relay[:<dir>]
   --chain-height <n>    the chain height of the mark
-  --eth-block <n>       the Ethereum block of the mark`;
+  --eth-block <n>       the Ethereum block of the mark
+  --validator-bin <file> the validator that re-serves a frozen gateway
+                        recording's copies (called by its full path)
+  --frozen-port <n>     the 127.0.0.1 port for that frozen node
+  --frozen-reviewed <commit>
+                        the capture commit a reviewer scored: a frozen
+                        recording that passes its checks counts as final`;
 
 function say(line: string): void {
   process.stdout.write(`${line}\n`);
@@ -34,6 +40,9 @@ interface Parsed {
   sources: SourceSpecs;
   chainHeight: number | null;
   ethBlock: number | null;
+  validatorBin?: string;
+  frozenPort?: number;
+  frozenReviewed?: string;
 }
 
 function number(name: string, value: string | undefined): number {
@@ -103,6 +112,15 @@ export function parseArgs(argv: readonly string[], repoRoot: string): Parsed {
       case '--eth-block':
         parsed.ethBlock = number(flag, value());
         break;
+      case '--validator-bin':
+        parsed.validatorBin = path.resolve(value());
+        break;
+      case '--frozen-port':
+        parsed.frozenPort = number(flag, value());
+        break;
+      case '--frozen-reviewed':
+        parsed.frozenReviewed = value();
+        break;
       default:
         throw new Error(`Unknown option ${flag}\n${USAGE}`);
     }
@@ -117,6 +135,13 @@ async function main(): Promise<number> {
     say(`[rebuild ${new Date().toISOString()}] ${line}`);
   const { report, runDir } = await runRebuildCheck({
     ...options,
+    frozen: {
+      validator: options.validatorBin
+        ? { file: options.validatorBin, command: [options.validatorBin] }
+        : undefined,
+      port: options.frozenPort,
+      reviewedCommit: options.frozenReviewed
+    },
     repoRoot,
     manifests: AREA_MANIFESTS,
     log

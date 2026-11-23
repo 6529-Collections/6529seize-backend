@@ -13,6 +13,22 @@ import {
   writeProvenance
 } from '@/rebuild/sources/running-source';
 import { UrlSource } from '@/rebuild/sources/source-spec';
+import {
+  FrozenHeader,
+  FrozenValidator,
+  verifyFrozenRecording
+} from '@/rebuild/sources/frozen-gateway';
+
+/** How a run re-serves a frozen recording's copies. */
+export interface FrozenOptions {
+  readonly validator?: FrozenValidator;
+  /** A 127.0.0.1 port claimed for the frozen node. */
+  readonly port?: number;
+  /** The capture commit a reviewer scored: the recording can be final. */
+  readonly reviewedCommit?: string;
+  /** Where the copies are unpacked: the run's own folder. */
+  readonly workDir?: string;
+}
 
 const RECORDING_FILE = 'recording.jsonl';
 
@@ -160,18 +176,37 @@ async function forward(
  * answer (record). In replay an unrecorded request answers 599 and is
  * reported, so a run never silently reaches past its recording.
  *
- * Nothing verifies a recording's answers yet, a gateway's or an Ethereum
- * node's, and a label is never a basis: a recording is provisional
- * whatever its PROVENANCE.json says. It can count once the run checks the
- * node's proofs (for Ethereum, the blocks' hash chain and receipt proofs).
+ * A label is never a basis: a recording is provisional whatever its
+ * PROVENANCE.json says, unless the run verifies its answers. A gateway
+ * recording made through the frozen-snapshot node can be (see
+ * frozen-gateway.ts); nothing verifies an Ethereum node's answers yet
+ * (the blocks' hash chain and receipt proofs).
  */
 
 export async function startHttpRecording(options: {
   readonly name: UrlSource;
   readonly dir: string;
   readonly upstream?: string;
+  /**
+   * For a replayed recording whose PROVENANCE.json names frozen
+   * snapshots: how to re-serve them, and the reviewed commit.
+   */
+  readonly frozen?: FrozenOptions;
 }): Promise<RunningSource> {
   const recording = loadRecording(options.dir);
+  const header = readProvenance(options.dir) as FrozenHeader | null;
+  const frozen =
+    !options.upstream && header?.frozen
+      ? await verifyFrozenRecording({
+          dir: options.dir,
+          header,
+          lines: Array.from(recording.values()),
+          workDir: options.frozen?.workDir ?? path.join(options.dir, '.frozen'),
+          validator: options.frozen?.validator,
+          port: options.frozen?.port,
+          reviewedCommit: options.frozen?.reviewedCommit
+        })
+      : null;
   const unrecorded: string[] = [];
   // Recording adds to the files; a recording someone marked as written by
   // hand stays marked so, whatever this run adds to it.
@@ -234,15 +269,22 @@ export async function startHttpRecording(options: {
       url,
       mode: options.upstream ? 'record' : 'replay',
       provenance: provenance?.made_by ?? null,
-      provisional: true,
-      provisionalWhy: 'answers not verified'
+      ...(frozen
+        ? frozen.provisionalWhy
+          ? { provisional: true, provisionalWhy: frozen.provisionalWhy }
+          : { provisional: false }
+        : { provisional: true, provisionalWhy: 'answers not verified' })
     },
-    problems: () =>
-      unrecorded.length
+    problems: () => [
+      ...(frozen?.problems ?? []).map(
+        (problem) => `${options.name}: frozen snapshot check: ${problem}`
+      ),
+      ...(unrecorded.length
         ? [
             `${options.name}: ${unrecorded.length} requests not in the recording, first ${unrecorded.slice(0, 5).join(', ')}`
           ]
-        : [],
+        : [])
+    ],
     stop: () => closeServer(server)
   };
 }
