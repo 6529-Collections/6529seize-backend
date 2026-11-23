@@ -186,6 +186,7 @@
       "Effect": "Allow",
       "Action": [
         "cloudwatch:DeleteAlarms",
+        "cloudwatch:DescribeAlarms",
         "cloudwatch:ListTagsForResource",
         "cloudwatch:PutMetricAlarm",
         "cloudwatch:TagResource",
@@ -195,6 +196,34 @@
         "arn:aws:cloudwatch:us-east-1:987989283142:alarm:dropForgeLaunchHandler-prod-*",
         "arn:aws:cloudwatch:us-east-1:987989283142:alarm:memesDistributionHandler-prod-*"
       ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      }
+    },
+    {
+      "Sid": "ReadDeploymentMetadata",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:ValidateTemplate",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeVpcs",
+        "logs:DescribeLogGroups"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      }
+    },
+    {
+      "Sid": "ReadDeploymentVpcSecurityGroups",
+      "Effect": "Allow",
+      "Action": "ec2:GetSecurityGroupsForVpc",
+      "Resource": "arn:aws:ec2:us-east-1:987989283142:vpc/vpc-0049175e3bed48694",
       "Condition": {
         "StringEquals": {
           "aws:RequestedRegion": "us-east-1"

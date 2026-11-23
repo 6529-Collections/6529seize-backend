@@ -46,8 +46,12 @@
     },
     {
       "Effect": "Allow",
-      "Action": ["iam:PassRole"],
-      "Resource": ["arn:aws:iam::987989283142:role/drop-forge-prod-launch"],
+      "Action": [
+        "iam:PassRole"
+      ],
+      "Resource": [
+        "arn:aws:iam::987989283142:role/drop-forge-prod-launch"
+      ],
       "Condition": {
         "StringEquals": {
           "iam:PassedToService": "lambda.amazonaws.com"
@@ -59,7 +63,9 @@
     },
     {
       "Effect": "Allow",
-      "Action": ["iam:PassRole"],
+      "Action": [
+        "iam:PassRole"
+      ],
       "Resource": [
         "arn:aws:iam::987989283142:role/drop-forge-prod-distribution"
       ],

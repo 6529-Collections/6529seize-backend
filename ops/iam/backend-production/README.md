@@ -116,18 +116,21 @@ References:
 ## Drop Forge deployment policies
 
 `DropForgeHandlersDeployment.json` and `DropForgeDispatchDeployment.json`
-supplement the existing deploy role for `dropForgeLaunchHandler` and
+define the dedicated deploy role for `dropForgeLaunchHandler` and
 `memesDistributionHandler`. They cover the two stacks, artifact buckets,
 functions, log groups, alarms, queues, schedule group and readiness schedules.
 Each Lambda execution role can be passed only to its named function. The
 Scheduler delivery role can be passed to EventBridge Scheduler. The deploy role
 has no KMS signing or IAM policy-editing permission.
+Production resolves network settings from the checked-in production deployment
+configuration.
 
-Before the first production deployment, an AWS administrator installs both
-documents as customer-managed policies on `gha-backend-deploy-production`.
-The existing manifest and verification files record the earlier policy
-installation. Install each signing guard as an inline identity policy on its
-corresponding runtime role:
+After staging validation, an AWS administrator creates
+`gha-backend-deploy-drop-forge-production` with `DropForgeDeployTrust.json`
+and attaches both documents as customer-managed policies. Set the GitHub
+`production` environment's `AWS_DROP_FORGE_DEPLOY_ROLE_ARN` to that role ARN
+before the first Drop Forge deployment. Install each signing guard as an
+inline identity policy on its corresponding runtime role.
 
 | Inline policy file | Runtime role |
 | --- | --- |
