@@ -1600,7 +1600,7 @@ describe('runIdentityExportJob', () => {
     expect(() => checkReplicaLag(300_400, lag(100_000, 198_899))).not.toThrow();
     // A row older than the whole gap: checked first, and not a wait.
     const old =
-      "The replica's lag row is 300400 ms old (a 0 ms lag), older than the 300400 ms since the freeze: LAST_UPDATE_TIMESTAMP may not be in UTC, or the reader stopped updating its row. If the same refusal returns with the row's age grown by the time you waited, the reader stopped updating: report it. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: {\"older_than_gap\": <Monday's replicaLagAgeMs plus 60000>}) only for a reading Monday's rehearsal also showed, and only with the identity lead's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it.";
+      "The replica's lag row is 300400 ms old (a 0 ms lag), older than the 300400 ms since the freeze: LAST_UPDATE_TIMESTAMP may not be in UTC, or the reader stopped updating its row. If the same refusal returns with the row's age grown by the time you waited, the reader stopped updating: report it. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: {\"older_than_gap\": <Monday's replicaLagAgeMs plus 60000>}) only for a reading Monday's rehearsal also showed, and only with the switch owner's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it.";
     expect(() => checkReplicaLag(300_400, lag(0, 300_400))).toThrow(old);
     expect(() => checkReplicaLag(300_400, lag(10, 400_000))).toThrow(
       "The replica's lag row is 400000 ms old (a 10 ms lag), older than the 300400 ms since the freeze"
@@ -1658,7 +1658,7 @@ describe('runIdentityExportJob', () => {
     mockBuild.mockResolvedValue(document());
     const refused = setup({ replicaLagMs: null });
     await expect(run(refused.deps)).rejects.toThrow(
-      "The replica's lag can't be read from information_schema.replica_host_status (ER_UNKNOWN_TABLE 1109). Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: \"unreadable\") only for a reading Monday's rehearsal also showed: for an error, only ER_UNKNOWN_TABLE 1109 or ER_UNKNOWN_SYSTEM_VARIABLE 1193 (the reader isn't Aurora), and only with the identity lead's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it."
+      "The replica's lag can't be read from information_schema.replica_host_status (ER_UNKNOWN_TABLE 1109). Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: \"unreadable\") only for a reading Monday's rehearsal also showed: for an error, only ER_UNKNOWN_TABLE 1109 or ER_UNKNOWN_SYSTEM_VARIABLE 1193 (the reader isn't Aurora), and only with the switch owner's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it."
     );
     // The server's own error is named, whatever it is: a parse error is a
     // fault to report, not an Aurora question.
@@ -1760,7 +1760,7 @@ describe('runIdentityExportJob', () => {
     expect(() =>
       checkReplicaLag(300_000, reading(null, null, 'dated_ahead'))
     ).toThrow(
-      "The replica's lag row is dated ahead of UTC (LAST_UPDATE_TIMESTAMP is 7200000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown): LAST_UPDATE_TIMESTAMP may not be in UTC, so the row's age is unknown. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: {\"dated_ahead\": <Monday's replicaLagAheadMs minus 60000>}) only for a reading Monday's rehearsal also showed, and only with the identity lead's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it."
+      "The replica's lag row is dated ahead of UTC (LAST_UPDATE_TIMESTAMP is 7200000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown): LAST_UPDATE_TIMESTAMP may not be in UTC, so the row's age is unknown. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: {\"dated_ahead\": <Monday's replicaLagAheadMs minus 60000>}) only for a reading Monday's rehearsal also showed, and only with the switch owner's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it."
     );
     const all: ReplicaLagAcceptance[] = [
       'unreadable',

@@ -332,7 +332,7 @@ function boundFor(
 
 /** What to do when the lag can't be trusted: the same in every refusal. */
 function unknownLagSteps(lagCase: ReplicaLagAccepted, only: string): string {
-  return `Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (${acceptanceExample(lagCase)}) only for a reading Monday's rehearsal also showed${only}, and only with the identity lead's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it.`;
+  return `Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (${acceptanceExample(lagCase)}) only for a reading Monday's rehearsal also showed${only}, and only with the switch owner's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it.`;
 }
 
 /**
@@ -1499,7 +1499,7 @@ function pointerErrorOf(
   read: PointerOwner | null
 ): string {
   if (read?.owner === 'another run') {
-    return `${key} names another run for this freeze, written while this one ran, and was kept. Send both runs' prefix and manifestSha256 to the coordinator; to make this run the export, run again with replacePointer: true`;
+    return `${key} names another run for this freeze, written while this one ran, and was kept. Send both runs' prefix and manifestSha256 to the on-call engineer; to make this run the export, run again with replacePointer: true`;
   }
   if (read?.owner === 'unknown') {
     return `S3 refused to write ${key} because one is there, and reading it back failed (${read.reason}): whether it names this run is unknown. Ask for links by freezeAt: if their prefix is this run's, the pointer is this run's; if not, it names another run, and this run is fetched by its prefix.`;

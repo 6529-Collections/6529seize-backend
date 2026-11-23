@@ -14,6 +14,9 @@ CLI never starts a second run after a timeout.
 
 The event carries the CLI's options, under the same rules.
 
+"The switch owner" below is the person in charge of the identity switch,
+who decides whatever this runbook leaves to a decision.
+
 ## The event
 
 - `job`: `identityExport`.
@@ -64,7 +67,7 @@ The event carries the CLI's options, under the same rules.
   `true`, a bare `"dated_ahead"` or `"older_than_gap"`, other names and
   repeats are refused. Only as in the README's "An unknown replica lag":
   after running once more, for a case Monday's rehearsal also showed, and
-  with the identity lead's agreement. What the run holds a reading to,
+  with the switch owner's agreement. What the run holds a reading to,
   accepted or not, is the README's [What the run
   enforces](README.md#an-unknown-replica-lag) list: `unreadable` only for a
   reader that isn't Aurora (`ER_UNKNOWN_TABLE 1109`,
@@ -265,7 +268,7 @@ whose pointer can't be written is still whole: the response has
 `pointerKey: null` and `pointerError`.
 
 Everything in the bucket, the pointer included, expires 30 days after it
-was written. Within the links' 6 hours, the coordinator downloads a complete
+was written. Within the links' 6 hours, the switch owner downloads a complete
 copy of the real export and keeps it with `out.json`: every file in the
 links file, the manifest included, and the pointer. These commands download
 everything and check every file's sha256 against the manifest. They are the
@@ -371,8 +374,8 @@ still have finished, and its `seconds` is only in the logs. Don't run it
 again: see "If the CLI fails", below. A `TooManyRequestsException` is not
 that: see "When to call it".
 
-Read `seconds` in `out.json` and send it to the identity lead. If it is above
-about 600, Tuesday's run may not fit one invocation. Check in `out.json`:
+Read `seconds` in `out.json` and send it to the on-call engineer. If it is
+above about 600, Tuesday's run may not fit one invocation. Check in `out.json`:
 
 - `stage` is `prod`.
 - `identityFreezeAtReading` is `time` and `identityFreezeAt` is
@@ -410,9 +413,9 @@ about 600, Tuesday's run may not fit one invocation. Check in `out.json`:
   run accepts: `ER_UNKNOWN_TABLE 1109`, `ER_UNKNOWN_SYSTEM_VARIABLE 1193`,
   no row for this server, a null lag or a null timestamp. Any other reason,
   such as a timeout, can't be accepted on Tuesday: report it.
-- If either reading names a case, tell the identity lead and settle it
-  before Tuesday: Tuesday can accept only a case Monday showed, by its
-  name, as in the README's "An unknown replica lag".
+- If either reading names a case, tell the on-call engineer, and settle it
+  with the switch owner before Tuesday: Tuesday can accept only a case
+  Monday showed, by its name, as in the README's "An unknown replica lag".
 
 ## Tuesday: the run at the freeze (us-east-1)
 
@@ -449,7 +452,7 @@ If the run is refused because of the replica:
 - it says the lag can't be read, or its row is dated ahead of UTC or older
   than the time since the freeze: follow the README's "An unknown replica
   lag". Run once more; then accept only the case the refusal names, and only
-  if Monday's rehearsal showed it, with the identity lead's agreement:
+  if Monday's rehearsal showed it, with the switch owner's agreement:
   `"acceptUnknownReplicaLag":"unreadable"`; for `older_than_gap` the bound
   from Monday's age, `"acceptUnknownReplicaLag":{"older_than_gap":<ms>}`
   with Monday's larger `replicaLagAgeMs` plus 60000; for `dated_ahead` the
@@ -474,13 +477,13 @@ If the run is refused because of the replica:
 
 If the run is refused because the profile site export's `cms-fields.json`
 is empty: add `"acceptNoCmsFields":true` only if that export really has no
-sites; otherwise report it to the coordinator.
+sites; otherwise report it to the on-call engineer.
 
 If the CLI fails without a `FunctionError`, don't run it again: see "If the
 CLI fails".
 
 A second run for the same freeze is refused before it reads, because the
-first run's pointer exists. Only if the coordinator picks a new run as the
+first run's pointer exists. Only if the switch owner picks a new run as the
 export, add `"replacePointer":true`. Its manifest records the pointer it
 replaced.
 
@@ -496,14 +499,14 @@ replaced.
   `pointerError`:
   - it says the pointer names another run, written while this one ran:
     that other run stays the export. Send both runs' `prefix` and
-    `manifestSha256` to the coordinator. Only if the coordinator picks this
-    run, run again with `"replacePointer":true`.
+    `manifestSha256` to the on-call engineer. Only if the switch owner picks
+    this run, run again with `"replacePointer":true`.
   - it says reading the pointer back failed: ask for links by `freezeAt`.
     If their prefix is this run's, the pointer is this run's and all is
     well. If not, it names another run: do as in the case above, and fetch
     this run by its `prefix`.
   - Any other `pointerError` ("The pointer write failed", with the error's
-    code or name only): send the coordinator this run's `prefix` and
+    code or name only): send the on-call engineer this run's `prefix` and
     `manifestSha256`, and fetch fresh links by `prefix`, not `freezeAt`.
 - `revision` is the commit deployed, and `buildCommit` is the same commit
   (or `null`, with the revision you gave).
