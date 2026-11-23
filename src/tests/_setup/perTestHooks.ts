@@ -1,4 +1,4 @@
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 import { legacyCompetitionGetSql } from '@/competitions/legacy-competition-get-facade';
 import { DbQueryOptions } from '../../db-query.options';
 import {
@@ -18,6 +18,8 @@ import {
 } from '../../sql-executor';
 import { Time } from '../../time';
 import { selectWorkerDatabaseFromEnv } from '@/tests/_setup/testDatabase';
+import { dbAuthPlugins } from '@/db-iam-auth';
+import { createMysqlPool } from '@/db/mysql-pool';
 
 const logger = Logger.get('TEST');
 
@@ -28,7 +30,7 @@ selectWorkerDatabaseFromEnv();
 function getConnectionsFromPool(): Promise<mysql.PoolConnection> {
   return new Promise((resolve, reject) => {
     pool.getConnection(function (
-      err: mysql.MysqlError,
+      err: NodeJS.ErrnoException | null,
       dbcon: mysql.PoolConnection
     ) {
       if (err) {
@@ -87,19 +89,22 @@ class DbImpl extends SqlExecutor {
 }
 
 beforeEach(async () => {
-  pool = mysql.createPool({
-    connectionLimit: 5,
-    connectTimeout: Time.seconds(30).toMillis(),
-    acquireTimeout: Time.seconds(30).toMillis(),
-    timeout: Time.seconds(30).toMillis(),
-    host: env.getStringOrThrow('DB_HOST'),
-    port: env.getIntOrThrow('DB_PORT'),
-    user: env.getStringOrThrow('DB_USER'),
-    password: env.getStringOrThrow('DB_PASS'),
-    charset: 'utf8mb4',
-    database: env.getStringOrThrow('DB_NAME'),
-    typeCast: CustomTypeCaster
-  });
+  // The same driver settings as the API pools in src/db-api.ts.
+  pool = createMysqlPool(
+    {
+      connectionLimit: 5,
+      connectTimeout: Time.seconds(30).toMillis(),
+      host: env.getStringOrThrow('DB_HOST'),
+      port: env.getIntOrThrow('DB_PORT'),
+      user: env.getStringOrThrow('DB_USER'),
+      password: env.getStringOrThrow('DB_PASS'),
+      charset: 'utf8mb4',
+      database: env.getStringOrThrow('DB_NAME'),
+      typeCast: CustomTypeCaster,
+      authPlugins: dbAuthPlugins(null)
+    },
+    { acquireTimeoutMs: Time.seconds(30).toMillis() }
+  );
 
   setSqlExecutor(new DbImpl());
 });

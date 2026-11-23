@@ -34,7 +34,7 @@ import { Time } from '../time';
 import { DbPoolName } from '../db-query.options';
 import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
 
-const mysql = require('mysql');
+const mysql = require('mysql2');
 
 export interface BeneficiaryGrantGroupCriteria {
   readonly groupId: string;

@@ -1,4 +1,4 @@
-import mysql from 'mysql';
+import mysql from 'mysql2';
 import * as apiDb from '@/db-api';
 import { DbQueryOptions } from '@/db-query.options';
 import { getRequestScopedPromise, RequestContext } from '@/request.context';
@@ -211,6 +211,8 @@ function routingConnection(
   const release = jest.fn();
   const connection = {
     config: {},
+    // Pools check a reused connection with a ping before handing it out.
+    ping: jest.fn((callback: (error: null) => void) => callback(null)),
     beginTransaction: begin,
     commit,
     rollback,
@@ -243,6 +245,7 @@ describe('primary transaction queries through the real API SqlExecutor adapter',
     const write = routingConnection('primary', beginError);
     const read = routingConnection('stale-replica');
     const pools = [write, read].map(({ connection }) => ({
+      on: jest.fn(),
       getConnection: jest.fn(
         (callback: (error: null, connection: mysql.PoolConnection) => void) =>
           callback(null, connection)
@@ -253,12 +256,14 @@ describe('primary transaction queries through the real API SqlExecutor adapter',
       .spyOn(mysql, 'createPool')
       .mockReturnValueOnce(pools[0] as unknown as mysql.Pool)
       .mockReturnValueOnce(pools[1] as unknown as mysql.Pool);
+    // The pools wrap getConnection; keep the driver-level mocks.
+    const acquisitions = pools.map((pool) => pool.getConnection);
     await apiDb.connect();
-    return { write, read, pools };
+    return { write, read, acquisitions };
   }
 
   it('routes ordinary SELECT to replica and primary transaction SELECT to its one primary transaction', async () => {
-    const { write, read, pools } = await connectRoutingPools();
+    const { write, read, acquisitions } = await connectRoutingPools();
     expect(await sqlExecutor.execute('SELECT source')).toEqual([
       { source: 'stale-replica' }
     ]);
@@ -287,8 +292,8 @@ describe('primary transaction queries through the real API SqlExecutor adapter',
       'COMMIT'
     ]);
     expect(read.statements).toEqual(['SELECT source']);
-    expect(pools[0].getConnection).toHaveBeenCalledTimes(1);
-    expect(pools[1].getConnection).toHaveBeenCalledTimes(1);
+    expect(acquisitions[0]).toHaveBeenCalledTimes(1);
+    expect(acquisitions[1]).toHaveBeenCalledTimes(1);
     expect(write.release).toHaveBeenCalledTimes(1);
   });
 

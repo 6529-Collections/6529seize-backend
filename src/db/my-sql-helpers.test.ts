@@ -1,4 +1,6 @@
-import type { PoolConnection } from 'mysql';
+import * as mysql from 'mysql2';
+import type { PoolConnection } from 'mysql2';
+import { FakeMysqlServer } from '@/tests/fake-mysql-server';
 import { SqlTransactionOptions } from '@/sql-executor';
 import { afterCommit } from './after-commit';
 import { CustomTypeCaster, execNativeTransactionally } from './my-sql.helpers';
@@ -207,5 +209,56 @@ describe('after-commit callbacks', () => {
         return 'committed';
       }, connection)
     ).resolves.toBe('committed');
+  });
+});
+
+describe('legacy transactions on mysql2', () => {
+  let server: FakeMysqlServer;
+  let pool: mysql.Pool;
+
+  afterEach(async () => {
+    await new Promise((resolve) => pool.end(resolve));
+    await server.stop();
+  });
+
+  it('keeps the mysql driver lifecycle when START TRANSACTION fails', async () => {
+    server = new FakeMysqlServer({
+      onQuery: (sql) =>
+        sql === 'START TRANSACTION'
+          ? {
+              error: {
+                errno: 1792,
+                sqlState: '25006',
+                message: 'Cannot execute statement in a READ ONLY transaction.'
+              }
+            }
+          : { affectedRows: 1 }
+    });
+    const port = await server.start();
+    pool = mysql.createPool({ host: '127.0.0.1', port, user: 'u' });
+    const connection = await new Promise<mysql.PoolConnection>(
+      (resolve, reject) =>
+        pool.getConnection((error, acquired) =>
+          error ? reject(error) : resolve(acquired)
+        )
+    );
+    // mysqljs passed the BEGIN error to an ignored connection listener and
+    // ran the work; without a callback mysql2 would throw it uncaught.
+    await expect(
+      execNativeTransactionally(
+        ({ connection: held }) =>
+          new Promise((resolve, reject) =>
+            held.query('UPDATE t SET x = 1', (error: unknown) =>
+              error ? reject(error) : resolve('done')
+            )
+          ),
+        connection
+      )
+    ).resolves.toBe('done');
+    expect(server.queries).toEqual([
+      'START TRANSACTION',
+      'UPDATE t SET x = 1',
+      'COMMIT'
+    ]);
   });
 });

@@ -8,6 +8,7 @@ import { ConsolidatedOwnerBalancesMemes } from '@/entities/IOwnerBalances';
 import { ConsolidatedNFTOwner } from '@/entities/INFTOwner';
 import { deleteConsolidations } from '@/orm_helpers';
 import { describeWithSeed } from '@/tests/_setup/seed';
+import { mysql2TypeOrmOptions } from '@/db/mysql-driver-compat';
 
 const address = (i: number) => `0x${i.toString(16).padStart(40, '0')}`;
 const [a, b, c, d, e] = [1, 2, 3, 4, 5].map(address);
@@ -29,7 +30,8 @@ const dataSource = new DataSource({
   database: process.env.DB_NAME,
   charset: 'utf8mb4',
   entities: [ConsolidatedOwnerBalancesMemes, ConsolidatedNFTOwner],
-  synchronize: false
+  synchronize: false,
+  ...mysql2TypeOrmOptions()
 });
 
 beforeAll(async () => {

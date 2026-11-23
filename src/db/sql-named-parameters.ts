@@ -1,4 +1,4 @@
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 
 const NAMED_PARAMETER_PATTERN = /:(\w+)/g;
 

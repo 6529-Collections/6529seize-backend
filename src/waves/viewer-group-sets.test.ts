@@ -1,4 +1,4 @@
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 import { SqlExecutor } from '@/sql-executor';
 import { withRequestDeadline } from '@/api/write-transaction-budget';
 import { Time } from '@/time';

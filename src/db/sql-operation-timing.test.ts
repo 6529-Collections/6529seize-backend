@@ -1,5 +1,5 @@
 import { performance } from 'node:perf_hooks';
-import { PoolConnection } from 'mysql';
+import { PoolConnection } from 'mysql2';
 import { DbPoolName } from '@/db-query.options';
 import { execSQLWithConnection } from '@/db/my-sql.helpers';
 import {

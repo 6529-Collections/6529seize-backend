@@ -1,5 +1,5 @@
-import * as mysql from 'mysql';
-import type { PoolConnection } from 'mysql';
+import * as mysql from 'mysql2';
+import type { PoolConnection } from 'mysql2';
 import * as fc from 'fast-check';
 import {
   isProxySessionPinned,

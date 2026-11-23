@@ -112,7 +112,7 @@ import { Time, Timer } from '../time';
 import { DbPoolName } from '@/db-query.options';
 import { invalidateWaveUnreadCacheForWaveAfterCommit } from '@/api/waves/wave-unread-cache';
 
-const mysql = require('mysql');
+const mysql = require('mysql2');
 
 /** Upper bound for reading a whole wave's activity logs. */
 export const WAVE_LOG_QUERY_BUDGET_MS = 5000;

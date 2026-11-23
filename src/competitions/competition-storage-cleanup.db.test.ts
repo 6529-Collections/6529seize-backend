@@ -23,6 +23,7 @@ import {
   prepareCompetitionStorage
 } from './competition-storage-cleanup';
 import { WaveType } from '@/entities/IWave';
+import { mysql2TypeOrmOptions } from '@/db/mysql-driver-compat';
 
 describe('guarded physical competition storage cleanup', () => {
   let source: DataSource;
@@ -39,7 +40,8 @@ describe('guarded physical competition storage cleanup', () => {
       entities: Object.values(registered).filter(
         (value) => typeof value === 'function'
       ),
-      synchronize: false
+      synchronize: false,
+      ...mysql2TypeOrmOptions()
     });
     await source.initialize();
     runner = source.createQueryRunner('master');

@@ -1,4 +1,4 @@
-import type { PoolConnection } from 'mysql';
+import type { PoolConnection } from 'mysql2';
 
 type Helpers = typeof import('./my-sql.helpers');
 type AfterCommit = typeof import('./after-commit');

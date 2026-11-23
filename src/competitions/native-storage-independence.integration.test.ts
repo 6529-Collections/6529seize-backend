@@ -30,6 +30,7 @@ import {
   legacyGetView
 } from './legacy-competition-get-facade';
 import { CompetitionVoteActivityRepository } from './competition-vote-activity.repository';
+import { mysql2TypeOrmOptions } from '@/db/mysql-driver-compat';
 
 const obsoleteTables = [
   tables.DROP_VOTER_STATE_TABLE,
@@ -78,7 +79,7 @@ describe('application and permanent projections without obsolete competition sto
       password: process.env.DB_PASS,
       database: process.env.DB_NAME,
       charset: 'utf8mb4',
-      timezone: 'Etc/UTC',
+      ...mysql2TypeOrmOptions({ timezone: 'Etc/UTC' }),
       entities: Object.values(Entities).filter(
         (entity) => typeof entity === 'function'
       ),

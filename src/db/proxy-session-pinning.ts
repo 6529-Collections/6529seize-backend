@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { PoolConnection } from 'mysql';
+import type { PoolConnection } from 'mysql2';
 import { Logger } from '@/logging';
 import { loggerContext } from '@/logger-context';
 
@@ -37,7 +37,7 @@ export type ProxyPinRetirement = 'release' | 'request_end';
 
 /**
  * `destroyed`: the driver closed it. `quarantined`: destroy threw, so it was
- * taken out of the pool's idle list and will never be released again; mysql
+ * taken out of the pool's idle list and will never be released again; mysql2
  * drops it from the pool when its socket ends.
  */
 export type ProxyRetireOutcome = 'destroyed' | 'quarantined';
@@ -68,7 +68,7 @@ export interface ProxyPinScopeRef {
 const scopes = new AsyncLocalStorage<ProxyPinScope>();
 
 /**
- * Captures the request scope at the call site. mysql runs query callbacks in
+ * Captures the request scope at the call site. mysql2 runs query callbacks in
  * the async context of the socket, which belongs to whichever invocation
  * opened the connection, so a release from a callback must use the scope
  * captured when the statement was issued.
@@ -143,7 +143,7 @@ export function isProxySessionPinned(connection: object): boolean {
 
 /**
  * Takes a pooled connection out of circulation so the proxy frees its pinned
- * database connection. It is destroyed (mysql removes it from its pool and
+ * database connection. It is destroyed (mysql2 removes it from its pool and
  * opens a replacement on demand). If destroy throws, the connection may be
  * half-closed, so it is quarantined instead of ever being released again.
  * Never throws.
@@ -247,7 +247,7 @@ function retireScopePins(scope: ProxyPinScope): void {
 }
 
 /**
- * mysql 2.x keeps released connections in `pool._freeConnections` (see
+ * mysql2 keeps released connections in `pool._freeConnections` (see
  * Pool#releaseConnection) and clears `_pool` when it drops a connection. Any
  * other shape counts as borrowed, so it is never destroyed mid-query.
  */
@@ -257,22 +257,57 @@ function poolState(connection: PoolConnection): 'idle' | 'borrowed' | 'gone' {
   return idleList(connection)?.includes(connection) ? 'idle' : 'borrowed';
 }
 
-function idleList(connection: PoolConnection): unknown[] | undefined {
+interface IdleList {
+  includes(connection: PoolConnection): boolean;
+  remove(connection: PoolConnection): void;
+}
+
+interface IdleQueue {
+  toArray(): unknown[];
+  removeOne(index: number): unknown;
+}
+
+function isIdleQueue(value: unknown): value is IdleQueue {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as Partial<IdleQueue>).toArray === 'function' &&
+    typeof (value as Partial<IdleQueue>).removeOne === 'function'
+  );
+}
+
+/** mysql2 3.16 queues idle connections in a denque; arrays work as well. */
+function idleList(connection: PoolConnection): IdleList | undefined {
   const pool = (connection as unknown as { _pool?: unknown })._pool as
     | { _freeConnections?: unknown }
     | null
     | undefined;
-  return Array.isArray(pool?._freeConnections)
-    ? pool._freeConnections
-    : undefined;
+  const free = pool?._freeConnections;
+  if (Array.isArray(free)) {
+    return {
+      includes: (candidate) => free.includes(candidate),
+      remove: (candidate) => {
+        const index = free.indexOf(candidate);
+        if (index !== -1) free.splice(index, 1);
+      }
+    };
+  }
+  if (isIdleQueue(free)) {
+    return {
+      includes: (candidate) => free.toArray().includes(candidate),
+      remove: (candidate) => {
+        const index = free.toArray().indexOf(candidate);
+        if (index !== -1) free.removeOne(index);
+      }
+    };
+  }
+  return undefined;
 }
 
 function quarantine(connection: PoolConnection): void {
   quarantined.add(connection);
   // An idle connection must not be handed to the next borrower.
-  const idle = idleList(connection);
-  const index = idle ? idle.indexOf(connection) : -1;
-  if (idle && index !== -1) idle.splice(index, 1);
+  idleList(connection)?.remove(connection);
 }
 
 function metricEnvironment(): string {

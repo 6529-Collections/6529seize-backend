@@ -4,7 +4,7 @@ import {
   SQL_TRANSACTION_FIXTURE_TABLE,
   createSqlTransactionFixture
 } from './sql-transaction-fixture';
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 import { performance } from 'node:perf_hooks';
 import * as apiDb from '@/db-api';
 import * as loopDb from '@/db';
@@ -233,8 +233,8 @@ describe.each(['API', 'LOOP'])(
         connectionDestroyed: true
       });
       expect(performance.now() - began).toBeLessThan(1500);
-      // mysql Pool._purgeConnection re-enters PoolConnection.destroy once.
-      expect(destroyed).toHaveBeenCalledTimes(2);
+      // The budget destroys it once (mysqljs's pool re-entered destroy).
+      expect(destroyed).toHaveBeenCalledTimes(1);
       expect(() => assertPrimaryTransactionContext(context!)).toThrow(
         'active primary'
       );
@@ -578,8 +578,8 @@ describe.each(['API', 'LOOP'])(
             budget(1000, 80)
           )
         ).resolves.toBe('committed');
-        // mysql Pool._purgeConnection re-enters PoolConnection.destroy once.
-        expect(destroy).toHaveBeenCalledTimes(2);
+        // The budget destroys it once (mysqljs's pool re-entered destroy).
+        expect(destroy).toHaveBeenCalledTimes(1);
         expect(await observer.execute(query, { id: first })).toEqual([
           { version: '2' }
         ]);

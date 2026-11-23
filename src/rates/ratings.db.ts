@@ -16,7 +16,7 @@ import {
 } from '../sql-executor';
 import { RatingsSnapshotsPageRequest } from './ratings.service';
 
-const mysql = require('mysql');
+const mysql = require('mysql2');
 
 function compareStrings(a: string, b: string): number {
   if (a < b) return -1;

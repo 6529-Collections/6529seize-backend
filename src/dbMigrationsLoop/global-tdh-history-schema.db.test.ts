@@ -9,6 +9,7 @@ import {
   TDHHistory
 } from '@/entities/ITDHHistory';
 import { widenGlobalTdhHistoryBeforeSchemaSync } from './global-tdh-history-schema';
+import { mysql2TypeOrmOptions } from '@/db/mysql-driver-compat';
 
 const globalTables = [GlobalTDHHistory, LatestGlobalTDHHistory];
 const consolidationTables = [TDHHistory, LatestTDHHistory, RecentTDHHistory];
@@ -33,7 +34,7 @@ describe('Global TDH history widening', () => {
       password: process.env.DB_PASS,
       database: process.env.DB_NAME,
       entities: [...globalTables, ...consolidationTables],
-      timezone: 'Z'
+      ...mysql2TypeOrmOptions({ timezone: 'Z' })
     }).initialize();
 
     const existingRow = {

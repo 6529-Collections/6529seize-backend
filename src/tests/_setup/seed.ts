@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 import { sqlExecutor } from '../../sql-executor';
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 import { resetTestDatabase } from '@/tests/_setup/testDatabase';
 
 export interface Seed {

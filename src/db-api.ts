@@ -50,17 +50,17 @@ import { getConsolidationsSql } from './sql_helpers';
 
 import { Nft } from '@/alchemy-sdk';
 import { createHash, randomUUID } from 'node:crypto';
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 import {
-  attachDbAuthTokenSource,
   createDbAuthTokenSource,
+  dbAuthPlugins,
   DbConnectionTarget,
-  installMysqlIamAuthSupport,
   isDbConnectionTargetComplete,
   isDbIamAuthRequested,
   resolveDbConnectionTargets,
   sslOptionsFor
 } from './db-iam-auth';
+import { createMysqlPool } from './db/mysql-pool';
 import {
   DEFAULT_PAGE_SIZE,
   NFTSearchResult,
@@ -180,38 +180,40 @@ export async function connect() {
     process.exit();
   }
   const port = +process.env.DB_PORT;
-  if (targets.write.iam || targets.read.iam) {
-    installMysqlIamAuthSupport();
-  }
   const createPool = (
     target: DbConnectionTarget,
     connectionLimit: number
   ): mysql.Pool => {
-    const pool = mysql.createPool({
-      connectionLimit,
-      connectTimeout: Time.seconds(30).toMillis(),
-      acquireTimeout: Time.seconds(30).toMillis(),
-      timeout: Time.seconds(30).toMillis(),
-      host: target.host,
-      port: port,
-      user: target.user,
-      password: target.password,
-      charset: 'utf8mb4',
-      database: process.env.DB_NAME,
-      typeCast: CustomTypeCaster,
-      ...sslOptionsFor(target)
-    });
-    if (target.iam) {
-      attachDbAuthTokenSource(
-        pool,
-        createDbAuthTokenSource({ host: target.host, port, user: target.user }),
-        (error) =>
-          logger.error(
-            `[DB IAM TOKEN SIGNING FAILED] [${target.host}] ${error}`
-          )
-      );
-    }
-    return pool;
+    // The 30 s acquire bound is the former mysqljs acquireTimeout. mysqljs
+    // never read the pool-level `timeout` option, so it has no replacement.
+    return createMysqlPool(
+      {
+        connectionLimit,
+        connectTimeout: Time.seconds(30).toMillis(),
+        host: target.host,
+        port: port,
+        user: target.user,
+        password: target.password,
+        charset: 'utf8mb4',
+        database: process.env.DB_NAME,
+        typeCast: CustomTypeCaster,
+        authPlugins: dbAuthPlugins(
+          target.iam
+            ? createDbAuthTokenSource({
+                host: target.host,
+                port,
+                user: target.user
+              })
+            : null,
+          (error) =>
+            logger.error(
+              `[DB IAM TOKEN SIGNING FAILED] [${target.host}] ${error}`
+            )
+        ),
+        ...sslOptionsFor(target)
+      },
+      { acquireTimeoutMs: Time.seconds(30).toMillis() }
+    );
   };
   write_pool = createPool(targets.write, 5);
   read_pool = createPool(targets.read, 10);
@@ -337,7 +339,7 @@ function getDbConnectionByPoolName(
   const pool = getPoolByName(poolName);
   return new Promise((resolve, reject) => {
     pool.getConnection(function (
-      err: mysql.MysqlError,
+      err: NodeJS.ErrnoException | null,
       dbcon: mysql.PoolConnection
     ) {
       if (err) {

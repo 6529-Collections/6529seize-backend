@@ -30,8 +30,9 @@ import { insertWithoutUpdate } from '@/orm_helpers';
 import { TDH_SAVE_BATCH_SIZE } from './tdh-persistence-batches';
 import { identityTdhSyncStateDb } from '@/identity-tdh-sync-state.db';
 import { identityTdhSyncScopeDb } from '@/identity-tdh-sync-scope.db';
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 import { DataSource, QueryRunner } from 'typeorm';
+import { mysql2TypeOrmOptions } from '@/db/mysql-driver-compat';
 
 const BLOCK = 99;
 const BLOCK_TIMESTAMP = new Date('2026-11-09T00:00:00Z');
@@ -249,7 +250,7 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
     synchronize: false,
     logging: false,
     charset: 'utf8mb4',
-    timezone: 'Etc/UTC'
+    ...mysql2TypeOrmOptions({ timezone: 'Etc/UTC' })
   });
 
   beforeAll(async () => {

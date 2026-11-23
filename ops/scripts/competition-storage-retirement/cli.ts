@@ -15,6 +15,7 @@ import {
   type CompetitionCleanupPlan,
   type CompetitionCleanupRecovery
 } from './approval';
+import { mysql2TypeOrmOptions } from '../../../src/db/mysql-driver-compat';
 
 async function main() {
   const [mode, planPath, recoveryPath, confirmation, ...extra] =
@@ -66,7 +67,7 @@ async function main() {
     migrationsRun: false,
     supportBigNumbers: true,
     bigNumberStrings: true,
-    extra: { dateStrings: true }
+    ...mysql2TypeOrmOptions({ dateStrings: true })
   });
   await source.initialize();
   const runner = source.createQueryRunner('master');

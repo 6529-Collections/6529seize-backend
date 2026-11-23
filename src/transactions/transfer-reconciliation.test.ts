@@ -5,7 +5,7 @@ import {
   EntityManager,
   ObjectLiteral
 } from 'typeorm';
-import { PoolConnection } from 'mysql';
+import { PoolConnection } from 'mysql2';
 import { execSQLWithParams as executeNativeSql } from '@/db/my-sql.helpers';
 import { execSQLWithParams as executeAppSql } from '@/db';
 import { enqueueTransfersWithManager } from './transfer-reconciliation.db';

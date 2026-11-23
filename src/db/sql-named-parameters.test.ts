@@ -1,5 +1,5 @@
 import fc from 'fast-check';
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 import {
   assertNamedParametersBindable,
   formatNamedParameters,

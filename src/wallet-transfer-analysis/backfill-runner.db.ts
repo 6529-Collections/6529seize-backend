@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { PoolConnection } from 'mysql';
+import type { PoolConnection } from 'mysql2';
 import type { QueryRunner } from 'typeorm';
 import { MEMES_CONTRACT } from '@/constants';
 import { getDataSource } from '@/db';
