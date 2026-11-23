@@ -406,18 +406,23 @@ export function checkSnapshotTime(
  */
 export function checkReplicaLag(
   gapMs: number,
-  replicaLagMs: number | null,
-  acceptUnknown = false,
-  lagError: string | null = null
+  lag: Pick<
+    ReadOnlyEvidence,
+    'replicaLagMs' | 'replicaLagAgeMs' | 'replicaLagError'
+  >,
+  acceptUnknown = false
 ): void {
-  if (replicaLagMs === null && !acceptUnknown) {
+  if (lag.replicaLagMs === null || lag.replicaLagAgeMs === null) {
+    if (acceptUnknown) return;
     throw new ProfileSiteExportSnapshotError(
-      `The replica's lag can't be read from information_schema.replica_host_status (${lagError ?? 'no reason given'}): only the gap since the freeze shows it holds the writes made before it. If that error says this isn't an Aurora reader, or the switch owner agrees, run again with acceptUnknownReplicaLag: true to rely on the gap alone.`
+      `The replica's lag can't be read from information_schema.replica_host_status (${lag.replicaLagError ?? 'no reason given'}). Run again first: a passing error, such as a timeout, clears. Accept an unknown lag (acceptUnknownReplicaLag: true) only for an error Monday's rehearsal also showed, ER_UNKNOWN_TABLE 1109 or ER_UNKNOWN_SYSTEM_VARIABLE 1193 (the reader isn't Aurora), and only with the switch owner's agreement. Any other error is a fault in the export: report it.`
     );
   }
-  if (replicaLagMs !== null && replicaLagMs >= gapMs) {
+  // The reader's row can be stale: its lag counts from when it was written.
+  const behindMs = lag.replicaLagMs + lag.replicaLagAgeMs;
+  if (behindMs >= gapMs) {
     throw new ProfileSiteExportSnapshotError(
-      `The replica is ${replicaLagMs} ms behind its writer, not less than the ${gapMs} ms since the freeze: it may not hold every write made before the freeze. Try again later.`
+      `The replica may be ${behindMs} ms behind its writer (a ${lag.replicaLagMs} ms lag in a row ${lag.replicaLagAgeMs} ms old), not less than the ${gapMs} ms since the freeze: it may not hold every write made before the freeze. Try again later.`
     );
   }
 }
@@ -894,7 +899,7 @@ export async function runProfileSiteExportJob(
   );
   const snapshot = await deps.openSnapshot(target);
   logger.info(
-    `[READ ONLY SNAPSHOT] [HOST ${snapshot.evidence.host}] [AT ${snapshot.evidence.snapshotAt}] [REPLICA LAG ${snapshot.evidence.replicaLagMs ?? 'unknown'} MS]${snapshot.evidence.replicaLagError ? ` [REPLICA LAG ERROR ${snapshot.evidence.replicaLagError}]` : ''} [TRANSACTION READ ONLY ${snapshot.evidence.transactionReadOnly}] [SERVER READ ONLY ${snapshot.evidence.serverReadOnly}] [INNODB READ ONLY ${snapshot.evidence.innodbReadOnly}]`
+    `[READ ONLY SNAPSHOT] [HOST ${snapshot.evidence.host}] [AT ${snapshot.evidence.snapshotAt}] [REPLICA LAG ${snapshot.evidence.replicaLagMs ?? 'unknown'} MS] [LAG ROW AGE ${snapshot.evidence.replicaLagAgeMs ?? 'unknown'} MS]${snapshot.evidence.replicaLagError ? ` [REPLICA LAG ERROR ${snapshot.evidence.replicaLagError}]` : ''} [TRANSACTION READ ONLY ${snapshot.evidence.transactionReadOnly}] [SERVER READ ONLY ${snapshot.evidence.serverReadOnly}] [INNODB READ ONLY ${snapshot.evidence.innodbReadOnly}]`
   );
   let run;
   let gapSeconds = 0;
@@ -917,9 +922,8 @@ export async function runProfileSiteExportJob(
     if (!event.rehearsal) {
       checkReplicaLag(
         gap.gapMs,
-        snapshot.evidence.replicaLagMs,
-        event.acceptUnknownReplicaLag,
-        snapshot.evidence.replicaLagError
+        snapshot.evidence,
+        event.acceptUnknownReplicaLag
       );
       checkWritesAfterFreeze(late, event.acceptWritesAfterFreeze);
     }

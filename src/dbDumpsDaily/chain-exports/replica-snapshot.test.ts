@@ -1,6 +1,8 @@
 import {
   openReadOnlySnapshot,
   ReadOnlySnapshotExecutor,
+  readReplicaLag,
+  REPLICA_LAG_SQL,
   ReplicaGuardError,
   replicaTarget
 } from './replica-snapshot';
@@ -66,7 +68,7 @@ describe('openReadOnlySnapshot', () => {
       transaction_read_only: [{ tro: 1, ro: 1 }],
       innodb_read_only: [{ iro: 0 }],
       'UNIX_TIMESTAMP(NOW(6))': [{ ms: '1795478405123' }],
-      replica_host_status: [{ lag_ms: 18.5 }]
+      replica_host_status: [{ lag_ms: 18.5, age_ms: '250.0000' }]
     });
     const createPool = jest.fn(() => pool);
     const snapshot = await openReadOnlySnapshot(target, createPool);
@@ -86,10 +88,13 @@ describe('openReadOnlySnapshot', () => {
       innodbReadOnly: false,
       snapshotAt: '2026-11-24T00:00:05.123Z',
       replicaLagMs: 18.5,
+      replicaLagAgeMs: 250,
       replicaLagError: null
     });
-    expect(statements).toContain(
-      'SELECT REPLICA_LAG_IN_MILLISECONDS AS lag_ms FROM information_schema.replica_host_status WHERE SERVER_ID = @@aurora_server_id'
+    expect(statements).toContain(REPLICA_LAG_SQL);
+    // The reader's newest row, with its age against the UTC clock.
+    expect(REPLICA_LAG_SQL).toBe(
+      'SELECT REPLICA_LAG_IN_MILLISECONDS AS lag_ms, TIMESTAMPDIFF(MICROSECOND, LAST_UPDATE_TIMESTAMP, UTC_TIMESTAMP(6)) / 1000 AS age_ms FROM information_schema.replica_host_status WHERE SERVER_ID = @@aurora_server_id ORDER BY LAST_UPDATE_TIMESTAMP DESC LIMIT 1'
     );
     await snapshot.close();
     expect(statements[statements.length - 1]).toBe('ROLLBACK');
@@ -103,7 +108,21 @@ describe('openReadOnlySnapshot', () => {
       undefined,
       'information_schema.replica_host_status has no row for this server'
     ],
-    ['a null lag', [{ lag_ms: null }], 'REPLICA_LAG_IN_MILLISECONDS is null'],
+    [
+      'a null lag',
+      [{ lag_ms: null, age_ms: 10 }],
+      'REPLICA_LAG_IN_MILLISECONDS is null'
+    ],
+    [
+      'a row without a timestamp',
+      [{ lag_ms: 20, age_ms: null }],
+      "LAST_UPDATE_TIMESTAMP is null: the row's age is unknown"
+    ],
+    [
+      'a row dated in the future',
+      [{ lag_ms: 20, age_ms: '-5000.0000' }],
+      "LAST_UPDATE_TIMESTAMP is 5000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown"
+    ],
     [
       'a table it cannot read',
       'error',
@@ -135,8 +154,27 @@ describe('openReadOnlySnapshot', () => {
       }
       const snapshot = await openReadOnlySnapshot(target, () => pool);
       expect(snapshot.evidence.replicaLagMs).toBeNull();
+      expect(snapshot.evidence.replicaLagAgeMs).toBeNull();
       expect(snapshot.evidence.replicaLagError).toBe(why);
       expect(snapshot.evidence.snapshotAt).toBe('2026-11-24T00:00:05.000Z');
+    }
+  );
+
+  it.each([
+    ['an old row', { lag_ms: 20, age_ms: '360000.0000' }, 20, 360_000],
+    ['clock jitter', { lag_ms: 20, age_ms: -300 }, 20, 0],
+    ['a fresh row', { lag_ms: '7', age_ms: 0 }, 7, 0]
+  ])(
+    'reads the lag and the age of its row: %s',
+    async (_name, row, lagMs, ageMs) => {
+      const connection = {
+        query: jest.fn((_sql: string, callback: any) => callback(null, [row]))
+      };
+      await expect(readReplicaLag(connection as never)).resolves.toEqual({
+        lagMs,
+        ageMs,
+        error: null
+      });
     }
   );
 
