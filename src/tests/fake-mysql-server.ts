@@ -103,6 +103,8 @@ export interface FakeMysqlServerOptions {
    * or proxy that stalls during authentication would.
    */
   readonly stallLogin?: (connectionId: number) => boolean;
+  /** Keep a socket open after the client half-closes it, as a dead peer would. */
+  readonly ignoreClientClose?: boolean;
 }
 
 function lengthEncodedInt(value: number): Buffer {
@@ -449,9 +451,12 @@ export class FakeMysqlServer {
   private nextId = 1;
 
   constructor(readonly options: FakeMysqlServerOptions = {}) {
-    this.server = net.createServer((socket) => {
-      this.connections.push(new FakeConnection(this.nextId++, socket, this));
-    });
+    this.server = net.createServer(
+      { allowHalfOpen: !!options.ignoreClientClose },
+      (socket) => {
+        this.connections.push(new FakeConnection(this.nextId++, socket, this));
+      }
+    );
   }
 
   /** Resolves with the port it listens on, on 127.0.0.1. */

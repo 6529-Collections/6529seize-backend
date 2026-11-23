@@ -12,6 +12,7 @@ export interface MysqlPoolGuards {
 /** One request for a connection, and the login timer of one opened for it. */
 interface Acquisition {
   loginTimer?: ReturnType<typeof setTimeout>;
+  settled?: boolean;
 }
 
 /** The resolved connection settings mysql2 passes to a `stream` factory. */
@@ -44,6 +45,8 @@ interface SocketSettings {
  * - Error listener. Every new connection keeps an 'error' listener, as with
  *   mysqljs. mysql2 listens for a pooled connection's first error only; a
  *   later one on a broken idle connection would be an unhandled 'error'.
+ * - Closing. pool.end() fails requests still waiting for a connection with
+ *   POOL_CLOSED, as mysqljs did; mysql2 would leave them pending.
  *
  * mysql2 opens a connection's socket through the `stream` factory while
  * pool.getConnection() runs, so the socket is tied to the request that is
@@ -69,6 +72,12 @@ export function createMysqlPool(
     });
   });
   const acquisitions = new WeakMap<GetConnectionCallback, Acquisition>();
+  // Hand-outs waiting in mysql2's queue, for pool.end() to fail.
+  const waiting = new Set<GetConnectionCallback>();
+  let requesting: GetConnectionCallback | null = null;
+  pool.on('enqueue', () => {
+    if (requesting) waiting.add(requesting);
+  });
   const getConnection = pool.getConnection.bind(pool);
   const acquire = (callback: GetConnectionCallback): void => {
     // mysql2 hands a queued callback back to getConnection when a connection
@@ -80,12 +89,16 @@ export function createMysqlPool(
       const state: Acquisition = {};
       acquisition = state;
       handOut = (error, connection) => {
+        waiting.delete(handOut);
+        if (state.settled) return;
         clearTimeout(state.loginTimer);
         state.loginTimer = undefined;
         if (error || justOpened.delete(connection)) {
+          state.settled = true;
           callback(error, connection);
           return;
         }
+        state.settled = true;
         pingWithin(connection, guards.acquireTimeoutMs, (alive) =>
           alive ? callback(null, connection) : acquire(callback)
         );
@@ -93,14 +106,32 @@ export function createMysqlPool(
       acquisitions.set(handOut, state);
     }
     opening = acquisition;
+    requesting = handOut;
     try {
       getConnection(handOut);
     } finally {
       opening = null;
+      requesting = null;
     }
   };
   pool.getConnection = acquire;
+  const end = pool.end.bind(pool);
+  pool.end = (callback?: Parameters<Pool['end']>[0]): void => {
+    const unserved = Array.from(waiting);
+    waiting.clear();
+    end(callback);
+    for (const handOut of unserved) {
+      process.nextTick(() =>
+        handOut(poolClosedError(), undefined as unknown as PoolConnection)
+      );
+    }
+  };
   return pool;
+}
+
+/** The error mysqljs gave requests still waiting when a pool was closed. */
+function poolClosedError(): Error {
+  return Object.assign(new Error('Pool is closed.'), { code: 'POOL_CLOSED' });
 }
 
 /**
@@ -162,10 +193,15 @@ function pingWithin(
     settled = true;
     clearTimeout(timer);
     if (!alive) {
+      // mysql2's destroy() only sends FIN; mysqljs closed the socket at once,
+      // which a dead or unresponsive peer needs.
+      const socket = (connection as unknown as { stream?: net.Socket }).stream;
       try {
         connection.destroy();
       } catch {
         // A connection that cannot even be closed is still never reused.
+      } finally {
+        socket?.destroy();
       }
     }
     done(alive);

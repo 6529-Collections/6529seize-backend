@@ -1,3 +1,4 @@
+import type * as net from 'node:net';
 import { performance } from 'node:perf_hooks';
 import * as mysql from 'mysql2';
 import { DataSource } from 'typeorm';
@@ -199,6 +200,23 @@ describe('createMysqlPool ping on reuse', () => {
     woken.release();
   });
 
+  it('closes the socket of a connection whose ping does not answer', async () => {
+    const target = await start(
+      {
+        ignoreClientClose: true,
+        onPing: (id) => (id === 1 ? { hang: true } : undefined)
+      },
+      50
+    );
+    const first = await acquire(target);
+    const socket = (first as unknown as { stream: net.Socket }).stream;
+    first.release();
+    const replacement = await acquire(target);
+    expect(replacement).not.toBe(first);
+    expect(socket.destroyed).toBe(true);
+    replacement.release();
+  });
+
   it('keeps listening for errors on pooled connections', async () => {
     const target = await start({});
     const connection = await acquire(target);
@@ -236,5 +254,20 @@ describe('createMysqlPool under TypeORM', () => {
     } finally {
       await source.destroy();
     }
+  });
+});
+
+describe('createMysqlPool end()', () => {
+  it('fails requests still waiting for a connection, as mysqljs did', async () => {
+    const target = await start({}, 1_000, { connectionLimit: 1 });
+    const held = await acquire(target);
+    const waiting = acquire(target);
+    await new Promise<void>((resolve) => target.end(() => resolve()));
+    pool = undefined;
+    await expect(waiting).rejects.toMatchObject({
+      code: 'POOL_CLOSED',
+      message: 'Pool is closed.'
+    });
+    expect(held.threadId).toBe(1);
   });
 });
