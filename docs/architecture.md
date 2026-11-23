@@ -892,6 +892,25 @@ identity join) in `chain_pending_operations` and
 `chain_pending_operation_signers` until every signer has signed, checking each
 signature against its signer, then relays it.
 
+Every submit carries its draft's txId, the digest every signer signed: a
+direct submit's body needs `tx_id` (400 without it), and a held operation
+uses its own. The client checks that the node's answer is of that
+transaction. A failed direct submit answers `tx_id` and an `outcome`:
+`refused` (422 `CHAIN_REFUSED`), `not_taken` (502 `CHAIN_UNAVAILABLE`, safe
+to send again) or `unknown` (502 `CHAIN_OUTCOME_UNKNOWN`, with `node_tx_id`
+when the node took another transaction): it may have landed, so ask the
+chain rather than send it again. A held operation is sent at most once. It is
+claimed under its row lock, moving from `PENDING` to `SUBMITTED` before
+anything is sent, and stays `SUBMITTED` with `result.outcome: 'unknown'`
+(and `result.txId`) until the node answers, or for good when the answer is
+lost; only an answer that the node surely didn't take it puts it back to
+`PENDING` for a retry, and a refusal of the operation marks it `FAILED`. A
+cancel takes the same lock and moves it only from `PENDING`, so a withdrawn
+join is never sent and a sent one is never shown as withdrawn; a cancel also
+drops the signatures it held. Signature values (`signers[].sig`) go only to
+the operation's own signer wallets while it is pending and unexpired;
+everyone else gets `sig: null`, with `signed` still set.
+
 ### Ordinary Ethereum RPC boundary
 
 The shared provider in `src/ethereum-rpc/` reads the server-only

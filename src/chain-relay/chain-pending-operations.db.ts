@@ -2,6 +2,7 @@ import {
   CHAIN_PENDING_OPERATION_SIGNERS_TABLE,
   CHAIN_PENDING_OPERATIONS_TABLE
 } from '@/constants';
+import { DbPoolName } from '@/db-query.options';
 import {
   ConnectionWrapper,
   dbSupplier,
@@ -41,8 +42,15 @@ function toNumber(value: unknown): number {
 }
 
 export class ChainPendingOperationsDb extends LazyDbAccessCompatibleService {
+  /**
+   * An operation and its signers. In a transaction (`conn`) the operation's
+   * row is locked until it ends. Outside one it is read from the primary,
+   * not a replica, so a status change (a cancel) is seen at once.
+   */
   async find(txId: string, conn?: Conn): Promise<PendingOperation | null> {
-    const opts = conn ? { wrappedConnection: conn } : undefined;
+    const opts = conn
+      ? { wrappedConnection: conn }
+      : { forcePool: DbPoolName.WRITE };
     const op = await this.db.oneOrNull<Omit<PendingOperation, 'signers'>>(
       `select * from ${CHAIN_PENDING_OPERATIONS_TABLE} where tx_id = :txId${conn ? ' for update' : ''}`,
       { txId },
@@ -108,27 +116,47 @@ export class ChainPendingOperationsDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /**
+   * Drops the signatures an operation holds, keeping when each was given:
+   * once it is withdrawn they are gone, not just hidden.
+   */
+  async clearSignatures(txId: string, conn: Conn) {
+    await this.db.execute(
+      `update ${CHAIN_PENDING_OPERATION_SIGNERS_TABLE}
+       set sig = null
+       where tx_id = :txId`,
+      { txId },
+      { wrappedConnection: conn }
+    );
+  }
+
+  /**
+   * Moves an operation from status `from` to `to`. Returns false, changing
+   * nothing, when it isn't in `from` (another request moved it first).
+   */
   async setStatus(
     txId: string,
-    status: PendingStatus,
+    change: { readonly from: PendingStatus; readonly to: PendingStatus },
     fields: { result_json?: string | null; last_error?: string | null },
     now: number,
     conn?: Conn
-  ) {
-    await this.db.execute(
+  ): Promise<boolean> {
+    const result = await this.db.execute(
       `update ${CHAIN_PENDING_OPERATIONS_TABLE}
-       set status = :status, result_json = :result_json, last_error = :last_error,
+       set status = :to, result_json = :result_json, last_error = :last_error,
            updated_at = :now
-       where tx_id = :txId`,
+       where tx_id = :txId and status = :from`,
       {
         txId,
-        status,
+        from: change.from,
+        to: change.to,
         result_json: fields.result_json ?? null,
         last_error: fields.last_error ?? null,
         now
       },
       conn ? { wrappedConnection: conn } : undefined
     );
+    return this.db.getAffectedRows(result) === 1;
   }
 
   /** Pending operations that still need this wallet's signature. */

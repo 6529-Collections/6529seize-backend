@@ -40,10 +40,19 @@ export class ChainPendingOperationEntity {
   @Column({ type: 'bigint', nullable: false })
   readonly expires_at!: number;
 
-  /** PENDING, SUBMITTED, FAILED or CANCELLED. */
+  /**
+   * PENDING, SUBMITTED, FAILED or CANCELLED. It moves only from PENDING,
+   * under the row's lock; SUBMITTED goes back to PENDING only when the node
+   * surely didn't take it.
+   */
   @Column({ type: 'varchar', length: 20, nullable: false })
   readonly status!: string;
 
+  /**
+   * The node's answer (JSON), or `{ txId, outcome: 'unknown', nodeTxId? }`
+   * while it is being sent, and for good when the answer was lost. It may
+   * have landed, so ask the chain; it is never sent again.
+   */
   @Column({ type: 'text', nullable: true, default: null })
   readonly result_json!: string | null;
 
@@ -73,7 +82,10 @@ export class ChainPendingOperationSignerEntity {
   @Column({ type: 'varchar', length: 50, nullable: false })
   readonly signer!: string;
 
-  /** 65-byte signature (0x hex); null until given. */
+  /**
+   * 65-byte signature (0x hex); null until given, and again once the
+   * operation is withdrawn (signed_at stays).
+   */
   @Column({ type: 'varchar', length: 140, nullable: true, default: null })
   readonly sig!: string | null;
 

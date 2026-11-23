@@ -3,9 +3,12 @@ import * as Joi from 'joi';
 import { asyncRouter } from '../async.router';
 import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
 import { getValidatedByJoiOrThrow } from '../validation';
-import { chainRelayService } from '@/chain-relay/chain-relay.service';
+import {
+  chainRelayService,
+  maySeeSignatures,
+  RelaySubmitRequest
+} from '@/chain-relay/chain-relay.service';
 import { PendingOperation } from '@/chain-relay/chain-pending-operations.db';
-import { ChainSubmitRequest } from '@/chain-gateway/chain-gateway.types';
 
 /**
  * Operations people sign with their wallets for the 6529 chain: relayed to
@@ -31,13 +34,20 @@ const SignatureSchema = Joi.object<SignatureBody>({
 });
 
 interface SubmitBody {
+  readonly tx_id: string;
   readonly signed?: string;
   readonly unsigned?: string;
   readonly signatures?: SignatureBody[];
 }
 
-/** Either the whole signed operation, or its unsigned bytes and signatures. */
+/**
+ * Either the whole signed operation, or its unsigned bytes and signatures,
+ * with its draft's txId (what every signer signed) in both forms.
+ */
 const SubmitSchema = Joi.object<SubmitBody>({
+  tx_id: Joi.string()
+    .pattern(/^0x[0-9a-fA-F]{64}$/)
+    .required(),
   signed: Joi.string().pattern(/^0x[0-9a-fA-F]+$/),
   unsigned: Joi.string().pattern(/^0x[0-9a-fA-F]+$/),
   signatures: Joi.array().items(SignatureSchema).min(1).max(8)
@@ -115,7 +125,18 @@ const toSignature = (it: SignatureBody) => ({
   sig: it.sig
 });
 
-export function toApiPendingOperation(op: PendingOperation) {
+/**
+ * An operation as the API shows it to `viewer`, the signed-in wallet. The
+ * signatures it holds go only to its own signers while it is pending (see
+ * maySeeSignatures); everyone else gets `sig: null`, and `signed` still
+ * says who has signed.
+ */
+export function toApiPendingOperation(
+  op: PendingOperation,
+  viewer: string,
+  now: number = Date.now()
+) {
+  const showSigs = maySeeSignatures(op, viewer, now);
   return {
     tx_id: op.tx_id,
     op_type: op.op_type,
@@ -133,8 +154,9 @@ export function toApiPendingOperation(op: PendingOperation) {
       role: it.role,
       key_type: it.key_type,
       signer: it.signer,
-      signed: !!it.sig,
-      sig: it.sig
+      // A withdrawn operation keeps when each signer signed, not the sig.
+      signed: !!it.sig || it.signed_at !== null,
+      sig: showSigs ? it.sig : null
     }))
   };
 }
@@ -145,11 +167,12 @@ router.post(
   async (req: Request<any, any, SubmitBody>, res: Response) => {
     getWalletOrThrow(req);
     const body = getValidatedByJoiOrThrow(req.body, SubmitSchema);
-    const request: ChainSubmitRequest = body.signed
-      ? { signed: body.signed }
+    const request: RelaySubmitRequest = body.signed
+      ? { signed: body.signed, txId: body.tx_id }
       : {
           unsigned: body.unsigned!,
-          signatures: body.signatures!.map(toSignature)
+          signatures: body.signatures!.map(toSignature),
+          txId: body.tx_id
         };
     res.send(await chainRelayService.submit(request));
   }
@@ -158,7 +181,7 @@ router.post(
 router.get('/pending', needsAuthenticatedUser(), async (req, res) => {
   const wallet = getWalletOrThrow(req);
   const ops = await chainRelayService.awaiting(wallet);
-  res.send({ data: ops.map(toApiPendingOperation) });
+  res.send({ data: ops.map((op) => toApiPendingOperation(op, wallet)) });
 });
 
 router.post(
@@ -184,7 +207,7 @@ router.post(
       },
       wallet
     );
-    res.status(201).send(toApiPendingOperation(op));
+    res.status(201).send(toApiPendingOperation(op, wallet));
   }
 );
 
@@ -192,9 +215,12 @@ router.get(
   '/pending/:tx_id',
   needsAuthenticatedUser(),
   async (req: Request<{ tx_id: string }>, res: Response) => {
-    getWalletOrThrow(req);
+    const wallet = getWalletOrThrow(req);
     res.send(
-      toApiPendingOperation(await chainRelayService.get(req.params.tx_id))
+      toApiPendingOperation(
+        await chainRelayService.get(req.params.tx_id),
+        wallet
+      )
     );
   }
 );
@@ -213,7 +239,7 @@ router.post(
       toSignature(body),
       wallet
     );
-    res.send(toApiPendingOperation(op));
+    res.send(toApiPendingOperation(op, wallet));
   }
 );
 
@@ -224,7 +250,8 @@ router.post(
     const wallet = getWalletOrThrow(req);
     res.send(
       toApiPendingOperation(
-        await chainRelayService.retry(req.params.tx_id, wallet)
+        await chainRelayService.retry(req.params.tx_id, wallet),
+        wallet
       )
     );
   }
@@ -237,7 +264,8 @@ router.delete(
     const wallet = getWalletOrThrow(req);
     res.send(
       toApiPendingOperation(
-        await chainRelayService.cancel(req.params.tx_id, wallet)
+        await chainRelayService.cancel(req.params.tx_id, wallet),
+        wallet
       )
     );
   }
