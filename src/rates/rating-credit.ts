@@ -1,7 +1,7 @@
 import { HELP_BOT_CREDIT_CATEGORY } from '@/help-bot/help-bot.config';
 import { isIdentityOnChain } from '@/identity-freeze/identity-freeze';
 
-const mysql = require('mysql');
+const mysql = require('mysql2');
 
 /**
  * The TDH a rater's credit and a level count: TDH + xTDH, and from switch-on
