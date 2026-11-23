@@ -90,13 +90,19 @@ type PrivateQueryFamily =
   | 'content moderation'
   | 'CMS agent'
   | 'competition authorization'
-  | 'membership runtime';
+  | 'membership runtime'
+  | 'signed records';
 
 function privateQueryFamily(sql: string): PrivateQueryFamily | null {
   // Encrypted-messaging rows carry ciphertext, KeyPackages, welcomes and
   // notify hints; neither statements nor bound values may reach logs.
   if (/\be2ee_[a-z_]+\b/i.test(sql)) {
     return 'e2ee messaging';
+  }
+  // Signed records and their log carry people's settings (whom they mute or
+  // block) and private entries; the head keys name them too.
+  if (/\bsigned_record_[a-z_]+\b/i.test(sql)) {
+    return 'signed records';
   }
   if (
     /\bcompetition_(?:entry_content_versions|signature_nonces|commands)\b/i.test(
@@ -132,19 +138,10 @@ function privateQueryFamily(sql: string): PrivateQueryFamily | null {
 }
 
 function describeQuery(sql: string, params?: Record<string, unknown>): string {
+  // Every private family, so a new one can't leak SQL or params into the
+  // slow-query log by missing a branch here.
   const family = privateQueryFamily(sql);
-  if (family === 'competition authorization')
-    return '[private competition authorization query]';
-  if (family === 'e2ee messaging') return '[private e2ee messaging query]';
-  if (family === 'artwork documentation') {
-    return '[private artwork documentation query]';
-  }
-  if (family === 'market depth') return '[private market depth query]';
-  if (family === 'CMS agent') return '[private CMS agent query]';
-  if (family === 'content moderation')
-    return '[private content moderation query]';
-  if (family === 'membership runtime')
-    return '[private membership runtime query]';
+  if (family) return `[private ${family} query]`;
   const normalized = sql.replace('\n', ' ');
   if (!params) return normalized;
   return `${normalized} with params ${JSON.stringify(params)}`;
