@@ -1,11 +1,5 @@
-const mockOperationalError = jest.fn();
-
-jest.mock('../operational-errors', () => ({
-  ...jest.requireActual('../operational-errors'),
-  operationalError: (...args: unknown[]) => mockOperationalError(...args)
-}));
-
 import { Logger } from '@/logging';
+import * as operationalErrors from '@/operational-errors';
 import {
   isRetriedConflict,
   logTransactionFailure
@@ -54,15 +48,25 @@ describe('transaction failure log', () => {
   });
 
   it('writes no operational error for a retried conflict, and one for any other failure', () => {
-    const logger = Logger.get('DB');
-    logTransactionFailure(new XTdhIdentitySnapshotChangedError(), logger);
-    expect(mockOperationalError).not.toHaveBeenCalled();
-    logTransactionFailure(new Error('deadlock'), logger);
-    expect(mockOperationalError).toHaveBeenCalledTimes(1);
-    expect(mockOperationalError).toHaveBeenCalledWith(
-      'DB',
-      ['Database transaction failed [Error: deadlock]'],
-      undefined
-    );
+    // A spy on the module's export, not jest.mock: the logger may already be
+    // loaded (the shared per-test setup loads it first), and it reads the
+    // export when it logs.
+    const operationalError = jest
+      .spyOn(operationalErrors, 'operationalError')
+      .mockImplementation(() => undefined);
+    try {
+      const logger = Logger.get('DB');
+      logTransactionFailure(new XTdhIdentitySnapshotChangedError(), logger);
+      expect(operationalError).not.toHaveBeenCalled();
+      logTransactionFailure(new Error('deadlock'), logger);
+      expect(operationalError).toHaveBeenCalledTimes(1);
+      expect(operationalError).toHaveBeenCalledWith(
+        'DB',
+        ['Database transaction failed [Error: deadlock]'],
+        undefined
+      );
+    } finally {
+      operationalError.mockRestore();
+    }
   });
 });

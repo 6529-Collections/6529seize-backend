@@ -47,9 +47,9 @@ describe('loop (db.ts) transaction failure logging', () => {
   });
 
   afterEach(async () => {
-    warn.mockRestore();
-    error.mockRestore();
     try {
+      warn?.mockRestore();
+      error?.mockRestore();
       await loopDb.disconnect();
     } finally {
       setSqlExecutor(observer);
