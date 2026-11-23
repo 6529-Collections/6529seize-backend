@@ -7,9 +7,11 @@ import { aRepRating, withRatings } from '@/tests/fixtures/rating.fixture';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   CIC_STATEMENTS_TABLE,
+  CONSOLIDATION_KEY_LENGTH,
   CONSOLIDATIONS_TABLE,
   DELEGATIONS_TABLE,
   IDENTITIES_TABLE,
+  IDENTITY_CHAIN_MIRROR_STATE_TABLE,
   IDENTITY_CHAIN_RATING_EVENTS_TABLE,
   PROFILES_TABLE,
   RATINGS_TABLE
@@ -161,6 +163,44 @@ describeWithSeed(
       expect(await db.profileIdOfPrincipal(P)).toBe(ALICE);
       expect(await db.principalOfProfile(ALICE)).toBe(P);
       expect(await db.principalsOfWallets([B])).toEqual([P]);
+    });
+
+    it('keeps a walk cursor as wide as a consolidation key', async () => {
+      const state = (offChainAfter: string) => ({
+        next_height: 101,
+        sync_from_height: null,
+        sync_phase: null,
+        sync_after: null,
+        last_full_sync_at: 5,
+        bindings_next_height: null,
+        chain_id: 'chain',
+        placeholders_at: 1,
+        bindings_exact: false,
+        levels_tdh_day: null,
+        level_sweep_day: null,
+        level_sweep_after: null,
+        levels_day_height: null,
+        sync_use_case: null,
+        sync_wallet_after: null,
+        pin_floor: null,
+        off_chain_after: offChainAfter,
+        events_next_height: null,
+        events_rebuild_height: null,
+        events_rebuild_after: null,
+        events_gone_at: null,
+        events_stuck_runs: 0,
+        retry: NO_RETRY
+      });
+      // As wide as the identities' own keys, which the walk goes by.
+      const [{ width }] = await sqlExecutor.execute<any>(
+        `select character_maximum_length as width from information_schema.columns
+         where table_schema = database() and table_name = '${IDENTITY_CHAIN_MIRROR_STATE_TABLE}'
+           and column_name = 'off_chain_after'`
+      );
+      expect(Number(width)).toBe(CONSOLIDATION_KEY_LENGTH);
+      const widest = 'k'.repeat(CONSOLIDATION_KEY_LENGTH);
+      await db.saveState(state(widest), 9);
+      expect((await db.getState())?.off_chain_after).toBe(widest);
     });
 
     it('applies a join: one row for the three wallets, pairs, the handle', async () => {

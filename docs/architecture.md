@@ -890,9 +890,11 @@ identity data from the chain add calls to this client, not their own.
 From switch-on the delegations loop also runs the identity mirror
 (`src/identity-chain-mirror`, `FEATURE_IDENTITY_CHAIN_MIRROR`) after its
 NFTDelegation work, also when that work failed (the failure still fails the
-run). With the flag on, NFTDelegation's events (after the identity freeze)
-are read so the checkpoint moves on but not applied: consolidations,
-delegations, re-keying and primary addresses come from the chain. Each step's
+run). With the flag on, NFTDelegation's events are read so the checkpoint
+moves on but not applied, before the freeze block as after it (on the freeze
+path too, which records the logs past the freeze block as before):
+consolidations, delegations, re-keying and primary addresses come from the
+chain; ENS still runs. Each step's
 time comes from what the Lambda has left: the mirror (at most six minutes),
 the re-keying (as many wallets as the time left allows, at 50 ms each, and
 half the last batch when that one didn't finish, the marks counting the last

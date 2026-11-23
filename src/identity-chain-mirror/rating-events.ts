@@ -37,7 +37,8 @@ export type RatingEventOrigin = 'OPERATION' | 'CAP_CUT' | 'IMPORT' | 'UNKNOWN';
 
 /**
  * Why a rating record changed, from the record's last writer in its block
- * (GATEWAY-API.md, I17) and the import's marker:
+ * (the gateway's change feed gives it with each record, for the rating
+ * event rows notifications read) and the import's marker:
  * - OPERATION: a RATING_SET transaction;
  * - CAP_CUT: the daily rating reduction (system step RATING_SCAN);
  * - IMPORT: the identity import (system step IMPORT), or no writer known

@@ -121,6 +121,10 @@ describe('delegations loop and the identity mirror', () => {
     jest.clearAllMocks();
     process.env = { ...env };
     delete process.env.DELEGATIONS_EXPIRY_TOKEN_SCOPE_BACKFILL;
+    // The freeze tests' settings: this file runs the loop unfrozen.
+    delete process.env.NFTDELEGATION_FREEZE_BLOCK;
+    delete process.env.IDENTITY_FREEZE_AT;
+    delete process.env.DELEGATIONS_RESET_BLOCK;
     jest.mocked(db.fetchLatestNftDelegationBlock).mockResolvedValue(90);
     jest.mocked(delegations.findDelegationTransactions).mockResolvedValue({
       latestBlock: 100,

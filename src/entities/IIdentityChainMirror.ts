@@ -6,6 +6,7 @@ import {
   PrimaryGeneratedColumn
 } from 'typeorm';
 import {
+  CONSOLIDATION_KEY_LENGTH,
   IDENTITY_CHAIN_FIRST_BINDINGS_TABLE,
   IDENTITY_CHAIN_FOUNDER_WAITS_TABLE,
   IDENTITY_CHAIN_MIRROR_STATE_TABLE,
@@ -281,8 +282,16 @@ export class IdentityChainMirrorStateEntity {
   @Column({ type: 'int', nullable: true, default: null })
   readonly sync_use_case!: number | null;
 
-  /** The rows off the chain's level fix: the last key it got to. */
-  @Column({ type: 'varchar', length: 255, nullable: true, default: null })
+  /**
+   * The rows off the chain's level fix: the last key it got to (a
+   * consolidation key, as wide as the keys).
+   */
+  @Column({
+    type: 'varchar',
+    length: CONSOLIDATION_KEY_LENGTH,
+    nullable: true,
+    default: null
+  })
   readonly off_chain_after!: string | null;
 
   /** Within that use case, the last wallet written (wallets in order). */

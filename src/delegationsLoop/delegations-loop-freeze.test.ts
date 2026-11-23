@@ -66,11 +66,22 @@ jest.mock('../identity-tdh-sync', () => ({
   resumePendingIdentityTdhSync: jest.fn(),
   startIdentitySyncBudget: jest.fn()
 }));
+jest.mock('../identity-chain-mirror/identity-chain-mirror.service', () => ({
+  identityChainMirror: {
+    run: jest.fn(),
+    followProfileSites: jest.fn(async () => []),
+    pendingRegroups: jest.fn(async () => []),
+    regroupsDone: jest.fn(async () => undefined),
+    unfinishedRegroups: jest.fn(async () => 0),
+    regroupsStarted: jest.fn(async () => undefined)
+  }
+}));
 
 import * as db from '../db';
 import * as delegations from '../delegations';
 import * as ens from '../ens';
 import { identitiesService } from '../api-serverless/src/identities/identities.service';
+import { identityChainMirror } from '../identity-chain-mirror/identity-chain-mirror.service';
 import { updateTDH } from '../tdhLoop/tdh';
 import { getAffectedWallets } from './reconsolidation';
 import { handler } from './index';
@@ -141,6 +152,7 @@ describe('delegations loop with NFTDelegation frozen', () => {
     delete process.env.DELEGATIONS_EXPIRY_TOKEN_SCOPE_BACKFILL;
     delete process.env.NFTDELEGATION_FREEZE_BLOCK;
     delete process.env.IDENTITY_FREEZE_AT;
+    delete process.env.FEATURE_IDENTITY_CHAIN_MIRROR;
     jest.mocked(db.fetchLatestNftDelegationBlock).mockResolvedValue(90);
     jest
       .mocked(delegations.fetchDelegationChainHead)
@@ -221,6 +233,41 @@ describe('delegations loop with NFTDelegation frozen', () => {
       80
     );
     expect(db.persistNftDelegationBlock).toHaveBeenCalledWith(130, T + 120);
+  });
+
+  it('with the identity mirror on, applies nothing before the freeze block either, and records the rest', async () => {
+    process.env.FEATURE_IDENTITY_CHAIN_MIRROR = 'true';
+    process.env.NFTDELEGATION_FREEZE_BLOCK = '110';
+    jest.mocked(identityChainMirror.run).mockResolvedValue({
+      mode: 'feed',
+      regroupedWallets: []
+    } as never);
+    await invoke();
+    // Read up to the freeze block, so the checkpoint moves on.
+    expect(delegations.findDelegationTransactions).toHaveBeenCalledWith(
+      90,
+      110
+    );
+    for (const fn of [
+      db.persistConsolidations,
+      db.persistDelegations,
+      getAffectedWallets,
+      updateTDH,
+      identitiesService.updatePrimaryAddresses
+    ]) {
+      expect(fn).not.toHaveBeenCalled();
+    }
+    expect(ens.discoverEnsDelegations).toHaveBeenCalledTimes(1);
+    expect(delegations.scanDelegationLogsForRecord).toHaveBeenCalledWith(
+      111,
+      130
+    );
+    expect(db.persistNftDelegationLogsAfterFreeze).toHaveBeenCalledWith(
+      recorded,
+      110
+    );
+    expect(db.persistNftDelegationBlock).toHaveBeenCalledWith(130, T + 120);
+    expect(identityChainMirror.run).toHaveBeenCalledTimes(1);
   });
 
   it('does not rewind on a reset block after the freeze block', async () => {
