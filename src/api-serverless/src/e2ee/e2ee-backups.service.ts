@@ -32,7 +32,13 @@ import {
 } from '@/e2ee/e2ee.constants';
 import { decodeE2eeBase64, isE2eeBucketLength } from '@/e2ee/e2ee-encoding';
 import { e2eeErrors } from '@/e2ee/e2ee-errors';
+import {
+  recordE2ee,
+  runE2eeRecordTransaction
+} from '@/e2ee/relay/e2ee-records';
+import { E2eeRecordBatch } from '@/e2ee/relay/e2ee-stream-publisher';
 import { Logger } from '@/logging';
+import { ConnectionWrapper } from '@/sql-executor';
 
 const logger = Logger.get('E2EE_BACKUPS');
 
@@ -135,6 +141,28 @@ export class E2eeBackupsService {
     );
   }
 
+  /** A transaction whose backup changes become one relay record. */
+  private transaction<T>(
+    work: (
+      connection: ConnectionWrapper<unknown>,
+      batch: E2eeRecordBatch | null
+    ) => Promise<T>
+  ): Promise<T> {
+    return runE2eeRecordTransaction(this.deps.e2ee.records, this.repo, work);
+  }
+
+  private async record(
+    batch: E2eeRecordBatch | null,
+    connection: ConnectionWrapper<unknown>,
+    input: Parameters<
+      NonNullable<E2eeServiceDeps['records']>['writers']['backupsChanged']
+    >[2]
+  ): Promise<void> {
+    await recordE2ee(this.deps.e2ee.records, batch, (writers, records) =>
+      writers.backupsChanged(records, connection, input)
+    );
+  }
+
   /** Object deletes run after the metadata delete committed (best effort). */
   private async deleteObjects(keys: readonly string[]): Promise<void> {
     if (!keys.length) return;
@@ -208,24 +236,27 @@ export class E2eeBackupsService {
       updated_at: now,
       activated_at: null
     };
-    const replacedKeys = await this.repo.executeNativeQueriesInTransaction(
-      async (connection) => {
-        await this.repo.lockProfile(callerProfileId, connection);
-        if (await this.repo.getBackup(request.backup_id, connection)) {
-          throw e2eeErrors.badRequest('backup_id is already in use');
-        }
-        // At most one pending generation: a new one replaces an older one.
-        const pending = (
-          await this.repo.listProfileBackups(callerProfileId, connection)
-        )
-          .filter((backup) => !backup.active)
-          .map((backup) => backup.backup_id);
-        const keys = await this.repo.listObjectKeys(pending, connection);
-        await this.repo.deleteBackups(pending, connection);
-        await this.repo.insertBackup(row, connection);
-        return keys;
+    const replacedKeys = await this.transaction(async (connection, batch) => {
+      await this.repo.lockProfile(callerProfileId, connection);
+      if (await this.repo.getBackup(request.backup_id, connection)) {
+        throw e2eeErrors.badRequest('backup_id is already in use');
       }
-    );
+      // At most one pending generation: a new one replaces an older one.
+      const pending = (
+        await this.repo.listProfileBackups(callerProfileId, connection)
+      )
+        .filter((backup) => !backup.active)
+        .map((backup) => backup.backup_id);
+      const keys = await this.repo.listObjectKeys(pending, connection);
+      await this.repo.deleteBackups(pending, connection);
+      await this.repo.insertBackup(row, connection);
+      await this.record(batch, connection, {
+        profileId: callerProfileId,
+        deletedBackups: pending,
+        deletedObjectKeys: keys
+      });
+      return keys;
+    });
     await this.deleteObjects(replacedKeys);
     return toApiBackup(row);
   }
@@ -271,51 +302,50 @@ export class E2eeBackupsService {
       .slice(2)}`;
     await this.deps.store.put(objectKey, data);
     try {
-      return await this.repo.executeNativeQueriesInTransaction(
-        async (connection) => {
-          await this.repo.lockProfile(callerProfileId, connection);
-          // The generation row stays locked until commit, so next_seq cannot
-          // move between the precondition and the insert.
-          const backup = requireOwn(
-            callerProfileId,
-            await this.repo.lockBackup(backupId, connection)
-          );
-          requireExpectedSeq(backup, request.expected_seq);
-          if (
-            Number(backup.chunk_count) >=
-            (this.deps.maxChunks ?? E2EE_BACKUP_MAX_CHUNKS)
-          ) {
-            throw e2eeErrors.tooLarge('Backup chunk count');
-          }
-          const used = await this.repo.getUsageBytes(
-            callerProfileId,
-            connection
-          );
-          if (used + data.length > this.quotaBytes) {
-            throw e2eeErrors.backupQuota(this.quotaBytes);
-          }
-          const chunk: E2eeBackupChunkRow = {
-            backup_id: backupId,
-            seq: Number(backup.next_seq),
-            profile_id: callerProfileId,
-            size: data.length,
-            object_key: objectKey,
-            uploader_device_key: request.device_key,
-            created_at: this.now()
-          };
-          await this.repo.insertChunk(chunk, connection);
-          await this.repo.recordChunk(
-            {
-              backupId,
-              seq: chunk.seq,
-              size: chunk.size,
-              updatedAt: chunk.created_at
-            },
-            connection
-          );
-          return toApiChunk(chunk);
+      return await this.transaction(async (connection, batch) => {
+        await this.repo.lockProfile(callerProfileId, connection);
+        // The generation row stays locked until commit, so next_seq cannot
+        // move between the precondition and the insert.
+        const backup = requireOwn(
+          callerProfileId,
+          await this.repo.lockBackup(backupId, connection)
+        );
+        requireExpectedSeq(backup, request.expected_seq);
+        if (
+          Number(backup.chunk_count) >=
+          (this.deps.maxChunks ?? E2EE_BACKUP_MAX_CHUNKS)
+        ) {
+          throw e2eeErrors.tooLarge('Backup chunk count');
         }
-      );
+        const used = await this.repo.getUsageBytes(callerProfileId, connection);
+        if (used + data.length > this.quotaBytes) {
+          throw e2eeErrors.backupQuota(this.quotaBytes);
+        }
+        const chunk: E2eeBackupChunkRow = {
+          backup_id: backupId,
+          seq: Number(backup.next_seq),
+          profile_id: callerProfileId,
+          size: data.length,
+          object_key: objectKey,
+          uploader_device_key: request.device_key,
+          created_at: this.now()
+        };
+        await this.repo.insertChunk(chunk, connection);
+        await this.repo.recordChunk(
+          {
+            backupId,
+            seq: chunk.seq,
+            size: chunk.size,
+            updatedAt: chunk.created_at
+          },
+          connection
+        );
+        await this.record(batch, connection, {
+          profileId: callerProfileId,
+          appended: { backupId, seq: chunk.seq, data }
+        });
+        return toApiChunk(chunk);
+      });
     } catch (error) {
       await this.deleteObjects([objectKey]);
       throw error;
@@ -364,8 +394,8 @@ export class E2eeBackupsService {
   ): Promise<ApiE2eeBackup> {
     this.requireEnabled();
     await requireOwnActiveDevice(this.deps.e2ee, callerProfileId, deviceKey);
-    const { backup, keys } = await this.repo.executeNativeQueriesInTransaction(
-      async (connection) => {
+    const { backup, keys } = await this.transaction(
+      async (connection, batch) => {
         await this.repo.lockProfile(callerProfileId, connection);
         const target = await this.ownBackup(
           callerProfileId,
@@ -379,9 +409,18 @@ export class E2eeBackupsService {
           .filter((id) => id !== backupId);
         const objectKeys = await this.repo.listObjectKeys(others, connection);
         await this.repo.deleteBackups(others, connection);
-        if (target.active) return { backup: target, keys: objectKeys };
-        const activatedAt = this.now();
-        await this.repo.activateBackup(backupId, activatedAt, connection);
+        const activatedAt = target.active ? null : this.now();
+        if (activatedAt !== null) {
+          await this.repo.activateBackup(backupId, activatedAt, connection);
+        }
+        if (others.length || activatedAt !== null) {
+          await this.record(batch, connection, {
+            profileId: callerProfileId,
+            deletedBackups: others,
+            deletedObjectKeys: objectKeys
+          });
+        }
+        if (activatedAt === null) return { backup: target, keys: objectKeys };
         return {
           backup: {
             ...target,
@@ -408,8 +447,8 @@ export class E2eeBackupsService {
       callerProfileId,
       request.device_key
     );
-    const { backup, keys } = await this.repo.executeNativeQueriesInTransaction(
-      async (connection) => {
+    const { backup, keys } = await this.transaction(
+      async (connection, batch) => {
         await this.repo.lockProfile(callerProfileId, connection);
         const target = await this.ownBackup(
           callerProfileId,
@@ -424,12 +463,23 @@ export class E2eeBackupsService {
           connection,
           request.through_seq
         );
+        const compacted = batch
+          ? await this.deps.e2ee.records?.writers.backupChunkSeqs(connection, {
+              backupId,
+              throughSeq: request.through_seq
+            })
+          : [];
         await this.repo.deleteChunksThrough(
           backupId,
           request.through_seq,
           this.now(),
           connection
         );
+        await this.record(batch, connection, {
+          profileId: callerProfileId,
+          deletedChunks: (compacted ?? []).map((seq) => ({ backupId, seq })),
+          deletedObjectKeys: objectKeys
+        });
         const updated = await this.repo.getBackup(backupId, connection);
         return { backup: updated ?? target, keys: objectKeys };
       }
@@ -440,17 +490,22 @@ export class E2eeBackupsService {
 
   async deleteAll(callerProfileId: string): Promise<ApiE2eeAck> {
     this.requireEnabled();
-    const keys = await this.repo.executeNativeQueriesInTransaction(
-      async (connection) => {
-        await this.repo.lockProfile(callerProfileId, connection);
-        const ids = (
-          await this.repo.listProfileBackups(callerProfileId, connection)
-        ).map((row) => row.backup_id);
-        const objectKeys = await this.repo.listObjectKeys(ids, connection);
-        await this.repo.deleteBackups(ids, connection);
-        return objectKeys;
+    const keys = await this.transaction(async (connection, batch) => {
+      await this.repo.lockProfile(callerProfileId, connection);
+      const ids = (
+        await this.repo.listProfileBackups(callerProfileId, connection)
+      ).map((row) => row.backup_id);
+      const objectKeys = await this.repo.listObjectKeys(ids, connection);
+      await this.repo.deleteBackups(ids, connection);
+      if (ids.length) {
+        await this.record(batch, connection, {
+          profileId: callerProfileId,
+          deletedBackups: ids,
+          deletedObjectKeys: objectKeys
+        });
       }
-    );
+      return objectKeys;
+    });
     await this.deleteObjects(keys);
     return {};
   }
@@ -463,23 +518,23 @@ export class E2eeBackupsService {
         E2EE_BACKUP_PRUNE_BATCH
       );
       for (const row of stale) {
-        const keys = await this.repo.executeNativeQueriesInTransaction(
-          async (connection) => {
-            // Re-check under the profile lock: it may have been activated.
-            await this.repo.lockProfile(row.profile_id, connection);
-            const current = await this.repo.getBackup(
-              row.backup_id,
-              connection
-            );
-            if (!current || current.active) return [];
-            const objectKeys = await this.repo.listObjectKeys(
-              [row.backup_id],
-              connection
-            );
-            await this.repo.deleteBackups([row.backup_id], connection);
-            return objectKeys;
-          }
-        );
+        const keys = await this.transaction(async (connection, batch) => {
+          // Re-check under the profile lock: it may have been activated.
+          await this.repo.lockProfile(row.profile_id, connection);
+          const current = await this.repo.getBackup(row.backup_id, connection);
+          if (!current || current.active) return [];
+          const objectKeys = await this.repo.listObjectKeys(
+            [row.backup_id],
+            connection
+          );
+          await this.repo.deleteBackups([row.backup_id], connection);
+          await this.record(batch, connection, {
+            profileId: row.profile_id,
+            deletedBackups: [row.backup_id],
+            deletedObjectKeys: objectKeys
+          });
+          return objectKeys;
+        });
         await this.deleteObjects(keys);
       }
     } catch (error) {

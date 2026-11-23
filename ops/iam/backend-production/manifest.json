@@ -69,6 +69,12 @@
       "file": "SignedRecordLogProductionDeployment.json",
       "characters": 4853,
       "sha256": "a7b099ac793540e769476ea2227b1881b56fa8700fe9dd420f077ced3bd71fd6"
+    },
+    {
+      "name": "E2eeRelayPublishProductionDeployment",
+      "file": "E2eeRelayPublishProductionDeployment.json",
+      "characters": 4775,
+      "sha256": "6b21ce80bfd33e54c559789ced77ad7ed6828a8197998496ea5d75ff6d8a5bf9"
     }
   ]
 }

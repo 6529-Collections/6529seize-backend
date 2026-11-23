@@ -1,3 +1,8 @@
+import { E2EE_MODERATION_INBOX } from '@/e2ee/relay/e2ee-moderation-seal';
+import {
+  E2eeModerationRecorder,
+  e2eeModerationRecorder
+} from '@/e2ee/relay/e2ee-moderation-records';
 import {
   DEVICE_GRANTS_TABLE,
   E2EE_BLOB_CHUNKS_TABLE,
@@ -12,6 +17,7 @@ import {
   E2EE_RATE_COUNTERS_TABLE,
   E2EE_REPORT_ACCESS_LOG_TABLE,
   E2EE_REPORTS_TABLE,
+  E2EE_STREAMS_TABLE,
   E2EE_WELCOME_DELIVERIES_TABLE,
   E2EE_WELCOMES_TABLE,
   PROFILES_TABLE
@@ -33,7 +39,8 @@ import {
 import {
   ConnectionWrapper,
   dbSupplier,
-  LazyDbAccessCompatibleService
+  LazyDbAccessCompatibleService,
+  SqlExecutor
 } from '@/sql-executor';
 
 export type E2eeDeviceRow = E2eeDeviceEntity;
@@ -191,11 +198,33 @@ function inList(values: readonly string[]): string[] {
   return Array.from(new Set(values));
 }
 
+/** An insert's auto-increment id, from either driver's write result. */
+function insertIdOf(result: unknown): number {
+  if (result !== null && typeof result === 'object' && 'insertId' in result) {
+    return Number((result as { insertId?: unknown }).insertId ?? 0);
+  }
+  if (Array.isArray(result) && typeof result[2] === 'number') {
+    return result[2];
+  }
+  return 0;
+}
+
 /**
  * Database access for E2EE messaging. Reads outside a transaction use the
  * primary so that ordering checks never act on replica lag.
  */
 export class E2eeDb extends LazyDbAccessCompatibleService {
+  constructor(
+    sqlExecutorGetter: () => SqlExecutor,
+    /** Records report writes for the relays; off unless records are on. */
+    private readonly reportRecords: Pick<
+      E2eeModerationRecorder,
+      'changed' | 'deleted'
+    > = e2eeModerationRecorder
+  ) {
+    super(sqlExecutorGetter);
+  }
+
   private opts(connection?: Conn): DbQueryOptions {
     return connection
       ? { wrappedConnection: connection }
@@ -1016,6 +1045,21 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /** A relay stream's head as MySQL holds it, or null before its first record. */
+  async getStreamHead(
+    wave: string
+  ): Promise<{ readonly pos: number; readonly hash: string } | null> {
+    const [row] = await this.many<{
+      head_pos: number | string;
+      head_hash: string | null;
+    }>(
+      `select head_pos, head_hash from ${E2EE_STREAMS_TABLE} where wave = :wave`,
+      { wave }
+    );
+    if (!row?.head_hash || Number(row.head_pos) < 1) return null;
+    return { pos: Number(row.head_pos), hash: row.head_hash };
+  }
+
   /** Read both signals in one snapshot as the roster and Welcome change. */
   async getDeviceInboxState(
     profileId: string,
@@ -1283,18 +1327,20 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /** Whether a pending delivery was there to delete. */
   async deleteWelcomeDelivery(
     welcomeId: string,
     deviceKey: string,
     connection: Conn
-  ): Promise<void> {
-    await this.write(
+  ): Promise<boolean> {
+    const deleted = await this.write(
       `delete from ${E2EE_WELCOME_DELIVERIES_TABLE}
        where welcome_id = :welcomeId and device_key = :deviceKey`,
       { welcomeId, deviceKey },
       connection
     );
     await this.deleteOrphanWelcomes([welcomeId], connection);
+    return deleted > 0;
   }
 
   async deleteWelcomeDeliveriesOfDevice(
@@ -1446,6 +1492,7 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
       )`,
       { ...row }
     );
+    await this.reportRecords.changed(E2EE_REPORTS_TABLE, { id: row.id });
   }
 
   /** Newest first, for trust and safety review; bodies as base64. */
@@ -1505,6 +1552,7 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
       { id, onHold },
       connection
     );
+    await this.reportRecords.changed(E2EE_REPORTS_TABLE, { id }, connection);
     return true;
   }
 
@@ -1512,13 +1560,21 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
     row: Omit<E2eeReportAccessEntity, 'id'>,
     connection?: Conn
   ) {
-    await this.write(
+    const result: unknown = await this.db.execute(
       `insert into ${E2EE_REPORT_ACCESS_LOG_TABLE}
          (viewer_profile_id, action, report_ids, created_at)
        values (:viewer_profile_id, :action, :report_ids, :created_at)`,
       { ...row },
-      connection
+      this.opts(connection)
     );
+    const id = insertIdOf(result);
+    if (id > 0) {
+      await this.reportRecords.changed(
+        E2EE_REPORT_ACCESS_LOG_TABLE,
+        { id },
+        connection
+      );
+    }
   }
 
   async listReportAccess(): Promise<E2eeReportAccessEntity[]> {
@@ -1655,29 +1711,36 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
       storage_location: string | null;
     }) => `${row.storage}|${row.storage_location ?? ''}`;
     const expected = new Map(blobs.map((row) => [row.blob_id, placeOf(row)]));
-    return this.executeNativeQueriesInTransaction(async (connection) => {
-      const current = await this.many<E2eeExpiredBlobRow>(
-        `select blob_id, chunk_count, storage, storage_location
+    const deleted = await this.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const current = await this.many<E2eeExpiredBlobRow>(
+          `select blob_id, chunk_count, storage, storage_location
          from ${E2EE_BLOBS_TABLE} where blob_id in (:ids) for update`,
-        { ids: Array.from(expected.keys()) },
-        connection
-      );
-      const ids = current
-        .filter((row) => expected.get(row.blob_id) === placeOf(row))
-        .map((row) => row.blob_id);
-      if (!ids.length) return 0;
-      await this.write(
-        `delete from ${E2EE_BLOB_CHUNKS_TABLE} where blob_id in (:ids)`,
-        { ids },
-        connection
-      );
-      await this.write(
-        `delete from ${E2EE_BLOBS_TABLE} where blob_id in (:ids)`,
-        { ids },
-        connection
-      );
-      return ids.length;
-    });
+          { ids: Array.from(expected.keys()) },
+          connection
+        );
+        const ids = current
+          .filter((row) => expected.get(row.blob_id) === placeOf(row))
+          .map((row) => row.blob_id);
+        if (!ids.length) return [];
+        await this.write(
+          `delete from ${E2EE_BLOB_CHUNKS_TABLE} where blob_id in (:ids)`,
+          { ids },
+          connection
+        );
+        await this.write(
+          `delete from ${E2EE_BLOBS_TABLE} where blob_id in (:ids)`,
+          { ids },
+          connection
+        );
+        return ids;
+      }
+    );
+    // The relays keep an attachment no longer than MySQL does.
+    for (const blobId of deleted) {
+      await this.reportRecords.deleted('bl', blobId, ['blob']);
+    }
+    return deleted.length;
   }
 
   /** Expired blobs (complete after 365 days, incomplete after 24 h). */
@@ -1862,11 +1925,42 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
   }
 
   private async pruneWelcomes(nowMs: number, limit: number): Promise<void> {
-    await this.write(
-      `delete from ${E2EE_WELCOME_DELIVERIES_TABLE}
-       where created_at < :cutoff limit :limit`,
-      { cutoff: nowMs - E2EE_RETENTION.welcomeDeliveriesMs, limit }
-    );
+    // One batch: the expired deliveries locked, deleted in one statement,
+    // and their DELs queued, one per device inbox, in the same transaction.
+    await this.executeNativeQueriesInTransaction(async (connection) => {
+      const expired = await this.many<{
+        welcome_id: string;
+        device_key: string;
+      }>(
+        `select welcome_id, device_key from ${E2EE_WELCOME_DELIVERIES_TABLE}
+         where created_at < :cutoff limit :limit for update skip locked`,
+        { cutoff: nowMs - E2EE_RETENTION.welcomeDeliveriesMs, limit },
+        connection
+      );
+      if (!expired.length) return;
+      const params: Record<string, string> = {};
+      const pairs = expired.map((row, index) => {
+        params[`w${index}`] = row.welcome_id;
+        params[`d${index}`] = row.device_key;
+        return `(:w${index}, :d${index})`;
+      });
+      await this.write(
+        `delete from ${E2EE_WELCOME_DELIVERIES_TABLE}
+         where (welcome_id, device_key) in (${pairs.join(', ')})`,
+        params,
+        connection
+      );
+      // The relays keep an expired Welcome no longer than the inbox does.
+      const byDevice = new Map<string, string[]>();
+      for (const row of expired) {
+        const keys = byDevice.get(row.device_key) ?? [];
+        keys.push(`welcome:${row.welcome_id}`);
+        byDevice.set(row.device_key, keys);
+      }
+      for (const [device, keys] of Array.from(byDevice.entries())) {
+        await this.reportRecords.deleted('dv', device, keys, connection);
+      }
+    });
     const orphans = await this.many<{ id: string }>(
       `select w.id from ${E2EE_WELCOMES_TABLE} w
        where not exists (
@@ -1931,13 +2025,38 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
     await this.pruneExpiredReports(nowMs, limit);
   }
 
-  /** Reports older than the retention window and not on hold. */
+  /**
+   * Reports older than the retention window and not on hold. The rows are
+   * locked first, and one a moderator is holding at that moment is left
+   * for a later run, so a hold either lands before the prune (and keeps
+   * the report and its records) or finds the report gone. Only the reports
+   * deleted here get a DEL, queued in the same transaction.
+   */
   async pruneExpiredReports(nowMs: number, limit: number): Promise<number> {
-    return this.write(
-      `delete from ${E2EE_REPORTS_TABLE}
-       where on_hold = false and created_at < :cutoff limit :limit`,
-      { cutoff: nowMs - E2EE_RETENTION.reportsMs, limit }
-    );
+    return this.executeNativeQueriesInTransaction(async (connection) => {
+      const expired = await this.many<{ id: string }>(
+        `select id from ${E2EE_REPORTS_TABLE}
+         where on_hold = false and created_at < :cutoff
+         limit :limit for update skip locked`,
+        { cutoff: nowMs - E2EE_RETENTION.reportsMs, limit },
+        connection
+      );
+      if (!expired.length) return 0;
+      const ids = expired.map((row) => row.id);
+      const deleted = await this.write(
+        `delete from ${E2EE_REPORTS_TABLE} where id in (:ids)`,
+        { ids },
+        connection
+      );
+      // The relays keep a reported message no longer than MySQL does.
+      await this.reportRecords.deleted(
+        'md',
+        E2EE_MODERATION_INBOX,
+        ids.map((id) => `${E2EE_REPORTS_TABLE}:${id}`),
+        connection
+      );
+      return deleted;
+    });
   }
 }
 

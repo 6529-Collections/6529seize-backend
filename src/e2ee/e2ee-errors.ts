@@ -167,5 +167,15 @@ export const e2eeErrors = {
       503,
       E2EE_ERROR_CODES.STORAGE_UNAVAILABLE,
       'Encrypted attachment storage is unavailable; try again later'
+    ),
+  /**
+   * E2EE_RELAY_MODE=primary and the relays did not confirm the write's
+   * records, so nothing was written.
+   */
+  relaysUnavailable: () =>
+    new E2eeApiException(
+      503,
+      E2EE_ERROR_CODES.RELAYS_UNAVAILABLE,
+      'Encrypted messaging is briefly unavailable; try again later'
     )
 };

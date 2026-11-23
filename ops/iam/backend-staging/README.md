@@ -197,3 +197,34 @@ production documents have different names. Install it through the administrative
 identity after Access Analyzer validation and positive/negative simulation. The
 existing managed policies, trust policy and runtime role remain unchanged.
 Deploy through the ordinary GitHub workflow afterward.
+
+## Relay publisher loop
+
+`e2eeRelayPublishLoop` runs one scheduled function in `eu-west-1` on
+`lambda-vpc-role`, every minute: it publishes the encrypted-messaging relay
+outbox and DELs and checks the relays' stream heads.
+`E2eeRelayPublishStagingDeployment.json` permits only that function and its
+versions, the `e2eeRelayPublishLoop-staging` stack, the
+`e2eerelaypublishloop-sta*-serverlessdeploy*` deployment-bucket prefix, the
+log group with its out-of-memory metric filter, the schedule
+`e2eeRelayPublishLoop-staging-publish`, and the four alarms
+`e2eeRelayPublishLoop-staging-<name>`: `e2eeRelay-lag` (outbox records waiting),
+`e2eeRelay-loop-errors`, `e2eeRelay-loop-duration` and
+`e2eeRelayPublishLoop-OOM`, all in `eu-west-1`. The schedule name is declared in
+the worker definition, because CloudFormation would otherwise truncate the
+stack name in a generated rule name. The bucket prefix allows CloudFormation's
+truncated stack component and generated suffix; it grants no application-bucket
+access and no direct invocation.
+
+`E2eeRelayPublishStagingDeployment.json` has `ACCOUNT_ID` where the account
+id goes. Replace it with the account id, as in the sibling files, before
+validating and installing. Its manifest entry measures the file as committed;
+with the id filled in, the document is 4,813 compact characters.
+Install it, like the signed record log worker's, as a customer-managed policy
+named `E2eeRelayPublishStagingDeployment` and attach it to this environment's
+deployment role; customer-managed policy names are account-wide, so the staging
+and production documents have different names. Install it through the
+administrative identity after Access Analyzer validation and positive/negative
+simulation. The existing managed policies, trust policy and runtime role
+remain unchanged (the managed-policies-per-role quota is 20). Deploy through
+the ordinary GitHub workflow afterward.

@@ -653,6 +653,231 @@ The MLS implementation lives in the clients (OpenMLS). No public third-party
 audit of OpenMLS exists; the owner decided to ship without one (D110). Pinned
 versions and OpenMLS security advisories are the safeguard.
 
+## Signed records on the relays
+
+6529.io stays the orderer (D109), but MySQL stops being where the delivery
+service's state lives: every write also becomes a record signed by an
+orderer key, and the relays keep the records. The tables become an index
+that `e2ee-relay-rebuild` rebuilds from the relays alone.
+
+**Records.** A record is the shared interim event (kinds 9 RECORD,
+10 SEALED, 11 LOG). Each one carries whole table rows, its stream position
+and the content hash of the record before it, so every stream is
+hash-chained. The streams:
+
+| Stream                        | What it holds                                                                                                                                                                                                    |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cv/<group>` (LOG)            | Group creation, every sequenced entry and message, roster repairs. An item's ciphertext is a separate payload, so relays can drop it at the end of retention while the record stays                              |
+| `dv/<device>` (SEALED)        | Welcomes waiting for the device, their acknowledgements, and its revocation: one record with every roster row the revocation closed                                                                              |
+| `dr/<device>` (RECORD)        | The device row after each change; its last-resort KeyPackages                                                                                                                                                    |
+| `bl/<blob>` (SEALED)          | Each attachment chunk with its bytes; the blob once complete                                                                                                                                                     |
+| `bk/<owner>` (SEALED)         | A profile's backup generations, chunks with their bytes, deletions                                                                                                                                               |
+| `md/<inbox>` (SEALED, RECORD) | Reports: drop reports, reported messages with their holds, the trust-and-safety access log (SEALED), and moderators' decisions on moderation items (a RECORD per item). All sealed to the moderation service key |
+
+Not carried: one-time KeyPackages, rate counters and push throttles
+(ephemeral; devices upload fresh KeyPackages), incomplete uploads,
+`last_seen_at` (rebuilt as the device's latest log item) and the
+`registered_*` columns (no route reads them). Legacy plaintext DMs are drops
+and are never copied (D153). A report, or a drop's moderation item, is
+recorded only when its drop is known to be in a public wave: a live drop,
+or a deleted one (`deleted_drops` keeps its wave), in a live wave neither
+of whose DM flags is set. A report on a DM drop, live or deleted, or one
+whose drop or wave cannot be found, is never recorded, so a DM's text never
+reaches a relay.
+
+**Reports.** Moderators read reports in 6529.io's moderation tool, from
+MySQL, as today. After each write of `content_moderation_reports`,
+`e2ee_reports` or `e2ee_report_access_log` commits, the changed rows go to
+the moderators' inbox, one `md` stream, in a record sealed to the moderation
+service key: a fresh AES-256-GCM key per record, wrapped to that key with
+HPKE (record content version 2, `e2ee-moderation-seal.ts`). The relays hold
+only ciphertext; a rebuild opens it with the private key. A report never
+fails because a relay is down: the record is written in its own short
+transaction and published best effort, and a record that could not be
+written at all is logged and copied by the `md` backfill. Holds stay per
+report (`e2ee_reports.on_hold`). The rebuild applies the same retention as
+MySQL: reported messages go after 180 days unless held, and resolved drop
+reports lose their evidence after 90 days. Each report row goes in a
+record of its own; when the prune clears a report's evidence, the pruned
+row is recorded and a DEL drops the report's older records, so the relays
+keep the evidence no longer than MySQL does.
+
+**Moderators' decisions.** Where a moderator acts on a moderation item (an
+override, a permit granted or used, a suppression, binding a report and
+its review status), the item's identity and decisions go to the same
+stream as one RECORD keyed by the item id, sealed; the newest wins. The AI
+result (evidence, outcome, trigger, evidence expiry, version) is not
+recorded: a rebuilt item reads `PENDING` until the check runs again, and
+an item no moderator acted on is not rebuilt at all. This holds until
+moderation decisions get records of their own; these records then move
+there.
+
+**`E2EE_RELAY_MODE`** (on `seizeAPI`, `dbMigrationsLoop` and
+`e2eeRelayPublishLoop`):
+
+- `off` (default): no records; writes run as before.
+- `mirror` (the target for the switch): each write appends its records in
+  its transaction. After the commit they are published in the background,
+  so no request waits on a relay and a relay outage never fails a write.
+  MySQL commits first and the relays catch up; the lag is the outbox.
+- `primary`: not ready, and stays off: it takes effect only with
+  `E2EE_RELAY_PRIMARY_OPT_IN=true`, and is `mirror` otherwise. A write
+  commits only after `E2EE_RELAY_ACK_QUORUM` relays hold its records;
+  otherwise it answers 503 `E2EE_RELAYS_UNAVAILABLE` and rolls back in
+  MySQL, but a relay may already hold its record, a phantom at that stream
+  position. It waits for reserve-then-confirm-or-void records and for
+  returning once the quorum holds a record.
+
+Whether to record reads only `E2EE_RELAY_MODE` (and the opt-in), so a bad
+key setting can never break the off mode.
+
+**Client reads.** While records are on, `GET /e2ee/me` names the relays
+(`relay`: the mode, URLs, network and orderer key, and the caller's device
+grant proofs in primary only; in mirror the list is empty), and
+`GET /e2ee/devices/{device_key}/inbox-status` names the device's inbox
+head (`relay_head`). Browsers read Welcomes, log pages and attachment
+chunks from the relays only in primary. They check every record against
+the orderer key and its stream's hash chain (allowing the positions an
+orderer's DEL names), that the relays hold the inbox head or the group's
+`last_seq`, and that the device is active, and read from 6529.io
+otherwise.
+
+**The publisher loop** (`e2eeRelayPublishLoop`, every minute, nothing
+while off) publishes what the outbox and the DEL queue still hold, and
+checks that every relay holds the head of each stream that moved in the
+last 15 minutes: the newest record, passing over DELs, which sit outside
+the chain. A relay found behind gets the missing records (never DELs)
+copied from a relay that has them. A relay the run cannot reach is tried once and
+then passed over until the next run, and a run starts no new work after
+240 seconds (the Lambda stops at 300) and logs `[BUDGET]` with the phase it
+left. Each run writes the lag as metrics in namespace
+`6529/E2eeRelay` (dimension `Environment`): `OutboxRows`,
+`OutboxOldestAgeSeconds`, `OutboxMostAttempts`, `DeletionsWaiting`,
+`HeadsBehind`, `HeadsUnrepaired`, `RelaysUnreachable` and `RunsCut`.
+The alarm `e2eeRelay-lag` goes off
+when a record has waited 15 minutes or more through three 5-minute periods.
+While anything waits, the `[LAG]` log line names the record and the DEL
+that failed most often, each with the last error a relay gave
+(`last_error`).
+
+**Sessions.** The orderer answers the CHALLENGE each relay sends before a
+session's hour runs out, and reconnects every 30 minutes, so its anchor
+(the lowest finalized height the relays' WELCOMEs report) stays fresh.
+
+**Rollback** is one change: `mirror` to `off`. MySQL keeps every write in
+every mode.
+
+Settings: `E2EE_RELAY_URLS` (comma-separated `wss://`), `E2EE_RELAY_NET`,
+`E2EE_RELAY_ACK_QUORUM`, the orderer's `E2EE_ORDERER_KEY` (secret seed) and
+`E2EE_ORDERER_GRANT` (its grant proof), and for rebuilds the site-reader's
+`E2EE_SITE_READER_KEY` and `E2EE_SITE_READER_GRANT` with
+`E2EE_ORDERER_PUBLIC_KEY`. The relays pin the orderer's public key; the
+team holds the orderer key. With records on,
+`E2EE_MODERATION_PUBLIC_KEY` (`{"id", "public_key"}`, the moderation
+service's X25519 key) is required; `E2EE_MODERATION_KEYS` (secret,
+`[{"id", "private_key"}]`) is set only where reports are rebuilt or
+checked. The team holds the moderation key too.
+
+**Size limits.** The relays cap a RECORD body at 16 KiB and a SEALED or
+LOG body at 64 KiB. Content goes inline only when the whole body fits, and
+is a payload otherwise. A roster goes out at most 300 delivery windows to a
+record (a 2048-device roster takes seven); a last-resort KeyPackage and a
+Welcome go one to a record, a backup snapshot's chunk rows 2000 to one. A
+record that could not fit even then is skipped and logged, and the user's
+write goes on: the stream misses that change, and the side-by-side check
+names it. It never blocks a stream.
+
+**Deletions (DEL).** The relays keep every record's content until a DEL
+(kind 12) names the record. So when the delivery service deletes or
+expires an item in MySQL, the orderer queues a DEL for the records that
+carry it: an acked, expired or revoked device's Welcome; a deleted backup
+chunk's bytes; an expired attachment (every record of its stream); a
+reported message past retention; a report's evidence after the 90-day
+prune. `e2ee_record_items` indexes which records carry which item (by
+stream position, with the event id once signed); the rebuild refills it.
+DELs wait in `e2ee_relay_deletions` until the records they name are on
+every relay, then the publisher loop signs and sends them. A DEL names at
+most 58 distinct event ids, so its body stays under the relays' 4 KiB (and
+their 64 ids), and goes only to `dv`, `bl`, `bk` and `md`; the relays take
+none in `cv` or `dr`. An event a DEL names keeps
+only its header on the relays and is never served again, so the rebuild
+allows one missing position per id a DEL names. A relay that refuses a DEL
+leaves it queued: DELs sit outside the hash chains, so a refusal never
+holds a stream back. A DEL that failed waits a minute before the next try,
+doubling up to six hours. A DEL naming a record whose event id was never
+saved is kept, logged and named in the lag report, never dropped. The
+report prune locks the rows it deletes and passes
+over one a moderator is holding at that moment, and queues DELs in the same
+transaction for the reports it deleted only, so a hold never loses its
+records. A message's ciphertext in a group log
+needs none: the relays drop a LOG item's `data` payload at the end of
+retention themselves, and `cv` takes no DEL.
+
+**What a report record keeps for the reporter.** A drop report's row
+carries who reported (`reporter_profile_id`), which drop (`drop_id`) and
+its author, and what the report did for the reporter when filed:
+`hide_drop` (the drop hidden from them) and `block_author`. The rebuild of
+the reporter's hides and blocks reads these from the moderators' inbox, so
+it needs the moderation key. Both are null on reports filed before they
+were kept; the moderators' queue does not show them.
+
+**Queued DELs and a rebuild.** DELs still queued when MySQL is lost are
+lost with it, so `write` queues them again: for each stream it writes, the
+records whose content no rebuilt row needs (every item they carry is gone:
+an acked or expired Welcome, a deleted backup object, an expired
+attachment, a pruned report; or, for backups and reports, a newer record
+carries it) get a DEL in the same transaction as the stream's rows. The
+publisher loop sends them as usual. (The rebuild check turns this off: it
+keeps the DEL queue through its drop.)
+
+**Known limit: one moderators' inbox stream.** Every report record goes to
+one `md` stream, so its head lock serializes report writes and its replay
+grows with every report and access. Sharding it by month is not cheap: a
+report's rows are written again in later months, so a stream by month
+could no longer be checked alone against MySQL. It stays one stream until
+after the switch.
+
+**Operator scopes** (`dbMigrationsLoop`, never scheduled). Each call does
+one slice and returns `next`; call again with `"after": "<next>"` until
+`next` is null.
+
+```json
+{"schema_scope": "e2ee-relay-backfill", "family": "cv"}
+{"schema_scope": "e2ee-relay-backfill", "family": "cv", "live": true, "after": "<next>"}
+{"schema_scope": "e2ee-relay-publish", "waves": 500}
+{"schema_scope": "e2ee-relay-rebuild", "mode": "verify", "after": "<next>", "limit": 200}
+{"schema_scope": "e2ee-relay-rebuild", "mode": "write", "after": "<next>"}
+```
+
+- The backfill copies what MySQL holds, family by family in the order `dr`,
+  `cv`, `dv`, `bl`, `bk`, `md`, each entity under the lock its writes take,
+  so a later write wins. Its copies are snapshots: a group's epochs and
+  roster, a device inbox's deliveries and a profile's backups are deleted
+  and put again. **Run it for every family whenever records come back on
+  after time off**: deletes and acks made while off are carried only that
+  way. Without `live` it only reports the volume (whole-table counts, on
+  the read pool); a live slice skips those scans and reports `volume: null`.
+  An attachment whose bytes read back empty is skipped, never recorded.
+  Running it twice is harmless.
+- `verify` (the side-by-side check; `verify-streams` is its old name) first
+  counts MySQL entities that have no stream at all, then rebuilds `limit`
+  streams alone and compares their rows and heads with MySQL. Both sides go
+  through the same retention rules at one `now`, so uploads in progress and
+  rows MySQL's prune has not reached yet are no difference. `ok` is true
+  only with none. A stream that differs only because records past the
+  relays' head still wait in `e2ee_relay_outbox` is lagging, not
+  different: it is counted in `lagging`, named in `laggingStreams`, and
+  does not fail the check. Run it again once the outbox drains: the
+  slice's `gate` is `rerun` until then (`pass` needs none lagging).
+- `write` rebuilds into empty tables and refuses otherwise. It lists the
+  streams each relay holds (as placeholder heads), then rebuilds and writes
+  them one at a time, each in one transaction with its head, so a slice cut
+  short resumes. Attachment bytes come back into MySQL storage. Memory stays
+  at one stream.
+- A record an orderer's DEL names is deleted: the rebuild skips it, and
+  its position, without a problem. Content missing without a DEL is a
+  loss, and a problem.
+
 ## Implementation choices
 
 - The welcome acknowledgement schema `ApiE2eeAck` carries an optional
@@ -691,3 +916,13 @@ in the API, so no other loop is involved. To switch an environment: set
 `seizeAPI`, then `E2EE_BLOB_STORE=s3`, check an upload, then run the
 migration (dry run first). To switch back, set `E2EE_BLOB_STORE=mysql` and
 keep the S3 settings so blobs already in S3 stay readable.
+
+Relay records add `e2ee_streams`, `e2ee_relay_outbox`, `e2ee_record_items`
+and `e2ee_relay_deletions`, and the report columns `hide_drop` and
+`block_author`: deploy `dbMigrationsLoop` (full entity sync) before `api`. Then set the relay
+settings, `E2EE_RELAY_MODE=mirror`, run the backfill (dry run first), and
+run `verify` over every slice. The gate is each slice's `gate`, not `ok`:
+`pass` on every slice. A `rerun` slice found only streams still in the
+outbox: wait for `OutboxRows` 0 and run that slice again. Only then
+`primary`. `e2eeRelayPublishLoop` deploys once its deploy policy
+(`ops/iam/*/E2eeRelayPublishLoopDeployment.json`) is installed.

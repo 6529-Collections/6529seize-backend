@@ -1,0 +1,874 @@
+import { createHash } from 'node:crypto';
+import {
+  CONTENT_MODERATION_ITEMS_TABLE,
+  E2EE_BACKUP_CHUNKS_TABLE,
+  E2EE_BACKUPS_TABLE,
+  E2EE_BLOB_CHUNKS_TABLE,
+  E2EE_BLOBS_TABLE,
+  E2EE_CIPHERTEXT_OBJECTS_TABLE,
+  E2EE_DEVICES_TABLE,
+  E2EE_GROUP_EPOCHS_TABLE,
+  E2EE_GROUP_ROSTER_TABLE,
+  E2EE_GROUPS_TABLE,
+  E2EE_KEY_PACKAGES_TABLE,
+  E2EE_LOG_TABLE,
+  E2EE_WELCOME_DELIVERIES_TABLE,
+  E2EE_WELCOMES_TABLE
+} from '@/constants/db-tables';
+import { DbQueryOptions } from '@/db-query.options';
+import { E2EE_MODERATION_INBOX } from '@/e2ee/relay/e2ee-moderation-seal';
+import {
+  E2eeExternalBytes,
+  E2eeRow,
+  E2eeRowOp,
+  E2eeRowValue
+} from '@/e2ee/relay/e2ee-record-container';
+import { E2eeRecordKind } from '@/e2ee/relay/e2ee-record-event';
+import {
+  E2EE_MODERATION_TABLES,
+  e2eeRecordRow,
+  e2eeRecordSelectList,
+  e2eeRecordTable,
+  e2eeRecordWhere
+} from '@/e2ee/relay/e2ee-record-tables';
+import {
+  E2eeDeliveryWindow,
+  E2eeRecordAppend,
+  E2eeRecordBatch
+} from '@/e2ee/relay/e2ee-stream-publisher';
+import {
+  ConnectionWrapper,
+  dbSupplier,
+  LazyDbAccessCompatibleService
+} from '@/sql-executor';
+
+type Conn = ConnectionWrapper<unknown>;
+export type E2eeRecordWhere = Readonly<
+  Record<string, E2eeRowValue | readonly E2eeRowValue[]>
+>;
+type Where = E2eeRecordWhere;
+
+/** Reads rows of the recorded tables, column for column, in a transaction. */
+export class E2eeRecordRowReader extends LazyDbAccessCompatibleService {
+  async rows(
+    tableName: string,
+    where: Where,
+    connection: Conn,
+    orderBy?: string
+  ): Promise<E2eeRow[]> {
+    const target = e2eeRecordTable(tableName);
+    const params: Record<string, unknown> = {};
+    const clauses = Object.entries(where).map(([column, value], index) => {
+      if (!(column in target.columns)) {
+        throw new Error(`${tableName} has no column ${column}`);
+      }
+      params[`w${index}`] = value;
+      if (Array.isArray(value)) return `${column} in (:w${index})`;
+      return value === null ? `${column} is null` : `${column} = :w${index}`;
+    });
+    if (Object.values(where).some((v) => Array.isArray(v) && !v.length)) {
+      return [];
+    }
+    const options: DbQueryOptions = { wrappedConnection: connection };
+    const raw = await this.db.execute<Record<string, unknown>>(
+      `select ${e2eeRecordSelectList(target)} from ${tableName}
+       ${e2eeRecordWhere(target, clauses)}
+       ${orderBy ? `order by ${orderBy}` : ''}`,
+      params,
+      options
+    );
+    return raw.map((row) => e2eeRecordRow(target, row));
+  }
+}
+
+export const e2eeRecordRowReader = new E2eeRecordRowReader(dbSupplier);
+
+function puts(table: string, rows: readonly E2eeRow[]): E2eeRowOp[] {
+  return rows.map((row) => ({ op: 'put', table, row }));
+}
+
+function windowsOf(roster: readonly E2eeRow[]): E2eeDeliveryWindow[] {
+  return roster.map((row) => ({
+    d: String(row.device_key),
+    from: Number(row.joined_epoch),
+    to: row.removed_epoch === null ? null : Number(row.removed_epoch)
+  }));
+}
+
+/**
+ * Delivery windows (and their roster rows) per LOG record. A window is
+ * about 100 bytes of the body, which the relays cap at 64 KiB, so a
+ * roster of up to 2048 devices goes out in several records.
+ */
+export const E2EE_WINDOWS_PER_RECORD = 300;
+
+/**
+ * A group's LOG records for one change: the first carries `ops` with the
+ * first slice of the roster rows and their windows; each further slice
+ * follows as a `roster` record. Windows are deltas, so splitting them
+ * across consecutive records gives the relays the same windows.
+ */
+function groupLogs(
+  group: string,
+  type: string,
+  ops: readonly E2eeRowOp[],
+  epoch: number | null,
+  roster: readonly E2eeRow[]
+): E2eeRecordAppend[] {
+  const slices: E2eeRow[][] = [];
+  for (let at = 0; at < roster.length; at += E2EE_WINDOWS_PER_RECORD) {
+    slices.push(roster.slice(at, at + E2EE_WINDOWS_PER_RECORD));
+  }
+  if (!slices.length) slices.push([]);
+  return slices.map((slice, index) => {
+    const recordType = index === 0 ? type : 'roster';
+    return {
+      family: 'cv',
+      owner: group,
+      kind: E2eeRecordKind.LOG,
+      refs: [recordType],
+      type: recordType,
+      ops: [
+        ...(index === 0 ? ops : []),
+        ...puts(E2EE_GROUP_ROSTER_TABLE, slice)
+      ],
+      log: { epoch, windows: windowsOf(slice) }
+    };
+  });
+}
+
+async function appendAll(
+  batch: E2eeRecordBatch,
+  connection: Conn,
+  records: readonly E2eeRecordAppend[]
+) {
+  for (const record of records) await batch.append(connection, record);
+}
+
+/** Chunk rows (no bytes) per backup snapshot record: well under 4 MiB. */
+const BACKUP_CHUNKS_PER_RECORD = 2000;
+
+/**
+ * The stream owner for a profile's backups. The relay families key `bk` by
+ * principal; until the identity mirror gives each profile its principal id,
+ * the owner is a hash of the profile id (only the orderer and the
+ * site-reader read it this week).
+ */
+export function e2eeBackupStreamOwner(profileId: string): string {
+  return `0x${createHash('sha256')
+    .update(`6529.io e2ee backups ${profileId}`)
+    .digest('hex')}`;
+}
+
+/**
+ * What each write of the delivery service records. Every function reads the
+ * rows the write left, in the write's transaction, and appends one record
+ * per stream. The records carry whole rows, so the rebuild writes back
+ * exactly what MySQL holds.
+ */
+export class E2eeRecordWriters {
+  constructor(
+    private readonly reader: Pick<
+      E2eeRecordRowReader,
+      'rows'
+    > = e2eeRecordRowReader
+  ) {}
+
+  private async groupRow(group: string, connection: Conn) {
+    const [row] = await this.reader.rows(
+      E2EE_GROUPS_TABLE,
+      { group_handle: group },
+      connection
+    );
+    if (!row) throw new Error(`Group ${group} is gone`);
+    return row;
+  }
+
+  /**
+   * A group's whole state: its row, every epoch key and every roster row.
+   * `genesis` when the group is created; `import` when the backfill copies
+   * an existing group (under its row lock, so no write interleaves). An
+   * import is a snapshot: it first deletes the group's epochs and roster
+   * rows, so a change made while records were off is carried too.
+   */
+  async groupCreated(
+    batch: E2eeRecordBatch,
+    connection: Conn,
+    group: string,
+    type: 'genesis' | 'import' = 'genesis'
+  ): Promise<void> {
+    const groupRow = await this.groupRow(group, connection);
+    const epochs = await this.reader.rows(
+      E2EE_GROUP_EPOCHS_TABLE,
+      { group_handle: group },
+      connection,
+      'epoch'
+    );
+    const roster = await this.reader.rows(
+      E2EE_GROUP_ROSTER_TABLE,
+      { group_handle: group },
+      connection,
+      'id'
+    );
+    await appendAll(
+      batch,
+      connection,
+      groupLogs(
+        group,
+        type,
+        [
+          ...(type === 'import'
+            ? ([
+                {
+                  op: 'del',
+                  table: E2EE_GROUP_EPOCHS_TABLE,
+                  key: { group_handle: group }
+                },
+                {
+                  op: 'del',
+                  table: E2EE_GROUP_ROSTER_TABLE,
+                  key: { group_handle: group }
+                }
+              ] satisfies E2eeRowOp[])
+            : []),
+          ...puts(E2EE_GROUPS_TABLE, [groupRow]),
+          ...puts(E2EE_GROUP_EPOCHS_TABLE, epochs)
+        ],
+        Number(groupRow.epoch),
+        roster
+      )
+    );
+  }
+
+  /**
+   * Existing log items copied by the backfill: the item rows only, never
+   * the group's state, so a copy appended after newer records cannot undo
+   * them. Log items never change; retention only deletes them.
+   */
+  async logItemsImported(
+    batch: E2eeRecordBatch,
+    connection: Conn,
+    input: { readonly group: string; readonly seqs: readonly number[] }
+  ): Promise<number> {
+    const items = await this.reader.rows(
+      E2EE_LOG_TABLE,
+      { group_handle: input.group, seq: input.seqs },
+      connection,
+      'seq'
+    );
+    let bytes = 0;
+    for (const item of items) {
+      if (!Buffer.isBuffer(item.data)) continue;
+      bytes += item.data.length;
+      await batch.append(connection, {
+        family: 'cv',
+        owner: input.group,
+        kind: E2eeRecordKind.LOG,
+        refs: [String(item.item_type)],
+        type: String(item.item_type),
+        ops: puts(E2EE_LOG_TABLE, [
+          { ...item, data: new E2eeExternalBytes(item.data) }
+        ]),
+        log: { epoch: Number(item.epoch), windows: [] }
+      });
+    }
+    return bytes;
+  }
+
+  /**
+   * A sequenced log item (an entry or a message): the item, the group's new
+   * head, the new epoch's key after a commit, and the roster rows of the
+   * devices the item added or removed.
+   */
+  async itemSequenced(
+    batch: E2eeRecordBatch,
+    connection: Conn,
+    input: {
+      readonly group: string;
+      readonly seq: number;
+      readonly changedDevices: readonly string[];
+    }
+  ): Promise<void> {
+    const [item] = await this.reader.rows(
+      E2EE_LOG_TABLE,
+      { group_handle: input.group, seq: input.seq },
+      connection
+    );
+    if (!item) throw new Error(`Log item ${input.group}#${input.seq} is gone`);
+    const groupRow = await this.groupRow(input.group, connection);
+    const epochs =
+      item.commit_epoch === null
+        ? []
+        : await this.reader.rows(
+            E2EE_GROUP_EPOCHS_TABLE,
+            { group_handle: input.group, epoch: Number(groupRow.epoch) },
+            connection
+          );
+    const roster = await this.reader.rows(
+      E2EE_GROUP_ROSTER_TABLE,
+      { group_handle: input.group, device_key: input.changedDevices },
+      connection,
+      'id'
+    );
+    if (!Buffer.isBuffer(item.data)) throw new Error('Log item has no data');
+    await appendAll(
+      batch,
+      connection,
+      groupLogs(
+        input.group,
+        String(item.item_type),
+        [
+          ...puts(E2EE_LOG_TABLE, [
+            { ...item, data: new E2eeExternalBytes(item.data) }
+          ]),
+          ...puts(E2EE_GROUPS_TABLE, [groupRow]),
+          ...puts(E2EE_GROUP_EPOCHS_TABLE, epochs)
+        ],
+        Number(groupRow.epoch),
+        roster
+      )
+    );
+  }
+
+  /** Roster changes outside the log: repairs and revocations. */
+  async rosterChanged(
+    batch: E2eeRecordBatch,
+    connection: Conn,
+    input: { readonly group: string; readonly devices: readonly string[] }
+  ): Promise<void> {
+    if (!input.devices.length) return;
+    const groupRow = await this.groupRow(input.group, connection);
+    const roster = await this.reader.rows(
+      E2EE_GROUP_ROSTER_TABLE,
+      { group_handle: input.group, device_key: input.devices },
+      connection,
+      'id'
+    );
+    await appendAll(
+      batch,
+      connection,
+      groupLogs(input.group, 'roster', [], Number(groupRow.epoch), roster)
+    );
+  }
+
+  /** A stored Welcome: one record in each target device's inbox. */
+  async welcomeStored(
+    batch: E2eeRecordBatch,
+    connection: Conn,
+    welcomeId: string,
+    onlyDevice?: string
+  ): Promise<void> {
+    const [welcome] = await this.reader.rows(
+      E2EE_WELCOMES_TABLE,
+      { id: welcomeId },
+      connection
+    );
+    if (!welcome) return;
+    const deliveries = await this.reader.rows(
+      E2EE_WELCOME_DELIVERIES_TABLE,
+      onlyDevice === undefined
+        ? { welcome_id: welcomeId }
+        : { welcome_id: welcomeId, device_key: onlyDevice },
+      connection,
+      'device_key'
+    );
+    for (const delivery of deliveries) {
+      await batch.append(connection, {
+        family: 'dv',
+        owner: String(delivery.device_key),
+        kind: E2eeRecordKind.SEALED,
+        refs: ['welcome'],
+        type: 'welcome',
+        ops: [
+          ...puts(E2EE_WELCOMES_TABLE, [welcome]),
+          ...puts(E2EE_WELCOME_DELIVERIES_TABLE, [delivery])
+        ]
+      });
+    }
+  }
+
+  /** A device took its Welcome (or never will): the delivery ends. */
+  /**
+   * A device inbox as MySQL holds it, for the backfill: its pending
+   * Welcomes and the roster rows its revocation closed, after deleting
+   * every delivery the stream held, so acks made while records were off
+   * are carried. Locks the stream first, so a live write that lands
+   * during the copy is recorded after it. Each Welcome goes in a record of
+   * its own.
+   */
+  async inboxSnapshot(
+    batch: E2eeRecordBatch,
+    connection: Conn,
+    deviceKey: string
+  ): Promise<number> {
+    await batch.lock(connection, 'dv', deviceKey);
+    const deliveries = await this.reader.rows(
+      E2EE_WELCOME_DELIVERIES_TABLE,
+      { device_key: deviceKey },
+      connection,
+      'welcome_id'
+    );
+    const welcomes = await this.reader.rows(
+      E2EE_WELCOMES_TABLE,
+      { id: deliveries.map((row) => String(row.welcome_id)) },
+      connection,
+      'id'
+    );
+    const revoked = (
+      await this.reader.rows(
+        E2EE_GROUP_ROSTER_TABLE,
+        { device_key: deviceKey },
+        connection,
+        'id'
+      )
+    ).filter((row) => row.removal_kind === 'revoke');
+    const records: E2eeRowOp[][] = [
+      [
+        {
+          op: 'del',
+          table: E2EE_WELCOME_DELIVERIES_TABLE,
+          key: { device_key: deviceKey }
+        },
+        ...puts(E2EE_GROUP_ROSTER_TABLE, revoked)
+      ]
+    ];
+    // One Welcome per record, so an ack's DEL names only its own.
+    for (const delivery of deliveries) {
+      const welcome = welcomes.find((row) => row.id === delivery.welcome_id);
+      if (!welcome) continue;
+      records.push([
+        ...puts(E2EE_WELCOMES_TABLE, [welcome]),
+        ...puts(E2EE_WELCOME_DELIVERIES_TABLE, [delivery])
+      ]);
+    }
+    for (const ops of records) {
+      await batch.append(connection, {
+        family: 'dv',
+        owner: deviceKey,
+        kind: E2eeRecordKind.SEALED,
+        refs: ['inbox'],
+        type: 'inbox',
+        ops
+      });
+    }
+    return deliveries.length;
+  }
+
+  async welcomeAcked(
+    batch: E2eeRecordBatch,
+    connection: Conn,
+    input: { readonly welcomeId: string; readonly deviceKey: string }
+  ): Promise<void> {
+    await batch.append(connection, {
+      family: 'dv',
+      owner: input.deviceKey,
+      kind: E2eeRecordKind.SEALED,
+      refs: ['welcome-ack'],
+      type: 'welcome-ack',
+      ops: [
+        {
+          op: 'del',
+          table: E2EE_WELCOME_DELIVERIES_TABLE,
+          key: { welcome_id: input.welcomeId, device_key: input.deviceKey }
+        }
+      ]
+    });
+    // The relays keep the Welcome no longer than the inbox does.
+    await batch.deleteItems(connection, 'dv', input.deviceKey, [
+      `welcome:${input.welcomeId}`
+    ]);
+  }
+
+  /** A device row after any change: registration, renewal, label, revocation. */
+  async deviceChanged(
+    batch: E2eeRecordBatch,
+    connection: Conn,
+    deviceKey: string
+  ): Promise<void> {
+    const [device] = await this.reader.rows(
+      E2EE_DEVICES_TABLE,
+      { device_key: deviceKey },
+      connection
+    );
+    if (!device) return;
+    await batch.append(connection, {
+      family: 'dr',
+      owner: deviceKey,
+      kind: E2eeRecordKind.RECORD,
+      refs: ['mls-device'],
+      type: 'device',
+      ops: puts(E2EE_DEVICES_TABLE, [device])
+    });
+  }
+
+  /** The groups whose current roster holds the device. */
+  async groupsOfDevice(connection: Conn, deviceKey: string): Promise<string[]> {
+    const rows = await this.reader.rows(
+      E2EE_GROUP_ROSTER_TABLE,
+      { device_key: deviceKey, removed_epoch: null },
+      connection,
+      'id'
+    );
+    return Array.from(new Set(rows.map((row) => String(row.group_handle))));
+  }
+
+  /**
+   * A revoked device: its row, and its roster rows in every group it was
+   * in. Its KeyPackages and pending Welcomes go with the revocation; the
+   * rebuild drops those of revoked devices by the same rule.
+   */
+  /**
+   * A revocation: the device's directory record, and one record in its
+   * inbox with every roster row the revocation closed (one per group it
+   * was in, up to 2000). The group streams get nothing: a revoked device
+   * reads nothing more, and one record replaces one per group. The
+   * rebuild puts these rows after the groups' own (`dv` replays after
+   * `cv`).
+   */
+  async deviceRevoked(
+    batch: E2eeRecordBatch,
+    connection: Conn,
+    input: { readonly deviceKey: string; readonly groups: readonly string[] }
+  ): Promise<void> {
+    await this.deviceChanged(batch, connection, input.deviceKey);
+    if (!input.groups.length) return;
+    const closed = (
+      await this.reader.rows(
+        E2EE_GROUP_ROSTER_TABLE,
+        { device_key: input.deviceKey, group_handle: input.groups },
+        connection,
+        'id'
+      )
+    ).filter((row) => row.removal_kind === 'revoke');
+    // Its pending Welcomes are deleted with it.
+    await batch.deleteItems(connection, 'dv', input.deviceKey, ['welcome:*']);
+    if (!closed.length) return;
+    await batch.append(connection, {
+      family: 'dv',
+      owner: input.deviceKey,
+      kind: E2eeRecordKind.SEALED,
+      refs: ['revocation'],
+      type: 'revocation',
+      ops: puts(E2EE_GROUP_ROSTER_TABLE, closed)
+    });
+  }
+
+  /** A device's last-resort KeyPackages of one suite, as they now are. */
+  async lastResortChanged(
+    batch: E2eeRecordBatch,
+    connection: Conn,
+    input: { readonly deviceKey: string; readonly ciphersuite: number }
+  ): Promise<void> {
+    const rows = await this.reader.rows(
+      E2EE_KEY_PACKAGES_TABLE,
+      {
+        device_key: input.deviceKey,
+        ciphersuite: input.ciphersuite,
+        last_resort: true
+      },
+      connection,
+      'id'
+    );
+    // A KeyPackage per record: a RECORD body is at most 16 KiB.
+    const slices: E2eeRowOp[][] = [
+      [
+        {
+          op: 'del',
+          table: E2EE_KEY_PACKAGES_TABLE,
+          key: {
+            device_key: input.deviceKey,
+            ciphersuite: input.ciphersuite,
+            last_resort: true
+          }
+        },
+        ...puts(E2EE_KEY_PACKAGES_TABLE, rows.slice(0, 1))
+      ],
+      ...rows.slice(1).map((row) => puts(E2EE_KEY_PACKAGES_TABLE, [row]))
+    ];
+    for (const ops of slices) {
+      await batch.append(connection, {
+        family: 'dr',
+        owner: input.deviceKey,
+        kind: E2eeRecordKind.RECORD,
+        refs: ['mls-lastresort', String(input.ciphersuite)],
+        type: 'last-resort',
+        ops
+      });
+    }
+  }
+
+  /** An attachment chunk as uploaded, bytes included whatever the store. */
+  async blobChunkStored(
+    batch: E2eeRecordBatch,
+    connection: Conn,
+    input: {
+      readonly blobId: string;
+      readonly index: number;
+      readonly data: Buffer;
+    }
+  ): Promise<void> {
+    const [chunk] = await this.reader.rows(
+      E2EE_BLOB_CHUNKS_TABLE,
+      { blob_id: input.blobId, chunk_index: input.index },
+      connection
+    );
+    if (!chunk) return;
+    await batch.append(connection, {
+      family: 'bl',
+      owner: input.blobId,
+      kind: E2eeRecordKind.SEALED,
+      refs: ['chunk'],
+      type: 'chunk',
+      ops: puts(E2EE_BLOB_CHUNKS_TABLE, [{ ...chunk, data: input.data }])
+    });
+  }
+
+  /** An attachment's row, once it is complete. */
+  async blobCompleted(
+    batch: E2eeRecordBatch,
+    connection: Conn,
+    blobId: string
+  ): Promise<void> {
+    const [blob] = await this.reader.rows(
+      E2EE_BLOBS_TABLE,
+      { blob_id: blobId },
+      connection
+    );
+    if (!blob) return;
+    await batch.append(connection, {
+      family: 'bl',
+      owner: blobId,
+      kind: E2eeRecordKind.SEALED,
+      refs: ['blob'],
+      type: 'blob',
+      ops: puts(E2EE_BLOBS_TABLE, [blob])
+    });
+  }
+
+  /** A generation's chunk seqs up to `throughSeq` (what a compact deletes). */
+  async backupChunkSeqs(
+    connection: Conn,
+    input: { readonly backupId: string; readonly throughSeq: number }
+  ): Promise<number[]> {
+    const rows = await this.reader.rows(
+      E2EE_BACKUP_CHUNKS_TABLE,
+      { backup_id: input.backupId },
+      connection,
+      'seq'
+    );
+    return rows
+      .map((row) => Number(row.seq))
+      .filter((seq) => seq <= input.throughSeq);
+  }
+
+  /**
+   * A profile's backups after a change: every generation row it has now,
+   * deletions of the generations and chunks that went, and an appended
+   * chunk with its bytes.
+   */
+  async backupsChanged(
+    batch: E2eeRecordBatch,
+    connection: Conn,
+    input: {
+      readonly profileId: string;
+      readonly deletedBackups?: readonly string[];
+      readonly deletedChunks?: readonly { backupId: string; seq: number }[];
+      readonly deletedObjectKeys?: readonly string[];
+      readonly appended?: {
+        readonly backupId: string;
+        readonly seq: number;
+        readonly data: Buffer;
+      };
+      /**
+       * The backfill's last record for a profile: deletes every backup
+       * and chunk row first, so deletions made while records were off are
+       * carried (the chunks' bytes stay in the records that put them).
+       */
+      readonly snapshot?: boolean;
+    }
+  ): Promise<void> {
+    const backups = await this.reader.rows(
+      E2EE_BACKUPS_TABLE,
+      { profile_id: input.profileId },
+      connection,
+      'backup_id'
+    );
+    const ops: E2eeRowOp[] = [];
+    if (input.snapshot) {
+      const profile = { profile_id: input.profileId };
+      ops.push(
+        { op: 'del', table: E2EE_BACKUP_CHUNKS_TABLE, key: profile },
+        { op: 'del', table: E2EE_BACKUPS_TABLE, key: profile }
+      );
+      ops.push(
+        ...puts(
+          E2EE_BACKUP_CHUNKS_TABLE,
+          await this.reader.rows(
+            E2EE_BACKUP_CHUNKS_TABLE,
+            profile,
+            connection,
+            'backup_id, seq'
+          )
+        )
+      );
+    }
+    for (const backupId of input.deletedBackups ?? []) {
+      ops.push(
+        {
+          op: 'del',
+          table: E2EE_BACKUP_CHUNKS_TABLE,
+          key: { backup_id: backupId }
+        },
+        { op: 'del', table: E2EE_BACKUPS_TABLE, key: { backup_id: backupId } }
+      );
+    }
+    for (const chunk of input.deletedChunks ?? []) {
+      ops.push({
+        op: 'del',
+        table: E2EE_BACKUP_CHUNKS_TABLE,
+        key: { backup_id: chunk.backupId, seq: chunk.seq }
+      });
+    }
+    for (const objectKey of input.deletedObjectKeys ?? []) {
+      ops.push({
+        op: 'del',
+        table: E2EE_CIPHERTEXT_OBJECTS_TABLE,
+        key: { object_key: objectKey }
+      });
+    }
+    // The relays keep a deleted chunk's bytes no longer than MySQL does.
+    await batch.deleteItems(
+      connection,
+      'bk',
+      e2eeBackupStreamOwner(input.profileId),
+      (input.deletedObjectKeys ?? []).map((key) => `object:${key}`)
+    );
+    ops.push(...puts(E2EE_BACKUPS_TABLE, backups));
+    if (input.appended) {
+      const [chunk] = await this.reader.rows(
+        E2EE_BACKUP_CHUNKS_TABLE,
+        { backup_id: input.appended.backupId, seq: input.appended.seq },
+        connection
+      );
+      if (chunk) {
+        // The MySQL object store's own row when it holds the bytes; the
+        // chunk's time otherwise (an object store outside MySQL).
+        const [stored] = await this.reader.rows(
+          E2EE_CIPHERTEXT_OBJECTS_TABLE,
+          { object_key: chunk.object_key },
+          connection
+        );
+        ops.push(...puts(E2EE_BACKUP_CHUNKS_TABLE, [chunk]), {
+          op: 'put',
+          table: E2EE_CIPHERTEXT_OBJECTS_TABLE,
+          row: {
+            object_key: chunk.object_key,
+            data: input.appended.data,
+            created_at: stored?.created_at ?? chunk.created_at
+          }
+        });
+      }
+    }
+    // A snapshot of a long backup goes out in slices of chunk rows, so no
+    // record's content passes the relays' payload limit.
+    const chunkPuts = ops.filter(
+      (op) => op.op === 'put' && op.table === E2EE_BACKUP_CHUNKS_TABLE
+    );
+    const first = input.snapshot
+      ? [
+          ...ops.filter((op) => !chunkPuts.includes(op)),
+          ...chunkPuts.slice(0, BACKUP_CHUNKS_PER_RECORD)
+        ]
+      : ops;
+    const rest = input.snapshot
+      ? chunkPuts.slice(BACKUP_CHUNKS_PER_RECORD)
+      : [];
+    const records = [first];
+    for (let at = 0; at < rest.length; at += BACKUP_CHUNKS_PER_RECORD) {
+      records.push(rest.slice(at, at + BACKUP_CHUNKS_PER_RECORD));
+    }
+    for (const slice of records) {
+      await batch.append(connection, {
+        family: 'bk',
+        owner: e2eeBackupStreamOwner(input.profileId),
+        kind: E2eeRecordKind.SEALED,
+        refs: ['backup'],
+        type: 'backup',
+        ops: slice
+      });
+    }
+  }
+
+  /**
+   * Report rows for the moderators' inbox: the rows of a report table
+   * that match `where`, as MySQL holds them once the stream is locked, in
+   * one record sealed to the moderation service key. Runs after the
+   * report's own write committed; rows outside the table's scope (reports
+   * on legacy DMs) are not copied. Returns the rows copied.
+   */
+  async moderationRowsChanged(
+    batch: E2eeRecordBatch,
+    connection: Conn,
+    change: {
+      readonly table: string;
+      readonly where: Where;
+      /**
+       * The rows' older records go (a DEL): the evidence prune, after which
+       * the relays keep only the pruned row.
+       */
+      readonly dropOlder?: boolean;
+    }
+  ): Promise<number> {
+    if (!E2EE_MODERATION_TABLES.includes(change.table)) {
+      throw new Error(`${change.table} is not a report table`);
+    }
+    await batch.lock(connection, 'md', E2EE_MODERATION_INBOX);
+    const rows = await this.reader.rows(
+      change.table,
+      change.where,
+      connection,
+      'id'
+    );
+    if (!rows.length) return 0;
+    if (change.table === CONTENT_MODERATION_ITEMS_TABLE) {
+      // Moderators' decisions: one RECORD per item, keyed by its id; the
+      // newest record of an item wins.
+      for (const row of rows) {
+        await batch.append(connection, {
+          family: 'md',
+          owner: E2EE_MODERATION_INBOX,
+          kind: E2eeRecordKind.RECORD,
+          refs: ['moderation-item', String(row.id)],
+          type: 'moderation-item',
+          ops: puts(change.table, [row]),
+          sealToModeration: true
+        });
+      }
+      return rows.length;
+    }
+    // One row per record, so a DEL names only the row it should.
+    for (const row of rows) {
+      await batch.append(connection, {
+        family: 'md',
+        owner: E2EE_MODERATION_INBOX,
+        kind: E2eeRecordKind.SEALED,
+        refs: ['report'],
+        type: 'report',
+        ops: puts(change.table, [row]),
+        sealToModeration: true
+      });
+    }
+    if (change.dropOlder) {
+      await batch.deleteItems(
+        connection,
+        'md',
+        E2EE_MODERATION_INBOX,
+        rows.map((row) => `${change.table}:${String(row.id)}`),
+        true
+      );
+    }
+    return rows.length;
+  }
+}
+
+export const e2eeRecordWriters = new E2eeRecordWriters();
