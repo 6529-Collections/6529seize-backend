@@ -658,14 +658,23 @@ export class CollectingRulesService {
     } = {}
   ): Promise<void> {
     const at = opts.at ?? this.now();
-    const row = await this.ruleOfRecord(change, connection);
-    if (row) {
+    const found = await this.ruleOfRecord(change, connection);
+    if (found) {
+      const { row, byKey } = found;
       const rule = readRule(row);
       if (row.profile_id !== change.profileId) {
         ruleConflict('Saved rule not found.');
       }
       if (!sameRuleTerms(change.definition, rule.definition)) {
         ruleConflict("A saved rule's terms can't change.");
+      }
+      // Found only by the key today's route saved it with: the create sent
+      // again (its shadow companion, or a late retry). Accepted, and it
+      // leaves the rule's state alone. A pause is keyed by the rule's id;
+      // one keyed by the key is refused.
+      if (byKey) {
+        if (change.paused) ruleConflict('Pause a rule by its id.');
+        return;
       }
       const userPaused =
         rule.state === 'PAUSED' && rule.pause_reason === 'USER_PAUSED';
@@ -718,27 +727,28 @@ export class CollectingRulesService {
 
   /**
    * The saved rule a `collect.rule` record names, locked: by its id, or else
-   * a rule of the same profile created through today's route with that key
-   * as its Idempotency-Key. The page keys a new rule's record by that key,
-   * so a create's shadow companion, or the same create sent again in
-   * primary, lands on the rule today's route made. Rule ids stay as they
+   * (`byKey`) a rule of the same profile created through today's route with
+   * that key as its Idempotency-Key. The page keys a new rule's record by
+   * that key, so a create's shadow companion, or the same create sent again
+   * in primary, lands on the rule today's route made. Rule ids stay as they
    * are; a rebuild finds the rule the same way.
    */
   private async ruleOfRecord(
     change: { readonly id: string; readonly profileId: string },
     connection: ConnectionWrapper<unknown>
-  ): Promise<RuleRow | null> {
+  ): Promise<{ readonly row: RuleRow; readonly byKey: boolean } | null> {
     const byId = await this.getDb().oneOrNull<RuleRow>(
       `SELECT * FROM ${COLLECT_RULES_TABLE} WHERE id=:id FOR UPDATE`,
       { id: change.id },
       { wrappedConnection: connection }
     );
-    if (byId) return byId;
-    return this.getDb().oneOrNull<RuleRow>(
+    if (byId) return { row: byId, byKey: false };
+    const byKey = await this.getDb().oneOrNull<RuleRow>(
       `SELECT * FROM ${COLLECT_RULES_TABLE} WHERE profile_id=:profileId AND idempotency_key=:key FOR UPDATE`,
       { profileId: change.profileId, key: change.id },
       { wrappedConnection: connection }
     );
+    return byKey ? { row: byKey, byKey: true } : null;
   }
 
   /** A rule as the import at the switch carried it, stored as it was. */

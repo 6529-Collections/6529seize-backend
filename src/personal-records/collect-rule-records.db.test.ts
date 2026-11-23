@@ -204,19 +204,47 @@ describeWithSeed('collect.rule records against rules saved today', [], () => {
     // It repeats the rule's state, so nothing is logged either.
     expect(logged).toEqual([]);
 
-    // And a pause keyed by that key pauses it, logged under the key.
-    await service().submit(
+    // A pause keyed by the key is refused: a rule is paused by its id.
+    const byKey = await service().submit(
       [VECTORS.keys.event, ruleRecord(KEY, true)],
       'primary',
       PROFILE,
       {}
     );
-    expect(await savedRules()).toEqual([
-      { id: saved.id, idempotency_key: KEY, state: 'PAUSED' }
-    ]);
+    expect(byKey[1]).toEqual(
+      expect.objectContaining({
+        outcome: 'refused',
+        detail: 'Pause a rule by its id.'
+      })
+    );
+    expect(await savedRules()).toEqual(before);
+    expect(logged).toEqual([]);
+
+    // A pause is keyed by the rule's id, as the list returns it.
+    await service().submit(
+      [VECTORS.keys.event, ruleRecord(saved.id, true)],
+      'primary',
+      PROFILE,
+      {}
+    );
+    const paused = [{ id: saved.id, idempotency_key: KEY, state: 'PAUSED' }];
+    expect(await savedRules()).toEqual(paused);
     expect(logged).toEqual([
-      expect.objectContaining({ kind: 'rule', rule: KEY, paused: true })
+      expect.objectContaining({ kind: 'rule', rule: saved.id, paused: true })
     ]);
+
+    // The create arriving late, after the pause: accepted, and the rule
+    // stays paused. Found only by its key, a record never pauses or
+    // resumes; nothing more is logged.
+    const late = await service().submit(
+      [VECTORS.keys.event, ruleRecord(KEY, false)],
+      'primary',
+      PROFILE,
+      {}
+    );
+    expect(late.map((result) => result.outcome)).toEqual(['stale', 'applied']);
+    expect(await savedRules()).toEqual(paused);
+    expect(logged).toHaveLength(1);
   });
 
   it('takes the same create twice with a checksummed wallet and targets in plan order', async () => {

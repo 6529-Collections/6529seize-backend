@@ -34,6 +34,8 @@ const OTHER = '0x0000000000000000000000000000000000000033';
 const ASSET = collectingAssetKey(MEMES_CONTRACT, '1');
 const RULE_A = '00000000-0000-4000-8000-00000000000a';
 const RULE_B = '00000000-0000-4000-8000-00000000000b';
+// The page's Idempotency-Key for a rule today's route saved.
+const PAGE_KEY = '00000000-0000-4000-8000-0000000000c1';
 const SENT_1 = `0x${'1'.repeat(64)}`;
 const SENT_2 = `0x${'2'.repeat(64)}`;
 const SENT_3 = `0x${'3'.repeat(64)}`;
@@ -333,6 +335,67 @@ describeWithSeed('Collect rules from records and the collect lane', [], () => {
     await expect(record(RULE_B, true, 3, '0xc3')).rejects.toThrow(
       'starts active'
     );
+  });
+
+  it("keeps a rule paused when its create arrives late, keyed by today's route's key", async () => {
+    // Before the switch, today's route saved the rule under its own id,
+    // with the page's key. The import carries it as stored.
+    at(1);
+    const saved = await service.create(definition(), PAGE_KEY);
+    const [row] = await sqlExecutor.execute<{ request_hash: string }>(
+      `select request_hash from ${COLLECT_RULES_TABLE} where id = :id`,
+      { id: saved.id }
+    );
+    const imported = {
+      rule: (await service.list('profile-1', 10))[0],
+      idempotencyKey: PAGE_KEY,
+      requestHash: row.request_hash
+    };
+
+    // In primary: a pause keyed by the rule's id, then the create record,
+    // keyed by the page's key, arriving late. It changes nothing. A pause
+    // keyed by the page's key is refused.
+    await record(saved.id, true, 2, '0xk1');
+    await record(PAGE_KEY, false, 3, '0xk2');
+    await expect(record(PAGE_KEY, true, 4, '0xk3')).rejects.toThrow(
+      'Pause a rule by its id.'
+    );
+    const live = await answers();
+    expect(live.rules.map((rule) => [rule.id, rule.state])).toEqual([
+      [saved.id, 'PAUSED']
+    ]);
+    expect(
+      logged.map((body) => (body.kind === 'rule' ? body.rule : body.kind))
+    ).toEqual([saved.id]);
+
+    // Rebuilt from the import and the lane: still paused, the same. The
+    // pause keyed by the page's key, had it reached the lane, is refused
+    // there as live refused it.
+    const pauseByKey: CollectLogBody = {
+      kind: 'rule',
+      rule: PAGE_KEY,
+      event_id: '0xk3',
+      profile_id: 'profile-1',
+      definition: definition(),
+      paused: true,
+      at: START + 4_000
+    };
+    await emptyTables();
+    await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+      service.restoreRule(imported, connection)
+    );
+    expect(
+      await replay([...logged, pauseByKey], importOrderKey(1001, START + 1_500))
+    ).toEqual({
+      applied: 1,
+      refused: [
+        {
+          what: `collect rule ${PAGE_KEY}`,
+          detail: 'Pause a rule by its id.'
+        }
+      ]
+    });
+    expect(await answers()).toEqual(live);
   });
 
   it("judges a rule record by the server's time", async () => {
