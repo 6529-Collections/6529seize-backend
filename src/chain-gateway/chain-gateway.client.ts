@@ -159,9 +159,31 @@ export function chainGatewayConfigFromEnv(
       ''
     );
   }
+  // Settings that make every request fail before it is sent are refused
+  // here, so that no submit can read as "maybe landed" because of them:
+  // a URL carrying a user name or password (fetch refuses it), and a key
+  // that isn't plain visible ASCII (no header can carry it).
+  const url = new URL(baseUrl);
+  if (url.username || url.password) {
+    throw new ChainGatewayError(
+      'CHAIN_GATEWAY_URL carries credentials; the key goes in CHAIN_GATEWAY_SERVICE_KEY',
+      null,
+      'not_configured',
+      ''
+    );
+  }
+  const serviceKey = env.CHAIN_GATEWAY_SERVICE_KEY?.trim() || null;
+  if (serviceKey !== null && !/^[!-~]+$/.test(serviceKey)) {
+    throw new ChainGatewayError(
+      'CHAIN_GATEWAY_SERVICE_KEY is not plain visible ASCII',
+      null,
+      'not_configured',
+      ''
+    );
+  }
   return {
     baseUrl: trimTrailingSlashes(baseUrl),
-    serviceKey: env.CHAIN_GATEWAY_SERVICE_KEY?.trim() || null,
+    serviceKey,
     // 0 would abort every request at once.
     timeoutMs: intOr(env.CHAIN_GATEWAY_TIMEOUT_MS, 10_000) || 10_000,
     retries: intOr(env.CHAIN_GATEWAY_RETRIES, 3),
@@ -2569,7 +2591,9 @@ export class ChainGatewayClient {
       if (
         !(error instanceof ChainGatewayError) ||
         notTaken(error) ||
-        NEVER_LEFT.indexOf(error.code) >= 0
+        // The client's own refusals (no status: never sent); a server's
+        // answer with the same code still went out.
+        (error.status === null && NEVER_LEFT.indexOf(error.code) >= 0)
       ) {
         throw error;
       }
