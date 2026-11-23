@@ -1,5 +1,6 @@
 import { AREA_MANIFESTS } from '@/rebuild/manifests';
 import { metricsManifest } from '@/rebuild/manifests/metrics.manifest';
+import { writtenTables } from '@/rebuild/step-writes';
 
 describe('the metrics area', () => {
   const others = AREA_MANIFESTS.filter((area) => area !== metricsManifest);
@@ -16,17 +17,18 @@ describe('the metrics area', () => {
     }
   });
 
-  it('recounts after every other area has seeded its world', () => {
+  it('recounts after every other area has seeded its world, last', () => {
     expect(new Set(seed.after)).toEqual(
       new Set(others.flatMap((area) => area.seeds.map((step) => step.id)))
     );
+    expect(seed.last).toBe(true);
   });
 
   it('rebuilds after every rebuilder that writes a table the recount reads', () => {
     const writers = others.flatMap((area) =>
       area.rebuilders
         .filter((step) =>
-          step.writes.some((table) => rebuilder.reads!.includes(table))
+          writtenTables(step).some((table) => rebuilder.reads!.includes(table))
         )
         .map((step) => step.id)
     );

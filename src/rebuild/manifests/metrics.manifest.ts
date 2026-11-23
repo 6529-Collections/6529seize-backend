@@ -16,6 +16,7 @@ import { subsManifest } from '@/rebuild/manifests/subs.manifest';
 import { tdhManifest } from '@/rebuild/manifests/tdh.manifest';
 import { wavesManifest } from '@/rebuild/manifests/waves.manifest';
 import { METRICS_RECOUNT_READS } from '@/metrics/metrics-rebuild.tables';
+import { writtenTables } from '@/rebuild/step-writes';
 
 /**
  * Community metrics: metric_rollup_hour, the hourly counters and daily
@@ -65,7 +66,7 @@ const seedsBefore = OTHER_AREAS.flatMap((area) =>
 const rebuildersBefore = OTHER_AREAS.flatMap((area) =>
   area.rebuilders
     .filter((step: RebuildStep) =>
-      step.writes.some((table) => RECOUNT_READS.includes(table))
+      writtenTables(step).some((table) => RECOUNT_READS.includes(table))
     )
     .map((step) => step.id)
 );
@@ -90,6 +91,9 @@ export const metricsManifest: AreaManifest = {
       writes: ['metric_rollup_hour'],
       reads: RECOUNT_READS,
       after: seedsBefore,
+      // It waits on every seed, those that run last included, so it runs
+      // last too.
+      last: true,
       sources: SOURCES,
       timeoutMinutes: 10
     }
