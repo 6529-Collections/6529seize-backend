@@ -167,6 +167,8 @@ export {
 } from './IProfileCmsPointerEvent';
 export { ProfileCmsPublishSignatureEntity } from './IProfileCmsPublishSignature';
 export { ProfileCmsUploadEntity } from './IProfileCmsUpload';
+export { ProfileCmsChainHeadEntity } from './IProfileCmsChainHead';
+export { ProfileCmsChainParkedEntity } from './IProfileCmsChainParked';
 export { PushNotificationDevice } from './IPushNotification';
 export { PushNotificationSettingsEntity } from './IPushNotificationSettings';
 export { Rating } from './IRating';

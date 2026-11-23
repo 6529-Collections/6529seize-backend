@@ -402,3 +402,203 @@ verify published wallet intent and the selected decentralized receipt. Responses
 also expose `is_primary` separately from publication history status and include
 `recovery_receipt` when one was created. For standalone renderers and mirrors,
 public access is limited to published production-safe packages, with private rows still requiring profile CMS permissions.
+
+## Profile Sites On The 6529 Chain
+
+Behind `FEATURE_PROFILE_CMS_CHAIN_POINTER` (default off), the primary pointer
+lives in the person's ProfileDoc on the 6529 chain, not in MySQL. The chain
+holds the ProfileDoc's CID; `PROFILE_REPLACE` moves it. Rollback: set the flag
+to `false`; the old publish path then reads and writes the same tables again.
+
+A ProfileDoc's fields are string keys with string values (ProfileDoc.v1),
+so the site is three flat keys, each a Cid:
+
+| Key | Names |
+| --- | --- |
+| `cms.primary.publication` | the signed `6529.cms.publication.v1` record |
+| `cms.primary.package` | the content core (the package-hash preimage) |
+| `cms.archive` | the person's `6529.cms.archive.v1` history file |
+
+- Publication and package come together or not at all. Without them no site
+  is served; one without the other, or a value that is not a Cid, serves no
+  site either. Other keys are ignored.
+- The archive is the person's public site history at the identity freeze
+  (published packages with their envelopes, pointer events, publish
+  signatures, and legacy CMS sites with published packages). Only the
+  identity import sets it, and writers copy it unchanged. The index imports
+  an archive only from version 1 of an imported identity that the import
+  wrote: marked as the import's by the gateway, or written inside the
+  import's heights before its last block (identity operations stay refused
+  until the import completes), or, in its last block, the document the
+  import's document list names for that person. While the import runs, such
+  a change waits. The archive's every package, event, signature, legacy site
+  and legacy package must belong to that profile. Any other archive is
+  ignored, so nobody can write history rows by naming a file in a document of
+  their own.
+- A Cid is a CIDv1, codec raw, sha2-256, base32 (`bafkrei...`). Its digest is
+  the file's SHA-256, so a package's Cid and its `package_hash` name the same
+  bytes. A raw block over 1 MiB may not move through IPFS with Kubo's
+  defaults; such cores are served by the gateway's document store and
+  Arweave. Publication records are small, so their `ipfs://` receipt holds.
+
+`src/profile-cms/chain` follows the chain. For each finalized Profile change
+it reads the ProfileDoc, checks the named files (hashes, the EIP-712
+signature and its bindings, the signer among the person's wallets, CMS V1
+production validation, a decentralized canonical receipt), and updates the
+package rows, pointer events and publish signatures:
+
+- a publication never published before: `PUBLISH`, `SUPERSEDE` of the old
+  primary, `SET_PRIMARY`;
+- a publication published before: `ROLLBACK`, `SUPERSEDE`, `SET_PRIMARY`;
+- no site, or a site that fails the checks: `UNPUBLISH` of the old primary.
+
+Event ids (keyed on the principal, the document version and the event's
+place), times (the block time) and rows follow from the chain and the files
+alone, so a rebuild from empty tables writes the same public rows.
+
+A change whose document or files are not in the store yet, whose Safe
+check fails on the network, or whose read through the chain port fails (a
+gateway error) is parked in `profile_cms_chain_parked`, with that person's
+later changes queued behind it, and the index reads on: everyone else's
+changes are applied once, and the cursor doesn't wait. Every pass retries
+the parked changes first, each person's in version order, up to five tries
+a change. A read the port says to try later (a wallet whose principal at
+that height isn't known yet, or an answer the port can't use yet) waits
+without using up a try, and is logged on every pass until it reads. A
+change parked for more than 30 minutes raises an operational error,
+`PROFILE_SITE_CHANGE_STALLED`, once. Live, the last try applies it as it
+reads: no site. A rebuild (`profile-cms:chain-sync` and the rebuild-check
+steps) retries until nothing waits and fails on a change still unreadable
+after its tries, instead of serving no site. Safe (EIP-1271) signatures are
+checked at the last Ethereum block before the change, so a rebuild gets the
+same answer. The port gives the change feed in whole blocks (the adapter
+follows the gateway's `height:index` cursor through a block cut across
+pages); the follower reads on while there is a next page, and stops with an
+error at a page that ends inside a block rather than skip the rest of it.
+The index keeps its own cursor in `profile_cms_chain_heads` and
+`profile_cms_chain_parked`: it reads the block of the last change it read
+again, so a pass that stopped inside a block loses none of it, and turning
+the flag off and on again catches up instead of losing changes.
+The index reads the chain through the identity mirror's port, over the
+shared gateway client at `CHAIN_GATEWAY_URL` (`createProfileCmsChainPort`).
+A caller that names another gateway, such as a rebuild check's source, is
+refused. Until the identity mirror is wired in, the port refuses.
+Draft-only fields of a package first published after the switch
+(`created_at`, `created_by_profile_id`) come from the draft. The serving rules do not change:
+public reads still serve only the primary, and the handle check stays at read
+time. Archiving no longer hides anything from the chain: every package that
+was ever primary stays named by the person's ProfileDoc history, whatever its
+status on 6529.io.
+
+When `PROFILE_SITE_CHANGE_STALLED` fires, `profile_cms_chain_parked` shows
+the change that waits (principal, height, version) and the reason of its
+last try. A reason ending in `_retry_later` waits on the identity mirror (a
+wallet it hasn't mapped at that height yet, or a gateway answer it can't use
+yet): check the mirror's own runs. `profile_doc_not_found` or a missing file
+waits on the document store. The change applies on its own once the read
+succeeds. Don't delete parked rows: the cursor is past them, so only a
+rebuild would read that change again.
+
+With the flag on, `publish` checks the signature and storage as before and
+uploads the signed publication record, then stops before the pointer: it puts
+the content core and the record in the gateway's document store, stores the
+record's CID on the draft, and returns the draft with `publication_cid`. The
+builder then writes the next ProfileDoc version with `cms.primary.publication`
+set to `publication_cid` and `cms.primary.package` to the package hash as a
+Cid, and signs PROFILE_REPLACE with the session key, or the wallet when there
+is none. The follower marks the package published once the change is final.
+Publishing a draft that already has a `publication_cid` (a second click, or a
+retry after the PROFILE_REPLACE failed) returns it as stored; nothing is
+signed or uploaded again. Only a draft: the archive import fills
+`publication_cid` on packages published before the switch, and those go
+through the normal checks, so publishing one again can't act as a rollback. If the document store answers with another CID
+than the file's, publish returns 502 `cms_doc_store_mismatch` and records
+nothing. `unpublish` returns 409 `cms_pointer_on_chain`, and the builder
+does it with PROFILE_REPLACE too, naming no site. `rollback` first checks
+the target the way public reads and the chain index will (the current
+handle, then the files, signature, a Safe at the latest block and
+production validation), since a version either refuses would take the site
+offline: it returns 409 `cms_pointer_on_chain` when the target passes (the
+builder then names its `publication_cid`), 409 `cms_profile_changed` for a
+version published under a former handle, 422 `cms_rollback_target_refused`
+when the index would refuse it, and 503 `cms_check_unavailable` when the
+files or the Safe can't be read now. The
+builder shows a move 6529.io doesn't serve within two minutes as submitted,
+not done. Before the switch, during the identity freeze
+(`FEATURE_IDENTITY_FROZEN=true`, or from `IDENTITY_FREEZE_AT`), publish,
+rollback, unpublish and archive return 423 `IDENTITY_FROZEN`, as the identity
+routes do. The chain flag wins over the freeze: with it on, freeze
+settings left set can't block publishing.
+
+### The export at the identity freeze
+
+`6529 run profile-cms:export -- --out <dir> --frozen-at <epoch ms>` reads the
+profile CMS and legacy CMS tables (run it on a read replica) and writes:
+
+- `files/<cid>`: content cores, publication records, archive files and legacy
+  package JSON;
+- `cms-fields.json`: profile id to `{ primary?: { publication, package },
+  archive? }`, the shape the identity snapshot builder reads; it writes them
+  into the imported ProfileDoc as the three `cms.*` keys;
+- `report.json`: per profile, the packages carried, publication records
+  rebuilt from the stored publish signature (packages published before the
+  records existed) and the ones among them the reader's check refuses at
+  their publish (`rebuilt_refused`, with the reason; they stay in history),
+  packages without any publication record, packages whose stored content no
+  longer matches its hash, and legacy packages whose signature does not
+  verify.
+
+### Legacy CMS sites
+
+Legacy CMS writes (`POST /cms/sites`, `POST /cms/sites/{id}/published-packages`)
+return 410 `cms_legacy_retired` with the flag on, and 423 `IDENTITY_FROZEN`
+during the freeze. The export checks each legacy package's stored signature,
+which 6529.io never checked. The legacy API stores the signature envelope
+inside the package JSON, so `package_hash` covers the signature and can't be
+what was signed. These EIP-191 personal signatures count: over `payload_hash`,
+or over the hash or the canonical JSON of the package with `package_hash` null
+and `signature` removed, set to null, or removed together with `storage`. The
+signer must be the envelope's `signing_wallet` and one of the owner's wallets
+at the freeze (the export runs at T).
+Packages that fail stay in the archive and are not served; a site whose
+primary fails has no primary.
+
+The export carries a primary only if the reader's check passes on it at T, as
+the index will judge it at the switch (a Safe whose owners changed since the
+publish may no longer accept the signature); the report also gives the check
+at the publish. A stored publication record that can't be fetched is reported
+and fails the run; it is never replaced by a rebuilt one.
+
+### Private state in the record log
+
+Behind `FEATURE_PROFILE_CMS_PERSONAL_LOG` (default off; rollback: set it to
+`false`), every write on 6529.io's own path of a draft or other package row,
+a pointer event (an archive after the switch), a publish signature, and a
+BYO agent grant, proposal or event appends the row as it stands after the
+write to the interim record log's private chain (sealed to 6529.io's
+provider keys): a service entry of lane `publish` with
+`{ v: 1, kind, at, height, doc_version, row }`, kinds `cms.package`,
+`cms.pointer-event`, `cms.publish-signature`, `cms.agent-grant`,
+`cms.agent-proposal` and `cms.agent-event`. The append runs in the write's
+transaction (the caller's, or one opened for it), so a failed append undoes
+the write. `height` and `doc_version` name the last chain change the index
+had applied for the row's profile, read in that transaction (both null
+before any). The follower's own writes are not logged; they come from the
+chain.
+
+To turn it on: set the flag for the API first, so every new write is logged,
+then run `6529 run profile-cms:log-existing-rows` once (with the flag set in
+its environment too), after the API has the setting everywhere. It logs
+every row the tables hold then; a row logged twice replays as it stood the
+second time.
+
+A rebuild from empty (`rebuildProfileCmsFromChainAndLog`) replays each entry
+right after the change it was stamped with (height, then document version)
+and before the profile's next one, entries in log order. So a draft is in
+place before the chain change that publishes it, and a write made after a
+change's block but before the index applied it replays before that change,
+as it was live. Wall time can't order them: a change's block time comes
+before the index applies it. The version tells apart two changes of one
+person in one block; changes of different people at one height touch
+different profiles, so ordering them by version is safe. The grant's
+`request_count` is a rate counter and is not logged.

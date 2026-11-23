@@ -5,8 +5,8 @@ import { ethers } from 'ethers';
 export const PROFILE_CMS_PUBLISH_EIP712_DOMAIN_NAME = '6529 Profile CMS';
 export const PROFILE_CMS_PUBLISH_EIP712_DOMAIN_VERSION = '1';
 
-const EIP1271_MAGIC_VALUE = '0x1626ba7e';
-const EIP1271_ABI = [
+export const EIP1271_MAGIC_VALUE = '0x1626ba7e';
+export const EIP1271_ABI = [
   'function isValidSignature(bytes32 _messageHash, bytes _signature) public view returns (bytes4)'
 ];
 
@@ -245,7 +245,8 @@ class DefaultEip1271SignatureVerifier implements Eip1271SignatureVerifier {
 export const defaultEip1271SignatureVerifier =
   new DefaultEip1271SignatureVerifier();
 
-function getRpcNetwork(chainId: number): Network {
+/** The RPC network of a chain id this CMS verifies Safe signatures on. */
+export function getRpcNetwork(chainId: number): Network {
   switch (chainId) {
     case 1:
       return Network.ETH_MAINNET;
