@@ -13,6 +13,7 @@ import {
   subscriptionsIdentitySwitch
 } from '../identity/identity-switch';
 import type { JournalBody } from '../timeline/journal';
+import { copyLegacyHistory, copyLegacyState } from './legacy-copy';
 import {
   Fetcher,
   JournalSource,
@@ -172,5 +173,28 @@ export async function rebuildSubscriptionsInCheck(
       : null;
   logger.info(
     `[SUBSCRIPTIONS_REBUILD_CHECK] [opening ${result.openingSha256}] [writes ${result.entries}] [checkpoints ${result.checkpoints}] [switch ${switchedAt ?? 'none'}]`
+  );
+}
+
+/**
+ * The rollback copy's final rows and redemptions, copied back from the
+ * rebuilt identity tables (legacy-copy.ts). Runs after subs.identity.
+ */
+export async function rebuildLegacyHistoryInCheck(): Promise<void> {
+  const { finals, redemptions, leftOut } = await copyLegacyHistory();
+  logger.info(
+    `[SUBSCRIPTIONS_LEGACY_HISTORY] [finals ${finals}] [redemptions ${redemptions}] [left out ${leftOut}]`
+  );
+}
+
+/**
+ * The rollback copy's balances, modes and choices, under each identity's
+ * consolidation key as the dual write uses it (legacy-copy.ts). Runs after
+ * subs.identity, and reads the identity mirror for the keys.
+ */
+export async function rebuildLegacyStateInCheck(): Promise<void> {
+  const { balances, modes, choices, leftOut } = await copyLegacyState();
+  logger.info(
+    `[SUBSCRIPTIONS_LEGACY_STATE] [balances ${balances}] [modes ${modes}] [choices ${choices}] [left out ${leftOut}]`
   );
 }

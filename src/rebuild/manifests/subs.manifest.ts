@@ -63,11 +63,15 @@ const SUBS_SEED: RebuildStep = {
     module: 'src/rebuild/areas/subs.seed',
     exportName: 'seedSubscriptions'
   },
-  writes: [...LEGACY_WRITES, 'transactions_processed_subscriptions_blocks'],
+  writes: [
+    ...LEGACY_WRITES,
+    'subscriptions_top_up_latest_block',
+    'transactions_processed_subscriptions_blocks'
+  ],
   reads: ['transactions'],
-  // The memes the holdings seed mints, and the probe wallets' keys.
+  // The holdings seed's chain and memes, and the probe wallets' keys.
   after: ['holdings.seed', 'identity.probe-profiles'],
-  sources: ['repo'],
+  sources: ['ethereum', 'repo'],
   timeoutMinutes: 10
 };
 
@@ -99,10 +103,11 @@ const SUBS_SWITCH_SEED: RebuildStep = {
   reads: [
     'nfts',
     'transactions_processed_subscriptions_blocks',
+    'subscriptions_top_up_latest_block',
     'identity_chain_principals'
   ],
   after: ['subs.seed'],
-  sources: ['files', 'repo'],
+  sources: ['ethereum', 'files', 'repo'],
   timeoutMinutes: 15
 };
 
@@ -123,6 +128,78 @@ const SUBS_REBUILD: RebuildStep = {
   reads: ['drops', 'drops_parts'],
   sources: ['files'],
   timeoutMinutes: 15
+};
+
+/**
+ * subscriptions_top_up from Ethereum: the top-up loop's own discovery from
+ * genesis to the mark, writing the rows alone (no credit, no cursor)
+ * (src/subscriptionsTopUpLoop/top-ups-rebuild-check.steps.ts).
+ */
+const SUBS_TOP_UPS_REBUILD: RebuildStep = {
+  id: 'subs.top-ups',
+  run: {
+    module: 'src/subscriptionsTopUpLoop/top-ups-rebuild-check.steps',
+    exportName: 'rebuildTopUpsInCheck'
+  },
+  writes: ['subscriptions_top_up'],
+  // A top-up whose write waits there has no row, as in the loop.
+  reads: ['subscription_deferred_writes'],
+  sources: ['ethereum'],
+  timeoutMinutes: 15
+};
+
+/**
+ * The rollback copy's final rows and redemptions, copied back from the
+ * rebuilt identity tables: same key, same final-row id.
+ */
+const SUBS_LEGACY_HISTORY_REBUILD: RebuildStep = {
+  id: 'subs.legacy-history',
+  run: {
+    module: 'src/subscriptions-identity/opening/rebuild-check.steps',
+    exportName: 'rebuildLegacyHistoryInCheck'
+  },
+  writes: ['subscriptions_nfts_final', 'subscriptions_redeemed'],
+  reads: [
+    'subscriptions_id_nfts_final',
+    'subscriptions_id_redeemed',
+    // The keys the key-width guard holds back are left out.
+    'subscription_deferred_writes'
+  ],
+  after: ['subs.identity'],
+  sources: ['repo'],
+  timeoutMinutes: 10
+};
+
+/**
+ * The rollback copy's balances, modes and choices, under each identity's
+ * consolidation key as the dual write uses it, which reads the identity
+ * mirror.
+ */
+const SUBS_LEGACY_STATE_REBUILD: RebuildStep = {
+  id: 'subs.legacy-state',
+  run: {
+    module: 'src/subscriptions-identity/opening/rebuild-check.steps',
+    exportName: 'rebuildLegacyStateInCheck'
+  },
+  writes: [
+    'subscriptions_balances',
+    'subscriptions_mode',
+    'subscriptions_nfts'
+  ],
+  reads: [
+    'subscriptions_id_balances',
+    'subscriptions_id_mode',
+    'subscriptions_id_nfts',
+    // The identities' consolidation keys (consolidationKeysOf).
+    'identity_chain_principals',
+    'identities',
+    'address_consolidation_keys',
+    // The keys the key-width guard holds back are left out.
+    'subscription_deferred_writes'
+  ],
+  after: ['subs.identity'],
+  sources: ['repo'],
+  timeoutMinutes: 10
 };
 
 /** The subscription answers, for the probe fixture's consolidations. */
@@ -216,14 +293,89 @@ export const subsManifest: AreaManifest = {
       class: 'EPHEMERAL',
       why: 'Refresh queue.'
     },
-    subscriptions_balances: { class: 'INDEX' },
-    subscriptions_logs: { class: 'INDEX' },
-    subscriptions_mode: { class: 'INDEX' },
-    subscriptions_nfts: { class: 'INDEX' },
-    subscriptions_nfts_final: { class: 'INDEX' },
+    // The legacy tables: after the switch, the rollback copy every identity
+    // write is also written to. Routes that don't switch still read them, so
+    // the copy-back rebuilds them from the identity tables (legacy-copy.ts),
+    // and the top-up rows come from Ethereum.
+    subscriptions_balances: {
+      class: 'INDEX',
+      volatileColumns: [
+        {
+          column: 'created_at',
+          reason: "The row's own write time on each side; no route shows it."
+        },
+        {
+          column: 'updated_at',
+          reason: "The row's own write time on each side; no route shows it."
+        }
+      ]
+    },
+    subscriptions_logs: {
+      class: 'EXEMPT',
+      why: 'Rollback copy and dual-write check; dropped after the rollback window. No route reads it once the identity tables are the truth.'
+    },
+    subscriptions_mode: {
+      class: 'INDEX',
+      volatileColumns: [
+        {
+          column: 'created_at',
+          reason: "The row's own write time on each side; no route shows it."
+        },
+        {
+          column: 'updated_at',
+          reason: "The row's own write time on each side; no route shows it."
+        }
+      ]
+    },
+    subscriptions_nfts: {
+      class: 'INDEX',
+      volatileColumns: [
+        {
+          column: 'id',
+          reason: 'Each side numbers its own choice rows; no route shows it.'
+        },
+        {
+          column: 'created_at',
+          reason: "The row's own write time on each side; no route shows it."
+        },
+        {
+          column: 'updated_at',
+          reason: "The row's own write time on each side; no route shows it."
+        }
+      ]
+    },
+    subscriptions_nfts_final: {
+      class: 'INDEX',
+      volatileColumns: [
+        {
+          column: 'created_at',
+          reason: "The row's own write time on each side; no route shows it."
+        },
+        {
+          column: 'updated_at',
+          reason: "The row's own write time on each side; no route shows it."
+        }
+      ]
+    },
     subscriptions_nfts_final_upload: { class: 'INDEX' },
-    subscriptions_redeemed: { class: 'INDEX' },
-    subscriptions_top_up: { class: 'INDEX' },
+    subscriptions_redeemed: {
+      class: 'INDEX',
+      volatileColumns: [
+        {
+          column: 'created_at',
+          reason: "The row's own write time on each side; no route shows it."
+        }
+      ]
+    },
+    subscriptions_top_up: {
+      class: 'INDEX',
+      volatileColumns: [
+        {
+          column: 'created_at',
+          reason: 'When discovery wrote the row; no route shows it.'
+        }
+      ]
+    },
     subscriptions_top_up_latest_block: {
       class: 'EPHEMERAL',
       why: 'Loop cursor.'
@@ -298,6 +450,11 @@ export const subsManifest: AreaManifest = {
     }
   },
   seeds: [SUBS_SEED, SUBS_SWITCH_SEED],
-  rebuilders: [SUBS_REBUILD],
+  rebuilders: [
+    SUBS_REBUILD,
+    SUBS_TOP_UPS_REBUILD,
+    SUBS_LEGACY_HISTORY_REBUILD,
+    SUBS_LEGACY_STATE_REBUILD
+  ],
   probes: PROBES
 };

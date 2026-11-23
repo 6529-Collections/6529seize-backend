@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { parseEther, toBeHex } from 'ethers';
+import fetch from 'node-fetch';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
@@ -9,6 +11,7 @@ import {
   NFTS_TABLE,
   MEMES_CONTRACT,
   PROFILES_TABLE,
+  SUBSCRIPTIONS_ADDRESS,
   SIGNED_RECORD_LOG_ENTRIES_TABLE,
   TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE,
   TRANSACTIONS_TABLE,
@@ -31,7 +34,7 @@ import {
   journalCheckpoint
 } from '@/subscriptions-identity/timeline/journal';
 import { runIdentityTopUpWriters } from '@/subscriptions-identity/writers/identity-loop-hooks';
-import { persistTopUps } from '@/subscriptionsTopUpLoop/db.subscriptions_topup';
+import { discoverTopUps } from '@/subscriptionsTopUpLoop/subscription_topups';
 import { aWave } from '@/tests/fixtures/wave.fixture';
 
 /**
@@ -58,26 +61,74 @@ import { aWave } from '@/tests/fixtures/wave.fixture';
 
 // Fixed, so a second pass minutes later answers the same.
 const SEEDED_AT = 1_767_225_600_000;
-const TOP_UP_TEXT = '2026-01-01 00:00:00';
 
-/** Fake top-up transactions of the probe wallets (never on any chain). */
-const BEFORE_TOP_UPS = [
-  {
-    hash: `0x${'5'.repeat(63)}1`,
-    wallet: PROBE_CONSOLIDATION_KEYS[0],
-    amount: 0.25
-  },
-  {
-    hash: `0x${'5'.repeat(63)}2`,
-    wallet: PROBE_CONSOLIDATION_KEYS[1],
-    amount: 0.05
-  }
+/** The probe wallets' top-ups before the switch, in ETH. */
+const BEFORE_TOP_UPS: readonly { wallet: string; amount: string }[] = [
+  // Covers a card: the top-up loop turns automatic mode on.
+  { wallet: PROBE_CONSOLIDATION_KEYS[0], amount: '0.25' },
+  { wallet: PROBE_CONSOLIDATION_KEYS[1], amount: '0.05' }
 ];
-const AFTER_TOP_UP = {
-  hash: `0x${'5'.repeat(63)}3`,
-  wallet: PROBE_CONSOLIDATION_KEYS[1],
-  amount: 0.1
-};
+/** A top-up after the switch, which the identity writer journals. */
+const AFTER_TOP_UP = { wallet: PROBE_CONSOLIDATION_KEYS[1], amount: '0.1' };
+
+/** Blocks past a transfer before the top-up loop reads it (its finality gap). */
+const DISCOVERY_CONFIRMATIONS = 6;
+
+/**
+ * A top-up as the world makes it: a probe wallet's transfer to the
+ * subscriptions address, then the top-up loop's discovery and credit.
+ */
+export type SeedTopUp = (wallet: string, amountEth: string) => Promise<void>;
+
+export interface SubscriptionsSeedDeps {
+  readonly topUp: SeedTopUp;
+}
+
+async function rpc<T>(url: string, method: string, params: unknown[]) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })
+  });
+  const answer = (await response.json()) as {
+    result?: T;
+    error?: { message: string };
+  };
+  if (answer.error) throw new Error(`${method}: ${answer.error.message}`);
+  return answer.result as T;
+}
+
+/**
+ * Top-ups on the run's anvil: the transfer, blocks past the top-up loop's
+ * finality gap, then the loop's own discovery, which credits as it does in
+ * production.
+ */
+function anvilTopUps(url: string): SeedTopUp {
+  return async (wallet, amountEth) => {
+    await rpc(url, 'anvil_impersonateAccount', [wallet]);
+    await rpc(url, 'anvil_setBalance', [wallet, toBeHex(parseEther('10'))]);
+    await rpc<string>(url, 'eth_sendTransaction', [
+      {
+        from: wallet,
+        to: SUBSCRIPTIONS_ADDRESS,
+        value: toBeHex(parseEther(amountEth))
+      }
+    ]);
+    await rpc(url, 'anvil_stopImpersonatingAccount', [wallet]);
+    await rpc(url, 'anvil_mine', [toBeHex(DISCOVERY_CONFIRMATIONS)]);
+    await discoverTopUps();
+  };
+}
+
+function anvilDeps(ctx: RebuildContext): SubscriptionsSeedDeps {
+  const url = ctx.sources.ethereum;
+  if (!url) {
+    throw new Error(
+      'The subscriptions seeds top up on Ethereum: the run has no ethereum source'
+    );
+  }
+  return { topUp: anvilTopUps(url) };
+}
 
 async function insertRow(
   table: string,
@@ -172,24 +223,6 @@ function seedFilesUploader(dir: string): FileUploader {
       url: `https://arweave.net/${seedFile(dir, buffer)}`
     })
   };
-}
-
-/** Top-ups as the top-up loop writes them, one call each. */
-async function topUp(
-  hash: string,
-  wallet: string,
-  amount: number,
-  block: number
-): Promise<void> {
-  await persistTopUps([
-    {
-      hash,
-      block,
-      transaction_date: new Date(`${TOP_UP_TEXT}Z`),
-      from_wallet: wallet,
-      amount
-    }
-  ]);
 }
 
 /** The newest memes card the holdings seed minted (0 when none). */
@@ -295,23 +328,18 @@ async function closeJournalSegments(
   }
 }
 
-/** The top-up blocks: after the transactions loop's processed block. */
-async function topUpBlockBase(): Promise<number> {
-  const [row] = await sqlExecutor.execute<{ block: number | null }>(
-    `select max(block) as block from ${TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE}`
-  );
-  return Number(row?.block ?? 0);
-}
-
 /**
  * Before the switch: today's subscriptions of the probe wallets, through
- * the legacy write paths, and the transactions loop's first run.
+ * the legacy write paths (a top-up each, all editions for the first), after
+ * the transactions loop's first run.
  */
-export async function seedSubscriptions(): Promise<void> {
-  const block = await markRedemptionLoopRun();
-  for (let index = 0; index < BEFORE_TOP_UPS.length; index++) {
-    const top = BEFORE_TOP_UPS[index];
-    await topUp(top.hash, top.wallet, top.amount, block + index + 1);
+export async function seedSubscriptions(
+  ctx: RebuildContext,
+  deps: SubscriptionsSeedDeps = anvilDeps(ctx)
+): Promise<void> {
+  await markRedemptionLoopRun();
+  for (const top of BEFORE_TOP_UPS) {
+    await deps.topUp(top.wallet, top.amount);
   }
   await updateSubscribeAllEditions(PROBE_CONSOLIDATION_KEYS[0], true);
 }
@@ -323,7 +351,8 @@ export async function seedSubscriptions(): Promise<void> {
  */
 export async function seedSubscriptionsSwitch(
   ctx: RebuildContext,
-  env: Readonly<Record<string, string | undefined>> = process.env
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  deps: SubscriptionsSeedDeps = anvilDeps(ctx)
 ): Promise<void> {
   const dir = ctx.seedFilesDir;
   if (!dir) {
@@ -359,12 +388,7 @@ export async function seedSubscriptionsSwitch(
   }
 
   // After it: a top-up the identity writer journals, and a checkpoint.
-  await topUp(
-    AFTER_TOP_UP.hash,
-    AFTER_TOP_UP.wallet,
-    AFTER_TOP_UP.amount,
-    (await topUpBlockBase()) + BEFORE_TOP_UPS.length + 1
-  );
+  await deps.topUp(AFTER_TOP_UP.wallet, AFTER_TOP_UP.amount);
   await runIdentityTopUpWriters();
   await journalCheckpoint();
 

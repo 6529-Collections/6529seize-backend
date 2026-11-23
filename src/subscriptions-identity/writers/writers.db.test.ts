@@ -20,6 +20,7 @@ import {
   SIGNED_RECORD_LOG_ENTRIES_TABLE,
   SUBSCRIPTIONS_MODE_TABLE,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+  SUBSCRIPTIONS_REDEEMED_TABLE,
   SUBSCRIPTIONS_NFTS_TABLE,
   SUBSCRIPTIONS_TOP_UP_TABLE,
   TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE,
@@ -57,6 +58,7 @@ import {
   REDEMPTION_CURSOR_ID
 } from '../opening/opening-load';
 import { suspendWithJournal } from '../opening/suspend';
+import { copyLegacyHistory } from '../opening/legacy-copy';
 import {
   JournalSource,
   rebuildIdentityTables,
@@ -2259,6 +2261,56 @@ describeWithSeed('identity writers after the switch', [], () => {
       `SELECT verdict FROM ${SUBSCRIPTIONS_ID_REPORTS_TABLE} WHERE kind = 'REDEMPTIONS'`
     );
     expect(report.verdict).toBe('MATCH');
+  });
+
+  it("copies the rollback copy's final rows and redemptions back from the identity tables exactly", async () => {
+    await seed();
+    await updateSubscriptions();
+    await execute(
+      `INSERT INTO ${TRANSACTIONS_TABLE}
+        (created_at, transaction, block, transaction_date, from_address, to_address,
+         contract, token_id, token_count, value, primary_proceeds, royalties,
+         gas_gwei, gas_price, gas_price_gwei, gas)
+        VALUES (NOW(), '0xmint', 50, '2026-11-26 15:00:00', :null, :lone, :c, :card,
+         1, 0, 0, 0, 0, 0, 0, 0)`,
+      { null: NULL_ADDRESS, lone: LONE, c: MEMES_CONTRACT, card: CARD }
+    );
+    await execute(
+      `INSERT INTO ${TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE} (created_at, block, timestamp)
+        VALUES (NOW(), 49, 0)`
+    );
+    await redeemSubscriptions();
+    await runIdentityRedemptionWriters();
+    // Every column but the rows' own write times on each side (created_at,
+    // and updated_at on final rows), which the manifest marks volatile.
+    const finalsOf = () =>
+      sqlExecutor.execute(
+        `SELECT id, consolidation_key, contract, token_id, subscribed_count,
+                airdrop_address, balance, subscribed_at, phase,
+                phase_subscriptions, phase_position, redeemed_count
+           FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} ORDER BY id`
+      );
+    const redeemedOf = () =>
+      sqlExecutor.execute(
+        `SELECT contract, token_id, address, \`transaction\`, transaction_date,
+                consolidation_key, value, balance_after, count
+           FROM ${SUBSCRIPTIONS_REDEEMED_TABLE}
+          ORDER BY \`transaction\`, consolidation_key`
+      );
+    const finals = await finalsOf();
+    const redeemed = await redeemedOf();
+    expect(finals.length).toBeGreaterThan(0);
+    expect(redeemed).toHaveLength(1);
+
+    await execute(`DELETE FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}`);
+    await execute(`DELETE FROM ${SUBSCRIPTIONS_REDEEMED_TABLE}`);
+    expect(await copyLegacyHistory()).toEqual({
+      finals: finals.length,
+      redemptions: 1,
+      leftOut: 0
+    });
+    expect(await finalsOf()).toEqual(finals);
+    expect(await redeemedOf()).toEqual(redeemed);
   });
 
   it('charges an airdrop once when a load commits after the run read its cursor', async () => {

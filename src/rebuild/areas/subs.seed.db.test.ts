@@ -17,9 +17,18 @@ import {
   sqlExecutor
 } from '@/sql-executor';
 import { subscriptionsIdentitySwitch } from '@/subscriptions-identity/identity/identity-switch';
-import { rebuildSubscriptionsInCheck } from '@/subscriptions-identity/opening/rebuild-check.steps';
+import {
+  rebuildLegacyHistoryInCheck,
+  rebuildLegacyStateInCheck,
+  rebuildSubscriptionsInCheck
+} from '@/subscriptions-identity/opening/rebuild-check.steps';
+import { persistTopUps } from '@/subscriptionsTopUpLoop/db.subscriptions_topup';
 import { describeWithSeed } from '@/tests/_setup/seed';
-import { seedSubscriptions, seedSubscriptionsSwitch } from './subs.seed';
+import {
+  SeedTopUp,
+  seedSubscriptions,
+  seedSubscriptionsSwitch
+} from './subs.seed';
 
 jest.mock('@/subscriptionsDaily/subscription-cache', () => ({
   invalidateUpcomingSubscriptionCaches: jest.fn()
@@ -49,9 +58,32 @@ const TABLES: readonly [string, string][] = [
   ['subscriptions_id_cursors', 'id, block']
 ];
 
-async function snapshot(): Promise<Record<string, unknown[]>> {
+/**
+ * The rollback copy the copy-back rebuilds, without the columns the
+ * manifest marks volatile (the rows' own times, the choices' ids).
+ */
+const LEGACY_TABLES: readonly [string, string][] = [
+  ['subscriptions_balances', 'consolidation_key, balance'],
+  [
+    'subscriptions_mode',
+    'consolidation_key, automatic, subscribe_all_editions'
+  ],
+  [
+    'subscriptions_nfts',
+    'consolidation_key, contract, token_id, subscribed_count, subscribed, automatic_subscription'
+  ],
+  ['subscriptions_nfts_final', '*'],
+  [
+    'subscriptions_redeemed',
+    'contract, token_id, address, `transaction`, transaction_date, consolidation_key, value, balance_after, count'
+  ]
+];
+
+async function snapshot(
+  tables: readonly [string, string][] = TABLES
+): Promise<Record<string, unknown[]>> {
   const rows: Record<string, unknown[]> = {};
-  for (const [table, columns] of TABLES) {
+  for (const [table, columns] of tables) {
     const all = await sqlExecutor.execute<Record<string, unknown>>(
       `select ${columns} from ${table}`
     );
@@ -139,6 +171,26 @@ afterAll(async () => {
   await disconnect();
 });
 
+/**
+ * Top-ups as the top-up loop's discovery credits them (persistTopUps), with
+ * made-up transaction hashes: the run makes them on anvil instead.
+ */
+function creditedTopUps(): SeedTopUp {
+  let block = 1_000;
+  return async (wallet, amountEth) => {
+    block += 1;
+    await persistTopUps([
+      {
+        hash: `0x${block.toString(16).padStart(64, '0')}`,
+        block,
+        transaction_date: new Date('2026-01-01T00:00:00Z'),
+        from_wallet: wallet,
+        amount: Number(amountEth)
+      }
+    ]);
+  };
+}
+
 describeWithSeed('the subscriptions rebuild check', [], () => {
   let dir: string;
   let server: http.Server;
@@ -163,18 +215,25 @@ describeWithSeed('the subscriptions rebuild check', [], () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('seeds a switched opening and rebuilds the identity tables from its files and journal alone', async () => {
+  it('seeds a switched opening and rebuilds the identity tables from its files and journal alone, then the rollback copy from them', async () => {
     const env = subsManifest.flags;
+    const deps = { topUp: creditedTopUps() };
     await seedProbeIdentities();
-    await seedSubscriptions();
-    await seedSubscriptionsSwitch(contextOf('subs.switch', files, dir), env);
+    await seedSubscriptions(contextOf('subs.seed', files, null), deps);
+    await seedSubscriptionsSwitch(
+      contextOf('subs.switch', files, dir),
+      env,
+      deps
+    );
     expect(await subscriptionsIdentitySwitch.writeModeOrFail()).toBe('TRUTH');
     const before = await snapshot();
     expect(before.subscriptions_id_balances).toHaveLength(2);
     expect(before.subscriptions_id_top_up).toHaveLength(3);
+    const legacyBefore = await snapshot(LEGACY_TABLES);
+    expect(legacyBefore.subscriptions_balances).toHaveLength(2);
 
-    // The drop: every table the rebuilder writes, from empty.
-    for (const [table] of TABLES) {
+    // The drop: every table the rebuilders write, from empty.
+    for (const [table] of [...TABLES, ...LEGACY_TABLES]) {
       await sqlExecutor.execute(`delete from ${table}`);
     }
     subscriptionsIdentitySwitch.invalidate();
@@ -186,19 +245,24 @@ describeWithSeed('the subscriptions rebuild check', [], () => {
     expect(await snapshot()).toEqual(before);
     subscriptionsIdentitySwitch.invalidate();
     expect(await subscriptionsIdentitySwitch.writeModeOrFail()).toBe('TRUTH');
+
+    await rebuildLegacyHistoryInCheck();
+    await rebuildLegacyStateInCheck();
+    expect(await snapshot(LEGACY_TABLES)).toEqual(legacyBefore);
   });
 
   it("refuses to close another record log lane's open entries into the journal's segment", async () => {
     const env = subsManifest.flags;
+    const deps = { topUp: creditedTopUps() };
     await seedProbeIdentities();
     // An entry of another record log lane, left open by its own seed.
     await sqlExecutor.execute(
       `insert into signed_record_log_entries (chain, lane, entry, created_at, segment_seq)
         values ('public', 'other', '{}', 0, null)`
     );
-    await seedSubscriptions();
+    await seedSubscriptions(contextOf('subs.seed', files, null), deps);
     await expect(
-      seedSubscriptionsSwitch(contextOf('subs.switch', files, dir), env)
+      seedSubscriptionsSwitch(contextOf('subs.switch', files, dir), env, deps)
     ).rejects.toThrow('Open record log entries of other lanes (other)');
   });
 
