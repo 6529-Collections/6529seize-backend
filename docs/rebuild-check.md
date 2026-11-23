@@ -242,6 +242,13 @@ Each `--source <name>=<spec>`:
     `--final` only when it has events and every one passes both.
     `PROVENANCE.json`'s `made_by` and `devnet_scenario` are labels the
     report shows; they never make a recording final.
+  - `6529 run rebuild:relay-capture` records a whole relay without a run:
+    every log it serves from its start (SUB `*`, then HIST to each log's
+    end) and every payload its events name. It takes `--relay <url>`,
+    `--dir <dir>`, `--net <name>`, `--made-by <text>` and, for a devnet's
+    recording, `--devnet-scenario <name>`. Its `reads.json` holds `*`, so
+    any run's reads replay. It needs Node and this repository, not MySQL: a
+    devnet's operator runs it next to the relay.
   - An area declares its checks in its manifest's `relayChecks`: the wave
     prefixes each covers and a module export
     `(item: RelayItem, flags) => RelayCheckResult` that runs what the

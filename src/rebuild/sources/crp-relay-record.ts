@@ -45,7 +45,7 @@ interface Seen {
 }
 
 /** A frame's fields other than `known`: what the relay sent beside the event. */
-function others(
+export function others(
   frame: Record<string, unknown>,
   known: readonly string[]
 ): Record<string, unknown> {
@@ -55,8 +55,8 @@ function others(
 }
 
 /** What a recorded run saw of the relay, written out when it stops. */
-class RelayRecording {
-  private readonly events = new Map<string, Seen>();
+export class RelayRecording {
+  private readonly events_ = new Map<string, Seen>();
   private readonly roles: Record<string, string[]> = {};
   private readonly reads = new Set<string>();
   private head: number | null = null;
@@ -75,9 +75,9 @@ class RelayRecording {
     rseq: number | null,
     extra: Record<string, unknown> = {}
   ): void {
-    const seen = this.events.get(event.id);
+    const seen = this.events_.get(event.id);
     if (!seen) {
-      this.events.set(event.id, {
+      this.events_.set(event.id, {
         rseq,
         event,
         grant,
@@ -88,6 +88,11 @@ class RelayRecording {
       seen.rseq = rseq;
       seen.extra = extra;
     }
+  }
+
+  /** The events recorded so far, in the order first seen. */
+  events(): StoredEvent['event'][] {
+    return Array.from(this.events_.values()).map((seen) => seen.event);
   }
 
   payload(hash: string, bytes: Buffer): void {
@@ -113,7 +118,7 @@ class RelayRecording {
    * read back takes the next rseq of its log.
    */
   save(): number {
-    const all = Array.from(this.events.values());
+    const all = Array.from(this.events_.values());
     const heads = new Map<string, number>();
     all.forEach((seen) => {
       const log = logOf(seen.event.wave);
@@ -156,7 +161,7 @@ class RelayRecording {
 }
 
 /** Fields of an EV frame and a HIST item the replay rebuilds itself. */
-const EV_FIELDS = [
+export const EV_FIELDS = [
   't',
   'sid',
   'wave',
@@ -166,7 +171,7 @@ const EV_FIELDS = [
   'grant',
   'recorded_at'
 ];
-const ITEM_FIELDS = ['rseq', 'event', 'grant', 'recorded_at'];
+export const ITEM_FIELDS = ['rseq', 'event', 'grant', 'recorded_at'];
 
 /** Notes what one frame from the client tells the recording. */
 function fromClient(

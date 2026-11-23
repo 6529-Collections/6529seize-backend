@@ -7,6 +7,7 @@ import {
   startCrpRelay,
   startCrpRelayReplay
 } from '@/rebuild/sources/crp-relay';
+import { captureRelay } from '@/rebuild/sources/crp-relay-capture';
 import { startCrpRelayRecord } from '@/rebuild/sources/crp-relay-record';
 import {
   checkFor,
@@ -347,6 +348,59 @@ describe('relay recordings', () => {
       expect(merged.problems()).toEqual([]);
     } finally {
       await merged.stop();
+    }
+  });
+
+  it('captures a whole relay into a recording a replay serves', async () => {
+    const relay = await startCrpRelay(path.join(root, 'relay'));
+    try {
+      const client = await connect(relay.url);
+      client.sendBinary(
+        { t: 'PAYLOAD_PUT', rid: 1, sha256: sha256(PAYLOAD) },
+        PAYLOAD
+      );
+      await client.waitFor((f) => f.t === 'ACK' && f.rid === 1);
+      const events = [
+        signedEvent({ wave: 'w1', kind: 1, seq: 1 }),
+        GOOD,
+        signedEvent({ wave: 'w1', kind: 1, seq: 2 })
+      ];
+      for (let i = 0; i < events.length; i++) {
+        client.send({ t: 'PUB', rid: i + 2, event: events[i], grant: GRANT });
+        await client.waitFor((f) => f.t === 'ACK' && f.rid === i + 2);
+      }
+      client.close();
+      const dir = path.join(root, 'captured');
+      const result = await captureRelay({
+        url: relay.url,
+        dir,
+        net: 'test-net',
+        madeBy: 'a capture of the harness relay',
+        devnetScenario: 'relay-world',
+        harnessWallet: READER,
+        quietMs: 300
+      });
+      expect(result).toEqual({ events: 3, logs: ['w1', 'dr'], payloads: 1 });
+      expect(readProvenance(dir)).toMatchObject({
+        made_by: 'a capture of the harness relay',
+        devnet_scenario: 'relay-world'
+      });
+      const replay = await replayOf([dir], [areaCheck(['w', 'dr/'])], root);
+      try {
+        expect(replay.info.provisional).toBe(false);
+        const reader = await connect(replay.url);
+        reader.send({ t: 'HIST', rid: 5, wave: 'w1', after: 0, limit: 10 });
+        const res = await reader.waitFor((f) => f.t === 'RES' && f.rid === 5);
+        expect((res.items as { rseq: number }[]).map((i) => i.rseq)).toEqual([
+          1, 2
+        ]);
+        reader.close();
+        expect(replay.problems()).toEqual([]);
+      } finally {
+        await replay.stop();
+      }
+    } finally {
+      await relay.stop();
     }
   });
 
