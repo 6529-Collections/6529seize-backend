@@ -1,4 +1,5 @@
 import { Column, Entity, PrimaryColumn } from 'typeorm';
+import { CONSOLIDATION_KEY_LENGTH } from '@/constants';
 import { IDENTITY_TDH_SYNC_STATE_TABLE } from '@/constants/db-tables';
 
 /**
@@ -40,7 +41,12 @@ export class IdentityTdhSyncStateEntity {
   readonly lease_until!: number;
 
   /** Same type as identities.consolidation_key. */
-  @Column({ type: 'varchar', length: 200, nullable: true, default: null })
+  @Column({
+    type: 'varchar',
+    length: CONSOLIDATION_KEY_LENGTH,
+    nullable: true,
+    default: null
+  })
   readonly walk_after!: string | null;
 
   @Column({ type: 'bigint', default: 0 })

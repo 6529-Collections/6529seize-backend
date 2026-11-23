@@ -69,6 +69,11 @@ export class HelpBotDailyActivityCreditQueueService extends LazyDbAccessCompatib
     },
     ctx: RequestContext = {}
   ): Promise<boolean> {
+    // With the credit meter off there is nothing to grant, so drop creation
+    // writes no request and sends no wakeup.
+    if (!this.creditsService.isEnabled()) {
+      return false;
+    }
     const timerName = `${this.constructor.name}->enqueueRequest`;
     ctx.timer?.start(timerName);
     try {

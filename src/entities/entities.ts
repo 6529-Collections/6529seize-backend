@@ -44,7 +44,12 @@ export {
   CompetitionPauseEntity,
   CompetitionVoteEntity
 } from './ICompetition';
-export { Consolidation, Delegation, NFTDelegationBlock } from './IDelegation';
+export {
+  Consolidation,
+  Delegation,
+  NFTDelegationBlock,
+  NFTDelegationLogAfterFreeze
+} from './IDelegation';
 export { DeletedDropEntity } from './IDeletedDrop';
 export { Distribution, DistributionNormalized } from './IDistribution';
 export { DistributionPhoto } from './IDistributionPhoto';
@@ -207,6 +212,7 @@ export {
 } from './ISubscription';
 export { SubscriptionCoverageAlertStateEntity } from './ISubscriptionCoverageAlertState';
 export { SubscriptionCoverageRefreshRequestEntity } from './ISubscriptionCoverageRefreshRequest';
+export { SubscriptionDeferredWriteEntity } from './ISubscriptionDeferredWrite';
 export {
   ConsolidatedTDH,
   ConsolidatedTDHEditions,
@@ -295,6 +301,11 @@ export { SubscriptionCacheInvalidationEntity } from './ISubscriptionCacheInvalid
 export { DeviceGrantEntity } from './IDeviceGrant';
 export { DeviceSignedEventEntity } from './IDeviceSignedEvent';
 export { DropAuthorSignatureEntity } from './IDropAuthorSignature';
+export { SignedRecordHeadEntity } from './ISignedRecordHead';
+export {
+  SignedRecordLogEntryEntity,
+  SignedRecordLogSegmentEntity
+} from './ISignedRecordLog';
 export * from './IE2ee';
 export {
   MemeCollaborationEntity,

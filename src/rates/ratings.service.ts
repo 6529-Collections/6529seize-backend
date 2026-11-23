@@ -47,6 +47,10 @@ import {
   NotFoundException
 } from '../exceptions';
 import { IdentitiesDb, identitiesDb } from '../identities/identities.db';
+import {
+  assertIdentityNotFrozen,
+  isIdentityFrozen
+} from '../identity-freeze/identity-freeze';
 import { ids } from '../ids';
 import { Logger } from '../logging';
 import { metricsRecorder, MetricsRecorder } from '../metrics/MetricsRecorder';
@@ -86,6 +90,27 @@ import {
 } from './ratings.db';
 
 const RATINGS_TRANSFER_PAGE_SIZE = 1000;
+
+/**
+ * REP and NIC (CIC) ratings move to the 6529 chain with the identities, so
+ * they freeze with them. WAVE_REP stays with the waves.
+ */
+export function isIdentityRatingMatter(matter: string): boolean {
+  return matter === RateMatter.REP || matter === RateMatter.CIC;
+}
+
+/**
+ * The over-rates loop leaves REP and NIC ratings as they are during the
+ * identity freeze: the chain imports them as they stand at the freeze.
+ */
+export function overRateMattersOutsideFreeze(
+  matters: OverRateMatter[],
+  frozen: boolean
+): OverRateMatter[] {
+  return frozen
+    ? matters.filter((it) => !isIdentityRatingMatter(it.matter))
+    : matters;
+}
 
 interface UpdateRatingInternalResult {
   readonly identityUpdates: IdentityUpdate[];
@@ -139,6 +164,9 @@ export class RatingsService {
   ) {
     try {
       ctx.timer?.start(`${this.constructor.name}->updateRating`);
+      if (isIdentityRatingMatter(request.matter)) {
+        assertIdentityNotFrozen();
+      }
       return await this.ratingsDb.executeNativeQueriesInTransaction(
         async (connection) => {
           const { identityUpdates } = await this.updateRatingInternal(request, {
@@ -594,7 +622,10 @@ export class RatingsService {
   public async reduceOverRates() {
     const start = Time.now();
     this.logger.info('Revoking rates for profiles which have lost credit');
-    const overRateMatters = await this.ratingsDb.getOverRateMatters();
+    const overRateMatters = overRateMattersOutsideFreeze(
+      await this.ratingsDb.getOverRateMatters(),
+      isIdentityFrozen()
+    );
     const overRateMattersByProfileIds = overRateMatters.reduce(
       (acc, overRateMatter) => {
         if (!acc[overRateMatter.rater_profile_id]) {
@@ -1103,6 +1134,9 @@ export class RatingsService {
     authContext: AuthenticationContext,
     apiRequest: ApiBulkRateRequest
   ): Promise<{ skipped: { identity: string; reason: string }[] }> {
+    if (isIdentityRatingMatter(String(apiRequest.matter))) {
+      assertIdentityNotFrozen();
+    }
     const result = await this.ratingsDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const actingAsId = authContext.getActingAsId();
@@ -1361,6 +1395,7 @@ export class RatingsService {
   }
 
   async bulkRep({ targets }: ApiBulkRepRequest, ctx: RequestContext) {
+    assertIdentityNotFrozen();
     const authenticationContext = ctx.authenticationContext!;
     // Everything that needs no target profile is checked before any target
     // profile is created.
