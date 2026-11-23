@@ -135,8 +135,12 @@ The job refuses, and writes nothing, when:
   covers the gap);
 - the replica may be as far behind its writer as the snapshot is after the
   freeze, or further, in milliseconds: its lag plus the age of the row it
-  was read from (`evidence.replicaLagMs`, `evidence.replicaLagAgeMs`), as
-  the README's rules for every export say;
+  was read from (`evidence.replicaLagMs`, `evidence.replicaLagAgeMs`), plus
+  1.5 s for the row's timestamp, as the README's rules for every export
+  say;
+- the lag row is itself older than the time since the freeze:
+  `LAST_UPDATE_TIMESTAMP` may not be in UTC, or the reader stopped updating
+  its row;
 - the lag can't be read (`evidence.replicaLagMs` `null`, the reason in
   `evidence.replicaLagError`), unless the run has
   `acceptUnknownReplicaLag: true`. What to do is in the README's "An
@@ -335,9 +339,18 @@ After a refusal, add only the fields its error named, as it names them. For
 example:
 `"acceptOverCredit":<N>,"acceptEditsAfterFreeze":<N>,"acceptRatingsChangedAfterFreeze":<N>,"acceptProfileWritesAfterFreeze":<N>,"acceptConsolidationsAfterFreeze":<N>,"acceptMissingExtraIds":<N>,"acceptUnmatchedCms":<N>`.
 Every count is exact, except `acceptConsolidationsAfterFreeze`, which is a
-ceiling. If the run is refused because the replica is behind, wait a few
-minutes and run it again. If it is refused because the lag can't be read,
-see the README's "An unknown replica lag".
+ceiling.
+
+If the run is refused because of the replica:
+
+- it says the replica may be behind its writer: wait a few minutes and run
+  it again;
+- it says the lag row is older than the time since the freeze: running
+  again won't help, as the age only grows. `LAST_UPDATE_TIMESTAMP` may not
+  be in UTC. Report it to the identity lead rather than running again until
+  01:30;
+- it says the lag can't be read: see the README's "An unknown replica
+  lag".
 
 If the CLI fails without a `FunctionError`, don't run it again: see "If the
 CLI fails".
@@ -375,9 +388,9 @@ replaced.
 - `host`, `readOnly: true` and `evidence`:
   - `transactionReadOnly` is true;
   - `serverReadOnly` or `innodbReadOnly` is true;
-  - `replicaLagMs` plus `replicaLagAgeMs` is below `snapshotGapMs`. Both
-    are `null` only in a run given `acceptUnknownReplicaLag`, with the
-    reason in `replicaLagError`.
+  - `replicaLagMs` plus `replicaLagAgeMs`, plus 1 500 ms, is below
+    `snapshotGapMs`. Both are `null` only in a run given
+    `acceptUnknownReplicaLag`, with the reason in `replicaLagError`.
 - `bucketPrivacy.owner` is the function's own account.
 - `identityFreezeAtSecret` is `prod/lambdas`, `identityFreezeAtReading` is
   `time`, and `identityFreezeAt` equals `frozenAt`.

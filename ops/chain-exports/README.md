@@ -30,7 +30,10 @@ a job the function knows, or it fails. Each export:
     comes from this reader's newest row in
     `information_schema.replica_host_status` (`evidence.replicaLagMs`). A
     lagging reader's row can be stale, so the row's age counts too
-    (`evidence.replicaLagAgeMs`): lag plus age must be below the gap. The
+    (`evidence.replicaLagAgeMs`): lag plus age, plus 1.5 s because the age
+    can read that much low (a row up to 1 s ahead reads as 0, and a
+    timestamp in whole seconds can round by 0.5 s), must be below the gap.
+    The
     age reads `LAST_UPDATE_TIMESTAMP` as UTC. That relies on Aurora's time
     zone being UTC, its default unless the cluster's `time_zone` parameter
     sets another; the snapshot's session is in UTC too. If that is wrong, a
@@ -278,8 +281,9 @@ Check in `out.json`:
   age well under a minute on a healthy reader. An age of hours means
   `LAST_UPDATE_TIMESTAMP` isn't in UTC: tell the identity lead before
   Tuesday, whose run would refuse. If they are `null`, the lag can't be
-  read, and `evidence.replicaLagError` says why. Run the rehearsal again first. If it is still `null`, follow
-  "An unknown replica lag" (top of this file): only `ER_UNKNOWN_TABLE 1109`
+  read, and `evidence.replicaLagError` says why. Run the rehearsal again
+  first. If it is still `null`, follow "An unknown replica lag" (top of
+  this file): only `ER_UNKNOWN_TABLE 1109`
   or `ER_UNKNOWN_SYSTEM_VARIABLE 1193` (the reader isn't Aurora) can be
   accepted on Tuesday, with `"acceptUnknownReplicaLag":true` and the
   identity lead's agreement; any other error is a fault to report. Settle
@@ -342,7 +346,11 @@ CLI fails".
 Start at least 2 minutes after the freeze; 00:05 UTC leaves room. A run
 before 00:02 is refused. Start before 01:30 UTC, or add
 `"acceptSnapshotGapMinutes":N`. If the run is refused because the replica
-is behind, wait a few minutes and run it again.
+may be behind, wait a few minutes and run it again. But if the refusal
+says the lag row is older than the time since the freeze, running again
+won't help, as the age only grows: `LAST_UPDATE_TIMESTAMP` may not be in
+UTC. Report it to the identity lead rather than running again until
+01:30.
 
 ### A publish that straddles the freeze
 
@@ -401,8 +409,8 @@ time. The manifest and the response record the writes
 - `bucketPrivacy.owner` is the function's own account.
 - `snapshotAt` and `snapshotGapMs`: the snapshot came at least 120 000 ms
   after the freeze (`snapshotGapSeconds` is the same, rounded).
-- `evidence.replicaLagMs` plus `evidence.replicaLagAgeMs` is below
-  `snapshotGapMs`. Both are `null` only in a run given
+- `evidence.replicaLagMs` plus `evidence.replicaLagAgeMs`, plus 1 500 ms,
+  is below `snapshotGapMs`. Both are `null` only in a run given
   `acceptUnknownReplicaLag`, with the reason in `evidence.replicaLagError`.
 - `latestSiteWrites` (publication, archive and pointer change) and
   `writesAfterFreeze`: no site writes after the freeze, except those listed

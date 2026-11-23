@@ -114,6 +114,11 @@ describe('openReadOnlySnapshot', () => {
       'REPLICA_LAG_IN_MILLISECONDS is null'
     ],
     [
+      'a negative lag',
+      [{ lag_ms: -1, age_ms: 10 }],
+      'REPLICA_LAG_IN_MILLISECONDS is -1'
+    ],
+    [
       'a row without a timestamp',
       [{ lag_ms: 20, age_ms: null }],
       "LAST_UPDATE_TIMESTAMP is null: the row's age is unknown"

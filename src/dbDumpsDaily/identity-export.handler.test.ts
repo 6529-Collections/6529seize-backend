@@ -1063,7 +1063,7 @@ describe('runIdentityExportJob', () => {
       'from a replica as far behind as the gap, to the millisecond',
       '2026-11-24T00:05:00.400Z',
       300_400,
-      'The replica may be 300400 ms behind its writer (a 300400 ms lag in a row 0 ms old), not less than the 300400 ms since the freeze'
+      "The replica may be 300400 ms behind its writer (a 300400 ms lag in a row 0 ms old), which with 1500 ms for the row's timestamp is not less than the 300400 ms since the freeze"
     ],
     [
       'too long after it',
@@ -1075,7 +1075,7 @@ describe('runIdentityExportJob', () => {
       'from a replica as far behind as the gap',
       '2026-11-24T00:05:00.000Z',
       300_000,
-      'The replica may be 300000 ms behind its writer (a 300000 ms lag in a row 0 ms old), not less than the 300000 ms since the freeze'
+      "The replica may be 300000 ms behind its writer (a 300000 ms lag in a row 0 ms old), which with 1500 ms for the row's timestamp is not less than the 300000 ms since the freeze"
     ]
   ])(
     'refuses a snapshot %s, writing nothing',
@@ -1117,11 +1117,15 @@ describe('runIdentityExportJob', () => {
     expect(() => checkReplicaLag(300_400, lag(300_400, 0))).toThrow(
       'not less than the 300400 ms since the freeze'
     );
-    expect(() => checkReplicaLag(300_400, lag(300_399, 0))).not.toThrow();
+    // With the row's 1.5 s margin, to the millisecond.
+    expect(() => checkReplicaLag(300_400, lag(298_900, 0))).toThrow(
+      "which with 1500 ms for the row's timestamp is not less than the 300400 ms since the freeze"
+    );
+    expect(() => checkReplicaLag(300_400, lag(298_899, 0))).not.toThrow();
     mockBuild.mockResolvedValue(document());
     const { deps, bodies } = setup({
       snapshotAt: '2026-11-24T00:05:00.400Z',
-      replicaLagMs: 300_399
+      replicaLagMs: 298_899
     });
     const result = await run(deps);
     expect([result.snapshotGapMs, result.snapshotGapSeconds]).toEqual([
@@ -1143,11 +1147,22 @@ describe('runIdentityExportJob', () => {
       replicaLagAgeMs: ageMs,
       replicaLagError: null
     });
-    // A small lag in an old row: lag plus age against the gap.
-    expect(() => checkReplicaLag(300_400, lag(100_000, 200_400))).toThrow(
-      'The replica may be 300400 ms behind its writer (a 100000 ms lag in a row 200400 ms old), not less than the 300400 ms since the freeze'
+    // A small lag in an old row: lag plus age, plus the 1.5 s margin,
+    // against the gap.
+    expect(() => checkReplicaLag(300_400, lag(100_000, 198_900))).toThrow(
+      "The replica may be 298900 ms behind its writer (a 100000 ms lag in a row 198900 ms old), which with 1500 ms for the row's timestamp is not less than the 300400 ms since the freeze: it may not hold every write made before the freeze. Wait a few minutes and run again."
     );
-    expect(() => checkReplicaLag(300_400, lag(100_000, 200_399))).not.toThrow();
+    expect(() => checkReplicaLag(300_400, lag(100_000, 198_899))).not.toThrow();
+    // A row older than the whole gap: checked first, and not a wait.
+    const old =
+      "The replica's lag row is 300400 ms old (a 0 ms lag), older than the 300400 ms since the freeze: LAST_UPDATE_TIMESTAMP may not be in UTC, or the reader stopped updating its row. Running again won't help, as the age only grows: report it to the identity lead rather than running again until 01:30.";
+    expect(() => checkReplicaLag(300_400, lag(0, 300_400))).toThrow(old);
+    expect(() => checkReplicaLag(300_400, lag(10, 400_000))).toThrow(
+      "The replica's lag row is 400000 ms old (a 10 ms lag), older than the 300400 ms since the freeze"
+    );
+    expect(() => checkReplicaLag(300_400, lag(0, 300_399))).toThrow(
+      'The replica may be 300399 ms behind its writer'
+    );
     // A lag with no age is an unknown lag.
     expect(() =>
       checkReplicaLag(300_400, {
@@ -1164,22 +1179,31 @@ describe('runIdentityExportJob', () => {
     const stale = setup({
       snapshotAt: '2026-11-24T00:05:00.000Z',
       replicaLagMs: 1_000,
-      replicaLagAgeMs: 299_000
+      replicaLagAgeMs: 297_500
     });
     await expect(run(stale.deps)).rejects.toThrow(
-      'The replica may be 300000 ms behind its writer (a 1000 ms lag in a row 299000 ms old)'
+      'The replica may be 298500 ms behind its writer (a 1000 ms lag in a row 297500 ms old)'
     );
     expect(mockBuild).not.toHaveBeenCalled();
     expect(stale.order).toEqual([]);
+    const stopped = setup({
+      snapshotAt: '2026-11-24T00:05:00.000Z',
+      replicaLagMs: 5,
+      replicaLagAgeMs: 3_600_000
+    });
+    await expect(run(stopped.deps)).rejects.toThrow(
+      "The replica's lag row is 3600000 ms old (a 5 ms lag), older than the 300000 ms since the freeze"
+    );
+    expect(stopped.order).toEqual([]);
     const fresh = setup({
       snapshotAt: '2026-11-24T00:05:00.000Z',
       replicaLagMs: 1_000,
-      replicaLagAgeMs: 298_999
+      replicaLagAgeMs: 297_499
     });
     const result = await run(fresh.deps);
     expect(result.evidence).toMatchObject({
       replicaLagMs: 1_000,
-      replicaLagAgeMs: 298_999
+      replicaLagAgeMs: 297_499
     });
   });
 
@@ -1250,9 +1274,9 @@ describe('runIdentityExportJob', () => {
     ).toBe(120);
     const behind = setup({
       snapshotAt: '2026-11-24T00:05:00.000Z',
-      replicaLagMs: 299_999
+      replicaLagMs: 298_499
     });
-    expect((await run(behind.deps)).evidence.replicaLagMs).toBe(299_999);
+    expect((await run(behind.deps)).evidence.replicaLagMs).toBe(298_499);
   });
 
   it('takes a later snapshot when the gap is acknowledged', async () => {
