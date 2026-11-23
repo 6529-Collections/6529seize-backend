@@ -370,7 +370,7 @@ async function resumeRequestedAt(client, runId) {
   const run = await client.getRun(runId);
   const requestedAt = Date.parse(run?.created_at);
   if (Number.isNaN(requestedAt)) {
-    throw new Error(`Cannot tell when resume run ${runId} was dispatched`);
+    throw new TypeError(`Cannot tell when resume run ${runId} was dispatched`);
   }
   return requestedAt;
 }
@@ -383,7 +383,7 @@ async function resumeRequestedAt(client, runId) {
  */
 async function resumeHalts(client, { by, runUrl, requestedBefore }) {
   if (!Number.isFinite(requestedBefore)) {
-    throw new Error('resumeHalts needs the resume dispatch time');
+    throw new TypeError('resumeHalts needs the resume dispatch time');
   }
   const uncleared = await findHaltIssues(client);
   const halts = uncleared.filter(
@@ -430,7 +430,9 @@ function validateLedgerGroups(groups, label) {
       entry.services.length > 0 &&
       Array.isArray(entry.shipped) &&
       !Number.isNaN(Date.parse(entry.opened_at));
-    if (!valid) throw new Error(`${label} has an invalid group for PR ${pull}`);
+    if (!valid) {
+      throw new TypeError(`${label} has an invalid group for PR ${pull}`);
+    }
   }
   return groups;
 }

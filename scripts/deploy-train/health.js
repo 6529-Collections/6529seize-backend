@@ -426,7 +426,8 @@ function createHealthChecker({
     const live = await liveState(region, functionName);
     // The new build is live from its LastModified; an older LastModified
     // means this deploy left the function's code and configuration alone.
-    const unchanged = !(live.liveAt >= deployStartedAt);
+    const unchanged =
+      !Number.isFinite(live.liveAt) || live.liveAt < deployStartedAt;
     const since = unchanged ? deployStartedAt : live.liveAt;
     // Only the observation window counts: a failure logged after it closed
     // is not this deploy's to judge.
@@ -466,12 +467,14 @@ function createHealthChecker({
     });
     // An unchanged function says nothing about this deploy: its existing
     // code running normally never counts as a verified new build.
-    const status =
-      unchanged && verdict.status === 'healthy' ? 'pending' : verdict.status;
-    const note =
-      unchanged && status === 'pending'
-        ? `${verdict.status === 'healthy' ? 'its existing code ran normally' : verdict.note}; this deploy did not change the function`
-        : verdict.note;
+    let { status, note } = verdict;
+    if (unchanged && status === 'healthy') {
+      status = 'pending';
+      note = 'its existing code ran normally';
+    }
+    if (unchanged && status === 'pending') {
+      note = `${note}; this deploy did not change the function`;
+    }
     return {
       ...verdict,
       status,

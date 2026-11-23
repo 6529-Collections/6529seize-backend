@@ -351,7 +351,11 @@ function positiveNumber(name, fallback, integer) {
   const raw = process.env[name];
   if (raw === undefined || raw === '') return fallback;
   const value = Number(raw);
-  if (!(value > 0) || (integer && !Number.isInteger(value))) {
+  if (
+    !Number.isFinite(value) ||
+    value <= 0 ||
+    (integer && !Number.isInteger(value))
+  ) {
     throw new Error(
       `${name} must be a positive ${integer ? 'integer' : 'number'}`
     );
