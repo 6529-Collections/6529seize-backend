@@ -11,6 +11,7 @@ import {
   RecordRuleError,
   RecordTypeHandler
 } from '@/signed-records/record-index';
+import { byCodeUnit } from '@/signed-records/record-order';
 
 /**
  * Collect rules as personal records. The person signs only their intent,
@@ -97,8 +98,8 @@ function exactFields(
   keys: readonly string[],
   what: string
 ): void {
-  const present = Object.keys(body).sort();
-  const wanted = [...keys].sort();
+  const present = Object.keys(body).sort(byCodeUnit);
+  const wanted = [...keys].sort(byCodeUnit);
   if (
     present.length !== wanted.length ||
     present.some((key, i) => key !== wanted[i])

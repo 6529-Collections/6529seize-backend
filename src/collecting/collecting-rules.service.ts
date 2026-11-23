@@ -69,6 +69,28 @@ async function sentTransactionOnChain(
     : null;
 }
 
+/**
+ * Whether two rule definitions are the same terms: compared in their one
+ * stored form (normalizeRuleDefinition, expiry not judged), so a record
+ * signed with a checksummed wallet or targets in plan order matches the
+ * saved rule. Terms that don't pass the checks are compared as they are.
+ */
+export function sameRuleTerms(
+  a: CollectingRuleDefinition,
+  b: CollectingRuleDefinition
+): boolean {
+  const canonical = (definition: CollectingRuleDefinition): string => {
+    try {
+      return canonicalizeJson(
+        normalizeRuleDefinition(definition, null) as never
+      );
+    } catch {
+      return canonicalizeJson(definition as never);
+    }
+  };
+  return canonical(a) === canonical(b);
+}
+
 /** A sent purchase to release as never mined, with what Ethereum shows. */
 export interface UnminedRelease {
   readonly transactionHash: string;
@@ -627,28 +649,22 @@ export class CollectingRulesService {
     },
     connection: ConnectionWrapper<unknown>,
     opts: {
-      readonly log: boolean;
+      // Whether to log it in the collect lane; yes unless replayed.
+      readonly log?: boolean;
       // A replay's logged server time; live, now.
       readonly at?: number;
       // Live: today's checks of a new rule's terms, run only on create.
       readonly beforeCreate?: () => Promise<void>;
-    } = { log: true }
+    } = {}
   ): Promise<void> {
     const at = opts.at ?? this.now();
-    const row = await this.getDb().oneOrNull<RuleRow>(
-      `SELECT * FROM ${COLLECT_RULES_TABLE} WHERE id=:id FOR UPDATE`,
-      { id: change.id },
-      { wrappedConnection: connection }
-    );
+    const row = await this.ruleOfRecord(change, connection);
     if (row) {
       const rule = readRule(row);
       if (row.profile_id !== change.profileId) {
         ruleConflict('Saved rule not found.');
       }
-      if (
-        canonicalizeJson(change.definition as never) !==
-        canonicalizeJson(rule.definition as never)
-      ) {
+      if (!sameRuleTerms(change.definition, rule.definition)) {
         ruleConflict("A saved rule's terms can't change.");
       }
       const userPaused =
@@ -684,7 +700,7 @@ export class CollectingRulesService {
         { wrappedConnection: connection }
       );
     }
-    if (opts.log) {
+    if (opts.log ?? true) {
       await this.log(
         {
           kind: 'rule',
@@ -698,6 +714,31 @@ export class CollectingRulesService {
         connection
       );
     }
+  }
+
+  /**
+   * The saved rule a `collect.rule` record names, locked: by its id, or else
+   * a rule of the same profile created through today's route with that key
+   * as its Idempotency-Key. The page keys a new rule's record by that key,
+   * so a create's shadow companion, or the same create sent again in
+   * primary, lands on the rule today's route made. Rule ids stay as they
+   * are; a rebuild finds the rule the same way.
+   */
+  private async ruleOfRecord(
+    change: { readonly id: string; readonly profileId: string },
+    connection: ConnectionWrapper<unknown>
+  ): Promise<RuleRow | null> {
+    const byId = await this.getDb().oneOrNull<RuleRow>(
+      `SELECT * FROM ${COLLECT_RULES_TABLE} WHERE id=:id FOR UPDATE`,
+      { id: change.id },
+      { wrappedConnection: connection }
+    );
+    if (byId) return byId;
+    return this.getDb().oneOrNull<RuleRow>(
+      `SELECT * FROM ${COLLECT_RULES_TABLE} WHERE profile_id=:profileId AND idempotency_key=:key FOR UPDATE`,
+      { profileId: change.profileId, key: change.id },
+      { wrappedConnection: connection }
+    );
   }
 
   /** A rule as the import at the switch carried it, stored as it was. */

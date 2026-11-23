@@ -7,8 +7,10 @@ import {
 } from '@/collecting/collecting-rules.log';
 import type { SentEvidence } from '@/collecting/collecting-rules.chain-check';
 import { nonceTransactionOnChain } from '@/collecting/collecting-rules.nonce-search';
-import { collectingRulesService } from '@/collecting/collecting-rules.service';
-import { canonicalizeJson } from '@/profile-cms/protocol/v1/canonical-json';
+import {
+  collectingRulesService,
+  sameRuleTerms
+} from '@/collecting/collecting-rules.service';
 import {
   compareOrderKeys,
   importOrderKey,
@@ -362,8 +364,7 @@ function signedRuleProblem(
     signed.rule !== body.rule ||
     signed.profileId !== body.profile_id ||
     signed.paused !== body.paused ||
-    canonicalizeJson(signed.definition as never) !==
-      canonicalizeJson(body.definition as never)
+    !sameRuleTerms(signed.definition, body.definition)
   ) {
     return `the entry differs from record ${body.event_id} as signed`;
   }

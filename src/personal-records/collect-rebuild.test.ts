@@ -2,6 +2,9 @@ import type { SentEvidence } from '@/collecting/collecting-rules.chain-check';
 import type { CollectLogBody } from '@/collecting/collecting-rules.log';
 import { parseCollectLogBody } from '@/collecting/collecting-rules.log';
 import type { CollectingRuleDefinition } from '@/collecting/collecting-rules.types';
+import { getAddress } from 'ethers';
+import { collectingAssetKey } from '@/collecting/collecting-analysis';
+import { MEMES_CONTRACT } from '@/constants';
 import { importOrderKey } from '@/signed-records/record-order';
 import type { SignedCollectRule } from './collect-rule-records';
 import { replayCollectLog } from './personal-rebuild.step';
@@ -109,6 +112,38 @@ describe('replayCollectLog', () => {
     });
     expect(replayed).toEqual(['rule@10500', 'sent@9800', 'settle@12000+chain']);
     expect(result).toEqual({ applied: 3, refused: [] });
+  });
+
+  it('compares terms in their stored form: wallet case and target order are no difference', async () => {
+    const wallet = getAddress('0x000000000000000000000000000000000000abcd');
+    const target = (token: string) => ({
+      asset_key: collectingAssetKey(MEMES_CONTRACT, token),
+      target_quantity: '1',
+      maximum_unit_price_wei: '100'
+    });
+    const terms = (lower: boolean): CollectingRuleDefinition => ({
+      profile_id: 'profile-1',
+      funding_wallet: lower ? wallet.toLowerCase() : wallet,
+      recipient: lower ? wallet.toLowerCase() : wallet,
+      plan_id: null,
+      analysis_id: null,
+      targets: lower ? [target('1'), target('2')] : [target('2'), target('1')],
+      max_total_cost_wei: '1000',
+      max_gas_reserve_wei: '10',
+      expires_at: 2_000_000_000_000,
+      max_actions: 2
+    });
+    const result = await replayCollectLog({
+      entries: [rule(20_000, '0x09', { definition: terms(true) })],
+      importOrder: IMPORT,
+      records: new Map([
+        ['0x09', { anchor: 200, claimedTime: 20_000, eventId: '0x09' }]
+      ]),
+      signed: new Map([['0x09', signed({ definition: terms(false) })]]),
+      chain: null,
+      replay: async () => undefined
+    });
+    expect(result).toEqual({ applied: 1, refused: [] });
   });
 
   it('refuses a rule entry that is not what the person signed', async () => {

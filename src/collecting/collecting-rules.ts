@@ -66,17 +66,22 @@ function validateAsset(assetKey: string, count: string): void {
     throw new BadRequestException('Unique NFTs require quantity one');
 }
 
+/**
+ * A rule's terms checked and in their one stored form: wallets lowercased,
+ * targets in asset order. With `now` null the expiry is not judged (terms
+ * compared with a saved rule's, whatever the time).
+ */
 export function normalizeRuleDefinition(
   input: CollectingRuleDefinition,
-  now: number
+  now: number | null
 ): CollectingRuleDefinition {
   validId(input.profile_id, 100);
   if (input.plan_id !== null) validId(input.plan_id, 36);
   if (input.analysis_id !== null) validId(input.analysis_id, 64);
   if (
     !Number.isSafeInteger(input.expires_at) ||
-    input.expires_at <= now ||
-    input.expires_at > now + 365 * 86400000
+    (now !== null &&
+      (input.expires_at <= now || input.expires_at > now + 365 * 86400000))
   )
     throw new BadRequestException(
       'Rule expiry must be within the next 365 days'
