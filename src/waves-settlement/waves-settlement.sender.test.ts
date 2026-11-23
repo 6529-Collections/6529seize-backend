@@ -726,6 +726,30 @@ describe('WavesSettlementSender', () => {
     expect(store.rows.get(D1)?.status).toBe('pending');
   });
 
+  it.each([504, 409, null])(
+    'takes an outcome_unknown submit (status %p) as unclear: no refusal, no second request while it may run',
+    async (status) => {
+      const { gateway, store, run, later } = setup();
+      gateway.due(D1);
+      gateway.submitAnswer = () =>
+        new ChainGatewayError(
+          '/v1/submit: the outcome is unknown (bad_answer): ask getTx',
+          status,
+          'outcome_unknown',
+          '/v1/submit'
+        );
+      expect(await run()).toEqual(expect.objectContaining({ errors: 1 }));
+      expect(store.rows.get(D1)).toEqual(
+        expect.objectContaining({ status: 'submitting', attempts: 1 })
+      );
+      // Not seen yet: the sender waits for it, and sends nothing new.
+      gateway.submitAnswer = () => ({ txId: '', accepted: true });
+      later();
+      expect(await run()).toEqual(expect.objectContaining({ waiting: 1 }));
+      expect(gateway.drafts).toHaveLength(1);
+    }
+  );
+
   it('saves a transaction status it does not know as unknown', async () => {
     const { gateway, store, run, later } = setup();
     gateway.due(D1);

@@ -617,6 +617,9 @@ function stepOf(settlement: ChainSettlement): Step | null {
 function isRefusal(error: unknown): boolean {
   return (
     error instanceof ChainGatewayError &&
+    // The client's word that the node may have taken it, whatever the
+    // status: the row stays submitting and is asked about with getTx.
+    error.code !== 'outcome_unknown' &&
     error.status !== null &&
     error.status >= 400 &&
     error.status < 500 &&
