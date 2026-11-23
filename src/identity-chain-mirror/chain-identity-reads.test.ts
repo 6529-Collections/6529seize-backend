@@ -169,6 +169,14 @@ describe('ChainIdentityReads', () => {
     });
   });
 
+  it('counts no xTDH in a level the chain does not give', async () => {
+    const { reads } = setup({
+      identities: new Map([[P, chainIdentity({ level: null as never })]])
+    });
+    // REP 500 from the chain plus TDH 3000 from the index; xTDH 12.5 is left out.
+    expect((await reads.byWallet(W(2)))?.level_raw).toBe(3500);
+  });
+
   it('answers a wallet the chain holds no identity for from the index, if unmapped', async () => {
     const unimported = row({
       consolidation_key: W(9),

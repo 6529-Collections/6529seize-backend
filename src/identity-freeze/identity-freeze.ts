@@ -8,9 +8,7 @@ import { Time } from '@/time';
  * profiles, handles, profile statements, REP and NIC ratings and REP/NIC
  * proxy allocations: the chain imports them as they stand at the freeze,
  * and from switch-on people change them on the chain through this site.
- * Waves, drops and wave proxies are not frozen, nor are the help bot's
- * credits: a 6529.io site feature kept in its own REP category, which the
- * chain does not import.
+ * Waves, drops and wave proxies are not frozen.
  *
  * The freeze is on when FEATURE_IDENTITY_FROZEN is `true`, or from the time
  * in IDENTITY_FREEZE_AT (ISO 8601 UTC such as `2026-11-24T00:00:00Z`, or Unix
