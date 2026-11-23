@@ -163,8 +163,19 @@ describe('delegations loop and the identity mirror', () => {
     process.env.FEATURE_IDENTITY_CHAIN_MIRROR = 'true';
     delete process.env.FEATURE_IDENTITY_ON_CHAIN;
     process.env.IDENTITY_SWITCH_ON_AT = '2099-01-01T00:00:00Z';
+    jest.mocked(delegations.findDelegationTransactions).mockResolvedValue({
+      latestBlock: 100,
+      latestBlockTimestamp: 1,
+      consolidations: [{ block: 99, wallet1: A, wallet2: C } as never],
+      registrations: [{ use_case: 1, wallet1: A } as never],
+      revocation: []
+    });
+    jest.mocked(getAffectedWallets).mockResolvedValue(new Set<string>());
     await invoke();
     expect(identityChainMirror.run).not.toHaveBeenCalled();
+    // Before switch-on NFTDelegation's events still apply.
+    expect(db.persistConsolidations).toHaveBeenCalled();
+    expect(db.persistDelegations).toHaveBeenCalled();
     expect(db.persistNftDelegationBlock).toHaveBeenCalledWith(100, 1);
   });
 

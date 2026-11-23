@@ -960,8 +960,8 @@ with a post of the same wallet.
 From switch-on the delegations loop also runs the identity mirror
 (`src/identity-chain-mirror`, `FEATURE_IDENTITY_CHAIN_MIRROR`) after its
 NFTDelegation work, also when that work failed (the failure still fails the
-run). With the flag on, NFTDelegation's events are read so the checkpoint
-moves on but not applied, before the freeze block as after it (on the freeze
+run). From switch-on, with the flag on, NFTDelegation's events are read so
+the checkpoint moves on but not applied, before the freeze block as after it (on the freeze
 path too, which records the logs past the freeze block as before):
 consolidations, delegations, re-keying and primary addresses come from the
 chain; ENS still runs. Each step's
