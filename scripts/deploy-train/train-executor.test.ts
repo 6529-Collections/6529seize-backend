@@ -45,6 +45,7 @@ type FakeOptions = {
   busyChecks?: number;
   reportRunId?: boolean;
   failedStep?: string;
+  steps?: { name: string; conclusion: string | null }[];
 };
 
 function harness(options: FakeOptions = {}) {
@@ -101,7 +102,7 @@ function harness(options: FakeOptions = {}) {
       return [
         {
           name: 'Build and deploy',
-          steps: [
+          steps: options.steps ?? [
             {
               name: options.failedStep ?? 'Deploy service',
               conclusion: 'failure'
@@ -239,14 +240,66 @@ describe('deploy train executor', () => {
   it('treats a refused stale commit as main moving, not a failure', async () => {
     const h = harness({
       conclusions: { nftsLoop: 'failure' },
-      heads: [TARGET, TARGET, 'e'.repeat(40)]
+      heads: [TARGET, TARGET, 'e'.repeat(40)],
+      steps: [
+        {
+          name: 'Validate dispatch inputs before using credentials',
+          conclusion: 'failure'
+        },
+        { name: 'Deploy service', conclusion: 'skipped' }
+      ]
     });
     const result = await h.run(trainPlan([item('nftsLoop', [1])]));
     expect(result.stop).toMatchObject({ reason: 'main-moved', halt: false });
   });
 
-  it('stops softly when someone cancels the deploy', async () => {
-    const h = harness({ conclusions: { nftsLoop: 'cancelled' } });
+  it('halts when a deploy fails after changing production, even if main moved', async () => {
+    const h = harness({
+      conclusions: { nftsLoop: 'failure' },
+      heads: [TARGET, TARGET, 'e'.repeat(40)],
+      steps: [
+        {
+          name: 'Validate dispatch inputs before using credentials',
+          conclusion: 'success'
+        },
+        { name: 'Deploy service', conclusion: 'success' },
+        { name: 'Verify immutable Lambda code', conclusion: 'failure' }
+      ]
+    });
+    const result = await h.run(trainPlan([item('nftsLoop', [1])]));
+    expect(result.stop).toMatchObject({
+      reason: 'deploy-failed',
+      halt: true,
+      detail: 'nftsLoop deploy failure at Verify immutable Lambda code'
+    });
+  });
+
+  it('halts when a cancelled deploy had started changing production', async () => {
+    const h = harness({
+      conclusions: { nftsLoop: 'cancelled' },
+      steps: [
+        { name: 'Deploy service', conclusion: 'cancelled' },
+        { name: 'Verify immutable Lambda code', conclusion: 'skipped' }
+      ]
+    });
+    const result = await h.run(trainPlan([item('nftsLoop', [1])]));
+    expect(result.stop).toMatchObject({
+      reason: 'deploy-cancelled-after-change',
+      halt: true
+    });
+  });
+
+  it('stops softly when someone cancels the deploy before it changed anything', async () => {
+    const h = harness({
+      conclusions: { nftsLoop: 'cancelled' },
+      steps: [
+        {
+          name: 'Install root dependencies for manual build',
+          conclusion: 'cancelled'
+        },
+        { name: 'Deploy service', conclusion: 'skipped' }
+      ]
+    });
     const result = await h.run(trainPlan([item('nftsLoop', [1])]));
     expect(result.stop).toMatchObject({
       reason: 'deploy-cancelled',

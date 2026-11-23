@@ -213,32 +213,43 @@ async function activeDeployRuns(client, environment) {
   });
 }
 
+const HISTORY_FALLBACK_PAGES = 5;
+
+function isFailed(conclusion) {
+  return conclusion === 'failure' || conclusion === 'timed_out';
+}
+
+/** A halt recorded by `run`, or null when its Ship job did not fail. */
+async function haltFromRun(client, run, shipJobName) {
+  if (!isFailed(run.conclusion)) return null;
+  const jobs = await client.listRunJobs(run.id);
+  const ship = jobs.find((job) => job.name === shipJobName);
+  if (!ship || !isFailed(ship.conclusion)) return null;
+  return { run_id: run.id, run_url: run.html_url, created_at: run.created_at };
+}
+
 /**
  * Fallback halt detection from run history, for a halt whose issue could
- * not be opened: the most recent completed train run whose `ship` job
- * failed or timed out, unless a later `resume` run cleared it. It reads
- * only recent runs; the halt issue is what makes a halt persist.
+ * not be opened: the most recent completed train run whose Ship job
+ * failed or timed out, unless a later resume run cleared it. It pages
+ * through the newest HISTORY_FALLBACK_PAGES pages of 100 runs (several
+ * days of trains); the halt issue is what makes a halt persist beyond that.
  */
 async function findUnclearedHalt(client, { currentRunId, shipJobName }) {
-  const result = await client.listWorkflowRuns(TRAIN_WORKFLOW, {
-    per_page: '50'
-  });
-  const runs = (result.workflow_runs || [])
-    .filter((run) => run.id !== currentRunId && run.status === 'completed')
-    .sort((left, right) => right.created_at.localeCompare(left.created_at));
-  for (const run of runs) {
-    if (['failure', 'timed_out'].includes(run.conclusion)) {
-      const jobs = await client.listRunJobs(run.id);
-      const ship = jobs.find((job) => job.name === shipJobName);
-      if (ship && ['failure', 'timed_out'].includes(ship.conclusion)) {
-        return {
-          run_id: run.id,
-          run_url: run.html_url,
-          created_at: run.created_at
-        };
-      }
+  for (let page = 1; page <= HISTORY_FALLBACK_PAGES; page++) {
+    const result = await client.listWorkflowRuns(TRAIN_WORKFLOW, {
+      per_page: '100',
+      page: String(page)
+    });
+    const runs = (result.workflow_runs || [])
+      .filter((run) => run.id !== currentRunId && run.status === 'completed')
+      .sort((left, right) => right.created_at.localeCompare(left.created_at));
+    for (const run of runs) {
+      const halt = await haltFromRun(client, run, shipJobName);
+      if (halt) return halt;
+      if ((run.display_title || '').endsWith('(resume)')) return null;
     }
-    if (/\(resume\)/.test(run.display_title || '')) return null;
+    if ((result.workflow_runs || []).length < 100) return null;
   }
   return null;
 }

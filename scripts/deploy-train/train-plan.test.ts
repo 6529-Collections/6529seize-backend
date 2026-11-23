@@ -312,6 +312,69 @@ describe('deploy train plan', () => {
     ).toEqual(['teamLoop']);
   });
 
+  it('defers a service whose change includes commits without a pull request', () => {
+    const partly = {
+      ...record('teamLoop', { prs: [123] }),
+      unattributed_commits: ['d'.repeat(40)]
+    };
+    const result = plan([partly, record('nftsLoop')]);
+    expect(result.deferred).toEqual([
+      expect.objectContaining({
+        service: 'teamLoop',
+        kind: 'release-notes',
+        reason: expect.stringContaining('dddddddddd')
+      })
+    ]);
+    expect(
+      result.ship.map((item: { service: string }) => item.service)
+    ).toEqual(['nftsLoop']);
+  });
+
+  it('says no service is eligible when everything behind is deferred', () => {
+    const report = require('./report');
+    const blocked = plan([record('royaltiesLoop')], {
+      now: Date.parse('2026-11-24T02:00:00Z')
+    });
+    expect(report.renderPlanMarkdown(blocked)).toContain(
+      'No service is eligible to ship'
+    );
+    expect(report.renderPlanMarkdown(plan([]))).toContain(
+      'Nothing to ship: every automatic service matches the target.'
+    );
+  });
+
+  it('reports deployments ahead of the target without claiming a match', () => {
+    const report = require('./report');
+    const drift = {
+      environment: 'prod',
+      target_sha: TARGET,
+      target_committed_at: '2026-11-24T00:00:00Z',
+      generated_at: '2026-11-24T10:00:00Z',
+      stats: {
+        services: 2,
+        seconds: 1,
+        builds: 0,
+        cache_hits: 0,
+        reused_target_bundle: 0
+      },
+      services: [
+        record('teamLoop', { status: 'ahead' }),
+        record('nftsLoop', { status: 'current' })
+      ]
+    };
+    const alert = report.driftAlert(drift);
+    expect(alert.status).toBe('success');
+    expect(alert.title).toBe(
+      'Backend drift check: no prod service behind main bbbbbbbbbb'
+    );
+    expect(alert.description).toContain(
+      'Deployed ahead of main bbbbbbbbbb: teamLoop.'
+    );
+    expect(report.renderDriftMarkdown(drift)).toContain(
+      'No service is behind the target or unassessed.'
+    );
+  });
+
   it('lists never-deployed and ahead services without shipping them', () => {
     const result = plan([
       record('signedRecordLogLoop', { status: 'never-deployed' }),

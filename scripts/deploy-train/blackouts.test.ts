@@ -176,6 +176,24 @@ describe('team windows', () => {
     ).toBe(true);
   });
 
+  it('catches a window shorter than a minute inside the look-ahead', () => {
+    const windows = parse(
+      '[{"start":"2026-11-25T14:00:10Z","end":"2026-11-25T14:00:20Z","services":["api"],"reason":"blip"}]'
+    );
+    const result = blackouts.evaluateBlackout(catalogService('api'), {
+      now: at('2026-11-25T14:00:00Z'),
+      teamWindows: windows
+    });
+    expect(result.blocked).toBe(true);
+    expect(result.from).toBe('2026-11-25T14:00Z');
+    expect(
+      blackouts.evaluateBlackout(catalogService('api'), {
+        now: at('2026-11-25T14:00:20Z'),
+        teamWindows: windows
+      }).blocked
+    ).toBe(false);
+  });
+
   it('holds team-freeze services during any announced window', () => {
     const windows = parse(
       '[{"start":"2026-11-25T14:00Z","end":"2026-11-25T18:00Z","services":["claimsBuilder"],"reason":"Mint"}]'

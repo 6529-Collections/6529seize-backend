@@ -160,7 +160,7 @@ Services the plan defers instead of shipping:
 | Deferred because | What to do |
 | --- | --- |
 | `deploy_train.mode` is `manual` in the catalog | Deploy it by hand when ready. |
-| No merged PR explains the change | Deploy it by hand with release-note metadata. |
+| No merged PR explains the change, or part of it | Deploy it by hand with release-note metadata. |
 | More than 100 PRs, or groups too large for one dispatch | Catch it up by hand once; the train then keeps it current. |
 | A temporary hold names it | Finish the hand-run step, then clear the hold. |
 | A quiet window is active within 15 minutes | Nothing; a later train ships it. |
@@ -318,9 +318,18 @@ Only a `Deploy train` dispatch with `resume=true` clears it: its Resume job
 comments on the issue, labels it `deploy-train-resumed` and closes it. Closing
 the issue by hand does not resume the train. If the plan cannot read the halt
 issues or the deploy history from GitHub, it fails and ships nothing; the next
-trigger tries again. Main moving, another deploy running for more than 30
-minutes, a cancelled deploy run, or the 300-minute budget only stop the
-current train.
+trigger tries again. If the halt issue itself cannot be opened, later trains
+still find the failed Ship job among the newest 500 train runs.
+
+A `Deploy a service` run that fails or is cancelled halts the train unless the
+run shows it changed nothing in production: its source guard refused a commit
+because `main` moved, or it was cancelled before any deploy step started.
+Those cases, like `main` moving between deploys, another deploy running for
+more than 30 minutes, or the 300-minute budget, only stop the current train.
+
+Re-running only the Ship job of a train does not deploy: its plan belongs to
+an earlier attempt of the run. Dispatch a new train instead (and resume first
+if it halted).
 
 Rollback is manual: revert or fix forward on `main` (the train ships it after
 the resume), or dispatch `Deploy a service` for the affected service once

@@ -23,6 +23,17 @@ const SOFT_STOPS = new Set([
   'deploy-cancelled'
 ]);
 
+// The "Deploy a service" step that refuses a commit other than
+// expected_source_sha, before any credentials or deploy step.
+const SOURCE_GUARD_STEP = 'Validate dispatch inputs before using credentials';
+
+/** "Deploy a service" steps that change production. */
+function isProductionStep(name) {
+  return (
+    name.startsWith('Deploy ') || name === 'Run lambda and validate result'
+  );
+}
+
 function deployInputs(plan, item, groups) {
   return {
     environment: plan.environment,
@@ -154,15 +165,6 @@ class TrainRun {
       if (this.clock() >= deadline) return { ...run, conclusion: 'timed_out' };
       await this.sleep(this.options.pollSeconds * 1000);
     }
-  }
-
-  async failedSteps(runId) {
-    const jobs = await this.client.listRunJobs(runId);
-    return jobs.flatMap((job) =>
-      (job.steps || [])
-        .filter((step) => step.conclusion === 'failure')
-        .map((step) => step.name)
-    );
   }
 
   /** A health check that cannot run is itself a failure: fail closed. */
@@ -305,27 +307,55 @@ class TrainRun {
     return { runId };
   }
 
+  /**
+   * Classifies a deploy run that did not succeed. Only a run whose source
+   * guard refused the commit before any deploy step, while main moved, is
+   * a soft stop; so is a cancellation before any step changed production.
+   * Anything else may have changed production and halts the train.
+   */
   async recordFailedRun(item, run, runSummary) {
     this.result.failed_run = runSummary;
-    const headAfter = await this.client.getBranchSha(this.branch);
-    if (headAfter !== this.plan.target_sha) {
+    const jobs = await this.client.listRunJobs(runSummary.run_id);
+    const steps = jobs.flatMap((job) => job.steps || []);
+    const failed = steps
+      .filter((step) => step.conclusion === 'failure')
+      .map((step) => step.name);
+    const changing = steps
+      .filter(
+        (step) =>
+          isProductionStep(step.name) &&
+          step.conclusion &&
+          step.conclusion !== 'skipped'
+      )
+      .map((step) => step.name);
+    if (failed.includes(SOURCE_GUARD_STEP) && changing.length === 0) {
+      const headAfter = await this.client.getBranchSha(this.branch);
+      if (headAfter !== this.plan.target_sha) {
+        this.stop(
+          'main-moved',
+          `${this.branch} moved during the deploy of ${item.service}; the deploy workflow refused the stale commit before deploying`,
+          item
+        );
+        return;
+      }
+    }
+    if (run.conclusion === 'cancelled' && changing.length === 0) {
       this.stop(
-        'main-moved',
-        `${this.branch} moved during the deploy of ${item.service}; the deploy workflow refused the stale commit`,
+        'deploy-cancelled',
+        `the ${item.service} deploy was cancelled before it changed production`,
         item
       );
       return;
     }
     if (run.conclusion === 'cancelled') {
       this.stop(
-        'deploy-cancelled',
-        `the ${item.service} deploy was cancelled`,
+        'deploy-cancelled-after-change',
+        `the ${item.service} deploy was cancelled after ${changing.join(', ')} started; production may have changed without verification`,
         item
       );
       return;
     }
-    const steps = await this.failedSteps(runSummary.run_id);
-    const where = steps.length > 0 ? ` at ${steps.join(', ')}` : '';
+    const where = failed.length > 0 ? ` at ${failed.join(', ')}` : '';
     this.stop(
       'deploy-failed',
       `${item.service} deploy ${run.conclusion}${where}`,

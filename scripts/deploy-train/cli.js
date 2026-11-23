@@ -276,6 +276,10 @@ async function commandPlan(flags) {
       ? notes.concat('resume requested: earlier halts are cleared')
       : notes
   });
+  // The Ship job refuses a plan from an earlier attempt of the run, so
+  // re-running only Ship cannot replay a plan made before a halt.
+  plan.run_id = process.env.GITHUB_RUN_ID || null;
+  plan.run_attempt = process.env.GITHUB_RUN_ATTEMPT || null;
   const markdown = report.renderPlanMarkdown(plan);
   writeFileIfRequested(flags.json, `${JSON.stringify(plan, null, 2)}\n`);
   writeFileIfRequested(
@@ -308,7 +312,12 @@ function validatePlanForShip(plan) {
   if (plan.mode !== 'prod' || plan.halt || plan.environment !== 'prod') {
     throw new Error('Only an unhalted prod plan for prod can ship');
   }
-  if (process.env.DEPLOY_TRAIN_MODE !== 'prod') {
+  const { mode } = resolveMode({
+    variable: process.env.DEPLOY_TRAIN_MODE,
+    requested: '',
+    eventName: 'push'
+  });
+  if (mode !== 'prod') {
     throw new Error('DEPLOY_TRAIN_MODE is no longer prod; refusing to ship');
   }
   gitLib.assertSha(plan.target_sha, 'plan target');
@@ -371,10 +380,39 @@ function healthSettings() {
 }
 
 /** Runs a planned prod train through the deploy workflow. */
+/**
+ * Why this Ship job must not run the plan, or null. A plan from an earlier
+ * attempt of the run (Ship re-run on its own) or a halt recorded since the
+ * plan was made both need a fresh train, and a resume for the halt.
+ */
+async function staleShipReason(plan, client) {
+  const attempt = process.env.GITHUB_RUN_ATTEMPT || null;
+  if (plan.run_attempt !== attempt) {
+    return `the plan comes from run attempt ${plan.run_attempt}, not ${attempt}; dispatch a new Deploy train instead of re-running Ship`;
+  }
+  // The halt issues are the ledger; a resume run has already cleared them.
+  const [halt] = await github.findHaltIssues(client);
+  return halt
+    ? `the train is halted (issue #${halt.number}); resume it with a resume=true dispatch`
+    : null;
+}
+
 async function commandShip(flags) {
   if (typeof flags.plan !== 'string') throw new Error('--plan is required');
   const plan = JSON.parse(fs.readFileSync(flags.plan, 'utf8'));
   const catalog = validatePlanForShip(plan);
+  const client = githubClient(flags);
+  const stale = await staleShipReason(plan, client);
+  if (stale) {
+    // Not a failure: nothing was deployed and no new halt is recorded.
+    log(`not shipping: ${stale}`);
+    writeGithubOutputs({
+      halted: 'false',
+      shipped_count: 0,
+      ...alertOutputs(null)
+    });
+    return;
+  }
   const settings = healthSettings();
   const { teamWindows, holds } = controlsAt(plan.target_sha, catalog);
   const { runTrain } = require('./executor');
@@ -387,7 +425,7 @@ async function commandShip(flags) {
     const result = await runTrain({
       plan,
       catalog,
-      client: githubClient(flags),
+      client,
       health: createHealthChecker({
         aws,
         environment: plan.environment,
@@ -483,4 +521,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseArgs, main, writeGithubOutputs };
+module.exports = { parseArgs, main, writeGithubOutputs, staleShipReason };

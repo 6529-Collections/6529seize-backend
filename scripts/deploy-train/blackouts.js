@@ -260,47 +260,74 @@ function isoMinute(time) {
   return `${new Date(time).toISOString().slice(0, 16)}Z`;
 }
 
-function blackoutReasonsAt(service, time, teamWindows) {
-  const reasons = [];
+/** Catalog `window` rules covering `service` at `time`. */
+function catalogReasonsAt(service, time) {
   const date = new Date(time);
-  const activeTeamWindows = teamWindows.filter(
-    (window) => window.start <= time && time < window.end
-  );
-  for (const rule of service.deploy_blackouts || []) {
-    if (rule.type === 'window' && isWindowRuleActive(rule, date)) {
-      reasons.push(describeRule(rule));
-    }
-    if (rule.type === 'team-freeze' && activeTeamWindows.length > 0) {
-      reasons.push(
-        `${rule.reason} (team window: ${activeTeamWindows[0].reason})`
-      );
-    }
-  }
-  for (const window of activeTeamWindows) {
-    if (
-      window.services.includes('*') ||
-      window.services.includes(service.name)
-    ) {
-      reasons.push(
-        `team window until ${isoMinute(window.end)}: ${window.reason}${provenance(window)}`
-      );
-    }
-  }
-  return reasons;
+  return (service.deploy_blackouts || [])
+    .filter((rule) => rule.type === 'window' && isWindowRuleActive(rule, date))
+    .map(describeRule);
 }
 
 /**
- * A service is blocked when any of its blackouts, or an announced team
- * window, is active at any minute from `now` to `now + lookaheadMinutes`.
- * The look-ahead keeps a deploy from starting just before a quiet window.
+ * Team windows that overlap [from, until], compared as intervals so a
+ * window shorter than a minute between two checks is never missed.
+ */
+function overlappingTeamWindows(teamWindows, from, until) {
+  return teamWindows.filter(
+    (window) => window.start <= until && window.end > from
+  );
+}
+
+/** Reasons team windows block `service` between `from` and `until`. */
+function teamWindowReasons(service, teamWindows, from, until) {
+  const overlapping = overlappingTeamWindows(teamWindows, from, until);
+  if (overlapping.length === 0) return { reasons: [], start: null };
+  const reasons = [];
+  const freeze = (service.deploy_blackouts || []).find(
+    (rule) => rule.type === 'team-freeze'
+  );
+  if (freeze) {
+    reasons.push(`${freeze.reason} (team window: ${overlapping[0].reason})`);
+  }
+  const covering = overlapping.filter(
+    (window) =>
+      window.services.includes('*') || window.services.includes(service.name)
+  );
+  for (const window of covering) {
+    reasons.push(
+      `team window until ${isoMinute(window.end)}: ${window.reason}${provenance(window)}`
+    );
+  }
+  const relevant = freeze ? overlapping : covering;
+  const start = relevant.length
+    ? Math.max(from, Math.min(...relevant.map((window) => window.start)))
+    : null;
+  return { reasons, start };
+}
+
+/**
+ * A service is blocked when a team window that covers it (or any team
+ * window, for team-freeze services) overlaps `now` to `now +
+ * lookaheadMinutes`, or a catalog quiet window is active at any minute in
+ * that span. The look-ahead keeps a deploy from starting just before a
+ * quiet window.
  */
 function evaluateBlackout(
   service,
   { now, teamWindows = [], lookaheadMinutes = DEFAULT_LOOKAHEAD_MINUTES }
 ) {
+  const until = now + lookaheadMinutes * MINUTE_MS;
+  const team = teamWindowReasons(service, teamWindows, now, until);
+  if (team.reasons.length > 0) {
+    return {
+      blocked: true,
+      reasons: team.reasons,
+      from: isoMinute(team.start)
+    };
+  }
   for (let minute = 0; minute <= lookaheadMinutes; minute++) {
     const time = now + minute * MINUTE_MS;
-    const reasons = blackoutReasonsAt(service, time, teamWindows);
+    const reasons = catalogReasonsAt(service, time);
     if (reasons.length > 0) {
       return { blocked: true, reasons, from: isoMinute(time) };
     }

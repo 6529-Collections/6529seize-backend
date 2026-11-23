@@ -145,6 +145,24 @@ describe('workflow hygiene', () => {
     }
   });
 
+  it('knows the deploy workflow steps that refuse a stale commit and change production', () => {
+    const names = deploy.jobs['build-and-deploy'].steps.map(
+      (step: { name: string }) => step.name
+    );
+    expect(names[0]).toBe('Validate dispatch inputs before using credentials');
+    const executor = readFileSync(path.join(__dirname, 'executor.js'), 'utf8');
+    expect(executor).toContain(
+      "const SOURCE_GUARD_STEP = 'Validate dispatch inputs before using credentials';"
+    );
+    for (const name of [
+      'Deploy service',
+      'Deploy API',
+      'Run lambda and validate result'
+    ]) {
+      expect(names).toContain(name);
+    }
+  });
+
   it('leaves the deploy workflow serialised per environment', () => {
     expect(deploy.concurrency).toEqual({
       group: 'deploy-control-${{ github.event.inputs.environment }}',

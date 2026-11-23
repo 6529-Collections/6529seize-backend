@@ -115,6 +115,15 @@ function holdReason(record, service, blackoutOptions) {
         'no merged pull request explains the change; deploy it by hand with release-note metadata'
     };
   }
+  const unattributed = record.unattributed_commits || [];
+  if (unattributed.length > 0) {
+    // Shipping would deploy changes the release notes cannot describe.
+    const commits = unattributed.map((sha) => sha.slice(0, 10)).join(', ');
+    return {
+      kind: 'release-notes',
+      reason: `commits without a merged pull request also change it (${commits}); deploy it by hand with release-note metadata`
+    };
+  }
   if (record.prs.length > MAX_GROUPS_PER_DEPLOY) {
     return {
       kind: 'release-notes',

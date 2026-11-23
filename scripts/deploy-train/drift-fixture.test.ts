@@ -241,6 +241,31 @@ describe('drift computation on a fixture repository', () => {
     });
   });
 
+  it('reports an unparseable build script for its service only', async () => {
+    write(
+      root,
+      'src/deltaLoop/package.json',
+      JSON.stringify({ scripts: { build: "esbuild 'index.ts --bundle" } })
+    );
+    shas.push(
+      commit(root, 'Break the delta build (#5)', '2026-11-05T10:00:00Z')
+    );
+    const result = await drift(shas.length - 1, {
+      alphaLoop: 3,
+      betaLoop: 3,
+      gammaLoop: 3,
+      deltaLoop: 3
+    });
+    const statuses = new Map(
+      result.services.map((record: { service: string; status: string }) => [
+        record.service,
+        record.status
+      ])
+    );
+    expect(statuses.get('deltaLoop')).toBe('error');
+    expect(statuses.get('alphaLoop')).toBe('current');
+  });
+
   it('reads pull request numbers from merge and squash subjects', () => {
     expect(
       pullRequestFromSubject('Merge pull request #2549 from org/branch')

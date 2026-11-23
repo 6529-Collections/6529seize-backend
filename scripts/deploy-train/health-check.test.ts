@@ -171,7 +171,9 @@ describe('health checker', () => {
       if (pattern === health.INVOCATION_LOG_PATTERN) {
         return message.startsWith('REPORT RequestId');
       }
-      if (pattern === health.AUTH_LOG_PATTERN) return message.includes('AUTH ');
+      if (pattern.startsWith('"AUTH ')) {
+        return message.includes(pattern.slice(1, -1));
+      }
       return /Access denied|Cannot find module|Status: error/.test(message);
     };
     return {
@@ -198,6 +200,7 @@ describe('health checker', () => {
           events: events
             .filter((event) => requested.indexOf(event.stream) !== -1)
             .filter((event) => matches(pattern, event.message))
+            .slice(0, Number(value(args, '--max-items')))
             .map((event) => ({ message: event.message }))
         };
       }
@@ -266,6 +269,38 @@ describe('health checker', () => {
       expect(args).toContain('new');
       expect(args).not.toContain('old');
     }
+  });
+
+  it('finds a password login even after many IAM logins', async () => {
+    const aws = fakeAws({
+      streams: [newStream],
+      events: [
+        { stream: 'new', message: 'REPORT RequestId: 3 Duration: 5 ms' },
+        ...Array.from({ length: 60 }, () => ({
+          stream: 'new',
+          message: '[DB HOST h] [AUTH IAM]'
+        })),
+        { stream: 'new', message: '[DB HOST h] [AUTH PASSWORD]' }
+      ]
+    });
+    const verdict = await checker(aws).check(item, DEPLOY_STARTED);
+    expect(verdict.status).toBe('unhealthy');
+    expect(verdict.findings[0]).toContain('[AUTH PASSWORD]');
+  });
+
+  it('starts error metrics at the first whole minute after the new build went live', async () => {
+    const aws = fakeAws({
+      lastModified: '2026-11-24T10:02:30.000+0000',
+      streams: [newStream]
+    });
+    await checker(aws).check(item, DEPLOY_STARTED);
+    const errorCall = aws.calls.find(
+      (args) =>
+        args[0] === 'cloudwatch' &&
+        args.indexOf('Errors') !== -1 &&
+        args.indexOf('60') !== -1
+    )!;
+    expect(errorCall).toContain('2026-11-24T10:03:00.000Z');
   });
 
   it('halts on a startup failure in the new build', async () => {

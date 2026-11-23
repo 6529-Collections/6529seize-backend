@@ -383,9 +383,18 @@ async function computeDrift(options) {
   }
 
   try {
+    // A build script that cannot be parsed is reported for its service by
+    // analyze(), which reads the spec again inside its error boundary.
+    const specOrNull = (name) => {
+      try {
+        return target.buildSpec(name);
+      } catch {
+        return null;
+      }
+    };
     const targetSpecs = services.map((service) => [
       service,
-      target.buildSpec(service.name)
+      specOrNull(service.name)
     ]);
     // Build every target bundle first; a failure here is reported per
     // service when analyze() awaits the same entry again.

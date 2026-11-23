@@ -11,7 +11,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // halts the train.
 const BAD_LOG_PATTERN =
   '?"Access denied" ?ER_ACCESS_DENIED ?"Cannot find module" ?ImportModuleError ?"Status: error" ?"Status: timeout"';
-const AUTH_LOG_PATTERN = '?"AUTH IAM" ?"AUTH PASSWORD"';
+const AUTH_MODES = ['IAM', 'PASSWORD'];
+const MINUTE_MS = 60 * 1000;
+
+function authLogPattern(mode) {
+  return `"AUTH ${mode}"`;
+}
 const INVOCATION_LOG_PATTERN = '"REPORT RequestId"';
 const TOKEN_REFRESH_MS = 4 * 60 * 1000;
 const UNCHECKED_PROFILES = new Set([
@@ -407,22 +412,31 @@ function createHealthChecker({
     const streams = await newStreams(region, functionName, since);
     const lines = (pattern) =>
       streamLines(region, functionName, streams, since, pattern);
+    // CloudWatch rounds metric periods down to the minute; start at the
+    // first whole minute after the new build went live so no bucket mixes
+    // in errors from the old build.
+    const metricsFrom = Math.ceil(since / MINUTE_MS) * MINUTE_MS;
+    const metric = (name) =>
+      metricsFrom < end
+        ? metricSum(region, functionName, name, metricsFrom, end, 60)
+        : 0;
+    // Each auth mode is queried on its own, so a wrong-mode login is found
+    // however many expected-mode logins came before it.
+    const authLines = [];
+    if (item.expects_db_auth) {
+      for (const mode of AUTH_MODES) {
+        authLines.push(...(await lines(authLogPattern(mode))));
+      }
+    }
     const verdict = evaluateFunctionHealth({
       updateStatus: live.updateStatus,
       newInvocations: (await lines(INVOCATION_LOG_PATTERN)).length,
-      invocations: await metricSum(
-        region,
-        functionName,
-        'Invocations',
-        since,
-        end,
-        60
-      ),
-      errors: await metricSum(region, functionName, 'Errors', since, end, 60),
+      invocations: await metric('Invocations'),
+      errors: await metric('Errors'),
       baselineInvocations: baseline.invocations,
       baselineErrors: baseline.errors,
       badLines: await lines(BAD_LOG_PATTERN),
-      authLines: item.expects_db_auth ? await lines(AUTH_LOG_PATTERN) : [],
+      authLines,
       expectsDbAuth: item.expects_db_auth,
       expectedAuth,
       thresholds
@@ -464,7 +478,7 @@ function createHealthChecker({
 
 module.exports = {
   BAD_LOG_PATTERN,
-  AUTH_LOG_PATTERN,
+  authLogPattern,
   INVOCATION_LOG_PATTERN,
   DEFAULT_ERROR_THRESHOLDS,
   evaluateFunctionHealth,

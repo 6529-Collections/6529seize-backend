@@ -81,9 +81,7 @@ function renderDriftMarkdown(drift, now = Date.parse(drift.generated_at)) {
     ''
   ];
   if (groups.behind.length === 0 && groups.error.length === 0) {
-    lines.push(
-      'Nothing is behind: every deployed artifact matches the target.'
-    );
+    lines.push('No service is behind the target or unassessed.');
   } else {
     lines.push(
       `### Behind (${groups.behind.length}), in deploy order`,
@@ -142,11 +140,15 @@ function driftAlert(drift, now = Date.parse(drift.generated_at)) {
   const branch = `${branchLabel(drift.environment)} ${shortSha(drift.target_sha)}`;
   const neverDeployed = serviceNames(groups['never-deployed']);
   if (behind === 0 && errors === 0) {
-    const notes = neverDeployed ? ` Never deployed: ${neverDeployed}.` : '';
+    const notes = [`${groups.current.length} services current.`];
+    if (groups.ahead.length > 0) {
+      notes.push(`Deployed ahead of ${branch}: ${serviceNames(groups.ahead)}.`);
+    }
+    if (neverDeployed) notes.push(`Never deployed: ${neverDeployed}.`);
     return {
       status: 'success',
-      title: `Backend drift check: every ${drift.environment} service matches ${branch}`,
-      description: `${groups.current.length} services current.${notes}`
+      title: `Backend drift check: no ${drift.environment} service behind ${branch}`,
+      description: notes.join(' ')
     };
   }
   const lines = groups.behind.map((record) => behindLine(record, now));
@@ -197,7 +199,9 @@ function renderPlanMarkdown(plan, now = Date.parse(plan.generated_at)) {
       ''
     );
   }
-  if (plan.ship.length === 0) {
+  if (plan.ship.length === 0 && plan.deferred.length > 0) {
+    lines.push('No service is eligible to ship; see the deferrals below.');
+  } else if (plan.ship.length === 0) {
     lines.push('Nothing to ship: every automatic service matches the target.');
   } else {
     lines.push(
@@ -254,6 +258,7 @@ const STOP_LABELS = {
   busy: 'another deploy kept running',
   'time-budget': 'time budget used',
   'deploy-cancelled': 'deploy cancelled',
+  'deploy-cancelled-after-change': 'deploy cancelled after changing production',
   'deploy-failed': 'deploy failed',
   'deploy-unknown': 'deploy run not found',
   unhealthy: 'health check failed'

@@ -404,6 +404,26 @@ describe('persistent halts', () => {
     expect(await github.findHaltIssues(client)).toEqual([]);
   });
 
+  it('refuses to ship a plan from an earlier attempt or after a halt', async () => {
+    const { staleShipReason } = require('./cli');
+    const previous = process.env.GITHUB_RUN_ATTEMPT;
+    process.env.GITHUB_RUN_ATTEMPT = '2';
+    try {
+      const { client } = fakeGitHub([]);
+      expect(await staleShipReason({ run_attempt: '1' }, client)).toContain(
+        'run attempt 1, not 2'
+      );
+      expect(await staleShipReason({ run_attempt: '2' }, client)).toBeNull();
+      await github.recordHalt(client, { title: 't', body: 'b' });
+      expect(await staleShipReason({ run_attempt: '2' }, client)).toContain(
+        'halted (issue #1)'
+      );
+    } finally {
+      if (previous === undefined) delete process.env.GITHUB_RUN_ATTEMPT;
+      else process.env.GITHUB_RUN_ATTEMPT = previous;
+    }
+  });
+
   it('describes the halt and how to resume in the issue', () => {
     const issue = report.haltIssue(
       { target_sha: 'f'.repeat(40) },
