@@ -9,7 +9,8 @@ import {
   AGGREGATED_ACTIVITY_MEMES_TABLE,
   AGGREGATED_ACTIVITY_TABLE,
   CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE,
-  CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE
+  CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE,
+  CONSOLIDATION_KEY_LENGTH
 } from '@/constants';
 
 export abstract class AggregatedActivityBase {
@@ -187,7 +188,7 @@ export class AggregatedActivity extends AggregatedActivityBreakdown {
 
 @Entity(CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE)
 export class ConsolidatedAggregatedActivity extends AggregatedActivityBreakdown {
-  @PrimaryColumn({ type: 'varchar', length: 200 })
+  @PrimaryColumn({ type: 'varchar', length: CONSOLIDATION_KEY_LENGTH })
   consolidation_key!: string;
 }
 
@@ -205,6 +206,6 @@ export class ConsolidatedAggregatedActivityMemes extends AggregatedActivityBase 
   @PrimaryColumn({ type: 'int' })
   season!: number;
 
-  @PrimaryColumn({ type: 'varchar', length: 200 })
+  @PrimaryColumn({ type: 'varchar', length: CONSOLIDATION_KEY_LENGTH })
   consolidation_key!: string;
 }

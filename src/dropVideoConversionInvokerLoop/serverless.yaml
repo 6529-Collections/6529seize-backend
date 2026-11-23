@@ -107,6 +107,7 @@ resources:
           Fn::GetAtt: [DropsVideoCreatedRule, Arn]
           
     DropVideoConversionInvokerLoopOOMFilter:
+      DependsOn: DropVideoConversionInvokerLoopLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/dropVideoConversionInvokerLoop

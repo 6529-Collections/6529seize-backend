@@ -71,6 +71,7 @@ resources:
                 ArnEquals:
                   aws:SourceArn: arn:aws:sns:${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):region}:${aws:accountId}:tdh-calculation-done.fifo
     OverRatesRevocationLoopOOMFilter:
+      DependsOn: OverRatesRevocationLoopLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/overRatesRevocationLoop

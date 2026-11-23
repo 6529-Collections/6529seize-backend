@@ -142,6 +142,10 @@ export function mapSubscriptionCoverageToApi(
       calculation_version: coverage.forecast.calculationVersion,
       forecast_fingerprint: coverage.fingerprint,
       unknown_reason: mapUnknownReason(coverage.unknownReason)
-    }
+    },
+    funded_drops_at_current_settings:
+      coverage.fundedDropsAtCurrentSettings?.count ?? null,
+    funded_drops_at_current_settings_capped:
+      coverage.fundedDropsAtCurrentSettings?.capped ?? null
   };
 }
