@@ -132,8 +132,9 @@ export class ChainPendingOperationsDb extends LazyDbAccessCompatibleService {
 
   /**
    * Moves an operation from status `from` to `to`. With `ifOutcome`, only
-   * while its result's outcome is still that one. Returns false, changing
-   * nothing, otherwise (another request moved it first).
+   * while its result's outcome is still that one; with `ifCheckedAt`, only
+   * while its result's checkedAt is still that one (null: none). Returns
+   * false, changing nothing, otherwise (another request moved it first).
    */
   async setStatus(
     txId: string,
@@ -141,6 +142,7 @@ export class ChainPendingOperationsDb extends LazyDbAccessCompatibleService {
       readonly from: PendingStatus;
       readonly to: PendingStatus;
       readonly ifOutcome?: 'unknown' | 'accepted';
+      readonly ifCheckedAt?: number | null;
     },
     fields: { result_json?: string | null; last_error?: string | null },
     now: number,
@@ -154,12 +156,17 @@ export class ChainPendingOperationsDb extends LazyDbAccessCompatibleService {
          change.ifOutcome
            ? ` and json_unquote(json_extract(result_json, '$.outcome')) = :ifOutcome`
            : ''
+       }${
+         change.ifCheckedAt !== undefined
+           ? ` and json_extract(result_json, '$.checkedAt') <=> :ifCheckedAt`
+           : ''
        }`,
       {
         txId,
         from: change.from,
         to: change.to,
         ifOutcome: change.ifOutcome ?? null,
+        ifCheckedAt: change.ifCheckedAt ?? null,
         result_json: fields.result_json ?? null,
         last_error: fields.last_error ?? null,
         now
@@ -167,6 +174,24 @@ export class ChainPendingOperationsDb extends LazyDbAccessCompatibleService {
       conn ? { wrappedConnection: conn } : undefined
     );
     return this.db.getAffectedRows(result) === 1;
+  }
+
+  /**
+   * Locks the joins this wallet holds as the identity's wallet (role 0),
+   * which is who creates them, until the transaction ends: two of its posts
+   * then count its open joins one after the other. In a read committed
+   * transaction this locks only those signer rows, found by the signer
+   * index, and no gaps, so other wallets' posts never wait on it. A wallet
+   * with no join yet locks nothing, and needs no lock: the cap is far.
+   */
+  async lockHeldBy(wallet: string, conn: Conn) {
+    await this.db.execute(
+      `select tx_id from ${CHAIN_PENDING_OPERATION_SIGNERS_TABLE}
+       where signer = :wallet and role = 0
+       for update`,
+      { wallet },
+      { wrappedConnection: conn }
+    );
   }
 
   /** How many joins this wallet created are pending and unexpired. */

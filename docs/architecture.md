@@ -904,7 +904,8 @@ when the chain can't be read, or doesn't answer in 5 s), its window is one
 the chain takes (at most `maxValidityMs` from `GET /v1/ops`, a day when
 unreadable), its envelope is at most 4 KiB and its typed data 8 KiB, and
 the wallet holding it has fewer than five pending joins (429
-`TOO_MANY_PENDING`). Posting a join again once it was sent answers its
+`TOO_MANY_PENDING`; counted under a lock on that wallet's joins, so two
+posts at once can't both pass at four). Posting a join again once it was sent answers its
 state, also after its expiry. No signature is ever returned
 (`signers[].sig` is always null; `signed` says who has signed): the relay
 submits, and a signature handed out could finish a join its signer had
@@ -937,10 +938,14 @@ result name for a join that ran and failed, or `expired`). It stays
 is lost. A read of a sent join (`GET /chain/pending/:tx_id`) asks the
 chain, bounded, at most every 10 s (the time is kept in `result.checkedAt`),
 until it is final: held in a block or the pool, `accepted` with the
-chain's `tx`; run and failed, `FAILED`; held nowhere as of a chain time
+chain's `tx`; run and failed, `FAILED`, with `last_error` worded as the
+node words a refusal (`0x0b07 REJOIN_WAIT`, and `, detail N` when it has
+one); held nowhere as of a chain time
 five minutes past its expiry (the answer's read time, not this backend's
-clock), `FAILED` (`expired`). Each of these writes, and the send's own,
-applies only while the outcome is still the one read. Only an answer that
+clock), `FAILED` (`expired`). Each of these writes applies only while
+the outcome and `checkedAt` are still the ones read (every one moves
+`checkedAt` on), so a slower read never undoes a faster one; the send's
+own applies only while the outcome is still unknown. Only an answer that
 the node surely didn't take it puts it back to `PENDING` for a retry, and a
 refusal of the operation marks it `FAILED`. A cancel takes the same lock
 and moves it only from `PENDING`, so a withdrawn join is never sent and a

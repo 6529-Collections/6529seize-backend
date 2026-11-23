@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { Wallet } from 'ethers';
+import { CustomApiCompliantException } from '@/exceptions';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import {
@@ -44,6 +45,13 @@ function join(txId = TX): PendingOperation {
 }
 
 /**
+ * How often a barrier reads information_schema.innodb_trx. InnoDB refreshes
+ * what that table shows only once it has gone unread for 0.1 s, so a read
+ * every 10 ms would see the first answer for ever.
+ */
+const INNODB_TRX_POLL_MS = 200;
+
+/**
  * Resolves once the transaction on the connection `threadOf()` names is
  * blocked waiting for a row lock: the database's own state, not a sleep.
  */
@@ -67,7 +75,23 @@ async function untilWaitingForALock(
         `The cancel never waited for the claim's lock: ${JSON.stringify(trx)}`
       );
     }
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, INNODB_TRX_POLL_MS));
+  }
+}
+
+/** Resolves once any transaction is blocked waiting for a row lock. */
+async function untilAnyWaitsForALock(): Promise<void> {
+  const deadline = Date.now() + 20_000;
+  for (;;) {
+    const row = await sqlExecutor.oneOrNull<{ n: number }>(
+      `select count(*) as n from information_schema.innodb_trx
+       where trx_state = 'LOCK WAIT'`
+    );
+    if (Number(row?.n) > 0) return;
+    if (Date.now() > deadline) {
+      throw new Error('No post waited for the lock');
+    }
+    await new Promise((resolve) => setTimeout(resolve, INNODB_TRX_POLL_MS));
   }
 }
 
@@ -327,5 +351,89 @@ describeWithSeed('ChainPendingOperationsDb', [], () => {
     expect(op?.status).toBe('SUBMITTED');
     expect(op?.signers.map((it) => !!it.sig)).toEqual([true, true]);
     expect(gateway.submit).toHaveBeenCalledTimes(1);
+  });
+  it("counts one wallet's open joins one post at a time, under its lock", async () => {
+    const anchor = new Wallet('0x' + '11'.repeat(32));
+    const me = anchor.address.toLowerCase();
+    const expiresAt = Date.now() + 3_600_000;
+    const open = (n: number): PendingOperation => ({
+      ...join('0x' + (0x60 + n).toString(16).repeat(32)),
+      created_by: me,
+      expires_at: expiresAt,
+      signers: [
+        {
+          role: 0,
+          key_type: 1,
+          signer: me,
+          sig: '0x' + 'aa'.repeat(65),
+          signed_at: 1_000
+        },
+        { role: 4, key_type: 1, signer: B, sig: null, signed_at: null }
+      ]
+    });
+    await sqlExecutor.executeNativeQueriesInTransaction(async (conn) => {
+      for (let n = 0; n < 4; n++) await db.insert(open(n), conn);
+    });
+    const relay = new ChainRelayService(
+      {
+        submit: jest.fn(),
+        getTx: jest.fn(),
+        getOps: jest.fn(async () => ({ maxValidityMs: 86_400_000 })),
+        getIdentityByWallet: jest.fn(async () => ({
+          principalId: JOIN_PRINCIPAL
+        }))
+      } as never,
+      db
+    );
+    const fifth = joinFixture({
+      signer: anchor.address,
+      joiner: '0x' + '77'.repeat(20),
+      expiresAt
+    });
+    // Another post of this wallet holds its lock while its own fifth join
+    // lands: this one waits, then counts five.
+    let locked!: () => void;
+    const lockTaken = new Promise<void>((resolve) => {
+      locked = resolve;
+    });
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const other = sqlExecutor.executeNativeQueriesInTransaction(
+      async (conn) => {
+        await db.lockHeldBy(me, conn);
+        await db.insert(open(4), conn);
+        locked();
+        await released;
+      },
+      { isolationLevel: 'READ COMMITTED' }
+    );
+    await lockTaken;
+    const post = relay
+      .createPending(
+        {
+          txId: fifth.txId,
+          opType: 'IDENTITY_JOIN',
+          principal: JOIN_PRINCIPAL,
+          unsigned: '0x0102',
+          typedData: fifth.typedData,
+          expiresAt,
+          required: [
+            { role: 0, keyType: 1, signer: anchor.address },
+            { role: 4, keyType: 1, signer: '0x' + '77'.repeat(20) }
+          ],
+          signatures: [{ role: 0, keyType: 1, sig: fifth.sign(anchor) }]
+        },
+        anchor.address
+      )
+      .catch((e: unknown) => e);
+    await untilAnyWaitsForALock();
+    release();
+    await other;
+    const answer = await post;
+    expect(answer).toBeInstanceOf(CustomApiCompliantException);
+    expect((answer as CustomApiCompliantException).getStatusCode()).toBe(429);
+    expect(await db.find(fifth.txId)).toBeNull();
   });
 });

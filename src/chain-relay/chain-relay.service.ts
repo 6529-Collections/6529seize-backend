@@ -359,8 +359,11 @@ interface OpenResult {
   readonly outcome: 'unknown' | 'accepted';
   /** Another txId the node named. */
   readonly nodeTxId: string | null;
-  /** When a read last asked the chain (Unix ms), or 0. */
-  readonly checkedAt: number;
+  /**
+   * When a read last asked the chain (Unix ms), as stored, or null. A
+   * read's write applies only while it is still this one.
+   */
+  readonly checkedAt: number | null;
 }
 
 /**
@@ -381,7 +384,7 @@ function openResultOf(op: PendingOperation): OpenResult | null {
       result,
       outcome,
       nodeTxId: typeof result.nodeTxId === 'string' ? result.nodeTxId : null,
-      checkedAt: Number(result.checkedAt) || 0
+      checkedAt: typeof result.checkedAt === 'number' ? result.checkedAt : null
     };
   } catch {
     return null;
@@ -397,6 +400,30 @@ type ChainPlace =
   | { readonly tx: ChainTx }
   | { readonly notHeldAt: number | null }
   | null;
+
+/**
+ * A chain result in the words a refusal of the node has: its code as 0x and
+ * four hex digits, its name, and its detail when it has one ("0x2101
+ * REJOIN_WAIT, detail 3"), which is what callers read a refusal's name and
+ * detail from.
+ */
+function resultWords(tx: ChainTx): string {
+  const name = tx.result?.name ?? 'failed';
+  const raw = tx.result?.code;
+  const text = typeof raw === 'string' ? raw.trim() : '';
+  const code =
+    typeof raw === 'number'
+      ? raw
+      : /^(?:0x[0-9a-f]+|\d+)$/i.test(text)
+        ? Number(text)
+        : NaN;
+  const detail = tx.result?.detail;
+  const words =
+    Number.isSafeInteger(code) && code >= 0 && code <= 0xffff
+      ? `0x${code.toString(16).padStart(4, '0')} ${name}`
+      : name;
+  return Number.isSafeInteger(detail) ? `${words}, detail ${detail}` : words;
+}
 
 /** Whether an operation has been sent: its state is the chain's now. */
 function isSent(op: PendingOperation): boolean {
@@ -727,61 +754,69 @@ export class ChainRelayService {
       await this.checkMembership(join);
     }
     const now = this.now();
+    // Read committed, so the count below sees a post that committed while
+    // this one waited on the wallet's lock, and the locks take no gaps.
     const hold = () =>
-      this.db.executeNativeQueriesInTransaction(async (conn) => {
-        const existing = await this.db.find(txId, conn);
-        if (!existing) {
-          const open = await this.db.countOpenCreatedBy(me, now, conn);
-          if (open >= MAX_OPEN_PER_CREATOR) {
-            throw new CustomApiCompliantException(
-              429,
-              `This wallet already has ${MAX_OPEN_PER_CREATOR} joins waiting for a signature: cancel one, or let one expire`,
-              'TOO_MANY_PENDING'
+      this.db.executeNativeQueriesInTransaction(
+        async (conn) => {
+          const existing = await this.db.find(txId, conn);
+          if (!existing) {
+            // One new join of a wallet at a time, so two posts at once can't
+            // both pass the cap at four.
+            await this.db.lockHeldBy(me, conn);
+            const open = await this.db.countOpenCreatedBy(me, now, conn);
+            if (open >= MAX_OPEN_PER_CREATOR) {
+              throw new CustomApiCompliantException(
+                429,
+                `This wallet already has ${MAX_OPEN_PER_CREATOR} joins waiting for a signature: cancel one, or let one expire`,
+                'TOO_MANY_PENDING'
+              );
+            }
+            await this.db.insert(
+              {
+                tx_id: txId,
+                op_type: IDENTITY_JOIN,
+                principal: join.principal,
+                unsigned_hex: lower(input.unsigned),
+                typed_data_json: JSON.stringify(input.typedData),
+                created_by: me,
+                expires_at: join.expiresAt,
+                status: 'PENDING',
+                result_json: null,
+                last_error: null,
+                created_at: now,
+                updated_at: now,
+                signers: signers.map((it) => ({
+                  ...it,
+                  sig: given.get(it.role) ?? null,
+                  signed_at: given.has(it.role) ? now : null
+                }))
+              },
+              conn
             );
+            return 'held';
           }
-          await this.db.insert(
-            {
-              tx_id: txId,
-              op_type: IDENTITY_JOIN,
-              principal: join.principal,
-              unsigned_hex: lower(input.unsigned),
-              typed_data_json: JSON.stringify(input.typedData),
-              created_by: me,
-              expires_at: join.expiresAt,
-              status: 'PENDING',
-              result_json: null,
-              last_error: null,
-              created_at: now,
-              updated_at: now,
-              signers: signers.map((it) => ({
-                ...it,
-                sig: given.get(it.role) ?? null,
-                signed_at: given.has(it.role) ? now : null
-              }))
-            },
-            conn
-          );
+          if (isSent(existing)) return 'sent';
+          // A withdrawn or expired operation takes no more signatures. Its
+          // signers are the typed data's, as these are: the same txId.
+          this.assertOpen(existing);
+          for (const [role, sig] of Array.from(given.entries())) {
+            const signer = existing.signers.find((it) => it.role === role);
+            if (signer && !signer.sig) {
+              await this.db.setSignature(txId, role, sig, now, conn);
+            }
+          }
           return 'held';
-        }
-        if (isSent(existing)) return 'sent';
-        // A withdrawn or expired operation takes no more signatures. Its
-        // signers are the typed data's, as these are: the same txId.
-        this.assertOpen(existing);
-        for (const [role, sig] of Array.from(given.entries())) {
-          const signer = existing.signers.find((it) => it.role === role);
-          if (signer && !signer.sig) {
-            await this.db.setSignature(txId, role, sig, now, conn);
-          }
-        }
-        return 'held';
-      });
+        },
+        { isolationLevel: 'READ COMMITTED' }
+      );
     let state: 'held' | 'sent';
     try {
       state = await hold();
     } catch (error) {
-      // Both wallets' first posts at once: both found no row, and one
-      // insert lost (a duplicate key, or a deadlock on the gap both
-      // locked). Once more, it finds the other's row and adds to it.
+      // Two posts at once: one insert lost (a duplicate key, or a
+      // deadlock). Once more, it finds the other's row and adds to it, or
+      // counts it.
       if (!isInsertRace(error)) throw error;
       state = await hold();
     }
@@ -924,11 +959,18 @@ export class ChainRelayService {
     open: OpenResult
   ): Promise<PendingOperation> {
     const now = this.now();
-    if (now - open.checkedAt < CHECK_EVERY_MS) return op;
+    if (now - (open.checkedAt ?? 0) < CHECK_EVERY_MS) return op;
     const txId = op.tx_id;
     const ids = open.nodeTxId ? [txId, open.nodeTxId] : [txId];
     const places = await Promise.all(ids.map((id) => this.chainTx(id)));
-    const guard = { from: 'SUBMITTED', ifOutcome: open.outcome } as const;
+    // A read's write applies only while the row is as it read it: the same
+    // outcome, and the same last ask. A slower read never undoes a faster
+    // one, such as a final result over the pool's answer it had.
+    const guard = {
+      from: 'SUBMITTED',
+      ifOutcome: open.outcome,
+      ifCheckedAt: open.checkedAt
+    } as const;
     const heldAt = places.findIndex((it) => !!it && 'tx' in it);
     if (heldAt >= 0) {
       const { tx } = places[heldAt] as { tx: ChainTx };
@@ -940,7 +982,7 @@ export class ChainRelayService {
           { ...guard, to: 'FAILED' },
           {
             result_json: refusedResult(txId, name, { ...named, tx }),
-            last_error: `The 6529 Network ran ${ids[heldAt]} and it failed: ${name}`
+            last_error: `The 6529 Network ran ${ids[heldAt]} and it failed: ${resultWords(tx)}`
           },
           now
         );
@@ -956,7 +998,8 @@ export class ChainRelayService {
               outcome: 'accepted',
               ...named,
               tx,
-              ...(tx.status === 'final' ? {} : { checkedAt: now })
+              // Also once final: every read's write moves checkedAt on.
+              checkedAt: now
             })
           },
           now

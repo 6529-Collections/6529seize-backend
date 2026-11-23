@@ -47,9 +47,13 @@ class FakeDb {
   onFind: (() => void) | null = null;
   private lock: Promise<unknown> = Promise.resolve();
 
+  /** What each transaction did, in order, for tests of their order. */
+  calls: string[] = [];
   async executeNativeQueriesInTransaction<T>(
-    fn: (c: unknown) => Promise<T>
+    fn: (c: unknown) => Promise<T>,
+    options?: { isolationLevel?: string }
   ): Promise<T> {
+    if (options?.isolationLevel) this.calls.push(options.isolationLevel);
     const run = this.lock.then(() => fn({}));
     this.lock = run.catch(() => undefined);
     return run;
@@ -85,7 +89,12 @@ class FakeDb {
   }
   async setStatus(
     txId: string,
-    change: { from: PendingStatus; to: PendingStatus; ifOutcome?: string },
+    change: {
+      from: PendingStatus;
+      to: PendingStatus;
+      ifOutcome?: string;
+      ifCheckedAt?: number | null;
+    },
     fields: { result_json?: string | null; last_error?: string | null },
     now: number
   ) {
@@ -94,6 +103,13 @@ class FakeDb {
     if (
       change.ifOutcome &&
       JSON.parse(op.result_json ?? 'null')?.outcome !== change.ifOutcome
+    ) {
+      return false;
+    }
+    if (
+      change.ifCheckedAt !== undefined &&
+      (JSON.parse(op.result_json ?? 'null')?.checkedAt ?? null) !==
+        change.ifCheckedAt
     ) {
       return false;
     }
@@ -106,7 +122,11 @@ class FakeDb {
     });
     return true;
   }
+  async lockHeldBy(wallet: string) {
+    this.calls.push(`lock ${wallet}`);
+  }
   async countOpenCreatedBy(wallet: string, now: number) {
+    this.calls.push(`count ${wallet}`);
     return Array.from(this.ops.values()).filter(
       (op) =>
         op.created_by === wallet &&
@@ -948,6 +968,16 @@ describe('ChainRelayService holding a join: its limits and the identity check', 
     ).toMatchObject({ outcome: 'accepted' });
   });
 
+  it("counts a wallet's open joins under its lock, in a read committed transaction", async () => {
+    const { service, db } = setup();
+    await service.createPending(joinInput(), ANCHOR.address);
+    expect(db.calls).toEqual([
+      'READ COMMITTED',
+      `lock ${addr(ANCHOR)}`,
+      `count ${addr(ANCHOR)}`
+    ]);
+  });
+
   it('holds at most five pending joins a wallet created', async () => {
     const { service } = setup();
     for (let n = 0; n < 5; n++) {
@@ -1018,7 +1048,8 @@ describe('ChainRelayService.get, of a sent join the chain has yet to settle', ()
     expect(resultOf(op)).toEqual({
       txId: TX,
       outcome: 'accepted',
-      tx: finalTx
+      tx: finalTx,
+      checkedAt: START
     });
     expect(op.last_error).toBeNull();
     tick(60_000);
@@ -1043,7 +1074,33 @@ describe('ChainRelayService.get, of a sent join the chain has yet to settle', ()
       code: 'ALREADY_BOUND',
       tx
     });
-    expect(op.last_error).toContain('ALREADY_BOUND');
+    expect(op.last_error).toContain('0x2101 ALREADY_BOUND');
+  });
+
+  it('words a failure found later as a refusal is worded, so a caller reads its name and detail', async () => {
+    // The patterns a caller (the 6529.io frontend's chainRefusalName and
+    // its fee detail) reads a refusal's name and detail with.
+    const NAMED_CODE = /\b0x[0-9a-fA-F]{4} ([A-Z][A-Z0-9_]+)\b/;
+    const DETAIL = /\b0x[0-9a-fA-F]{4} [A-Z][A-Z0-9_]+, detail (\d+)\b/;
+    const cases = [
+      [{ code: 0x0b07, name: 'REJOIN_WAIT' }, 'REJOIN_WAIT', null],
+      [{ code: '0x0B07', name: 'REJOIN_WAIT' }, 'REJOIN_WAIT', null],
+      [{ code: '2817', name: 'REJOIN_WAIT' }, 'REJOIN_WAIT', null],
+      [{ code: 0x0a01, name: 'FEE_UNCOVERED', detail: 3 }, 'FEE_UNCOVERED', '3']
+    ] as const;
+    for (const [result, name, detail] of cases) {
+      const { service, gateway } = await unknownJoin();
+      gateway.getTx.mockResolvedValueOnce({
+        txId: TX,
+        status: 'failed',
+        height: 12,
+        result
+      });
+      const op = await service.get(TX);
+      expect(op.status).toBe('FAILED');
+      expect(NAMED_CODE.exec(op.last_error!)?.[1]).toBe(name);
+      expect(DETAIL.exec(op.last_error!)?.[1] ?? null).toBe(detail);
+    }
   });
 
   it('keeps asking, at most every 10 s, about one only in the pool until it is final', async () => {
@@ -1069,7 +1126,8 @@ describe('ChainRelayService.get, of a sent join the chain has yet to settle', ()
       txId: TX,
       accepted: true,
       outcome: 'accepted',
-      tx: finalTx
+      tx: finalTx,
+      checkedAt: START + 10_000
     });
     tick(60_000);
     await service.get(TX);
@@ -1135,6 +1193,27 @@ describe('ChainRelayService.get, of a sent join the chain has yet to settle', ()
     expect(gateway.getTx).toHaveBeenCalledTimes(2);
   });
 
+  it("never lets a slower read's pool answer undo a faster read's final one", async () => {
+    const { service, gateway, db } = setup();
+    await service.createPending(bothSigned(), ANCHOR.address);
+    // Two reads at once: the first one's ask answers late, from the pool.
+    let answerLate!: (tx: unknown) => void;
+    gateway.getTx
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            answerLate = resolve;
+          })
+      )
+      .mockResolvedValueOnce(finalTx);
+    const slow = service.get(TX);
+    const fast = await service.get(TX);
+    expect(resultOf(fast).tx).toEqual(finalTx);
+    answerLate({ txId: TX, status: 'pending' });
+    await slow;
+    expect(resultOf((await db.find(TX))!).tx).toEqual(finalTx);
+  });
+
   it('never undoes what another request recorded meanwhile', async () => {
     // A read finding it held nowhere, while another read records the chain
     // holding it.
@@ -1172,7 +1251,8 @@ describe('ChainRelayService.get, of a sent join the chain has yet to settle', ()
     expect(resultOf(done)).toEqual({
       txId: TX,
       outcome: 'accepted',
-      tx: finalTx
+      tx: finalTx,
+      checkedAt: START
     });
   });
 });
