@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   IDENTITIES_TABLE,
+  SUBSCRIPTIONS_ID_KEY_MAP_TABLE,
   MEMES_CONTRACT,
   NULL_ADDRESS,
   SUBSCRIPTIONS_ADDRESS,
@@ -29,6 +30,10 @@ import { connect, disconnect } from '@/db';
 import { Logger } from '@/logging';
 import * as Entities from '@/entities/entities';
 import { sqlExecutor } from '@/sql-executor';
+import {
+  deferSubscriptionWrites,
+  executorSink
+} from '@/subscription-key-width/subscription-deferred-writes';
 import { getPublicSubscriptions } from '@/api/subscriptions/api.subscriptions.allowlist';
 import { updateSubscriptions } from '@/subscriptionsDaily/subscriptions';
 import { describeWithSeed } from '@/tests/_setup/seed';
@@ -125,6 +130,7 @@ jest.mock('@/subscriptionsDaily/subscription-cache', () => ({
 }));
 
 const wallet = (n: number) => `0x${n.toString(16).padStart(40, '0')}`;
+
 const P1 = `0x${'b1'.padStart(64, '0')}`;
 /** Bound to P1; its key is itself. */
 const A = wallet(1);
@@ -200,6 +206,39 @@ async function seedLegacy() {
     `INSERT INTO ${TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE} (created_at, block, timestamp)
       VALUES (NOW(), 1, 0)`
   );
+}
+
+/**
+ * An identity of 15 wallets bound to one principal: its consolidation key
+ * (644 characters) fits address_consolidation_keys but not the narrowest
+ * legacy key column, so the key-width guard holds every write of it back
+ * and the key never has a legacy row.
+ */
+async function seedWideIdentity(): Promise<{
+  W: string;
+  P9: string;
+  wideKey: string;
+}> {
+  const W = wallet(9);
+  const P9 = `0x${'b9'.padStart(64, '0')}`;
+  const wallets = [W, ...Array.from({ length: 14 }, (_, i) => wallet(400 + i))];
+  const wideKey = wallets.join('-');
+  for (const address of wallets) {
+    await execute(
+      `INSERT INTO ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key) VALUES (:address, :k)`,
+      { address, k: wideKey }
+    );
+  }
+  await execute(
+    `INSERT INTO ${IDENTITIES_TABLE} (consolidation_key, profile_id, primary_address, tdh, rep, cic, level_raw)
+      VALUES (:k, 'profile-9', :w, 0, 0, 0, 0)`,
+    { k: wideKey, w: W }
+  );
+  await execute(
+    `INSERT INTO identity_chain_principals VALUES (:p, 'profile-9', 'LEGACY', 0)`,
+    { p: P9 }
+  );
+  return { W, P9, wideKey };
 }
 
 /** Cut, load and verify; with `goLive`, set the switch time to now. */
@@ -2432,6 +2471,108 @@ describeWithSeed('identity writers after the switch', [], () => {
       "1 airdrop transaction(s) after the legacy loop's block 40: not compared; the legacy loop had not charged them",
       `balance of ${LONE} not compared: charged after the legacy loop's block too`
     ]);
+  });
+
+  it('goes live with a top-up queued for a key wider than the legacy columns, keyed to its identity and credited once', async () => {
+    await seedLegacy();
+    const { W, P9, wideKey } = await seedWideIdentity();
+    // The top-up loop's write queues the whole top-up for this key, as
+    // persistTopUps does when the key-width guard holds the key back: no
+    // legacy row, no credit.
+    const queuedTopUp = {
+      hash: `0x${'e1'.repeat(32)}`,
+      block: 40,
+      transaction_date: new Date('2026-11-25T10:00:00Z'),
+      from_wallet: W,
+      amount: 0.3
+    };
+    await deferSubscriptionWrites(
+      [
+        {
+          kind: 'TOP_UP',
+          consolidationKey: wideKey,
+          dedupe: queuedTopUp.hash,
+          payload: { topUp: queuedTopUp },
+          reason: {
+            narrow: [{ table: 'subscriptions_redeemed', width: 567 }],
+            pendingEarlier: false
+          }
+        }
+      ],
+      executorSink()
+    );
+
+    // go-live cuts, verifies, loads and compares: the cut credits the
+    // waiting top-up to P9, and the opening keys P9 by the queue's key.
+    expect((await goLiveForTest()).switched).toBe(true);
+    expect(
+      await sqlExecutor.execute(
+        `SELECT consolidation_key, identity_key FROM ${SUBSCRIPTIONS_ID_KEY_MAP_TABLE}
+          WHERE identity_key = :p`,
+        { p: P9 }
+      )
+    ).toEqual([{ consolidation_key: wideKey, identity_key: P9 }]);
+    const credited = () =>
+      sqlExecutor.execute<{ hash: string; identity_key: string }>(
+        `SELECT hash, identity_key FROM ${SUBSCRIPTIONS_ID_TOP_UP_TABLE}
+          WHERE from_wallet = :w`,
+        { w: W }
+      );
+    expect(await credited()).toEqual([
+      { hash: queuedTopUp.hash, identity_key: P9 }
+    ]);
+    expect(
+      await balance(SUBSCRIPTIONS_ID_BALANCES_TABLE, 'identity_key', P9)
+    ).toBe(0.3);
+
+    // The writer finds it credited: no second credit.
+    await runIdentityTopUpWriters();
+    await runIdentityTopUpWriters();
+    expect(await credited()).toHaveLength(1);
+    expect(
+      await balance(SUBSCRIPTIONS_ID_BALANCES_TABLE, 'identity_key', P9)
+    ).toBe(0.3);
+  });
+
+  it('goes live with a log line, a final row and an automatic choice waiting for a key wider than the legacy columns', async () => {
+    await seedLegacy();
+    const { P9, wideKey } = await seedWideIdentity();
+    const reason = { narrow: [], pendingEarlier: false };
+    await deferSubscriptionWrites(
+      [
+        {
+          kind: 'LOG',
+          consolidationKey: wideKey,
+          dedupe: 'wide-log',
+          payload: { log: 'Subscription Mode set to Automatic' },
+          reason
+        },
+        {
+          kind: 'FINAL_ROW',
+          consolidationKey: wideKey,
+          dedupe: 'wide-final',
+          payload: { consolidation_key: wideKey, token_id: CARD },
+          reason
+        },
+        {
+          kind: 'AUTO_SUBSCRIPTION',
+          consolidationKey: wideKey,
+          dedupe: 'wide-auto',
+          payload: { consolidation_key: wideKey, token_id: CARD },
+          reason
+        }
+      ],
+      executorSink()
+    );
+    // The log line is carried into the history; the final row and the
+    // choice are left to the next build. None of them is current state the
+    // opening must key, so the cut verifies, loads and compares as before.
+    expect((await goLiveForTest()).switched).toBe(true);
+    const [logs] = await sqlExecutor.execute<{ n: number | string }>(
+      `SELECT COUNT(*) AS n FROM ${SUBSCRIPTIONS_ID_LOGS_TABLE} WHERE identity_key = :p`,
+      { p: P9 }
+    );
+    expect(Number(logs.n)).toBe(1);
   });
 
   it("credits a new top-up to the sender's identity once", async () => {
