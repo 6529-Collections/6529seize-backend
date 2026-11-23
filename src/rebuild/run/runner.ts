@@ -135,7 +135,7 @@ export interface RunOptions {
   /**
    * For a gateway recording made through the frozen-snapshot node: the
    * validator that re-serves its copies, a claimed 127.0.0.1 port, and the
-   * capture commit a reviewer scored.
+   * reviewed build (the capture's commit and the replay binary's hash).
    */
   readonly frozen?: FrozenOptions;
   readonly chainHeight: number | null;

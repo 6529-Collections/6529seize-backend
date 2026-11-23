@@ -20,10 +20,11 @@ const USAGE = `Usage: rebuild:check -- [options]
   --eth-block <n>       the Ethereum block of the mark
   --validator-bin <file> the validator that re-serves a frozen gateway
                         recording's copies (called by its full path)
-  --frozen-port <n>     the 127.0.0.1 port for that frozen node
-  --frozen-reviewed <commit>
-                        the capture commit a reviewer scored: a frozen
-                        recording that passes its checks counts as final`;
+  --frozen-port <n>     the 127.0.0.1 port for that frozen node (1024-65535)
+  --frozen-reviewed <commit>@<sha256>
+                        the reviewed build: the capture's commit and the
+                        replay binary's SHA-256. A frozen recording that
+                        passes its checks counts as final only with it`;
 
 function say(line: string): void {
   process.stdout.write(`${line}\n`);
@@ -115,12 +116,22 @@ export function parseArgs(argv: readonly string[], repoRoot: string): Parsed {
       case '--validator-bin':
         parsed.validatorBin = path.resolve(value());
         break;
-      case '--frozen-port':
-        parsed.frozenPort = number(flag, value());
+      case '--frozen-port': {
+        const port = number(flag, value());
+        if (port < 1024 || port > 65535) {
+          throw new Error(`${flag} needs a port from 1024 to 65535`);
+        }
+        parsed.frozenPort = port;
         break;
-      case '--frozen-reviewed':
-        parsed.frozenReviewed = value();
+      }
+      case '--frozen-reviewed': {
+        const reviewed = value() ?? '';
+        if (!/^[0-9a-f]{40}([0-9a-f]{24})?@[0-9a-f]{64}$/.test(reviewed)) {
+          throw new Error(`${flag} needs <commit>@<sha256>, both in full`);
+        }
+        parsed.frozenReviewed = reviewed;
         break;
+      }
       default:
         throw new Error(`Unknown option ${flag}\n${USAGE}`);
     }
@@ -140,7 +151,7 @@ async function main(): Promise<number> {
         ? { file: options.validatorBin, command: [options.validatorBin] }
         : undefined,
       port: options.frozenPort,
-      reviewedCommit: options.frozenReviewed
+      reviewed: options.frozenReviewed
     },
     repoRoot,
     manifests: AREA_MANIFESTS,

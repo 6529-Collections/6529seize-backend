@@ -24,7 +24,10 @@ import {
   verifyFrozenRecording
 } from '@/rebuild/sources/frozen-gateway';
 import { takeFrozenLock } from '@/rebuild/sources/frozen-guard';
-import { exchangeKey } from '@/rebuild/sources/http-recording';
+import {
+  exchangeKey,
+  startHttpRecording
+} from '@/rebuild/sources/http-recording';
 import { extractTar, readTar } from '@/rebuild/sources/tar-reader';
 
 const sha256 = (bytes: Buffer | string) =>
@@ -143,6 +146,27 @@ describe('frozen node lock', () => {
       JSON.stringify({ pid: 2 ** 22 + 7, startedAt: 'x', purpose: 'gone' })
     );
     expect('release' in takeFrozenLock('a new run', lockDir)).toBe(true);
+  });
+
+  it('stays held while the node lives, though its harness has exited', () => {
+    const held = takeFrozenLock('a run', lockDir);
+    if (!('holdFor' in held)) throw new Error('not taken');
+    held.holdFor(process.ppid);
+    const owner = JSON.parse(
+      fs.readFileSync(path.join(lockDir, 'owner.json'), 'utf8')
+    ) as { pid: number; nodePid: number };
+    expect([owner.pid, owner.nodePid]).toEqual([process.pid, process.ppid]);
+    // The harness gone, its node (here this test's parent) still alive.
+    fs.writeFileSync(
+      path.join(lockDir, 'owner.json'),
+      JSON.stringify({ ...owner, pid: 2 ** 22 + 7, startedAt: 'earlier' })
+    );
+    expect(takeFrozenLock('the next run', lockDir)).toEqual({
+      refused: `another frozen node is running (process ${2 ** 22 + 7}, node ${process.ppid}, since earlier, for a run); one runs at a time`
+    });
+    held.release();
+    held.release();
+    expect(fs.existsSync(lockDir)).toBe(false);
   });
 });
 
@@ -264,6 +288,8 @@ describe('frozen gateway recordings', () => {
   };
   const lines = () => [line('/v1/status'), line('/v1/membership?height=9')];
   let header: FrozenHeader & { frozen: FrozenSnapshot[] };
+  const reviewedBuild = () =>
+    `${header.validatorCommit}@${header.validatorSha256Windows}`;
 
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'rebuild-frozen-'));
@@ -334,7 +360,12 @@ describe('frozen gateway recordings', () => {
     expect(
       frozenHeaderProblems(bad, [
         ...lines(),
-        { ...line('/v1/status'), path: '/v1/x', snapshot: 'other' }
+        {
+          ...line('/v1/status'),
+          key: exchangeKey('GET', '/v1/x', Buffer.alloc(0)),
+          path: '/v1/x',
+          snapshot: 'other'
+        }
       ])
     ).toEqual([
       "snapshot mark's archive isn't named by the copy's hash",
@@ -346,6 +377,122 @@ describe('frozen gateway recordings', () => {
     ]);
     expect(frozenHeaderProblems({ ...header, frozen: [] }, [])).toEqual([
       'the header names no frozen snapshot'
+    ]);
+  });
+
+  it("refuses a line whose key isn't its own request, a repeated key, or a path without /", () => {
+    // The run serves answers by key and the replay asks by path: a line
+    // keyed as one request with another's path and answer would pass the
+    // replay and then serve the wrong answer to the run.
+    const balance = (who: string, body: string): FrozenExchange => ({
+      ...line('/v1/status'),
+      key: exchangeKey('GET', `/v1/balance?who=${who}`, Buffer.alloc(0)),
+      path: `/v1/balance?who=${who}`,
+      body
+    });
+    const swapped: FrozenExchange = {
+      ...balance('2', '{"balance":2}'),
+      key: balance('1', '').key
+    };
+    const recorded = [line('/v1/status'), swapped];
+    expect(frozenHeaderProblems(header, recorded)).toEqual([
+      "recorded line 2: its key isn't its own request (GET /v1/balance?who=2), so its answer would serve another"
+    ]);
+    // A body the key only hashes can't be checked or replayed.
+    expect(
+      frozenHeaderProblems(header, [
+        line('/v1/status'),
+        {
+          ...balance('1', '{}'),
+          key: `POST /v1/balance?who=1 ${'a'.repeat(64)}`
+        }
+      ])
+    ).toEqual([
+      "recorded line 2 (GET /v1/balance?who=1): its key's body is neither JSON nor the empty body's hash"
+    ]);
+    expect(
+      frozenHeaderProblems({ ...header, answers: 3, answersServedFrozen: 3 }, [
+        ...lines(),
+        { ...line('/v1/status'), body: '{}' }
+      ])
+    ).toEqual([
+      "1 recorded lines repeat another line's key, first GET /v1/status"
+    ]);
+    expect(
+      frozenHeaderProblems(header, [
+        line('/v1/status'),
+        { ...line('/v1/status'), key: 'GET v1/x x', path: 'v1/x' }
+      ])
+    ).toEqual(["recorded line 2 (GET v1/x): its path doesn't start with /"]);
+  });
+
+  it('refuses a phase that is no plain name, and removes nothing outside the work folder', async () => {
+    const victim = path.join(root, 'victim');
+    fs.mkdirSync(victim);
+    fs.writeFileSync(path.join(victim, 'keep.txt'), 'kept');
+    const [snapshot] = header.frozen;
+    const climbing = {
+      ...header,
+      frozen: [{ ...snapshot, phase: '../victim' }]
+    };
+    const recorded = lines().map((l) => ({ ...l, snapshot: '../victim' }));
+    expect(frozenHeaderProblems(climbing, recorded)).toEqual([
+      'a snapshot\'s phase "../victim" isn\'t a plain name (letters, digits, - and _, at most 64)',
+      '2 answers name no snapshot of the header, first GET /v1/status'
+    ]);
+    const verdict = await verifyFrozenRecording({
+      dir,
+      header: climbing,
+      lines: recorded,
+      workDir: path.join(root, 'work'),
+      validator,
+      port: await freePort(),
+      lockDir
+    });
+    expect(verdict.provisionalWhy).toBe(
+      'its frozen-snapshot header fails its checks'
+    );
+    expect(fs.readFileSync(path.join(victim, 'keep.txt'), 'utf8')).toBe('kept');
+    // Malformed fields are named, not thrown on.
+    expect(
+      frozenHeaderProblems(
+        {
+          ...header,
+          frozen: [
+            { ...snapshot, phase: 7 as unknown as string },
+            { ...snapshot, liveNodes: 'none' as unknown as [] }
+          ]
+        },
+        lines()
+      )
+    ).toEqual([
+      "a snapshot's phase 7 isn't a plain name (letters, digits, - and _, at most 64)",
+      "snapshot mark's liveNodes isn't a list"
+    ]);
+  });
+
+  it('refuses an answer both retagged and listed, and a prototype part in a field', () => {
+    const [status] = lines();
+    expect(
+      frozenHeaderProblems(
+        {
+          ...header,
+          answersServedFrozen: 1,
+          retagged: [{ key: status.key }],
+          notReplayable: [
+            {
+              key: status.key,
+              snapshot: 'mark',
+              fields: ['data.__proto__.x'],
+              why: 'a counter'
+            }
+          ]
+        },
+        lines()
+      )
+    ).toEqual([
+      `notReplayable ${status.key} is listed as retagged too`,
+      `notReplayable ${status.key} names a field with an empty part or __proto__, constructor or prototype`
     ]);
   });
 
@@ -391,7 +538,7 @@ describe('frozen gateway recordings', () => {
 
   it('re-serves the kept copy and replays its answers: final once reviewed', async () => {
     const port = await freePort();
-    const verify = (reviewedCommit?: string, recorded = lines()) =>
+    const verify = (reviewed?: string, recorded = lines()) =>
       verifyFrozenRecording({
         dir,
         header,
@@ -399,20 +546,31 @@ describe('frozen gateway recordings', () => {
         workDir: path.join(root, 'work'),
         validator,
         port,
-        reviewedCommit,
+        reviewed,
         lockDir
       });
-    expect(await verify('c'.repeat(40))).toEqual({
+    const built = `${'c'.repeat(40)}@${header.validatorSha256Windows}`;
+    const notes = [
+      `the copies were re-served by the binary with SHA-256 ${header.validatorSha256Windows}`
+    ];
+    expect(await verify(reviewedBuild())).toEqual({
       problems: [],
-      provisionalWhy: null
+      provisionalWhy: null,
+      notes
     });
     expect((await verify()).provisionalWhy).toBe(
-      `its validator (${'c'.repeat(40)}) isn't marked reviewed (--frozen-reviewed)`
+      `its build (${built}) isn't named as reviewed (--frozen-reviewed <commit>@<sha256>)`
+    );
+    // The commit alone, or another binary's hash, doesn't name this build.
+    expect(
+      (await verify(`${'c'.repeat(40)}@${'f'.repeat(64)}`)).provisionalWhy
+    ).toBe(
+      `--frozen-reviewed names ${'c'.repeat(40)}@${'f'.repeat(64)}, not this recording's build ${built}`
     );
     // A hand-edited answer doesn't replay.
     const edited = lines();
     edited[1] = { ...edited[1], body: '{"members":["0x02"]}' };
-    expect((await verify('c'.repeat(40), edited)).problems).toEqual([
+    expect((await verify(reviewedBuild(), edited)).problems).toEqual([
       'GET /v1/membership?height=9: the frozen node answers 200 with other bytes than the recording'
     ]);
     // The frozen node is stopped, its lock given back and its temp gone.
@@ -421,12 +579,13 @@ describe('frozen gateway recordings', () => {
     // An answer tagged after the capture keeps it from being final, and
     // is left out of the replay: here an edited one, which would fail it.
     header = { ...header, retagged: [{ key: edited[1].key }] };
-    expect(await verify('c'.repeat(40), edited)).toEqual({
+    expect(await verify(reviewedBuild(), edited)).toEqual({
       problems: [],
       provisionalWhy:
-        "1 answers were tagged with their snapshot after the capture (retagged), so the recording can't be final"
+        "1 answers were tagged with their snapshot after the capture (retagged), so the recording can't be final",
+      notes
     });
-    expect((await verify('c'.repeat(40))).provisionalWhy).toBe(
+    expect((await verify(reviewedBuild())).provisionalWhy).toBe(
       "1 answers were tagged with their snapshot after the capture (retagged), so the recording can't be final"
     );
   });
@@ -501,18 +660,93 @@ describe('frozen gateway recordings', () => {
           port,
           // Reviewed, so only the listed answer keeps it from being final,
           // and a final run fails on it.
-          reviewedCommit: 'c'.repeat(40),
+          reviewed: reviewedBuild(),
           lockDir
         });
-      expect(await verify(withCounter())).toEqual({
-        problems: [],
-        provisionalWhy:
-          "1 answer can't replay (notReplayable: GET /v1/status, data.requests)"
-      });
+      expect((await verify(withCounter())).provisionalWhy).toBe(
+        "1 answer can't replay (notReplayable: GET /v1/status, data.requests)"
+      );
+      expect((await verify(withCounter())).problems).toEqual([]);
       expect((await verify(withCounter({ node: 'other' }))).problems).toEqual([
         "GET /v1/status: the frozen node's answer differs outside its notReplayable fields (data.requests), at data.node"
       ]);
+      // A body JSON can't hold exactly (spacing, a number past 2^53) is
+      // refused rather than compared after a lossy parse.
+      const spaced = withCounter();
+      spaced[0] = { ...spaced[0], body: spaced[0].body.replace(':', ': ') };
+      const big = withCounter();
+      big[0] = {
+        ...big[0],
+        body: big[0].body.replace(
+          '"requests":2',
+          '"requests":12345678901234567891'
+        )
+      };
+      for (const recorded of [spaced, big]) {
+        expect((await verify(recorded)).problems).toEqual([
+          "GET /v1/status: the frozen node's answer differs outside its notReplayable fields (data.requests), at its recorded body (not plain JSON, so its fields can't be left out exactly)"
+        ]);
+      }
     });
+  });
+
+  it("refuses a recording without devnet.toml, or one that doesn't match its hash", async () => {
+    const port = await freePort();
+    const verify = (over: Partial<FrozenHeader> = {}) =>
+      verifyFrozenRecording({
+        dir,
+        header: { ...header, ...over },
+        lines: lines(),
+        workDir: path.join(root, 'work'),
+        validator,
+        port,
+        lockDir
+      });
+    expect((await verify({ devnetSha256: 'e'.repeat(64) })).problems).toEqual([
+      "the recording's devnet.toml doesn't match its hash in the header"
+    ]);
+    expect(
+      (
+        await verify({
+          devnetSha256: sha256(fs.readFileSync(path.join(dir, 'devnet.toml')))
+        })
+      ).problems
+    ).toEqual([]);
+    fs.rmSync(path.join(dir, 'devnet.toml'));
+    expect((await verify()).problems).toEqual([
+      "the recording has no devnet.toml, which its copies' configs name"
+    ]);
+  });
+
+  it('refuses recording into a frozen recording, and needs a work folder', async () => {
+    fs.writeFileSync(
+      path.join(dir, 'PROVENANCE.json'),
+      JSON.stringify({ made_by: 'devnet test', ...header })
+    );
+    fs.writeFileSync(
+      path.join(dir, 'recording.jsonl'),
+      `${lines()
+        .map((l) => JSON.stringify(l))
+        .join('\n')}\n`
+    );
+    await expect(
+      startHttpRecording({
+        name: 'gateway',
+        dir,
+        upstream: 'http://127.0.0.1:9'
+      })
+    ).rejects.toThrow(
+      "gateway: a frozen-snapshot recording can't be recorded into"
+    );
+    const source = await startHttpRecording({ name: 'gateway', dir });
+    try {
+      expect(source.problems()).toEqual([
+        'gateway: frozen snapshot check: no work folder was given for its frozen copies'
+      ]);
+      expect(fs.existsSync(path.join(dir, '.frozen'))).toBe(false);
+    } finally {
+      await source.stop();
+    }
   });
 
   it('notes a Windows binary built from another commit than the capture', () => {

@@ -1,8 +1,7 @@
-import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
 import * as path from 'node:path';
-import { canonicalStringify } from '@/rebuild/probes/canonical';
+import { exchangeKey, parseJson } from '@/rebuild/sources/exchange-key';
 import {
   closeServer,
   listenLoopback,
@@ -24,13 +23,20 @@ export interface FrozenOptions {
   readonly validator?: FrozenValidator;
   /** A 127.0.0.1 port claimed for the frozen node. */
   readonly port?: number;
-  /** The capture commit a reviewer scored: the recording can be final. */
-  readonly reviewedCommit?: string;
-  /** Where the copies are unpacked: the run's own folder. */
+  /**
+   * The reviewed build, `<commit>@<sha256>`: the capture's commit and the
+   * replay binary's hash. With it a recording that passes can be final.
+   */
+  readonly reviewed?: string;
+  /** Where the copies are unpacked: a folder of the run's own. */
   readonly workDir?: string;
 }
 
 const RECORDING_FILE = 'recording.jsonl';
+
+export { exchangeKey };
+
+type Json = unknown;
 
 /** One saved answer. JSON-RPC ids are left out of the key and put back. */
 export interface RecordedExchange {
@@ -41,54 +47,6 @@ export interface RecordedExchange {
   readonly contentType: string | null;
   readonly body: string;
   readonly encoding: 'utf8' | 'base64';
-}
-
-type Json = unknown;
-
-function withoutIds(value: Json): Json {
-  if (Array.isArray(value)) return value.map(withoutIds);
-  if (value && typeof value === 'object' && 'jsonrpc' in value) {
-    const { id: _id, ...rest } = value as Record<string, unknown>;
-    return rest;
-  }
-  return value;
-}
-
-function parseJson(body: Buffer): Json | undefined {
-  if (!body.length) return undefined;
-  try {
-    return JSON.parse(body.toString('utf8'));
-  } catch {
-    return undefined;
-  }
-}
-
-function sortedQuery(rawPath: string): string {
-  const [pathname, query] = rawPath.split('?');
-  if (!query) return pathname;
-  const params = query
-    .split('&')
-    .filter(Boolean)
-    .sort((a, b) => a.localeCompare(b));
-  return `${pathname}?${params.join('&')}`;
-}
-
-/**
- * The key of a request: method, path with sorted query, and the body. A
- * JSON body is compared canonically, without JSON-RPC ids, since clients
- * number their requests differently on every run.
- */
-export function exchangeKey(
-  method: string,
-  rawPath: string,
-  body: Buffer
-): string {
-  const json = parseJson(body);
-  const bodyText =
-    json === undefined
-      ? createHash('sha256').update(body).digest('hex')
-      : canonicalStringify(withoutIds(json));
-  return `${method} ${sortedQuery(rawPath)} ${bodyText}`;
 }
 
 /** Puts the request's JSON-RPC ids into a recorded response. */
@@ -130,16 +88,15 @@ export function withRequestIds(
   return responseBody;
 }
 
-function loadRecording(dir: string): Map<string, RecordedExchange> {
+/** Every line of a recording, repeats included, in file order. */
+function readRecordingLines(dir: string): RecordedExchange[] {
   const file = path.join(dir, RECORDING_FILE);
-  const exchanges = new Map<string, RecordedExchange>();
-  if (!fs.existsSync(file)) return exchanges;
-  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
-    if (!line.trim()) continue;
-    const exchange = JSON.parse(line) as RecordedExchange;
-    exchanges.set(exchange.key, exchange);
-  }
-  return exchanges;
+  if (!fs.existsSync(file)) return [];
+  return fs
+    .readFileSync(file, 'utf8')
+    .split('\n')
+    .filter((line) => line.trim())
+    .map((line) => JSON.parse(line) as RecordedExchange);
 }
 
 function textBody(buffer: Buffer, contentType: string | null) {
@@ -189,24 +146,36 @@ export async function startHttpRecording(options: {
   readonly upstream?: string;
   /**
    * For a replayed recording whose PROVENANCE.json names frozen
-   * snapshots: how to re-serve them, and the reviewed commit.
+   * snapshots: how to re-serve them, and the reviewed build.
    */
   readonly frozen?: FrozenOptions;
 }): Promise<RunningSource> {
-  const recording = loadRecording(options.dir);
+  const lines = readRecordingLines(options.dir);
+  const recording = new Map(lines.map((line) => [line.key, line]));
   const header = readProvenance(options.dir) as FrozenHeader | null;
-  const frozen =
-    !options.upstream && header?.frozen
+  // A frozen recording holds the snapshots' answers only: recording into
+  // it would add answers no snapshot served.
+  if (options.upstream && header?.frozen) {
+    throw new Error(
+      `${options.name}: a frozen-snapshot recording can't be recorded into`
+    );
+  }
+  const frozen = !header?.frozen
+    ? null
+    : options.frozen?.workDir
       ? await verifyFrozenRecording({
           dir: options.dir,
           header,
-          lines: Array.from(recording.values()),
-          workDir: options.frozen?.workDir ?? path.join(options.dir, '.frozen'),
-          validator: options.frozen?.validator,
-          port: options.frozen?.port,
-          reviewedCommit: options.frozen?.reviewedCommit
+          lines,
+          workDir: options.frozen.workDir,
+          validator: options.frozen.validator,
+          port: options.frozen.port,
+          reviewed: options.frozen.reviewed
         })
-      : null;
+      : {
+          problems: ['no work folder was given for its frozen copies'],
+          provisionalWhy: 'its frozen copies have no work folder'
+        };
   const unrecorded: string[] = [];
   // Recording adds to the files; a recording someone marked as written by
   // hand stays marked so, whatever this run adds to it.
