@@ -16,7 +16,7 @@ import { ApiCompleteMultipartUploadResponse } from '../generated/models/ApiCompl
 import { ApiDropMediaStatus } from '../generated/models/ApiDropMediaStatus';
 import { ApiStartMultipartMediaUploadResponse } from '../generated/models/ApiStartMultipartMediaUploadResponse';
 import { getFileExtension, slugifyBaseName } from './sanitize-file-name';
-import { CLOUDFRONT_LINK } from '@/constants';
+import { getUserMediaOrigin } from '@/constants';
 import {
   BadRequestException,
   CustomApiCompliantException,
@@ -334,7 +334,7 @@ export class UploadMediaService {
       });
     }
     return {
-      media_url: `${CLOUDFRONT_LINK}/${completeResp.Key}`,
+      media_url: `${getUserMediaOrigin()}/${completeResp.Key}`,
       media_status: ApiDropMediaStatus.Ready
     };
   }
@@ -595,7 +595,7 @@ export class UploadMediaService {
       profile_id: author_id,
       source,
       public_key: key,
-      public_url: `${CLOUDFRONT_LINK}/${key}`,
+      public_url: `${getUserMediaOrigin()}/${key}`,
       ingest_bucket: ingestBucket,
       ingest_key: ingestKey,
       s3_upload_id: uploadId,
@@ -642,7 +642,7 @@ export class UploadMediaService {
       profile_id: authorId,
       source: DropMediaUploadSource.DROP,
       public_key: key,
-      public_url: `${CLOUDFRONT_LINK}/${key}`,
+      public_url: `${getUserMediaOrigin()}/${key}`,
       ingest_bucket: this.getS3Bucket(),
       ingest_key: key,
       s3_upload_id: s3UploadId,
@@ -864,7 +864,7 @@ export class UploadMediaService {
     return {
       upload_url: signedUrl,
       content_type,
-      media_url: `${CLOUDFRONT_LINK}/${key}`
+      media_url: `${getUserMediaOrigin()}/${key}`
     };
   }
 

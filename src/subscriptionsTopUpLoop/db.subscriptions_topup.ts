@@ -6,7 +6,6 @@ import {
 } from '@/constants';
 import { getDataSource } from '../db';
 import {
-  SubscriptionBalance,
   SubscriptionTopUp,
   SubscriptionTopUpLatestBlock
 } from '../entities/ISubscription';
@@ -18,8 +17,18 @@ import {
   sendSubscriptionTopUpWaveUpdate
 } from '../subscription-wave-notifier';
 import { sqlExecutor } from '../sql-executor';
+import {
+  claimDeferredWrite,
+  deferralReason,
+  deferSubscriptionWrites,
+  executorSink
+} from '@/subscription-key-width/subscription-deferred-writes';
 import { markSubscriptionCoverageDirty } from '../subscription-coverage/subscription-coverage-dirty';
 import { invalidateUpcomingSubscriptionCaches } from '@/subscriptionsDaily/subscription-cache';
+import {
+  lockSubscriptionBalance,
+  writeSubscriptionBalance
+} from '@/subscriptionsDaily/db.subscriptions';
 import {
   hasMinimumBalanceForAutomaticMode,
   InsufficientSubscriptionBalanceException
@@ -29,15 +38,30 @@ const logger = Logger.get('SUBSCRIPTIONS_TOP_UP_DB');
 
 const SUBSCRIPTIONS_TOP_UP_LATEST_BLOCK_ID = 'subscription_top_up_latest_block';
 
-export async function persistTopUps(topUps: SubscriptionTopUp[]) {
+/**
+ * Credits top-ups to their consolidation keys. With `replaySequence` it
+ * replays one queued top-up: the queue entry is claimed in the same
+ * transaction, and false is returned when another run had claimed it.
+ */
+export async function persistTopUps(
+  topUps: SubscriptionTopUp[],
+  options: { readonly replaySequence?: number } = {}
+): Promise<boolean> {
   const processedTopUps: SubscriptionTopUp[] = [];
   const alreadyProcessedTopUpHashes: string[] = [];
   const dirtyConsolidationKeys = new Set<string>();
+  let claimed = true;
   await sqlExecutor.executeNativeQueriesInTransaction(async (qrHolder) => {
     const queryRunner = qrHolder.connection as QueryRunner;
     const manager = queryRunner.manager;
-    const balancesRepo = manager.getRepository(SubscriptionBalance);
     const topUpsRepo = manager.getRepository(SubscriptionTopUp);
+    const sink = executorSink({ wrappedConnection: qrHolder });
+    if (options.replaySequence !== undefined) {
+      claimed = await claimDeferredWrite(options.replaySequence, 'DONE', sink);
+      if (!claimed) {
+        return;
+      }
+    }
 
     for (const topUp of topUps) {
       const isProcessed = await isTopUpProcessed(topUp.hash, manager);
@@ -59,9 +83,38 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
         consolidationKey = topUp.from_wallet;
       }
 
-      let balance = await balancesRepo.findOne({
-        where: { consolidation_key: consolidationKey }
-      });
+      // The key read above can be stale: a merge may have moved its balance
+      // to another key since. lockSubscriptionBalance follows the move.
+      const locked = await lockSubscriptionBalance(consolidationKey, manager);
+      consolidationKey = locked.consolidationKey;
+
+      // A key that must wait (too long for a subscription table, or with
+      // earlier writes waiting) has the whole top-up queued: no balance and
+      // no top-up row, so the top-up is applied, once, when it is replayed.
+      // Checked on the key the top-up would be written to, after the move.
+      const reason = await deferralReason(
+        consolidationKey,
+        sink,
+        options.replaySequence,
+        { locking: true }
+      );
+      if (reason) {
+        await deferSubscriptionWrites(
+          [
+            {
+              kind: 'TOP_UP',
+              consolidationKey,
+              dedupe: topUp.hash,
+              payload: { topUp },
+              reason
+            }
+          ],
+          sink
+        );
+        continue;
+      }
+
+      let balance = locked.balance;
 
       const setToAutoSubscribe = !balance;
 
@@ -75,7 +128,7 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
         balanceAfter = Math.round(balanceAfter * 100000) / 100000;
         balance.balance = balanceAfter;
       }
-      await balancesRepo.save(balance);
+      await writeSubscriptionBalance(manager, balance, locked.balance !== null);
       await topUpsRepo.save(topUp);
 
       if (setToAutoSubscribe) {
@@ -122,6 +175,7 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
       etherscanLink: link
     });
   }
+  return claimed;
 }
 
 /**

@@ -5,10 +5,6 @@ import {
   RATINGS_SNAPSHOTS_TABLE,
   RATINGS_TABLE
 } from '@/constants';
-import {
-  HELP_BOT_CREDIT_CATEGORY,
-  HELP_BOT_HANDLE
-} from '@/help-bot/help-bot.config';
 import { revokeRepBasedDropOverVotes } from '../drops/participation-drops-over-vote-revocation';
 import { creditTdhSql, withoutHelpBotCreditsSql } from './rating-credit';
 import { RateMatter, Rating } from '../entities/IRating';
@@ -22,27 +18,6 @@ import {
 import { RatingsSnapshotsPageRequest } from './ratings.service';
 
 const mysql = require('mysql');
-
-const HELP_BOT_CREDIT_OVERRATE_PARAMS = {
-  helpBotCreditCategory: HELP_BOT_CREDIT_CATEGORY,
-  helpBotHandle: HELP_BOT_HANDLE
-};
-
-function helpBotCreditOverRateExclusion(ratingAlias: string): string {
-  return `
-    ${ratingAlias}.matter = 'REP'
-    and ${ratingAlias}.matter_category = :helpBotCreditCategory
-    and exists (
-      select 1
-      from ${IDENTITIES_TABLE} help_bot_identity
-      where help_bot_identity.profile_id = ${ratingAlias}.rater_profile_id
-        and (
-          help_bot_identity.normalised_handle = :helpBotHandle
-          or lower(help_bot_identity.handle) = :helpBotHandle
-        )
-    )
-  `;
-}
 
 function compareStrings(a: string, b: string): number {
   if (a < b) return -1;
@@ -160,15 +135,11 @@ from general_stats
   ): Promise<Rating[]> {
     return this.db.execute(
       `
-          select * from ${RATINGS_TABLE} r
-          where r.rater_profile_id = :rater_profile_id
-            and r.matter = :matter
-            and not (${helpBotCreditOverRateExclusion('r')})
+          select * from ${RATINGS_TABLE} where rater_profile_id = :rater_profile_id and matter = :matter
       `,
       {
         rater_profile_id,
-        matter,
-        ...HELP_BOT_CREDIT_OVERRATE_PARAMS
+        matter
       },
       { wrappedConnection: connection }
     );
@@ -400,14 +371,12 @@ from general_stats
                                        sum(abs(r.rating)) as tally
                                 from ${RATINGS_TABLE} r
                                 where r.matter in ('REP', 'CIC', 'WAVE_REP')
-                                  and not (${helpBotCreditOverRateExclusion('r')})
                                 group by 1, 2)
           select rt.rater_profile_id, rt.matter, rt.tally, coalesce(${creditTdhSql('i')}, 0) as rater_credit
           from rate_tallies rt
                    left join ${IDENTITIES_TABLE} i on rt.rater_profile_id = i.profile_id
           where floor(coalesce(${creditTdhSql('i')}, 0)) < abs(rt.tally)
-      `,
-      HELP_BOT_CREDIT_OVERRATE_PARAMS
+      `
     );
   }
 

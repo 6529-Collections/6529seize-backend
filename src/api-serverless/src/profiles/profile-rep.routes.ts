@@ -36,10 +36,6 @@ import { ApiRepContributorsPage } from '@/api/generated/models/ApiRepContributor
 import { ApiRepOverview } from '@/api/generated/models/ApiRepOverview';
 import { profileRepOverviewApiService } from '@/api/profiles/profile-rep-overview.api.service';
 import { ApiRepDirection } from '@/api/generated/models/ApiRepDirection';
-import {
-  HELP_BOT_RESERVED_CREDIT_CATEGORY_MESSAGE,
-  isHelpBotCreditCategory
-} from '@/help-bot/help-bot.config';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -289,11 +285,6 @@ router.post(
     timer.start(`abusivenessDetection`);
     const proposedCategory = category?.trim() ?? '';
     if (proposedCategory !== '') {
-      if (isHelpBotCreditCategory(proposedCategory)) {
-        throw new BadRequestException(
-          HELP_BOT_RESERVED_CREDIT_CATEGORY_MESSAGE
-        );
-      }
       const abusivenessDetectionResult =
         await abusivenessCheckService.checkRepPhrase(category, {
           authenticationContext: authContext,

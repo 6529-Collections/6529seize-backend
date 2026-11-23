@@ -200,8 +200,8 @@ async function planMetricsSync(
 }
 
 /**
- * Step C on a scoped plan. Every REP and CIC ratings writer (ratings.db,
- * help-bot credits) sets `ratings.last_modified` to the database clock in
+ * Step C on a scoped plan. Every REP and CIC ratings writer (ratings.db)
+ * sets `ratings.last_modified` to the database clock in
  * the statement that changes the rating, and commits within the Lambda limit,
  * so `last_modified` >= commit time - margin. The previous walk started at T
  * and stored T - margin; it read every rating committed before T. A rating
