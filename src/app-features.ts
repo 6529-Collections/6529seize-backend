@@ -15,6 +15,15 @@ export class AppFeatures {
     return this.isFeatureEnabled('DB_MIGRATE_DISABLED');
   }
 
+  /**
+   * Replays subscription writes held back by the key-width guard
+   * (subscription-key-width) once their key fits every subscription table,
+   * in order per key. Rollback: unset it; the queue keeps the writes.
+   */
+  public isSubscriptionDeferredReplayEnabled(): boolean {
+    return this.isFeatureEnabled('SUBSCRIPTION_DEFERRED_REPLAY');
+  }
+
   public isExperimentalBulkRepEnabled(): boolean {
     return this.isFeatureEnabled('EXPERIMENTAL_BULK_REP');
   }

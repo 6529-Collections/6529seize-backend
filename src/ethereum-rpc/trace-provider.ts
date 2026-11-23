@@ -1,5 +1,6 @@
 import { JsonRpcProvider } from 'ethers';
 import { Network, getRpcChainId } from '@/ethereum-rpc/ethereum-rpc-network';
+import { getAlchemyBaseUrl } from '@/alchemy-sdk';
 
 const providers = new Map<string, JsonRpcProvider>();
 function providerFor(url: string, chainId: number): JsonRpcProvider {
@@ -17,7 +18,7 @@ export function getAlchemyTraceProvider(network: Network): JsonRpcProvider {
   const chainId = getRpcChainId(network);
   const key = process.env.ALCHEMY_API_KEY;
   if (!key) throw new Error('ALCHEMY_API_KEY is required for Alchemy tracing');
-  return providerFor(`https://${network}.g.alchemy.com/v2/${key}`, chainId);
+  return providerFor(`${getAlchemyBaseUrl(network)}/v2/${key}`, chainId);
 }
 
 /** Preserve the existing mainnet trace provider; never send testnet traces here. */
