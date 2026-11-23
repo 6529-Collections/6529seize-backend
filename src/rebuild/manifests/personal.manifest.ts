@@ -138,10 +138,14 @@ const PROBES: Probe[] = [
  *   and takeLogHead, personal-record-heads.ts). Keys records are SEALED,
  *   which ps doesn't carry (record-families.ts), and readers are pv
  *   RECORDs, so both are pv only.
+ * - `collect.rule`: a person's Collect rule records (collectRuleHandlers,
+ *   collect-rule-records.ts), live and in the rebuild's first pass, which
+ *   keeps their heads (deferredCollectRules).
  *
- * The import's own types keep no head: the rebuild applies import entries
- * and report effects with `heads: false` (personal-import.ts), and a signed
- * record of such a type is refused.
+ * The import's own types keep no head (moderation-log, collect.rule-state,
+ * collect.op): the rebuild applies import entries and report effects with
+ * `heads: false` (personal-import.ts), and a signed record of such a type
+ * is refused.
  */
 const PERSONAL_HEAD_TYPES = [
   ['ps', 'follow'],
@@ -157,6 +161,7 @@ const PERSONAL_HEAD_TYPES = [
   ['pv', 'alias'],
   ['pv', 'push'],
   ['pv', 'eula'],
+  ['pv', 'collect.rule'],
   ['pv', '~owner'],
   ['pv', '~keys'],
   ['pv', '~reader']
