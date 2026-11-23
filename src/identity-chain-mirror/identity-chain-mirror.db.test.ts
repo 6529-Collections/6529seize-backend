@@ -1009,6 +1009,37 @@ describeWithSeed(
     });
 
     it('keeps first bindings, regroups to re-key and mapped profile ids', async () => {
+      // A run saves the mirror's state (the chain, then the placeholders'
+      // listing) before any step that records or reads first bindings, and
+      // firstBindingOf reads the bindings' place from that row.
+      await db.saveState(
+        {
+          next_height: null,
+          sync_from_height: null,
+          sync_phase: null,
+          sync_after: null,
+          last_full_sync_at: null,
+          bindings_next_height: null,
+          chain_id: 'chain',
+          placeholders_at: 1,
+          bindings_exact: false,
+          levels_tdh_day: null,
+          level_sweep_day: null,
+          level_sweep_after: null,
+          levels_day_height: null,
+          sync_use_case: null,
+          sync_wallet_after: null,
+          pin_floor: null,
+          off_chain_after: null,
+          events_next_height: null,
+          events_rebuild_height: null,
+          events_rebuild_after: null,
+          events_gone_at: null,
+          events_stuck_runs: 0,
+          retry: NO_RETRY
+        },
+        1
+      );
       await inTx((conn) =>
         db.recordFirstBindings(
           [
