@@ -69,6 +69,15 @@ import {
 const logger = Logger.get('IDENTITY_CHAIN_MIRROR');
 
 /**
+ * Orders strings by UTF-16 code units, as the default sort and the `>` the
+ * walk resumes with both do: the resume point and the order must agree.
+ */
+function compareCodeUnits(a: string, b: string): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
+/**
  * 6529.io's consolidation keys held four wallets (varchar 200) before the
  * widening migration; the mirror reads the live width at each run and falls
  * back to this.
@@ -1169,7 +1178,7 @@ export class IdentityChainMirror {
         ])
       )
         .filter((it) => after === null || it > after)
-        .sort();
+        .sort(compareCodeUnits);
       let last: string | null = null;
       for (const wallet of wallets) {
         if (this.now() >= deadline) {
