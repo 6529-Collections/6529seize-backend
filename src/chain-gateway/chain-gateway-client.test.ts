@@ -135,6 +135,31 @@ const P02 = '0x' + '02'.repeat(32);
 const P03 = '0x' + '03'.repeat(32);
 const TX = '0x' + 'aa'.repeat(32);
 const WALLET1 = '0x' + '01'.repeat(20);
+const JOINER = '0x' + '02'.repeat(20);
+const ZERO_PRINCIPAL = '0x' + '0'.repeat(64);
+
+/** A draft as the node answers an IDENTITY_JOIN of PA signed by WALLET1. */
+function joinDraft(over: Record<string, unknown> = {}) {
+  return {
+    txId: '0x' + 'cd'.repeat(32),
+    opType: 0x010f,
+    opName: 'IDENTITY_JOIN',
+    envelope: { networkId: stamp(1).network, header: { principal: PA } },
+    signatures: [
+      { role: 0, keyType: 1, signer: WALLET1 },
+      { role: 4, keyType: 1, signer: JOINER }
+    ],
+    fee: { maxWork: '500000' },
+    ...over
+  };
+}
+
+const JOIN_REQUEST = {
+  opType: 'IDENTITY_JOIN',
+  principal: PA,
+  signer: WALLET1,
+  body: { wallet: JOINER }
+};
 
 /** A route that answers the status at `finalized`, and `rest` otherwise. */
 function withStatus(rest: (call: Call) => Reply, finalized = 1000) {
@@ -1426,6 +1451,80 @@ describe('ChainGatewayClient reads', () => {
       IDENTITY
     );
     expect(reads(calls)).toHaveLength(3);
+  });
+
+  it.each([
+    ['the cursor it was asked from', [IDENTITY], 'c1'],
+    ['no rows', [], 'c2']
+  ])(
+    'refuses a list page that gives %s as its next',
+    async (_name, rows, next) => {
+      const { client, calls } = setup(
+        withStatus(
+          () => ({ status: 200, json: { read: stamp(10), data: rows, next } }),
+          10
+        )
+      );
+      await expect(
+        client.listIdentities({ after: 'c1', height: 10 })
+      ).rejects.toMatchObject({ code: 'bad_answer' });
+      // Refused, never kept: asked again.
+      await expect(
+        client.listIdentities({ after: 'c1', height: 10 })
+      ).rejects.toMatchObject({ code: 'bad_answer' });
+      expect(reads(calls)).toHaveLength(2);
+    }
+  );
+
+  it('takes an empty last page', async () => {
+    const { client } = setup(
+      withStatus(
+        () => ({
+          status: 200,
+          json: { read: stamp(10), data: [], next: null }
+        }),
+        10
+      )
+    );
+    expect(
+      (await client.listIdentities({ after: 'c1', height: 10 }))?.items
+    ).toEqual([]);
+  });
+
+  it.each([
+    ['a NUL', 'ab' + String.fromCharCode(0) + 'c'],
+    ['a control character', 'a' + String.fromCharCode(1) + 'b'],
+    ['a lone surrogate', 'ab' + String.fromCharCode(0xd800)]
+  ])(
+    'answers a handle with %s as invalid, and refuses it as a lookup',
+    async (_name, handle) => {
+      const { client, calls } = setup(withStatus(() => new Error('not asked')));
+      expect((await client.getHandle(handle))?.status).toBe('invalid');
+      await expect(client.getIdentityByHandle(handle)).rejects.toMatchObject({
+        code: 'bad_request'
+      });
+      expect(calls).toHaveLength(0);
+    }
+  );
+
+  it.each([
+    [
+      'families past a query',
+      (c: ChainGatewayClient) =>
+        c.getChanges(1, { families: Array(400).fill('ratings') })
+    ],
+    [
+      'a TDH list without its day',
+      (c: ChainGatewayClient) => c.getTdh({ list: 'wallets' })
+    ],
+    [
+      "a wallet's TDH with a day",
+      (c: ChainGatewayClient) => c.getTdh({ wallet: WALLET1, day: 3 })
+    ]
+  ])('refuses %s before asking', async (_name, ask) => {
+    const { client, calls } = setup(withStatus(() => new Error('not asked')));
+    await expect(ask(client)).rejects.toMatchObject({ code: 'bad_request' });
+    expect(calls).toHaveLength(0);
   });
 
   it('refuses an empty 200 as an answer it cannot read', async () => {
@@ -2779,7 +2878,7 @@ describe('ChainGatewayClient writes', () => {
               status: 200,
               json: {
                 read: stamp(5, 'head'),
-                data: { txId: '0x' + 'cd'.repeat(32), opName: 'IDENTITY_JOIN' }
+                data: joinDraft()
               }
             }
           : {
@@ -2791,12 +2890,7 @@ describe('ChainGatewayClient writes', () => {
             }
       )
     );
-    const draft = await client.getDraft({
-      opType: 'IDENTITY_JOIN',
-      principal: '0x' + 'ab'.repeat(32),
-      signer: '0x' + '01'.repeat(20),
-      body: { wallet: '0x' + '02'.repeat(20) }
-    });
+    const draft = await client.getDraft(JOIN_REQUEST);
     expect(draft.opName).toBe('IDENTITY_JOIN');
     const result = await client.submit({
       unsigned: '0x00',
@@ -2820,33 +2914,25 @@ describe('ChainGatewayClient writes', () => {
     ['another code', { opType: 0x0102 }, true],
     ['another name', { opType: 'IDENTITY_LEAVE' }, true],
     ['another hex code', { opType: '0x0102' }, true],
-    ['its code', { opType: 0x0101 }, false],
+    ['its code', { opType: 0x010f }, false],
     ['its name in another case', { opType: 'identity_join' }, false],
-    ['its hex code', { opType: '0x0101' }, false],
+    ['its hex code', { opType: '0x010F' }, false],
     [
       'less work reserved than given',
-      { opType: 0x0101, maxWork: 600000 },
+      { opType: 0x010f, maxWork: 600000 },
       true
     ],
-    ['the work given', { opType: 0x0101, maxWork: 500000 }, false]
+    ['the work given', { opType: 0x010f, maxWork: 500000 }, false]
   ])(
     'checks a draft against the request: %s',
     async (_name, asked, refused) => {
       const { client } = setup(
         withStatus(() => ({
           status: 200,
-          json: {
-            read: stamp(5, 'head'),
-            data: {
-              txId: '0x' + 'cd'.repeat(32),
-              opType: 0x0101,
-              opName: 'IDENTITY_JOIN',
-              fee: { maxWork: '500000' }
-            }
-          }
+          json: { read: stamp(5, 'head'), data: joinDraft() }
         }))
       );
-      const draft = client.getDraft({ ...asked, body: {} });
+      const draft = client.getDraft({ ...JOIN_REQUEST, ...asked });
       if (refused) {
         await expect(draft).rejects.toMatchObject({ code: 'bad_answer' });
       } else {
@@ -2854,6 +2940,131 @@ describe('ChainGatewayClient writes', () => {
       }
     }
   );
+
+  it.each([
+    [
+      'another principal',
+      joinDraft({
+        envelope: { networkId: stamp(1).network, header: { principal: P01 } }
+      }),
+      JOIN_REQUEST
+    ],
+    [
+      'another signer',
+      joinDraft({
+        signatures: [
+          { role: 0, signer: JOINER },
+          { role: 4, signer: JOINER }
+        ]
+      }),
+      JOIN_REQUEST
+    ],
+    [
+      'another joining wallet',
+      joinDraft({
+        signatures: [
+          { role: 0, signer: WALLET1 },
+          { role: 4, signer: WALLET1 }
+        ]
+      }),
+      JOIN_REQUEST
+    ],
+    [
+      'no joining wallet',
+      joinDraft({ signatures: [{ role: 0, signer: WALLET1 }] }),
+      JOIN_REQUEST
+    ],
+    [
+      'another chain',
+      joinDraft({
+        envelope: { networkId: OTHER_NETWORK, header: { principal: PA } }
+      }),
+      JOIN_REQUEST
+    ],
+    [
+      'a principal where none was given',
+      joinDraft({ opType: 0x0101, opName: 'IDENTITY_CREATE' }),
+      { opType: 'IDENTITY_CREATE', signer: WALLET1, body: {} }
+    ],
+    [
+      'another session key',
+      joinDraft({
+        opType: 0x0101,
+        opName: 'IDENTITY_CREATE',
+        envelope: {
+          networkId: stamp(1).network,
+          header: { principal: PA, keyId: P02 }
+        },
+        signatures: [{ role: 0, keyType: 2, signer: null }]
+      }),
+      {
+        opType: 'IDENTITY_CREATE',
+        principal: PA,
+        keyType: 2,
+        keyId: P01,
+        authRef: P03,
+        body: {}
+      }
+    ]
+  ])('refuses a draft of %s than asked', async (_name, data, request) => {
+    const { client } = setup(
+      withStatus(() => ({
+        status: 200,
+        json: { read: stamp(5, 'head'), data }
+      }))
+    );
+    await expect(client.getDraft(request)).rejects.toMatchObject({
+      code: 'bad_answer'
+    });
+  });
+
+  it('takes a draft of principal zero, and of a session key, as asked', async () => {
+    let data: unknown = joinDraft({
+      opType: 0x0101,
+      opName: 'IDENTITY_CREATE',
+      envelope: {
+        networkId: stamp(1).network,
+        header: { principal: ZERO_PRINCIPAL }
+      },
+      signatures: [{ role: 0, keyType: 1, signer: WALLET1 }]
+    });
+    const { client } = setup(
+      withStatus(() => ({
+        status: 200,
+        json: { read: stamp(5, 'head'), data }
+      }))
+    );
+    expect(
+      (
+        await client.getDraft({
+          opType: 'IDENTITY_CREATE',
+          signer: WALLET1,
+          body: {}
+        })
+      ).opName
+    ).toBe('IDENTITY_CREATE');
+    data = joinDraft({
+      opType: 0x0101,
+      opName: 'IDENTITY_CREATE',
+      envelope: {
+        networkId: stamp(1).network,
+        header: { principal: PA, keyId: P01 }
+      },
+      signatures: [{ role: 0, keyType: 2, signer: null }]
+    });
+    expect(
+      (
+        await client.getDraft({
+          opType: 'IDENTITY_CREATE',
+          principal: PA,
+          keyType: 2,
+          keyId: P01,
+          authRef: P03,
+          body: {}
+        })
+      ).opName
+    ).toBe('IDENTITY_CREATE');
+  });
 
   it.each([
     [

@@ -715,7 +715,19 @@ const isHandleSegment = (v: string) =>
   !v.includes('/') &&
   !v.includes('\\') &&
   v !== '.' &&
-  v !== '..';
+  v !== '..' &&
+  // eslint-disable-next-line no-control-regex
+  !/[\u0000-\u001f\u007f]/.test(v) &&
+  isWellFormed(v);
+/** Text a URL can carry: no lone surrogate. */
+function isWellFormed(v: string): boolean {
+  try {
+    encodeURIComponent(v);
+    return true;
+  } catch {
+    return false;
+  }
+}
 const handleArg = (it: string) =>
   arg(it, 'a handle', isHandleSegment).toLowerCase();
 /** Longer than any handle can be (they are 3 to 15 bytes): never asked. */
@@ -846,6 +858,48 @@ function outcomeUnknown(
   );
   unknown.txId = txId;
   return unknown;
+}
+
+const ZERO_PRINCIPAL = '0x' + '0'.repeat(64);
+
+/**
+ * What of a draft differs from the request it answers, or null: the
+ * header's principal (zero when none was given), the role-0 signer (a
+ * wallet) or key id (a session key), IDENTITY_JOIN's role-4 joining
+ * wallet, and the envelope's network.
+ */
+function draftMismatch(
+  draft: ChainDraft,
+  request: ChainDraftRequest,
+  network: string | null
+): string | null {
+  const envelope = (draft.envelope ?? {}) as {
+    networkId?: unknown;
+    header?: { principal?: unknown; keyId?: unknown };
+  };
+  const text = (value: unknown) => lower(String(value ?? ''));
+  const principal = request.principal
+    ? lower(request.principal)
+    : ZERO_PRINCIPAL;
+  if (text(envelope.header?.principal) !== principal) return 'principal';
+  const rows = Array.isArray(draft.signatures) ? draft.signatures : [];
+  const role = (n: number) => rows.find((it) => it?.role === n);
+  if ((request.keyType ?? 1) === 1) {
+    if (text(role(0)?.signer) !== text(request.signer)) return 'signer';
+  } else if (text(envelope.header?.keyId) !== text(request.keyId)) {
+    return 'key';
+  }
+  const joins = draft.opName === 'IDENTITY_JOIN' || draft.opType === 0x010f;
+  if (joins) {
+    const wallet = (request.body as { wallet?: unknown })?.wallet;
+    if (!wallet || text(role(4)?.signer) !== text(wallet)) {
+      return 'joining wallet';
+    }
+  }
+  if (network !== null && text(envelope.networkId) !== network) {
+    return 'network';
+  }
+  return null;
 }
 
 /** A UUID compared without its dashes, in lower case. */
@@ -1626,8 +1680,14 @@ export class ChainGatewayClient {
       { ...query, after: opts.after ?? undefined, limit: opts.limit },
       opts,
       (it) => {
-        if (it && !Array.isArray(items(it.data))) {
+        if (!it) return;
+        const list = items(it.data);
+        if (!Array.isArray(list)) {
           throw badAnswer(path, 'a list that is not a list');
+        }
+        // A walk following `next` must move on, or it loops for ever.
+        if (it.next !== null && (!list.length || it.next === opts.after)) {
+          throw badAnswer(path, 'a page that does not move on');
         }
       }
     );
@@ -2154,6 +2214,19 @@ export class ChainGatewayClient {
   ): Promise<ChainAnswer<T> | null> {
     let path = '/v1/tdh';
     let isAsked: (data: Record<string, unknown>) => boolean = () => true;
+    // Nothing asked is left unread: a list needs its day, and a wallet's
+    // TDH is of the read's day, so no day goes with it.
+    if (
+      (query.list !== undefined && query.day === undefined) ||
+      (query.wallet && query.day !== undefined)
+    ) {
+      throw new ChainGatewayError(
+        'A TDH list needs its day, and a wallet takes none',
+        null,
+        'bad_request',
+        '/v1/tdh'
+      );
+    }
     if (query.wallet) {
       const wallet = walletArg(query.wallet);
       path = `/v1/tdh/wallets/${segment(wallet)}`;
@@ -2241,6 +2314,18 @@ export class ChainGatewayClient {
     const path = '/v1/feed';
     const cursor = parseFeedCursor(from);
     countArg(opts.limit, 'a limit');
+    if (
+      new URLSearchParams({
+        families: (opts.families ?? []).join(',')
+      }).toString().length > LIST_QUERY_BYTES
+    ) {
+      throw new ChainGatewayError(
+        'Too many families for one query',
+        null,
+        'bad_request',
+        '/v1/feed'
+      );
+    }
     for (const family of opts.families ?? []) {
       // A family id (0x and 4 hex) or a group's name.
       arg(
@@ -2375,6 +2460,13 @@ export class ChainGatewayClient {
         path,
         `a draft reserving ${reserved} work, below ${given}`
       );
+    }
+    // What every wallet will sign must be of what was asked: a node that
+    // misread a field, or a gateway mixing nodes, could hand over a draft
+    // for another principal, signer, joining wallet or chain.
+    const wrong = draftMismatch(draft, request, (await this.getHead()).network);
+    if (wrong) {
+      throw badAnswer(path, `a draft of another ${wrong} than was asked`);
     }
     return draft;
   }
