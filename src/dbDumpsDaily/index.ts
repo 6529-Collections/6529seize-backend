@@ -41,6 +41,12 @@ export const handler = sentryContext.wrapLambdaHandler(
     if (identityExport) {
       return await runIdentityExportJob(identityExport, context);
     }
+    const { parseProfileSiteExportEvent, runProfileSiteExportJob } =
+      await import('./profile-site-export.handler');
+    const profileSiteExport = parseProfileSiteExportEvent(event);
+    if (profileSiteExport) {
+      return await runProfileSiteExportJob(profileSiteExport, context);
+    }
     const job =
       event && typeof event === 'object' && 'job' in event
         ? String((event as { job: unknown }).job)
