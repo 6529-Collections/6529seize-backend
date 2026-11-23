@@ -35,6 +35,12 @@ export const handler = sentryContext.wrapLambdaHandler(
       return;
     }
     // Loaded only for a job, so the export's modules never touch the dump.
+    const { parseIdentityExportEvent, runIdentityExportJob } =
+      await import('./identity-export.handler');
+    const identityExport = parseIdentityExportEvent(event);
+    if (identityExport) {
+      return await runIdentityExportJob(identityExport, context);
+    }
     const { parseProfileSiteExportEvent, runProfileSiteExportJob } =
       await import('./profile-site-export.handler');
     const profileSiteExport = parseProfileSiteExportEvent(event);
