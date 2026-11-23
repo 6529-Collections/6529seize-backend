@@ -102,6 +102,14 @@ export const RATING_EVENTS_UNSETTLED_WAIT_MS = 15 * 60_000;
 /** The most changes the cursor keeps waiting at once; the oldest go first. */
 export const RATING_EVENTS_MAX_PENDING = 32;
 
+/**
+ * A rating's row is still pushed this long after its block. The mirror
+ * applies ratings once per delegationsLoop run, and the feeds read them at
+ * the end of that run; while the mirror's first full sync fills its runs, a
+ * rating can reach the feed 5-15 minutes after its block.
+ */
+export const RATING_PUSH_WINDOW_MS = 30 * 60_000;
+
 const COLUMNS = `id, height, block_time_ms, rater_principal, target_principal,
   rater_profile_id, target_profile_id, matter, matter_category, old_rating,
   new_rating, total_after, origin, by_import, created_at`;
@@ -283,6 +291,7 @@ function parseCursor(value: string | null): RatingsFeedCursor | null {
  */
 export class IdentityRatingsFeed implements NotificationFeed<RatingChangedEvent> {
   readonly name = 'identity:ratings';
+  readonly pushWindowMs = RATING_PUSH_WINDOW_MS;
   private readonly logger = Logger.get('IDENTITY_RATINGS_FEED');
 
   constructor(

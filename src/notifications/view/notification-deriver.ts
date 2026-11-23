@@ -34,7 +34,7 @@ import {
   writesViewRow
 } from '@/notifications/view/notify-view-flags';
 
-/** A derived row is pushed only while it is this fresh. */
+/** A derived row is pushed only while it is this fresh, by its event's time. */
 export const PUSH_LIVE_WINDOW_MS = 15 * 60 * 1000;
 
 export interface DeriveOptions {
@@ -45,6 +45,8 @@ export interface DeriveOptions {
   readonly mode: 'live' | 'replay';
   /** The clock for the live window (tests). */
   readonly now?: number;
+  /** The live window for this source's rows; PUSH_LIVE_WINDOW_MS if unset. */
+  readonly pushWindowMs?: number;
 }
 
 export interface DeriveCounts {
@@ -274,7 +276,7 @@ export class NotificationDeriver {
     return (
       options.mode === 'live' &&
       this.pushActivated() &&
-      createdAt >= now - PUSH_LIVE_WINDOW_MS
+      createdAt >= now - (options.pushWindowMs ?? PUSH_LIVE_WINDOW_MS)
     );
   }
 

@@ -33,6 +33,11 @@ export interface FeedBatch<E> {
 export interface NotificationFeed<E> {
   /** The cursor's key; one per feed, stable across deploys. */
   readonly name: string;
+  /**
+   * How long after its event a new row is still pushed, for a source whose
+   * rows can come later than most; the deriver's 15 minutes if unset.
+   */
+  readonly pushWindowMs?: number;
   /** At most `limit` events after `after` (null: from the start). */
   read(after: string | null, limit: number): Promise<FeedBatch<E>>;
   derive(event: E): Promise<DerivedGroup>;
@@ -132,7 +137,11 @@ export class NotificationFeedRunner {
           }
           const derived = await this.deriver.apply(
             groups,
-            { mode: options.mode, now: options.now },
+            {
+              mode: options.mode,
+              now: options.now,
+              pushWindowMs: feed.pushWindowMs
+            },
             { connection }
           );
           await this.cursors.set(feed.name, next, connection);

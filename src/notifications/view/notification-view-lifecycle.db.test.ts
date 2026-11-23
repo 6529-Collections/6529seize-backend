@@ -515,6 +515,86 @@ describe('notification view lifecycle', () => {
     announced.mockRestore();
   });
 
+  it('pushes a rating once up to 30 minutes after its block, and never an older one', async () => {
+    // While the mirror's first full sync fills its runs, a rating can reach
+    // the feed 5-15 minutes after its block.
+    const now = Date.now();
+    const flags = { NOTIFY_DERIVED_CAUSES: `IDENTITY_REP@${now - 3_600_000}` };
+    setFlags({ NOTIFY_VIEW_MODE: 'shadow', ...flags });
+    const ratingRow = (id: number, ageMs: number) => ({
+      id,
+      height: 300 + id,
+      block_time_ms: now - ageMs,
+      rater_principal: `0x${'f'.repeat(39)}${id}`,
+      target_principal: `0x${'a'.repeat(40)}`,
+      rater_profile_id: fanId,
+      target_profile_id: authorId,
+      matter: 'REP',
+      matter_category: 'Art',
+      old_rating: 0,
+      new_rating: id,
+      total_after: id,
+      origin: 'OPERATION' as RatingEventRow['origin'],
+      by_import: false,
+      created_at: now - 60_000
+    });
+    const table = [
+      // Applied 20 minutes after its block: still pushed.
+      ratingRow(1, 20 * 60_000),
+      // Applied 31 minutes after its block: listed, not pushed.
+      ratingRow(2, 31 * 60_000)
+    ];
+    const feed = new IdentityRatingsFeed({
+      scanEnd: async (afterId) => {
+        const last = table.filter((row) => row.id > afterId).at(-1);
+        return last ? { id: last.id, height: last.height } : null;
+      },
+      readNotifying: async (afterId, upToId) =>
+        table.filter((row) => row.id > afterId && row.id <= upToId),
+      readByIds: async () => [],
+      heightOf: async (id) => table.find((row) => row.id === id)?.height ?? null
+    });
+    const copies = () =>
+      sqlExecutor.execute<{ id: number; additional_data: unknown }>(
+        `select id, additional_data from ${IDENTITY_NOTIFICATIONS_TABLE} order by id`
+      );
+    const pushed = async () =>
+      (
+        await sqlExecutor.execute<{ notification_id: number }>(
+          `select notification_id from ${PUSH_NOTIFICATION_OUTBOX_TABLE}`
+        )
+      ).map((row) => Number(row.notification_id));
+
+    await notificationFeedRunner.run(feed, { mode: 'live', now });
+    const [fresh, late] = await copies();
+    const data = (row: { additional_data: unknown }) =>
+      typeof row.additional_data === 'string'
+        ? JSON.parse(row.additional_data)
+        : row.additional_data;
+    expect([fresh, late].map((row) => data(row).rater_rating)).toEqual([1, 2]);
+    expect(await pushed()).toEqual([Number(fresh.id)]);
+
+    // Read again from the start: the same changes, and no second push.
+    await notificationViewCursorsDb.clear([feed.name]);
+    await notificationFeedRunner.run(feed, { mode: 'live', now });
+    expect(await copies()).toHaveLength(2);
+    expect(await pushed()).toEqual([Number(fresh.id)]);
+
+    // In `on` the same window holds for pushes from the view.
+    setFlags({ NOTIFY_VIEW_MODE: 'on', ...flags });
+    table.push(ratingRow(3, 25 * 60_000), ratingRow(4, 45 * 60_000));
+    await notificationFeedRunner.run(feed, { mode: 'live', now });
+    expect(
+      (
+        await sqlExecutor.execute<{ cause: string; created_at: number }>(
+          `select v.cause, v.created_at from ${NOTIFICATION_VIEW_PUSH_OUTBOX_TABLE} o
+           join ${NOTIFICATION_VIEW_TABLE} v
+             on v.identity_id = o.identity_id and v.source_key = o.source_key`
+        )
+      ).map((row) => [row.cause, Number(row.created_at)])
+    ).toEqual([['IDENTITY_REP', now - 25 * 60_000]]);
+  });
+
   it('derives REP from an earlier cut in shadow: the copy and its push at once, one row at on', async () => {
     // Ratings leave 6529.io a day before the rest switches: from their cut
     // the deriver writes them, in shadow, through identity_notifications.
