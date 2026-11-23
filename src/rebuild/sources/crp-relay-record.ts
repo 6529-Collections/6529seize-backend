@@ -3,6 +3,7 @@ import * as http from 'node:http';
 import * as path from 'node:path';
 import {
   bareHash,
+  byCodeUnit,
   decodeBinary,
   EVENTS_FILE,
   Frame,
@@ -138,7 +139,7 @@ export class RelayRecording {
     );
     fs.writeFileSync(
       path.join(this.dir, READS_FILE),
-      `${JSON.stringify(Array.from(this.reads).sort(), null, 2)}\n`
+      `${JSON.stringify(Array.from(this.reads).sort(byCodeUnit), null, 2)}\n`
     );
     if (this.head !== null) {
       fs.writeFileSync(
