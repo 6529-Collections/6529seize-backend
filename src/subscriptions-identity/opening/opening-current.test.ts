@@ -200,7 +200,8 @@ describe('currentState', () => {
       queued('TOP_UP', X, topUp('0xa2', X, 0.000006)),
       // Already credited by the top-up loop.
       queued('TOP_UP', X, topUp('0xdone', X, 1)),
-      // Queued under a 14-wallet key; the sender is now in P1.
+      // Queued under a 14-wallet key; the sender is now in P1 and the
+      // key's other wallets are not.
       queued('TOP_UP', WIDE, topUp('0xa3', wallet(0x40), 0.033333))
     );
     const state = currentState(CUT, t, byWallet);
@@ -241,6 +242,35 @@ describe('currentState', () => {
       'TOP_UP_ALREADY_CREDITED',
       'TOP_UP_CREDITED'
     ]);
+    // X's key goes to X. WIDE's wallets now span identities, so its key
+    // blocks the cut as a legacy key's would; the credit is the same.
+    expect(state.identityOf(X)).toBe(X);
+    expect(
+      state.blocked.map((b) => [
+        b.consolidationKey,
+        b.reason,
+        b.identities.length
+      ])
+    ).toEqual([[WIDE, 'SPANS_IDENTITIES', 14]]);
+  });
+
+  it("keys a credited waiting top-up's key to its one identity, or to the identity a waiting re-key chose", () => {
+    const wideWallets = WIDE.split('-');
+    const oneIdentity = new Map(wideWallets.map((w) => [w, P1]));
+    const t = empty();
+    t.queue.push(queued('TOP_UP', WIDE, topUp('0xc1', wideWallets[0], 0.1)));
+    const whole = currentState(CUT, t, oneIdentity);
+    expect(whole.blocked).toEqual([]);
+    expect(whole.identityOf(WIDE)).toBe(P1);
+
+    // WIDE spans identities, but the legacy re-key the guard held back
+    // chose P1's key for it.
+    t.queue.push(
+      queued('CONSOLIDATION', PAIR, { newKey: PAIR, oldKeys: [WIDE] })
+    );
+    const decided = currentState(CUT, t, byWallet);
+    expect(decided.blocked).toEqual([]);
+    expect(decided.identityOf(WIDE)).toBe(P1);
   });
 
   it('subscribes the open cards again on a waiting first top-up, as the legacy mode change does', () => {
