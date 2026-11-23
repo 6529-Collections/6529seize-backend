@@ -38,8 +38,19 @@ jest.mock('./identity.fetcher', () => ({
   }
 }));
 
+jest.mock('@/api/identity-subscriptions/identity-subscriptions.db', () => ({
+  identitySubscriptionsDb: {
+    findIdentitySubscriptionActionsOfTarget: jest.fn()
+  }
+}));
+
 import { getAuthenticationContext } from '@/api/auth/auth';
+import { identitySubscriptionsDb } from '@/api/identity-subscriptions/identity-subscriptions.db';
 import { AuthenticationContext } from '@/auth-context';
+import {
+  ActivityEventAction,
+  ActivityEventTargetType
+} from '@/entities/IActivityEvent';
 import { ForbiddenException } from '@/exceptions';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { identitiesService } from './identities.service';
@@ -126,4 +137,36 @@ describe('identity subscription routes', () => {
     });
     expect(res.send).toHaveBeenCalledWith({ actions: ['DROP_CREATED'] });
   });
+
+  it.each([true, false])(
+    'reports the reverse follow independently of your subscription (%s)',
+    async (followsViewer) => {
+      jest
+        .mocked(getAuthenticationContext)
+        .mockResolvedValue(AuthenticationContext.fromProfileId('member'));
+      jest
+        .mocked(identityFetcher.getProfileIdByIdentityKey)
+        .mockResolvedValue('target-profile');
+      jest.mocked(identityFetcher.getOverviewsByIds).mockResolvedValue({});
+      const findActions = jest.mocked(
+        identitySubscriptionsDb.findIdentitySubscriptionActionsOfTarget
+      );
+      findActions.mockResolvedValue(
+        followsViewer ? [ActivityEventAction.DROP_CREATED] : []
+      );
+      const res = { send: jest.fn() };
+
+      await routeFor('get')({ params: { id: 'target-handle' } }, res);
+
+      expect(findActions).toHaveBeenCalledWith({
+        subscriber_id: 'target-profile',
+        target_id: 'member',
+        target_type: ActivityEventTargetType.IDENTITY
+      });
+      expect(res.send).toHaveBeenCalledWith({
+        actions: [],
+        follows_viewer: followsViewer
+      });
+    }
+  );
 });

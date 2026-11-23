@@ -13,6 +13,9 @@ import {
 } from '@/exceptions';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { ApiIdentitySubscriptionActions } from '@/api/generated/models/ApiIdentitySubscriptionActions';
+import { ApiIdentitySubscriptionStatus } from '@/api/generated/models/ApiIdentitySubscriptionStatus';
+import { identitySubscriptionsDb } from '@/api/identity-subscriptions/identity-subscriptions.db';
+import { ActivityEventTargetType } from '@/entities/IActivityEvent';
 import * as Joi from 'joi';
 import { ApiIdentitySubscriptionTargetAction } from '@/api/generated/models/ApiIdentitySubscriptionTargetAction';
 import { identitiesService } from './identities.service';
@@ -214,7 +217,7 @@ router.get(
   needsAuthenticatedUser(),
   async (
     req: Request<{ id: string }, any, any, any, any>,
-    res: Response<ApiResponse<ApiIdentitySubscriptionActions>>
+    res: Response<ApiResponse<ApiIdentitySubscriptionStatus>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
     const timer = Timer.getFromRequest(req);
@@ -230,16 +233,26 @@ router.get(
       { identityKey: req.params.id },
       { authenticationContext, timer }
     );
-    const activeActions = !profileId
-      ? []
-      : ((
-          await identityFetcher.getOverviewsByIds([profileId], {
-            authenticationContext,
-            timer
+    if (!profileId) {
+      res.send({ actions: [], follows_viewer: false });
+      return;
+    }
+    const [overviews, reverseActions] = await Promise.all([
+      identityFetcher.getOverviewsByIds([profileId], {
+        authenticationContext,
+        timer
+      }),
+      profileId === authenticatedProfileId
+        ? []
+        : identitySubscriptionsDb.findIdentitySubscriptionActionsOfTarget({
+            subscriber_id: profileId,
+            target_id: authenticatedProfileId,
+            target_type: ActivityEventTargetType.IDENTITY
           })
-        )[profileId]?.subscribed_actions ?? []);
+    ]);
     res.send({
-      actions: activeActions
+      actions: overviews[profileId]?.subscribed_actions ?? [],
+      follows_viewer: reverseActions.length > 0
     });
   }
 );
