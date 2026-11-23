@@ -36,6 +36,8 @@ export interface VerdictInput {
   readonly plannedSteps: readonly string[];
   /** Steps skipped as planned, one entry per table they need and lack. */
   readonly waitingSteps: readonly WaitingStep[];
+  /** Partitioned tables with rows no writer's partition owns. */
+  readonly unownedRows: readonly string[];
   /** Planned probes held because a table they read isn't in the schema. */
   readonly heldProbes: readonly string[];
   /** Tables a manifest keeps or rebuilds that a fresh schema lacks. */
@@ -123,17 +125,27 @@ export function judge(input: VerdictInput): Verdict {
       `${input.plannedTables} planned tables are not in this tree's code`
     );
   }
+  // A normal run keeps a skipped rebuilder's tables; a final run drops
+  // them, and nothing rebuilds them.
+  const skippedTables = input.final
+    ? "their rebuilders' tables were not rebuilt"
+    : "their rebuilders' tables were kept";
   if (input.plannedSteps.length) {
     finalOnly(
-      `${input.plannedSteps.length} planned steps were skipped because their code is not in this tree, and their rebuilders' tables were kept: ${input.plannedSteps.join(', ')}`
+      `${input.plannedSteps.length} planned steps were skipped because their code is not in this tree, and ${skippedTables}: ${input.plannedSteps.join(', ')}`
     );
   }
   if (input.waitingSteps.length) {
     const steps = new Set(input.waitingSteps.map((w) => w.step));
     finalOnly(
-      `${steps.size} steps were skipped as planned because a table they need is not in the schema yet, and their rebuilders' tables were kept: ${input.waitingSteps
+      `${steps.size} steps were skipped as planned because a table they need is not in the schema yet, and ${skippedTables}: ${input.waitingSteps
         .map((w) => `${w.step} needs ${w.table} (${w.reason})`)
         .join('; ')}`
+    );
+  }
+  if (input.unownedRows.length) {
+    finalOnly(
+      `${input.unownedRows.length} partitioned tables hold rows no rebuilder owns after the seeds: ${input.unownedRows.join(', ')}`
     );
   }
   if (input.heldProbes.length) {
