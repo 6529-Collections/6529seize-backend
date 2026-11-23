@@ -1,4 +1,9 @@
-import { AreaManifest, Probe, TableEntry } from '@/rebuild/manifest.types';
+import {
+  AreaManifest,
+  Probe,
+  ReasonedPath,
+  TableEntry
+} from '@/rebuild/manifest.types';
 import {
   RELAY_WORLD_WALLET,
   WAVES_WORLD_IDS
@@ -56,6 +61,28 @@ const WORLD_DROPS = [
 ];
 
 /**
+ * Subscription action lists at these paths, compared as sets: the API reads
+ * them with no ORDER BY, so their order follows MySQL's plan and can differ
+ * between the two passes on the same rows.
+ */
+function subscribedActions(...prefixes: string[]): ReasonedPath[] {
+  return prefixes.map((prefix) => ({
+    path: `${prefix}.subscribed_actions`,
+    reason:
+      'Read with no ORDER BY: the order follows the query plan, not the rows.'
+  }));
+}
+
+/** A wave's own lists, its author's and its description drop's. */
+const waveActions = (at: string) =>
+  subscribedActions(
+    at,
+    `${at}.author`,
+    `${at}.description_drop`,
+    `${at}.description_drop.author`
+  );
+
+/**
  * The main waves routes over the world's waves, anonymous: a wave, the
  * lists, its drops, a rank wave's decisions, leaderboard and competitions,
  * a drop, groups. The members-only wave is asked for too: anonymous, it
@@ -65,28 +92,63 @@ const PROBES: Probe[] = [
   {
     id: 'waves.wave',
     path: '/api/waves/{wave}',
-    each: { wave: [PUBLIC_WAVE, MEMBERS_WAVE, RANK_WAVE] }
+    each: { wave: [PUBLIC_WAVE, MEMBERS_WAVE, RANK_WAVE] },
+    unordered: waveActions('$')
   },
-  { id: 'waves.wave-v3', path: `/api/v3/waves/${PUBLIC_WAVE}` },
-  { id: 'waves.list', path: '/api/waves?limit=20' },
-  { id: 'waves.list-v2', path: '/api/v2/waves?page_size=20' },
+  {
+    id: 'waves.wave-v3',
+    path: `/api/v3/waves/${PUBLIC_WAVE}`,
+    unordered: waveActions('$.configuration')
+  },
+  {
+    id: 'waves.list',
+    path: '/api/waves?limit=20',
+    unordered: waveActions('$[*]')
+  },
+  {
+    id: 'waves.list-v2',
+    path: '/api/v2/waves?page_size=20',
+    unordered: subscribedActions('$.data[*].creator')
+  },
   {
     id: 'waves.overview',
-    path: '/api/waves-overview?type=RECENTLY_DROPPED_TO&limit=20'
+    path: '/api/waves-overview?type=RECENTLY_DROPPED_TO&limit=20',
+    unordered: waveActions('$[*]')
   },
-  { id: 'waves.drops', path: `/api/waves/${PUBLIC_WAVE}/drops?limit=20` },
-  { id: 'waves.drops-v2', path: `/api/v2/waves/${PUBLIC_WAVE}/drops?limit=20` },
-  { id: 'waves.drop', path: '/api/drops/{drop}', each: { drop: WORLD_DROPS } },
+  {
+    id: 'waves.drops',
+    path: `/api/waves/${PUBLIC_WAVE}/drops?limit=20`,
+    unordered: subscribedActions('$.drops[*]', '$.drops[*].author')
+  },
+  {
+    id: 'waves.drops-v2',
+    path: `/api/v2/waves/${PUBLIC_WAVE}/drops?limit=20`,
+    unordered: subscribedActions('$.wave.creator')
+  },
+  {
+    id: 'waves.drop',
+    path: '/api/drops/{drop}',
+    each: { drop: WORLD_DROPS },
+    unordered: subscribedActions('$', '$.author')
+  },
   {
     id: 'waves.drop-v2',
     path: '/api/v2/drops/{drop}',
-    each: { drop: WORLD_DROPS }
+    each: { drop: WORLD_DROPS },
+    unordered: subscribedActions('$.wave.creator')
   },
   {
     id: 'waves.drop-signed-events',
     path: `/api/drops/${WAVES_WORLD_IDS.firstDrop}/signed-events`
   },
-  { id: 'waves.decisions', path: `/api/waves/${RANK_WAVE}/decisions` },
+  {
+    id: 'waves.decisions',
+    path: `/api/waves/${RANK_WAVE}/decisions`,
+    unordered: subscribedActions(
+      '$.data[*].winners[*].drop',
+      '$.data[*].winners[*].drop.author'
+    )
+  },
   { id: 'waves.decisions-v2', path: `/api/v2/waves/${RANK_WAVE}/decisions` },
   { id: 'waves.leaderboard', path: `/api/waves/${RANK_WAVE}/leaderboard` },
   {
