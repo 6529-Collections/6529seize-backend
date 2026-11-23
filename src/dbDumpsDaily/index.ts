@@ -6,11 +6,52 @@ import { sqlExecutor } from '../sql-executor';
 import { json2csv } from 'json-2-csv';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { doInDbContext } from '../secrets';
+import type { Context } from 'aws-lambda';
 
 const logger = Logger.get('DB_DUMPS_DAILY');
 const s3 = new S3Client({ region: 'eu-west-1' });
 
-export const handler = sentryContext.wrapLambdaHandler(async () => {
+/**
+ * The daily dump runs for its schedule's event (source aws.events) or an
+ * empty event. An event naming a `job` runs that job (the chain exports,
+ * invoked by hand). Anything else fails, so a misspelled job never runs
+ * the dump.
+ */
+export function isDailyDumpEvent(event: unknown): boolean {
+  if (!event || typeof event !== 'object' || Array.isArray(event)) {
+    return false;
+  }
+  const record = event as Record<string, unknown>;
+  return (
+    Object.keys(record).length === 0 ||
+    (record.source === 'aws.events' && !('job' in record))
+  );
+}
+
+export const handler = sentryContext.wrapLambdaHandler(
+  async (event: unknown, context: Context) => {
+    if (isDailyDumpEvent(event)) {
+      await dumpDaily();
+      return;
+    }
+    // Loaded only for a job, so the export's modules never touch the dump.
+    const { parseProfileSiteExportEvent, runProfileSiteExportJob } =
+      await import('./profile-site-export.handler');
+    const profileSiteExport = parseProfileSiteExportEvent(event);
+    if (profileSiteExport) {
+      return await runProfileSiteExportJob(profileSiteExport, context);
+    }
+    const job =
+      event && typeof event === 'object' && 'job' in event
+        ? String((event as { job: unknown }).job)
+        : 'none';
+    throw new Error(
+      `Not a dbDumpsDaily event: unknown job ${job}. The daily dump runs only for its schedule or an empty event.`
+    );
+  }
+);
+
+async function dumpDaily() {
   await doInDbContext(
     async () => {
       for (const table of DB_DUMPS_DAILY_TABLES) {
@@ -24,7 +65,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     },
     { logger }
   );
-});
+}
 
 async function dumpTable(tableName: string) {
   logger.info(`[TABLE ${tableName}] : [DUMPING...]`);

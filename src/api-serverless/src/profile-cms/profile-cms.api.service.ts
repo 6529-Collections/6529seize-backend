@@ -1,4 +1,20 @@
 import { DbPoolName } from '@/db-query.options';
+import { ProfileCmsChainPort } from '@/profile-cms/chain/profile-cms-chain.port';
+import { createProfileCmsChainPort } from '@/profile-cms/chain/profile-cms-chain-port.factory';
+import { pinnedEip1271Verifier } from '@/profile-cms/chain/profile-cms-eip1271-pinned';
+import {
+  checkProfileCmsPublication,
+  isRetryablePublicationReason
+} from '@/profile-cms/chain/profile-cms-publication-check';
+import {
+  cmsCidFromBytes,
+  cmsCidFromHash
+} from '@/profile-cms/chain/profile-cms-cid';
+import {
+  profileCmsFrozenError,
+  ProfileCmsRollout,
+  profileCmsRollout
+} from '@/profile-cms/profile-cms-identity-freeze';
 import { AuthenticationContext } from '@/auth-context';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import {
@@ -40,6 +56,7 @@ import {
   profileCmsPublishSignaturesDb
 } from '@/profile-cms/profile-cms-publish-signatures.db';
 import {
+  Eip1271SignatureVerifier,
   ProfileCmsPublishSignatureRequest,
   ProfileCmsPublishSignatureVerificationResult,
   verifyProfileCmsPublishSignature
@@ -124,6 +141,8 @@ export interface ProfileCmsPackageResponse {
   readonly updated_at: number;
   readonly created_at: number;
   readonly published_at?: number;
+  /** The signed publication record's CID, once the package was signed for publishing. */
+  readonly publication_cid?: string;
 }
 
 export interface ProfileCmsPrimaryPackageResponse {
@@ -196,8 +215,48 @@ export class ProfileCmsApiService {
     private readonly publicationStorage: ProfileCmsPublicationStorage = new ProfileCmsPublicationStorage(
       undefined,
       arweaveUploader
-    )
+    ),
+    private readonly features: ProfileCmsRollout = profileCmsRollout,
+    private readonly chainPort: () => ProfileCmsChainPort = () =>
+      createProfileCmsChainPort(),
+    private readonly safeVerifierAt: (
+      timeMs: number
+    ) => Eip1271SignatureVerifier = pinnedEip1271Verifier
   ) {}
+
+  /**
+   * Publish and archive wait out the identity freeze, while the export reads
+   * them at T. Once profile sites follow the chain the freeze is over for
+   * them: the chain flag wins, so freeze settings left on can't block
+   * publishing on the chain.
+   */
+  private assertNotFrozen(): void {
+    if (
+      !this.features.isProfileCmsChainPointerEnabled() &&
+      this.features.isIdentityFreezeOn()
+    ) {
+      throw profileCmsFrozenError(
+        "Profile sites can't change while profiles move to the 6529 Network."
+      );
+    }
+  }
+
+  /**
+   * The primary pointer moves only on 6529.io's own path. Once profile sites
+   * follow the chain, the person's PROFILE_REPLACE moves it and 6529.io
+   * indexes the result; before that, it holds still during the identity
+   * freeze.
+   */
+  private assertPointerCanMoveHere(): void {
+    if (this.features.isProfileCmsChainPointerEnabled()) {
+      throw new CustomApiCompliantException(
+        409,
+        'Profile sites now change on the 6529 Network. Reload the page to continue.',
+        'cms_pointer_on_chain'
+      );
+    }
+    this.assertNotFrozen();
+  }
 
   async saveDraft(
     request: SaveProfileCmsPackageDraftRequest,
@@ -334,9 +393,16 @@ export class ProfileCmsApiService {
     request: PublishProfileCmsPackageRequest,
     ctx: RequestContext
   ): Promise<ProfileCmsPackageResponse> {
+    this.assertNotFrozen();
     const entity = await this.getPackageEntityOrThrow(id, ctx);
     this.assertCanManageProfile(entity.profile_id, ctx.authenticationContext);
     if (this.isCompletedPublishRetry(entity, request)) {
+      return this.toPackageResponse(entity);
+    }
+    if (this.isRecordedChainPublication(entity, request)) {
+      // Signed for the chain already (a second click, or a retry after the
+      // PROFILE_REPLACE failed): the stored record stands, nothing is signed
+      // or uploaded again.
       return this.toPackageResponse(entity);
     }
     this.assertDraftCanBePublished(entity);
@@ -468,7 +534,16 @@ export class ProfileCmsApiService {
       },
       ctx
     );
-    await this.publicationStorage.verify(recoveryReceipt);
+    const manifestBytes = await this.publicationStorage.verify(recoveryReceipt);
+    if (this.features.isProfileCmsChainPointerEnabled()) {
+      return this.recordChainPublication(
+        entity,
+        rebuiltPackage,
+        manifestBytes,
+        recoveryReceipt,
+        ctx
+      );
+    }
 
     const publishedAt = Time.currentMillis();
     const publishedByProfileId = this.getLoggedInProfileId(
@@ -602,11 +677,155 @@ export class ProfileCmsApiService {
     );
   }
 
+  /**
+   * With profile sites on the chain, publish stops before the pointer: the
+   * content core and the signed publication record go to the gateway's
+   * document store, the draft keeps the publication's CID, and the person's
+   * PROFILE_REPLACE names both in their ProfileDoc. The follower then marks
+   * the package published and writes its events and signature row.
+   */
+  private async recordChainPublication(
+    entity: ProfileCmsPackageEntity,
+    rebuiltPackage: CmsPackageV1,
+    manifestBytes: Buffer,
+    recoveryReceipt: CmsStorageReceiptV1,
+    ctx: RequestContext
+  ): Promise<ProfileCmsPackageResponse> {
+    const coreBytes = Buffer.from(
+      canonicalizeJson(toPackageHashInput(rebuiltPackage)),
+      'utf8'
+    );
+    const port = this.chainPort();
+    const publicationCid = cmsCidFromBytes(manifestBytes);
+    const stored = await Promise.all([
+      port.putDocBytes(coreBytes),
+      port.putDocBytes(manifestBytes)
+    ]);
+    if (
+      stored[0] !== cmsCidFromHash(entity.package_hash) ||
+      stored[1] !== publicationCid
+    ) {
+      throw new CustomApiCompliantException(
+        502,
+        'The document store returned an unexpected CID',
+        'cms_doc_store_mismatch'
+      );
+    }
+    await this.packagesDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const txCtx: RequestContext = { ...ctx, connection };
+        const locked = await this.packagesDb.findByIdForUpdate(
+          entity.id,
+          txCtx
+        );
+        if (!locked) {
+          throw new NotFoundException(
+            `Profile CMS package ${entity.id} was not found`
+          );
+        }
+        if (locked.publication_cid) {
+          // A concurrent click recorded its publication first; keep it.
+          return;
+        }
+        this.assertDraftCanBePublished(locked);
+        this.assertExpectedHashes(locked, {
+          expected_package_hash: entity.package_hash,
+          expected_payload_hash: entity.payload_hash
+        } as PublishProfileCmsPackageRequest);
+        await this.packagesDb.recordPublication(
+          locked.id,
+          publicationCid,
+          recoveryReceipt,
+          Time.currentMillis(),
+          txCtx
+        );
+      }
+    );
+    return this.toPackageResponse(
+      await this.getPackageEntityOrThrow(entity.id, ctx)
+    );
+  }
+
+  /**
+   * With profile sites on the chain the person rolls back with
+   * PROFILE_REPLACE. Before they sign, the target gets the check the index
+   * will run on it, since a version the index refuses would take the site
+   * offline, and the handle check public reads run, since a version
+   * published under a former handle isn't served. Answers 409
+   * cms_pointer_on_chain when the target passes (move it on the chain), 409
+   * cms_profile_changed for a former handle, 422
+   * cms_rollback_target_refused when the index would refuse it, and 503
+   * cms_check_unavailable when its files or a Safe can't be read now.
+   */
+  private async refuseRollbackOnChain(
+    id: string,
+    ctx: RequestContext
+  ): Promise<never> {
+    const target = await this.getPackageEntityOrThrow(id, ctx);
+    this.assertCanManageProfile(target.profile_id, ctx.authenticationContext);
+    this.assertPackageCanBecomePrimary(target);
+    const profile = await this.getProfileIdentityOrThrow(
+      target.profile_id,
+      ctx
+    );
+    this.assertCurrentProfileBinding(target, profile.handle);
+    if (!target.publication_cid) {
+      throw new CustomApiCompliantException(
+        422,
+        "This version has no signed publication record, so it can't be the site on the 6529 Network.",
+        'cms_rollback_target_refused'
+      );
+    }
+    const port = this.chainPort();
+    const pkg = cmsCidFromHash(target.package_hash);
+    const [publicationBytes, packageBytes] = await Promise.all([
+      port.getDocBytes(target.publication_cid),
+      port.getDocBytes(pkg)
+    ]);
+    const now = Time.currentMillis();
+    const check = await checkProfileCmsPublication(
+      {
+        primary: { publication: target.publication_cid, package: pkg },
+        publicationBytes,
+        packageBytes,
+        profileId: target.profile_id,
+        wallets: [],
+        // A version published before: the index accepts its signer, as here.
+        signerAccepted: true,
+        checkedAtMs: now
+      },
+      this.safeVerifierAt(now)
+    );
+    if (!check.ok && isRetryablePublicationReason(check.reason)) {
+      throw new CustomApiCompliantException(
+        503,
+        "This version's files can't be checked right now. Try again shortly.",
+        'cms_check_unavailable'
+      );
+    }
+    if (!check.ok) {
+      throw new CustomApiCompliantException(
+        422,
+        `This version can't be the site on the 6529 Network (${check.reason}).`,
+        'cms_rollback_target_refused'
+      );
+    }
+    throw new CustomApiCompliantException(
+      409,
+      'Profile sites now change on the 6529 Network. Reload the page to continue.',
+      'cms_pointer_on_chain'
+    );
+  }
+
   async rollbackPrimary(
     id: string,
     request: RollbackProfileCmsPackageRequest,
     ctx: RequestContext
   ): Promise<ProfileCmsPackageResponse> {
+    if (this.features.isProfileCmsChainPointerEnabled()) {
+      return this.refuseRollbackOnChain(id, ctx);
+    }
+    this.assertPointerCanMoveHere();
     const target = await this.getPackageEntityOrThrow(id, ctx);
     this.assertCanManageProfile(target.profile_id, ctx.authenticationContext);
     this.assertPackageCanBecomePrimary(target);
@@ -697,6 +916,7 @@ export class ProfileCmsApiService {
     request: RollbackProfileCmsPackageRequest,
     ctx: RequestContext
   ): Promise<ProfileCmsPackageResponse> {
+    this.assertPointerCanMoveHere();
     const entity = await this.getPackageEntityOrThrow(id, ctx);
     this.assertCanManageProfile(entity.profile_id, ctx.authenticationContext);
     if (
@@ -762,6 +982,7 @@ export class ProfileCmsApiService {
     request: ArchiveProfileCmsPackageRequest,
     ctx: RequestContext
   ): Promise<ProfileCmsPackageResponse> {
+    this.assertNotFrozen();
     const entity = await this.getPackageEntityOrThrow(id, ctx);
     this.assertCanManageProfile(entity.profile_id, ctx.authenticationContext);
     this.assertExpectedPackageHash(entity, request.expected_package_hash);
@@ -1451,6 +1672,28 @@ export class ProfileCmsApiService {
     );
   }
 
+  /**
+   * With profile sites on the chain: a draft that already holds a signed
+   * publication record for these hashes, waiting for the person's
+   * PROFILE_REPLACE. Only a draft: the archive import fills
+   * `publication_cid` on packages published before the switch, and
+   * publishing one of those again must not act as a rollback.
+   */
+  private isRecordedChainPublication(
+    entity: ProfileCmsPackageEntity,
+    request: PublishProfileCmsPackageRequest
+  ): boolean {
+    if (
+      !this.features.isProfileCmsChainPointerEnabled() ||
+      entity.status !== ProfileCmsPackageStatus.DRAFT ||
+      !entity.publication_cid
+    ) {
+      return false;
+    }
+    this.assertExpectedHashes(entity, request);
+    return true;
+  }
+
   private assertDraftCanBePublished(entity: ProfileCmsPackageEntity): void {
     if (entity.status !== ProfileCmsPackageStatus.DRAFT) {
       throw new BadRequestException('Only draft CMS packages can be published');
@@ -1664,7 +1907,10 @@ export class ProfileCmsApiService {
       payload_hash: entity.payload_hash,
       updated_at: entity.updated_at,
       created_at: entity.created_at,
-      ...(entity.published_at ? { published_at: entity.published_at } : {})
+      ...(entity.published_at ? { published_at: entity.published_at } : {}),
+      ...(entity.publication_cid
+        ? { publication_cid: entity.publication_cid }
+        : {})
     };
   }
 
