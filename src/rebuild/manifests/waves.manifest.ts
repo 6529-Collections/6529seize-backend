@@ -472,6 +472,18 @@ export const wavesManifest: AreaManifest = {
     }
   ],
   probes: PROBES,
+  // A replayed relay recording of the world's drops counts per event: the
+  // drop index's own check of each one. The prefixes cover the world's
+  // waves (made-up 6529.io wave ids) and waves named by their chain id.
+  relayChecks: [
+    {
+      waves: ['00000000-0000-4000-8000-', '0x'],
+      run: {
+        module: 'src/rebuild/steps/waves-relay-check',
+        exportName: 'checkWavesRelayEvent'
+      }
+    }
+  ],
   waivers: {
     unprobedTables: [
       ...WAVES_CHAIN_INDEX_TABLES.map((target) => ({
