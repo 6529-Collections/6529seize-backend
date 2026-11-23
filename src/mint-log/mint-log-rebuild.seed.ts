@@ -56,7 +56,6 @@ import {
 import { mintLogRecorder, MintWriteSpec } from './mint-log-recorder';
 import {
   MintCardRef,
-  MINT_LOG_LANE,
   MintLogKind,
   NEXTGEN_CARD_CONTRACT,
   REMEMES_CARD_CONTRACT
@@ -449,16 +448,30 @@ async function insertRecordsService(
 }
 
 /**
- * Closes the mint entries this seed left open into a segment, as the record
+ * The record log's newest entry when the seed starts. Entries still open at
+ * or before it were left by another seed; entries after it are this run's.
+ */
+export async function recordLogStart(): Promise<number> {
+  const [row] = await sqlExecutor.execute<{ last: number | string | null }>(
+    `select max(id) as last from ${SIGNED_RECORD_LOG_ENTRIES_TABLE}`
+  );
+  return Number(row?.last ?? 0);
+}
+
+/**
+ * Closes the entries this seed's run left open into a segment, as the record
  * log loop does: the file goes into the run's seed files and its head drop
  * into the records wave, posted as the records service with the author's
- * follow that posting a drop writes. Each seed closes its own entries, so
- * the queue holds only mint's; another area's open entries stop the seed
- * rather than go into mint's segment.
+ * follow that posting a drop writes. All of the run's entries are closed,
+ * not only `mint` ones: once the subscriptions' switch is on, the phase
+ * split also journals a `subs` entry. Entries open since before the run
+ * belong to the seed that wrote them, and stop this one rather than go into
+ * its segment.
  */
-async function closeRecordLog(
+export async function closeRecordLog(
   dir: string,
-  env: Readonly<Record<string, string | undefined>>
+  env: Readonly<Record<string, string | undefined>>,
+  startId: number
 ): Promise<void> {
   const waveId = env.SIGNED_RECORDS_WAVE_ID;
   const profileId = env.SIGNED_RECORDS_SERVICE_PROFILE_ID;
@@ -469,19 +482,21 @@ async function closeRecordLog(
       'The mint seed closes the record log: the SIGNED_RECORDS_* flags are needed'
     );
   }
-  const open = await sqlExecutor.execute<{ lane: string }>(
+  const leftovers = await sqlExecutor.execute<{ lane: string }>(
     `select distinct lane from ${SIGNED_RECORD_LOG_ENTRIES_TABLE}
-     where segment_seq is null`
+     where segment_seq is null and id <= :startId`,
+    { startId }
   );
-  const others = open
-    .map((row) => row.lane)
-    .filter((lane) => lane !== MINT_LOG_LANE);
-  if (others.length) {
+  if (leftovers.length) {
     throw new Error(
-      `The record log holds open entries of ${others.join(', ')}: the seed that wrote them closes them`
+      `The record log holds open entries of ${leftovers.map((row) => row.lane).join(', ')} from before the mint seed: the seed that wrote them closes them`
     );
   }
-  if (!open.length) return;
+  const [open] = await sqlExecutor.execute<{ entries: number | string }>(
+    `select count(*) as entries from ${SIGNED_RECORD_LOG_ENTRIES_TABLE}
+     where segment_seq is null`
+  );
+  if (!Number(open?.entries ?? 0)) return;
   await insertRecordsService(waveId, profileId, wallet);
   const segmenter = new RecordLogSegmenter({
     store: recordLogDb,
@@ -544,6 +559,7 @@ export async function seedMintProbes(
   if (!log) {
     throw new Error('No record log is bound: the genesis appends to it');
   }
+  const startId = await recordLogStart();
 
   await seedCard(1, unlogged);
   await seedRememe(EARLY_REMEME_CONTRACT, 'Early probe rememes', unlogged);
@@ -561,7 +577,7 @@ export async function seedMintProbes(
   await seedNextgen();
   await seedCollaboration();
 
-  await closeRecordLog(dir, env);
+  await closeRecordLog(dir, env, startId);
 
   // Mints close on the chain's clock (see mint-log-rebuild.chain-clock.ts).
   if (ctx.sources.ethereum) {
