@@ -1,6 +1,5 @@
 import { HelpBotDailyActivityCreditRequestStatus } from '@/entities/IHelpBotDailyActivityCreditRequest';
 import { DbPoolName } from '@/db-query.options';
-import { RequestContext } from '@/request.context';
 import {
   HELP_BOT_DAILY_ACTIVITY_CREDITS_QUEUE_NAME,
   HELP_BOT_DAILY_ACTIVITY_CREDITS_MESSAGE_GROUP_ID,
@@ -8,25 +7,28 @@ import {
 } from './help-bot-daily-activity-credit-queue.service';
 
 function createService() {
-  const connection = { connection: {} };
   const executor = {
     execute: jest.fn(),
     getAffectedRows: jest.fn((result: { affectedRows?: number }) =>
       Number(result.affectedRows ?? 0)
     )
   };
-  const creditsService = {
-    grantDailyActivityCredits: jest.fn()
-  };
   const sqsClient = {
     sendToQueueName: jest.fn()
   };
   const service = new HelpBotDailyActivityCreditQueueService(
     () => executor as never,
-    creditsService as never,
     sqsClient as never
   );
-  return { connection, creditsService, executor, service, sqsClient };
+  return { executor, service, sqsClient };
+}
+
+function pendingRow(attempts = 0) {
+  return {
+    profile_id: 'profile-1',
+    activity_date: '2026-08-29',
+    attempts
+  };
 }
 
 describe('HelpBotDailyActivityCreditQueueService', () => {
@@ -34,50 +36,7 @@ describe('HelpBotDailyActivityCreditQueueService', () => {
     jest.clearAllMocks();
   });
 
-  it('durably enqueues one request per profile and UTC day in the caller transaction', async () => {
-    const { connection, executor, service } = createService();
-    executor.execute.mockResolvedValue({ affectedRows: 1 });
-
-    await expect(
-      service.enqueueRequest(
-        {
-          profileId: 'profile-1',
-          requestedAt: Date.UTC(2026, 7, 29, 23, 59, 59)
-        },
-        { connection } as RequestContext
-      )
-    ).resolves.toBe(true);
-
-    expect(executor.execute).toHaveBeenCalledWith(
-      expect.stringContaining(
-        'INSERT IGNORE INTO help_bot_daily_activity_credit_requests'
-      ),
-      {
-        profileId: 'profile-1',
-        activityDate: '2026-08-29',
-        status: HelpBotDailyActivityCreditRequestStatus.PENDING,
-        requestedAt: Date.UTC(2026, 7, 29, 23, 59, 59)
-      },
-      { wrappedConnection: connection }
-    );
-  });
-
-  it('reports a duplicate daily request without replacing completed state', async () => {
-    const { executor, service } = createService();
-    executor.execute.mockResolvedValue({ affectedRows: 0 });
-
-    await expect(
-      service.enqueueRequest({
-        profileId: 'profile-1',
-        requestedAt: Date.UTC(2026, 7, 29)
-      })
-    ).resolves.toBe(false);
-
-    expect(executor.execute).toHaveBeenCalledTimes(1);
-    expect(executor.execute.mock.calls[0][0]).toContain('INSERT IGNORE');
-  });
-
-  it('publishes a small wakeup without putting credit work in the API path', async () => {
+  it('publishes a continuation wakeup to the FIFO queue', async () => {
     const { service, sqsClient } = createService();
     sqsClient.sendToQueueName.mockResolvedValue(undefined);
 
@@ -93,31 +52,12 @@ describe('HelpBotDailyActivityCreditQueueService', () => {
     });
   });
 
-  it('keeps the committed request available when SQS publication fails', async () => {
-    const { service, sqsClient } = createService();
-    sqsClient.sendToQueueName.mockRejectedValue(new Error('sqs unavailable'));
-
-    await expect(service.sendWakeupBestEffort({})).resolves.toBeUndefined();
-  });
-
-  it('processes a queued day and records completion', async () => {
-    const { creditsService, executor, service } = createService();
+  it('completes a leftover request without granting anything', async () => {
+    const { executor, service } = createService();
     executor.execute
-      .mockResolvedValueOnce([
-        {
-          profile_id: 'profile-1',
-          activity_date: '2026-08-29',
-          attempts: 0
-        }
-      ])
+      .mockResolvedValueOnce([pendingRow()])
       .mockResolvedValueOnce({ affectedRows: 1 })
       .mockResolvedValueOnce([]);
-    creditsService.grantDailyActivityCredits.mockResolvedValue({
-      amountGranted: 1,
-      balance: 3,
-      alreadyGranted: false,
-      botProfileMissing: false
-    });
 
     await expect(service.processNextRequest({})).resolves.toEqual({
       processed: true,
@@ -126,12 +66,9 @@ describe('HelpBotDailyActivityCreditQueueService', () => {
       hasMore: false
     });
 
-    expect(creditsService.grantDailyActivityCredits).toHaveBeenCalledWith(
-      {
-        profileId: 'profile-1',
-        nowMillis: Date.UTC(2026, 7, 29)
-      },
-      {}
+    expect(executor.execute).toHaveBeenCalledTimes(3);
+    expect(executor.execute.mock.calls[0][0]).toContain(
+      'ORDER BY attempts ASC'
     );
     expect(executor.execute).toHaveBeenNthCalledWith(
       2,
@@ -143,43 +80,37 @@ describe('HelpBotDailyActivityCreditQueueService', () => {
       }),
       expect.objectContaining({ forcePool: DbPoolName.WRITE })
     );
-    expect(executor.execute.mock.calls[0][0]).toContain(
-      'ORDER BY attempts ASC'
-    );
+    for (const [sql] of executor.execute.mock.calls) {
+      expect(sql).not.toMatch(/ratings|identities|help_bot_credit_events/i);
+    }
   });
 
-  it('treats an already-granted credit event as successful duplicate delivery', async () => {
-    const { creditsService, executor, service } = createService();
+  it('completes a request whatever its stored activity date', async () => {
+    const { executor, service } = createService();
     executor.execute
-      .mockResolvedValueOnce([
-        {
-          profile_id: 'profile-1',
-          activity_date: '2026-08-29',
-          attempts: 1
-        }
-      ])
+      .mockResolvedValueOnce([{ ...pendingRow(), activity_date: 'not-a-date' }])
       .mockResolvedValueOnce({ affectedRows: 1 })
       .mockResolvedValueOnce([]);
-    creditsService.grantDailyActivityCredits.mockResolvedValue({
-      amountGranted: 0,
-      balance: 3,
-      alreadyGranted: true,
-      botProfileMissing: false
-    });
 
-    await expect(service.processNextRequest({})).resolves.toEqual({
-      processed: true,
-      failed: false,
-      dead: false,
-      hasMore: false
-    });
-    expect(executor.execute.mock.calls[1][0]).toContain(
-      'SET status = :completedStatus'
+    await expect(service.processNextRequest({})).resolves.toEqual(
+      expect.objectContaining({ processed: true, failed: false })
     );
   });
 
-  it('does no credit work for a duplicate wakeup after completion', async () => {
-    const { creditsService, executor, service } = createService();
+  it('reports more work while other requests are pending', async () => {
+    const { executor, service } = createService();
+    executor.execute
+      .mockResolvedValueOnce([pendingRow()])
+      .mockResolvedValueOnce({ affectedRows: 1 })
+      .mockResolvedValueOnce([{ profile_id: 'profile-2' }]);
+
+    await expect(service.processNextRequest({})).resolves.toEqual(
+      expect.objectContaining({ processed: true, hasMore: true })
+    );
+  });
+
+  it('does nothing for a wakeup with no pending request', async () => {
+    const { executor, service } = createService();
     executor.execute.mockResolvedValueOnce([]);
 
     await expect(service.processNextRequest({})).resolves.toEqual({
@@ -188,24 +119,16 @@ describe('HelpBotDailyActivityCreditQueueService', () => {
       dead: false,
       hasMore: false
     });
-    expect(creditsService.grantDailyActivityCredits).not.toHaveBeenCalled();
+    expect(executor.execute).toHaveBeenCalledTimes(1);
   });
 
-  it('records retry state when identities-table work fails', async () => {
-    const { creditsService, executor, service } = createService();
+  it('records retry state when completing a request fails', async () => {
+    const { executor, service } = createService();
     executor.execute
-      .mockResolvedValueOnce([
-        {
-          profile_id: 'profile-1',
-          activity_date: '2026-08-29',
-          attempts: 7
-        }
-      ])
+      .mockResolvedValueOnce([pendingRow(7)])
+      .mockRejectedValueOnce(new Error('Lock wait timeout exceeded'))
       .mockResolvedValueOnce({ affectedRows: 1 })
       .mockResolvedValueOnce([{ profile_id: 'profile-2' }]);
-    creditsService.grantDailyActivityCredits.mockRejectedValue(
-      new Error('Lock wait timeout exceeded')
-    );
 
     await expect(service.processNextRequest({})).resolves.toEqual({
       processed: false,
@@ -214,7 +137,7 @@ describe('HelpBotDailyActivityCreditQueueService', () => {
       hasMore: true
     });
     expect(executor.execute).toHaveBeenNthCalledWith(
-      2,
+      3,
       expect.stringContaining('attempts = attempts + 1'),
       expect.objectContaining({
         nextStatus: HelpBotDailyActivityCreditRequestStatus.PENDING,
@@ -224,21 +147,13 @@ describe('HelpBotDailyActivityCreditQueueService', () => {
     );
   });
 
-  it('parks and exposes a request after the terminal retry attempt', async () => {
-    const { creditsService, executor, service } = createService();
+  it('parks a request after the terminal retry attempt', async () => {
+    const { executor, service } = createService();
     executor.execute
-      .mockResolvedValueOnce([
-        {
-          profile_id: 'profile-1',
-          activity_date: '2026-08-29',
-          attempts: 99
-        }
-      ])
+      .mockResolvedValueOnce([pendingRow(99)])
+      .mockRejectedValueOnce(new Error('persistent failure'))
       .mockResolvedValueOnce({ affectedRows: 1 })
       .mockResolvedValueOnce([]);
-    creditsService.grantDailyActivityCredits.mockRejectedValue(
-      new Error('persistent failure')
-    );
 
     await expect(service.processNextRequest({})).resolves.toEqual({
       processed: false,
@@ -246,38 +161,27 @@ describe('HelpBotDailyActivityCreditQueueService', () => {
       dead: true,
       hasMore: false
     });
-    expect(executor.execute.mock.calls[1][1]).toEqual(
+    expect(executor.execute.mock.calls[2][1]).toEqual(
       expect.objectContaining({
         nextStatus: HelpBotDailyActivityCreditRequestStatus.DEAD
       })
     );
   });
 
-  it('parks a malformed persisted activity date on its first attempt', async () => {
-    const { creditsService, executor, service } = createService();
-    executor.execute
-      .mockResolvedValueOnce([
-        {
-          profile_id: 'profile-1',
-          activity_date: 'not-a-date',
-          attempts: 0
-        }
-      ])
-      .mockResolvedValueOnce({ affectedRows: 1 })
-      .mockResolvedValueOnce([]);
+  it('deletes completed requests after their retention', async () => {
+    const { executor, service } = createService();
+    executor.execute.mockResolvedValueOnce({ affectedRows: 0 });
 
-    await expect(service.processNextRequest({})).resolves.toEqual({
-      processed: false,
-      failed: true,
-      dead: true,
-      hasMore: false
-    });
-    expect(creditsService.grantDailyActivityCredits).not.toHaveBeenCalled();
-    expect(executor.execute.mock.calls[1][1]).toEqual(
+    await service.cleanupCompletedRequests({});
+
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'DELETE FROM help_bot_daily_activity_credit_requests'
+      ),
       expect.objectContaining({
-        nextStatus: HelpBotDailyActivityCreditRequestStatus.DEAD,
-        lastError: 'Invalid help bot activity date: not-a-date'
-      })
+        completedStatus: HelpBotDailyActivityCreditRequestStatus.COMPLETED
+      }),
+      expect.objectContaining({ forcePool: DbPoolName.WRITE })
     );
   });
 });

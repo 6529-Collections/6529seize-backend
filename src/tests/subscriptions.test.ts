@@ -55,7 +55,8 @@ jest.mock('../subscription-wave-notifier', () => ({
 }));
 
 jest.mock('../subscriptionsDaily/db.subscriptions', () => ({
-  fetchSubscriptionBalanceForConsolidationKey: jest.fn()
+  lockSubscriptionBalance: jest.fn(),
+  writeSubscriptionBalance: jest.fn()
 }));
 
 const { sendDiscordUpdate: mockSendDiscordUpdate } = jest.requireMock(
@@ -77,8 +78,10 @@ const {
   sendNoBalanceFoundWaveError: mockSendNoBalanceFoundWaveError,
   sendNoSubscriptionFoundWaveWarning: mockSendNoSubscriptionFoundWaveWarning
 } = jest.requireMock('../subscription-wave-notifier');
-const { fetchSubscriptionBalanceForConsolidationKey: mockFetchBalance } =
-  jest.requireMock('../subscriptionsDaily/db.subscriptions');
+const {
+  lockSubscriptionBalance: mockFetchBalance,
+  writeSubscriptionBalance: mockWriteBalance
+} = jest.requireMock('../subscriptionsDaily/db.subscriptions');
 
 describe('SubscriptionTests', () => {
   const originalSubscriptionsChainId = process.env.SUBSCRIPTIONS_CHAIN_ID;
@@ -281,11 +284,14 @@ describe('SubscriptionTests', () => {
       let currentBalance = initialBalance;
       mockFetchBalance.mockImplementation(() =>
         Promise.resolve({
-          consolidation_key: consolidationKey,
-          balance: currentBalance
+          consolidationKey: consolidationKey,
+          balance: {
+            consolidation_key: consolidationKey,
+            balance: currentBalance
+          }
         })
       );
-      subscriptionBalanceRepo.save.mockImplementation((balance: any) => {
+      mockWriteBalance.mockImplementation((_manager: unknown, balance: any) => {
         currentBalance = balance.balance;
         return Promise.resolve(balance);
       });
@@ -318,15 +324,17 @@ describe('SubscriptionTests', () => {
       await processAirdrop(transaction, entityManager);
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(1);
-      expect(subscriptionBalanceRepo.save).toHaveBeenCalledTimes(1);
+      expect(mockWriteBalance).toHaveBeenCalledTimes(1);
       expect(redeemedSubscriptionRepo.findOne).toHaveBeenCalledTimes(1);
       expect(redeemedSubscriptionRepo.save).toHaveBeenCalledTimes(1);
       expect(nftFinalSubscriptionRepo.save).toHaveBeenCalledTimes(1);
 
-      const balanceSave = subscriptionBalanceRepo.save.mock.calls[0][0];
+      const balanceSave = mockWriteBalance.mock.calls[0][1];
       expect(balanceSave.balance).toBe(
         Math.round((initialBalance - MEMES_MINT_PRICE) * 100000) / 100000
       );
+      // The row was found, so it is updated, not inserted.
+      expect(mockWriteBalance.mock.calls[0][2]).toBe(true);
 
       const redeemedSave = redeemedSubscriptionRepo.save.mock.calls[0][0];
       expect(redeemedSave.consolidation_key).toBe(consolidationKey);
@@ -353,11 +361,14 @@ describe('SubscriptionTests', () => {
       let currentBalance = initialBalance;
       mockFetchBalance.mockImplementation(() =>
         Promise.resolve({
-          consolidation_key: consolidationKey,
-          balance: currentBalance
+          consolidationKey: consolidationKey,
+          balance: {
+            consolidation_key: consolidationKey,
+            balance: currentBalance
+          }
         })
       );
-      subscriptionBalanceRepo.save.mockImplementation((balance: any) => {
+      mockWriteBalance.mockImplementation((_manager: unknown, balance: any) => {
         currentBalance = balance.balance;
         return Promise.resolve(balance);
       });
@@ -389,12 +400,14 @@ describe('SubscriptionTests', () => {
       await processAirdrop(transaction, entityManager);
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(3);
-      expect(subscriptionBalanceRepo.save).toHaveBeenCalledTimes(3);
+      expect(mockWriteBalance).toHaveBeenCalledTimes(3);
       expect(redeemedSubscriptionRepo.findOne).toHaveBeenCalledTimes(3);
       expect(redeemedSubscriptionRepo.save).toHaveBeenCalledTimes(3);
       expect(nftFinalSubscriptionRepo.save).toHaveBeenCalledTimes(3);
 
-      const balanceSaves = subscriptionBalanceRepo.save.mock.calls;
+      const balanceSaves = mockWriteBalance.mock.calls.map(
+        (call: unknown[]) => [call[1]]
+      );
       expect(balanceSaves[0][0].balance).toBe(
         Math.round((initialBalance - MEMES_MINT_PRICE) * 100000) / 100000
       );
@@ -441,11 +454,14 @@ describe('SubscriptionTests', () => {
       let currentBalance = initialBalance;
       mockFetchBalance.mockImplementation(() =>
         Promise.resolve({
-          consolidation_key: consolidationKey,
-          balance: currentBalance
+          consolidationKey: consolidationKey,
+          balance: {
+            consolidation_key: consolidationKey,
+            balance: currentBalance
+          }
         })
       );
-      subscriptionBalanceRepo.save.mockImplementation((balance: any) => {
+      mockWriteBalance.mockImplementation((_manager: unknown, balance: any) => {
         currentBalance = balance.balance;
         return Promise.resolve(balance);
       });
@@ -477,12 +493,14 @@ describe('SubscriptionTests', () => {
       await processAirdrop(transaction, entityManager);
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(2);
-      expect(subscriptionBalanceRepo.save).toHaveBeenCalledTimes(2);
+      expect(mockWriteBalance).toHaveBeenCalledTimes(2);
       expect(redeemedSubscriptionRepo.findOne).toHaveBeenCalledTimes(2);
       expect(redeemedSubscriptionRepo.save).toHaveBeenCalledTimes(2);
       expect(nftFinalSubscriptionRepo.save).toHaveBeenCalledTimes(2);
 
-      const balanceSaves = subscriptionBalanceRepo.save.mock.calls;
+      const balanceSaves = mockWriteBalance.mock.calls.map(
+        (call: unknown[]) => [call[1]]
+      );
       expect(balanceSaves[0][0].balance).toBe(
         Math.round((initialBalance - MEMES_MINT_PRICE) * 100000) / 100000
       );
@@ -516,11 +534,14 @@ describe('SubscriptionTests', () => {
       let currentBalance = initialBalance;
       mockFetchBalance.mockImplementation(() =>
         Promise.resolve({
-          consolidation_key: consolidationKey,
-          balance: currentBalance
+          consolidationKey: consolidationKey,
+          balance: {
+            consolidation_key: consolidationKey,
+            balance: currentBalance
+          }
         })
       );
-      subscriptionBalanceRepo.save.mockImplementation((balance: any) => {
+      mockWriteBalance.mockImplementation((_manager: unknown, balance: any) => {
         currentBalance = balance.balance;
         return Promise.resolve(balance);
       });
@@ -554,7 +575,7 @@ describe('SubscriptionTests', () => {
       await processAirdrop(transaction, entityManager, waveNotifications);
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(2);
-      expect(subscriptionBalanceRepo.save).toHaveBeenCalledTimes(2);
+      expect(mockWriteBalance).toHaveBeenCalledTimes(2);
       expect(redeemedSubscriptionRepo.findOne).toHaveBeenCalledTimes(2);
       expect(redeemedSubscriptionRepo.save).toHaveBeenCalledTimes(2);
       expect(nftFinalSubscriptionRepo.save).toHaveBeenCalledTimes(2);
@@ -582,11 +603,14 @@ describe('SubscriptionTests', () => {
       let currentBalance = initialBalance;
       mockFetchBalance.mockImplementation(() =>
         Promise.resolve({
-          consolidation_key: consolidationKey,
-          balance: currentBalance
+          consolidationKey: consolidationKey,
+          balance: {
+            consolidation_key: consolidationKey,
+            balance: currentBalance
+          }
         })
       );
-      subscriptionBalanceRepo.save.mockImplementation((balance: any) => {
+      mockWriteBalance.mockImplementation((_manager: unknown, balance: any) => {
         currentBalance = balance.balance;
         return Promise.resolve(balance);
       });
@@ -627,7 +651,7 @@ describe('SubscriptionTests', () => {
       });
       expect(mockSendInsufficientBalanceWaveError).not.toHaveBeenCalled();
 
-      expect(subscriptionBalanceRepo.save).toHaveBeenCalledTimes(2);
+      expect(mockWriteBalance).toHaveBeenCalledTimes(2);
       expect(redeemedSubscriptionRepo.findOne).toHaveBeenCalledTimes(2);
       expect(redeemedSubscriptionRepo.save).toHaveBeenCalledTimes(2);
       expect(nftFinalSubscriptionRepo.save).toHaveBeenCalledTimes(2);
@@ -657,8 +681,10 @@ describe('SubscriptionTests', () => {
         ),
         1
       );
-      mockFetchBalance.mockResolvedValue(null);
-      subscriptionBalanceRepo.save.mockResolvedValue({} as any);
+      mockFetchBalance.mockImplementation((key: string) =>
+        Promise.resolve({ consolidationKey: key, balance: null })
+      );
+      mockWriteBalance.mockResolvedValue(undefined);
       redeemedSubscriptionRepo.findOne.mockResolvedValue(null);
       redeemedSubscriptionRepo.save.mockResolvedValue({} as any);
       nftFinalSubscriptionRepo.save.mockResolvedValue({} as any);
@@ -675,8 +701,10 @@ describe('SubscriptionTests', () => {
       });
       expect(mockSendNoBalanceFoundWaveError).not.toHaveBeenCalled();
 
-      expect(subscriptionBalanceRepo.save).toHaveBeenCalledTimes(1);
-      const balanceSave = subscriptionBalanceRepo.save.mock.calls[0][0];
+      expect(mockWriteBalance).toHaveBeenCalledTimes(1);
+      const balanceSave = mockWriteBalance.mock.calls[0][1];
+      // No row was found, so one is inserted.
+      expect(mockWriteBalance.mock.calls[0][2]).toBe(false);
       expect(balanceSave.consolidation_key).toBe(consolidationKey);
       expect(balanceSave.balance).toBe(
         Math.round((0 - MEMES_MINT_PRICE) * 100000) / 100000
@@ -701,17 +729,23 @@ describe('SubscriptionTests', () => {
       mockFetchBalance.mockImplementation((key: string) => {
         if (key === consolidationKey1) {
           return Promise.resolve({
-            consolidation_key: consolidationKey1,
-            balance: currentBalance1
+            consolidationKey: consolidationKey1,
+            balance: {
+              consolidation_key: consolidationKey1,
+              balance: currentBalance1
+            }
           });
         } else {
           return Promise.resolve({
-            consolidation_key: consolidationKey2,
-            balance: currentBalance2
+            consolidationKey: consolidationKey2,
+            balance: {
+              consolidation_key: consolidationKey2,
+              balance: currentBalance2
+            }
           });
         }
       });
-      subscriptionBalanceRepo.save.mockImplementation((balance: any) => {
+      mockWriteBalance.mockImplementation((_manager: unknown, balance: any) => {
         if (balance.consolidation_key === consolidationKey1) {
           currentBalance1 = balance.balance;
         } else {
@@ -765,7 +799,7 @@ describe('SubscriptionTests', () => {
       await processAirdrop(transaction, entityManager);
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(3);
-      expect(subscriptionBalanceRepo.save).toHaveBeenCalledTimes(3);
+      expect(mockWriteBalance).toHaveBeenCalledTimes(3);
       expect(redeemedSubscriptionRepo.findOne).toHaveBeenCalledTimes(3);
       expect(redeemedSubscriptionRepo.save).toHaveBeenCalledTimes(3);
       expect(nftFinalSubscriptionRepo.save).toHaveBeenCalledTimes(3);
@@ -928,7 +962,8 @@ function getSubscriptionSql(transaction: Transaction) {
       AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.token_id = ?
       AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.airdrop_address = ?
       AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.redeemed_count < ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.subscribed_count
-      ORDER BY phase ASC, phase_position ASC;`,
+      ORDER BY phase ASC, phase_position ASC
+      FOR UPDATE;`,
     params: [transaction.contract, transaction.token_id, transaction.to_address]
   };
 }

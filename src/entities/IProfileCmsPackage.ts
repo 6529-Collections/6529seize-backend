@@ -123,9 +123,10 @@ export class ProfileCmsPackageEntity {
 
   /**
    * The CID of this package's signed publication record, set once the package
-   * was published. A ProfileDoc's `cms.primary.publication` names it.
+   * was published. A ProfileDoc's `cms.primary.publication` names it. Its
+   * index is added by its own online migration before profile sites move to
+   * the chain; until then nothing reads by it.
    */
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
-  @Index('idx_profile_cms_packages_publication_cid')
   readonly publication_cid?: string | null;
 }
