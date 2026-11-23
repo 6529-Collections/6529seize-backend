@@ -72,6 +72,7 @@ import { readReconsolidationAction } from './reconsolidation-action';
 import { DelegationsLoopHealth } from './delegations-loop-health';
 import { collectGarbageAfter } from './heap-release';
 import { appFeatures } from '../app-features';
+import { isIdentityOnChain } from '../identity-freeze/identity-freeze';
 import { identityChainMirror } from '../identity-chain-mirror/identity-chain-mirror.service';
 import {
   NftDelegationFreeze,
@@ -174,7 +175,7 @@ export const handler = sentryContext.wrapLambdaHandler(
             );
             health.completed(delegationsResponse.blockTimestamp);
           });
-          if (!appFeatures.isIdentityChainMirrorEnabled()) {
+          if (!isIdentityMirrorOn()) {
             await delegationsWork;
             return;
           }
@@ -291,7 +292,7 @@ async function applyDelegationEvents(
   },
   health: DelegationsLoopHealth
 ) {
-  if (appFeatures.isIdentityChainMirrorEnabled()) {
+  if (isIdentityMirrorOn()) {
     // From switch-on the identity mirror writes consolidations, delegations,
     // consolidation keys and primary addresses from the 6529 chain; this
     // contract's events would fight it, before the freeze block as after
@@ -379,6 +380,17 @@ async function handleDelegationsWithFreeze(
   return { block: head.block, blockTimestamp: head.timestamp };
 }
 
+/**
+ * The identity mirror runs once identities are on the chain (switch-on:
+ * IDENTITY_SWITCH_ON_AT, or FEATURE_IDENTITY_ON_CHAIN) and its flag,
+ * FEATURE_IDENTITY_CHAIN_MIRROR, is on. So the flag can be set ahead of
+ * switch-on: before it, NFTDelegation's events still apply and the mirror
+ * waits; from it, the mirror writes the identity tables and they don't.
+ */
+function isIdentityMirrorOn(): boolean {
+  return appFeatures.isIdentityChainMirrorEnabled() && isIdentityOnChain();
+}
+
 /** The run's share of time for the identity mirror (a run is 15 minutes). */
 const IDENTITY_MIRROR_BUDGET_MS = Time.minutes(6).toMillis();
 /** The profile site followers' share, after the mirror and the re-keying. */
@@ -406,7 +418,7 @@ const IDENTITY_REKEY_MS_PER_WALLET = 50;
  * allows), then the profile site followers.
  */
 async function mirrorChainIdentities(timeLeft: () => number) {
-  if (!appFeatures.isIdentityChainMirrorEnabled()) {
+  if (!isIdentityMirrorOn()) {
     return;
   }
   const mirrorBudget = Math.min(

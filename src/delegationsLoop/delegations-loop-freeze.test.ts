@@ -153,6 +153,8 @@ describe('delegations loop with NFTDelegation frozen', () => {
     delete process.env.NFTDELEGATION_FREEZE_BLOCK;
     delete process.env.IDENTITY_FREEZE_AT;
     delete process.env.FEATURE_IDENTITY_CHAIN_MIRROR;
+    delete process.env.FEATURE_IDENTITY_ON_CHAIN;
+    delete process.env.IDENTITY_SWITCH_ON_AT;
     jest.mocked(db.fetchLatestNftDelegationBlock).mockResolvedValue(90);
     jest
       .mocked(delegations.fetchDelegationChainHead)
@@ -237,6 +239,7 @@ describe('delegations loop with NFTDelegation frozen', () => {
 
   it('with the identity mirror on, applies nothing before the freeze block either, and records the rest', async () => {
     process.env.FEATURE_IDENTITY_CHAIN_MIRROR = 'true';
+    process.env.FEATURE_IDENTITY_ON_CHAIN = 'true';
     process.env.NFTDELEGATION_FREEZE_BLOCK = '110';
     jest.mocked(identityChainMirror.run).mockResolvedValue({
       mode: 'feed',

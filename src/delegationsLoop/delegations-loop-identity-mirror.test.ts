@@ -125,6 +125,9 @@ describe('delegations loop and the identity mirror', () => {
     delete process.env.NFTDELEGATION_FREEZE_BLOCK;
     delete process.env.IDENTITY_FREEZE_AT;
     delete process.env.DELEGATIONS_RESET_BLOCK;
+    // Identities are on the chain: the mirror's flag alone decides here.
+    process.env.FEATURE_IDENTITY_ON_CHAIN = 'true';
+    delete process.env.IDENTITY_SWITCH_ON_AT;
     jest.mocked(db.fetchLatestNftDelegationBlock).mockResolvedValue(90);
     jest.mocked(delegations.findDelegationTransactions).mockResolvedValue({
       latestBlock: 100,
@@ -154,6 +157,21 @@ describe('delegations loop and the identity mirror', () => {
     await invoke();
     expect(identityChainMirror.run).not.toHaveBeenCalled();
     expect(db.persistNftDelegationBlock).toHaveBeenCalledWith(100, 1);
+  });
+
+  it('does not run the mirror before switch-on, with its flag set ahead', async () => {
+    process.env.FEATURE_IDENTITY_CHAIN_MIRROR = 'true';
+    delete process.env.FEATURE_IDENTITY_ON_CHAIN;
+    process.env.IDENTITY_SWITCH_ON_AT = '2099-01-01T00:00:00Z';
+    await invoke();
+    expect(identityChainMirror.run).not.toHaveBeenCalled();
+    expect(db.persistNftDelegationBlock).toHaveBeenCalledWith(100, 1);
+  });
+
+  it('runs the mirror once identities are on the chain and its flag is on', async () => {
+    process.env.FEATURE_IDENTITY_CHAIN_MIRROR = 'true';
+    await invoke();
+    expect(identityChainMirror.run).toHaveBeenCalledTimes(1);
   });
 
   it('runs the mirror after the delegations work', async () => {
