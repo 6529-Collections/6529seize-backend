@@ -875,7 +875,7 @@ function draftMismatch(
 ): string | null {
   const envelope = (draft.envelope ?? {}) as {
     networkId?: unknown;
-    header?: { principal?: unknown; keyId?: unknown };
+    header?: { principal?: unknown; keyId?: unknown; authRef?: unknown };
   };
   const text = (value: unknown) => lower(String(value ?? ''));
   const principal = request.principal
@@ -886,7 +886,10 @@ function draftMismatch(
   const role = (n: number) => rows.find((it) => it?.role === n);
   if ((request.keyType ?? 1) === 1) {
     if (text(role(0)?.signer) !== text(request.signer)) return 'signer';
-  } else if (text(envelope.header?.keyId) !== text(request.keyId)) {
+  } else if (
+    text(envelope.header?.keyId) !== text(request.keyId) ||
+    text(envelope.header?.authRef) !== text(request.authRef)
+  ) {
     return 'key';
   }
   const joins = draft.opName === 'IDENTITY_JOIN' || draft.opType === 0x010f;
@@ -896,7 +899,14 @@ function draftMismatch(
       return 'joining wallet';
     }
   }
-  if (network !== null && text(envelope.networkId) !== network) {
+  // The envelope's network, and the one the wallets sign for (the typed
+  // data's domain salt).
+  const salt = (draft.typedData as { domain?: { salt?: unknown } } | undefined)
+    ?.domain?.salt;
+  if (
+    network !== null &&
+    (text(envelope.networkId) !== network || text(salt) !== network)
+  ) {
     return 'network';
   }
   return null;
@@ -1685,8 +1695,10 @@ export class ChainGatewayClient {
         if (!Array.isArray(list)) {
           throw badAnswer(path, 'a list that is not a list');
         }
-        // A walk following `next` must move on, or it loops for ever.
-        if (it.next !== null && (!list.length || it.next === opts.after)) {
+        // A walk following `next` must move on, or it loops for ever. A
+        // page can be empty and still move on: the node's walks stop after
+        // so many keys scanned, matching or not.
+        if (it.next !== null && it.next === opts.after) {
           throw badAnswer(path, 'a page that does not move on');
         }
       }
@@ -2218,7 +2230,7 @@ export class ChainGatewayClient {
     // TDH is of the read's day, so no day goes with it.
     if (
       (query.list !== undefined && query.day === undefined) ||
-      (query.wallet && query.day !== undefined)
+      (query.wallet !== undefined && query.day !== undefined)
     ) {
       throw new ChainGatewayError(
         'A TDH list needs its day, and a wallet takes none',
@@ -2227,7 +2239,7 @@ export class ChainGatewayClient {
         '/v1/tdh'
       );
     }
-    if (query.wallet) {
+    if (query.wallet !== undefined) {
       const wallet = walletArg(query.wallet);
       path = `/v1/tdh/wallets/${segment(wallet)}`;
       isAsked = (data) => lower(String(data.wallet ?? '')) === wallet;
@@ -2253,6 +2265,15 @@ export class ChainGatewayClient {
       query.list ? { after: opts.after ?? undefined, limit: opts.limit } : {},
       opts,
       (answer) => {
+        // A list page whose next is the cursor it was asked from loops.
+        if (
+          query.list &&
+          answer?.next !== null &&
+          answer?.next !== undefined &&
+          answer.next === opts.after
+        ) {
+          throw badAnswer(path, 'a page that does not move on');
+        }
         const data = answer?.data as unknown;
         if (data === null || data === undefined) return;
         if (

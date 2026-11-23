@@ -145,6 +145,7 @@ function joinDraft(over: Record<string, unknown> = {}) {
     opType: 0x010f,
     opName: 'IDENTITY_JOIN',
     envelope: { networkId: stamp(1).network, header: { principal: PA } },
+    typedData: { domain: { salt: stamp(1).network } },
     signatures: [
       { role: 0, keyType: 1, signer: WALLET1 },
       { role: 4, keyType: 1, signer: JOINER }
@@ -1453,10 +1454,7 @@ describe('ChainGatewayClient reads', () => {
     expect(reads(calls)).toHaveLength(3);
   });
 
-  it.each([
-    ['the cursor it was asked from', [IDENTITY], 'c1'],
-    ['no rows', [], 'c2']
-  ])(
+  it.each([['the cursor it was asked from', [IDENTITY], 'c1']])(
     'refuses a list page that gives %s as its next',
     async (_name, rows, next) => {
       const { client, calls } = setup(
@@ -1475,6 +1473,56 @@ describe('ChainGatewayClient reads', () => {
       expect(reads(calls)).toHaveLength(2);
     }
   );
+
+  it('takes an empty page whose cursor moves on: the node stops scanning', async () => {
+    const { client } = setup(
+      withStatus(
+        () => ({
+          status: 200,
+          json: { read: stamp(10), data: [], next: 'c2' }
+        }),
+        10
+      )
+    );
+    expect(await client.listIdentities({ after: 'c1', height: 10 })).toEqual(
+      expect.objectContaining({ items: [], next: 'c2' })
+    );
+  });
+
+  it('refuses a TDH list page that gives the cursor it was asked from', async () => {
+    const { client } = setup(
+      withStatus(
+        () => ({
+          status: 200,
+          json: { read: stamp(10), data: { day: 3, rows: [] }, next: 'c1' }
+        }),
+        10
+      )
+    );
+    await expect(
+      client.getTdh({ day: 3, list: 'wallets' }, { after: 'c1', height: 10 })
+    ).rejects.toMatchObject({ code: 'bad_answer' });
+    // A first page, or one that moves on, is taken.
+    expect(
+      (
+        await client.getTdh(
+          { day: 3, list: 'wallets' },
+          { after: 'c0', height: 10 }
+        )
+      )?.next
+    ).toBe('c1');
+  });
+
+  it('refuses an empty wallet for its TDH before asking', async () => {
+    const { client, calls } = setup(withStatus(() => new Error('not asked')));
+    await expect(client.getTdh({ wallet: '' })).rejects.toMatchObject({
+      code: 'bad_request'
+    });
+    await expect(client.getTdh({ wallet: '', day: 3 })).rejects.toMatchObject({
+      code: 'bad_request'
+    });
+    expect(calls).toHaveLength(0);
+  });
 
   it('takes an empty last page', async () => {
     const { client } = setup(
@@ -2982,6 +3030,31 @@ describe('ChainGatewayClient writes', () => {
       JOIN_REQUEST
     ],
     [
+      'another chain to sign for',
+      joinDraft({ typedData: { domain: { salt: OTHER_NETWORK } } }),
+      JOIN_REQUEST
+    ],
+    [
+      'another grant for the session key',
+      joinDraft({
+        opType: 0x0101,
+        opName: 'IDENTITY_CREATE',
+        envelope: {
+          networkId: stamp(1).network,
+          header: { principal: PA, keyId: P01, authRef: P02 }
+        },
+        signatures: [{ role: 0, keyType: 2, signer: null }]
+      }),
+      {
+        opType: 'IDENTITY_CREATE',
+        principal: PA,
+        keyType: 2,
+        keyId: P01,
+        authRef: P03,
+        body: {}
+      }
+    ],
+    [
       'a principal where none was given',
       joinDraft({ opType: 0x0101, opName: 'IDENTITY_CREATE' }),
       { opType: 'IDENTITY_CREATE', signer: WALLET1, body: {} }
@@ -2993,7 +3066,7 @@ describe('ChainGatewayClient writes', () => {
         opName: 'IDENTITY_CREATE',
         envelope: {
           networkId: stamp(1).network,
-          header: { principal: PA, keyId: P02 }
+          header: { principal: PA, keyId: P02, authRef: P03 }
         },
         signatures: [{ role: 0, keyType: 2, signer: null }]
       }),
@@ -3048,7 +3121,7 @@ describe('ChainGatewayClient writes', () => {
       opName: 'IDENTITY_CREATE',
       envelope: {
         networkId: stamp(1).network,
-        header: { principal: PA, keyId: P01 }
+        header: { principal: PA, keyId: P01, authRef: P03 }
       },
       signatures: [{ role: 0, keyType: 2, signer: null }]
     });
