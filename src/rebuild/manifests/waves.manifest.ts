@@ -45,7 +45,12 @@ const DROP_INDEX_READS = ['device_grants', 'device_signed_events'];
 const PUBLIC_WAVE = WAVES_WORLD_IDS.publicWave;
 const RANK_WAVE = WAVES_WORLD_IDS.rankWave;
 const MEMBERS_WAVE = WAVES_WORLD_IDS.membersWave;
-const WORLD_DROPS = [WAVES_WORLD_IDS.firstDrop, WAVES_WORLD_IDS.secondDrop];
+const WORLD_DROPS = [
+  WAVES_WORLD_IDS.firstDrop,
+  WAVES_WORLD_IDS.secondDrop,
+  // The rank wave's Main Stage winner.
+  WAVES_WORLD_IDS.rankWinnerDrop
+];
 
 /**
  * The main waves routes over the world's waves, anonymous: a wave, the
@@ -422,7 +427,11 @@ export const wavesManifest: AreaManifest = {
         'drops_parts',
         'community_groups',
         'competitions',
-        'competition_config_versions'
+        'competition_config_versions',
+        'competition_capabilities',
+        'competition_decisions',
+        'competition_entries',
+        'competition_decision_winners'
       ],
       // The fixture profiles the waves and drops name.
       after: ['identity.probe-profiles'],

@@ -10,6 +10,8 @@ export const WAVES_WORLD_IDS = {
   /** A legacy rank wave with its competition (not on the chain world). */
   rankWave: '00000000-0000-4000-8000-0000000000a3',
   rankDescription: '00000000-0000-4000-8000-0000000001a3',
+  /** The rank wave's Main Stage winner drop. */
+  rankWinnerDrop: '00000000-0000-4000-8000-0000000004a3',
   /** The members-only wave's group (the chain world's first group). */
   group: '00000000-0000-4000-8000-000000000092',
   publicDescription: '00000000-0000-4000-8000-0000000001a2',

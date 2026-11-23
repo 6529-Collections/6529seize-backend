@@ -1,5 +1,14 @@
 import {
+  legacyCompetitionDecisionId,
+  legacyCompetitionEntryId,
+  legacyCompetitionId
+} from '@/competitions/competition-id';
+import {
+  COMPETITION_CAPABILITIES_TABLE,
   COMPETITION_CONFIG_VERSIONS_TABLE,
+  COMPETITION_DECISION_WINNERS_TABLE,
+  COMPETITION_DECISIONS_TABLE,
+  COMPETITION_ENTRIES_TABLE,
   COMPETITIONS_TABLE,
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
@@ -38,7 +47,11 @@ export const WAVES_LEGACY_TABLES = [
   DROPS_PARTS_TABLE,
   USER_GROUPS_TABLE,
   COMPETITIONS_TABLE,
-  COMPETITION_CONFIG_VERSIONS_TABLE
+  COMPETITION_CONFIG_VERSIONS_TABLE,
+  COMPETITION_CAPABILITIES_TABLE,
+  COMPETITION_DECISIONS_TABLE,
+  COMPETITION_ENTRIES_TABLE,
+  COMPETITION_DECISION_WINNERS_TABLE
 ] as const;
 
 const CREATED_AT = 1_764_000_000_000;
@@ -158,6 +171,14 @@ export function wavesLegacyRows(): Record<string, Record<string, unknown>[]> {
       'A rank wave for the rebuild check'
     ),
     drop(
+      WAVES_LEGACY_IDS.rankWinnerDrop,
+      WAVES_LEGACY_IDS.rankWave,
+      6,
+      probeProfileId(2),
+      'The rank wave Main Stage winner',
+      DropType.WINNER
+    ),
+    drop(
       WAVES_LEGACY_IDS.firstDrop,
       WAVES_LEGACY_IDS.publicWave,
       3,
@@ -181,6 +202,93 @@ export function wavesLegacyRows(): Record<string, Record<string, unknown>[]> {
   };
 }
 
+/** When the rank wave's one decision ran (made up, a day after the waves). */
+const DECISION_AT = CREATED_AT + 86_400_000;
+
+/**
+ * The rank wave as a Main Stage with one decided winner, as the native
+ * competition runtime holds it after a decision: the MAIN_STAGE capability,
+ * a completed decision, the winner drop's entry (WINNER, rank 1) and the
+ * decision's winner row. The mint area maps a card to this drop
+ * (meme_card_drop_mappings); written after the rank wave's competition.
+ */
+export function mainStageWinnerRows(): Record<
+  string,
+  Record<string, unknown>[]
+> {
+  const competitionId = legacyCompetitionId(WAVES_LEGACY_IDS.rankWave);
+  const decisionId = legacyCompetitionDecisionId(competitionId, DECISION_AT);
+  const entryId = legacyCompetitionEntryId(
+    competitionId,
+    WAVES_LEGACY_IDS.rankWinnerDrop
+  );
+  return {
+    [COMPETITION_CAPABILITIES_TABLE]: [
+      {
+        competition_id: competitionId,
+        wave_id: WAVES_LEGACY_IDS.rankWave,
+        capability: 'MAIN_STAGE',
+        assigned_at: CREATED_AT
+      }
+    ],
+    [COMPETITION_DECISIONS_TABLE]: [
+      {
+        id: decisionId,
+        competition_id: competitionId,
+        scheduled_at: DECISION_AT,
+        decided_at: DECISION_AT,
+        status: 'COMPLETED',
+        execution_key: `native:${competitionId}:${DECISION_AT}`,
+        created_at: DECISION_AT
+      }
+    ],
+    [COMPETITION_ENTRIES_TABLE]: [
+      {
+        id: entryId,
+        competition_id: competitionId,
+        wave_id: WAVES_LEGACY_IDS.rankWave,
+        drop_id: WAVES_LEGACY_IDS.rankWinnerDrop,
+        submitter_id: probeProfileId(2),
+        status: 'WINNER',
+        config_version: 1,
+        submitted_at: CREATED_AT + 6000,
+        won_at: DECISION_AT,
+        rank: 1,
+        decision_id: decisionId
+      }
+    ],
+    [COMPETITION_DECISION_WINNERS_TABLE]: [
+      {
+        competition_id: competitionId,
+        entry_id: entryId,
+        decision_id: decisionId,
+        rank: 1,
+        final_rating: 0,
+        created_at: DECISION_AT
+      }
+    ]
+  };
+}
+
+async function insertRows(
+  tables: Record<string, Record<string, unknown>[]>
+): Promise<void> {
+  for (const [table, rows] of Object.entries(tables)) {
+    for (const row of rows) {
+      const columns = Object.keys(row);
+      const params = Object.fromEntries(
+        columns.map((column) => [column, cell(row[column])])
+      );
+      // Quoted: `rank` is a reserved word in MySQL 8.
+      await dbSupplier().execute(
+        `insert into ${table} (${columns.map((column) => `\`${column}\``).join(', ')})
+         values (${columns.map((column) => `:${column}`).join(', ')})`,
+        params
+      );
+    }
+  }
+}
+
 function cell(value: unknown): unknown {
   if (value === undefined) return null;
   if (value instanceof Date || value === null) return value;
@@ -188,23 +296,13 @@ function cell(value: unknown): unknown {
 }
 
 /**
- * Seed: the legacy rows, through plain inserts with fixed values, and the
- * rank wave's competition through the native competition fixture.
+ * Seed: the legacy rows, through plain inserts with fixed values; the rank
+ * wave's competition through the native competition fixture; then its Main
+ * Stage winner.
  */
 export async function seedWavesLegacy(_ctx: RebuildContext): Promise<void> {
-  for (const [table, rows] of Object.entries(wavesLegacyRows())) {
-    for (const row of rows) {
-      const columns = Object.keys(row);
-      const params = Object.fromEntries(
-        columns.map((column) => [column, cell(row[column])])
-      );
-      await dbSupplier().execute(
-        `insert into ${table} (${columns.join(', ')})
-         values (${columns.map((column) => `:${column}`).join(', ')})`,
-        params
-      );
-    }
-  }
+  await insertRows(wavesLegacyRows());
   // The rank wave's competition, as the native competition code holds it.
   await seedNativeOriginalPrimaryFixture(rankWave());
+  await insertRows(mainStageWinnerRows());
 }
