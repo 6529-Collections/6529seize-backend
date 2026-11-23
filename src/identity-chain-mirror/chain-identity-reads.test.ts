@@ -198,9 +198,13 @@ function setup({
   };
   const mirrorDb = {
     profileIdOfPrincipal: mappingDb.profileIdOfPrincipal,
-    unmappedPlaceholderProfile: jest.fn(
-      async (w: string) => choice.placeholders?.get(w) ?? null
-    ),
+    // As the table: a placeholder a principal holds isn't unmapped.
+    unmappedPlaceholderProfile: jest.fn(async (w: string) => {
+      const placeholder = choice.placeholders?.get(w) ?? null;
+      return placeholder && !Array.from(mapping.values()).includes(placeholder)
+        ? placeholder
+        : null;
+    }),
     firstBindingOf: jest.fn(async (w: string) => ({
       first: choice.firstBindings?.get(w) ?? null,
       exact: choice.bindings?.exact ?? false,
@@ -229,6 +233,13 @@ function setup({
       {
         ...mirrorDb,
         profileIdOfPrincipal: async (p: string) => stored.get(p) ?? null,
+        unmappedPlaceholderProfile: async (w: string) => {
+          const placeholder = choice.placeholders?.get(w) ?? null;
+          return placeholder &&
+            !Array.from(stored.values()).includes(placeholder)
+            ? placeholder
+            : null;
+        },
         executeNativeQueriesInTransaction: async (
           fn: (c: unknown) => unknown
         ) => await fn({}),
@@ -342,6 +353,15 @@ describe('ChainIdentityReads', () => {
       ])
     });
     expect(await reads.byProfileId(ALICE)).toBeNull();
+    // Its wallet too: not the wallet's old row in the index, unmapped,
+    // which the mirror doesn't file it under.
+    const unmapped = setup({
+      identities: new Map([
+        [P, chainIdentity({ status: 'merged', mergedInto: Q })]
+      ]),
+      mapping: new Map()
+    });
+    expect(await unmapped.reads.byWallet(W(1))).toBeNull();
   });
 
   it('answers an imported identity not mirrored yet with its legacy id', async () => {
@@ -628,6 +648,28 @@ describe('ChainIdentityReads', () => {
       expect(mirrorDb.profileIdOfPrincipal).not.toHaveBeenCalled();
       choice.mirrorChain = 'relaunched';
       expect(await reads.profileIdOf(chainIdentity())).toBe(ALICE);
+    });
+
+    it('answers the mapping the mirror makes while the read chooses', async () => {
+      const mapping = new Map<string, string>();
+      const { reads, mirrorDb } = setup({
+        identities: new Map([[Q, made()]]),
+        mapping,
+        choice: {
+          placeholders,
+          firstBindings: new Map([
+            [W(7), { wallet: W(7), principal_id: Q, height: 80 }]
+          ]),
+          bindings: { exact: true, nextHeight: 100 }
+        }
+      });
+      // No mapping when the read asks; the mirror then maps Q to its
+      // placeholder, which the read's choice no longer sees as unmapped.
+      mirrorDb.profileIdOfPrincipal.mockImplementationOnce(async () => {
+        mapping.set(Q, 'p-7');
+        return null;
+      });
+      expect(await reads.profileIdOf(made())).toBe('p-7');
     });
 
     it('takes the import as complete as soon as it is', async () => {

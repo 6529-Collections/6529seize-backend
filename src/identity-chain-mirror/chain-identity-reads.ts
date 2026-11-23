@@ -36,9 +36,7 @@ type Gateway = Pick<
   | 'getProfileDoc'
   | 'getHandle'
   | 'getMembership'
-  | 'getMembershipWallet'
   | 'getHead'
-  | 'getMembershipWalletHistory'
   | 'getImportedIdentity'
 >;
 
@@ -118,11 +116,20 @@ export class ChainIdentityReads {
   async profileIdOf(identity: ChainIdentity): Promise<string | null> {
     const principalId = identity.principalId.toLowerCase();
     const network = await this.mirroredNetwork();
-    const profileId =
-      network === false
-        ? null
-        : ((await this.mapping.profileIdOfPrincipal(principalId)) ??
-          (await this.chosenProfileId(identity, network)));
+    let profileId: string | null = null;
+    if (network !== false) {
+      profileId = await this.mapping.profileIdOfPrincipal(principalId);
+      if (profileId === null) {
+        const chosen = await this.chosenProfileId(identity, network);
+        // The mirror may have mapped it meanwhile, taking the placeholder
+        // the choice would then no longer see: its mapping wins.
+        profileId =
+          chosen === null
+            ? null
+            : ((await this.mapping.profileIdOfPrincipal(principalId)) ??
+              chosen);
+      }
+    }
     if (profileId === null) {
       logger.debug(
         `[IDENTITY ${principalId} NOT PLACED YET] [ANSWERED AS NONE UNTIL THE MIRROR CHOOSES ITS PROFILE ID]`
@@ -163,8 +170,7 @@ export class ChainIdentityReads {
       this.gateway,
       this.mirror,
       heights.start,
-      heights.done,
-      true
+      heights.done
     ).readOnlyProfileId(identity);
   }
 
@@ -272,9 +278,19 @@ export class ChainIdentityReads {
     );
   }
 
+  /**
+   * The identity of a wallet. A wallet of a merged, closing or walletless
+   * identity has none (the mirror files that identity under its own id,
+   * not the wallet's old row); only a wallet the chain holds no identity
+   * for is answered from the index, if unmapped.
+   */
   async byWallet(wallet: string): Promise<IdentityEntity | null> {
     const identity = await this.gateway.getIdentityByWallet(wallet);
-    if (this.isLive(identity)) return await this.toIdentityEntity(identity);
+    if (identity) {
+      return this.isLive(identity)
+        ? await this.toIdentityEntity(identity)
+        : null;
+    }
     return await this.unmapped(await this.rows.getIdentityByWallet(wallet));
   }
 

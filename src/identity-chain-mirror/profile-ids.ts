@@ -212,13 +212,12 @@ export class ProfileIds {
   }
 
   /** The choice, with the import's heights as this run read them. */
-  private choice(): ProfileIdChoice {
-    return new ProfileIdChoice(
+  private choice(): MirrorProfileIdChoice {
+    return new MirrorProfileIdChoice(
       this.gateway,
       this.db,
       this.importStart,
-      this.importDone,
-      false
+      this.importDone
     );
   }
 
@@ -262,21 +261,30 @@ export type ProfileIdChoiceDb = Pick<
 >;
 
 /**
+ * The gateway reads of a choice from the mirror's own state: what the chain
+ * says the same on every node (the import's entries, its legacy ids).
+ */
+export type ProfileIdChoiceGateway = Pick<
+  ChainGatewayClient,
+  'getIdentityByLegacyProfileId' | 'getImportedIdentity'
+>;
+
+/**
  * How the mirror chooses a chain identity's profile id (see
  * ProfileIds.profileIdOf), from the chain and the mirror's tables, which it
- * only reads (its table type has no write). With `readOnly`, for a read of
- * an identity the mirror hasn't mapped: whatever the mirror's own state
- * can't decide is left undecided (ChainReadRetryLater), never decided from
- * a node's answer the mirror's runs may not get (a wallet's history, the
- * anchor's binding now).
+ * only reads (its table type has no write). This class is a read's, for an
+ * identity the mirror hasn't mapped: what the mirror's own state can't
+ * decide it leaves undecided (ChainReadRetryLater), and its gateway type
+ * has no read one node could answer otherwise than the node the mirror's
+ * runs get (a wallet's history, the anchor's binding now).
+ * MirrorProfileIdChoice, the mirror's own, decides those from the gateway.
  */
 export class ProfileIdChoice {
   constructor(
-    private readonly gateway: Gateway,
+    private readonly gateway: ProfileIdChoiceGateway,
     private readonly db: ProfileIdChoiceDb,
-    private readonly importStart: number | null,
-    private readonly importDone: number | null,
-    private readonly readOnly: boolean
+    protected readonly importStart: number | null,
+    private readonly importDone: number | null
   ) {}
 
   /**
@@ -346,40 +354,28 @@ export class ProfileIdChoice {
    */
   async foundingWalletOf(identity: ChainIdentity): Promise<string | null> {
     if (identity.founder) return identity.founder.toLowerCase();
-    // The anchor's binding now, which a read can't take for the mirror's.
-    if (this.readOnly) {
-      throw new ChainReadRetryLater(
-        `No founder of ${identity.principalId} from the gateway`,
-        'founder_not_given'
-      );
-    }
-    if (!identity.anchor) return null;
-    const anchor = identity.anchor;
-    const binding = await orRetryLater(() =>
-      this.gateway.getMembershipWallet(anchor)
+    return await this.foundingWalletWithoutFounder(identity);
+  }
+
+  /**
+   * No founder from the gateway: the anchor's binding now would decide,
+   * which a read can't take for what the mirror's runs will see.
+   */
+  protected async foundingWalletWithoutFounder(
+    identity: ChainIdentity
+  ): Promise<string | null> {
+    throw new ChainReadRetryLater(
+      `No founder of ${identity.principalId} from the gateway`,
+      'founder_not_given'
     );
-    const sinceCreation =
-      binding?.principalId?.toLowerCase() ===
-        identity.principalId.toLowerCase() &&
-      Number(binding?.firstBoundHeight) === Number(identity.createdHeight);
-    return sinceCreation ? identity.anchor.toLowerCase() : null;
   }
 
   /**
    * Whether `principal` is the first identity `wallet` was ever bound to,
-   * from its creation:
-   * - from the mirror's own first binding of the wallet, recorded while the
-   *   wallet bindings followed the feed without a break from the import's
-   *   start; while they haven't reached the creation yet, tried again later;
-   * - else (not read only) from the gateway's history of the wallet: a
-   *   binding before the creation says no; otherwise it must cover every
-   *   height from the import's start to the creation. A node behind is
-   *   waited for (tried again later); a history that can't say (the
-   *   import's start unknown, or the node's feed starting after it or with
-   *   a gap) gives 'unknowable', which the mirror waits on for
-   *   FOUNDER_WAIT_MS before deciding. Read only, it isn't asked: one
-   *   node's history could say what another's, which the mirror's runs may
-   *   get, can't.
+   * from its creation, from the mirror's own first binding of the wallet,
+   * recorded while the wallet bindings followed the feed without a break
+   * from the import's start (while they haven't reached the creation yet,
+   * tried again later); else from firstBoundFromHistory.
    */
   private async firstBoundTo(
     wallet: string,
@@ -403,14 +399,108 @@ export class ProfileIdChoice {
         'bindings_behind'
       );
     }
-    if (this.readOnly) {
-      throw new ChainReadRetryLater(
-        `The mirror's own bindings can't tell whether ${wallet} was first bound to ${principal}`,
-        'bindings_cant_tell'
-      );
+    return await this.firstBoundFromHistory(wallet, principal, createdHeight);
+  }
+
+  /**
+   * The mirror's own bindings can't tell: a read leaves it undecided. One
+   * node's history could say what another's, which the mirror's runs may
+   * get, can't.
+   */
+  protected async firstBoundFromHistory(
+    wallet: string,
+    principal: string,
+    _createdHeight: number
+  ): Promise<FirstBound> {
+    throw new ChainReadRetryLater(
+      `The mirror's own bindings can't tell whether ${wallet} was first bound to ${principal}`,
+      'bindings_cant_tell'
+    );
+  }
+
+  /**
+   * The imported profile id. The import's entry is asked when the gateway
+   * leaves the field out (older than the field), or gives none for an
+   * identity created no later than the import's end, so an imported
+   * identity is never taken for one made on the chain.
+   */
+  async legacyIdOf(identity: ChainIdentity): Promise<string | null> {
+    const given = identity.legacyId;
+    const created = Number(identity.createdHeight);
+    const madeAfterImport =
+      this.importDone !== null && created > this.importDone;
+    if (given || (given === null && madeAfterImport)) {
+      return given?.toLowerCase() ?? null;
     }
+    const entry = await orRetryLater(() =>
+      this.gateway.getImportedIdentity(identity.principalId)
+    );
+    return entry?.legacyId?.toLowerCase() ?? null;
+  }
+
+  /**
+   * The profile id the mirror will store for an identity it hasn't mapped,
+   * or null while that can't be told from its own state.
+   */
+  async readOnlyProfileId(identity: ChainIdentity): Promise<string | null> {
+    try {
+      const chosen = await this.choose(identity);
+      return 'unknowable' in chosen ? null : chosen.profileId;
+    } catch (error) {
+      if (error instanceof ChainReadRetryLater) return null;
+      throw error;
+    }
+  }
+}
+
+/**
+ * The mirror's own choice: as ProfileIdChoice, and what its own state can't
+ * decide, from the gateway (FOUNDER_WAIT_MS bounds the cases no node can).
+ */
+export class MirrorProfileIdChoice extends ProfileIdChoice {
+  constructor(
+    private readonly mirrorGateway: Gateway,
+    db: ProfileIdChoiceDb,
+    importStart: number | null,
+    importDone: number | null
+  ) {
+    super(mirrorGateway, db, importStart, importDone);
+  }
+
+  /**
+   * Until the gateway gives the founder, the anchor when it has been bound
+   * to the identity since its creation; else none.
+   */
+  protected override async foundingWalletWithoutFounder(
+    identity: ChainIdentity
+  ): Promise<string | null> {
+    if (!identity.anchor) return null;
+    const anchor = identity.anchor;
+    const binding = await orRetryLater(() =>
+      this.mirrorGateway.getMembershipWallet(anchor)
+    );
+    const sinceCreation =
+      binding?.principalId?.toLowerCase() ===
+        identity.principalId.toLowerCase() &&
+      Number(binding?.firstBoundHeight) === Number(identity.createdHeight);
+    return sinceCreation ? identity.anchor.toLowerCase() : null;
+  }
+
+  /**
+   * From the gateway's history of the wallet: a binding before the
+   * creation says no; otherwise it must cover every height from the
+   * import's start to the creation. A node behind is waited for (tried
+   * again later); a history that can't say (the import's start unknown, or
+   * the node's feed starting after it or with a gap) gives 'unknowable',
+   * which the mirror waits on for FOUNDER_WAIT_MS before deciding.
+   */
+  protected override async firstBoundFromHistory(
+    wallet: string,
+    principal: string,
+    createdHeight: number
+  ): Promise<FirstBound> {
     const history = await orRetryLater(() =>
-      this.gateway.getMembershipWalletHistory(wallet, {
+      this.mirrorGateway.getMembershipWalletHistory(wallet, {
         noBindingsBefore: this.importStart
       })
     );
@@ -446,39 +536,5 @@ export class ProfileIdChoice {
       first?.principalId === principal &&
       Number(first.height) === Number(createdHeight)
     );
-  }
-
-  /**
-   * The imported profile id. The import's entry is asked when the gateway
-   * leaves the field out (older than the field), or gives none for an
-   * identity created no later than the import's end, so an imported
-   * identity is never taken for one made on the chain.
-   */
-  async legacyIdOf(identity: ChainIdentity): Promise<string | null> {
-    const given = identity.legacyId;
-    const created = Number(identity.createdHeight);
-    const madeAfterImport =
-      this.importDone !== null && created > this.importDone;
-    if (given || (given === null && madeAfterImport)) {
-      return given?.toLowerCase() ?? null;
-    }
-    const entry = await orRetryLater(() =>
-      this.gateway.getImportedIdentity(identity.principalId)
-    );
-    return entry?.legacyId?.toLowerCase() ?? null;
-  }
-
-  /**
-   * Read only: the profile id the mirror will store for an identity it
-   * hasn't mapped, or null while that can't be told from its own state.
-   */
-  async readOnlyProfileId(identity: ChainIdentity): Promise<string | null> {
-    try {
-      const chosen = await this.choose(identity);
-      return 'unknowable' in chosen ? null : chosen.profileId;
-    } catch (error) {
-      if (error instanceof ChainReadRetryLater) return null;
-      throw error;
-    }
   }
 }
