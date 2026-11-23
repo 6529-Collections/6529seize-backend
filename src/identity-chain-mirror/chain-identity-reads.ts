@@ -141,9 +141,8 @@ export class ChainIdentityReads {
       tdh,
       rep,
       cic: toNumber(identity.nic?.total),
-      level_raw: identity.level
-        ? toNumber(identity.level.raw)
-        : rep + tdh + xtdh,
+      // The chain's level is REP plus TDH; xTDH is not part of it.
+      level_raw: identity.level ? toNumber(identity.level.raw) : rep + tdh,
       pfp: doc?.pfp ?? null,
       banner1: doc?.banner1 ?? null,
       banner2: doc?.banner2 ?? null,
