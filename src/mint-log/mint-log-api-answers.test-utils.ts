@@ -18,6 +18,7 @@ export async function apiAnswers(
   omit: readonly string[] = []
 ): Promise<Record<string, ApiAnswer>> {
   const app = express();
+  app.disable('x-powered-by');
   for (const [path, handler] of mounts) {
     app.use(`/api${path}`, handler);
   }
