@@ -71,6 +71,250 @@ actual deployment.
 - Coordinate potentially conflicting deployments through GitHub run visibility;
   existing concurrency is repository-scoped. Do not cancel another developer's
   run. Wait for that work to finish when the environment would conflict.
+- When the repository variable `DEPLOY_TRAIN_MODE` is `prod`, merging a backend
+  change into `main` is its production deployment: the
+  [deploy train](#deploy-train-and-drift-guard) ships every affected service.
+  Manual `Deploy a service` dispatches stay available; the train waits for them.
+
+## Deploy train and drift guard
+
+The owner's rule (2026-11-23) is to deploy every backend change when it lands,
+with a guard that reports anything missed. Before it, a merge to `main` shipped
+only the services someone dispatched; an audit on 2026-11-22 found 54 of 62
+production services running builds weeks behind `main` (up to 153 PRs).
+
+### Drift tool
+
+`node scripts/deploy-train/cli.js drift --environment prod --target <ref>`
+(system `node`, after `./bin/6529 ci` at the root and in `src/api-serverless`,
+with `GH_TOKEN` able to read Actions runs) lists the services whose deployable
+artifact differs from what runs in that environment. The deployed commit of a
+service is the head commit of its newest successful `Deploy <service> to <env>`
+run on `main` (prod) or `1a-staging` (staging). A service is behind when any of
+these differ between its deployed commit and the target:
+
+- the esbuild bundle bytes, built in memory from both commits with the
+  service's own esbuild flags (or the API's esbuild config) and the same
+  installed packages;
+- the locked version of any package in the bundle (root or API lockfile);
+- the files beside the bundle: the service's `package.json`,
+  `package-lock.json`, `serverless.yaml`, CSVs and deploy scripts, files its
+  build copies (`migrations/`, `database.json`, OpenAPI files) and
+  `serverless-config/<env>`;
+- the deploy adapter: the catalog fields that shape the deployment (adapter,
+  region, memory) and the `deploy.yml` steps that deploy the service;
+- the esbuild and Serverless versions that build and deploy it.
+
+For each behind service it reports why, the pull requests that touched those
+inputs since the deployed commit, and how long ago the first of them merged.
+Services come out in dependency order (`default_dependencies`,
+`dbMigrationsLoop` first, then the oldest drift). Never-deployed services are
+listed but not shipped: a first deploy creates infrastructure and stays manual.
+A deployed commit newer than the target is reported as ahead and never shipped.
+
+Builds run in parallel and only when needed. Each bundle is cached with the
+object IDs of every file it read and the listing of every directory on their
+paths. A commit that left those unchanged reuses the bundle without building,
+and each deployed commit is built once. A cold production run built 116
+bundles in about two minutes on a developer machine; a warm run took 15
+seconds. CI restores the cache between runs.
+
+### Drift guard
+
+`Deploy drift guard` runs daily at 06:17 UTC. It runs the drift tool for prod
+against `main`, writes the report to the job summary and the `deploy-drift-prod`
+artifact, and posts it to the production CI wave through
+`scripts/notify-ci-wave.mjs` as a `workflow` alert. A clean day posts a
+one-line all-clear; drift posts a failure that lists each behind service and
+pings the developers. It holds no AWS credentials. Dispatch it with
+`environment=staging` for an ad hoc staging report against `1a-staging`.
+
+### How the train works
+
+`Deploy train` (`.github/workflows/deploy-train.yml`) covers production only.
+It starts on every push to `main`, every 30 minutes (:07 and :37) and on
+dispatch. One train runs at a time; a newer trigger replaces a waiting one and
+every train recomputes what still differs, so merges never queue up trains.
+
+1. **Plan** (no deploy credentials): pins the current `main` commit, checks for
+   an uncleared halt, reads team windows, runs the drift tool and builds the
+   work list. The job summary shows what ships, in order, and what is deferred.
+2. **Ship** (only in prod mode; the `production` environment, a GitHub token
+   that can dispatch workflows and OIDC for a read-only health role; it
+   installs no packages): for each service in order it
+   - stops if `main` moved since planning, leaving the rest to the next train;
+   - defers the service if it entered a quiet window, with its dependents;
+   - waits, up to 30 minutes, while any other `deploy.yml` run is active, so it
+     never displaces or cancels another developer's deploy;
+   - dispatches `Deploy a service` with `environment=prod`, the service,
+     `expected_source_sha` set to the train's commit and `release_note_groups`;
+   - waits for the run and checks the service's health.
+
+Services the plan defers instead of shipping:
+
+| Deferred because | What to do |
+| --- | --- |
+| `deploy_train.mode` is `manual` in the catalog | Deploy it by hand when ready. |
+| No merged PR explains the change | Deploy it by hand with release-note metadata. |
+| More than 100 PRs, or groups too large for one dispatch | Catch it up by hand once; the train then keeps it current. |
+| A quiet window is active within 15 minutes | Nothing; a later train ships it. |
+| A dependency is held back or could not be assessed | Fix or ship the dependency first. |
+
+Release notes: each PR becomes one group (`pr-<number>`) that lists every
+service in the train that ships it, and the group publishes on the last of
+them. If a train stops early, a later train publishes the remaining groups.
+The train never uses the release-note opt-out.
+
+The train deploys `dbMigrationsLoop` with the default `full` schema scope. A
+change that needs a hand-run sequence (a scoped `dbMigrationsLoop` run, a
+backfill between deploys, or a frontend that must ship first) needs a team
+window for the affected services before it merges. Run the sequence by hand,
+then end the window.
+
+### Blackouts and team windows
+
+Quiet windows live in the catalog as `deploy_blackouts`. A `window` rule has
+`start` and `end` (`HH:MM`, `end` may be `24:00`, overnight allowed), an
+optional IANA `timezone` (UTC by default) and optional `days` on which the
+window starts. A `team-freeze` rule holds the service during any announced
+team window. The train will not start a deploy that a window covers within the
+next 15 minutes. Current rules:
+
+| Service | Quiet window |
+| --- | --- |
+| `royaltiesLoop` | 01:55-02:30 UTC (its 02:01 run) |
+| `releaseDigestLoop` | 23:20-24:00 UTC (its 23:30 run) |
+| `claimsBuilder`, `claimsMediaArweaveUploader`, `s3Uploader` | Mint launch Mon/Wed/Fri 17:30-19:45 and close Tue/Thu/Sat 16:50-18:30, Europe/Athens |
+| `populateHistoricConsolidatedTdh` | Any team window (team freeze) |
+
+The mint rules follow the regular Mon/Wed/Fri cadence. Announce extra or moved
+mint days as team windows.
+
+A team announces a temporary window in either of two places:
+
+- the committed file `ops/deploy-train/team-windows.json`, for planned windows
+  that should go through review;
+- the repository variable `DEPLOY_TRAIN_TEAM_WINDOWS`, which takes effect on
+  the next train without a merge.
+
+Both hold the same JSON:
+
+```json
+{
+  "windows": [
+    {
+      "start": "2026-12-20T00:00Z",
+      "end": "2027-01-03T00:00Z",
+      "services": ["*"],
+      "reason": "Holiday freeze",
+      "owner": "github-login"
+    }
+  ]
+}
+```
+
+Times are UTC; a window may last at most 31 days (use the mode switch for
+longer stops). `"*"` covers every service; named services must exist in the
+catalog. A malformed window fails the plan, so nothing deploys until it is
+fixed. Expired windows are ignored and can be removed at leisure.
+
+### Health check and halts
+
+`Deploy a service` already verifies the deployed code digest, the CloudFormation
+stack or the API's live version. After it succeeds, the train checks every
+verification target of the service in CloudWatch, from the start of its deploy
+run:
+
+- unhealthy: a log line with `Access denied`, `ER_ACCESS_DENIED`,
+  `Cannot find module` or `ImportModuleError`; a database login logged with
+  another mode than `[AUTH IAM]` (`DEPLOY_TRAIN_DB_AUTH` overrides `IAM`); or
+  Lambda errors, any when the previous 24 hours had none, otherwise more than
+  double the earlier error rate;
+- healthy: at least one invocation and, for services that bundle the database
+  modules, the `[AUTH IAM]` login line;
+- pending otherwise. The train waits up to five minutes, then keeps watching
+  the service for 30 minutes while it ships the next ones, and five more
+  minutes at the end. Services that never run in that time are reported as
+  unverified.
+
+Resources-only stacks and the Lambda@Edge interceptor rely on the deploy
+workflow's own checks.
+
+A failed deploy, an unhealthy service, a health check that cannot run, or a
+crash **halts** the train: the ship job fails and posts a failure to the CI
+wave. Later trains plan in report-only mode until someone fixes the cause and
+dispatches `Deploy train` with `resume=true`. Main moving, another deploy
+running for more than 30 minutes, a cancelled deploy run, or the 300-minute
+budget only stop the current train.
+
+Rollback is manual in this version: revert or fix forward on `main` (the train
+ships it after the resume), or dispatch `Deploy a service` for the affected
+service once `main` holds a known-good state. See the rollback section below
+for schema compatibility.
+
+### Mode switch and enablement
+
+The repository variable `DEPLOY_TRAIN_MODE` controls the train:
+
+| Value | Effect |
+| --- | --- |
+| unset or `off` | Every train job is skipped. This is the default. |
+| `report` | Plans and writes the job summary; posts a "would ship" message once per merge. Deploys nothing. |
+| `prod` | Plans and ships. |
+
+A dispatch with `mode=report` runs a dry run at any time and cannot raise the
+mode. Changing the variable affects the next train; to stop a running one,
+cancel its run (a `Deploy a service` run it already started finishes on its
+own).
+
+Prerequisite for `prod`: the `production` environment variable
+`DEPLOY_TRAIN_HEALTH_ROLE_ARN`, a read-only role trusted for
+`repo:6529-Collections/6529seize-backend:environment:production` through
+GitHub OIDC (audience `sts.amazonaws.com`) with:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    { "Effect": "Allow", "Action": "cloudwatch:GetMetricStatistics", "Resource": "*" },
+    {
+      "Effect": "Allow",
+      "Action": "logs:FilterLogEvents",
+      "Resource": [
+        "arn:aws:logs:us-east-1:<account-id>:log-group:/aws/lambda/*",
+        "arn:aws:logs:eu-west-1:<account-id>:log-group:/aws/lambda/*"
+      ]
+    }
+  ]
+}
+```
+
+Enablement: set `report` for a few days and compare the per-merge "would ship"
+posts and job summaries with what developers deploy by hand. Catch up anything
+the plan defers for release notes. Create the health role, then set `prod`.
+
+### Staging
+
+The train covers production only and relies on staging before merge.
+`1a-staging` is a shared union of unmerged branches that developers stage one
+service at a time. An automatic staging train would redeploy other developers'
+half-finished union states and compete for `deploy-control-staging`, where a
+new dispatch replaces another developer's waiting run. Staging stays manual;
+nothing merges into `1a-staging` automatically. The drift guard can report
+staging on dispatch.
+
+### Parallelism
+
+`Deploy a service` keeps one deploy per environment
+(`concurrency: deploy-control-<env>`), and the train ships one service at a
+time. The last 500 production deploys took a median of 150 seconds (p90 233
+seconds); with the health gate a service takes about three to five minutes,
+so a shared-code change that touches 50 services takes about three to four
+hours. `main` received 225 merges in the 30 days to 2026-11-23, a median of five
+a day and at most 46. On a typical day the train drains well within the day.
+On a busy day each merge restarts it with the oldest drift first, and it drains
+overnight. Drift stays within hours instead of weeks, so bounded parallel lanes
+are left as a separate, reviewable proposal.
 
 ## Workflow dispatch examples
 
@@ -207,5 +451,10 @@ workflow for rollback; retain shared history and account for database/API
 compatibility. Do not drop schema as part of a routine application rollback.
 Report the run links, affected services, health/E2E outcomes, and remaining
 failures. Preserve useful logs and artifact evidence without exposing secrets.
+
+When the deploy train halted, read its result summary and the failed
+`Deploy a service` run, fix or revert on `main`, then dispatch `Deploy train`
+with `resume=true`. The resumed train ships the fix with everything else that
+still differs.
 
 See [CI Pipeline Alerts](ci-pipeline-alerts.md) and the [deployment skill](../ops/skills/deploy-6529/SKILL.md).

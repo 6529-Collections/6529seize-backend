@@ -167,6 +167,29 @@ Existing `.release-coordinator/` records are historical evidence; leave them int
    Preserve the workflow's autonomous release-note notification; never compose
    or publish the note yourself.
 
+### Backend deploy train
+
+Read the repository variable first:
+`gh variable get DEPLOY_TRAIN_MODE -R 6529-Collections/6529seize-backend`
+(unset means `off`). See [the deploy train](../../../docs/deployment.md#deploy-train-and-drift-guard).
+
+- `off` or `report`: deploy backend services by hand as in steps 1 and 2.
+- `prod`: the merge into `main` is the backend deployment. Watch the
+  `Deploy train` run that the push starts (or the next scheduled one): its
+  plan summary lists the services, order and release-note groups, and each
+  service still runs as an ordinary `Deploy a service` run. Report those runs
+  and the train's health results. Dispatch by hand only what the train defers
+  (manual services, missing release-note attribution, first deploys) or a
+  scoped `dbMigrationsLoop` run; the train waits for your run and never
+  cancels it.
+- Before merging a change that needs a hand-run sequence, announce a team
+  window for the affected services (`DEPLOY_TRAIN_TEAM_WINDOWS` or
+  `ops/deploy-train/team-windows.json`), run the sequence, then end the window.
+- A halted train deploys nothing until someone dispatches `Deploy train` with
+  `resume=true`. Resume only after reading the halt and fixing or reverting the
+  cause on `main`. Changing `DEPLOY_TRAIN_MODE` or resuming is an owner
+  decision, not part of an ordinary release request.
+
 ## Failure and closeout
 
 Inspect failed jobs and logs before retrying. A failed deployment, artifact,

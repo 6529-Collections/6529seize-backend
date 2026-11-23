@@ -13,7 +13,10 @@
   changes require dispatching `Deploy a service` for the required services.
 - For production, merge the development branch into `main`, then dispatch
   `Web Deploy - PROD` for frontend or `Deploy a service` with `environment=prod`
-  for backend. A staging request alone does not authorize production.
+  for backend. A staging request alone does not authorize production. When
+  `DEPLOY_TRAIN_MODE` is `prod`, the backend `Deploy train` ships every
+  affected service after the merge; follow the deploy skill's deploy-train
+  section instead of dispatching each service.
 - Run backend service deployments sequentially in dependency order. Wait for
   each run to succeed, then continue the next service in the same task without
   asking for repeated authorization already covered by the requested phase.
