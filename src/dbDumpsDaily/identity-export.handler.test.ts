@@ -271,7 +271,7 @@ function setup(
           options.replicaLagError !== undefined
             ? options.replicaLagError
             : options.replicaLagMs === null
-              ? "ER_UNKNOWN_TABLE 1109: Unknown table 'REPLICA_HOST_STATUS' in information_schema"
+              ? 'ER_UNKNOWN_TABLE 1109'
               : null,
         replicaLagUnknown:
           options.replicaLagUnknown !== undefined
@@ -333,6 +333,27 @@ describe('parseIdentityExportEvent', () => {
     expect(parseIdentityExportEvent({ job: 'profileSiteExport' })).toBeNull();
   });
 
+  it('takes acceptUnknownReplicaLag as a case name or a list of them', () => {
+    expect(
+      parseIdentityExportEvent({
+        ...atFreeze,
+        acceptUnknownReplicaLag: 'older_than_gap'
+      })
+    ).toEqual(
+      expect.objectContaining({ acceptUnknownReplicaLag: ['older_than_gap'] })
+    );
+    expect(
+      parseIdentityExportEvent({
+        ...atFreeze,
+        acceptUnknownReplicaLag: ['unreadable', 'dated_ahead']
+      })
+    ).toEqual(
+      expect.objectContaining({
+        acceptUnknownReplicaLag: ['unreadable', 'dated_ahead']
+      })
+    );
+  });
+
   it("reads the CLI's options, with its defaults", () => {
     expect(parseIdentityExportEvent(atFreeze)).toEqual({
       job: 'identityExport',
@@ -354,7 +375,7 @@ describe('parseIdentityExportEvent', () => {
       acceptNoCmsFields: false,
       acceptBulk: null,
       acceptSnapshotGapMinutes: null,
-      acceptUnknownReplicaLag: false,
+      acceptUnknownReplicaLag: [],
       replacePointer: false
     });
     expect(
@@ -475,6 +496,21 @@ describe('parseIdentityExportEvent', () => {
       'acceptSnapshotGapMinutes is for an export at the freeze'
     ],
     [{ ...rehearsal, replacePointer: true }, 'a rehearsal writes no pointer'],
+    [
+      { ...atFreeze, acceptUnknownReplicaLag: true },
+      'acceptUnknownReplicaLag must name the case to accept, as the refusal does: "unreadable", "dated_ahead", "older_than_gap", or a list of them. true is not accepted'
+    ],
+    [
+      { ...atFreeze, acceptUnknownReplicaLag: 'stale' },
+      'acceptUnknownReplicaLag must name the case to accept'
+    ],
+    [
+      {
+        ...atFreeze,
+        acceptUnknownReplicaLag: ['older_than_gap', 'older_than_gap']
+      },
+      'acceptUnknownReplicaLag must name the case to accept'
+    ],
     [
       { job: 'identityExportLinks', prefix: 'profile-site-export/x/' },
       'prefix must be'
@@ -1162,7 +1198,7 @@ describe('runIdentityExportJob', () => {
       300_400, 300
     ]);
     expect(result).toMatchObject({
-      acceptUnknownReplicaLag: false,
+      acceptUnknownReplicaLag: [],
       replacePointer: false
     });
     const manifest = JSON.parse(bodies.get(result.manifestKey)!);
@@ -1186,7 +1222,7 @@ describe('runIdentityExportJob', () => {
     expect(() => checkReplicaLag(300_400, lag(100_000, 198_899))).not.toThrow();
     // A row older than the whole gap: checked first, and not a wait.
     const old =
-      "The replica's lag row is 300400 ms old (a 0 ms lag), older than the 300400 ms since the freeze: LAST_UPDATE_TIMESTAMP may not be in UTC, or the reader stopped updating its row. If the same refusal returns with the row's age grown by the time you waited, the reader stopped updating: report it. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: true) only for a reading Monday's rehearsal also showed, and only with the identity lead's agreement: the run then relies on the 2-minute minimum gap alone. Otherwise report it.";
+      "The replica's lag row is 300400 ms old (a 0 ms lag), older than the 300400 ms since the freeze: LAST_UPDATE_TIMESTAMP may not be in UTC, or the reader stopped updating its row. If the same refusal returns with the row's age grown by the time you waited, the reader stopped updating: report it. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: \"older_than_gap\") only for a reading Monday's rehearsal also showed, and only with the identity lead's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it.";
     expect(() => checkReplicaLag(300_400, lag(0, 300_400))).toThrow(old);
     expect(() => checkReplicaLag(300_400, lag(10, 400_000))).toThrow(
       "The replica's lag row is 400000 ms old (a 10 ms lag), older than the 300400 ms since the freeze"
@@ -1243,18 +1279,15 @@ describe('runIdentityExportJob', () => {
     mockBuild.mockResolvedValue(document());
     const refused = setup({ replicaLagMs: null });
     await expect(run(refused.deps)).rejects.toThrow(
-      "The replica's lag can't be read from information_schema.replica_host_status (ER_UNKNOWN_TABLE 1109: Unknown table 'REPLICA_HOST_STATUS' in information_schema). Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: true) only for a reading Monday's rehearsal also showed: for an error, only ER_UNKNOWN_TABLE 1109 or ER_UNKNOWN_SYSTEM_VARIABLE 1193 (the reader isn't Aurora), and only with the identity lead's agreement: the run then relies on the 2-minute minimum gap alone. Otherwise report it."
+      "The replica's lag can't be read from information_schema.replica_host_status (ER_UNKNOWN_TABLE 1109). Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: \"unreadable\") only for a reading Monday's rehearsal also showed: for an error, only ER_UNKNOWN_TABLE 1109 or ER_UNKNOWN_SYSTEM_VARIABLE 1193 (the reader isn't Aurora), and only with the identity lead's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it."
     );
     // The server's own error is named, whatever it is: a parse error is a
     // fault to report, not an Aurora question.
     const parseError = setup({
       replicaLagMs: null,
-      replicaLagError:
-        'ER_PARSE_ERROR 1064: You have an error in your SQL syntax'
+      replicaLagError: 'ER_PARSE_ERROR 1064'
     });
-    await expect(run(parseError.deps)).rejects.toThrow(
-      '(ER_PARSE_ERROR 1064: You have an error in your SQL syntax)'
-    );
+    await expect(run(parseError.deps)).rejects.toThrow('(ER_PARSE_ERROR 1064)');
     expect(() =>
       checkReplicaLag(300_000, {
         replicaLagMs: null,
@@ -1270,7 +1303,7 @@ describe('runIdentityExportJob', () => {
       expect(
         info.mock.calls.some(([line]) =>
           String(line).includes(
-            "[REPLICA LAG unknown MS] [LAG ROW AGE unknown MS] [REPLICA LAG ERROR ER_UNKNOWN_TABLE 1109: Unknown table 'REPLICA_HOST_STATUS' in information_schema]"
+            '[REPLICA LAG unknown MS] [LAG ROW AGE unknown MS] [REPLICA LAG ERROR ER_UNKNOWN_TABLE 1109] [REPLICA LAG UNKNOWN unreadable]'
           )
         )
       ).toBe(true);
@@ -1282,17 +1315,21 @@ describe('runIdentityExportJob', () => {
     const accepted = setup({ replicaLagMs: null });
     const result = await run(accepted.deps, {
       ...atFreeze,
-      acceptUnknownReplicaLag: true
+      acceptUnknownReplicaLag: 'unreadable'
     });
     expect(result.evidence.replicaLagMs).toBeNull();
     expect(result.replicaLagAccepted).toBe('unreadable');
+    expect(result.acceptUnknownReplicaLag).toEqual(['unreadable']);
     expect(
       JSON.parse(accepted.bodies.get(result.manifestKey)!)
         .accept_unknown_replica_lag
-    ).toBe(true);
+    ).toEqual(['unreadable']);
     // Only for an export at the freeze.
     expect(() =>
-      parseIdentityExportEvent({ ...rehearsal, acceptUnknownReplicaLag: true })
+      parseIdentityExportEvent({
+        ...rehearsal,
+        acceptUnknownReplicaLag: 'unreadable'
+      })
     ).toThrow('an acknowledgement is only for an export at the freeze');
   });
 
@@ -1303,8 +1340,12 @@ describe('runIdentityExportJob', () => {
       replicaLagMs: null
     });
     expect(
-      (await run(unknown.deps, { ...atFreeze, acceptUnknownReplicaLag: true }))
-        .snapshotGapSeconds
+      (
+        await run(unknown.deps, {
+          ...atFreeze,
+          acceptUnknownReplicaLag: ['unreadable']
+        })
+      ).snapshotGapSeconds
     ).toBe(120);
     const behind = setup({
       snapshotAt: '2026-11-24T00:05:00.000Z',
@@ -1330,27 +1371,60 @@ describe('runIdentityExportJob', () => {
     expect(() =>
       checkReplicaLag(300_000, reading(null, null, 'dated_ahead'))
     ).toThrow(
-      "The replica's lag row is dated ahead of UTC (LAST_UPDATE_TIMESTAMP is 7200000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown): LAST_UPDATE_TIMESTAMP may not be in UTC, so how far the reader is behind is unknown. Run once more first"
+      "The replica's lag row is dated ahead of UTC (LAST_UPDATE_TIMESTAMP is 7200000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown): LAST_UPDATE_TIMESTAMP may not be in UTC, so the row's age is unknown. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: \"dated_ahead\") only for a reading Monday's rehearsal also showed, and only with the identity lead's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it."
     );
+    const all = ['unreadable', 'dated_ahead', 'older_than_gap'] as const;
     expect(
-      checkReplicaLag(300_000, reading(null, null, 'dated_ahead'), true)
+      checkReplicaLag(300_000, reading(null, null, 'dated_ahead'), [
+        'dated_ahead'
+      ])
     ).toBe('dated_ahead');
     expect(
-      checkReplicaLag(300_000, reading(null, null, 'unreadable'), true)
+      checkReplicaLag(300_000, reading(null, null, 'unreadable'), [
+        'unreadable'
+      ])
     ).toBe('unreadable');
-    expect(checkReplicaLag(300_000, reading(5, 300_000), true)).toBe(
-      'older_than_gap'
-    );
-    // A trusted reading passes with nothing accepted, told or not.
+    expect(
+      checkReplicaLag(300_000, reading(5, 300_000), ['older_than_gap'])
+    ).toBe('older_than_gap');
+    // Only the case named: a rerun that lands on a reader showing another
+    // case is refused.
+    expect(() =>
+      checkReplicaLag(300_000, reading(5, 300_000), ['dated_ahead'])
+    ).toThrow("The replica's lag row is 300000 ms old");
+    expect(() =>
+      checkReplicaLag(300_000, reading(null, null, 'dated_ahead'), [
+        'unreadable',
+        'older_than_gap'
+      ])
+    ).toThrow("The replica's lag row is dated ahead of UTC");
+    // A trusted reading passes with nothing accepted, named or not.
     expect(checkReplicaLag(300_000, reading(5, 1_000))).toBeNull();
-    expect(checkReplicaLag(300_000, reading(5, 1_000), true)).toBeNull();
+    expect(checkReplicaLag(300_000, reading(5, 1_000), all)).toBeNull();
     // A real lag, its row younger than the gap, is never accepted.
     expect(() =>
-      checkReplicaLag(300_000, reading(299_000, 1_000), true)
+      checkReplicaLag(300_000, reading(299_000, 1_000), all)
     ).toThrow('The replica may be 300000 ms behind its writer');
     expect(() =>
-      checkReplicaLag(300_000, reading(1_000, 298_000), true)
+      checkReplicaLag(300_000, reading(1_000, 298_000), all)
     ).toThrow('Wait a few minutes and run again.');
+    // An accepted case still holds the lag the row reports to the gap.
+    expect(() =>
+      checkReplicaLag(300_000, reading(298_500, null, 'dated_ahead'), all)
+    ).toThrow(
+      "The replica reports a 298500 ms lag (its row's age not counted: dated_ahead), which with 1500 ms for the row's timestamp is not less than the 300000 ms since the freeze"
+    );
+    expect(
+      checkReplicaLag(300_000, reading(298_499, null, 'dated_ahead'), all)
+    ).toBe('dated_ahead');
+    expect(() =>
+      checkReplicaLag(300_000, reading(298_500, 400_000), all)
+    ).toThrow(
+      "reports a 298500 ms lag (its row's age not counted: older_than_gap)"
+    );
+    expect(() =>
+      checkReplicaLag(300_000, reading(298_500, null, 'unreadable'), all)
+    ).toThrow("(its row's age not counted: unreadable)");
     // The job records the case, in the response, the manifest and the log.
     mockBuild.mockResolvedValue(document());
     const warn = jest.spyOn(Logger.prototype, 'warn');
@@ -1362,7 +1436,7 @@ describe('runIdentityExportJob', () => {
       });
       const result = await run(deps, {
         ...atFreeze,
-        acceptUnknownReplicaLag: true
+        acceptUnknownReplicaLag: 'older_than_gap'
       });
       expect(result.replicaLagAccepted).toBe('older_than_gap');
       expect(

@@ -48,13 +48,16 @@ The event carries the CLI's options, under the same rules.
   run reported, or a little more if more may come before the next run.
 - `acceptSnapshotGapMinutes`: at the freeze, accepts a snapshot more than 90
   minutes after it.
-- `acceptUnknownReplicaLag: true`: at the freeze, run although the replica's
-  lag can't be trusted (it can't be read, its row is dated ahead of UTC, or
-  its row is older than the gap), relying on the 2-minute gap alone. Only as
-  in the README's "An unknown replica lag": after running once more, for a
-  reading Monday's rehearsal also showed, and with the identity lead's
-  agreement. The response and the manifest record it and the case accepted
-  (`replicaLagAccepted`, `replica_lag_accepted`).
+- `acceptUnknownReplicaLag`: at the freeze, the untrusted lag cases the run
+  may go through, by the names the refusals use (`"unreadable"`,
+  `"dated_ahead"`, `"older_than_gap"`), one or a list; `true`, other names
+  and repeats are refused. Only as in the README's "An unknown replica
+  lag": after running once more, for a case Monday's rehearsal also
+  showed, and with the identity lead's agreement. An accepted case still
+  holds the lag the row reports to the gap. The response and the manifest
+  record the list and the case accepted (`replicaLagAccepted`,
+  `replica_lag_accepted`). The CLI has no such flag: it reads no replica
+  lag.
 - `replacePointer: true`: at the freeze, makes this run the freeze's export
   when another run already is.
 
@@ -148,13 +151,16 @@ The job refuses, and writes nothing, when:
   was read from (`evidence.replicaLagMs`, `evidence.replicaLagAgeMs`), plus
   1.5 s for the row's timestamp, as the README's rules for every export
   say. Such a lag is never accepted;
-- the lag can't be trusted, unless the run has
-  `acceptUnknownReplicaLag: true`: it can't be read
-  (`evidence.replicaLagUnknown` `unreadable`, the reason in
-  `evidence.replicaLagError`), its row is dated ahead of UTC
-  (`dated_ahead`), or its row is older than the whole time since the
-  freeze. What to do is in the README's "An unknown replica lag", and the
-  refusal says the same;
+- the lag can't be trusted, unless `acceptUnknownReplicaLag` names that
+  case: it can't be read (`unreadable`), its row is dated ahead of UTC
+  (`dated_ahead`), or its row is older than the whole time since the freeze
+  (`older_than_gap`). `evidence.replicaLagUnknown` names the first two, and
+  `evidence.replicaLagError` gives the reason: the server's error code and
+  number only (its message, which can name the user and host, goes to the
+  function's log), or the export's own. A row whose age can't be trusted
+  but which reports a lag of the gap less 1.5 s or more is refused, even
+  with its case accepted. What to do is in the README's "An unknown replica
+  lag", and the refusal says the same;
 - the database is not at the freeze day, or a count is not acknowledged.
   The error names every reason, with the CLI's exit code. The counts include
   profile rows saved after the freeze whether or not the save was logged,
@@ -319,10 +325,16 @@ about 600, Tuesday's run may not fit one invocation. Check in `out.json`:
   age well under a minute on a healthy reader. An age of hours, or
   `evidence.replicaLagUnknown` `dated_ahead`, means `LAST_UPDATE_TIMESTAMP`
   isn't in UTC. If they are `null` (`replicaLagUnknown` `unreadable`),
-  `evidence.replicaLagError` says why. In each case run this once more,
-  then tell the identity lead and settle it before Tuesday: Tuesday can
-  accept only a reading this run also showed, as in the README's "An
-  unknown replica lag".
+  `evidence.replicaLagError` says why.
+- Read the lag twice: a few minutes after this run, read it again, by
+  running this a second time or from the profile site export's rehearsal
+  (both read the same reader endpoint), and compare
+  `evidence.replicaLagAgeMs`. If the row's age grew by about the wait, the
+  reader stopped updating its row: report it, and never accept it on
+  Tuesday.
+- If either reading is untrusted, tell the identity lead and settle it
+  before Tuesday: Tuesday can accept only a case this rehearsal also
+  showed, by its name, as in the README's "An unknown replica lag".
 
 ## Tuesday: the run at the freeze (us-east-1)
 
@@ -358,9 +370,10 @@ If the run is refused because of the replica:
   it again. This refusal is never accepted;
 - it says the lag can't be read, or its row is dated ahead of UTC or older
   than the time since the freeze: follow the README's "An unknown replica
-  lag". Run once more; then accept it with `"acceptUnknownReplicaLag":true`
-  only for a reading Monday also showed and with the identity lead's
-  agreement, or report it. Don't keep running it until 01:30.
+  lag". Run once more; then accept only the case the refusal names, and
+  only if Monday's rehearsal showed it, with the identity lead's
+  agreement: for example `"acceptUnknownReplicaLag":"older_than_gap"`.
+  Otherwise report it. Don't keep running it until 01:30.
 
 If the run is refused because the profile site export's `cms-fields.json`
 is empty: add `"acceptNoCmsFields":true` only if that export really has no
@@ -406,16 +419,17 @@ replaced.
   - `transactionReadOnly` is true;
   - `serverReadOnly` or `innodbReadOnly` is true;
   - `replicaLagMs` plus `replicaLagAgeMs`, plus 1 500 ms, is below
-    `snapshotGapMs`, and `replicaLagAccepted` is `null`. Otherwise the run
-    was given `acceptUnknownReplicaLag`, and `replicaLagAccepted` names the
-    case it accepted: `unreadable`, `dated_ahead` or `older_than_gap`.
+    `snapshotGapMs`, and `replicaLagAccepted` is `null`. Otherwise
+    `replicaLagAccepted` names the case accepted, which must be in
+    `acceptUnknownReplicaLag`; any lag the row reported, plus 1 500 ms, is
+    still below `snapshotGapMs`.
 - `bucketPrivacy.owner` is the function's own account.
 - `identityFreezeAtSecret` is `prod/lambdas`, `identityFreezeAtReading` is
   `time`, and `identityFreezeAt` equals `frozenAt`.
 - `snapshotAt` and `snapshotGapMs`: at least 120000. The run compares the
   gap in milliseconds; `snapshotGapSeconds` is the same gap, rounded.
-- `acceptUnknownReplicaLag` and `replacePointer`: true only if you gave
-  them.
+- `acceptUnknownReplicaLag` is empty, and `replacePointer` false, unless
+  you gave them.
 - `identities`, `ratings` and `tdhBlock`.
 - `seconds`.
 - `presignedManifestUrl`, `presignedLinksUrl`, `presignedPointerUrl` and

@@ -42,7 +42,7 @@ describe('the replica lag query on MySQL', () => {
     const reading = await readReplicaLag(connection);
     expect(reading.lagMs).toBeNull();
     expect(reading.error).toMatch(
-      /^(ER_UNKNOWN_TABLE 1109|ER_UNKNOWN_SYSTEM_VARIABLE 1193): /
+      /^(ER_UNKNOWN_TABLE 1109|ER_UNKNOWN_SYSTEM_VARIABLE 1193)$/
     );
     // The same statement, run directly: the server's own error number.
     const error = await run(REPLICA_LAG_SQL).then(
@@ -107,7 +107,7 @@ describe('the replica lag query on MySQL', () => {
         )
       )
     ).resolves.toEqual({
-      lagMs: null,
+      lagMs: 20,
       ageMs: null,
       error: "LAST_UPDATE_TIMESTAMP is null: the row's age is unknown",
       unknown: 'unreadable'
@@ -118,7 +118,8 @@ describe('the replica lag query on MySQL', () => {
         'SELECT 7 AS SERVER_ID, 20 AS REPLICA_LAG_IN_MILLISECONDS, UTC_TIMESTAMP(6) + INTERVAL 2 HOUR AS LAST_UPDATE_TIMESTAMP'
       )
     );
-    expect(ahead.lagMs).toBeNull();
+    expect(ahead.lagMs).toBe(20);
+    expect(ahead.ageMs).toBeNull();
     expect(ahead.error).toMatch(/ms ahead of UTC_TIMESTAMP: not UTC/);
     expect(ahead).toMatchObject({ unknown: 'dated_ahead' });
   });
