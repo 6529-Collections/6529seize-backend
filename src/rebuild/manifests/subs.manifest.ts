@@ -520,8 +520,9 @@ export const subsManifest: AreaManifest = {
     // dropped after the rollback window:
     // - the other kinds' rows (FINAL_ROW, LOG, AUTO_SUBSCRIPTION,
     //   REDEMPTION): production makes them only for a key that still has
-    //   legacy rows while a write of it waits, from those legacy rows,
-    //   which the identity tables don't keep; a wide identity has none;
+    //   legacy rows and that the guard holds back (too long for a legacy
+    //   column, or with a write waiting), from those legacy rows, which the
+    //   identity tables don't keep; a wide identity has none;
     // - CONSOLIDATION rows queued after the switch: their regroups are the
     //   identity mirror's, which neither the journal nor the identity
     //   tables keep;
