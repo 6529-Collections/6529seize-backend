@@ -1,10 +1,15 @@
-import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-media';
+import {
+  isFilesServerUrl,
+  parseDecentralizedMediaRef
+} from '@/decentralized-media/decentralized-media';
 
 export const MAX_HISTORY_METADATA_BYTES = 2_000_000;
 const MAX_REDIRECTS = 3;
 
 function verifiedGateway(input: string): URL {
   const url = new URL(input);
+  // The rebuild check's files source, only when the environment names it.
+  if (isFilesServerUrl(url)) return url;
   // Reuse the central gateway catalog. Arbitrary protocol-1 HTTPS origins need
   // an explicit policy review before history ingestion can fetch them.
   const recognized = parseDecentralizedMediaRef(url.href);

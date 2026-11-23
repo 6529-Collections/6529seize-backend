@@ -1,3 +1,4 @@
+import { filesServerFetchUrl } from '@/decentralized-media/decentralized-media';
 import {
   getPayloadPreview,
   normalizeMetadataPayload
@@ -51,7 +52,11 @@ async function fetchNextGenMetadataOnce(
 
   let res: Response;
   try {
-    res = await fetch(metadataLink, { signal: controller.signal });
+    // A content-addressed link comes from the rebuild check's files source
+    // when one is set (DECENTRALIZED_MEDIA_FILES_URL); otherwise as it is.
+    res = await fetch(filesServerFetchUrl(metadataLink) ?? metadataLink, {
+      signal: controller.signal
+    });
   } catch (error: unknown) {
     if (error instanceof Error && error.name === 'AbortError') {
       throw new NextGenMetadataFetchError(

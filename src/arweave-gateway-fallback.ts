@@ -1,4 +1,5 @@
 import {
+  filesServerFetchUrl,
   parseDecentralizedMediaRef,
   toExternalFallbackUrls
 } from '@/decentralized-media/decentralized-media';
@@ -49,11 +50,15 @@ function stringifyErr(err: unknown): string {
 /**
  * Tries the URL first, then external Arweave fallbacks in order.
  * If url is not a recognized Arweave reference, it just tries url once.
+ * With the rebuild check's files source set, content-addressed URLs are
+ * fetched from it alone.
  */
 export async function withArweaveFallback<T>(
   url: string,
   fetchFn: (url: string) => Promise<T>
 ): Promise<T> {
+  const filesUrl = filesServerFetchUrl(url);
+  if (filesUrl) return fetchFn(filesUrl);
   const urls = getArweaveFallbackUrls(url);
   const toTry = urls.length > 0 ? [url, ...urls] : [url];
   const uniqueToTry = dedupe(toTry);
