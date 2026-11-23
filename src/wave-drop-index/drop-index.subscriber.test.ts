@@ -27,6 +27,12 @@ import {
 } from './drop-index.subscriber';
 import { relayWaveKey } from './relay-wave-key';
 
+/** UTF-16 code unit order: the same on every container, unlike locales. */
+function compareCodeUnits(a: string, b: string): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
 class FakeStore implements DropIndexStore {
   readonly rows: IngestedEvent[] = [];
   readonly rejects: RejectRow[] = [];
@@ -633,9 +639,9 @@ describe('DropIndexSubscriber', () => {
     );
     expect(relay.subs[2].waves).toEqual(['*']);
     expect(relay.asked).toEqual([0]);
-    expect(store.rows.map((r) => r.event_id).sort()).toEqual(
-      [String(fresh.id), String(known.id)].sort()
-    );
+    expect(
+      store.rows.map((r) => String(r.event_id)).sort(compareCodeUnits)
+    ).toEqual([String(fresh.id), String(known.id)].sort(compareCodeUnits));
   });
 
   it('reads open waves when its AUTH fails', async () => {
@@ -726,9 +732,9 @@ describe('DropIndexSubscriber', () => {
       relays: ['wss://a.example']
     });
     expect(report.stored).toBe(4);
-    expect(store.rows.map((r) => r.event_id).sort()).toEqual(
-      [e3.id, e4.id, e5.id, f3.id].map(String).sort()
-    );
+    expect(
+      store.rows.map((r) => String(r.event_id)).sort(compareCodeUnits)
+    ).toEqual([e3.id, e4.id, e5.id, f3.id].map(String).sort(compareCodeUnits));
     expect(Array.from(store.cursorsOf.get('r-1')!.values())).toEqual([
       { wave: 'wave-1', logEpoch: 1, rseq: 5 },
       { wave: 'wave-2', logEpoch: 1, rseq: 3 }
