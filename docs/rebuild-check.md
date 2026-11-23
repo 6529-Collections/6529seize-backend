@@ -105,10 +105,13 @@ export const mintManifest: AreaManifest = {
     Until it is in the tree, runs skip the step and note it, and keep a
     skipped rebuilder's tables like pending ones; a final run fails.
 - `probes`: API requests whose answers must match before and after. `ignore`
-  and `unordered` paths each need a reason, which the registry checks. A
-  probe with `origin: 'planned'` and `needs: [tables]` reads tables a later
-  branch creates: runs hold it while any of them is missing from the fresh
-  schema and say so, and a final run fails on it.
+  and `unordered` paths each need a reason, which the registry checks. Mark
+  `unordered` any list the backend selects without `ORDER BY`, such as
+  follows' `actions` and the `subscribed_actions` of drops and identities:
+  MySQL may return it in another order in the second pass. A probe with
+  `origin: 'planned'` and `needs: [tables]` reads tables a later branch
+  creates: runs hold it while any of them is missing from the fresh schema
+  and say so, and a final run fails on it.
 - `waivers`: `routes` (documented GET routes no probe needs to call),
   `unprobedTables` (rebuilt tables no probe needs to read) and
   `unseededTables` (rebuilt tables that may have no rows after the seeds),
