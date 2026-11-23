@@ -20,6 +20,7 @@ import {
   type CompetitionCleanupPlan,
   type CompetitionCleanupRecovery
 } from './approval';
+import { mysql2TypeOrmOptions } from '../../../src/db/mysql-driver-compat';
 
 type Operation = 'plan' | 'orphans' | 'prepare' | 'drop';
 function options(context: { invokedFunctionArn: string }) {
@@ -121,7 +122,7 @@ export const handler = async (
       migrationsRun: false,
       supportBigNumbers: true,
       bigNumberStrings: true,
-      extra: { dateStrings: true }
+      ...mysql2TypeOrmOptions({ dateStrings: true })
     });
     await source.initialize();
     const runner = source.createQueryRunner('master');

@@ -4,7 +4,7 @@ import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import type { MintingClaimRowInput } from './minting-claim-from-drop.builder';
 
-const mysql = require('mysql');
+const mysql = require('mysql2');
 
 export class MintingClaimsDb extends LazyDbAccessCompatibleService {
   async existsByDropId(

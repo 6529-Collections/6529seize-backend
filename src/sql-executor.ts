@@ -1,7 +1,7 @@
 import { DbQueryOptions } from './db-query.options';
 import { RequestContext } from './request.context';
 
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 import type { SqlExecutionBudget } from '@/db/sql-execution-budget';
 export type {
   SqlExecutionBudget,

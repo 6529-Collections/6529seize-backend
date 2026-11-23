@@ -9,22 +9,16 @@ existing environments keep their current behaviour until it is enabled.
 | `DB_SSL`         | `true` enables TLS with server certificate chain verification (`rejectUnauthorized: true`; no host name check, see below). Any other value, or unset, keeps TLS off. |
 | `DB_SSL_CA_FILE` | Optional path to a PEM bundle used as the trusted CA list when `DB_SSL=true`. Unset uses Node's default trust store. Read at connect time.                           |
 
-Both paths use the `mysql` driver (2.18.x; TypeORM's default
-`connectorPackage`). Its only verification setting is `ssl.rejectUnauthorized`
-(on unless set to `false`): after the handshake the driver fails the
-connection if Node reports a certificate chain error (`verifyError()`), which
-checks the chain against the trusted CA list. The driver has no option for the
-server's identity: it upgrades the open socket with `new tls.TLSSocket(...)`
-and passes only `ca`, `cert`, `key`, `passphrase` and `ciphers` to the secure
-context, never `servername` or `checkServerIdentity`, so Node does not check
-that the certificate was issued for the host being connected to.
-`DB_SSL=true` therefore protects against passive interception and against
-certificates from untrusted authorities, but must not be relied on to verify
-the database host's identity. Treat host verification as missing until the
-driver is replaced with one that verifies the host name (for example
-`mysql2`). With `mysql2`, host name verification is only on when
-`ssl.verifyIdentity` is set to `true`; it is off by default, so a switch must
-set it explicitly. `rejectUnauthorized` stays as it is today.
+Both paths use the `mysql2` driver (3.16.x). It verifies the certificate
+chain when `ssl.rejectUnauthorized` is on (the default), as the earlier `mysql`
+driver did. It sends the host name for SNI, but checks that the certificate
+was issued for that host only when `ssl.verifyIdentity` is `true`. The driver
+change kept that setting off, so the behaviour stayed as it was: `DB_SSL=true`
+protects against passive interception and against certificates from
+untrusted authorities, but must not be relied on to verify the database
+host's identity. Turning `verifyIdentity` on is a separate change; first
+confirm that every `DB_HOST`, `DB_HOST_READ` and `DB_IAM_HOST*` value is a
+name on its endpoint's certificate (not an IP address or a custom CNAME).
 
 Which trust source fits depends on the endpoint:
 
@@ -36,8 +30,8 @@ Which trust source fits depends on the endpoint:
   [RDS global bundle](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.SSL.html)
   with the function and set `DB_SSL_CA_FILE` to its path.
 
-The legacy `Amazon RDS` SSL profile built into the `mysql` driver is not used:
-its bundled certificates predate the current RDS certificate authorities.
+The `Amazon RDS` SSL profiles that `mysql2` can load by name are not used;
+`DB_SSL_CA_FILE` stays the way to trust the RDS certificate authorities.
 
 Redis TLS is configured separately with `REDIS_TLS=true` (`src/redis.ts`).
 

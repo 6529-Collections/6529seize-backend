@@ -4,7 +4,7 @@ import {
   SQL_TRANSACTION_FIXTURE_TABLE,
   createSqlTransactionFixture
 } from './sql-transaction-fixture';
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 import { performance } from 'node:perf_hooks';
 import * as apiDb from '@/db-api';
 import * as loopDb from '@/db';

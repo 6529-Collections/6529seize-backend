@@ -12,6 +12,7 @@ import {
   provisionWorkerDatabases,
   TEST_DB_NAME_PREFIX_ENV
 } from '@/tests/_setup/testDatabase';
+import { mysql2TypeOrmOptions } from '@/db/mysql-driver-compat';
 
 /** Starts an isolated MySQL container and initializes one database per Jest worker. */
 module.exports = async (globalConfig?: unknown) => {
@@ -65,7 +66,7 @@ module.exports = async (globalConfig?: unknown) => {
         password: container.getUserPassword(),
         database: `${databasePrefix}_${workerId}`,
         charset: 'utf8mb4',
-        timezone: 'Etc/UTC',
+        ...mysql2TypeOrmOptions({ timezone: 'Etc/UTC' }),
         entities: Object.values(Entities).filter(
           (entity) => typeof entity === 'function'
         ),

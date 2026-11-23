@@ -4,6 +4,7 @@ import { env } from '@/env';
 import { DropEntity } from '@/entities/IDrop';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { applyWaveScoreInputIndexSchema } from './wave-score-input-index-schema';
+import { mysql2TypeOrmOptions } from '@/db/mysql-driver-compat';
 
 describeWithSeed('Wave score input index online DDL', [], () => {
   it('adds the covering index without losing data and remains idempotent across entity sync', async () => {
@@ -15,7 +16,8 @@ describeWithSeed('Wave score input index online DDL', [], () => {
       password: env.getStringOrThrow('DB_PASS'),
       database: env.getStringOrThrow('DB_NAME'),
       entities: [DropEntity],
-      synchronize: false
+      synchronize: false,
+      ...mysql2TypeOrmOptions()
     });
     await source.initialize();
     try {

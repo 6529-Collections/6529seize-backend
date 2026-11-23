@@ -56,7 +56,7 @@ import {
   waveVotingCreditNftKey
 } from '@/waves/wave-voting-credit-nfts';
 
-const mysql = require('mysql');
+const mysql = require('mysql2');
 
 export interface WaveMentionSearchCandidate {
   readonly id: string;

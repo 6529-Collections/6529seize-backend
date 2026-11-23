@@ -1,4 +1,4 @@
-import type { PoolConnection } from 'mysql';
+import type { PoolConnection } from 'mysql2';
 import { SqlTransactionOptions } from '@/sql-executor';
 import { afterCommit } from './after-commit';
 import { CustomTypeCaster, execNativeTransactionally } from './my-sql.helpers';

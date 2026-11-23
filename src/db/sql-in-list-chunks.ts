@@ -1,4 +1,4 @@
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 
 /**
  * Inlined IN-list size per statement. The driver inlines every value, and

@@ -49,17 +49,17 @@ import { getConsolidationsSql } from './sql_helpers';
 
 import { Nft } from '@/alchemy-sdk';
 import { createHash, randomUUID } from 'node:crypto';
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 import {
-  attachDbAuthTokenSource,
   createDbAuthTokenSource,
+  dbAuthPlugins,
   DbConnectionTarget,
-  installMysqlIamAuthSupport,
   isDbConnectionTargetComplete,
   isDbIamAuthRequested,
   resolveDbConnectionTargets,
   sslOptionsFor
 } from './db-iam-auth';
+import { checkPooledConnectionsOnAcquire } from './db/mysql-pool-acquire';
 import {
   DEFAULT_PAGE_SIZE,
   NFTSearchResult,
@@ -179,9 +179,6 @@ export async function connect() {
     process.exit();
   }
   const port = +process.env.DB_PORT;
-  if (targets.write.iam || targets.read.iam) {
-    installMysqlIamAuthSupport();
-  }
   const createPool = (
     target: DbConnectionTarget,
     connectionLimit: number
@@ -189,8 +186,6 @@ export async function connect() {
     const pool = mysql.createPool({
       connectionLimit,
       connectTimeout: Time.seconds(30).toMillis(),
-      acquireTimeout: Time.seconds(30).toMillis(),
-      timeout: Time.seconds(30).toMillis(),
       host: target.host,
       port: port,
       user: target.user,
@@ -198,18 +193,24 @@ export async function connect() {
       charset: 'utf8mb4',
       database: process.env.DB_NAME,
       typeCast: CustomTypeCaster,
-      ...sslOptionsFor(target)
-    });
-    if (target.iam) {
-      attachDbAuthTokenSource(
-        pool,
-        createDbAuthTokenSource({ host: target.host, port, user: target.user }),
+      authPlugins: dbAuthPlugins(
+        target.iam
+          ? createDbAuthTokenSource({
+              host: target.host,
+              port,
+              user: target.user
+            })
+          : null,
         (error) =>
           logger.error(
             `[DB IAM TOKEN SIGNING FAILED] [${target.host}] ${error}`
           )
-      );
-    }
+      ),
+      ...sslOptionsFor(target)
+    });
+    // The 30 s bound is the former mysqljs acquireTimeout. mysqljs never read
+    // the pool-level `timeout` option, so it has no replacement.
+    checkPooledConnectionsOnAcquire(pool, Time.seconds(30).toMillis());
     return pool;
   };
   write_pool = createPool(targets.write, 5);
@@ -335,7 +336,7 @@ function getDbConnectionByPoolName(
   const pool = getPoolByName(poolName);
   return new Promise((resolve, reject) => {
     pool.getConnection(function (
-      err: mysql.MysqlError,
+      err: NodeJS.ErrnoException | null,
       dbcon: mysql.PoolConnection
     ) {
       if (err) {

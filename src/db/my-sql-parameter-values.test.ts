@@ -1,4 +1,4 @@
-import type { PoolConnection } from 'mysql';
+import type { PoolConnection } from 'mysql2';
 import { DbPoolName } from '@/db-query.options';
 import { SqlParameterValueError } from '@/db/sql-named-parameters';
 import { execSQLWithConnection, execSQLWithParams } from './my-sql.helpers';

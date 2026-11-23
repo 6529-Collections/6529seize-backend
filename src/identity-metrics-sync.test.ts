@@ -1,4 +1,4 @@
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 import { randomUUID } from 'node:crypto';
 import { IdentityMetricsSync } from '@/identity-metrics-sync';
 import { ConnectionWrapper, SqlExecutor } from '@/sql-executor';

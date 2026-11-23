@@ -5,8 +5,7 @@ import {
   ConnectionWrapper,
   SqlTransactionOptions
 } from '../sql-executor';
-import * as mysql from 'mysql';
-import { PoolConnection, TypeCast } from 'mysql';
+import type { PoolConnection } from 'mysql2';
 import { Time } from '../time';
 import { Logger } from '../logging';
 import { DbPoolName, DbQueryOptions } from '@/db-query.options';
@@ -39,10 +38,16 @@ import {
   assertNamedParametersBindable,
   formatNamedParameters
 } from '@/db/sql-named-parameters';
+import {
+  mysqljsTypeCast,
+  mysqljsWriteResult,
+  TypeCastFunction,
+  withMysqljsErrorCode
+} from '@/db/mysql-driver-compat';
 
 const logger = Logger.get('MYSQL_HELPERS');
 
-const BigIntToNumberCaster: TypeCast = function castField(field, next) {
+const BigIntToNumberCaster: TypeCastFunction = function castField(field, next) {
   if (field.type === 'LONGLONG') {
     const text = field.string();
 
@@ -58,7 +63,10 @@ const BigIntToNumberCaster: TypeCast = function castField(field, next) {
   return next();
 };
 
-const TinyIntToBooleanCaster: TypeCast = function castField(field, next) {
+const TinyIntToBooleanCaster: TypeCastFunction = function castField(
+  field,
+  next
+) {
   if (field.type === 'TINY') {
     const value = field.string();
     if (value === null) {
@@ -72,10 +80,15 @@ const TinyIntToBooleanCaster: TypeCast = function castField(field, next) {
   return next();
 };
 
-export const CustomTypeCaster: TypeCast = (field, next) =>
-  TinyIntToBooleanCaster(field, () => BigIntToNumberCaster(field, next));
+// The pools never set supportBigNumbers, dateStrings or a time zone.
+const MysqljsDefaultTypeCaster = mysqljsTypeCast();
 
-const LegacyCompetitionGetTypeCaster: TypeCast = (field, next) => {
+export const CustomTypeCaster: TypeCastFunction = (field, next) =>
+  TinyIntToBooleanCaster(field, () =>
+    BigIntToNumberCaster(field, () => MysqljsDefaultTypeCaster(field, next))
+  );
+
+const LegacyCompetitionGetTypeCaster: TypeCastFunction = (field, next) => {
   if (LEGACY_GET_BOOLEAN_FIELDS.has(field.name)) {
     const value = field.string();
     return value === null ? null : value === '1' || value === 'true';
@@ -205,14 +218,16 @@ export async function execNativeTransactionally<T>(
       // Preserve the existing lifecycle for legacy callers. Membership always
       // opts into the awaited BEGIN/rollback path; changing all legacy callers
       // requires its own compatibility validation and deployment inventory.
-      connection.beginTransaction();
+      // mysqljs sent an error without a callback to the connection's 'error'
+      // listener; mysql2 would throw it, so it is ignored here instead.
+      connection.beginTransaction(ignoreError);
     }
     openAfterCommitScope(connection);
     const result = await executable({ connection: connection });
     await new Promise<void>((resolve, reject) => {
-      connection.commit((err: any) => {
+      connection.commit((err: unknown) => {
         if (err) {
-          reject(err);
+          reject(withMysqljsErrorCode(err, connection));
         } else {
           resolve();
         }
@@ -226,7 +241,7 @@ export async function execNativeTransactionally<T>(
         connection.rollback(() => resolve())
       );
     } else {
-      connection.rollback();
+      connection.rollback(ignoreError);
     }
     throw e;
   } finally {
@@ -240,10 +255,8 @@ export async function execNativeTransactionally<T>(
 }
 
 export async function execBudgetedNativeTransactionally<T>(
-  executable: (
-    connection: ConnectionWrapper<mysql.PoolConnection>
-  ) => Promise<T>,
-  acquire: () => Promise<mysql.PoolConnection>,
+  executable: (connection: ConnectionWrapper<PoolConnection>) => Promise<T>,
+  acquire: () => Promise<PoolConnection>,
   budget: NonNullable<SqlTransactionOptions['executionBudget']>
 ): Promise<T> {
   let scoped: object | undefined;
@@ -268,7 +281,7 @@ export async function execBudgetedNativeTransactionally<T>(
       (handle) => {
         scoped = handle;
         openAfterCommitScope(handle);
-        return executable({ connection: handle as mysql.PoolConnection });
+        return executable({ connection: handle as PoolConnection });
       }
     );
   } catch (e) {
@@ -295,20 +308,27 @@ async function beginIsolatedTransaction(
   await new Promise<void>((resolve, reject) => {
     connection.query(
       `SET TRANSACTION ISOLATION LEVEL ${options.isolationLevel}`,
-      (error) => (error ? reject(error) : resolve())
+      (error) =>
+        error ? reject(withMysqljsErrorCode(error, connection)) : resolve()
     );
   });
   await new Promise<void>((resolve, reject) => {
-    connection.beginTransaction((error) => (error ? reject(error) : resolve()));
+    connection.beginTransaction((error) =>
+      error ? reject(withMysqljsErrorCode(error, connection)) : resolve()
+    );
   });
+}
+
+function ignoreError(): void {
+  // See the callers.
 }
 
 /** Times the whole API operation, including a pool wait before SQL is sent. */
 export async function execSQLWithConnection<T>(
   sql: string,
   source:
-    | { connection: mysql.PoolConnection }
-    | { pool: DbPoolName; acquire: () => Promise<mysql.PoolConnection> },
+    | { connection: PoolConnection }
+    | { pool: DbPoolName; acquire: () => Promise<PoolConnection> },
   params?: Record<string, unknown>,
   options?: DbQueryOptions
 ): Promise<T[]> {
@@ -338,16 +358,20 @@ export async function execSQLWithConnection<T>(
 
 export async function execSQLWithParams<T>(
   sql: string,
-  connection: mysql.PoolConnection,
+  connection: PoolConnection,
   closeConnection: boolean,
   params?: Record<string, any>,
   options?: DbQueryOptions,
   timing?: SqlOperationTiming
 ): Promise<T[]> {
-  // Check parameter values before the driver formats the statement: a throw
-  // from queryFormat would skip onResult and keep a borrowed connection.
+  // Format before the driver sees the statement: a throw past this point
+  // would skip onResult and keep a borrowed connection. The driver's
+  // queryFormat hook is not used because mysql2 shares one connection config
+  // across a pool.
+  let formatted: string;
   try {
     assertNamedParametersBindable(sql, params);
+    formatted = params ? prepareStatement(sql, params) : sql;
   } catch (error) {
     settleProxySession({
       connection,
@@ -365,25 +389,15 @@ export async function execSQLWithParams<T>(
     options,
     () =>
       new Promise((resolve, reject) => {
-        // mysql formats synchronously inside query(), so this measures this
-        // statement's final SQL before any other statement can reuse the hook.
-        let measured = false;
-        let statementBytes: number | null = null;
+        const statementBytes = oversizedStatementBytes(formatted);
         // The driver invokes onResult in the socket's async context, not this
         // request's; capture the request's pin scope now.
         const pinScope = captureProxyPinScope();
-        connection.config.queryFormat = function (query, values) {
-          const formatted = values ? prepareStatement(query, values) : query;
-          if (!measured) {
-            measured = true;
-            statementBytes = oversizedStatementBytes(formatted);
-          }
-          return formatted;
-        };
         const timer = Time.now();
         timing?.queryStarted();
-        const onResult = (err: unknown, result: T[]) => {
-          timing?.queryFinished(!!err);
+        const onResult = (driverError: unknown, result: unknown) => {
+          timing?.queryFinished(!!driverError);
+          const err = withMysqljsErrorCode(driverError, connection);
           // Private records and membership authority tokens must stay out of
           // infrastructure logs. Bulk inserts can embed values directly in SQL,
           // so hide both statements and parameters for these table families.
@@ -398,11 +412,7 @@ export async function execSQLWithParams<T>(
           settleProxySession({
             connection,
             sql,
-            // mysql always formats through queryFormat; the template fallback
-            // only covers drivers that skip it and cannot see bound values.
-            statementBytes: measured
-              ? statementBytes
-              : oversizedStatementBytes(sql),
+            statementBytes,
             privateFamily,
             closeConnection,
             pool: timing?.pool,
@@ -423,15 +433,18 @@ export async function execSQLWithParams<T>(
             logger.error(description);
             reject(privateFamily ? privateQueryError(err, privateFamily) : err);
           } else {
-            resolve(Object.values(JSON.parse(JSON.stringify(result))));
+            resolve(
+              Object.values(
+                JSON.parse(JSON.stringify(mysqljsWriteResult(result)))
+              )
+            );
           }
         };
         // mysql sockets can outlive a Lambda invocation. Bind both logging and
         // operational contexts at registration, not the socket's callback context.
         connection.query(
           {
-            sql,
-            values: params,
+            sql: formatted,
             // Field parsing runs on pooled sockets before onResult. Capture
             // this query's conversion mode instead of reading the socket scope.
             typeCast: isLegacyCompetitionGetFacadeScope()
@@ -460,7 +473,7 @@ function settleProxySession({
   pool,
   pinScope
 }: {
-  connection: mysql.PoolConnection;
+  connection: PoolConnection;
   sql: string;
   statementBytes: number | null;
   privateFamily: PrivateQueryFamily | null;

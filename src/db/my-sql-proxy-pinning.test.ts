@@ -1,6 +1,6 @@
 import { AsyncResource } from 'node:async_hooks';
 import { performance } from 'node:perf_hooks';
-import type { PoolConnection } from 'mysql';
+import type { PoolConnection } from 'mysql2';
 import { DbPoolName } from '@/db-query.options';
 import { SqlExecutionBudgetExceededError } from './sql-execution-budget';
 import {

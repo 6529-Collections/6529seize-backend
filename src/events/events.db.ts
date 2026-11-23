@@ -7,7 +7,7 @@ import { EventStatus, EventType, ProcessableEvent } from '../entities/IEvent';
 import { EVENTS_TABLE, LISTENER_PROCESSED_EVENTS_TABLE } from '@/constants';
 import { Time } from '../time';
 
-const mysql = require('mysql');
+const mysql = require('mysql2');
 
 export class EventsDb extends LazyDbAccessCompatibleService {
   async getListenerKeysAlreadyProcessedByEventIds(

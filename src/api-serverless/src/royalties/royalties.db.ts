@@ -13,7 +13,7 @@ import {
 } from '@/constants';
 import { Time } from '../../../time';
 import { sqlExecutor } from '../../../sql-executor';
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 import { artistListRegExp } from '@/api/collection-report-query';
 
 export interface RoyaltyResponse {

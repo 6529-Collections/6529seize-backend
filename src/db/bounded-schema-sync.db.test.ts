@@ -17,6 +17,7 @@ import {
   SchemaSyncDestructivePlanRefusedError,
   synchronizeSchemaBounded
 } from './bounded-schema-sync';
+import { mysql2TypeOrmOptions } from '@/db/mysql-driver-compat';
 
 const noSleep = async () => undefined;
 const TOUCHED_TABLES = [
@@ -77,7 +78,7 @@ describe('synchronizeSchemaBounded on MySQL', () => {
       password: process.env.DB_PASS,
       database: process.env.DB_NAME,
       charset: 'utf8mb4',
-      timezone: 'Etc/UTC',
+      ...mysql2TypeOrmOptions({ timezone: 'Etc/UTC' }),
       logging: false,
       entities: Object.values(Entities).filter(
         (entity) => typeof entity === 'function'

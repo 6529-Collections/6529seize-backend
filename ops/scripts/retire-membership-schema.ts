@@ -8,6 +8,7 @@ import {
   RetirementInventory,
   sha256
 } from '../../src/dbMigrationsLoop/retired-schema-cleanup';
+import { mysql2TypeOrmOptions } from '../../src/db/mysql-driver-compat';
 
 interface Plan {
   environment: 'staging' | 'prod';
@@ -124,7 +125,8 @@ async function main() {
     synchronize: false,
     migrationsRun: false,
     supportBigNumbers: true,
-    bigNumberStrings: true
+    bigNumberStrings: true,
+    ...mysql2TypeOrmOptions()
   });
   await source.initialize();
   const runner = source.createQueryRunner('master');

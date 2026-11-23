@@ -1,4 +1,4 @@
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 import { DB_TEXT_COLLATION } from '@/db/db-collation';
 import {
   SQL_IN_LIST_CHUNK_BYTES,

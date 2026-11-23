@@ -1,4 +1,4 @@
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 import { execSQLWithConnection, execSQLWithParams } from './my-sql.helpers';
 import { loggerContext } from '@/logger-context';
 import { Logger } from '@/logging';

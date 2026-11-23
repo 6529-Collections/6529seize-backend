@@ -1,6 +1,6 @@
 import * as os from 'node:os';
 import { DB_TEXT_COLLATION } from '@/db/db-collation';
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 import { sqlExecutor } from '@/sql-executor';
 
 export const TEST_DB_NAME_PREFIX_ENV = 'TEST_DB_NAME_PREFIX';

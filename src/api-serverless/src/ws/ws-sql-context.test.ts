@@ -1,4 +1,4 @@
-import type { PoolConnection } from 'mysql';
+import type { PoolConnection } from 'mysql2';
 import { execSQLWithParams } from '@/db/my-sql.helpers';
 import { loggerContext } from '@/logger-context';
 import { Logger } from '@/logging';

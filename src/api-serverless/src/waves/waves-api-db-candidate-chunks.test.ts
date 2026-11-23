@@ -1,4 +1,4 @@
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 import { DbQueryOptions } from '@/db-query.options';
 import { PROXY_PIN_STATEMENT_BYTES } from '@/db/proxy-session-pinning';
 import { SqlExecutor } from '@/sql-executor';

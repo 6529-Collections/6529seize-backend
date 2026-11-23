@@ -44,6 +44,7 @@ import {
 } from '../../../src/legacy-dm/legacy-dm-retention';
 import { getRedisClient, initRedis } from '../../../src/redis';
 import { bumpWaveUnreadCacheVersionOrThrow } from '../../../src/api-serverless/src/waves/wave-unread-cache';
+import { mysql2TypeOrmOptions } from '../../../src/db/mysql-driver-compat';
 
 const MODES = ['plan', 'execute', 'media-plan', 'media-execute'] as const;
 type Mode = (typeof MODES)[number];
@@ -234,7 +235,8 @@ async function main() {
     migrationsRun: false,
     supportBigNumbers: true,
     bigNumberStrings: true,
-    charset: 'utf8mb4'
+    charset: 'utf8mb4',
+    ...mysql2TypeOrmOptions()
   });
   await source.initialize();
   const runner = source.createQueryRunner('master');

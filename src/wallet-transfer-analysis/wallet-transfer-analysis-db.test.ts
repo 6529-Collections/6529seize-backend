@@ -24,6 +24,7 @@ import {
 import { aggregateTransferBucket } from './aggregate';
 import { WalletTransferAnalysisDb } from './wallet-transfer-analysis.db';
 import { WalletTransferAnalysisService } from './wallet-transfer-analysis.service';
+import { mysql2TypeOrmOptions } from '@/db/mysql-driver-compat';
 
 const address = (digit: string) => `0x${digit.repeat(40)}`;
 const hash = (id: number) => `0x${id.toString(16).padStart(64, '0')}`;
@@ -227,7 +228,7 @@ describe('wallet transfer TypeORM session settings', () => {
     database: process.env.DB_NAME,
     entities: [],
     synchronize: false,
-    timezone: 'Etc/UTC'
+    ...mysql2TypeOrmOptions({ timezone: 'Etc/UTC' })
   });
   class LoopExecutor extends SqlExecutor {
     async execute<T>(

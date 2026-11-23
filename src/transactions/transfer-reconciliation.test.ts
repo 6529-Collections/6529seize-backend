@@ -5,7 +5,7 @@ import {
   EntityManager,
   ObjectLiteral
 } from 'typeorm';
-import { PoolConnection } from 'mysql';
+import { PoolConnection } from 'mysql2';
 import { execSQLWithParams as executeNativeSql } from '@/db/my-sql.helpers';
 import { execSQLWithParams as executeAppSql } from '@/db';
 import { enqueueTransfersWithManager } from './transfer-reconciliation.db';
@@ -62,19 +62,14 @@ it.each(['native', 'app'] as const)(
     await db.acknowledge(rows);
     const [sql, params] = execute.mock.calls[0];
     let rendered = '';
-    const config: {
-      queryFormat?: (sql: string, values: Record<string, unknown>) => string;
-    } = {};
     const connection = {
-      config,
+      config: {},
+      // Both executors hand the driver the statement with values bound.
       query: (
-        input: string | { sql: string; values: Record<string, unknown> },
+        input: string | { sql: string },
         callback?: (error: null, rows: unknown[]) => void
       ) => {
-        rendered =
-          typeof input === 'string'
-            ? input
-            : config.queryFormat!(input.sql, input.values);
+        rendered = typeof input === 'string' ? input : input.sql;
         if (callback) callback(null, []);
         else return Promise.resolve([]);
       }
