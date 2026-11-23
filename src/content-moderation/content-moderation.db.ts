@@ -1,4 +1,8 @@
 import {
+  E2eeModerationRecorder,
+  e2eeModerationRecorder
+} from '@/e2ee/relay/e2ee-moderation-records';
+import {
   ATTACHMENTS_TABLE,
   CONTENT_MODERATION_AUDIT_LOG_TABLE,
   CONTENT_MODERATION_DROP_STATES_TABLE,
@@ -31,7 +35,8 @@ import { RequestContext } from '@/request.context';
 import {
   ConnectionWrapper,
   dbSupplier,
-  LazyDbAccessCompatibleService
+  LazyDbAccessCompatibleService,
+  SqlExecutor
 } from '@/sql-executor';
 import { Time } from '@/time';
 import { randomUUID } from 'node:crypto';
@@ -94,6 +99,9 @@ export interface ModerationReportRow {
 }
 
 type ModerationQueueReportRow = ModerationReportRow & {
+  /** The reporter's own hide and block (`r.*`), dropped before the queue answers. */
+  readonly hide_drop?: boolean | number | null;
+  readonly block_author?: boolean | number | null;
   readonly drop_deleted: number;
   readonly author_handle: string | null;
   readonly author_pfp: string | null;
@@ -252,6 +260,17 @@ function getInsertIdFromWriteResult(result: unknown): number {
 }
 
 export class ContentModerationDb extends LazyDbAccessCompatibleService {
+  constructor(
+    sqlExecutorGetter: () => SqlExecutor,
+    /** Records report writes for the relays; off unless records are on. */
+    private readonly reportRecords: Pick<
+      E2eeModerationRecorder,
+      'changed'
+    > = e2eeModerationRecorder
+  ) {
+    super(sqlExecutorGetter);
+  }
+
   async blockProfile(
     blockerProfileId: string,
     blockedProfileId: string,
@@ -898,6 +917,10 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       reason: ContentReportReason;
       notes: string | null;
       contentSnapshot: Record<string, unknown>;
+      /** The drop hidden from the reporter with the report. */
+      hideDrop?: boolean;
+      /** The author blocked by the reporter with the report. */
+      blockAuthor?: boolean;
     },
     ctx: RequestContext
   ): Promise<ModerationReportRow> {
@@ -914,7 +937,9 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
           notes,
           content_snapshot,
           status,
-          created_at
+          created_at,
+          hide_drop,
+          block_author
         ) values (
           :id,
           :dropId,
@@ -924,7 +949,9 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
           :notes,
           cast(:contentSnapshot as json),
           :status,
-          :createdAt
+          :createdAt,
+          :hideDrop,
+          :blockAuthor
         )
       `,
       {
@@ -932,9 +959,16 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         id,
         contentSnapshot: JSON.stringify(input.contentSnapshot),
         status: ContentReportStatus.OPEN,
-        createdAt: now
+        createdAt: now,
+        hideDrop: input.hideDrop === true,
+        blockAuthor: input.blockAuthor === true
       },
       this.connectionOptions(ctx.connection)
+    );
+    await this.reportRecords.changed(
+      CONTENT_MODERATION_REPORTS_TABLE,
+      { id },
+      ctx.connection
     );
     await this.insertAudit(
       {
@@ -1048,6 +1082,11 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         { reportId: report.id, withdrawnAt },
         this.connectionOptions(connection)
       );
+      await this.reportRecords.changed(
+        CONTENT_MODERATION_REPORTS_TABLE,
+        { id: report.id },
+        connection
+      );
       await this.insertAudit(
         {
           actorProfileId: reporterProfileId,
@@ -1119,6 +1158,11 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         assessedAt
       },
       this.connectionOptions(connection)
+    );
+    await this.reportRecords.changed(
+      CONTENT_MODERATION_REPORTS_TABLE,
+      { id: reportId },
+      connection
     );
   }
 
@@ -1227,9 +1271,13 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     );
     return rows.map((row) => {
       const parsed = this.parseReportJson(row);
+      // The reporter's own hide and block stay theirs: the queue does not
+      // show them to moderators.
       const {
         recommendation_rank: recommendationRank,
         sort_timestamp: sortTimestamp,
+        hide_drop: hideDrop,
+        block_author: blockAuthor,
         ...report
       } = parsed;
       return {
@@ -1590,6 +1638,11 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       `,
       { ...input, resolvedAt: Time.currentMillis() },
       this.connectionOptions(connection)
+    );
+    await this.reportRecords.changed(
+      CONTENT_MODERATION_REPORTS_TABLE,
+      { drop_id: input.dropId },
+      connection
     );
   }
 

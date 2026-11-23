@@ -39,6 +39,10 @@ export const identityManifest: AreaManifest = {
       why: 'Short-lived locks on rating credit.'
     },
     ratings: { class: 'INDEX' },
+    rep_rating_removals: {
+      class: 'EXEMPT',
+      why: "audit and undo record of an operator-run one-off job (#2550); written only when an operator applies it; no public source holds it; kept by the database's backups, not by the rebuild"
+    },
     // Pending: the over-rates loop's Arweave rates upload writes it.
     // RatingsSnapshot is missing from src/entities/entities.ts, so a fresh
     // schema has no table; registering it there is a one-line fix.

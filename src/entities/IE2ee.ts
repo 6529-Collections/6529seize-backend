@@ -20,7 +20,11 @@ import {
   E2EE_PUSH_THROTTLE_TABLE,
   E2EE_RATE_COUNTERS_TABLE,
   E2EE_REPORT_ACCESS_LOG_TABLE,
+  E2EE_RECORD_ITEMS_TABLE,
+  E2EE_RELAY_DELETIONS_TABLE,
+  E2EE_RELAY_OUTBOX_TABLE,
   E2EE_REPORTS_TABLE,
+  E2EE_STREAMS_TABLE,
   E2EE_WELCOME_DELIVERIES_TABLE,
   E2EE_WELCOMES_TABLE
 } from '@/constants/db-tables';
@@ -620,4 +624,150 @@ export class E2eeCiphertextObjectEntity {
 
   @Column({ type: 'bigint' })
   readonly created_at!: number;
+}
+
+/**
+ * The head of one signed record stream on the relays (a `<family>/<owner>`
+ * wave): its last position and that record's content hash, which the next
+ * record names as `prev`. An index: a rebuild reads it back from the relays.
+ */
+@Entity(E2EE_STREAMS_TABLE)
+@Index('e2ee_streams_updated_idx', ['updated_at'])
+export class E2eeStreamEntity {
+  @PrimaryColumn({ type: 'varchar', length: 200 })
+  readonly wave!: string;
+
+  @Column({ type: 'bigint' })
+  readonly head_pos!: number;
+
+  /** sha256 of the head record's content, 0x-hex; null before the first. */
+  @Column({ type: 'varchar', length: 66, nullable: true, default: null })
+  readonly head_hash!: string | null;
+
+  @Column({ type: 'bigint' })
+  readonly created_at!: number;
+
+  @Column({ type: 'bigint' })
+  readonly updated_at!: number;
+}
+
+/**
+ * A record not yet held by every relay. The content is stored when the write
+ * commits; the orderer signs it on first publish (so the anchor is the
+ * relays' current height) and keeps the signed event, so every relay gets
+ * the same event id. Ephemeral: deleted once every relay holds it.
+ */
+@Entity(E2EE_RELAY_OUTBOX_TABLE)
+@Index('e2ee_relay_outbox_wave_pos_uq', ['wave', 'pos'], { unique: true })
+@Index('e2ee_relay_outbox_created_idx', ['created_at'])
+export class E2eeRelayOutboxEntity {
+  @PrimaryGeneratedColumn('increment', { type: 'bigint' })
+  readonly id!: number;
+
+  @Column({ type: 'varchar', length: 200 })
+  readonly wave!: string;
+
+  @Column({ type: 'bigint' })
+  readonly pos!: number;
+
+  /** 9 RECORD, 10 SEALED or 11 LOG. */
+  @Column({ type: 'int' })
+  readonly kind!: number;
+
+  /** The record's refs, JSON. */
+  @Column({ type: 'varchar', length: 512 })
+  readonly refs!: string;
+
+  /** The record's content (the dm container), as hashed for `prev`. */
+  @Column({ type: 'longblob' })
+  readonly content!: Buffer;
+
+  /** Bytes the content names as external (an item's ciphertext), if any. */
+  @Column({ type: 'longblob', nullable: true, default: null })
+  readonly payload!: Buffer | null;
+
+  /** LOG records: `{epoch, item, windows}`, JSON; null otherwise. */
+  @Column({ type: 'text', nullable: true, default: null })
+  readonly log_meta!: string | null;
+
+  /** The signed event (CRP's SignedEvent JSON), once signed. */
+  @Column({ type: 'mediumtext', nullable: true, default: null })
+  readonly event!: string | null;
+
+  /** Relay URLs that hold the record, JSON array. */
+  @Column({ type: 'text' })
+  readonly held_by!: string;
+
+  @Column({ type: 'int', default: 0 })
+  readonly attempts!: number;
+
+  @Column({ type: 'varchar', length: 255, nullable: true, default: null })
+  readonly last_error!: string | null;
+
+  @Column({ type: 'bigint' })
+  readonly created_at!: number;
+}
+
+/**
+ * Which records carry an item the delivery service may delete (a Welcome,
+ * a backup chunk's bytes, an attachment, a report), by stream position,
+ * with the record's event id once signed: what a DEL names. An index the
+ * rebuild refills from the records.
+ */
+@Entity(E2EE_RECORD_ITEMS_TABLE)
+@Index('e2ee_record_items_key_idx', ['wave', 'item_key'])
+export class E2eeRecordItemEntity {
+  @PrimaryColumn({ type: 'varchar', length: 200 })
+  readonly wave!: string;
+
+  @PrimaryColumn({ type: 'bigint' })
+  readonly pos!: number;
+
+  @PrimaryColumn({ type: 'varchar', length: 200 })
+  readonly item_key!: string;
+
+  @Column({ type: 'varchar', length: 66, nullable: true, default: null })
+  readonly event_id!: string | null;
+
+  @Column({ type: 'bigint' })
+  readonly created_at!: number;
+}
+
+/**
+ * A DEL (kind 12) waiting for the relays: the stream positions of records
+ * whose item MySQL deleted or expired. Ephemeral: deleted, with the items'
+ * index rows, once every relay holds it.
+ */
+@Entity(E2EE_RELAY_DELETIONS_TABLE)
+@Index('e2ee_relay_deletions_created_idx', ['created_at'])
+export class E2eeRelayDeletionEntity {
+  @PrimaryGeneratedColumn('increment', { type: 'bigint' })
+  readonly id!: number;
+
+  @Column({ type: 'varchar', length: 200 })
+  readonly wave!: string;
+
+  /** Stream positions of the records to delete, JSON array (at most 64). */
+  @Column({ type: 'text' })
+  readonly positions!: string;
+
+  /** The signed DEL event, once signed. */
+  @Column({ type: 'mediumtext', nullable: true, default: null })
+  readonly event!: string | null;
+
+  @Column({ type: 'text' })
+  readonly held_by!: string;
+
+  @Column({ type: 'int', default: 0 })
+  readonly attempts!: number;
+
+  @Column({ type: 'varchar', length: 255, nullable: true, default: null })
+  readonly last_error!: string | null;
+
+  @Column({ type: 'bigint' })
+  readonly created_at!: number;
+
+  /** Not tried again before this (epoch ms): the backoff after a failure. */
+  @Column({ type: 'bigint', default: 0 })
+  readonly next_attempt_at!: number;
 }

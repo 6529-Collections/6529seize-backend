@@ -59,6 +59,11 @@ import { e2eeErrors } from '@/e2ee/e2ee-errors';
 import { e2eeEntriesPerGroupPerHour } from '@/e2ee/e2ee-flag';
 import { e2eeDeviceSuites } from '@/e2ee/e2ee-suite-policy';
 import { DirectMessageRefusalReason } from '@/direct-messages/direct-message-admission';
+import {
+  recordE2ee,
+  runE2eeRecordTransaction
+} from '@/e2ee/relay/e2ee-records';
+import { E2eeRecordBatch } from '@/e2ee/relay/e2ee-stream-publisher';
 import { ConnectionWrapper } from '@/sql-executor';
 
 type Conn = ConnectionWrapper<unknown>;
@@ -150,13 +155,17 @@ export class E2eeGroupsService {
     // the whole transaction a few times before giving up.
     for (let attempt = 1; ; attempt++) {
       try {
-        return await this.db.executeNativeQueriesInTransaction((connection) =>
-          this.createGroupInTransaction(
-            callerProfileId,
-            request,
-            now,
-            connection
-          )
+        return await runE2eeRecordTransaction(
+          this.deps.records,
+          this.db,
+          (connection, batch) =>
+            this.createGroupInTransaction(
+              callerProfileId,
+              request,
+              now,
+              connection,
+              batch
+            )
         );
       } catch (error) {
         if (isDeadlockError(error) && attempt < CREATE_GROUP_ATTEMPTS) continue;
@@ -171,7 +180,8 @@ export class E2eeGroupsService {
     callerProfileId: string,
     request: ApiE2eeCreateGroupRequest,
     now: number,
-    connection: Conn
+    connection: Conn,
+    batch: E2eeRecordBatch | null
   ): Promise<ApiE2eeGroup> {
     const existing = await this.db.lockGroup(request.group, connection);
     if (existing) {
@@ -212,6 +222,9 @@ export class E2eeGroupsService {
         }
       ],
       connection
+    );
+    await recordE2ee(this.deps.records, batch, (writers, records) =>
+      writers.groupCreated(records, connection, request.group)
     );
     return toApiE2eeGroup(
       group,
@@ -328,10 +341,31 @@ export class E2eeGroupsService {
     await requireOwnActiveDevice(this.deps, callerProfileId, deviceKey);
     const { hasQueuedWelcomes, hasUnjoinedChats } =
       await this.db.getDeviceInboxState(callerProfileId, deviceKey);
+    const relayHead = await this.relayInboxHead(deviceKey);
     return {
       has_pending_chats: hasQueuedWelcomes || hasUnjoinedChats,
-      has_queued_welcomes: hasQueuedWelcomes
+      has_queued_welcomes: hasQueuedWelcomes,
+      ...(relayHead ? { relay_head: relayHead } : {})
     };
+  }
+
+  /**
+   * While records are on, the device's inbox stream head: a client reading
+   * Welcomes from the relays checks they hold it. A bad relay setting or a
+   * failed read leaves it out; the client then reads from 6529.io.
+   */
+  private async relayInboxHead(
+    deviceKey: string
+  ): Promise<{ pos: number; hash: string } | null> {
+    const reads = this.deps.relayReads;
+    if (!reads) return null;
+    try {
+      if (reads.settings().mode === 'off') return null;
+      const head = await reads.inboxHead(deviceKey);
+      return head ? { pos: head.pos, hash: head.hash } : null;
+    } catch {
+      return null;
+    }
   }
 
   // ------------------------------------------------------------- entries
@@ -567,7 +601,8 @@ export class E2eeGroupsService {
     group: string,
     request: ApiE2eeSubmitEntryRequest,
     entry: DecodedEntry,
-    connection: Conn
+    connection: Conn,
+    batch: E2eeRecordBatch | null
   ): Promise<SequencedEntry> {
     const groupRow = await this.db.lockGroup(group, connection);
     if (!groupRow) throw e2eeErrors.notFound('Group');
@@ -685,6 +720,20 @@ export class E2eeGroupsService {
           connection
         )
       : [];
+    await recordE2ee(this.deps.records, batch, async (writers, records) => {
+      await writers.itemSequenced(records, connection, {
+        group,
+        seq,
+        changedDevices: [
+          ...delta.removeKeys,
+          ...delta.addDevices.map((device) => device.device_key)
+        ]
+      });
+      const welcomeId = welcomes[0]?.welcomeId;
+      if (welcomeId) {
+        await writers.welcomeStored(records, connection, welcomeId);
+      }
+    });
     const after = await this.db.getCurrentRoster(group, connection);
     return {
       item: toApiE2eeLogItem(
@@ -789,9 +838,18 @@ export class E2eeGroupsService {
     );
     let sequenced: SequencedEntry;
     try {
-      sequenced = await this.db.executeNativeQueriesInTransaction(
-        (connection) =>
-          this.applyEntry(callerProfileId, group, request, entry, connection)
+      sequenced = await runE2eeRecordTransaction(
+        this.deps.records,
+        this.db,
+        (connection, batch) =>
+          this.applyEntry(
+            callerProfileId,
+            group,
+            request,
+            entry,
+            connection,
+            batch
+          )
       );
     } catch (error) {
       if (!isDuplicateKeyError(error)) throw error;
@@ -844,8 +902,10 @@ export class E2eeGroupsService {
       data.length
     );
     const now = this.deps.now();
-    const { item, profiles } = await this.db.executeNativeQueriesInTransaction(
-      async (connection) => {
+    const { item, profiles } = await runE2eeRecordTransaction(
+      this.deps.records,
+      this.db,
+      async (connection, batch) => {
         const groupRow = await this.db.lockGroup(group, connection);
         if (!groupRow) throw e2eeErrors.notMember();
         const roster = await this.db.getCurrentRoster(group, connection);
@@ -886,6 +946,13 @@ export class E2eeGroupsService {
             updatedAt: now
           },
           connection
+        );
+        await recordE2ee(this.deps.records, batch, (writers, records) =>
+          writers.itemSequenced(records, connection, {
+            group,
+            seq,
+            changedDevices: []
+          })
         );
         return {
           item: toApiE2eeLogItem(meta, data.toString('base64')),
@@ -995,8 +1062,10 @@ export class E2eeGroupsService {
       group
     );
     const now = this.deps.now();
-    const result = await this.db.executeNativeQueriesInTransaction(
-      async (connection) => {
+    const result = await runE2eeRecordTransaction(
+      this.deps.records,
+      this.db,
+      async (connection, batch) => {
         const groupRow = await this.db.lockGroup(group, connection);
         if (!groupRow) throw e2eeErrors.notFound('Group');
         const epoch = Number(groupRow.epoch);
@@ -1036,6 +1105,15 @@ export class E2eeGroupsService {
             added_at: now
           })),
           connection
+        );
+        await recordE2ee(this.deps.records, batch, (writers, records) =>
+          writers.rosterChanged(records, connection, {
+            group,
+            devices: [
+              ...delta.removeKeys,
+              ...delta.addDevices.map((device) => device.device_key)
+            ]
+          })
         );
         const after = await this.db.getCurrentRoster(group, connection);
         return {
@@ -1094,8 +1172,23 @@ export class E2eeGroupsService {
     // orphan cleanup; the loser retries (the delete is idempotent).
     for (let attempt = 1; ; attempt++) {
       try {
-        await this.db.executeNativeQueriesInTransaction((connection) =>
-          this.db.deleteWelcomeDelivery(welcomeId, deviceKey, connection)
+        await runE2eeRecordTransaction(
+          this.deps.records,
+          this.db,
+          async (connection, batch) => {
+            const deleted = await this.db.deleteWelcomeDelivery(
+              welcomeId,
+              deviceKey,
+              connection
+            );
+            if (!deleted) return;
+            await recordE2ee(this.deps.records, batch, (writers, records) =>
+              writers.welcomeAcked(records, connection, {
+                welcomeId,
+                deviceKey
+              })
+            );
+          }
         );
         return {};
       } catch (error) {

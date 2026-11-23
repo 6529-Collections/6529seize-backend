@@ -12,6 +12,7 @@
 
 import { ApiE2eeDevice } from '../models/ApiE2eeDevice';
 import { ApiE2eeKeyPackageStatus } from '../models/ApiE2eeKeyPackageStatus';
+import { ApiE2eeRelaySettings } from '../models/ApiE2eeRelaySettings';
 import { HttpFile } from '../http/http';
 
 export class ApiE2eeMe {
@@ -26,6 +27,7 @@ export class ApiE2eeMe {
     * Whether this server accepts encrypted attachments (E2EE_ATTACHMENTS_ENABLED); clients hide attaching while false
     */
     'attachments_enabled': boolean;
+    'relay'?: ApiE2eeRelaySettings;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -60,6 +62,12 @@ export class ApiE2eeMe {
             "name": "attachments_enabled",
             "baseName": "attachments_enabled",
             "type": "boolean",
+            "format": ""
+        },
+        {
+            "name": "relay",
+            "baseName": "relay",
+            "type": "ApiE2eeRelaySettings",
             "format": ""
         }    ];
 

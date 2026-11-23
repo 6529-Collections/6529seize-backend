@@ -49,6 +49,14 @@ import {
   E2EE_BLOB_MIGRATION_SCOPE,
   runE2eeBlobMigrationScope
 } from './e2ee-blob-migration-scope';
+import {
+  E2EE_RELAY_BACKFILL_SCOPE,
+  E2EE_RELAY_PUBLISH_SCOPE,
+  E2EE_RELAY_REBUILD_SCOPE,
+  runE2eeRelayBackfillScope,
+  runE2eeRelayPublishScope,
+  runE2eeRelayRebuildScope
+} from './e2ee-relay-scopes';
 import { PinnedWaveEntity } from '@/entities/IPinnedWaveEntity';
 import {
   backfillPinnedWaveOrder,
@@ -124,6 +132,9 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
       scope !== 'nft-history-replay' &&
       scope !== 'wave-score-input-index' &&
       scope !== E2EE_BLOB_MIGRATION_SCOPE &&
+      scope !== E2EE_RELAY_BACKFILL_SCOPE &&
+      scope !== E2EE_RELAY_PUBLISH_SCOPE &&
+      scope !== E2EE_RELAY_REBUILD_SCOPE &&
       scope !== PINNED_WAVE_ORDER_SCHEMA_SCOPE &&
       scope !== PINNED_WAVE_ORDER_BACKFILL_SCOPE)
   ) {
@@ -256,6 +267,29 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
       }
     );
     logger.info(`[FINISHED E2EE BLOB MIGRATION] ${JSON.stringify(report)}`);
+    return { schema_scope: scope, ...report };
+  }
+  if (
+    scope === E2EE_RELAY_BACKFILL_SCOPE ||
+    scope === E2EE_RELAY_PUBLISH_SCOPE ||
+    scope === E2EE_RELAY_REBUILD_SCOPE
+  ) {
+    // Operator-only relay record jobs; never sent by deploys or schedules.
+    const run: (event: Record<string, unknown>) => Promise<object> = {
+      [E2EE_RELAY_BACKFILL_SCOPE]: runE2eeRelayBackfillScope,
+      [E2EE_RELAY_PUBLISH_SCOPE]: runE2eeRelayPublishScope,
+      [E2EE_RELAY_REBUILD_SCOPE]: runE2eeRelayRebuildScope
+    }[scope];
+    const report = await doInDbContext<object>(
+      () => run(event as Record<string, unknown>),
+      {
+        logger,
+        entities: Object.values(Entities),
+        syncEntities: false,
+        skipRedis: true
+      }
+    );
+    logger.info(`[FINISHED ${scope}] ${JSON.stringify(report)}`);
     return { schema_scope: scope, ...report };
   }
   if (scope === 'wave-score-input-index') {

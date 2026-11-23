@@ -34671,6 +34671,26 @@ components:
           description: >-
             A Welcome is queued for this device. Omitted by servers that only
             provide the combined has_pending_chats hint.
+        relay_head:
+          $ref: "#/components/schemas/ApiE2eeRelayStreamHead"
+    ApiE2eeRelayStreamHead:
+      type: object
+      description: >-
+        The head of this device's inbox stream on the relays (its newest
+        record), present only while records are on and the inbox has a
+        record. A client reading Welcomes from the relays checks that they
+        hold this record, and reads from 6529.io otherwise.
+      required:
+        - pos
+        - hash
+      properties:
+        pos:
+          type: integer
+          format: int64
+          description: The record's position in the stream
+        hash:
+          type: string
+          description: The SHA-256 of the record's content, 0x-hex
     ApiE2eeDeviceLookupRequest:
       type: object
       properties:
@@ -34966,6 +34986,43 @@ components:
           description: >-
             Whether this server accepts encrypted attachments
             (E2EE_ATTACHMENTS_ENABLED); clients hide attaching while false
+        relay:
+          $ref: "#/components/schemas/ApiE2eeRelaySettings"
+    ApiE2eeRelaySettings:
+      type: object
+      description: >-
+        Where clients read the delivery service's signed records
+        (E2EE_RELAY_MODE). Clients read from the relays only while mode is
+        primary, check every record against orderer_key, and fall back to the
+        REST routes on any relay failure. Absent while records are off.
+      required:
+        - mode
+        - urls
+        - net
+        - orderer_key
+        - grant_proofs
+      properties:
+        mode:
+          type: string
+          description: off, mirror or primary
+        urls:
+          type: array
+          items:
+            type: string
+        net:
+          type: string
+          description: The relays' CRP network tag
+        orderer_key:
+          type: string
+          nullable: true
+          description: The orderer's Ed25519 public key, 0x-hex
+        grant_proofs:
+          type: array
+          description: >-
+            The caller's device grants as proofs, for the relays' AUTH by
+            this browser's device key
+          items:
+            $ref: "#/components/schemas/ApiDeviceGrantProof"
     ApiE2eeNotifyHint:
       type: object
       required:
@@ -35316,6 +35373,16 @@ components:
           maxItems: 100
           items:
             $ref: "#/components/schemas/ApiE2eeKeyPackageUpload"
+        replace_one_time:
+          type: boolean
+          description: >-
+            When true, the device's own unclaimed one-time KeyPackages of the
+            uploaded KeyPackages' suites are deleted, in the same transaction,
+            before these are stored: a client that updated replaces the pool its
+            older version made. The replacement never touches claimed
+            KeyPackages, last-resort KeyPackages or other devices' KeyPackages;
+            as on every upload, expired KeyPackages are removed and an uploaded
+            last-resort KeyPackage replaces the current one.
     ApiE2eeWelcome:
       type: object
       required:

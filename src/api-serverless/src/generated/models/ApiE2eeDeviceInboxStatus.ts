@@ -10,6 +10,7 @@
  * Do not edit the class manually.
  */
 
+import { ApiE2eeRelayStreamHead } from '../models/ApiE2eeRelayStreamHead';
 import { HttpFile } from '../http/http';
 
 export class ApiE2eeDeviceInboxStatus {
@@ -21,6 +22,7 @@ export class ApiE2eeDeviceInboxStatus {
     * A Welcome is queued for this device. Omitted by servers that only provide the combined has_pending_chats hint.
     */
     'has_queued_welcomes'?: boolean;
+    'relay_head'?: ApiE2eeRelayStreamHead;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -37,6 +39,12 @@ export class ApiE2eeDeviceInboxStatus {
             "name": "has_queued_welcomes",
             "baseName": "has_queued_welcomes",
             "type": "boolean",
+            "format": ""
+        },
+        {
+            "name": "relay_head",
+            "baseName": "relay_head",
+            "type": "ApiE2eeRelayStreamHead",
             "format": ""
         }    ];
 
