@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import {
   checkFreezeSetting,
   checkReplicaLag,
+  REPLICA_LAG_CASES,
   checkSnapshotTime,
   checkWritesAfterFreeze,
   jobRecordFetcher,
@@ -247,20 +248,21 @@ function setup(
         snapshotAt: new Date(options.snapshotAt ?? T + 150_000).toISOString(),
         replicaLagMs:
           options.replicaLagMs === undefined ? 40 : options.replicaLagMs,
+        // A row dated ahead keeps its lag; only its age is unknown.
         replicaLagAgeMs:
-          options.replicaLagMs === null ? null : (options.replicaLagAgeMs ?? 0),
-        replicaLagError:
-          options.replicaLagMs !== null
+          options.replicaLagMs === null || options.lagRowAhead
             ? null
-            : options.lagRowAhead
-              ? "LAST_UPDATE_TIMESTAMP is 7200000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown"
-              : "ER_UNKNOWN_TABLE 1109: Unknown table 'REPLICA_HOST_STATUS' in information_schema",
-        replicaLagUnknown:
-          options.replicaLagMs !== null
-            ? null
-            : options.lagRowAhead
-              ? ('dated_ahead' as const)
-              : ('unreadable' as const)
+            : (options.replicaLagAgeMs ?? 0),
+        replicaLagError: options.lagRowAhead
+          ? "LAST_UPDATE_TIMESTAMP is 7200000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown"
+          : options.replicaLagMs === null
+            ? 'ER_UNKNOWN_TABLE 1109'
+            : null,
+        replicaLagUnknown: options.lagRowAhead
+          ? ('dated_ahead' as const)
+          : options.replicaLagMs === null
+            ? ('unreadable' as const)
+            : null
       },
       close
     })),
@@ -299,7 +301,7 @@ const event = {
   rehearsal: false,
   concurrency: 1,
   acceptWritesAfterFreeze: [],
-  acceptUnknownReplicaLag: false,
+  acceptUnknownReplicaLag: [],
   replacePointer: false
 } as const;
 const context = { invokedFunctionArn: ARN, awsRequestId: 'abcdef12-3456' };
@@ -335,7 +337,7 @@ describe('parseProfileSiteExportEvent', () => {
           'packages:pkg-1@2026-11-24T00:00:00.005Z',
           'legacy_packages:sha256:abc@2026-11-24T00:00:01.000Z'
         ],
-        acceptUnknownReplicaLag: true
+        acceptUnknownReplicaLag: 'older_than_gap'
       })
     ).toEqual({
       ...event,
@@ -347,8 +349,32 @@ describe('parseProfileSiteExportEvent', () => {
         'packages:pkg-1@2026-11-24T00:00:00.005Z',
         'legacy_packages:sha256:abc@2026-11-24T00:00:01.000Z'
       ],
-      acceptUnknownReplicaLag: true
+      acceptUnknownReplicaLag: ['older_than_gap']
     });
+    expect(
+      parseProfileSiteExportEvent({
+        job: 'profileSiteExport',
+        frozenAt: T,
+        acceptUnknownReplicaLag: ['unreadable', 'dated_ahead']
+      })
+    ).toMatchObject({ acceptUnknownReplicaLag: ['unreadable', 'dated_ahead'] });
+  });
+
+  it.each([
+    [true],
+    ['yes'],
+    [['unreadable', 'unreadable']],
+    [['older_than_gap', 'stale']]
+  ])('refuses acceptUnknownReplicaLag %j, naming the cases', (value) => {
+    expect(() =>
+      parseProfileSiteExportEvent({
+        job: 'profileSiteExport',
+        frozenAt: T,
+        acceptUnknownReplicaLag: value
+      })
+    ).toThrow(
+      /acceptUnknownReplicaLag must name the case to accept, as the refusal does: "unreadable", "dated_ahead", "older_than_gap", or a list of them\. true is not accepted/
+    );
   });
 
   it('reads replacePointer for a real run of every profile only', () => {
@@ -520,9 +546,16 @@ describe('the freeze checks', () => {
       ? 'unreadable'
       : null
   ) => ({ replicaLagMs, replicaLagAgeMs, replicaLagError, replicaLagUnknown });
+  const ahead = (replicaLagMs: number) =>
+    lag(
+      replicaLagMs,
+      null,
+      "LAST_UPDATE_TIMESTAMP is 7200000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown",
+      'dated_ahead'
+    );
 
   it('refuses a replica as far behind its writer as the gap, less 1.5 s, or further', () => {
-    expect(() => checkReplicaLag(150_000, lag(148_499))).not.toThrow();
+    expect(checkReplicaLag(150_000, lag(148_499))).toBeNull();
     expect(() => checkReplicaLag(150_000, lag(148_500))).toThrow(
       /148500 ms behind its writer \(a 148500 ms lag in a row 0 ms old\), which with 1500 ms for the row's timestamp is not less than the 150000 ms since the freeze.*Wait a few minutes and run again\./
     );
@@ -541,52 +574,95 @@ describe('the freeze checks', () => {
     );
   });
 
-  it('refuses a row older than the whole gap, with the steps, unless accepted', () => {
+  it('refuses a row older than the whole gap, with the steps, unless that case is accepted', () => {
     // At 00:05 the reader is 6 minutes behind, but its row, last written
     // at 23:59, still says 20 ms: the age alone passes the gap.
     expect(() => checkReplicaLag(300_000, lag(20, 360_000))).toThrow(
-      /lag row is 360000 ms old \(a 20 ms lag\), older than the 300000 ms since the freeze: LAST_UPDATE_TIMESTAMP may not be in UTC, or the reader stopped updating its row\. If the same refusal returns with the row's age grown by the time you waited, the reader stopped updating: report it\. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader\. Accept it \(acceptUnknownReplicaLag: true\) only for a reading Monday's rehearsal also showed, and only with the switch owner's agreement: the run then relies on the 2-minute minimum gap alone\. Otherwise report it\./
+      /lag row is 360000 ms old \(a 20 ms lag\), older than the 300000 ms since the freeze: LAST_UPDATE_TIMESTAMP may not be in UTC, or the reader stopped updating its row\. If the same refusal returns with the row's age grown by the time you waited, the reader stopped updating: report it\. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader\. Accept it \(acceptUnknownReplicaLag: "older_than_gap"\) only for a reading Monday's rehearsal also showed, and only with the switch owner's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one\. Otherwise report it\./
     );
     expect(() => checkReplicaLag(150_000, lag(20, 150_000))).toThrow(
       /older than the 150000 ms since the freeze/
     );
-    // Accepted, it relies on the minimum gap, and says which case it was.
-    expect(checkReplicaLag(300_000, lag(20, 360_000), true)).toBe(
+    expect(checkReplicaLag(300_000, lag(20, 360_000), ['older_than_gap'])).toBe(
       'older_than_gap'
     );
-    // Younger than the gap, the lag passing it: a real lag, never accepted.
-    expect(() => checkReplicaLag(150_000, lag(149_000, 10))).toThrow(
-      /Wait a few minutes and run again/
-    );
-    expect(() => checkReplicaLag(150_000, lag(149_000, 10), true)).toThrow(
-      /Wait a few minutes and run again/
-    );
-    expect(checkReplicaLag(150_000, lag(40), true)).toBeNull();
-    expect(checkReplicaLag(150_000, lag(40))).toBeNull();
+    // Only the case named is accepted.
+    expect(() =>
+      checkReplicaLag(300_000, lag(20, 360_000), ['dated_ahead', 'unreadable'])
+    ).toThrow(/older than the 300000 ms/);
+    // A real lag, its row younger than the gap, is never accepted.
+    expect(() =>
+      checkReplicaLag(150_000, lag(149_000, 10), [...REPLICA_LAG_CASES])
+    ).toThrow(/Wait a few minutes and run again/);
+    expect(
+      checkReplicaLag(150_000, lag(40), [...REPLICA_LAG_CASES])
+    ).toBeNull();
   });
 
-  it('refuses a row dated ahead of UTC, with the steps, unless accepted', () => {
-    const ahead = lag(
-      null,
-      null,
-      "LAST_UPDATE_TIMESTAMP is 7200000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown",
-      'dated_ahead'
-    );
-    expect(() => checkReplicaLag(150_000, ahead)).toThrow(
-      /lag row is dated ahead of UTC \(LAST_UPDATE_TIMESTAMP is 7200000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown\): LAST_UPDATE_TIMESTAMP may not be in UTC, so how far the reader is behind is unknown\. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader\. Accept it \(acceptUnknownReplicaLag: true\) only for a reading Monday's rehearsal also showed, and only with the switch owner's agreement: the run then relies on the 2-minute minimum gap alone\. Otherwise report it\./
-    );
-    expect(checkReplicaLag(150_000, ahead, true)).toBe('dated_ahead');
-  });
-
-  it('refuses an unreadable lag, with the steps and the only errors to accept, unless accepted', () => {
-    expect(() => checkReplicaLag(150_000, lag(null))).toThrow(
-      /lag can't be read from information_schema.replica_host_status \(no reason given\)\. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader\. Accept it \(acceptUnknownReplicaLag: true\) only for a reading Monday's rehearsal also showed: for an error, only ER_UNKNOWN_TABLE 1109 or ER_UNKNOWN_SYSTEM_VARIABLE 1193 \(the reader isn't Aurora\), and only with the switch owner's agreement: the run then relies on the 2-minute minimum gap alone\. Otherwise report it\./
+  it('still holds the lag a row reports to the gap when its age is accepted as untrusted', () => {
+    // time_zone behind UTC: every row reads hours old, and this fresh one
+    // says the reader is 400 s behind. Accepting the age passes nothing.
+    expect(() =>
+      checkReplicaLag(300_000, lag(400_000, 7_200_000), ['older_than_gap'])
+    ).toThrow(
+      /The replica reports a 400000 ms lag \(its row's age not counted: older_than_gap\), which with 1500 ms for the row's timestamp is not less than the 300000 ms since the freeze.*Wait a few minutes and run again\./
     );
     expect(() =>
-      checkReplicaLag(150_000, lag(null, null, 'ER_PARSE_ERROR 1064: syntax'))
-    ).toThrow(/\(ER_PARSE_ERROR 1064: syntax\)/);
-    expect(checkReplicaLag(150_000, lag(null), true)).toBe('unreadable');
-    // A lag without its row's age is an unknown lag too.
+      checkReplicaLag(300_000, lag(298_500, 7_200_000), ['older_than_gap'])
+    ).toThrow(/reports a 298500 ms lag/);
+    expect(
+      checkReplicaLag(300_000, lag(298_499, 7_200_000), ['older_than_gap'])
+    ).toBe('older_than_gap');
+    // Dated ahead: the lag is kept and held to the gap the same way.
+    expect(() =>
+      checkReplicaLag(300_000, ahead(400_000), ['dated_ahead'])
+    ).toThrow(
+      /reports a 400000 ms lag \(its row's age not counted: dated_ahead\)/
+    );
+    expect(checkReplicaLag(300_000, ahead(20), ['dated_ahead'])).toBe(
+      'dated_ahead'
+    );
+    // No timestamp: the lag is kept too.
+    expect(() =>
+      checkReplicaLag(
+        300_000,
+        lag(
+          400_000,
+          null,
+          "LAST_UPDATE_TIMESTAMP is null: the row's age is unknown",
+          'unreadable'
+        ),
+        ['unreadable']
+      )
+    ).toThrow(
+      /reports a 400000 ms lag \(its row's age not counted: unreadable\)/
+    );
+  });
+
+  it('refuses a row dated ahead of UTC, with the steps, unless that case is accepted', () => {
+    expect(() => checkReplicaLag(150_000, ahead(20))).toThrow(
+      /lag row is dated ahead of UTC \(LAST_UPDATE_TIMESTAMP is 7200000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown\): LAST_UPDATE_TIMESTAMP may not be in UTC, so the row's age is unknown\. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader\. Accept it \(acceptUnknownReplicaLag: "dated_ahead"\) only for a reading Monday's rehearsal also showed, and only with the switch owner's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one\. Otherwise report it\./
+    );
+    expect(() =>
+      checkReplicaLag(150_000, ahead(20), ['older_than_gap'])
+    ).toThrow(/dated ahead of UTC/);
+  });
+
+  it('refuses an unreadable lag, with the steps and the only errors to accept, unless that case is accepted', () => {
+    expect(() => checkReplicaLag(150_000, lag(null))).toThrow(
+      /lag can't be read from information_schema.replica_host_status \(no reason given\)\. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader\. Accept it \(acceptUnknownReplicaLag: "unreadable"\) only for a reading Monday's rehearsal also showed: for an error, only ER_UNKNOWN_TABLE 1109 or ER_UNKNOWN_SYSTEM_VARIABLE 1193 \(the reader isn't Aurora\), and only with the switch owner's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one\. Otherwise report it\./
+    );
+    expect(() =>
+      checkReplicaLag(150_000, lag(null, null, 'ER_PARSE_ERROR 1064'))
+    ).toThrow(/\(ER_PARSE_ERROR 1064\)/);
+    // With no lag at all, the minimum gap alone decides.
+    expect(checkReplicaLag(150_000, lag(null), ['unreadable'])).toBe(
+      'unreadable'
+    );
+    expect(() => checkReplicaLag(150_000, lag(null), ['dated_ahead'])).toThrow(
+      /can't be read/
+    );
+    // A lag without its row's age is an unreadable lag too.
     expect(() => checkReplicaLag(150_000, lag(20, null, null, null))).toThrow(
       /can't be read/
     );
@@ -1112,27 +1188,26 @@ describe('runProfileSiteExportJob', () => {
     const { deps, bodies, order } = setup({ replicaLagMs: null });
     // The refusal carries the server's own reason.
     await expect(runProfileSiteExportJob(event, context, deps)).rejects.toThrow(
-      /lag can't be read from information_schema.replica_host_status \(ER_UNKNOWN_TABLE 1109: Unknown table 'REPLICA_HOST_STATUS' in information_schema\).*acceptUnknownReplicaLag: true/
+      /lag can't be read from information_schema.replica_host_status \(ER_UNKNOWN_TABLE 1109\)\..*acceptUnknownReplicaLag: "unreadable"/
     );
     expect(order).toEqual([]);
     const result = (await runProfileSiteExportJob(
-      { ...event, acceptUnknownReplicaLag: true },
+      { ...event, acceptUnknownReplicaLag: ['unreadable'] },
       context,
       deps
     )) as ProfileSiteExportResult;
     expect(result.evidence.replicaLagMs).toBeNull();
-    expect(result.acceptUnknownReplicaLag).toBe(true);
+    expect(result.acceptUnknownReplicaLag).toEqual(['unreadable']);
     expect(result.replicaLagAccepted).toBe('unreadable');
     expect(JSON.parse(bodies.get(result.manifestKey)!)).toMatchObject({
       read: {
         endpoint: 'reader',
         replicaLagMs: null,
         replicaLagAgeMs: null,
-        replicaLagError:
-          "ER_UNKNOWN_TABLE 1109: Unknown table 'REPLICA_HOST_STATUS' in information_schema",
+        replicaLagError: 'ER_UNKNOWN_TABLE 1109',
         replicaLagUnknown: 'unreadable'
       },
-      accept_unknown_replica_lag: true,
+      accept_unknown_replica_lag: ['unreadable'],
       replica_lag_accepted: 'unreadable'
     });
   });
@@ -1141,12 +1216,12 @@ describe('runProfileSiteExportJob', () => {
     [
       'a row older than the gap',
       { replicaLagMs: 20, replicaLagAgeMs: 360_000 },
-      'older_than_gap'
+      'older_than_gap' as const
     ],
     [
       'a row dated ahead of UTC',
-      { replicaLagMs: null, lagRowAhead: true },
-      'dated_ahead'
+      { replicaLagMs: 20, lagRowAhead: true },
+      'dated_ahead' as const
     ]
   ])(
     'refuses %s, and records it when accepted',
@@ -1159,8 +1234,18 @@ describe('runProfileSiteExportJob', () => {
         runProfileSiteExportJob(event, context, deps)
       ).rejects.toThrow(/Run once more first/);
       expect(order).toEqual([]);
+      // Another case named is no acceptance of this one.
+      const other = REPLICA_LAG_CASES.filter((it) => it !== accepted);
+      await expect(
+        runProfileSiteExportJob(
+          { ...event, acceptUnknownReplicaLag: other },
+          context,
+          deps
+        )
+      ).rejects.toThrow(`acceptUnknownReplicaLag: "${accepted}"`);
+      expect(order).toEqual([]);
       const result = (await runProfileSiteExportJob(
-        { ...event, acceptUnknownReplicaLag: true },
+        { ...event, acceptUnknownReplicaLag: [accepted] },
         context,
         deps
       )) as ProfileSiteExportResult;
@@ -1190,7 +1275,7 @@ describe('runProfileSiteExportJob', () => {
     )) as ProfileSiteExportResult;
     expect(result.snapshotGapSeconds).toBe(150);
     expect(result.snapshotGapMs).toBe(150_400);
-    expect(result.acceptUnknownReplicaLag).toBe(false);
+    expect(result.acceptUnknownReplicaLag).toEqual([]);
     expect(result.replacePointer).toBe(false);
     const behind = setup({ snapshotAt: T + 150_400, replicaLagMs: 148_900 });
     await expect(

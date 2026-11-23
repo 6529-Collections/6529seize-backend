@@ -2,6 +2,7 @@ import * as mysql from 'mysql';
 import { mysqlSslConnectionOptions } from '@/db-ssl';
 import { DbQueryOptions } from '@/db-query.options';
 import { CustomTypeCaster, execSQLWithConnection } from '@/db/my-sql.helpers';
+import { Logger } from '@/logging';
 import { ConnectionWrapper, SqlExecutor } from '@/sql-executor';
 import { Time } from '@/time';
 
@@ -86,21 +87,26 @@ export interface ReadOnlyEvidence {
   /**
    * How far this Aurora reader was behind the writer, in milliseconds, as
    * its newest row in information_schema.replica_host_status says; null
-   * when that can't be read (not Aurora, no row, no timestamp).
+   * when the row has no lag (not Aurora, no row, no lag).
    */
   readonly replicaLagMs: number | null;
   /**
    * How old that row was at the snapshot, in milliseconds: a lagging
    * reader's row can be stale, so the lag held to the gap is
-   * replicaLagMs + replicaLagAgeMs. Null exactly when replicaLagMs is.
+   * replicaLagMs + replicaLagAgeMs. Null when the age can't be known: no
+   * lag, no timestamp, or a timestamp ahead of UTC.
    */
   readonly replicaLagAgeMs: number | null;
-  /** Why replicaLagMs is null: the server's error code and message. */
+  /**
+   * Why the lag or its age is unknown: the server's error code and number
+   * (never its message, which can name the user and host; that goes to the
+   * log only), or the export's own reason.
+   */
   readonly replicaLagError: string | null;
   /**
-   * Why the lag is unknown: `unreadable` (an error, no row, no lag, no
-   * timestamp) or `dated_ahead` (the row is dated ahead of UTC: its time
-   * zone may not be UTC). Null when the lag was read.
+   * Why the lag can't be trusted: `unreadable` (an error, no row, no lag,
+   * no timestamp) or `dated_ahead` (the row is dated ahead of UTC: its time
+   * zone may not be UTC). Null when lag and age were both read.
    */
   readonly replicaLagUnknown: ReplicaLagUnknown | null;
 }
@@ -173,40 +179,43 @@ const FUTURE_ROW_TOLERANCE_MS = 1_000;
 export const REPLICA_LAG_AGE_MARGIN_MS = FUTURE_ROW_TOLERANCE_MS + 500;
 
 /**
- * The lag and its row's age in milliseconds, or both null with the reason
- * they couldn't be read.
+ * The lag the row reports and its age in milliseconds. When either is
+ * unknown, `unknown` says why and `error` gives the reason; the lag is
+ * kept whenever the row has one, so a check can still hold it to the gap.
  */
-export type ReplicaLagReading =
-  | {
-      readonly lagMs: number;
-      readonly ageMs: number;
-      readonly error: null;
-    }
-  | {
-      readonly lagMs: null;
-      readonly ageMs: null;
-      readonly error: string;
-      readonly unknown: ReplicaLagUnknown;
-    };
+export interface ReplicaLagReading {
+  readonly lagMs: number | null;
+  readonly ageMs: number | null;
+  readonly error: string | null;
+  readonly unknown: ReplicaLagUnknown | null;
+}
+
+const logger = Logger.get('REPLICA_SNAPSHOT');
 
 function unknownLag(
   error: string,
-  unknown: ReplicaLagUnknown = 'unreadable'
+  unknown: ReplicaLagUnknown = 'unreadable',
+  lagMs: number | null = null
 ): ReplicaLagReading {
-  return { lagMs: null, ageMs: null, error, unknown };
+  return { lagMs, ageMs: null, error, unknown };
 }
 
-/** A server error as `CODE errno: message`. */
-function sqlErrorText(error: unknown): string {
-  const { code, errno, sqlMessage, message } = (error ?? {}) as {
+/**
+ * An error as its code and number only, e.g. `ER_UNKNOWN_TABLE 1109`. The
+ * message stays out: a server's can name the user and host
+ * ('user'@'host'), a connection error's the hostname (ENOTFOUND <host>).
+ */
+export function errorCode(error: unknown): string {
+  const { code, errno, name } = (error ?? {}) as {
     code?: unknown;
     errno?: unknown;
-    sqlMessage?: unknown;
-    message?: unknown;
+    name?: unknown;
   };
-  const id = [code, errno].filter((it) => it !== undefined).join(' ');
-  const text = String(sqlMessage ?? message ?? error);
-  return id ? `${id}: ${text}` : text;
+  const id = code ?? name;
+  const parts = [id, errno === id ? undefined : errno].filter(
+    (it) => it !== undefined && it !== null && it !== ''
+  );
+  return parts.length ? parts.map(String).join(' ') : 'unknown error';
 }
 
 /**
@@ -223,7 +232,12 @@ export async function readReplicaLag(
   try {
     [row] = await query(connection, sql);
   } catch (error) {
-    return unknownLag(sqlErrorText(error));
+    const code = errorCode(error);
+    // The full message, which can name the host, goes to the log only.
+    logger.warn(
+      `[REPLICA LAG NOT READ] [${code}] ${String((error as Error)?.message ?? error)}`
+    );
+    return unknownLag(code);
   }
   if (row === undefined) {
     return unknownLag(
@@ -237,16 +251,24 @@ export async function readReplicaLag(
   const age = numberOrNull(row.age_ms);
   if (age === null) {
     return unknownLag(
-      "LAST_UPDATE_TIMESTAMP is null: the row's age is unknown"
+      "LAST_UPDATE_TIMESTAMP is null: the row's age is unknown",
+      'unreadable',
+      lag
     );
   }
   if (age < -FUTURE_ROW_TOLERANCE_MS) {
     return unknownLag(
       `LAST_UPDATE_TIMESTAMP is ${-age} ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown`,
-      'dated_ahead'
+      'dated_ahead',
+      lag
     );
   }
-  return { lagMs: lag, ageMs: Math.max(0, age), error: null };
+  return {
+    lagMs: lag,
+    ageMs: Math.max(0, age),
+    error: null,
+    unknown: null
+  };
 }
 
 function numberOrNull(value: unknown): number | null {
@@ -371,7 +393,7 @@ export async function openReadOnlySnapshot(
       replicaLagMs: lag.lagMs,
       replicaLagAgeMs: lag.ageMs,
       replicaLagError: lag.error,
-      replicaLagUnknown: lag.lagMs === null ? lag.unknown : null
+      replicaLagUnknown: lag.unknown
     };
     return {
       executor: new ReadOnlySnapshotExecutor(connection),

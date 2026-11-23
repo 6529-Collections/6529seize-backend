@@ -1,4 +1,5 @@
 import {
+  errorCode,
   openReadOnlySnapshot,
   ReadOnlySnapshotExecutor,
   readReplicaLag,
@@ -121,25 +122,32 @@ describe('openReadOnlySnapshot', () => {
       [{ lag_ms: -1, age_ms: 10 }],
       'REPLICA_LAG_IN_MILLISECONDS is -1'
     ],
+    // The lag is kept when the row has one: only its age is unknown.
     [
       'a row without a timestamp',
       [{ lag_ms: 20, age_ms: null }],
-      "LAST_UPDATE_TIMESTAMP is null: the row's age is unknown"
+      "LAST_UPDATE_TIMESTAMP is null: the row's age is unknown",
+      'unreadable',
+      20
     ],
     [
       'a row dated in the future',
       [{ lag_ms: 20, age_ms: '-5000.0000' }],
       "LAST_UPDATE_TIMESTAMP is 5000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown",
-      'dated_ahead'
+      'dated_ahead',
+      20
     ],
-    [
-      'a table it cannot read',
-      'error',
-      "ER_UNKNOWN_TABLE 1109: Unknown table 'REPLICA_HOST_STATUS' in information_schema"
-    ]
+    // The server's code and number only: its message can name user and host.
+    ['a table it cannot read', 'error', 'ER_UNKNOWN_TABLE 1109']
   ])(
     'records the lag as unknown with %s, and why',
-    async (_name, answer, why, unknown = 'unreadable') => {
+    async (
+      _name,
+      answer,
+      why,
+      unknown = 'unreadable',
+      lagMs: number | null = null
+    ) => {
       const { pool, connection } = fakePool({
         transaction_read_only: [{ tro: 1, ro: 1 }],
         innodb_read_only: [{ iro: 0 }],
@@ -162,13 +170,71 @@ describe('openReadOnlySnapshot', () => {
         );
       }
       const snapshot = await openReadOnlySnapshot(target, () => pool);
-      expect(snapshot.evidence.replicaLagMs).toBeNull();
+      expect(snapshot.evidence.replicaLagMs).toBe(lagMs);
       expect(snapshot.evidence.replicaLagAgeMs).toBeNull();
       expect(snapshot.evidence.replicaLagError).toBe(why);
       expect(snapshot.evidence.replicaLagUnknown).toBe(unknown);
       expect(snapshot.evidence.snapshotAt).toBe('2026-11-24T00:00:05.000Z');
     }
   );
+
+  it.each([
+    [
+      'a server refusal naming user and host',
+      Object.assign(
+        new Error(
+          "ER_ACCESS_DENIED_ERROR: Access denied for user 'reader'@'10.0.0.5'"
+        ),
+        {
+          code: 'ER_ACCESS_DENIED_ERROR',
+          errno: 1045,
+          sqlMessage: "Access denied for user 'reader'@'10.0.0.5'"
+        }
+      ),
+      'ER_ACCESS_DENIED_ERROR 1045'
+    ],
+    [
+      'a lookup naming the host',
+      Object.assign(
+        new Error('getaddrinfo ENOTFOUND reader.example.internal'),
+        {
+          code: 'ENOTFOUND',
+          errno: -3008,
+          hostname: 'reader.example.internal'
+        }
+      ),
+      'ENOTFOUND -3008'
+    ],
+    [
+      'a code repeated as errno',
+      Object.assign(new Error('connect ECONNREFUSED 10.0.0.5:3306'), {
+        code: 'ECONNREFUSED',
+        errno: 'ECONNREFUSED'
+      }),
+      'ECONNREFUSED'
+    ],
+    ['an error with no code', new Error('reader.example.internal'), 'Error'],
+    [
+      'a bare string naming the host',
+      'lost reader.example.internal',
+      'unknown error'
+    ]
+  ])('keeps only the code and number of %s', async (_name, error, code) => {
+    expect(errorCode(error)).toBe(code);
+    const connection = {
+      query: jest.fn((_sql: string, callback: any) => callback(error, null))
+    };
+    const reading = await readReplicaLag(connection as never);
+    expect(reading).toEqual({
+      lagMs: null,
+      ageMs: null,
+      error: code,
+      unknown: 'unreadable'
+    });
+    expect(JSON.stringify(reading)).not.toMatch(
+      /reader\.example|10\.0\.0\.5|'reader'/
+    );
+  });
 
   it.each([
     ['an old row', { lag_ms: 20, age_ms: '360000.0000' }, 20, 360_000],
@@ -183,7 +249,8 @@ describe('openReadOnlySnapshot', () => {
       await expect(readReplicaLag(connection as never)).resolves.toEqual({
         lagMs,
         ageMs,
-        error: null
+        error: null,
+        unknown: null
       });
     }
   );

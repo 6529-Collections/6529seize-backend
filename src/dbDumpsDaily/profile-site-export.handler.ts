@@ -48,7 +48,6 @@ import {
   ReadOnlyEvidence,
   ReadOnlySnapshot,
   REPLICA_LAG_AGE_MARGIN_MS,
-  ReplicaLagUnknown,
   ReplicaTarget,
   replicaTarget
 } from './chain-exports/replica-snapshot';
@@ -122,11 +121,11 @@ export type ProfileSiteExportEvent =
        */
       readonly acceptWritesAfterFreeze: readonly string[];
       /**
-       * Runs although the replica's lag can't be trusted (unreadable, its
-       * row dated ahead of UTC, or its row older than the gap), relying on
-       * the minimum gap after the freeze alone.
+       * The untrusted lags the run may go through, by the case names the
+       * refusals use (unreadable, dated_ahead, older_than_gap), relying on
+       * the minimum gap after the freeze and on any lag the row reports.
        */
-      readonly acceptUnknownReplicaLag: boolean;
+      readonly acceptUnknownReplicaLag: readonly ReplicaLagAccepted[];
       /**
        * Replaces the by-freeze pointer if an earlier run wrote one; without
        * it the pointer is written only where none is.
@@ -334,12 +333,7 @@ export function parseProfileSiteExportEvent(
       `acceptWritesAfterFreeze must list at most ${MAX_WRITES_AFTER_FREEZE} writes, each source:id@time exactly as the refusal lists it`
     );
   }
-  const acceptUnknownLag = record.acceptUnknownReplicaLag ?? false;
-  if (typeof acceptUnknownLag !== 'boolean') {
-    throw new ProfileSiteExportEventError(
-      'acceptUnknownReplicaLag must be true or false'
-    );
-  }
+  const acceptUnknownLag = acceptedLagCasesOf(record.acceptUnknownReplicaLag);
   const replacePointer = record.replacePointer ?? false;
   if (typeof replacePointer !== 'boolean') {
     throw new ProfileSiteExportEventError(
@@ -401,20 +395,29 @@ export function checkSnapshotTime(
   return { gapMs, gapSeconds: Math.round(gapMs / 1000) };
 }
 
-/** Which unreadable or stale lag a run accepted, on the minimum gap alone. */
-export type ReplicaLagAccepted = ReplicaLagUnknown | 'older_than_gap';
+/** The lags a run can accept by name: each refusal names its own. */
+export const REPLICA_LAG_CASES = [
+  'unreadable',
+  'dated_ahead',
+  'older_than_gap'
+] as const;
+
+/** Which untrusted lag a run accepted. */
+export type ReplicaLagAccepted = (typeof REPLICA_LAG_CASES)[number];
 
 /** What to do when the lag can't be trusted: the same in every refusal. */
-function unknownLagSteps(only: string): string {
-  return `Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: true) only for a reading Monday's rehearsal also showed${only}, and only with the switch owner's agreement: the run then relies on the 2-minute minimum gap alone. Otherwise report it.`;
+function unknownLagSteps(lagCase: ReplicaLagAccepted, only: string): string {
+  return `Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: "${lagCase}") only for a reading Monday's rehearsal also showed${only}, and only with the switch owner's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it.`;
 }
 
 /**
  * Refuses a replica further behind its writer than the snapshot is after
  * the freeze: it might not yet hold writes made before the freeze. A lag
  * that can't be read, a row dated ahead of UTC, and a row older than the
- * whole gap are refused unless the invoker accepts relying on the minimum
- * gap alone; the case accepted is returned, to be recorded.
+ * whole gap are refused unless the invoker accepts that case by name; the
+ * case accepted is returned, to be recorded. The lag a row reports is held
+ * to the gap in every case: only when there is none does the minimum gap
+ * alone decide.
  */
 export function checkReplicaLag(
   gapMs: number,
@@ -422,37 +425,65 @@ export function checkReplicaLag(
     ReadOnlyEvidence,
     'replicaLagMs' | 'replicaLagAgeMs' | 'replicaLagError' | 'replicaLagUnknown'
   >,
-  acceptUnknown = false
+  accepted: readonly ReplicaLagAccepted[] = []
 ): ReplicaLagAccepted | null {
-  if (lag.replicaLagMs === null || lag.replicaLagAgeMs === null) {
-    const unknown = lag.replicaLagUnknown ?? 'unreadable';
-    if (acceptUnknown) return unknown;
-    if (unknown === 'dated_ahead') {
+  const lagCase: ReplicaLagAccepted | null =
+    lag.replicaLagUnknown !== null ||
+    lag.replicaLagMs === null ||
+    lag.replicaLagAgeMs === null
+      ? (lag.replicaLagUnknown ?? 'unreadable')
+      : lag.replicaLagAgeMs >= gapMs
+        ? 'older_than_gap'
+        : null;
+  // The lag the row reports counts whenever there is one; its age only
+  // when the row's timestamp can be trusted.
+  if (lag.replicaLagMs !== null) {
+    const ageMs = lagCase === null ? (lag.replicaLagAgeMs ?? 0) : 0;
+    const behindMs = lag.replicaLagMs + ageMs;
+    if (behindMs + REPLICA_LAG_AGE_MARGIN_MS >= gapMs) {
+      const what =
+        lagCase === null
+          ? `may be ${behindMs} ms behind its writer (a ${lag.replicaLagMs} ms lag in a row ${ageMs} ms old)`
+          : `reports a ${lag.replicaLagMs} ms lag (its row's age not counted: ${lagCase})`;
       throw new ProfileSiteExportSnapshotError(
-        `The replica's lag row is dated ahead of UTC (${lag.replicaLagError ?? 'no reason given'}): LAST_UPDATE_TIMESTAMP may not be in UTC, so how far the reader is behind is unknown. ${unknownLagSteps('')}`
+        `The replica ${what}, which with ${REPLICA_LAG_AGE_MARGIN_MS} ms for the row's timestamp is not less than the ${gapMs} ms since the freeze: it may not hold every write made before the freeze. Wait a few minutes and run again.`
       );
     }
+  }
+  if (lagCase === null) return null;
+  if (accepted.includes(lagCase)) return lagCase;
+  const reason = lag.replicaLagError ?? 'no reason given';
+  if (lagCase === 'dated_ahead') {
     throw new ProfileSiteExportSnapshotError(
-      `The replica's lag can't be read from information_schema.replica_host_status (${lag.replicaLagError ?? 'no reason given'}). ${unknownLagSteps(": for an error, only ER_UNKNOWN_TABLE 1109 or ER_UNKNOWN_SYSTEM_VARIABLE 1193 (the reader isn't Aurora)")}`
+      `The replica's lag row is dated ahead of UTC (${reason}): LAST_UPDATE_TIMESTAMP may not be in UTC, so the row's age is unknown. ${unknownLagSteps(lagCase, '')}`
     );
   }
-  // A row older than the whole gap: its time zone may not be UTC, or the
-  // reader stopped updating it. Waiting alone won't make it younger.
-  if (lag.replicaLagAgeMs >= gapMs) {
-    if (acceptUnknown) return 'older_than_gap';
+  if (lagCase === 'older_than_gap') {
     throw new ProfileSiteExportSnapshotError(
-      `The replica's lag row is ${lag.replicaLagAgeMs} ms old (a ${lag.replicaLagMs} ms lag), older than the ${gapMs} ms since the freeze: LAST_UPDATE_TIMESTAMP may not be in UTC, or the reader stopped updating its row. If the same refusal returns with the row's age grown by the time you waited, the reader stopped updating: report it. ${unknownLagSteps('')}`
+      `The replica's lag row is ${lag.replicaLagAgeMs} ms old (a ${lag.replicaLagMs} ms lag), older than the ${gapMs} ms since the freeze: LAST_UPDATE_TIMESTAMP may not be in UTC, or the reader stopped updating its row. If the same refusal returns with the row's age grown by the time you waited, the reader stopped updating: report it. ${unknownLagSteps(lagCase, '')}`
     );
   }
-  // The reader's row can be stale: its lag counts from when it was
-  // written, and its age can read up to REPLICA_LAG_AGE_MARGIN_MS low.
-  const behindMs = lag.replicaLagMs + lag.replicaLagAgeMs;
-  if (behindMs + REPLICA_LAG_AGE_MARGIN_MS >= gapMs) {
-    throw new ProfileSiteExportSnapshotError(
-      `The replica may be ${behindMs} ms behind its writer (a ${lag.replicaLagMs} ms lag in a row ${lag.replicaLagAgeMs} ms old), which with ${REPLICA_LAG_AGE_MARGIN_MS} ms for the row's timestamp is not less than the ${gapMs} ms since the freeze: it may not hold every write made before the freeze. Wait a few minutes and run again.`
+  throw new ProfileSiteExportSnapshotError(
+    `The replica's lag can't be read from information_schema.replica_host_status (${reason}). ${unknownLagSteps(lagCase, ": for an error, only ER_UNKNOWN_TABLE 1109 or ER_UNKNOWN_SYSTEM_VARIABLE 1193 (the reader isn't Aurora)")}`
+  );
+}
+
+/** acceptUnknownReplicaLag as given: a case name or a list of them. */
+function acceptedLagCasesOf(value: unknown): ReplicaLagAccepted[] {
+  if (value === undefined || value === false) return [];
+  const list = typeof value === 'string' ? [value] : value;
+  if (
+    !Array.isArray(list) ||
+    list.some(
+      (it) => !(REPLICA_LAG_CASES as readonly unknown[]).includes(it)
+    ) ||
+    new Set(list).size !== list.length
+  ) {
+    throw new ProfileSiteExportEventError(
+      `acceptUnknownReplicaLag must name the case to accept, as the refusal does: ${REPLICA_LAG_CASES.map((it) => `"${it}"`).join(', ')}, or a list of them. true is not accepted: a rerun that lands on another reader showing another case must be refused.`
     );
   }
-  return null;
+  return list as ReplicaLagAccepted[];
 }
 
 /** IDENTITY_FREEZE_AT as the profile site itself reads it. */
@@ -677,8 +708,8 @@ export interface ProfileSiteExportResult {
   /** Site writes after the freeze, and the package ids accepted for them. */
   readonly writesAfterFreeze: readonly WriteAfterFreeze[];
   readonly acceptedWritesAfterFreeze: readonly string[];
-  /** Whether the run was told to rely on the gap if the lag was unknown. */
-  readonly acceptUnknownReplicaLag: boolean;
+  /** The untrusted lag cases the run was allowed to go through. */
+  readonly acceptUnknownReplicaLag: readonly ReplicaLagAccepted[];
   /** The unknown or stale lag the run accepted, or null if none. */
   readonly replicaLagAccepted: ReplicaLagAccepted | null;
   /** Whether the run was allowed to replace an earlier run's pointer. */
