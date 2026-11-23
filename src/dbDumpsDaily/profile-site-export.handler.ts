@@ -847,7 +847,7 @@ export function checkFreezeSetting(
 ): void {
   if (setting.reading === 'unset') {
     throw new ProfileSiteExportSnapshotError(
-      `IDENTITY_FREEZE_AT is not set in the ${LAMBDAS_SECRET_ID} secret of this region: a real run exports 6529.io’s own freeze. Use rehearsal: true before the freeze.`
+      `IDENTITY_FREEZE_AT is not set in the ${LAMBDAS_SECRET_ID} secret of this region: a real run exports 6529.io's own freeze. Use rehearsal: true before the freeze.`
     );
   }
   if (setting.reading === 'not_a_time') {
