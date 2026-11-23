@@ -31,7 +31,7 @@ import {
   helpBotCreditsService,
   HelpBotCreditsService
 } from './help-bot-credits.service';
-import { detectHelpBotTrigger } from './help-bot.detector';
+import { detectHelpBotTrigger, mayTriggerHelpBot } from './help-bot.detector';
 import {
   helpBotDropWriterService,
   HelpBotDropWriterService
@@ -88,16 +88,23 @@ export class HelpBotTriggerService {
         );
         return;
       }
+      // Most drops neither mention the bot nor reply to a drop: skip them
+      // before reading anything.
+      if (
+        !mayTriggerHelpBot({
+          request: createDropRequest,
+          createdDrop,
+          authorProfileId,
+          botProfileId
+        })
+      ) {
+        return;
+      }
+      // Public help must be decided before a parent drop is read.
       const wave = await this.findPublicHelpBotWave(createdDrop.wave.id, ctx);
       if (!wave) {
         this.logger.debug(
           `Help bot trigger skipped for drop ${createdDrop.id}: non-public wave ${createdDrop.wave.id}`
-        );
-        return;
-      }
-      if (!(await this.canBotReplyInWave(botProfileId, wave, ctx))) {
-        this.logger.info(
-          `Help bot trigger skipped for drop ${createdDrop.id}: help bot cannot post in wave ${wave.id}`
         );
         return;
       }
@@ -112,6 +119,14 @@ export class HelpBotTriggerService {
       if (!trigger) {
         this.logger.debug(
           `Help bot trigger skipped for drop ${createdDrop.id}: no trigger detected`
+        );
+        return;
+      }
+      // Logged only for real triggers, so these lines count questions the
+      // bot could not answer.
+      if (!(await this.canBotReplyInWave(botProfileId, wave, ctx))) {
+        this.logger.info(
+          `Help bot trigger skipped for drop ${createdDrop.id}: help bot cannot post in wave ${wave.id}`
         );
         return;
       }
