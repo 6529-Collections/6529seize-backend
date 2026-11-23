@@ -73,12 +73,23 @@ function requireApiKey(apiKey?: string): string {
   return apiKey;
 }
 
+/**
+ * Alchemy's host for a network. `ALCHEMY_BASE_URL` replaces it for local
+ * runs against a stand-in (the rebuild check); unset, nothing changes.
+ */
+export function getAlchemyBaseUrl(network: Network): string {
+  const override = process.env.ALCHEMY_BASE_URL?.trim();
+  return override
+    ? override.replace(/\/+$/, '')
+    : `https://${network}.g.alchemy.com`;
+}
+
 function getAlchemyIndexedRpcUrl(network: Network, apiKey: string): string {
-  return `https://${network}.g.alchemy.com/v2/${apiKey}`;
+  return `${getAlchemyBaseUrl(network)}/v2/${apiKey}`;
 }
 
 function getNftApiBaseUrl(network: Network, apiKey: string): string {
-  return `https://${network}.g.alchemy.com/nft/v3/${apiKey}`;
+  return `${getAlchemyBaseUrl(network)}/nft/v3/${apiKey}`;
 }
 
 function toNftQueryParams(

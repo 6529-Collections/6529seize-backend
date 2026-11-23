@@ -25,7 +25,12 @@ jest.mock('axios', () => {
 
 import axios from 'axios';
 import axiosRetry from 'axios-retry';
-import { Alchemy, AssetTransfersCategory, SortingOrder } from '@/alchemy-sdk';
+import {
+  Alchemy,
+  AssetTransfersCategory,
+  getAlchemyBaseUrl,
+  SortingOrder
+} from '@/alchemy-sdk';
 import { Network } from '@/ethereum-rpc/ethereum-rpc-network';
 
 const mockedAxios = axios as unknown as jest.Mocked<typeof axios> & {
@@ -301,6 +306,25 @@ describe('Alchemy SDK replacement', () => {
         expect.objectContaining({
           headers: { 'Content-Type': 'application/json' }
         })
+      );
+    });
+  });
+
+  describe('base URL', () => {
+    const original = process.env.ALCHEMY_BASE_URL;
+    afterEach(() => {
+      if (original === undefined) delete process.env.ALCHEMY_BASE_URL;
+      else process.env.ALCHEMY_BASE_URL = original;
+    });
+
+    it('is the network host at Alchemy unless ALCHEMY_BASE_URL is set', () => {
+      delete process.env.ALCHEMY_BASE_URL;
+      expect(getAlchemyBaseUrl(Network.ETH_MAINNET)).toBe(
+        'https://eth-mainnet.g.alchemy.com'
+      );
+      process.env.ALCHEMY_BASE_URL = 'http://127.0.0.1:8545//';
+      expect(getAlchemyBaseUrl(Network.ETH_MAINNET)).toBe(
+        'http://127.0.0.1:8545'
       );
     });
   });
