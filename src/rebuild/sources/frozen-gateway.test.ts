@@ -16,6 +16,7 @@ import {
   FrozenHeader,
   frozenHeaderProblems,
   FrozenSnapshot,
+  frozenNotes,
   FrozenValidator,
   startFrozenNode,
   unpackSnapshot,
@@ -428,6 +429,119 @@ describe('frozen gateway recordings', () => {
     expect((await verify('c'.repeat(40))).provisionalWhy).toBe(
       "1 answers were tagged with their snapshot after the capture (retagged), so the recording can't be final"
     );
+  });
+
+  describe('answers listed as not replayable', () => {
+    const counted = (recorded: FrozenExchange[]) => ({
+      ...header,
+      answersServedFrozen: 1,
+      notReplayable: [
+        {
+          key: recorded[0].key,
+          snapshot: 'mark',
+          fields: ['data.requests'],
+          why: 'the serving process counts its requests'
+        }
+      ]
+    });
+    // The recorded status carries a counter the frozen node's lacks.
+    const withCounter = (extra: Record<string, unknown> = {}) => {
+      const recorded = lines();
+      const body = JSON.parse(recorded[0].body) as { data: object };
+      recorded[0] = {
+        ...recorded[0],
+        body: JSON.stringify({ data: { ...body.data, requests: 2, ...extra } })
+      };
+      return recorded;
+    };
+
+    it('counts them in the header, and refuses an unknown key, a missing field or reason, or a repeat', () => {
+      const recorded = withCounter();
+      expect(frozenHeaderProblems(counted(recorded), recorded)).toEqual([]);
+      // Listed, but still counted as served frozen.
+      expect(
+        frozenHeaderProblems(
+          { ...counted(recorded), answersServedFrozen: 2 },
+          recorded
+        )
+      ).toEqual([
+        'the header counts 2 answers, 2 served frozen and 1 not replayable, for 2 recorded'
+      ]);
+      const [entry] = counted(recorded).notReplayable;
+      expect(
+        frozenHeaderProblems(
+          {
+            ...counted(recorded),
+            answersServedFrozen: -1,
+            notReplayable: [
+              { ...entry, key: 'GET /v1/elsewhere' },
+              { ...entry, fields: [], why: ' ' },
+              entry
+            ]
+          },
+          recorded
+        )
+      ).toEqual([
+        "notReplayable GET /v1/elsewhere isn't a recorded answer of snapshot mark",
+        `notReplayable ${entry.key} names no field`,
+        `notReplayable ${entry.key} gives no reason`,
+        `notReplayable ${entry.key} is listed twice`
+      ]);
+    });
+
+    it('replays them without their fields: provisional when the rest matches, failed when it does not', async () => {
+      const port = await freePort();
+      const verify = (recorded: FrozenExchange[]) =>
+        verifyFrozenRecording({
+          dir,
+          header: counted(recorded),
+          lines: recorded,
+          workDir: path.join(root, 'work'),
+          validator,
+          port,
+          // Reviewed, so only the listed answer keeps it from being final,
+          // and a final run fails on it.
+          reviewedCommit: 'c'.repeat(40),
+          lockDir
+        });
+      expect(await verify(withCounter())).toEqual({
+        problems: [],
+        provisionalWhy:
+          "1 answer can't replay (notReplayable: GET /v1/status, data.requests)"
+      });
+      expect((await verify(withCounter({ node: 'other' }))).problems).toEqual([
+        "GET /v1/status: the frozen node's answer differs outside its notReplayable fields (data.requests), at data.node"
+      ]);
+    });
+  });
+
+  it('notes a Windows binary built from another commit than the capture', () => {
+    expect(
+      frozenNotes(
+        { ...header, validatorWindowsCommit: 'd'.repeat(40) },
+        'win32'
+      )
+    ).toEqual([
+      `the Windows binary that re-served the copies was built from ${'d'.repeat(40)}, the capture's from ${'c'.repeat(40)}; the replay is keyed on validatorSha256Windows`
+    ]);
+    expect(
+      frozenNotes(
+        { ...header, validatorWindowsCommit: 'd'.repeat(40) },
+        'linux'
+      )
+    ).toEqual([]);
+    expect(
+      frozenNotes(
+        { ...header, validatorWindowsCommit: 'c'.repeat(40) },
+        'win32'
+      )
+    ).toEqual([]);
+    expect(
+      frozenHeaderProblems(
+        { ...header, validatorWindowsCommit: 'd'.repeat(12) },
+        lines()
+      )
+    ).toEqual(["the header's validatorWindowsCommit isn't in full"]);
   });
 
   it('stays provisional without a validator, and fails on a copy or binary that differs', async () => {

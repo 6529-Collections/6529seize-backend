@@ -313,22 +313,39 @@ Each `--source <name>=<spec>`:
   `--frozen-reviewed <commit>` names the header's `validatorCommit`, so a
   reviewer's score of the capture's code stands behind a final one. The
   run checks:
-  1. each snapshot's fields, that `answers` and `answersServedFrozen`
-     count every line, and that the header names the build: `validatorCommit`
-     in full, `validatorSha256Linux` (the binary that served the capture)
-     and `validatorSha256Windows` (the same commit built for Windows);
+  1. each snapshot's fields, that `answers` counts every line and
+     `answersServedFrozen` every line but those listed under
+     `notReplayable` (below), and that the header names the build:
+     `validatorCommit` in full, `validatorSha256Linux` (the binary that
+     served the capture) and `validatorSha256Windows` (the same commit
+     built for Windows; `validatorWindowsCommit`, when the Windows binary
+     was built from another commit, in full, and the report notes both);
   2. that at least two live nodes other than the copied one reported the
      snapshot's block root and app state root at its height;
   3. with `--validator-bin <file>` and `--frozen-port <n>`: the binary's
      SHA-256 against the header's for this platform (any other binary is
      refused: both builds of one commit answer with the same bytes, a
-     different build may not) and its `--api-frozen-snapshot` option, then for each snapshot the kept copy
+     different build may not) and its `--api-frozen-snapshot` option,
+     then for each snapshot the kept copy
      (`<dir>/snapshots/<hash>.tar.gz`) against both hashes, unpacked into
      the run's folder beside `<dir>/devnet.toml`, served by the validator
      with the frozen option on 127.0.0.1 and no peers, one such node on
      the machine at a time, its `/v1/status` against the header, and every
      answer the snapshot served replayed to the same status, content type
      and bytes.
+
+  Two header lists keep a recording that passes provisional, so a final
+  run fails on it. `retagged` names answers whose snapshot tag was set
+  after the capture: they are left out of the replay. `notReplayable`
+  names answers holding fields a second serving can't repeat (a process
+  counter): each entry gives the answer's `key` and `snapshot`, its
+  `fields` as dot paths into the JSON body (`data.requests`), and `why`.
+  An entry must name a recorded answer of that snapshot, at least one
+  field and a reason, and no answer twice. Such an answer is still
+  replayed: same status and content type, and its body and the recorded
+  one, read as JSON with the listed fields deleted, must match; the run
+  fails on any other difference and names its path.
+
 - The report shows source URLs without credentials, query values or
   key-like path segments.
 - The harness relay speaks CRP v1 over WebSocket (HELLO, AUTH, PUB, payloads,

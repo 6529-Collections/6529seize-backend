@@ -273,7 +273,8 @@ export async function startHttpRecording(options: {
         ? frozen.provisionalWhy
           ? { provisional: true, provisionalWhy: frozen.provisionalWhy }
           : { provisional: false }
-        : { provisional: true, provisionalWhy: 'answers not verified' })
+        : { provisional: true, provisionalWhy: 'answers not verified' }),
+      ...(frozen?.notes?.length ? { notes: frozen.notes } : {})
     },
     problems: () => [
       ...(frozen?.problems ?? []).map(

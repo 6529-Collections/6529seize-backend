@@ -65,8 +65,25 @@ export interface FrozenHeader {
   readonly validatorSha256Linux?: string;
   /** The same commit built for Windows, which re-serves the copies there. */
   readonly validatorSha256Windows?: string;
+  /** The commit the Windows binary was built from, when not the capture's. */
+  readonly validatorWindowsCommit?: string;
   /** Answers whose snapshot tag was set after the capture. */
   readonly retagged?: readonly { readonly key?: string }[];
+  /**
+   * Answers that hold fields a second serving can't repeat (a process
+   * counter, say): replayed and compared without those fields, and they
+   * keep the recording provisional.
+   */
+  readonly notReplayable?: readonly NotReplayable[];
+}
+
+/** An answer the header lists as not replayable byte for byte. */
+export interface NotReplayable {
+  readonly key?: string;
+  readonly snapshot?: string;
+  /** JSON paths in its body, dot-separated (`data.requests`). */
+  readonly fields?: readonly string[];
+  readonly why?: string;
 }
 
 /** A recorded exchange with the snapshot that served it. */
@@ -96,6 +113,12 @@ export function frozenHeaderProblems(
   // the copies here.
   if (!COMMIT.test(header.validatorCommit ?? '')) {
     problems.push('the header names no full validatorCommit');
+  }
+  if (
+    header.validatorWindowsCommit !== undefined &&
+    !COMMIT.test(header.validatorWindowsCommit)
+  ) {
+    problems.push("the header's validatorWindowsCommit isn't in full");
   }
   for (const field of [
     'validatorSha256Linux',
@@ -160,13 +183,49 @@ export function frozenHeaderProblems(
       `${untagged.length} answers name no snapshot of the header, first ${untagged[0].method} ${untagged[0].path}`
     );
   }
+  problems.push(...notReplayableProblems(header, lines));
+  const listed = header.notReplayable?.length ?? 0;
   if (
     header.answers !== lines.length ||
-    header.answersServedFrozen !== lines.length
+    (header.answersServedFrozen ?? NaN) + listed !== lines.length
   ) {
     problems.push(
-      `the header counts ${header.answers} answers, ${header.answersServedFrozen} served frozen, for ${lines.length} recorded`
+      `the header counts ${header.answers} answers, ${header.answersServedFrozen} served frozen${
+        listed ? ` and ${listed} not replayable` : ''
+      }, for ${lines.length} recorded`
     );
+  }
+  return problems;
+}
+
+/**
+ * Each notReplayable entry names a recorded answer of its snapshot, once,
+ * with at least one field and a reason.
+ */
+function notReplayableProblems(
+  header: FrozenHeader,
+  lines: readonly FrozenExchange[]
+): string[] {
+  const problems: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of header.notReplayable ?? []) {
+    const at = `notReplayable ${entry.key ?? '(no key)'}`;
+    if (entry.key && seen.has(entry.key))
+      problems.push(`${at} is listed twice`);
+    if (entry.key) seen.add(entry.key);
+    if (
+      !lines.some(
+        (line) => line.key === entry.key && line.snapshot === entry.snapshot
+      )
+    ) {
+      problems.push(
+        `${at} isn't a recorded answer of snapshot ${entry.snapshot ?? '(none)'}`
+      );
+    }
+    if (!entry.fields?.length || entry.fields.some((field) => !field)) {
+      problems.push(`${at} names no field`);
+    }
+    if (!entry.why?.trim()) problems.push(`${at} gives no reason`);
   }
   return problems;
 }
@@ -264,9 +323,72 @@ export interface ReplayOutcome {
  * Replays one snapshot's answers against a frozen node at `url`: each
  * must come back with the recorded status, content type and bytes.
  */
+/** A JSON value with the dot-separated paths deleted. */
+function withoutPaths(value: unknown, paths: readonly string[]): unknown {
+  const copy = JSON.parse(JSON.stringify(value)) as unknown;
+  for (const field of paths) {
+    const parts = field.split('.');
+    let at: unknown = copy;
+    for (const part of parts.slice(0, -1)) {
+      at =
+        at && typeof at === 'object'
+          ? (at as Record<string, unknown>)[part]
+          : undefined;
+    }
+    if (at && typeof at === 'object') {
+      delete (at as Record<string, unknown>)[parts[parts.length - 1]];
+    }
+  }
+  return copy;
+}
+
+/** The first path where two JSON values differ, or null when equal. */
+function firstDifference(a: unknown, b: unknown, at = ''): string | null {
+  const objects =
+    a !== null && b !== null && typeof a === 'object' && typeof b === 'object';
+  if (!objects || Array.isArray(a) !== Array.isArray(b)) {
+    return JSON.stringify(a) === JSON.stringify(b) ? null : at || '(the body)';
+  }
+  const ra = a as Record<string, unknown>;
+  const rb = b as Record<string, unknown>;
+  const keys = Array.from(
+    new Set([...Object.keys(ra), ...Object.keys(rb)])
+  ).sort((x, y) => (x < y ? -1 : Number(x > y)));
+  for (const key of keys) {
+    const path = at ? `${at}.${key}` : key;
+    if (!(key in ra) || !(key in rb)) return path;
+    const found = firstDifference(ra[key], rb[key], path);
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * A listed answer's body against the frozen node's, both read as JSON
+ * with the listed fields deleted; the first other path that differs, or
+ * a problem reading either as JSON.
+ */
+function maskedDifference(
+  recorded: Buffer,
+  served: Buffer,
+  fields: readonly string[]
+): string | null {
+  let a: unknown;
+  let b: unknown;
+  try {
+    a = JSON.parse(recorded.toString('utf8'));
+    b = JSON.parse(served.toString('utf8'));
+  } catch {
+    return "its body (not JSON, so its fields can't be left out)";
+  }
+  return firstDifference(withoutPaths(a, fields), withoutPaths(b, fields));
+}
+
 export async function replaySnapshot(
   url: string,
-  exchanges: readonly FrozenExchange[]
+  exchanges: readonly FrozenExchange[],
+  /** By key: the fields a listed answer is compared without. */
+  masked: ReadonlyMap<string, readonly string[]> = new Map()
 ): Promise<ReplayOutcome> {
   const problems: string[] = [];
   let replayed = 0;
@@ -289,6 +411,20 @@ export async function replaySnapshot(
         ? Buffer.from(exchange.body, 'base64')
         : Buffer.from(exchange.body, 'utf8');
     replayed++;
+    const fields = masked.get(exchange.key);
+    if (
+      fields &&
+      response.status === exchange.status &&
+      response.headers.get('content-type') === exchange.contentType
+    ) {
+      const differs = maskedDifference(recorded, bytes, fields);
+      if (differs) {
+        problems.push(
+          `${exchange.method} ${exchange.path}: the frozen node's answer differs outside its notReplayable fields (${fields.join(', ')}), at ${differs}`
+        );
+      }
+      continue;
+    }
     if (
       response.status !== exchange.status ||
       response.headers.get('content-type') !== exchange.contentType ||
@@ -440,6 +576,38 @@ export interface FrozenVerdict {
   readonly problems: string[];
   /** Why the recording isn't final, when it isn't; null when it is. */
   readonly provisionalWhy: string | null;
+  /** What the report should say besides, when there is anything. */
+  readonly notes?: string[];
+}
+
+/**
+ * Notes on a re-serve: on Windows, a binary built from another commit
+ * than the capture's (the replay is still keyed on its SHA-256).
+ */
+export function frozenNotes(
+  header: FrozenHeader,
+  platform: NodeJS.Platform = process.platform
+): string[] {
+  const windows = header.validatorWindowsCommit;
+  return platform === 'win32' && windows && windows !== header.validatorCommit
+    ? [
+        `the Windows binary that re-served the copies was built from ${windows}, the capture's from ${header.validatorCommit}; the replay is keyed on validatorSha256Windows`
+      ]
+    : [];
+}
+
+/** Why a listed answer keeps the recording provisional. */
+function notReplayableWhy(
+  header: FrozenHeader,
+  lines: readonly FrozenExchange[]
+): string | null {
+  const listed = header.notReplayable ?? [];
+  if (!listed.length) return null;
+  const named = listed.map((entry) => {
+    const line = lines.find((l) => l.key === entry.key);
+    return `${line ? `${line.method} ${line.path}` : entry.key}, ${(entry.fields ?? []).join(', ')}`;
+  });
+  return `${listed.length} ${listed.length === 1 ? 'answer' : 'answers'} can't replay (notReplayable: ${named.join('; ')})`;
 }
 
 /**
@@ -448,7 +616,16 @@ export interface FrozenVerdict {
  * naming the capture's commit the recording isn't final; either leaves it
  * provisional, with the reason.
  */
-export async function verifyFrozenRecording(options: {
+export async function verifyFrozenRecording(
+  options: Parameters<typeof frozenChecks>[0]
+): Promise<FrozenVerdict> {
+  const verdict = await frozenChecks(options);
+  const notes =
+    options.validator && options.port ? frozenNotes(options.header) : [];
+  return notes.length ? { ...verdict, notes } : verdict;
+}
+
+async function frozenChecks(options: {
   readonly dir: string;
   readonly header: FrozenHeader;
   readonly lines: readonly FrozenExchange[];
@@ -483,6 +660,13 @@ export async function verifyFrozenRecording(options: {
   // left out of the replay, and the recording can't be final.
   const retaggedKeys = new Set(
     (options.header.retagged ?? []).map((entry) => entry.key)
+  );
+  // A listed answer is replayed too, compared without its fields.
+  const masked = new Map(
+    (options.header.notReplayable ?? []).map((entry) => [
+      entry.key ?? '',
+      entry.fields ?? []
+    ])
   );
   const devnet = path.join(options.dir, 'devnet.toml');
   for (const snapshot of options.header.frozen ?? []) {
@@ -526,7 +710,8 @@ export async function verifyFrozenRecording(options: {
             options.lines.filter(
               (line) =>
                 line.snapshot === snapshot.phase && !retaggedKeys.has(line.key)
-            )
+            ),
+            masked
           );
       const failed = [...status, ...replay.problems];
       if (failed.length) {
@@ -537,12 +722,15 @@ export async function verifyFrozenRecording(options: {
     }
   }
   const retagged = options.header.retagged ?? [];
-  if (retagged.length) {
-    return {
-      problems: [],
-      provisionalWhy: `${retagged.length} answers were tagged with their snapshot after the capture (retagged), so the recording can't be final`
-    };
-  }
+  const why = [
+    ...(retagged.length
+      ? [
+          `${retagged.length} answers were tagged with their snapshot after the capture (retagged), so the recording can't be final`
+        ]
+      : []),
+    notReplayableWhy(options.header, options.lines)
+  ].filter((reason): reason is string => !!reason);
+  if (why.length) return { problems: [], provisionalWhy: why.join('; ') };
   if (options.reviewedCommit !== options.header.validatorCommit) {
     return {
       problems: [],
