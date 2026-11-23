@@ -404,15 +404,15 @@ export const wavesManifest: AreaManifest = {
         { column: 'updated_at', reason: 'When the cursor last moved.' }
       ]
     },
-    // The settlement sender (src/waves-settlement); planned until
-    // its code is in this tree.
+    // The settlement sender (src/waves-settlement); planned until its code
+    // is in this tree.
     waves_settlement_sends: {
       class: 'EPHEMERAL',
       origin: 'planned',
-      why: "The sender's in-flight request per decision step. A lost row costs one repeat request, which the decision's nonce lane makes a no-op."
+      why: "The sender's in-flight request per decision step. A lost row costs one repeat request, which the chain refuses: every request for a decision step takes the same nonce."
     },
     // The chain mirror (src/waves-chain-mirror): its own tables, rebuilt
-    // with competition_* by waves.chain-mirror once that branch is final.
+    // with competition_* by the mirror's rebuild once its code is here.
     waves_chain_mirror_state: { class: 'INDEX', origin: 'planned' },
     waves_chain_mirror_events: { class: 'INDEX', origin: 'planned' },
     chain_docs: { class: 'INDEX', origin: 'planned' },
