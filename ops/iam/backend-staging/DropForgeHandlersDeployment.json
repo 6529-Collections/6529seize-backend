@@ -8,9 +8,12 @@
         "lambda:DeleteFunction",
         "lambda:DeleteFunctionConcurrency",
         "lambda:GetFunction",
+        "lambda:GetFunctionCodeSigningConfig",
         "lambda:GetFunctionConcurrency",
         "lambda:GetFunctionConfiguration",
+        "lambda:GetFunctionRecursionConfig",
         "lambda:GetPolicy",
+        "lambda:GetRuntimeManagementConfig",
         "lambda:ListTags",
         "lambda:ListVersionsByFunction",
         "lambda:PublishVersion",
@@ -36,7 +39,9 @@
         "lambda:DeleteFunction",
         "lambda:GetFunction",
         "lambda:GetFunctionConfiguration",
-        "lambda:GetPolicy"
+        "lambda:GetPolicy",
+        "lambda:GetProvisionedConcurrencyConfig",
+        "lambda:GetRuntimeManagementConfig"
       ],
       "Resource": [
         "arn:aws:lambda:eu-west-1:296096934726:function:dropForgeLaunchHandler:*",
@@ -207,9 +212,11 @@
       "Effect": "Allow",
       "Action": [
         "cloudformation:ValidateTemplate",
+        "ec2:DescribeNetworkAcls",
         "ec2:DescribeSecurityGroups",
         "ec2:DescribeSubnets",
         "ec2:DescribeVpcs",
+        "lambda:GetAccountSettings",
         "logs:DescribeLogGroups"
       ],
       "Resource": "*",
