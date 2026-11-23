@@ -122,9 +122,10 @@ export class ProfileIds {
   async candidateIds(identity: ChainIdentity): Promise<string[]> {
     const ids = [principalProfileId(identity.principalId.toLowerCase())];
     try {
-      const legacy = await this.legacyIdOf(identity);
+      const choice = this.choice();
+      const legacy = await choice.legacyIdOf(identity);
       if (legacy) ids.push(legacy);
-      const wallet = await this.foundingWalletOf(identity);
+      const wallet = await choice.foundingWalletOf(identity);
       const placeholder = wallet
         ? await this.db.unmappedPlaceholderProfile(wallet)
         : null;
@@ -146,7 +147,7 @@ export class ProfileIds {
   async profileIdForSites(
     identity: ChainIdentity
   ): Promise<{ profileId: string; imported: boolean }> {
-    const legacy = await this.legacyIdOf(identity);
+    const legacy = await this.choice().legacyIdOf(identity);
     if (!isInactive(identity)) {
       return {
         profileId: await this.profileIdOf(identity),
@@ -210,39 +211,94 @@ export class ProfileIds {
     return chosen;
   }
 
-  /**
-   * For an identity with no mapping (the caller has checked): the profile
-   * id profileIdOf would store for it, read only. The same choice (its
-   * legacy id; the founding wallet's unmapped placeholder when this is
-   * that wallet's first identity; else the derived id), storing nothing
-   * and starting no founder wait. Null while the choice can't be made yet:
-   * a founder wait, a history not read yet, the bindings behind, or no
-   * founder from the gateway (the anchor's binding then decides, and it
-   * changes with time). An id answered now is never one the mirror won't
-   * store, with the import's heights set as the mirror's run sets them.
-   */
-  async chosenProfileId(identity: ChainIdentity): Promise<string | null> {
-    try {
-      return (await this.chooseProfileId(identity, true)).profileId;
-    } catch (error) {
-      if (error instanceof ChainReadRetryLater) return null;
-      throw error;
-    }
+  /** The choice, with the import's heights as this run read them. */
+  private choice(): ProfileIdChoice {
+    return new ProfileIdChoice(
+      this.gateway,
+      this.db,
+      this.importStart,
+      this.importDone,
+      false
+    );
   }
 
-  private async chooseProfileId(
-    identity: ChainIdentity,
-    readOnly = false
-  ): Promise<{
+  /**
+   * The choice, and when no history can tell whether the identity was its
+   * founding wallet's first: tried again for a while (the founder wait),
+   * then the derived id, the placeholder left for a later merge.
+   */
+  private async chooseProfileId(identity: ChainIdentity): Promise<{
     profileId: string;
     origin: string;
     left?: string;
     founderAsked?: boolean;
   }> {
+    const chosen = await this.choice().choose(identity);
+    if (!('unknowable' in chosen)) return chosen;
+    const principalId = identity.principalId.toLowerCase();
+    const { wallet, placeholder } = chosen;
+    // One node's answer decides nothing: tried again for a while, and
+    // mapped to the derived id only when it stays so.
+    const since = await this.db.founderWaitSince(principalId, this.now());
+    if (this.now() - since < FOUNDER_WAIT_MS) {
+      throw new ChainReadRetryLater(
+        `No history tells whether ${wallet} was first bound to ${principalId} yet: tried again until ${new Date(since + FOUNDER_WAIT_MS).toISOString()}`,
+        'founder_unknown_yet'
+      );
+    }
+    return {
+      profileId: principalProfileId(principalId),
+      origin: 'NEW',
+      left: placeholder,
+      founderAsked: true
+    };
+  }
+}
+
+/** The mirror's tables the choice of a profile id reads: it writes none. */
+export type ProfileIdChoiceDb = Pick<
+  IdentityChainMirrorDb,
+  'unmappedPlaceholderProfile' | 'firstBindingOf'
+>;
+
+/**
+ * How the mirror chooses a chain identity's profile id (see
+ * ProfileIds.profileIdOf), from the chain and the mirror's tables, which it
+ * only reads (its table type has no write). With `readOnly`, for a read of
+ * an identity the mirror hasn't mapped: whatever the mirror's own state
+ * can't decide is left undecided (ChainReadRetryLater), never decided from
+ * a node's answer the mirror's runs may not get (a wallet's history, the
+ * anchor's binding now).
+ */
+export class ProfileIdChoice {
+  constructor(
+    private readonly gateway: Gateway,
+    private readonly db: ProfileIdChoiceDb,
+    private readonly importStart: number | null,
+    private readonly importDone: number | null,
+    private readonly readOnly: boolean
+  ) {}
+
+  /**
+   * The profile id for an identity with no mapping: its legacy id; else
+   * its founding wallet's unmapped placeholder (not taken by the import)
+   * when this is that wallet's first identity; else the derived id. When
+   * no history can tell whether it was the first: `unknowable`, for the
+   * caller's founder wait. Throws ChainReadRetryLater while it can't be
+   * told yet.
+   */
+  async choose(identity: ChainIdentity): Promise<
+    | {
+        profileId: string;
+        origin: string;
+        founderAsked?: boolean;
+      }
+    | { unknowable: true; wallet: string; placeholder: string }
+  > {
     const principalId = identity.principalId.toLowerCase();
     const legacy = await this.legacyIdOf(identity);
     if (legacy) return { profileId: legacy, origin: 'LEGACY' };
-    const wallet = await this.foundingWalletOf(identity, readOnly);
+    const wallet = await this.foundingWalletOf(identity);
     const placeholder = wallet
       ? await this.db.unmappedPlaceholderProfile(wallet)
       : null;
@@ -253,7 +309,9 @@ export class ProfileIds {
     if (
       !wallet ||
       !placeholder ||
-      (await this.gateway.getIdentityByLegacyProfileId(placeholder))
+      (await orRetryLater(() =>
+        this.gateway.getIdentityByLegacyProfileId(placeholder)
+      ))
     ) {
       return derived;
     }
@@ -263,27 +321,10 @@ export class ProfileIds {
       Number(identity.createdHeight)
     );
     if (first === 'unknowable') {
-      // Read only, the wait isn't started, and when it ends is the
-      // mirror's to say (it maps the identity then).
-      if (readOnly) {
-        throw new ChainReadRetryLater(
-          `No history tells whether ${wallet} was first bound to ${principalId} yet`,
-          'founder_unknown_yet'
-        );
-      }
-      // One node's answer decides nothing: tried again for a while, and
-      // mapped to the derived id only when it stays so.
-      const since = await this.db.founderWaitSince(principalId, this.now());
-      if (this.now() - since < FOUNDER_WAIT_MS) {
-        throw new ChainReadRetryLater(
-          `No history tells whether ${wallet} was first bound to ${principalId} yet: tried again until ${new Date(since + FOUNDER_WAIT_MS).toISOString()}`,
-          'founder_unknown_yet'
-        );
-      }
       return {
-        ...derived,
-        left: placeholder.toLowerCase(),
-        founderAsked: true
+        unknowable: true,
+        wallet,
+        placeholder: placeholder.toLowerCase()
       };
     }
     return first
@@ -303,13 +344,10 @@ export class ProfileIds {
    * so that a wallet that made two identities gives it to the first
    * whatever order a rebuild reads them in.
    */
-  private async foundingWalletOf(
-    identity: ChainIdentity,
-    readOnly = false
-  ): Promise<string | null> {
+  async foundingWalletOf(identity: ChainIdentity): Promise<string | null> {
     if (identity.founder) return identity.founder.toLowerCase();
     // The anchor's binding now, which a read can't take for the mirror's.
-    if (readOnly) {
+    if (this.readOnly) {
       throw new ChainReadRetryLater(
         `No founder of ${identity.principalId} from the gateway`,
         'founder_not_given'
@@ -333,13 +371,15 @@ export class ProfileIds {
    * - from the mirror's own first binding of the wallet, recorded while the
    *   wallet bindings followed the feed without a break from the import's
    *   start; while they haven't reached the creation yet, tried again later;
-   * - else from the gateway's history of the wallet: a binding before the
-   *   creation says no; otherwise it must cover every height from the
-   *   import's start to the creation. A node behind is waited for (tried
-   *   again later); a history that can't say (the import's start unknown,
-   *   or the node's feed starting after it or with a gap) gives
-   *   'unknowable', which the caller waits on for FOUNDER_WAIT_MS before
-   *   deciding.
+   * - else (not read only) from the gateway's history of the wallet: a
+   *   binding before the creation says no; otherwise it must cover every
+   *   height from the import's start to the creation. A node behind is
+   *   waited for (tried again later); a history that can't say (the
+   *   import's start unknown, or the node's feed starting after it or with
+   *   a gap) gives 'unknowable', which the mirror waits on for
+   *   FOUNDER_WAIT_MS before deciding. Read only, it isn't asked: one
+   *   node's history could say what another's, which the mirror's runs may
+   *   get, can't.
    */
   private async firstBoundTo(
     wallet: string,
@@ -361,6 +401,12 @@ export class ProfileIds {
       throw new ChainReadRetryLater(
         `The wallet bindings haven't reached ${createdHeight} yet: the identity is mapped later`,
         'bindings_behind'
+      );
+    }
+    if (this.readOnly) {
+      throw new ChainReadRetryLater(
+        `The mirror's own bindings can't tell whether ${wallet} was first bound to ${principal}`,
+        'bindings_cant_tell'
       );
     }
     const history = await orRetryLater(() =>
@@ -408,7 +454,7 @@ export class ProfileIds {
    * identity created no later than the import's end, so an imported
    * identity is never taken for one made on the chain.
    */
-  private async legacyIdOf(identity: ChainIdentity): Promise<string | null> {
+  async legacyIdOf(identity: ChainIdentity): Promise<string | null> {
     const given = identity.legacyId;
     const created = Number(identity.createdHeight);
     const madeAfterImport =
@@ -420,5 +466,19 @@ export class ProfileIds {
       this.gateway.getImportedIdentity(identity.principalId)
     );
     return entry?.legacyId?.toLowerCase() ?? null;
+  }
+
+  /**
+   * Read only: the profile id the mirror will store for an identity it
+   * hasn't mapped, or null while that can't be told from its own state.
+   */
+  async readOnlyProfileId(identity: ChainIdentity): Promise<string | null> {
+    try {
+      const chosen = await this.choose(identity);
+      return 'unknowable' in chosen ? null : chosen.profileId;
+    } catch (error) {
+      if (error instanceof ChainReadRetryLater) return null;
+      throw error;
+    }
   }
 }

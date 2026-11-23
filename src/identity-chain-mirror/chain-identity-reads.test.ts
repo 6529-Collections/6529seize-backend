@@ -1,3 +1,4 @@
+import { ChainGatewayError } from '@/chain-gateway/chain-gateway.client';
 import { ChainIdentity } from '@/chain-gateway/chain-gateway.types';
 import { IdentityEntity } from '@/entities/IIdentity';
 import { ProfileClassification } from '@/entities/IProfile';
@@ -103,6 +104,8 @@ interface Choice {
   importCompleted?: boolean;
   importStart?: number;
   importDone?: number;
+  /** No node holds the answer to whether the import took a placeholder. */
+  legacyLookupNotHeld?: boolean;
 }
 
 function setup({
@@ -128,9 +131,12 @@ function setup({
     getIdentityByPrincipal: jest.fn(
       async (p: string) => identities.get(p) ?? null
     ),
-    getIdentityByLegacyProfileId: jest.fn(async (uuid: string) =>
-      uuid === ALICE ? (identities.get(P) ?? null) : null
-    ),
+    getIdentityByLegacyProfileId: jest.fn(async (uuid: string) => {
+      if (choice.legacyLookupNotHeld) {
+        throw new ChainGatewayError('not here', 404, 'not_held', '/v1');
+      }
+      return uuid === ALICE ? (identities.get(P) ?? null) : null;
+    }),
     getProfileDoc: jest.fn(async () => DOC),
     getMembership: jest.fn(async () => ({
       import: {
@@ -206,9 +212,9 @@ function setup({
     founderWaitDone: jest.fn(readOnly),
     founderDecisionOf: jest.fn(async () => null),
     founderDecided: jest.fn(readOnly),
-    getState: jest.fn(async () => ({
-      chain_id: choice.mirrorChain === undefined ? 'chain' : choice.mirrorChain,
-      placeholders_at: (choice.placeholdersListed ?? true) ? 1 : null
+    mirrorChainState: jest.fn(async () => ({
+      chainId: choice.mirrorChain === undefined ? 'chain' : choice.mirrorChain,
+      placeholdersAt: (choice.placeholdersListed ?? true) ? 1 : null
     }))
   };
   /**
@@ -431,10 +437,8 @@ describe('ChainIdentityReads', () => {
       }
     });
     expect(await waiting.reads.byWallet(W(7))).toBeNull();
-    expect(waiting.gateway.getMembershipWalletHistory).toHaveBeenCalledWith(
-      W(7),
-      { noBindingsBefore: 50 }
-    );
+    // A wallet's history isn't asked by a read.
+    expect(waiting.gateway.getMembershipWalletHistory).not.toHaveBeenCalled();
     expect(waiting.mirrorDb.founderWaitSince).not.toHaveBeenCalled();
     // The mirror's bindings not at the creation yet: none as well.
     const behind = setup({
@@ -502,14 +506,17 @@ describe('ChainIdentityReads', () => {
         principalProfileId(Q)
       ],
       [
-        "the gateway's history says first: the placeholder",
+        // One node's whole history says first; a node restarted from a
+        // checkpoint can't say to the mirror's runs, which then wait and
+        // store the derived id. A read can't tell which the runs will get.
+        "a node's history says first, the mirror's own bindings can't tell",
         made(),
         { placeholders, history: historyOf([{ height: 80, principalId: Q }]) },
-        'same',
-        'p-7'
+        'none',
+        null
       ],
       [
-        "the gateway's history says not first, with a placeholder: derived",
+        "a node's history says not first, with a placeholder",
         made(),
         {
           placeholders,
@@ -519,8 +526,22 @@ describe('ChainIdentityReads', () => {
             { height: 80, principalId: Q }
           ])
         },
+        'none',
+        null
+      ],
+      [
+        "the mirror's own bindings past the creation without the wallet: derived",
+        made(),
+        { placeholders, bindings: { exact: true, nextHeight: 100 } },
         'same',
         principalProfileId(Q)
+      ],
+      [
+        'no node holds whether the import took the placeholder',
+        made(),
+        { placeholders, legacyLookupNotHeld: true },
+        'none',
+        null
       ],
       [
         "the mirror's own bindings say first: the placeholder",
@@ -587,15 +608,26 @@ describe('ChainIdentityReads', () => {
         null
       ]
     ])('%s', async (_, identity, choice, expected, id) => {
-      const { reads, mirrorStores } = setup({
+      const { reads, mirrorStores, gateway } = setup({
         identities: new Map([[Q, identity]]),
         mapping: new Map(),
         choice
       });
       const read = await reads.profileIdOf(identity);
+      // A read asks no wallet's history (uncached, and one node's).
+      expect(gateway.getMembershipWalletHistory).not.toHaveBeenCalled();
       const stored = await mirrorStores(identity);
       expect(read).toBe(id);
       if (expected === 'same') expect(read).toBe(stored);
+    });
+
+    it("answers no mapping of the old chain's across a relaunch", async () => {
+      const choice: Choice = { network: 'relaunched' };
+      const { reads, mirrorDb } = setup({ choice });
+      expect(await reads.profileIdOf(chainIdentity())).toBeNull();
+      expect(mirrorDb.profileIdOfPrincipal).not.toHaveBeenCalled();
+      choice.mirrorChain = 'relaunched';
+      expect(await reads.profileIdOf(chainIdentity())).toBe(ALICE);
     });
 
     it('takes the import as complete as soon as it is', async () => {

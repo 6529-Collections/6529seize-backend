@@ -288,6 +288,31 @@ function sameDelegation(a: DelegationRowWrite, b: DelegationRowWrite) {
 export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
   // ---------------------------------------------------------------- state
 
+  /**
+   * The chain the mirror's tables are of and when its placeholder profiles
+   * were listed (null before); null before the mirror has a state. Only
+   * these two columns: the reads ask this for every identity, and the
+   * state row's retry list can be large.
+   */
+  async mirrorChainState(): Promise<{
+    chainId: string | null;
+    placeholdersAt: number | null;
+  } | null> {
+    const row = await this.db.oneOrNull<{
+      chain_id: string | null;
+      placeholders_at: number | string | null;
+    }>(
+      `select chain_id, placeholders_at from ${IDENTITY_CHAIN_MIRROR_STATE_TABLE} where id = :id`,
+      { id: STATE_ID }
+    );
+    return row
+      ? {
+          chainId: row.chain_id,
+          placeholdersAt: numberOrNull(row.placeholders_at)
+        }
+      : null;
+  }
+
   async getState(conn?: Conn): Promise<MirrorState | null> {
     const row = await this.db.oneOrNull<
       Omit<MirrorState, 'retry' | 'bindings_exact'> & {

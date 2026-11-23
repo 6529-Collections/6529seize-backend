@@ -18,7 +18,7 @@ import {
   isPlaceholderHandle,
   placeholderHandle
 } from './identity-plan';
-import { ProfileIds } from './profile-ids';
+import { ProfileIdChoice, ProfileIdChoiceDb } from './profile-ids';
 import {
   decodeProfileDoc,
   ProfileDocFields,
@@ -43,11 +43,12 @@ type Gateway = Pick<
 >;
 
 /**
- * The identity mirror's tables its choice of a profile id reads (only
- * reads: chosenProfileId), and its state.
+ * The identity mirror's tables the reads ask: which chain they are of, and
+ * what its choice of a profile id reads. No write is in the type, so a read
+ * can't write the mirror's tables.
  */
-type MirrorDb = ConstructorParameters<typeof ProfileIds>[1] &
-  Pick<IdentityChainMirrorDb, 'getState'>;
+type MirrorDb = ProfileIdChoiceDb &
+  Pick<IdentityChainMirrorDb, 'mirrorChainState'>;
 
 function heightOf(value: unknown): number | null {
   const n = Number(value);
@@ -87,6 +88,15 @@ function toNumber(value: string | number | null | undefined): number {
  * imported) is answered from those tables as before.
  */
 export class ChainIdentityReads {
+  /**
+   * The import's heights by network, once it completed there (they don't
+   * change then; a relaunch is another network).
+   */
+  private readonly imports = new Map<
+    string,
+    { start: number | null; done: number | null }
+  >();
+
   constructor(
     private readonly gateway: Gateway = chainGatewayClient,
     private readonly mapping: MappingDb = identityChainMirrorDb,
@@ -97,54 +107,84 @@ export class ChainIdentityReads {
   /**
    * The 6529.io profile id the identity's rows use: its mapping, else the
    * id the identity mirror will store for it, chosen as the mirror chooses
-   * (ProfileIds, read only: legacy id, the founding wallet's placeholder
-   * when it is that wallet's first identity, else the derived id). Null
-   * while the mirror can't choose yet (see chosenProfileId): the identity
-   * is then answered as none, never with an id the mirror won't store.
+   * (ProfileIdChoice, read only: legacy id, the founding wallet's
+   * placeholder when the mirror's own bindings say it is that wallet's
+   * first identity, else the derived id). Null while the mirror's tables
+   * aren't of the chain the gateway serves now or haven't listed the
+   * placeholder profiles, or while the choice can't be made from the
+   * mirror's own state: the identity is then answered as none, never with
+   * an id the mirror won't store.
    */
   async profileIdOf(identity: ChainIdentity): Promise<string | null> {
     const principalId = identity.principalId.toLowerCase();
-    const mapped = await this.mapping.profileIdOfPrincipal(principalId);
-    if (mapped) return mapped;
-    const chosen = await this.chosenProfileId(identity);
-    if (chosen === null) {
+    const network = await this.mirroredNetwork();
+    const profileId =
+      network === false
+        ? null
+        : ((await this.mapping.profileIdOfPrincipal(principalId)) ??
+          (await this.chosenProfileId(identity, network)));
+    if (profileId === null) {
       logger.debug(
         `[IDENTITY ${principalId} NOT PLACED YET] [ANSWERED AS NONE UNTIL THE MIRROR CHOOSES ITS PROFILE ID]`
       );
     }
-    return chosen;
+    return profileId;
+  }
+
+  /**
+   * The network the gateway serves (null when it names none) when the
+   * mirror's tables are of it, as IdentityChainLookups checks, and its
+   * placeholder profiles are listed; false otherwise (across a relaunch the
+   * tables are the old chain's until the mirror has run on the new one).
+   */
+  private async mirroredNetwork(): Promise<string | null | false> {
+    const [state, head] = await Promise.all([
+      this.mirror.mirrorChainState(),
+      this.gateway.getHead()
+    ]);
+    const network = head.network?.toLowerCase() ?? null;
+    if (!state || state.placeholdersAt === null) return false;
+    if (network !== null && state.chainId !== network) return false;
+    return network;
   }
 
   /**
    * The mirror's choice for an identity it hasn't mapped, as its run would
-   * make it now; null while it can't be made here. Its tables must be of
-   * the chain the gateway serves now (not the old chain's across a
-   * relaunch, as IdentityChainLookups checks) with the placeholder
-   * profiles listed, and the import complete: the run reads the import's
-   * heights each time, and so does this (nothing is kept across calls, so
-   * a relaunch's new heights are taken at once).
+   * make it now, once the import is complete; null while it can't be made
+   * from the mirror's own state.
    */
   private async chosenProfileId(
-    identity: ChainIdentity
+    identity: ChainIdentity,
+    network: string | null
   ): Promise<string | null> {
-    const [state, head, membership] = await Promise.all([
-      this.mirror.getState(),
-      this.gateway.getHead(),
-      this.gateway.getMembership()
-    ]);
-    const network = head.network?.toLowerCase() ?? null;
-    if (!state || state.placeholders_at === null) return null;
-    if (network !== null && state.chain_id !== network) return null;
+    const heights = await this.importHeights(network);
+    if (!heights) return null;
+    return await new ProfileIdChoice(
+      this.gateway,
+      this.mirror,
+      heights.start,
+      heights.done,
+      true
+    ).readOnlyProfileId(identity);
+  }
+
+  /** The import's heights on the network, once it completed; else null. */
+  private async importHeights(
+    network: string | null
+  ): Promise<{ start: number | null; done: number | null } | null> {
+    const kept = network === null ? undefined : this.imports.get(network);
+    if (kept) return kept;
+    const membership = await this.gateway.getMembership();
     const imported = membership?.import as
       | { completed?: boolean; startHeight?: unknown; doneHeight?: unknown }
       | undefined;
     if (!imported?.completed) return null;
-    const ids = new ProfileIds(this.gateway, this.mirror, () => Date.now());
-    ids.setImportHeights(
-      heightOf(imported.startHeight),
-      heightOf(imported.doneHeight)
-    );
-    return await ids.chosenProfileId(identity);
+    const heights = {
+      start: heightOf(imported.startHeight),
+      done: heightOf(imported.doneHeight)
+    };
+    if (network !== null) this.imports.set(network, heights);
+    return heights;
   }
 
   private async docOf(
