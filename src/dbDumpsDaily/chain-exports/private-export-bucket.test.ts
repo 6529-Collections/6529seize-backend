@@ -255,9 +255,8 @@ describe('the chain exports bucket', () => {
 
   it.each([
     [{ name: 'NoSuchKey' }, { found: false, reason: 'missing' }],
-    [{ name: 'AccessDenied' }, { found: false, reason: 'forbidden' }],
     [
-      { name: 'Unknown', $metadata: { httpStatusCode: 403 } },
+      { name: 'AccessDenied', $metadata: { httpStatusCode: 403 } },
       { found: false, reason: 'forbidden' }
     ]
   ])('reads %j as %j', async (error, expected) => {
@@ -266,6 +265,25 @@ describe('the chain exports bucket', () => {
     });
     const writer = new PrivateExportWriter({ send } as never, BUCKET, 'p/');
     await expect(writer.read('m.json')).resolves.toEqual(expected);
+  });
+
+  it.each([
+    // A 403 that says nothing about the key: never a missing one.
+    [{ name: 'RequestTimeTooSkewed', $metadata: { httpStatusCode: 403 } }],
+    [{ name: 'SignatureDoesNotMatch', $metadata: { httpStatusCode: 403 } }],
+    [{ name: 'InvalidAccessKeyId', $metadata: { httpStatusCode: 403 } }],
+    [{ name: 'Unknown', $metadata: { httpStatusCode: 403 } }],
+    [{ name: 'InternalError', $metadata: { httpStatusCode: 500 } }]
+  ])('throws %j rather than read it as a missing key', async (error) => {
+    const failure = Object.assign(new Error('no'), error);
+    const send = jest.fn(async () => {
+      throw failure;
+    });
+    const writer = new PrivateExportWriter({ send } as never, BUCKET, 'p/');
+    await expect(writer.read('m.json')).rejects.toBe(failure);
+    await expect(writer.readOutside('x/by-freeze/t.json')).rejects.toBe(
+      failure
+    );
   });
 
   it('reads an object as its owner, and rethrows other errors', async () => {

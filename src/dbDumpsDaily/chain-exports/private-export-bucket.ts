@@ -308,14 +308,14 @@ export class PrivateExportWriter {
       );
       return { found: true, text: await answer.Body.transformToString('utf8') };
     } catch (error) {
-      const { name: code, $metadata } = (error ?? {}) as {
-        name?: string;
-        $metadata?: { httpStatusCode?: number };
-      };
+      const { name: code } = (error ?? {}) as { name?: string };
       if (code === 'NoSuchKey' || code === 'NotFound') {
         return { found: false, reason: 'missing' };
       }
-      if (code === 'AccessDenied' || $metadata?.httpStatusCode === 403) {
+      // Without ListBucket, S3 answers AccessDenied for a key that isn't
+      // there. Any other 403 (a skewed clock, a bad signature or key) says
+      // nothing about the key: it is thrown, never read as a missing one.
+      if (code === 'AccessDenied') {
         return { found: false, reason: 'forbidden' };
       }
       throw error;

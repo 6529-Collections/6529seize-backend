@@ -115,14 +115,17 @@ export type IdentityExportInput =
 const HAND_RUN_ROOT = `${PREFIX_ROOT}inputs/`;
 
 /**
- * At the freeze, when the profile site export didn't run: a cms-fields.json
- * made by hand with the profile site export's CLI, uploaded under
- * identity-export/inputs/, and its sha256. Taken only when no profile site
+ * At the freeze, when the profile site export didn't run: the
+ * cms-fields.json and report.json made by hand with the profile site
+ * export's CLI, uploaded under identity-export/inputs/, with their sha256.
+ * The report ties the file to the freeze. Taken only when no profile site
  * pointer exists for the freeze: a site run's values always win.
  */
 export interface CmsFieldsAtFreeze {
   readonly key: string;
   readonly sha256: string;
+  readonly reportKey: string;
+  readonly reportSha256: string;
 }
 
 /**
@@ -850,23 +853,33 @@ function handRunOf(value: unknown): CmsFieldsAtFreeze {
       ? (value as Record<string, unknown>)
       : null;
   const keys = record ? Object.keys(record).sort() : [];
-  const key = record?.key;
-  const hex = record?.sha256;
+  const isKey = (key: unknown): key is string =>
+    typeof key === 'string' &&
+    key.startsWith(HAND_RUN_ROOT) &&
+    !key.endsWith('/') &&
+    !key.includes('..') &&
+    /^[A-Za-z0-9/_.-]+$/.test(key);
+  const isSha256 = (hex: unknown): hex is string =>
+    typeof hex === 'string' && /^[0-9a-fA-F]{64}$/.test(hex);
+  const { key, sha256: hex, reportKey, reportSha256 } = record ?? {};
   if (
-    keys.join(',') !== 'key,sha256' ||
-    typeof key !== 'string' ||
-    !key.startsWith(HAND_RUN_ROOT) ||
-    key.endsWith('/') ||
-    key.includes('..') ||
-    !/^[A-Za-z0-9/_.-]+$/.test(key) ||
-    typeof hex !== 'string' ||
-    !/^[0-9a-fA-F]{64}$/.test(hex)
+    keys.join(',') !== 'key,reportKey,reportSha256,sha256' ||
+    !isKey(key) ||
+    !isKey(reportKey) ||
+    key === reportKey ||
+    !isSha256(hex) ||
+    !isSha256(reportSha256)
   ) {
     throw new IdentityExportEventError(
-      `cmsFieldsAtFreeze must be {"key": "${HAND_RUN_ROOT}<file>.json", "sha256": "<its 64-hex sha256>"}: the hand-run cms-fields.json uploaded to the chain exports bucket`
+      `cmsFieldsAtFreeze must be {"key": "${HAND_RUN_ROOT}<cms-fields file>.json", "sha256": "<its 64-hex sha256>", "reportKey": "${HAND_RUN_ROOT}<report file>.json", "reportSha256": "<its 64-hex sha256>"}: the hand-run cms-fields.json and report.json uploaded to the chain exports bucket`
     );
   }
-  return { key, sha256: hex.toLowerCase() };
+  return {
+    key,
+    sha256: hex.toLowerCase(),
+    reportKey,
+    reportSha256: reportSha256.toLowerCase()
+  };
 }
 
 /** One of the two, as the CLI's `--x FILE` or `--no-x`. */
@@ -1123,6 +1136,10 @@ export type CmsFieldsSource =
       /** identity-export/inputs/<file>.json */
       readonly key: string;
       readonly sha256: string;
+      /** The CLI's report.json for the file, and the freeze it records. */
+      readonly reportKey: string;
+      readonly reportSha256: string;
+      readonly reportFrozenAt: string;
       /** The site pointer that wasn't there, and how its read answered. */
       readonly sitePointer: string;
       readonly sitePointerRead: 'missing' | 'forbidden';
@@ -1370,12 +1387,37 @@ async function cmsFieldsAtFreeze(
         `The profile site export ran for the freeze ${freeze}: ${pointerKey} names its run, and its values are the ones taken. Leave cmsFieldsAtFreeze out: a hand-run file never overrides them.`
       );
     }
-    const bytes = await objectBytes(handRun.key, writer.bucket, s3);
+    const bytes = await handRunBytes(
+      handRun.key,
+      'cms-fields.json',
+      writer.bucket,
+      s3
+    );
     const fileSha256 = sha256(bytes);
     if (fileSha256 !== handRun.sha256) {
       throw new IdentityExportEventError(
         `${handRun.key} has the sha256 ${fileSha256}, not the ${handRun.sha256} given in cmsFieldsAtFreeze: upload the file that was made, and give its sha256`
       );
+    }
+    const reportBytes = await handRunBytes(
+      handRun.reportKey,
+      'report.json',
+      writer.bucket,
+      s3
+    );
+    const reportSha256 = sha256(reportBytes);
+    if (reportSha256 !== handRun.reportSha256) {
+      throw new IdentityExportEventError(
+        `${handRun.reportKey} has the sha256 ${reportSha256}, not the ${handRun.reportSha256} given in cmsFieldsAtFreeze: upload the report.json made with the file, and give its sha256`
+      );
+    }
+    const problem = handRunReportProblem(
+      reportBytes.toString('utf8'),
+      freezeMs,
+      stage
+    );
+    if (problem) {
+      throw new IdentityExportEventError(`${handRun.reportKey}: ${problem}`);
     }
     return {
       bytes,
@@ -1383,6 +1425,9 @@ async function cmsFieldsAtFreeze(
         kind: 'hand_run',
         key: handRun.key,
         sha256: fileSha256,
+        reportKey: handRun.reportKey,
+        reportSha256,
+        reportFrozenAt: freeze,
         sitePointer: pointerKey,
         sitePointerRead: pointerRead.reason
       }
@@ -1448,6 +1493,107 @@ async function cmsFieldsAtFreeze(
   };
 }
 
+/**
+ * A hand-run file's bytes. S3 refusing the read (no such key, access
+ * denied) names the file and the key given; its message goes to the log.
+ */
+async function handRunBytes(
+  key: string,
+  what: string,
+  bucket: ExportBucket,
+  s3: Pick<S3Client, 'send'>
+): Promise<Buffer> {
+  try {
+    return await objectBytes(key, bucket, s3);
+  } catch (error) {
+    const { name, $metadata } = (error ?? {}) as {
+      name?: unknown;
+      $metadata?: unknown;
+    };
+    if (
+      isNetworkError(error) ||
+      typeof name !== 'string' ||
+      ($metadata === undefined && name !== 'NoSuchKey')
+    ) {
+      throw error;
+    }
+    logger.warn(
+      `[HAND-RUN FILE NOT READ] [${key}] ${String((error as Error)?.message ?? error)}`
+    );
+    throw new IdentityExportEventError(
+      `Can't read the hand-run ${what} at ${key}: ${errorName(error)}. Upload it there, or give the key it was uploaded to in cmsFieldsAtFreeze.`
+    );
+  }
+}
+
+/** The profile site export's pointer appeared while a hand-run run read. */
+export class SitePointerAppearedError extends Error {
+  constructor(message: string) {
+    super(message);
+    Object.setPrototypeOf(this, new.target.prototype);
+    this.name = 'SitePointerAppearedError';
+  }
+}
+
+/**
+ * Refuses a hand-run run once the profile site export's pointer for the
+ * freeze exists: the site run's values win. Any error reading it refuses
+ * too.
+ */
+async function refuseIfSiteRan(
+  writer: PrivateExportWriter,
+  sitePointer: string,
+  before: 'manifest' | 'pointer'
+): Promise<void> {
+  const read = await writer.readOutside(sitePointer);
+  if (read.found) {
+    throw new SitePointerAppearedError(
+      `The profile site export's pointer ${sitePointer} appeared while this run read the database: that run's values win over the hand-run file, so this run wrote no ${before === 'manifest' ? 'manifest and no pointer' : 'pointer'}. Run again without cmsFieldsAtFreeze.`
+    );
+  }
+}
+
+/**
+ * Why a hand-run report.json doesn't vouch for the freeze, or null: it
+ * must record this freeze (frozen_at, in milliseconds), the stage when it
+ * records one, and no profile whose publication couldn't be fetched (the
+ * CLI says not to use such an export).
+ */
+export function handRunReportProblem(
+  text: string,
+  freezeMs: number,
+  stage: string
+): string | null {
+  let report: Record<string, unknown>;
+  try {
+    report = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return "it isn't JSON: give the report.json the profile site export's CLI wrote with the file";
+  }
+  if (!report || typeof report !== 'object' || Array.isArray(report)) {
+    return "it isn't the profile site export CLI's report.json";
+  }
+  if (report.frozen_at !== freezeMs) {
+    return `it records frozen_at ${JSON.stringify(report.frozen_at ?? null)}, not this freeze (${freezeMs}, ${new Date(freezeMs).toISOString()}): make the file again with --frozen-at ${freezeMs}`;
+  }
+  if (report.stage !== undefined && report.stage !== stage) {
+    return `it is of the stage ${JSON.stringify(report.stage)}, not ${stage}`;
+  }
+  const profiles =
+    report.profiles && typeof report.profiles === 'object'
+      ? Object.values(report.profiles as Record<string, unknown>)
+      : [];
+  const unavailable = profiles.filter((it) => {
+    const list = (it as { publication_unavailable?: unknown })
+      ?.publication_unavailable;
+    return Array.isArray(list) && list.length > 0;
+  }).length;
+  if (unavailable > 0) {
+    return `${unavailable} profiles have stored publication records that couldn't be fetched, and the CLI says not to use such an export: make it again`;
+  }
+  return null;
+}
+
 /** Whose run a pointer names, as read back after S3 refused to write it. */
 export type PointerOwner =
   | { readonly owner: 'this run' | 'another run' }
@@ -1498,6 +1644,7 @@ function pointerErrorOf(
   error: unknown,
   read: PointerOwner | null
 ): string {
+  if (error instanceof SitePointerAppearedError) return error.message;
   if (read?.owner === 'another run') {
     return `${key} names another run for this freeze, written while this one ran, and was kept. Send both runs' prefix and manifestSha256 to the on-call engineer; to make this run the export, run again with replacePointer: true`;
   }
@@ -1677,11 +1824,11 @@ async function runJob(
         );
   if (atFreeze?.source.kind === 'hand_run') {
     logger.warn(
-      `[CMS FIELDS HAND RUN] [${atFreeze.source.key}] [SHA256 ${atFreeze.source.sha256}] [NO SITE POINTER: ${atFreeze.source.sitePointerRead.toUpperCase()}]`
+      `[CMS FIELDS HAND RUN] [${atFreeze.source.key}] [SHA256 ${atFreeze.source.sha256}] [REPORT ${atFreeze.source.reportKey}] [REPORT SHA256 ${atFreeze.source.reportSha256}] [NO SITE POINTER: ${atFreeze.source.sitePointerRead.toUpperCase()}]`
     );
     // The export file says so too.
     notes.push(
-      `cms: the profile site export didn't run for this freeze: the profile site values are a hand-run cms-fields.json (${atFreeze.source.key}, sha256 ${atFreeze.source.sha256})`
+      `cms: the profile site export didn't run for this freeze: the profile site values are a hand-run cms-fields.json (${atFreeze.source.key}, sha256 ${atFreeze.source.sha256}), its report.json for this freeze (${atFreeze.source.reportKey}, sha256 ${atFreeze.source.reportSha256})`
     );
   }
   const cmsBytes =
@@ -1905,6 +2052,12 @@ async function runJob(
     links_last_at_most: lastAtMost.toISOString(),
     files: written
   };
+  // A hand-run file stands only while the profile site export hasn't run
+  // for the freeze: if its pointer appeared during the read, its values
+  // win, and this run writes no manifest.
+  if (atFreeze?.source.kind === 'hand_run') {
+    await refuseIfSiteRan(writer, atFreeze.source.sitePointer, 'manifest');
+  }
   // Last in the run's prefix: a run that stops early has no manifest, and a
   // rehearsal has only manifest.unusable.json.
   const manifestPut = await writer.put(
@@ -1919,6 +2072,11 @@ async function runJob(
   let pointerError: string | null = null;
   if (usable && pointerKey !== null) {
     try {
+      // And again just before the pointer: the import takes the run the
+      // pointer names.
+      if (atFreeze?.source.kind === 'hand_run') {
+        await refuseIfSiteRan(writer, atFreeze.source.sitePointer, 'pointer');
+      }
       await writer.putOutside(
         pointerKey,
         JSON.stringify(

@@ -55,6 +55,10 @@ a job the function knows, or it fails. Each export:
 
 Each job's own section adds its own rules.
 
+The switch owner is the person in charge of the identity switch. Where this
+file leaves something to a decision, such as accepting a refused reading or
+choosing between two runs, the switch owner decides.
+
 ### An unknown replica lag
 
 Three refusals mean the run can't trust the reader's lag. Each names its
@@ -76,7 +80,7 @@ For each:
    you waited, or the `dated_ahead` refusal with its lead shrunk, the
    reader stopped updating: report it.
 2. Accept it only for a reading Monday's rehearsal also showed, and only
-   with the identity lead's agreement, by naming its case:
+   with the switch owner's agreement, by naming its case:
    - `"acceptUnknownReplicaLag":"unreadable"`;
    - `"acceptUnknownReplicaLag":{"older_than_gap":<ms>}`, with the largest
      row age to accept: Monday's larger `replicaLagAgeMs` plus 60000;
@@ -205,7 +209,7 @@ with. So 6529.io also:
    to publish a profile site (in the editor, or
    `POST /api/profile-cms/packages/{id}/publish`). It must fail with 423
    and the code `IDENTITY_FROZEN`. If the publish goes through, the site
-   isn't frozen: stop, and tell the coordinator before running the export.
+   isn't frozen: stop, and tell the switch owner before running the export.
 
 Monday's rehearsal passes only when it reads the setting as `time`, equal
 to Tuesday's freeze.
@@ -236,9 +240,9 @@ The team confirms once, before Monday:
 
 - **Who:** the deployment roles may invoke only `dbMigrationsLoop`, and can't
   read the bucket. The invoker needs `lambda:InvokeFunction` on
-  `dbDumpsDaily` in the region of the stage it runs. The deploy lead reports
-  that its credentials can invoke functions in both stages. Confirm that
-  before Monday, or have an admin grant it.
+  `dbDumpsDaily` in the region of the stage it runs. Whoever deploys
+  `dbDumpsDaily` reports that their credentials can invoke functions in both
+  stages. Confirm that before Monday, or have an admin grant it.
 - **Fetching:** needs no AWS access; the response's presigned links are
   enough.
 - **CLI:** AWS CLI v2 is required, since `--cli-binary-format` is v2 only.
@@ -293,7 +297,7 @@ Event fields:
 - `acceptSnapshotGapMinutes` (optional): allow a snapshot taken up to this
   many minutes after `frozenAt`. Without it the limit is 90.
 - `acceptWritesAfterFreeze` (optional): site writes after `frozenAt` the
-  coordinator accepted, at most 100, each `source:id@time` exactly as the
+  switch owner accepted, at most 100, each `source:id@time` exactly as the
   refusal lists it. Use it only as in "A publish that straddles the
   freeze", below.
 - `acceptUnknownReplicaLag` (optional): the untrusted lag cases the run may
@@ -302,21 +306,21 @@ Event fields:
   `{"older_than_gap":<largest row age in ms>}`, one or a list; `true` and
   a bare `"dated_ahead"` or `"older_than_gap"` are refused. Only as in "An
   unknown replica lag" (top of this file): after running once more, for a
-  reading Monday's rehearsal also showed, and with the identity lead's
+  reading Monday's rehearsal also showed, and with the switch owner's
   agreement. The manifest records the list, bounds included
   (`accept_unknown_replica_lag`), and the case accepted
   (`replica_lag_accepted`).
 - `replacePointer` (optional, `true`): let this run replace the by-freeze
   pointer an earlier run for the same freeze wrote. Without it, the pointer
   is written only if none is there. Only for a real run of every profile,
-  and only when the coordinator says so; the manifest records it
+  and only when the switch owner says so; the manifest records it
   (`replace_pointer`).
 
 Unknown fields are refused.
 
 Besides the rules every export keeps (top of this file), a real run of the
 profile site export refuses a snapshot holding a site publication, archive
-or pointer change after `frozenAt`, unless the coordinator accepted each of
+or pointer change after `frozenAt`, unless the switch owner accepted each of
 those writes (`acceptWritesAfterFreeze`; see "A publish that straddles the
 freeze").
 
@@ -341,20 +345,21 @@ still have finished, and its `seconds` is only in the logs. Don't run it
 again: see "If the CLI fails", below.
 
 Read `seconds` and `unavailableProfiles` in `out.json`, and send them to
-the identity lead.
+the on-call engineer.
 
 - If `unavailableProfiles` is above 0, some stored publication records
   couldn't be fetched at 4. Run the rehearsal again with `"concurrency":1`.
   If that run has none, Tuesday uses 1.
 - If `seconds` is above about 600 at the concurrency Tuesday will use,
   Tuesday's run doesn't fit one invocation. Then the export runs from a
-  checkout on a machine with database access, by a person the coordinator
-  arranges. No lane logs into a database.
+  checkout on a machine with database access, by a person the switch owner
+  arranges. Database access is by named people only.
 
 Check in `out.json`:
 
 - `stage` is `prod` in `us-east-1` (`staging` in `eu-west-1`). If it isn't,
-  the function's `NODE_ENV` is wrong. Tell the deploy lead before Tuesday.
+  the function's `NODE_ENV` is wrong. Tell whoever deploys
+  `dbDumpsDaily` before Tuesday.
 - `identityFreezeAtReading` is `time` and `identityFreezeAt` is
   `2026-11-24T00:00:00.000Z`. Anything else (`unset`, `not_a_time`, or
   another time), and the rehearsal hasn't passed: ask 6529.io to fix the
@@ -381,9 +386,10 @@ Check in `out.json`:
   report it, and never accept it on Tuesday. If it stayed the same (a time
   zone offset), write it down: Tuesday's `older_than_gap` bound is the
   larger age plus 60000, its `dated_ahead` bound the smaller lead minus 60000.
-- If either reading names a case, tell the identity lead and settle it
-  before Tuesday: Tuesday can accept only a case Monday showed, by its
-  name, as in "An unknown replica lag" (top of this file).
+- If either reading names a case, tell the on-call engineer and the switch
+  owner, and settle it before Tuesday: Tuesday can accept only a case
+  Monday showed, by its name, as in "An unknown replica lag" (top of this
+  file).
 
 Then test the download links: fetch the manifest and `links.json`, then one
 file by its link, and check each against its sha256.
@@ -458,8 +464,8 @@ after `frozenAt`. The run then refuses, listing each write as
 `...writes after the freeze that no one has accepted: packages:<id>@2026-11-24T00:00:00.412Z...`.
 
 1. Stop. Don't run it again with those writes yet.
-2. Send the whole error to the coordinator.
-3. Only after the coordinator accepts those writes, run again, listing each
+2. Send the whole error to the on-call engineer and the switch owner.
+3. Only after the switch owner accepts those writes, run again, listing each
    one exactly as the error does:
 
 ```text
@@ -492,14 +498,14 @@ time. The manifest and the response record the writes
   points to it:
   - `pointerError` says the pointer already names an earlier run: that
     earlier run stays the export. Send both runs' `prefix` and
-    `manifestSha256` to the coordinator. Only if the coordinator picks this
+    `manifestSha256` to the switch owner. Only if the switch owner picks this
     run, run again with `"replacePointer":true`.
   - `pointerError` says reading the pointer back failed: ask for links by
     `frozenAt`. If their prefix is this run's, the pointer is this run's and
     all is well. If not, it names an earlier run: do as in the case above,
     and fetch this run by its `prefix`.
   - Any other `pointerError` ("The pointer write failed", with the error's
-    code or name only): send the coordinator this run's `prefix` and
+    code or name only): send the switch owner this run's `prefix` and
     `manifestSha256`, and fetch fresh links by `prefix`, not `frozenAt`.
 - `endpoint` is `reader`, with `readOnly: true` and `evidence`: the export
   read DB_HOST_READ. `evidence.transactionReadOnly` is true, and
@@ -527,7 +533,7 @@ time. The manifest and the response record the writes
   its size too.
 
 Everything in the bucket, the pointer included, expires 30 days after it
-was written. Within the links' 6 hours, the coordinator downloads a complete
+was written. Within the links' 6 hours, the switch owner downloads a complete
 copy of the real export and keeps it with `out.json`: every file in the
 links file, the manifest included, and the pointer. These commands download
 everything and check every file's sha256 against the manifest. They work
@@ -665,7 +671,7 @@ sha256, its pointer (or `NOT WRITTEN`) and its seconds. Then ask for links
 by that `prefix`.
 
 Reading the logs needs `logs:FilterLogEvents` on `/aws/lambda/dbDumpsDaily`;
-ask the deploy lead if you don't have it.
+ask whoever deploys `dbDumpsDaily` if you don't have it.
 
 ```text
 $since = [DateTimeOffset]::UtcNow.AddHours(-1).ToUnixTimeMilliseconds()
