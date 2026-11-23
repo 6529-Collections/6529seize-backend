@@ -198,8 +198,9 @@ describeWithSeed('the subscriptions rebuild check', [], () => {
 
   beforeEach(async () => {
     setSqlExecutor(new TypeOrmExecutor());
-    // The identity mirror's principals table (the identity area's), which
-    // the cut reads; the test schema has no entity for it.
+    // A test fixture only: the identity mirror's principals table, which the
+    // cut reads. The identity mirror (#2516) owns it and creates it; until
+    // that is in, the test schema has no entity for it.
     await sqlExecutor.execute(`CREATE TABLE IF NOT EXISTS identity_chain_principals (
       principal_id varchar(66) NOT NULL PRIMARY KEY,
       profile_id varchar(50) NOT NULL UNIQUE,

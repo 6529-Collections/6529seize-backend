@@ -235,7 +235,14 @@ const PROBES: Probe[] = [
   {
     id: 'subs.top-up',
     path: '/api/subscriptions/consolidation/top-up/{key}',
-    each: { key: PROBE_CONSOLIDATION_KEYS }
+    each: { key: PROBE_CONSOLIDATION_KEYS },
+    ignore: [
+      {
+        path: '$.data[*].created_at',
+        reason:
+          "When discovery wrote the row. Ethereum doesn't carry it, so a rebuild's discovery writes its own time."
+      }
+    ]
   },
   {
     id: 'subs.logs',
@@ -395,7 +402,8 @@ export const subsManifest: AreaManifest = {
       volatileColumns: [
         {
           column: 'created_at',
-          reason: 'When discovery wrote the row; no route shows it.'
+          reason:
+            "When discovery wrote the row. Ethereum doesn't carry it, so a rebuild's discovery writes its own time; the top-up probe leaves it out too."
         }
       ]
     },
