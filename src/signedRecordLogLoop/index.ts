@@ -3,6 +3,7 @@ import {
   SignedRecordLogEntryEntity,
   SignedRecordLogSegmentEntity
 } from '@/entities/ISignedRecordLog';
+import { wireSignedRecordsChainAtStartup } from '@/signed-records/record-chain';
 import { createRecordLogSegmenter } from '@/signed-records/record-log/record-log';
 import { Logger } from '../logging';
 import { doInDbContext } from '../secrets';
@@ -23,6 +24,10 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         logger.info('[SIGNED RECORD LOG OFF]');
         return;
       }
+      // Wired for the tasks that read records (personal settings add one,
+      // the import): anchors and wallet owners from the chain gateway, as
+      // the API takes them. Closing and archiving segments read neither.
+      wireSignedRecordsChainAtStartup();
       const segmenter = createRecordLogSegmenter();
       if (process.env.SIGNED_RECORD_LOG_TASK === 'archive') {
         const archived = await segmenter.archive({});
