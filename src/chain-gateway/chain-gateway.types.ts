@@ -53,6 +53,11 @@ export interface ChainPageOptions extends ChainReadOptions {
   readonly limit?: number;
 }
 
+/**
+ * A page of a list. A page can be empty and still have a `next` (the
+ * node's walks stop after so many keys scanned): follow `next` until it
+ * is null, never stop at an empty page.
+ */
 export interface ChainPage<T> {
   readonly items: T[];
   readonly next: string | null;
@@ -415,7 +420,7 @@ export interface ChainDraftRequest {
   readonly maxFee?: string;
   /**
    * Best left out: the draft then reserves step 9's bound plus 150,000 RU.
-   * From rc.27 a value below the bound is refused (400); before, it was
+   * From 0.27.0 a value below the bound is refused (400); before, it was
    * raised to the bound alone.
    */
   readonly maxWork?: number;
