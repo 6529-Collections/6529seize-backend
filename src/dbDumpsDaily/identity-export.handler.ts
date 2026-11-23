@@ -1419,6 +1419,15 @@ async function cmsFieldsAtFreeze(
     if (problem) {
       throw new IdentityExportEventError(`${handRun.reportKey}: ${problem}`);
     }
+    const mismatch = handRunPairProblem(
+      bytes.toString('utf8'),
+      reportBytes.toString('utf8')
+    );
+    if (mismatch) {
+      throw new IdentityExportEventError(
+        `${handRun.key} isn't the cms-fields.json of the run that wrote ${handRun.reportKey}: ${mismatch}. Make both files again in one run of the CLI with --frozen-at ${freezeMs}, and upload both.`
+      );
+    }
     return {
       bytes,
       source: {
@@ -1520,6 +1529,11 @@ async function handRunBytes(
     logger.warn(
       `[HAND-RUN FILE NOT READ] [${key}] ${String((error as Error)?.message ?? error)}`
     );
+    if (name !== 'NoSuchKey' && name !== 'AccessDenied') {
+      throw new IdentityExportServiceError(
+        `An AWS call failed reading the hand-run ${what} at ${key}: ${errorName(error)}. It's S3 failing, not the file: run again later.`
+      );
+    }
     throw new IdentityExportEventError(
       `Can't read the hand-run ${what} at ${key}: ${errorName(error)}. Upload it there, or give the key it was uploaded to in cmsFieldsAtFreeze.`
     );
@@ -1574,7 +1588,7 @@ export function handRunReportProblem(
     return "it isn't the profile site export CLI's report.json";
   }
   if (report.frozen_at !== freezeMs) {
-    return `it records frozen_at ${JSON.stringify(report.frozen_at ?? null)}, not this freeze (${freezeMs}, ${new Date(freezeMs).toISOString()}): make the file again with --frozen-at ${freezeMs}`;
+    return `it records frozen_at ${JSON.stringify(report.frozen_at ?? null)}, not this freeze (${freezeMs}, ${new Date(freezeMs).toISOString()}): make cms-fields.json and report.json again in one run of the CLI with --frozen-at ${freezeMs}, and upload both`;
   }
   if (report.stage !== undefined && report.stage !== stage) {
     return `it is of the stage ${JSON.stringify(report.stage)}, not ${stage}`;
@@ -1590,6 +1604,52 @@ export function handRunReportProblem(
   }).length;
   if (unavailable > 0) {
     return `${unavailable} profiles have stored publication records that couldn't be fetched, and the CLI says not to use such an export: make it again`;
+  }
+  return null;
+}
+
+/**
+ * Why a hand-run cms-fields.json isn't the one its report.json was written
+ * with, or null. The report carries no hash of the file, so the two are
+ * held to each other profile by profile: every profile in the file is in
+ * the report, and a profile has a primary in the file exactly when the
+ * report carries its primary (primary_carried).
+ */
+export function handRunPairProblem(
+  cmsText: string,
+  reportText: string
+): string | null {
+  let cms: Record<string, unknown>;
+  let report: { profiles?: unknown };
+  try {
+    cms = JSON.parse(cmsText) as Record<string, unknown>;
+    report = JSON.parse(reportText) as { profiles?: unknown };
+  } catch {
+    return "one of them isn't JSON";
+  }
+  const profiles =
+    report.profiles &&
+    typeof report.profiles === 'object' &&
+    !Array.isArray(report.profiles)
+      ? (report.profiles as Record<string, { primary_carried?: unknown }>)
+      : null;
+  if (profiles === null) return 'the report lists no profiles';
+  const notInReport = Object.keys(cms).filter(
+    (id) => !Object.prototype.hasOwnProperty.call(profiles, id)
+  );
+  if (notInReport.length > 0) {
+    return `${notInReport.length} of its profiles aren't in the report (${notInReport.slice(0, 3).join(', ')})`;
+  }
+  const differ = Object.entries(profiles).filter(([id, it]) => {
+    const value = cms[id] as { primary?: unknown } | undefined;
+    const inFile = value?.primary !== undefined && value?.primary !== null;
+    return inFile !== (it?.primary_carried === true);
+  });
+  if (differ.length > 0) {
+    return `${differ.length} profiles have a primary in one and not the other (${differ
+      .slice(0, 3)
+      .map(([id]) => id)
+      .join(', ')})`;
   }
   return null;
 }
@@ -1644,7 +1704,6 @@ function pointerErrorOf(
   error: unknown,
   read: PointerOwner | null
 ): string {
-  if (error instanceof SitePointerAppearedError) return error.message;
   if (read?.owner === 'another run') {
     return `${key} names another run for this freeze, written while this one ran, and was kept. Send both runs' prefix and manifestSha256 to the on-call engineer; to make this run the export, run again with replacePointer: true`;
   }
@@ -2070,13 +2129,24 @@ async function runJob(
   // without it: a pointer not written is reported, not fatal.
   let writtenPointer: string | null = null;
   let pointerError: string | null = null;
-  if (usable && pointerKey !== null) {
+  // And again just before the pointer: the import takes the run the
+  // pointer names. A read that fails says nothing about the site run, so
+  // no pointer either.
+  if (usable && pointerKey !== null && atFreeze?.source.kind === 'hand_run') {
     try {
-      // And again just before the pointer: the import takes the run the
-      // pointer names.
-      if (atFreeze?.source.kind === 'hand_run') {
-        await refuseIfSiteRan(writer, atFreeze.source.sitePointer, 'pointer');
-      }
+      await refuseIfSiteRan(writer, atFreeze.source.sitePointer, 'pointer');
+    } catch (error) {
+      pointerError =
+        error instanceof SitePointerAppearedError
+          ? error.message
+          : `This run wrote no pointer: the profile site export's pointer ${atFreeze.source.sitePointer} couldn't be read again just before it (${errorName(error)}), so whether that run finished meanwhile is unknown. Run again: the new run writes the pointer if the site pointer is still missing.`;
+      logger.warn(
+        `[POINTER NOT WRITTEN] [${pointerKey}] ${pointerError} ${String((error as Error)?.message ?? error)}`
+      );
+    }
+  }
+  if (usable && pointerKey !== null && pointerError === null) {
+    try {
       await writer.putOutside(
         pointerKey,
         JSON.stringify(

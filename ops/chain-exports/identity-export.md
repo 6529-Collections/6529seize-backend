@@ -134,12 +134,16 @@ deployed, or it fails), the values can come from files made by hand:
 
 1. Confirm with whoever deploys `dbDumpsDaily` that the profile site export
    job is not running and won't run for this freeze, and don't run it for
-   this freeze afterwards: once its pointer exists, its values win.
+   this freeze afterwards. If a site run for the freeze finishes after a
+   hand-run export was written anyway, run the identity export again
+   without `cmsFieldsAtFreeze`, with `"replacePointer":true`, so the
+   freeze's export takes the site run's values.
 2. Make the files with the profile site export's CLI on the production
    database, after the freeze, the freeze in milliseconds:
    `6529 run profile-cms:export -- --out <dir> --frozen-at 1795478400000`.
-   It writes `cms-fields.json` and `report.json`. If it says "Do not use
-   this export", make them again.
+   It writes `cms-fields.json` and `report.json`: upload the two from the
+   same run, never one remade alone. If it says "Do not use this export",
+   make both again.
 3. Take each file's sha256 (`Get-FileHash -Algorithm SHA256`, or
    `sha256sum`), in lower case, and upload them to the chain exports bucket
    as `identity-export/inputs/cms-fields-2026-11-24.json` and
@@ -167,14 +171,22 @@ The run refuses, before reading the database:
 - if `report.json` doesn't record this freeze as `frozen_at` (in
   milliseconds), records another stage, or lists a profile whose
   publication couldn't be fetched;
+- if `cms-fields.json` isn't the one written with that `report.json`: a
+  profile in the file that the report doesn't list, or a profile with a
+  primary in one and not the other (the report's `primary_carried`). The
+  report carries no hash of the file, so this is how the two are held to
+  each other. Make both again in one run and upload both;
 - if the file is `{}`, unless `"acceptNoCmsFields":true`, as for a site
   run with no sites.
 
 It reads the site pointer again just before it writes its manifest, and
 again before its pointer. If the profile site export's pointer appeared
 while it read the database, it refuses with no manifest, or, if the
-pointer appeared after the manifest, writes no pointer: that run's values
-win. Run again without `cmsFieldsAtFreeze`.
+pointer appeared after the manifest, writes no pointer: run again without
+`cmsFieldsAtFreeze`. If that second read fails, it writes no pointer and
+says so in `pointerError`: run again. A site pointer that appears after
+the hand-run export's pointer is written isn't seen by this run: then run
+again without `cmsFieldsAtFreeze`, with `"replacePointer":true`.
 
 `cmsFieldsSource` in the response, and `cms_fields_source` in the manifest,
 record the files as `"kind":"hand_run"`: the file's `key` and `sha256`, the

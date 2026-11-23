@@ -930,13 +930,18 @@ describe('runIdentityExportJob', () => {
 
   describe("a hand-run cms-fields.json at the freeze, when the profile site export didn't run", () => {
     const HAND = 'identity-export/inputs/cms-fields-2026-11-24.json';
+    const PROFILE = '00000000-0000-4000-8000-0000000a11ce';
+    const OTHER = '00000000-0000-4000-8000-000000000b0b';
     const REPORT = 'identity-export/inputs/report-2026-11-24.json';
     const handCms = '{"00000000-0000-4000-8000-0000000a11ce": {"primary": {}}}';
     const report = (over: Record<string, unknown> = {}) =>
       JSON.stringify(
         {
           frozen_at: T,
-          profiles: { a: { publication_unavailable: [] } },
+          profiles: {
+            [PROFILE]: { publication_unavailable: [], primary_carried: true },
+            [OTHER]: { publication_unavailable: [], primary_carried: false }
+          },
           public_check: null,
           ...over
         },
@@ -1097,7 +1102,7 @@ describe('runIdentityExportJob', () => {
       [
         'another freeze',
         report({ frozen_at: T - 86_400_000 }),
-        `it records frozen_at ${T - 86_400_000}, not this freeze (${T}, ${FREEZE_ISO}): make the file again with --frozen-at ${T}`
+        `it records frozen_at ${T - 86_400_000}, not this freeze (${T}, ${FREEZE_ISO}): make cms-fields.json and report.json again in one run of the CLI with --frozen-at ${T}, and upload both`
       ],
       [
         'no freeze',
@@ -1137,6 +1142,81 @@ describe('runIdentityExportJob', () => {
         expect(order).toEqual([]);
       }
     );
+
+    it.each([
+      [
+        "a profile the report doesn't list",
+        JSON.stringify({
+          [PROFILE]: { primary: {} },
+          '00000000-0000-4000-8000-00000000c0de': { primary: {} }
+        }),
+        "1 of its profiles aren't in the report (00000000-0000-4000-8000-00000000c0de)"
+      ],
+      [
+        'a primary the report does not carry',
+        JSON.stringify({
+          [PROFILE]: { primary: {} },
+          [OTHER]: { primary: {} }
+        }),
+        `1 profiles have a primary in one and not the other (${OTHER})`
+      ],
+      [
+        'no primary for one the report carries',
+        JSON.stringify({ [PROFILE]: { archive: 'bafyarchive' } }),
+        `1 profiles have a primary in one and not the other (${PROFILE})`
+      ]
+    ])(
+      'refuses a cms-fields.json from another run than its report: %s',
+      async (_what, cms, reason) => {
+        mockBuild.mockResolvedValue(document());
+        const { deps, order } = setup({ objects: files(cms) });
+        await expect(run(deps, handRun({}, cms))).rejects.toThrow(
+          `${HAND} isn't the cms-fields.json of the run that wrote ${REPORT}: ${reason}. Make both files again in one run of the CLI with --frozen-at ${T}, and upload both.`
+        );
+        expect(deps.openSnapshot).not.toHaveBeenCalled();
+        expect(order).toEqual([]);
+      }
+    );
+
+    it('takes a cms-fields.json and report.json of the same run, archive-only profiles included', async () => {
+      mockBuild.mockResolvedValue(document());
+      const cms = JSON.stringify({
+        [PROFILE]: { primary: {} },
+        [OTHER]: { archive: 'bafyarchive' }
+      });
+      const { deps } = setup({ objects: files(cms) });
+      const result = await run(deps, handRun({}, cms));
+      expect(result.cmsFieldsSource).toMatchObject({
+        kind: 'hand_run',
+        sha256: sha(cms)
+      });
+    });
+
+    it('names an S3 failure reading a hand-run file as one, not a file to upload', async () => {
+      mockBuild.mockResolvedValue(document());
+      const { deps, send } = setup({ objects: files() });
+      const answer = send.getMockImplementation()!;
+      send.mockImplementation(async (command: any) => {
+        if (
+          command instanceof GetObjectCommand &&
+          command.input.Key === REPORT
+        ) {
+          throw Object.assign(new Error('We encountered an internal error'), {
+            name: 'InternalError',
+            $metadata: { httpStatusCode: 500 }
+          });
+        }
+        return answer(command);
+      });
+      const error = await run(deps, handRun()).then(
+        () => null,
+        (e: Error) => e
+      );
+      expect(error?.name).toBe('IdentityExportServiceError');
+      expect(error?.message).toBe(
+        `An AWS call failed reading the hand-run report.json at ${REPORT}: InternalError (500). It's S3 failing, not the file: run again later.`
+      );
+    });
 
     it('names the hand-run file and its key when S3 refuses its read', async () => {
       mockBuild.mockResolvedValue(document());
@@ -1247,15 +1327,50 @@ describe('runIdentityExportJob', () => {
       expect(bodies.has(POINTER)).toBe(false);
     });
 
+    it("writes no pointer when the site pointer can't be read again before it, saying why", async () => {
+      mockBuild.mockResolvedValue(document());
+      const { deps, bodies, send } = setup({ objects: files() });
+      const answer = send.getMockImplementation()!;
+      let manifestWritten = false;
+      send.mockImplementation(async (command: any) => {
+        if (
+          manifestWritten &&
+          command instanceof GetObjectCommand &&
+          command.input.Key === SITE_POINTER
+        ) {
+          throw Object.assign(new Error('Service Unavailable'), {
+            name: 'ServiceUnavailable',
+            $metadata: { httpStatusCode: 503 }
+          });
+        }
+        const result = await answer(command);
+        if (
+          command instanceof PutObjectCommand &&
+          command.input.Key!.endsWith('/manifest.json')
+        ) {
+          manifestWritten = true;
+        }
+        return result;
+      });
+      const result = await run(deps, handRun());
+      expect(result.pointerKey).toBeNull();
+      expect(result.pointerError).toBe(
+        `This run wrote no pointer: the profile site export's pointer ${SITE_POINTER} couldn't be read again just before it (ServiceUnavailable (503)), so whether that run finished meanwhile is unknown. Run again: the new run writes the pointer if the site pointer is still missing.`
+      );
+      expect(bodies.has(POINTER)).toBe(false);
+    });
+
     it('takes an empty file only with acceptNoCmsFields, as a site run', async () => {
       mockBuild.mockResolvedValue(document());
-      const event = handRun({}, '{}');
-      const empty = setup({ objects: files('{}') });
+      // A run with no sites: no profile carries a primary.
+      const none = report({ profiles: {} });
+      const event = handRun({}, '{}', none);
+      const empty = setup({ objects: files('{}', none) });
       await expect(run(empty.deps, event)).rejects.toThrow(
         'the profile site export has no profile site values (its cms-fields.json is empty), so no identity would carry one. Only if that site export really has no sites, acknowledge it with "acceptNoCmsFields": true'
       );
       expect(empty.deps.openSnapshot).not.toHaveBeenCalled();
-      const accepted = setup({ objects: files('{}') });
+      const accepted = setup({ objects: files('{}', none) });
       const result = await run(accepted.deps, {
         ...event,
         acceptNoCmsFields: true
