@@ -264,13 +264,31 @@ jobs:
         shell: bash
         env:
           AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          AWS_DROP_FORGE_DEPLOY_ROLE_ARN: ${{ vars.AWS_DROP_FORGE_DEPLOY_ROLE_ARN }}
         run: |
           set -euo pipefail
-          if ! [[ "$AWS_DEPLOY_ROLE_ARN" =~ ^arn:aws:iam::([0-9]{12}):role/[A-Za-z0-9_+=,.@/-]+$ ]]; then
+          role_arn_pattern='^arn:aws:iam::([0-9]{12}):role/[A-Za-z0-9_+=,.@/-]+$'
+          if ! [[ "$AWS_DEPLOY_ROLE_ARN" =~ $role_arn_pattern ]]; then
             echo "::error::Configure AWS_DEPLOY_ROLE_ARN in the selected GitHub environment with a valid IAM role ARN"
             exit 1
           fi
-          echo "account_id=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          account_id="${BASH_REMATCH[1]}"
+          role_arn="$AWS_DEPLOY_ROLE_ARN"
+          case "$INPUT_SERVICE" in
+            dropForgeLaunchHandler|memesDistributionHandler)
+              if ! [[ "$AWS_DROP_FORGE_DEPLOY_ROLE_ARN" =~ $role_arn_pattern ]]; then
+                echo "::error::Configure AWS_DROP_FORGE_DEPLOY_ROLE_ARN in the selected GitHub environment with a valid IAM role ARN"
+                exit 1
+              fi
+              if [[ "${BASH_REMATCH[1]}" != "$account_id" || "$AWS_DROP_FORGE_DEPLOY_ROLE_ARN" == "$role_arn" ]]; then
+                echo "::error::AWS_DROP_FORGE_DEPLOY_ROLE_ARN must select a dedicated role in the same AWS account as AWS_DEPLOY_ROLE_ARN"
+                exit 1
+              fi
+              role_arn="$AWS_DROP_FORGE_DEPLOY_ROLE_ARN"
+              ;;
+          esac
+          echo "arn=$role_arn" >> "$GITHUB_OUTPUT"
+          echo "account_id=$account_id" >> "$GITHUB_OUTPUT"
       - name: Checkout
         id: source
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -317,7 +335,7 @@ jobs:
         if: github.event.inputs.environment == 'staging'
         uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ steps.deploy_role.outputs.arn }}
           allowed-account-ids: ${{ steps.deploy_role.outputs.account_id }}
           role-session-name: backend-staging-${{ github.run_id }}
           unset-current-credentials: true
@@ -327,7 +345,7 @@ jobs:
         if: github.event.inputs.environment == 'prod'
         uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ steps.deploy_role.outputs.arn }}
           allowed-account-ids: ${{ steps.deploy_role.outputs.account_id }}
           role-session-name: backend-prod-${{ github.run_id }}
           unset-current-credentials: true

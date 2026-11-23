@@ -31,16 +31,26 @@ const steps: WorkflowStep[] = job.steps;
 const stagingCondition = "github.event.inputs.environment == 'staging'";
 const productionCondition = "github.event.inputs.environment == 'prod'";
 const roleArn = 'arn:aws:iam::123456789012:role/gha-backend-deploy-staging';
+const dropForgeRoleArn = roleArn.replace(
+  'deploy-staging',
+  'deploy-drop-forge-staging'
+);
 const validation = steps.find((step) => step.id === 'deploy_role')!;
 
-function validateRole(value: string) {
+function validateRole(value: string, service = 'api', dropForgeRole = '') {
   const directory = mkdtempSync(path.join(tmpdir(), 'deploy-oidc-'));
   const output = path.join(directory, 'output');
   try {
     const result = spawnSync('bash', ['-c', validation.run!], {
       encoding: 'utf8',
       timeout: 10000,
-      env: { ...process.env, AWS_DEPLOY_ROLE_ARN: value, GITHUB_OUTPUT: output }
+      env: {
+        ...process.env,
+        INPUT_SERVICE: service,
+        AWS_DEPLOY_ROLE_ARN: value,
+        AWS_DROP_FORGE_DEPLOY_ROLE_ARN: dropForgeRole,
+        GITHUB_OUTPUT: output
+      }
     });
     return {
       ...result,
@@ -164,7 +174,7 @@ describe('backend deployment OIDC boundary', () => {
     const staging = credentials.find((step) => step.if === stagingCondition)!;
     expect(staging.id).toBe('aws_credentials_staging');
     expect(staging.with).toEqual({
-      'role-to-assume': '${{ vars.AWS_DEPLOY_ROLE_ARN }}',
+      'role-to-assume': '${{ steps.deploy_role.outputs.arn }}',
       'allowed-account-ids': '${{ steps.deploy_role.outputs.account_id }}',
       'role-session-name': 'backend-staging-${{ github.run_id }}',
       'unset-current-credentials': true,
@@ -175,7 +185,7 @@ describe('backend deployment OIDC boundary', () => {
     )!;
     expect(production.id).toBe('aws_credentials');
     expect(production.with).toEqual({
-      'role-to-assume': '${{ vars.AWS_DEPLOY_ROLE_ARN }}',
+      'role-to-assume': '${{ steps.deploy_role.outputs.arn }}',
       'allowed-account-ids': '${{ steps.deploy_role.outputs.account_id }}',
       'role-session-name': 'backend-prod-${{ github.run_id }}',
       'unset-current-credentials': true,
@@ -186,7 +196,9 @@ describe('backend deployment OIDC boundary', () => {
   it('validates the environment variable before checkout, builds, or authentication', () => {
     expect(validation.if).toBeUndefined();
     expect(validation.env).toEqual({
-      AWS_DEPLOY_ROLE_ARN: '${{ vars.AWS_DEPLOY_ROLE_ARN }}'
+      AWS_DEPLOY_ROLE_ARN: '${{ vars.AWS_DEPLOY_ROLE_ARN }}',
+      AWS_DROP_FORGE_DEPLOY_ROLE_ARN:
+        '${{ vars.AWS_DROP_FORGE_DEPLOY_ROLE_ARN }}'
     });
     expect(validation.run).not.toContain('${{');
     const validationIndex = steps.indexOf(validation);
@@ -199,10 +211,10 @@ describe('backend deployment OIDC boundary', () => {
   it.each([roleArn, roleArn.replace('role/', 'role/deployment/')])(
     'accepts a role ARN and restricts the expected account: %s',
     (value) => {
-      const result = validateRole(value);
+      const result = validateRole(value, 'api', dropForgeRoleArn);
       expect(result.error).toBeUndefined();
       expect(result.status).toBe(0);
-      expect(result.output).toBe('account_id=123456789012\n');
+      expect(result.output).toBe(`arn=${value}\naccount_id=123456789012\n`);
     }
   );
 
@@ -220,6 +232,29 @@ describe('backend deployment OIDC boundary', () => {
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(1);
     expect(result.stdout).toContain('Configure AWS_DEPLOY_ROLE_ARN');
+    expect(result.output).toBeUndefined();
+  });
+
+  it.each(['dropForgeLaunchHandler', 'memesDistributionHandler'])(
+    'selects the dedicated deploy role for %s',
+    (service) => {
+      const result = validateRole(roleArn, service, dropForgeRoleArn);
+      expect(result.status).toBe(0);
+      expect(result.output).toBe(
+        `arn=${dropForgeRoleArn}\naccount_id=123456789012\n`
+      );
+    }
+  );
+
+  it.each([
+    '',
+    'drop-forge-deploy',
+    roleArn,
+    dropForgeRoleArn.replace('123456789012', '999999999999')
+  ])('fails closed on invalid Drop Forge role configuration: %j', (value) => {
+    const result = validateRole(roleArn, 'dropForgeLaunchHandler', value);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('AWS_DROP_FORGE_DEPLOY_ROLE_ARN');
     expect(result.output).toBeUndefined();
   });
 });
