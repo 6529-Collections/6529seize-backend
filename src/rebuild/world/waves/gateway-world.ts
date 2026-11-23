@@ -28,6 +28,11 @@ export interface WavesGatewayWorld {
   readonly chain: FakeChain;
   readonly doneHeight: number;
   readonly markHeight: number;
+  /**
+   * Heights the node serves only as head views, never finalized (finality
+   * moves a checkpoint at a time): a pinned read there is stamped `head`.
+   */
+  readonly headViews?: ReadonlySet<number>;
 }
 
 const G1 = id('91');
@@ -201,6 +206,23 @@ function all(
 
 /** One GET of the gateway's read API, answered from the world. */
 export async function answerGatewayRequest(
+  world: WavesGatewayWorld,
+  rawUrl: string
+): Promise<Answer> {
+  const answer = await answerAtHeight(world, rawUrl);
+  const asked = new URL(rawUrl, 'http://world').searchParams.get('height');
+  const read = answer.json.read as Record<string, unknown> | undefined;
+  if (asked !== null && read && world.headViews?.has(Number(asked))) {
+    // As the node answers a height it holds only as a head view.
+    return {
+      ...answer,
+      json: { ...answer.json, read: { ...read, at: 'head' } }
+    };
+  }
+  return answer;
+}
+
+async function answerAtHeight(
   world: WavesGatewayWorld,
   rawUrl: string
 ): Promise<Answer> {

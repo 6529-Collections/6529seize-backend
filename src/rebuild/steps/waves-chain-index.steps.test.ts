@@ -8,6 +8,7 @@ import { FakeIndexDb } from '@/tests/fixtures/waves-chain-index.fixture';
 import { IndexTableName } from '@/waves-chain-index/waves-chain-index.db';
 import {
   ChainIndexSource,
+  firstFinalizedFrom,
   gatewayChainIndexSource,
   indexChainTo
 } from './waves-chain-index.steps';
@@ -143,6 +144,49 @@ describe('the waves chain index rebuild step', () => {
       )
     ).toEqual([]);
     expect(db.rows('waves')).toEqual([]);
+  });
+
+  it("starts at the first finalized height when the import's own is only a head view", async () => {
+    const skipped: WavesGatewayWorld = {
+      ...world,
+      headViews: new Set([world.doneHeight, world.doneHeight + 1])
+    };
+    const node = await startGatewayWorld(skipped);
+    try {
+      const db = new FakeIndexDb();
+      const heights = await indexChainTo(
+        gatewayChainIndexSource(node.url),
+        db.asDb(),
+        null
+      );
+      expect(heights).toEqual([world.doneHeight + 2, world.markHeight]);
+      expect(db.state).toMatchObject({
+        fullFromHeight: world.doneHeight + 2,
+        feedNext: world.markHeight + 1
+      });
+      expect(db.events.every((e) => e.height > world.doneHeight + 2)).toBe(
+        true
+      );
+    } finally {
+      await node.close();
+    }
+  });
+
+  it('says so when no height from the import to the mark is finalized', async () => {
+    const heights = new Set<number>();
+    for (let h = world.doneHeight; h < world.markHeight; h++) heights.add(h);
+    const node = await startGatewayWorld({ ...world, headViews: heights });
+    try {
+      await expect(
+        firstFinalizedFrom(
+          gatewayChainIndexSource(node.url),
+          world.doneHeight,
+          world.markHeight - 1
+        )
+      ).rejects.toThrow(/No height from the waves import's/);
+    } finally {
+      await node.close();
+    }
   });
 
   it('refuses a mark past the finalized height', async () => {

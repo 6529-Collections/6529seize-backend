@@ -1,6 +1,7 @@
 import {
   ChainGatewayClient,
-  chainGatewayConfigFromEnv
+  chainGatewayConfigFromEnv,
+  ChainGatewayError
 } from '@/chain-gateway/chain-gateway.client';
 import { Logger } from '@/logging';
 import { RebuildContext } from '@/rebuild/manifest.types';
@@ -142,10 +143,40 @@ export async function indexAtHeight(
 }
 
 /**
+ * The first height at or after the waves import's completion (`done`) that
+ * the gateway serves as finalized, up to `upTo`, with its read stamp.
+ * Finality can move a checkpoint at a time, so the import's own height may
+ * never be a finalized one: the node serves it only as a head view, which
+ * a pinned read refuses (`height_gone`). Each height is asked in turn, so
+ * a recording holds the same answers a replay asks for.
+ */
+export async function firstFinalizedFrom(
+  source: ChainIndexSource,
+  done: number,
+  upTo: number
+): Promise<PinnedHead> {
+  for (let at = done; at <= upTo; at++) {
+    try {
+      return await source.headAt(at);
+    } catch (error) {
+      if (
+        !(error instanceof ChainGatewayError && error.code === 'height_gone')
+      ) {
+        throw error;
+      }
+    }
+  }
+  throw new Error(
+    `No height from the waves import's ${done} to ${upTo} is finalized at the gateway`
+  );
+}
+
+/**
  * The index from empty, as 6529.io's index would have read it from the
- * switch: a full read at the height the waves import completed, then the
- * feed from there to `target`, so the event log holds every block after
- * the import. Returns the heights it read at.
+ * switch: a full read at the first finalized height at or after the one the
+ * waves import completed at (firstFinalizedFrom), then the feed from there
+ * to `target`, so the event log holds every block after it. Returns the
+ * heights it read at.
  */
 export async function indexChainTo(
   source: ChainIndexSource,
@@ -166,14 +197,16 @@ export async function indexChainTo(
     );
     return [];
   }
-  const heights =
-    atMark.doneHeight < height ? [atMark.doneHeight, height] : [height];
-  for (const at of heights) {
-    const head = at === height ? atMark : await source.headAt(at);
+  const start =
+    atMark.doneHeight < height
+      ? await firstFinalizedFrom(source, atMark.doneHeight, height)
+      : atMark;
+  const heads = start.finalizedHeight < height ? [start, atMark] : [atMark];
+  for (const head of heads) {
     const runs = await indexAtHeight(source.api, db, head);
-    logger.info(`[CHAIN INDEX AT ${at}] ${runs} runs`);
+    logger.info(`[CHAIN INDEX AT ${head.finalizedHeight}] ${runs} runs`);
   }
-  return heights;
+  return heads.map((head) => head.finalizedHeight);
 }
 
 function gatewayOf(ctx: RebuildContext): string {

@@ -110,4 +110,49 @@ describe('the waves gateway capture', () => {
       await replay.stop();
     }
   });
+
+  it('starts after an import height the node never finalized, and replays the same', async () => {
+    const skipped: WavesGatewayWorld = {
+      ...world,
+      headViews: new Set([world.doneHeight, world.doneHeight + 1])
+    };
+    const skippedNode = await startGatewayWorld(skipped);
+    try {
+      const result = await captureWavesGateway({
+        gateway: skippedNode.url,
+        dir,
+        madeBy: 'a test of the capture',
+        pollMs: 10,
+        waitForMark: async () => undefined
+      });
+      expect(result).toMatchObject({
+        doneHeight: world.doneHeight,
+        startHeight: world.doneHeight + 2,
+        markHeight: world.markHeight
+      });
+      const replay = await startHttpRecording({ name: 'gateway', dir });
+      try {
+        const replayed = new FakeIndexDb();
+        expect(
+          await indexChainTo(
+            gatewayChainIndexSource(replay.url),
+            replayed.asDb(),
+            null
+          )
+        ).toEqual([world.doneHeight + 2, world.markHeight]);
+        expect(replay.problems()).toEqual([]);
+        const direct = new FakeIndexDb();
+        await indexChainTo(
+          gatewayChainIndexSource(skippedNode.url),
+          direct.asDb(),
+          null
+        );
+        expect(snapshot(replayed)).toEqual(snapshot(direct));
+      } finally {
+        await replay.stop();
+      }
+    } finally {
+      await skippedNode.close();
+    }
+  });
 });

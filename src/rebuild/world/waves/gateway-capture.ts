@@ -12,6 +12,7 @@ import {
   writeProvenance
 } from '@/rebuild/sources/running-source';
 import {
+  firstFinalizedFrom,
   gatewayChainIndexSource,
   indexChainTo
 } from '@/rebuild/steps/waves-chain-index.steps';
@@ -21,9 +22,10 @@ import { FakeIndexDb } from '@/tests/fixtures/waves-chain-index.fixture';
  * Records, from a devnet's API-mode node, every gateway answer the waves
  * rebuild reads, so a run replays them (`--source gateway=replay:<dir>`).
  *
- * The rebuild reads at two heights: the one the waves import completed at
- * and the mark. A node keeps only its last few heights, so the capture
- * reads the import's height as soon as the import is final (phase 1), then
+ * The rebuild reads at two heights: the first finalized height at or after
+ * the one the waves import completed at, and the mark. A node keeps only
+ * its last few heights, so the capture reads the first as soon as the
+ * import is final (phase 1), then
  * waits until the native writes are final (phase 2): the node's finalized
  * height then is the mark, read once and kept as the recording's
  * /v1/status. Phase 2 reads from empty, as a rebuild does: what phase 1
@@ -46,6 +48,8 @@ export interface GatewayCaptureOptions {
 
 export interface GatewayCaptureResult {
   readonly doneHeight: number;
+  /** The first finalized height at or after doneHeight: the index's start. */
+  readonly startHeight: number;
   readonly markHeight: number;
   readonly exchanges: number;
 }
@@ -154,13 +158,18 @@ export async function captureWavesGateway(
       options.pollMs ?? 2000,
       log
     );
-    // Phase 1: everything at the import's height, while the node holds it.
-    await indexChainTo(
-      gatewayChainIndexSource(recorder.url),
-      new FakeIndexDb().asDb(),
-      doneHeight
+    // Phase 1: everything at the first finalized height at or after the
+    // import's (it may not be finalized itself), while the node holds it.
+    const source = gatewayChainIndexSource(recorder.url);
+    const start = await firstFinalizedFrom(
+      source,
+      doneHeight,
+      await source.finalizedHeight()
     );
-    log(`[GATEWAY CAPTURE] phase 1 done: ${recorder.kept.size} answers`);
+    await indexChainTo(source, new FakeIndexDb().asDb(), start.finalizedHeight);
+    log(
+      `[GATEWAY CAPTURE] phase 1 done at ${start.finalizedHeight}: ${recorder.kept.size} answers`
+    );
     await options.waitForMark();
     // Phase 2: as a rebuild reads, from empty, to the node's finalized
     // height now (the mark), kept as the recording's status.
@@ -171,20 +180,25 @@ export async function captureWavesGateway(
       null
     );
     const markHeight = heights[heights.length - 1];
-    if (heights[0] !== doneHeight || markHeight === undefined) {
+    if (heights[0] !== start.finalizedHeight || markHeight === undefined) {
       throw new Error(
-        `The rebuild's heights ${heights.join(', ')} don't start at the import's ${doneHeight}`
+        `The rebuild's heights ${heights.join(', ')} don't start at phase 1's ${start.finalizedHeight}`
       );
     }
     writeProvenance(options.dir, {
       made_by: options.madeBy,
-      note: `The waves import completed at height ${doneHeight}; the mark is height ${markHeight}.`,
+      note: `The waves import completed at height ${doneHeight}; the index starts at ${start.finalizedHeight}, the first finalized height from it; the mark is height ${markHeight}.`,
       recorded_at: new Date().toISOString()
     });
     log(
-      `[GATEWAY CAPTURE] done: ${recorder.kept.size} answers, heights ${doneHeight} and ${markHeight}`
+      `[GATEWAY CAPTURE] done: ${recorder.kept.size} answers, import ${doneHeight}, heights ${start.finalizedHeight} and ${markHeight}`
     );
-    return { doneHeight, markHeight, exchanges: recorder.kept.size };
+    return {
+      doneHeight,
+      startHeight: start.finalizedHeight,
+      markHeight,
+      exchanges: recorder.kept.size
+    };
   } finally {
     await recorder.stop();
   }
