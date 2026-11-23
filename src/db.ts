@@ -66,6 +66,8 @@ import {
   Delegation,
   DelegationEvent,
   NFTDelegationBlock,
+  NFTDelegationLogAfterFreeze,
+  NftDelegationLogRecord,
   WalletConsolidationKey
 } from './entities/IDelegation';
 import { ENS } from './entities/IENS';
@@ -592,6 +594,26 @@ export async function fetchLatestNftDelegationBlock(): Promise<number> {
     .select('MAX(block)', 'maxBlock')
     .getRawOne();
   return block.maxBlock ?? 0;
+}
+
+/**
+ * Keeps NFTDelegation logs after the identity freeze block for the record.
+ * A log already kept (same block and log index) is left as it is, so a scan
+ * that reads a block twice stores it once.
+ */
+export async function persistNftDelegationLogsAfterFreeze(
+  logs: NftDelegationLogRecord[],
+  freezeBlock: number
+) {
+  if (!logs.length) {
+    return;
+  }
+  await AppDataSource.getRepository(NFTDelegationLogAfterFreeze)
+    .createQueryBuilder()
+    .insert()
+    .values(logs.map((log) => ({ ...log, freeze_block: freezeBlock })))
+    .orIgnore()
+    .execute();
 }
 
 export async function persistNftDelegationBlock(
