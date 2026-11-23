@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { AreaManifest, Probe, RebuildStep } from '@/rebuild/manifest.types';
 import { PROBE_CALLER, PROBE_WALLETS } from '@/rebuild/manifests/probe-fixture';
+import { writtenTables } from '@/rebuild/step-writes';
 
 /** A fake wave, drop and device id the seed uses for its rows. */
 const PROBE_WAVE = '00000000-0000-4000-8000-000000000001';
@@ -111,6 +112,46 @@ const PROBES: Probe[] = [
 ];
 
 /**
+ * The signed record heads personal settings keep, as (family, rtype), live
+ * (PersonalRecordsService.submit) and in the rebuild (rebuildPersonalTables):
+ *
+ * - Per-key heads: RecordIndexer.applyLocked puts one for each applied
+ *   change of a type personalRecordHandlers registers
+ *   (personal-record-types.ts). `follow` is a ps RECORD and a pv sealed
+ *   item; every other type is a pv sealed item. A ps RECORD of a type
+ *   personal doesn't register gets no head from its indexer.
+ * - `~owner`: each owner's newest applied settings record (ownerMarkKey,
+ *   personal-record-heads.ts), always in pv; put live and by
+ *   restoreServiceHeads.
+ * - `~keys` and `~reader`: keys and reader records, logged once (logHeadKey
+ *   and takeLogHead, personal-record-heads.ts). Keys records are SEALED,
+ *   which ps doesn't carry (record-families.ts), and readers are pv
+ *   RECORDs, so both are pv only.
+ *
+ * The import's own types keep no head: the rebuild applies import entries
+ * and report effects with `heads: false` (personal-import.ts), and a signed
+ * record of such a type is refused.
+ */
+const PERSONAL_HEAD_TYPES = [
+  ['ps', 'follow'],
+  ['pv', 'follow'],
+  ['pv', 'mute'],
+  ['pv', 'block'],
+  ['pv', 'art-alert'],
+  ['pv', 'hide'],
+  ['pv', 'bookmark'],
+  ['pv', 'pin'],
+  ['pv', 'wave-notify'],
+  ['pv', 'pref'],
+  ['pv', 'alias'],
+  ['pv', 'push'],
+  ['pv', 'eula'],
+  ['pv', '~owner'],
+  ['pv', '~keys'],
+  ['pv', '~reader']
+] as const;
+
+/**
  * The personal settings tables rebuildPersonalTables writes
  * (personal-rebuild.step.ts): the settings, the record heads, the segment
  * table and the switch state.
@@ -135,7 +176,15 @@ const PERSONAL_SETTINGS_REBUILD: RebuildStep = {
     'mention_alias_members',
     'push_notification_settings',
     'eula_consent',
-    'signed_record_heads',
+    {
+      table: 'signed_record_heads',
+      partition: {
+        columns: ['family', 'rtype'],
+        values: PERSONAL_HEAD_TYPES,
+        reason:
+          "The rebuild puts back the head of every personal settings record it applies, each owner's order mark, and the logged-once heads of keys and reader records; personal settings keep heads only for their own types"
+      }
+    },
     'signed_record_log_segments',
     'personal_records_state'
   ],
@@ -173,8 +222,9 @@ const PERSONAL_SETTINGS_SEED: RebuildStep = {
     module: 'src/rebuild/areas/personal.seed',
     exportName: 'seedPersonalSettings'
   },
+  // A seed declares no partition: the tables, whole.
   writes: [
-    ...PERSONAL_SETTINGS_REBUILD.writes,
+    ...writtenTables(PERSONAL_SETTINGS_REBUILD),
     'signed_record_log_entries',
     'waves',
     'drops',
