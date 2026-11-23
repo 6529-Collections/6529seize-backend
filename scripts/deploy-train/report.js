@@ -304,6 +304,16 @@ function shippedRow(item) {
   return `| ${item.service} | ${run} | ${healthLabel(item.health)}${note} |`;
 }
 
+/** Job summary for a Ship job that refused its plan without deploying. */
+function renderSkippedShip(plan, reason) {
+  return [
+    `## Deploy train result at ${shortSha(plan?.target_sha)}`,
+    '',
+    `Not shipped: ${reason}. Nothing was deployed and no halt was recorded.`,
+    ''
+  ].join('\n');
+}
+
 /** Job summary for a finished train run. */
 function renderTrainMarkdown(plan, result) {
   const lines = [
@@ -329,6 +339,10 @@ function renderTrainMarkdown(plan, result) {
   }
   if (result.not_started.length > 0) {
     lines.push('', `Not started: ${result.not_started.join(', ')}.`);
+  }
+  const warnings = result.warnings || [];
+  if (warnings.length > 0) {
+    lines.push('', 'Warnings:', ...warnings.map((warning) => `- ${warning}`));
   }
   return `${lines.join('\n')}\n`;
 }
@@ -425,6 +439,7 @@ module.exports = {
   renderPlanMarkdown,
   planAlert,
   renderTrainMarkdown,
+  renderSkippedShip,
   trainAlert,
   truncate
 };

@@ -270,6 +270,8 @@ async function commandPlan(flags) {
         })
       : null;
   const drift = await driftFor(flags, client, environment, targetSha);
+  // Release-note groups already started keep their service set.
+  const { groups: ledger } = await github.readLedger(client);
   const plan = buildTrainPlan({
     catalog,
     drift,
@@ -277,6 +279,7 @@ async function commandPlan(flags) {
     teamWindows,
     holds,
     halt,
+    ledger,
     notes: resuming
       ? notes.concat(
           'resume requested: halts opened before the dispatch are cleared'
@@ -404,6 +407,33 @@ async function staleShipReason(plan, client) {
     : null;
 }
 
+/**
+ * The release-note ledger for a train, and how to save it. The plan already
+ * fixed this train's groups, so an unreadable ledger only stops the train
+ * from recording them: release notes are best effort and must not halt it.
+ */
+async function shipLedger(client) {
+  let current;
+  try {
+    current = await github.readLedger(client);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      ledger: {},
+      saveLedger: null,
+      ledgerWarning: `release-note ledger not read, so this train's groups are not recorded: ${message}`
+    };
+  }
+  let number = current.number;
+  return {
+    ledger: current.groups,
+    saveLedger: async (groups) => {
+      ({ number } = await github.writeLedger(client, { number, groups }));
+    },
+    ledgerWarning: null
+  };
+}
+
 async function commandShip(flags) {
   if (typeof flags.plan !== 'string') throw new Error('--plan is required');
   const plan = JSON.parse(fs.readFileSync(flags.plan, 'utf8'));
@@ -411,8 +441,14 @@ async function commandShip(flags) {
   const client = githubClient(flags);
   const stale = await staleShipReason(plan, client);
   if (stale) {
-    // Not a failure: nothing was deployed and no new halt is recorded.
+    // Not a failure: nothing was deployed and no new halt is recorded. The
+    // result files are still written so the workflow's summary step works.
     log(`not shipping: ${stale}`);
+    writeFileIfRequested(
+      flags.result,
+      `${JSON.stringify({ skipped: stale, shipped: [] }, null, 2)}\n`
+    );
+    writeFileIfRequested(flags.markdown, report.renderSkippedShip(plan, stale));
     writeGithubOutputs({
       halted: 'false',
       shipped_count: 0,
@@ -422,6 +458,7 @@ async function commandShip(flags) {
   }
   const settings = healthSettings();
   const { teamWindows, holds } = controlsAt(plan.target_sha, catalog);
+  const { ledger, saveLedger, ledgerWarning } = await shipLedger(client);
   const { runTrain } = require('./executor');
   const { createAwsCli, createHealthChecker } = require('./health');
   const aws = createAwsCli({
@@ -441,8 +478,11 @@ async function commandShip(flags) {
       }),
       teamWindows,
       holds,
+      ledger,
+      saveLedger,
       log
     });
+    if (ledgerWarning) result.warnings.unshift(ledgerWarning);
     writeFileIfRequested(flags.result, `${JSON.stringify(result, null, 2)}\n`);
     writeFileIfRequested(
       flags.markdown,
@@ -542,4 +582,10 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseArgs, main, writeGithubOutputs, staleShipReason };
+module.exports = {
+  parseArgs,
+  main,
+  writeGithubOutputs,
+  staleShipReason,
+  shipLedger
+};

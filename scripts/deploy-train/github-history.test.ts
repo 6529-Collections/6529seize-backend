@@ -1,3 +1,8 @@
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
 const github = require('./github');
 const report = require('./report');
 
@@ -184,11 +189,101 @@ describe('train halts', () => {
             ),
             trainRun(2, '2026-11-23T09:00:00Z', 'failure')
           ],
-          { 2: [{ name: 'Ship', conclusion: 'failure' }] }
+          {
+            2: [{ name: 'Ship', conclusion: 'failure' }],
+            3: [{ name: 'Resume', conclusion: 'success' }]
+          }
         ),
         { currentRunId: 4, shipJobName: 'Ship' }
       )
     ).toBeNull();
+  });
+
+  it('is not cleared by a resume run whose Resume job did not complete', async () => {
+    // GelatoGenesis's case: a fresh resume dispatch cancelled before its
+    // Resume job ran must not clear a halt that only the history records.
+    for (const resumeJobs of [
+      [{ name: 'Resume', conclusion: 'cancelled' }],
+      [{ name: 'Resume', conclusion: 'skipped' }],
+      []
+    ]) {
+      const halt = await github.findUnclearedHalt(
+        client(
+          [
+            trainRun(
+              3,
+              '2026-11-23T10:00:00Z',
+              'cancelled',
+              'Deploy train (resume)'
+            ),
+            trainRun(2, '2026-11-23T09:00:00Z', 'failure')
+          ],
+          { 2: [{ name: 'Ship', conclusion: 'failure' }], 3: resumeJobs }
+        ),
+        { currentRunId: 4, shipJobName: 'Ship' }
+      );
+      expect(halt).toMatchObject({ run_id: 2 });
+    }
+  });
+
+  it('keeps a halt opened after a completed resume', async () => {
+    const halt = await github.findUnclearedHalt(
+      client(
+        [
+          trainRun(5, '2026-11-23T11:00:00Z', 'failure'),
+          trainRun(
+            3,
+            '2026-11-23T10:00:00Z',
+            'success',
+            'Deploy train (resume)'
+          ),
+          trainRun(2, '2026-11-23T09:00:00Z', 'failure')
+        ],
+        {
+          5: [{ name: 'Ship', conclusion: 'failure' }],
+          2: [{ name: 'Ship', conclusion: 'failure' }],
+          3: [{ name: 'Resume', conclusion: 'success' }]
+        }
+      ),
+      { currentRunId: 6, shipJobName: 'Ship' }
+    );
+    expect(halt).toMatchObject({ run_id: 5 });
+  });
+
+  it('keeps a halt from a train that failed after the resume was dispatched', async () => {
+    // The resume waits in the concurrency group behind a running train; if
+    // that train then halts, its halt is newer than the resume.
+    const halt = await github.findUnclearedHalt(
+      client(
+        [
+          trainRun(
+            3,
+            '2026-11-23T10:00:00Z',
+            'success',
+            'Deploy train (resume)'
+          ),
+          {
+            ...trainRun(2, '2026-11-23T09:50:00Z', 'failure'),
+            updated_at: '2026-11-23T10:20:00Z'
+          }
+        ],
+        {
+          2: [
+            {
+              name: 'Ship',
+              conclusion: 'failure',
+              completed_at: '2026-11-23T10:20:00Z'
+            }
+          ],
+          3: [{ name: 'Resume', conclusion: 'success' }]
+        }
+      ),
+      { currentRunId: 4, shipJobName: 'Ship' }
+    );
+    expect(halt).toMatchObject({
+      run_id: 2,
+      failed_at: '2026-11-23T10:20:00Z'
+    });
   });
 });
 
@@ -286,6 +381,7 @@ describe('persistent halts', () => {
     labels: { name: string }[];
     created_at?: string;
     pull_request?: unknown;
+    body?: string;
   };
 
   /**
@@ -329,7 +425,8 @@ describe('persistent halts', () => {
             state: 'open',
             html_url: `https://example.test/issues/${issues.length + 1}`,
             labels: body.labels.map((name: string) => ({ name })),
-            created_at: new Date(clock.now).toISOString()
+            created_at: new Date(clock.now).toISOString(),
+            body: body.body
           };
           issues.push(issue);
           return issue;
@@ -339,7 +436,8 @@ describe('persistent halts', () => {
         if (path.endsWith('/labels')) {
           issue.labels.push(...body.labels.map((name: string) => ({ name })));
         } else if (method === 'PATCH') {
-          issue.state = body.state;
+          if (body.state) issue.state = body.state;
+          if (body.body !== undefined) issue.body = body.body;
         }
         return {};
       },
@@ -470,6 +568,121 @@ describe('persistent halts', () => {
       if (previous === undefined) delete process.env.GITHUB_RUN_ATTEMPT;
       else process.env.GITHUB_RUN_ATTEMPT = previous;
     }
+  });
+
+  it('finishes a stale Ship retry cleanly, with a summary and no halt', async () => {
+    // GelatoGenesis's case: the skip used to leave train/result.md missing,
+    // so the summary step failed the job and recorded a false halt.
+    const { main } = require('./cli');
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: path.resolve(__dirname, '../..'),
+      encoding: 'utf8'
+    }).trim();
+    const dir = mkdtempSync(path.join(tmpdir(), 'deploy-train-skip-'));
+    const saved = { ...process.env };
+    Object.assign(process.env, {
+      DEPLOY_TRAIN_MODE: 'prod',
+      GITHUB_RUN_ATTEMPT: '2',
+      GH_TOKEN: 'test-token',
+      GITHUB_OUTPUT: path.join(dir, 'output')
+    });
+    try {
+      const planFile = path.join(dir, 'plan.json');
+      writeFileSync(
+        planFile,
+        JSON.stringify({
+          mode: 'prod',
+          environment: 'prod',
+          halt: null,
+          target_sha: head,
+          run_attempt: '1',
+          ship: []
+        })
+      );
+      await main([
+        'ship',
+        '--plan',
+        planFile,
+        '--result',
+        path.join(dir, 'result.json'),
+        '--markdown',
+        path.join(dir, 'result.md'),
+        '--github-output'
+      ]);
+      expect(process.exitCode ?? 0).toBe(0);
+      expect(
+        JSON.parse(readFileSync(path.join(dir, 'result.json'), 'utf8'))
+      ).toMatchObject({ shipped: [] });
+      expect(readFileSync(path.join(dir, 'result.md'), 'utf8')).toContain(
+        'Nothing was deployed and no halt was recorded.'
+      );
+      expect(readFileSync(path.join(dir, 'output'), 'utf8')).toContain(
+        'halted=false'
+      );
+    } finally {
+      for (const key of Object.keys(process.env)) {
+        if (!(key in saved)) delete process.env[key];
+      }
+      Object.assign(process.env, saved);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  describe('release-note ledger', () => {
+    const groups = {
+      '20': {
+        services: ['nftsLoop', 'teamLoop'],
+        shipped: ['teamLoop'],
+        opened_at: '2026-11-24T08:00:00Z'
+      }
+    };
+
+    it('starts empty, opens its issue on first save and reads it back', async () => {
+      const { client, issues } = fakeGitHub([]);
+      expect(await github.readLedger(client)).toEqual({
+        number: null,
+        groups: {}
+      });
+      const written = await github.writeLedger(client, {
+        number: null,
+        groups
+      });
+      expect(written.number).toBe(1);
+      expect(issues[0].labels).toEqual([{ name: github.LEDGER_LABEL }]);
+      expect(await github.readLedger(client)).toEqual({ number: 1, groups });
+      await github.writeLedger(client, { number: 1, groups: {} });
+      expect(issues).toHaveLength(1);
+      expect(await github.readLedger(client)).toEqual({
+        number: 1,
+        groups: {}
+      });
+    });
+
+    it('refuses a ledger someone has broken', async () => {
+      const { client, issues } = fakeGitHub([]);
+      await github.writeLedger(client, { number: null, groups });
+      issues[0].body = issues[0].body!.replace(
+        '"opened_at": "',
+        '"opened_at": "soon '
+      );
+      await expect(github.readLedger(client)).rejects.toThrow(
+        'Ledger issue #1'
+      );
+    });
+
+    it('lets a ship continue without recording groups when the ledger is unreadable', async () => {
+      const { shipLedger } = require('./cli');
+      const { client, issues } = fakeGitHub([]);
+      const ready = await shipLedger(client);
+      expect(ready).toMatchObject({ ledger: {}, ledgerWarning: null });
+      await ready.saveLedger(groups);
+      await ready.saveLedger({});
+      expect(issues).toHaveLength(1);
+      issues[0].body = 'edited by hand';
+      const broken = await shipLedger(client);
+      expect(broken.saveLedger).toBeNull();
+      expect(broken.ledgerWarning).toContain('release-note ledger not read');
+    });
   });
 
   it('describes the halt and how to resume in the issue', () => {

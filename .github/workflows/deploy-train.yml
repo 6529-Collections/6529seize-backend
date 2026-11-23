@@ -231,7 +231,7 @@ jobs:
           set -euo pipefail
           node scripts/deploy-train/cli.js ship --plan train/plan.json \
             --result train/result.json --markdown train/result.md --github-output
-          cat train/result.md >> "$GITHUB_STEP_SUMMARY"
+          if [ -f train/result.md ]; then cat train/result.md >> "$GITHUB_STEP_SUMMARY"; fi
       - name: Upload the result
         if: always() && hashFiles('train/result.json') != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

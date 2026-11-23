@@ -165,11 +165,21 @@ Services the plan defers instead of shipping:
 | A temporary hold names it | Finish the hand-run step, then clear the hold. |
 | A quiet window is active within 15 minutes | Nothing; a later train ships it. |
 | A dependency is held back or could not be assessed | Fix or ship the dependency first. |
+| Its PR's release-note group was fixed before the service fell behind | Nothing; the train ships it once that group has published or expired (7 days). |
 
 Release notes: each PR becomes one group (`pr-<number>`) that lists every
-service in the train that ships it, and the group publishes on the last of
-them. If a train stops early, a later train publishes the remaining groups.
-The train never uses the release-note opt-out.
+service behind `main` because of that PR, including services the train holds
+back or defers. The group keeps that service set across trains: the first
+deploy that carries an incomplete group records it in an open issue labelled
+`deploy-train-ledger` (only the train edits it), and later trains send the
+same set while any member is still behind, for up to 7 days, the release-note
+receiver's memory. `publish_release_note` is `true` only on the deploy that
+completes the group, after every member that was behind has shipped; a held
+member keeps the note unpublished until it ships. To deploy a member by hand,
+copy its group's services from the ledger issue into `release_note_groups`,
+and publish only if it is the last member. If the ledger cannot be read
+during a train, the train still deploys with the groups its plan fixed and
+reports a warning. The train never uses the release-note opt-out.
 
 Routine migrations stay in the train. It deploys `dbMigrationsLoop` first, with
 the default `full` schema scope. Services whose catalog entry depends on
@@ -218,7 +228,10 @@ variables (immediate, no merge):
 - **Holds** (`holds`, variables `DEPLOY_TRAIN_HOLDS*`): no end time; the train
   leaves the named services and their dependents alone until the hold is
   removed. Use a hold for a release that needs a non-catalog order or an
-  operator step.
+  operator step. A hold keeps protecting dependents after the held service
+  itself is current, for example while a backfill runs after a hand-run
+  scoped `dbMigrationsLoop` deploy, and the Ship job checks it against every
+  catalog dependency of a service, not only those in the same train.
 
 The train reads every repository variable whose name starts with
 `DEPLOY_TRAIN_HOLDS` or `DEPLOY_TRAIN_TEAM_WINDOWS` and merges their entries.
@@ -279,6 +292,9 @@ stack or the API's live version. After it succeeds, the train checks every
 verification target of the service. All signals start when the **new build
 went live**: the function's `LastModified` after the update, not the start of
 the deploy run. Log signals come only from log streams created after that.
+Error metrics are per minute, so they are counted from the start of the
+minute the build went live: errors in that minute count against the new
+build rather than being missed.
 After a code update Lambda serves invocations from new execution environments,
 so those streams hold only the new build's output, and traffic still served by
 the old build cannot pass or fail the check.
@@ -330,7 +346,9 @@ a later halt, which needs a fresh dispatch. Closing the issue by hand does not
 resume the train. If the plan cannot read the halt
 issues or the deploy history from GitHub, it fails and ships nothing; the next
 trigger tries again. If the halt issue itself cannot be opened, later trains
-still find the failed Ship job among the newest 500 train runs.
+still find the failed Ship job among the newest 500 train runs. Only a resume
+run dispatched after that failure whose Resume job completed successfully
+clears it; a cancelled, skipped or failed Resume job does not.
 
 A `Deploy a service` run that fails or is cancelled halts the train unless the
 run shows it changed nothing in production: its source guard refused a commit
@@ -339,8 +357,9 @@ Those cases, like `main` moving between deploys, another deploy running for
 more than 30 minutes, or the 200-minute budget, only stop the current train.
 
 Re-running only the Ship job of a train does not deploy: its plan belongs to
-an earlier attempt of the run. Dispatch a new train instead (and resume first
-if it halted).
+an earlier attempt of the run. The job ends successfully with that reason in
+its summary and records no halt. Dispatch a new train instead (and resume
+first if it halted).
 
 Rollback is manual: revert or fix forward on `main` (the train ships it after
 the resume), or dispatch `Deploy a service` for the affected service once

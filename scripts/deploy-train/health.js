@@ -412,10 +412,10 @@ function createHealthChecker({
     const streams = await newStreams(region, functionName, since);
     const lines = (pattern) =>
       streamLines(region, functionName, streams, since, pattern);
-    // CloudWatch rounds metric periods down to the minute; start at the
-    // first whole minute after the new build went live so no bucket mixes
-    // in errors from the old build.
-    const metricsFrom = Math.ceil(since / MINUTE_MS) * MINUTE_MS;
+    // Start at the minute the new build went live: errors right after
+    // go-live must count. That minute's bucket can also hold old-build
+    // errors from its first seconds, which errs towards halting.
+    const metricsFrom = Math.floor(since / MINUTE_MS) * MINUTE_MS;
     const metric = (name) =>
       metricsFrom < end
         ? metricSum(region, functionName, name, metricsFrom, end, 60)

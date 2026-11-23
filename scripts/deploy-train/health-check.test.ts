@@ -162,7 +162,8 @@ describe('health checker', () => {
     lastModified = '2026-11-24T10:02:00.000+0000',
     streams = [] as { logStreamName: string; creationTime: number }[],
     events = [] as Event[],
-    metrics = {} as Record<string, number>
+    metrics = {} as Record<string, number>,
+    points = [] as { key: string; at: string; sum: number }[]
   }) {
     const calls: string[][] = [];
     const value = (args: string[], flag: string) =>
@@ -189,7 +190,17 @@ describe('health checker', () => {
         }
         if (args[0] === 'cloudwatch') {
           const key = `${value(args, '--metric-name')}:${value(args, '--period')}`;
-          return { Datapoints: [{ Sum: metrics[key] ?? 0 }] };
+          // Datapoints with a timestamp count only inside the queried range.
+          const start = Date.parse(value(args, '--start-time'));
+          const finish = Date.parse(value(args, '--end-time'));
+          const timed = points
+            .filter((point) => point.key === key)
+            .filter((point) => {
+              const at = Date.parse(point.at);
+              return at >= start && at < finish;
+            })
+            .map((point) => ({ Sum: point.sum }));
+          return { Datapoints: [{ Sum: metrics[key] ?? 0 }, ...timed] };
         }
         if (args[1] === 'describe-log-streams') return { logStreams: streams };
         const start = args.indexOf('--log-stream-names') + 1;
@@ -288,19 +299,33 @@ describe('health checker', () => {
     expect(verdict.findings[0]).toContain('[AUTH PASSWORD]');
   });
 
-  it('starts error metrics at the first whole minute after the new build went live', async () => {
+  it('counts errors in the minute the new build went live', async () => {
+    // GelatoGenesis's case: go-live at 10:02:30 and three Lambda errors
+    // right after, all in the 10:02 one-minute bucket.
     const aws = fakeAws({
       lastModified: '2026-11-24T10:02:30.000+0000',
-      streams: [newStream]
+      streams: [newStream],
+      events: [
+        { stream: 'new', message: 'REPORT RequestId: 4 Duration: 5 ms' }
+      ],
+      points: [
+        { key: 'Errors:60', at: '2026-11-24T10:02:00Z', sum: 3 },
+        { key: 'Invocations:60', at: '2026-11-24T10:02:00Z', sum: 3 }
+      ]
     });
-    await checker(aws).check(item, DEPLOY_STARTED);
+    const verdict = await checker(aws).check(
+      { ...item, expects_db_auth: false },
+      DEPLOY_STARTED
+    );
+    expect(verdict.status).toBe('unhealthy');
+    expect(verdict.findings[0]).toContain('3 Lambda errors');
     const errorCall = aws.calls.find(
       (args) =>
         args[0] === 'cloudwatch' &&
         args.indexOf('Errors') !== -1 &&
         args.indexOf('60') !== -1
     )!;
-    expect(errorCall).toContain('2026-11-24T10:03:00.000Z');
+    expect(errorCall).toContain('2026-11-24T10:02:00.000Z');
   });
 
   it('halts on a startup failure in the new build', async () => {

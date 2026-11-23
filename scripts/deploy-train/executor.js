@@ -3,7 +3,7 @@
 const catalogLib = require('./catalog');
 const { evaluateBlackout, holdFor } = require('./blackouts');
 const { DEPLOY_WORKFLOW, activeDeployRuns, deployBranch } = require('./github');
-const { releaseNoteGroups } = require('./plan');
+const { LEDGER_DAYS } = require('./plan');
 
 // The ship job has 330 minutes: a new deploy starts only within the
 // budget, and a started deploy, its first health check and the trailing
@@ -64,6 +64,8 @@ class TrainRun {
     health,
     teamWindows,
     holds,
+    ledger,
+    saveLedger,
     clock,
     sleep,
     log,
@@ -75,6 +77,8 @@ class TrainRun {
     this.health = health;
     this.teamWindows = teamWindows;
     this.holds = holds;
+    this.ledger = ledger;
+    this.saveLedger = saveLedger;
     this.clock = clock;
     this.sleep = sleep;
     this.log = log;
@@ -86,6 +90,7 @@ class TrainRun {
       deferred: [],
       not_started: [],
       watch: [],
+      warnings: [],
       stop: null
     };
     this.heldBack = new Set();
@@ -122,9 +127,56 @@ class TrainRun {
     this.heldBack.add(item.service);
   }
 
+  /**
+   * The release-note groups to send with `item`: the plan's stable groups,
+   * asking to publish only when this deploy completes the group, that is
+   * when every member still behind at planning time has now shipped.
+   */
   groupsFor(item) {
-    const records = this.shippedItems.concat([item], this.queue);
-    return releaseNoteGroups(records).get(item.service);
+    const shipped = new Set(this.shippedItems.map((done) => done.service));
+    const outstanding = item.release_note_outstanding || {};
+    return (item.release_note_groups || []).map((group) => {
+      const left = (outstanding[group.pull_request_number] || []).filter(
+        (service) => service !== item.service && !shipped.has(service)
+      );
+      return { ...group, publish_release_note: left.length === 0 };
+    });
+  }
+
+  /**
+   * Remembers, for each group a deploy carried, its service set and which
+   * members shipped, so later trains send the same set. A completed group
+   * leaves the ledger, and so does one the receiver has forgotten.
+   */
+  async recordGroups(item, groups) {
+    if (!this.saveLedger || groups.length === 0) return;
+    const expiry = this.clock() - LEDGER_DAYS * 86_400_000;
+    for (const [key, entry] of Object.entries(this.ledger)) {
+      if (Date.parse(entry.opened_at) <= expiry) delete this.ledger[key];
+    }
+    for (const group of groups) {
+      const key = String(group.pull_request_number);
+      if (group.publish_release_note) {
+        delete this.ledger[key];
+        continue;
+      }
+      const entry = this.ledger[key] || {
+        services: group.release_group_services,
+        shipped: [],
+        opened_at: new Date(this.clock()).toISOString()
+      };
+      if (!entry.shipped.includes(item.service)) {
+        entry.shipped.push(item.service);
+      }
+      this.ledger[key] = entry;
+    }
+    try {
+      await this.saveLedger(this.ledger);
+    } catch (error) {
+      this.result.warnings.push(
+        `release-note ledger not saved after ${item.service}: ${errorMessage(error)}`
+      );
+    }
   }
 
   async waitUntilIdle() {
@@ -269,6 +321,17 @@ class TrainRun {
     const service = catalogLib.getService(this.catalog, item.service);
     const held = holdFor(service, this.holds);
     if (held) return held;
+    // A held dependency blocks its dependents even when it is not in this
+    // train (it may look current while an operator step is still running).
+    for (const name of item.catalog_dependencies || []) {
+      const dependencyHeld = holdFor(
+        catalogLib.getService(this.catalog, name),
+        this.holds
+      );
+      if (dependencyHeld) {
+        return `waits for held dependency ${name}: ${dependencyHeld}`;
+      }
+    }
     const blackout = evaluateBlackout(service, {
       now: this.clock(),
       teamWindows: this.teamWindows,
@@ -326,7 +389,7 @@ class TrainRun {
     const runId =
       reportedId ||
       (await this.findDispatchedRun(item, priorIds, dispatchedAt));
-    return { runId };
+    return { runId, groups };
   }
 
   /**
@@ -388,7 +451,7 @@ class TrainRun {
   async deployAndCheck(item) {
     const dispatched = await this.dispatch(item);
     if (!dispatched) return;
-    const { runId } = dispatched;
+    const { runId, groups } = dispatched;
     if (!runId) {
       this.stop(
         'deploy-unknown',
@@ -409,6 +472,7 @@ class TrainRun {
       return;
     }
     this.shippedItems.push(item);
+    await this.recordGroups(item, groups);
     const entry = {
       item,
       deployStartedAt: Date.parse(run.run_started_at || run.created_at),
@@ -489,6 +553,8 @@ function runTrain({
   health,
   teamWindows = [],
   holds = [],
+  ledger = {},
+  saveLedger = null,
   clock = () => Date.now(),
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   log = () => undefined,
@@ -501,6 +567,8 @@ function runTrain({
     health,
     teamWindows,
     holds,
+    ledger,
+    saveLedger,
     clock,
     sleep,
     log,

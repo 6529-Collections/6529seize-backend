@@ -181,7 +181,10 @@ Read the repository variable first:
   and the train's health results, including services it reports as not yet
   verified. Dispatch by hand only urgent fixes and what the train defers
   (manual services, missing release-note attribution, first deploys); the
-  train waits for your run and never cancels it.
+  train waits for your run and never cancels it. If the service belongs to a
+  release-note group the train has started (an open `deploy-train-ledger`
+  issue lists them), send that group's full service set in
+  `release_note_groups` and publish only when your deploy is its last member.
 - Before merging a change that needs a non-catalog order or an operator step
   (a scoped `dbMigrationsLoop` run, a backfill between deploys, frontend
   first), set a temporary hold on the affected services, run the sequence by

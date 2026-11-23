@@ -203,6 +203,100 @@ describe('deploy train plan', () => {
     ]);
   });
 
+  describe('release-note groups across trains', () => {
+    const hold = {
+      services: ['nftsLoop'],
+      reason: 'waiting on a vendor fix',
+      owner: null
+    };
+    const ledgerEntry = (openedAt: number) => ({
+      '20': {
+        services: ['nftsLoop', 'teamLoop'],
+        shipped: ['teamLoop'],
+        opened_at: new Date(openedAt).toISOString()
+      }
+    });
+
+    it('keeps a held member in the group and does not publish without it', () => {
+      const result = plan(
+        [record('nftsLoop', { prs: [20] }), record('teamLoop', { prs: [20] })],
+        { holds: [hold] }
+      );
+      expect(
+        result.ship.map((item: { service: string }) => item.service)
+      ).toEqual(['teamLoop']);
+      expect(result.ship[0].release_note_groups).toEqual([
+        {
+          release_group_id: 'pr-20',
+          release_group_services: ['nftsLoop', 'teamLoop'],
+          pull_request_number: 20,
+          publish_release_note: false
+        }
+      ]);
+      expect(result.ship[0].release_note_outstanding).toEqual({
+        '20': ['nftsLoop', 'teamLoop']
+      });
+    });
+
+    it('sends the same group later and publishes on the deploy that completes it', () => {
+      const result = plan(
+        [
+          record('nftsLoop', { prs: [20] }),
+          record('teamLoop', { status: 'current', prs: [] })
+        ],
+        { ledger: ledgerEntry(QUIET_TIME - 3_600_000) }
+      );
+      expect(result.ship[0].release_note_groups).toEqual([
+        {
+          release_group_id: 'pr-20',
+          release_group_services: ['nftsLoop', 'teamLoop'],
+          pull_request_number: 20,
+          publish_release_note: true
+        }
+      ]);
+    });
+
+    it('forgets a ledger group after the receiver has', () => {
+      const result = plan(
+        [
+          record('nftsLoop', { prs: [20] }),
+          record('teamLoop', { status: 'current', prs: [] })
+        ],
+        {
+          ledger: ledgerEntry(
+            QUIET_TIME - (planLib.LEDGER_DAYS * 24 + 1) * 3_600_000
+          )
+        }
+      );
+      expect(
+        result.ship[0].release_note_groups[0].release_group_services
+      ).toEqual(['nftsLoop']);
+    });
+
+    it('defers a service whose pull request has a group fixed without it', () => {
+      const result = plan(
+        [
+          record('nftsLoop', { prs: [20] }),
+          record('ethPriceLoop', { prs: [20] })
+        ],
+        { ledger: ledgerEntry(QUIET_TIME - 3_600_000) }
+      );
+      expect(
+        result.ship.map((item: { service: string }) => item.service)
+      ).toEqual(['nftsLoop']);
+      expect(result.deferred).toEqual([
+        expect.objectContaining({
+          service: 'ethPriceLoop',
+          kind: 'release-notes'
+        })
+      ]);
+      expect(result.ship[0].release_note_groups[0]).toMatchObject({
+        release_group_services: ['nftsLoop', 'teamLoop'],
+        publish_release_note: true
+      });
+    });
+  });
+
   it('defers manual, unattributed, oversized and blacked-out services', () => {
     const result = plan(
       [
@@ -310,6 +404,38 @@ describe('deploy train plan', () => {
     expect(
       result.ship.map((item: { service: string }) => item.service)
     ).toEqual(['teamLoop']);
+  });
+
+  it('keeps a hold on a current migration protecting its dependents', () => {
+    // GelatoGenesis's case: a scoped hand-run deploy made dbMigrationsLoop
+    // current, but its backfill is still running under the hold.
+    const result = plan(
+      [
+        record('dbMigrationsLoop', { status: 'current', prs: [] }),
+        record('api'),
+        record('teamLoop')
+      ],
+      {
+        holds: [
+          {
+            services: ['dbMigrationsLoop'],
+            reason: 'backfill running',
+            owner: null
+          }
+        ]
+      }
+    );
+    expect(result.deferred).toEqual([
+      expect.objectContaining({
+        service: 'api',
+        kind: 'dependency',
+        reason: 'waits for dependency dbMigrationsLoop'
+      })
+    ]);
+    expect(
+      result.ship.map((item: { service: string }) => item.service)
+    ).toEqual(['teamLoop']);
+    expect(result.ship[0].catalog_dependencies).toEqual([]);
   });
 
   it('defers a service whose change includes commits without a pull request', () => {

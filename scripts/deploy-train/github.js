@@ -225,17 +225,66 @@ async function haltFromRun(client, run, shipJobName) {
   const jobs = await client.listRunJobs(run.id);
   const ship = jobs.find((job) => job.name === shipJobName);
   if (!ship || !isFailed(ship.conclusion)) return null;
-  return { run_id: run.id, run_url: run.html_url, created_at: run.created_at };
+  return {
+    run_id: run.id,
+    run_url: run.html_url,
+    created_at: run.created_at,
+    // When the halt was opened: the Ship job's failure.
+    failed_at: ship.completed_at || run.updated_at || run.created_at
+  };
+}
+
+/**
+ * Whether `run` is a resume whose Resume job actually completed: a resume
+ * dispatch cancelled or failed before clearing anything does not count.
+ */
+async function isCompletedResume(client, run, resumeJobName) {
+  if (!(run.display_title || '').endsWith('(resume)')) return false;
+  const jobs = await client.listRunJobs(run.id);
+  const resume = jobs.find((job) => job.name === resumeJobName);
+  return Boolean(resume) && resume.conclusion === 'success';
+}
+
+/**
+ * What one past train run, read newest first, says about a halt.
+ * `resumedAt` is the dispatch time of the newest completed resume seen so
+ * far, or null. Returns `{ done: true, halt }` once the answer is known,
+ * else `{ done: false, resumedAt }` to read the next older run.
+ */
+async function historyVerdict(client, run, resumedAt, jobNames) {
+  // This run, and every older one, ended before the resume was dispatched.
+  if (resumedAt !== null && Date.parse(run.updated_at) < resumedAt) {
+    return { done: true, halt: null };
+  }
+  const halt = await haltFromRun(client, run, jobNames.shipJobName);
+  if (halt) {
+    const kept = resumedAt === null || Date.parse(halt.failed_at) >= resumedAt;
+    return { done: true, halt: kept ? halt : null };
+  }
+  const resumed =
+    resumedAt === null &&
+    (await isCompletedResume(client, run, jobNames.resumeJobName));
+  return {
+    done: false,
+    resumedAt: resumed ? Date.parse(run.created_at) : resumedAt
+  };
 }
 
 /**
  * Fallback halt detection from run history, for a halt whose issue could
  * not be opened: the most recent completed train run whose Ship job
- * failed or timed out, unless a later resume run cleared it. It pages
- * through the newest HISTORY_FALLBACK_PAGES pages of 100 runs (several
- * days of trains); the halt issue is what makes a halt persist beyond that.
+ * failed or timed out, unless the Resume job of a run dispatched after
+ * that failure completed successfully: like the Resume job itself, a resume
+ * clears only halts opened before its dispatch, so a train that was still
+ * running when the resume was dispatched and failed later stays halted.
+ * It pages through the newest HISTORY_FALLBACK_PAGES pages of 100 runs
+ * (several days of trains); the halt issue makes a halt persist beyond that.
  */
-async function findUnclearedHalt(client, { currentRunId, shipJobName }) {
+async function findUnclearedHalt(
+  client,
+  { currentRunId, shipJobName, resumeJobName = 'Resume' }
+) {
+  let resumedAt = null;
   for (let page = 1; page <= HISTORY_FALLBACK_PAGES; page++) {
     const result = await client.listWorkflowRuns(TRAIN_WORKFLOW, {
       per_page: '100',
@@ -245,9 +294,12 @@ async function findUnclearedHalt(client, { currentRunId, shipJobName }) {
       .filter((run) => run.id !== currentRunId && run.status === 'completed')
       .sort((left, right) => right.created_at.localeCompare(left.created_at));
     for (const run of runs) {
-      const halt = await haltFromRun(client, run, shipJobName);
-      if (halt) return halt;
-      if ((run.display_title || '').endsWith('(resume)')) return null;
+      const verdict = await historyVerdict(client, run, resumedAt, {
+        shipJobName,
+        resumeJobName
+      });
+      if (verdict.done) return verdict.halt;
+      resumedAt = verdict.resumedAt;
     }
     if ((result.workflow_runs || []).length < 100) return null;
   }
@@ -358,6 +410,76 @@ async function resumeHalts(client, { by, runUrl, requestedBefore }) {
   return { cleared: halts, kept };
 }
 
+const LEDGER_LABEL = 'deploy-train-ledger';
+const LEDGER_TITLE = 'Deploy train release-note groups';
+const LEDGER_JSON = /```json\n([\s\S]*?)\n```/;
+
+function validateLedgerGroups(groups, label) {
+  if (!groups || typeof groups !== 'object' || Array.isArray(groups)) {
+    throw new TypeError(`${label} must hold a "groups" object`);
+  }
+  for (const [pull, entry] of Object.entries(groups)) {
+    const valid =
+      /^[1-9]\d*$/.test(pull) &&
+      entry &&
+      Array.isArray(entry.services) &&
+      entry.services.length > 0 &&
+      Array.isArray(entry.shipped) &&
+      !Number.isNaN(Date.parse(entry.opened_at));
+    if (!valid) throw new Error(`${label} has an invalid group for PR ${pull}`);
+  }
+  return groups;
+}
+
+/**
+ * The release-note ledger: per pull request, the service set its group was
+ * first sent with and the members that shipped. It lives in one open issue
+ * labelled deploy-train-ledger, which only the train edits.
+ */
+async function readLedger(client) {
+  const issues = await client.request(
+    'GET',
+    `/issues?labels=${LEDGER_LABEL}&state=open&sort=created&direction=asc&per_page=10`
+  );
+  const issue = (issues || []).find((candidate) => !candidate.pull_request);
+  if (!issue) return { number: null, groups: {} };
+  const match = LEDGER_JSON.exec(issue.body || '');
+  if (!match)
+    throw new Error(`Ledger issue #${issue.number} has no JSON block`);
+  const label = `Ledger issue #${issue.number}`;
+  return {
+    number: issue.number,
+    groups: validateLedgerGroups(JSON.parse(match[1]).groups, label)
+  };
+}
+
+/** Writes the ledger back, opening its issue on first use. */
+async function writeLedger(client, ledger) {
+  const body = [
+    'The deploy train keeps here the service set of each pull request whose release-note group it has started to send, so the group stays the same across trains. Only the train edits this issue; do not edit or close it.',
+    '',
+    '```json',
+    JSON.stringify({ groups: ledger.groups }, null, 1),
+    '```'
+  ].join('\n');
+  if (ledger.number) {
+    await client.request('PATCH', `/issues/${ledger.number}`, { body });
+    return ledger;
+  }
+  await ensureLabel(
+    client,
+    LEDGER_LABEL,
+    'c5def5',
+    'Release-note groups the deploy train keeps across trains'
+  );
+  const issue = await client.request('POST', '/issues', {
+    title: LEDGER_TITLE,
+    body,
+    labels: [LEDGER_LABEL]
+  });
+  return { ...ledger, number: issue.number };
+}
+
 /** The halt blocking the train: an uncleared halt issue, else run history. */
 async function currentHalt(
   client,
@@ -383,6 +505,9 @@ module.exports = {
   findUnclearedHalt,
   findHaltIssues,
   recordHalt,
+  readLedger,
+  writeLedger,
+  LEDGER_LABEL,
   resumeRequestedAt,
   resumeHalts,
   currentHalt

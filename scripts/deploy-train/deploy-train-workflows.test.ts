@@ -118,6 +118,14 @@ describe('deploy train workflow', () => {
     const record = steps[steps.length - 1];
     expect(record.if).toBe('failure()');
     expect(record.run).toContain('cli.js record-halt');
+    // A missing result file must not fail the step, or a skipped stale
+    // retry would record a halt.
+    const shipStep = steps.find(
+      (step: { name: string }) => step.name === 'Ship the train'
+    );
+    expect(shipStep.run).toContain(
+      'if [ -f train/result.md ]; then cat train/result.md >> "$GITHUB_STEP_SUMMARY"; fi'
+    );
   });
 });
 

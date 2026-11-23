@@ -3,6 +3,7 @@ import path from 'node:path';
 
 const catalogLib = require('./catalog');
 const { runTrain } = require('./executor');
+const { releaseNoteGroups } = require('./plan');
 
 const catalog = catalogLib.loadCatalog(
   JSON.parse(
@@ -24,8 +25,34 @@ function item(service: string, prs: number[], dependencies: string[] = []) {
     verification_targets: [service],
     validation_profile: 'lambda-version',
     expects_db_auth: true,
-    release_note_groups: []
+    release_note_groups: [] as any[],
+    release_note_outstanding: {} as Record<string, string[]>
   };
+}
+
+/**
+ * Gives each item the release-note groups the planner would send, with
+ * `behind` naming services that are behind but not in this train.
+ */
+function withGroups(
+  items: ReturnType<typeof item>[],
+  behind: { service: string; prs: number[] }[] = [],
+  ledger: Record<string, unknown> = {}
+) {
+  const records = items
+    .map((entry) => ({ service: entry.service, prs: entry.prs }))
+    .concat(behind)
+    .map((record) => ({ ...record, status: 'behind' }));
+  const release = releaseNoteGroups(
+    items.map((entry) => ({ service: entry.service, prs: entry.prs })),
+    records,
+    ledger
+  );
+  return items.map((entry) => ({
+    ...entry,
+    release_note_groups: release.groups.get(entry.service),
+    release_note_outstanding: release.outstanding.get(entry.service)
+  }));
 }
 
 function trainPlan(items: ReturnType<typeof item>[]) {
@@ -155,11 +182,13 @@ describe('deploy train executor', () => {
   it('deploys in order, pinned to the plan commit, with per-PR release-note groups', async () => {
     const h = harness();
     const result = await h.run(
-      trainPlan([
-        item('dbMigrationsLoop', [1]),
-        item('api', [1, 2], ['dbMigrationsLoop']),
-        item('teamLoop', [2])
-      ])
+      trainPlan(
+        withGroups([
+          item('dbMigrationsLoop', [1]),
+          item('api', [1, 2], ['dbMigrationsLoop']),
+          item('teamLoop', [2])
+        ])
+      )
     );
     expect(result.stop).toBeNull();
     expect(
@@ -500,6 +529,36 @@ describe('deploy train executor', () => {
     ]);
   });
 
+  it('defers a dependent of a held service that is not in the train', async () => {
+    const h = harness();
+    const api = {
+      ...item('api', [1]),
+      catalog_dependencies: [
+        'artworkDocumentationProcessor',
+        'dbMigrationsLoop'
+      ]
+    };
+    const result = await h.run(trainPlan([api, item('teamLoop', [1])]), {
+      holds: [
+        {
+          services: ['dbMigrationsLoop'],
+          reason: 'backfill running',
+          owner: null
+        }
+      ]
+    });
+    expect(result.deferred).toEqual([
+      {
+        service: 'api',
+        reason:
+          'waits for held dependency dbMigrationsLoop: held: backfill running'
+      }
+    ]);
+    expect(h.dispatched.map((entry) => entry.inputs.service)).toEqual([
+      'teamLoop'
+    ]);
+  });
+
   it('never deploys a migration dependent after the migration deploy fails', async () => {
     const h = harness({ conclusions: { dbMigrationsLoop: 'failure' } });
     const result = await h.run(
@@ -525,6 +584,113 @@ describe('deploy train executor', () => {
     ).toEqual([
       ['nftsLoop', 'unverified'],
       ['teamLoop', 'healthy']
+    ]);
+  });
+
+  it('keeps a group open while a member is held, and records it in the ledger', async () => {
+    const h = harness();
+    const saved: any[] = [];
+    const result = await h.run(
+      trainPlan(
+        withGroups([item('teamLoop', [5])], [{ service: 'nftsLoop', prs: [5] }])
+      ),
+      {
+        saveLedger: async (groups: any) => {
+          saved.push(structuredClone(groups));
+        }
+      }
+    );
+    expect(JSON.parse(h.dispatched[0].inputs.release_note_groups)).toEqual([
+      {
+        release_group_id: 'pr-5',
+        release_group_services: ['nftsLoop', 'teamLoop'],
+        pull_request_number: 5,
+        publish_release_note: false
+      }
+    ]);
+    expect(saved).toEqual([
+      {
+        '5': {
+          services: ['nftsLoop', 'teamLoop'],
+          shipped: ['teamLoop'],
+          opened_at: new Date(START).toISOString()
+        }
+      }
+    ]);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('publishes on the deploy that completes a ledger group, then forgets it', async () => {
+    const h = harness();
+    const ledger = {
+      '4': {
+        services: ['api', 'teamLoop'],
+        shipped: ['teamLoop'],
+        opened_at: new Date(START - 8 * 86_400_000).toISOString()
+      },
+      '5': {
+        services: ['nftsLoop', 'teamLoop'],
+        shipped: ['teamLoop'],
+        opened_at: new Date(START - 3_600_000).toISOString()
+      }
+    };
+    const saved: any[] = [];
+    await h.run(trainPlan(withGroups([item('nftsLoop', [5])], [], ledger)), {
+      ledger,
+      saveLedger: async (groups: any) => {
+        saved.push(structuredClone(groups));
+      }
+    });
+    expect(JSON.parse(h.dispatched[0].inputs.release_note_groups)).toEqual([
+      {
+        release_group_id: 'pr-5',
+        release_group_services: ['nftsLoop', 'teamLoop'],
+        pull_request_number: 5,
+        publish_release_note: true
+      }
+    ]);
+    // Group 5 completed and group 4 outlived the receiver's memory.
+    expect(saved).toEqual([{}]);
+  });
+
+  it('does not publish when the group member planned to publish is deferred mid-train', async () => {
+    const h = harness();
+    const saved: any[] = [];
+    const result = await h.run(
+      trainPlan(withGroups([item('teamLoop', [6]), item('nftsLoop', [6])])),
+      {
+        holds: [{ services: ['nftsLoop'], reason: 'paused', owner: null }],
+        saveLedger: async (groups: any) => {
+          saved.push(structuredClone(groups));
+        }
+      }
+    );
+    expect(result.deferred.map((entry: any) => entry.service)).toEqual([
+      'nftsLoop'
+    ]);
+    expect(
+      JSON.parse(h.dispatched[0].inputs.release_note_groups)[0]
+        .publish_release_note
+    ).toBe(false);
+    expect(saved.at(-1)['6'].shipped).toEqual(['teamLoop']);
+  });
+
+  it('keeps deploying and warns when the ledger cannot be saved', async () => {
+    const h = harness();
+    const result = await h.run(
+      trainPlan(
+        withGroups([item('teamLoop', [5])], [{ service: 'nftsLoop', prs: [5] }])
+      ),
+      {
+        saveLedger: async () => {
+          throw new Error('API rate limit');
+        }
+      }
+    );
+    expect(result.shipped).toHaveLength(1);
+    expect(result.stop).toBeNull();
+    expect(result.warnings).toEqual([
+      'release-note ledger not saved after teamLoop: API rate limit'
     ]);
   });
 });

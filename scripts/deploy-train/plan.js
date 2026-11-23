@@ -35,34 +35,92 @@ function resolveMode({ variable, requested, eventName }) {
   return { mode: configured, configured, notes };
 }
 
-/**
- * One release-note group per pull request. Each deploy carries only the
- * groups that include its service; a group publishes on the last service
- * of the train that ships its pull request.
- */
-function releaseNoteGroups(records) {
-  const servicesByPull = new Map();
-  const lastByPull = new Map();
+// The release-note receiver remembers a group's services for seven days.
+const LEDGER_DAYS = 7;
+
+/** Ledger groups still worth reusing: recent and with a member still behind. */
+function activeLedger(ledgerGroups, behindByPull, now) {
+  const active = {};
+  for (const [pull, entry] of Object.entries(ledgerGroups || {})) {
+    const fresh = now - Date.parse(entry.opened_at) < LEDGER_DAYS * 86_400_000;
+    const open = (behindByPull.get(Number(pull)) || []).some((service) =>
+      entry.services.includes(service)
+    );
+    if (fresh && open) active[pull] = entry;
+  }
+  return active;
+}
+
+/** Behind services by the pull request numbers they list. */
+function behindServicesByPull(records) {
+  const byPull = new Map();
   for (const record of records) {
+    if (record.status !== 'behind') continue;
     for (const pull of record.prs) {
-      if (!servicesByPull.has(pull)) servicesByPull.set(pull, []);
-      servicesByPull.get(pull).push(record.service);
-      lastByPull.set(pull, record.service);
+      if (!byPull.has(pull)) byPull.set(pull, []);
+      byPull.get(pull).push(record.service);
     }
   }
-  return new Map(
-    records.map((record) => [
+  return byPull;
+}
+
+/**
+ * Release-note groups, one per pull request, with a service set that stays
+ * the same across trains. The receiver keeps the first set it sees for a
+ * group and publishes only once every member has reported, so a group's
+ * members are fixed when it first ships: every service then behind with
+ * that pull request, shipping or not (held, deferred, in a quiet window).
+ * The ledger keeps that set for later trains. A group asks to publish only
+ * on the deploy that completes it: the last shipping member, when no other
+ * member is still behind.
+ *
+ * Returns, per shipping service, its groups and, per pull request, the
+ * members still outstanding (behind) when the plan was made.
+ */
+function releaseNoteGroups(shipping, behindRecords, ledgerGroups = {}) {
+  const behindByPull = behindServicesByPull(behindRecords);
+  const members = (pull) =>
+    ledgerGroups[pull]?.services ||
+    (behindByPull.get(pull) || []).slice().sort(catalogLib.compareText);
+  const shippingNames = new Set(shipping.map((record) => record.service));
+  const lastShipping = new Map();
+  for (const record of shipping) {
+    for (const pull of record.prs) lastShipping.set(pull, record.service);
+  }
+  const outstanding = (pull) =>
+    (behindByPull.get(pull) || []).filter((service) =>
+      members(pull).includes(service)
+    );
+  const groups = new Map();
+  const outstandingByService = new Map();
+  for (const record of shipping) {
+    const pulls = record.prs.filter((pull) =>
+      members(pull).includes(record.service)
+    );
+    groups.set(
       record.service,
-      record.prs.map((pull) => ({
+      pulls.map((pull) => ({
         release_group_id: `pr-${pull}`,
-        release_group_services: servicesByPull
-          .get(pull)
-          .slice()
-          .sort(catalogLib.compareText),
+        release_group_services: members(pull),
         pull_request_number: pull,
-        publish_release_note: lastByPull.get(pull) === record.service
+        publish_release_note:
+          lastShipping.get(pull) === record.service &&
+          outstanding(pull).every((service) => shippingNames.has(service))
       }))
-    ])
+    );
+    outstandingByService.set(
+      record.service,
+      Object.fromEntries(pulls.map((pull) => [pull, outstanding(pull)]))
+    );
+  }
+  return { groups, outstanding: outstandingByService };
+}
+
+/** Services whose pull requests all belong to groups fixed without them. */
+function outsideTheirGroups(shipping, behindRecords, ledgerGroups) {
+  const { groups } = releaseNoteGroups(shipping, behindRecords, ledgerGroups);
+  return shipping.filter(
+    (record) => record.prs.length > 0 && groups.get(record.service).length === 0
   );
 }
 
@@ -143,7 +201,14 @@ function holdReason(record, service, blackoutOptions) {
 /** Splits drift records into ship candidates and deferrals. */
 function triage(catalog, drift, blackoutOptions) {
   const deferred = [];
-  const heldBack = new Set();
+  // A hold also protects the services that depend on the held one, whether
+  // or not the held service is behind: after a scoped hand-run deploy it can
+  // look current while its operator step (a backfill, say) is still running.
+  const heldBack = new Set(
+    catalog.services
+      .filter((service) => holdFor(service, blackoutOptions.holds || []))
+      .map((service) => service.name)
+  );
   const candidates = [];
   for (const record of drift.services) {
     if (record.status === 'error') {
@@ -169,21 +234,40 @@ function triage(catalog, drift, blackoutOptions) {
  * Defers services whose release-note groups would not fit in one dispatch,
  * with their dependents, until every remaining service fits.
  */
-function dropOversized(catalog, shipping, heldBack, deferred) {
+function dropOversized(catalog, shipping, context, heldBack, deferred) {
   let remaining = shipping;
   for (;;) {
-    const groups = releaseNoteGroups(remaining);
+    const { groups } = releaseNoteGroups(
+      remaining,
+      context.behindRecords,
+      context.ledgerGroups
+    );
     const oversized = remaining.filter(
       (record) =>
         JSON.stringify(groups.get(record.service)).length >
         MAX_GROUP_INPUT_CHARS
     );
-    if (oversized.length === 0) return remaining;
+    const outside = outsideTheirGroups(
+      remaining,
+      context.behindRecords,
+      context.ledgerGroups
+    );
+    if (oversized.length === 0 && outside.length === 0) return remaining;
     for (const record of oversized) {
       deferred.push(
         deferral(
           record,
           'release-note groups exceed the workflow input size; catch up by hand',
+          'release-notes'
+        )
+      );
+      heldBack.add(record.service);
+    }
+    for (const record of outside) {
+      deferred.push(
+        deferral(
+          record,
+          'its pull requests already have release-note groups fixed without it; deploy it by hand',
           'release-notes'
         )
       );
@@ -198,7 +282,7 @@ function dropOversized(catalog, shipping, heldBack, deferred) {
   }
 }
 
-function shipItem(catalog, environment, record, shipping, groups) {
+function shipItem(catalog, environment, record, shipping, release) {
   const service = catalogLib.getService(catalog, record.service);
   return {
     service: record.service,
@@ -214,7 +298,15 @@ function shipItem(catalog, environment, record, shipping, groups) {
     dependencies: Array.from(
       catalogLib.transitiveDependencies(catalog).get(record.service)
     ).filter((dependency) => shipping.has(dependency)),
-    release_note_groups: groups.get(record.service)
+    // Every catalog dependency, shipping or not, so the train can re-check
+    // holds on them right before dispatch.
+    catalog_dependencies: Array.from(
+      catalogLib.transitiveDependencies(catalog).get(record.service)
+    ).sort(catalogLib.compareText),
+    release_note_groups: release.groups.get(record.service),
+    // Group members still behind at planning time, by pull request, so the
+    // train can tell at run time which deploy completes each group.
+    release_note_outstanding: release.outstanding.get(record.service)
   };
 }
 
@@ -237,8 +329,17 @@ function buildTrainPlan({
   holds = [],
   lookaheadMinutes = DEFAULT_LOOKAHEAD_MINUTES,
   halt = null,
-  notes = []
+  notes = [],
+  ledger = {}
 }) {
+  const context = {
+    behindRecords: drift.services,
+    ledgerGroups: activeLedger(
+      ledger,
+      behindServicesByPull(drift.services),
+      now
+    )
+  };
   const { deferred, heldBack, candidates } = triage(catalog, drift, {
     now,
     teamWindows,
@@ -248,6 +349,7 @@ function buildTrainPlan({
   const shipping = dropOversized(
     catalog,
     deferDependents(catalog, candidates, heldBack, deferred),
+    context,
     heldBack,
     deferred
   );
@@ -259,7 +361,11 @@ function buildTrainPlan({
       (name) => [Date.parse(byName.get(name).behind_since) || 0]
     )
     .map((name) => byName.get(name));
-  const groups = releaseNoteGroups(ordered);
+  const release = releaseNoteGroups(
+    ordered,
+    context.behindRecords,
+    context.ledgerGroups
+  );
   return {
     mode,
     environment: drift.environment,
@@ -269,7 +375,7 @@ function buildTrainPlan({
     notes,
     lookahead_minutes: lookaheadMinutes,
     ship: ordered.map((record) =>
-      shipItem(catalog, drift.environment, record, byName, groups)
+      shipItem(catalog, drift.environment, record, byName, release)
     ),
     deferred,
     never_deployed: servicesWithStatus(drift, 'never-deployed'),
@@ -282,7 +388,9 @@ module.exports = {
   MODES,
   MAX_GROUPS_PER_DEPLOY,
   MAX_GROUP_INPUT_CHARS,
+  LEDGER_DAYS,
   resolveMode,
   releaseNoteGroups,
+  activeLedger,
   buildTrainPlan
 };
