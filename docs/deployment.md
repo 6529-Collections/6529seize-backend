@@ -149,8 +149,9 @@ every train recomputes what still differs, so merges never queue up trains.
      covers it;
    - waits, up to 30 minutes, while any other `deploy.yml` run is active, so it
      never displaces or cancels another developer's deploy;
-   - checks `main`, the holds and the quiet windows again immediately before
-     dispatching, because that wait can carry it into a window;
+   - checks the time budget, `main`, the holds and the quiet windows again
+     immediately before dispatching, because that wait can carry it into a
+     window (the holds and team windows as read when the Ship job started);
    - dispatches `Deploy a service` with `environment=prod`, the service,
      `expected_source_sha` set to the train's commit and `release_note_groups`;
    - waits for the run and checks the new build's health.
@@ -164,7 +165,7 @@ Services the plan defers instead of shipping:
 | More than 100 PRs, or groups too large for one dispatch | Catch it up by hand once; the train then keeps it current. |
 | A temporary hold names it | Finish the hand-run step, then clear the hold. |
 | A quiet window is active within 15 minutes | Nothing; a later train ships it. |
-| A dependency is held back or could not be assessed | Fix or ship the dependency first. |
+| A dependency is held back, could not be assessed or was never deployed | Fix or ship the dependency first. |
 | Its PR's release-note group was fixed before the service fell behind | Nothing; the train ships it once that group has published or expired (7 days). |
 
 Release notes: each PR becomes one group (`pr-<number>`) that lists every
@@ -283,7 +284,11 @@ Times are UTC. `"*"` covers every service; named services must exist in the
 catalog. A malformed window or hold, or an unknown field, fails the plan, so
 nothing deploys until it is fixed. A running train read the variables when it
 started; a hold or window set during a train applies from the next one, so
-cancel the running train if it must stop at once.
+cancel the running train if it must stop at once. Cancelling stops further
+dispatches but not a `Deploy a service` run the train already started: find
+that run in the Actions tab and let it finish (or cancel it too) before
+starting the protected work. A train cancelled after dispatching a deploy
+records a halt, because no train checked that deploy's health.
 
 ### Health check and halts
 
@@ -291,7 +296,11 @@ cancel the running train if it must stop at once.
 stack or the API's live version. After it succeeds, the train checks every
 verification target of the service. All signals start when the **new build
 went live**: the function's `LastModified` after the update, not the start of
-the deploy run. Log signals come only from log streams created after that.
+the deploy run. Log signals come only from log streams created after that
+(up to the 500 most recently active, read 100 at a time), and only until the
+service's observation window closes. If the deploy left a function
+unchanged (its `LastModified` predates the deploy), its existing code running
+normally does not verify the deploy: it is reported as not yet verified.
 Error metrics are per minute, so they are counted from the start of the
 minute the build went live: errors in that minute count against the new
 build rather than being missed.
@@ -379,7 +388,7 @@ The repository variable `DEPLOY_TRAIN_MODE` controls the train:
 A dispatch with `mode=report` runs a dry run at any time and cannot raise the
 mode. Changing the variable affects the next train; to stop a running one,
 cancel its run (a `Deploy a service` run it already started finishes on its
-own).
+own, and a train cancelled after a dispatch records a halt).
 
 Prerequisite for `prod`: the `production` environment variable
 `DEPLOY_TRAIN_HEALTH_ROLE_ARN`, a read-only role trusted for

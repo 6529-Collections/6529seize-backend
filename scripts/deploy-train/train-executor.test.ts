@@ -397,6 +397,12 @@ describe('deploy train executor', () => {
       service: 'nftsLoop',
       health: 'unhealthy'
     });
+    // The halt ended teamLoop's window early, and the result says so.
+    expect(result.shipped[1]).toMatchObject({
+      service: 'teamLoop',
+      health: 'healthy',
+      note: 'watch cut short by the halt'
+    });
   });
 
   it('keeps watching after the last deploy until the window closes', async () => {
@@ -480,6 +486,29 @@ describe('deploy train executor', () => {
     );
     expect(result.stop).toMatchObject({ reason: 'time-budget', halt: false });
     expect(result.not_started).toEqual(['nftsLoop']);
+  });
+
+  it('rechecks the time budget right before dispatch, after waiting for other deploys', async () => {
+    // The budget is not yet used when the train starts waiting, but is by
+    // the time the other deploy finishes.
+    const h = harness({ busyChecks: 20 });
+    const result = await h.run(trainPlan([item('teamLoop', [1])]), {
+      options: { budgetMinutes: 5 }
+    });
+    expect(result.stop).toMatchObject({ reason: 'time-budget', halt: false });
+    expect(result.not_started).toEqual(['teamLoop']);
+    expect(h.dispatched).toHaveLength(0);
+  });
+
+  it('reports each service just before dispatching it', async () => {
+    const h = harness();
+    const seen: string[] = [];
+    await h.run(trainPlan([item('teamLoop', [1]), item('nftsLoop', [1])]), {
+      onDispatch: (service: string) => {
+        seen.push(`${service}:${h.dispatched.length}`);
+      }
+    });
+    expect(seen).toEqual(['teamLoop:0', 'nftsLoop:1']);
   });
 
   it('rechecks quiet windows right before dispatch, after waiting for other deploys', async () => {

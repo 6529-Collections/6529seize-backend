@@ -202,7 +202,14 @@ function renderPlanMarkdown(plan, now = Date.parse(plan.generated_at)) {
   if (plan.ship.length === 0 && plan.deferred.length > 0) {
     lines.push('No service is eligible to ship; see the deferrals below.');
   } else if (plan.ship.length === 0) {
-    lines.push('Nothing to ship: every automatic service matches the target.');
+    const allMatch =
+      (plan.ahead || []).length === 0 &&
+      (plan.never_deployed || []).length === 0;
+    lines.push(
+      allMatch
+        ? 'Nothing to ship: every automatic service matches the target.'
+        : 'Nothing to ship.'
+    );
   } else {
     lines.push(
       `### ${verb} (${plan.ship.length}), in order`,
@@ -261,7 +268,8 @@ const STOP_LABELS = {
   'deploy-cancelled-after-change': 'deploy cancelled after changing production',
   'deploy-failed': 'deploy failed',
   'deploy-unknown': 'deploy run not found',
-  unhealthy: 'health check failed'
+  unhealthy: 'health check failed',
+  'train-cancelled': 'train cancelled after dispatching a deploy'
 };
 
 function stopLabel(stop) {
@@ -381,9 +389,7 @@ function trainAlert(plan, result) {
     (item) => item.health === 'unverified'
   );
   if (unverified.length > 0) {
-    lines.push(
-      `Not yet verified (the new build was not invoked during the train): ${serviceNames(unverified)}`
-    );
+    lines.push(`Not yet verified: ${unverified.map(shippedLine).join('; ')}`);
   }
   if (result.stop) {
     lines.push(`Stopped: ${stopLabel(result.stop)}. ${result.stop.detail}`);

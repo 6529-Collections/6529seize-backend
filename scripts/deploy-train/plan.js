@@ -216,6 +216,10 @@ function triage(catalog, drift, blackoutOptions) {
         deferral(record, `not assessed: ${record.reasons[0]}`, 'error')
       );
       heldBack.add(record.service);
+    } else if (record.status === 'never-deployed') {
+      // A first deploy stays manual, and its dependents (a migration's,
+      // say) wait for it.
+      heldBack.add(record.service);
     } else if (record.status === 'behind') {
       const service = catalogLib.getService(catalog, record.service);
       const hold = holdReason(record, service, blackoutOptions);
@@ -242,10 +246,15 @@ function dropOversized(catalog, shipping, context, heldBack, deferred) {
       context.behindRecords,
       context.ledgerGroups
     );
+    // Measured with every publish flag false, the longest form, because
+    // the final order and the train itself decide which deploy publishes.
     const oversized = remaining.filter(
       (record) =>
-        JSON.stringify(groups.get(record.service)).length >
-        MAX_GROUP_INPUT_CHARS
+        JSON.stringify(
+          groups
+            .get(record.service)
+            .map((group) => ({ ...group, publish_release_note: false }))
+        ).length > MAX_GROUP_INPUT_CHARS
     );
     const outside = outsideTheirGroups(
       remaining,

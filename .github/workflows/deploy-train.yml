@@ -230,7 +230,8 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/deploy-train/cli.js ship --plan train/plan.json \
-            --result train/result.json --markdown train/result.md --github-output
+            --result train/result.json --markdown train/result.md \
+            --progress train/progress.json --github-output
           if [ -f train/result.md ]; then cat train/result.md >> "$GITHUB_STEP_SUMMARY"; fi
       - name: Upload the result
         if: always() && hashFiles('train/result.json') != ''
@@ -276,8 +277,13 @@ jobs:
           exit 1
       - name: Record the halt until a resume
         # Any failure of this job, a halt or a crash, opens the halt issue
-        # that later trains read; only a resume=true dispatch clears it.
-        if: failure()
+        # that later trains read; only a resume=true dispatch clears it. A
+        # cancelled job halts only if it had dispatched a deploy (or ended
+        # with a halt); cancelling before any dispatch is a soft stop.
+        if: failure() || cancelled()
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/deploy-train/cli.js record-halt --plan train/plan.json --result train/result.json
+          JOB_STATUS: ${{ job.status }}
+        run: >-
+          node scripts/deploy-train/cli.js record-halt --plan train/plan.json
+          --result train/result.json --progress train/progress.json

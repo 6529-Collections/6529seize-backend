@@ -406,6 +406,24 @@ describe('deploy train plan', () => {
     ).toEqual(['teamLoop']);
   });
 
+  it('holds dependents of a service that was never deployed', () => {
+    const result = plan([
+      record('dbMigrationsLoop', { status: 'never-deployed', prs: [] }),
+      record('api'),
+      record('teamLoop')
+    ]);
+    expect(result.deferred).toEqual([
+      expect.objectContaining({
+        service: 'api',
+        reason: 'waits for dependency dbMigrationsLoop'
+      })
+    ]);
+    expect(
+      result.ship.map((item: { service: string }) => item.service)
+    ).toEqual(['teamLoop']);
+    expect(result.never_deployed).toEqual(['dbMigrationsLoop']);
+  });
+
   it('keeps a hold on a current migration protecting its dependents', () => {
     // GelatoGenesis's case: a scoped hand-run deploy made dbMigrationsLoop
     // current, but its backfill is still running under the hold.
@@ -467,6 +485,11 @@ describe('deploy train plan', () => {
     expect(report.renderPlanMarkdown(plan([]))).toContain(
       'Nothing to ship: every automatic service matches the target.'
     );
+    const aheadOnly = report.renderPlanMarkdown(
+      plan([record('teamLoop', { status: 'ahead' })])
+    );
+    expect(aheadOnly).toContain('Nothing to ship.');
+    expect(aheadOnly).not.toContain('every automatic service matches');
   });
 
   it('reports deployments ahead of the target without claiming a match', () => {

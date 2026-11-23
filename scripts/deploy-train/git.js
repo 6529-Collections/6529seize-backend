@@ -5,7 +5,14 @@ const { createHash } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const TRUSTED_BIN_DIRS = ['/usr/bin', '/bin', '/usr/local/bin'];
+// System and package-manager directories (Homebrew on Apple Silicon uses
+// /opt/homebrew/bin); never a PATH lookup.
+const TRUSTED_BIN_DIRS = [
+  '/usr/bin',
+  '/bin',
+  '/usr/local/bin',
+  '/opt/homebrew/bin'
+];
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const MAX_BUFFER = 512 * 1024 * 1024;
 

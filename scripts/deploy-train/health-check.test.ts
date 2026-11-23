@@ -156,7 +156,8 @@ describe('health checker', () => {
     expects_db_auth: true
   };
 
-  type Event = { stream: string; message: string };
+  // `at` defaults to a minute after the new build went live.
+  type Event = { stream: string; message: string; at?: number };
 
   function fakeAws({
     lastModified = '2026-11-24T10:02:00.000+0000',
@@ -207,9 +208,15 @@ describe('health checker', () => {
         const end = args.indexOf('--start-time');
         const requested = args.slice(start, end);
         const pattern = value(args, '--filter-pattern');
+        const from = Number(value(args, '--start-time'));
+        const to = Number(value(args, '--end-time'));
         return {
           events: events
             .filter((event) => requested.indexOf(event.stream) !== -1)
+            .filter((event) => {
+              const at = event.at ?? LIVE_AT + 60_000;
+              return at >= from && at <= to;
+            })
             .filter((event) => matches(pattern, event.message))
             .slice(0, Number(value(args, '--max-items')))
             .map((event) => ({ message: event.message }))
@@ -348,6 +355,78 @@ describe('health checker', () => {
     expect(verdict.note).toBe(
       'teamLoop: new build not invoked yet; this deploy did not change the function'
     );
+  });
+
+  it('never reports an unchanged function as a verified new build', async () => {
+    // The existing code cold-starts and logs in normally after the deploy.
+    const aws = fakeAws({
+      lastModified: '2026-11-20T10:00:00.000+0000',
+      streams: [{ logStreamName: 'cold', creationTime: DEPLOY_STARTED + 1 }],
+      events: [
+        { stream: 'cold', message: 'REPORT RequestId: 3 Duration: 5 ms' },
+        { stream: 'cold', message: '[AUTH IAM]' }
+      ]
+    });
+    const verdict = await checker(aws).check(item, DEPLOY_STARTED);
+    expect(verdict.status).toBe('pending');
+    expect(verdict.note).toBe(
+      'teamLoop: its existing code ran normally; this deploy did not change the function'
+    );
+  });
+
+  it('ignores failures logged after the observation window closed', async () => {
+    const windowEnd = LIVE_AT + 120_000;
+    const aws = fakeAws({
+      streams: [newStream],
+      events: [
+        { stream: 'new', message: 'REPORT RequestId: 4 Duration: 5 ms' },
+        { stream: 'new', message: '[AUTH IAM]' },
+        {
+          stream: 'new',
+          message: 'Error: Access denied for user x',
+          at: windowEnd + 60_000
+        }
+      ]
+    });
+    const verdict = await checker(aws).check(item, DEPLOY_STARTED, windowEnd);
+    expect(verdict.status).toBe('healthy');
+    const inside = await checker(aws).check(item, DEPLOY_STARTED);
+    expect(inside.status).toBe('unhealthy');
+  });
+
+  it('reads every new stream, a hundred per query', async () => {
+    // The failing environment is the least recently active of 150.
+    const streams = Array.from({ length: 150 }, (_, index) => ({
+      logStreamName: `s${index}`,
+      creationTime: LIVE_AT + 1000 + index
+    }));
+    const aws = fakeAws({
+      streams,
+      events: [
+        { stream: 's0', message: 'REPORT RequestId: 5 Duration: 5 ms' },
+        { stream: 's0', message: '[AUTH IAM]' },
+        {
+          stream: 's149',
+          message: 'Runtime.ImportModuleError: Cannot find module y'
+        }
+      ]
+    });
+    const verdict = await checker(aws).check(item, DEPLOY_STARTED);
+    expect(verdict.status).toBe('unhealthy');
+    const describe = aws.calls.find(
+      (args) => args[1] === 'describe-log-streams'
+    )!;
+    expect(describe[describe.indexOf('--max-items') + 1]).toBe('500');
+    const filterCalls = aws.calls.filter(
+      (args) => args[1] === 'filter-log-events'
+    );
+    for (const args of filterCalls) {
+      const names = args.slice(
+        args.indexOf('--log-stream-names') + 1,
+        args.indexOf('--start-time')
+      );
+      expect(names.length).toBeLessThanOrEqual(100);
+    }
   });
 
   it('skips resource-only stacks and Lambda@Edge', async () => {

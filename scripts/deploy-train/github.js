@@ -202,8 +202,10 @@ const ACTIVE_STATUSES = new Set([
 
 /** Deploy runs for `environment` that have not completed yet. */
 async function activeDeployRuns(client, environment) {
+  // The deploy workflow's concurrency group keeps at most one run pending
+  // per environment, so an active run is always among the newest 100.
   const result = await client.listWorkflowRuns(DEPLOY_WORKFLOW, {
-    per_page: '30'
+    per_page: '100'
   });
   return (result.workflow_runs || []).filter((run) => {
     const match = DEPLOY_TITLE.exec(run.display_title || '');
@@ -282,9 +284,11 @@ async function historyVerdict(client, run, resumedAt, jobNames) {
  */
 async function findUnclearedHalt(
   client,
-  { currentRunId, shipJobName, resumeJobName = 'Resume' }
+  { currentRunId, shipJobName, resumeJobName = 'Resume', resumedAt = null }
 ) {
-  let resumedAt = null;
+  // In a resume run, its own completed Resume job (resumedAt, its dispatch
+  // time) covers the halts opened before it, like a later resume would.
+  let clearedBefore = resumedAt;
   for (let page = 1; page <= HISTORY_FALLBACK_PAGES; page++) {
     const result = await client.listWorkflowRuns(TRAIN_WORKFLOW, {
       per_page: '100',
@@ -294,12 +298,12 @@ async function findUnclearedHalt(
       .filter((run) => run.id !== currentRunId && run.status === 'completed')
       .sort((left, right) => right.created_at.localeCompare(left.created_at));
     for (const run of runs) {
-      const verdict = await historyVerdict(client, run, resumedAt, {
+      const verdict = await historyVerdict(client, run, clearedBefore, {
         shipJobName,
         resumeJobName
       });
       if (verdict.done) return verdict.halt;
-      resumedAt = verdict.resumedAt;
+      clearedBefore = verdict.resumedAt;
     }
     if ((result.workflow_runs || []).length < 100) return null;
   }
@@ -483,12 +487,16 @@ async function writeLedger(client, ledger) {
 /** The halt blocking the train: an uncleared halt issue, else run history. */
 async function currentHalt(
   client,
-  { currentRunId, shipJobName, historyFallback = true }
+  { currentRunId, shipJobName, historyFallback = true, resumedAt = null }
 ) {
   const [issue] = await findHaltIssues(client);
   if (issue) return { url: issue.url, label: `issue #${issue.number}` };
   if (!historyFallback) return null;
-  const run = await findUnclearedHalt(client, { currentRunId, shipJobName });
+  const run = await findUnclearedHalt(client, {
+    currentRunId,
+    shipJobName,
+    resumedAt
+  });
   return run ? { url: run.run_url, label: `run ${run.run_id}` } : null;
 }
 

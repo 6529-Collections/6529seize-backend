@@ -66,6 +66,7 @@ class TrainRun {
     holds,
     ledger,
     saveLedger,
+    onDispatch,
     clock,
     sleep,
     log,
@@ -79,6 +80,7 @@ class TrainRun {
     this.holds = holds;
     this.ledger = ledger;
     this.saveLedger = saveLedger;
+    this.onDispatch = onDispatch;
     this.clock = clock;
     this.sleep = sleep;
     this.log = log;
@@ -228,9 +230,13 @@ class TrainRun {
   }
 
   /** A health check that cannot run is itself a failure: fail closed. */
-  async checkHealth(item, deployStartedAt) {
+  async checkHealth(entry) {
     try {
-      return await this.health.check(item, deployStartedAt);
+      return await this.health.check(
+        entry.item,
+        entry.deployStartedAt,
+        entry.until
+      );
     } catch (error) {
       return {
         status: 'unhealthy',
@@ -269,7 +275,7 @@ class TrainRun {
   async waitForFirstResult(entry) {
     const deadline = this.clock() + this.options.healthTimeoutSeconds * 1000;
     for (;;) {
-      const verdict = await this.checkHealth(entry.item, entry.deployStartedAt);
+      const verdict = await this.checkHealth(entry);
       if (verdict.status === 'skipped') return verdict;
       this.applyVerdict(entry, verdict);
       if (entry.status !== 'pending' || this.clock() >= deadline) {
@@ -283,7 +289,7 @@ class TrainRun {
   async sweepWatch() {
     for (const entry of this.result.watch) {
       if (!isWatched(entry)) continue;
-      const verdict = await this.checkHealth(entry.item, entry.deployStartedAt);
+      const verdict = await this.checkHealth(entry);
       this.applyVerdict(entry, verdict);
       if (entry.status === 'unhealthy') return;
     }
@@ -295,14 +301,6 @@ class TrainRun {
     if (blockedBy) {
       this.defer(item, `waits for dependency ${blockedBy}`);
       return 'skip';
-    }
-    if (this.clock() - this.startedAt > this.options.budgetMinutes * 60_000) {
-      this.stopBefore(
-        item,
-        'time-budget',
-        `train ran longer than ${this.options.budgetMinutes} minutes`
-      );
-      return 'stop';
     }
     // Checked before waiting so a held or quiet service does not wait for
     // other deploys, and again right before dispatch (clearToDispatch).
@@ -343,11 +341,19 @@ class TrainRun {
   }
 
   /**
-   * Confirms the branch still points at the train's commit and the service
-   * is outside holds and quiet windows. Records a stop or deferral and
-   * returns false otherwise.
+   * Confirms the time budget is not used up, the branch still points at the
+   * train's commit and the service is outside holds and quiet windows.
+   * Records a stop or deferral and returns false otherwise.
    */
   async clearToDispatch(item) {
+    if (this.clock() - this.startedAt > this.options.budgetMinutes * 60_000) {
+      this.stopBefore(
+        item,
+        'time-budget',
+        `train ran longer than ${this.options.budgetMinutes} minutes`
+      );
+      return false;
+    }
     const head = await this.client.getBranchSha(this.branch);
     if (head !== this.plan.target_sha) {
       this.stopBefore(
@@ -378,6 +384,7 @@ class TrainRun {
     // and quiet windows again immediately before dispatching.
     if (!(await this.clearToDispatch(item))) return null;
     const dispatchedAt = this.clock();
+    this.onDispatch(item.service);
     this.log(
       `deploying ${item.service} at ${this.plan.target_sha.slice(0, 10)}`
     );
@@ -506,9 +513,13 @@ class TrainRun {
 
   finish() {
     for (const entry of this.result.watch) {
-      // Reached only when a soft stop or halt ended the watch early.
+      // Reached only when a halt ended the watch early: keep what was seen,
+      // and say the window did not run its course.
       if (isWatched(entry)) {
         entry.status = entry.seenHealthy ? 'healthy' : 'unverified';
+        entry.note = [entry.note, 'watch cut short by the halt']
+          .filter(Boolean)
+          .join('; ');
       }
       const shipped = this.result.shipped.find(
         (item) => item.service === entry.item.service
@@ -555,6 +566,7 @@ function runTrain({
   holds = [],
   ledger = {},
   saveLedger = null,
+  onDispatch = () => undefined,
   clock = () => Date.now(),
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   log = () => undefined,
@@ -569,6 +581,7 @@ function runTrain({
     holds,
     ledger,
     saveLedger,
+    onDispatch,
     clock,
     sleep,
     log,

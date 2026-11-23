@@ -258,15 +258,18 @@ async function commandPlan(flags) {
   // In a resume run, the Resume job has already cleared the halts opened
   // before the dispatch.
   const resuming = process.env.DEPLOY_TRAIN_RESUME === 'true';
-  // A resume run still honours halts its Resume job did not clear (opened
-  // after the dispatch); only the run-history fallback is skipped, because
-  // it cannot tell which halts the resume covered.
+  const currentRunId = Number(process.env.GITHUB_RUN_ID || 0);
+  // A resume run still honours halts its Resume job did not clear: halt
+  // issues opened after the dispatch, and Ship jobs in the run history that
+  // failed after it.
   const halt =
     mode === 'prod'
       ? await github.currentHalt(client, {
-          currentRunId: Number(process.env.GITHUB_RUN_ID || 0),
+          currentRunId,
           shipJobName: SHIP_JOB_NAME,
-          historyFallback: !resuming
+          resumedAt: resuming
+            ? await github.resumeRequestedAt(client, currentRunId)
+            : null
         })
       : null;
   const drift = await driftFor(flags, client, environment, targetSha);
@@ -408,6 +411,21 @@ async function staleShipReason(plan, client) {
 }
 
 /**
+ * Records each service just before its dispatch, so a cancelled Ship job
+ * can tell whether it may have changed production (see record-halt).
+ */
+function progressRecorder(target) {
+  if (typeof target !== 'string') return undefined;
+  const dispatched = [];
+  return (service) => {
+    dispatched.push(service);
+    // Write then rename, so a cancellation never leaves half a file.
+    fs.writeFileSync(`${target}.tmp`, JSON.stringify({ dispatched }));
+    fs.renameSync(`${target}.tmp`, target);
+  };
+}
+
+/**
  * The release-note ledger for a train, and how to save it. The plan already
  * fixed this train's groups, so an unreadable ledger only stops the train
  * from recording them: release notes are best effort and must not halt it.
@@ -480,6 +498,7 @@ async function commandShip(flags) {
       holds,
       ledger,
       saveLedger,
+      onDispatch: progressRecorder(flags.progress),
       log
     });
     if (ledgerWarning) result.warnings.unshift(ledgerWarning);
@@ -515,9 +534,38 @@ function readJsonIfPresent(file) {
 }
 
 /** Opens the issue that keeps the train halted until a resume dispatch. */
+/**
+ * The halt a cancelled Ship job leaves: the train's own halt if it finished
+ * with one, or, cut off mid-run, a halt when it had already dispatched a
+ * deploy whose outcome no train has checked. A cancellation before any
+ * dispatch changed nothing and is a soft stop (null).
+ */
+function cancelledShipHalt(result, progress) {
+  if (result) return result.stop?.halt ? result : null;
+  const dispatched = progress?.dispatched || [];
+  if (dispatched.length === 0) return null;
+  return {
+    stop: {
+      reason: 'train-cancelled',
+      halt: true,
+      service: dispatched.at(-1),
+      detail: `the Ship job was cancelled after dispatching ${dispatched.join(', ')}; check those deploys before resuming`
+    },
+    shipped: [],
+    not_started: []
+  };
+}
+
 async function commandRecordHalt(flags) {
   const plan = readJsonIfPresent(flags.plan);
-  const result = readJsonIfPresent(flags.result);
+  let result = readJsonIfPresent(flags.result);
+  if (process.env.JOB_STATUS === 'cancelled') {
+    result = cancelledShipHalt(result, readJsonIfPresent(flags.progress));
+    if (!result) {
+      log('Ship was cancelled without a halt or a dispatched deploy');
+      return;
+    }
+  }
   const issue = await github.recordHalt(
     githubClient(flags),
     report.haltIssue(plan, result, runUrl())
@@ -587,5 +635,7 @@ module.exports = {
   main,
   writeGithubOutputs,
   staleShipReason,
-  shipLedger
+  shipLedger,
+  cancelledShipHalt,
+  progressRecorder
 };

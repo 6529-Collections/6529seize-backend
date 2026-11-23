@@ -250,6 +250,51 @@ describe('train halts', () => {
     expect(halt).toMatchObject({ run_id: 5 });
   });
 
+  it('lets a resume run skip only the halts its own Resume job covered', async () => {
+    const runs = [
+      {
+        ...trainRun(5, '2026-11-23T09:50:00Z', 'failure'),
+        updated_at: '2026-11-23T10:20:00Z'
+      },
+      {
+        ...trainRun(2, '2026-11-23T09:00:00Z', 'failure'),
+        updated_at: '2026-11-23T09:30:00Z'
+      }
+    ];
+    const jobs = {
+      5: [
+        {
+          name: 'Ship',
+          conclusion: 'failure',
+          completed_at: '2026-11-23T10:20:00Z'
+        }
+      ],
+      2: [
+        {
+          name: 'Ship',
+          conclusion: 'failure',
+          completed_at: '2026-11-23T09:30:00Z'
+        }
+      ]
+    };
+    // Dispatched at 10:00: covers run 2, not run 5, which failed later.
+    expect(
+      await github.findUnclearedHalt(client(runs, jobs), {
+        currentRunId: 9,
+        shipJobName: 'Ship',
+        resumedAt: Date.parse('2026-11-23T10:00:00Z')
+      })
+    ).toMatchObject({ run_id: 5 });
+    // Dispatched at 10:30: covers both.
+    expect(
+      await github.findUnclearedHalt(client(runs, jobs), {
+        currentRunId: 9,
+        shipJobName: 'Ship',
+        resumedAt: Date.parse('2026-11-23T10:30:00Z')
+      })
+    ).toBeNull();
+  });
+
   it('keeps a halt from a train that failed after the resume was dispatched', async () => {
     // The resume waits in the concurrency group behind a running train; if
     // that train then halts, its halt is newer than the resume.
@@ -626,6 +671,52 @@ describe('persistent halts', () => {
       Object.assign(process.env, saved);
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  describe('a cancelled Ship job', () => {
+    const { cancelledShipHalt, progressRecorder } = require('./cli');
+
+    it('is a soft stop before any dispatch', () => {
+      expect(cancelledShipHalt(null, null)).toBeNull();
+      expect(cancelledShipHalt(null, { dispatched: [] })).toBeNull();
+    });
+
+    it('halts once it has dispatched a deploy', () => {
+      expect(
+        cancelledShipHalt(null, { dispatched: ['dbMigrationsLoop', 'api'] })
+      ).toMatchObject({
+        stop: {
+          reason: 'train-cancelled',
+          halt: true,
+          service: 'api',
+          detail: expect.stringContaining('dispatching dbMigrationsLoop, api')
+        }
+      });
+    });
+
+    it('follows the result when the train had finished', () => {
+      const halted = { stop: { reason: 'unhealthy', halt: true } };
+      expect(cancelledShipHalt(halted, { dispatched: ['api'] })).toBe(halted);
+      expect(
+        cancelledShipHalt({ stop: null }, { dispatched: ['api'] })
+      ).toBeNull();
+    });
+
+    it('records each dispatch in the progress file', () => {
+      const dir = mkdtempSync(path.join(tmpdir(), 'deploy-train-progress-'));
+      try {
+        const file = path.join(dir, 'progress.json');
+        const record = progressRecorder(file);
+        record('dbMigrationsLoop');
+        record('api');
+        expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({
+          dispatched: ['dbMigrationsLoop', 'api']
+        });
+        expect(progressRecorder(undefined)).toBeUndefined();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe('release-note ledger', () => {

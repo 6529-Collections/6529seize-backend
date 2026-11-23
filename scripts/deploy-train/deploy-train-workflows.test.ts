@@ -116,8 +116,12 @@ describe('deploy train workflow', () => {
     expect(train['run-name']).toContain("'Deploy train (resume)'");
     const steps = train.jobs.ship.steps;
     const record = steps[steps.length - 1];
-    expect(record.if).toBe('failure()');
+    // A cancelled Ship job runs the step too; record-halt then halts only
+    // if a deploy was dispatched (see cancelledShipHalt).
+    expect(record.if).toBe('failure() || cancelled()');
+    expect(record.env.JOB_STATUS).toBe('${{ job.status }}');
     expect(record.run).toContain('cli.js record-halt');
+    expect(record.run).toContain('--progress train/progress.json');
     // A missing result file must not fail the step, or a skipped stale
     // retry would record a halt.
     const shipStep = steps.find(
@@ -126,6 +130,7 @@ describe('deploy train workflow', () => {
     expect(shipStep.run).toContain(
       'if [ -f train/result.md ]; then cat train/result.md >> "$GITHUB_STEP_SUMMARY"; fi'
     );
+    expect(shipStep.run).toContain('--progress train/progress.json');
   });
 });
 

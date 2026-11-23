@@ -13,6 +13,11 @@ const BAD_LOG_PATTERN =
   '?"Access denied" ?ER_ACCESS_DENIED ?"Cannot find module" ?ImportModuleError ?"Status: error" ?"Status: timeout"';
 const AUTH_MODES = ['IAM', 'PASSWORD'];
 const MINUTE_MS = 60 * 1000;
+// Log reads: new streams considered, streams per filter-log-events call
+// (the API's limit) and matching lines kept per pattern.
+const MAX_STREAMS = 500;
+const STREAMS_PER_QUERY = 100;
+const MAX_LINES = 50;
 
 function authLogPattern(mode) {
   return `"AUTH ${mode}"`;
@@ -327,7 +332,10 @@ function createHealthChecker({
   /**
    * Log streams opened since `since`. After a code update Lambda serves new
    * invocations from new execution environments, each with its own stream,
-   * so these streams hold only the new build's output.
+   * so these streams hold only the new build's output. Reads up to
+   * MAX_STREAMS streams, most recently active first: far more than a
+   * deploy's watch window opens for any of our functions, and a startup or
+   * login failure shows in every new environment, not just one.
    */
   async function newStreams(region, functionName, since) {
     const result = await aws.json(
@@ -342,7 +350,7 @@ function createHealthChecker({
         'LastEventTime',
         '--descending',
         '--max-items',
-        '50'
+        String(MAX_STREAMS)
       ],
       { allowMissing: true }
     );
@@ -351,28 +359,41 @@ function createHealthChecker({
       .map((stream) => stream.logStreamName);
   }
 
-  async function streamLines(region, functionName, streams, since, pattern) {
-    if (streams.length === 0) return [];
-    const result = await aws.json(
-      [
-        'logs',
-        'filter-log-events',
-        '--region',
-        region,
-        '--log-group-name',
-        `/aws/lambda/${functionName}`,
-        '--log-stream-names',
-        ...streams,
-        '--start-time',
-        String(since),
-        '--filter-pattern',
-        pattern,
-        '--max-items',
-        '50'
-      ],
-      { allowMissing: true }
-    );
-    return (result?.events || []).map((event) => event.message || '');
+  /**
+   * Up to MAX_LINES log lines matching `pattern` in `streams` between
+   * `since` and `end`, querying STREAMS_PER_QUERY streams at a time.
+   */
+  async function streamLines(region, functionName, streams, window, pattern) {
+    const lines = [];
+    for (
+      let start = 0;
+      start < streams.length && lines.length < MAX_LINES;
+      start += STREAMS_PER_QUERY
+    ) {
+      const result = await aws.json(
+        [
+          'logs',
+          'filter-log-events',
+          '--region',
+          region,
+          '--log-group-name',
+          `/aws/lambda/${functionName}`,
+          '--log-stream-names',
+          ...streams.slice(start, start + STREAMS_PER_QUERY),
+          '--start-time',
+          String(window.since),
+          '--end-time',
+          String(window.end),
+          '--filter-pattern',
+          pattern,
+          '--max-items',
+          String(MAX_LINES - lines.length)
+        ],
+        { allowMissing: true }
+      );
+      lines.push(...(result?.events || []).map((event) => event.message || ''));
+    }
+    return lines;
   }
 
   async function baselineFor(region, functionName, since) {
@@ -400,18 +421,20 @@ function createHealthChecker({
     return baselines.get(key);
   }
 
-  async function checkFunction(item, functionName, deployStartedAt) {
+  async function checkFunction(item, functionName, deployStartedAt, until) {
     const { region } = item;
     const live = await liveState(region, functionName);
     // The new build is live from its LastModified; an older LastModified
     // means this deploy left the function's code and configuration alone.
     const unchanged = !(live.liveAt >= deployStartedAt);
     const since = unchanged ? deployStartedAt : live.liveAt;
-    const end = now();
+    // Only the observation window counts: a failure logged after it closed
+    // is not this deploy's to judge.
+    const end = Math.min(now(), until ?? Infinity);
     const baseline = await baselineFor(region, functionName, since);
     const streams = await newStreams(region, functionName, since);
     const lines = (pattern) =>
-      streamLines(region, functionName, streams, since, pattern);
+      streamLines(region, functionName, streams, { since, end }, pattern);
     // Start at the minute the new build went live: errors right after
     // go-live must count. That minute's bucket can also hold old-build
     // errors from its first seconds, which errs towards halting.
@@ -441,12 +464,17 @@ function createHealthChecker({
       expectedAuth,
       thresholds
     });
+    // An unchanged function says nothing about this deploy: its existing
+    // code running normally never counts as a verified new build.
+    const status =
+      unchanged && verdict.status === 'healthy' ? 'pending' : verdict.status;
     const note =
-      unchanged && verdict.status === 'pending'
-        ? `${verdict.note}; this deploy did not change the function`
+      unchanged && status === 'pending'
+        ? `${verdict.status === 'healthy' ? 'its existing code ran normally' : verdict.note}; this deploy did not change the function`
         : verdict.note;
     return {
       ...verdict,
+      status,
       note,
       functionName,
       live_since: isoTime(since),
@@ -455,7 +483,8 @@ function createHealthChecker({
   }
 
   return {
-    async check(item, deployStartedAt) {
+    /** Checks `item`'s targets for the window `deployStartedAt`..`until`. */
+    async check(item, deployStartedAt, until) {
       if (
         UNCHECKED_PROFILES.has(item.validation_profile) ||
         item.verification_targets.length === 0
@@ -468,7 +497,9 @@ function createHealthChecker({
       }
       const verdicts = [];
       for (const functionName of item.verification_targets) {
-        verdicts.push(await checkFunction(item, functionName, deployStartedAt));
+        verdicts.push(
+          await checkFunction(item, functionName, deployStartedAt, until)
+        );
       }
       return combineVerdicts(verdicts);
     },
