@@ -519,17 +519,20 @@ export const subsManifest: AreaManifest = {
     // so failing a final run, until the legacy tables and this queue are
     // dropped after the rollback window:
     // - the other kinds' rows (FINAL_ROW, LOG, AUTO_SUBSCRIPTION,
-    //   REDEMPTION), until a rebuilder writes them from the copy-back's
-    //   held-back keys;
+    //   REDEMPTION): production makes them only for a key that still has
+    //   legacy rows while a write of it waits, from those legacy rows,
+    //   which the identity tables don't keep; a wide identity has none;
     // - CONSOLIDATION rows queued after the switch: their regroups are the
     //   identity mirror's, which neither the journal nor the identity
     //   tables keep;
     // - replayed rows: a replay runs only once the key fits, so the
     //   rebuild gives that top-up its row and queues nothing; the whole
     //   replayed queue row is missing.
-    // And in the legacy tables: a key that fits but has an earlier write
-    // still waiting gets its rows copied where production holds them until
-    // the replay (subs.legacy-history applies the guard's width rule only).
+    // And in the legacy tables (subs.legacy-history applies the guard's
+    // width rule only): a key that fits but has an earlier write still
+    // waiting gets its rows copied where production holds them until the
+    // replay; a key over 567 characters with legacy rows from before the
+    // guard keeps them in production, and the copy leaves them out.
     subscription_deferred_writes: {
       class: 'INDEX',
       volatileColumns: [

@@ -41,7 +41,9 @@ const logger = Logger.get('SUBSCRIPTIONS_LEGACY_COPY');
  * (src/subscription-key-width). The copy leaves out the keys the width rule
  * holds back, so no insert fails on a key column's width. It does not read
  * the queue: a key that fits but has an earlier write still waiting gets its
- * rows copied where production holds them until the replay.
+ * rows copied where production holds them until the replay. And a key wider
+ * than that with legacy rows from before the guard keeps them in
+ * production; the copy leaves them out.
  */
 
 /** The widest key every subscription table can hold, read now. */
