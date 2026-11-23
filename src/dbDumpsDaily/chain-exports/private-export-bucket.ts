@@ -83,19 +83,23 @@ export interface BucketPrivacy {
 }
 
 /**
- * A network-level failure (a DNS lookup, a reset connection): its message
- * can name the host. Node's own ERR_ codes are not network errors.
+ * A network-level failure (a DNS lookup, a reset connection, a TLS
+ * handshake): its message can name the host. Node's other ERR_ codes are
+ * programming errors, not network errors.
  */
 export function isNetworkError(error: unknown): boolean {
-  const { code, syscall, hostname } = (error ?? {}) as {
+  const { code, syscall, hostname, host } = (error ?? {}) as {
     code?: unknown;
     syscall?: unknown;
     hostname?: unknown;
+    host?: unknown;
   };
   return (
     syscall !== undefined ||
     hostname !== undefined ||
-    (typeof code === 'string' && /^E(?!RR_)[A-Z0-9_]+$/.test(code))
+    host !== undefined ||
+    (typeof code === 'string' &&
+      /^(E(?!RR_)[A-Z0-9_]+|ERR_TLS_[A-Z0-9_]+)$/.test(code))
   );
 }
 

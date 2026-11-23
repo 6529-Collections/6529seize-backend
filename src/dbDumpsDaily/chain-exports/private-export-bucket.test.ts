@@ -151,6 +151,9 @@ describe('the chain exports bucket', () => {
     [{ syscall: 'connect' }, true],
     [{ hostname: 'reader.example.invalid' }, true],
     [{ code: 'ERR_INVALID_ARG_TYPE' }, false],
+    // A TLS failure names the host it expected.
+    [{ code: 'ERR_TLS_CERT_ALTNAME_INVALID' }, true],
+    [{ host: 'bucket.s3.example.invalid' }, true],
     [{ name: 'AccessDenied' }, false],
     [null, false]
   ])('reads %j as a network error: %j', (error, network) => {
