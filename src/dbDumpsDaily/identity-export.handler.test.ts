@@ -134,6 +134,12 @@ function setup(
     replicaLagError?: string | null;
     /** Why the lag is unknown (default: unreadable when it is null). */
     replicaLagUnknown?: 'unreadable' | 'dated_ahead' | null;
+    /** How far ahead of UTC the row is dated (7 200 000 ms when dated_ahead). */
+    replicaLagAheadMs?: number | null;
+    /** The bucket's privacy check fails with this error. */
+    privacyFailsWith?: Error;
+    /** What the upload named by failPutOf throws (an 'upload failed' Error). */
+    failPutWith?: Error;
     closeFails?: boolean;
     /** Answer a read of a missing key with 403, as S3 does without ListBucket. */
     missingAs403?: boolean;
@@ -154,6 +160,7 @@ function setup(
       throw new Error(`no ExpectedBucketOwner on ${command.constructor.name}`);
     }
     if (command instanceof GetPublicAccessBlockCommand) {
+      if (options.privacyFailsWith) throw options.privacyFailsWith;
       const on = options.publicBlock ?? true;
       return {
         PublicAccessBlockConfiguration: {
@@ -170,7 +177,7 @@ function setup(
     if (command instanceof PutObjectCommand) {
       const key = command.input.Key!;
       if (options.failPutOf && key.endsWith(options.failPutOf)) {
-        throw new Error('upload failed');
+        throw options.failPutWith ?? new Error('upload failed');
       }
       // S3 refuses an upload whose bytes don't match its checksum.
       const sum = createHash('sha256')
@@ -279,6 +286,12 @@ function setup(
             ? options.replicaLagUnknown
             : options.replicaLagMs === null
               ? ('unreadable' as const)
+              : null,
+        replicaLagAheadMs:
+          options.replicaLagAheadMs !== undefined
+            ? options.replicaLagAheadMs
+            : options.replicaLagUnknown === 'dated_ahead'
+              ? 7_200_000
               : null
       },
       close
@@ -334,7 +347,7 @@ describe('parseIdentityExportEvent', () => {
     expect(parseIdentityExportEvent({ job: 'profileSiteExport' })).toBeNull();
   });
 
-  it('takes acceptUnknownReplicaLag as a case name or a list of them, older_than_gap with its bound', () => {
+  it('takes acceptUnknownReplicaLag as a case or a list of them, older_than_gap and dated_ahead with their bounds', () => {
     expect(
       parseIdentityExportEvent({
         ...atFreeze,
@@ -348,23 +361,43 @@ describe('parseIdentityExportEvent', () => {
     expect(
       parseIdentityExportEvent({
         ...atFreeze,
-        acceptUnknownReplicaLag: ['dated_ahead', { older_than_gap: 60_000 }]
+        acceptUnknownReplicaLag: [
+          { dated_ahead: 7_140_000 },
+          { older_than_gap: 180_000 }
+        ]
       })
     ).toEqual(
       expect.objectContaining({
-        acceptUnknownReplicaLag: ['dated_ahead', { older_than_gap: 60_000 }]
+        acceptUnknownReplicaLag: [
+          { dated_ahead: 7_140_000 },
+          { older_than_gap: 180_000 }
+        ]
       })
     );
     expect(
       parseIdentityExportEvent({
         ...atFreeze,
-        acceptUnknownReplicaLag: ['unreadable', 'dated_ahead']
+        acceptUnknownReplicaLag: ['unreadable', { dated_ahead: 7_140_000 }]
       })
     ).toEqual(
       expect.objectContaining({
-        acceptUnknownReplicaLag: ['unreadable', 'dated_ahead']
+        acceptUnknownReplicaLag: ['unreadable', { dated_ahead: 7_140_000 }]
       })
     );
+  });
+
+  it('takes bounds at the edges of the time zones', () => {
+    for (const bounds of [
+      [{ older_than_gap: 120_000 }, { dated_ahead: 51_000_000 }],
+      [{ older_than_gap: 51_000_000 }, { dated_ahead: 60_000 }]
+    ]) {
+      expect(
+        parseIdentityExportEvent({
+          ...atFreeze,
+          acceptUnknownReplicaLag: bounds
+        })
+      ).toEqual(expect.objectContaining({ acceptUnknownReplicaLag: bounds }));
+    }
   });
 
   it("reads the CLI's options, with its defaults", () => {
@@ -511,11 +544,51 @@ describe('parseIdentityExportEvent', () => {
     [{ ...rehearsal, replacePointer: true }, 'a rehearsal writes no pointer'],
     [
       { ...atFreeze, acceptUnknownReplicaLag: true },
-      'acceptUnknownReplicaLag must name each case to accept, as the refusals do: "unreadable", "dated_ahead", or {"older_than_gap": <largest row age in ms: Monday\'s replicaLagAgeMs plus a margin>}; one or a list, each once. true and a bare "older_than_gap" are not accepted'
+      'acceptUnknownReplicaLag must name each case to accept, as the refusals do: "unreadable", {"dated_ahead": <smallest lead in ms: Monday\'s replicaLagAheadMs minus a margin>}, or {"older_than_gap": <largest row age in ms: Monday\'s replicaLagAgeMs plus a margin>}; one or a list, each once. A bound on a row\'s age is 120000 to 51000000 ms, on its lead 60000 to 51000000 ms. true and a bare "dated_ahead" or "older_than_gap" are not accepted: a rerun that lands on another reader showing another case, or a reader that stopped, must be refused.'
     ],
     [
       { ...atFreeze, acceptUnknownReplicaLag: 'older_than_gap' },
-      'true and a bare "older_than_gap" are not accepted'
+      'true and a bare "dated_ahead" or "older_than_gap" are not accepted'
+    ],
+    [
+      { ...atFreeze, acceptUnknownReplicaLag: 'dated_ahead' },
+      'true and a bare "dated_ahead" or "older_than_gap" are not accepted'
+    ],
+    [
+      { ...atFreeze, acceptUnknownReplicaLag: ['unreadable', 'dated_ahead'] },
+      'acceptUnknownReplicaLag must name each case to accept'
+    ],
+    // Both bounds within the zones: a lead of a minute or more, an age of
+    // the 2-minute minimum gap or more, neither past 14 h 10 min.
+    [
+      { ...atFreeze, acceptUnknownReplicaLag: { dated_ahead: 59_999 } },
+      'acceptUnknownReplicaLag must name each case to accept'
+    ],
+    [
+      { ...atFreeze, acceptUnknownReplicaLag: { dated_ahead: 51_000_001 } },
+      'acceptUnknownReplicaLag must name each case to accept'
+    ],
+    [
+      { ...atFreeze, acceptUnknownReplicaLag: { older_than_gap: 119_999 } },
+      'acceptUnknownReplicaLag must name each case to accept'
+    ],
+    [
+      { ...atFreeze, acceptUnknownReplicaLag: { older_than_gap: 51_000_001 } },
+      'acceptUnknownReplicaLag must name each case to accept'
+    ],
+    [
+      { ...atFreeze, acceptUnknownReplicaLag: { dated_ahead: '7140000' } },
+      'acceptUnknownReplicaLag must name each case to accept'
+    ],
+    [
+      {
+        ...atFreeze,
+        acceptUnknownReplicaLag: [
+          { dated_ahead: 7_140_000 },
+          { dated_ahead: 7_000_000 }
+        ]
+      },
+      'acceptUnknownReplicaLag must name each case to accept'
     ],
     [
       { ...atFreeze, acceptUnknownReplicaLag: 'stale' },
@@ -525,8 +598,8 @@ describe('parseIdentityExportEvent', () => {
       {
         ...atFreeze,
         acceptUnknownReplicaLag: [
-          { older_than_gap: 60_000 },
-          { older_than_gap: 90_000 }
+          { older_than_gap: 180_000 },
+          { older_than_gap: 240_000 }
         ]
       },
       'acceptUnknownReplicaLag must name each case to accept'
@@ -553,7 +626,7 @@ describe('parseIdentityExportEvent', () => {
     [
       {
         ...atFreeze,
-        acceptUnknownReplicaLag: { older_than_gap: 60_000, extra: 1 }
+        acceptUnknownReplicaLag: { older_than_gap: 180_000, extra: 1 }
       },
       'acceptUnknownReplicaLag must name each case to accept'
     ],
@@ -716,7 +789,8 @@ describe('runIdentityExportJob', () => {
         replicaLagMs: 40,
         replicaLagAgeMs: 0,
         replicaLagError: null,
-        replicaLagUnknown: null
+        replicaLagUnknown: null,
+        replicaLagAheadMs: null
       },
       replica_lag_accepted: null
     });
@@ -1224,7 +1298,8 @@ describe('runIdentityExportJob', () => {
       replicaLagAgeMs: ageMs,
       replicaLagError: lagMs === null || ageMs === null ? 'unknown' : null,
       replicaLagUnknown:
-        lagMs === null || ageMs === null ? ('unreadable' as const) : null
+        lagMs === null || ageMs === null ? ('unreadable' as const) : null,
+      replicaLagAheadMs: null
     });
     expect(() => checkReplicaLag(300_400, lag(300_400, 0))).toThrow(
       'not less than the 300400 ms since the freeze'
@@ -1258,7 +1333,8 @@ describe('runIdentityExportJob', () => {
       replicaLagMs: lagMs,
       replicaLagAgeMs: ageMs,
       replicaLagError: null,
-      replicaLagUnknown: null
+      replicaLagUnknown: null,
+      replicaLagAheadMs: null
     });
     // A small lag in an old row: lag plus age, plus the 1.5 s margin,
     // against the gap.
@@ -1283,7 +1359,8 @@ describe('runIdentityExportJob', () => {
         replicaLagAgeMs: null,
         replicaLagError:
           "LAST_UPDATE_TIMESTAMP is null: the row's age is unknown",
-        replicaLagUnknown: 'unreadable'
+        replicaLagUnknown: 'unreadable',
+        replicaLagAheadMs: null
       })
     ).toThrow(
       "can't be read from information_schema.replica_host_status (LAST_UPDATE_TIMESTAMP is null: the row's age is unknown)"
@@ -1339,7 +1416,8 @@ describe('runIdentityExportJob', () => {
         replicaLagMs: null,
         replicaLagAgeMs: null,
         replicaLagError: null,
-        replicaLagUnknown: null
+        replicaLagUnknown: null,
+        replicaLagAheadMs: null
       })
     ).toThrow('(no reason given)');
     // And the snapshot's log line names it.
@@ -1404,30 +1482,33 @@ describe('runIdentityExportJob', () => {
     const reading = (
       lagMs: number | null,
       ageMs: number | null,
-      unknown: 'unreadable' | 'dated_ahead' | null = null
+      unknown: 'unreadable' | 'dated_ahead' | null = null,
+      aheadMs = 7_200_000
     ) => ({
       replicaLagMs: lagMs,
       replicaLagAgeMs: ageMs,
       replicaLagError: unknown
-        ? "LAST_UPDATE_TIMESTAMP is 7200000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown"
+        ? `LAST_UPDATE_TIMESTAMP is ${aheadMs} ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown`
         : null,
-      replicaLagUnknown: unknown
+      replicaLagUnknown: unknown,
+      replicaLagAheadMs: unknown === 'dated_ahead' ? aheadMs : null
     });
+    // Monday read the row 7 200 000 ms ahead (a +2 h offset): Tuesday
+    // accepts a lead down to that less a minute.
+    const LEAD: ReplicaLagAcceptance[] = [{ dated_ahead: 7_140_000 }];
     // Each untrustworthy reading: refused, and accepted only when told to.
     expect(() =>
       checkReplicaLag(300_000, reading(null, null, 'dated_ahead'))
     ).toThrow(
-      "The replica's lag row is dated ahead of UTC (LAST_UPDATE_TIMESTAMP is 7200000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown): LAST_UPDATE_TIMESTAMP may not be in UTC, so the row's age is unknown. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: \"dated_ahead\") only for a reading Monday's rehearsal also showed, and only with the identity lead's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it."
+      "The replica's lag row is dated ahead of UTC (LAST_UPDATE_TIMESTAMP is 7200000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown): LAST_UPDATE_TIMESTAMP may not be in UTC, so the row's age is unknown. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: {\"dated_ahead\": <Monday's replicaLagAheadMs minus a margin, such as 60000>}) only for a reading Monday's rehearsal also showed, and only with the identity lead's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it."
     );
     const all: ReplicaLagAcceptance[] = [
       'unreadable',
-      'dated_ahead',
+      { dated_ahead: 60_000 },
       { older_than_gap: 400_000 }
     ];
     expect(
-      checkReplicaLag(300_000, reading(null, null, 'dated_ahead'), [
-        'dated_ahead'
-      ])
+      checkReplicaLag(300_000, reading(null, null, 'dated_ahead'), LEAD)
     ).toBe('dated_ahead');
     expect(
       checkReplicaLag(300_000, reading(null, null, 'unreadable'), [
@@ -1441,9 +1522,9 @@ describe('runIdentityExportJob', () => {
     ).toBe('older_than_gap');
     // Only the case named: a rerun that lands on a reader showing another
     // case is refused.
-    expect(() =>
-      checkReplicaLag(300_000, reading(5, 300_000), ['dated_ahead'])
-    ).toThrow("The replica's lag row is 300000 ms old");
+    expect(() => checkReplicaLag(300_000, reading(5, 300_000), LEAD)).toThrow(
+      "The replica's lag row is 300000 ms old"
+    );
     expect(() =>
       checkReplicaLag(300_000, reading(null, null, 'dated_ahead'), [
         'unreadable',
@@ -1497,6 +1578,32 @@ describe('runIdentityExportJob', () => {
     ).toThrow(
       "The replica's lag row is 3660001 ms old, over the 3660000 ms accepted for older_than_gap: it has aged past Monday's reading, so the reader may have stopped updating its row. Report it; don't raise the bound."
     );
+    // dated_ahead only down to the lead given: a constant offset passes, a
+    // lead that shrinks past Monday's reading is refused.
+    expect(
+      checkReplicaLag(300_000, reading(5, null, 'dated_ahead', 7_199_800), LEAD)
+    ).toBe('dated_ahead');
+    expect(
+      checkReplicaLag(300_000, reading(5, null, 'dated_ahead', 7_140_000), LEAD)
+    ).toBe('dated_ahead');
+    // The reader stopped at 23:50: by 00:05 its row's lead has shrunk by
+    // 15 minutes, still ahead of UTC, and it is refused.
+    expect(() =>
+      checkReplicaLag(300_000, reading(5, null, 'dated_ahead', 6_300_000), LEAD)
+    ).toThrow(
+      "The replica's lag row is dated 6300000 ms ahead of UTC, less than the 7140000 ms accepted for dated_ahead: its lead has shrunk since Monday's reading, so the reader may have stopped updating its row. Report it; don't lower the bound."
+    );
+    expect(() =>
+      checkReplicaLag(300_000, reading(5, null, 'dated_ahead', 7_139_999), LEAD)
+    ).toThrow('less than the 7140000 ms accepted for dated_ahead');
+    // A dated_ahead row without its lead can't pass a bound.
+    expect(() =>
+      checkReplicaLag(
+        300_000,
+        { ...reading(5, null, 'dated_ahead'), replicaLagAheadMs: null },
+        LEAD
+      )
+    ).toThrow('less than the 7140000 ms accepted');
     // The job records the case, in the response, the manifest and the log.
     mockBuild.mockResolvedValue(document());
     const warn = jest.spyOn(Logger.prototype, 'warn');
@@ -1574,6 +1681,70 @@ describe('runIdentityExportJob', () => {
         JSON.parse(bodies.get(rehearsed.manifestKey)!).replica_lag_case
       ).toBe(expected);
     }
+    // A row dated ahead gives its lead, for Monday's two readings to
+    // compare, in the response and the manifest.
+    const ahead = setup({
+      replicaLagMs: 5,
+      replicaLagAgeMs: null,
+      replicaLagUnknown: 'dated_ahead',
+      replicaLagAheadMs: 7_199_000
+    });
+    const led = await run(ahead.deps, rehearsal);
+    expect([led.replicaLagCase, led.evidence.replicaLagAheadMs]).toEqual([
+      'dated_ahead',
+      7_199_000
+    ]);
+    expect(
+      JSON.parse(ahead.bodies.get(led.manifestKey)!).read.replicaLagAheadMs
+    ).toBe(7_199_000);
+    // A run at the freeze names the case against its own gap: a row 200 s
+    // old, 300 s after the freeze, is trusted, though older than the
+    // 2-minute minimum.
+    mockBuild.mockResolvedValue(document());
+    const later = setup({
+      snapshotAt: '2026-11-24T00:05:00.000Z',
+      replicaLagMs: 5,
+      replicaLagAgeMs: 200_000
+    });
+    const atGap = await run(later.deps);
+    expect([atGap.replicaLagCase, atGap.replicaLagAccepted]).toEqual([
+      null,
+      null
+    ]);
+  });
+
+  it('accepts a row dated ahead at the freeze only down to the lead given, and records it', async () => {
+    mockBuild.mockResolvedValue(document());
+    const dated = (aheadMs: number) =>
+      setup({
+        snapshotAt: '2026-11-24T00:05:00.000Z',
+        replicaLagMs: 5,
+        replicaLagAgeMs: null,
+        replicaLagUnknown: 'dated_ahead',
+        replicaLagAheadMs: aheadMs
+      });
+    const event = {
+      ...atFreeze,
+      acceptUnknownReplicaLag: { dated_ahead: 7_140_000 }
+    };
+    const offset = dated(7_199_000);
+    const result = await run(offset.deps, event);
+    expect([result.replicaLagCase, result.replicaLagAccepted]).toEqual([
+      'dated_ahead',
+      'dated_ahead'
+    ]);
+    const manifest = JSON.parse(offset.bodies.get(result.manifestKey)!);
+    expect(manifest.replica_lag_accepted).toBe('dated_ahead');
+    expect(manifest.accept_unknown_replica_lag).toEqual([
+      { dated_ahead: 7_140_000 }
+    ]);
+    // A reader that stopped: its lead has shrunk past the bound. Refused,
+    // nothing written.
+    const stopped = dated(6_300_000);
+    await expect(run(stopped.deps, event)).rejects.toThrow(
+      "The replica's lag row is dated 6300000 ms ahead of UTC, less than the 7140000 ms accepted for dated_ahead"
+    );
+    expect(stopped.order).toEqual([]);
   });
 
   it("gives a failed read replica's error by its code only, its message to the log", async () => {
@@ -1728,6 +1899,79 @@ describe('runIdentityExportJob', () => {
     } finally {
       error.mockRestore();
     }
+  });
+
+  it('reports a DNS failure in the bucket check by its code, never the host', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error');
+    try {
+      mockBuild.mockResolvedValue(document());
+      const { deps, order } = setup({
+        privacyFailsWith: Object.assign(
+          new Error('getaddrinfo EAI_AGAIN bucket.s3.example.invalid'),
+          {
+            code: 'EAI_AGAIN',
+            errno: -3001,
+            syscall: 'getaddrinfo',
+            hostname: 'bucket.s3.example.invalid'
+          }
+        )
+      });
+      const failure = await run(deps).then(
+        () => null,
+        (e: Error) => e
+      );
+      expect(failure?.name).toBe('IdentityExportNetworkError');
+      expect(failure?.message).toBe(
+        "DNS lookup failed, retry: EAI_AGAIN -3001 (A network call, while running the export). The host it looked up is in the function's log."
+      );
+      expect(order).toEqual([]);
+      // The links job's check too.
+      const links = await runIdentityExportJob(
+        parseIdentityExportEvent({
+          job: 'identityExportLinks',
+          freezeAt: '2026-11-24T00:00:00Z'
+        })!,
+        context,
+        deps
+      ).then(
+        () => null,
+        (e: Error) => e
+      );
+      expect(links?.message).toMatch(
+        /^DNS lookup failed, retry: EAI_AGAIN -3001 \(A network call, while renewing the links\)/
+      );
+      expect(links?.message).not.toContain('example.invalid');
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it('gives an S3 refusal in the bucket check by its name and status, not its message', async () => {
+    mockBuild.mockResolvedValue(document());
+    const { deps, order } = setup({
+      privacyFailsWith: Object.assign(
+        new Error('User is not authorized to perform this action'),
+        { name: 'AccessDenied', $metadata: { httpStatusCode: 403 } }
+      )
+    });
+    const failure = await run(deps).then(
+      () => null,
+      (e: Error) => e
+    );
+    expect(failure?.message).toBe(
+      `Can't read the public access block of ${BUCKET} as its owner's: AccessDenied (403)`
+    );
+    expect(order).toEqual([]);
+  });
+
+  it("leaves a programming error's ERR_ code alone: it is no network call", async () => {
+    mockBuild.mockResolvedValue(document());
+    const bug = Object.assign(
+      new TypeError('The "chunk" argument must be of type string'),
+      { code: 'ERR_INVALID_ARG_TYPE' }
+    );
+    const { deps } = setup({ failPutOf: 'summary.json', failPutWith: bug });
+    await expect(run(deps)).rejects.toBe(bug);
   });
 
   it("keeps the reader's hostname out of the response, the manifest, the pointer and the files", async () => {

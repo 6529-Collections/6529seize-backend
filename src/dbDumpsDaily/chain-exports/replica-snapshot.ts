@@ -109,6 +109,12 @@ export interface ReadOnlyEvidence {
    * zone may not be UTC). Null when lag and age were both read.
    */
   readonly replicaLagUnknown: ReplicaLagUnknown | null;
+  /**
+   * How far ahead of UTC the row is dated, in milliseconds, when it is
+   * (`dated_ahead`); null otherwise. A time zone offset keeps it constant;
+   * a reader that stopped updating makes it shrink.
+   */
+  readonly replicaLagAheadMs: number | null;
 }
 
 export type ReplicaLagUnknown = 'unreadable' | 'dated_ahead';
@@ -188,6 +194,8 @@ export interface ReplicaLagReading {
   readonly ageMs: number | null;
   readonly error: string | null;
   readonly unknown: ReplicaLagUnknown | null;
+  /** How far ahead of UTC the row is dated, when it is. */
+  readonly aheadMs: number | null;
 }
 
 const logger = Logger.get('REPLICA_SNAPSHOT');
@@ -195,9 +203,10 @@ const logger = Logger.get('REPLICA_SNAPSHOT');
 function unknownLag(
   error: string,
   unknown: ReplicaLagUnknown = 'unreadable',
-  lagMs: number | null = null
+  lagMs: number | null = null,
+  aheadMs: number | null = null
 ): ReplicaLagReading {
-  return { lagMs, ageMs: null, error, unknown };
+  return { lagMs, ageMs: null, error, unknown, aheadMs };
 }
 
 /**
@@ -260,14 +269,16 @@ export async function readReplicaLag(
     return unknownLag(
       `LAST_UPDATE_TIMESTAMP is ${-age} ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown`,
       'dated_ahead',
-      lag
+      lag,
+      -age
     );
   }
   return {
     lagMs: lag,
     ageMs: Math.max(0, age),
     error: null,
-    unknown: null
+    unknown: null,
+    aheadMs: null
   };
 }
 
@@ -393,7 +404,8 @@ export async function openReadOnlySnapshot(
       replicaLagMs: lag.lagMs,
       replicaLagAgeMs: lag.ageMs,
       replicaLagError: lag.error,
-      replicaLagUnknown: lag.unknown
+      replicaLagUnknown: lag.unknown,
+      replicaLagAheadMs: lag.aheadMs
     };
     return {
       executor: new ReadOnlySnapshotExecutor(connection),

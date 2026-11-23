@@ -91,7 +91,8 @@ describe('openReadOnlySnapshot', () => {
       replicaLagMs: 18.5,
       replicaLagAgeMs: 250,
       replicaLagError: null,
-      replicaLagUnknown: null
+      replicaLagUnknown: null,
+      replicaLagAheadMs: null
     });
     // The hostname stays out of the evidence the manifest carries.
     expect(JSON.stringify(snapshot.evidence)).not.toContain('replica-host');
@@ -174,6 +175,10 @@ describe('openReadOnlySnapshot', () => {
       expect(snapshot.evidence.replicaLagAgeMs).toBeNull();
       expect(snapshot.evidence.replicaLagError).toBe(why);
       expect(snapshot.evidence.replicaLagUnknown).toBe(unknown);
+      // How far ahead the row is dated, when it is: what Tuesday bounds.
+      expect(snapshot.evidence.replicaLagAheadMs).toBe(
+        unknown === 'dated_ahead' ? 5000 : null
+      );
       expect(snapshot.evidence.snapshotAt).toBe('2026-11-24T00:00:05.000Z');
     }
   );
@@ -226,7 +231,8 @@ describe('openReadOnlySnapshot', () => {
       lagMs: null,
       ageMs: null,
       error: code,
-      unknown: 'unreadable'
+      unknown: 'unreadable',
+      aheadMs: null
     });
     expect(JSON.stringify(reading)).not.toMatch(
       /reader\.example|192\.0\.2\.10|'reader'/
@@ -247,7 +253,8 @@ describe('openReadOnlySnapshot', () => {
         lagMs,
         ageMs,
         error: null,
-        unknown: null
+        unknown: null,
+        aheadMs: null
       });
     }
   );

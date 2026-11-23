@@ -50,17 +50,21 @@ The event carries the CLI's options, under the same rules.
   minutes after it.
 - `acceptUnknownReplicaLag`: at the freeze, the untrusted lag cases the run
   may go through, as the refusals name them: `"unreadable"`,
-  `"dated_ahead"`, or `{"older_than_gap":<largest row age in ms>}` (the
-  larger of Monday's two `replicaLagAgeMs` readings plus a margin, such as
-  60000), one or a list. `true`, a bare `"older_than_gap"`, other names and
-  repeats are refused. Only as in the README's "An unknown replica lag":
-  after running once more, for a case Monday's rehearsal also showed, and
-  with the identity lead's agreement. An accepted case still holds the lag
-  the row reports to the gap, and an `older_than_gap` row older than its
-  bound is refused. The response and the manifest record the list as given,
-  bound included, and the case accepted (`replicaLagAccepted`,
-  `replica_lag_accepted`). The CLI has no such flag: it reads no replica
-  lag.
+  `{"dated_ahead":<smallest lead in ms>}` (the smaller of Monday's two
+  `replicaLagAheadMs` readings minus a margin, such as 60000), or
+  `{"older_than_gap":<largest row age in ms>}` (the larger of Monday's two
+  `replicaLagAgeMs` readings plus a margin, such as 60000), one or a list.
+  An age bound is 120000 to 51000000 ms, a lead bound 60000 to 51000000 ms:
+  time zones reach 14 hours from UTC. `true`, a bare `"dated_ahead"` or
+  `"older_than_gap"`, other names and repeats are refused. Only as in the
+  README's "An unknown replica lag": after running once more, for a case
+  Monday's rehearsal also showed, and with the identity lead's agreement.
+  An accepted case still holds the lag the row reports to the gap; an
+  `older_than_gap` row older than its bound, or a `dated_ahead` row whose
+  lead is less than its bound, is refused. The response and the manifest
+  record the list as given, bounds included, and the case accepted
+  (`replicaLagAccepted`, `replica_lag_accepted`). The CLI has no such flag:
+  it reads no replica lag.
 - `replacePointer: true`: at the freeze, makes this run the freeze's export
   when another run already is.
 
@@ -156,8 +160,9 @@ The job refuses, and writes nothing, when:
   say. Such a lag is never accepted;
 - the lag can't be trusted, unless `acceptUnknownReplicaLag` names that
   case: it can't be read (`unreadable`), its row is dated ahead of UTC
-  (`dated_ahead`), or its row is older than the whole time since the freeze
-  (`older_than_gap`). `evidence.replicaLagUnknown` names the first two, and
+  (`dated_ahead`, how far ahead in `evidence.replicaLagAheadMs`), or its row
+  is older than the whole time since the freeze (`older_than_gap`).
+  `evidence.replicaLagUnknown` names the first two, and
   `evidence.replicaLagError` gives the reason: the server's error code and
   number only (its message, which can name the user and host, goes to the
   function's log), or the export's own. A row whose age can't be trusted
@@ -327,22 +332,26 @@ about 600, Tuesday's run may not fit one invocation. Check in `out.json`:
   `"revision":"<40-hex commit deployed to production>"`.
 - `replicaLagCase` is `null`: the lag and its row's age could be trusted.
   Otherwise it names the case a real run would refuse on: `unreadable`,
-  `dated_ahead` or `older_than_gap` (a rehearsal holds the row's age to the
-  2-minute minimum gap). Write that name down; it is the only one Tuesday
+  `dated_ahead` or `older_than_gap`. A rehearsal has no freeze, so it
+  holds the row's age to the 2-minute minimum gap alone, the shortest gap
+  Tuesday's run can have. Write that name down; it is the only one Tuesday
   may accept.
 - `evidence.replicaLagMs` and `evidence.replicaLagAgeMs` are numbers, the
   age well under a minute on a healthy reader. An age of hours, or the case
-  `dated_ahead`, means `LAST_UPDATE_TIMESTAMP` isn't in UTC. With the case
-  `unreadable`, `evidence.replicaLagError` says why.
+  `dated_ahead` (with its lead in `evidence.replicaLagAheadMs`), means
+  `LAST_UPDATE_TIMESTAMP` isn't in UTC. With the case `unreadable`,
+  `evidence.replicaLagError` says why.
 - Read the lag twice: a few minutes after this run, take a quick second
   reading with a one-profile profile site rehearsal
   (`"rehearsal":true,"profile":"<a profile id>"`, which reads the same
   reader endpoint in seconds), or run this rehearsal again. Compare the two
-  readings' `evidence.replicaLagAgeMs`, not their case names. If the row's
-  age grew by about the wait, the reader stopped updating its row: report
-  it, and never accept it on Tuesday. If it stayed the same (a time zone
-  offset), write down the larger of the two: Tuesday's `older_than_gap`
-  bound is that age plus a margin, such as 60000 ms.
+  readings' `evidence.replicaLagAgeMs` (or, for `dated_ahead`,
+  `evidence.replicaLagAheadMs`), not their case names. If the age grew, or
+  the lead shrank, by about the wait, the reader stopped updating its row:
+  report it, and never accept it on Tuesday. If it stayed the same (a time
+  zone offset), write it down: Tuesday's `older_than_gap` bound is the
+  larger age plus a margin, its `dated_ahead` bound the smaller lead minus
+  a margin, such as 60000 ms.
 - If either reading names a case, tell the identity lead and settle it
   before Tuesday: Tuesday can accept only a case Monday showed, by its
   name, as in the README's "An unknown replica lag".
@@ -383,12 +392,15 @@ If the run is refused because of the replica:
   than the time since the freeze: follow the README's "An unknown replica
   lag". Run once more; then accept only the case the refusal names, and
   only if Monday's rehearsal showed it, with the identity lead's
-  agreement: `"acceptUnknownReplicaLag":"unreadable"` or `"dated_ahead"`,
-  or for `older_than_gap` the bound from Monday's age:
-  `"acceptUnknownReplicaLag":{"older_than_gap":<ms>}`, with Monday's larger
-  `replicaLagAgeMs` plus 60000. A row older than that bound is refused:
-  report it, and don't raise the bound. Otherwise report it. Don't keep
-  running it until 01:30;
+  agreement: `"acceptUnknownReplicaLag":"unreadable"`; for `older_than_gap`
+  the bound from Monday's age,
+  `"acceptUnknownReplicaLag":{"older_than_gap":<ms>}` with Monday's larger
+  `replicaLagAgeMs` plus 60000; for `dated_ahead` the bound from Monday's
+  lead, `"acceptUnknownReplicaLag":{"dated_ahead":<ms>}` with Monday's
+  smaller `replicaLagAheadMs` minus 60000. A row older than its bound, or
+  one whose lead has shrunk below it, means the reader stopped: report it,
+  and don't move the bound. Otherwise report it. Don't keep running it
+  until 01:30;
 - it says an untrusted row reports a lag of the gap less 1.5 s or more:
   its lag never changes, so run once more, and if the refusal comes back
   unchanged, report it.

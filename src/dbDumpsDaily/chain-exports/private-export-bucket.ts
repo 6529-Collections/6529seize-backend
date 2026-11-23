@@ -83,6 +83,38 @@ export interface BucketPrivacy {
 }
 
 /**
+ * A network-level failure (a DNS lookup, a reset connection): its message
+ * can name the host. Node's own ERR_ codes are not network errors.
+ */
+export function isNetworkError(error: unknown): boolean {
+  const { code, syscall, hostname } = (error ?? {}) as {
+    code?: unknown;
+    syscall?: unknown;
+    hostname?: unknown;
+  };
+  return (
+    syscall !== undefined ||
+    hostname !== undefined ||
+    (typeof code === 'string' && /^E(?!RR_)[A-Z0-9_]+$/.test(code))
+  );
+}
+
+/**
+ * An S3 service error as its name and HTTP status, e.g. `AccessDenied
+ * (403)`: never its message. A network error is rethrown as it is, for the
+ * job to report by its code without the host.
+ */
+function s3Refusal(error: unknown): string {
+  if (isNetworkError(error)) throw error;
+  const { name, $metadata } = (error ?? {}) as {
+    name?: unknown;
+    $metadata?: { httpStatusCode?: number };
+  };
+  const status = $metadata?.httpStatusCode;
+  return `${String(name ?? 'Error')}${status === undefined ? '' : ` (${status})`}`;
+}
+
+/**
  * Refuses unless the bucket is the function's own account's, blocks every
  * kind of public access, and S3 says its policy isn't public. The bucket's
  * policy grants the function's role these two reads.
@@ -102,7 +134,7 @@ export async function assertBucketPrivate(
     block = answer?.PublicAccessBlockConfiguration;
   } catch (error) {
     throw new PrivateBucketError(
-      `Can't read the public access block of ${bucket.name} as its owner's: ${(error as Error).message}`
+      `Can't read the public access block of ${bucket.name} as its owner's: ${s3Refusal(error)}`
     );
   }
   const blocked =
@@ -126,7 +158,7 @@ export async function assertBucketPrivate(
     isPublic = status?.PolicyStatus?.IsPublic;
   } catch (error) {
     throw new PrivateBucketError(
-      `Can't read the policy status of ${bucket.name}: ${(error as Error).message}`
+      `Can't read the policy status of ${bucket.name}: ${s3Refusal(error)}`
     );
   }
   if (isPublic !== false) {
