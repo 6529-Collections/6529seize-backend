@@ -110,7 +110,8 @@ describe('the replica lag query on MySQL', () => {
       lagMs: 20,
       ageMs: null,
       error: "LAST_UPDATE_TIMESTAMP is null: the row's age is unknown",
-      unknown: 'unreadable'
+      unknown: 'unreadable',
+      aheadMs: null
     });
     const ahead = await readReplicaLag(
       connection,
@@ -122,6 +123,9 @@ describe('the replica lag query on MySQL', () => {
     expect(ahead.ageMs).toBeNull();
     expect(ahead.error).toMatch(/ms ahead of UTC_TIMESTAMP: not UTC/);
     expect(ahead).toMatchObject({ unknown: 'dated_ahead' });
+    // Two hours ahead, as MySQL computed it.
+    expect(ahead.aheadMs).toBeGreaterThan(7_190_000);
+    expect(ahead.aheadMs).toBeLessThanOrEqual(7_200_000);
   });
 
   it('would not parse with the alias lag: LAG is a reserved word', async () => {

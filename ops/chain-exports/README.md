@@ -39,8 +39,9 @@ a job the function knows, or it fails. Each export:
   - a lag it can't trust, unless that case is accepted by name as in "An
     unknown replica lag", below: a lag that can't be read
     (`evidence.replicaLagUnknown` is `unreadable`), a row dated ahead of
-    UTC (`dated_ahead`), or a row older than the whole gap
-    (`older_than_gap`). `evidence.replicaLagError` gives the reason: the
+    UTC (`dated_ahead`, how far ahead in `evidence.replicaLagAheadMs`), or
+    a row older than the whole gap (`older_than_gap`).
+    `evidence.replicaLagError` gives the reason: the
     server's error code and number only (its message, which can name the
     user and host, goes to the function's log), or the export's own;
 - writes only to the private bucket `6529-chain-exports-<account>-<region>`
@@ -72,27 +73,34 @@ For each:
 1. Run it once more first. A passing error, such as a timeout, clears, and
    through the reader endpoint the run may land on another reader. If the
    `older_than_gap` refusal returns with the row's age grown by the time
-   you waited, the reader stopped updating: report it.
+   you waited, or the `dated_ahead` refusal with its lead shrunk, the
+   reader stopped updating: report it.
 2. Accept it only for a reading Monday's rehearsal also showed, and only
    with the switch owner's agreement, by naming its case:
-   - `"acceptUnknownReplicaLag":"unreadable"` or `"dated_ahead"`;
+   - `"acceptUnknownReplicaLag":"unreadable"`;
    - `"acceptUnknownReplicaLag":{"older_than_gap":<ms>}`, with the largest
      row age to accept: Monday's larger `replicaLagAgeMs` plus a margin,
-     such as 60000. A time zone offset keeps the row's age constant, so it
-     passes; a reader that stopped updating makes the age grow past the
-     bound, so it is refused, as a bare `"older_than_gap"` is;
-   - or a list of these, such as `["unreadable","dated_ahead"]`.
+     such as 60000;
+   - `"acceptUnknownReplicaLag":{"dated_ahead":<ms>}`, with the smallest
+     lead over UTC to accept: Monday's smaller `replicaLagAheadMs` minus a
+     margin, such as 60000;
+   - or a list of these, such as `["unreadable",{"dated_ahead":7140000}]`.
 
-   A rerun that lands on a reader showing another case is refused, as
-   `true` is. For an error, accept only `ER_UNKNOWN_TABLE 1109` or
+   A time zone offset keeps a row's age, or its lead, constant, so it
+   passes; a reader that stopped updating makes the age grow, or the lead
+   shrink, past the bound, so it is refused, as a bare `"older_than_gap"`
+   or `"dated_ahead"` is. An age bound is 120000 to 51000000 ms, a lead
+   bound 60000 to 51000000 ms: time zones reach 14 hours from UTC. A rerun
+   that lands on a reader showing another case is refused, as `true` is.
+   For an error, accept only `ER_UNKNOWN_TABLE 1109` or
    `ER_UNKNOWN_SYSTEM_VARIABLE 1193` (the reader isn't Aurora). The run
    records the case it accepted (`replicaLagAccepted`, and
    `replica_lag_accepted` in the manifest, beside the acceptance as given,
-   bound included).
+   bounds included).
 
 3. Otherwise report it: any other error, such as `ER_PARSE_ERROR 1064`, is
-   a fault, and a row older than the bound accepted means the reader
-   stopped: don't raise the bound.
+   a fault, and a row past the bound accepted means the reader stopped:
+   don't move the bound.
 
 An accepted case still holds the lag the row reports to the gap: a row
 whose age can't be trusted but which says the reader is behind by the gap
@@ -251,13 +259,15 @@ Event fields:
   refusal lists it. Use it only as in "A publish that straddles the
   freeze", below.
 - `acceptUnknownReplicaLag` (optional): the untrusted lag cases the run may
-  go through, as the refusals name them: `"unreadable"`, `"dated_ahead"`,
-  or `{"older_than_gap":<largest row age in ms>}`, one or a list; `true`
-  and a bare `"older_than_gap"` are refused. Only as in "An unknown replica
-  lag" (top of this file): after running once more, for a reading Monday's
-  rehearsal also showed, and with the switch owner's agreement. The
-  manifest records the list, bound included (`accept_unknown_replica_lag`),
-  and the case accepted (`replica_lag_accepted`).
+  go through, as the refusals name them: `"unreadable"`,
+  `{"dated_ahead":<smallest lead in ms>}` or
+  `{"older_than_gap":<largest row age in ms>}`, one or a list; `true` and
+  a bare `"dated_ahead"` or `"older_than_gap"` are refused. Only as in "An
+  unknown replica lag" (top of this file): after running once more, for a
+  reading Monday's rehearsal also showed, and with the switch owner's
+  agreement. The manifest records the list, bounds included
+  (`accept_unknown_replica_lag`), and the case accepted
+  (`replica_lag_accepted`).
 - `replacePointer` (optional, `true`): let this run replace the by-freeze
   pointer an earlier run for the same freeze wrote. Without it, the pointer
   is written only if none is there. Only for a real run of every profile,
@@ -314,23 +324,26 @@ Check in `out.json`:
   reads the secret afresh.
 - `replicaLagCase` is `null`: the lag and its row's age could be trusted.
   Otherwise it names the case a real run would refuse on: `unreadable`,
-  `dated_ahead` or `older_than_gap`. The rehearsal works it out against at
-  least the 2-minute minimum gap, as a real run would see it, so a healthy
-  reader isn't named `older_than_gap` just because the rehearsal's own
-  `frozenAt` was moments ago. Write the name down; it is the only one
-  Tuesday may accept.
+  `dated_ahead` or `older_than_gap`. The rehearsal works it out against the
+  2-minute minimum gap alone, whatever its own `frozenAt`: a gap of
+  moments would name `older_than_gap` on a healthy reader, and a gap of an
+  hour would hide an offset Tuesday will see. Write the name down; it is
+  the only one Tuesday may accept.
 - `evidence.replicaLagMs` and `evidence.replicaLagAgeMs` are numbers, the
   age well under a minute on a healthy reader. An age of hours, or the case
-  `dated_ahead`, means `LAST_UPDATE_TIMESTAMP` isn't in UTC. With the case
-  `unreadable`, `evidence.replicaLagError` says why.
+  `dated_ahead` (with its lead in `evidence.replicaLagAheadMs`), means
+  `LAST_UPDATE_TIMESTAMP` isn't in UTC. With the case `unreadable`,
+  `evidence.replicaLagError` says why.
 - Read the lag twice: a few minutes after the first rehearsal, run a
   one-profile rehearsal (`"rehearsal":true,"profile":"<a profile id>"`),
   which reads the same lag in seconds, and compare the two readings'
-  `evidence.replicaLagAgeMs`, not their case names. If the row's age grew
-  by about the wait, the reader stopped updating its row: report it, and
-  never accept it on Tuesday. If it stayed the same (a time zone offset),
-  write down the larger of the two: Tuesday's `older_than_gap` bound is
-  that age plus a margin, such as 60000 ms.
+  `evidence.replicaLagAgeMs` (or, for `dated_ahead`,
+  `evidence.replicaLagAheadMs`), not their case names. If the age grew, or
+  the lead shrank, by about the wait, the reader stopped updating its row:
+  report it, and never accept it on Tuesday. If it stayed the same (a time
+  zone offset), write it down: Tuesday's `older_than_gap` bound is the
+  larger age plus a margin, its `dated_ahead` bound the smaller lead minus
+  a margin, such as 60000 ms.
 - If either reading names a case, tell the on-call engineer and settle it
   before Tuesday: Tuesday can accept only a case Monday showed, by its
   name, as in "An unknown replica lag" (top of this file).
@@ -396,8 +409,9 @@ may be behind, wait a few minutes and run it again. If the refusal says
 the lag can't be read, or its row is dated ahead of UTC or older than the
 time since the freeze, follow "An unknown replica lag" (top of this file):
 run once more, then accept only the case the refusal names, and only if
-Monday's rehearsal showed it (for `older_than_gap`, with the bound from
-Monday's age), or report it. Don't keep running it until 01:30.
+Monday's rehearsal showed it (for `older_than_gap` and `dated_ahead`, with
+the bound from Monday's age or lead), or report it. Don't keep running it
+until 01:30.
 
 ### A publish that straddles the freeze
 

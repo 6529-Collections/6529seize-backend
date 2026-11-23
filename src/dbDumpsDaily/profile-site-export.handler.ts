@@ -40,6 +40,7 @@ import {
   ExportBucket,
   exportBucketOf,
   exportStage,
+  isNetworkError,
   isWriteConflict,
   linksLastAtMost,
   Presigner,
@@ -414,27 +415,47 @@ export type ReplicaLagAccepted = (typeof REPLICA_LAG_CASES)[number];
 
 /**
  * One untrusted lag case a run may go through, as the invoker names it.
+ * A time zone offset keeps a row's age (or its lead over UTC) constant; a
+ * reader that stopped updating makes the age grow (the lead shrink). So
  * older_than_gap carries the largest row age accepted, from Monday's
- * replicaLagAgeMs plus a margin: a time zone offset keeps the age
- * constant, so it passes; a reader that stopped updating makes it grow
- * past the bound, so it is refused.
+ * replicaLagAgeMs plus a margin, and dated_ahead the smallest lead, from
+ * Monday's replicaLagAheadMs minus a margin: past either, it is refused.
  */
 export type ReplicaLagAcceptance =
   | 'unreadable'
-  | 'dated_ahead'
+  | { readonly dated_ahead: number }
   | { readonly older_than_gap: number };
 
-/** The most a row's age may be accepted at: a week. */
-const MAX_ACCEPTED_ROW_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+/** Time zones reach 14 hours from UTC; a bound may add a margin to that. */
+const MAX_ZONE_BOUND_MS = 14 * 60 * 60 * 1000 + 10 * 60 * 1000;
+/** A smaller lead over UTC is clock skew, not a time zone. */
+const MIN_DATED_AHEAD_BOUND_MS = 60_000;
 
 const ACCEPT_FORMS =
-  '"unreadable", "dated_ahead", or {"older_than_gap": <largest row age in ms: Monday\'s replicaLagAgeMs plus a margin>}';
+  '"unreadable", {"dated_ahead": <smallest lead in ms: Monday\'s replicaLagAheadMs minus a margin>}, or {"older_than_gap": <largest row age in ms: Monday\'s replicaLagAgeMs plus a margin>}';
 
 /** How a refusal says to accept its case. */
 function acceptanceExample(lagCase: ReplicaLagAccepted): string {
-  return lagCase === 'older_than_gap'
-    ? 'acceptUnknownReplicaLag: {"older_than_gap": <Monday\'s replicaLagAgeMs plus a margin, such as 60000>}'
-    : `acceptUnknownReplicaLag: "${lagCase}"`;
+  if (lagCase === 'older_than_gap') {
+    return 'acceptUnknownReplicaLag: {"older_than_gap": <Monday\'s replicaLagAgeMs plus a margin, such as 60000>}';
+  }
+  if (lagCase === 'dated_ahead') {
+    return 'acceptUnknownReplicaLag: {"dated_ahead": <Monday\'s replicaLagAheadMs minus a margin, such as 60000>}';
+  }
+  return `acceptUnknownReplicaLag: "${lagCase}"`;
+}
+
+/** The bound an acceptance gives a case, if it names that case. */
+function boundFor(
+  accepted: readonly ReplicaLagAcceptance[],
+  lagCase: 'dated_ahead' | 'older_than_gap'
+): number | undefined {
+  for (const it of accepted) {
+    if (typeof it === 'object' && lagCase in it) {
+      return (it as Record<string, number>)[lagCase];
+    }
+  }
+  return undefined;
 }
 
 /** What to do when the lag can't be trusted: the same in every refusal. */
@@ -455,7 +476,11 @@ export function checkReplicaLag(
   gapMs: number,
   lag: Pick<
     ReadOnlyEvidence,
-    'replicaLagMs' | 'replicaLagAgeMs' | 'replicaLagError' | 'replicaLagUnknown'
+    | 'replicaLagMs'
+    | 'replicaLagAgeMs'
+    | 'replicaLagError'
+    | 'replicaLagUnknown'
+    | 'replicaLagAheadMs'
   >,
   accepted: readonly ReplicaLagAcceptance[] = []
 ): ReplicaLagAccepted | null {
@@ -483,13 +508,19 @@ export function checkReplicaLag(
   }
   if (lagCase === null) return null;
   if (lagCase === 'older_than_gap') {
-    const bound = accepted.find(
-      (it): it is { readonly older_than_gap: number } => typeof it === 'object'
-    )?.older_than_gap;
+    const bound = boundFor(accepted, lagCase);
     if (bound !== undefined) {
       if ((lag.replicaLagAgeMs ?? Infinity) <= bound) return lagCase;
       throw new ProfileSiteExportSnapshotError(
         `The replica's lag row is ${lag.replicaLagAgeMs} ms old, over the ${bound} ms accepted for older_than_gap: it has aged past Monday's reading, so the reader may have stopped updating its row. Report it; don't raise the bound.`
+      );
+    }
+  } else if (lagCase === 'dated_ahead') {
+    const bound = boundFor(accepted, lagCase);
+    if (bound !== undefined) {
+      if ((lag.replicaLagAheadMs ?? -Infinity) >= bound) return lagCase;
+      throw new ProfileSiteExportSnapshotError(
+        `The replica's lag row is dated ${lag.replicaLagAheadMs} ms ahead of UTC, less than the ${bound} ms accepted for dated_ahead: its lead has shrunk since Monday's reading, so the reader may have stopped updating its row. Report it; don't lower the bound.`
       );
     }
   } else if (accepted.includes(lagCase)) {
@@ -551,8 +582,6 @@ export class ProfileSiteExportNetworkError extends Error {
   }
 }
 
-/** A system error's code: ENOTFOUND, EAI_AGAIN, ECONNRESET, ETIMEDOUT, ... */
-const SYSTEM_ERROR_CODE = /^E[A-Z0-9_]+$/;
 /** The MySQL driver's codes: ER_..., PROTOCOL_..., HANDSHAKE_..., POOL_... */
 const MYSQL_ERROR_CODE = /^(ER|PROTOCOL|HANDSHAKE|POOL)_[A-Z0-9_]+$/;
 
@@ -584,16 +613,6 @@ function failureMessage(what: string, during: string, error: unknown): string {
   return isDnsFailure(error)
     ? `DNS lookup failed, retry: ${errorCode(error)} (${what}, while ${during}). The host it looked up is in the function's log.`
     : `${what} failed while ${during}: ${errorCode(error)}. Its message, which can name the host or user, is in the function's log.`;
-}
-
-/** A network-level error: its message can name the host. */
-function isNetworkError(error: unknown): boolean {
-  const { code, syscall, hostname } = (error ?? {}) as ErrorFields;
-  return (
-    syscall !== undefined ||
-    hostname !== undefined ||
-    (typeof code === 'string' && SYSTEM_ERROR_CODE.test(code))
-  );
 }
 
 /**
@@ -681,31 +700,34 @@ function acceptedLagCasesOf(value: unknown): ReplicaLagAcceptance[] {
   const list: unknown[] = Array.isArray(value) ? value : [value];
   const refuse = () =>
     new ProfileSiteExportEventError(
-      `acceptUnknownReplicaLag must name each case to accept, as the refusals do: ${ACCEPT_FORMS}; one or a list, each once. true and a bare "older_than_gap" are not accepted: a rerun that lands on another reader showing another case, or a row that keeps aging, must be refused.`
+      `acceptUnknownReplicaLag must name each case to accept, as the refusals do: ${ACCEPT_FORMS}; one or a list, each once. A bound on a row's age is ${MIN_SNAPSHOT_GAP_SECONDS * 1000} to ${MAX_ZONE_BOUND_MS} ms, on its lead ${MIN_DATED_AHEAD_BOUND_MS} to ${MAX_ZONE_BOUND_MS} ms. true and a bare "dated_ahead" or "older_than_gap" are not accepted: a rerun that lands on another reader showing another case, or a reader that stopped, must be refused.`
     );
   const seen = new Set<string>();
   return list.map((item) => {
     let name: string;
     let acceptance: ReplicaLagAcceptance;
-    if (item === 'unreadable' || item === 'dated_ahead') {
+    const keys =
+      typeof item === 'object' && item !== null && !Array.isArray(item)
+        ? Object.keys(item)
+        : [];
+    const bound =
+      keys.length === 1 ? (item as Record<string, unknown>)[keys[0]] : null;
+    const within = (min: number) =>
+      Number.isSafeInteger(bound) &&
+      (bound as number) >= min &&
+      (bound as number) <= MAX_ZONE_BOUND_MS;
+    if (item === 'unreadable') {
       name = item;
       acceptance = item;
     } else if (
-      typeof item === 'object' &&
-      item !== null &&
-      !Array.isArray(item) &&
-      Object.keys(item).length === 1 &&
-      Number.isSafeInteger(
-        (item as { older_than_gap?: unknown }).older_than_gap
-      ) &&
-      (item as { older_than_gap: number }).older_than_gap > 0 &&
-      (item as { older_than_gap: number }).older_than_gap <=
-        MAX_ACCEPTED_ROW_AGE_MS
+      keys[0] === 'older_than_gap' &&
+      within(MIN_SNAPSHOT_GAP_SECONDS * 1000)
     ) {
       name = 'older_than_gap';
-      acceptance = {
-        older_than_gap: (item as { older_than_gap: number }).older_than_gap
-      };
+      acceptance = { older_than_gap: bound as number };
+    } else if (keys[0] === 'dated_ahead' && within(MIN_DATED_AHEAD_BOUND_MS)) {
+      name = 'dated_ahead';
+      acceptance = { dated_ahead: bound as number };
     } else {
       throw refuse();
     }
@@ -1238,10 +1260,11 @@ async function runJob(
     gapMs = gap.gapMs;
     // A rehearsal names the case a real run would refuse on, so Tuesday
     // knows which name Monday showed.
-    // Against at least the minimum gap, so a rehearsal minutes after its
-    // own frozenAt can't name older_than_gap on a healthy reader.
+    // A rehearsal's against the minimum gap alone: its own frozenAt is
+    // arbitrary, so a short gap would name older_than_gap on a healthy
+    // reader, and a long one would hide an offset Tuesday will see.
     replicaLagCase = replicaLagCaseOf(
-      Math.max(gap.gapMs, MIN_SNAPSHOT_GAP_SECONDS * 1000),
+      event.rehearsal ? MIN_SNAPSHOT_GAP_SECONDS * 1000 : gap.gapMs,
       snapshot.evidence
     );
     latest = await latestSiteWrites(reader);

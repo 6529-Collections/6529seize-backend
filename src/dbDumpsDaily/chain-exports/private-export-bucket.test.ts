@@ -11,6 +11,7 @@ import {
   chainExportsBucketName,
   exportBucketOf,
   exportStage,
+  isNetworkError,
   isWriteConflict,
   linksLastAtMost,
   PRESIGNED_URL_SECONDS,
@@ -43,7 +44,8 @@ describe('the chain exports bucket', () => {
   function s3(
     block: Record<string, boolean>,
     isPublic: boolean | undefined,
-    failStatus = false
+    failStatus = false,
+    failBlock: unknown = null
   ) {
     const commands: any[] = [];
     return {
@@ -51,10 +53,16 @@ describe('the chain exports bucket', () => {
       send: jest.fn(async (command: any) => {
         commands.push(command);
         if (command instanceof GetPublicAccessBlockCommand) {
+          if (failBlock) throw failBlock;
           return { PublicAccessBlockConfiguration: block };
         }
         if (command instanceof GetBucketPolicyStatusCommand) {
-          if (failStatus) throw new Error('AccessDenied');
+          if (failStatus === true) {
+            throw Object.assign(
+              new Error('Access Denied for bucket.s3.example.invalid'),
+              { name: 'AccessDenied', $metadata: { httpStatusCode: 403 } }
+            );
+          }
           return { PolicyStatus: { IsPublic: isPublic } };
         }
         throw new Error('unexpected');
@@ -94,6 +102,59 @@ describe('the chain exports bucket', () => {
     await expect(
       assertBucketPrivate(s3(allBlocked, false, true), BUCKET)
     ).rejects.toThrow(/policy status/);
+  });
+
+  it("gives S3's refusal by its name and status, never its message", async () => {
+    const error = await assertBucketPrivate(
+      s3(allBlocked, false, true),
+      BUCKET
+    ).catch((e) => e);
+    expect(error).toBeInstanceOf(PrivateBucketError);
+    expect(error.message).toBe(
+      "Can't read the policy status of b: AccessDenied (403)"
+    );
+  });
+
+  it.each([
+    [
+      'a DNS failure',
+      Object.assign(
+        new Error('getaddrinfo EAI_AGAIN bucket.s3.example.invalid'),
+        {
+          code: 'EAI_AGAIN',
+          errno: -3001,
+          syscall: 'getaddrinfo',
+          hostname: 'bucket.s3.example.invalid'
+        }
+      )
+    ],
+    [
+      'a reset connection',
+      Object.assign(new Error('read ECONNRESET'), {
+        code: 'ECONNRESET',
+        syscall: 'read'
+      })
+    ]
+  ])(
+    'rethrows %s as it is, not as a privacy refusal, for the job to report by its code',
+    async (_name, failure) => {
+      await expect(
+        assertBucketPrivate(s3(allBlocked, false, false, failure), BUCKET)
+      ).rejects.toBe(failure);
+    }
+  );
+
+  it.each([
+    [{ code: 'EAI_AGAIN' }, true],
+    [{ code: 'ENOTFOUND' }, true],
+    [{ code: 'ECONNRESET' }, true],
+    [{ syscall: 'connect' }, true],
+    [{ hostname: 'reader.example.invalid' }, true],
+    [{ code: 'ERR_INVALID_ARG_TYPE' }, false],
+    [{ name: 'AccessDenied' }, false],
+    [null, false]
+  ])('reads %j as a network error: %j', (error, network) => {
+    expect(isNetworkError(error)).toBe(network);
   });
 
   it('names the stage as prod or staging from NODE_ENV', () => {
