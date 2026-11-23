@@ -49,13 +49,16 @@ The event carries the CLI's options, under the same rules.
 - `acceptSnapshotGapMinutes`: at the freeze, accepts a snapshot more than 90
   minutes after it.
 - `acceptUnknownReplicaLag`: at the freeze, the untrusted lag cases the run
-  may go through, by the names the refusals use (`"unreadable"`,
-  `"dated_ahead"`, `"older_than_gap"`), one or a list; `true`, other names
-  and repeats are refused. Only as in the README's "An unknown replica
-  lag": after running once more, for a case Monday's rehearsal also
-  showed, and with the identity lead's agreement. An accepted case still
-  holds the lag the row reports to the gap. The response and the manifest
-  record the list and the case accepted (`replicaLagAccepted`,
+  may go through, as the refusals name them: `"unreadable"`,
+  `"dated_ahead"`, or `{"older_than_gap":<largest row age in ms>}` (the
+  larger of Monday's two `replicaLagAgeMs` readings plus a margin, such as
+  60000), one or a list. `true`, a bare `"older_than_gap"`, other names and
+  repeats are refused. Only as in the README's "An unknown replica lag":
+  after running once more, for a case Monday's rehearsal also showed, and
+  with the identity lead's agreement. An accepted case still holds the lag
+  the row reports to the gap, and an `older_than_gap` row older than its
+  bound is refused. The response and the manifest record the list as given,
+  bound included, and the case accepted (`replicaLagAccepted`,
   `replica_lag_accepted`). The CLI has no such flag: it reads no replica
   lag.
 - `replacePointer: true`: at the freeze, makes this run the freeze's export
@@ -159,8 +162,9 @@ The job refuses, and writes nothing, when:
   number only (its message, which can name the user and host, goes to the
   function's log), or the export's own. A row whose age can't be trusted
   but which reports a lag of the gap less 1.5 s or more is refused, even
-  with its case accepted. What to do is in the README's "An unknown replica
-  lag", and the refusal says the same;
+  with its case accepted; a stale row's lag never changes, so run once
+  more, and if that refusal comes back unchanged, report it. What to do is
+  in the README's "An unknown replica lag", and the refusal says the same;
 - the database is not at the freeze day, or a count is not acknowledged.
   The error names every reason, with the CLI's exit code. The counts include
   profile rows saved after the freeze whether or not the save was logged,
@@ -333,10 +337,12 @@ about 600, Tuesday's run may not fit one invocation. Check in `out.json`:
 - Read the lag twice: a few minutes after this run, take a quick second
   reading with a one-profile profile site rehearsal
   (`"rehearsal":true,"profile":"<a profile id>"`, which reads the same
-  reader endpoint in seconds), or run this rehearsal again. Compare
-  `evidence.replicaLagAgeMs` and `replicaLagCase`. If the row's age grew by
-  about the wait, the reader stopped updating its row: report it, and
-  never accept it on Tuesday.
+  reader endpoint in seconds), or run this rehearsal again. Compare the two
+  readings' `evidence.replicaLagAgeMs`, not their case names. If the row's
+  age grew by about the wait, the reader stopped updating its row: report
+  it, and never accept it on Tuesday. If it stayed the same (a time zone
+  offset), write down the larger of the two: Tuesday's `older_than_gap`
+  bound is that age plus a margin, such as 60000 ms.
 - If either reading names a case, tell the identity lead and settle it
   before Tuesday: Tuesday can accept only a case Monday showed, by its
   name, as in the README's "An unknown replica lag".
@@ -377,8 +383,15 @@ If the run is refused because of the replica:
   than the time since the freeze: follow the README's "An unknown replica
   lag". Run once more; then accept only the case the refusal names, and
   only if Monday's rehearsal showed it, with the identity lead's
-  agreement: for example `"acceptUnknownReplicaLag":"older_than_gap"`.
-  Otherwise report it. Don't keep running it until 01:30.
+  agreement: `"acceptUnknownReplicaLag":"unreadable"` or `"dated_ahead"`,
+  or for `older_than_gap` the bound from Monday's age:
+  `"acceptUnknownReplicaLag":{"older_than_gap":<ms>}`, with Monday's larger
+  `replicaLagAgeMs` plus 60000. A row older than that bound is refused:
+  report it, and don't raise the bound. Otherwise report it. Don't keep
+  running it until 01:30;
+- it says an untrusted row reports a lag of the gap less 1.5 s or more:
+  its lag never changes, so run once more, and if the refusal comes back
+  unchanged, report it.
 
 If the run is refused because the profile site export's `cms-fields.json`
 is empty: add `"acceptNoCmsFields":true` only if that export really has no
@@ -463,10 +476,14 @@ holds the `errorMessage`. Fix what it names and run again; every run has its
 own prefix.
 
 When the read replica itself fails (a connection, a login, a `SELECT`),
-`errorMessage` gives only the error's code and number, such as
-`ER_ACCESS_DENIED_ERROR 1045` or `ENOTFOUND -3008`: the server's message can
-name the user and host. The full message is in the function's log, as
-`[READ REPLICA FAILED]`.
+`errorMessage` says "The read replica failed" and gives only the error's
+code and number, such as `ER_ACCESS_DENIED_ERROR 1045`: the server's
+message can name the user and host. Any other network call that fails (an
+S3 upload, the secret's read) says "A network call failed", again with the
+code only. A DNS failure (`EAI_AGAIN`, `ENOTFOUND`) on either says "DNS
+lookup failed, retry" with its code, and never the host: run it again. The
+full messages are in the function's log, as `[READ REPLICA FAILED]` and
+`[NETWORK CALL FAILED]`.
 
 A `TooManyRequestsException` means the call was refused before any run
 started: see "When to call it". Call again; none of the steps below apply.

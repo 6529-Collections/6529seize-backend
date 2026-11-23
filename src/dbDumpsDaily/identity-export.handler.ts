@@ -25,6 +25,12 @@ import {
   PROFILE_SITE_CMS_FILE,
   profileSiteManifestProblem
 } from '@/identity-export/profile-site-manifest';
+import { DbQueryOptions } from '@/db-query.options';
+import {
+  ConnectionWrapper,
+  SqlExecutor,
+  SqlTransactionOptions
+} from '@/sql-executor';
 import { buildCommit } from './build-commit';
 import {
   FreshSecretValue,
@@ -159,7 +165,7 @@ export type IdentityExportEvent =
        * refusals use (unreadable, dated_ahead, older_than_gap), relying on
        * the minimum gap after the freeze and on any lag the row reports.
        */
-      readonly acceptUnknownReplicaLag: readonly ReplicaLagAccepted[];
+      readonly acceptUnknownReplicaLag: readonly ReplicaLagAcceptance[];
       /** Replace the freeze's pointer if a run wrote one already. */
       readonly replacePointer: boolean;
     }
@@ -249,9 +255,34 @@ export const REPLICA_LAG_CASES = [
 /** Which untrusted lag a run accepted. */
 export type ReplicaLagAccepted = (typeof REPLICA_LAG_CASES)[number];
 
+/**
+ * One untrusted lag case a run may go through, as the invoker names it.
+ * older_than_gap carries the largest row age accepted, from Monday's
+ * replicaLagAgeMs plus a margin: a time zone offset keeps the age
+ * constant, so it passes; a reader that stopped updating makes it grow
+ * past the bound, so it is refused.
+ */
+export type ReplicaLagAcceptance =
+  | 'unreadable'
+  | 'dated_ahead'
+  | { readonly older_than_gap: number };
+
+/** The most a row's age may be accepted at: a week. */
+const MAX_ACCEPTED_ROW_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+const ACCEPT_FORMS =
+  '"unreadable", "dated_ahead", or {"older_than_gap": <largest row age in ms: Monday\'s replicaLagAgeMs plus a margin>}';
+
+/** How a refusal says to accept its case. */
+function acceptanceExample(lagCase: ReplicaLagAccepted): string {
+  return lagCase === 'older_than_gap'
+    ? 'acceptUnknownReplicaLag: {"older_than_gap": <Monday\'s replicaLagAgeMs plus a margin, such as 60000>}'
+    : `acceptUnknownReplicaLag: "${lagCase}"`;
+}
+
 /** What to do when the lag can't be trusted: the same in every refusal. */
 function unknownLagSteps(lagCase: ReplicaLagAccepted, only: string): string {
-  return `Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: "${lagCase}") only for a reading Monday's rehearsal also showed${only}, and only with the identity lead's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it.`;
+  return `Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (${acceptanceExample(lagCase)}) only for a reading Monday's rehearsal also showed${only}, and only with the identity lead's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it.`;
 }
 
 /**
@@ -270,7 +301,7 @@ export function checkReplicaLag(
     ReadOnlyEvidence,
     'replicaLagMs' | 'replicaLagAgeMs' | 'replicaLagError' | 'replicaLagUnknown'
   >,
-  accepted: readonly ReplicaLagAccepted[] = []
+  accepted: readonly ReplicaLagAcceptance[] = []
 ): ReplicaLagAccepted | null {
   const lagCase = replicaLagCaseOf(gapMs, lag);
   // The lag the row reports counts whenever there is one; its age only
@@ -284,13 +315,31 @@ export function checkReplicaLag(
         lagCase === null
           ? `may be ${behindMs} ms behind its writer (a ${lag.replicaLagMs} ms lag in a row ${ageMs} ms old)`
           : `reports a ${lag.replicaLagMs} ms lag (its row's age not counted: ${lagCase})`;
+      // A trusted row's lag falls as the reader catches up; an untrusted
+      // (stale) row's lag never changes, so waiting won't help.
+      const next =
+        lagCase === null
+          ? 'Wait a few minutes and run again.'
+          : "The row can't be trusted, and a stale row's lag never changes: run once more, and if this refusal comes back unchanged, report it.";
       throw new IdentityExportSnapshotError(
-        `The replica ${what}, which with ${REPLICA_LAG_AGE_MARGIN_MS} ms for the row's timestamp is not less than the ${gapMs} ms since the freeze: it may not hold every write made before the freeze. Wait a few minutes and run again.`
+        `The replica ${what}, which with ${REPLICA_LAG_AGE_MARGIN_MS} ms for the row's timestamp is not less than the ${gapMs} ms since the freeze: it may not hold every write made before the freeze. ${next}`
       );
     }
   }
   if (lagCase === null) return null;
-  if (accepted.includes(lagCase)) return lagCase;
+  if (lagCase === 'older_than_gap') {
+    const bound = accepted.find(
+      (it): it is { readonly older_than_gap: number } => typeof it === 'object'
+    )?.older_than_gap;
+    if (bound !== undefined) {
+      if ((lag.replicaLagAgeMs ?? Infinity) <= bound) return lagCase;
+      throw new IdentityExportSnapshotError(
+        `The replica's lag row is ${lag.replicaLagAgeMs} ms old, over the ${bound} ms accepted for older_than_gap: it has aged past Monday's reading, so the reader may have stopped updating its row. Report it; don't raise the bound.`
+      );
+    }
+  } else if (accepted.includes(lagCase)) {
+    return lagCase;
+  }
   const reason = lag.replicaLagError ?? 'no reason given';
   if (lagCase === 'dated_ahead') {
     throw new IdentityExportSnapshotError(
@@ -338,24 +387,75 @@ export class IdentityExportDatabaseError extends Error {
   }
 }
 
-/** A MySQL or network error's code: ER_..., PROTOCOL_..., ENOTFOUND, ... */
-const DATABASE_ERROR_CODE =
-  /^(ER_[A-Z0-9_]+|PROTOCOL_[A-Z_]+|HANDSHAKE_[A-Z_]+|POOL_[A-Z_]+|E[A-Z]+)$/;
+/** A network call failed; its message stays in the function's log. */
+export class IdentityExportNetworkError extends Error {
+  constructor(message: string) {
+    super(message);
+    Object.setPrototypeOf(this, new.target.prototype);
+    this.name = 'IdentityExportNetworkError';
+  }
+}
+
+/** A system error's code: ENOTFOUND, EAI_AGAIN, ECONNRESET, ETIMEDOUT, ... */
+const SYSTEM_ERROR_CODE = /^E[A-Z0-9_]+$/;
+/** The MySQL driver's codes: ER_..., PROTOCOL_..., HANDSHAKE_..., POOL_... */
+const MYSQL_ERROR_CODE = /^(ER|PROTOCOL|HANDSHAKE|POOL)_[A-Z0-9_]+$/;
+
+interface ErrorFields {
+  readonly code?: unknown;
+  readonly sqlMessage?: unknown;
+  readonly fatal?: unknown;
+  readonly syscall?: unknown;
+  readonly hostname?: unknown;
+}
+
+/** A DNS lookup's failure: EAI_AGAIN, ENOTFOUND, a getaddrinfo call. */
+function isDnsFailure(error: unknown): boolean {
+  const { code, syscall } = (error ?? {}) as ErrorFields;
+  return (
+    syscall === 'getaddrinfo' ||
+    (typeof code === 'string' &&
+      (/^EAI_[A-Z0-9_]+$/.test(code) ||
+        ['ENOTFOUND', 'ENODATA', 'ESERVFAIL'].includes(code)))
+  );
+}
 
 /**
- * A database or connection error as its code and number only: its message
- * can name the user and host ('user'@'host') or the hostname (ENOTFOUND
- * <host>), and the response goes to the operator's out.json. The message
- * goes to the log. Any other error is returned as it is.
+ * What the operator is told of a database or network failure: for a DNS
+ * failure, that the lookup failed and to retry; otherwise what failed. The
+ * code and number always; never the host.
+ */
+function failureMessage(what: string, during: string, error: unknown): string {
+  return isDnsFailure(error)
+    ? `DNS lookup failed, retry: ${errorCode(error)} (${what}, while ${during}). The host it looked up is in the function's log.`
+    : `${what} failed while ${during}: ${errorCode(error)}. Its message, which can name the host or user, is in the function's log.`;
+}
+
+/** A network-level error: its message can name the host. */
+function isNetworkError(error: unknown): boolean {
+  const { code, syscall, hostname } = (error ?? {}) as ErrorFields;
+  return (
+    syscall !== undefined ||
+    hostname !== undefined ||
+    (typeof code === 'string' && SYSTEM_ERROR_CODE.test(code))
+  );
+}
+
+/**
+ * An error from the database connection or a query on it, as its code and
+ * number only: its message can name the user and host ('user'@'host') or
+ * the hostname (getaddrinfo EAI_AGAIN <host>), and the response goes to
+ * the operator's out.json. The message goes to the log. Called only where
+ * the database raised the error; the export's own refusals, and anything
+ * else, are returned as they are.
  */
 export function databaseErrorOf(error: unknown, during: string): unknown {
-  const { code, sqlMessage } = (error ?? {}) as {
-    code?: unknown;
-    sqlMessage?: unknown;
-  };
+  const { code, sqlMessage, fatal } = (error ?? {}) as ErrorFields;
   if (
     sqlMessage === undefined &&
-    !(typeof code === 'string' && DATABASE_ERROR_CODE.test(code))
+    fatal !== true &&
+    !isNetworkError(error) &&
+    !(typeof code === 'string' && MYSQL_ERROR_CODE.test(code))
   ) {
     return error;
   }
@@ -363,26 +463,98 @@ export function databaseErrorOf(error: unknown, during: string): unknown {
     `[READ REPLICA FAILED] [${during}] ${String((error as Error)?.message ?? error)}`
   );
   return new IdentityExportDatabaseError(
-    `The read replica failed while ${during}: ${errorCode(error)}. Its message, which can name the host or user, is in the function's log.`
+    failureMessage('The read replica', during, error)
   );
 }
 
-/** acceptUnknownReplicaLag as given: a case name or a list of them. */
-export function acceptedLagCasesOf(value: unknown): ReplicaLagAccepted[] {
-  if (value === undefined || value === false) return [];
-  const list = typeof value === 'string' ? [value] : value;
-  if (
-    !Array.isArray(list) ||
-    list.some(
-      (it) => !(REPLICA_LAG_CASES as readonly unknown[]).includes(it)
-    ) ||
-    new Set(list).size !== list.length
-  ) {
-    throw new IdentityExportEventError(
-      `acceptUnknownReplicaLag must name the case to accept, as the refusal does: ${REPLICA_LAG_CASES.map((it) => `"${it}"`).join(', ')}, or a list of them. true is not accepted: a rerun that lands on another reader showing another case must be refused.`
-    );
+/**
+ * Any other network failure (an S3 call, the secret's read), as its code
+ * and number only, with its own wording: its message can name the host.
+ * Anything else is returned as it is.
+ */
+export function networkErrorOf(error: unknown, during: string): unknown {
+  if (error instanceof IdentityExportDatabaseError || !isNetworkError(error)) {
+    return error;
   }
-  return list as ReplicaLagAccepted[];
+  logger.error(
+    `[NETWORK CALL FAILED] [${during}] ${String((error as Error)?.message ?? error)}`
+  );
+  return new IdentityExportNetworkError(
+    failureMessage('A network call', during, error)
+  );
+}
+
+/**
+ * The snapshot's executor, its errors given as codes: every query of the
+ * read goes through it, so only errors the database raised are read as
+ * the replica's.
+ */
+class ReplicaErrorsExecutor extends SqlExecutor {
+  constructor(private readonly inner: SqlExecutor) {
+    super();
+  }
+
+  async execute<T>(
+    sql: string,
+    params?: Record<string, any>,
+    options?: DbQueryOptions
+  ): Promise<T[]> {
+    try {
+      return await this.inner.execute<T>(sql, params, options);
+    } catch (error) {
+      throw databaseErrorOf(error, 'reading the snapshot');
+    }
+  }
+
+  async executeNativeQueriesInTransaction<T>(
+    executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>,
+    options?: SqlTransactionOptions
+  ): Promise<T> {
+    return this.inner.executeNativeQueriesInTransaction(executable, options);
+  }
+}
+
+/**
+ * acceptUnknownReplicaLag as given: one case or a list, each named as the
+ * refusals name it, older_than_gap with its largest row age.
+ */
+export function acceptedLagCasesOf(value: unknown): ReplicaLagAcceptance[] {
+  if (value === undefined || value === false) return [];
+  const list: unknown[] = Array.isArray(value) ? value : [value];
+  const refuse = () =>
+    new IdentityExportEventError(
+      `acceptUnknownReplicaLag must name each case to accept, as the refusals do: ${ACCEPT_FORMS}; one or a list, each once. true and a bare "older_than_gap" are not accepted: a rerun that lands on another reader showing another case, or a row that keeps aging, must be refused.`
+    );
+  const seen = new Set<string>();
+  return list.map((item) => {
+    let name: string;
+    let acceptance: ReplicaLagAcceptance;
+    if (item === 'unreadable' || item === 'dated_ahead') {
+      name = item;
+      acceptance = item;
+    } else if (
+      typeof item === 'object' &&
+      item !== null &&
+      !Array.isArray(item) &&
+      Object.keys(item).length === 1 &&
+      Number.isSafeInteger(
+        (item as { older_than_gap?: unknown }).older_than_gap
+      ) &&
+      (item as { older_than_gap: number }).older_than_gap > 0 &&
+      (item as { older_than_gap: number }).older_than_gap <=
+        MAX_ACCEPTED_ROW_AGE_MS
+    ) {
+      name = 'older_than_gap';
+      acceptance = {
+        older_than_gap: (item as { older_than_gap: number }).older_than_gap
+      };
+    } else {
+      throw refuse();
+    }
+    if (seen.has(name)) throw refuse();
+    seen.add(name);
+    return acceptance;
+  });
 }
 
 /** IDENTITY_FREEZE_AT as 6529.io's profile site reads it. */
@@ -829,7 +1001,7 @@ export interface IdentityExportResult {
   /** Milliseconds from the freeze to the snapshot, as checked. */
   readonly snapshotGapMs: number | null;
   /** The untrusted lag cases the run was allowed to go through. */
-  readonly acceptUnknownReplicaLag: readonly ReplicaLagAccepted[];
+  readonly acceptUnknownReplicaLag: readonly ReplicaLagAcceptance[];
   /** The unknown or stale lag the run accepted, or null if none. */
   readonly replicaLagAccepted: ReplicaLagAccepted | null;
   /**
@@ -1203,6 +1375,22 @@ export async function runIdentityExportJob(
   context: IdentityExportContext,
   deps: IdentityExportDeps = defaultDeps()
 ): Promise<IdentityExportResult | IdentityExportLinksResult> {
+  try {
+    return await runJob(event, context, deps);
+  } catch (error) {
+    // What the operator's out.json gets: no hostname from a network error.
+    throw networkErrorOf(
+      error,
+      event.job === LINKS_JOB ? 'renewing the links' : 'running the export'
+    );
+  }
+}
+
+async function runJob(
+  event: IdentityExportEvent,
+  context: IdentityExportContext,
+  deps: IdentityExportDeps
+): Promise<IdentityExportResult | IdentityExportLinksResult> {
   await deps.prepareEnvironment();
   const env = deps.env();
   const bucket = exportBucketOf(
@@ -1337,6 +1525,8 @@ export async function runIdentityExportJob(
   logger.info(
     `[READ ONLY SNAPSHOT] [HOST ${target.host}] [AT ${snapshot.evidence.snapshotAt}] [REPLICA LAG ${snapshot.evidence.replicaLagMs ?? 'unknown'} MS] [LAG ROW AGE ${snapshot.evidence.replicaLagAgeMs ?? 'unknown'} MS]${snapshot.evidence.replicaLagError ? ` [REPLICA LAG ERROR ${snapshot.evidence.replicaLagError}]` : ''}${snapshot.evidence.replicaLagUnknown ? ` [REPLICA LAG UNKNOWN ${snapshot.evidence.replicaLagUnknown}]` : ''} [TRANSACTION READ ONLY ${snapshot.evidence.transactionReadOnly}] [SERVER READ ONLY ${snapshot.evidence.serverReadOnly}] [INNODB READ ONLY ${snapshot.evidence.innodbReadOnly}]`
   );
+  // Every query of the read: its errors come back as the replica's codes.
+  const reader = new ReplicaErrorsExecutor(snapshot.executor);
   let document: IdentityExportDocument;
   let gapSeconds: number | null = null;
   let gapMs: number | null = null;
@@ -1357,7 +1547,11 @@ export async function runIdentityExportJob(
       );
       gapSeconds = gap.gapSeconds;
       gapMs = gap.gapMs;
-      replicaLagCase = replicaLagCaseOf(gap.gapMs, snapshot.evidence);
+      // Against at least the minimum gap, as the rehearsal's is.
+      replicaLagCase = replicaLagCaseOf(
+        Math.max(gap.gapMs, MIN_SNAPSHOT_GAP_SECONDS * 1000),
+        snapshot.evidence
+      );
       replicaLagAccepted = checkReplicaLag(
         gap.gapMs,
         snapshot.evidence,
@@ -1372,7 +1566,7 @@ export async function runIdentityExportJob(
     document = await buildIdentityExport(
       new SqlIdentityExportSource(
         <T>(sql: string, params?: Record<string, unknown>) =>
-          snapshot.executor.execute<T>(sql, params)
+          reader.execute<T>(sql, params)
       ),
       {
         bulkThreshold: event.bulk,
@@ -1413,7 +1607,9 @@ export async function runIdentityExportJob(
       .catch((closeError: unknown) =>
         logger.warn(`[SNAPSHOT CLOSE FAILED] ${String(closeError)}`)
       );
-    throw databaseErrorOf(error, 'reading the snapshot');
+    // Errors the database raised are already the replica's codes (the
+    // reader executor); anything else keeps its own wording.
+    throw error;
   }
   await snapshot.close().catch((error: unknown) => {
     throw databaseErrorOf(error, 'closing the snapshot');

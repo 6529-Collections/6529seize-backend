@@ -10,6 +10,7 @@ import { Logger } from '@/logging';
 import {
   checkReplicaLag,
   checkSnapshotTime,
+  ReplicaLagAcceptance,
   IdentityExportDeps,
   IdentityExportEventError,
   IdentityExportLinksResult,
@@ -333,14 +334,26 @@ describe('parseIdentityExportEvent', () => {
     expect(parseIdentityExportEvent({ job: 'profileSiteExport' })).toBeNull();
   });
 
-  it('takes acceptUnknownReplicaLag as a case name or a list of them', () => {
+  it('takes acceptUnknownReplicaLag as a case name or a list of them, older_than_gap with its bound', () => {
     expect(
       parseIdentityExportEvent({
         ...atFreeze,
-        acceptUnknownReplicaLag: 'older_than_gap'
+        acceptUnknownReplicaLag: { older_than_gap: 3_660_000 }
       })
     ).toEqual(
-      expect.objectContaining({ acceptUnknownReplicaLag: ['older_than_gap'] })
+      expect.objectContaining({
+        acceptUnknownReplicaLag: [{ older_than_gap: 3_660_000 }]
+      })
+    );
+    expect(
+      parseIdentityExportEvent({
+        ...atFreeze,
+        acceptUnknownReplicaLag: ['dated_ahead', { older_than_gap: 60_000 }]
+      })
+    ).toEqual(
+      expect.objectContaining({
+        acceptUnknownReplicaLag: ['dated_ahead', { older_than_gap: 60_000 }]
+      })
     );
     expect(
       parseIdentityExportEvent({
@@ -498,18 +511,51 @@ describe('parseIdentityExportEvent', () => {
     [{ ...rehearsal, replacePointer: true }, 'a rehearsal writes no pointer'],
     [
       { ...atFreeze, acceptUnknownReplicaLag: true },
-      'acceptUnknownReplicaLag must name the case to accept, as the refusal does: "unreadable", "dated_ahead", "older_than_gap", or a list of them. true is not accepted'
+      'acceptUnknownReplicaLag must name each case to accept, as the refusals do: "unreadable", "dated_ahead", or {"older_than_gap": <largest row age in ms: Monday\'s replicaLagAgeMs plus a margin>}; one or a list, each once. true and a bare "older_than_gap" are not accepted'
+    ],
+    [
+      { ...atFreeze, acceptUnknownReplicaLag: 'older_than_gap' },
+      'true and a bare "older_than_gap" are not accepted'
     ],
     [
       { ...atFreeze, acceptUnknownReplicaLag: 'stale' },
-      'acceptUnknownReplicaLag must name the case to accept'
+      'acceptUnknownReplicaLag must name each case to accept'
     ],
     [
       {
         ...atFreeze,
-        acceptUnknownReplicaLag: ['older_than_gap', 'older_than_gap']
+        acceptUnknownReplicaLag: [
+          { older_than_gap: 60_000 },
+          { older_than_gap: 90_000 }
+        ]
       },
-      'acceptUnknownReplicaLag must name the case to accept'
+      'acceptUnknownReplicaLag must name each case to accept'
+    ],
+    [
+      { ...atFreeze, acceptUnknownReplicaLag: ['unreadable', 'unreadable'] },
+      'acceptUnknownReplicaLag must name each case to accept'
+    ],
+    [
+      { ...atFreeze, acceptUnknownReplicaLag: { older_than_gap: 0 } },
+      'acceptUnknownReplicaLag must name each case to accept'
+    ],
+    [
+      { ...atFreeze, acceptUnknownReplicaLag: { older_than_gap: 1.5 } },
+      'acceptUnknownReplicaLag must name each case to accept'
+    ],
+    [
+      {
+        ...atFreeze,
+        acceptUnknownReplicaLag: { older_than_gap: 8 * 24 * 3_600_000 }
+      },
+      'acceptUnknownReplicaLag must name each case to accept'
+    ],
+    [
+      {
+        ...atFreeze,
+        acceptUnknownReplicaLag: { older_than_gap: 60_000, extra: 1 }
+      },
+      'acceptUnknownReplicaLag must name each case to accept'
     ],
     [
       { job: 'identityExportLinks', prefix: 'profile-site-export/x/' },
@@ -1222,7 +1268,7 @@ describe('runIdentityExportJob', () => {
     expect(() => checkReplicaLag(300_400, lag(100_000, 198_899))).not.toThrow();
     // A row older than the whole gap: checked first, and not a wait.
     const old =
-      "The replica's lag row is 300400 ms old (a 0 ms lag), older than the 300400 ms since the freeze: LAST_UPDATE_TIMESTAMP may not be in UTC, or the reader stopped updating its row. If the same refusal returns with the row's age grown by the time you waited, the reader stopped updating: report it. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: \"older_than_gap\") only for a reading Monday's rehearsal also showed, and only with the identity lead's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it.";
+      "The replica's lag row is 300400 ms old (a 0 ms lag), older than the 300400 ms since the freeze: LAST_UPDATE_TIMESTAMP may not be in UTC, or the reader stopped updating its row. If the same refusal returns with the row's age grown by the time you waited, the reader stopped updating: report it. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: {\"older_than_gap\": <Monday's replicaLagAgeMs plus a margin, such as 60000>}) only for a reading Monday's rehearsal also showed, and only with the identity lead's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it.";
     expect(() => checkReplicaLag(300_400, lag(0, 300_400))).toThrow(old);
     expect(() => checkReplicaLag(300_400, lag(10, 400_000))).toThrow(
       "The replica's lag row is 400000 ms old (a 10 ms lag), older than the 300400 ms since the freeze"
@@ -1373,7 +1419,11 @@ describe('runIdentityExportJob', () => {
     ).toThrow(
       "The replica's lag row is dated ahead of UTC (LAST_UPDATE_TIMESTAMP is 7200000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown): LAST_UPDATE_TIMESTAMP may not be in UTC, so the row's age is unknown. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: \"dated_ahead\") only for a reading Monday's rehearsal also showed, and only with the identity lead's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it."
     );
-    const all = ['unreadable', 'dated_ahead', 'older_than_gap'] as const;
+    const all: ReplicaLagAcceptance[] = [
+      'unreadable',
+      'dated_ahead',
+      { older_than_gap: 400_000 }
+    ];
     expect(
       checkReplicaLag(300_000, reading(null, null, 'dated_ahead'), [
         'dated_ahead'
@@ -1385,7 +1435,9 @@ describe('runIdentityExportJob', () => {
       ])
     ).toBe('unreadable');
     expect(
-      checkReplicaLag(300_000, reading(5, 300_000), ['older_than_gap'])
+      checkReplicaLag(300_000, reading(5, 300_000), [
+        { older_than_gap: 300_000 }
+      ])
     ).toBe('older_than_gap');
     // Only the case named: a rerun that lands on a reader showing another
     // case is refused.
@@ -1395,7 +1447,7 @@ describe('runIdentityExportJob', () => {
     expect(() =>
       checkReplicaLag(300_000, reading(null, null, 'dated_ahead'), [
         'unreadable',
-        'older_than_gap'
+        { older_than_gap: 3_600_000 }
       ])
     ).toThrow("The replica's lag row is dated ahead of UTC");
     // A trusted reading passes with nothing accepted, named or not.
@@ -1425,6 +1477,26 @@ describe('runIdentityExportJob', () => {
     expect(() =>
       checkReplicaLag(300_000, reading(298_500, null, 'unreadable'), all)
     ).toThrow("(its row's age not counted: unreadable)");
+    // An untrusted row's lag never changes: run once more, then report it.
+    expect(() =>
+      checkReplicaLag(300_000, reading(298_500, null, 'dated_ahead'), all)
+    ).toThrow(
+      "The row can't be trusted, and a stale row's lag never changes: run once more, and if this refusal comes back unchanged, report it."
+    );
+    expect(() =>
+      checkReplicaLag(300_000, reading(298_500, null, 'dated_ahead'), all)
+    ).not.toThrow('Wait a few minutes');
+    // older_than_gap only up to the bound given: a row that keeps aging
+    // past Monday's reading is refused, a constant offset passes.
+    const bounded: ReplicaLagAcceptance[] = [{ older_than_gap: 3_660_000 }];
+    expect(checkReplicaLag(300_000, reading(5, 3_660_000), bounded)).toBe(
+      'older_than_gap'
+    );
+    expect(() =>
+      checkReplicaLag(300_000, reading(5, 3_660_001), bounded)
+    ).toThrow(
+      "The replica's lag row is 3660001 ms old, over the 3660000 ms accepted for older_than_gap: it has aged past Monday's reading, so the reader may have stopped updating its row. Report it; don't raise the bound."
+    );
     // The job records the case, in the response, the manifest and the log.
     mockBuild.mockResolvedValue(document());
     const warn = jest.spyOn(Logger.prototype, 'warn');
@@ -1436,12 +1508,15 @@ describe('runIdentityExportJob', () => {
       });
       const result = await run(deps, {
         ...atFreeze,
-        acceptUnknownReplicaLag: 'older_than_gap'
+        acceptUnknownReplicaLag: { older_than_gap: 3_660_000 }
       });
       expect(result.replicaLagAccepted).toBe('older_than_gap');
-      expect(
-        JSON.parse(bodies.get(result.manifestKey)!).replica_lag_accepted
-      ).toBe('older_than_gap');
+      const manifest = JSON.parse(bodies.get(result.manifestKey)!);
+      expect(manifest.replica_lag_accepted).toBe('older_than_gap');
+      // The acceptance as given, bound included.
+      expect(manifest.accept_unknown_replica_lag).toEqual([
+        { older_than_gap: 3_660_000 }
+      ]);
       expect(
         warn.mock.calls.some(([line]) =>
           String(line).includes(
@@ -1465,7 +1540,7 @@ describe('runIdentityExportJob', () => {
     });
     const result = await run(accepted.deps, {
       ...atFreeze,
-      acceptUnknownReplicaLag: 'older_than_gap'
+      acceptUnknownReplicaLag: { older_than_gap: 3_660_000 }
     });
     expect([result.replicaLagCase, result.replicaLagAccepted]).toEqual([
       'older_than_gap',
@@ -1504,9 +1579,32 @@ describe('runIdentityExportJob', () => {
   it("gives a failed read replica's error by its code only, its message to the log", async () => {
     const error = jest.spyOn(Logger.prototype, 'error');
     try {
-      // The lookup names the host.
-      const lookup = setup();
-      (lookup.deps.openSnapshot as jest.Mock).mockRejectedValue(
+      const opening = async (failure: Error) => {
+        const { deps } = setup();
+        (deps.openSnapshot as jest.Mock).mockRejectedValue(failure);
+        return await run(deps).then(
+          () => null,
+          (e: Error) => e
+        );
+      };
+      // A DNS failure: "DNS lookup failed, retry" and its code, never the
+      // host.
+      const again = await opening(
+        Object.assign(
+          new Error('getaddrinfo EAI_AGAIN reader.example.invalid'),
+          {
+            code: 'EAI_AGAIN',
+            errno: -3001,
+            syscall: 'getaddrinfo',
+            hostname: 'reader.example.invalid'
+          }
+        )
+      );
+      expect(again?.name).toBe('IdentityExportDatabaseError');
+      expect(again?.message).toBe(
+        "DNS lookup failed, retry: EAI_AGAIN -3001 (The read replica, while opening the read-only snapshot). The host it looked up is in the function's log."
+      );
+      const notFound = await opening(
         Object.assign(
           new Error('getaddrinfo ENOTFOUND reader.example.invalid'),
           {
@@ -1516,30 +1614,41 @@ describe('runIdentityExportJob', () => {
           }
         )
       );
-      const lost = await run(lookup.deps).then(
-        () => null,
-        (e: Error) => e
+      expect(notFound?.message).toBe(
+        "DNS lookup failed, retry: ENOTFOUND -3008 (The read replica, while opening the read-only snapshot). The host it looked up is in the function's log."
       );
-      expect(lost?.name).toBe('IdentityExportDatabaseError');
-      expect(lost?.message).toBe(
-        "The read replica failed while opening the read-only snapshot: ENOTFOUND -3008. Its message, which can name the host or user, is in the function's log."
+      // An error carrying only the hostname.
+      const bare = await opening(
+        Object.assign(new Error('lost reader.example.invalid'), {
+          hostname: 'reader.example.invalid'
+        })
       );
-      expect(lost?.message).not.toContain('reader.example');
-      // A SELECT refused, naming the user and host.
-      mockBuild.mockRejectedValue(
+      expect(bare?.message).toBe(
+        "The read replica failed while opening the read-only snapshot: Error. Its message, which can name the host or user, is in the function's log."
+      );
+      for (const failure of [again, notFound, bare]) {
+        expect(failure?.message).not.toContain('reader.example');
+      }
+      // A SELECT refused, naming the user and host: every query of the read
+      // goes through the replica's executor.
+      mockBuild.mockImplementation(async (source) => {
+        await source.latestTdhBlock();
+        return document();
+      });
+      const denied = setup();
+      denied.executor.execute.mockRejectedValue(
         Object.assign(
           new Error(
-            "ER_TABLEACCESS_DENIED_ERROR: SELECT command denied to user 'reader'@'192.0.2.10' for table 'ratings'"
+            "ER_TABLEACCESS_DENIED_ERROR: SELECT command denied to user 'reader'@'192.0.2.10' for table 'tdh_blocks'"
           ),
           {
             code: 'ER_TABLEACCESS_DENIED_ERROR',
             errno: 1142,
             sqlMessage:
-              "SELECT command denied to user 'reader'@'192.0.2.10' for table 'ratings'"
+              "SELECT command denied to user 'reader'@'192.0.2.10' for table 'tdh_blocks'"
           }
         )
       );
-      const denied = setup();
       const refused = await run(denied.deps).then(
         () => null,
         (e: Error) => e
@@ -1553,7 +1662,7 @@ describe('runIdentityExportJob', () => {
       // The full messages are in the log.
       const logged = error.mock.calls.map(([line]) => String(line)).join('\n');
       expect(logged).toContain(
-        '[READ REPLICA FAILED] [opening the read-only snapshot] getaddrinfo ENOTFOUND reader.example.invalid'
+        '[READ REPLICA FAILED] [opening the read-only snapshot] getaddrinfo EAI_AGAIN reader.example.invalid'
       );
       expect(logged).toContain("'reader'@'192.0.2.10'");
       // An export refusal is not a database error: it is kept as it is.
@@ -1563,6 +1672,59 @@ describe('runIdentityExportJob', () => {
       await expect(run(setup().deps)).rejects.toBeInstanceOf(
         IdentityExportNotReadyError
       );
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it('gives any other network failure by its code, apart from the replica', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error');
+    try {
+      mockBuild.mockResolvedValue(document());
+      const signing = setup();
+      const presign = jest.fn(async () => {
+        throw Object.assign(
+          new Error('getaddrinfo EAI_AGAIN s3.example.invalid'),
+          {
+            code: 'EAI_AGAIN',
+            errno: -3001,
+            syscall: 'getaddrinfo',
+            hostname: 's3.example.invalid'
+          }
+        );
+      });
+      const failure = await run({ ...signing.deps, presign }).then(
+        () => null,
+        (e: Error) => e
+      );
+      expect(failure?.name).toBe('IdentityExportNetworkError');
+      expect(failure?.message).toBe(
+        "DNS lookup failed, retry: EAI_AGAIN -3001 (A network call, while running the export). The host it looked up is in the function's log."
+      );
+      const upload = setup();
+      const send = upload.send.getMockImplementation()!;
+      upload.send.mockImplementation(async (command: any) => {
+        if (command instanceof PutObjectCommand) {
+          throw Object.assign(
+            new Error('write ECONNRESET s3.example.invalid'),
+            { code: 'ECONNRESET', syscall: 'write' }
+          );
+        }
+        return send(command);
+      });
+      const reset = await run(upload.deps).then(
+        () => null,
+        (e: Error) => e
+      );
+      expect(reset?.message).toBe(
+        "A network call failed while running the export: ECONNRESET. Its message, which can name the host or user, is in the function's log."
+      );
+      expect(
+        error.mock.calls.map(([line]) => String(line)).join('\n')
+      ).toContain('[NETWORK CALL FAILED] [running the export]');
+      // Not a network error: kept as it is.
+      const plain = setup({ failPutOf: 'summary.json' });
+      await expect(run(plain.deps)).rejects.toThrow('upload failed');
     } finally {
       error.mockRestore();
     }
