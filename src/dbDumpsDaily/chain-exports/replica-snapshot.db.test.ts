@@ -71,6 +71,56 @@ describe('the replica lag query on MySQL', () => {
     expect(Math.abs(Number(row.ms) - Date.now())).toBeLessThan(60_000);
   });
 
+  /**
+   * The statement as written, with a derived table standing in for Aurora's
+   * replica_host_status and a server id for @@aurora_server_id, so MySQL
+   * runs its WHERE, ORDER BY and the age expression for real.
+   */
+  function standIn(rows: string): string {
+    return REPLICA_LAG_SQL.replace(
+      'information_schema.replica_host_status',
+      `(${rows}) AS replica_host_status`
+    ).replace('@@aurora_server_id', '7');
+  }
+
+  it("reads the reader's newest row: its lag and its age against UTC", async () => {
+    const reading = await readReplicaLag(
+      connection,
+      standIn(
+        `SELECT 7 AS SERVER_ID, 999 AS REPLICA_LAG_IN_MILLISECONDS, UTC_TIMESTAMP(6) - INTERVAL 1 HOUR AS LAST_UPDATE_TIMESTAMP
+         UNION ALL SELECT 7, 18.5, UTC_TIMESTAMP(6) - INTERVAL 2 SECOND
+         UNION ALL SELECT 8, 5, UTC_TIMESTAMP(6)`
+      )
+    );
+    expect(reading.error).toBeNull();
+    expect(reading.lagMs).toBe(18.5);
+    expect(reading.ageMs).toBeGreaterThanOrEqual(2_000);
+    expect(reading.ageMs).toBeLessThan(30_000);
+  });
+
+  it('reads a row without a timestamp, or dated ahead of UTC, as an unknown lag', async () => {
+    await expect(
+      readReplicaLag(
+        connection,
+        standIn(
+          'SELECT 7 AS SERVER_ID, 20 AS REPLICA_LAG_IN_MILLISECONDS, CAST(NULL AS DATETIME(6)) AS LAST_UPDATE_TIMESTAMP'
+        )
+      )
+    ).resolves.toEqual({
+      lagMs: null,
+      ageMs: null,
+      error: "LAST_UPDATE_TIMESTAMP is null: the row's age is unknown"
+    });
+    const ahead = await readReplicaLag(
+      connection,
+      standIn(
+        'SELECT 7 AS SERVER_ID, 20 AS REPLICA_LAG_IN_MILLISECONDS, UTC_TIMESTAMP(6) + INTERVAL 2 HOUR AS LAST_UPDATE_TIMESTAMP'
+      )
+    );
+    expect(ahead.lagMs).toBeNull();
+    expect(ahead.error).toMatch(/ms ahead of UTC_TIMESTAMP: not UTC/);
+  });
+
   it('would not parse with the alias lag: LAG is a reserved word', async () => {
     const error = await run('SELECT 1 AS lag').then(
       () => null,

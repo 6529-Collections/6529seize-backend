@@ -80,11 +80,17 @@ export interface ReadOnlyEvidence {
   /** The server's clock (UTC) when the snapshot was taken. */
   readonly snapshotAt: string;
   /**
-   * How far this Aurora reader was behind the writer at the snapshot, in
-   * milliseconds, from information_schema.replica_host_status; null when
-   * that can't be read (not Aurora, or no row for this server).
+   * How far this Aurora reader was behind the writer, in milliseconds, as
+   * its newest row in information_schema.replica_host_status says; null
+   * when that can't be read (not Aurora, no row, no timestamp).
    */
   readonly replicaLagMs: number | null;
+  /**
+   * How old that row was at the snapshot, in milliseconds: a lagging
+   * reader's row can be stale, so the lag held to the gap is
+   * replicaLagMs + replicaLagAgeMs. Null exactly when replicaLagMs is.
+   */
+  readonly replicaLagAgeMs: number | null;
   /** Why replicaLagMs is null: the server's error code and message. */
   readonly replicaLagError: string | null;
 }
@@ -128,16 +134,38 @@ export class ReadOnlySnapshotExecutor extends SqlExecutor {
 }
 
 /**
- * This Aurora reader's lag behind the writer. The alias is not `lag`: LAG
- * is a reserved word since MySQL 8.0.2, and `AS lag` fails to parse.
+ * This Aurora reader's lag behind the writer, from its newest row, with
+ * that row's age: a lagging reader's row "might be outdated" (AWS), so a
+ * small lag on an old row says little. The alias is not `lag`: LAG is a
+ * reserved word since MySQL 8.0.2, and `AS lag` fails to parse.
+ *
+ * The age takes LAST_UPDATE_TIMESTAMP as UTC, against UTC_TIMESTAMP(6).
+ * That relies on Aurora's time zone being UTC, its default unless the
+ * cluster's time_zone parameter sets another; the snapshot's session is in
+ * UTC too. Were the row in a zone ahead of UTC, it would look dated in the
+ * future, which is read as an unknown lag; in a zone behind UTC, it would
+ * only look older, and the check refuses rather than passes.
  */
 export const REPLICA_LAG_SQL =
-  'SELECT REPLICA_LAG_IN_MILLISECONDS AS lag_ms FROM information_schema.replica_host_status WHERE SERVER_ID = @@aurora_server_id';
+  'SELECT REPLICA_LAG_IN_MILLISECONDS AS lag_ms, TIMESTAMPDIFF(MICROSECOND, LAST_UPDATE_TIMESTAMP, UTC_TIMESTAMP(6)) / 1000 AS age_ms FROM information_schema.replica_host_status WHERE SERVER_ID = @@aurora_server_id ORDER BY LAST_UPDATE_TIMESTAMP DESC LIMIT 1';
 
-/** The lag in milliseconds, or null with the reason it couldn't be read. */
-export interface ReplicaLagReading {
-  readonly lagMs: number | null;
-  readonly error: string | null;
+/** A row dated this far ahead of the server's clock is not clock jitter. */
+const FUTURE_ROW_TOLERANCE_MS = 1_000;
+
+/**
+ * The lag and its row's age in milliseconds, or both null with the reason
+ * they couldn't be read.
+ */
+export type ReplicaLagReading =
+  | {
+      readonly lagMs: number;
+      readonly ageMs: number;
+      readonly error: null;
+    }
+  | { readonly lagMs: null; readonly ageMs: null; readonly error: string };
+
+function unknownLag(error: string): ReplicaLagReading {
+  return { lagMs: null, ageMs: null, error };
 }
 
 /** A server error as `CODE errno: message`. */
@@ -160,32 +188,42 @@ function sqlErrorText(error: unknown): string {
  * Aurora".
  */
 export async function readReplicaLag(
-  connection: Queryable
+  connection: Queryable,
+  sql: string = REPLICA_LAG_SQL
 ): Promise<ReplicaLagReading> {
   let row: any;
   try {
-    [row] = await query(connection, REPLICA_LAG_SQL);
+    [row] = await query(connection, sql);
   } catch (error) {
-    return { lagMs: null, error: sqlErrorText(error) };
+    return unknownLag(sqlErrorText(error));
   }
   if (row === undefined) {
-    return {
-      lagMs: null,
-      error: 'information_schema.replica_host_status has no row for this server'
-    };
+    return unknownLag(
+      'information_schema.replica_host_status has no row for this server'
+    );
   }
-  const value = Number(row.lag_ms);
-  if (
-    row.lag_ms === null ||
-    row.lag_ms === undefined ||
-    !Number.isFinite(value)
-  ) {
-    return {
-      lagMs: null,
-      error: `REPLICA_LAG_IN_MILLISECONDS is ${String(row.lag_ms)}`
-    };
+  const lag = numberOrNull(row.lag_ms);
+  if (lag === null) {
+    return unknownLag(`REPLICA_LAG_IN_MILLISECONDS is ${String(row.lag_ms)}`);
   }
-  return { lagMs: value, error: null };
+  const age = numberOrNull(row.age_ms);
+  if (age === null) {
+    return unknownLag(
+      "LAST_UPDATE_TIMESTAMP is null: the row's age is unknown"
+    );
+  }
+  if (age < -FUTURE_ROW_TOLERANCE_MS) {
+    return unknownLag(
+      `LAST_UPDATE_TIMESTAMP is ${-age} ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown`
+    );
+  }
+  return { lagMs: lag, ageMs: Math.max(0, age), error: null };
+}
+
+function numberOrNull(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 
 type Queryable = Pick<mysql.Connection, 'query'>;
@@ -302,6 +340,7 @@ export async function openReadOnlySnapshot(
       innodbReadOnly: innodb,
       snapshotAt: new Date(snapshotMs).toISOString(),
       replicaLagMs: lag.lagMs,
+      replicaLagAgeMs: lag.ageMs,
       replicaLagError: lag.error
     };
     return {

@@ -46,9 +46,10 @@ The event carries the CLI's options, under the same rules.
 - `acceptSnapshotGapMinutes`: at the freeze, accepts a snapshot more than 90
   minutes after it.
 - `acceptUnknownReplicaLag: true`: at the freeze, run although the replica's
-  lag can't be read, relying on the 2-minute gap alone. Only when Monday
-  showed the lag can't be read because the reader isn't Aurora (below), and
-  the identity lead agreed. The manifest records it.
+  lag can't be read, relying on the 2-minute gap alone. Only as in the
+  README's "An unknown replica lag": after running again, for an error
+  Monday's rehearsal also showed (1109 or 1193), and with the identity
+  lead's agreement. The manifest records it.
 - `replacePointer: true`: at the freeze, makes this run the freeze's export
   when another run already is.
 
@@ -132,15 +133,14 @@ The job refuses, and writes nothing, when:
 - the snapshot was taken before the freeze, less than 2 minutes after it,
   or more than 90 minutes after it (unless `acceptSnapshotGapMinutes`
   covers the gap);
-- the replica is as far behind its writer as the snapshot is after the
-  freeze, or further, both in milliseconds. The lag comes from
-  `information_schema.replica_host_status`. When it can't be read,
-  `evidence.replicaLagMs` is `null`, `evidence.replicaLagError` holds the
-  server's error, and the run refuses unless it has
-  `acceptUnknownReplicaLag: true`. `ER_UNKNOWN_TABLE 1109` or
-  `ER_UNKNOWN_SYSTEM_VARIABLE 1193` mean the reader isn't Aurora. Any other
-  error, such as `ER_PARSE_ERROR 1064`, is a fault in the export: report
-  it, and don't accept an unknown lag for it;
+- the replica may be as far behind its writer as the snapshot is after the
+  freeze, or further, in milliseconds: its lag plus the age of the row it
+  was read from (`evidence.replicaLagMs`, `evidence.replicaLagAgeMs`), as
+  the README's rules for every export say;
+- the lag can't be read (`evidence.replicaLagMs` `null`, the reason in
+  `evidence.replicaLagError`), unless the run has
+  `acceptUnknownReplicaLag: true`. What to do is in the README's "An
+  unknown replica lag", and the refusal says the same;
 - the database is not at the freeze day, or a count is not acknowledged.
   The error names every reason, with the CLI's exit code. The counts include
   profile rows saved after the freeze whether or not the save was logged,
@@ -301,13 +301,13 @@ about 600, Tuesday's run may not fit one invocation. Check in `out.json`:
 - `buildCommit` is the commit deployed. If it is `null`, the deployed build
   doesn't record its commit, and Tuesday's event needs
   `"revision":"<40-hex commit deployed to production>"`.
-- `evidence.replicaLagMs` is a number. If it is `null`, Tuesday's run will
-  refuse unless it is given `"acceptUnknownReplicaLag":true`.
-  `evidence.replicaLagError` says why: `ER_UNKNOWN_TABLE 1109` or
-  `ER_UNKNOWN_SYSTEM_VARIABLE 1193` mean the reader isn't Aurora; any other
-  error, such as `ER_PARSE_ERROR 1064`, is a fault in the export: report it,
-  and don't accept an unknown lag for it. Tell the identity lead, and settle
-  it before Tuesday.
+- `evidence.replicaLagMs` and `evidence.replicaLagAgeMs` are numbers, the
+  age well under a minute on a healthy reader. An age of hours means
+  `LAST_UPDATE_TIMESTAMP` isn't in UTC: tell the identity lead before
+  Tuesday, whose run would refuse. If they are `null`, the lag can't be
+  read, and `evidence.replicaLagError` says why: run this again first, then
+  follow the README's "An unknown replica lag", and settle it before
+  Tuesday.
 
 ## Tuesday: the run at the freeze (us-east-1)
 
@@ -336,7 +336,8 @@ example:
 `"acceptOverCredit":<N>,"acceptEditsAfterFreeze":<N>,"acceptRatingsChangedAfterFreeze":<N>,"acceptProfileWritesAfterFreeze":<N>,"acceptConsolidationsAfterFreeze":<N>,"acceptMissingExtraIds":<N>,"acceptUnmatchedCms":<N>`.
 Every count is exact, except `acceptConsolidationsAfterFreeze`, which is a
 ceiling. If the run is refused because the replica is behind, wait a few
-minutes and run it again.
+minutes and run it again. If it is refused because the lag can't be read,
+see the README's "An unknown replica lag".
 
 If the CLI fails without a `FunctionError`, don't run it again: see "If the
 CLI fails".
@@ -374,8 +375,9 @@ replaced.
 - `host`, `readOnly: true` and `evidence`:
   - `transactionReadOnly` is true;
   - `serverReadOnly` or `innodbReadOnly` is true;
-  - `replicaLagMs` is below `snapshotGapMs`, or `null` only in a run given
-    `acceptUnknownReplicaLag`, with the reason in `replicaLagError`.
+  - `replicaLagMs` plus `replicaLagAgeMs` is below `snapshotGapMs`. Both
+    are `null` only in a run given `acceptUnknownReplicaLag`, with the
+    reason in `replicaLagError`.
 - `bucketPrivacy.owner` is the function's own account.
 - `identityFreezeAtSecret` is `prod/lambdas`, `identityFreezeAtReading` is
   `time`, and `identityFreezeAt` equals `frozenAt`.

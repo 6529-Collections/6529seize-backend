@@ -127,6 +127,8 @@ function setup(
     publicBlock?: boolean;
     snapshotAt?: string;
     replicaLagMs?: number | null;
+    /** The lag row's age (default 0, null when the lag is). */
+    replicaLagAgeMs?: number | null;
     /** Why the lag couldn't be read (default: when it is null, not Aurora). */
     replicaLagError?: string | null;
     closeFails?: boolean;
@@ -257,6 +259,12 @@ function setup(
         snapshotAt: options.snapshotAt ?? '2026-11-24T00:30:00.000Z',
         replicaLagMs:
           options.replicaLagMs === undefined ? 40 : options.replicaLagMs,
+        replicaLagAgeMs:
+          options.replicaLagAgeMs !== undefined
+            ? options.replicaLagAgeMs
+            : options.replicaLagMs === null
+              ? null
+              : 0,
         replicaLagError:
           options.replicaLagError !== undefined
             ? options.replicaLagError
@@ -615,6 +623,7 @@ describe('runIdentityExportJob', () => {
         host: 'replica-host',
         read_only: true,
         replicaLagMs: 40,
+        replicaLagAgeMs: 0,
         replicaLagError: null
       }
     });
@@ -1054,7 +1063,7 @@ describe('runIdentityExportJob', () => {
       'from a replica as far behind as the gap, to the millisecond',
       '2026-11-24T00:05:00.400Z',
       300_400,
-      'The replica is 300400 ms behind its writer, not less than the 300400 ms since the freeze'
+      'The replica may be 300400 ms behind its writer (a 300400 ms lag in a row 0 ms old), not less than the 300400 ms since the freeze'
     ],
     [
       'too long after it',
@@ -1066,7 +1075,7 @@ describe('runIdentityExportJob', () => {
       'from a replica as far behind as the gap',
       '2026-11-24T00:05:00.000Z',
       300_000,
-      'The replica is 300000 ms behind its writer, not less than the 300000 ms since the freeze'
+      'The replica may be 300000 ms behind its writer (a 300000 ms lag in a row 0 ms old), not less than the 300000 ms since the freeze'
     ]
   ])(
     'refuses a snapshot %s, writing nothing',
@@ -1100,10 +1109,15 @@ describe('runIdentityExportJob', () => {
     expect(() => checkSnapshotTime(T0, T0 + 90 * 60_000 + 500, null)).toThrow(
       'over the 90-minute limit'
     );
-    expect(() => checkReplicaLag(300_400, 300_400)).toThrow(
+    const lag = (lagMs: number | null, ageMs: number | null) => ({
+      replicaLagMs: lagMs,
+      replicaLagAgeMs: ageMs,
+      replicaLagError: lagMs === null || ageMs === null ? 'unknown' : null
+    });
+    expect(() => checkReplicaLag(300_400, lag(300_400, 0))).toThrow(
       'not less than the 300400 ms since the freeze'
     );
-    expect(() => checkReplicaLag(300_400, 300_399)).not.toThrow();
+    expect(() => checkReplicaLag(300_400, lag(300_399, 0))).not.toThrow();
     mockBuild.mockResolvedValue(document());
     const { deps, bodies } = setup({
       snapshotAt: '2026-11-24T00:05:00.400Z',
@@ -1123,11 +1137,57 @@ describe('runIdentityExportJob', () => {
     ]);
   });
 
+  it("counts the lag row's age: a stale row's lag runs from when it was written", async () => {
+    const lag = (lagMs: number, ageMs: number) => ({
+      replicaLagMs: lagMs,
+      replicaLagAgeMs: ageMs,
+      replicaLagError: null
+    });
+    // A small lag in an old row: lag plus age against the gap.
+    expect(() => checkReplicaLag(300_400, lag(100_000, 200_400))).toThrow(
+      'The replica may be 300400 ms behind its writer (a 100000 ms lag in a row 200400 ms old), not less than the 300400 ms since the freeze'
+    );
+    expect(() => checkReplicaLag(300_400, lag(100_000, 200_399))).not.toThrow();
+    // A lag with no age is an unknown lag.
+    expect(() =>
+      checkReplicaLag(300_400, {
+        replicaLagMs: 40,
+        replicaLagAgeMs: null,
+        replicaLagError:
+          "LAST_UPDATE_TIMESTAMP is null: the row's age is unknown"
+      })
+    ).toThrow(
+      "can't be read from information_schema.replica_host_status (LAST_UPDATE_TIMESTAMP is null: the row's age is unknown)"
+    );
+    // The job holds the snapshot to it, writing nothing.
+    mockBuild.mockResolvedValue(document());
+    const stale = setup({
+      snapshotAt: '2026-11-24T00:05:00.000Z',
+      replicaLagMs: 1_000,
+      replicaLagAgeMs: 299_000
+    });
+    await expect(run(stale.deps)).rejects.toThrow(
+      'The replica may be 300000 ms behind its writer (a 1000 ms lag in a row 299000 ms old)'
+    );
+    expect(mockBuild).not.toHaveBeenCalled();
+    expect(stale.order).toEqual([]);
+    const fresh = setup({
+      snapshotAt: '2026-11-24T00:05:00.000Z',
+      replicaLagMs: 1_000,
+      replicaLagAgeMs: 298_999
+    });
+    const result = await run(fresh.deps);
+    expect(result.evidence).toMatchObject({
+      replicaLagMs: 1_000,
+      replicaLagAgeMs: 298_999
+    });
+  });
+
   it('refuses a replica lag it can not read, unless told to rely on the gap alone', async () => {
     mockBuild.mockResolvedValue(document());
     const refused = setup({ replicaLagMs: null });
     await expect(run(refused.deps)).rejects.toThrow(
-      "The replica's lag can't be read from information_schema.replica_host_status (ER_UNKNOWN_TABLE 1109: Unknown table 'REPLICA_HOST_STATUS' in information_schema): only the gap since the freeze shows it holds the writes made before it. If that error says this isn't an Aurora reader, or the identity lead agrees, run again with acceptUnknownReplicaLag: true to rely on the gap alone."
+      "The replica's lag can't be read from information_schema.replica_host_status (ER_UNKNOWN_TABLE 1109: Unknown table 'REPLICA_HOST_STATUS' in information_schema). Run again first: a passing error, such as a timeout, clears. Accept an unknown lag (acceptUnknownReplicaLag: true) only for an error Monday's rehearsal also showed, ER_UNKNOWN_TABLE 1109 or ER_UNKNOWN_SYSTEM_VARIABLE 1193 (the reader isn't Aurora), and only with the identity lead's agreement. Any other error is a fault in the export: report it."
     );
     // The server's own error is named, whatever it is: a parse error is a
     // fault to report, not an Aurora question.
@@ -1139,7 +1199,13 @@ describe('runIdentityExportJob', () => {
     await expect(run(parseError.deps)).rejects.toThrow(
       '(ER_PARSE_ERROR 1064: You have an error in your SQL syntax)'
     );
-    expect(() => checkReplicaLag(300_000, null)).toThrow('(no reason given)');
+    expect(() =>
+      checkReplicaLag(300_000, {
+        replicaLagMs: null,
+        replicaLagAgeMs: null,
+        replicaLagError: null
+      })
+    ).toThrow('(no reason given)');
     // And the snapshot's log line names it.
     const info = jest.spyOn(Logger.prototype, 'info');
     try {
@@ -1147,7 +1213,7 @@ describe('runIdentityExportJob', () => {
       expect(
         info.mock.calls.some(([line]) =>
           String(line).includes(
-            "[REPLICA LAG unknown MS: ER_UNKNOWN_TABLE 1109: Unknown table 'REPLICA_HOST_STATUS' in information_schema]"
+            "[REPLICA LAG unknown MS] [LAG ROW AGE unknown MS] [REPLICA LAG ERROR ER_UNKNOWN_TABLE 1109: Unknown table 'REPLICA_HOST_STATUS' in information_schema]"
           )
         )
       ).toBe(true);
