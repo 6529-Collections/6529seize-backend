@@ -20,6 +20,7 @@ import {
   RecordRuleError,
   RecordTypeHandler
 } from '@/signed-records/record-index';
+import { byCodeUnit } from '@/signed-records/record-order';
 import type {
   FollowAction,
   FollowTargetType,
@@ -93,10 +94,6 @@ const PIN_POSITION_MAX = 1_000_000;
 const TEXT_MAX = 100;
 const GROUP_ID_MAX = 200;
 const EULA_FIELD_MAX = 32;
-
-/** Sorts strings by code unit: the same everywhere, unlike a locale. */
-const byCodeUnit = (a: string, b: string): number =>
-  a < b ? -1 : Number(a > b);
 
 const FOLLOW_ACTIONS: Readonly<
   Record<FollowTargetType, readonly FollowAction[]>

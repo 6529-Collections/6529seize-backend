@@ -91,6 +91,7 @@ const BOB = 'rebuild-bob';
 const WAVE = 'rebuild-wave-0000-4000-8000-000000000001';
 const DROP = 'rebuild-drop-0000-4000-8000-000000000001';
 const DEVICE = 'rebuild-push-device';
+const READER = `0x${'5'.repeat(40)}`;
 const ANCHOR_T = 1000;
 const T = VECTORS.followRecord.claimed_time;
 const provider = {
@@ -217,6 +218,14 @@ async function answers(): Promise<Record<string, unknown>> {
        from ${EULA_CONSENT_TABLE} where profile_id is not null order by 1`
     )
   };
+}
+
+/** Every head: per key, and the service's own (`~owner`, `~keys`, `~reader`). */
+async function headRows(): Promise<Record<string, unknown>[]> {
+  return sqlExecutor.execute<Record<string, unknown>>(
+    `select owner, family, rtype, rkey, anchor, claimed_time, event_id
+     from ${SIGNED_RECORD_HEADS_TABLE} order by owner, family, rtype, rkey`
+  );
 }
 
 /** The audit rows of the people's own blocks and hides, oldest first. */
@@ -536,16 +545,26 @@ describeWithSeed(
         settings([
           { t: 'block', k: P_BOB, b: {} },
           { t: 'hide', k: DROP, b: null }
-        ])
+        ]),
+        signed(RecordKind.RECORD, `pv/${P_ME}`, ['reader', READER], {})
       ];
       const results = await service.submit(events, 'primary', ME, ctx);
       expect(results.map((result) => result.outcome)).toEqual([
         'stale',
         'applied',
         'applied',
-        'applied'
+        'applied',
+        'logged'
       ]);
       const before = await answers();
+      // Per key, and the service's own: the owner's mark, the keys and the
+      // reader already logged.
+      const headsBefore = await headRows();
+      expect(
+        headsBefore
+          .map((row) => row.rtype as string)
+          .filter((type) => type.startsWith('~'))
+      ).toEqual(['~keys', '~owner', '~reader']);
       const auditBefore = await personalAuditRows();
       expect(
         auditBefore.map((row) => [row.actor_profile_id, row.action])
@@ -580,6 +599,7 @@ describeWithSeed(
           heads,
           keyring: new SenderKeyring([provider])
         }),
+        heads,
         imports: bodies,
         records: verified,
         derive: (c) => exportDb.deriveFromWavesIndex(c),
@@ -589,6 +609,8 @@ describeWithSeed(
       // The shadow-period bookmark stays out.
       expect(report.beforeImport).toBe(1);
       expect(await answers()).toEqual(before);
+      // The same heads: none for the import, which live never indexes.
+      expect(await headRows()).toEqual(headsBefore);
 
       // 6. The audit rows of their own blocks and hides, for the audit
       // log's rebuild: the import's history, then the records', each at

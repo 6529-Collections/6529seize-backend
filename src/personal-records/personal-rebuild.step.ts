@@ -241,6 +241,7 @@ export async function rebuildPersonalTables(
           heads: signedRecordHeadsDb,
           keyring: new SenderKeyring(providers)
         }),
+        heads: signedRecordHeadsDb,
         imports: log.imports,
         records: log.records,
         derive: (c) => personalExportDb.deriveFromWavesIndex(c),

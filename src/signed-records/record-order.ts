@@ -25,6 +25,11 @@ export function importOrderKey(anchor: number, time: number): RecordOrderKey {
   return { anchor, claimedTime: time, eventId: ethers.ZeroHash };
 }
 
+/** Sorts strings by code unit: the same everywhere, unlike a locale. */
+export function byCodeUnit(a: string, b: string): number {
+  return a < b ? -1 : Number(a > b);
+}
+
 function compareNumbers(a: number, b: number): number {
   if (a === b) {
     return 0;

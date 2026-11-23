@@ -3,7 +3,11 @@ import {
   SignedRecordEvent,
   signRecordEvent
 } from '@/signed-records/record-event';
-import { RecordRegistry } from '@/signed-records/record-index';
+import {
+  RecordIndexer,
+  RecordRegistry,
+  SenderKeyring
+} from '@/signed-records/record-index';
 import { RecordKind } from '@/signed-records/record-kinds';
 import {
   grantSource,
@@ -14,6 +18,11 @@ import {
   VECTORS
 } from '@/signed-records/record-test-fixtures';
 import { importOrderKey, RecordOrderKey } from '@/signed-records/record-order';
+import {
+  verifyRecordEvent,
+  VerifiedRecord
+} from '@/signed-records/record-verify';
+import { rebuildPersonalState } from './personal-import';
 import { registerPersonalRecordTypes } from './personal-record-types';
 import { PersonalRecordsService } from './personal-records.service';
 import {
@@ -262,6 +271,81 @@ describe('PersonalRecordsService.submit', () => {
       { id: reader.id, outcome: 'stale' }
     ]);
     expect(logged).toHaveLength(1);
+  });
+
+  it('leaves the heads that a rebuild of its log leaves, its own included', async () => {
+    const { service, heads, owners, grants, logged } = setup();
+    const keys = VECTORS.keys.event;
+    const sameKeys = record(
+      RecordKind.SEALED,
+      keys.wave,
+      ['keys'],
+      JSON.parse(keys.body ?? 'null')
+    );
+    const reader = (anchor: number) =>
+      record(
+        RecordKind.RECORD,
+        `pv/${PRINCIPAL}`,
+        ['reader', `0x${'5'.repeat(40)}`],
+        {},
+        anchor
+      );
+    const newerReader = reader(1002);
+    const olderReader = reader(1001);
+    const follow = record(
+      RecordKind.RECORD,
+      `ps/${PRINCIPAL}`,
+      ['follow', `identity:${TARGET}`],
+      { actions: ['DROP_REPLIED'] },
+      1010
+    );
+    // Sealed settings open with the keys record of the same submit.
+    const submits = [
+      [keys, VECTORS.sealedSettings.event],
+      [newerReader],
+      [olderReader],
+      [sameKeys],
+      [follow]
+    ];
+    for (const events of submits) {
+      await service.submit(events, 'primary', 'p-me', {});
+    }
+    const byId = new Map(submits.flat().map((event) => [event.id, event]));
+    expect(logged).toEqual(
+      [keys, VECTORS.sealedSettings.event, newerReader, follow].map(
+        (event) => `personal:${event.id}`
+      )
+    );
+    const records: VerifiedRecord[] = [];
+    for (const entry of logged) {
+      const result = await verifyRecordEvent(
+        byId.get(entry.slice('personal:'.length))!,
+        { grants, bindings: owners }
+      );
+      if (!result.ok) throw new Error(result.reason);
+      records.push(result.record);
+    }
+    const tables = new MemoryPersonalTables();
+    const rebuilt = new MemoryHeadStore();
+    await rebuildPersonalState({
+      indexer: new RecordIndexer({
+        registry: registerPersonalRecordTypes(new RecordRegistry(), {
+          owners,
+          tables,
+          live: new RecordingLiveEffects(tables)
+        }),
+        heads: rebuilt,
+        keyring: new SenderKeyring([provider])
+      }),
+      heads: rebuilt,
+      imports: [],
+      records,
+      ctx: {}
+    });
+    expect(
+      Array.from(heads.heads.keys()).filter((key) => key.includes('|~'))
+    ).toHaveLength(3);
+    expect(rebuilt.heads).toEqual(heads.heads);
   });
 
   it('rejects a record that fails verification, with the reason', async () => {

@@ -2,7 +2,7 @@ import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { RecordFamily } from './record-families';
 import { RecordKind } from './record-kinds';
-import { compareOrderKeys, RecordOrderKey } from './record-order';
+import { byCodeUnit, compareOrderKeys, RecordOrderKey } from './record-order';
 import type { VerifiedRecord } from './record-verify';
 import {
   decodeKeysDocument,
@@ -95,6 +95,11 @@ export interface RecordHeadKey {
  */
 export interface RecordHeadStore {
   lock(key: RecordHeadKey, ctx: RequestContext): Promise<RecordOrderKey | null>;
+  /**
+   * The head as it is, with no lock and without creating its row: for
+   * state that keeps no head (ingestImported with `heads: false`).
+   */
+  read(key: RecordHeadKey, ctx: RequestContext): Promise<RecordOrderKey | null>;
   put(
     key: RecordHeadKey,
     order: RecordOrderKey,
@@ -478,15 +483,17 @@ export class RecordIndexer {
       // Lock every head first, in one order, so two records sharing keys
       // cannot deadlock; then apply in the record's own item order (a
       // rename's new name before the old name's unset, as the client wrote
-      // them), the same order a rebuild applies.
+      // them), the same order a rebuild applies. Imported state that keeps
+      // no head (`heads: false`) only reads them: live never puts it
+      // through the indexer, so it leaves no row.
       const byLockOrder = [...handled].sort((a, b) =>
-        headId(a.change) < headId(b.change)
-          ? -1
-          : Number(headId(a.change) > headId(b.change))
+        byCodeUnit(headId(a.change), headId(b.change))
       );
       const isNewer = new Map<RecordChange, boolean>();
       for (const { change } of byLockOrder) {
-        const head = await this.deps.heads.lock(headKeyOf(change), txCtx);
+        const head = writeHeads
+          ? await this.deps.heads.lock(headKeyOf(change), txCtx)
+          : await this.deps.heads.read(headKeyOf(change), txCtx);
         isNewer.set(change, !head || compareOrderKeys(change.order, head) > 0);
       }
       let applied = 0;

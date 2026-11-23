@@ -65,6 +65,10 @@ class MemoryHeads implements RecordHeadStore {
     return this.heads.get(MemoryHeads.id(key)) ?? null;
   }
 
+  async read(key: RecordHeadKey): Promise<RecordOrderKey | null> {
+    return this.heads.get(MemoryHeads.id(key)) ?? null;
+  }
+
   async put(key: RecordHeadKey, order: RecordOrderKey): Promise<void> {
     this.heads.set(MemoryHeads.id(key), order);
   }
@@ -206,12 +210,14 @@ export async function personalModerationAuditRows(args: {
           : async () => undefined;
     registry.register({ ...handler, apply });
   }
+  const heads = new MemoryHeads();
   await rebuildPersonalState({
     indexer: new RecordIndexer({
       registry,
-      heads: new MemoryHeads(),
+      heads,
       keyring: new SenderKeyring(args.providers)
     }),
+    heads,
     imports: args.imports,
     records: args.records,
     reportEffects: args.reportEffects,

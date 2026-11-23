@@ -101,6 +101,9 @@ describeWithSeed('the personal seed and its rebuild', [], () => {
       await seedProbeIdentities();
       await seedPersonalSettings(contextOf('personal.seed', null, dir), env);
       const seeded = await snapshot();
+      const state = await sqlExecutor.execute(
+        `select id, frozen, import_anchor, import_at from personal_records_state`
+      );
       expect(seeded.identity_subscriptions.length).toBeGreaterThan(0);
       expect(seeded.eula_consent).toHaveLength(1);
       const listed = JSON.parse(
@@ -121,6 +124,15 @@ describeWithSeed('the personal seed and its rebuild', [], () => {
         env
       );
       expect(await snapshot()).toEqual(seeded);
+      // As live: the import never goes through the indexer, so no heads.
+      expect(
+        await sqlExecutor.execute(`select * from signed_record_heads`)
+      ).toEqual([]);
+      expect(
+        await sqlExecutor.execute(
+          `select id, frozen, import_anchor, import_at from personal_records_state`
+        )
+      ).toEqual(state);
     } finally {
       server.close();
       fs.rmSync(dir, { recursive: true, force: true });

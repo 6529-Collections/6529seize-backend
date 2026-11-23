@@ -108,6 +108,10 @@ export class MemoryHeadStore implements RecordHeadStore {
     return this.heads.get(MemoryHeadStore.id(key)) ?? null;
   }
 
+  async read(key: RecordHeadKey): Promise<RecordOrderKey | null> {
+    return this.heads.get(MemoryHeadStore.id(key)) ?? null;
+  }
+
   async put(key: RecordHeadKey, order: RecordOrderKey): Promise<void> {
     this.heads.set(MemoryHeadStore.id(key), order);
   }

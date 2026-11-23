@@ -1,4 +1,5 @@
 import type { RequestContext } from '@/request.context';
+import { byCodeUnit } from '@/signed-records/record-order';
 import type {
   FollowAction,
   FollowTargetType,
@@ -9,10 +10,6 @@ import type {
   WaveMentionGroup
 } from './personal-records.ports';
 import type { RecordOwnerDirectory } from './record-owner-directory';
-
-/** Sorts strings by code unit: the same everywhere, unlike a locale. */
-const byCodeUnit = (a: string, b: string): number =>
-  a < b ? -1 : Number(a > b);
 
 const DEFAULT_PREFERENCES = {
   direct_message_policy: 'EVERYONE',

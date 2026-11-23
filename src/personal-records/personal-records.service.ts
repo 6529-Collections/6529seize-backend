@@ -1,11 +1,8 @@
-import { createHash } from 'node:crypto';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import type { RecordAnchorService } from '@/signed-records/record-anchor';
 import {
   IngestOutcome,
-  KEYS_LABEL,
-  RecordHeadKey,
   RecordHeadStore,
   RecordIndexer,
   RecordRegistry,
@@ -16,16 +13,19 @@ import {
   compareOrderKeys,
   RecordOrderKey
 } from '@/signed-records/record-order';
-import {
-  decodeKeysDocument,
-  ProviderKey
-} from '@/signed-records/sealed-crypto';
+import type { ProviderKey } from '@/signed-records/sealed-crypto';
 import {
   RecordGrantSource,
   verifyRecordEvent,
   VerifiedRecord
 } from '@/signed-records/record-verify';
 import type { RecordLogWriter } from '@/signed-records/record-log/record-log.service';
+import {
+  isKeysRecord,
+  ownerMarkKey,
+  READER_TYPE,
+  takeLogHead
+} from './personal-record-heads';
 import { ownersUnavailable } from './personal-records.ports';
 import type { RecordOwnerDirectory } from './record-owner-directory';
 
@@ -34,14 +34,6 @@ export const PERSONAL_SUBMIT_MAX_EVENTS = 16;
 
 /** The record log lane for personal records. */
 export const PERSONAL_LOG_LANE = 'personal';
-
-const READER_TYPE = 'reader';
-// The head that holds each owner's newest applied settings record.
-const OWNER_MARK_TYPE = '~owner';
-
-/** Sorts strings by code unit: the same everywhere, unlike a locale. */
-const byCodeUnit = (a: string, b: string): number =>
-  a < b ? -1 : Number(a > b);
 
 export type PersonalSubmitOutcome =
   // Indexed: the tables changed (primary) or would have (shadow).
@@ -109,13 +101,6 @@ function refusal(
     detail,
     ...(code ? { code } : {})
   });
-}
-
-function isKeysRecord(record: VerifiedRecord): boolean {
-  return (
-    record.parsed.kind === RecordKind.SEALED &&
-    record.parsed.label === KEYS_LABEL
-  );
 }
 
 /**
@@ -298,7 +283,7 @@ export class PersonalRecordsService {
       if (parsed.type !== READER_TYPE) {
         throw refusal(record, 'not-accepted', 'pv carries reader records only');
       }
-      return this.logOnce(record, READER_TYPE, parsed.key, ctx);
+      return this.logOnce(record, ctx);
     }
     if (isKeysRecord(record)) {
       if (this.deps.providers().length === 0) {
@@ -319,7 +304,7 @@ export class PersonalRecordsService {
           'A sender key for this device and generation is already known with other bytes'
         );
       }
-      return this.logOnce(record, KEYS_LABEL, keysDocumentKey(record), ctx);
+      return this.logOnce(record, ctx);
     }
     const isSettings =
       (parsed.kind === RecordKind.RECORD && record.family === 'ps') ||
@@ -338,12 +323,7 @@ export class PersonalRecordsService {
     // needs the follow), and a rebuild applies them in signed order. So,
     // live, a record ordered before the owner's newest applied one is
     // refused: the client signs it again, after that mark.
-    const markKey: RecordHeadKey = {
-      owner: record.owner,
-      family: 'pv',
-      type: OWNER_MARK_TYPE,
-      key: ''
-    };
+    const markKey = ownerMarkKey(record.owner);
     const mark = await this.deps.heads.lock(markKey, ctx);
     if (mark && compareOrderKeys(record.order, mark) < 0) {
       throw refusal(
@@ -400,53 +380,18 @@ export class PersonalRecordsService {
 
   /**
    * Keys and reader records change no table; they are logged once, when
-   * newer than the last one logged for the same device or reader.
+   * newer than the last one logged for the same keys or reader.
    */
   private async logOnce(
     record: VerifiedRecord,
-    type: string,
-    key: string,
     ctx: RequestContext
   ): Promise<PersonalSubmitResult> {
-    const headKey: RecordHeadKey = {
-      owner: record.owner,
-      family: record.family,
-      type: `~${type}`,
-      key
-    };
-    const head = await this.deps.heads.lock(headKey, ctx);
-    // Keys: any record for the same keys was enough. Readers: the newest wins.
-    if (
-      head &&
-      (type === KEYS_LABEL || compareOrderKeys(record.order, head) <= 0)
-    ) {
+    if (!(await takeLogHead(this.deps.heads, record, ctx))) {
       return { id: record.event.id, outcome: 'stale' };
     }
-    await this.deps.heads.put(headKey, record.order, ctx);
     await this.deps.log.appendEvents(PERSONAL_LOG_LANE, [record.event], ctx);
     return { id: record.event.id, outcome: 'logged' };
   }
-}
-
-/**
- * What a keys record holds, as a head key: its device and each wrap's
- * class, generation and recipient. A device that signs a new keys record
- * for the same keys (new HPKE wraps, a new event) is logged once; a new
- * generation or a new provider key is logged again.
- */
-function keysDocumentKey(record: VerifiedRecord): string {
-  const parsed = record.parsed;
-  const doc =
-    parsed.kind === RecordKind.SEALED && parsed.bytes
-      ? decodeKeysDocument(parsed.bytes)
-      : null;
-  const wraps = (doc?.wraps ?? [])
-    .map((wrap) => `${wrap.cls}:${wrap.gen}:${wrap.from}:${wrap.to}`)
-    .sort(byCodeUnit)
-    .join(',');
-  return createHash('sha256')
-    .update(`${record.event.device_key}|${wraps}`)
-    .digest('hex');
 }
 
 function idOf(event: unknown): string | null {

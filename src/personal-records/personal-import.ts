@@ -20,13 +20,13 @@ import {
 import { RequestContext } from '@/request.context';
 import {
   IngestOutcome,
-  KEYS_LABEL,
   RecordChange,
+  RecordHeadStore,
   RecordIndexer
 } from '@/signed-records/record-index';
-import { RecordKind } from '@/signed-records/record-kinds';
 import type { RecordLogEntry } from '@/signed-records/record-log/record-log-format';
 import {
+  byCodeUnit,
   compareOrderKeys,
   importOrderKey,
   RecordOrderKey
@@ -38,6 +38,7 @@ import {
   PERSONAL_MODERATION_LOG_TYPE,
   PersonalRecordType
 } from './personal-record-types';
+import { isKeysRecord, restoreServiceHeads } from './personal-record-heads';
 
 /** The record log lane of the one-time import at the switch. */
 export const PERSONAL_IMPORT_LANE = 'personal-import';
@@ -46,10 +47,6 @@ export const PERSONAL_IMPORT_LANE = 'personal-import';
 const ITEMS_PER_ENTRY = 2_000;
 // Owners read and resolved per page.
 const OWNERS_PER_PAGE = 500;
-
-/** Sorts strings by code unit: the same everywhere, unlike a locale. */
-const byCodeUnit = (a: string, b: string): number =>
-  a < b ? -1 : Number(a > b);
 
 export interface PersonalImportItem {
   readonly t: string;
@@ -749,12 +746,16 @@ export function latestImport(
  * 1. what the waves index implies (`derive`: one's own waves and drops);
  * 2. the latest complete import (the one with its closing entry);
  * 3. every signed record ordered after that import, in merge order (keys
- *    records first, so sealed items open).
+ *    records first, so sealed items open);
+ * 4. the heads the service keeps beside the per-key ones
+ *    (restoreServiceHeads).
  * Records ordered at or before the import are left out: the import holds
  * their outcome. Refusals are reported, never skipped silently.
  */
 export async function rebuildPersonalState(args: {
   readonly indexer: RecordIndexer;
+  // The indexer's heads.
+  readonly heads: RecordHeadStore;
   readonly imports: readonly (PersonalImportBody | PersonalImportDone)[];
   readonly records: readonly VerifiedRecord[];
   readonly derive?: (ctx: RequestContext) => Promise<void>;
@@ -778,10 +779,7 @@ export async function rebuildPersonalState(args: {
   const { done, imported } = latestImport(args.imports);
   const importOrder = done ? importOrderKey(done.anchor, done.at) : null;
 
-  const isKeys = (record: VerifiedRecord) =>
-    record.parsed.kind === RecordKind.SEALED &&
-    record.parsed.label === KEYS_LABEL;
-  for (const record of args.records.filter(isKeys)) {
+  for (const record of args.records.filter(isKeysRecord)) {
     note(
       `keys ${record.event.id}`,
       await args.indexer.ingest(record, 'rebuild', args.ctx)
@@ -809,7 +807,7 @@ export async function rebuildPersonalState(args: {
   const isAfterImport = (order: RecordOrderKey) =>
     !importOrder || compareOrderKeys(order, importOrder) > 0;
   const after = args.records
-    .filter((record) => !isKeys(record))
+    .filter((record) => !isKeysRecord(record))
     .filter((record) => isAfterImport(record.order));
   const steps: (
     | { order: RecordOrderKey; record: VerifiedRecord }
@@ -820,12 +818,19 @@ export async function rebuildPersonalState(args: {
       .filter((effect) => isAfterImport(effect.order))
       .map((report) => ({ order: report.order, report }))
   ].sort((a, b) => compareOrderKeys(a.order, b.order));
+  // Each owner's newest settings record applied, for their mark.
+  const newestApplied = new Map<string, RecordOrderKey>();
   for (const step of steps) {
     if ('record' in step) {
-      note(
-        `record ${step.record.event.id}`,
-        await args.indexer.ingest(step.record, 'rebuild', args.ctx)
+      const outcome = await args.indexer.ingest(
+        step.record,
+        'rebuild',
+        args.ctx
       );
+      note(`record ${step.record.event.id}`, outcome);
+      if (outcome.kind === 'applied' && outcome.changes > 0) {
+        newestApplied.set(step.record.owner, step.record.order);
+      }
     } else {
       note(
         `report ${step.report.dropId}`,
@@ -839,12 +844,14 @@ export async function rebuildPersonalState(args: {
       );
     }
   }
+  await restoreServiceHeads(args.heads, args.records, newestApplied, args.ctx);
   return {
     importOrder,
     importEntries: imported.length,
     records: after.length,
     beforeImport:
-      args.records.filter((record) => !isKeys(record)).length - after.length,
+      args.records.filter((record) => !isKeysRecord(record)).length -
+      after.length,
     refused
   };
 }

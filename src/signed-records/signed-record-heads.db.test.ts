@@ -93,6 +93,23 @@ describeWithSeed('SignedRecordHeadsDb', [], () => {
     });
   });
 
+  it('reads a head without creating its row; the zero row is no head', async () => {
+    const rows = async () =>
+      sqlExecutor.execute(
+        `select rkey from ${SIGNED_RECORD_HEADS_TABLE} where rkey = :rkey`,
+        { rkey: 'read' }
+      );
+    expect(await db.read(key('read'), ctx)).toBeNull();
+    expect(await rows()).toEqual([]);
+    await db.inTransaction(ctx, async (tx) => {
+      await db.lock(key('read'), tx);
+      expect(await db.read(key('read'), tx)).toBeNull();
+      await db.put(key('read'), order(4), tx);
+    });
+    expect(await db.read(key('read'), ctx)).toEqual(order(4));
+    expect(await rows()).toHaveLength(1);
+  });
+
   it('keeps keys apart that differ only in case or accents', async () => {
     await db.inTransaction(ctx, async (tx) => {
       await db.lock(key('mute'), tx);

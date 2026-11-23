@@ -381,6 +381,7 @@ describe('RecordIndexer', () => {
 
   it('applies imported state without a head when told to keep none', async () => {
     const { indexer, follow, heads } = setup();
+    const lock = jest.spyOn(heads, 'lock');
     const imported: RecordChange = {
       owner: PRINCIPAL,
       family: 'ps',
@@ -401,6 +402,8 @@ describe('RecordIndexer', () => {
       { actions: ['DROP_CREATED'] }
     ]);
     expect(heads.heads.size).toBe(0);
+    // Read, never locked: the lock would leave a zero row in the table.
+    expect(lock).not.toHaveBeenCalled();
     // With no head, the stale check against the import is the caller's
     // (the import order key), as live.
     expect(

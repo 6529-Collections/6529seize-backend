@@ -393,9 +393,11 @@ describe('rebuildPersonalState with report effects', () => {
       tables,
       live: new RecordingLiveEffects(tables)
     });
+    const heads = new MemoryHeadStore();
+    const lock = jest.spyOn(heads, 'lock');
     const indexer = new RecordIndexer({
       registry,
-      heads: new MemoryHeadStore(),
+      heads,
       keyring: new SenderKeyring([])
     });
     const done = {
@@ -407,6 +409,7 @@ describe('rebuildPersonalState with report effects', () => {
     };
     const report = await rebuildPersonalState({
       indexer,
+      heads,
       imports: [done],
       records: [],
       reportEffects: [
@@ -441,5 +444,8 @@ describe('rebuildPersonalState with report effects', () => {
     expect(report.refused).toEqual([]);
     expect(Array.from(tables.hidden.entries())).toEqual([['me|drop-1', 6000]]);
     expect(Array.from(tables.blocks.keys())).toEqual(['me|alice']);
+    // Live applies report effects outside the indexer: no head, no lock.
+    expect(heads.heads.size).toBe(0);
+    expect(lock).not.toHaveBeenCalled();
   });
 });
