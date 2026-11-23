@@ -15,8 +15,8 @@ import { TdhChainDay, TdhDayHeader } from './tdh-chain.types';
  *
  * The roots prove the lists are the ones the header commits to. Trust in the
  * header itself comes from the Ethereum cutoff check below and, while it
- * exists, the site's own recompute; a finalized-checkpoint proof (G4) joins
- * when the gateway serves one.
+ * exists, the site's own recompute; a proof from a finalized checkpoint
+ * joins when the gateway serves one.
  */
 
 export type ChainDayCheck =
