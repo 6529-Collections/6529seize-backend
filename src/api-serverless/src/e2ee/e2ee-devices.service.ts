@@ -827,6 +827,14 @@ export class E2eeDevicesService {
         atSeconds,
         connection
       );
+      if (request.replace_one_time === true) {
+        // An updated client replaces the pool its older version made.
+        await this.db.deleteOneTimeKeyPackages(
+          deviceKey,
+          rows.map((row) => row.ciphersuite),
+          connection
+        );
+      }
       const existing = await this.db.countOneTimeKeyPackages(
         deviceKey,
         atSeconds,

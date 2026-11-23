@@ -69,10 +69,6 @@ import {
   wavesApiDb as defaultWavesApiDb,
   WavesApiDb
 } from '@/api/waves/waves.api.db';
-import {
-  helpBotDailyActivityCreditQueueService,
-  HelpBotDailyActivityCreditQueueService
-} from '@/help-bot/help-bot-daily-activity-credit-queue.service';
 
 import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
 import { assertProxyMayEditDrops } from '@/api/drops/drop-proxy-rights';
@@ -233,7 +229,6 @@ export class DropCreationApiService {
     private readonly nftLinkResolvingService: NftLinkResolvingService,
     private readonly dropPollsApiService: DropPollsApiService,
     private readonly wavesApiDb: WavesApiDb = defaultWavesApiDb,
-    private readonly dailyActivityCreditQueueService: HelpBotDailyActivityCreditQueueService = helpBotDailyActivityCreditQueueService,
     private readonly purgeDb: ChatHistoryPurgeDb = chatHistoryPurgeDb,
     private readonly clientIdsDb: DropClientIdsDb = dropClientIdsDb
   ) {}
@@ -243,14 +238,12 @@ export class DropCreationApiService {
       createDropRequest,
       authorId,
       representativeId,
-      hideLinkPreview,
-      requestDailyActivityCredit = false
+      hideLinkPreview
     }: {
       createDropRequest: ApiCreateDropRequest;
       authorId: string;
       representativeId: string;
       hideLinkPreview?: boolean;
-      requestDailyActivityCredit?: boolean;
     },
     ctx: RequestContext
   ): Promise<ApiDrop> {
@@ -339,7 +332,6 @@ export class DropCreationApiService {
                   authorId,
                   preResolvedIdentityNomination,
                   prePublication,
-                  requestDailyActivityCredit,
                   clientDrop
                 },
                 normalizeCreateDropPollRequest(createDropRequest.poll),
@@ -385,8 +377,7 @@ export class DropCreationApiService {
     const {
       dropId: createdDropId,
       pendingPushNotificationIds,
-      dmUnreadRecipientIds,
-      dailyActivityCreditRequestEnqueued
+      dmUnreadRecipientIds
     } = created;
     // The drop is committed from here on: no failure below may look like a
     // failed write, or the author reposts it.
@@ -395,11 +386,6 @@ export class DropCreationApiService {
     );
     if (drop && clientDrop) {
       drop.client_drop_id = clientDrop.clientDropId;
-    }
-    if (dailyActivityCreditRequestEnqueued) {
-      await hops.time('post_commit_daily_activity_ms', () =>
-        this.dailyActivityCreditQueueService.sendWakeupBestEffort(ctx)
-      );
     }
     // Before the fan-out: a frame must not reach a client that then reads a
     // cached unread count the new drop has not invalidated yet.
@@ -585,7 +571,6 @@ export class DropCreationApiService {
       authorId,
       preResolvedIdentityNomination,
       prePublication,
-      requestDailyActivityCredit,
       clientDrop = null
     }: {
       model: CreateOrUpdateDropModel;
@@ -594,7 +579,6 @@ export class DropCreationApiService {
         ReturnType<CreateOrUpdateDropUseCase['preResolveIdentityNomination']>
       > | null;
       prePublication: PrePublicationPreparation;
-      requestDailyActivityCredit: boolean;
       clientDrop?: ClientDrop | null;
     },
     poll: CreateDropPollRequest | null | undefined,
@@ -603,7 +587,6 @@ export class DropCreationApiService {
     dropId: string;
     pendingPushNotificationIds: number[];
     dmUnreadRecipientIds: string[];
-    dailyActivityCreditRequestEnqueued: boolean;
   }> {
     const {
       drop_id,
@@ -646,18 +629,10 @@ export class DropCreationApiService {
           authenticationContext: AuthenticationContext.fromProfileId(authorId)
         }
       );
-    const dailyActivityCreditRequestEnqueued =
-      requestDailyActivityCredit && !replayed
-        ? await this.dailyActivityCreditQueueService.enqueueRequest(
-            { profileId: authorId },
-            { timer, connection }
-          )
-        : false;
     return {
       dropId: drop_id,
       pendingPushNotificationIds: pending_push_notification_ids,
-      dmUnreadRecipientIds: dm_unread_recipient_ids ?? [],
-      dailyActivityCreditRequestEnqueued
+      dmUnreadRecipientIds: dm_unread_recipient_ids ?? []
     };
   }
 

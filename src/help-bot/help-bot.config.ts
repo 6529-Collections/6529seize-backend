@@ -1,4 +1,3 @@
-import { env } from '@/env';
 import { DEVS_6529_MENTION } from '@/constants/mentions';
 import {
   DEFAULT_HELP_BOT_BEDROCK_MODEL_ID,
@@ -61,7 +60,6 @@ export const HELP_BOT_SEEN_REACTION = ':eyes:';
 export const HELP_BOT_SUCCESS_REACTION = ':white_check_mark:';
 export const HELP_BOT_FAILURE_REACTION = ':warning:';
 export const HELP_BOT_SPAM_REACTION = ':no_entry:';
-export const HELP_BOT_INSUFFICIENT_CREDITS_REACTION = ':low_battery:';
 export const HELP_BOT_USER_SPAM_WINDOW_MS = 60_000;
 export const HELP_BOT_USER_SPAM_MAX_TRIGGERS_PER_WINDOW = 5;
 /**
@@ -101,44 +99,15 @@ export function getHelpBotGlobalDailyAnswerLimit(): number {
   );
 }
 export const HELP_BOT_TECH_TEAM_MENTION = DEVS_6529_MENTION;
+/** The REP category of the removed Help6529 Credits; the bot's answer about credits names it. */
 export const HELP_BOT_CREDIT_CATEGORY = 'Help6529 Credits';
-export const HELP_BOT_RESERVED_CREDIT_CATEGORY_MESSAGE = `${HELP_BOT_CREDIT_CATEGORY} is a reserved REP category managed by ${HELP_BOT_HANDLE}.`;
-export const HELP_BOT_CREDIT_GRANT_ENV = 'HELP_BOT_CREDIT_GRANT';
-export const HELP_BOT_DEFAULT_CREDIT_GRANT = 10;
-export function getHelpBotCreditGrantAmount(): number {
-  const rawAmount = env.getStringOrNull(HELP_BOT_CREDIT_GRANT_ENV);
-  if (!rawAmount?.trim()) {
-    return HELP_BOT_DEFAULT_CREDIT_GRANT;
-  }
-  const amount = Number(rawAmount.trim());
-  if (!Number.isInteger(amount) || amount <= 0) {
-    throw new Error(`${HELP_BOT_CREDIT_GRANT_ENV} must be a positive integer`);
-  }
-  return amount;
-}
-
-const HELP_BOT_CREDIT_GRANT = getHelpBotCreditGrantAmount();
-export const HELP_BOT_SIGNUP_CREDIT_GRANT = HELP_BOT_CREDIT_GRANT;
-export const HELP_BOT_PROFILE_SETUP_CREDIT_GRANT = HELP_BOT_CREDIT_GRANT;
-export const HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT = HELP_BOT_CREDIT_GRANT;
-export const HELP_BOT_QUESTION_CREDIT_COST = 1;
 
 export const HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY =
   "I don't have enough knowledge to help you here.";
 export const HELP_BOT_OUT_OF_SCOPE_REPLY =
   'I can only help with 6529 product questions.';
-export const HELP_BOT_INSUFFICIENT_CREDITS_REPLY = `You need at least 1 Help6529 Credit REP to ask a question. Help6529 Credits are REP in the \`${HELP_BOT_CREDIT_CATEGORY}\` category managed by ${HELP_BOT_HANDLE} for signup, profile setup, and daily activity.`;
-
 export const HELP_BOT_TECHNICAL_FAILURE_REPLY =
   'I saw this, but I hit a temporary issue while looking it up. Please try again in a minute.';
-
-export function isHelpBotCreditCategory(
-  category: string | null | undefined
-): boolean {
-  return (
-    category?.trim().toLowerCase() === HELP_BOT_CREDIT_CATEGORY.toLowerCase()
-  );
-}
 
 export function buildHelpBotNoReliableSourceReply(): string {
   return `${HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY} I'm flagging this so the tech team can double-check: ${HELP_BOT_TECH_TEAM_MENTION}`;
