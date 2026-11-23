@@ -1305,14 +1305,6 @@ describe('ChainGatewayClient reads', () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("refuses a document over the store's size before uploading it", async () => {
-    const { client, calls } = setup(() => new Error('not asked'));
-    await expect(
-      client.putDocument(Buffer.alloc(2 * 1024 * 1024 + 1))
-    ).rejects.toMatchObject({ code: 'bad_request' });
-    expect(calls).toHaveLength(0);
-  });
-
   it('takes only a 404 as none: a 200 of nothing is refused', async () => {
     const { client, calls } = setup(
       withStatus(
@@ -1403,6 +1395,37 @@ describe('ChainGatewayClient reads', () => {
     const { client, calls } = setup(withStatus(() => new Error('not asked')));
     expect((await client.getHandle('a\\b'))?.status).toBe('invalid');
     expect(calls).toHaveLength(0);
+  });
+
+  it('answers a handle past any length as invalid, and no identity, without asking', async () => {
+    const { client, calls } = setup(withStatus(() => new Error('not asked')));
+    const long = 'a'.repeat(65);
+    expect((await client.getHandle(long))?.status).toBe('invalid');
+    expect(await client.getIdentityByHandle(long)).toBeNull();
+    expect(calls).toHaveLength(0);
+  });
+
+  it('keeps answers of the public read apart from the checked ones', async () => {
+    let data: unknown = { ...IDENTITY, principalId: P01 };
+    const { client, calls } = setup(
+      withStatus(
+        () => ({ status: 200, json: { read: stamp(10), data, next: null } }),
+        10
+      )
+    );
+    // An unchecked read keeps another identity's answer under that path...
+    await client.read(`/v1/identities/${PA}`, {}, { height: 10 });
+    // ...which the checked lookup doesn't take: it asks, and refuses.
+    await expect(
+      client.getIdentityByPrincipal(PA, { height: 10 })
+    ).rejects.toMatchObject({
+      code: 'bad_answer'
+    });
+    data = IDENTITY;
+    expect(await client.getIdentityByPrincipal(PA, { height: 10 })).toEqual(
+      IDENTITY
+    );
+    expect(reads(calls)).toHaveLength(3);
   });
 
   it('refuses an empty 200 as an answer it cannot read', async () => {
@@ -2952,6 +2975,31 @@ describe('ChainGatewayClient writes', () => {
     });
   });
 
+  it.each([
+    ['unauthorized', 401],
+    ['forbidden', 403],
+    ['bad_path', 400],
+    ['bad_body', 400],
+    ['method_not_allowed', 405],
+    ['unsupported_media_type', 415]
+  ])(
+    "takes the gateway's own %s refusal of a submit as not taken",
+    async (code, status) => {
+      const { client } = setup(
+        withStatus(() => ({
+          status,
+          json: { error: code, message: 'refused here' }
+        }))
+      );
+      await expect(
+        client.submit({ signed: '0x00', txId: TX })
+      ).rejects.toMatchObject({
+        code,
+        txId: TX
+      });
+    }
+  );
+
   it('refuses a draft or submit answer without its read stamp', async () => {
     const { client } = setup(
       withStatus(() => ({
@@ -3176,6 +3224,14 @@ describe('profile documents', () => {
     });
   });
 
+  it('uploads nothing over service access: not available here', async () => {
+    const { client, calls } = setup(() => new Error('not asked'));
+    await expect(client.putDocument(doc)).rejects.toMatchObject({
+      code: 'not_available'
+    });
+    expect(calls).toHaveLength(0);
+  });
+
   it('reads a CID in hex or in base32 text', () => {
     expect(cidHex(cidPath(cid))).toBe(cid);
     expect(cidHex(cid.slice(2))).toBe(cid);
@@ -3276,78 +3332,6 @@ describe('profile documents', () => {
     await client.getDocument(bigCid);
     await client.getDocument(bigCid);
     expect(calls).toHaveLength(2);
-  });
-
-  it('stores a document as bytes and checks the CID the store names', async () => {
-    const { client, calls } = setup(() => ({
-      status: 201,
-      json: { cid: cidPath(cid), cid_hex: cid, codec: 'raw', size: doc.length }
-    }));
-    expect(await client.putDocument(doc)).toBe(cidPath(cid));
-    expect(calls[0].method).toBe('POST');
-    expect(path(calls[0])).toBe('/v1/docs');
-    expect(param(calls[0], 'cid')).toBe(cidPath(cid));
-    expect(calls[0].headers['content-type']).toBe('application/octet-stream');
-    expect(Buffer.from(calls[0].body as Uint8Array)).toEqual(doc);
-  });
-
-  it('reads the CID the store names in base32 alone', async () => {
-    const { client } = setup(() => ({
-      status: 200,
-      json: { cid: cidPath(cid), cid_hex: cid.slice(2), codec: 'raw', size: 1 }
-    }));
-    expect(await client.putDocument(doc)).toBe(cidPath(cid));
-  });
-
-  it('refuses an answer with another status or an unreadable CID', async () => {
-    const accepted = setup(() => ({
-      status: 202,
-      json: { cid: cidPath(cid), cid_hex: cid, codec: 'raw', size: 1 }
-    }));
-    await expect(accepted.client.putDocument(doc)).rejects.toBeInstanceOf(
-      ChainGatewayError
-    );
-    const garbled = setup(() => ({
-      status: 201,
-      json: { cid: 'not a cid', codec: 'raw', size: 1 }
-    }));
-    await expect(garbled.client.putDocument(doc)).rejects.toMatchObject({
-      code: 'bad_answer'
-    });
-  });
-
-  it('throws the store refusal and an answer without a CID', async () => {
-    const tooBig = setup(() => ({
-      status: 413,
-      json: { error: 'too_large', message: 'over 2 MiB' }
-    }));
-    await expect(tooBig.client.putDocument(doc)).rejects.toBeInstanceOf(
-      ChainGatewayError
-    );
-    const empty = setup(() => ({ status: 201, json: { size: 1 } }));
-    await expect(empty.client.putDocument(doc)).rejects.toBeInstanceOf(
-      ChainGatewayError
-    );
-  });
-
-  it('sends any byte array as bytes', async () => {
-    const { client, calls } = setup(() => ({
-      status: 201,
-      json: { cid: cidPath(cid), cid_hex: cid, codec: 'raw', size: 1 }
-    }));
-    await client.putDocument(Buffer.from(new Uint8Array(doc)));
-    expect(calls[0].headers['content-type']).toBe('application/octet-stream');
-  });
-
-  it('refuses an upload the store names differently', async () => {
-    const other = rawCidHexOf(Buffer.from('other'));
-    const { client } = setup(() => ({
-      status: 200,
-      json: { cid: cidPath(other), cid_hex: other, codec: 'raw', size: 5 }
-    }));
-    await expect(client.putDocument(doc)).rejects.toMatchObject({
-      code: 'cid_mismatch'
-    });
   });
 });
 
@@ -3759,6 +3743,15 @@ describe('configuration', () => {
       headTtlMs: 2_000,
       cacheEntries: 10_000
     });
+  });
+
+  it('never takes a timeout of 0', () => {
+    expect(
+      chainGatewayConfigFromEnv({
+        CHAIN_GATEWAY_URL: BASE,
+        CHAIN_GATEWAY_TIMEOUT_MS: '0'
+      }).timeoutMs
+    ).toBe(10_000);
   });
 
   it('fails at first use, not at import, without a URL', async () => {

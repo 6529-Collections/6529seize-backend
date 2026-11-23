@@ -25,7 +25,6 @@ import {
   ChainReadOptions,
   ChainReadStamp,
   ChainStatus,
-  ChainStoredDoc,
   ChainSubmitRequest,
   ChainSubmitResult,
   ChainTdhQuery,
@@ -146,7 +145,8 @@ export function chainGatewayConfigFromEnv(
   return {
     baseUrl: trimTrailingSlashes(baseUrl),
     serviceKey: env.CHAIN_GATEWAY_SERVICE_KEY?.trim() || null,
-    timeoutMs: intOr(env.CHAIN_GATEWAY_TIMEOUT_MS, 10_000),
+    // 0 would abort every request at once.
+    timeoutMs: intOr(env.CHAIN_GATEWAY_TIMEOUT_MS, 10_000) || 10_000,
     retries: intOr(env.CHAIN_GATEWAY_RETRIES, 3),
     headTtlMs: intOr(env.CHAIN_GATEWAY_HEAD_TTL_MS, 2_000),
     cacheEntries: intOr(env.CHAIN_GATEWAY_CACHE_ENTRIES, 10_000)
@@ -398,15 +398,6 @@ function parseFeedCursor(cursor: ChainFeedCursor): {
     );
   }
   return { height, index };
-}
-
-/** The CID the document store answered with, as hex; bad_answer if unreadable. */
-function storedCidHex(cid: string, path: string): string {
-  try {
-    return cidHex(cid);
-  } catch {
-    throw badAnswer(path, `the store answered with a CID that can't be read`);
-  }
 }
 
 /** The sha2-256 digest a CIDv1 names (any codec), or null for another CID. */
@@ -727,6 +718,9 @@ const isHandleSegment = (v: string) =>
   v !== '..';
 const handleArg = (it: string) =>
   arg(it, 'a handle', isHandleSegment).toLowerCase();
+/** Longer than any handle can be (they are 3 to 15 bytes): never asked. */
+const tooLongForHandle = (v: string) => Buffer.byteLength(v, 'utf8') > 64;
+
 /** A height, limit or day: a safe integer, not negative. */
 function countArg(value: number | undefined, what: string): number | undefined {
   if (value === undefined) return undefined;
@@ -809,12 +803,20 @@ function listOnly<T>(path: string): AnswerCheck<T> {
 
 /** Refusals of a submit that say the transaction wasn't taken. */
 const REFUSALS = [
+  // The node's.
   'inadmissible',
   'not_admitted',
   'bad_request',
   'too_large',
   'body_too_large',
-  'head_too_large'
+  'head_too_large',
+  // The gateway's own, before passing anything on.
+  'unauthorized',
+  'forbidden',
+  'bad_path',
+  'bad_body',
+  'method_not_allowed',
+  'unsupported_media_type'
 ];
 
 /** A txId (0x and 64 hex), lowercased, or undefined. */
@@ -1554,7 +1556,10 @@ export class ChainGatewayClient {
     // knows): the gateway's caches then keep each chain apart.
     const pinned = { ...query, height, network: network ?? undefined };
     const url = this.url(path, pinned);
-    const cached = this.answers.get(`${network} ${url}`);
+    // Answers a typed method checked are kept apart from unchecked ones (the
+    // public read()), so neither serves the other.
+    const space = check ? 'checked' : 'raw';
+    const cached = this.answers.get(`${network} ${space} ${url}`);
     if (cached !== undefined) {
       // Parsed afresh: a caller that changes an answer can't change the cache.
       return JSON.parse(cached) as ChainAnswer<T> | null;
@@ -1587,7 +1592,7 @@ export class ChainGatewayClient {
     // state at that height.
     if (!nodeLocal(path, answer?.data)) {
       this.answers.set(
-        `${lower(read.network)} ${this.url(path, { ...pinned, network: lower(read.network) })}`,
+        `${lower(read.network)} ${space} ${this.url(path, { ...pinned, network: lower(read.network) })}`,
         JSON.stringify(answer)
       );
     }
@@ -1645,6 +1650,8 @@ export class ChainGatewayClient {
   async getIdentityByHandle(handle: string, opts?: ChainReadOptions) {
     // The node folds a handle to lower case.
     const asked = handleArg(handle);
+    // Past any handle's length no identity holds it: not asked.
+    if (tooLongForHandle(asked)) return null;
     return this.identityAnswer(
       `/v1/identities/by-handle/${segment(asked)}`,
       opts,
@@ -1883,8 +1890,12 @@ export class ChainGatewayClient {
       .trim()
       .toLowerCase();
     // A handle that can't be a path segment can't be a handle either: it
-    // is answered here (a dot segment would reach another route).
-    if (given.length > 0 && !isHandleSegment(given)) {
+    // is answered here (a dot segment would reach another route; a long
+    // one, past any handle's 15 bytes, the gateway's path limit).
+    if (
+      given.length > 0 &&
+      (!isHandleSegment(given) || tooLongForHandle(given))
+    ) {
       return {
         handle: given,
         valid: false,
@@ -1973,7 +1984,10 @@ export class ChainGatewayClient {
     // wallet held whatever the loaded membership said. It is exact from the
     // range's start when that is before the import's start
     // (`noBindingsBefore`). With no change and no such height, no
-    // range is exact. For the API: an `exactFrom`, or Start writing the
+    // range is exact. A node restarted from a checkpoint in the middle of
+    // the import can report a later import.startHeight than the chain's:
+    // take noBindingsBefore from the chain's record, not one node's word.
+    // For the API: an `exactFrom`, or Start writing the
     // bindings it loads into the history, would let more be kept. Also
     // node-side: the route reads the changes and the ranges under two
     // locks (routes.rs, the history route), so one answer can pair them
@@ -2375,14 +2389,16 @@ export class ChainGatewayClient {
    * connection that never opened. After a 504 (the node waits 5 s for its
    * pool, and the transaction can still land), any other 5xx, a timeout or
    * a connection lost on the way, sending again would be refused as a
-   * duplicate: it throws `outcome_unknown` with the txId (the request's,
-   * from its draft), and the caller asks getTx.
+   * duplicate: it throws `outcome_unknown`, and the caller asks getTx. The
+   * txId it carries is the one the node named (in a refusal's message, or
+   * the answer's txId, which an answer of another transaction than drafted
+   * reports), else the request's.
    */
   async submit(
     request: ChainSubmitRequest & {
       /**
-       * The draft's txId: never sent. An answer of another txId, and any
-       * unknown outcome, are reported with it.
+       * The draft's txId: never sent. The answer must be of it; an unknown
+       * outcome carries it when the node named none.
        */
       readonly txId: string;
     }
@@ -2584,43 +2600,20 @@ export class ChainGatewayClient {
   }
 
   /**
-   * Stores bytes in the document store and returns their CID as base32
-   * text. The document store's upload route: POST /v1/docs
-   * with the bytes as application/octet-stream, at most 2 MiB, and an
-   * optional `?cid=` it checks; it answers 201, or 200 when stored already,
-   * with `{ cid, cid_hex, codec, size, url }`. The CID it names must be these
-   * bytes' own. Storing the same bytes again is harmless.
+   * Uploads are not served over service access: the gateway's proxy, which
+   * the backend reaches, doesn't serve POST /v1/docs (its own function
+   * does, on the public name, with the public lane's limits). So this
+   * fails at once with `not_available`, sending nothing; an upload goes
+   * through the public name (POST /v1/docs with the bytes, at most 2 MiB,
+   * `?cid=` checked, answering `{ cid, cid_hex, codec, size, url }`).
    */
   async putDocument(bytes: Buffer): Promise<string> {
-    if (bytes.length > MAX_DOC_BYTES) {
-      throw new ChainGatewayError(
-        `/v1/docs: ${bytes.length} bytes is over the store's ${MAX_DOC_BYTES}`,
-        null,
-        'bad_request',
-        '/v1/docs'
-      );
-    }
-    const expected = rawCidHexOf(bytes);
-    const path = '/v1/docs';
-    const { status, json } = await this.send(
-      'POST',
-      path,
-      { cid: cidPath(expected) },
-      bytes
+    throw new ChainGatewayError(
+      `/v1/docs: uploads go through the gateway's public name, not service access (${bytes.length} bytes not sent)`,
+      null,
+      'not_available',
+      '/v1/docs'
     );
-    const stored = json as unknown as ChainStoredDoc | null;
-    if ((status !== 200 && status !== 201) || !stored?.cid) {
-      throw this.errorOf(path, status, json);
-    }
-    if (storedCidHex(stored.cid, path) !== expected) {
-      throw new ChainGatewayError(
-        `${path}: the store named the document ${stored.cid}, not ${cidPath(expected)}`,
-        status,
-        'cid_mismatch',
-        path
-      );
-    }
-    return cidPath(expected);
   }
 }
 
