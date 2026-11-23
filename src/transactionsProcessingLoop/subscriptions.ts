@@ -12,8 +12,7 @@ import {
 import { fetchMaxTransactionByBlockNumber, getDataSource } from '../db';
 import {
   NFTFinalSubscription,
-  RedeemedSubscription,
-  SubscriptionBalance
+  RedeemedSubscription
 } from '../entities/ISubscription';
 import { Transaction } from '../entities/ITransaction';
 import { TransactionsProcessedSubscriptionsBlock } from '../entities/ITransactionsProcessing';
@@ -26,7 +25,10 @@ import {
 } from '../subscription-wave-notifier';
 import { sqlExecutor } from '../sql-executor';
 import { equalIgnoreCase } from '../strings';
-import { fetchSubscriptionBalanceForConsolidationKey } from '../subscriptionsDaily/db.subscriptions';
+import {
+  lockSubscriptionBalance,
+  writeSubscriptionBalance
+} from '../subscriptionsDaily/db.subscriptions';
 import {
   getLastProcessingBlock,
   persistBlock
@@ -67,7 +69,14 @@ export const redeemSubscriptions = async (reset?: boolean) => {
     TransactionsProcessedSubscriptionsBlock
   );
   const lastProcessingBlock = await getLastProcessingBlock(blockRepo, reset);
-  const maxBlockTransaction = await fetchMaxTransactionByBlockNumber();
+  // The memes contract's highest block, not the highest of all contracts.
+  // The memes transactions loop commits whole blocks, in block order, so
+  // every memes airdrop up to this block is already in the table. The
+  // gradients and memelab loops keep their own cursors and can be ahead.
+  // Recording their block skipped any memes airdrop the memes loop then
+  // committed in a lower block: it was never charged.
+  const maxBlockTransaction =
+    await fetchMaxTransactionByBlockNumber(MEMES_CONTRACT);
 
   if (!maxBlockTransaction) {
     throw new Error('No max transaction block');
@@ -80,15 +89,21 @@ export const redeemSubscriptions = async (reset?: boolean) => {
     await persistBlock(blockRepo, maxBlockTransaction);
     return;
   }
+  // Only up to the block this run records as processed: an airdrop the
+  // memes loop commits in a later block after the read above is left
+  // to the next run, which starts after that block. Unbounded, it was
+  // charged now and again by the next run.
   const airdrops: Transaction[] = await sqlExecutor.execute(
     `SELECT * FROM ${TRANSACTIONS_TABLE}
     WHERE block > :lastProcessingBlock
+    AND block <= :maxBlock
     AND from_address = :nullAddress
     AND value = 0
     AND token_count > 0
     ORDER BY block asc;`,
     {
       lastProcessingBlock,
+      maxBlock: maxBlockTransaction.block,
       nullAddress: NULL_ADDRESS
     }
   );
@@ -221,9 +236,13 @@ export async function validateNonSubscriptionAirdrop(
         ]
       )
     )[0].previous_airdrops;
+    // MySQL returns SUM as a decimal string, or NULL with no earlier
+    // airdrop. Added as a string, "1" + 1 made "11", so a distribution
+    // airdrop that followed an earlier airdrop of the card to the same wallet
+    // was taken for a subscription airdrop.
     if (
       distributionAirdropCount >=
-      previousAirdrops + transaction.token_count
+      Number(previousAirdrops ?? 0) + transaction.token_count
     ) {
       const message = 'Distribution airdrop';
       logger.info(
@@ -256,6 +275,11 @@ async function processSubscription(
   dirtyConsolidationKeys: Set<string> | undefined,
   options: RedemptionOptions
 ) {
+  // FOR UPDATE: a merge moves final allocations and their balances to the
+  // new key in one transaction. Locked, the allocation is read only after
+  // such a merge commits, with its current key, so the charge below goes to
+  // the balance the merge left. This locks the card's allocations that the
+  // read scans until the run commits.
   const finalSubscription: NFTFinalSubscription | undefined = (
     await entityManager.query(
       `SELECT * FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
@@ -263,22 +287,11 @@ async function processSubscription(
       AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.token_id = ?
       AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.airdrop_address = ?
       AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.redeemed_count < ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.subscribed_count
-      ORDER BY phase ASC, phase_position ASC;`,
+      ORDER BY phase ASC, phase_position ASC
+      FOR UPDATE;`,
       [transaction.contract, transaction.token_id, transaction.to_address]
     )
   )[0];
-
-  if (
-    finalSubscription &&
-    (await deferRedemption(
-      transaction,
-      finalSubscription,
-      entityManager,
-      options
-    ))
-  ) {
-    return;
-  }
 
   if (!finalSubscription) {
     const transactionLink = buildTransactionLink(transaction.transaction);
@@ -292,30 +305,40 @@ async function processSubscription(
     return;
   }
 
-  let balance = await fetchSubscriptionBalanceForConsolidationKey(
+  // The key whose balance pays: the allocation's, or the key a merge moved
+  // that balance to when the merge left this allocation under the old key.
+  const locked = await lockSubscriptionBalance(
     finalSubscription.consolidation_key,
     entityManager
   );
+  const payingKey = locked.consolidationKey;
+
+  // The key-width guard runs on the key the charge is written to.
+  if (await deferRedemption(transaction, payingKey, entityManager, options)) {
+    return;
+  }
+
+  let balance = locked.balance;
   if (!balance) {
     const transactionLink = buildTransactionLink(transaction.transaction);
-    const message = `🚨 No balance found for consolidation key: ${finalSubscription.consolidation_key} \nTransaction: ${transactionLink}`;
+    const message = `🚨 No balance found for consolidation key: ${payingKey} \nTransaction: ${transactionLink}`;
     logger.errorWithCode('SUBSCRIPTION_BALANCE_NOT_FOUND', message);
     waveNotifications.push({
       kind: 'no-balance-found',
-      consolidationKey: finalSubscription.consolidation_key,
+      consolidationKey: payingKey,
       transactionLink
     });
     balance = {
-      consolidation_key: finalSubscription.consolidation_key,
+      consolidation_key: payingKey,
       balance: 0
     };
   } else if (MEMES_MINT_PRICE > balance.balance) {
     const transactionLink = buildTransactionLink(transaction.transaction);
-    const message = `🚨 Insufficient balance for consolidation key: ${finalSubscription.consolidation_key} \nTransaction: ${transactionLink}`;
+    const message = `🚨 Insufficient balance for consolidation key: ${payingKey} \nTransaction: ${transactionLink}`;
     logger.errorWithCode('SUBSCRIPTION_BALANCE_INSUFFICIENT', message);
     waveNotifications.push({
       kind: 'insufficient-balance',
-      consolidationKey: finalSubscription.consolidation_key,
+      consolidationKey: payingKey,
       transactionLink
     });
   }
@@ -324,7 +347,11 @@ async function processSubscription(
   balanceAfter = Math.round(balanceAfter * 100000) / 100000;
   balance.balance = balanceAfter;
 
-  await entityManager.getRepository(SubscriptionBalance).save(balance);
+  await writeSubscriptionBalance(
+    entityManager,
+    balance,
+    locked.balance !== null
+  );
 
   const existingRedeemed = await entityManager
     .getRepository(RedeemedSubscription)
@@ -334,7 +361,7 @@ async function processSubscription(
         token_id: transaction.token_id,
         address: transaction.to_address,
         transaction: transaction.transaction,
-        consolidation_key: finalSubscription.consolidation_key
+        consolidation_key: payingKey
       }
     });
 
@@ -352,7 +379,7 @@ async function processSubscription(
       address: transaction.to_address,
       transaction: transaction.transaction,
       transaction_date: transaction.transaction_date,
-      consolidation_key: finalSubscription.consolidation_key,
+      consolidation_key: payingKey,
       value: MEMES_MINT_PRICE,
       balance_after: balanceAfter,
       count: 1
@@ -367,7 +394,7 @@ async function processSubscription(
   await entityManager
     .getRepository(NFTFinalSubscription)
     .save(finalSubscription);
-  dirtyConsolidationKeys?.add(finalSubscription.consolidation_key);
+  dirtyConsolidationKeys?.add(payingKey);
 }
 
 /**
@@ -378,12 +405,12 @@ async function processSubscription(
  */
 async function deferRedemption(
   transaction: Transaction,
-  finalSubscription: NFTFinalSubscription,
+  consolidationKey: string,
   entityManager: EntityManager,
   options: RedemptionOptions
 ): Promise<boolean> {
   const reason = await deferralReason(
-    finalSubscription.consolidation_key,
+    consolidationKey,
     entityManager,
     options.beforeSequence,
     { locking: true }
@@ -395,7 +422,7 @@ async function deferRedemption(
     [
       {
         kind: 'REDEMPTION',
-        consolidationKey: finalSubscription.consolidation_key,
+        consolidationKey,
         dedupe: [
           transaction.transaction,
           transaction.to_address,
