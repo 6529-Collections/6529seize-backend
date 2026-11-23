@@ -23,9 +23,9 @@ export const PROBE_MEME_IDS = ['1', '2'];
 
 /**
  * A meme card that hasn't dropped: after the newest card the fixture mints
- * (the holdings seed mints cards 1 to 3), for routes about upcoming cards.
+ * (the holdings seed mints cards 1 to 4), for routes about upcoming cards.
  */
-export const PROBE_UPCOMING_MEME_ID = '4';
+export const PROBE_UPCOMING_MEME_ID = '5';
 
 export const PROBE_MEMES_CONTRACT = MEMES_CONTRACT.toLowerCase();
 
