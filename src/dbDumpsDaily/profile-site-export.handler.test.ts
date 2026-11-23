@@ -9,7 +9,8 @@ import { createHash } from 'node:crypto';
 import {
   checkFreezeSetting,
   checkReplicaLag,
-  REPLICA_LAG_CASES,
+  ReplicaLagAcceptance,
+  ProfileSiteExportNetworkError,
   checkSnapshotTime,
   checkWritesAfterFreeze,
   jobRecordFetcher,
@@ -86,6 +87,8 @@ function setup(
     getDenied?: boolean;
     /** Every read of an object fails outright. */
     getFails?: boolean;
+    /** The upload of failPutOf fails with this error, not 'upload failed'. */
+    failPutWith?: Error;
     /** The snapshot's first SELECT fails with this error. */
     selectFails?: Error;
     verifyFails?: number;
@@ -117,7 +120,7 @@ function setup(
     if (command instanceof PutObjectCommand) {
       const key = command.input.Key!;
       if (options.failPutOf && key.endsWith(options.failPutOf)) {
-        throw new Error('upload failed');
+        throw options.failPutWith ?? new Error('upload failed');
       }
       if (
         options.pointerAnswerLost &&
@@ -342,7 +345,7 @@ describe('parseProfileSiteExportEvent', () => {
           'packages:pkg-1@2026-11-24T00:00:00.005Z',
           'legacy_packages:sha256:abc@2026-11-24T00:00:01.000Z'
         ],
-        acceptUnknownReplicaLag: 'older_than_gap'
+        acceptUnknownReplicaLag: { older_than_gap: 160_000 }
       })
     ).toEqual({
       ...event,
@@ -354,7 +357,7 @@ describe('parseProfileSiteExportEvent', () => {
         'packages:pkg-1@2026-11-24T00:00:00.005Z',
         'legacy_packages:sha256:abc@2026-11-24T00:00:01.000Z'
       ],
-      acceptUnknownReplicaLag: ['older_than_gap']
+      acceptUnknownReplicaLag: [{ older_than_gap: 160_000 }]
     });
     expect(
       parseProfileSiteExportEvent({
@@ -369,7 +372,14 @@ describe('parseProfileSiteExportEvent', () => {
     [true],
     ['yes'],
     [['unreadable', 'unreadable']],
-    [['older_than_gap', 'stale']]
+    [['older_than_gap', 'stale']],
+    // older_than_gap needs its largest row age.
+    ['older_than_gap'],
+    [{ older_than_gap: 0 }],
+    [{ older_than_gap: '60000' }],
+    [{ older_than_gap: 60_000, unreadable: true }],
+    [[{ older_than_gap: 60_000 }, { older_than_gap: 90_000 }]],
+    [{ older_than_gap: 8 * 24 * 60 * 60 * 1000 }]
   ])('refuses acceptUnknownReplicaLag %j, naming the cases', (value) => {
     expect(() =>
       parseProfileSiteExportEvent({
@@ -378,7 +388,7 @@ describe('parseProfileSiteExportEvent', () => {
         acceptUnknownReplicaLag: value
       })
     ).toThrow(
-      /acceptUnknownReplicaLag must name the case to accept, as the refusal does: "unreadable", "dated_ahead", "older_than_gap", or a list of them\. true is not accepted/
+      /acceptUnknownReplicaLag must name each case to accept, as the refusals do: "unreadable", "dated_ahead", or \{"older_than_gap": <largest row age in ms: Monday's replicaLagAgeMs plus a margin>\}; one or a list, each once\. true and a bare "older_than_gap" are not accepted/
     );
   });
 
@@ -551,6 +561,11 @@ describe('the freeze checks', () => {
       ? 'unreadable'
       : null
   ) => ({ replicaLagMs, replicaLagAgeMs, replicaLagError, replicaLagUnknown });
+  const ALL: ReplicaLagAcceptance[] = [
+    'unreadable',
+    'dated_ahead',
+    { older_than_gap: 10_000_000 }
+  ];
   const ahead = (replicaLagMs: number) =>
     lag(
       replicaLagMs,
@@ -583,46 +598,46 @@ describe('the freeze checks', () => {
     // At 00:05 the reader is 6 minutes behind, but its row, last written
     // at 23:59, still says 20 ms: the age alone passes the gap.
     expect(() => checkReplicaLag(300_000, lag(20, 360_000))).toThrow(
-      /lag row is 360000 ms old \(a 20 ms lag\), older than the 300000 ms since the freeze: LAST_UPDATE_TIMESTAMP may not be in UTC, or the reader stopped updating its row\. If the same refusal returns with the row's age grown by the time you waited, the reader stopped updating: report it\. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader\. Accept it \(acceptUnknownReplicaLag: "older_than_gap"\) only for a reading Monday's rehearsal also showed, and only with the switch owner's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one\. Otherwise report it\./
+      /lag row is 360000 ms old \(a 20 ms lag\), older than the 300000 ms since the freeze: LAST_UPDATE_TIMESTAMP may not be in UTC, or the reader stopped updating its row\. If the same refusal returns with the row's age grown by the time you waited, the reader stopped updating: report it\. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader\. Accept it \(acceptUnknownReplicaLag: \{"older_than_gap": <Monday's replicaLagAgeMs plus a margin, such as 60000>\}\) only for a reading Monday's rehearsal also showed, and only with the switch owner's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one\. Otherwise report it\./
     );
     expect(() => checkReplicaLag(150_000, lag(20, 150_000))).toThrow(
       /older than the 150000 ms since the freeze/
     );
-    expect(checkReplicaLag(300_000, lag(20, 360_000), ['older_than_gap'])).toBe(
-      'older_than_gap'
-    );
+    expect(
+      checkReplicaLag(300_000, lag(20, 360_000), [{ older_than_gap: 420_000 }])
+    ).toBe('older_than_gap');
     // Only the case named is accepted.
     expect(() =>
       checkReplicaLag(300_000, lag(20, 360_000), ['dated_ahead', 'unreadable'])
     ).toThrow(/older than the 300000 ms/);
     // A real lag, its row younger than the gap, is never accepted.
-    expect(() =>
-      checkReplicaLag(150_000, lag(149_000, 10), [...REPLICA_LAG_CASES])
-    ).toThrow(/Wait a few minutes and run again/);
-    expect(
-      checkReplicaLag(150_000, lag(40), [...REPLICA_LAG_CASES])
-    ).toBeNull();
+    expect(() => checkReplicaLag(150_000, lag(149_000, 10), ALL)).toThrow(
+      /Wait a few minutes and run again/
+    );
+    expect(checkReplicaLag(150_000, lag(40), ALL)).toBeNull();
   });
 
   it('still holds the lag a row reports to the gap when its age is accepted as untrusted', () => {
     // time_zone behind UTC: every row reads hours old, and this fresh one
-    // says the reader is 400 s behind. Accepting the age passes nothing.
+    // says the reader is 400 s behind. Accepting the age passes nothing,
+    // and as the row can't be trusted, waiting isn't the advice.
+    const twoHours = [{ older_than_gap: 7_300_000 }];
     expect(() =>
-      checkReplicaLag(300_000, lag(400_000, 7_200_000), ['older_than_gap'])
+      checkReplicaLag(300_000, lag(400_000, 7_200_000), twoHours)
     ).toThrow(
-      /The replica reports a 400000 ms lag \(its row's age not counted: older_than_gap\), which with 1500 ms for the row's timestamp is not less than the 300000 ms since the freeze.*Wait a few minutes and run again\./
+      /The replica reports a 400000 ms lag \(its row's age not counted: older_than_gap\), which with 1500 ms for the row's timestamp is not less than the 300000 ms since the freeze: it may not hold every write made before the freeze\. The row can't be trusted, and a stale row's lag never changes: run once more, and if this refusal comes back unchanged, report it\.$/
     );
     expect(() =>
-      checkReplicaLag(300_000, lag(298_500, 7_200_000), ['older_than_gap'])
+      checkReplicaLag(300_000, lag(298_500, 7_200_000), twoHours)
     ).toThrow(/reports a 298500 ms lag/);
-    expect(
-      checkReplicaLag(300_000, lag(298_499, 7_200_000), ['older_than_gap'])
-    ).toBe('older_than_gap');
+    expect(checkReplicaLag(300_000, lag(298_499, 7_200_000), twoHours)).toBe(
+      'older_than_gap'
+    );
     // Dated ahead: the lag is kept and held to the gap the same way.
     expect(() =>
       checkReplicaLag(300_000, ahead(400_000), ['dated_ahead'])
     ).toThrow(
-      /reports a 400000 ms lag \(its row's age not counted: dated_ahead\)/
+      /reports a 400000 ms lag \(its row's age not counted: dated_ahead\).*a stale row's lag never changes/
     );
     expect(checkReplicaLag(300_000, ahead(20), ['dated_ahead'])).toBe(
       'dated_ahead'
@@ -642,6 +657,33 @@ describe('the freeze checks', () => {
     ).toThrow(
       /reports a 400000 ms lag \(its row's age not counted: unreadable\)/
     );
+    // A trusted row's lag, too large: waiting can help.
+    expect(() => checkReplicaLag(300_000, lag(300_000, 10))).toThrow(
+      /Wait a few minutes and run again\.$/
+    );
+  });
+
+  it('accepts older_than_gap only up to the row age named: an offset passes, a stall is refused', () => {
+    // Monday: the row read 7 200 150 ms old (a two-hour offset); Tuesday
+    // accepts up to 7 260 000 ms.
+    const bound = [{ older_than_gap: 7_260_000 }];
+    expect(checkReplicaLag(300_000, lag(20, 7_200_400), bound)).toBe(
+      'older_than_gap'
+    );
+    expect(checkReplicaLag(300_000, lag(20, 7_260_000), bound)).toBe(
+      'older_than_gap'
+    );
+    // The reader stopped: its row keeps aging past the bound.
+    expect(() => checkReplicaLag(300_000, lag(20, 7_260_001), bound)).toThrow(
+      /The replica's lag row is 7260001 ms old, over the 7260000 ms accepted for older_than_gap: it has aged past Monday's reading, so the reader may have stopped updating its row\. Report it; don't raise the bound\./
+    );
+    // Monday's 150 s age, accepted with a margin: a reader that stopped at
+    // 23:50 shows a 40-minute-old row on Tuesday, and is refused.
+    expect(() =>
+      checkReplicaLag(300_000, lag(20, 2_400_000), [
+        { older_than_gap: 210_000 }
+      ])
+    ).toThrow(/over the 210000 ms accepted/);
   });
 
   it('refuses a row dated ahead of UTC, with the steps, unless that case is accepted', () => {
@@ -649,7 +691,7 @@ describe('the freeze checks', () => {
       /lag row is dated ahead of UTC \(LAST_UPDATE_TIMESTAMP is 7200000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown\): LAST_UPDATE_TIMESTAMP may not be in UTC, so the row's age is unknown\. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader\. Accept it \(acceptUnknownReplicaLag: "dated_ahead"\) only for a reading Monday's rehearsal also showed, and only with the switch owner's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one\. Otherwise report it\./
     );
     expect(() =>
-      checkReplicaLag(150_000, ahead(20), ['older_than_gap'])
+      checkReplicaLag(150_000, ahead(20), [{ older_than_gap: 10_000_000 }])
     ).toThrow(/dated ahead of UTC/);
   });
 
@@ -1219,20 +1261,35 @@ describe('runProfileSiteExportJob', () => {
     });
   });
 
-  it.each([
+  it.each<
+    [
+      string,
+      Record<string, unknown>,
+      ReplicaLagAcceptance,
+      ReplicaLagAcceptance[],
+      string,
+      string
+    ]
+  >([
     [
       'a row older than the gap',
       { replicaLagMs: 20, replicaLagAgeMs: 360_000 },
-      'older_than_gap' as const
+      { older_than_gap: 420_000 },
+      ['unreadable', 'dated_ahead'],
+      'older_than_gap',
+      'acceptUnknownReplicaLag: {"older_than_gap"'
     ],
     [
       'a row dated ahead of UTC',
       { replicaLagMs: 20, lagRowAhead: true },
-      'dated_ahead' as const
+      'dated_ahead',
+      ['unreadable', { older_than_gap: 10_000_000 }],
+      'dated_ahead',
+      'acceptUnknownReplicaLag: "dated_ahead"'
     ]
   ])(
     'refuses %s, and records it when accepted',
-    async (_name, lagOptions, accepted) => {
+    async (_name, lagOptions, acceptance, others, accepted, how) => {
       const { deps, bodies, order } = setup({
         snapshotAt: T + 300_000,
         ...lagOptions
@@ -1242,25 +1299,26 @@ describe('runProfileSiteExportJob', () => {
       ).rejects.toThrow(/Run once more first/);
       expect(order).toEqual([]);
       // Another case named is no acceptance of this one.
-      const other = REPLICA_LAG_CASES.filter((it) => it !== accepted);
       await expect(
         runProfileSiteExportJob(
-          { ...event, acceptUnknownReplicaLag: other },
+          { ...event, acceptUnknownReplicaLag: others },
           context,
           deps
         )
-      ).rejects.toThrow(`acceptUnknownReplicaLag: "${accepted}"`);
+      ).rejects.toThrow(how);
       expect(order).toEqual([]);
       const result = (await runProfileSiteExportJob(
-        { ...event, acceptUnknownReplicaLag: [accepted] },
+        { ...event, acceptUnknownReplicaLag: [acceptance] },
         context,
         deps
       )) as ProfileSiteExportResult;
       expect(result.usable).toBe(true);
       expect(result.replicaLagAccepted).toBe(accepted);
-      expect(
-        JSON.parse(bodies.get(result.manifestKey)!).replica_lag_accepted
-      ).toBe(accepted);
+      expect(JSON.parse(bodies.get(result.manifestKey)!)).toMatchObject({
+        replica_lag_accepted: accepted,
+        // The bound, if any, is in the manifest.
+        accept_unknown_replica_lag: [acceptance]
+      });
     }
   );
 
@@ -1352,7 +1410,7 @@ describe('runProfileSiteExportJob', () => {
     );
     expect(error).toBeInstanceOf(ProfileSiteExportDatabaseError);
     expect(error.message).toBe(
-      "The read replica failed while opening the read-only snapshot: ENOTFOUND -3008. Its message, which can name the host or user, is in the function's log."
+      "DNS lookup failed, retry: ENOTFOUND -3008 (The read replica, while opening the read-only snapshot). The host it looked up is in the function's log."
     );
     expect(error.message).not.toMatch(/reader\.example/);
     expect(order).toEqual([]);
@@ -1380,6 +1438,117 @@ describe('runProfileSiteExportJob', () => {
     expect(error.message).not.toMatch(/192\.0\.2\.10|'reader'/);
     expect(close).toHaveBeenCalledTimes(1);
     expect(order).toEqual([]);
+  });
+
+  it.each([
+    [
+      'a DNS hiccup',
+      {
+        code: 'EAI_AGAIN',
+        errno: -3001,
+        syscall: 'getaddrinfo',
+        hostname: 'reader.example.invalid'
+      },
+      'getaddrinfo EAI_AGAIN reader.example.invalid',
+      'EAI_AGAIN -3001'
+    ],
+    [
+      'a DNS code alone',
+      { code: 'EAI_AGAIN', errno: -3001 },
+      'getaddrinfo EAI_AGAIN reader.example.invalid',
+      'EAI_AGAIN -3001'
+    ],
+    [
+      'an error naming only its host',
+      { hostname: 'reader.example.invalid' },
+      'lookup failed for reader.example.invalid',
+      'Error'
+    ]
+  ])(
+    'gives the code of %s on the connection, never its message',
+    async (_name, fields, message, code) => {
+      const { deps } = setup();
+      (deps as { openSnapshot: unknown }).openSnapshot = jest.fn(async () => {
+        throw Object.assign(new Error(message), fields);
+      });
+      const error = await runProfileSiteExportJob(event, context, deps).catch(
+        (e) => e
+      );
+      expect(error).toBeInstanceOf(ProfileSiteExportDatabaseError);
+      expect(error.message).toBe(
+        code.startsWith('EAI_')
+          ? `DNS lookup failed, retry: ${code} (The read replica, while opening the read-only snapshot). The host it looked up is in the function's log.`
+          : `The read replica failed while opening the read-only snapshot: ${code}. Its message, which can name the host or user, is in the function's log.`
+      );
+      expect(error.message).not.toMatch(/example\.invalid/);
+    }
+  );
+
+  it.each([
+    [
+      'a reset connection',
+      { code: 'ECONNRESET', errno: -104, syscall: 'read' },
+      'read ECONNRESET',
+      'ECONNRESET -104'
+    ],
+    [
+      'a lookup naming the bucket host',
+      {
+        code: 'ENOTFOUND',
+        errno: -3008,
+        syscall: 'getaddrinfo',
+        hostname: 'bucket.s3.example.invalid'
+      },
+      'getaddrinfo ENOTFOUND bucket.s3.example.invalid',
+      'ENOTFOUND -3008'
+    ]
+  ])(
+    'reports an S3 upload failure (%s) as a network call, not the replica, without the host',
+    async (_name, fields, message, code) => {
+      const { deps } = setup({
+        failPutOf: 'files/bafyb',
+        failPutWith: Object.assign(new Error(message), fields)
+      });
+      const error = await runProfileSiteExportJob(event, context, deps).catch(
+        (e) => e
+      );
+      expect(error).toBeInstanceOf(ProfileSiteExportNetworkError);
+      expect(error.message).toBe(
+        code.startsWith('ENOTFOUND')
+          ? `DNS lookup failed, retry: ${code} (A network call, while running the export). The host it looked up is in the function's log.`
+          : `A network call failed while running the export: ${code}. Its message, which can name the host or user, is in the function's log.`
+      );
+      expect(error.message).not.toMatch(/read replica|example\.invalid/);
+    }
+  );
+
+  it("works out a rehearsal's lag case against at least the minimum gap", async () => {
+    // A rehearsal 10 s after its own frozenAt, on a healthy reader whose
+    // row is 30 s old: against 10 s it would read older_than_gap.
+    const { deps } = setup({
+      snapshotAt: T + 30_000,
+      replicaLagMs: 20,
+      replicaLagAgeMs: 30_000
+    });
+    const result = (await runProfileSiteExportJob(
+      { ...event, rehearsal: true, frozenAt: T + 20_000 },
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.snapshotGapSeconds).toBe(10);
+    expect(result.replicaLagCase).toBeNull();
+    // A row older than the minimum gap is still named.
+    const old = setup({
+      snapshotAt: T + 30_000,
+      replicaLagMs: 20,
+      replicaLagAgeMs: 120_000
+    });
+    const named = (await runProfileSiteExportJob(
+      { ...event, rehearsal: true, frozenAt: T + 20_000 },
+      context,
+      old.deps
+    )) as ProfileSiteExportResult;
+    expect(named.replicaLagCase).toBe('older_than_gap');
   });
 
   it("passes the export's own refusals through as they are", async () => {
