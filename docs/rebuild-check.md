@@ -211,10 +211,15 @@ Each `--source <name>=<spec>`:
   answers 599 and fails the run. `record` proxies to the URL and adds every
   new answer to the recording. Keys leave out JSON-RPC ids and key order.
 - `<dir>/PROVENANCE.json` says what made a recording (`made_by`: a
-  devnet scenario, an anvil state, or `hand`). Provisional, so `--final`
-  fails on them: a live URL, a `record` run (it reaches a live URL), a
-  recording written by hand, and the harness relay. Recording into a
-  directory marked `hand` keeps that mark.
+  devnet scenario, an anvil state, or `hand`), as a label for the report.
+  Provisional, so `--final` fails on them: a live URL, a `record` run (it
+  reaches a live URL), the harness relay, every gateway or ethereum
+  recording, and a files directory that holds any file. Nothing verifies
+  a recording's answers yet, and a label is never a basis, so the report
+  says "answers not verified" whatever `PROVENANCE.json` says; checking
+  the node's proofs (for ethereum, the blocks' hash chain and receipt
+  proofs) is what will let one count. `anvil` from a state file records
+  nothing and counts.
 - The report shows source URLs without credentials, query values or
   key-like path segments.
 - The harness relay speaks CRP v1 over WebSocket (HELLO, AUTH, PUB, payloads,
@@ -232,6 +237,10 @@ Each `--source <name>=<spec>`:
   `files.json` is what ties each id to its bytes. A seed can add files: it
   writes them into `ctx.seedFilesDir` and lists them in that directory's own
   `files.json`; the server checks each one's hash when it is asked for.
+  The seeds' files are the run's own world. Files in `<dir>` come from
+  outside the run, and nothing checks their ids against their bytes yet,
+  so a directory that holds any is provisional ("ids not verified"),
+  whatever its `PROVENANCE.json` says.
 - A flag value may name a source: `{gateway}`, `{relays}`, `{ethereum}`
   or `{files}` become its URL in the run.
 

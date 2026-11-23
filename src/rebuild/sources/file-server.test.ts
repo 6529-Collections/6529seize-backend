@@ -8,6 +8,7 @@ import {
   fileIdOf,
   startFileServer
 } from '@/rebuild/sources/file-server';
+import { writeProvenance } from '@/rebuild/sources/running-source';
 
 const sha256 = (text: string) =>
   createHash('sha256').update(text).digest('hex');
@@ -95,6 +96,28 @@ describe('file server', () => {
       ]);
     } finally {
       await server.stop();
+    }
+  });
+
+  it('counts only the seeds own files, never an outside directory on its label', async () => {
+    writeProvenance(dir, { made_by: 'devnet example' });
+    const outside = await startFileServer(dir);
+    const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'rebuild-empty-'));
+    const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rebuild-seed-'));
+    const seedsOnly = await startFileServer(empty, seedDir);
+    try {
+      expect(outside.info).toMatchObject({
+        provenance: 'devnet example',
+        provisional: true,
+        provisionalWhy: 'ids not verified'
+      });
+      expect(seedsOnly.info.provisional).toBe(false);
+      expect(seedsOnly.info.provisionalWhy).toBeUndefined();
+    } finally {
+      await outside.stop();
+      await seedsOnly.stop();
+      fs.rmSync(empty, { recursive: true, force: true });
+      fs.rmSync(seedDir, { recursive: true, force: true });
     }
   });
 });

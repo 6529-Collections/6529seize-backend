@@ -105,13 +105,35 @@ describe('HTTP recording', () => {
       expect(replay.problems()).toEqual([
         'gateway: 1 requests not in the recording, first GET /v1/other'
       ]);
+      // Nothing verifies a recording's answers: never final on its label.
       expect(replay.info).toMatchObject({
         mode: 'replay',
         provenance: `record of ${upstreamUrl}`,
-        provisional: false
+        provisional: true,
+        provisionalWhy: 'answers not verified'
       });
     } finally {
       await replay.stop();
+    }
+  });
+
+  it('never counts a gateway or ethereum recording on its label', async () => {
+    fs.writeFileSync(path.join(dir, 'recording.jsonl'), '');
+    writeProvenance(dir, { made_by: 'devnet example' });
+    const ethereum = await startHttpRecording({ name: 'ethereum', dir });
+    const gateway = await startHttpRecording({ name: 'gateway', dir });
+    try {
+      for (const source of [ethereum, gateway]) {
+        expect(source.info).toMatchObject({
+          mode: 'replay',
+          provenance: 'devnet example',
+          provisional: true,
+          provisionalWhy: 'answers not verified'
+        });
+      }
+    } finally {
+      await ethereum.stop();
+      await gateway.stop();
     }
   });
 
