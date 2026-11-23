@@ -38,6 +38,28 @@ const NEEDS_IDENTITY_MIRROR = [
   }
 ];
 
+/**
+ * The signed record heads subscriptions keep: their four choice types in
+ * the ps family (src/subscriptions-identity/records/subscription-records.ts),
+ * written live through the record index and put back by the rebuild from
+ * each choice's journal entry. No `~` heads. Other areas keep their own
+ * types' heads, so the table is shared by partition.
+ */
+const SUBSCRIPTION_HEADS = {
+  table: 'signed_record_heads',
+  partition: {
+    columns: ['family', 'rtype'],
+    values: [
+      ['ps', 'subs.mode'],
+      ['ps', 'subs.all-editions'],
+      ['ps', 'subs.card'],
+      ['ps', 'subs.count']
+    ],
+    reason:
+      "The subscription choices' signed record heads: the rebuild puts each back from its journal entry, the newest per key"
+  }
+};
+
 /** The identity tables the rebuild fills from the opening files and the journal. */
 const IDENTITY_TABLES = [
   'subscriptions_id_balances',
@@ -85,6 +107,9 @@ const SUBS_SEED: RebuildStep = {
   ],
   // The probe wallets' keys.
   after: ['identity.probe-profiles'],
+  // Before any card is minted: the redemption loop's block is the chain's
+  // head before the holdings seed mints card 1.
+  before: ['holdings.seed'],
   sources: ['ethereum', 'repo'],
   timeoutMinutes: 10
 };
@@ -134,6 +159,8 @@ const SUBS_SWITCH_SEED: RebuildStep = {
     'identity_chain_principals'
   ],
   after: ['subs.seed'],
+  // The list is card 1's, which the holdings seed mints after it.
+  before: ['holdings.seed'],
   sources: ['ethereum', 'files', 'repo'],
   needs: NEEDS_IDENTITY_MIRROR,
   timeoutMinutes: 15
@@ -168,6 +195,8 @@ const SUBS_REDEMPTIONS_SEED: RebuildStep = {
   reads: ['transactions', 'identity_chain_principals'],
   // The holdings seed's mints, indexed into transactions.
   after: ['subs.switch', 'holdings.seed'],
+  // The mint stats the mint seed writes count this redemption.
+  before: ['mint.probes.seed'],
   sources: ['files'],
   needs: NEEDS_IDENTITY_MIRROR,
   timeoutMinutes: 10
@@ -185,7 +214,7 @@ const SUBS_REBUILD: RebuildStep = {
     module: 'src/subscriptions-identity/opening/rebuild-check.steps',
     exportName: 'rebuildSubscriptionsInCheck'
   },
-  writes: IDENTITY_TABLES,
+  writes: [...IDENTITY_TABLES, SUBSCRIPTION_HEADS],
   // The records wave: the head drops the records service posted.
   reads: ['drops', 'drops_parts'],
   sources: ['files'],
