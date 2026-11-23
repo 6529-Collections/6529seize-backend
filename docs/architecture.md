@@ -1032,11 +1032,15 @@ page and takes the identity sync's own id (`ProfileIds.profileIdOf`, stored,
 so the sync later finds the same one; a merged, closing or walletless one
 named without storing, as the sync names such a rater). The two never map at
 the same time: the follower runs after the identity steps, and one Lambda runs
-at a time. A failed read ends the follower's run before the page is written;
-an id that can't be settled yet (a chain-made identity in its founder wait),
-the rows past the 200 and those of other origins (the import's above all) are
-written with a null id, which the fill below sets once the identity sync maps
-it. Each page's rows, ledger
+at a time. A gateway failure that passes on its own (a height not held, a
+timeout, the network, 429 or 5xx) ends the follower's run before the page is
+written. When more than 200 are left to map and some were mapped, the page
+waits too, and the next run goes on mapping. An id that can't be settled yet
+(a chain-made identity in its founder wait, an answer another node may give),
+one whose mapping fails some other way (reported with the principal, as the
+identity sync isolates such an identity), and the rows of other origins (the
+import's above all) are written with a null id, which the fill below sets
+once the identity sync maps it. Each page's rows, ledger
 changes, category names and place are written in one transaction. The
 follower keeps its own copy of every rating in
 `identity_chain_rating_ledger`, keyed by the record's key fields (rater,
@@ -1054,11 +1058,15 @@ latest finalized height (as after a gap), with no rows before it.
 Each Rating record of an identity gives one row: the block's height and time
 (`block_time_ms`, the block's slot start), the rater and target principals
 and, when mapped, their profile ids (made here only for the rows that notify,
-as above; each run fills in those of the rows written in the last day whose
-principal is mapped since, by primary key, 5,000 ids a statement, at most
-500,000 ids and a quarter of the follower's time a run, going on next run
-from where it got to; a principal never mapped, merged or closed, can leave
-one null), the matter
+as above; each run fills in those of the rows whose principal is mapped since,
+by primary key, 5,000 ids a statement, at most 500,000 ids and a quarter of
+the follower's time a run, going on next run from where it got to: every row
+until a whole pass has run after a full sync ended, since the import's rows
+wait on the first one, which can take more than a day, then the rows written
+in the last day. Where a pass got to, and whether that whole pass has run,
+are kept in memory only: a cold start begins again from the window's first
+row, and runs one whole pass again. A principal never mapped, merged or
+closed, can leave one null), the matter
 (REP, or CIC for NIC), the REP category's name (`''` for CIC; cut to 100
 characters, noted), the value before and the new one (`old_rating` and
 `new_rating`, bigint; 0 when removed), `total_after`, the record's `byImport`

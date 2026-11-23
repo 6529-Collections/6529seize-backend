@@ -23,7 +23,7 @@ import {
   RatingLedgerKey,
   RatingLedgerRow
 } from './identity-chain-mirror.db';
-import { ChainReadRetryLater, messageOf } from './mirror-errors';
+import { ChainReadRetryLater, messageOf, orRetryLater } from './mirror-errors';
 import { isInactive, ProfileIds } from './profile-ids';
 import {
   categoryKey,
@@ -52,9 +52,9 @@ const PROBLEMS_LISTED = 50;
 /** The longest category name the event log holds. */
 const CATEGORY_NAME_MAX = 100;
 /**
- * Raters and targets of a page's OPERATION rows the follower maps itself
- * at most; past these the rows are written without the ids, which the fill
- * sets once the identity sync maps them.
+ * Raters and targets of a page's OPERATION rows the follower maps itself in
+ * one run at most; when more are left after some were mapped, the page
+ * waits for the next run, which goes on from there.
  */
 export const RATING_EVENTS_MAPPED_A_PAGE = 200;
 
@@ -135,6 +135,41 @@ class OutOfTime extends Error {
 }
 
 /**
+ * A page's raters and targets to map went past RATING_EVENTS_MAPPED_A_PAGE
+ * after some were mapped: it is dropped, and the next run goes on mapping.
+ */
+class MoreToMap extends Error {
+  constructor() {
+    super('more to map');
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/** Gateway codes of failures that pass on their own. */
+const PASSING_CODES: ReadonlySet<string> = new Set([
+  'height_gone',
+  'timeout',
+  'network',
+  'starting',
+  'wrong_network'
+]);
+
+/**
+ * A gateway failure that passes on its own (a height not held yet or any
+ * more, a timeout, the network, 429 or 5xx, an answer of another chain):
+ * the page waits for the next run. Anything else may fail the same way
+ * every run.
+ */
+function passesOnItsOwn(error: unknown): boolean {
+  if (!(error instanceof ChainGatewayError)) return false;
+  return (
+    PASSING_CODES.has(error.code) ||
+    error.status === 429 ||
+    (error.status !== null && error.status >= 500)
+  );
+}
+
+/**
  * A height the gateway no longer holds. The node serves pinned reads of its
  * last views only; a refusal stamped below the height asked is a node that
  * hasn't finalized it yet, not one that dropped it.
@@ -176,9 +211,10 @@ function cursorOf(state: MirrorState): RatingEventsCursor {
  * rows that notify (origin OPERATION), the follower maps a rater or target
  * the identity sync hasn't reached yet itself, with the identity sync's
  * own ProfileIds (so the sync later finds the same id), up to
- * RATING_EVENTS_MAPPED_A_PAGE a page. Other rows, those past the bound and
- * an id that can't be settled yet are written without it: the fill
- * (fillRatingEventProfiles) sets it once the identity sync maps it.
+ * RATING_EVENTS_MAPPED_A_PAGE a run. Other rows, an id that can't be
+ * settled yet and one whose mapping fails other than in passing are
+ * written without it: the fill (fillRatingEventProfiles) sets it once the
+ * identity sync maps it.
  *
  * Each Rating record of an identity gives a row: the value before, the new
  * one, the total after, the origin from its writer. The value before is
@@ -203,6 +239,14 @@ export class RatingEventsFollower {
   private readonly storedCategories = new Set<string>();
   /** The chain the names above are of. */
   private namesChain: string | null = null;
+  /**
+   * Raters and targets of the page under way that came back without an id
+   * (tried again last, after the ones not tried yet); emptied when a page
+   * is written.
+   */
+  private readonly leftUnmapped = new Set<string>();
+  /** A page of this run was dropped after ids were mapped for it. */
+  private mappedForPage = false;
 
   constructor(
     private readonly gateway: Gateway,
@@ -221,6 +265,7 @@ export class RatingEventsFollower {
   ): Promise<void> {
     let withoutWriter = 0;
     let state: MirrorState | null = null;
+    this.mappedForPage = false;
     try {
       // The state as stored: an identity step that threw leaves the run's
       // copy behind it.
@@ -257,7 +302,9 @@ export class RatingEventsFollower {
       if (!after || after.events_next_height === null) return;
       const was = before.events_next_height === null ? null : cursorOf(before);
       const now = cursorOf(after);
+      // Ids mapped for a page that waits are a step on: the next run goes on.
       const moved =
+        this.mappedForPage ||
         was === null ||
         now.next > was.next ||
         (now.rebuildHeight !== null &&
@@ -370,6 +417,11 @@ export class RatingEventsFollower {
           report
         );
       } catch (error) {
+        if (error instanceof MoreToMap) {
+          this.mappedForPage = true;
+          logger.info(`[MORE TO MAP IN THE PAGE AT ${from}] [NEXT RUN]`);
+          break;
+        }
         if (!(error instanceof OutOfTime)) throw error;
         logger.warn(`[OUT OF TIME IN THE PAGE AT ${from}] [NEXT RUN]`);
         break;
@@ -739,7 +791,13 @@ export class RatingEventsFollower {
         writer: writerText(change.writer)
       });
     }
-    await this.mapForNotifications(rows, mapped, after.next - 1, deadline);
+    await this.mapForNotifications(
+      rows,
+      mapped,
+      after.next - 1,
+      deadline,
+      report
+    );
     const named = rows.map((it) => ({
       ...it,
       rater_profile_id: mapped.get(it.rater_principal) ?? null,
@@ -760,6 +818,7 @@ export class RatingEventsFollower {
       }
     );
     names.forEach((it) => this.storedCategories.add(it.id));
+    this.leftUnmapped.clear();
     report.ratingEvents += written;
     return { cursor: after, withoutWriter };
   }
@@ -767,10 +826,14 @@ export class RatingEventsFollower {
   /**
    * The raters and targets of the page's OPERATION rows that aren't mapped
    * yet, named into `mapped` as the identity sync names them, at most
-   * RATING_EVENTS_MAPPED_A_PAGE (in the rows' order); the rest are left to
-   * the fill. Each identity is read at one finalized height at or past the
-   * page's last block. The deadline is checked before each one: past it,
-   * OutOfTime drops the page (the ids mapped so far stay mapped).
+   * RATING_EVENTS_MAPPED_A_PAGE: those not tried yet first (in the rows'
+   * order), then those that came back without an id on an earlier try of
+   * the page. Each identity is read at one finalized height at or past the
+   * page's last block. The page is dropped (the ids mapped so far stay
+   * mapped, and the next run goes on from them) when the deadline comes
+   * before one (OutOfTime), or when some are left untried after at least one
+   * was mapped (MoreToMap: each such run maps more, so the page is written
+   * in a few runs). Those that can't be mapped now are left to the fill.
    *
    * The identity sync maps with the same ProfileIds, never at the same
    * time: within a run the follower runs after the identity steps, and the
@@ -782,7 +845,8 @@ export class RatingEventsFollower {
     rows: readonly RatingEventRow[],
     mapped: Map<string, string>,
     lastHeight: number,
-    deadline: number
+    deadline: number,
+    report: RatingEventsReport
   ) {
     const unmapped = Array.from(
       new Set(
@@ -792,16 +856,30 @@ export class RatingEventsFollower {
       )
     ).filter((it) => !mapped.has(it));
     if (!unmapped.length) return;
+    const tried = [
+      ...unmapped.filter((it) => !this.leftUnmapped.has(it)),
+      ...unmapped.filter((it) => this.leftUnmapped.has(it))
+    ].slice(0, RATING_EVENTS_MAPPED_A_PAGE);
     this.ensureTime(deadline);
     const head = await this.gateway.getHead();
     const height = Math.max(Number(head.finalizedHeight), lastHeight);
     let named = 0;
-    for (const principal of unmapped.slice(0, RATING_EVENTS_MAPPED_A_PAGE)) {
+    for (const principal of tried) {
       this.ensureTime(deadline);
-      const profileId = await this.profileIdAt(principal, height);
-      if (profileId === null) continue;
+      const profileId = await this.profileIdAt(principal, height, report);
+      if (profileId === null) {
+        this.leftUnmapped.add(principal);
+        continue;
+      }
       mapped.set(principal, profileId);
       named++;
+    }
+    const untried = unmapped.length - tried.length;
+    if (untried && named) {
+      logger.info(
+        `[RATING EVENTS: ${named} RATERS AND TARGETS MAPPED FOR NOTIFICATIONS] [${untried} NOT TRIED YET: THE PAGE WAITS FOR THE NEXT RUN]`
+      );
+      throw new MoreToMap();
     }
     logger.info(
       `[RATING EVENTS: ${named} RATERS AND TARGETS MAPPED FOR NOTIFICATIONS] [${unmapped.length - named} LEFT FOR THE FILL]`
@@ -812,33 +890,43 @@ export class RatingEventsFollower {
    * A principal's profile id as the identity sync gives it: an active
    * identity's mapping (stored now if needed, as applyIdentity does); a
    * merged, closing or walletless one's id named without storing it, as
-   * syncTargetRatings names such a rater. Null when the chain has no such
-   * identity or its id can't be settled yet (ChainReadRetryLater, as a
-   * founder wait): the row is written without it. Any other failure throws
-   * (the page waits for the next run).
+   * syncTargetRatings names such a rater. A gateway failure that passes on
+   * its own throws: the page waits for the next run. Otherwise null, and
+   * the row is written without the id, for the fill: when the chain has no
+   * such identity, when its id can't be settled yet (ChainReadRetryLater, as
+   * a founder wait, or an answer another node may give), and on any other
+   * failure, which may come back every run (reported with the principal:
+   * the identity sync isolates such an identity the same way).
    */
   private async profileIdAt(
     principal: string,
-    height: number
+    height: number,
+    report: RatingEventsReport
   ): Promise<string | null> {
-    const identity = await this.gateway.getIdentityByPrincipal(principal, {
-      height
-    });
-    if (!identity) {
-      logger.warn(
-        `[RATING EVENTS: NO IDENTITY ${principal} AT ${height}] [LEFT FOR THE FILL]`
-      );
-      return null;
-    }
     try {
+      const identity = await orRetryLater(() =>
+        this.gateway.getIdentityByPrincipal(principal, { height })
+      );
+      if (!identity) {
+        logger.warn(
+          `[RATING EVENTS: NO IDENTITY ${principal} AT ${height}] [LEFT FOR THE FILL]`
+        );
+        return null;
+      }
       return isInactive(identity)
         ? (await this.ids.profileIdForSites(identity)).profileId
         : await this.ids.profileIdOf(identity);
     } catch (error) {
-      if (!(error instanceof ChainReadRetryLater)) throw error;
-      logger.warn(
-        `[RATING EVENTS: ${principal} NOT SETTLED YET] [${error.reason}] [LEFT FOR THE FILL]`
-      );
+      if (error instanceof ChainReadRetryLater) {
+        logger.warn(
+          `[RATING EVENTS: ${principal} NOT SETTLED YET] [${error.reason}] [LEFT FOR THE FILL]`
+        );
+        return null;
+      }
+      if (passesOnItsOwn(error)) throw error;
+      const message = `${principal} not mapped: ${messageOf(error)}`;
+      logger.error(`[RATING EVENTS: ${message}] [LEFT FOR THE FILL]`);
+      noteRatingEventProblem(report, message);
       return null;
     }
   }

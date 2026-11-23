@@ -2466,69 +2466,207 @@ describe('IdentityChainMirror', () => {
     ]);
   });
 
-  it('leaves the page for the next run when an identity it maps cannot be read', async () => {
-    const w = ratedWorld();
-    const { mirror, db, gateway, bob } = w;
-    bobRatesAliceAt70(w);
-    firstSyncStops(gateway, 2);
-    gateway.getIdentityByPrincipal.mockRejectedValueOnce(
-      down('/v1/identities')
+  it.each([
+    ['a 5xx', () => down('/v1/identities')],
+    [
+      'a timeout',
+      () =>
+        new ChainGatewayError('timed out', null, 'timeout', '/v1/identities')
+    ],
+    ['a height not held', () => gone('/v1/identities')]
+  ])(
+    'leaves the page for the next run on %s while mapping',
+    async (_, failure) => {
+      const w = ratedWorld();
+      const { mirror, db, gateway, bob } = w;
+      bobRatesAliceAt70(w);
+      firstSyncStops(gateway, 2);
+      const error = failure();
+      gateway.getIdentityByPrincipal.mockRejectedValueOnce(error);
+      const first = await mirror.run({ budgetMs: 60_000 });
+      expect(first.ratingEventProblems).toContain(error.message);
+      expect(db.state?.events_next_height).toBe(50);
+      expect(db.ratingEvents).toEqual([]);
+      const second = await mirror.run({ budgetMs: 60_000 });
+      expect(second.ratingEventProblems).toEqual([]);
+      expect(db.state?.events_next_height).toBe(101);
+      const bobId = principalProfileId(bob.principalId);
+      expect(idsOf(db.ratingEvents)).toEqual([
+        [60, 'IMPORT', bobId, ALICE_PROFILE],
+        [70, 'OPERATION', bobId, ALICE_PROFILE]
+      ]);
+    }
+  );
+
+  it("writes the page without the id of an identity that can't be mapped, holding no other row back", async () => {
+    const { mirror, db, chain, gateway, alice, bob } = ratedWorld();
+    // One answer without wallets (isInactive can't read it), one refused
+    // for good: each would fail the same way every run.
+    const noWallets = {
+      ...chainIdentity(PID(95), [W(95)]),
+      wallets: undefined
+    } as unknown as ChainIdentity;
+    const refused = chainIdentity(PID(94), [W(94)]);
+    chain.identities.set(noWallets.principalId, noWallets);
+    chain.identities.set(refused.principalId, refused);
+    const read = gateway.getIdentityByPrincipal.getMockImplementation()!;
+    gateway.getIdentityByPrincipal.mockImplementation((async (p: string) => {
+      if (p === refused.principalId) {
+        throw new ChainGatewayError('no', 400, 'bad_request', '/v1/identities');
+      }
+      return await read(p);
+    }) as never);
+    chain.feed[0].blocks.push(
+      timed(70, [
+        ratingRecord(noWallets.principalId, alice.principalId, 1, ratingSet),
+        ratingRecord(refused.principalId, alice.principalId, 2, ratingSet),
+        ratingRecord(bob.principalId, alice.principalId, 7, ratingSet)
+      ])
     );
-    const first = await mirror.run({ budgetMs: 60_000 });
-    expect(first.ratingEventProblems).toContain('down');
-    expect(db.state?.events_next_height).toBe(50);
-    expect(db.ratingEvents).toEqual([]);
-    const second = await mirror.run({ budgetMs: 60_000 });
-    expect(second.ratingEventProblems).toEqual([]);
-    expect(db.state?.events_next_height).toBe(101);
+    firstSyncStops(gateway);
+    const report = await mirror.run({ budgetMs: 60_000 });
     const bobId = principalProfileId(bob.principalId);
-    expect(idsOf(db.ratingEvents)).toEqual([
-      [60, 'IMPORT', bobId, ALICE_PROFILE],
+    expect(idsOf(db.ratingEvents.filter((it) => it.height === 70))).toEqual([
+      [70, 'OPERATION', null, ALICE_PROFILE],
+      [70, 'OPERATION', null, ALICE_PROFILE],
       [70, 'OPERATION', bobId, ALICE_PROFILE]
+    ]);
+    expect(db.state?.events_next_height).toBe(101);
+    expect(report.ratingEventProblems).toEqual([
+      expect.stringContaining(`${noWallets.principalId} not mapped:`),
+      expect.stringContaining(`${refused.principalId} not mapped: no`)
     ]);
   });
 
-  it(`maps at most ${RATING_EVENTS_MAPPED_A_PAGE} raters and targets a page, leaving the rest to the fill`, async () => {
-    const { mirror, db, chain, gateway, alice } = ratedWorld();
-    const raters = Array.from({ length: RATING_EVENTS_MAPPED_A_PAGE }, (_, i) =>
+  /** A follower of its own, with its clock, from height 101 (behind 102). */
+  const followerAt101 = (w: ReturnType<typeof ratedWorld>) => {
+    let now = 1_000;
+    const ids = new ProfileIds(w.gateway as never, w.db as never, () => now);
+    ids.setImportHeights(50, 60);
+    const follower = new RatingEventsFollower(
+      w.gateway as never,
+      w.db as unknown as IdentityChainMirrorDb,
+      ids,
+      () => now,
+      async () => undefined
+    );
+    w.db.state = {
+      next_height: 102,
+      last_full_sync_at: null,
+      chain_id: null,
+      events_next_height: 101,
+      events_rebuild_height: null,
+      events_rebuild_after: null,
+      events_gone_at: null,
+      events_stuck_runs: 0
+    } as unknown as MirrorState;
+    w.chain.categories.set(CATEGORY, 'Kind');
+    const report = () => ({
+      ratingEvents: 0,
+      ratingEventProblems: [] as string[],
+      ratingEventProblemsLeftOut: 0,
+      ratingRecordsWithoutWriter: 0,
+      eventsNextHeight: null as number | null
+    });
+    return {
+      follow: () => follower.follow(50, 60, (now += 1_000) + 60_000, report())
+    };
+  };
+  /** Raters of Alice at 101, each a new identity made on the chain. */
+  const ratersAt101 = (w: ReturnType<typeof ratedWorld>, count: number) => {
+    const raters = Array.from({ length: count }, (_, i) =>
       chainIdentity(PID(1000 + i), [W(1000 + i)])
     );
-    raters.forEach((it) => chain.identities.set(it.principalId, it));
-    chain.feed[0].blocks.push(
-      timed(
-        70,
-        raters.map((it) =>
-          ratingRecord(it.principalId, alice.principalId, 1, ratingSet)
+    raters.forEach((it) => w.chain.identities.set(it.principalId, it));
+    w.chain.feed.push({
+      from: 101,
+      through: 101,
+      next: 102,
+      blocks: [
+        timed(
+          101,
+          raters.map((it) =>
+            ratingRecord(it.principalId, w.alice.principalId, 1, ratingSet)
+          )
         )
-      )
-    );
-    firstSyncStops(gateway);
+      ]
+    });
+    return raters;
+  };
+
+  it(`maps at most ${RATING_EVENTS_MAPPED_A_PAGE} raters and targets a run, the page waiting for the rest`, async () => {
+    const w = ratedWorld();
+    const { db } = w;
+    // 249 raters and Alice: 250 to map.
+    ratersAt101(w, 249);
+    const { follow } = followerAt101(w);
     const info = jest.spyOn(Logger.get('IDENTITY_CHAIN_RATING_EVENTS'), 'info');
     try {
-      await mirror.run({ budgetMs: 60_000 });
+      await follow();
       expect(info).toHaveBeenCalledWith(
-        `[RATING EVENTS: ${RATING_EVENTS_MAPPED_A_PAGE} RATERS AND TARGETS MAPPED FOR NOTIFICATIONS] [1 LEFT FOR THE FILL]`
+        `[RATING EVENTS: ${RATING_EVENTS_MAPPED_A_PAGE} RATERS AND TARGETS MAPPED FOR NOTIFICATIONS] [50 NOT TRIED YET: THE PAGE WAITS FOR THE NEXT RUN]`
       );
     } finally {
       info.mockRestore();
     }
-    const last = raters[raters.length - 1].principalId;
-    const rated = () => db.ratingEvents.filter((it) => it.height === 70);
-    expect(rated()).toHaveLength(RATING_EVENTS_MAPPED_A_PAGE);
-    // The first rater, Alice, then the raters in order: the last is left.
-    expect(
-      rated()
-        .filter((it) => it.rater_profile_id === null)
-        .map((it) => it.rater_principal)
-    ).toEqual([last]);
-    expect(rated().every((it) => it.target_profile_id === ALICE_PROFILE)).toBe(
-      true
-    );
+    expect(db.ratingEvents).toEqual([]);
     expect(db.mapping.size).toBe(RATING_EVENTS_MAPPED_A_PAGE);
-    expect(db.mapping.has(last)).toBe(false);
-    // The full sync maps it; the fill sets it.
-    await mirror.run({ budgetMs: 60_000 });
-    expect(rated().filter((it) => it.rater_profile_id === null)).toEqual([]);
+    // A step on, not a stuck follower.
+    expect(db.state).toMatchObject({
+      events_next_height: 101,
+      events_stuck_runs: 0
+    });
+    await follow();
+    expect(db.mapping.size).toBe(250);
+    expect(db.state?.events_next_height).toBe(102);
+    expect(db.ratingEvents).toHaveLength(249);
+    expect(
+      db.ratingEvents.filter(
+        (it) => it.rater_profile_id === null || it.target_profile_id === null
+      )
+    ).toEqual([]);
+  });
+
+  it('tries the ids not tried yet first, and writes a page once none left can be settled', async () => {
+    const w = ratedWorld();
+    const { db, gateway } = w;
+    // 201 raters no node can settle yet (no import entry held), then ten
+    // that map.
+    const raters = ratersAt101(w, RATING_EVENTS_MAPPED_A_PAGE + 11);
+    const unsettled = new Set(
+      raters
+        .slice(0, RATING_EVENTS_MAPPED_A_PAGE + 1)
+        .map((it) => it.principalId)
+    );
+    gateway.getImportedIdentity.mockImplementation((async (p: string) => {
+      if (unsettled.has(p)) {
+        throw new ChainGatewayError('not here', 404, 'not_held', '/v1/import');
+      }
+      return null;
+    }) as never);
+    const { follow } = followerAt101(w);
+    // Alice is mapped, the last raters not tried: the page waits.
+    await follow();
+    expect(db.ratingEvents).toEqual([]);
+    expect(Array.from(db.mapping.values())).toEqual([
+      { profile: ALICE_PROFILE, origin: 'LEGACY' }
+    ]);
+    // Those not tried yet go first: the ten are mapped, the page waits.
+    await follow();
+    expect(db.ratingEvents).toEqual([]);
+    expect(db.mapping.size).toBe(11);
+    // None of those left can be settled: the page is written.
+    await follow();
+    expect(db.state?.events_next_height).toBe(102);
+    expect(db.ratingEvents).toHaveLength(RATING_EVENTS_MAPPED_A_PAGE + 11);
+    expect(
+      db.ratingEvents.every(
+        (it) =>
+          (it.rater_profile_id === null) ===
+            unsettled.has(it.rater_principal) &&
+          it.target_profile_id === ALICE_PROFILE
+      )
+    ).toBe(true);
   });
 
   it('names a merged rater of a rating as the full sync does, without mapping it', async () => {
@@ -2715,12 +2853,45 @@ describe('IdentityChainMirror', () => {
     );
     expect(opts.map((it) => it.after)).toEqual([null, 70, null]);
     expect(opts.every((it) => it.maxIds === 500_000)).toBe(true);
+    // The first pass after the full sync ended covers every row, across
+    // runs; then the last day's.
+    expect(fill.mock.calls.map(([since]) => since)).toEqual([
+      0,
+      0,
+      1_000 - 24 * 60 * 60 * 1000
+    ]);
     // A quarter of the rating events' time (all of it, here: 60 s).
     const inTime = (fill.mock.calls[2][1] as { inTime: () => boolean }).inTime;
     tick(14_000);
     expect(inTime()).toBe(true);
     tick(2_000);
     expect(inTime()).toBe(false);
+  });
+
+  it("fills the import's rows when the first full sync ends more than a day after them", async () => {
+    const { mirror, db, gateway, bob, tick } = ratedWorld();
+    const fillOf = db.fillRatingEventProfiles.bind(db);
+    const fill = jest.fn((since: number) => fillOf(since));
+    db.fillRatingEventProfiles = fill as never;
+    firstSyncStops(gateway);
+    await mirror.run({ budgetMs: 60_000 });
+    expect(idsOf(db.ratingEvents)).toEqual([[60, 'IMPORT', null, null]]);
+    // The first full sync ends two days later.
+    tick(2 * 24 * 60 * 60 * 1000);
+    const second = await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.last_full_sync_at).not.toBeNull();
+    expect(second.ratingEventsFilled).toBe(1);
+    expect(idsOf(db.ratingEvents)).toEqual([
+      [60, 'IMPORT', db.mapping.get(bob.principalId)?.profile, ALICE_PROFILE]
+    ]);
+    await mirror.run({ budgetMs: 60_000 });
+    // Every row until the full sync ended and one pass after; then a day.
+    const now = 1_000 + 2 * 24 * 60 * 60 * 1000;
+    expect(fill.mock.calls.map(([since]) => since)).toEqual([
+      0,
+      0,
+      now - 24 * 60 * 60 * 1000
+    ]);
   });
 
   it('starts a full sync when the feed no longer holds its height', async () => {

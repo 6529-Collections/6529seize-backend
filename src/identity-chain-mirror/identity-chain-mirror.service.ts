@@ -96,7 +96,12 @@ const PAGE_KEYS = 2_000;
  * before (the rest are tried again).
  */
 const PIN_WINDOW_MS = 8 * 60 * 1000;
-/** Rating event rows written in the last day get profile ids once mapped. */
+/**
+ * Rating event rows written in the last day get profile ids once mapped;
+ * every row, whenever written, until a first full sync has ended and one
+ * whole pass has run after it (the import's rows wait on that sync, which
+ * can take longer than a day).
+ */
 const RATING_EVENT_FILL_MS = 24 * 60 * 60 * 1000;
 /**
  * Rating event ids the fill looks at in one run at most: a whole pass over
@@ -399,10 +404,22 @@ export class IdentityChainMirror {
   /** When the current pin was taken. */
   private pinnedAt = 0;
   /**
-   * Where the fill of the last day's rating events goes on from (kept
-   * between warm runs; a cold start begins at the day's first row).
+   * Where the fill of the rating events goes on from, kept in memory only
+   * (between warm runs): a cold start begins again from the window's first
+   * row.
    */
   private fillAfter: number | null = null;
+  /**
+   * The fill's pass under way: over every row ('whole', while no full sync
+   * has ended; 'whole after a sync', the one pass after one has), or over
+   * the last day's.
+   */
+  private fillPass: 'whole' | 'whole after a sync' | 'day' = 'whole';
+  /**
+   * A whole pass has run since a full sync ended (in memory: a cold start
+   * runs one again, cheap by primary key).
+   */
+  private filledWholeLog = false;
   private readonly ids: ProfileIds;
   private readonly bindings: WalletBindingsFollower;
   private readonly events: RatingEventsFollower;
@@ -614,12 +631,13 @@ export class IdentityChainMirror {
   }
 
   /**
-   * The profile ids of rating events written in the last day whose rater or
-   * target is mapped since (the import's rows during a first full sync,
-   * and rows past the follower's own mapping), with a share of the time
-   * left and a bound of ids a run; then the rating events follower (from
-   * the stored state, up to the identity sync's place). Failures are
-   * reported.
+   * The profile ids of rating events whose rater or target is mapped since
+   * they were written (the import's rows during a first full sync, and rows
+   * past the follower's own mapping): every row until a pass has run after
+   * a full sync ended, then the last day's; with a share of the time left
+   * and a bound of ids a run, a pass going on next run from where it got
+   * to. Then the rating events follower (from the stored state, up to the
+   * identity sync's place). Failures are reported.
    */
   private async followRatingEvents(
     importState: { startHeight?: number | null; doneHeight?: number | null },
@@ -629,8 +647,19 @@ export class IdentityChainMirror {
     try {
       const until =
         this.now() + (deadline - this.now()) * RATING_EVENT_FILL_SHARE;
+      const synced = (await this.db.getState())?.last_full_sync_at != null;
+      if (!synced) this.filledWholeLog = false;
+      if (this.fillAfter === null) {
+        // A new pass: over every row until one has run after a full sync
+        // ended (rows written before it may have waited more than a day).
+        this.fillPass = this.filledWholeLog
+          ? 'day'
+          : synced
+            ? 'whole after a sync'
+            : 'whole';
+      }
       const fill = await this.db.fillRatingEventProfiles(
-        this.now() - RATING_EVENT_FILL_MS,
+        this.fillPass === 'day' ? this.now() - RATING_EVENT_FILL_MS : 0,
         {
           after: this.fillAfter,
           maxIds: RATING_EVENT_FILL_IDS,
@@ -638,6 +667,9 @@ export class IdentityChainMirror {
         }
       );
       this.fillAfter = fill.after;
+      if (fill.after === null && this.fillPass === 'whole after a sync') {
+        this.filledWholeLog = true;
+      }
       report.ratingEventsFilled = fill.filled;
     } catch (error) {
       const message = messageOf(error);
