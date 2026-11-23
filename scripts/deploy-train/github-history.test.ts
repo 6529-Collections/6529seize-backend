@@ -284,13 +284,18 @@ describe('persistent halts', () => {
     state: string;
     html_url: string;
     labels: { name: string }[];
+    created_at?: string;
     pull_request?: unknown;
   };
 
-  /** A tiny in-memory GitHub: issues, labels and a long run history. */
+  /**
+   * A tiny in-memory GitHub: issues, labels, a long run history and one
+   * resume run dispatched at RESUME_DISPATCHED. `now` stamps new issues.
+   */
   function fakeGitHub(issues: Issue[], runCount = 0) {
     const requests: string[] = [];
     const labels = new Set<string>();
+    const clock = { now: Date.parse('2026-11-24T09:00:00Z') };
     const runs = Array.from({ length: runCount }, (_, index) => ({
       id: 1000 + index,
       created_at: new Date(
@@ -323,7 +328,8 @@ describe('persistent halts', () => {
             title: body.title,
             state: 'open',
             html_url: `https://example.test/issues/${issues.length + 1}`,
-            labels: body.labels.map((name: string) => ({ name }))
+            labels: body.labels.map((name: string) => ({ name })),
+            created_at: new Date(clock.now).toISOString()
           };
           issues.push(issue);
           return issue;
@@ -342,12 +348,22 @@ describe('persistent halts', () => {
       },
       async listRunJobs() {
         return [];
+      },
+      async getRun(id: number) {
+        // Re-run attempts keep the run's original created_at.
+        return { id, created_at: RESUME_DISPATCHED, run_attempt: 2 };
       }
     };
-    return { client, requests, issues };
+    return { client, requests, issues, clock };
   }
 
   const shipJob = { currentRunId: 1, shipJobName: 'Ship' };
+  const RESUME_DISPATCHED = '2026-11-24T10:00:00Z';
+  const resumeRun = {
+    by: 'dev',
+    runUrl: 'https://example.test/runs/9',
+    requestedBefore: Date.parse(RESUME_DISPATCHED)
+  };
 
   it('stays halted however many train runs follow the halt', async () => {
     // The halted run fell off the run-history page long ago; the issue
@@ -373,10 +389,7 @@ describe('persistent halts', () => {
   it('clears only through a resume, which labels, comments on and closes the issue', async () => {
     const { client, requests, issues } = fakeGitHub([]);
     await github.recordHalt(client, { title: 't', body: 'b' });
-    const cleared = await github.resumeHalts(client, {
-      by: 'dev',
-      runUrl: 'https://example.test/runs/9'
-    });
+    const { cleared } = await github.resumeHalts(client, resumeRun);
     expect(cleared.map((halt: { number: number }) => halt.number)).toEqual([1]);
     expect(issues[0].state).toBe('closed');
     expect(issues[0].labels.map((label) => label.name)).toEqual([
@@ -385,9 +398,44 @@ describe('persistent halts', () => {
     ]);
     expect(requests).toContain('POST /issues/1/comments');
     expect(await github.currentHalt(client, shipJob)).toBeNull();
+    expect(await github.resumeHalts(client, resumeRun)).toEqual({
+      cleared: [],
+      kept: []
+    });
+  });
+
+  it('never lets a retried old resume clear a halt opened after its dispatch', async () => {
+    // prxt0's case: attempt 2 of a resume run dispatched at 10:00 runs
+    // after a new halt was opened at 11:00.
+    const { client, clock } = fakeGitHub([]);
+    await github.recordHalt(client, { title: 'old halt', body: 'b' });
+    clock.now = Date.parse('2026-11-24T11:00:00Z');
+    await github.recordHalt(client, { title: 'new halt', body: 'b' });
+    const requestedBefore = await github.resumeRequestedAt(client, 9);
+    expect(requestedBefore).toBe(Date.parse(RESUME_DISPATCHED));
+    const { cleared, kept } = await github.resumeHalts(client, {
+      ...resumeRun,
+      requestedBefore
+    });
+    expect(cleared.map((halt: { number: number }) => halt.number)).toEqual([1]);
+    expect(kept.map((halt: { number: number }) => halt.number)).toEqual([2]);
+    expect(await github.currentHalt(client, shipJob)).toMatchObject({
+      label: 'issue #2'
+    });
+    // The resume run's own plan still sees the newer halt.
     expect(
-      await github.resumeHalts(client, { by: 'dev', runUrl: 'u' })
-    ).toEqual([]);
+      await github.currentHalt(client, { ...shipJob, historyFallback: false })
+    ).toMatchObject({ label: 'issue #2' });
+  });
+
+  it('refuses to resume without the dispatch time', async () => {
+    const { client } = fakeGitHub([]);
+    await expect(
+      github.resumeHalts(client, { by: 'dev', runUrl: 'u' })
+    ).rejects.toThrow('dispatch time');
+    await expect(
+      github.resumeRequestedAt({ getRun: async () => ({}) }, 9)
+    ).rejects.toThrow('Cannot tell when resume run 9 was dispatched');
   });
 
   it('ignores pull requests that carry the label', async () => {

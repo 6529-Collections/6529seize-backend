@@ -285,7 +285,8 @@ async function findHaltIssues(client) {
       number: issue.number,
       url: issue.html_url,
       title: issue.title,
-      state: issue.state
+      state: issue.state,
+      created_at: issue.created_at
     }));
 }
 
@@ -305,10 +306,35 @@ async function recordHalt(client, { title, body }) {
   return { number: issue.number, url: issue.html_url };
 }
 
-/** Clears every uncleared halt: comments, labels it resumed and closes it. */
-async function resumeHalts(client, { by, runUrl }) {
-  const halts = await findHaltIssues(client);
-  if (halts.length === 0) return [];
+/**
+ * When a resume was requested: the creation time of its workflow run, which
+ * stays the original dispatch time on every re-run attempt.
+ */
+async function resumeRequestedAt(client, runId) {
+  const run = await client.getRun(runId);
+  const requestedAt = Date.parse(run?.created_at);
+  if (Number.isNaN(requestedAt)) {
+    throw new Error(`Cannot tell when resume run ${runId} was dispatched`);
+  }
+  return requestedAt;
+}
+
+/**
+ * Clears the halts opened before `requestedBefore` (the resume dispatch):
+ * comments on each, labels it resumed and closes it. A halt opened after
+ * the dispatch stays, so retrying an old resume run cannot clear it; that
+ * needs a fresh resume dispatch. Returns the cleared and kept halts.
+ */
+async function resumeHalts(client, { by, runUrl, requestedBefore }) {
+  if (!Number.isFinite(requestedBefore)) {
+    throw new Error('resumeHalts needs the resume dispatch time');
+  }
+  const uncleared = await findHaltIssues(client);
+  const halts = uncleared.filter(
+    (halt) => Date.parse(halt.created_at) < requestedBefore
+  );
+  const kept = uncleared.filter((halt) => !halts.includes(halt));
+  if (halts.length === 0) return { cleared: [], kept };
   await ensureLabel(
     client,
     RESUMED_LABEL,
@@ -329,13 +355,17 @@ async function resumeHalts(client, { by, runUrl }) {
       });
     }
   }
-  return halts;
+  return { cleared: halts, kept };
 }
 
 /** The halt blocking the train: an uncleared halt issue, else run history. */
-async function currentHalt(client, { currentRunId, shipJobName }) {
+async function currentHalt(
+  client,
+  { currentRunId, shipJobName, historyFallback = true }
+) {
   const [issue] = await findHaltIssues(client);
   if (issue) return { url: issue.url, label: `issue #${issue.number}` };
+  if (!historyFallback) return null;
   const run = await findUnclearedHalt(client, { currentRunId, shipJobName });
   return run ? { url: run.run_url, label: `run ${run.run_id}` } : null;
 }
@@ -353,6 +383,7 @@ module.exports = {
   findUnclearedHalt,
   findHaltIssues,
   recordHalt,
+  resumeRequestedAt,
   resumeHalts,
   currentHalt
 };

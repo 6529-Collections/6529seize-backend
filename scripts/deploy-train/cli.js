@@ -255,13 +255,18 @@ async function commandPlan(flags) {
   const catalog = catalogAt(targetSha);
   const { teamWindows, holds } = controlsAt(targetSha, catalog);
   const client = githubClient(flags);
-  // A resume run's own Resume job has already cleared the halt issues.
+  // In a resume run, the Resume job has already cleared the halts opened
+  // before the dispatch.
   const resuming = process.env.DEPLOY_TRAIN_RESUME === 'true';
+  // A resume run still honours halts its Resume job did not clear (opened
+  // after the dispatch); only the run-history fallback is skipped, because
+  // it cannot tell which halts the resume covered.
   const halt =
-    mode === 'prod' && !resuming
+    mode === 'prod'
       ? await github.currentHalt(client, {
           currentRunId: Number(process.env.GITHUB_RUN_ID || 0),
-          shipJobName: SHIP_JOB_NAME
+          shipJobName: SHIP_JOB_NAME,
+          historyFallback: !resuming
         })
       : null;
   const drift = await driftFor(flags, client, environment, targetSha);
@@ -273,7 +278,9 @@ async function commandPlan(flags) {
     holds,
     halt,
     notes: resuming
-      ? notes.concat('resume requested: earlier halts are cleared')
+      ? notes.concat(
+          'resume requested: halts opened before the dispatch are cleared'
+        )
       : notes
   });
   // The Ship job refuses a plan from an earlier attempt of the run, so
@@ -484,15 +491,29 @@ async function commandResume(flags) {
     process.env.GITHUB_TRIGGERING_ACTOR ||
     process.env.GITHUB_ACTOR ||
     'unknown';
-  const cleared = await github.resumeHalts(githubClient(flags), {
+  const client = githubClient(flags);
+  // Only halts opened before this resume was dispatched; a re-run attempt
+  // keeps the original dispatch time, so it cannot clear a newer halt.
+  const requestedBefore = await github.resumeRequestedAt(
+    client,
+    process.env.GITHUB_RUN_ID
+  );
+  const { cleared, kept } = await github.resumeHalts(client, {
     by,
-    runUrl: runUrl()
+    runUrl: runUrl(),
+    requestedBefore
   });
+  const numbers = (halts) => halts.map((halt) => `#${halt.number}`).join(', ');
   log(
     cleared.length > 0
-      ? `resumed: cleared ${cleared.map((halt) => `#${halt.number}`).join(', ')}`
+      ? `resumed: cleared ${numbers(cleared)}`
       : 'resume: no halt to clear'
   );
+  if (kept.length > 0) {
+    log(
+      `::warning::kept ${numbers(kept)}: opened after this resume was dispatched; dispatch Deploy train with resume=true again to clear them`
+    );
+  }
 }
 
 const COMMANDS = {

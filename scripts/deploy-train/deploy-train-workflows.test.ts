@@ -71,7 +71,11 @@ describe('deploy train workflow', () => {
     expect(resume.if).toBe(
       "github.event_name == 'workflow_dispatch' && inputs.resume"
     );
-    expect(resume.permissions).toEqual({ contents: 'read', issues: 'write' });
+    expect(resume.permissions).toEqual({
+      contents: 'read',
+      actions: 'read',
+      issues: 'write'
+    });
     expect(
       resume.steps.map((step: { run?: string }) => step.run || '')
     ).toContain('node scripts/deploy-train/cli.js resume');

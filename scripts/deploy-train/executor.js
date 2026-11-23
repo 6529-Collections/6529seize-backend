@@ -5,15 +5,18 @@ const { evaluateBlackout, holdFor } = require('./blackouts');
 const { DEPLOY_WORKFLOW, activeDeployRuns, deployBranch } = require('./github');
 const { releaseNoteGroups } = require('./plan');
 
+// The ship job has 330 minutes: a new deploy starts only within the
+// budget, and a started deploy, its first health check and the trailing
+// watch window must still fit after it.
 const DEFAULT_OPTIONS = {
   pollSeconds: 30,
   findRunSeconds: 300,
-  deployTimeoutMinutes: 90,
+  deployTimeoutMinutes: 60,
   healthTimeoutSeconds: 300,
   watchMinutes: 30,
-  finalWatchSeconds: 300,
+  watchPollSeconds: 60,
   busyWaitMinutes: 30,
-  budgetMinutes: 300
+  budgetMinutes: 200
 };
 // Stops that leave nothing broken: the next train picks up what still differs.
 const SOFT_STOPS = new Set([
@@ -41,6 +44,11 @@ function deployInputs(plan, item, groups) {
     expected_source_sha: plan.target_sha,
     release_note_groups: JSON.stringify(groups)
   };
+}
+
+/** A deployed service still inside its observation window. */
+function isWatched(entry) {
+  return entry.status === 'pending' || entry.status === 'watching';
 }
 
 function errorMessage(error) {
@@ -180,38 +188,52 @@ class TrainRun {
     }
   }
 
-  async waitForHealth(item, deployStartedAt) {
+  /**
+   * Records one health verdict on a watch entry. A healthy verdict does not
+   * end the watch: the service stays watched for its whole window, because
+   * the health check counts errors since the new build went live and they
+   * can cross the threshold after a first clean invocation.
+   */
+  applyVerdict(entry, verdict) {
+    entry.note = verdict.note;
+    entry.findings = verdict.findings;
+    if (verdict.status === 'healthy') entry.seenHealthy = true;
+    if (verdict.status === 'unhealthy') {
+      entry.status = 'unhealthy';
+      this.stop(
+        'unhealthy',
+        `${entry.item.service}: ${verdict.findings.join('; ')}`,
+        entry.item
+      );
+    } else if (this.clock() >= entry.until) {
+      // The window is over: healthy if the new build was ever seen working.
+      entry.status = entry.seenHealthy ? 'healthy' : 'unverified';
+    } else {
+      entry.status = entry.seenHealthy ? 'watching' : 'pending';
+    }
+  }
+
+  /** Waits for the first healthy or unhealthy result, up to the health timeout. */
+  async waitForFirstResult(entry) {
     const deadline = this.clock() + this.options.healthTimeoutSeconds * 1000;
     for (;;) {
-      const verdict = await this.checkHealth(item, deployStartedAt);
-      if (verdict.status !== 'pending' || this.clock() >= deadline) {
+      const verdict = await this.checkHealth(entry.item, entry.deployStartedAt);
+      if (verdict.status === 'skipped') return verdict;
+      this.applyVerdict(entry, verdict);
+      if (entry.status !== 'pending' || this.clock() >= deadline) {
         return verdict;
       }
       await this.sleep(this.options.pollSeconds * 1000);
     }
   }
 
-  /** Re-checks services that had not run yet; halts on an unhealthy one. */
+  /** Re-checks every service still inside its window; halts on a failure. */
   async sweepWatch() {
     for (const entry of this.result.watch) {
-      if (entry.status !== 'pending') continue;
+      if (!isWatched(entry)) continue;
       const verdict = await this.checkHealth(entry.item, entry.deployStartedAt);
-      Object.assign(entry, {
-        status: verdict.status,
-        note: verdict.note,
-        findings: verdict.findings
-      });
-      if (verdict.status === 'unhealthy') {
-        this.stop(
-          'unhealthy',
-          `${entry.item.service}: ${verdict.findings.join('; ')}`,
-          entry.item
-        );
-        return;
-      }
-      if (verdict.status === 'pending' && this.clock() >= entry.until) {
-        entry.status = 'unverified';
-      }
+      this.applyVerdict(entry, verdict);
+      if (entry.status === 'unhealthy') return;
     }
   }
 
@@ -386,51 +408,44 @@ class TrainRun {
       await this.recordFailedRun(item, run, runSummary);
       return;
     }
-    const deployStartedAt = Date.parse(run.run_started_at || run.created_at);
     this.shippedItems.push(item);
-    const verdict = await this.waitForHealth(item, deployStartedAt);
+    const entry = {
+      item,
+      deployStartedAt: Date.parse(run.run_started_at || run.created_at),
+      until: this.clock() + this.options.watchMinutes * 60_000,
+      status: 'pending',
+      seenHealthy: false,
+      note: null,
+      findings: []
+    };
+    const verdict = await this.waitForFirstResult(entry);
     this.result.shipped.push({
       ...runSummary,
-      health: verdict.status,
+      health: verdict.status === 'skipped' ? 'skipped' : entry.status,
       note: verdict.note
     });
-    if (verdict.status === 'unhealthy') {
-      this.stop(
-        'unhealthy',
-        `${item.service}: ${verdict.findings.join('; ')}`,
-        item
-      );
-      return;
-    }
-    if (verdict.status === 'pending') {
-      this.result.watch.push({
-        item,
-        deployStartedAt,
-        until: this.clock() + this.options.watchMinutes * 60_000,
-        status: 'pending',
-        note: verdict.note,
-        findings: []
-      });
-    }
+    if (verdict.status === 'skipped' || entry.status === 'unhealthy') return;
+    this.result.watch.push(entry);
     await this.sweepWatch();
   }
 
-  /** After the last deploy, watch pending services a little longer. */
+  /**
+   * After the last deploy, keeps watching until every deployed service's
+   * window has closed, so a failure late in a window still halts.
+   */
   async finalWatch() {
-    if (this.result.stop?.halt) return;
-    const deadline = this.clock() + this.options.finalWatchSeconds * 1000;
-    const pending = () =>
-      this.result.watch.some((entry) => entry.status === 'pending');
-    while (pending() && !this.result.stop?.halt) {
+    while (!this.result.stop?.halt && this.result.watch.some(isWatched)) {
+      await this.sleep(this.options.watchPollSeconds * 1000);
       await this.sweepWatch();
-      if (this.clock() >= deadline) return;
-      if (pending()) await this.sleep(this.options.pollSeconds * 1000);
     }
   }
 
   finish() {
     for (const entry of this.result.watch) {
-      if (entry.status === 'pending') entry.status = 'unverified';
+      // Reached only when a soft stop or halt ended the watch early.
+      if (isWatched(entry)) {
+        entry.status = entry.seenHealthy ? 'healthy' : 'unverified';
+      }
       const shipped = this.result.shipped.find(
         (item) => item.service === entry.item.service
       );
@@ -461,10 +476,11 @@ class TrainRun {
  * Ships a train plan one service at a time through the existing deploy
  * workflow, pinned to the plan's commit. Before each deploy it confirms the
  * branch has not moved, the service is outside its quiet windows and no
- * other deploy is running. After each deploy it checks the service's
- * health and keeps watching services that have not run yet. It stops at
- * the first failed deploy or unhealthy service (a halt), and stops softly
- * when the branch moves or time runs out.
+ * other deploy is running. After each deploy it checks the new build's
+ * health and keeps every deployed service under watch for its whole
+ * observation window while it ships the others, and after the last deploy
+ * until the windows close. It stops at the first failed deploy or unhealthy
+ * service (a halt), and stops softly when the branch moves or time runs out.
  */
 function runTrain({
   plan,

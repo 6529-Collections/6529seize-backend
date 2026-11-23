@@ -297,15 +297,23 @@ the old build cannot pass or fail the check.
 - Healthy: the new build handled at least one invocation (a `REPORT` line in
   its own log streams) and, for services that bundle the database modules,
   logged the `[AUTH IAM]` login line.
-- **Not yet verified** otherwise: the new build has not been invoked. The train
-  waits up to five minutes, then **continues and flags the service**. It keeps
-  checking the service for 30 minutes while it ships the next ones, and five
-  more minutes at the end. A startup or login failure found then still halts.
-  The result and the CI wave post list every service the new build never
-  served during the train. Many loops run hourly or daily, so waiting for
-  every one would stall the train for hours, and the deploy workflow has
-  already verified the code digest. Dependents of a not-verified service still
-  deploy; `dbMigrationsLoop` is verified by its synchronous invocation.
+- **Not yet verified** otherwise: the new build has not been invoked.
+
+After each deploy the train waits up to five minutes for a first healthy or
+unhealthy result, then **continues** with the next service. Every deployed
+service stays under watch for its whole 30-minute observation window, healthy
+or not yet verified. The train re-checks it after each later deploy and once a
+minute after the last deploy, until every window has closed. The checks count
+errors since the new build went live, so errors crossing the threshold, or a
+startup or login failure, anywhere inside the window still halt the train,
+even after a first clean invocation. A service the new build never served in
+its window is reported as not yet verified in the result and the CI wave post.
+Many loops run hourly or daily, so waiting for every one before the next
+deploy would stall the train for hours, and the deploy workflow has already
+verified the code digest. Dependents of a not-verified service still deploy;
+`dbMigrationsLoop` is verified by its synchronous invocation. A train starts no
+new deploy after 200 minutes, so its last deploy and watch window fit in the
+job's time limit.
 
 Resources-only stacks and the Lambda@Edge interceptor rely on the deploy
 workflow's own checks.
@@ -315,8 +323,11 @@ crash **halts** the train. The ship job fails, posts a failure to the CI wave
 and opens a GitHub issue labelled `deploy-train-halt`. Later trains plan in
 report-only mode while any such issue is uncleared, however many runs follow.
 Only a `Deploy train` dispatch with `resume=true` clears it: its Resume job
-comments on the issue, labels it `deploy-train-resumed` and closes it. Closing
-the issue by hand does not resume the train. If the plan cannot read the halt
+comments on the issue, labels it `deploy-train-resumed` and closes it. A
+resume clears only the halts opened before it was dispatched; re-running an
+old resume run (a new attempt keeps the original dispatch time) cannot clear
+a later halt, which needs a fresh dispatch. Closing the issue by hand does not
+resume the train. If the plan cannot read the halt
 issues or the deploy history from GitHub, it fails and ships nothing; the next
 trigger tries again. If the halt issue itself cannot be opened, later trains
 still find the failed Ship job among the newest 500 train runs.
@@ -325,7 +336,7 @@ A `Deploy a service` run that fails or is cancelled halts the train unless the
 run shows it changed nothing in production: its source guard refused a commit
 because `main` moved, or it was cancelled before any deploy step started.
 Those cases, like `main` moving between deploys, another deploy running for
-more than 30 minutes, or the 300-minute budget, only stop the current train.
+more than 30 minutes, or the 200-minute budget, only stop the current train.
 
 Re-running only the Ship job of a train does not deploy: its plan belongs to
 an earlier attempt of the run. Dispatch a new train instead (and resume first
@@ -409,7 +420,9 @@ staging on dispatch.
 time. The last 500 production deploys took a median of 150 seconds (p90 233
 seconds); with the health gate a service takes about three to five minutes,
 so a shared-code change that touches 50 services takes about three to four
-hours. `main` received 225 merges in the 30 days to 2026-11-23, a median of five
+hours, spread over two trains because one train starts no deploy after 200
+minutes and then finishes its 30-minute watch. `main` received 225 merges in
+the 30 days to 2026-11-23, a median of five
 a day and at most 46. On a typical day the train drains well within the day.
 On a busy day each merge restarts it with the oldest drift first, and it drains
 overnight. Drift stays within hours instead of weeks, so bounded parallel lanes

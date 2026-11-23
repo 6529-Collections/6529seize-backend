@@ -342,6 +342,52 @@ describe('deploy train executor', () => {
     ]);
   });
 
+  it('keeps watching a healthy service and halts when its errors cross the threshold later', async () => {
+    // prxt0's case: one clean invocation, then the error threshold is
+    // crossed while the train is deploying the next service.
+    const h = harness();
+    h.verdicts.nftsLoop = ['healthy', 'healthy', 'unhealthy'];
+    const result = await h.run(
+      trainPlan([
+        item('nftsLoop', [1]),
+        item('teamLoop', [1]),
+        item('ethPriceLoop', [1])
+      ])
+    );
+    expect(result.stop).toMatchObject({
+      reason: 'unhealthy',
+      halt: true,
+      service: 'nftsLoop'
+    });
+    expect(h.dispatched.map((entry) => entry.inputs.service)).toEqual([
+      'nftsLoop',
+      'teamLoop'
+    ]);
+    expect(result.not_started).toEqual(['ethPriceLoop']);
+    expect(result.shipped[0]).toMatchObject({
+      service: 'nftsLoop',
+      health: 'unhealthy'
+    });
+  });
+
+  it('keeps watching after the last deploy until the window closes', async () => {
+    const h = harness();
+    h.verdicts.nftsLoop = Array(10).fill('healthy').concat(['unhealthy']);
+    const result = await h.run(trainPlan([item('nftsLoop', [1])]));
+    expect(result.stop).toMatchObject({ reason: 'unhealthy', halt: true });
+  });
+
+  it('stops checking a service once its window has closed', async () => {
+    const h = harness();
+    h.verdicts.nftsLoop = Array(40).fill('healthy').concat(['unhealthy']);
+    const result = await h.run(trainPlan([item('nftsLoop', [1])]));
+    expect(result.stop).toBeNull();
+    expect(result.shipped[0].health).toBe('healthy');
+    const checks = h.checks.filter((name) => name === 'nftsLoop').length;
+    expect(checks).toBeGreaterThanOrEqual(30);
+    expect(checks).toBeLessThanOrEqual(33);
+  });
+
   it('reports services that never ran during the train as unverified', async () => {
     const h = harness();
     h.verdicts.nftsLoop = Array(200).fill('pending');

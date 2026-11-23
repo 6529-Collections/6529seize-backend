@@ -204,8 +204,10 @@ Read the repository variable first:
   the next train.
 - A halted train has an open `deploy-train-halt` issue and deploys nothing
   until someone dispatches `Deploy train` with `resume=true`; closing the issue
-  by hand does not resume it. Resume only after reading the halt and fixing or
-  reverting the cause on `main`. Changing `DEPLOY_TRAIN_MODE` or resuming is an
+  by hand does not resume it. A resume clears only halts opened before its
+  dispatch, so always dispatch a fresh resume rather than re-running an old
+  one. Resume only after reading the halt and fixing or reverting the cause on
+  `main`. Changing `DEPLOY_TRAIN_MODE` or resuming is an
   owner decision, not part of an ordinary release request.
 
 ## Failure and closeout

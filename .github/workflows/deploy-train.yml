@@ -46,6 +46,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+      actions: read
       issues: write
     steps:
       - name: Checkout the train's scripts
