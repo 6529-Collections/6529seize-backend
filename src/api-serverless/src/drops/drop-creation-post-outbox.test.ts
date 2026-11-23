@@ -6,7 +6,6 @@ jest.mock('@/competitions/competition-entry-drop-hooks');
 import { waveScoreService } from '@/api/waves/wave-score.service';
 import { DropType } from '@/entities/IDrop';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
-import { helpBotDailyActivityCreditQueueService } from '@/help-bot/help-bot-daily-activity-credit-queue.service';
 import { handOffDropWriteOutbox } from '@/drops/drop-write-outbox.hand-off';
 import { poolForUnboundQuery } from '@/db/primary-read-scope';
 import { DbPoolName } from '@/db-query.options';
@@ -28,9 +27,6 @@ describe('DropCreationApiService.createDrop with the post outbox (1.8)', () => {
   const env = { ...process.env };
 
   beforeEach(() => {
-    jest
-      .spyOn(helpBotDailyActivityCreditQueueService, 'enqueueRequest')
-      .mockResolvedValue(false);
     jest
       .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
       .mockResolvedValue(undefined);
@@ -109,7 +105,6 @@ describe('DropCreationApiService.createDrop with the post outbox (1.8)', () => {
       { findByDropId: jest.fn().mockResolvedValue([]) } as never,
       {} as never,
       { createPollForDrop: jest.fn().mockResolvedValue(undefined) } as never,
-      undefined,
       undefined,
       undefined,
       undefined,

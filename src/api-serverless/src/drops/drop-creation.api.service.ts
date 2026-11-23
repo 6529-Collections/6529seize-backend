@@ -69,10 +69,6 @@ import {
   wavesApiDb as defaultWavesApiDb,
   WavesApiDb
 } from '@/api/waves/waves.api.db';
-import {
-  helpBotDailyActivityCreditQueueService,
-  HelpBotDailyActivityCreditQueueService
-} from '@/help-bot/help-bot-daily-activity-credit-queue.service';
 
 import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
 import { assertProxyMayEditDrops } from '@/api/drops/drop-proxy-rights';
@@ -300,7 +296,6 @@ export class DropCreationApiService {
     private readonly nftLinkResolvingService: NftLinkResolvingService,
     private readonly dropPollsApiService: DropPollsApiService,
     private readonly wavesApiDb: WavesApiDb = defaultWavesApiDb,
-    private readonly dailyActivityCreditQueueService: HelpBotDailyActivityCreditQueueService = helpBotDailyActivityCreditQueueService,
     private readonly purgeDb: ChatHistoryPurgeDb = chatHistoryPurgeDb,
     private readonly clientIdsDb: DropClientIdsDb = dropClientIdsDb,
     private readonly fanoutQueue: WaveFanoutQueue = waveFanoutQueue,
@@ -312,14 +307,12 @@ export class DropCreationApiService {
       createDropRequest,
       authorId,
       representativeId,
-      hideLinkPreview,
-      requestDailyActivityCredit = false
+      hideLinkPreview
     }: {
       createDropRequest: ApiCreateDropRequest;
       authorId: string;
       representativeId: string;
       hideLinkPreview?: boolean;
-      requestDailyActivityCredit?: boolean;
     },
     ctx: RequestContext
   ): Promise<ApiDrop> {
@@ -408,7 +401,6 @@ export class DropCreationApiService {
                   authorId,
                   preResolvedIdentityNomination,
                   prePublication,
-                  requestDailyActivityCredit,
                   clientDrop
                 },
                 normalizeCreateDropPollRequest(createDropRequest.poll),
@@ -456,8 +448,7 @@ export class DropCreationApiService {
       dropId: committedDropId,
       outboxId,
       pendingPushNotificationIds,
-      dmUnreadRecipientIds,
-      dailyActivityCreditRequestEnqueued
+      dmUnreadRecipientIds
     } = created;
     // After-commit pipeline, in this order (waves 1.1 + 1.8):
     // 1. the committed drop as the writer sees it (#2372: read after commit,
@@ -481,8 +472,7 @@ export class DropCreationApiService {
           authorId,
           collaboratorIds: createDropRequest.collaborator_ids ?? [],
           pendingPushNotificationIds,
-          dmUnreadRecipientIds,
-          dailyActivityCreditRequestEnqueued
+          dmUnreadRecipientIds
         },
         ctx
       );
@@ -509,7 +499,7 @@ export class DropCreationApiService {
             dm_unread_recipient_ids: dmUnreadRecipientIds,
             collaborator_ids: createDropRequest.collaborator_ids ?? []
           },
-          { drop, gapMarker, dailyActivityCreditRequestEnqueued, hops },
+          { drop, gapMarker, hops },
           ctx
         )
       : this.deliverCreatedDropInline(
@@ -520,7 +510,6 @@ export class DropCreationApiService {
             collaboratorIds: createDropRequest.collaborator_ids ?? [],
             pendingPushNotificationIds,
             dmUnreadRecipientIds,
-            dailyActivityCreditRequestEnqueued,
             hops,
             gapMarker
           },
@@ -600,7 +589,6 @@ export class DropCreationApiService {
       collaboratorIds,
       pendingPushNotificationIds,
       dmUnreadRecipientIds,
-      dailyActivityCreditRequestEnqueued,
       hops,
       gapMarker
     }: {
@@ -610,17 +598,11 @@ export class DropCreationApiService {
       collaboratorIds: string[];
       pendingPushNotificationIds: number[];
       dmUnreadRecipientIds: string[];
-      dailyActivityCreditRequestEnqueued: boolean;
       hops: DropPostHops;
       gapMarker: { prevSerialNo?: number | null };
     },
     ctx: RequestContext
   ): Promise<void> {
-    if (dailyActivityCreditRequestEnqueued) {
-      await hops.time('post_commit_daily_activity_ms', () =>
-        this.dailyActivityCreditQueueService.sendWakeupBestEffort(ctx)
-      );
-    }
     // Before the fan-out: a frame must not reach a client that then reads a
     // cached unread count the new drop has not invalidated yet.
     await hops.time('post_commit_unread_cache_ms', () =>
@@ -676,21 +658,14 @@ export class DropCreationApiService {
     {
       drop,
       gapMarker,
-      dailyActivityCreditRequestEnqueued,
       hops
     }: {
       drop: ApiDrop;
       gapMarker: { prevSerialNo?: number | null };
-      dailyActivityCreditRequestEnqueued: boolean;
       hops: DropPostHops;
     },
     ctx: RequestContext
   ): Promise<void> {
-    if (dailyActivityCreditRequestEnqueued) {
-      await hops.time('post_commit_daily_activity_ms', () =>
-        this.dailyActivityCreditQueueService.sendWakeupBestEffort(ctx)
-      );
-    }
     await hops.time('post_commit_unread_cache_ms', () =>
       invalidateWaveUnreadCacheForWave(effects.wave_id)
     );
@@ -786,8 +761,7 @@ export class DropCreationApiService {
       authorId,
       collaboratorIds,
       pendingPushNotificationIds,
-      dmUnreadRecipientIds,
-      dailyActivityCreditRequestEnqueued
+      dmUnreadRecipientIds
     }: {
       dropId: string;
       waveId: string;
@@ -795,13 +769,9 @@ export class DropCreationApiService {
       collaboratorIds: string[];
       pendingPushNotificationIds: number[];
       dmUnreadRecipientIds: string[];
-      dailyActivityCreditRequestEnqueued: boolean;
     },
     ctx: RequestContext
   ): Promise<void> {
-    if (dailyActivityCreditRequestEnqueued) {
-      await this.dailyActivityCreditQueueService.sendWakeupBestEffort(ctx);
-    }
     await invalidateWaveUnreadCacheForWave(waveId);
     await this.runDropCreatedEffects(
       {
@@ -898,7 +868,6 @@ export class DropCreationApiService {
       authorId,
       preResolvedIdentityNomination,
       prePublication,
-      requestDailyActivityCredit,
       clientDrop = null
     }: {
       model: CreateOrUpdateDropModel;
@@ -907,7 +876,6 @@ export class DropCreationApiService {
         ReturnType<CreateOrUpdateDropUseCase['preResolveIdentityNomination']>
       > | null;
       prePublication: PrePublicationPreparation;
-      requestDailyActivityCredit: boolean;
       clientDrop?: ClientDrop | null;
     },
     poll: CreateDropPollRequest | null | undefined,
@@ -918,7 +886,6 @@ export class DropCreationApiService {
     outboxId: number | null;
     pendingPushNotificationIds: number[];
     dmUnreadRecipientIds: string[];
-    dailyActivityCreditRequestEnqueued: boolean;
   }> {
     const useOutbox = isDropWriteOutboxEnabled();
     const {
@@ -964,13 +931,6 @@ export class DropCreationApiService {
           authenticationContext: AuthenticationContext.fromProfileId(authorId)
         }
       );
-    const dailyActivityCreditRequestEnqueued =
-      requestDailyActivityCredit && !replayed
-        ? await this.dailyActivityCreditQueueService.enqueueRequest(
-            { profileId: authorId },
-            { timer, connection }
-          )
-        : false;
     // Waves 1.8: with the outbox the response read runs after commit, on the
     // writer, so it no longer extends the write transaction. Without it the
     // read stays here (staging only); under the #2372 write budget its
@@ -995,8 +955,7 @@ export class DropCreationApiService {
       dropId: drop_id,
       outboxId: outbox_id ?? null,
       pendingPushNotificationIds: pending_push_notification_ids,
-      dmUnreadRecipientIds: dm_unread_recipient_ids ?? [],
-      dailyActivityCreditRequestEnqueued
+      dmUnreadRecipientIds: dm_unread_recipient_ids ?? []
     };
   }
 
@@ -1610,7 +1569,6 @@ export const dropCreationService = new DropCreationApiService(
   dropNftLinksDb,
   nftLinkResolvingService,
   dropPollsApiService,
-  undefined,
   undefined,
   undefined,
   undefined,

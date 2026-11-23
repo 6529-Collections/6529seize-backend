@@ -11,7 +11,6 @@ import { DbPoolName } from '@/db-query.options';
 import { dropsMappers } from '@/api/drops/drops.mappers';
 import { DropMediaUploadStatus } from '@/entities/IDropMediaUpload';
 import { dropMediaUploadsDb } from '@/drops/drop-media-uploads.db';
-import { helpBotDailyActivityCreditQueueService } from '@/help-bot/help-bot-daily-activity-credit-queue.service';
 
 jest.mock('@/api/waves/wave-unread-cache', () => ({
   // After-commit bumps from the DB chokepoints (drop insert/delete, reader
@@ -376,12 +375,6 @@ describe('DropCreationApiService.updateDrop', () => {
 describe('DropCreationApiService.createDrop', () => {
   beforeEach(() => {
     (sendIdentityPushNotifications as jest.Mock).mockResolvedValue(undefined);
-    jest
-      .spyOn(helpBotDailyActivityCreditQueueService, 'enqueueRequest')
-      .mockResolvedValue(false);
-    jest
-      .spyOn(helpBotDailyActivityCreditQueueService, 'sendWakeupBestEffort')
-      .mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -394,17 +387,6 @@ describe('DropCreationApiService.createDrop', () => {
     async (hideLinkPreview) => {
       const connection = {} as any;
       const order: string[] = [];
-      (
-        helpBotDailyActivityCreditQueueService.enqueueRequest as jest.Mock
-      ).mockImplementationOnce(async () => {
-        order.push('daily-credit-request-written');
-        return true;
-      });
-      (
-        helpBotDailyActivityCreditQueueService.sendWakeupBestEffort as jest.Mock
-      ).mockImplementationOnce(async () => {
-        order.push('daily-credit-wakeup-sent');
-      });
       const dropsDb = {
         executeNativeQueriesInTransaction: jest.fn(
           async (callback: (connection: unknown) => Promise<unknown>) => {
@@ -475,8 +457,7 @@ describe('DropCreationApiService.createDrop', () => {
           createDropRequest: { hide_link_preview: hideLinkPreview } as never,
           authorId: 'author-profile',
           representativeId: 'author-profile',
-          hideLinkPreview,
-          requestDailyActivityCredit: true
+          hideLinkPreview
         },
         { timer: undefined } as never
       );
@@ -496,18 +477,10 @@ describe('DropCreationApiService.createDrop', () => {
         expect.anything()
       );
       expect(invalidateWaveUnreadCacheForWave).toHaveBeenCalledWith('wave-1');
-      expect(
-        helpBotDailyActivityCreditQueueService.enqueueRequest
-      ).toHaveBeenCalledWith(
-        { profileId: 'author-profile' },
-        { timer: undefined, connection }
-      );
       expect(order).toEqual([
         'transaction',
         'drop-written',
-        'daily-credit-request-written',
         'committed',
-        'daily-credit-wakeup-sent',
         'unread-cache-invalidated'
       ]);
     }
@@ -619,9 +592,6 @@ describe('DropCreationApiService.createDrop', () => {
       [dmUnreadState],
       [{ connectionId: 'connection-1', identityId: 'reader-profile' }]
     );
-    expect(
-      helpBotDailyActivityCreditQueueService.enqueueRequest
-    ).not.toHaveBeenCalled();
     expect(order).toEqual([
       'drop-written',
       'committed',
@@ -915,7 +885,6 @@ describe('DropCreationApiService bounded chat history purge', () => {
       {} as never,
       {} as never,
       waves as never,
-      {} as never,
       purgeDb as never
     );
     jest
@@ -1091,9 +1060,6 @@ describe('DropCreationApiService.createDrop delivery hops (1.0)', () => {
     process.env.AWS_LAMBDA_FUNCTION_NAME = 'api';
     (sendIdentityPushNotifications as jest.Mock).mockResolvedValue(undefined);
     jest
-      .spyOn(helpBotDailyActivityCreditQueueService, 'enqueueRequest')
-      .mockResolvedValue(false);
-    jest
       .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
       .mockResolvedValue(undefined);
   });
@@ -1193,7 +1159,6 @@ describe('DropCreationApiService.createDrop delivery hops (1.0)', () => {
       expect(typeof record[hop]).toBe('number');
     }
     expect(record.drop_post_total_ms).toBeGreaterThanOrEqual(12);
-    expect(record).not.toHaveProperty('post_commit_daily_activity_ms');
   });
 
   it('bumps the unread cache before the fan-out and runs the wave-score request beside it', async () => {
@@ -1330,7 +1295,6 @@ describe('DropCreationApiService.createDrop reply after commit (1.1)', () => {
       { createPollForDrop: jest.fn().mockResolvedValue(undefined) } as never,
       undefined,
       undefined,
-      undefined,
       // Staging (#2318): the client drop id store comes first.
       undefined,
       { enqueue } as never
@@ -1341,9 +1305,6 @@ describe('DropCreationApiService.createDrop reply after commit (1.1)', () => {
   beforeEach(() => {
     process.env.WS_ASYNC_FANOUT = 'true';
     (sendIdentityPushNotifications as jest.Mock).mockResolvedValue(undefined);
-    jest
-      .spyOn(helpBotDailyActivityCreditQueueService, 'enqueueRequest')
-      .mockResolvedValue(false);
     jest
       .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
       .mockResolvedValue(undefined);
@@ -1442,9 +1403,6 @@ describe('DropCreationApiService.createDrop after-commit pipeline', () => {
   beforeEach(() => {
     (sendIdentityPushNotifications as jest.Mock).mockResolvedValue(undefined);
     jest
-      .spyOn(helpBotDailyActivityCreditQueueService, 'enqueueRequest')
-      .mockResolvedValue(false);
-    jest
       .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
       .mockResolvedValue(undefined);
   });
@@ -1500,7 +1458,6 @@ describe('DropCreationApiService.createDrop after-commit pipeline', () => {
       { findByDropId: jest.fn().mockResolvedValue([]) } as never,
       {} as never,
       { createPollForDrop: jest.fn().mockResolvedValue(undefined) } as never,
-      undefined,
       undefined,
       undefined,
       // Staging (#2318): the client drop id store comes first.
@@ -1668,9 +1625,6 @@ describe('DropCreationApiService.createDrop after-commit pipeline', () => {
 describe('DropCreationApiService.createDrop media upload ids (R11-2)', () => {
   beforeEach(() => {
     (sendIdentityPushNotifications as jest.Mock).mockResolvedValue(undefined);
-    jest
-      .spyOn(helpBotDailyActivityCreditQueueService, 'enqueueRequest')
-      .mockResolvedValue(false);
     jest
       .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
       .mockResolvedValue(undefined);

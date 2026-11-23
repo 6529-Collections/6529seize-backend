@@ -6,7 +6,6 @@ import { NewDropSchema } from '@/api/drops/drop.validator';
 jest.mock('@/competitions/competition-entry-drop-hooks');
 import { waveScoreService } from '@/api/waves/wave-score.service';
 import { DropType } from '@/entities/IDrop';
-import { helpBotDailyActivityCreditQueueService } from '@/help-bot/help-bot-daily-activity-credit-queue.service';
 import { DropClientIdTakenError } from '@/drops/drop-client-ids.db';
 import { DropClientIdEntity } from '@/entities/IDropClientId';
 import { NotFoundException } from '@/exceptions';
@@ -130,7 +129,6 @@ function setup({
     { createPollForDrop: jest.fn().mockResolvedValue(undefined) } as never,
     undefined,
     undefined,
-    undefined,
     clientIdsDb as never
   );
   const create = (clientDropId: string | null = CLIENT_DROP_ID) =>
@@ -158,9 +156,6 @@ function setup({
 
 describe('DropCreationApiService.createDrop with client_drop_id (R11-5)', () => {
   beforeEach(() => {
-    jest
-      .spyOn(helpBotDailyActivityCreditQueueService, 'enqueueRequest')
-      .mockResolvedValue(false);
     jest
       .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
       .mockResolvedValue(undefined);
