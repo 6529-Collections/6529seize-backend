@@ -242,7 +242,11 @@ function setup(
         innodbReadOnly: null,
         snapshotAt: new Date(options.snapshotAt ?? T + 150_000).toISOString(),
         replicaLagMs:
-          options.replicaLagMs === undefined ? 40 : options.replicaLagMs
+          options.replicaLagMs === undefined ? 40 : options.replicaLagMs,
+        replicaLagError:
+          options.replicaLagMs === null
+            ? "ER_UNKNOWN_TABLE 1109: Unknown table 'REPLICA_HOST_STATUS' in information_schema"
+            : null
       },
       close
     })),
@@ -495,8 +499,11 @@ describe('the freeze checks', () => {
 
   it('refuses a replica as far behind its writer as the gap, or further', () => {
     expect(() => checkReplicaLag(150_000, null)).toThrow(
-      /acceptUnknownReplicaLag: true/
+      /\(no reason given\).*acceptUnknownReplicaLag: true/
     );
+    expect(() =>
+      checkReplicaLag(150_000, null, false, 'ER_PARSE_ERROR 1064: syntax')
+    ).toThrow(/\(ER_PARSE_ERROR 1064: syntax\)/);
     expect(() => checkReplicaLag(150_000, null, true)).not.toThrow();
     expect(() => checkReplicaLag(150_000, 149_999)).not.toThrow();
     expect(() => checkReplicaLag(150_000, 150_000)).toThrow(
@@ -672,7 +679,8 @@ describe('runProfileSiteExportJob', () => {
       identityFreezeAt: '2026-11-24T00:00:00.000Z',
       snapshotAt: new Date(T + 150_000).toISOString(),
       snapshotGapSeconds: 150,
-      evidence: { replicaLagMs: 40 },
+      snapshotGapMs: 150_000,
+      evidence: { replicaLagMs: 40, replicaLagError: null },
       latestSiteWrites: {
         packages: new Date(T - 60_000).toISOString(),
         archived_packages: null,
@@ -743,6 +751,7 @@ describe('runProfileSiteExportJob', () => {
       replace_pointer: false,
       snapshot_at: new Date(T + 150_000).toISOString(),
       snapshot_gap_seconds: 150,
+      snapshot_gap_ms: 150_000,
       read: { replicaLagMs: 40, read_only: true },
       latest_site_writes: { archived_packages: null },
       writes_after_freeze: [],
@@ -1005,8 +1014,9 @@ describe('runProfileSiteExportJob', () => {
 
   it('refuses an unknown replica lag unless told to rely on the gap alone', async () => {
     const { deps, bodies, order } = setup({ replicaLagMs: null });
+    // The refusal carries the server's own reason.
     await expect(runProfileSiteExportJob(event, context, deps)).rejects.toThrow(
-      /lag can't be read.*acceptUnknownReplicaLag: true/
+      /lag can't be read from information_schema.replica_host_status \(ER_UNKNOWN_TABLE 1109: Unknown table 'REPLICA_HOST_STATUS' in information_schema\).*acceptUnknownReplicaLag: true/
     );
     expect(order).toEqual([]);
     const result = (await runProfileSiteExportJob(
@@ -1017,7 +1027,11 @@ describe('runProfileSiteExportJob', () => {
     expect(result.evidence.replicaLagMs).toBeNull();
     expect(result.acceptUnknownReplicaLag).toBe(true);
     expect(JSON.parse(bodies.get(result.manifestKey)!)).toMatchObject({
-      read: { replicaLagMs: null },
+      read: {
+        replicaLagMs: null,
+        replicaLagError:
+          "ER_UNKNOWN_TABLE 1109: Unknown table 'REPLICA_HOST_STATUS' in information_schema"
+      },
       accept_unknown_replica_lag: true
     });
   });
@@ -1030,6 +1044,7 @@ describe('runProfileSiteExportJob', () => {
       ok.deps
     )) as ProfileSiteExportResult;
     expect(result.snapshotGapSeconds).toBe(150);
+    expect(result.snapshotGapMs).toBe(150_400);
     expect(result.acceptUnknownReplicaLag).toBe(false);
     expect(result.replacePointer).toBe(false);
     const behind = setup({ snapshotAt: T + 150_400, replicaLagMs: 150_400 });
@@ -1141,9 +1156,9 @@ describe('runProfileSiteExportJob', () => {
     expect(result.usable).toBe(true);
     expect(result.pointerKey).toBeNull();
     expect(result.pointerError).toMatch(
-      /reading it back failed \(socket hang up\): whether it names this run is unknown/
+      /reading it back failed \(socket hang up\): whether it names this run is unknown\. Ask for links by frozenAt: if their prefix is this run's/
     );
-    expect(result.pointerError).not.toMatch(/earlier run/);
+    expect(result.pointerError).not.toMatch(/already names an earlier run/);
   });
 
   it('says so when a refused pointer is then not there to read', async () => {

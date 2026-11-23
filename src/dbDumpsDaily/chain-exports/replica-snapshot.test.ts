@@ -66,7 +66,7 @@ describe('openReadOnlySnapshot', () => {
       transaction_read_only: [{ tro: 1, ro: 1 }],
       innodb_read_only: [{ iro: 0 }],
       'UNIX_TIMESTAMP(NOW(6))': [{ ms: '1795478405123' }],
-      replica_host_status: [{ lag: 18.5 }]
+      replica_host_status: [{ lag_ms: 18.5 }]
     });
     const createPool = jest.fn(() => pool);
     const snapshot = await openReadOnlySnapshot(target, createPool);
@@ -85,10 +85,11 @@ describe('openReadOnlySnapshot', () => {
       serverReadOnly: true,
       innodbReadOnly: false,
       snapshotAt: '2026-11-24T00:00:05.123Z',
-      replicaLagMs: 18.5
+      replicaLagMs: 18.5,
+      replicaLagError: null
     });
     expect(statements).toContain(
-      'SELECT REPLICA_LAG_IN_MILLISECONDS AS lag FROM information_schema.replica_host_status WHERE SERVER_ID = @@aurora_server_id'
+      'SELECT REPLICA_LAG_IN_MILLISECONDS AS lag_ms FROM information_schema.replica_host_status WHERE SERVER_ID = @@aurora_server_id'
     );
     await snapshot.close();
     expect(statements[statements.length - 1]).toBe('ROLLBACK');
@@ -97,28 +98,47 @@ describe('openReadOnlySnapshot', () => {
   });
 
   it.each([
-    ['no row for this server', undefined],
-    ['a null lag', [{ lag: null }]],
-    ['a table it cannot read', 'error']
-  ])('records the lag as unknown with %s', async (_name, answer) => {
-    const { pool, connection } = fakePool({
-      transaction_read_only: [{ tro: 1, ro: 1 }],
-      innodb_read_only: [{ iro: 0 }],
-      'UNIX_TIMESTAMP(NOW(6))': [{ ms: 1795478405000 }],
-      ...(Array.isArray(answer) ? { replica_host_status: answer } : {})
-    });
-    if (answer === 'error') {
-      const query = connection.query;
-      connection.query = jest.fn((sql: string, callback: any) =>
-        sql.includes('replica_host_status')
-          ? callback(new Error('Unknown table'))
-          : query(sql, callback)
-      );
+    [
+      'no row for this server',
+      undefined,
+      'information_schema.replica_host_status has no row for this server'
+    ],
+    ['a null lag', [{ lag_ms: null }], 'REPLICA_LAG_IN_MILLISECONDS is null'],
+    [
+      'a table it cannot read',
+      'error',
+      "ER_UNKNOWN_TABLE 1109: Unknown table 'REPLICA_HOST_STATUS' in information_schema"
+    ]
+  ])(
+    'records the lag as unknown with %s, and why',
+    async (_name, answer, why) => {
+      const { pool, connection } = fakePool({
+        transaction_read_only: [{ tro: 1, ro: 1 }],
+        innodb_read_only: [{ iro: 0 }],
+        'UNIX_TIMESTAMP(NOW(6))': [{ ms: 1795478405000 }],
+        ...(Array.isArray(answer) ? { replica_host_status: answer } : {})
+      });
+      if (answer === 'error') {
+        const query = connection.query;
+        connection.query = jest.fn((sql: string, callback: any) =>
+          sql.includes('replica_host_status')
+            ? callback(
+                Object.assign(new Error('ER_UNKNOWN_TABLE: Unknown table'), {
+                  code: 'ER_UNKNOWN_TABLE',
+                  errno: 1109,
+                  sqlMessage:
+                    "Unknown table 'REPLICA_HOST_STATUS' in information_schema"
+                })
+              )
+            : query(sql, callback)
+        );
+      }
+      const snapshot = await openReadOnlySnapshot(target, () => pool);
+      expect(snapshot.evidence.replicaLagMs).toBeNull();
+      expect(snapshot.evidence.replicaLagError).toBe(why);
+      expect(snapshot.evidence.snapshotAt).toBe('2026-11-24T00:00:05.000Z');
     }
-    const snapshot = await openReadOnlySnapshot(target, () => pool);
-    expect(snapshot.evidence.replicaLagMs).toBeNull();
-    expect(snapshot.evidence.snapshotAt).toBe('2026-11-24T00:00:05.000Z');
-  });
+  );
 
   it('takes an Aurora reader (innodb_read_only) as read-only', async () => {
     const { pool } = fakePool({

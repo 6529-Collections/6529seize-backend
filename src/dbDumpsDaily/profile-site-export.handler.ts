@@ -407,11 +407,12 @@ export function checkSnapshotTime(
 export function checkReplicaLag(
   gapMs: number,
   replicaLagMs: number | null,
-  acceptUnknown = false
+  acceptUnknown = false,
+  lagError: string | null = null
 ): void {
   if (replicaLagMs === null && !acceptUnknown) {
     throw new ProfileSiteExportSnapshotError(
-      "The replica's lag can't be read (information_schema.replica_host_status): only the gap since the freeze shows it holds the writes made before it. To rely on that gap alone, run again with acceptUnknownReplicaLag: true."
+      `The replica's lag can't be read from information_schema.replica_host_status (${lagError ?? 'no reason given'}): only the gap since the freeze shows it holds the writes made before it. If that error says this isn't an Aurora reader, or the switch owner agrees, run again with acceptUnknownReplicaLag: true to rely on the gap alone.`
     );
   }
   if (replicaLagMs !== null && replicaLagMs >= gapMs) {
@@ -631,8 +632,10 @@ export interface ProfileSiteExportResult {
   readonly identityFreezeAt: string | null;
   /** The server's clock when the snapshot was taken. */
   readonly snapshotAt: string;
-  /** Seconds from the freeze to the snapshot. */
+  /** Seconds from the freeze to the snapshot, rounded. */
   readonly snapshotGapSeconds: number;
+  /** Milliseconds from the freeze to the snapshot: what the lag is held to. */
+  readonly snapshotGapMs: number;
   /** The latest publication, archive and pointer change in the snapshot. */
   readonly latestSiteWrites: Record<string, string | null>;
   /** Site writes after the freeze, and the package ids accepted for them. */
@@ -891,10 +894,11 @@ export async function runProfileSiteExportJob(
   );
   const snapshot = await deps.openSnapshot(target);
   logger.info(
-    `[READ ONLY SNAPSHOT] [HOST ${snapshot.evidence.host}] [AT ${snapshot.evidence.snapshotAt}] [REPLICA LAG ${snapshot.evidence.replicaLagMs ?? 'unknown'} MS] [TRANSACTION READ ONLY ${snapshot.evidence.transactionReadOnly}] [SERVER READ ONLY ${snapshot.evidence.serverReadOnly}] [INNODB READ ONLY ${snapshot.evidence.innodbReadOnly}]`
+    `[READ ONLY SNAPSHOT] [HOST ${snapshot.evidence.host}] [AT ${snapshot.evidence.snapshotAt}] [REPLICA LAG ${snapshot.evidence.replicaLagMs ?? 'unknown'} MS]${snapshot.evidence.replicaLagError ? ` [REPLICA LAG ERROR ${snapshot.evidence.replicaLagError}]` : ''} [TRANSACTION READ ONLY ${snapshot.evidence.transactionReadOnly}] [SERVER READ ONLY ${snapshot.evidence.serverReadOnly}] [INNODB READ ONLY ${snapshot.evidence.innodbReadOnly}]`
   );
   let run;
   let gapSeconds = 0;
+  let gapMs = 0;
   let latest: LatestSiteWrites;
   let late: WriteAfterFreeze[];
   try {
@@ -905,6 +909,7 @@ export async function runProfileSiteExportJob(
       event.rehearsal ? 0 : MIN_SNAPSHOT_GAP_SECONDS
     );
     gapSeconds = gap.gapSeconds;
+    gapMs = gap.gapMs;
     latest = await latestSiteWrites(snapshot.executor);
     late = await writesAfterFreeze(snapshot.executor, event.frozenAt);
     // Before the freeze, sites are still published: a rehearsal records
@@ -913,7 +918,8 @@ export async function runProfileSiteExportJob(
       checkReplicaLag(
         gap.gapMs,
         snapshot.evidence.replicaLagMs,
-        event.acceptUnknownReplicaLag
+        event.acceptUnknownReplicaLag,
+        snapshot.evidence.replicaLagError
       );
       checkWritesAfterFreeze(late, event.acceptWritesAfterFreeze);
     }
@@ -1027,6 +1033,7 @@ export async function runProfileSiteExportJob(
     },
     snapshot_at: snapshot.evidence.snapshotAt,
     snapshot_gap_seconds: gapSeconds,
+    snapshot_gap_ms: gapMs,
     latest_site_writes: latestWrites,
     writes_after_freeze: late,
     accepted_writes_after_freeze: event.acceptWritesAfterFreeze,
@@ -1090,7 +1097,7 @@ export async function runProfileSiteExportJob(
           read?.owner === 'another run'
             ? `${key} already names an earlier run for this freeze, and was kept. To make this run the export, run again with replacePointer: true.`
             : read?.owner === 'unknown'
-              ? `S3 refused to write ${key} because one is there, and reading it back failed (${read.reason}): whether it names this run is unknown. Ask for links by frozenAt to see which run it names.`
+              ? `S3 refused to write ${key} because one is there, and reading it back failed (${read.reason}): whether it names this run is unknown. Ask for links by frozenAt: if their prefix is this run's, the pointer is this run's; if not, it names an earlier run, and this run is fetched by its prefix.`
               : String((error as Error)?.message ?? error);
         logger.warn(`[POINTER NOT WRITTEN] [${key}] ${pointerError}`);
       }
@@ -1143,6 +1150,7 @@ export async function runProfileSiteExportJob(
     identityFreezeAt: iso(freezeSetting.at),
     snapshotAt: snapshot.evidence.snapshotAt,
     snapshotGapSeconds: gapSeconds,
+    snapshotGapMs: gapMs,
     latestSiteWrites: latestWrites,
     writesAfterFreeze: late,
     acceptedWritesAfterFreeze: event.acceptWritesAfterFreeze,

@@ -12,25 +12,26 @@ a job the function knows, or it fails. Each export:
 - reads in one `START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY` with
   the session in UTC, and records the server's clock at the snapshot
   (`snapshot_at`);
-- holds the snapshot to the freeze. It refuses a snapshot taken before
-  `frozenAt` or more than 90 minutes after it, unless `acceptSnapshotGapMinutes`
-  allows more. A real run also refuses:
-  - when `IDENTITY_FREEZE_AT` is unset, is not a time, or differs from
-    `frozenAt`. It reads the setting as the site does (`Z` or `+00:00`, with
-    or without milliseconds, or Unix milliseconds), from the `prod/lambdas`
+- holds the snapshot to the freeze, which each job's event names in its own
+  field: `frozenAt` in the profile site export, `freezeAt` in the identity
+  export. It refuses a snapshot taken before the freeze or more than 90
+  minutes after it, unless `acceptSnapshotGapMinutes` allows more. A real
+  run also refuses:
+  - when `IDENTITY_FREEZE_AT` is unset, is not a time, or differs from the
+    freeze. It reads the setting as the site does (`Z` or `+00:00`, with or
+    without milliseconds, or Unix milliseconds), from the `prod/lambdas`
     secret in the function's region, at the start of each run. A warm
     container's environment keeps the secret as it was when the container
     started, so the run doesn't use it: a fix to the secret is seen on the
     next run;
-  - a snapshot less than 2 minutes after `frozenAt`, so the replica has the
-    writes made before the freeze;
+  - a snapshot less than 2 minutes after the freeze, so the replica has the
+    writes made before it;
   - a replica as far behind its writer as that gap, or further. The lag
     comes from `information_schema.replica_host_status` for this server. If
-    that can't be read (`null`), the run refuses unless it is given
-    `acceptUnknownReplicaLag: true`, relying on the 2-minute gap alone;
-  - a snapshot holding a site publication, archive or pointer change after
-    `frozenAt`, unless the switch owner accepted each of those writes
-    (`acceptWritesAfterFreeze`, below);
+    that can't be read, `evidence.replicaLagMs` is `null`,
+    `evidence.replicaLagError` holds the server's error, and the run
+    refuses unless it is given `acceptUnknownReplicaLag: true`, relying on
+    the 2-minute gap alone;
 - writes only to the private bucket `6529-chain-exports-<account>-<region>`
   under its own prefix. Every call names the function's own account as the
   bucket's expected owner, and every upload carries a SHA-256 checksum S3
@@ -39,6 +40,8 @@ a job the function knows, or it fails. Each export:
 - writes its manifest last, with the size and sha256 of every object
   (`links.json` included), so a run that stops early has none;
 - returns presigned download links, valid for at most 6 hours.
+
+Each job's own section adds its own rules.
 
 No database password and no long-lived key is handled by a person.
 
@@ -200,6 +203,12 @@ Event fields:
 
 Unknown fields are refused.
 
+Besides the rules every export keeps (top of this file), a real run of the
+profile site export refuses a snapshot holding a site publication, archive
+or pointer change after `frozenAt`, unless the switch owner accepted each of
+those writes (`acceptWritesAfterFreeze`; see "A publish that straddles the
+freeze").
+
 `usable` in the response is true only for `manifest.json`, the one manifest
 the import takes. A rehearsal is never usable; whether its stored
 publication records were all fetched is `unavailableProfiles` (0 when they
@@ -242,25 +251,30 @@ Check in `out.json`:
   reads the secret afresh.
 - `evidence.replicaLagMs` is a number. If it is `null`, the lag can't be
   read, and Tuesday's run will refuse unless it is given
-  `"acceptUnknownReplicaLag":true`. Tell the on-call engineer, and settle it
-  before Tuesday.
+  `"acceptUnknownReplicaLag":true`. `evidence.replicaLagError` says why:
+  `ER_UNKNOWN_TABLE 1109` or `ER_UNKNOWN_SYSTEM_VARIABLE 1193` mean the
+  reader isn't Aurora; any other error, such as `ER_PARSE_ERROR 1064`, is a
+  fault in the export: report it, and don't accept an unknown lag for it.
+  Tell the on-call engineer, and settle it before Tuesday.
 
 Then test the download links: fetch the manifest and `links.json`, then one
 file by its link, and check each against its sha256.
 
 ```text
 $ErrorActionPreference = 'Stop'
-[Net.ServicePointManager]::SecurityProtocol = 'Tls12'
-$out = Get-Content out.json -Raw | ConvertFrom-Json
-Invoke-WebRequest -UseBasicParsing $out.presignedManifestUrl -OutFile manifest.json
-Invoke-WebRequest -UseBasicParsing $out.presignedLinksUrl -OutFile links.json
-$manifest = Get-Content manifest.json -Raw | ConvertFrom-Json
-$links = Get-Content links.json -Raw | ConvertFrom-Json
-$file = $manifest.files | Where-Object { $_.name -like 'files/*' } | Select-Object -First 1
-Invoke-WebRequest -UseBasicParsing $links.links.($file.name) -OutFile one-file
-(Get-FileHash manifest.json -Algorithm SHA256).Hash.ToLower() -eq $out.manifestSha256
-(Get-FileHash links.json -Algorithm SHA256).Hash.ToLower() -eq ($manifest.files | Where-Object { $_.name -eq 'links.json' }).sha256
-(Get-FileHash one-file -Algorithm SHA256).Hash.ToLower() -eq $file.sha256
+& {
+  [Net.ServicePointManager]::SecurityProtocol = 'Tls12'
+  $out = Get-Content out.json -Raw | ConvertFrom-Json
+  Invoke-WebRequest -UseBasicParsing $out.presignedManifestUrl -OutFile manifest.json
+  Invoke-WebRequest -UseBasicParsing $out.presignedLinksUrl -OutFile links.json
+  $manifest = Get-Content manifest.json -Raw | ConvertFrom-Json
+  $links = Get-Content links.json -Raw | ConvertFrom-Json
+  $file = $manifest.files | Where-Object { $_.name -like 'files/*' } | Select-Object -First 1
+  Invoke-WebRequest -UseBasicParsing $links.links.($file.name) -OutFile one-file
+  (Get-FileHash manifest.json -Algorithm SHA256).Hash.ToLower() -eq $out.manifestSha256
+  (Get-FileHash links.json -Algorithm SHA256).Hash.ToLower() -eq ($manifest.files | Where-Object { $_.name -eq 'links.json' }).sha256
+  (Get-FileHash one-file -Algorithm SHA256).Hash.ToLower() -eq $file.sha256
+}
 ```
 
 bash, with `curl` and `jq` (`shasum -a 256 -c` instead of `sha256sum -c` on
@@ -346,16 +360,22 @@ time. The manifest and the response record the writes
     earlier run stays the export. Send both runs' `prefix` and
     `manifestSha256` to the switch owner. Only if the switch owner picks this
     run, run again with `"replacePointer":true`.
-  - Any other `pointerError`: send the switch owner this run's `prefix` and
-    `manifestSha256`, and fetch fresh links by `prefix`, not `frozenAt`.
+  - `pointerError` says reading the pointer back failed: ask for links by
+    `frozenAt`. If their prefix is this run's, the pointer is this run's and
+    all is well. If not, it names an earlier run: do as in the case above,
+    and fetch this run by its `prefix`.
+  - Any other `pointerError` (the write itself failed): send the
+    switch owner this run's `prefix` and `manifestSha256`, and fetch fresh
+    links by `prefix`, not `frozenAt`.
 - `host`, `readOnly: true` and `evidence`: the replica it read.
   `evidence.transactionReadOnly` is true, and `serverReadOnly` or
   `innodbReadOnly` is true.
 - `bucketPrivacy.owner` is the function's own account.
-- `snapshotAt` and `snapshotGapSeconds`: the snapshot came at least 120
-  seconds after the freeze.
-- `evidence.replicaLagMs` is below `snapshotGapSeconds` × 1000, or `null`
-  only in a run given `acceptUnknownReplicaLag`.
+- `snapshotAt` and `snapshotGapMs`: the snapshot came at least 120 000 ms
+  after the freeze (`snapshotGapSeconds` is the same, rounded).
+- `evidence.replicaLagMs` is below `snapshotGapMs`, or `null` only in a run
+  given `acceptUnknownReplicaLag`, with the reason in
+  `evidence.replicaLagError`.
 - `latestSiteWrites` (publication, archive and pointer change) and
   `writesAfterFreeze`: no site writes after the freeze, except those listed
   in `acceptedWritesAfterFreeze`.
@@ -374,7 +394,9 @@ copy of the real export and keeps it with `out.json`: every file in the
 links file, the manifest included, and the pointer. These commands download
 everything and check every file's sha256 against the manifest. They work
 for `links-out.json` from the links job too: put its name in place of
-`out.json`.
+`out.json`. Start in an empty folder, beside `out.json`: each run's files
+go into their own `profile-site-export-<run>/`, the pointer included, so a
+rehearsal's files never mix with Tuesday's.
 
 PowerShell:
 
@@ -384,13 +406,14 @@ $ErrorActionPreference = 'Stop'
   [Net.ServicePointManager]::SecurityProtocol = 'Tls12'
   $ProgressPreference = 'SilentlyContinue'
   $out = Get-Content out.json -Raw | ConvertFrom-Json
-  $dir = 'profile-site-export'
+  $run = Split-Path (Split-Path $out.manifestKey -Parent) -Leaf
+  $dir = "profile-site-export-$run"
   New-Item -ItemType Directory -Force "$dir\files" | Out-Null
   Invoke-WebRequest -UseBasicParsing $out.presignedLinksUrl -OutFile links-now.json
   $links = (Get-Content links-now.json -Raw | ConvertFrom-Json).links
   foreach ($p in $links.PSObject.Properties) { Invoke-WebRequest -UseBasicParsing $p.Value -OutFile (Join-Path $dir $p.Name) }
-  if (-not (Test-Path "$dir\links.json")) { Copy-Item links-now.json "$dir\links.json" }
-  if ($out.presignedPointerUrl) { Invoke-WebRequest -UseBasicParsing $out.presignedPointerUrl -OutFile pointer.json }
+  if ($null -eq $links.PSObject.Properties['links.json']) { Copy-Item -Force links-now.json "$dir\links.json" }
+  if ($out.presignedPointerUrl) { Invoke-WebRequest -UseBasicParsing $out.presignedPointerUrl -OutFile "$dir\pointer.json" }
   $manifestFile = Join-Path $dir (Split-Path $out.manifestKey -Leaf)
   $manifest = Get-Content $manifestFile -Raw | ConvertFrom-Json
   $wrong = @($manifest.files | Where-Object { $f = Join-Path $dir $_.name; -not (Test-Path -LiteralPath $f) -or (Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash.ToLower() -ne $_.sha256 })
@@ -409,11 +432,11 @@ macOS):
 
 ```text
 j() { jq -r "$@" | tr -d '\r'; }
-dir=profile-site-export; mkdir -p "$dir/files"
+run=$(basename "$(dirname "$(j .manifestKey out.json)")"); dir="profile-site-export-$run"; mkdir -p "$dir/files"
 curl -fsS -o links-now.json "$(j .presignedLinksUrl out.json)"
 j '.links | to_entries[] | "\(.key)\t\(.value)"' links-now.json | while IFS=$'\t' read -r name url; do curl -fsS -o "$dir/$name" "$url" || echo "FAILED $name"; done
-[ -f "$dir/links.json" ] || cp links-now.json "$dir/links.json"
-pointer=$(j '.presignedPointerUrl // empty' out.json); [ -n "$pointer" ] && curl -fsS -o pointer.json "$pointer"
+[ "$(j '.links | has("links.json")' links-now.json)" = true ] || cp -f links-now.json "$dir/links.json"
+pointer=$(j '.presignedPointerUrl // empty' out.json); [ -n "$pointer" ] && curl -fsS -o "$dir/pointer.json" "$pointer"
 manifest="$dir/$(basename "$(j .manifestKey out.json)")"
 j '.files[] | "\(.sha256)  \(.name)"' "$manifest" | (cd "$dir" && sha256sum -c --quiet) && echo "every file matches"
 echo "$(j .manifestSha256 out.json)  $manifest" | sha256sum -c
@@ -422,7 +445,7 @@ echo "$(j .manifestSha256 out.json)  $manifest" | sha256sum -c
 It must print `every file matches` and then `OK`.
 
 Anyone with read access to the bucket can also use
-`aws s3 cp --recursive s3://<bucket>/<prefix> ./profile-site-export/`.
+`aws s3 cp --recursive s3://<bucket>/<prefix> ./profile-site-export-<run>/`.
 
 Every `files/<cid>` is at most 2 MiB, the chain's document limit, since each
 becomes a chain document. `cms-fields.json`, `report.json`, `links.json` and

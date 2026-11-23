@@ -85,6 +85,8 @@ export interface ReadOnlyEvidence {
    * that can't be read (not Aurora, or no row for this server).
    */
   readonly replicaLagMs: number | null;
+  /** Why replicaLagMs is null: the server's error code and message. */
+  readonly replicaLagError: string | null;
 }
 
 export interface ReadOnlySnapshot {
@@ -125,7 +127,70 @@ export class ReadOnlySnapshotExecutor extends SqlExecutor {
   }
 }
 
-function query(connection: mysql.PoolConnection, sql: string): Promise<any[]> {
+/**
+ * This Aurora reader's lag behind the writer. The alias is not `lag`: LAG
+ * is a reserved word since MySQL 8.0.2, and `AS lag` fails to parse.
+ */
+export const REPLICA_LAG_SQL =
+  'SELECT REPLICA_LAG_IN_MILLISECONDS AS lag_ms FROM information_schema.replica_host_status WHERE SERVER_ID = @@aurora_server_id';
+
+/** The lag in milliseconds, or null with the reason it couldn't be read. */
+export interface ReplicaLagReading {
+  readonly lagMs: number | null;
+  readonly error: string | null;
+}
+
+/** A server error as `CODE errno: message`. */
+function sqlErrorText(error: unknown): string {
+  const { code, errno, sqlMessage, message } = (error ?? {}) as {
+    code?: unknown;
+    errno?: unknown;
+    sqlMessage?: unknown;
+    message?: unknown;
+  };
+  const id = [code, errno].filter((it) => it !== undefined).join(' ');
+  const text = String(sqlMessage ?? message ?? error);
+  return id ? `${id}: ${text}` : text;
+}
+
+/**
+ * Reads the lag on the snapshot's connection. A server that isn't Aurora
+ * has neither the table nor the variable (MySQL errors 1109 and 1193); the
+ * error is kept, never swallowed, so a parse error can't pass as "not
+ * Aurora".
+ */
+export async function readReplicaLag(
+  connection: Queryable
+): Promise<ReplicaLagReading> {
+  let row: any;
+  try {
+    [row] = await query(connection, REPLICA_LAG_SQL);
+  } catch (error) {
+    return { lagMs: null, error: sqlErrorText(error) };
+  }
+  if (row === undefined) {
+    return {
+      lagMs: null,
+      error: 'information_schema.replica_host_status has no row for this server'
+    };
+  }
+  const value = Number(row.lag_ms);
+  if (
+    row.lag_ms === null ||
+    row.lag_ms === undefined ||
+    !Number.isFinite(value)
+  ) {
+    return {
+      lagMs: null,
+      error: `REPLICA_LAG_IN_MILLISECONDS is ${String(row.lag_ms)}`
+    };
+  }
+  return { lagMs: value, error: null };
+}
+
+type Queryable = Pick<mysql.Connection, 'query'>;
+
+function query(connection: Queryable, sql: string): Promise<any[]> {
   return new Promise((resolve, reject) =>
     connection.query(sql, (error, rows) =>
       error ? reject(error) : resolve(rows as any[])
@@ -229,27 +294,15 @@ export async function openReadOnlySnapshot(
     if (!Number.isSafeInteger(snapshotMs) || snapshotMs <= 0) {
       throw new ReplicaGuardError("The server's clock could not be read");
     }
-    let replicaLagMs: number | null = null;
-    try {
-      const [lag] = await query(
-        connection,
-        'SELECT REPLICA_LAG_IN_MILLISECONDS AS lag FROM information_schema.replica_host_status WHERE SERVER_ID = @@aurora_server_id'
-      );
-      const value = Number(lag?.lag);
-      replicaLagMs =
-        lag?.lag === null || lag?.lag === undefined || !Number.isFinite(value)
-          ? null
-          : value;
-    } catch {
-      replicaLagMs = null;
-    }
+    const lag = await readReplicaLag(connection);
     const evidence: ReadOnlyEvidence = {
       host: target.host,
       transactionReadOnly,
       serverReadOnly,
       innodbReadOnly: innodb,
       snapshotAt: new Date(snapshotMs).toISOString(),
-      replicaLagMs
+      replicaLagMs: lag.lagMs,
+      replicaLagError: lag.error
     };
     return {
       executor: new ReadOnlySnapshotExecutor(connection),
