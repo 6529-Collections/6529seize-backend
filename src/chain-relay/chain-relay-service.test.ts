@@ -85,12 +85,18 @@ class FakeDb {
   }
   async setStatus(
     txId: string,
-    change: { from: PendingStatus; to: PendingStatus },
+    change: { from: PendingStatus; to: PendingStatus; ifOutcome?: string },
     fields: { result_json?: string | null; last_error?: string | null },
     now: number
   ) {
     const op = this.ops.get(txId);
     if (!op || op.status !== change.from) return false;
+    if (
+      change.ifOutcome &&
+      JSON.parse(op.result_json ?? 'null')?.outcome !== change.ifOutcome
+    ) {
+      return false;
+    }
     this.ops.set(txId, {
       ...op,
       status: change.to,
@@ -100,6 +106,14 @@ class FakeDb {
     });
     return true;
   }
+  async countOpenCreatedBy(wallet: string, now: number) {
+    return Array.from(this.ops.values()).filter(
+      (op) =>
+        op.created_by === wallet &&
+        op.status === 'PENDING' &&
+        op.expires_at > now
+    ).length;
+  }
   async awaiting(wallet: string, now: number) {
     return Array.from(this.ops.values())
       .filter(
@@ -108,9 +122,15 @@ class FakeDb {
           op.expires_at > now &&
           op.signers.some((it) => it.signer === wallet && !it.sig)
       )
-      .map((op) => op.tx_id);
+      .map(({ unsigned_hex: _u, typed_data_json: _t, ...summary }) => ({
+        ...summary,
+        signers: summary.signers.map((it) => ({ ...it }))
+      }));
   }
 }
+
+/** The anchor's identity, as the chain gives a wallet's. */
+const IDENTITY = { principalId: JOIN_PRINCIPAL };
 
 function setup() {
   const db = new FakeDb();
@@ -121,7 +141,14 @@ function setup() {
     })),
     getTx: jest.fn(async (_txId: string): Promise<unknown> => {
       throw notHeld();
-    })
+    }),
+    getOps: jest.fn(
+      async (): Promise<unknown> => ({ maxValidityMs: 86_400_000 })
+    ),
+    getIdentityByWallet: jest.fn(
+      async (wallet: string): Promise<unknown> =>
+        wallet === addr(ANCHOR) ? IDENTITY : null
+    )
   };
   let now = START;
   const service = new ChainRelayService(
@@ -176,13 +203,46 @@ function outcomeUnknown(txId = TX) {
   return error;
 }
 
-function notHeld() {
-  return new ChainGatewayError(
+/** The client's not_held, with the chain time of the read when given. */
+function notHeld(readTime?: number) {
+  const error = new ChainGatewayError(
     "/v1/tx: not_held: neither a block on this node's chain nor its pool holds that transaction",
     404,
     'not_held',
     '/v1/tx'
   );
+  if (readTime !== undefined) {
+    error.read = {
+      at: 'head',
+      height: 40,
+      root: '0x' + '00'.repeat(32),
+      slot: 40,
+      time: readTime,
+      finalizedHeight: 38,
+      headHeight: 40,
+      network: '0x' + '65'.repeat(32)
+    };
+  }
+  return error;
+}
+
+/** Another join the anchor's wallet proposes, to the n-th joining wallet. */
+function otherJoin(n: number) {
+  const joiner = new Wallet('0x' + (40 + n).toString(16).repeat(32));
+  const held = join({
+    signer: ANCHOR.address,
+    joiner: joiner.address,
+    expiresAt: EXPIRES
+  });
+  return {
+    ...joinInput([{ role: 0, keyType: 1, sig: held.sign(ANCHOR) }]),
+    txId: held.txId,
+    typedData: held.typedData,
+    required: [
+      { role: 0, keyType: 1, signer: ANCHOR.address },
+      { role: 4, keyType: 1, signer: joiner.address }
+    ]
+  };
 }
 
 const resultOf = (op: PendingOperation) => JSON.parse(op.result_json!);
@@ -226,6 +286,7 @@ describe('joinTermsOf', () => {
       principal: JOIN_PRINCIPAL,
       signer: addr(ANCHOR),
       joiner: addr(JOINER),
+      notBefore: EXPIRES - 3_660_000,
       expiresAt: EXPIRES
     });
   });
@@ -472,6 +533,7 @@ describe('ChainRelayService pending operations', () => {
     const find = db.find.bind(db);
     db.find = jest
       .fn()
+      .mockImplementationOnce(async () => null)
       .mockImplementationOnce(async () => null)
       .mockImplementation(find);
     const op = await service.createPending(
@@ -756,26 +818,244 @@ describe('ChainRelayService pending operations', () => {
   });
 });
 
-describe('ChainRelayService.get, of a join sent with an unknown outcome', () => {
+describe('ChainRelayService holding a join: its limits and the identity check', () => {
+  const statusOf = async (pending: Promise<unknown>) => {
+    const error = await pending.then(
+      () => null,
+      (e: unknown) => e
+    );
+    return error instanceof CustomApiCompliantException
+      ? error.getStatusCode()
+      : error instanceof BadRequestException
+        ? 400
+        : error;
+  };
+
+  it("holds it only while the identity's wallet is a wallet of that identity", async () => {
+    const { service, gateway, db } = setup();
+    gateway.getIdentityByWallet.mockResolvedValueOnce(null);
+    expect(
+      await statusOf(service.createPending(joinInput(), ANCHOR.address))
+    ).toBe(400);
+    gateway.getIdentityByWallet.mockResolvedValueOnce({
+      principalId: '0x' + 'ee'.repeat(32)
+    });
+    expect(
+      await statusOf(service.createPending(joinInput(), ANCHOR.address))
+    ).toBe(400);
+    gateway.getIdentityByWallet.mockRejectedValueOnce(
+      new ChainGatewayError('down', null, 'network', '/v1/identities')
+    );
+    const unavailable = await service
+      .createPending(joinInput(), ANCHOR.address)
+      .catch((e: unknown) => e);
+    expect(unavailable).toBeInstanceOf(CustomApiCompliantException);
+    expect(unavailable).toMatchObject({ code: 'CHAIN_UNAVAILABLE' });
+    expect((unavailable as CustomApiCompliantException).getStatusCode()).toBe(
+      503
+    );
+    expect(db.ops.size).toBe(0);
+    // The joining wallet holding it first: the identity's wallet is checked.
+    const held = await service.createPending(
+      joinInput([joinerSignature()]),
+      JOINER.address
+    );
+    expect(held.status).toBe('PENDING');
+    expect(gateway.getIdentityByWallet).toHaveBeenLastCalledWith(addr(ANCHOR));
+  });
+
+  it("refuses a window longer than the chain's maxValidityMs, or a day when it can't be read", async () => {
+    const { service, gateway, db } = setup();
+    // The join's window, notBefore to expiresAt, is 61 minutes.
+    gateway.getOps.mockResolvedValueOnce({ maxValidityMs: 3_600_000 });
+    await expect(
+      service.createPending(joinInput(), ANCHOR.address)
+    ).rejects.toThrow("the chain's maxValidityMs");
+    expect(db.ops.size).toBe(0);
+    // Unreadable: a day, which this window fits.
+    const fresh = setup();
+    fresh.gateway.getOps.mockRejectedValueOnce(new Error('down'));
+    expect(
+      (await fresh.service.createPending(joinInput(), ANCHOR.address)).status
+    ).toBe('PENDING');
+    // Ending more than a day from now, however short its window.
+    const late = join({
+      signer: ANCHOR.address,
+      joiner: JOINER.address,
+      expiresAt: START + 25 * 3_600_000
+    });
+    await expect(
+      setup().service.createPending(
+        {
+          ...joinInput([{ role: 0, keyType: 1, sig: late.sign(ANCHOR) }]),
+          txId: late.txId,
+          typedData: late.typedData,
+          expiresAt: START + 25 * 3_600_000
+        },
+        ANCHOR.address
+      )
+    ).rejects.toThrow("the chain's maxValidityMs");
+  });
+
+  it("caps a join's bytes at a real join's size, and no other submit's", async () => {
+    const { service, db } = setup();
+    await expect(
+      service.createPending(
+        { ...joinInput(), unsigned: '0x' + '00'.repeat(4 * 1024 + 1) },
+        ANCHOR.address
+      )
+    ).rejects.toThrow('at most 4096');
+    await expect(
+      service.createPending(
+        {
+          ...joinInput(),
+          typedData: {
+            ...JOIN.typedData,
+            domain: { ...JOIN.typedData.domain, padding: 'x'.repeat(8_192) }
+          }
+        },
+        ANCHOR.address
+      )
+    ).rejects.toThrow('typed_data is too large');
+    expect(db.ops.size).toBe(0);
+    expect(
+      await service.submit({
+        unsigned: '0x' + '00'.repeat(5 * 1024),
+        signatures: [{ role: 0, keyType: 1, sig: sign(ANCHOR) }],
+        txId: TX
+      })
+    ).toMatchObject({ outcome: 'accepted' });
+  });
+
+  it('holds at most five pending joins a wallet created', async () => {
+    const { service } = setup();
+    for (let n = 0; n < 5; n++) {
+      await service.createPending(otherJoin(n), ANCHOR.address);
+    }
+    const sixth = await service
+      .createPending(otherJoin(5), ANCHOR.address)
+      .catch((e: unknown) => e);
+    expect(sixth).toBeInstanceOf(CustomApiCompliantException);
+    expect((sixth as CustomApiCompliantException).getStatusCode()).toBe(429);
+    expect(sixth).toMatchObject({ code: 'TOO_MANY_PENDING' });
+    // Another wallet's are its own; a cancelled one frees its place.
+    expect(
+      (
+        await service.createPending(
+          joinInput([joinerSignature()]),
+          JOINER.address
+        )
+      ).status
+    ).toBe('PENDING');
+    await service.cancel(otherJoin(0).txId, ANCHOR.address);
+    expect(
+      (await service.createPending(otherJoin(5), ANCHOR.address)).status
+    ).toBe('PENDING');
+  });
+
+  it('lists the joins waiting for a wallet without their bytes', async () => {
+    const { service } = setup();
+    await service.createPending(joinInput(), ANCHOR.address);
+    const listed = await service.awaiting(JOINER.address);
+    expect(listed.map((it) => it.tx_id)).toEqual([TX]);
+    expect(listed[0]).not.toHaveProperty('unsigned_hex');
+    expect(listed[0]).not.toHaveProperty('typed_data_json');
+    expect(listed[0].signers.map((it) => it.role)).toEqual([0, 4]);
+  });
+
+  it('answers a join posted again once it was sent with its state, sending nothing', async () => {
+    const { service, gateway } = setup();
+    await service.createPending(bothSigned(), ANCHOR.address);
+    expect(
+      (await service.createPending(bothSigned(), JOINER.address)).status
+    ).toBe('SUBMITTED');
+    expect(gateway.submit).toHaveBeenCalledTimes(1);
+    const failed = setup();
+    failed.gateway.submit.mockRejectedValueOnce(
+      new ChainGatewayError('no', 422, 'inadmissible', '/v1/submit')
+    );
+    await failed.service.createPending(bothSigned(), ANCHOR.address);
+    expect(
+      (await failed.service.createPending(bothSigned(), ANCHOR.address)).status
+    ).toBe('FAILED');
+    expect(failed.gateway.submit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ChainRelayService.get, of a sent join the chain has yet to settle', () => {
   async function unknownJoin(error = outcomeUnknown()) {
     const it = setup();
     it.gateway.submit.mockRejectedValueOnce(error);
     await it.service.createPending(bothSigned(), ANCHOR.address);
     return it;
   }
+  const finalTx = { txId: TX, status: 'final', height: 12, block: '0xb' };
 
-  it('records what the chain holds', async () => {
-    const { service, gateway } = await unknownJoin();
-    const tx = { txId: TX, status: 'final', height: 12, block: '0xb' };
-    gateway.getTx.mockResolvedValueOnce(tx);
+  it('records what the chain holds, and asks no more once it is final', async () => {
+    const { service, gateway, tick } = await unknownJoin();
+    gateway.getTx.mockResolvedValueOnce(finalTx);
     const op = await service.get(TX);
     expect(gateway.getTx).toHaveBeenCalledWith(TX);
     expect(op.status).toBe('SUBMITTED');
-    expect(resultOf(op)).toEqual({ txId: TX, outcome: 'accepted', tx });
+    expect(resultOf(op)).toEqual({
+      txId: TX,
+      outcome: 'accepted',
+      tx: finalTx
+    });
     expect(op.last_error).toBeNull();
-    // Settled: no more asking.
+    tick(60_000);
     await service.get(TX);
     expect(gateway.getTx).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks a join the chain ran and failed as FAILED, with its result', async () => {
+    const { service, gateway } = await unknownJoin();
+    const tx = {
+      txId: TX,
+      status: 'failed',
+      height: 12,
+      result: { code: '0x2101', name: 'ALREADY_BOUND' }
+    };
+    gateway.getTx.mockResolvedValueOnce(tx);
+    const op = await service.get(TX);
+    expect(op.status).toBe('FAILED');
+    expect(resultOf(op)).toEqual({
+      txId: TX,
+      outcome: 'refused',
+      code: 'ALREADY_BOUND',
+      tx
+    });
+    expect(op.last_error).toContain('ALREADY_BOUND');
+  });
+
+  it('keeps asking, at most every 10 s, about one only in the pool until it is final', async () => {
+    const { service, gateway, tick } = setup();
+    // Sent and taken: the node's answer, then the chain's.
+    await service.createPending(bothSigned(), ANCHOR.address);
+    gateway.getTx.mockResolvedValueOnce({ txId: TX, status: 'pending' });
+    const pooled = await service.get(TX);
+    expect(resultOf(pooled)).toEqual({
+      txId: TX,
+      accepted: true,
+      outcome: 'accepted',
+      tx: { txId: TX, status: 'pending' },
+      checkedAt: START
+    });
+    tick(9_000);
+    await service.get(TX);
+    expect(gateway.getTx).toHaveBeenCalledTimes(1);
+    tick(1_000);
+    gateway.getTx.mockResolvedValueOnce(finalTx);
+    const landed = await service.get(TX);
+    expect(resultOf(landed)).toEqual({
+      txId: TX,
+      accepted: true,
+      outcome: 'accepted',
+      tx: finalTx
+    });
+    tick(60_000);
+    await service.get(TX);
+    expect(gateway.getTx).toHaveBeenCalledTimes(2);
   });
 
   it('records the other transaction the node named, when the chain holds it', async () => {
@@ -790,31 +1070,23 @@ describe('ChainRelayService.get, of a join sent with an unknown outcome', () => 
       txId: TX,
       outcome: 'accepted',
       nodeTxId: OTHER_TX,
-      tx
+      tx,
+      checkedAt: START
     });
   });
 
-  it('keeps it unknown while it may still land, or the chain cannot say', async () => {
+  it("fails it only once the chain's own time is well past its expiry", async () => {
     const { service, gateway, tick } = await unknownJoin();
+    // This backend's clock long past it, the chain's not: still unknown.
+    tick(24 * 3_600_000);
+    gateway.getTx.mockRejectedValueOnce(notHeld(EXPIRES + 60_000));
     expect(resultOf(await service.get(TX)).outcome).toBe('unknown');
-    // Expired, but not long enough for the blocks before it to arrive.
-    tick(3_600_000 + 60_000);
-    expect((await service.get(TX)).status).toBe('SUBMITTED');
-    // Long expired, but the chain doesn't answer: in time, or at all.
-    tick(10 * 60_000);
-    gateway.getTx.mockImplementationOnce(() => new Promise(() => undefined));
-    const started = Date.now();
+    // An answer without its read time can't say either.
+    tick(10_000);
+    gateway.getTx.mockRejectedValueOnce(notHeld());
     expect(resultOf(await service.get(TX)).outcome).toBe('unknown');
-    expect(Date.now() - started).toBeLessThan(2_000);
-    gateway.getTx.mockRejectedValueOnce(
-      new ChainGatewayError('down', null, 'network', '/v1/tx')
-    );
-    expect(resultOf(await service.get(TX)).outcome).toBe('unknown');
-  });
-
-  it('fails it once it has expired and the chain never held it', async () => {
-    const { service, tick } = await unknownJoin();
-    tick(3_600_000 + 6 * 60_000);
+    tick(10_000);
+    gateway.getTx.mockRejectedValueOnce(notHeld(EXPIRES + 6 * 60_000));
     const op = await service.get(TX);
     expect(op.status).toBe('FAILED');
     expect(resultOf(op)).toEqual({
@@ -823,6 +1095,67 @@ describe('ChainRelayService.get, of a join sent with an unknown outcome', () => 
       code: 'expired'
     });
     expect(op.last_error).toContain('never took');
+  });
+
+  it('keeps it unknown when the chain cannot say, in time or at all, and notes each ask', async () => {
+    const { service, gateway, tick } = await unknownJoin();
+    tick(24 * 3_600_000);
+    gateway.getTx.mockImplementationOnce(() => new Promise(() => undefined));
+    const started = Date.now();
+    const waited = await service.get(TX);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(resultOf(waited)).toMatchObject({
+      outcome: 'unknown',
+      checkedAt: START + 24 * 3_600_000
+    });
+    expect(waited.last_error).toContain(`may have taken ${TX}`);
+    tick(10_000);
+    gateway.getTx.mockRejectedValueOnce(
+      new ChainGatewayError('down', null, 'network', '/v1/tx')
+    );
+    expect(resultOf(await service.get(TX)).outcome).toBe('unknown');
+    expect(gateway.getTx).toHaveBeenCalledTimes(2);
+  });
+
+  it('never undoes what another request recorded meanwhile', async () => {
+    // A read finding it held nowhere, while another read records the chain
+    // holding it.
+    const { service, gateway, db, tick } = await unknownJoin();
+    tick(24 * 3_600_000);
+    gateway.getTx.mockImplementationOnce(async () => {
+      const op = db.ops.get(TX)!;
+      db.ops.set(TX, {
+        ...op,
+        result_json: JSON.stringify({
+          txId: TX,
+          outcome: 'accepted',
+          tx: finalTx
+        })
+      });
+      throw notHeld(EXPIRES + 60 * 60_000);
+    });
+    const op = await service.get(TX);
+    expect(op.status).toBe('SUBMITTED');
+    expect(resultOf(op).outcome).toBe('accepted');
+    // The send's own answer, after a read settled it from the chain.
+    const sent = setup();
+    await sent.service.createPending(joinInput(), ANCHOR.address);
+    sent.gateway.getTx.mockResolvedValueOnce(finalTx);
+    sent.gateway.submit.mockImplementationOnce(async () => {
+      await sent.service.get(TX);
+      throw new ChainGatewayError('busy', 503, 'busy', '/v1/submit');
+    });
+    const done = await sent.service.addSignature(
+      TX,
+      joinerSignature(),
+      JOINER.address
+    );
+    expect(done.status).toBe('SUBMITTED');
+    expect(resultOf(done)).toEqual({
+      txId: TX,
+      outcome: 'accepted',
+      tx: finalTx
+    });
   });
 });
 

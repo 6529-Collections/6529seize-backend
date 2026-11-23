@@ -23,7 +23,8 @@ import {
   chainPendingOperationsDb,
   ChainPendingOperationsDb,
   PendingOperation,
-  PendingSigner
+  PendingSigner,
+  PendingSummary
 } from './chain-pending-operations.db';
 
 const logger = Logger.get('CHAIN_RELAY');
@@ -37,14 +38,25 @@ const IDENTITY_JOIN_CODE = 0x010f;
 const ROLE_SIGNER = 0;
 const ROLE_JOINER = 4;
 
+/** A directly submitted envelope's cap. */
 const MAX_UNSIGNED_BYTES = 128 * 1024;
-const MAX_TYPED_DATA_CHARS = 64 * 1024;
-const MAX_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000 + 60_000;
+/** A held join's caps: its envelope is about 300 bytes, its typed data 2 KiB. */
+const MAX_JOIN_UNSIGNED_BYTES = 4 * 1024;
+const MAX_JOIN_TYPED_DATA_CHARS = 8 * 1024;
+/** The chain's maxValidityMs (GET /v1/ops) when it can't be read: a day. */
+const DEFAULT_MAX_VALIDITY_MS = 24 * 60 * 60 * 1000;
+/** How long the chain's maxValidityMs, once read, is kept. */
+const OPS_TTL_MS = 10 * 60_000;
+/** How many pending joins one wallet may have created at once. */
+const MAX_OPEN_PER_CREATOR = 5;
 /** How long a read waits for the chain to say what became of a submit. */
 const CHAIN_CHECK_MS = 3_000;
+/** How often reads ask the chain about one operation, at most. */
+const CHECK_EVERY_MS = 10_000;
 /**
- * How long past its expiry an operation the chain doesn't hold is taken as
- * never landed: time for the blocks before its expiry to reach the node.
+ * How long past its expiry, in the chain's time, an operation the chain
+ * doesn't hold is taken as never landed: time for the blocks before its
+ * expiry to reach the node that answers.
  */
 const SETTLE_GRACE_MS = 5 * 60_000;
 
@@ -89,7 +101,10 @@ export type RelaySubmitResult = ChainSubmitResult & {
   readonly outcome: 'accepted';
 };
 
-type Gateway = Pick<ChainGatewayClient, 'submit' | 'getTx'>;
+type Gateway = Pick<
+  ChainGatewayClient,
+  'submit' | 'getTx' | 'getOps' | 'getIdentityByWallet'
+>;
 
 export interface ChainTypedData {
   readonly domain: Record<string, unknown>;
@@ -126,7 +141,8 @@ export interface JoinTerms {
   readonly signer: string;
   /** The wallet joining the identity, which signs it in role 4. */
   readonly joiner: string;
-  /** Unix ms. */
+  /** Unix ms: the window the chain takes it in. */
+  readonly notBefore: number;
   readonly expiresAt: number;
 }
 
@@ -137,6 +153,7 @@ const JOIN_FIELDS: Record<string, Record<string, string>> = {
     principal: 'bytes32',
     keyType: 'uint8',
     keyId: 'bytes32',
+    notBefore: 'uint64',
     expiresAt: 'uint64'
   },
   IdentityJoinBody: { wallet: 'address' }
@@ -168,6 +185,7 @@ export function joinTermsOf(typedData: ChainTypedData): JoinTerms | null {
   const principal = text(header?.principal);
   const keyId = ADDRESS_WORD.exec(text(header?.keyId));
   const joiner = text(body?.wallet);
+  const notBefore = Number(header?.notBefore);
   const expiresAt = Number(header?.expiresAt);
   if (
     !TX_ID.test(principal) ||
@@ -175,11 +193,18 @@ export function joinTermsOf(typedData: ChainTypedData): JoinTerms | null {
     Number(header?.keyType) !== WALLET_KEY_TYPE ||
     !keyId ||
     !ADDRESS.test(joiner) ||
+    !Number.isSafeInteger(notBefore) ||
     !Number.isSafeInteger(expiresAt)
   ) {
     return null;
   }
-  return { principal, signer: '0x' + keyId[1], joiner, expiresAt };
+  return {
+    principal,
+    signer: '0x' + keyId[1],
+    joiner,
+    notBefore,
+    expiresAt
+  };
 }
 
 /** Whether an operation type, by name or code, is IDENTITY_JOIN. */
@@ -316,25 +341,62 @@ function unknownResult(txId: string, nodeTxId: string | null): string {
   });
 }
 
-function refusedResult(txId: string, code: string | null): string {
-  return JSON.stringify({ txId, outcome: 'refused', code });
+function refusedResult(
+  txId: string,
+  code: string | null,
+  more: Record<string, unknown> = {}
+): string {
+  return JSON.stringify({ txId, outcome: 'refused', code, ...more });
 }
 
-/** A held operation whose outcome is unknown, and the other txId it named. */
-function unknownOf(op: PendingOperation): { nodeTxId: string | null } | null {
+/** A sent operation's result that the chain has yet to make final. */
+interface OpenResult {
+  readonly result: Record<string, unknown>;
+  readonly outcome: 'unknown' | 'accepted';
+  /** Another txId the node named. */
+  readonly nodeTxId: string | null;
+  /** When a read last asked the chain (Unix ms), or 0. */
+  readonly checkedAt: number;
+}
+
+/**
+ * The result of a SUBMITTED operation while the chain has yet to settle
+ * it: unknown, or accepted but not yet final in a block. Null otherwise.
+ */
+function openResultOf(op: PendingOperation): OpenResult | null {
   if (op.status !== 'SUBMITTED' || !op.result_json) return null;
   try {
-    const result = JSON.parse(op.result_json) as {
-      outcome?: unknown;
-      nodeTxId?: unknown;
-    };
-    if (result?.outcome !== 'unknown') return null;
+    const result = JSON.parse(op.result_json) as Record<string, unknown>;
+    const outcome = result?.outcome;
+    const final =
+      (result?.tx as { status?: unknown } | undefined)?.status === 'final';
+    if (outcome !== 'unknown' && !(outcome === 'accepted' && !final)) {
+      return null;
+    }
     return {
-      nodeTxId: typeof result.nodeTxId === 'string' ? result.nodeTxId : null
+      result,
+      outcome,
+      nodeTxId: typeof result.nodeTxId === 'string' ? result.nodeTxId : null,
+      checkedAt: Number(result.checkedAt) || 0
     };
   } catch {
     return null;
   }
+}
+
+/**
+ * Where the chain has a transaction: in a block or the pool (`tx`), held
+ * nowhere as of the chain time of the read (`notHeldAt`, null when the
+ * answer carried none), or null when it can't say in time.
+ */
+type ChainPlace =
+  | { readonly tx: ChainTx }
+  | { readonly notHeldAt: number | null }
+  | null;
+
+/** Whether an operation has been sent: its state is the chain's now. */
+function isSent(op: PendingOperation): boolean {
+  return op.status === 'SUBMITTED' || op.status === 'FAILED';
 }
 
 /** Two first posts of one operation at once: the second insert lost. */
@@ -412,6 +474,10 @@ export class ChainRelayService {
     private readonly chainCheckMs: number = CHAIN_CHECK_MS
   ) {}
 
+  /** The chain's maxValidityMs as last read, and when. */
+  private maxValidity: { readonly ms: number; readonly at: number } | null =
+    null;
+
   /**
    * Relays a fully signed operation. `txId` is its draft's, which every
    * signer signed: the node's answer must be of it, and a failure names it.
@@ -424,7 +490,7 @@ export class ChainRelayService {
         badRequest('signed must be 0x hex bytes');
       }
     } else {
-      this.checkUnsigned(request.unsigned);
+      this.checkUnsigned(request.unsigned, MAX_UNSIGNED_BYTES);
       request.signatures.forEach((it) => this.checkSignatureShape(it));
     }
     let result: ChainSubmitResult;
@@ -436,12 +502,10 @@ export class ChainRelayService {
     return { ...result, outcome: 'accepted' };
   }
 
-  private checkUnsigned(unsigned: string) {
+  private checkUnsigned(unsigned: string, maxBytes: number) {
     const hex = lower(unsigned);
-    if (!HEX_BYTES.test(hex) || (hex.length - 2) / 2 > MAX_UNSIGNED_BYTES) {
-      badRequest(
-        `unsigned must be 0x hex bytes, at most ${MAX_UNSIGNED_BYTES}`
-      );
+    if (!HEX_BYTES.test(hex) || (hex.length - 2) / 2 > maxBytes) {
+      badRequest(`unsigned must be 0x hex bytes, at most ${maxBytes}`);
     }
   }
 
@@ -466,8 +530,10 @@ export class ChainRelayService {
   private checkInput(input: PendingOperationInput): JoinTerms {
     if (!TX_ID.test(lower(input.txId)))
       badRequest('txId must be 32 bytes of 0x hex');
-    this.checkUnsigned(input.unsigned);
-    if (JSON.stringify(input.typedData ?? null).length > MAX_TYPED_DATA_CHARS) {
+    this.checkUnsigned(input.unsigned, MAX_JOIN_UNSIGNED_BYTES);
+    if (
+      JSON.stringify(input.typedData ?? null).length > MAX_JOIN_TYPED_DATA_CHARS
+    ) {
       badRequest('typed_data is too large');
     }
     if (typedDataDigest(input.typedData) !== lower(input.txId)) {
@@ -488,9 +554,8 @@ export class ChainRelayService {
     if (input.expiresAt !== join.expiresAt) {
       badRequest("expires_at is not the typed data's");
     }
-    const now = this.now();
-    if (join.expiresAt <= now || join.expiresAt > now + MAX_VALIDITY_MS) {
-      badRequest('expiresAt must be a time in the next seven days');
+    if (join.expiresAt <= this.now()) {
+      badRequest('The operation has expired: draft it again');
     }
     const given = input.required.map((it) => ({
       role: it.role,
@@ -519,10 +584,74 @@ export class ChainRelayService {
   }
 
   /**
+   * A new join's window must be one the chain takes: from its notBefore to
+   * its expiry, and from now to its expiry, at most the chain's
+   * maxValidityMs. That also bounds how long it is held.
+   */
+  private async checkWindow(join: JoinTerms) {
+    const max = await this.maxValidityMs();
+    if (
+      join.expiresAt - join.notBefore > max ||
+      join.expiresAt > this.now() + max
+    ) {
+      badRequest(
+        `A join may be valid for at most ${max} ms (the chain's maxValidityMs): draft it again`
+      );
+    }
+  }
+
+  /** The chain's maxValidityMs, read now and then; a day when unreadable. */
+  private async maxValidityMs(): Promise<number> {
+    const now = this.now();
+    if (this.maxValidity && now - this.maxValidity.at < OPS_TTL_MS) {
+      return this.maxValidity.ms;
+    }
+    try {
+      const ms = Number((await this.gateway.getOps())?.maxValidityMs);
+      if (Number.isSafeInteger(ms) && ms > 0) {
+        this.maxValidity = { ms, at: now };
+        return ms;
+      }
+    } catch (error) {
+      logger.warn(
+        `[RELAY OPS UNREAD] ${(error as Error)?.message ?? error}: taking a day`
+      );
+    }
+    return DEFAULT_MAX_VALIDITY_MS;
+  }
+
+  /**
+   * The wallet signing in role 0 must be a wallet of the identity it joins
+   * another wallet to, now (at the latest finalized height). Otherwise any
+   * wallet could put joins to any identity in another wallet's list. When
+   * the chain can't be read, nothing is held unchecked: 503.
+   */
+  private async checkMembership(join: JoinTerms) {
+    let principal: string;
+    try {
+      const identity = await this.gateway.getIdentityByWallet(join.signer);
+      principal = lower(identity?.principalId ?? '');
+    } catch (error) {
+      throw new CustomApiCompliantException(
+        503,
+        `The 6529 Network could not be read to check the join: ${(error as Error)?.message ?? error}`,
+        'CHAIN_UNAVAILABLE'
+      );
+    }
+    if (principal !== join.principal) {
+      badRequest(
+        'The wallet signing in role 0 is not a wallet of the identity the join is to'
+      );
+    }
+  }
+
+  /**
    * Holds an identity join until both its wallets have signed. The creating
-   * wallet must be one of them and have signed it. Creating it again with
-   * more signatures adds them while it is pending. Relays it once both have
-   * signed.
+   * wallet must be one of them and have signed it, the identity's wallet
+   * must belong to that identity, and a wallet may have created at most
+   * five pending joins. Posting it again with more signatures adds them
+   * while it is pending, and answers its state once it has been sent.
+   * Relays it once both have signed.
    */
   async createPending(
     input: PendingOperationInput,
@@ -547,11 +676,27 @@ export class ChainRelayService {
     if (!mine.some((it) => given.has(it.role))) {
       badRequest('Sign the operation before sharing it');
     }
+    // A join already held needs no checks again; one already sent is
+    // answered as it stands.
+    const held = await this.db.find(txId);
+    if (held && isSent(held)) return await this.get(txId);
+    if (!held) {
+      await this.checkWindow(join);
+      await this.checkMembership(join);
+    }
     const now = this.now();
     const hold = () =>
       this.db.executeNativeQueriesInTransaction(async (conn) => {
         const existing = await this.db.find(txId, conn);
         if (!existing) {
+          const open = await this.db.countOpenCreatedBy(me, now, conn);
+          if (open >= MAX_OPEN_PER_CREATOR) {
+            throw new CustomApiCompliantException(
+              429,
+              `This wallet already has ${MAX_OPEN_PER_CREATOR} joins waiting for a signature: cancel one, or let one expire`,
+              'TOO_MANY_PENDING'
+            );
+          }
           await this.db.insert(
             {
               tx_id: txId,
@@ -574,10 +719,11 @@ export class ChainRelayService {
             },
             conn
           );
-          return;
+          return 'held';
         }
-        // A withdrawn, sent or expired operation takes no more signatures.
-        // Its signers are the typed data's, as these are: the same txId.
+        if (isSent(existing)) return 'sent';
+        // A withdrawn or expired operation takes no more signatures. Its
+        // signers are the typed data's, as these are: the same txId.
         this.assertOpen(existing);
         for (const [role, sig] of Array.from(given.entries())) {
           const signer = existing.signers.find((it) => it.role === role);
@@ -585,16 +731,19 @@ export class ChainRelayService {
             await this.db.setSignature(txId, role, sig, now, conn);
           }
         }
+        return 'held';
       });
+    let state: 'held' | 'sent';
     try {
-      await hold();
+      state = await hold();
     } catch (error) {
       // Both wallets' first posts at once: both found no row, and one
       // insert lost (a duplicate key, or a deadlock on the gap both
       // locked). Once more, it finds the other's row and adds to it.
       if (!isInsertRace(error)) throw error;
-      await hold();
+      state = await hold();
     }
+    if (state === 'sent') return await this.get(txId);
     return await this.submitIfComplete(txId);
   }
 
@@ -665,24 +814,20 @@ export class ChainRelayService {
   }
 
   /**
-   * An operation. One sent with an unknown outcome is asked of the chain
-   * first, so the answer is final once the chain can say.
+   * An operation. One sent whose outcome the chain has yet to make final
+   * (unknown, or accepted but not final in a block) is asked of the chain
+   * first, at most every 10 s, so the answer is final once the chain can
+   * say.
    */
   async get(txId: string): Promise<PendingOperation> {
     const op = await this.getOrThrow(lower(txId));
-    const unknown = unknownOf(op);
-    return unknown ? await this.settle(op, unknown.nodeTxId) : op;
+    const open = openResultOf(op);
+    return open ? await this.settle(op, open) : op;
   }
 
-  /** Operations waiting for this wallet's signature. */
-  async awaiting(wallet: string): Promise<PendingOperation[]> {
-    const now = this.now();
-    const ids = await this.db.awaiting(lower(wallet), now);
-    const ops = await Promise.all(ids.map((id) => this.db.find(id)));
-    return ops.filter(
-      (it): it is PendingOperation =>
-        !!it && it.status === 'PENDING' && it.expires_at > now
-    );
+  /** Operations waiting for this wallet's signature, without their bytes. */
+  async awaiting(wallet: string): Promise<PendingSummary[]> {
+    return await this.db.awaiting(lower(wallet), this.now());
   }
 
   private async getOrThrow(txId: string): Promise<PendingOperation> {
@@ -717,75 +862,114 @@ export class ChainRelayService {
   }
 
   /**
-   * Asks the chain what became of an operation sent with an unknown
-   * outcome (and of the other txId the node named, if any), each ask
-   * bounded. Held there, in a block or in the pool, it was accepted. Held
-   * nowhere once it has expired, with time for the blocks before its expiry
-   * to arrive, it never landed and never will: FAILED. Otherwise, or when
-   * the chain can't say, it stays unknown.
+   * Asks the chain what became of a sent operation (and of the other txId
+   * the node named, if any), each ask bounded.
+   * - In a block that ran it and failed: FAILED, with the chain's result.
+   * - In a block, or only in the pool: accepted, with the chain's `tx`;
+   *   until it is final, later reads ask again (a pool can still drop it).
+   * - Held nowhere, as of a chain time later than its expiry with time for
+   *   the blocks before its expiry to arrive: it never landed and never
+   *   will, FAILED. The chain's time, not this backend's clock, decides.
+   * - Otherwise, or when the chain can't say, it stays as it is.
+   * Each write applies only while the outcome is still the one read, so
+   * a slower read never undoes a faster one, and records when it asked.
    */
   private async settle(
     op: PendingOperation,
-    nodeTxId: string | null
+    open: OpenResult
   ): Promise<PendingOperation> {
-    const ids = nodeTxId ? [op.tx_id, nodeTxId] : [op.tx_id];
-    const answers = await Promise.all(ids.map((id) => this.chainTx(id)));
     const now = this.now();
-    const held = answers.findIndex((it) => !!it);
-    if (held >= 0) {
-      await this.db.setStatus(
-        op.tx_id,
-        { from: 'SUBMITTED', to: 'SUBMITTED' },
-        {
-          result_json: JSON.stringify({
-            txId: op.tx_id,
-            outcome: 'accepted',
-            ...(held > 0 ? { nodeTxId } : {}),
-            tx: answers[held]
-          })
-        },
-        now
-      );
+    if (now - open.checkedAt < CHECK_EVERY_MS) return op;
+    const txId = op.tx_id;
+    const ids = open.nodeTxId ? [txId, open.nodeTxId] : [txId];
+    const places = await Promise.all(ids.map((id) => this.chainTx(id)));
+    const guard = { from: 'SUBMITTED', ifOutcome: open.outcome } as const;
+    const heldAt = places.findIndex((it) => !!it && 'tx' in it);
+    if (heldAt >= 0) {
+      const { tx } = places[heldAt] as { tx: ChainTx };
+      const named = heldAt > 0 ? { nodeTxId: open.nodeTxId } : {};
+      if (tx.status === 'failed') {
+        const name = tx.result?.name ?? 'failed';
+        await this.db.setStatus(
+          txId,
+          { ...guard, to: 'FAILED' },
+          {
+            result_json: refusedResult(txId, name, { ...named, tx }),
+            last_error: `The 6529 Network ran ${ids[heldAt]} and it failed: ${name}`
+          },
+          now
+        );
+      } else {
+        const { checkedAt: _checked, nodeTxId: _named, ...kept } = open.result;
+        await this.db.setStatus(
+          txId,
+          { ...guard, to: 'SUBMITTED' },
+          {
+            result_json: JSON.stringify({
+              ...kept,
+              txId,
+              outcome: 'accepted',
+              ...named,
+              tx,
+              ...(tx.status === 'final' ? {} : { checkedAt: now })
+            })
+          },
+          now
+        );
+      }
     } else if (
-      answers.every((it) => it === null) &&
-      op.expires_at + SETTLE_GRACE_MS <= now
+      places.every(
+        (it) =>
+          !!it &&
+          'notHeldAt' in it &&
+          it.notHeldAt !== null &&
+          it.notHeldAt > op.expires_at + SETTLE_GRACE_MS
+      )
     ) {
       await this.db.setStatus(
-        op.tx_id,
-        { from: 'SUBMITTED', to: 'FAILED' },
+        txId,
+        { ...guard, to: 'FAILED' },
         {
-          result_json: refusedResult(op.tx_id, 'expired'),
-          last_error: `The 6529 Network never took ${op.tx_id}, and it has expired`
+          result_json: refusedResult(txId, 'expired'),
+          last_error: `The 6529 Network never took ${txId}, and it has expired`
         },
         now
       );
     } else {
-      return op;
+      await this.db.setStatus(
+        txId,
+        { ...guard, to: 'SUBMITTED' },
+        {
+          result_json: JSON.stringify({ ...open.result, checkedAt: now }),
+          last_error: op.last_error
+        },
+        now
+      );
     }
-    return await this.getOrThrow(op.tx_id);
+    return await this.getOrThrow(txId);
   }
 
-  /**
-   * The chain's place for a transaction: its answer, null when no block
-   * or pool holds it, or undefined when it can't say in time.
-   */
-  private async chainTx(txId: string): Promise<ChainTx | null | undefined> {
+  /** Where the chain has a transaction (see ChainPlace), asked bounded. */
+  private async chainTx(txId: string): Promise<ChainPlace> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      return await Promise.race([
+      const tx = await Promise.race([
         this.gateway.getTx(txId),
         new Promise<undefined>((resolve) => {
           timer = setTimeout(() => resolve(undefined), this.chainCheckMs);
         })
       ]);
+      if (tx === undefined) return null;
+      return tx ? { tx } : { notHeldAt: null };
     } catch (error) {
       if (error instanceof ChainGatewayError && error.code === 'not_held') {
-        return null;
+        const time = error.read?.time;
+        return { notHeldAt: typeof time === 'number' ? time : null };
       }
       logger.warn(
         `[RELAY ${txId} CHAIN CHECK FAILED] ${(error as Error)?.message ?? error}`
       );
-      return undefined;
+      return null;
     } finally {
       clearTimeout(timer);
     }
@@ -853,7 +1037,7 @@ export class ChainRelayService {
     try {
       await this.db.setStatus(
         txId,
-        { from: 'SUBMITTED', to: 'SUBMITTED' },
+        { from: 'SUBMITTED', to: 'SUBMITTED', ifOutcome: 'unknown' },
         { result_json: acceptedResult(result) },
         this.now()
       );
@@ -867,15 +1051,20 @@ export class ChainRelayService {
     return await this.getOrThrow(txId);
   }
 
+  /**
+   * Records a failed send. It replaces only the claim's unknown outcome: a
+   * read that settled it from the chain meanwhile stands.
+   */
   private async recordFailure(failure: SubmitFailure) {
     const { txId } = failure;
+    const guard = { from: 'SUBMITTED', ifOutcome: 'unknown' } as const;
     logger.warn(
       `[RELAY ${txId} ${failure.outcome.toUpperCase()}] ${failure.message}`
     );
     if (failure.outcome === 'unknown') {
       await this.db.setStatus(
         txId,
-        { from: 'SUBMITTED', to: 'SUBMITTED' },
+        { ...guard, to: 'SUBMITTED' },
         {
           result_json: unknownResult(txId, failure.nodeTxId),
           last_error: unknownMessage(failure)
@@ -885,7 +1074,7 @@ export class ChainRelayService {
     } else if (failure.outcome === 'refused') {
       await this.db.setStatus(
         txId,
-        { from: 'SUBMITTED', to: 'FAILED' },
+        { ...guard, to: 'FAILED' },
         {
           result_json: refusedResult(txId, failure.code),
           last_error: failure.message
@@ -895,7 +1084,7 @@ export class ChainRelayService {
     } else {
       await this.db.setStatus(
         txId,
-        { from: 'SUBMITTED', to: 'PENDING' },
+        { ...guard, to: 'PENDING' },
         { last_error: failure.message },
         this.now()
       );

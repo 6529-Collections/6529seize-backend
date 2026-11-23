@@ -7,7 +7,10 @@ import {
   chainRelayService,
   RelaySubmitRequest
 } from '@/chain-relay/chain-relay.service';
-import { PendingOperation } from '@/chain-relay/chain-pending-operations.db';
+import {
+  PendingOperation,
+  PendingSummary
+} from '@/chain-relay/chain-pending-operations.db';
 
 /**
  * Operations people sign with their wallets for the 6529 chain: relayed to
@@ -136,11 +139,24 @@ export function toApiPendingOperation(
   now: number = Date.now()
 ) {
   return {
+    ...toApiPendingSummary(op, now),
+    unsigned: op.unsigned_hex,
+    typed_data: JSON.parse(op.typed_data_json)
+  };
+}
+
+/**
+ * An operation as a list shows it: without its envelope and typed data,
+ * which only GET /chain/pending/:tx_id answers.
+ */
+export function toApiPendingSummary(
+  op: PendingSummary,
+  now: number = Date.now()
+) {
+  return {
     tx_id: op.tx_id,
     op_type: op.op_type,
     principal: op.principal,
-    unsigned: op.unsigned_hex,
-    typed_data: JSON.parse(op.typed_data_json),
     created_by: op.created_by,
     expires_at: op.expires_at,
     status:
@@ -180,7 +196,7 @@ router.post(
 router.get('/pending', needsAuthenticatedUser(), async (req, res) => {
   const wallet = getWalletOrThrow(req);
   const ops = await chainRelayService.awaiting(wallet);
-  res.send({ data: ops.map((op) => toApiPendingOperation(op)) });
+  res.send({ data: ops.map((op) => toApiPendingSummary(op)) });
 });
 
 router.post(

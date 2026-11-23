@@ -8,7 +8,9 @@ import {
  * An identity join drafted by the gateway and signed by one of its two
  * wallets (the identity's and the joining one), held until the other signs,
  * then relayed to the chain. Its principal, signers and expiry are its typed
- * data's.
+ * data's. It is held only if its role-0 wallet belongs to that identity
+ * when it is posted, and a wallet may have created at most five pending
+ * ones.
  */
 @Entity(CHAIN_PENDING_OPERATIONS_TABLE)
 @Index('chain_pending_operations_status_expiry_idx', ['status', 'expires_at'])
@@ -45,17 +47,20 @@ export class ChainPendingOperationEntity {
    * PENDING, SUBMITTED, FAILED or CANCELLED (the API shows a PENDING one
    * past expires_at as EXPIRED). It moves only from PENDING, under the
    * row's lock; SUBMITTED goes back to PENDING only when the node surely
-   * didn't take it, and to FAILED when the chain never held it by expiry.
+   * didn't take it, and to FAILED when the chain ran it and it failed, or
+   * held it nowhere well past its expiry in the chain's time.
    */
   @Column({ type: 'varchar', length: 20, nullable: false })
   readonly status!: string;
 
   /**
    * The submit's result (JSON), always with its `outcome`: `accepted` (the
-   * node's answer, or the chain's `tx`), `unknown` (`txId`, and `nodeTxId`
-   * when the node named another: while it is being sent, and when the
-   * answer was lost, until a read settles it from the chain; never sent
-   * again) or `refused` (the node's `code`, or `expired`).
+   * node's answer, and the chain's `tx` once a read asked), `unknown`
+   * (`txId`, and `nodeTxId` when the node named another: while it is being
+   * sent, and when the answer was lost; never sent again) or `refused` (the
+   * node's `code`, the chain's result name, or `expired`). Until the chain
+   * makes it final, reads ask it at most every 10 s, keeping the time of
+   * the last ask in `checkedAt`.
    */
   @Column({ type: 'text', nullable: true, default: null })
   readonly result_json!: string | null;

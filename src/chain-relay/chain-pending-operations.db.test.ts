@@ -10,6 +10,8 @@ import { ChainRelayService } from './chain-relay.service';
 import { join as joinFixture, JOIN_PRINCIPAL } from './identity-join.fixtures';
 
 const TX = '0x' + '5a'.repeat(32);
+const TX2 = '0x' + '5b'.repeat(32);
+const TX3 = '0x' + '5c'.repeat(32);
 const A = '0x' + '01'.repeat(20);
 const B = '0x' + '02'.repeat(20);
 const db = new ChainPendingOperationsDb(() => sqlExecutor);
@@ -74,7 +76,7 @@ describeWithSeed('ChainPendingOperationsDb', [], () => {
     await sqlExecutor.executeNativeQueriesInTransaction((conn) =>
       db.insert(join(), conn)
     );
-    expect(await db.awaiting(B, 2_000)).toEqual([TX]);
+    expect((await db.awaiting(B, 2_000)).map((it) => it.tx_id)).toEqual([TX]);
     expect(await db.awaiting(A, 2_000)).toEqual([]);
     expect(await db.awaiting(B, 6_000)).toEqual([]);
 
@@ -116,6 +118,76 @@ describeWithSeed('ChainPendingOperationsDb', [], () => {
       }
     ]);
     expect(await db.awaiting(B, 2_000)).toEqual([]);
+  });
+
+  it('lists the joins waiting for a wallet in one query, with their signers and without their bytes', async () => {
+    await sqlExecutor.executeNativeQueriesInTransaction(async (conn) => {
+      await db.insert(join(), conn);
+      await db.insert({ ...join(TX2), created_at: 1_500 }, conn);
+      await db.insert({ ...join(TX3), status: 'CANCELLED' }, conn);
+    });
+    const listed = await db.awaiting(B, 2_000);
+    expect(listed.map((it) => it.tx_id)).toEqual([TX2, TX]);
+    expect(listed[0]).not.toHaveProperty('unsigned_hex');
+    expect(listed[0]).not.toHaveProperty('typed_data_json');
+    expect(listed[1]).toEqual(
+      expect.objectContaining({
+        tx_id: TX,
+        created_by: A,
+        expires_at: 5_000,
+        status: 'PENDING',
+        created_at: 1_000
+      })
+    );
+    expect(listed[1].signers).toEqual(join().signers);
+  });
+
+  it("counts a wallet's pending, unexpired joins", async () => {
+    await sqlExecutor.executeNativeQueriesInTransaction(async (conn) => {
+      await db.insert(join(), conn);
+      await db.insert(join(TX2), conn);
+      await db.insert({ ...join(TX3), status: 'CANCELLED' }, conn);
+    });
+    const count = (wallet: string, now: number) =>
+      sqlExecutor.executeNativeQueriesInTransaction((conn) =>
+        db.countOpenCreatedBy(wallet, now, conn)
+      );
+    expect(await count(A, 2_000)).toBe(2);
+    expect(await count(B, 2_000)).toBe(0);
+    expect(await count(A, 6_000)).toBe(0);
+  });
+
+  it("moves a status only while the result's outcome is the one given", async () => {
+    await sqlExecutor.executeNativeQueriesInTransaction((conn) =>
+      db.insert(
+        {
+          ...join(),
+          status: 'SUBMITTED',
+          result_json: JSON.stringify({ txId: TX, outcome: 'accepted' })
+        },
+        conn
+      )
+    );
+    expect(
+      await db.setStatus(
+        TX,
+        { from: 'SUBMITTED', to: 'FAILED', ifOutcome: 'unknown' },
+        { result_json: '{"outcome":"refused"}' },
+        2_000
+      )
+    ).toBe(false);
+    expect((await db.find(TX))?.status).toBe('SUBMITTED');
+    expect(
+      await db.setStatus(
+        TX,
+        { from: 'SUBMITTED', to: 'SUBMITTED', ifOutcome: 'accepted' },
+        { result_json: '{"outcome":"accepted","checkedAt":2000}' },
+        2_000
+      )
+    ).toBe(true);
+    expect((await db.find(TX))?.result_json).toBe(
+      '{"outcome":"accepted","checkedAt":2000}'
+    );
   });
 
   it('moves a status only from the one given, and drops signatures but not when they were given', async () => {
@@ -213,7 +285,11 @@ describeWithSeed('ChainPendingOperationsDb', [], () => {
     });
     const gateway = {
       submit: jest.fn(async () => ({ txId: held.txId, accepted: true })),
-      getTx: jest.fn()
+      getTx: jest.fn(),
+      getOps: jest.fn(async () => ({ maxValidityMs: 86_400_000 })),
+      getIdentityByWallet: jest.fn(async () => ({
+        principalId: JOIN_PRINCIPAL
+      }))
     };
     const relay = new ChainRelayService(gateway as never, db);
     const post = (wallet: Wallet, role: number) =>

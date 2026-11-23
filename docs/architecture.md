@@ -892,14 +892,22 @@ identity data from the chain add calls to this client, not their own.
 have signed, checking each signature against its signer, then relays it.
 
 Only identity joins are held. What is held is read from the join's typed
-data, which must hash to its `tx_id`: the principal, the expiry, and the
+data, which must hash to its `tx_id`: the principal, the window, and the
 signers (role 0, the identity's wallet the header's key id names; role 4,
 the body's joining wallet). A given `principal`, `expires_at` or `required`
-that says otherwise is refused, so no wallet can put an operation in another
-wallet's list that isn't what it would sign. No signature is ever returned
-(`signers[].sig` is always null; `signed` says who has signed): the relay
-submits, and a signature handed out could finish a join its signer had
-withdrawn. A pending operation past its expiry shows as `EXPIRED`.
+that says otherwise is refused. A new join is held only when the role-0
+wallet belongs to that principal now, read through the gateway at the
+latest finalized height (400 if not, 503 when the chain can't be read), its
+window is one the chain takes (at most `maxValidityMs` from `GET /v1/ops`, a
+day when unreadable), its envelope is at most 4 KiB and its typed data 8
+KiB, and the wallet holding it has fewer than five pending joins (429
+`TOO_MANY_PENDING`). No signature is ever returned (`signers[].sig` is
+always null; `signed` says who has signed): the relay submits, and a
+signature handed out could finish a join its signer had withdrawn. A
+pending join past its expiry shows as `EXPIRED`. The list of joins waiting
+for a wallet (`GET /chain/pending`, one query) leaves out `unsigned` and
+`typed_data`, which `GET /chain/pending/:tx_id` answers. Posting a join
+again once it was sent answers its state.
 
 Every submit carries its draft's txId, the digest every signer signed: a
 direct submit's body needs `tx_id` (400 without it), and a held operation
@@ -913,17 +921,23 @@ send it again.
 
 A held operation is sent at most once. It is claimed under its row lock,
 moving from `PENDING` to `SUBMITTED` before anything is sent. Its `result`
-always says its `outcome`: `accepted` (the node's answer, or the chain's
-`tx`), `unknown` (with `txId`, and `nodeTxId` when the node named another),
-or `refused` (with the node's `code`, or `expired`). It stays `SUBMITTED`
-with an unknown outcome while it is sent, and when the answer is lost; a read
-of it (`GET /chain/pending/:tx_id`) then asks the chain, bounded, and records
-`accepted` once the chain holds it, or `FAILED` (`expired`) once it has
-expired and no block or pool holds it. Only an answer that the node surely
-didn't take it puts it back to `PENDING` for a retry, and a refusal of the
-operation marks it `FAILED`. A cancel takes the same lock and moves it only
-from `PENDING`, so a withdrawn join is never sent and a sent one is never
-shown as withdrawn; a cancel also drops the signatures it held.
+always says its `outcome`: `accepted` (the node's answer, and the chain's
+`tx` once a read has asked), `unknown` (with `txId`, and `nodeTxId` when the
+node named another), or `refused` (with the node's `code`, the chain's
+result name for a join that ran and failed, or `expired`). It stays
+`SUBMITTED` with an unknown outcome while it is sent, and when the answer
+is lost. A read of a sent join (`GET /chain/pending/:tx_id`) asks the
+chain, bounded, at most every 10 s (the time is kept in `result.checkedAt`),
+until it is final: held in a block or the pool, `accepted` with the
+chain's `tx`; run and failed, `FAILED`; held nowhere as of a chain time
+five minutes past its expiry (the answer's read time, not this backend's
+clock), `FAILED` (`expired`). Each of these writes, and the send's own,
+applies only while the outcome is still the one read. Only an answer that
+the node surely didn't take it puts it back to `PENDING` for a retry, and a
+refusal of the operation marks it `FAILED`. A cancel takes the same lock
+and moves it only from `PENDING`, so a withdrawn join is never sent and a
+sent one is never shown as withdrawn; a cancel also drops the signatures it
+held.
 
 ### Ordinary Ethereum RPC boundary
 

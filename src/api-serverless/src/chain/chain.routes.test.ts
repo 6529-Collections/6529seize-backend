@@ -336,4 +336,17 @@ describe('/chain routes', () => {
       'PENDING'
     );
   });
+
+  it('lists waiting joins without their bytes, which only the join itself answers', async () => {
+    const { unsigned_hex: _u, typed_data_json: _t, ...summary } = op('PENDING');
+    mockService.awaiting.mockResolvedValueOnce([summary]);
+    const listed = (await call('GET', '/pending', JOINER)).body.data[0];
+    expect(listed.tx_id).toBe(TX);
+    expect(listed).not.toHaveProperty('unsigned');
+    expect(listed).not.toHaveProperty('typed_data');
+    mockService.get.mockResolvedValueOnce(op('PENDING'));
+    const one = (await call('GET', `/pending/${TX}`, JOINER)).body;
+    expect(one.unsigned).toBe('0x0102');
+    expect(one.typed_data).toEqual({ primaryType: 'IdentityJoin' });
+  });
 });

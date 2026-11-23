@@ -37,6 +37,12 @@ export interface PendingOperation {
   readonly signers: PendingSigner[];
 }
 
+/** An operation as a list shows it: without its envelope or typed data. */
+export type PendingSummary = Omit<
+  PendingOperation,
+  'unsigned_hex' | 'typed_data_json'
+>;
+
 function toNumber(value: unknown): number {
   return Number(value ?? 0);
 }
@@ -131,12 +137,17 @@ export class ChainPendingOperationsDb extends LazyDbAccessCompatibleService {
   }
 
   /**
-   * Moves an operation from status `from` to `to`. Returns false, changing
-   * nothing, when it isn't in `from` (another request moved it first).
+   * Moves an operation from status `from` to `to`. With `ifOutcome`, only
+   * while its result's outcome is still that one. Returns false, changing
+   * nothing, otherwise (another request moved it first).
    */
   async setStatus(
     txId: string,
-    change: { readonly from: PendingStatus; readonly to: PendingStatus },
+    change: {
+      readonly from: PendingStatus;
+      readonly to: PendingStatus;
+      readonly ifOutcome?: 'unknown' | 'accepted';
+    },
     fields: { result_json?: string | null; last_error?: string | null },
     now: number,
     conn?: Conn
@@ -145,11 +156,16 @@ export class ChainPendingOperationsDb extends LazyDbAccessCompatibleService {
       `update ${CHAIN_PENDING_OPERATIONS_TABLE}
        set status = :to, result_json = :result_json, last_error = :last_error,
            updated_at = :now
-       where tx_id = :txId and status = :from`,
+       where tx_id = :txId and status = :from${
+         change.ifOutcome
+           ? ` and json_unquote(json_extract(result_json, '$.outcome')) = :ifOutcome`
+           : ''
+       }`,
       {
         txId,
         from: change.from,
         to: change.to,
+        ifOutcome: change.ifOutcome ?? null,
         result_json: fields.result_json ?? null,
         last_error: fields.last_error ?? null,
         now
@@ -159,19 +175,78 @@ export class ChainPendingOperationsDb extends LazyDbAccessCompatibleService {
     return this.db.getAffectedRows(result) === 1;
   }
 
-  /** Pending operations that still need this wallet's signature. */
-  async awaiting(wallet: string, now: number): Promise<string[]> {
-    const rows = await this.db.execute<{ tx_id: string }>(
-      `select o.tx_id
-       from ${CHAIN_PENDING_OPERATIONS_TABLE} o
-       join ${CHAIN_PENDING_OPERATION_SIGNERS_TABLE} s on s.tx_id = o.tx_id
-       where s.signer = :wallet and s.sig is null
-         and o.status = 'PENDING' and o.expires_at > :now
-       order by o.created_at desc
-       limit 50`,
-      { wallet, now }
+  /** How many joins this wallet created are pending and unexpired. */
+  async countOpenCreatedBy(
+    wallet: string,
+    now: number,
+    conn: Conn
+  ): Promise<number> {
+    const row = await this.db.oneOrNull<{ n: number }>(
+      `select count(*) as n from ${CHAIN_PENDING_OPERATIONS_TABLE}
+       where created_by = :wallet and status = 'PENDING' and expires_at > :now`,
+      { wallet, now },
+      { wrappedConnection: conn }
     );
-    return rows.map((it) => it.tx_id);
+    return toNumber(row?.n);
+  }
+
+  /**
+   * Pending operations that still need this wallet's signature, newest
+   * first, at most 50, in one query: each with its signers, without its
+   * envelope or typed data.
+   */
+  async awaiting(wallet: string, now: number): Promise<PendingSummary[]> {
+    const rows = await this.db.execute<
+      Omit<PendingSummary, 'signers'> & PendingSigner
+    >(
+      `select o.tx_id, o.op_type, o.principal, o.created_by, o.expires_at,
+              o.status, o.result_json, o.last_error, o.created_at,
+              o.updated_at, s.role, s.key_type, s.signer, s.sig, s.signed_at
+       from (
+         select w.tx_id, w.created_at
+         from ${CHAIN_PENDING_OPERATIONS_TABLE} w
+         join ${CHAIN_PENDING_OPERATION_SIGNERS_TABLE} mine
+           on mine.tx_id = w.tx_id
+         where mine.signer = :wallet and mine.sig is null
+           and w.status = 'PENDING' and w.expires_at > :now
+         order by w.created_at desc, w.tx_id
+         limit 50
+       ) picked
+       join ${CHAIN_PENDING_OPERATIONS_TABLE} o on o.tx_id = picked.tx_id
+       join ${CHAIN_PENDING_OPERATION_SIGNERS_TABLE} s on s.tx_id = o.tx_id
+       order by picked.created_at desc, picked.tx_id, s.role`,
+      { wallet, now },
+      { forcePool: DbPoolName.WRITE }
+    );
+    const ops = new Map<string, PendingSummary>();
+    for (const row of rows) {
+      const signer: PendingSigner = {
+        role: toNumber(row.role),
+        key_type: toNumber(row.key_type),
+        signer: row.signer,
+        sig: row.sig,
+        signed_at: row.signed_at === null ? null : toNumber(row.signed_at)
+      };
+      const held = ops.get(row.tx_id);
+      if (held) {
+        held.signers.push(signer);
+        continue;
+      }
+      ops.set(row.tx_id, {
+        tx_id: row.tx_id,
+        op_type: row.op_type,
+        principal: row.principal,
+        created_by: row.created_by,
+        expires_at: toNumber(row.expires_at),
+        status: row.status,
+        result_json: row.result_json,
+        last_error: row.last_error,
+        created_at: toNumber(row.created_at),
+        updated_at: toNumber(row.updated_at),
+        signers: [signer]
+      });
+    }
+    return Array.from(ops.values());
   }
 }
 
