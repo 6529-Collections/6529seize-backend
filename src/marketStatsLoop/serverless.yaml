@@ -6,6 +6,13 @@ package:
 plugins:
   - serverless-offline
 
+custom:
+  # Production archives market-depth history before retention deletes it
+  # (6529-infra stack Prod-MarketArchive). Staging keeps no archive.
+  marketDepthArchiveBucket:
+    prod: 6529-market-depth-archive-${aws:accountId}
+    staging: ''
+
 provider:
   name: aws
   runtime: nodejs22.x
@@ -28,6 +35,7 @@ functions:
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
       MARKET_STATS_CONTRACT: '0x33FD426905F149f8376e227d0C9D3340AaD17aF1'
+      MARKET_DEPTH_ARCHIVE_BUCKET: ${self:custom.marketDepthArchiveBucket.${opt:stage, self:provider.stage}, ''}
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'marketStatsMEMES_${opt:stage, self:provider.stage}'
   marketStatsLAB:
@@ -43,6 +51,7 @@ functions:
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
       MARKET_STATS_CONTRACT: '0x4db52a61dc491e15a2f78f5ac001c14ffe3568cb'
+      MARKET_DEPTH_ARCHIVE_BUCKET: ${self:custom.marketDepthArchiveBucket.${opt:stage, self:provider.stage}, ''}
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'marketStatsLAB_${opt:stage, self:provider.stage}'
   marketStatsGRADIENT:
@@ -58,6 +67,7 @@ functions:
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
       MARKET_STATS_CONTRACT: '0x0c58ef43ff3032005e472cb5709f8908acb00205'
+      MARKET_DEPTH_ARCHIVE_BUCKET: ${self:custom.marketDepthArchiveBucket.${opt:stage, self:provider.stage}, ''}
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'marketStatsGRADIENT_${opt:stage, self:provider.stage}'
   marketStatsNEXTGEN:
@@ -73,6 +83,7 @@ functions:
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
       MARKET_STATS_CONTRACT: 'NEXTGEN'
+      MARKET_DEPTH_ARCHIVE_BUCKET: ${self:custom.marketDepthArchiveBucket.${opt:stage, self:provider.stage}, ''}
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'marketStatsNEXTGEN_${opt:stage, self:provider.stage}'
 
