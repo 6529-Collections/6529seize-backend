@@ -26,6 +26,22 @@ const CHAIN_INDEX_STEPS = 'src/rebuild/steps/waves-chain-index.steps';
 /** 6529.io's rows at the freeze for the world's waves. */
 const LEGACY_STEPS = 'src/rebuild/steps/waves-legacy.steps';
 
+/** The drop index read from the relays. */
+const DROP_INDEX_STEPS = 'src/rebuild/steps/waves-drop-index.steps';
+
+/** The drop index's log of checked relay events, its rejects and its relay cursors. */
+export const WAVES_DROP_INDEX_TABLES = [
+  'wave_relay_events',
+  'wave_relay_rejects',
+  'wave_relay_subscriptions'
+] as const;
+
+/**
+ * What the drop index reads besides its own tables: 6529.io's grants (a
+ * revocation it holds) and its signed events (which events 6529.io wrote).
+ */
+const DROP_INDEX_READS = ['device_grants', 'device_signed_events'];
+
 const PUBLIC_WAVE = WAVES_WORLD_IDS.publicWave;
 const RANK_WAVE = WAVES_WORLD_IDS.rankWave;
 const MEMBERS_WAVE = WAVES_WORLD_IDS.membersWave;
@@ -347,15 +363,13 @@ export const wavesManifest: AreaManifest = {
       why: 'Outbox of Main Stage claim-build messages: a kept row stops a second send. The rebuild queues none.'
     },
     // Relay publishing and the drop index (src/wave-relay-publish,
-    // src/wave-drop-index); planned until their code is in this tree.
+    // src/wave-drop-index).
     wave_relay_cursors: {
       class: 'EPHEMERAL',
-      origin: 'planned',
       why: 'Relay publishing cursor: the relays already hold what it passed, and a lost cursor only publishes copies they drop.'
     },
     wave_relay_events: {
       class: 'INDEX',
-      origin: 'planned',
       volatileColumns: [
         {
           column: 'received_at',
@@ -369,7 +383,6 @@ export const wavesManifest: AreaManifest = {
     },
     wave_relay_rejects: {
       class: 'INDEX',
-      origin: 'planned',
       volatileColumns: [
         {
           column: 'received_at',
@@ -379,7 +392,6 @@ export const wavesManifest: AreaManifest = {
     },
     wave_relay_subscriptions: {
       class: 'INDEX',
-      origin: 'planned',
       volatileColumns: [
         { column: 'updated_at', reason: 'When the cursor last moved.' }
       ]
@@ -396,7 +408,9 @@ export const wavesManifest: AreaManifest = {
     waves_chain_mirror_state: { class: 'INDEX', origin: 'planned' },
     waves_chain_mirror_events: { class: 'INDEX', origin: 'planned' },
     chain_docs: { class: 'INDEX', origin: 'planned' },
-    chain_entry_holds: { class: 'INDEX', origin: 'planned' }
+    chain_entry_holds: { class: 'INDEX', origin: 'planned' },
+    waves_chain_mirror_groups: { class: 'INDEX', origin: 'planned' },
+    waves_chain_mirror_waves: { class: 'INDEX', origin: 'planned' }
   },
   seeds: [
     {
@@ -421,6 +435,14 @@ export const wavesManifest: AreaManifest = {
       writes: [...WAVES_CHAIN_INDEX_TABLES],
       sources: ['gateway'],
       timeoutMinutes: 15
+    },
+    {
+      id: 'waves.drop-index.seed',
+      run: { module: DROP_INDEX_STEPS, exportName: 'seedWavesDropIndex' },
+      writes: [...WAVES_DROP_INDEX_TABLES],
+      reads: DROP_INDEX_READS,
+      sources: ['relays'],
+      timeoutMinutes: 10
     }
   ],
   rebuilders: [
@@ -430,14 +452,29 @@ export const wavesManifest: AreaManifest = {
       writes: [...WAVES_CHAIN_INDEX_TABLES],
       sources: ['gateway'],
       timeoutMinutes: 30
+    },
+    {
+      id: 'waves.drop-index',
+      run: { module: DROP_INDEX_STEPS, exportName: 'rebuildWavesDropIndex' },
+      writes: [...WAVES_DROP_INDEX_TABLES],
+      reads: DROP_INDEX_READS,
+      sources: ['relays'],
+      timeoutMinutes: 15
     }
   ],
   probes: PROBES,
   waivers: {
-    unprobedTables: WAVES_CHAIN_INDEX_TABLES.map((target) => ({
-      target,
-      reason:
-        'No route reads the chain index yet: the chain mirror and the claims builder do. The run compares its rows table by table.'
-    }))
+    unprobedTables: [
+      ...WAVES_CHAIN_INDEX_TABLES.map((target) => ({
+        target,
+        reason:
+          'No route reads the chain index yet: the chain mirror and the claims builder do. The run compares its rows table by table.'
+      })),
+      ...WAVES_DROP_INDEX_TABLES.map((target) => ({
+        target,
+        reason:
+          'No route reads the drop index: the drop applier and the notifications do. The run compares its rows table by table.'
+      }))
+    ]
   }
 };
