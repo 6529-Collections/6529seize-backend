@@ -119,11 +119,7 @@ describeWithSeed('inline fan-out lab benchmark', [withWaves([wave])], () => {
       .mockResolvedValue(new Set());
     const repo = new WsConnectionRepository(
       () => sqlExecutor,
-      new UserGroupsService(
-        new UserGroupsDb(() => sqlExecutor),
-        mock(),
-        mock()
-      ),
+      new UserGroupsService(new UserGroupsDb(() => sqlExecutor), mock()),
       () => false
     );
     const reads = jest.spyOn(repo, 'getByConnectionId');
