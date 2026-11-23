@@ -64,6 +64,12 @@ const PUBLISH_WAVES = 50;
 /** When the rebuilder applies retention: an hour after the seed's clock starts. */
 const REBUILD_AT = E2EE_CHECK_T0 + 60 * 60 * 1000;
 
+/** Orders strings by their UTF-16 code units, as `sort()` does by default. */
+function byCodeUnits(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
 /**
  * Runs after-commit work one callback at a time, in order, and waits for
  * all of it. The moderation records are written after commit, and run
@@ -580,10 +586,12 @@ async function seedAll(clock: DeterministicSeed): Promise<void> {
   clock.advance(1000);
   await seedReports(all, { group, a, b });
   clock.advance(1000);
-  // Signed in stream-name order, one stream at a time: each record's seq
-  // follows the signing order, so it is the same every run.
+  // Signed in stream-name order (code units, not the locale's, so the
+  // order is the same on every machine), one stream at a time: each
+  // record's seq follows the signing order, so it is the same every run.
   const store = new MysqlE2eeStreamStore(dbSupplier);
-  for (const wave of (await store.listPendingWaves(PUBLISH_WAVES)).sort()) {
+  const waves = await store.listPendingWaves(PUBLISH_WAVES);
+  for (const wave of waves.sort(byCodeUnits)) {
     await e2eeStreamPublisher.publishWave(wave);
   }
   const outbox = await store.countOutbox();
