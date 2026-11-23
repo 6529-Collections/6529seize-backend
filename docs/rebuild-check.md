@@ -78,6 +78,10 @@ export const mintManifest: AreaManifest = {
   The run sets them for seeds, rebuilders and the API. A flag may not set
   the run's own variables (`REBUILD_*`, `DB_*`, `ETHEREUM_RPC_URL`,
   `ALCHEMY_*`, `AWS_*` and the like); the registry refuses it.
+- A table's `volatileColumns` (each with its `reason`) are left out when
+  its rows are compared after the rebuild. A volatile primary-key column,
+  such as an auto-increment id the API never shows, also stops keying the
+  rows: they match by their other columns.
 - `seeds`: steps that put the stack in its "before" state: legacy rows, kept
   rows, and the live loops run forward.
 - `rebuilders`: steps that fill your INDEX tables from empty. A module step
@@ -87,7 +91,8 @@ export const mintManifest: AreaManifest = {
   to rebuild to. A command step gets the same values in `REBUILD_*`
   environment variables.
   - Each rebuilder connects as its own MySQL user. It can write its `writes`
-    and read its `reads`; anything else is refused.
+    and read its `reads`, and lock rows it reads (`SELECT ... FOR UPDATE`,
+    as production writers do); anything else is refused.
   - A preload refuses every socket except MySQL and the run's sources.
   - Any id the API shows must come from the source, never from
     auto-increment or a random UUID, or the answers change.
