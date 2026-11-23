@@ -1,4 +1,4 @@
-import type { PoolConnection } from 'mysql';
+import type { PoolConnection } from 'mysql2';
 import type WebSocket from 'ws';
 import { DbQueryOptions } from '@/db-query.options';
 import { execNativeTransactionally } from '@/db/my-sql.helpers';

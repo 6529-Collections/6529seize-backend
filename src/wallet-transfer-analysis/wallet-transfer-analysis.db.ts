@@ -9,7 +9,7 @@ import { DbPoolName, DbQueryOptions } from '@/db-query.options';
 import { WalletTransferAnalysisStateEntity } from '@/entities/IWalletTransferAnalysis';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
-import type { PoolConnection } from 'mysql';
+import type { PoolConnection } from 'mysql2';
 import type { QueryRunner } from 'typeorm';
 import {
   ANALYSIS_LOCK_WAIT_SECONDS,

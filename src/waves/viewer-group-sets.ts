@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 import { requestWriteDeadline } from '@/api/write-transaction-budget';
 import { appFeatures } from '@/app-features';
 import {

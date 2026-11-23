@@ -7,6 +7,7 @@ import { writeDelegations } from '@/delegation-row';
 import { Delegation, DelegationEvent, EventType } from '@/entities/IDelegation';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { DataSource, EntityManager } from 'typeorm';
+import { mysql2TypeOrmOptions } from '@/db/mysql-driver-compat';
 
 const COLD = '0xc01d000000000000000000000000000000000c01';
 const HOT_1 = '0x1111111111111111111111111111111111111111';
@@ -60,7 +61,7 @@ describeWithSeed(
       synchronize: false,
       logging: false,
       charset: 'utf8mb4',
-      timezone: 'Etc/UTC'
+      ...mysql2TypeOrmOptions({ timezone: 'Etc/UTC' })
     });
 
     beforeAll(async () => {

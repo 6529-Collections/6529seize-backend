@@ -1,4 +1,4 @@
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 import { PROXY_PIN_STATEMENT_BYTES } from '@/db/proxy-session-pinning';
 import { SQL_IN_LIST_PAGE_VALUES as IN_LIST_MAX_VALUES } from '@/db/sql-in-list-chunks';
 import { NativeCompetitionRuntimeRepository } from './native-competition-runtime.repository';

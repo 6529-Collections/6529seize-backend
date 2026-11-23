@@ -6,6 +6,7 @@ import {
   inspectRetiredSchema,
   RETIRED_MEMBERSHIP_TABLES
 } from './retired-schema-cleanup';
+import { mysql2TypeOrmOptions } from '@/db/mysql-driver-compat';
 
 function source() {
   return new DataSource({
@@ -16,7 +17,7 @@ function source() {
     password: process.env.DB_PASS,
     database: process.env.DB_NAME,
     charset: 'utf8mb4',
-    timezone: 'Etc/UTC',
+    ...mysql2TypeOrmOptions({ timezone: 'Etc/UTC' }),
     entities: Object.values(Entities).filter(
       (entity) => typeof entity === 'function'
     ),

@@ -10,6 +10,7 @@ import {
 } from './transfer-reconciliation.db';
 import { DataSource } from 'typeorm';
 import { Transaction } from '@/entities/ITransaction';
+import { mysql2TypeOrmOptions } from '@/db/mysql-driver-compat';
 
 const A = '0x1111111111111111111111111111111111111111';
 const B = '0x2222222222222222222222222222222222222222';
@@ -182,7 +183,7 @@ describeWithSeed('Transfer reconciliation durable requests', [], () => {
       database: process.env.DB_NAME,
       entities: [Transaction],
       synchronize: false,
-      timezone: 'Etc/UTC'
+      ...mysql2TypeOrmOptions({ timezone: 'Etc/UTC' })
     });
     await source.initialize();
     try {

@@ -13,6 +13,7 @@ import { describeWithSeed, Seed } from '@/tests/_setup/seed';
 import { Time } from '@/time';
 import { XTdhRepository } from './xtdh.repository';
 import { XTdhStatsDb } from './xtdh-stats.db';
+import { mysql2TypeOrmOptions } from '@/db/mysql-driver-compat';
 
 const CONTRACT = '0x0000000000000000000000000000000000000001';
 const OWNER = '0x0000000000000000000000000000000000000002';
@@ -106,8 +107,10 @@ describeWithSeed('xTDH stats nonlocking inserts', seeds, () => {
     username: process.env.DB_USER,
     password: process.env.DB_PASS,
     database: process.env.DB_NAME,
-    timezone: 'Etc/UTC',
-    extra: { connectionLimit: 2 }
+    ...mysql2TypeOrmOptions({
+      timezone: 'Etc/UTC',
+      extra: { connectionLimit: 2 }
+    })
   });
   const statsDb = new XTdhStatsDb(() => dataSource);
   let repository: XTdhRepository;

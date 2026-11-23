@@ -1,4 +1,4 @@
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 import { PROXY_PIN_STATEMENT_BYTES } from '@/db/proxy-session-pinning';
 import { DropsDb } from '@/drops/drops.db';
 import { SqlExecutor } from '@/sql-executor';

@@ -36,6 +36,7 @@ import { DataSource } from 'typeorm';
 import { WaveApiService } from './wave.api.service';
 import { WavesApiDb } from './waves.api.db';
 import { WavesMappers } from './waves.mappers';
+import { mysql2TypeOrmOptions } from '@/db/mysql-driver-compat';
 
 jest.mock('@/api/waves/wave-score.service', () => ({
   waveScoreService: {
@@ -299,7 +300,7 @@ async function restoreDisposableSchema() {
     password: process.env.DB_PASS,
     database: process.env.DB_NAME,
     charset: 'utf8mb4',
-    timezone: 'Etc/UTC',
+    ...mysql2TypeOrmOptions({ timezone: 'Etc/UTC' }),
     entities: Object.values(Entities).filter(
       (entity) => typeof entity === 'function'
     ),

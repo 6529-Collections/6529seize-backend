@@ -27,7 +27,7 @@ import {
   LazyDbAccessCompatibleService
 } from '@/sql-executor';
 
-const mysql = require('mysql');
+const mysql = require('mysql2');
 
 /** Handles 6529.io gives profiles it makes for rated wallets. */
 const PLACEHOLDER_HANDLE_PATTERN = 'id-0x%';

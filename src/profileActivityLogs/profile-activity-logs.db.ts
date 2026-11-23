@@ -43,7 +43,7 @@ import {
   competitionAnonymityViewerId
 } from '@/competitions/competition-anonymity';
 
-const mysql = require('mysql');
+const mysql = require('mysql2');
 
 const PROFILE_LATEST_LOG_RETRY_CODES = new Set([
   'ER_LOCK_DEADLOCK',

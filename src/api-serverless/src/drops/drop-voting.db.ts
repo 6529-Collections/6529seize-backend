@@ -31,7 +31,7 @@ import { DropType } from '../../../entities/IDrop';
 import { DbPoolName } from '../../../db-query.options';
 import { WinnerDropVoterVoteEntity } from '../../../entities/IWinnerDropVoterVote';
 import { WaveType } from '@/entities/IWave';
-import mysql from 'mysql';
+import mysql from 'mysql2';
 
 // A pending decision still needs its final snapshot, even after voting ends.
 const ONGOING_LEGACY_LEADERBOARD_WAVE_SQL = `(

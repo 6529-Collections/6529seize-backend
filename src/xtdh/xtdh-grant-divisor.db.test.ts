@@ -12,6 +12,7 @@ import { describeWithSeed, Seed } from '@/tests/_setup/seed';
 import { Time } from '@/time';
 import { XTdhRepository } from './xtdh.repository';
 import { XTdhStatsDb } from './xtdh-stats.db';
+import { mysql2TypeOrmOptions } from '@/db/mysql-driver-compat';
 
 const OWNER = '0x0000000000000000000000000000000000000002';
 const START = Time.latestUtcMidnight().toMillis() - Time.days(5).toMillis();
@@ -116,8 +117,10 @@ describeWithSeed('xTDH grant divisor', seeds, () => {
     username: process.env.DB_USER,
     password: process.env.DB_PASS,
     database: process.env.DB_NAME,
-    timezone: 'Etc/UTC',
-    extra: { connectionLimit: 2 }
+    ...mysql2TypeOrmOptions({
+      timezone: 'Etc/UTC',
+      extra: { connectionLimit: 2 }
+    })
   });
   let repository: XTdhRepository;
   let previousEpoch: string | undefined;

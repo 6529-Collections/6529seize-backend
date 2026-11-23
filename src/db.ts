@@ -50,14 +50,16 @@ import {
 } from '@/constants';
 import { DbQueryOptions } from './db-query.options';
 import {
-  attachDbAuthTokenSource,
   createDbAuthTokenSource,
-  DbAuthTokenSource,
-  installMysqlIamAuthSupport,
+  dbAuthPlugins,
   isDbIamAuthRequested,
   resolveDbConnectionTargets,
   sslOptionsFor
 } from './db-iam-auth';
+import {
+  mysql2TypeOrmOptions,
+  mysqljsWriteResult
+} from '@/db/mysql-driver-compat';
 import { writeDelegations } from '@/delegation-row';
 import { Artist } from './entities/IArtist';
 import {
@@ -145,12 +147,12 @@ import { equalIgnoreCase } from './strings';
 import { computeMerkleRoot } from './tdhLoop/tdh_merkle';
 import { Time } from './time';
 
-const mysql = require('mysql');
+const mysql = require('mysql2');
 import {
   executeBudgetedSqlTransaction,
   withSqlBudgetQueryOptions
 } from '@/db/sql-execution-budget';
-import type { PoolConnection } from 'mysql';
+import type { PoolConnection } from 'mysql2';
 import { formatNamedParameters } from '@/db/sql-named-parameters';
 
 const logger = Logger.get('DB');
@@ -196,18 +198,17 @@ export async function connect(
     );
   }
   const port = parseInt(process.env.DB_PORT!);
-  let tokens: DbAuthTokenSource | null = null;
-  if (writeTarget.iam) {
-    installMysqlIamAuthSupport();
-    tokens = createDbAuthTokenSource({
-      host: writeTarget.host,
-      port,
-      user: writeTarget.user
-    });
-    // The first pool connection is opened inside initialize(), before the
-    // token source can be attached, so it uses this token.
-    await tokens.ensureFresh();
-  }
+  const tokens = writeTarget.iam
+    ? createDbAuthTokenSource({
+        host: writeTarget.host,
+        port,
+        user: writeTarget.user
+      })
+    : null;
+  // Sign before initialize(), so a signing failure still fails connect()
+  // rather than being logged as an init error below. The first connection
+  // then reuses this token.
+  await tokens?.ensureFresh();
   logger.info(
     `[DB HOST ${writeTarget.host}] [AUTH ${writeTarget.iam ? 'IAM' : 'PASSWORD'}] [SYNC ENTITIES ${syncEntities}]`
   );
@@ -217,7 +218,7 @@ export async function connect(
     host: writeTarget.host,
     port,
     username: writeTarget.user,
-    password: tokens ? tokens.current() : writeTarget.password,
+    password: writeTarget.password,
     database: selection
       ? (selection.database ?? undefined)
       : process.env.DB_NAME,
@@ -226,22 +227,22 @@ export async function connect(
     synchronize: false,
     logging: false,
     charset: 'utf8mb4',
-    timezone: 'Etc/UTC',
+    ...mysql2TypeOrmOptions({
+      timezone: 'Etc/UTC',
+      extra: {
+        // In IAM mode every new pool connection logs in with a fresh token.
+        authPlugins: dbAuthPlugins(tokens, (error) =>
+          logger.error(
+            `[DB IAM TOKEN SIGNING FAILED] [${writeTarget.host}] ${error}`
+          )
+        )
+      }
+    }),
     ...sslOptionsFor(writeTarget)
   });
 
   try {
     await AppDataSource.initialize();
-    if (tokens) {
-      attachDbAuthTokenSource(
-        (AppDataSource.driver as any).pool,
-        tokens,
-        (error) =>
-          logger.error(
-            `[DB IAM TOKEN SIGNING FAILED] [${writeTarget.host}] ${error}`
-          )
-      );
-    }
   } catch (error) {
     if (selection) {
       // initialize() can fail during driver.connect(), before TypeORM's own cleanup.
@@ -405,7 +406,7 @@ function serializeQueryRows(result: unknown): unknown[] {
   // This is the adapter's established JSON wire normalization, not a general
   // deep clone: Dates, Buffers, toJSON and omitted undefined fields must retain
   // the same values in both bound and unbound database results.
-  const encoded = JSON.stringify(result);
+  const encoded = JSON.stringify(mysqljsWriteResult(result));
   return Object.values(JSON.parse(encoded));
 }
 

@@ -39,6 +39,7 @@ import {
   TDHHistory
 } from '@/entities/ITDHHistory';
 import { widenConsolidationKeysBeforeSchemaSync } from './consolidation-key-schema';
+import { mysql2TypeOrmOptions } from '@/db/mysql-driver-compat';
 
 const entities = [
   AddressConsolidationKey,
@@ -106,7 +107,7 @@ describe('consolidation key widening', () => {
       password: process.env.DB_PASS,
       database: process.env.DB_NAME,
       entities,
-      timezone: 'Z'
+      ...mysql2TypeOrmOptions({ timezone: 'Z' })
     }).initialize();
     for (const entity of entities) {
       const metadata = source.getMetadata(entity);

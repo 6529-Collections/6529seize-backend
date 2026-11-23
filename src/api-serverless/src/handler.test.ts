@@ -8,7 +8,7 @@ import {
 } from './ws/ws';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
 import { NotFoundException, UnauthorisedException } from '../../exceptions';
-import type { PoolConnection } from 'mysql';
+import type { PoolConnection } from 'mysql2';
 import {
   markProxySessionPinned,
   releaseOrRetireProxySession

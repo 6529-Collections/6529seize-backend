@@ -1,18 +1,12 @@
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 import {
-  attachDbAuthTokenSource,
   createDbAuthTokenSource,
-  installMysqlIamAuthSupport,
+  dbAuthPlugins,
   isDbConnectionTargetComplete,
   resolveDbConnectionTargets,
   sslOptionsFor
 } from './db-iam-auth';
-
-const MysqlAuth = require('mysql/lib/protocol/Auth');
-const ClientAuthenticationPacket = require('mysql/lib/protocol/packets/ClientAuthenticationPacket');
-const ConnectionConfig = require('mysql/lib/ConnectionConfig');
-const PacketWriter = require('mysql/lib/protocol/PacketWriter');
-const ClientConstants = require('mysql/lib/protocol/constants/client');
+import { FakeMysqlServer } from '@/tests/fake-mysql-server';
 
 const PASSWORD_ENV = {
   DB_HOST: 'writer.example',
@@ -164,102 +158,150 @@ describe('createDbAuthTokenSource', () => {
   });
 });
 
-describe('installMysqlIamAuthSupport', () => {
-  beforeAll(() => {
-    installMysqlIamAuthSupport();
-    installMysqlIamAuthSupport();
-  });
+describe('dbAuthPlugins', () => {
+  const plugin = (
+    plugins: ReturnType<typeof dbAuthPlugins>,
+    name: string
+  ): ((data: Buffer) => unknown) =>
+    plugins[name]({
+      connection: {} as mysql.Connection,
+      command: 'ClientHandshake'
+    }) as (data: Buffer) => unknown;
 
-  it('answers a clear-password request with the token', () => {
-    expect(
-      MysqlAuth.auth('mysql_clear_password', Buffer.alloc(0), {
-        password: 'tok'
-      })
-    ).toEqual(Buffer.from('tok\0'));
-  });
-
-  it('keeps native password authentication unchanged', () => {
-    const scramble = Buffer.alloc(20, 7);
-    expect(
-      MysqlAuth.auth('mysql_native_password', scramble, { password: 'pw' })
-    ).toEqual(MysqlAuth.token('pw', scramble));
-    expect(MysqlAuth.auth('unknown_plugin', scramble, {})).toBeUndefined();
-  });
-
-  it('advertises plugin authentication', () => {
-    const config = new ConnectionConfig({ host: 'h' });
-    expect(config.clientFlags & ClientConstants.CLIENT_PLUGIN_AUTH).not.toBe(0);
-  });
-
-  it('names the client plugin at the end of the handshake response', () => {
-    const write = (clientFlags: number) => {
-      const writer = new PacketWriter();
-      new ClientAuthenticationPacket({
-        clientFlags,
-        maxPacketSize: 0,
-        charsetNumber: 33,
-        user: 'u',
-        scrambleBuff: Buffer.alloc(0),
-        database: 'db',
-        protocol41: true
-      }).write(writer);
-      return writer.toBuffer({ incrementPacketNumber: () => 0 } as any);
+  it('answers a clear-password request with a fresh token', async () => {
+    const tokens = {
+      current: () => 'stale',
+      ensureFresh: jest.fn(async () => 'tok')
     };
-    const withPlugin = write(ClientConstants.CLIENT_PLUGIN_AUTH);
-    const withoutPlugin = write(0);
-    expect(withPlugin.subarray(-22).toString()).toBe('mysql_native_password\0');
-    expect(withoutPlugin.toString()).not.toContain('mysql_native_password');
+    const answer = plugin(dbAuthPlugins(tokens), 'mysql_clear_password');
+    await expect(answer(Buffer.alloc(0))).resolves.toEqual(
+      Buffer.from('tok\0')
+    );
+    expect(tokens.ensureFresh).toHaveBeenCalledTimes(1);
   });
+
+  it('reports a signing failure and fails the login', async () => {
+    const onTokenError = jest.fn();
+    const answer = plugin(
+      dbAuthPlugins(
+        {
+          current: () => '',
+          ensureFresh: async () => {
+            throw new Error('expired credentials');
+          }
+        },
+        onTokenError
+      ),
+      'mysql_clear_password'
+    );
+    await expect(answer(Buffer.alloc(0))).rejects.toThrow(
+      'expired credentials'
+    );
+    expect(onTokenError).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['mysql_clear_password', 'sha256_password', 'caching_sha2_password'])(
+    'refuses %s in password mode, as the mysql driver did',
+    (name) => {
+      expect(() => plugin(dbAuthPlugins(null), name)(Buffer.alloc(0))).toThrow(
+        'not allowed'
+      );
+    }
+  );
+
+  it.each(['sha256_password', 'caching_sha2_password'])(
+    'refuses %s in IAM mode',
+    (name) => {
+      const tokens = { current: () => 't', ensureFresh: async () => 't' };
+      expect(() =>
+        plugin(dbAuthPlugins(tokens), name)(Buffer.alloc(0))
+      ).toThrow('not allowed');
+    }
+  );
 });
 
-describe('attachDbAuthTokenSource', () => {
-  it('gives new connections the newest token after refreshing it', async () => {
-    const pool = mysql.createPool({ host: 'h', user: 'u' });
-    const order: string[] = [];
-    let token = '';
-    const tokens = {
-      current: () => token,
-      ensureFresh: jest.fn(async () => {
-        order.push('refresh');
-        token = 'fresh-token';
-        return token;
-      })
-    };
-    const originalGetConnection = jest
-      .spyOn(pool, 'getConnection')
-      .mockImplementation(((callback: any) => {
-        order.push('getConnection');
-        callback(null, 'connection');
-      }) as any);
-    attachDbAuthTokenSource(pool, tokens);
+describe('token login with mysql2', () => {
+  let server: FakeMysqlServer | undefined;
+  let pool: mysql.Pool | undefined;
 
-    const connection = await new Promise((resolve, reject) =>
-      pool.getConnection((err, conn) => (err ? reject(err) : resolve(conn)))
+  afterEach(async () => {
+    await new Promise<void>((resolve) =>
+      pool ? pool.end(() => resolve()) : resolve()
     );
-    expect(connection).toBe('connection');
-    expect(order).toEqual(['refresh', 'getConnection']);
-    expect((pool as any).config.connectionConfig.password).toBe('fresh-token');
-    expect((pool as any).config.newConnectionConfig().password).toBe(
-      'fresh-token'
-    );
-    originalGetConnection.mockRestore();
-    pool.end(() => undefined);
+    await server?.stop();
+    pool = undefined;
+    server = undefined;
   });
 
-  it('reports a signing failure to the caller', async () => {
-    const pool = mysql.createPool({ host: 'h', user: 'u' });
-    attachDbAuthTokenSource(pool, {
-      current: () => '',
-      ensureFresh: async () => {
-        throw new Error('no credentials');
-      }
-    });
-    await expect(
-      new Promise((resolve, reject) =>
-        pool.getConnection((err, conn) => (err ? reject(err) : resolve(conn)))
+  const connect = (target: mysql.Pool) =>
+    new Promise<mysql.PoolConnection>((resolve, reject) =>
+      target.getConnection((error, connection) =>
+        error ? reject(error) : resolve(connection)
       )
-    ).rejects.toThrow('no credentials');
-    pool.end(() => undefined);
+    );
+
+  it('logs each new connection in with a token no older than 10 minutes', async () => {
+    server = new FakeMysqlServer({ clearPassword: true });
+    const port = await server.start();
+    let clock = 0;
+    let issued = 0;
+    const tokens = createDbAuthTokenSource(
+      { host: '127.0.0.1', port, user: 'seize_app_rw' },
+      { sign: async () => `token-${++issued}`, now: () => clock }
+    );
+    pool = mysql.createPool({
+      host: '127.0.0.1',
+      port,
+      user: 'seize_app_rw',
+      database: 'OM6529',
+      authPlugins: dbAuthPlugins(tokens)
+    });
+    const first = await connect(pool);
+    const second = await connect(pool);
+    clock = 10 * 60 * 1000;
+    const third = await connect(pool);
+    [first, second, third].forEach((connection) => connection.release());
+
+    expect(server.logins).toEqual([
+      expect.objectContaining({
+        user: 'seize_app_rw',
+        database: 'OM6529',
+        clientPlugin: 'mysql_native_password',
+        clearPassword: 'token-1'
+      }),
+      expect.objectContaining({ clearPassword: 'token-1' }),
+      expect.objectContaining({ clearPassword: 'token-2' })
+    ]);
+  });
+
+  it('keeps native password login in password mode', async () => {
+    server = new FakeMysqlServer({ password: 'secret' });
+    const port = await server.start();
+    pool = mysql.createPool({
+      host: '127.0.0.1',
+      port,
+      user: 'app',
+      password: 'secret',
+      authPlugins: dbAuthPlugins(null)
+    });
+    (await connect(pool)).release();
+    expect(server.logins).toEqual([
+      expect.objectContaining({ user: 'app', clearPassword: null })
+    ]);
+  });
+
+  it('never sends the password in clear text in password mode', async () => {
+    server = new FakeMysqlServer({ clearPassword: true });
+    const port = await server.start();
+    pool = mysql.createPool({
+      host: '127.0.0.1',
+      port,
+      user: 'app',
+      password: 'secret',
+      authPlugins: dbAuthPlugins(null)
+    });
+    await expect(connect(pool)).rejects.toThrow('not allowed');
+    expect(server.logins).toEqual([]);
   });
 });
 
@@ -281,38 +323,5 @@ describe('review follow-ups', () => {
     } finally {
       Object.assign(process.env, saved);
     }
-  });
-
-  it('refuses to patch a driver whose internals changed', () => {
-    expect(() =>
-      installMysqlIamAuthSupport({
-        auth: { auth: () => undefined },
-        clientAuthenticationPacket: { prototype: { write: () => undefined } },
-        connectionConfig: { getDefaultFlags: () => ['+PROTOCOL_41'] },
-        clientPluginAuthFlag: 524288
-      })
-    ).toThrow('mysql@2.18');
-  });
-
-  it('reports token signing failures to the error callback', async () => {
-    const pool = mysql.createPool({ host: 'h', user: 'u' });
-    const onTokenError = jest.fn();
-    attachDbAuthTokenSource(
-      pool,
-      {
-        current: () => '',
-        ensureFresh: async () => {
-          throw new Error('expired credentials');
-        }
-      },
-      onTokenError
-    );
-    await expect(
-      new Promise((resolve, reject) =>
-        pool.getConnection((err, conn) => (err ? reject(err) : resolve(conn)))
-      )
-    ).rejects.toThrow('expired credentials');
-    expect(onTokenError).toHaveBeenCalledTimes(1);
-    pool.end(() => undefined);
   });
 });

@@ -1,7 +1,8 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { performance } from 'node:perf_hooks';
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 import { Logger } from '@/logging';
+import { withMysqljsErrorCode } from '@/db/mysql-driver-compat';
 
 export interface SqlExecutionBudget {
   readonly deadlineMonotonicMillis: number;
@@ -151,9 +152,10 @@ export function normalizeSqlSessionInteger(value: unknown): number {
 }
 
 function sanitizedDriverError(
-  error: unknown,
+  driverError: unknown,
   scope: SqlBudgetScope
 ): SqlExecutionBudgetExceededError {
+  const error = withMysqljsErrorCode(driverError, scope.connection.physical);
   const rawCode =
     error && typeof error === 'object' && 'code' in error
       ? error.code
@@ -598,7 +600,7 @@ function nativeQuery(
   return new Promise((resolve, reject) => {
     // Format numeric parameters independently of a caller's named queryFormat.
     connection.query(mysql.format(sql, [...values]), (error, rows) =>
-      error ? reject(error) : resolve(rows)
+      error ? reject(error) : resolve(rows as unknown[])
     );
   });
 }

@@ -14,7 +14,7 @@ import { CreateOrUpdateProfileCommand } from './profile.types';
 import { RequestContext } from '../request.context';
 import { identitiesDb } from '../identities/identities.db';
 
-const mysql = require('mysql');
+const mysql = require('mysql2');
 
 export class ProfilesDb extends LazyDbAccessCompatibleService {
   private async insertProfileArchiveRecord(

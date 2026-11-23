@@ -12,7 +12,7 @@ import {
 } from '../entities/IActivityEvent';
 import { RequestContext } from '../request.context';
 
-const mysql = require('mysql');
+const mysql = require('mysql2');
 
 const ACTIVITY_EVENT_ACTIONS_BY_TYPE: Record<
   ActivityEventTargetType,

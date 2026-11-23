@@ -1,5 +1,5 @@
 import type { APIGatewayEvent, Context } from 'aws-lambda';
-import type { PoolConnection } from 'mysql';
+import type { PoolConnection } from 'mysql2';
 import { DbQueryOptions } from '@/db-query.options';
 import { execNativeTransactionally } from '@/db/my-sql.helpers';
 import { ConnectionWrapper, SqlExecutor } from '@/sql-executor';
