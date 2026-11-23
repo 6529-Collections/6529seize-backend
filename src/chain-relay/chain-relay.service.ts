@@ -23,8 +23,7 @@ import {
   chainPendingOperationsDb,
   ChainPendingOperationsDb,
   PendingOperation,
-  PendingSigner,
-  PendingSummary
+  PendingSigner
 } from './chain-pending-operations.db';
 
 const logger = Logger.get('CHAIN_RELAY');
@@ -51,6 +50,11 @@ const OPS_TTL_MS = 10 * 60_000;
 const MAX_OPEN_PER_CREATOR = 5;
 /** How long a read waits for the chain to say what became of a submit. */
 const CHAIN_CHECK_MS = 3_000;
+/**
+ * How long holding a join waits for the gateway's reads (the identity
+ * check, the chain's maxValidityMs), so a slow gateway gives a quick 503.
+ */
+const GATEWAY_READ_MS = 5_000;
 /** How often reads ask the chain about one operation, at most. */
 const CHECK_EVERY_MS = 10_000;
 /**
@@ -399,6 +403,26 @@ function isSent(op: PendingOperation): boolean {
   return op.status === 'SUBMITTED' || op.status === 'FAILED';
 }
 
+const TIMED_OUT = Symbol('timed out');
+
+/** A promise's value, or TIMED_OUT once `ms` have passed first. */
+async function within<T>(
+  promise: Promise<T>,
+  ms: number
+): Promise<T | typeof TIMED_OUT> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<typeof TIMED_OUT>((resolve) => {
+        timer = setTimeout(() => resolve(TIMED_OUT), ms);
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Two first posts of one operation at once: the second insert lost. */
 function isInsertRace(error: unknown): boolean {
   const code = (error as { code?: unknown } | null)?.code;
@@ -471,7 +495,12 @@ export class ChainRelayService {
     private readonly gateway: Gateway = chainGatewayClient,
     private readonly db: ChainPendingOperationsDb = chainPendingOperationsDb,
     private readonly now: () => number = () => Date.now(),
-    private readonly chainCheckMs: number = CHAIN_CHECK_MS
+    private readonly waits: {
+      /** For a read of a sent operation's place on the chain. */
+      readonly chainCheckMs?: number;
+      /** For the gateway's reads when a join is held. */
+      readonly gatewayReadMs?: number;
+    } = {}
   ) {}
 
   /** The chain's maxValidityMs as last read, and when. */
@@ -554,9 +583,6 @@ export class ChainRelayService {
     if (input.expiresAt !== join.expiresAt) {
       badRequest("expires_at is not the typed data's");
     }
-    if (join.expiresAt <= this.now()) {
-      badRequest('The operation has expired: draft it again');
-    }
     const given = input.required.map((it) => ({
       role: it.role,
       key_type: it.keyType,
@@ -584,11 +610,14 @@ export class ChainRelayService {
   }
 
   /**
-   * A new join's window must be one the chain takes: from its notBefore to
-   * its expiry, and from now to its expiry, at most the chain's
-   * maxValidityMs. That also bounds how long it is held.
+   * A new join's window must be one the chain takes: unexpired, and from
+   * its notBefore to its expiry and from now to its expiry at most the
+   * chain's maxValidityMs. That also bounds how long it is held.
    */
   private async checkWindow(join: JoinTerms) {
+    if (join.expiresAt <= this.now()) {
+      badRequest('The operation has expired: draft it again');
+    }
     const max = await this.maxValidityMs();
     if (
       join.expiresAt - join.notBefore > max ||
@@ -607,7 +636,8 @@ export class ChainRelayService {
       return this.maxValidity.ms;
     }
     try {
-      const ms = Number((await this.gateway.getOps())?.maxValidityMs);
+      const ops = await within(this.gateway.getOps(), this.gatewayReadMs);
+      const ms = ops === TIMED_OUT ? NaN : Number(ops?.maxValidityMs);
       if (Number.isSafeInteger(ms) && ms > 0) {
         this.maxValidity = { ms, at: now };
         return ms;
@@ -627,16 +657,25 @@ export class ChainRelayService {
    * the chain can't be read, nothing is held unchecked: 503.
    */
   private async checkMembership(join: JoinTerms) {
-    let principal: string;
-    try {
-      const identity = await this.gateway.getIdentityByWallet(join.signer);
-      principal = lower(identity?.principalId ?? '');
-    } catch (error) {
-      throw new CustomApiCompliantException(
+    const unavailable = (why: string) =>
+      new CustomApiCompliantException(
         503,
-        `The 6529 Network could not be read to check the join: ${(error as Error)?.message ?? error}`,
+        `The 6529 Network could not be read to check the join: ${why}`,
         'CHAIN_UNAVAILABLE'
       );
+    let principal: string;
+    try {
+      const identity = await within(
+        this.gateway.getIdentityByWallet(join.signer),
+        this.gatewayReadMs
+      );
+      if (identity === TIMED_OUT) {
+        throw unavailable(`no answer in ${this.gatewayReadMs} ms`);
+      }
+      principal = lower(identity?.principalId ?? '');
+    } catch (error) {
+      if (error instanceof CustomApiCompliantException) throw error;
+      throw unavailable(`${(error as Error)?.message ?? error}`);
     }
     if (principal !== join.principal) {
       badRequest(
@@ -646,12 +685,14 @@ export class ChainRelayService {
   }
 
   /**
-   * Holds an identity join until both its wallets have signed. The creating
-   * wallet must be one of them and have signed it, the identity's wallet
-   * must belong to that identity, and a wallet may have created at most
-   * five pending joins. Posting it again with more signatures adds them
-   * while it is pending, and answers its state once it has been sent.
-   * Relays it once both have signed.
+   * Holds an identity join until the joining wallet signs it. Only the
+   * identity's wallet (role 0) posts it, signed, and that wallet must
+   * belong to the identity; a wallet may have created at most five pending
+   * joins. The joining wallet signs through addSignature. Otherwise anyone
+   * could make fresh wallets and fill an identity wallet's list with joins
+   * it never asked for. Posting it again adds any signature it lacks while
+   * it is pending, and answers its state once it has been sent. Relays it
+   * once both have signed.
    */
   async createPending(
     input: PendingOperationInput,
@@ -661,9 +702,10 @@ export class ChainRelayService {
     const txId = lower(input.txId);
     const me = lower(wallet);
     const signers = joinSigners(join);
-    const mine = signers.filter((it) => it.signer === me);
-    if (!mine.length) {
-      throw new ForbiddenException('You are not a signer of this operation');
+    if (me !== join.signer) {
+      throw new ForbiddenException(
+        "Only the identity's wallet (role 0) holds a join; the joining wallet signs it after"
+      );
     }
     const byRole = new Map(signers.map((it) => [it.role, it]));
     const given = new Map<number, string>();
@@ -673,7 +715,7 @@ export class ChainRelayService {
       this.checkSignature(txId, signer, signature);
       given.set(signature.role, lower(signature.sig));
     }
-    if (!mine.some((it) => given.has(it.role))) {
+    if (!given.has(ROLE_SIGNER)) {
       badRequest('Sign the operation before sharing it');
     }
     // A join already held needs no checks again; one already sent is
@@ -825,8 +867,11 @@ export class ChainRelayService {
     return open ? await this.settle(op, open) : op;
   }
 
-  /** Operations waiting for this wallet's signature, without their bytes. */
-  async awaiting(wallet: string): Promise<PendingSummary[]> {
+  /**
+   * Operations waiting for this wallet's signature, with their envelope
+   * and typed data: the joining wallet builds what it signs from them.
+   */
+  async awaiting(wallet: string): Promise<PendingOperation[]> {
     return await this.db.awaiting(lower(wallet), this.now());
   }
 
@@ -951,15 +996,9 @@ export class ChainRelayService {
 
   /** Where the chain has a transaction (see ChainPlace), asked bounded. */
   private async chainTx(txId: string): Promise<ChainPlace> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const tx = await Promise.race([
-        this.gateway.getTx(txId),
-        new Promise<undefined>((resolve) => {
-          timer = setTimeout(() => resolve(undefined), this.chainCheckMs);
-        })
-      ]);
-      if (tx === undefined) return null;
+      const tx = await within(this.gateway.getTx(txId), this.chainCheckMs);
+      if (tx === TIMED_OUT) return null;
       return tx ? { tx } : { notHeldAt: null };
     } catch (error) {
       if (error instanceof ChainGatewayError && error.code === 'not_held') {
@@ -970,9 +1009,15 @@ export class ChainRelayService {
         `[RELAY ${txId} CHAIN CHECK FAILED] ${(error as Error)?.message ?? error}`
       );
       return null;
-    } finally {
-      clearTimeout(timer);
     }
+  }
+
+  private get chainCheckMs(): number {
+    return this.waits.chainCheckMs ?? CHAIN_CHECK_MS;
+  }
+
+  private get gatewayReadMs(): number {
+    return this.waits.gatewayReadMs ?? GATEWAY_READ_MS;
   }
 
   /**

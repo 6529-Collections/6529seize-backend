@@ -7,10 +7,7 @@ import {
   chainRelayService,
   RelaySubmitRequest
 } from '@/chain-relay/chain-relay.service';
-import {
-  PendingOperation,
-  PendingSummary
-} from '@/chain-relay/chain-pending-operations.db';
+import { PendingOperation } from '@/chain-relay/chain-pending-operations.db';
 
 /**
  * Operations people sign with their wallets for the 6529 chain: relayed to
@@ -129,39 +126,35 @@ const toSignature = (it: SignatureBody) => ({
 
 /**
  * An operation as the API shows it. A pending one past its expiry is
- * EXPIRED: it can no longer land. No signature is ever shown, to anyone:
- * the relay submits, so no wallet needs another's, and a signature handed
- * out could finish a join its signer had withdrawn. `signed` says who has
- * signed.
+ * EXPIRED: it can no longer land. `final` is true once nothing about it
+ * will change: the chain's tx is final, or it is FAILED, CANCELLED or
+ * EXPIRED. Poll GET /chain/pending/:tx_id until it is. No signature is
+ * ever shown, to anyone: the relay submits, so no wallet needs another's,
+ * and a signature handed out could finish a join its signer had withdrawn.
+ * `signed` says who has signed.
  */
 export function toApiPendingOperation(
   op: PendingOperation,
   now: number = Date.now()
 ) {
-  return {
-    ...toApiPendingSummary(op, now),
-    unsigned: op.unsigned_hex,
-    typed_data: JSON.parse(op.typed_data_json)
-  };
-}
-
-/**
- * An operation as a list shows it: without its envelope and typed data,
- * which only GET /chain/pending/:tx_id answers.
- */
-export function toApiPendingSummary(
-  op: PendingSummary,
-  now: number = Date.now()
-) {
+  const status =
+    op.status === 'PENDING' && op.expires_at <= now ? 'EXPIRED' : op.status;
+  const result = op.result_json ? JSON.parse(op.result_json) : null;
   return {
     tx_id: op.tx_id,
     op_type: op.op_type,
     principal: op.principal,
+    unsigned: op.unsigned_hex,
+    typed_data: JSON.parse(op.typed_data_json),
     created_by: op.created_by,
     expires_at: op.expires_at,
-    status:
-      op.status === 'PENDING' && op.expires_at <= now ? 'EXPIRED' : op.status,
-    result: op.result_json ? JSON.parse(op.result_json) : null,
+    status,
+    final:
+      status === 'FAILED' ||
+      status === 'CANCELLED' ||
+      status === 'EXPIRED' ||
+      (status === 'SUBMITTED' && result?.tx?.status === 'final'),
+    result,
     last_error: op.last_error,
     created_at: op.created_at,
     updated_at: op.updated_at,
@@ -196,7 +189,7 @@ router.post(
 router.get('/pending', needsAuthenticatedUser(), async (req, res) => {
   const wallet = getWalletOrThrow(req);
   const ops = await chainRelayService.awaiting(wallet);
-  res.send({ data: ops.map((op) => toApiPendingSummary(op)) });
+  res.send({ data: ops.map((op) => toApiPendingOperation(op)) });
 });
 
 router.post(

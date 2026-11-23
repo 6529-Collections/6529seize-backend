@@ -122,9 +122,9 @@ class FakeDb {
           op.expires_at > now &&
           op.signers.some((it) => it.signer === wallet && !it.sig)
       )
-      .map(({ unsigned_hex: _u, typed_data_json: _t, ...summary }) => ({
-        ...summary,
-        signers: summary.signers.map((it) => ({ ...it }))
+      .map((op) => ({
+        ...op,
+        signers: op.signers.map((it) => ({ ...it }))
       }));
   }
 }
@@ -155,7 +155,7 @@ function setup() {
     gateway as never,
     db as unknown as ChainPendingOperationsDb,
     () => now,
-    50
+    { chainCheckMs: 50, gatewayReadMs: 50 }
   );
   return {
     db,
@@ -366,7 +366,7 @@ describe('ChainRelayService pending operations', () => {
     const { service, gateway } = setup();
     const op = await service.createPending(
       { ...bothSigned(), opType: 271 },
-      JOINER.address
+      ANCHOR.address
     );
     expect(op.status).toBe('SUBMITTED');
     expect(op.op_type).toBe('IDENTITY_JOIN');
@@ -477,16 +477,22 @@ describe('ChainRelayService pending operations', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
-  it('takes an operation only from a signer who has signed it', async () => {
-    const { service } = setup();
+  it("takes a join only from the identity's wallet, signed", async () => {
+    const { service, gateway, db } = setup();
+    for (const wallet of [STRANGER, JOINER]) {
+      await expect(
+        service.createPending(joinInput(), wallet.address)
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    }
+    // The joining wallet holding it first, with its own signature: 403,
+    // and nothing is read or held.
     await expect(
-      service.createPending(joinInput(), STRANGER.address)
-    ).rejects.toBeInstanceOf(ForbiddenException);
+      service.createPending(joinInput([joinerSignature()]), JOINER.address)
+    ).rejects.toThrow("Only the identity's wallet (role 0) holds a join");
+    expect(gateway.getIdentityByWallet).not.toHaveBeenCalled();
+    expect(db.ops.size).toBe(0);
     await expect(
-      service.createPending(
-        joinInput([{ role: 0, keyType: 1, sig: sign(ANCHOR) }]),
-        JOINER.address
-      )
+      service.createPending(joinInput([joinerSignature()]), ANCHOR.address)
     ).rejects.toThrow('Sign the operation before sharing it');
   });
 
@@ -525,10 +531,10 @@ describe('ChainRelayService pending operations', () => {
     }
   });
 
-  it('holds both wallets first posts at once as one join', async () => {
+  it('holds two first posts of one join at once as one join', async () => {
     const { service, gateway, db } = setup();
-    // The joining wallet's post finds no row, as the identity's wallet's
-    // insert lands: its own insert then loses on the key.
+    // The second post finds no row, as the first one's insert lands: its
+    // own insert then loses on the key, and it adds what it has instead.
     await service.createPending(joinInput(), ANCHOR.address);
     const find = db.find.bind(db);
     db.find = jest
@@ -536,11 +542,9 @@ describe('ChainRelayService pending operations', () => {
       .mockImplementationOnce(async () => null)
       .mockImplementationOnce(async () => null)
       .mockImplementation(find);
-    const op = await service.createPending(
-      joinInput([joinerSignature()]),
-      JOINER.address
-    );
+    const op = await service.createPending(bothSigned(), ANCHOR.address);
     expect(op.status).toBe('SUBMITTED');
+    expect(db.ops.size).toBe(1);
     expect(gateway.submit).toHaveBeenCalledTimes(1);
   });
 
@@ -742,7 +746,7 @@ describe('ChainRelayService pending operations', () => {
       service.addSignature(TX, joinerSignature(), JOINER.address)
     ).rejects.toThrow('The operation is cancelled');
     await expect(
-      service.createPending(bothSigned(), JOINER.address)
+      service.createPending(bothSigned(), ANCHOR.address)
     ).rejects.toThrow('The operation is cancelled');
     await expect(service.retry(TX, ANCHOR.address)).rejects.toThrow(
       'The operation is cancelled'
@@ -855,13 +859,30 @@ describe('ChainRelayService holding a join: its limits and the identity check', 
       503
     );
     expect(db.ops.size).toBe(0);
-    // The joining wallet holding it first: the identity's wallet is checked.
-    const held = await service.createPending(
-      joinInput([joinerSignature()]),
-      JOINER.address
-    );
+    const held = await service.createPending(joinInput(), ANCHOR.address);
     expect(held.status).toBe('PENDING');
     expect(gateway.getIdentityByWallet).toHaveBeenLastCalledWith(addr(ANCHOR));
+  });
+
+  it('answers 503 at once when the gateway is slow, and takes a day when its maxValidityMs is', async () => {
+    const hang = () => new Promise<never>(() => undefined);
+    const { service, gateway, db } = setup();
+    gateway.getIdentityByWallet.mockImplementationOnce(hang);
+    const started = Date.now();
+    const slow = await service
+      .createPending(joinInput(), ANCHOR.address)
+      .catch((e: unknown) => e);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(slow).toBeInstanceOf(CustomApiCompliantException);
+    expect((slow as CustomApiCompliantException).getStatusCode()).toBe(503);
+    expect(db.ops.size).toBe(0);
+    const fresh = setup();
+    fresh.gateway.getOps.mockImplementationOnce(hang);
+    const opsStarted = Date.now();
+    expect(
+      (await fresh.service.createPending(joinInput(), ANCHOR.address)).status
+    ).toBe('PENDING');
+    expect(Date.now() - opsStarted).toBeLessThan(2_000);
   });
 
   it("refuses a window longer than the chain's maxValidityMs, or a day when it can't be read", async () => {
@@ -938,36 +959,33 @@ describe('ChainRelayService holding a join: its limits and the identity check', 
     expect(sixth).toBeInstanceOf(CustomApiCompliantException);
     expect((sixth as CustomApiCompliantException).getStatusCode()).toBe(429);
     expect(sixth).toMatchObject({ code: 'TOO_MANY_PENDING' });
-    // Another wallet's are its own; a cancelled one frees its place.
-    expect(
-      (
-        await service.createPending(
-          joinInput([joinerSignature()]),
-          JOINER.address
-        )
-      ).status
-    ).toBe('PENDING');
+    // A cancelled one frees its place.
     await service.cancel(otherJoin(0).txId, ANCHOR.address);
     expect(
       (await service.createPending(otherJoin(5), ANCHOR.address)).status
     ).toBe('PENDING');
   });
 
-  it('lists the joins waiting for a wallet without their bytes', async () => {
+  it('lists the joins waiting for a wallet with what it signs', async () => {
     const { service } = setup();
     await service.createPending(joinInput(), ANCHOR.address);
     const listed = await service.awaiting(JOINER.address);
     expect(listed.map((it) => it.tx_id)).toEqual([TX]);
-    expect(listed[0]).not.toHaveProperty('unsigned_hex');
-    expect(listed[0]).not.toHaveProperty('typed_data_json');
+    expect(listed[0].unsigned_hex).toBe('0x0102');
+    expect(JSON.parse(listed[0].typed_data_json)).toEqual(JOIN.typedData);
     expect(listed[0].signers.map((it) => it.role)).toEqual([0, 4]);
   });
 
   it('answers a join posted again once it was sent with its state, sending nothing', async () => {
-    const { service, gateway } = setup();
+    const { service, gateway, tick } = setup();
     await service.createPending(bothSigned(), ANCHOR.address);
     expect(
-      (await service.createPending(bothSigned(), JOINER.address)).status
+      (await service.createPending(bothSigned(), ANCHOR.address)).status
+    ).toBe('SUBMITTED');
+    // Also once it has expired.
+    tick(2 * 3_600_000);
+    expect(
+      (await service.createPending(bothSigned(), ANCHOR.address)).status
     ).toBe('SUBMITTED');
     expect(gateway.submit).toHaveBeenCalledTimes(1);
     const failed = setup();

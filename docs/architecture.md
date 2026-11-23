@@ -891,23 +891,31 @@ identity data from the chain add calls to this client, not their own.
 `chain_pending_operations` and `chain_pending_operation_signers` until both
 have signed, checking each signature against its signer, then relays it.
 
-Only identity joins are held. What is held is read from the join's typed
-data, which must hash to its `tx_id`: the principal, the window, and the
-signers (role 0, the identity's wallet the header's key id names; role 4,
-the body's joining wallet). A given `principal`, `expires_at` or `required`
-that says otherwise is refused. A new join is held only when the role-0
-wallet belongs to that principal now, read through the gateway at the
-latest finalized height (400 if not, 503 when the chain can't be read), its
-window is one the chain takes (at most `maxValidityMs` from `GET /v1/ops`, a
-day when unreadable), its envelope is at most 4 KiB and its typed data 8
-KiB, and the wallet holding it has fewer than five pending joins (429
-`TOO_MANY_PENDING`). No signature is ever returned (`signers[].sig` is
-always null; `signed` says who has signed): the relay submits, and a
-signature handed out could finish a join its signer had withdrawn. A
-pending join past its expiry shows as `EXPIRED`. The list of joins waiting
-for a wallet (`GET /chain/pending`, one query) leaves out `unsigned` and
-`typed_data`, which `GET /chain/pending/:tx_id` answers. Posting a join
-again once it was sent answers its state.
+Only identity joins are held, and only the identity's wallet (role 0)
+holds one (`POST /chain/pending`, signed; 403 for any other wallet); the
+joining wallet signs it after (`POST /chain/pending/:tx_id/signatures`).
+What is held is read from the join's typed data, which must hash to its
+`tx_id`: the principal, the window, and the signers (role 0, the wallet the
+header's key id names; role 4, the body's joining wallet). A given
+`principal`, `expires_at` or `required` that says otherwise is refused. A
+new join is held only when the role-0 wallet belongs to that principal now,
+read through the gateway at the latest finalized height (400 if not; 503
+when the chain can't be read, or doesn't answer in 5 s), its window is one
+the chain takes (at most `maxValidityMs` from `GET /v1/ops`, a day when
+unreadable), its envelope is at most 4 KiB and its typed data 8 KiB, and
+the wallet holding it has fewer than five pending joins (429
+`TOO_MANY_PENDING`). Posting a join again once it was sent answers its
+state, also after its expiry. No signature is ever returned
+(`signers[].sig` is always null; `signed` says who has signed): the relay
+submits, and a signature handed out could finish a join its signer had
+withdrawn. A pending join past its expiry shows as `EXPIRED`. The list of
+joins waiting for a wallet (`GET /chain/pending`, one query, at most 50)
+carries each join's `unsigned` and `typed_data`, which the joining wallet
+checks and signs.
+
+Every operation the API answers has `final`: true once nothing about it
+will change (the chain's tx is final, or it is `FAILED`, `CANCELLED` or
+`EXPIRED`). Poll `GET /chain/pending/:tx_id` until it is final.
 
 Every submit carries its draft's txId, the digest every signer signed: a
 direct submit's body needs `tx_id` (400 without it), and a held operation

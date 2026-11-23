@@ -120,7 +120,7 @@ describeWithSeed('ChainPendingOperationsDb', [], () => {
     expect(await db.awaiting(B, 2_000)).toEqual([]);
   });
 
-  it('lists the joins waiting for a wallet in one query, with their signers and without their bytes', async () => {
+  it('lists the joins waiting for a wallet in one query, with their signers and what they sign', async () => {
     await sqlExecutor.executeNativeQueriesInTransaction(async (conn) => {
       await db.insert(join(), conn);
       await db.insert({ ...join(TX2), created_at: 1_500 }, conn);
@@ -128,11 +128,11 @@ describeWithSeed('ChainPendingOperationsDb', [], () => {
     });
     const listed = await db.awaiting(B, 2_000);
     expect(listed.map((it) => it.tx_id)).toEqual([TX2, TX]);
-    expect(listed[0]).not.toHaveProperty('unsigned_hex');
-    expect(listed[0]).not.toHaveProperty('typed_data_json');
     expect(listed[1]).toEqual(
       expect.objectContaining({
         tx_id: TX,
+        unsigned_hex: '0x0102',
+        typed_data_json: '{"primaryType":"IdentityJoin"}',
         created_by: A,
         expires_at: 5_000,
         status: 'PENDING',
@@ -274,7 +274,7 @@ describeWithSeed('ChainPendingOperationsDb', [], () => {
     expect((await db.find(TX))?.status).toBe('SUBMITTED');
   });
 
-  it('holds both wallets first posts of a join, sent at once, as one join sent once', async () => {
+  it('holds two first posts of a join, sent at once, as one join sent once', async () => {
     const anchor = new Wallet('0x' + '11'.repeat(32));
     const joiner = new Wallet('0x' + '22'.repeat(32));
     const expiresAt = Date.now() + 3_600_000;
@@ -292,7 +292,9 @@ describeWithSeed('ChainPendingOperationsDb', [], () => {
       }))
     };
     const relay = new ChainRelayService(gateway as never, db);
-    const post = (wallet: Wallet, role: number) =>
+    // The identity's wallet posts it twice at once, the second time with
+    // the joining wallet's signature too.
+    const post = (signers: { wallet: Wallet; role: number }[]) =>
       relay.createPending(
         {
           txId: held.txId,
@@ -305,11 +307,21 @@ describeWithSeed('ChainPendingOperationsDb', [], () => {
             { role: 0, keyType: 1, signer: anchor.address },
             { role: 4, keyType: 1, signer: joiner.address }
           ],
-          signatures: [{ role, keyType: 1, sig: held.sign(wallet) }]
+          signatures: signers.map(({ wallet, role }) => ({
+            role,
+            keyType: 1,
+            sig: held.sign(wallet)
+          }))
         },
-        wallet.address
+        anchor.address
       );
-    const both = await Promise.all([post(anchor, 0), post(joiner, 4)]);
+    const both = await Promise.all([
+      post([{ wallet: anchor, role: 0 }]),
+      post([
+        { wallet: anchor, role: 0 },
+        { wallet: joiner, role: 4 }
+      ])
+    ]);
     expect(both.map((it) => it.tx_id)).toEqual([held.txId, held.txId]);
     const op = await db.find(held.txId);
     expect(op?.status).toBe('SUBMITTED');

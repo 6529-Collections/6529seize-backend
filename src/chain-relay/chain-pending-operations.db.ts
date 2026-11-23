@@ -37,12 +37,6 @@ export interface PendingOperation {
   readonly signers: PendingSigner[];
 }
 
-/** An operation as a list shows it: without its envelope or typed data. */
-export type PendingSummary = Omit<
-  PendingOperation,
-  'unsigned_hex' | 'typed_data_json'
->;
-
 function toNumber(value: unknown): number {
   return Number(value ?? 0);
 }
@@ -192,16 +186,16 @@ export class ChainPendingOperationsDb extends LazyDbAccessCompatibleService {
 
   /**
    * Pending operations that still need this wallet's signature, newest
-   * first, at most 50, in one query: each with its signers, without its
-   * envelope or typed data.
+   * first, at most 50, in one query: each with its signers.
    */
-  async awaiting(wallet: string, now: number): Promise<PendingSummary[]> {
+  async awaiting(wallet: string, now: number): Promise<PendingOperation[]> {
     const rows = await this.db.execute<
-      Omit<PendingSummary, 'signers'> & PendingSigner
+      Omit<PendingOperation, 'signers'> & PendingSigner
     >(
-      `select o.tx_id, o.op_type, o.principal, o.created_by, o.expires_at,
-              o.status, o.result_json, o.last_error, o.created_at,
-              o.updated_at, s.role, s.key_type, s.signer, s.sig, s.signed_at
+      `select o.tx_id, o.op_type, o.principal, o.unsigned_hex,
+              o.typed_data_json, o.created_by, o.expires_at, o.status,
+              o.result_json, o.last_error, o.created_at, o.updated_at,
+              s.role, s.key_type, s.signer, s.sig, s.signed_at
        from (
          select w.tx_id, w.created_at
          from ${CHAIN_PENDING_OPERATIONS_TABLE} w
@@ -218,7 +212,7 @@ export class ChainPendingOperationsDb extends LazyDbAccessCompatibleService {
       { wallet, now },
       { forcePool: DbPoolName.WRITE }
     );
-    const ops = new Map<string, PendingSummary>();
+    const ops = new Map<string, PendingOperation>();
     for (const row of rows) {
       const signer: PendingSigner = {
         role: toNumber(row.role),
@@ -236,6 +230,8 @@ export class ChainPendingOperationsDb extends LazyDbAccessCompatibleService {
         tx_id: row.tx_id,
         op_type: row.op_type,
         principal: row.principal,
+        unsigned_hex: row.unsigned_hex,
+        typed_data_json: row.typed_data_json,
         created_by: row.created_by,
         expires_at: toNumber(row.expires_at),
         status: row.status,

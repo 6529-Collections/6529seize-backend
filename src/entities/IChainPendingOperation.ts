@@ -5,8 +5,8 @@ import {
 } from '@/constants';
 
 /**
- * An identity join drafted by the gateway and signed by one of its two
- * wallets (the identity's and the joining one), held until the other signs,
+ * An identity join drafted by the gateway, posted and signed by the
+ * identity's wallet (role 0), held until the joining wallet (role 4) signs,
  * then relayed to the chain. Its principal, signers and expiry are its typed
  * data's. It is held only if its role-0 wallet belongs to that identity
  * when it is posted, and a wallet may have created at most five pending

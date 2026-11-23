@@ -337,16 +337,32 @@ describe('/chain routes', () => {
     );
   });
 
-  it('lists waiting joins without their bytes, which only the join itself answers', async () => {
-    const { unsigned_hex: _u, typed_data_json: _t, ...summary } = op('PENDING');
-    mockService.awaiting.mockResolvedValueOnce([summary]);
+  it('lists waiting joins with what the joining wallet signs', async () => {
+    mockService.awaiting.mockResolvedValueOnce([op('PENDING')]);
     const listed = (await call('GET', '/pending', JOINER)).body.data[0];
     expect(listed.tx_id).toBe(TX);
-    expect(listed).not.toHaveProperty('unsigned');
-    expect(listed).not.toHaveProperty('typed_data');
-    mockService.get.mockResolvedValueOnce(op('PENDING'));
-    const one = (await call('GET', `/pending/${TX}`, JOINER)).body;
-    expect(one.unsigned).toBe('0x0102');
-    expect(one.typed_data).toEqual({ primaryType: 'IdentityJoin' });
+    expect(listed.unsigned).toBe('0x0102');
+    expect(listed.typed_data).toEqual({ primaryType: 'IdentityJoin' });
+  });
+
+  it('says final once nothing about the join will change', async () => {
+    const finalOf = async (held: PendingOperation) => {
+      mockService.get.mockResolvedValueOnce(held);
+      return (await call('GET', `/pending/${TX}`, ANCHOR)).body.final;
+    };
+    const sent = (tx: unknown) => ({
+      ...op('SUBMITTED'),
+      result_json: JSON.stringify({ txId: TX, outcome: 'accepted', tx })
+    });
+    expect(await finalOf(op('PENDING'))).toBe(false);
+    expect(await finalOf(op('SUBMITTED'))).toBe(false);
+    expect(await finalOf(sent({ txId: TX, status: 'pending' }))).toBe(false);
+    expect(await finalOf(sent({ txId: TX, status: 'in_block' }))).toBe(false);
+    expect(await finalOf(sent({ txId: TX, status: 'final' }))).toBe(true);
+    expect(await finalOf(op('FAILED'))).toBe(true);
+    expect(await finalOf(op('CANCELLED'))).toBe(true);
+    expect(
+      await finalOf({ ...op('PENDING'), expires_at: Date.now() - 1 })
+    ).toBe(true);
   });
 });
