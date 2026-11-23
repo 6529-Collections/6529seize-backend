@@ -22,7 +22,8 @@ import {
   claimDeferredWrite,
   deferralReason,
   deferSubscriptionWrites,
-  executorSink
+  executorSink,
+  isWriteWaiting
 } from '@/subscription-key-width/subscription-deferred-writes';
 import { markSubscriptionCoverageDirty } from '../subscription-coverage/subscription-coverage-dirty';
 import { invalidateUpcomingSubscriptionCaches } from '@/subscriptionsDaily/subscription-cache';
@@ -34,6 +35,38 @@ import {
 const logger = Logger.get('SUBSCRIPTIONS_TOP_UP_DB');
 
 const SUBSCRIPTIONS_TOP_UP_LATEST_BLOCK_ID = 'subscription_top_up_latest_block';
+
+/**
+ * The top-up rows alone, as discovery found them: no balance credit, log
+ * line or mode change. A rebuild of the rows from Ethereum, where the
+ * credit is kept elsewhere (the identity tables after the switch). A hash
+ * already there is left as it is. A top-up whose write waits in the
+ * deferred writes queue is left out: persistTopUps queued it whole, and
+ * its row is written only when the queue replays it.
+ */
+export async function recordTopUps(topUps: SubscriptionTopUp[]): Promise<void> {
+  for (const topUp of topUps) {
+    if (await isWriteWaiting('TOP_UP', topUp.hash)) {
+      logger.info(
+        `[TOP UP ${topUp.hash} WAITS IN THE DEFERRED WRITES QUEUE] [ROW LEFT OUT]`
+      );
+      continue;
+    }
+    await sqlExecutor.execute(
+      `INSERT INTO ${SUBSCRIPTIONS_TOP_UP_TABLE}
+        (created_at, hash, block, transaction_date, from_wallet, amount)
+        VALUES (NOW(), :hash, :block, :transactionDate, :fromWallet, :amount)
+        ON DUPLICATE KEY UPDATE hash = hash`,
+      {
+        hash: topUp.hash,
+        block: topUp.block,
+        transactionDate: topUp.transaction_date,
+        fromWallet: topUp.from_wallet,
+        amount: topUp.amount
+      }
+    );
+  }
+}
 
 /**
  * Credits top-ups to their consolidation keys. With `replaySequence` it

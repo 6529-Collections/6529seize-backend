@@ -68,7 +68,25 @@ function enforceBounds(subs: SubscriptionTopUp[], from: number, to: number) {
   return deduped;
 }
 
-export async function discoverTopUps(reset?: boolean) {
+export interface DiscoverTopUpsOptions {
+  /**
+   * Writes each chunk's top-ups. The loop's own write by default
+   * (persistTopUps: the rows, the balance credit, the log line, and mode on
+   * for a first top-up); a rebuild of the top-up rows alone passes another.
+   */
+  readonly persist?: (topUps: SubscriptionTopUp[]) => Promise<unknown>;
+  /** Whether the loop's cursor moves. True by default. */
+  readonly checkpoint?: boolean;
+  /** The last block read, at most the confirmed head. */
+  readonly toBlock?: number;
+}
+
+export async function discoverTopUps(
+  reset?: boolean,
+  options: DiscoverTopUpsOptions = {}
+) {
+  const persist = options.persist ?? persistTopUps;
+  const checkpoint = options.checkpoint ?? true;
   const network = getSubscriptionsNetwork();
   const alchemy: Alchemy = getAlchemyInstance(network);
   const rpc = getEthereumRpcClient(network);
@@ -97,7 +115,10 @@ export async function discoverTopUps(reset?: boolean) {
   }
 
   const head = await rpc.getBlockNumber();
-  const toBlock = head - CONFIRMATIONS;
+  const toBlock = Math.min(
+    head - CONFIRMATIONS,
+    options.toBlock ?? Number.POSITIVE_INFINITY
+  );
 
   logger.info(
     `[HEAD ${head}] [NETWORK: ${network}] : [FROM ${fromBlock}] : [TO ${toBlock}] (finality gap=${CONFIRMATIONS})`
@@ -138,13 +159,16 @@ export async function discoverTopUps(reset?: boolean) {
         `[FOUND ${boundedSubscriptions.length}] (raw=${subscriptions.length})`
     );
 
-    await persistTopUps(boundedSubscriptions);
+    await persist(boundedSubscriptions);
 
     lastProcessedBlock = currentToBlock;
     currentFromBlock = currentToBlock + 1;
 
     // Persist progress periodically, but not on every chunk
-    if (currentToBlock - lastCheckpointBlock >= CHECKPOINT_EVERY_BLOCKS) {
+    if (
+      checkpoint &&
+      currentToBlock - lastCheckpointBlock >= CHECKPOINT_EVERY_BLOCKS
+    ) {
       await persistLatestBlockCheckpoint(rpc, currentToBlock);
       lastCheckpointBlock = currentToBlock;
     }
@@ -157,5 +181,7 @@ export async function discoverTopUps(reset?: boolean) {
   const blockToPersist = Math.max(...blockCandidates);
 
   // Final checkpoint after processing all chunks (ensures we persist even if we never hit an interval boundary)
-  await persistLatestBlockCheckpoint(rpc, blockToPersist);
+  if (checkpoint) {
+    await persistLatestBlockCheckpoint(rpc, blockToPersist);
+  }
 }

@@ -132,6 +132,33 @@ async function hasPendingWrite(
 }
 
 /**
+ * Whether the write queued under this kind and dedupe key is still waiting
+ * for its replay. As for a key's waiting writes, a missing queue table
+ * reads as none.
+ */
+export async function isWriteWaiting(
+  kind: DeferredWriteKind,
+  dedupe: string,
+  sink: DeferredWriteSink = executorSink()
+): Promise<boolean> {
+  let rows: unknown;
+  try {
+    rows = await sink.query(
+      `SELECT sequence FROM ${SUBSCRIPTION_DEFERRED_WRITES_TABLE}
+        WHERE dedupe_key = ? AND replayed_at IS NULL
+        LIMIT 1`,
+      [sha256(`${kind}|${dedupe}`)]
+    );
+  } catch (error) {
+    if (isMissingTable(error)) {
+      return false;
+    }
+    throw error;
+  }
+  return Array.isArray(rows) && rows.length > 0;
+}
+
+/**
  * Why a write for `key` must wait, or null when it can be made now: the key
  * does not fit every subscription table, or the key has an earlier write
  * still waiting (one key's writes keep their order). A replayed entry passes
