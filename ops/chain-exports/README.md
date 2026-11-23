@@ -55,6 +55,10 @@ a job the function knows, or it fails. Each export:
 
 Each job's own section adds its own rules.
 
+The switch owner is the person in charge of the identity switch. Where this
+file leaves something to a decision, such as accepting a refused reading or
+choosing between two runs, the switch owner decides.
+
 ### An unknown replica lag
 
 Three refusals mean the run can't trust the reader's lag. Each names its
@@ -236,9 +240,9 @@ The team confirms once, before Monday:
 
 - **Who:** the deployment roles may invoke only `dbMigrationsLoop`, and can't
   read the bucket. The invoker needs `lambda:InvokeFunction` on
-  `dbDumpsDaily` in the region of the stage it runs. Whoever deploys `dbDumpsDaily` reports
-  that their credentials can invoke functions in both stages. Confirm that
-  before Monday, or have an admin grant it.
+  `dbDumpsDaily` in the region of the stage it runs. Whoever deploys
+  `dbDumpsDaily` reports that their credentials can invoke functions in both
+  stages. Confirm that before Monday, or have an admin grant it.
 - **Fetching:** needs no AWS access; the response's presigned links are
   enough.
 - **CLI:** AWS CLI v2 is required, since `--cli-binary-format` is v2 only.
@@ -354,7 +358,8 @@ the on-call engineer.
 Check in `out.json`:
 
 - `stage` is `prod` in `us-east-1` (`staging` in `eu-west-1`). If it isn't,
-  the function's `NODE_ENV` is wrong. Tell whoever deploys `dbDumpsDaily` before Tuesday.
+  the function's `NODE_ENV` is wrong. Tell whoever deploys
+  `dbDumpsDaily` before Tuesday.
 - `identityFreezeAtReading` is `time` and `identityFreezeAt` is
   `2026-11-24T00:00:00.000Z`. Anything else (`unset`, `not_a_time`, or
   another time), and the rehearsal hasn't passed: ask 6529.io to fix the
@@ -381,9 +386,10 @@ Check in `out.json`:
   report it, and never accept it on Tuesday. If it stayed the same (a time
   zone offset), write it down: Tuesday's `older_than_gap` bound is the
   larger age plus 60000, its `dated_ahead` bound the smaller lead minus 60000.
-- If either reading names a case, tell the on-call engineer and settle it
-  before Tuesday: Tuesday can accept only a case Monday showed, by its
-  name, as in "An unknown replica lag" (top of this file).
+- If either reading names a case, tell the on-call engineer and the switch
+  owner, and settle it before Tuesday: Tuesday can accept only a case
+  Monday showed, by its name, as in "An unknown replica lag" (top of this
+  file).
 
 Then test the download links: fetch the manifest and `links.json`, then one
 file by its link, and check each against its sha256.
