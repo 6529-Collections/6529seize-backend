@@ -1,4 +1,31 @@
-import { AreaManifest } from '@/rebuild/manifest.types';
+import { AreaManifest, TableEntry } from '@/rebuild/manifest.types';
+
+/** The chain index's tables and its state, and its event log. */
+export const WAVES_CHAIN_INDEX_TABLES = [
+  'chain_waves',
+  'chain_groups',
+  'chain_wave_roles',
+  'chain_polls',
+  'chain_wave_rep',
+  'chain_decisions',
+  'chain_entries',
+  'chain_votes',
+  'chain_results',
+  'chain_decision_leaderboards',
+  'chain_leaderboard_rows',
+  'chain_events',
+  // The index's cursor and full-read state, rebuilt with its rows: kept,
+  // it would tell the index the emptied tables are up to date.
+  'waves_chain_index_state'
+] as const;
+
+/** The chain index read from the gateway (src/rebuild/steps). */
+const CHAIN_INDEX_STEPS = 'src/rebuild/steps/waves-chain-index.steps';
+
+const CHAIN_INDEX_TABLE_ENTRIES: Record<string, TableEntry> =
+  Object.fromEntries(
+    WAVES_CHAIN_INDEX_TABLES.map((table) => [table, { class: 'INDEX' }])
+  );
 
 /**
  * Waves: waves, drops, reactions, mentions, polls, curations, decisions,
@@ -256,9 +283,90 @@ export const wavesManifest: AreaManifest = {
     content_moderation_profile_states: { class: 'INDEX' },
     content_moderation_roles: { class: 'INDEX' },
     art_curation_token_watch_drops: { class: 'INDEX' },
-    art_curation_token_watches: { class: 'INDEX' }
+    art_curation_token_watches: { class: 'INDEX' },
+    // The chain index: 6529.io's index of the chain's waves and its event log
+    // (src/waves-chain-index), rebuilt by waves.chain-index from the gateway.
+    ...CHAIN_INDEX_TABLE_ENTRIES,
+    chain_claim_builds: {
+      class: 'EPHEMERAL',
+      why: 'Outbox of Main Stage claim-build messages: a kept row stops a second send. The rebuild queues none.'
+    },
+    // Relay publishing and the drop index (src/wave-relay-publish,
+    // src/wave-drop-index); planned until their code is in this tree.
+    wave_relay_cursors: {
+      class: 'EPHEMERAL',
+      origin: 'planned',
+      why: 'Relay publishing cursor: the relays already hold what it passed, and a lost cursor only publishes copies they drop.'
+    },
+    wave_relay_events: {
+      class: 'INDEX',
+      origin: 'planned',
+      volatileColumns: [
+        {
+          column: 'received_at',
+          reason: 'When 6529.io read the event; no route shows it.'
+        },
+        {
+          column: 'next_try_at',
+          reason: 'When the applier tries a waiting event again.'
+        }
+      ]
+    },
+    wave_relay_rejects: {
+      class: 'INDEX',
+      origin: 'planned',
+      volatileColumns: [
+        {
+          column: 'received_at',
+          reason: 'When 6529.io read the copy; no route shows it.'
+        }
+      ]
+    },
+    wave_relay_subscriptions: {
+      class: 'INDEX',
+      origin: 'planned',
+      volatileColumns: [
+        { column: 'updated_at', reason: 'When the cursor last moved.' }
+      ]
+    },
+    // The settlement sender (src/waves-settlement); planned until
+    // its code is in this tree.
+    waves_settlement_sends: {
+      class: 'EPHEMERAL',
+      origin: 'planned',
+      why: "The sender's in-flight request per decision step. A lost row costs one repeat request, which the decision's nonce lane makes a no-op."
+    },
+    // The chain mirror (src/waves-chain-mirror): its own tables, rebuilt
+    // with competition_* by waves.chain-mirror once that branch is final.
+    waves_chain_mirror_state: { class: 'INDEX', origin: 'planned' },
+    waves_chain_mirror_events: { class: 'INDEX', origin: 'planned' },
+    chain_docs: { class: 'INDEX', origin: 'planned' },
+    chain_entry_holds: { class: 'INDEX', origin: 'planned' }
   },
-  seeds: [],
-  rebuilders: [],
-  probes: []
+  seeds: [
+    {
+      id: 'waves.chain-index.seed',
+      run: { module: CHAIN_INDEX_STEPS, exportName: 'seedWavesChainIndex' },
+      writes: [...WAVES_CHAIN_INDEX_TABLES],
+      sources: ['gateway'],
+      timeoutMinutes: 15
+    }
+  ],
+  rebuilders: [
+    {
+      id: 'waves.chain-index',
+      run: { module: CHAIN_INDEX_STEPS, exportName: 'rebuildWavesChainIndex' },
+      writes: [...WAVES_CHAIN_INDEX_TABLES],
+      sources: ['gateway'],
+      timeoutMinutes: 30
+    }
+  ],
+  probes: [],
+  waivers: {
+    unprobedTables: WAVES_CHAIN_INDEX_TABLES.map((target) => ({
+      target,
+      reason:
+        'No route reads the chain index yet: the chain mirror and the claims builder do. The run compares its rows table by table.'
+    }))
+  }
 };
