@@ -264,13 +264,20 @@ describe('currentState', () => {
     expect(whole.identityOf(WIDE)).toBe(P1);
 
     // WIDE spans identities, but the legacy re-key the guard held back
-    // chose P1's key for it.
+    // chose Z's key for it. Z sorts after every identity of WIDE, so the
+    // key follows the decision, not the sort order.
+    const Z = `0x${'f'.repeat(64)}`;
+    const Z_WALLET = wallet(0x99);
     t.queue.push(
-      queued('CONSOLIDATION', PAIR, { newKey: PAIR, oldKeys: [WIDE] })
+      queued('CONSOLIDATION', Z_WALLET, { newKey: Z_WALLET, oldKeys: [WIDE] })
     );
-    const decided = currentState(CUT, t, byWallet);
+    const decided = currentState(
+      CUT,
+      t,
+      new Map([...Array.from(byWallet.entries()), [Z_WALLET, Z]])
+    );
     expect(decided.blocked).toEqual([]);
-    expect(decided.identityOf(WIDE)).toBe(P1);
+    expect(decided.identityOf(WIDE)).toBe(Z);
   });
 
   it('subscribes the open cards again on a waiting first top-up, as the legacy mode change does', () => {
