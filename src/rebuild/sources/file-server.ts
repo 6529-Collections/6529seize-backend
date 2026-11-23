@@ -4,7 +4,6 @@ import * as http from 'node:http';
 import * as path from 'node:path';
 import {
   closeServer,
-  isProvisional,
   listenLoopback,
   readProvenance,
   RunningSource
@@ -100,6 +99,12 @@ function seedFile(
 /**
  * Serves a directory of content-addressed files on loopback, and, when
  * given, the files the run's seeds write into `seedDir`.
+ *
+ * Files the seeds write are the run's own world. A file in `dir` comes
+ * from outside the run, and nothing checks its id against its bytes yet
+ * (an IPFS CID recomputed, an Arweave id against its transaction), so a
+ * directory that holds any is provisional, whatever its PROVENANCE.json
+ * says: a label is never a basis.
  */
 export async function startFileServer(
   dir: string,
@@ -131,7 +136,8 @@ export async function startFileServer(
       url,
       mode: 'local',
       provenance: provenance?.made_by ?? `${files.size} files in ${dir}`,
-      provisional: isProvisional(provenance)
+      provisional: files.size > 0,
+      ...(files.size > 0 ? { provisionalWhy: 'ids not verified' } : {})
     },
     problems: () => [
       ...problems.map((p) => `files: ${p}`),

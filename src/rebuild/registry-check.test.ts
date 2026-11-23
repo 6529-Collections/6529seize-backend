@@ -175,13 +175,259 @@ describe('checkRegistry', () => {
       ],
       codeTables: code('t1')
     });
-    expect(result.problems.map((p) => p.kind).sort()).toEqual([
+    expect(
+      result.problems
+        .map((p) => p.kind)
+        .sort((a, b) => (a < b ? -1 : Number(a > b)))
+    ).toEqual([
       'BAD_ORDER',
       'BAD_ORDER',
       'BAD_STEP',
       'BAD_STEP',
       'BAD_STEP',
       'DOUBLE_WRITER'
+    ]);
+  });
+
+  it('keeps last to seeds, and never lets a seed that is not last wait on one', () => {
+    const result = checkRegistry({
+      manifests: [
+        area(
+          'a',
+          { t1: index() },
+          {
+            seeds: [
+              step('a.seed'),
+              step('a.catch-up', { after: ['a.seed'], last: true }),
+              step('a.after-catch-up', { after: ['a.catch-up'] }),
+              step('a.last-too', { after: ['a.catch-up'], last: true }),
+              // A seed may run before a last one, never a last one before
+              // a seed that isn't.
+              step('a.early', { before: ['a.seed', 'a.catch-up'] }),
+              step('a.last-first', { before: ['a.seed'], last: true })
+            ],
+            rebuilders: [step('a.rebuild', { writes: ['t1'], last: true })]
+          }
+        )
+      ],
+      codeTables: code('t1')
+    });
+    expect(result.problems.map((p) => [p.kind, p.detail])).toEqual([
+      ['BAD_STEP', 'rebuilder a.rebuild is marked last; only seeds run last'],
+      [
+        'BAD_ORDER',
+        'seed a.after-catch-up waits on last seed a.catch-up; mark it last too'
+      ],
+      [
+        'BAD_ORDER',
+        "last seed a.last-first runs before seed a.seed, which isn't last; mark it last too"
+      ]
+    ]);
+  });
+
+  it('takes a writer that runs before its reader as ordered', () => {
+    const result = checkRegistry({
+      manifests: [
+        area(
+          'a',
+          { t1: index(), t2: index() },
+          {
+            rebuilders: [
+              step('a.reader', { writes: ['t2'], reads: ['t1'] }),
+              step('a.writer', { writes: ['t1'], before: ['a.reader'] }),
+              step('a.ghost', { writes: [], before: ['nowhere'] })
+            ]
+          }
+        )
+      ],
+      codeTables: code('t1', 't2')
+    });
+    expect(result.problems.map((p) => p.detail)).toEqual([
+      'a rebuilder waits on unknown step nowhere'
+    ]);
+  });
+
+  describe('partitioned writers', () => {
+    const write = (table: string, columns: string[], values: string[][]) => ({
+      table,
+      partition: { columns, values, reason: 'its records' }
+    });
+    const check = (
+      a: RebuildStep['writes'],
+      b: RebuildStep['writes'],
+      seeds: RebuildStep[] = []
+    ) =>
+      checkRegistry({
+        manifests: [
+          area(
+            'a',
+            { heads: index() },
+            {
+              seeds,
+              rebuilders: [step('a.rebuild', { writes: a })]
+            }
+          ),
+          // b writes a partition of a's table.
+          area('b', {}, { rebuilders: [step('b.rebuild', { writes: b })] })
+        ],
+        codeTables: code('heads')
+      }).problems.map((p) => [p.kind, p.detail]);
+    const cols = ['family', 'type'];
+
+    it('lets two rebuilders write disjoint partitions of one table', () => {
+      expect(
+        check(
+          [
+            write('heads', cols, [
+              ['pv', 'follow'],
+              ['pv', '~keys']
+            ])
+          ],
+          [write('heads', cols, [['ps', '~keys']])]
+        )
+      ).toEqual([]);
+    });
+
+    it('refuses overlapping partitions, a whole writer beside one, and other columns', () => {
+      expect(
+        check(
+          [write('heads', cols, [['ps', '~keys']])],
+          [write('heads', cols, [['ps', '~keys']])]
+        )
+      ).toEqual([
+        [
+          'DOUBLE_WRITER',
+          "heads's partitions overlap: a.rebuild and b.rebuild both write (family, type) ('ps', '~keys')"
+        ]
+      ]);
+      // Folded as the default collation folds: case and accents, while
+      // trailing spaces count (NO PAD).
+      expect(
+        check(
+          [
+            write('heads', cols, [
+              ['ps', '~keys'],
+              ['pv', 'a']
+            ])
+          ],
+          [
+            write('heads', cols, [
+              ['PS', '~K\u00e9ys'],
+              ['pv', 'a ']
+            ])
+          ]
+        )
+      ).toEqual([
+        [
+          'DOUBLE_WRITER',
+          "heads's partitions overlap: a.rebuild and b.rebuild both write (family, type) ('PS', '~K\u00e9ys')"
+        ]
+      ]);
+      expect(
+        check(['heads'], [write('heads', cols, [['ps', '~keys']])])
+      ).toEqual([
+        [
+          'DOUBLE_WRITER',
+          'heads is written by a.rebuild, b.rebuild; with more than one writer, each writes a partition'
+        ]
+      ]);
+      expect(
+        check(
+          [write('heads', ['type'], [['~keys']])],
+          [write('heads', cols, [['ps', '~keys']])]
+        )
+      ).toEqual([
+        [
+          'DOUBLE_WRITER',
+          "heads's writers partition it on different columns: (type) by a.rebuild, (family, type) by b.rebuild"
+        ]
+      ]);
+    });
+
+    it("checks a partition is well formed and a rebuilder's", () => {
+      expect(
+        check(
+          [write('heads', cols, [['pv']])],
+          [write('heads', [], [])],
+          [step('a.seed', { writes: [write('heads', cols, [['x', 'y']])] })]
+        ).map(([, detail]) => detail)
+      ).toEqual([
+        "seed a.seed declares a partition of heads; only a rebuilder's write has one",
+        "rebuilder a.rebuild's partition of heads has a value that doesn't match its 2 columns",
+        "rebuilder b.rebuild's partition of heads names no columns",
+        "rebuilder b.rebuild's partition of heads has no values",
+        "heads's writers partition it on different columns: (family, type) by a.rebuild, () by b.rebuild"
+      ]);
+    });
+  });
+
+  it('keeps a checkpoint to INDEX tables, with a column and a reason', () => {
+    const result = checkRegistry({
+      manifests: [
+        area('a', {
+          good: {
+            class: 'INDEX',
+            checkpoint: { column: 'block', reason: 'readers take MAX(block)' }
+          },
+          kept: {
+            class: 'EPHEMERAL',
+            why: 'a cache',
+            checkpoint: { column: 'block', reason: 'x' }
+          },
+          bare: { class: 'INDEX', checkpoint: { column: ' ', reason: ' ' } }
+        })
+      ],
+      codeTables: code('good', 'kept', 'bare')
+    });
+    expect(result.problems.map((p) => [p.kind, p.detail])).toEqual([
+      [
+        'BAD_CHECKPOINT',
+        'kept is EPHEMERAL; only an INDEX table has a checkpoint'
+      ],
+      ['BAD_CHECKPOINT', "bare's checkpoint names no column"],
+      ['BAD_CHECKPOINT', "bare's checkpoint has no reason"]
+    ]);
+  });
+
+  it('lets a step wait only for a table a later branch adds, with a reason', () => {
+    const result = checkRegistry({
+      manifests: [
+        area(
+          'a',
+          {
+            t1: index(),
+            later: { class: 'INDEX', origin: 'planned' },
+            // Named in code with no entity behind it yet.
+            named: index(),
+            v: { class: 'VIEW', why: 'a facade view' }
+          },
+          {
+            seeds: [
+              step('a.seed', {
+                writes: ['t1'],
+                needs: [
+                  { table: 'later', reason: 'a later branch creates it' },
+                  { table: 'named', reason: ' ' },
+                  { table: 'nope', reason: 'x' },
+                  { table: 't1', reason: 'x' },
+                  { table: 'v', reason: 'x' }
+                ]
+              })
+            ]
+          }
+        )
+      ],
+      codeTables: new Map([
+        ...Array.from(code('t1')),
+        ['named', new Set<CodeOrigin>(['constant'])],
+        ['v', new Set<CodeOrigin>(['view'])]
+      ])
+    });
+    expect(result.problems.map((p) => p.detail)).toEqual([
+      'seed a.seed needs named without a reason',
+      'seed a.seed needs unknown table nope',
+      'seed a.seed needs t1, an entity in this tree creates it, so the schema always has it',
+      'seed a.seed needs v, a VIEW table, never one a branch adds'
     ]);
   });
 
