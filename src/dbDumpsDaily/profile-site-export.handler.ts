@@ -114,10 +114,16 @@ export type ProfileSiteExportEvent =
       /** Profiles exported at once, 1 to 4. */
       readonly concurrency: number;
       /**
-       * Package ids whose site writes after the freeze the switch owner has
-       * looked at and accepted (a publish that straddled the freeze).
+       * Site writes after the freeze the switch owner looked at and accepted
+       * (a publish that straddled the freeze), each `source:id@at` as the
+       * refusal lists it.
        */
       readonly acceptWritesAfterFreeze: readonly string[];
+      /**
+       * Runs although the replica's lag can't be read, relying on the
+       * minimum gap after the freeze alone.
+       */
+      readonly acceptUnknownReplicaLag: boolean;
       /**
        * Replaces the by-freeze pointer if an earlier run wrote one; without
        * it the pointer is written only where none is.
@@ -208,20 +214,30 @@ function only(
   }
 }
 
+/** A run's prefix: profile-site-export/<stage>/<run>/. */
+const RUN_PREFIX = /^profile-site-export\/([a-z0-9-]+)\/([A-Za-z0-9_.-]+)\/$/;
+/** Folders beside the runs that are not runs. */
+const NOT_RUNS = ['by-freeze', 'renewed-links'];
+
 function runPrefixOf(value: unknown): string {
-  if (
-    typeof value !== 'string' ||
-    !value.startsWith(PREFIX_ROOT) ||
-    !value.endsWith('/') ||
-    value.includes('..') ||
-    value.includes('/by-freeze/') ||
-    !/^[A-Za-z0-9/_.-]+$/.test(value)
-  ) {
+  const match = typeof value === 'string' ? RUN_PREFIX.exec(value) : null;
+  if (!match || match[2].includes('..') || NOT_RUNS.includes(match[2])) {
     throw new ProfileSiteExportEventError(
-      `prefix must be a run's prefix under ${PREFIX_ROOT}, ending in /`
+      `prefix must be a run's prefix, ${PREFIX_ROOT}<stage>/<run>/`
     );
   }
-  return value;
+  return value as string;
+}
+
+/**
+ * Where the links job writes a run's fresh links: beside the run, not in
+ * it, so a run's folder holds only what its manifest lists.
+ */
+function renewedLinksKeyOf(prefix: string, now: Date): string {
+  const [, stage, run] = RUN_PREFIX.exec(prefix)!;
+  return `${JOB_PREFIX}/${stage}/renewed-links/${run}/links-${now
+    .toISOString()
+    .replace(/[:.]/g, '-')}.json`;
 }
 
 /**
@@ -259,6 +275,7 @@ export function parseProfileSiteExportEvent(
     'rehearsal',
     'concurrency',
     'acceptWritesAfterFreeze',
+    'acceptUnknownReplicaLag',
     'replacePointer'
   ]);
   const profile = record.profile ?? null;
@@ -307,11 +324,17 @@ export function parseProfileSiteExportEvent(
     !Array.isArray(acceptWrites) ||
     acceptWrites.length > MAX_WRITES_AFTER_FREEZE ||
     acceptWrites.some(
-      (id) => typeof id !== 'string' || !/^[A-Za-z0-9:._-]{1,100}$/.test(id)
+      (write) => typeof write !== 'string' || !WRITE_TOKEN.test(write)
     )
   ) {
     throw new ProfileSiteExportEventError(
-      `acceptWritesAfterFreeze must list at most ${MAX_WRITES_AFTER_FREEZE} package ids`
+      `acceptWritesAfterFreeze must list at most ${MAX_WRITES_AFTER_FREEZE} writes, each source:id@time exactly as the refusal lists it`
+    );
+  }
+  const acceptUnknownLag = record.acceptUnknownReplicaLag ?? false;
+  if (typeof acceptUnknownLag !== 'boolean') {
+    throw new ProfileSiteExportEventError(
+      'acceptUnknownReplicaLag must be true or false'
     );
   }
   const replacePointer = record.replacePointer ?? false;
@@ -334,6 +357,7 @@ export function parseProfileSiteExportEvent(
     rehearsal,
     concurrency,
     acceptWritesAfterFreeze: acceptWrites as string[],
+    acceptUnknownReplicaLag: acceptUnknownLag,
     replacePointer
   };
 }
@@ -375,12 +399,19 @@ export function checkSnapshotTime(
 /**
  * Refuses a replica further behind its writer than the snapshot is after
  * the freeze: it might not yet hold writes made before the freeze. An
- * unknown lag leaves the minimum gap as the only guard.
+ * unknown lag is refused unless the invoker accepts relying on the minimum
+ * gap alone.
  */
 export function checkReplicaLag(
   gapSeconds: number,
-  replicaLagMs: number | null
+  replicaLagMs: number | null,
+  acceptUnknown = false
 ): void {
+  if (replicaLagMs === null && !acceptUnknown) {
+    throw new ProfileSiteExportSnapshotError(
+      "The replica's lag can't be read (information_schema.replica_host_status): only the gap since the freeze shows it holds the writes made before it. To rely on that gap alone, run again with acceptUnknownReplicaLag: true."
+    );
+  }
   if (replicaLagMs !== null && replicaLagMs >= gapSeconds * 1000) {
     throw new ProfileSiteExportSnapshotError(
       `The replica is ${replicaLagMs} ms behind its writer, not less than the ${gapSeconds} s since the freeze: it may not hold every write made before the freeze. Try again later.`
@@ -467,7 +498,13 @@ export interface WriteAfterFreeze {
   readonly source: 'packages' | 'pointer_events' | 'legacy_packages';
   readonly packageId: string;
   readonly at: string;
+  /** `source:id@at`: how a refusal lists it and acceptWritesAfterFreeze takes it. */
+  readonly token: string;
 }
+
+/** A write as acceptWritesAfterFreeze takes it: `source:id@at`. */
+const WRITE_TOKEN =
+  /^(packages|pointer_events|legacy_packages):[^\s@,]{1,100}@\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 /**
  * The site writes after the freeze in the snapshot, by package: a
@@ -498,16 +535,22 @@ export async function writesAfterFreeze(
      limit ${MAX_WRITES_AFTER_FREEZE + 1}`,
     { frozenAt }
   );
-  return rows.map((row) => ({
-    source: row.source,
-    packageId: String(row.package_id),
-    at: new Date(Number(row.at)).toISOString()
-  }));
+  return rows.map((row) => {
+    const packageId = String(row.package_id);
+    const at = new Date(Number(row.at)).toISOString();
+    return {
+      source: row.source,
+      packageId,
+      at,
+      token: `${row.source}:${packageId}@${at}`
+    };
+  });
 }
 
 /**
- * Refuses site writes after the freeze, unless each one's package is in
- * the acknowledged list.
+ * Refuses site writes after the freeze, unless each one is in the accepted
+ * list, as `source:id@at`: a write to the same package at another time is
+ * still refused.
  */
 export function checkWritesAfterFreeze(
   writes: readonly WriteAfterFreeze[],
@@ -518,14 +561,14 @@ export function checkWritesAfterFreeze(
       `The snapshot holds more than ${MAX_WRITES_AFTER_FREEZE} profile site writes after the freeze: it is not the state at the freeze`
     );
   }
-  const open = writes.filter((write) => !accepted.includes(write.packageId));
+  const open = writes.filter((write) => !accepted.includes(write.token));
   if (open.length) {
     throw new ProfileSiteExportSnapshotError(
       `The snapshot holds profile site writes after the freeze that no one has accepted: ${open
-        .map((write) => `${write.source} ${write.packageId} at ${write.at}`)
+        .map((write) => write.token)
         .join(
           ', '
-        )}. Send this to the on-call engineer and the switch owner; only with the switch owner's word, list the package ids in acceptWritesAfterFreeze.`
+        )}. Send this to the on-call engineer and the switch owner; only with the switch owner's word, list these writes in acceptWritesAfterFreeze, exactly as written here.`
     );
   }
 }
@@ -601,6 +644,8 @@ export interface ProfileSiteExportResult {
   readonly presignedManifestUrl: string;
   /** links.json: a presigned link for every object of the run. */
   readonly presignedLinksUrl: string;
+  /** links.json's size: exempt from the 2 MiB limit, never on the chain. */
+  readonly linksBytes: number;
   /** The pointer this run wrote, to keep with the export; null without one. */
   readonly presignedPointerUrl: string | null;
 }
@@ -613,7 +658,9 @@ export interface ProfileSiteExportLinksResult {
   readonly manifestSha256: string;
   /** The pointer the run was found by, when asked by frozenAt. */
   readonly pointerKey: string | null;
+  /** The fresh links file, beside the run's folder, not in it. */
   readonly linksKey: string;
+  readonly linksBytes: number;
   readonly linksLastAtMost: string;
   readonly presignedManifestUrl: string;
   readonly presignedLinksUrl: string;
@@ -706,12 +753,11 @@ function defaultDeps(): ProfileSiteExportDeps {
 }
 
 /** Presigns every object and writes the links file. */
-async function writeLinks(
+async function linksJson(
   writer: PrivateExportWriter,
   presign: Presigner,
-  names: readonly string[],
-  linksName: string
-) {
+  names: readonly string[]
+): Promise<string> {
   const links: Record<string, string> = {};
   for (const name of names) {
     links[name] = await presign(
@@ -720,15 +766,37 @@ async function writeLinks(
       PRESIGNED_URL_SECONDS
     );
   }
-  return await writer.put(
-    linksName,
-    JSON.stringify(
-      { expires_in_seconds_at_most: PRESIGNED_URL_SECONDS, links },
-      null,
-      2
-    ),
-    'application/json'
+  return JSON.stringify(
+    { expires_in_seconds_at_most: PRESIGNED_URL_SECONDS, links },
+    null,
+    2
   );
+}
+
+/**
+ * Whether the pointer at `key` names this run: after a lost answer the
+ * SDK writes again, and S3 refuses the retry because the first write
+ * landed.
+ */
+async function pointerNamesRun(
+  writer: PrivateExportWriter,
+  key: string,
+  prefix: string,
+  manifestSha256: string
+): Promise<boolean> {
+  try {
+    const read = await writer.readOutside(key);
+    if (!read.found) return false;
+    const pointer = JSON.parse(read.text) as {
+      prefix?: unknown;
+      manifest_sha256?: unknown;
+    };
+    return (
+      pointer.prefix === prefix && pointer.manifest_sha256 === manifestSha256
+    );
+  } catch {
+    return false;
+  }
 }
 
 function iso(ms: number | null): string | null {
@@ -819,7 +887,11 @@ export async function runProfileSiteExportJob(
     // Before the freeze, sites are still published: a rehearsal records
     // what it saw instead of refusing.
     if (!event.rehearsal) {
-      checkReplicaLag(gapSeconds, snapshot.evidence.replicaLagMs);
+      checkReplicaLag(
+        gapSeconds,
+        snapshot.evidence.replicaLagMs,
+        event.acceptUnknownReplicaLag
+      );
       checkWritesAfterFreeze(late, event.acceptWritesAfterFreeze);
     }
     run = await runProfileCmsExport(
@@ -896,11 +968,13 @@ export async function runProfileSiteExportJob(
       : event.profile
         ? PARTIAL_MANIFEST
         : MANIFEST;
-  const links = await writeLinks(
-    writer,
-    deps.presign,
-    [...written.map((file) => file.name), manifestName],
-    'links.json'
+  const links = await writer.put(
+    'links.json',
+    await linksJson(writer, deps.presign, [
+      ...written.map((file) => file.name),
+      manifestName
+    ]),
+    'application/json'
   );
   written.push({
     name: 'links.json',
@@ -933,6 +1007,7 @@ export async function runProfileSiteExportJob(
     latest_site_writes: latestWrites,
     writes_after_freeze: late,
     accepted_writes_after_freeze: event.acceptWritesAfterFreeze,
+    accept_unknown_replica_lag: event.acceptUnknownReplicaLag,
     replace_pointer: event.replacePointer,
     started_at: startedAt.toISOString(),
     finished_at: finishedAt.toISOString(),
@@ -980,10 +1055,19 @@ export async function runProfileSiteExportJob(
       );
       pointerKey = key;
     } catch (error) {
-      pointerError = isWriteConflict(error)
-        ? `${key} already names an earlier run for this freeze, and was kept. To make this run the export, run again with replacePointer: true.`
-        : String((error as Error)?.message ?? error);
-      logger.warn(`[POINTER NOT WRITTEN] [${key}] ${pointerError}`);
+      if (
+        isWriteConflict(error) &&
+        (await pointerNamesRun(writer, key, prefix, manifestPut.sha256))
+      ) {
+        // The write landed; only its answer was lost.
+        pointerKey = key;
+        logger.warn(`[POINTER WRITTEN, ITS RETRY REFUSED] [${key}]`);
+      } else {
+        pointerError = isWriteConflict(error)
+          ? `${key} already names an earlier run for this freeze, and was kept. To make this run the export, run again with replacePointer: true.`
+          : String((error as Error)?.message ?? error);
+        logger.warn(`[POINTER NOT WRITTEN] [${key}] ${pointerError}`);
+      }
     }
   }
   const presignedManifestUrl = await deps.presign(
@@ -1002,7 +1086,7 @@ export async function runProfileSiteExportJob(
       : await deps.presign(bucket, pointerKey, PRESIGNED_URL_SECONDS);
   const seconds = (finishedAt.getTime() - startedAt.getTime()) / 1000;
   logger.info(
-    `[EXPORT DONE] [${prefix}] [${manifestName}] [${writer.files} OBJECTS] [${writer.bytes} BYTES] [${seconds} S] ${exportSummary(run).trim()}`
+    `[EXPORT DONE] [${prefix}] [${manifestName}] [MANIFEST SHA256 ${manifestPut.sha256}] [POINTER ${pointerKey ?? 'NOT WRITTEN'}] [${writer.files} OBJECTS] [${writer.bytes} BYTES] [${seconds} S] ${exportSummary(run).trim()}`
   );
   return {
     job: JOB,
@@ -1042,6 +1126,7 @@ export async function runProfileSiteExportJob(
     linksLastAtMost: lastAtMost.toISOString(),
     presignedManifestUrl,
     presignedLinksUrl,
+    linksBytes: links.bytes,
     presignedPointerUrl
   };
 }
@@ -1122,12 +1207,13 @@ async function renewLinks(
     );
   }
   const now = deps.now();
-  const linksName = `links-${now.toISOString().replace(/[:.]/g, '-')}.json`;
-  const links = await writeLinks(
-    writer,
-    deps.presign,
-    [...found.manifest.files.map((file) => file.name), found.name],
-    linksName
+  const links = await writer.putOutside(
+    renewedLinksKeyOf(prefix, now),
+    await linksJson(writer, deps.presign, [
+      ...found.manifest.files.map((file) => file.name),
+      found.name
+    ]),
+    'application/json'
   );
   return {
     job: LINKS_JOB,
@@ -1137,6 +1223,7 @@ async function renewLinks(
     manifestSha256,
     pointerKey,
     linksKey: links.key,
+    linksBytes: links.bytes,
     linksLastAtMost: linksLastAtMost(now).toISOString(),
     presignedManifestUrl: await deps.presign(
       bucket,

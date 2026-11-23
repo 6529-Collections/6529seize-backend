@@ -78,6 +78,8 @@ function setup(
     late?: { source: string; package_id: string; at: number }[];
     getDenied?: boolean;
     verifyFails?: number;
+    /** The pointer write lands, but its answer is lost and the retry refused. */
+    pointerAnswerLost?: boolean;
     /** IDENTITY_FREEZE_AT in the secret; FREEZE when not given. */
     freezeSecret?: string;
   } = {}
@@ -105,6 +107,15 @@ function setup(
       const key = command.input.Key!;
       if (options.failPutOf && key.endsWith(options.failPutOf)) {
         throw new Error('upload failed');
+      }
+      if (
+        options.pointerAnswerLost &&
+        key.includes('/by-freeze/') &&
+        !bodies.has(key)
+      ) {
+        // The first attempt lands; the SDK's retry finds it there.
+        order.push(key);
+        bodies.set(key, Buffer.from(command.input.Body as Buffer).toString());
       }
       if (command.input.IfNoneMatch === '*' && bodies.has(key)) {
         throw Object.assign(new Error('At least one of the pre-conditions'), {
@@ -267,6 +278,7 @@ const event = {
   rehearsal: false,
   concurrency: 1,
   acceptWritesAfterFreeze: [],
+  acceptUnknownReplicaLag: false,
   replacePointer: false
 } as const;
 const context = { invokedFunctionArn: ARN, awsRequestId: 'abcdef12-3456' };
@@ -298,7 +310,11 @@ describe('parseProfileSiteExportEvent', () => {
         publicApi: 'https://api.example',
         rehearsal: true,
         concurrency: 4,
-        acceptWritesAfterFreeze: ['pkg-1', 'sha256:abc']
+        acceptWritesAfterFreeze: [
+          'packages:pkg-1@2026-11-24T00:00:00.005Z',
+          'legacy_packages:sha256:abc@2026-11-24T00:00:01.000Z'
+        ],
+        acceptUnknownReplicaLag: true
       })
     ).toEqual({
       ...event,
@@ -306,7 +322,11 @@ describe('parseProfileSiteExportEvent', () => {
       publicApi: 'https://api.example',
       rehearsal: true,
       concurrency: 4,
-      acceptWritesAfterFreeze: ['pkg-1', 'sha256:abc']
+      acceptWritesAfterFreeze: [
+        'packages:pkg-1@2026-11-24T00:00:00.005Z',
+        'legacy_packages:sha256:abc@2026-11-24T00:00:01.000Z'
+      ],
+      acceptUnknownReplicaLag: true
     });
   });
 
@@ -375,6 +395,29 @@ describe('parseProfileSiteExportEvent', () => {
         acceptWritesAfterFreeze: ['a b']
       }
     ],
+    // A package id alone, or a time not as the refusal writes it.
+    [
+      {
+        job: 'profileSiteExport',
+        frozenAt: T,
+        acceptWritesAfterFreeze: ['pkg-1']
+      }
+    ],
+    [
+      {
+        job: 'profileSiteExport',
+        frozenAt: T,
+        acceptWritesAfterFreeze: ['packages:pkg-1@2026-11-24T00:00:00Z']
+      }
+    ],
+    [
+      {
+        job: 'profileSiteExport',
+        frozenAt: T,
+        acceptWritesAfterFreeze: ['drops:pkg-1@2026-11-24T00:00:00.005Z']
+      }
+    ],
+    [{ job: 'profileSiteExport', frozenAt: T, acceptUnknownReplicaLag: 'yes' }],
     [
       {
         job: 'profileSiteExport',
@@ -398,7 +441,17 @@ describe('parseProfileSiteExportEvent', () => {
         job: 'profileSiteExportLinks',
         prefix: 'profile-site-export/prod/by-freeze/'
       }
-    ]
+    ],
+    [
+      {
+        job: 'profileSiteExportLinks',
+        prefix: 'profile-site-export/prod/renewed-links/'
+      }
+    ],
+    [
+      { job: 'profileSiteExportLinks', prefix: 'profile-site-export/prod/a/b/' }
+    ],
+    [{ job: 'profileSiteExportLinks', prefix: 'profile-site-export/prod/' }]
   ])('refuses %j', (bad) => {
     expect(() => parseProfileSiteExportEvent(bad)).toThrow(
       ProfileSiteExportEventError
@@ -425,7 +478,10 @@ describe('the freeze checks', () => {
   });
 
   it('refuses a replica as far behind its writer as the gap, or further', () => {
-    expect(() => checkReplicaLag(150, null)).not.toThrow();
+    expect(() => checkReplicaLag(150, null)).toThrow(
+      /acceptUnknownReplicaLag: true/
+    );
+    expect(() => checkReplicaLag(150, null, true)).not.toThrow();
     expect(() => checkReplicaLag(150, 149_999)).not.toThrow();
     expect(() => checkReplicaLag(150, 150_000)).toThrow(/150000 ms behind/);
     expect(() => checkReplicaLag(150, 3_600_000)).toThrow(/behind its writer/);
@@ -470,28 +526,49 @@ describe('the freeze checks', () => {
     );
   });
 
-  const late = (packageId: string): WriteAfterFreeze => ({
-    source: 'packages',
-    packageId,
-    at: new Date(T + 5).toISOString()
-  });
+  const late = (packageId: string, offset = 5): WriteAfterFreeze => {
+    const at = new Date(T + offset).toISOString();
+    return {
+      source: 'packages',
+      packageId,
+      at,
+      token: `packages:${packageId}@${at}`
+    };
+  };
 
-  it('refuses site writes after the freeze unless each package was accepted', () => {
+  it('refuses site writes after the freeze unless each one was accepted', () => {
     expect(() => checkWritesAfterFreeze([], [])).not.toThrow();
     expect(() =>
-      checkWritesAfterFreeze([late('pkg-1'), late('pkg-1')], ['pkg-1'])
+      checkWritesAfterFreeze(
+        [late('pkg-1'), late('pkg-1')],
+        ['packages:pkg-1@2026-11-24T00:00:00.005Z']
+      )
     ).not.toThrow();
     expect(() => checkWritesAfterFreeze([late('pkg-1')], [])).toThrow(
-      /packages pkg-1 at 2026-11-24T00:00:00.005Z.*switch owner/
+      /accepted: packages:pkg-1@2026-11-24T00:00:00.005Z\. Send this to the on-call engineer and the switch owner.*exactly as written here/
     );
     expect(() =>
-      checkWritesAfterFreeze([late('pkg-1'), late('pkg-2')], ['pkg-1'])
-    ).toThrow(/no one has accepted: packages pkg-2 at/);
+      checkWritesAfterFreeze(
+        [late('pkg-1'), late('pkg-2')],
+        ['packages:pkg-1@2026-11-24T00:00:00.005Z']
+      )
+    ).toThrow(/no one has accepted: packages:pkg-2@/);
+    // The same package written again later is a new write.
+    expect(() =>
+      checkWritesAfterFreeze(
+        [late('pkg-1'), late('pkg-1', 9)],
+        ['packages:pkg-1@2026-11-24T00:00:00.005Z']
+      )
+    ).toThrow(/accepted: packages:pkg-1@2026-11-24T00:00:00.009Z\./);
+    // A bare package id accepts nothing.
+    expect(() => checkWritesAfterFreeze([late('pkg-1')], ['pkg-1'])).toThrow(
+      /no one has accepted/
+    );
     const many = Array.from({ length: 101 }, (_, i) => late(`p${i}`));
     expect(() =>
       checkWritesAfterFreeze(
         many,
-        many.map((it) => it.packageId)
+        many.map((it) => it.token)
       )
     ).toThrow(/more than 100/);
   });
@@ -518,12 +595,14 @@ describe('the freeze checks', () => {
       {
         source: 'packages',
         packageId: 'pkg-1',
-        at: '2026-11-24T00:00:00.005Z'
+        at: '2026-11-24T00:00:00.005Z',
+        token: 'packages:pkg-1@2026-11-24T00:00:00.005Z'
       },
       {
         source: 'pointer_events',
         packageId: 'pkg-2',
-        at: '2026-11-24T00:00:00.006Z'
+        at: '2026-11-24T00:00:00.006Z',
+        token: 'pointer_events:pkg-2@2026-11-24T00:00:00.006Z'
       }
     ]);
     const [sql, params] = executor.execute.mock.calls[0];
@@ -659,8 +738,14 @@ describe('runProfileSiteExportJob', () => {
       );
     }
     expect(presigned.every((it) => it.owner === OWNER)).toBe(true);
-    const links = JSON.parse(bodies.get(`${result.prefix}links.json`)!);
+    const linksBody = bodies.get(`${result.prefix}links.json`)!;
+    const links = JSON.parse(linksBody);
     expect(Object.keys(links.links)).toContain('manifest.json');
+    expect(result.linksBytes).toBe(Buffer.byteLength(linksBody));
+    expect(
+      manifest.files.find((f: { name: string }) => f.name === 'links.json')
+        .bytes
+    ).toBe(result.linksBytes);
   });
 
   it('names the stage from NODE_ENV: production is prod', async () => {
@@ -727,7 +812,12 @@ describe('runProfileSiteExportJob', () => {
     expect(result.presignedPointerUrl).toBeNull();
     expect(result.snapshotGapSeconds).toBe(10);
     expect(result.writesAfterFreeze).toEqual([
-      { source: 'packages', packageId: 'pkg-9', at: '2026-11-24T00:00:50.000Z' }
+      {
+        source: 'packages',
+        packageId: 'pkg-9',
+        at: '2026-11-24T00:00:50.000Z',
+        token: 'packages:pkg-9@2026-11-24T00:00:50.000Z'
+      }
     ]);
     expect(order.some((key) => key.includes('by-freeze'))).toBe(false);
     expect(JSON.parse(bodies.get(result.manifestKey)!)).toMatchObject({
@@ -817,7 +907,7 @@ describe('runProfileSiteExportJob', () => {
       late: [{ source: 'pointer_events', package_id: 'pkg-1', at: T + 5 }]
     });
     await expect(runProfileSiteExportJob(event, context, deps)).rejects.toThrow(
-      /no one has accepted: pointer_events pkg-1 at 2026-11-24T00:00:00.005Z\. Send this to the on-call engineer and the switch owner/
+      /no one has accepted: pointer_events:pkg-1@2026-11-24T00:00:00.005Z\. Send this to the on-call engineer and the switch owner/
     );
     expect(order).toEqual([]);
     expect(close).toHaveBeenCalledTimes(1);
@@ -829,20 +919,21 @@ describe('runProfileSiteExportJob', () => {
       { source: 'pointer_events', package_id: 'pkg-1', at: T + 6 }
     ];
     const { deps, bodies } = setup({ late });
+    const accepted = [
+      'packages:pkg-1@2026-11-24T00:00:00.005Z',
+      'pointer_events:pkg-1@2026-11-24T00:00:00.006Z'
+    ];
     const result = (await runProfileSiteExportJob(
-      { ...event, acceptWritesAfterFreeze: ['pkg-1'] },
+      { ...event, acceptWritesAfterFreeze: accepted },
       context,
       deps
     )) as ProfileSiteExportResult;
     expect(result.usable).toBe(true);
-    expect(result.acceptedWritesAfterFreeze).toEqual(['pkg-1']);
-    expect(result.writesAfterFreeze.map((it) => it.packageId)).toEqual([
-      'pkg-1',
-      'pkg-1'
-    ]);
+    expect(result.acceptedWritesAfterFreeze).toEqual(accepted);
+    expect(result.writesAfterFreeze.map((it) => it.token)).toEqual(accepted);
     expect(JSON.parse(bodies.get(result.manifestKey)!)).toMatchObject({
       writes_after_freeze: result.writesAfterFreeze,
-      accepted_writes_after_freeze: ['pkg-1']
+      accepted_writes_after_freeze: accepted
     });
   });
 
@@ -855,11 +946,16 @@ describe('runProfileSiteExportJob', () => {
     });
     await expect(
       runProfileSiteExportJob(
-        { ...event, acceptWritesAfterFreeze: ['pkg-1'] },
+        {
+          ...event,
+          acceptWritesAfterFreeze: ['packages:pkg-1@2026-11-24T00:00:00.005Z']
+        },
         context,
         deps
       )
-    ).rejects.toThrow(/legacy_packages sha256:abc/);
+    ).rejects.toThrow(
+      /accepted: legacy_packages:sha256:abc@2026-11-24T00:00:00.006Z\./
+    );
     expect(order).toEqual([]);
   });
 
@@ -884,17 +980,32 @@ describe('runProfileSiteExportJob', () => {
     }
   );
 
-  it('relies on the gap when the replica lag cannot be read, and says so', async () => {
-    const { deps, bodies } = setup({ replicaLagMs: null });
+  it('refuses an unknown replica lag unless told to rely on the gap alone', async () => {
+    const { deps, bodies, order } = setup({ replicaLagMs: null });
+    await expect(runProfileSiteExportJob(event, context, deps)).rejects.toThrow(
+      /lag can't be read.*acceptUnknownReplicaLag: true/
+    );
+    expect(order).toEqual([]);
     const result = (await runProfileSiteExportJob(
-      event,
+      { ...event, acceptUnknownReplicaLag: true },
       context,
       deps
     )) as ProfileSiteExportResult;
     expect(result.evidence.replicaLagMs).toBeNull();
-    expect(JSON.parse(bodies.get(result.manifestKey)!).read.replicaLagMs).toBe(
-      null
-    );
+    expect(JSON.parse(bodies.get(result.manifestKey)!)).toMatchObject({
+      read: { replicaLagMs: null },
+      accept_unknown_replica_lag: true
+    });
+  });
+
+  it('lets a rehearsal run with an unknown replica lag, and reports it', async () => {
+    const { deps } = setup({ replicaLagMs: null });
+    const result = (await runProfileSiteExportJob(
+      { ...event, rehearsal: true },
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.evidence.replicaLagMs).toBeNull();
   });
 
   it('writes no manifest when an upload fails, and still closes the snapshot', async () => {
@@ -939,6 +1050,44 @@ describe('runProfileSiteExportJob', () => {
     expect(JSON.parse(bodies.get(third.manifestKey)!).replace_pointer).toBe(
       true
     );
+  });
+
+  it('reports the pointer as written when only its answer was lost', async () => {
+    const { deps, bodies } = setup({ pointerAnswerLost: true });
+    const result = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.pointerKey).toBe(POINTER);
+    expect(result.pointerError).toBeNull();
+    expect(result.presignedPointerUrl).not.toBeNull();
+    expect(JSON.parse(bodies.get(POINTER)!)).toMatchObject({
+      prefix: result.prefix,
+      manifest_sha256: result.manifestSha256
+    });
+  });
+
+  it('reports a conflict when the pointer names this prefix with another manifest', async () => {
+    const { deps, bodies } = setup();
+    bodies.set(
+      POINTER,
+      JSON.stringify({
+        prefix:
+          'profile-site-export/staging/2026-11-24T00-03-01-000Z-abcdef12/',
+        manifest_sha256: '0'.repeat(64)
+      })
+    );
+    const result = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.prefix).toBe(
+      'profile-site-export/staging/2026-11-24T00-03-01-000Z-abcdef12/'
+    );
+    expect(result.pointerKey).toBeNull();
+    expect(result.pointerError).toMatch(/already names an earlier run/);
   });
 
   it('keeps a whole run when only the pointer fails, and says so', async () => {
@@ -1159,6 +1308,20 @@ describe('runProfileSiteExportJob', () => {
     const links = JSON.parse(bodies.get(again.linksKey)!);
     expect(Object.keys(links.links)).toContain('files/bafyshared');
     expect(Object.keys(links.links)).toContain('manifest.json');
+    // Beside the run's folder: the folder keeps only what its manifest lists.
+    expect(again.linksKey).toMatch(
+      /^profile-site-export\/staging\/renewed-links\/2026-11-24T00-03-01-000Z-abcdef12\/links-.+\.json$/
+    );
+    expect(again.linksBytes).toBe(
+      Buffer.byteLength(bodies.get(again.linksKey)!)
+    );
+    const listed = JSON.parse(bodies.get(first.manifestKey)!).files.map(
+      (f: { name: string }) => first.prefix + f.name
+    );
+    const inRun = Array.from(bodies.keys()).filter((key) =>
+      key.startsWith(first.prefix)
+    );
+    expect(inRun.sort()).toEqual([...listed, first.manifestKey].sort());
   });
 
   it('finds the run for fresh links through its freeze', async () => {
@@ -1180,7 +1343,8 @@ describe('runProfileSiteExportJob', () => {
       pointerKey: POINTER,
       presignedPointerUrl: `https://signed/${BUCKET}/${POINTER}?s=21600`
     });
-    expect(again.linksKey.startsWith(first.prefix)).toBe(true);
+    expect(again.linksKey.startsWith(first.prefix)).toBe(false);
+    expect(again.linksKey).toMatch(/\/renewed-links\//);
   });
 
   it('refuses fresh links when the manifest no longer matches its pointer', async () => {
