@@ -60,7 +60,7 @@ export async function readUndeclaredTable(): Promise<void> {
 
 /** Calls a host outside the run's sources (RFC 5737 address). */
 export async function callOutsideSource(): Promise<void> {
-  await fetch('http://192.0.2.1/');
+  await fetch('http://192.0.2.1/'); // NOSONAR -- a TEST-NET-1 address (RFC 5737) the source guard must refuse; it is never reached.
   await insertTeam(false);
 }
 

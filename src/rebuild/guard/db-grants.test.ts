@@ -31,6 +31,7 @@ describe('step grants', () => {
       "DROP USER IF EXISTS 'rb_1'@'%'",
       "CREATE USER 'rb_1'@'%' IDENTIFIED WITH mysql_native_password BY 'p\\'w'",
       "GRANT CREATE TEMPORARY TABLES ON `rebuild`.* TO 'rb_1'@'%'",
+      "GRANT LOCK TABLES ON `rebuild`.* TO 'rb_1'@'%'",
       "GRANT SELECT, INSERT, UPDATE, DELETE ON `rebuild`.`team` TO 'rb_1'@'%'",
       "GRANT SELECT ON `rebuild`.`nfts` TO 'rb_1'@'%'"
     ]);
@@ -38,7 +39,7 @@ describe('step grants', () => {
   });
 
   it('escapes table names', () => {
-    const [, , , grant] = stepGrantStatements({
+    const [, , , , grant] = stepGrantStatements({
       user: 'rb_1',
       password: 'x',
       database: 'db',
