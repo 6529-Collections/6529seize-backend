@@ -953,7 +953,8 @@ the node surely didn't take it puts it back to `PENDING` for a retry, and a
 refusal of the operation marks it `FAILED`. A cancel takes the same lock
 and moves it only from `PENDING`, so a withdrawn join is never sent and a
 sent one is never shown as withdrawn; a cancel also drops the signatures it
-held.
+held, and is tried once more when MySQL rolls it back to break a deadlock
+with a post of the same wallet.
 
 ### Ordinary Ethereum RPC boundary
 

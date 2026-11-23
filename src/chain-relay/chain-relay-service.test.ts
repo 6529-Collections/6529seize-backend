@@ -54,7 +54,19 @@ class FakeDb {
     options?: { isolationLevel?: string }
   ): Promise<T> {
     if (options?.isolationLevel) this.calls.push(options.isolationLevel);
-    const run = this.lock.then(() => fn({}));
+    const run = this.lock.then(async () => {
+      const undo = new Map<string, PendingOperation | undefined>();
+      try {
+        return await fn({ undo });
+      } catch (error) {
+        // A failed transaction's writes are rolled back, as MySQL does.
+        for (const [txId, op] of Array.from(undo.entries())) {
+          if (op) this.ops.set(txId, op);
+          else this.ops.delete(txId);
+        }
+        throw error;
+      }
+    });
     this.lock = run.catch(() => undefined);
     return run;
   }
@@ -63,7 +75,13 @@ class FakeDb {
     this.onFind?.();
     return op ? { ...op, signers: op.signers.map((it) => ({ ...it })) } : null;
   }
-  async insert(op: PendingOperation) {
+  /** Keeps a row's value before a transaction's first write to it. */
+  private touched(txId: string, conn: unknown) {
+    const undo = (conn as { undo?: Map<string, unknown> } | undefined)?.undo;
+    if (undo && !undo.has(txId)) undo.set(txId, this.ops.get(txId));
+  }
+  async insert(op: PendingOperation, conn?: unknown) {
+    this.touched(op.tx_id, conn);
     if (this.ops.has(op.tx_id)) {
       throw Object.assign(new Error('Duplicate entry'), {
         code: 'ER_DUP_ENTRY'
@@ -71,7 +89,14 @@ class FakeDb {
     }
     this.ops.set(op.tx_id, op);
   }
-  async setSignature(txId: string, role: number, sig: string, now: number) {
+  async setSignature(
+    txId: string,
+    role: number,
+    sig: string,
+    now: number,
+    conn?: unknown
+  ) {
+    this.touched(txId, conn);
     const op = this.ops.get(txId)!;
     this.ops.set(txId, {
       ...op,
@@ -80,7 +105,8 @@ class FakeDb {
       )
     });
   }
-  async clearSignatures(txId: string) {
+  async clearSignatures(txId: string, conn?: unknown) {
+    this.touched(txId, conn);
     const op = this.ops.get(txId)!;
     this.ops.set(txId, {
       ...op,
@@ -96,10 +122,12 @@ class FakeDb {
       ifCheckedAt?: number | null;
     },
     fields: { result_json?: string | null; last_error?: string | null },
-    now: number
+    now: number,
+    conn?: unknown
   ) {
     const op = this.ops.get(txId);
     if (!op || op.status !== change.from) return false;
+    this.touched(txId, conn);
     if (
       change.ifOutcome &&
       JSON.parse(op.result_json ?? 'null')?.outcome !== change.ifOutcome
@@ -758,6 +786,34 @@ describe('ChainRelayService pending operations', () => {
     expect((await fresh.service.cancel(TX, JOINER.address)).status).toBe(
       'CANCELLED'
     );
+  });
+
+  it('withdraws a join once more when MySQL breaks a deadlock by rolling the cancel back', async () => {
+    const { service, db } = setup();
+    await service.createPending(joinInput(), ANCHOR.address);
+    const clear = db.clearSignatures.bind(db);
+    const deadlock = Object.assign(new Error('Deadlock found'), {
+      code: 'ER_LOCK_DEADLOCK'
+    });
+    db.clearSignatures = jest
+      .fn()
+      .mockRejectedValueOnce(deadlock)
+      .mockImplementation(clear);
+    const op = await service.cancel(TX, ANCHOR.address);
+    expect(op.status).toBe('CANCELLED');
+    expect(op.signers.every((it) => it.sig === null)).toBe(true);
+    expect(db.clearSignatures).toHaveBeenCalledTimes(2);
+    // Any other error is not tried again, and leaves it as it was.
+    const other = setup();
+    await other.service.createPending(joinInput(), ANCHOR.address);
+    other.db.clearSignatures = jest.fn(async () => {
+      throw Object.assign(new Error('gone away'), { code: 'PROTOCOL_LOST' });
+    });
+    await expect(other.service.cancel(TX, ANCHOR.address)).rejects.toThrow(
+      'gone away'
+    );
+    expect(other.db.clearSignatures).toHaveBeenCalledTimes(1);
+    expect(other.db.ops.get(TX)!.status).toBe('PENDING');
   });
 
   it('stops a withdrawn join at once: its signatures go, and nothing more is taken or sent', async () => {

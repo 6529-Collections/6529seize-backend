@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { Wallet } from 'ethers';
+import { CHAIN_PENDING_OPERATION_SIGNERS_TABLE } from '@/constants';
 import { CustomApiCompliantException } from '@/exceptions';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
@@ -79,13 +80,21 @@ async function untilWaitingForALock(
   }
 }
 
-/** Resolves once `count` transactions are blocked waiting for a row lock. */
+/**
+ * Resolves once `count` transactions of this test's database are blocked
+ * waiting for a row lock in a statement on the signers table (a post on
+ * its wallet's lock), so no other test's wait on the server counts.
+ */
 async function untilAnyWaitsForALock(count = 1): Promise<void> {
   const deadline = Date.now() + 20_000;
   for (;;) {
     const row = await sqlExecutor.oneOrNull<{ n: number }>(
-      `select count(*) as n from information_schema.innodb_trx
-       where trx_state = 'LOCK WAIT'`
+      `select count(*) as n
+       from information_schema.innodb_trx t
+       join information_schema.processlist p on p.id = t.trx_mysql_thread_id
+       where t.trx_state = 'LOCK WAIT' and p.db = database()
+         and t.trx_query like :statement`,
+      { statement: `%from ${CHAIN_PENDING_OPERATION_SIGNERS_TABLE}%` }
     );
     if (Number(row?.n) >= count) return;
     if (Date.now() > deadline) {

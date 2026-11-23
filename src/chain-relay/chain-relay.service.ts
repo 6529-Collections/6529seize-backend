@@ -450,10 +450,15 @@ async function within<T>(
   }
 }
 
+/** MySQL rolled this transaction back to break a deadlock. */
+function isDeadlock(error: unknown): boolean {
+  return (error as { code?: unknown } | null)?.code === 'ER_LOCK_DEADLOCK';
+}
+
 /** Two first posts of one operation at once: the second insert lost. */
 function isInsertRace(error: unknown): boolean {
   const code = (error as { code?: unknown } | null)?.code;
-  return code === 'ER_DUP_ENTRY' || code === 'ER_LOCK_DEADLOCK';
+  return code === 'ER_DUP_ENTRY' || isDeadlock(error);
 }
 
 /**
@@ -879,20 +884,32 @@ export class ChainRelayService {
    */
   async cancel(txId: string, wallet: string): Promise<PendingOperation> {
     const id = lower(txId);
-    await this.db.executeNativeQueriesInTransaction(async (conn) => {
-      const op = await this.lockedOrThrow(id, conn);
-      this.assertParty(op, wallet);
-      this.assertOpen(op);
-      const moved = await this.db.setStatus(
-        id,
-        { from: 'PENDING', to: 'CANCELLED' },
-        {},
-        this.now(),
-        conn
-      );
-      if (!moved) badRequest('The operation is no longer pending');
-      await this.db.clearSignatures(id, conn);
-    });
+    const withdraw = () =>
+      this.db.executeNativeQueriesInTransaction(async (conn) => {
+        const op = await this.lockedOrThrow(id, conn);
+        this.assertParty(op, wallet);
+        this.assertOpen(op);
+        const moved = await this.db.setStatus(
+          id,
+          { from: 'PENDING', to: 'CANCELLED' },
+          {},
+          this.now(),
+          conn
+        );
+        if (!moved) badRequest('The operation is no longer pending');
+        await this.db.clearSignatures(id, conn);
+      });
+    try {
+      await withdraw();
+    } catch (error) {
+      // A post of this wallet waiting on its lock (lockHeldBy) holds this
+      // join's role-0 signer row and waits on the join's row, which this
+      // holds while it clears that signer row. MySQL breaks the deadlock by
+      // rolling one back; if it is this one, once more, as the post has
+      // moved on. The post retries its own.
+      if (!isDeadlock(error)) throw error;
+      await withdraw();
+    }
     return await this.getOrThrow(id);
   }
 
