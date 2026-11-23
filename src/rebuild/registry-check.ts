@@ -198,10 +198,8 @@ function needRefusal(
   if (NEVER_NEEDED.has(entry.class)) {
     return `a ${entry.class} table, never one a branch adds`;
   }
-  if (entry.origin === 'planned') return null;
-  if (input.codeTables.get(table)?.has('entity')) {
-    return 'an entity in this tree creates it, so the schema always has it';
-  }
+  // A table an entity in this tree creates is no refusal: the branch
+  // that adds it may land first, and the run notes the need as one to drop.
   return null;
 }
 

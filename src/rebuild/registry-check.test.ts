@@ -426,9 +426,38 @@ describe('checkRegistry', () => {
     expect(result.problems.map((p) => p.detail)).toEqual([
       'seed a.seed needs named without a reason',
       'seed a.seed needs unknown table nope',
-      'seed a.seed needs t1, an entity in this tree creates it, so the schema always has it',
       'seed a.seed needs v, a VIEW table, never one a branch adds'
     ]);
+  });
+
+  it('lets a step need a table whether or not an entity in the tree creates it', () => {
+    // The same branch, on a tree without the table's entity (it waits) and
+    // on one with it (the run notes the need as one to drop).
+    const check = (codeTables: Map<string, Set<CodeOrigin>>) =>
+      checkRegistry({
+        manifests: [
+          area(
+            'a',
+            { t1: index() },
+            { seeds: [step('a.seed', { writes: ['t1'] })] }
+          ),
+          area(
+            'b',
+            { mirror: { class: 'INDEX', origin: 'planned' } },
+            {
+              rebuilders: [
+                step('b.copy', {
+                  writes: [],
+                  needs: [{ table: 'mirror', reason: 'the mirror creates it' }]
+                })
+              ]
+            }
+          )
+        ],
+        codeTables
+      }).problems.map((p) => p.detail);
+    expect(check(code('t1'))).toEqual([]);
+    expect(check(code('t1', 'mirror'))).toEqual([]);
   });
 
   it('checks probe ids, paths, placeholders and reasons', () => {

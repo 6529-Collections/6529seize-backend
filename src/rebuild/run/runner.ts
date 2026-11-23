@@ -217,6 +217,8 @@ class RebuildRun {
   private plannedSteps: string[] = [];
   /** Steps skipped as planned because a table they need isn't in the schema. */
   private waitingSteps: WaitingStep[] = [];
+  /** Needs on tables the schema has: the step runs, and the need can go. */
+  private staleNeeds: string[] = [];
   /** The fresh schema's base tables. */
   private baseTables: ReadonlySet<string> = new Set();
   /** Planned probes held because a table they need isn't in the schema. */
@@ -754,6 +756,25 @@ class RebuildRun {
     return problems.length === 0;
   }
 
+  /**
+   * Needs, of the steps this run runs (every area's seeds, and the
+   * scope's rebuilders), on tables the schema already has: they no longer
+   * hold anything back and should be dropped.
+   */
+  private findStaleNeeds(base: ReadonlySet<string>): string[] {
+    return [
+      ...this.o.manifests.flatMap((m) => m.seeds),
+      ...this.scopeManifests.flatMap((m) => m.rebuilders)
+    ].flatMap((step) =>
+      (step.needs ?? [])
+        .filter((need) => base.has(need.table))
+        .map(
+          (need) =>
+            `${step.id} needs ${need.table}, which the schema now has: drop the need`
+        )
+    );
+  }
+
   /** The tables a step needs that the fresh schema doesn't have. */
   private missingNeeds(step: RebuildStep): NeededTable[] {
     return (step.needs ?? []).filter(
@@ -1056,6 +1077,7 @@ class RebuildRun {
       this.live.filter((t) => t.type === 'BASE TABLE').map((t) => t.name)
     );
     this.baseTables = base;
+    this.staleNeeds = this.findStaleNeeds(base);
     if (!(await this.checkpointColumnsHold())) return;
     if (!(await this.partitionsDisjointInMysql())) return;
     const all = expandAll(this.o.manifests);
@@ -1136,6 +1158,7 @@ class RebuildRun {
       plannedTables: (this.registry?.plannedAbsent ?? []).length,
       plannedSteps: this.plannedSteps,
       waitingSteps: this.waitingSteps,
+      staleNeeds: this.staleNeeds,
       unownedRows: this.unownedRows,
       heldProbes: this.heldProbes,
       notInSchema: this.notInSchema().map((a) => a.table),

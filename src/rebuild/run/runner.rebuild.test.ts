@@ -192,6 +192,31 @@ describe('rebuild check, end to end', () => {
     writes: [partition('MEMES')]
   };
 
+  it('runs a step that needs a table the schema has, and notes the need to drop', async () => {
+    const { report } = await teamRun({
+      ...step('self-check.needs-team', 'rebuildTeam', ['team']),
+      needs: [{ table: 'team', reason: 'an entity in this tree creates it' }]
+    });
+    expect(report.failures).toEqual([]);
+    expect(report.verdict).toBe('PASS');
+    expect(report.steps.map((s) => s.id)).toContain('self-check.needs-team');
+    expect(report.tables.rebuilt).toEqual(['team']);
+    expect(report.notes.join(' ')).toContain(
+      'self-check.needs-team needs team, which the schema now has: drop the need'
+    );
+    const final = await teamRun(
+      {
+        ...step('self-check.needs-team-final', 'rebuildTeam', ['team']),
+        needs: [{ table: 'team', reason: 'an entity in this tree creates it' }]
+      },
+      true
+    );
+    expect(final.report.verdict).toBe('FAIL');
+    expect(final.report.failures.join(' ')).toContain(
+      'self-check.needs-team-final needs team, which the schema now has: drop the need'
+    );
+  });
+
   it('rebuilds only its own partition of a shared table in an area run, and notes rows no partition owns', async () => {
     // Another area's writer of the 6529 rows: not run in a mint-only run,
     // so those rows must stay as seeded.

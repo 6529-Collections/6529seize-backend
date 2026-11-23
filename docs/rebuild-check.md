@@ -27,9 +27,9 @@ test shards and fails when:
 - a rebuilder writes a table that isn't one of its area's INDEX tables, two
   rebuilders write one table (unless each writes a disjoint partition of
   it), or steps wait on each other;
-- a step reads a table no manifest has, or needs one that no later branch
-  adds or without a reason; a rebuilder is marked `last`, or a seed that
-  isn't last waits on one that is;
+- a step reads a table no manifest has, or needs an unknown table, a
+  VIEW, RETIRED or SCHEMA table, or one without a reason; a rebuilder is
+  marked `last`, or a seed that isn't last waits on one that is;
 - a probe repeats an id, has a path without a leading `/`, or a placeholder
   with no values.
 
@@ -132,10 +132,11 @@ export const mintManifest: AreaManifest = {
     when every table it needs is in the run's schema. While one is missing
     (a table another branch creates), runs skip it the same way, and the
     report names the step, the table and the reason; a final run fails.
-    A step waits only for a table a later branch adds: one marked planned,
-    or one no entity in this tree creates yet. The registry refuses any
-    other (an entity's table, a view, a retired or a schema table) and a
-    needed table without a reason.
+    A step waits for a table a later branch adds. The registry refuses a
+    view, a retired or a schema table, and a needed table without a reason.
+    A need on a table the schema already has (its branch landed first)
+    holds nothing back: the step runs, the run notes the need as one to
+    drop, and a final run fails on it.
     A step that waits on a skipped one and touches the same tables should
     declare the same needs.
   - A seed with `last: true` runs after every seed without it, in the
