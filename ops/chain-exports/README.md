@@ -84,35 +84,69 @@ For each:
      lead over UTC to accept: Monday's smaller `replicaLagAheadMs` minus
      60000;
    - or a list of these, such as `["unreadable",{"dated_ahead":7140000}]`.
+     Each reading is then taken on its own case's terms.
+3. Otherwise report it.
 
-   Take the margin as exactly 60000 ms: the run counts that much possible
-   stall as lag, on top of the lag the row reports. A time zone offset
-   keeps a row's age, or its lead, constant, so it passes; a reader that
-   stopped updating makes the age grow, or the lead shrink, past the bound,
-   so it is refused, as a bare `"older_than_gap"` or `"dated_ahead"` is.
-   With a `dated_ahead` bound given, any other reading is refused too: a
-   reader dated ahead that stops updating reads as fresh once its lead has
-   run out. An age bound is 120000 to 51000000 ms, a lead bound 1740000 to
-   51000000 ms: time zones reach 14 hours from UTC, and none is less than
-   30 minutes from it. A rerun that lands on a reader showing another case
-   is refused, as `true` is.
-   For an error, accept only `ER_UNKNOWN_TABLE 1109` or
-   `ER_UNKNOWN_SYSTEM_VARIABLE 1193` (the reader isn't Aurora). The run
-   records the case it accepted (`replicaLagAccepted`, and
-   `replica_lag_accepted` in the manifest, beside the acceptance as given,
-   bounds included).
+What the run enforces, accepted or not:
 
-3. Otherwise report it: any other error, such as `ER_PARSE_ERROR 1064`, is
-   a fault, and a row past the bound accepted means the reader stopped:
-   don't move the bound.
+- `unreadable` is accepted only for the "can't read the lag on this
+  server" reasons in `evidence.replicaLagError`: `ER_UNKNOWN_TABLE 1109` or
+  `ER_UNKNOWN_SYSTEM_VARIABLE 1193` (the reader isn't Aurora), no row for
+  this server, a null lag, or a null timestamp. Any other reason, such as a
+  timeout (`PROTOCOL_SEQUENCE_TIMEOUT`), a refusal
+  (`ER_TABLEACCESS_DENIED_ERROR 1142`), `ER_PARSE_ERROR 1064` or a negative
+  lag, is refused even with `"unreadable"` given: a reader falling behind
+  can time out. Report it if it returns.
+- A bound is taken with a margin of exactly 60000 ms: the run counts that
+  much possible stall as lag, on top of the lag the row reports. A time
+  zone offset keeps a row's age, or its lead, constant, so it passes; a
+  reader that stopped updating makes the age grow, or the lead shrink,
+  past the bound, so it is refused, as a bare `"older_than_gap"` or
+  `"dated_ahead"` is. Don't move a bound to let a reading through.
+- With a `dated_ahead` bound given, a reading that is fresh, or older than
+  the gap, is refused: a reader dated ahead that stops updating reads that
+  way once its lead has run out. An `unreadable` reading is taken on its
+  own terms.
+- An age bound is 120000 to 51000000 ms, a lead bound 1740000 to 51000000
+  ms: time zones reach 14 hours from UTC, and none is less than 30 minutes
+  from it.
+- A rerun that lands on a reader showing another case is refused, as
+  `true` is. The run records the case it accepted (`replicaLagAccepted`,
+  and `replica_lag_accepted` in the manifest, beside the acceptance as
+  given, bounds included).
+- An accepted case still holds the lag the row reports to the gap: a row
+  whose age can't be trusted but which says the reader is behind by the
+  gap less 1.5 s or more is refused. As a stale row's lag never changes,
+  run once more, and if that refusal comes back unchanged, report it. Only
+  when the row reports no lag at all does the 2-minute minimum gap alone
+  decide. A trusted lag that is simply too large is never accepted: wait a
+  few minutes and run again.
 
-An accepted case still holds the lag the row reports to the gap: a row
-whose age can't be trusted but which says the reader is behind by the gap
-less 1.5 s or more is refused. As a stale row's lag never changes, run once
-more, and if that refusal comes back unchanged, report it. Only when the
-row reports no lag at all does the 2-minute minimum gap alone decide. A
-trusted lag that is simply too large is never accepted: wait a few minutes
-and run again. The refusals say the same.
+The refusals say the same.
+
+#### Working out a bound from Monday
+
+The bound is only as tight as the arithmetic: work it out from Monday's
+two readings, never round it down or pick a small number. A loose bound
+hides a stall: `{"dated_ahead":1740000}` would pass a +2 h reader that
+stopped 90 minutes before the run.
+
+`dated_ahead`, a reader on UTC+2:
+
+- Monday's two readings: `replicaLagAheadMs` 7 200 340 and, five minutes
+  later, 7 200 310. They match (an offset, not a stall).
+- Bound: the smaller, 7 200 310, minus 60 000: `{"dated_ahead":7140310}`.
+- Tuesday, healthy: a lead of 7 200 300 passes.
+- Tuesday, the reader stopped at 23:50: at 00:05 its lead is 7 200 300 less
+  15 minutes (900 000), 6 300 300, under the bound: refused.
+
+`older_than_gap`, a reader on UTC-1:
+
+- Monday's two readings: `replicaLagAgeMs` 3 600 410 and 3 600 380.
+- Bound: the larger, 3 600 410, plus 60 000: `{"older_than_gap":3660410}`.
+- Tuesday, healthy: an age of 3 600 400 passes.
+- Tuesday, the reader stopped at 23:50: at 00:05 its age is 3 600 400 plus
+  900 000, 4 500 400, over the bound: refused.
 
 No database password and no long-lived key is handled by a person.
 
@@ -599,7 +633,10 @@ failed", again with the code only. A DNS failure (`EAI_AGAIN`,
 never the host: run it again. An AWS service's refusal (S3, Secrets
 Manager) says "An AWS call was refused" with its name and HTTP status,
 such as `AccessDenied (403)`. A failed public API request is written into
-`report.json` as `request_failed: <code>`. The full messages are in the
+`report.json` as `request_failed: <code>`, or its error's name when it
+has no code (such as `FetchError`). A call that got no answer at all (a
+timeout, a certificate it couldn't check) says "A network call failed"
+with its code or name, not "refused". The full messages are in the
 function's log, as `[READ REPLICA FAILED]`, `[NETWORK CALL FAILED]`,
 `[AWS CALL REFUSED]` and `[PUBLIC API REQUEST FAILED]`.
 

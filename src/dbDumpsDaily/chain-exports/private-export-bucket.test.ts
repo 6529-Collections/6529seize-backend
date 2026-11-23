@@ -154,6 +154,12 @@ describe('the chain exports bucket', () => {
     // A TLS failure names the host it expected.
     [{ code: 'ERR_TLS_CERT_ALTNAME_INVALID' }, true],
     [{ host: 'bucket.s3.example.invalid' }, true],
+    // A timeout or a certificate failure never got an answer.
+    [{ name: 'TimeoutError' }, true],
+    [{ code: 'CERT_HAS_EXPIRED' }, true],
+    [{ code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' }, true],
+    [{ code: 'SELF_SIGNED_CERT_IN_CHAIN' }, true],
+    [{ code: 'DEPTH_ZERO_SELF_SIGNED_CERT' }, true],
     [{ name: 'AccessDenied' }, false],
     [null, false]
   ])('reads %j as a network error: %j', (error, network) => {

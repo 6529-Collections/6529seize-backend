@@ -49,7 +49,13 @@ export async function readFreshSecretValue(
     if (typeof text !== 'string') {
       throw new Error(`The secret ${secretId} has no text value`);
     }
-    const values = JSON.parse(text) as Record<string, unknown>;
+    let values: Record<string, unknown>;
+    try {
+      values = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      // A parse error's message can quote the secret's text: never pass it on.
+      throw new Error(`The secret ${secretId} is not valid JSON`);
+    }
     const value = values?.[key];
     return {
       secretId,

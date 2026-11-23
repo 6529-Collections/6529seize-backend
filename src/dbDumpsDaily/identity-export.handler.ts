@@ -55,6 +55,7 @@ import {
 } from './chain-exports/private-export-bucket';
 import {
   errorCode,
+  isAcceptableUnreadableLag,
   openReadOnlySnapshot,
   ReadOnlyEvidence,
   ReadOnlySnapshot,
@@ -342,7 +343,10 @@ export function checkReplicaLag(
   // passes, and once the lead has run out its row reads as fresh: with a
   // dated_ahead bound accepted, any other reading is refused.
   const leadBound = boundFor(accepted, 'dated_ahead');
-  if (leadBound !== undefined && lagCase !== 'dated_ahead') {
+  if (
+    leadBound !== undefined &&
+    (lagCase === null || lagCase === 'older_than_gap')
+  ) {
     throw new IdentityExportSnapshotError(
       `dated_ahead was accepted down to a ${leadBound} ms lead, but this reader's row reads ${lagCase ?? 'as fresh'}: a reader dated ahead that stopped updating reads that way once its lead has run out. Run once more without changing anything; if it reads the same, report it.`
     );
@@ -393,7 +397,13 @@ export function checkReplicaLag(
       );
     }
   } else if (accepted.includes(lagCase)) {
-    return lagCase;
+    // lagCase is 'unreadable': only the "can't read the lag on this
+    // server" cases. A timeout or a refusal can come from a reader falling
+    // behind.
+    if (isAcceptableUnreadableLag(lag.replicaLagError)) return lagCase;
+    throw new IdentityExportSnapshotError(
+      `unreadable was accepted, but this reading's reason (${lag.replicaLagError ?? 'no reason given'}) isn't one it covers: only ER_UNKNOWN_TABLE 1109 or ER_UNKNOWN_SYSTEM_VARIABLE 1193 (the reader isn't Aurora), no row for this server, a null lag or a null timestamp. A timeout or a refusal can come from a reader falling behind: run once more, and if it returns, report it.`
+    );
   }
   const reason = lag.replicaLagError ?? 'no reason given';
   if (lagCase === 'dated_ahead') {
@@ -538,15 +548,11 @@ export class IdentityExportServiceError extends Error {
 
 /**
  * An error as words the operator may see: a network error's code and
- * number (for a DNS lookup, saying so), an AWS service error's name and
- * HTTP status, or the error's name; never its message.
+ * number, an AWS service error's name and HTTP status, or the error's
+ * name; never its message.
  */
 export function errorName(error: unknown): string {
-  if (isNetworkError(error)) {
-    return isDnsFailure(error)
-      ? `DNS lookup failed, ${errorCode(error)}`
-      : errorCode(error);
-  }
+  if (isNetworkError(error)) return errorCode(error);
   const { name, $metadata } = (error ?? {}) as {
     name?: unknown;
     $metadata?: { httpStatusCode?: number };
@@ -565,6 +571,17 @@ export function serviceErrorOf(error: unknown, during: string): unknown {
     $metadata?: unknown;
   };
   if ($metadata === undefined || typeof name !== 'string') return error;
+  const status = ($metadata as { httpStatusCode?: unknown })?.httpStatusCode;
+  // No HTTP status: the call never got an answer (a timeout, a certificate):
+  // a network failure, not a refusal.
+  if (typeof status !== 'number') {
+    logger.error(
+      `[NETWORK CALL FAILED] [${during}] ${String((error as Error)?.message ?? error)}`
+    );
+    return new IdentityExportNetworkError(
+      `A network call failed while ${during}: ${name}. Its message, which can name the host, is in the function's log.`
+    );
+  }
   logger.error(
     `[AWS CALL REFUSED] [${during}] ${String((error as Error)?.message ?? error)}`
   );

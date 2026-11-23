@@ -53,21 +53,21 @@ The event carries the CLI's options, under the same rules.
   `{"dated_ahead":<smallest lead in ms>}` (the smaller of Monday's two
   `replicaLagAheadMs` readings minus 60000), or
   `{"older_than_gap":<largest row age in ms>}` (the larger of Monday's two
-  `replicaLagAgeMs` readings plus 60000), one or a list. Take the margin as
-  exactly 60000 ms: with a bound accepted, the run counts that much
-  possible stall as lag, on top of the lag the row reports. An age bound is
-  120000 to 51000000 ms, a lead bound 1740000 to 51000000 ms: time zones
-  reach 14 hours from UTC, and none is less than 30 minutes from it.
+  `replicaLagAgeMs` readings plus 60000), one or a list; work the bound out
+  as in the README's
+  [Working out a bound from Monday](README.md#working-out-a-bound-from-monday).
   `true`, a bare `"dated_ahead"` or `"older_than_gap"`, other names and
   repeats are refused. Only as in the README's "An unknown replica lag":
   after running once more, for a case Monday's rehearsal also showed, and
-  with the identity lead's agreement. An accepted case still holds the lag
-  the row reports to the gap; an `older_than_gap` row older than its bound,
-  or a `dated_ahead` row whose lead is less than its bound, is refused.
-  With a `dated_ahead` bound given, any other reading is refused too: a
-  reader dated ahead that stops updating reads as fresh once its lead has
-  run out. The response and the manifest
-  record the list as given, bounds included, and the case accepted
+  with the identity lead's agreement. What the run holds a reading to,
+  accepted or not, is the README's [What the run
+  enforces](README.md#an-unknown-replica-lag) list: `unreadable` only for a
+  reader that isn't Aurora (`ER_UNKNOWN_TABLE 1109`,
+  `ER_UNKNOWN_SYSTEM_VARIABLE 1193`), no row for this server, a null lag or
+  a null timestamp; a bound's 60000 ms margin counted as lag; with a
+  `dated_ahead` bound, a fresh reading or one older than the gap refused;
+  the lag the row reports always held to the gap. The response and the
+  manifest record the list as given, bounds included, and the case accepted
   (`replicaLagAccepted`, `replica_lag_accepted`). The CLI has no such flag:
   it reads no replica lag.
 - `replacePointer: true`: at the freeze, makes this run the freeze's export
@@ -170,11 +170,13 @@ The job refuses, and writes nothing, when:
   `evidence.replicaLagUnknown` names the first two, and
   `evidence.replicaLagError` gives the reason: the server's error code and
   number only (its message, which can name the user and host, goes to the
-  function's log), or the export's own. A row whose age can't be trusted
-  but which reports a lag of the gap less 1.5 s or more is refused, even
-  with its case accepted; a stale row's lag never changes, so run once
-  more, and if that refusal comes back unchanged, report it. What to do is
-  in the README's "An unknown replica lag", and the refusal says the same;
+  function's log), or the export's own. A row whose age can't be trusted but
+  which reports a lag of the gap less 1.5 s or more is refused, even with
+  its case accepted; a stale row's lag never changes, so run once more, and
+  if that refusal comes back unchanged, report it. What to do is in the
+  README's "An unknown replica lag", and what the run enforces in its [What
+  the run enforces](README.md#an-unknown-replica-lag) list; the refusal says
+  the same;
 - the database is not at the freeze day, or a count is not acknowledged.
   The error names every reason, with the CLI's exit code. The counts include
   profile rows saved after the freeze whether or not the save was logged,
@@ -355,7 +357,14 @@ about 600, Tuesday's run may not fit one invocation. Check in `out.json`:
   the lead shrank, by about the wait, the reader stopped updating its row:
   report it, and never accept it on Tuesday. If it stayed the same (a time
   zone offset), write it down: Tuesday's `older_than_gap` bound is the
-  larger age plus 60000, its `dated_ahead` bound the smaller lead minus 60000.
+  larger age plus 60000, its `dated_ahead` bound the smaller lead minus
+  60000, worked out as in the README's [Working out a bound from
+  Monday](README.md#working-out-a-bound-from-monday). Never round a bound or
+  pick a smaller one: a loose bound hides a stall.
+- With the case `unreadable`, `evidence.replicaLagError` must be one the
+  run accepts: `ER_UNKNOWN_TABLE 1109`, `ER_UNKNOWN_SYSTEM_VARIABLE 1193`,
+  no row for this server, a null lag or a null timestamp. Any other reason,
+  such as a timeout, can't be accepted on Tuesday: report it.
 - If either reading names a case, tell the identity lead and settle it
   before Tuesday: Tuesday can accept only a case Monday showed, by its
   name, as in the README's "An unknown replica lag".
@@ -394,23 +403,27 @@ If the run is refused because of the replica:
   it again. This refusal is never accepted;
 - it says the lag can't be read, or its row is dated ahead of UTC or older
   than the time since the freeze: follow the README's "An unknown replica
-  lag". Run once more; then accept only the case the refusal names, and
-  only if Monday's rehearsal showed it, with the identity lead's
-  agreement: `"acceptUnknownReplicaLag":"unreadable"`; for `older_than_gap`
-  the bound from Monday's age,
-  `"acceptUnknownReplicaLag":{"older_than_gap":<ms>}` with Monday's larger
-  `replicaLagAgeMs` plus 60000; for `dated_ahead` the bound from Monday's
-  lead, `"acceptUnknownReplicaLag":{"dated_ahead":<ms>}` with Monday's
-  smaller `replicaLagAheadMs` minus 60000. A row older than its bound, or
-  one whose lead has shrunk below it, means the reader stopped: report it,
-  and don't move the bound. Otherwise report it. Don't keep running it
-  until 01:30;
+  lag". Run once more; then accept only the case the refusal names, and only
+  if Monday's rehearsal showed it, with the identity lead's agreement:
+  `"acceptUnknownReplicaLag":"unreadable"`; for `older_than_gap` the bound
+  from Monday's age, `"acceptUnknownReplicaLag":{"older_than_gap":<ms>}`
+  with Monday's larger `replicaLagAgeMs` plus 60000; for `dated_ahead` the
+  bound from Monday's lead, `"acceptUnknownReplicaLag":{"dated_ahead":<ms>}`
+  with Monday's smaller `replicaLagAheadMs` minus 60000, as in the README's
+  [Working out a bound from
+  Monday](README.md#working-out-a-bound-from-monday). A row older than its
+  bound, or one whose lead has shrunk below it, means the reader stopped:
+  report it, and don't move the bound. Otherwise report it. Don't keep
+  running it until 01:30;
+- it says `unreadable` was accepted, but the reading's reason isn't one it
+  covers (a timeout, a refusal, a parse error): a reader falling behind
+  can time out. Run once more; if it returns, report it;
 - it says an untrusted row reports a lag of the gap less 1.5 s or more
   (with a bound accepted, less another 60000 ms for a stall within the
   bound's margin): its lag never changes, so run once more, and if the
   refusal comes back unchanged, report it;
 - it says `dated_ahead` was accepted but the reader's row reads as fresh,
-  or reads another case: a reader dated ahead that stopped updating reads
+  or older than the gap: a reader dated ahead that stopped updating reads
   that way once its lead has run out. Run once more without changing the
   event; if it reads the same, report it.
 
@@ -445,9 +458,8 @@ replaced.
     well. If not, it names another run: do as in the case above, and fetch
     this run by its `prefix`.
   - Any other `pointerError` ("The pointer write failed", with the error's
-    code or name only; "DNS lookup failed" and its code for a DNS failure):
-    send the coordinator this run's `prefix` and `manifestSha256`, and
-    fetch fresh links by `prefix`, not `freezeAt`.
+    code or name only): send the coordinator this run's `prefix` and
+    `manifestSha256`, and fetch fresh links by `prefix`, not `freezeAt`.
 - `revision` is the commit deployed, and `buildCommit` is the same commit
   (or `null`, with the revision you gave).
 - `cmsFieldsSource` names the profile site run at the freeze and its
@@ -507,7 +519,9 @@ failed", again with the code only. A DNS failure (`EAI_AGAIN`,
 `ENOTFOUND`) on either says "DNS lookup failed, retry" with its code, and
 never the host: run it again. An AWS service's refusal (S3, Secrets
 Manager) says "An AWS call was refused" with its name and HTTP status,
-such as `AccessDenied (403)`. The full messages are in the function's log,
+such as `AccessDenied (403)`. A call that got no answer at all (a timeout,
+a certificate it couldn't check) says "A network call failed" with its code
+or name, not "refused". The full messages are in the function's log,
 as `[READ REPLICA FAILED]`, `[NETWORK CALL FAILED]` and
 `[AWS CALL REFUSED]`; a pointer's, as `[POINTER NOT WRITTEN]` and
 `[POINTER READ-BACK FAILED]`.

@@ -1179,7 +1179,7 @@ describe('runIdentityExportJob', () => {
             String(line).includes('connect ETIMEDOUT 192.0.2.7:443')
           )
         ).toBe(true);
-        // A DNS failure says so, by its code.
+        // A DNS failure: its code only, as any other.
         const dns = setup({
           failPutOf: '2026-11-24T00-00-00-000Z.json',
           failPutWith: Object.assign(
@@ -1194,7 +1194,7 @@ describe('runIdentityExportJob', () => {
         });
         const looked = await run(dns.deps);
         expect(looked.pointerError).toBe(
-          "The pointer write failed: DNS lookup failed, EAI_AGAIN -3001. Its message is in the function's log."
+          "The pointer write failed: EAI_AGAIN -3001. Its message is in the function's log."
         );
         expect(JSON.stringify(looked)).not.toContain('example.invalid');
       } finally {
@@ -1583,13 +1583,17 @@ describe('runIdentityExportJob', () => {
       lagMs: number | null,
       ageMs: number | null,
       unknown: 'unreadable' | 'dated_ahead' | null = null,
-      aheadMs = 7_200_000
+      aheadMs = 7_200_000,
+      reason: string | null = 'ER_UNKNOWN_TABLE 1109'
     ) => ({
       replicaLagMs: lagMs,
       replicaLagAgeMs: ageMs,
-      replicaLagError: unknown
-        ? `LAST_UPDATE_TIMESTAMP is ${aheadMs} ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown`
-        : null,
+      replicaLagError:
+        unknown === 'dated_ahead'
+          ? `LAST_UPDATE_TIMESTAMP is ${aheadMs} ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown`
+          : unknown === 'unreadable'
+            ? reason
+            : null,
       replicaLagUnknown: unknown,
       replicaLagAheadMs: unknown === 'dated_ahead' ? aheadMs : null
     });
@@ -1688,12 +1692,17 @@ describe('runIdentityExportJob', () => {
     ).toThrow(
       "dated_ahead was accepted down to a 7140000 ms lead, but this reader's row reads older_than_gap"
     );
-    expect(() =>
+    // An unreadable reading is taken on its own terms: accepted when
+    // named, refused as unreadable when not.
+    expect(
       checkReplicaLag(300_000, reading(null, null, 'unreadable'), [
         ...LEAD,
         'unreadable'
       ])
-    ).toThrow("this reader's row reads unreadable");
+    ).toBe('unreadable');
+    expect(() =>
+      checkReplicaLag(300_000, reading(null, null, 'unreadable'), LEAD)
+    ).toThrow("The replica's lag can't be read");
     // Without that bound, the same fresh row passes.
     expect(checkReplicaLag(300_000, reading(20, 500), all)).toBeNull();
     // older_than_gap only up to the bound given: a row that keeps aging
@@ -1763,6 +1772,134 @@ describe('runIdentityExportJob', () => {
     } finally {
       warn.mockRestore();
     }
+  });
+
+  it('accepts unreadable only for the server\'s "can\'t read the lag" cases, refusing any other by name', () => {
+    const unread = (lagMs: number | null, reason: string | null) => ({
+      replicaLagMs: lagMs,
+      replicaLagAgeMs: null,
+      replicaLagError: reason,
+      replicaLagUnknown: 'unreadable' as const,
+      replicaLagAheadMs: null
+    });
+    for (const reason of [
+      'ER_UNKNOWN_TABLE 1109',
+      'ER_UNKNOWN_SYSTEM_VARIABLE 1193',
+      'information_schema.replica_host_status has no row for this server',
+      'REPLICA_LAG_IN_MILLISECONDS is null'
+    ]) {
+      expect(
+        checkReplicaLag(150_000, unread(null, reason), ['unreadable'])
+      ).toBe('unreadable');
+    }
+    // A null timestamp keeps its lag, still held to the gap.
+    const noTimestamp = unread(
+      20,
+      "LAST_UPDATE_TIMESTAMP is null: the row's age is unknown"
+    );
+    expect(checkReplicaLag(150_000, noTimestamp, ['unreadable'])).toBe(
+      'unreadable'
+    );
+    expect(() =>
+      checkReplicaLag(150_000, { ...noTimestamp, replicaLagMs: 148_500 }, [
+        'unreadable'
+      ])
+    ).toThrow(
+      "reports a 148500 ms lag (its row's age not counted: unreadable)"
+    );
+    // A timeout, a refusal, a parse error or a negative lag can come from
+    // a reader falling behind, or a fault: refused, by its reason.
+    for (const reason of [
+      'PROTOCOL_SEQUENCE_TIMEOUT',
+      'ER_TABLEACCESS_DENIED_ERROR 1142',
+      'ER_PARSE_ERROR 1064',
+      'REPLICA_LAG_IN_MILLISECONDS is -1: not a lag',
+      null
+    ]) {
+      expect(() =>
+        checkReplicaLag(150_000, unread(null, reason), ['unreadable'])
+      ).toThrow(
+        `unreadable was accepted, but this reading's reason (${reason ?? 'no reason given'}) isn't one it covers: only ER_UNKNOWN_TABLE 1109 or ER_UNKNOWN_SYSTEM_VARIABLE 1193 (the reader isn't Aurora), no row for this server, a null lag or a null timestamp. A timeout or a refusal can come from a reader falling behind: run once more, and if it returns, report it.`
+      );
+    }
+  });
+
+  it("works the README's bound examples as the README says", () => {
+    const at = (lagMs: number, ageMs: number) => ({
+      replicaLagMs: lagMs,
+      replicaLagAgeMs: ageMs,
+      replicaLagError: null,
+      replicaLagUnknown: null,
+      replicaLagAheadMs: null
+    });
+    const ahead = (lagMs: number, aheadMs: number) => ({
+      replicaLagMs: lagMs,
+      replicaLagAgeMs: null,
+      replicaLagError: `LAST_UPDATE_TIMESTAMP is ${aheadMs} ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown`,
+      replicaLagUnknown: 'dated_ahead' as const,
+      replicaLagAheadMs: aheadMs
+    });
+    // UTC+2, Monday 7 200 340 and 7 200 310: the bound is 7 140 310.
+    const lead: ReplicaLagAcceptance[] = [{ dated_ahead: 7_140_310 }];
+    expect(checkReplicaLag(300_000, ahead(20, 7_200_300), lead)).toBe(
+      'dated_ahead'
+    );
+    expect(() => checkReplicaLag(300_000, ahead(20, 6_300_300), lead)).toThrow(
+      'dated 6300300 ms ahead of UTC, less than the 7140310 ms accepted'
+    );
+    // UTC-1, Monday 3 600 410 and 3 600 380: the bound is 3 660 410.
+    const age: ReplicaLagAcceptance[] = [{ older_than_gap: 3_660_410 }];
+    expect(checkReplicaLag(300_000, at(20, 3_600_400), age)).toBe(
+      'older_than_gap'
+    );
+    expect(() => checkReplicaLag(300_000, at(20, 4_500_400), age)).toThrow(
+      '4500400 ms old, over the 3660410 ms accepted'
+    );
+    // The loose bound the README warns against lets the stall through.
+    expect(
+      checkReplicaLag(300_000, ahead(20, 7_200_000 - 5_400_000), [
+        { dated_ahead: 1_740_000 }
+      ])
+    ).toBe('dated_ahead');
+    // Its example list, case by case.
+    const example: ReplicaLagAcceptance[] = [
+      'unreadable',
+      { dated_ahead: 7_140_000 }
+    ];
+    expect(
+      checkReplicaLag(
+        300_000,
+        {
+          replicaLagMs: null,
+          replicaLagAgeMs: null,
+          replicaLagError: 'ER_UNKNOWN_TABLE 1109',
+          replicaLagUnknown: 'unreadable',
+          replicaLagAheadMs: null
+        },
+        example
+      )
+    ).toBe('unreadable');
+    expect(checkReplicaLag(300_000, ahead(20, 7_200_000), example)).toBe(
+      'dated_ahead'
+    );
+    expect(() => checkReplicaLag(300_000, at(20, 500), example)).toThrow(
+      "dated_ahead was accepted down to a 7140000 ms lead, but this reader's row reads as fresh"
+    );
+    expect(() =>
+      checkReplicaLag(
+        300_000,
+        {
+          replicaLagMs: null,
+          replicaLagAgeMs: null,
+          replicaLagError: 'PROTOCOL_SEQUENCE_TIMEOUT',
+          replicaLagUnknown: 'unreadable',
+          replicaLagAheadMs: null
+        },
+        example
+      )
+    ).toThrow(
+      "unreadable was accepted, but this reading's reason (PROTOCOL_SEQUENCE_TIMEOUT)"
+    );
   });
 
   it('names the lag case in every run, a rehearsal against the minimum gap', async () => {
@@ -1840,6 +1977,29 @@ describe('runIdentityExportJob', () => {
       null,
       null
     ]);
+  });
+
+  it('refuses at the freeze an unreadable lag that may be a reader falling behind', async () => {
+    mockBuild.mockResolvedValue(document());
+    const covered = setup({ replicaLagMs: null });
+    const result = await run(covered.deps, {
+      ...atFreeze,
+      acceptUnknownReplicaLag: 'unreadable'
+    });
+    expect([result.replicaLagCase, result.replicaLagAccepted]).toEqual([
+      'unreadable',
+      'unreadable'
+    ]);
+    const timedOut = setup({
+      replicaLagMs: null,
+      replicaLagError: 'PROTOCOL_SEQUENCE_TIMEOUT'
+    });
+    await expect(
+      run(timedOut.deps, { ...atFreeze, acceptUnknownReplicaLag: 'unreadable' })
+    ).rejects.toThrow(
+      "unreadable was accepted, but this reading's reason (PROTOCOL_SEQUENCE_TIMEOUT) isn't one it covers"
+    );
+    expect(timedOut.order).toEqual([]);
   });
 
   it('accepts a row dated ahead at the freeze only down to the lead given, and records it', async () => {
@@ -2137,6 +2297,56 @@ describe('runIdentityExportJob', () => {
       error.mockRestore();
     }
   });
+
+  it.each([
+    [
+      'an SDK timeout',
+      Object.assign(new Error('Connection timed out after 30000 ms'), {
+        name: 'TimeoutError',
+        $metadata: { attempts: 3 }
+      }),
+      "A network call failed while running the export: TimeoutError. Its message, which can name the host or user, is in the function's log."
+    ],
+    [
+      'a certificate the SDK could not check',
+      Object.assign(
+        new Error('certificate has expired for bucket.s3.example.invalid'),
+        { code: 'CERT_HAS_EXPIRED', $metadata: {} }
+      ),
+      "A network call failed while running the export: CERT_HAS_EXPIRED. Its message, which can name the host or user, is in the function's log."
+    ],
+    [
+      'a certificate chain it could not check',
+      Object.assign(new Error('unable to verify the first certificate'), {
+        code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE'
+      }),
+      "A network call failed while running the export: UNABLE_TO_VERIFY_LEAF_SIGNATURE. Its message, which can name the host or user, is in the function's log."
+    ],
+    [
+      'an unanswered call of another kind',
+      Object.assign(new Error('no answer from bucket.s3.example.invalid'), {
+        name: 'UnknownError',
+        $metadata: {}
+      }),
+      "A network call failed while running the export: UnknownError. Its message, which can name the host, is in the function's log."
+    ]
+  ])(
+    'reports %s as a network failure, not an AWS refusal',
+    async (_what, failure, message) => {
+      mockBuild.mockResolvedValue(document());
+      const { deps } = setup({
+        failPutOf: 'summary.json',
+        failPutWith: failure
+      });
+      const error = await run(deps).then(
+        () => null,
+        (e: Error) => e
+      );
+      expect(error?.name).toBe('IdentityExportNetworkError');
+      expect(error?.message).toBe(message);
+      expect(error?.message).not.toMatch(/refused|example\.invalid/);
+    }
+  );
 
   it('counts a TLS failure, and an error naming its host, as network errors', async () => {
     mockBuild.mockResolvedValue(document());
