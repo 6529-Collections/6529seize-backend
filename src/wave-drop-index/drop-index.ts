@@ -292,8 +292,9 @@ export async function runDropIndex({
     budgetMs: readMs,
     liveFrom: config.liveFrom
   });
-  if (!config.apply) return { relays, applied: null };
+  // Also in shadow: rows learn the drops 6529.io wrote, for their readers.
   await dropIndexDb.markSiteWritten();
+  if (!config.apply) return { relays, applied: null };
   // Loaded only when writing: it brings the API's drop write path.
   const drops = writes ?? (await import('./relay-drop-writes')).relayDropWrites;
   const applied = await new RelayDropApplier(dropIndexDb, drops).applyPending({

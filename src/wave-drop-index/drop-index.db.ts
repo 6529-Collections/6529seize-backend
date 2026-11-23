@@ -239,14 +239,17 @@ export class DropIndexDb extends LazyDbAccessCompatibleService {
 
   /**
    * Relay-only events written through 6529.io since they were read (the
-   * author also sent them to 6529.io): marked `site`, with their drop.
+   * author also sent them to 6529.io): marked `site`, with their drop. Also
+   * fills the drop of a site event read while 6529.io's write of it was
+   * under way, so every POST row ends up naming its drop.
    */
   async markSiteWritten(): Promise<number> {
     const result = await this.db.execute(
       `update ${WAVE_RELAY_EVENTS_TABLE} e
          join ${DEVICE_SIGNED_EVENTS_TABLE} d on d.id = e.event_id
           set e.origin = 'site', e.drop_id = d.drop_id
-        where e.origin = 'relay' and e.status = 'logged'
+        where ((e.origin = 'relay' and e.status = 'logged')
+            or (e.origin = 'site' and e.drop_id is null))
           and d.drop_id is not null`
     );
     return this.db.getAffectedRows(result);

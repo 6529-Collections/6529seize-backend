@@ -358,6 +358,21 @@ describeWithSeed(
       ).toEqual([eventId(1), eventId(2), eventId(3), eventId(4), eventId(5)]);
     });
 
+    it("fills a site post's drop once 6529.io finishes writing it", async () => {
+      // Read while 6529.io's write of it was still under way.
+      await db.ingest(
+        [aRow(2, { origin: 'site', drop_id: null })],
+        [],
+        'r-1',
+        [],
+        1
+      );
+      expect(await db.markSiteWritten()).toBe(1);
+      const [row] = await db.eventsAfter(0, 10);
+      expect([row.origin, row.drop_id]).toEqual(['site', 'site-drop']);
+      expect(await db.markSiteWritten()).toBe(0);
+    });
+
     it('releases a reservation only once it is stale and unfinished', async () => {
       await sqlExecutor.execute(
         `update ${DEVICE_SIGNED_EVENTS_TABLE} set drop_id = null, created_at = 1 where id = :id`,
