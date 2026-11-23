@@ -134,13 +134,20 @@ export type IdentityExportEvent =
       readonly acceptMissingExtraIds: number;
       readonly acceptProfileWritesAfterFreeze: number;
       readonly acceptUnmatchedCms: number;
-      readonly acceptDelegationsAfterFreeze: number;
+      /**
+       * At most this many consolidation rows and primary-address delegations
+       * after the TDH block (a ceiling: the count can grow while the run
+       * waits).
+       */
+      readonly acceptConsolidationsAfterFreeze: number;
       /** At the freeze without the waves list. */
       readonly acceptNoExtraIds: boolean;
       /** At the freeze with a bulk threshold other than 2000. */
       readonly acceptBulk: number | null;
       /** Accepts a snapshot up to this many minutes after the freeze. */
       readonly acceptSnapshotGapMinutes: number | null;
+      /** Runs although the replica's lag can't be read (the gap alone). */
+      readonly acceptUnknownReplicaLag: boolean;
       /** Replace the freeze's pointer if a run wrote one already. */
       readonly replacePointer: boolean;
     }
@@ -221,12 +228,19 @@ export function checkSnapshotTime(
 /**
  * Refuses a replica as far behind its writer as the snapshot is after the
  * freeze, or further: it might not yet hold writes made before the freeze.
- * An unknown lag leaves the minimum gap as the only guard.
+ * A lag that can't be read is refused too, unless the invoker accepts
+ * relying on the minimum gap alone.
  */
 export function checkReplicaLag(
   gapSeconds: number,
-  replicaLagMs: number | null
+  replicaLagMs: number | null,
+  acceptUnknown = false
 ): void {
+  if (replicaLagMs === null && !acceptUnknown) {
+    throw new IdentityExportSnapshotError(
+      "The replica's lag can't be read (information_schema.replica_host_status): only the gap since the freeze shows it holds the writes made before it. To rely on that gap alone, run again with acceptUnknownReplicaLag: true."
+    );
+  }
   if (replicaLagMs !== null && replicaLagMs >= gapSeconds * 1000) {
     throw new IdentityExportSnapshotError(
       `The replica is ${replicaLagMs} ms behind its writer, not less than the ${gapSeconds} s since the freeze: it may not hold every write made before the freeze. Try again later.`
@@ -282,10 +296,11 @@ const EXPORT_FIELDS = [
   'acceptMissingExtraIds',
   'acceptProfileWritesAfterFreeze',
   'acceptUnmatchedCms',
-  'acceptDelegationsAfterFreeze',
+  'acceptConsolidationsAfterFreeze',
   'acceptNoExtraIds',
   'acceptBulk',
   'acceptSnapshotGapMinutes',
+  'acceptUnknownReplicaLag',
   'replacePointer'
 ] as const;
 
@@ -582,14 +597,18 @@ export function parseIdentityExportEvent(
       record.acceptUnmatchedCms,
       0
     ),
-    acceptDelegationsAfterFreeze: wholeNumber(
-      'acceptDelegationsAfterFreeze',
-      record.acceptDelegationsAfterFreeze,
+    acceptConsolidationsAfterFreeze: wholeNumber(
+      'acceptConsolidationsAfterFreeze',
+      record.acceptConsolidationsAfterFreeze,
       0
     ),
     acceptNoExtraIds: flag('acceptNoExtraIds', record.acceptNoExtraIds),
     acceptBulk,
     acceptSnapshotGapMinutes: gap,
+    acceptUnknownReplicaLag: flag(
+      'acceptUnknownReplicaLag',
+      record.acceptUnknownReplicaLag
+    ),
     replacePointer
   };
 }
@@ -894,6 +913,32 @@ async function cmsFieldsAtFreeze(
   };
 }
 
+/**
+ * Whether the pointer at `key` names this run: after a lost answer the
+ * SDK writes again, and S3 refuses the retry because the first write
+ * landed.
+ */
+async function pointerNamesRun(
+  writer: PrivateExportWriter,
+  key: string,
+  prefix: string,
+  manifestSha256: string
+): Promise<boolean> {
+  try {
+    const read = await writer.readOutside(key);
+    if (!read.found) return false;
+    const pointer = JSON.parse(read.text) as {
+      prefix?: unknown;
+      manifest_sha256?: unknown;
+    };
+    return (
+      pointer.prefix === prefix && pointer.manifest_sha256 === manifestSha256
+    );
+  } catch {
+    return false;
+  }
+}
+
 function pointerErrorOf(key: string, error: unknown): string {
   if (isWriteConflict(error)) {
     return `${key} names another run for this freeze, written while this one ran, and was kept. Send both runs' prefix and manifestSha256 to the coordinator; to make this run the export, run again with replacePointer: true`;
@@ -1052,8 +1097,12 @@ export async function runIdentityExportJob(
     (event.cmsFields
       ? await inputBytes(event.cmsFields, bucket, deps.s3)
       : null);
+  // A site export with no sites writes {}: at the freeze its manifest
+  // vouches for it.
   const cmsFields = cmsBytes
-    ? parseCmsFields(cmsBytes.toString('utf8'))
+    ? parseCmsFields(cmsBytes.toString('utf8'), {
+        allowEmpty: atFreeze !== null
+      })
     : undefined;
   const extraIdsFile: InputFile | null = extraIdsBytes
     ? { count: extraProfileIds.length, sha256: sha256(extraIdsBytes) }
@@ -1106,7 +1155,11 @@ export async function runIdentityExportJob(
         event.acceptSnapshotGapMinutes,
         MIN_SNAPSHOT_GAP_SECONDS
       ).gapSeconds;
-      checkReplicaLag(gapSeconds, snapshot.evidence.replicaLagMs);
+      checkReplicaLag(
+        gapSeconds,
+        snapshot.evidence.replicaLagMs,
+        event.acceptUnknownReplicaLag
+      );
     }
     document = await buildIdentityExport(
       new SqlIdentityExportSource(
@@ -1127,12 +1180,13 @@ export async function runIdentityExportJob(
         acceptMissingExtraIds: event.acceptMissingExtraIds,
         acceptProfileWritesAfterFreeze: event.acceptProfileWritesAfterFreeze,
         acceptUnmatchedCms: event.acceptUnmatchedCms,
-        acceptDelegationsAfterFreeze: event.acceptDelegationsAfterFreeze,
+        acceptConsolidationsAfterFreeze: event.acceptConsolidationsAfterFreeze,
         acceptNoExtraIds: event.acceptNoExtraIds,
         acceptBulk: event.acceptBulk,
         extraIdsFile,
         cmsFieldsFile,
         exporterRevision: revision,
+        acceptStyle: 'event',
         notes,
         log: (message) => step(`IDENTITY EXPORT ${message}`)
       }
@@ -1195,6 +1249,7 @@ export async function runIdentityExportJob(
     frozen_at: scope.freezeAt,
     identity_freeze_at: { secret: freezeSecret.secretId, ...freezeSetting },
     cms_fields_source: atFreeze?.source ?? null,
+    accept_unknown_replica_lag: event.acceptUnknownReplicaLag,
     replace_pointer: event.replacePointer,
     replaced_pointer: replacedPointer,
     snapshot_at: snapshot.evidence.snapshotAt,
@@ -1247,8 +1302,17 @@ export async function runIdentityExportJob(
       );
       writtenPointer = pointerKey;
     } catch (error) {
-      pointerError = pointerErrorOf(pointerKey, error);
-      logger.warn(`[POINTER NOT WRITTEN] [${pointerKey}] ${pointerError}`);
+      if (
+        isWriteConflict(error) &&
+        (await pointerNamesRun(writer, pointerKey, prefix, manifestPut.sha256))
+      ) {
+        // The write landed; only its answer was lost.
+        writtenPointer = pointerKey;
+        logger.warn(`[POINTER WRITTEN, ITS RETRY REFUSED] [${pointerKey}]`);
+      } else {
+        pointerError = pointerErrorOf(pointerKey, error);
+        logger.warn(`[POINTER NOT WRITTEN] [${pointerKey}] ${pointerError}`);
+      }
     }
   }
   const presignedManifestUrl = await deps.presign(

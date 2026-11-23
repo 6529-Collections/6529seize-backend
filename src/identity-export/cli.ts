@@ -32,8 +32,11 @@ async function runExport(command: IdentityExportCommand) {
   const cmsBytes = command.cmsFieldsFile
     ? fs.readFileSync(command.cmsFieldsFile)
     : null;
+  // An empty file (a site export with no sites) only with its manifest.
   const cmsFields = cmsBytes
-    ? parseCmsFields(cmsBytes.toString('utf8'))
+    ? parseCmsFields(cmsBytes.toString('utf8'), {
+        allowEmpty: command.cmsManifestFile !== null
+      })
     : undefined;
   // The profile site run that wrote the values vouches for them: at the
   // freeze, a whole, usable run of that freeze.
@@ -117,7 +120,8 @@ async function runExport(command: IdentityExportCommand) {
           acceptProfileWritesAfterFreeze:
             command.acceptProfileWritesAfterFreeze,
           acceptUnmatchedCms: command.acceptUnmatchedCms,
-          acceptDelegationsAfterFreeze: command.acceptDelegationsAfterFreeze,
+          acceptConsolidationsAfterFreeze:
+            command.acceptConsolidationsAfterFreeze,
           acceptNoExtraIds: command.acceptNoExtraIds,
           acceptBulk: command.acceptBulk,
           extraIdsFile: extraIdsBytes

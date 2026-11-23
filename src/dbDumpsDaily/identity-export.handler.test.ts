@@ -114,6 +114,8 @@ function setup(
     /** The bucket's objects; a whole profile site run by default. */
     objects?: Record<string, string>;
     failPutOf?: string;
+    /** The pointer's write lands, but its answer is lost and the retry refused. */
+    pointerAnswerLost?: boolean;
     publicBlock?: boolean;
     snapshotAt?: string;
     replicaLagMs?: number | null;
@@ -161,6 +163,14 @@ function setup(
         .digest('base64');
       if (command.input.ChecksumSHA256 !== sum) {
         throw new Error(`bad checksum for ${key}`);
+      }
+      if (options.pointerAnswerLost && key.includes('/by-freeze/')) {
+        bodies.set(key, Buffer.from(command.input.Body as Buffer).toString());
+        order.push(key);
+        throw Object.assign(new Error('At least one precondition failed'), {
+          name: 'PreconditionFailed',
+          $metadata: { httpStatusCode: 412 }
+        });
       }
       // A conditional write of a key that exists: 412.
       if (command.input.IfNoneMatch === '*' && bodies.has(key)) {
@@ -297,10 +307,11 @@ describe('parseIdentityExportEvent', () => {
       acceptMissingExtraIds: 0,
       acceptProfileWritesAfterFreeze: 0,
       acceptUnmatchedCms: 0,
-      acceptDelegationsAfterFreeze: 0,
+      acceptConsolidationsAfterFreeze: 0,
       acceptNoExtraIds: false,
       acceptBulk: null,
       acceptSnapshotGapMinutes: null,
+      acceptUnknownReplicaLag: false,
       replacePointer: false
     });
     expect(
@@ -338,7 +349,7 @@ describe('parseIdentityExportEvent', () => {
         acceptNoExtraIds: true,
         bulk: 0,
         acceptBulk: 0,
-        acceptDelegationsAfterFreeze: 2,
+        acceptConsolidationsAfterFreeze: 2,
         replacePointer: true
       })
     ).toEqual(
@@ -347,7 +358,7 @@ describe('parseIdentityExportEvent', () => {
         acceptNoExtraIds: true,
         bulk: 0,
         acceptBulk: 0,
-        acceptDelegationsAfterFreeze: 2,
+        acceptConsolidationsAfterFreeze: 2,
         replacePointer: true
       })
     );
@@ -481,7 +492,9 @@ describe('runIdentityExportJob', () => {
           }
         },
         exporterRevision: REV,
-        notes: []
+        notes: [],
+        // A refusal names the event's fields, not the CLI's flags.
+        acceptStyle: 'event'
       })
     );
     const cmsSource = {
@@ -621,6 +634,29 @@ describe('runIdentityExportJob', () => {
     ).rejects.toThrow('not valid JSON');
     expect(bad.deps.openSnapshot).not.toHaveBeenCalled();
     expect(bad.order).toEqual([]);
+  });
+
+  it('takes an empty cms-fields.json at the freeze: a site export with no sites', async () => {
+    mockBuild.mockResolvedValue(document());
+    const { deps } = setup({ objects: siteRun({ cms: '{}' }) });
+    const result = await run(deps);
+    const options = mockBuild.mock.calls[0][1];
+    expect(options.cmsFields).toEqual({});
+    expect(options.cmsFieldsFile).toEqual(
+      expect.objectContaining({ count: 0, sha256: sha('{}') })
+    );
+    expect(result.cmsFieldsSource?.sha256).toBe(sha('{}'));
+    // Bare, in a rehearsal, it is still refused.
+    const bare = setup({
+      objects: { 'identity-export/inputs/cms.json': '{}' }
+    });
+    await expect(
+      run(bare.deps, {
+        ...rehearsal,
+        noCmsFields: undefined,
+        cmsFields: { key: 'identity-export/inputs/cms.json' }
+      })
+    ).rejects.toThrow('The cms fields file is empty');
   });
 
   it("takes a rehearsal's profile site values by key or inline", async () => {
@@ -825,6 +861,19 @@ describe('runIdentityExportJob', () => {
       expect(bodies.has(result.manifestKey)).toBe(true);
     });
 
+    it('takes its own pointer as written when a retry is refused because the first write landed', async () => {
+      mockBuild.mockResolvedValue(document());
+      const { deps, bodies } = setup({ pointerAnswerLost: true });
+      const result = await run(deps);
+      expect(result.pointerKey).toBe(POINTER);
+      expect(result.pointerError).toBeNull();
+      expect(result.presignedPointerUrl).toContain(POINTER);
+      expect(JSON.parse(bodies.get(POINTER)!)).toMatchObject({
+        prefix: result.prefix,
+        manifest_sha256: result.manifestSha256
+      });
+    });
+
     it('reports a pointer that could not be written; the run stays whole', async () => {
       mockBuild.mockResolvedValue(document());
       const { deps } = setup({ failPutOf: '2026-11-24T00-00-00-000Z.json' });
@@ -964,13 +1013,40 @@ describe('runIdentityExportJob', () => {
     }
   );
 
-  it('takes a snapshot 2 minutes after the freeze, the lag unknown or below the gap', async () => {
+  it('refuses a replica lag it can not read, unless told to rely on the gap alone', async () => {
+    mockBuild.mockResolvedValue(document());
+    const refused = setup({ replicaLagMs: null });
+    await expect(run(refused.deps)).rejects.toThrow(
+      "The replica's lag can't be read (information_schema.replica_host_status): only the gap since the freeze shows it holds the writes made before it. To rely on that gap alone, run again with acceptUnknownReplicaLag: true."
+    );
+    expect(mockBuild).not.toHaveBeenCalled();
+    expect(refused.order).toEqual([]);
+    const accepted = setup({ replicaLagMs: null });
+    const result = await run(accepted.deps, {
+      ...atFreeze,
+      acceptUnknownReplicaLag: true
+    });
+    expect(result.evidence.replicaLagMs).toBeNull();
+    expect(
+      JSON.parse(accepted.bodies.get(result.manifestKey)!)
+        .accept_unknown_replica_lag
+    ).toBe(true);
+    // Only for an export at the freeze.
+    expect(() =>
+      parseIdentityExportEvent({ ...rehearsal, acceptUnknownReplicaLag: true })
+    ).toThrow('an acknowledgement is only for an export at the freeze');
+  });
+
+  it('takes a snapshot 2 minutes after the freeze, the lag unknown and accepted, or below the gap', async () => {
     mockBuild.mockResolvedValue(document());
     const unknown = setup({
       snapshotAt: '2026-11-24T00:02:00.000Z',
       replicaLagMs: null
     });
-    expect((await run(unknown.deps)).snapshotGapSeconds).toBe(120);
+    expect(
+      (await run(unknown.deps, { ...atFreeze, acceptUnknownReplicaLag: true }))
+        .snapshotGapSeconds
+    ).toBe(120);
     const behind = setup({
       snapshotAt: '2026-11-24T00:05:00.000Z',
       replicaLagMs: 299_999

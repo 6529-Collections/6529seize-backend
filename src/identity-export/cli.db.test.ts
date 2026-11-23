@@ -107,19 +107,19 @@ describeWithSeed(
     },
     {
       table: DELEGATIONS_TABLE,
-      // Registered in the block after the TDH block: after the freeze.
-      rows: [
-        {
-          block: BLOCK + 1,
-          from_address: W(1),
-          to_address: W(9),
-          collection: W(10),
-          use_case: 1,
-          expiry: 64_060_588_800,
-          all_tokens: true,
-          token_id: 0
-        }
-      ]
+      // One before the TDH block, in the file; two after it, left out: a
+      // delegation (counted) and a primary address (counted and gated, as
+      // the loop applies it to the identity).
+      rows: [BLOCK - 1, BLOCK + 1, BLOCK + 2].map((block, i) => ({
+        block,
+        from_address: W(1),
+        to_address: W(9),
+        collection: W(10),
+        use_case: i === 2 ? 997 : 1,
+        expiry: 64_060_588_800,
+        all_tokens: true,
+        token_id: 0
+      }))
     }
   ],
   () => {
@@ -229,7 +229,7 @@ describeWithSeed(
       const saved = process.env.IDENTITY_FREEZE_AT;
       process.env.IDENTITY_FREEZE_AT = new Date(FREEZE).toISOString();
       try {
-        // The delegation registered after the TDH block: refused, exit 5.
+        // The primary address registered after the TDH block: refused, exit 5.
         const refused = path.join(dir, 'refused.json');
         expect(
           await run([
@@ -249,7 +249,7 @@ describeWithSeed(
             ...atFreeze,
             '--expect-tdh-block',
             `${BLOCK}`,
-            '--accept-delegations-after-freeze',
+            '--accept-consolidations-after-freeze',
             '1'
           ])
         ).toBe(0);
@@ -261,14 +261,14 @@ describeWithSeed(
           sha256: sha256(cms),
           manifest: { key: null, sha256: sha256(manifest) }
         });
-        expect(doc.rules.delegations).toBe('included');
-        expect(doc.delegations).toHaveLength(1);
+        expect(doc.rules.delegations).toBe('through_tdh_block');
+        expect(doc.delegations.map((it: any) => it.block)).toEqual([BLOCK - 1]);
         expect(doc.acknowledged).toEqual({
           over_credit: 0,
           edits_after_freeze: 0,
           ratings_changed_after_freeze: 0,
           profile_writes_after_freeze: 0,
-          delegations_after_freeze: 1,
+          consolidations_after_freeze: 1,
           missing_extra_ids: 0,
           unmatched_cms: 0,
           no_extra_ids: false,
@@ -277,7 +277,8 @@ describeWithSeed(
         expect(doc.stats).toEqual(
           expect.objectContaining({
             consolidations_after_tdh_block: 0,
-            delegations_after_tdh_block: 1,
+            delegations_after_tdh_block: 2,
+            primary_address_delegations_after_tdh_block: 1,
             profile_saves_after_freeze: 0
           })
         );
@@ -298,7 +299,7 @@ describeWithSeed(
             ...atFreeze,
             '--expect-tdh-block',
             `${BLOCK - 1}`,
-            '--accept-delegations-after-freeze',
+            '--accept-consolidations-after-freeze',
             '1'
           ])
         ).toBe(3);

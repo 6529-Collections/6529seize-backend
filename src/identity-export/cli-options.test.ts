@@ -73,7 +73,7 @@ describe('parseIdentityExportCommand', () => {
       acceptUnmatchedCms: 0,
       acceptEditsAfterFreeze: 0,
       acceptRatingsChangedAfterFreeze: 0,
-      acceptDelegationsAfterFreeze: 0,
+      acceptConsolidationsAfterFreeze: 0,
       acceptNoExtraIds: false,
       acceptBulk: null,
       notice: null,
@@ -126,7 +126,7 @@ describe('parseIdentityExportCommand', () => {
           '5',
           '--accept-unmatched-cms',
           '7',
-          '--accept-delegations-after-freeze',
+          '--accept-consolidations-after-freeze',
           '8',
           '--overwrite'
         ],
@@ -140,7 +140,7 @@ describe('parseIdentityExportCommand', () => {
         acceptMissingExtraIds: 3,
         acceptProfileWritesAfterFreeze: 5,
         acceptUnmatchedCms: 7,
-        acceptDelegationsAfterFreeze: 8,
+        acceptConsolidationsAfterFreeze: 8,
         overwrite: true
       })
     );
@@ -186,7 +186,7 @@ describe('parseIdentityExportCommand', () => {
       acceptUnmatchedCms: 0,
       acceptEditsAfterFreeze: 0,
       acceptRatingsChangedAfterFreeze: 0,
-      acceptDelegationsAfterFreeze: 0,
+      acceptConsolidationsAfterFreeze: 0,
       acceptNoExtraIds: false,
       acceptBulk: null,
       notice: null,
@@ -325,7 +325,7 @@ describe('parseIdentityExportCommand', () => {
       ['--accept-unmatched-cms', '0'],
       ['--accept-no-extra-ids'],
       ['--accept-bulk', '0'],
-      ['--accept-delegations-after-freeze', '1']
+      ['--accept-consolidations-after-freeze', '1']
     ]) {
       expect(() =>
         parseIdentityExportCommand(
@@ -574,6 +574,8 @@ describe('parseExtraIds', () => {
 describe('parseCmsFields', () => {
   it('refuses an empty object, and two keys that are one lowercase', () => {
     expect(() => parseCmsFields('{}')).toThrow('The cms fields file is empty');
+    // Vouched for by a site run's manifest: a site export with no sites.
+    expect(parseCmsFields('{}', { allowEmpty: true })).toEqual({});
     expect(() =>
       parseCmsFields('{"A-1": {"primary": {}}, "a-1 ": {"archive": {}}}')
     ).toThrow('names a-1 twice');

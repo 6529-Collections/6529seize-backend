@@ -75,10 +75,17 @@ export interface IdentityExportOptions {
   /** Profile site values for profiles not exported (default 0). */
   readonly acceptUnmatchedCms?: number;
   /**
-   * Consolidations and delegations rows with a block after the TDH block
-   * acknowledged (default 0).
+   * At most this many consolidation rows and primary-address delegations
+   * with a block after the TDH block, acknowledged (default 0). A ceiling,
+   * not an exact count: the delegations loop can add more while the run
+   * waits, and the file records the exact count.
    */
-  readonly acceptDelegationsAfterFreeze?: number;
+  readonly acceptConsolidationsAfterFreeze?: number;
+  /**
+   * How a refusal names an acknowledgement: the CLI's flag
+   * (--accept-over-credit 3) or the job's event field ("acceptOverCredit": 3).
+   */
+  readonly acceptStyle?: AcceptStyle;
   /** At the freeze without the waves list, acknowledged (recorded). */
   readonly acceptNoExtraIds?: boolean;
   /** At the freeze with a bulk threshold other than 2000 (recorded). */
@@ -120,10 +127,16 @@ export interface IdentityExportDocument extends IdentityExportHeader {
 }
 
 /** The rules every export is written by; the builder refuses a file without. */
+/**
+ * Which delegations rows the file holds: those at or before the TDH block,
+ * every row read (no TDH block known), or none (left out).
+ */
+export type DelegationsRule = 'through_tdh_block' | 'all_rows' | 'left_out';
+
 export function exportRules(
   bulkThreshold: number,
   cmsFieldsSha256: string | null = null,
-  delegations: 'included' | 'left_out' = 'included'
+  delegations: DelegationsRule = 'through_tdh_block'
 ) {
   return {
     help_bot_credit_category: HELP_BOT_CREDIT_CATEGORY,
@@ -172,8 +185,11 @@ export interface ExportReadiness {
   readonly ratingsChangedAfterFreeze: number;
   /** Profile writes and profiles created after the freeze, in all. */
   readonly profileWritesAfterFreeze?: number;
-  /** Consolidations and delegations rows after the TDH block, in all. */
-  readonly delegationsAfterFreeze?: number;
+  /**
+   * Consolidation rows and primary-address delegations with a block after
+   * the TDH block: changes the loop applies to the identities.
+   */
+  readonly consolidationsAfterFreeze?: number;
 }
 
 /** Every profile write after the freeze, the profiles created included. */
@@ -190,6 +206,28 @@ export function profileWriteTotal(writes: ProfileWrites): number {
   );
 }
 
+/** The CLI's flags, or the job's event fields. */
+export type AcceptStyle = 'cli' | 'event';
+
+/**
+ * An acknowledgement's name as the caller gives it: the CLI's flag
+ * (--accept-over-credit) or the job's event field (acceptOverCredit).
+ */
+export function acceptName(flag: string, style: AcceptStyle = 'cli'): string {
+  return style === 'cli'
+    ? flag
+    : flag
+        .replace(/^--/, '')
+        .replace(/-([a-z])/g, (_match, letter: string) => letter.toUpperCase());
+}
+
+/** An acknowledgement of `count`, written as the caller would give it. */
+function acceptGiven(flag: string, count: number, style: AcceptStyle): string {
+  return style === 'cli'
+    ? `${flag} ${count}`
+    : `"${acceptName(flag, style)}": ${count}`;
+}
+
 /**
  * The acknowledgement of a count at the freeze must be exactly the count:
  * a problem when it is not.
@@ -198,12 +236,28 @@ export function acknowledgementProblem(
   count: number,
   accepted: number,
   flag: string,
-  what: string
+  what: string,
+  style: AcceptStyle = 'cli'
 ): string | null {
   if (count === accepted) return null;
   return accepted < count
-    ? `${count} ${what}; acknowledge with ${flag} ${count}`
-    : `${flag} ${accepted} does not match: ${count} ${what}${count ? `; give ${flag} ${count}` : `; leave ${flag} out`}`;
+    ? `${count} ${what}; acknowledge with ${acceptGiven(flag, count, style)}`
+    : `${acceptGiven(flag, accepted, style)} does not match: ${count} ${what}${count ? `; give ${acceptGiven(flag, count, style)}` : `; leave ${acceptName(flag, style)} out`}`;
+}
+
+/**
+ * A count that may grow while the run waits is acknowledged by a ceiling:
+ * a problem only when the count is over it.
+ */
+export function ceilingProblem(
+  count: number,
+  ceiling: number,
+  flag: string,
+  what: string,
+  style: AcceptStyle = 'cli'
+): string | null {
+  if (count <= ceiling) return null;
+  return `${count} ${what}; acknowledge them with ${acceptGiven(flag, count, style)}: a ceiling, so a higher number also passes if more may come before the next run (the file records the exact count)`;
 }
 
 /** Every reason the export is not the freeze day's (empty when it is). */
@@ -216,9 +270,11 @@ export function readinessProblems(
     | 'acceptEditsAfterFreeze'
     | 'acceptRatingsChangedAfterFreeze'
     | 'acceptProfileWritesAfterFreeze'
-    | 'acceptDelegationsAfterFreeze'
+    | 'acceptConsolidationsAfterFreeze'
+    | 'acceptStyle'
   >
 ): NotReadyProblem[] {
+  const style = options.acceptStyle ?? 'cli';
   // The counts below are gated only at the freeze (--expect-tdh-block).
   const problems: NotReadyProblem[] = [];
   if (options.freezeMs !== null && options.freezeMs % DAY_MS !== 0) {
@@ -245,31 +301,35 @@ export function readinessProblems(
     readiness.editsAfterFreeze,
     options.acceptEditsAfterFreeze ?? 0,
     '--accept-edits-after-freeze',
-    'REP and CIC rating edits were logged after the freeze (over-rate cuts and help-bot credits aside)'
+    'REP and CIC rating edits were logged after the freeze (over-rate cuts and help-bot credits aside)',
+    style
   );
   if (edits) problems.push({ cause: 'after_freeze', message: edits });
   const changed = acknowledgementProblem(
     readiness.ratingsChangedAfterFreeze,
     options.acceptRatingsChangedAfterFreeze ?? 0,
     '--accept-ratings-changed-after-freeze',
-    'REP and CIC ratings were changed after the freeze (help-bot credits aside; listed in ratings_changed_after_freeze)'
+    'REP and CIC ratings were changed after the freeze (help-bot credits aside; listed in ratings_changed_after_freeze)',
+    style
   );
   if (changed) problems.push({ cause: 'after_freeze', message: changed });
   const profiles = acknowledgementProblem(
     readiness.profileWritesAfterFreeze ?? 0,
     options.acceptProfileWritesAfterFreeze ?? 0,
     '--accept-profile-writes-after-freeze',
-    'profile writes were made after the freeze: logged, saved to profiles_archive, or profiles created (by kind in stats)'
+    'profile writes were made after the freeze: logged, saved to profiles_archive, or profiles created (by kind in stats)',
+    style
   );
   if (profiles) problems.push({ cause: 'after_freeze', message: profiles });
-  const delegations = acknowledgementProblem(
-    readiness.delegationsAfterFreeze ?? 0,
-    options.acceptDelegationsAfterFreeze ?? 0,
-    '--accept-delegations-after-freeze',
-    'consolidations and delegations rows have a block after the TDH block (by table in stats)'
+  const consolidations = ceilingProblem(
+    readiness.consolidationsAfterFreeze ?? 0,
+    options.acceptConsolidationsAfterFreeze ?? 0,
+    '--accept-consolidations-after-freeze',
+    'consolidation rows and primary-address delegations have a block after the TDH block, and the delegations loop has applied them to the identities (by table in stats)',
+    style
   );
-  if (delegations) {
-    problems.push({ cause: 'after_freeze', message: delegations });
+  if (consolidations) {
+    problems.push({ cause: 'after_freeze', message: consolidations });
   }
   return problems;
 }
@@ -884,15 +944,17 @@ export async function buildIdentityExport(
   const profileWritesAfterFreeze = profileWrites
     ? profileWriteTotal(profileWrites)
     : 0;
-  // Registered after the TDH was taken: the identities are as of the TDH
-  // block, while the delegations list holds every row read.
+  // Written after the TDH was taken. The file's delegations stop at the TDH
+  // block, so later ones are only counted; consolidations and primary
+  // addresses the loop has already applied to the identities are gated.
   const rowsAfter: RowsAfterBlock | null =
     options.freezeMs === null || tdhBlock === null
       ? null
       : await source.rowsAfterBlock(tdhBlock);
-  const delegationsAfterFreeze = rowsAfter
-    ? rowsAfter.consolidations + rowsAfter.delegations
+  const consolidationsAfterFreeze = rowsAfter
+    ? rowsAfter.consolidations + rowsAfter.primaryAddressDelegations
     : 0;
+  const style = options.acceptStyle ?? 'cli';
   // Every reason is gathered and reported together once all is read.
   const problems = readinessProblems(
     {
@@ -901,7 +963,7 @@ export async function buildIdentityExport(
       editsAfterFreeze,
       ratingsChangedAfterFreeze,
       profileWritesAfterFreeze,
-      delegationsAfterFreeze
+      consolidationsAfterFreeze
     },
     options
   );
@@ -983,6 +1045,11 @@ export async function buildIdentityExport(
           'no --cms-fields: profile site values were not given, so no identity carries a cms value'
         ]
       : []),
+    ...(options.cmsFields && Object.keys(options.cmsFields).length === 0
+      ? [
+          'cms: the profile site export has no profile site values (its cms-fields.json is empty), so no identity carries one'
+        ]
+      : []),
     ...cms.notes
   );
   const repFromFile = repMismatches(storedMinusCredits, ratings);
@@ -1000,14 +1067,16 @@ export async function buildIdentityExport(
       overInFile,
       options.acceptOverCredit ?? 0,
       '--accept-over-credit',
-      "raters give more REP or CIC in this file than floor(TDH) of their identity, the chain's cap (exported as they are once acknowledged)"
+      "raters give more REP or CIC in this file than floor(TDH) of their identity, the chain's cap (exported as they are once acknowledged)",
+      style
     );
     if (over) problems.push({ cause: 'over_credit', message: over });
     const missing = acknowledgementProblem(
       core.extraMissing.length,
       options.acceptMissingExtraIds ?? 0,
       '--accept-missing-extra-ids',
-      'waves-list ids have no identity or profile row (left out)'
+      'waves-list ids have no identity or profile row (left out)',
+      style
     );
     if (missing)
       problems.push({ cause: 'missing_extra_ids', message: missing });
@@ -1017,7 +1086,7 @@ export async function buildIdentityExport(
     ) {
       problems.push({
         cause: 'missing_extra_ids',
-        message: `none of the ${core.extraIds.length} waves-list ids has an identity or profile row: the wrong list`
+        message: `none of the ${core.extraIds.length} waves-list ids has an identity or profile row: the wrong list, or a list for another database. Ask the waves lead for the list of this freeze and run again with it; acknowledging doesn't take a list none of whose ids matches`
       });
     }
     if (options.cmsFields) {
@@ -1025,14 +1094,16 @@ export async function buildIdentityExport(
         cms.unmatched,
         options.acceptUnmatchedCms ?? 0,
         '--accept-unmatched-cms',
-        'profile site values are for profiles not in the export (not carried)'
+        'profile site values are for profiles not in the export (not carried)',
+        style
       );
       if (unmatched)
         problems.push({ cause: 'unmatched_cms', message: unmatched });
-      if (cms.matched === 0) {
+      // An empty file (a site export with no sites) has nothing to match.
+      if (cms.matched === 0 && cms.unmatched > 0) {
         problems.push({
           cause: 'unmatched_cms',
-          message: `none of the ${cms.matched + cms.unmatched} profile site values is for a profile in the export: the wrong file`
+          message: `none of the ${cms.unmatched} profile site values is for a profile in the export: the values are of another database or stage. Run the profile site export for this freeze on the same stage (the job takes its values through the site's pointer; the CLI takes its cms-fields.json and manifest.json) and run again; acknowledging doesn't take values none of which match`
         });
       }
     }
@@ -1074,9 +1145,9 @@ export async function buildIdentityExport(
       `${ratingsChangedAfterFreeze} REP and CIC ratings were changed after the freeze (help-bot credits aside, zeros included)`
     );
   }
-  if (rowsAfter && delegationsAfterFreeze) {
+  if (rowsAfter) {
     notes.push(
-      `${rowsAfter.consolidations} consolidations and ${rowsAfter.delegations} delegations rows have a block after the TDH block ${tdhBlock}: registered after the TDH was taken. The identities are as of the TDH block; the delegations list holds every row read`
+      `after the TDH block ${tdhBlock}: ${rowsAfter.consolidations} consolidation rows and ${rowsAfter.primaryAddressDelegations} primary-address delegations, which the delegations loop has applied to the identities (a consolidation by a partial TDH write; a revoked confirmed pair leaves a one-way row at the revocation's block, so it is counted), and ${rowsAfter.delegations} delegations rows in all, which the file leaves out. A delegation revoked after the TDH block is not counted: the loop deletes its row, so it is missing from the file`
     );
   }
 
@@ -1097,8 +1168,13 @@ export async function buildIdentityExport(
       `not a finished TDH day: ${syncProblem} (--expect-tdh-block refuses such an export)`
     );
   }
+  const delegationsRule: DelegationsRule = !options.includeDelegations
+    ? 'left_out'
+    : tdhBlock === null
+      ? 'all_rows'
+      : 'through_tdh_block';
   const delegations = options.includeDelegations
-    ? await source.delegations()
+    ? await source.delegations(tdhBlock)
     : [];
   log(
     options.includeDelegations
@@ -1106,9 +1182,9 @@ export async function buildIdentityExport(
       : 'delegations: left out'
   );
   notes.push(
-    options.includeDelegations
-      ? `delegations: every row of 6529.io's delegations table (${delegations.length}), ordered by block, then from, to and collection (lowercase, bytewise), use case and token id (rules.delegations included)`
-      : "no delegations: 6529.io's delegations table was left out (--no-delegations), so the empty list says nothing about delegations (rules.delegations left_out)"
+    delegationsRule === 'left_out'
+      ? "no delegations: 6529.io's delegations table was left out (--no-delegations), so the empty list says nothing about delegations (rules.delegations left_out)"
+      : `delegations: the ${delegations.length} rows of 6529.io's delegations table ${delegationsRule === 'through_tdh_block' ? `with a block at or before the TDH block ${tdhBlock}` : 'as read (no TDH block)'}, ordered by block, then from, to and collection (lowercase, bytewise), use case and token id (rules.delegations ${delegationsRule})`
   );
   const byScope = (label: IdentityExportScope) =>
     identities.filter((it) => it.scope.includes(label)).length;
@@ -1129,7 +1205,7 @@ export async function buildIdentityExport(
       ratings_changed_after_freeze:
         options.acceptRatingsChangedAfterFreeze ?? 0,
       profile_writes_after_freeze: options.acceptProfileWritesAfterFreeze ?? 0,
-      delegations_after_freeze: options.acceptDelegationsAfterFreeze ?? 0,
+      consolidations_after_freeze: options.acceptConsolidationsAfterFreeze ?? 0,
       missing_extra_ids: options.acceptMissingExtraIds ?? 0,
       unmatched_cms: options.acceptUnmatchedCms ?? 0,
       no_extra_ids: options.acceptNoExtraIds ?? false,
@@ -1143,7 +1219,7 @@ export async function buildIdentityExport(
     rules: exportRules(
       options.bulkThreshold,
       options.cmsFieldsFile?.sha256 ?? null,
-      options.includeDelegations ? 'included' : 'left_out'
+      delegationsRule
     ),
     identity_sync: identitySync,
     ratings_changed_after_freeze: changedAfterFreeze,
@@ -1187,6 +1263,8 @@ export async function buildIdentityExport(
       profiles_created_after_freeze: profileWrites?.created ?? 0,
       consolidations_after_tdh_block: rowsAfter?.consolidations ?? 0,
       delegations_after_tdh_block: rowsAfter?.delegations ?? 0,
+      primary_address_delegations_after_tdh_block:
+        rowsAfter?.primaryAddressDelegations ?? 0,
       cms_unmatched: cms.unmatched,
       identity_sync_pending_generation: identitySync?.pendingGeneration ?? -1,
       identity_sync_synced_generation: identitySync?.syncedGeneration ?? -1,

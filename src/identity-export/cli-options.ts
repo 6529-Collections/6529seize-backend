@@ -6,7 +6,7 @@ export const IDENTITY_EXPORT_HELP = `Usage: 6529 run identity:export -- --out FI
          [--accept-over-credit N] [--accept-edits-after-freeze N]
          [--accept-ratings-changed-after-freeze N]
          [--accept-profile-writes-after-freeze N]
-         [--accept-delegations-after-freeze N]
+         [--accept-consolidations-after-freeze N]
          [--accept-missing-extra-ids N] [--accept-unmatched-cms N]
          [--accept-no-extra-ids] [--accept-bulk N] [--overwrite]
 
@@ -59,9 +59,13 @@ Options:
                          to profiles_archive (every profile save and pfp
                          update writes one, logged or not) and profiles
                          created
-  --accept-delegations-after-freeze N
-                         acknowledge exactly N consolidations and delegations
-                         rows with a block after the TDH block
+  --accept-consolidations-after-freeze N
+                         acknowledge at most N consolidation rows and
+                         primary-address delegations with a block after the
+                         TDH block, which the delegations loop has applied to
+                         the identities. A ceiling, not an exact count: the
+                         loop may add more while you wait. The file records
+                         the exact count
   --accept-missing-extra-ids N
                          acknowledge exactly N waves-list ids with no identity
                          or profile row (left out); none matching is refused
@@ -75,7 +79,10 @@ Options:
   --bulk N               a rater's REP category with more than N targets brings
                          no target in by itself (default 2000; 0 turns it off)
   --no-delegations       leave out 6529.io's delegations table (not at the
-                         freeze)
+                         freeze). Otherwise the file holds the delegations
+                         with a block at or before the TDH block; later ones
+                         are counted in stats. A delegation revoked after the
+                         TDH block is missing (6529.io deletes its row)
   --cms-fields FILE      the profile site export's cms-fields.json (profile id
                          -> the ProfileDoc cms value): each identity of those
                          profiles gets that value as "cms"; its sha256 goes
@@ -83,7 +90,8 @@ Options:
   --cms-manifest FILE    the manifest.json of the profile site export run that
                          wrote the --cms-fields file. Required at the freeze:
                          a whole, usable run of the same freeze that lists the
-                         file's sha256. Its sha256 goes into the export
+                         file's sha256. Its sha256 goes into the export. With
+                         it, an empty cms-fields.json ({}: no sites) is taken
   --no-cms-fields        export without profile site values (noted in the
                          file; not at the freeze)
   --overwrite            replace FILE if it exists (it is written to FILE.tmp
@@ -98,11 +106,12 @@ Exit codes: 0 written; 1 failed; 2 a usage error (FILE exists, an input that
 doesn't match, or IDENTITY_FREEZE_AT unset or another time at the freeze);
 3 not the freeze day's TDH yet (the TDH block, its time, the day's full TDH
 write or the identities sync); 4 raters over the chain's cap, not
-acknowledged; 5 REP, CIC, a profile, a consolidation or a delegation changed
-after the freeze, not acknowledged; 6 waves-list ids missing; 7 profile site
-values unmatched. With several reasons, the lowest code; all are printed.
-FILE is written only on 0. On 3, 4, 5, 6 and 7 nothing is written: wait, or
-acknowledge the exact counts, and run again.
+acknowledged; 5 REP, CIC, a profile, a consolidation or a primary address
+changed after the freeze, not acknowledged; 6 waves-list ids missing; 7
+profile site values unmatched. With several reasons, the lowest code; all are
+printed. FILE is written only on 0. On 3, 4, 5, 6 and 7 nothing is written:
+wait, or acknowledge the counts (exactly, but for the consolidations'
+ceiling), and run again.
 `;
 
 /** --bulk unless given: another number at the freeze needs --accept-bulk. */
@@ -129,7 +138,7 @@ export interface IdentityExportCommand {
   readonly acceptUnmatchedCms: number;
   readonly acceptEditsAfterFreeze: number;
   readonly acceptRatingsChangedAfterFreeze: number;
-  readonly acceptDelegationsAfterFreeze: number;
+  readonly acceptConsolidationsAfterFreeze: number;
   /** --accept-no-extra-ids: at the freeze without the waves list. */
   readonly acceptNoExtraIds: boolean;
   /** --accept-bulk N: at the freeze with a --bulk other than 2000. */
@@ -266,7 +275,10 @@ export function parseExtraIds(text: string): string[] {
  * The profile site export's cms-fields.json: profile id -> the ProfileDoc
  * `cms` value (an object), carried into the export as it is.
  */
-export function parseCmsFields(text: string): Record<string, unknown> {
+export function parseCmsFields(
+  text: string,
+  { allowEmpty = false }: { readonly allowEmpty?: boolean } = {}
+): Record<string, unknown> {
   let doc: unknown;
   try {
     doc = JSON.parse(text);
@@ -279,9 +291,11 @@ export function parseCmsFields(text: string): Record<string, unknown> {
     );
   }
   const entries = Object.entries(doc);
-  if (!entries.length) {
+  // A site export with no sites writes {}: taken when its manifest vouches
+  // for it, refused when given bare.
+  if (!entries.length && !allowEmpty) {
     throw new IdentityExportUsageError(
-      'The cms fields file is empty: give --no-cms-fields instead'
+      'The cms fields file is empty: give --no-cms-fields, or, for a profile site export with no sites, its manifest (--cms-manifest)'
     );
   }
   const fields: Record<string, unknown> = {};
@@ -320,7 +334,7 @@ interface Draft {
   acceptMissingExtraIds: number;
   acceptProfileWritesAfterFreeze: number;
   acceptUnmatchedCms: number;
-  acceptDelegationsAfterFreeze: number;
+  acceptConsolidationsAfterFreeze: number;
   acceptNoExtraIds: boolean;
   acceptBulk: number | null;
   /** The --accept-* flags given: each needs --expect-tdh-block. */
@@ -407,8 +421,8 @@ function readOption(
       return accept((n) => (draft.acceptEditsAfterFreeze = n));
     case '--accept-ratings-changed-after-freeze':
       return accept((n) => (draft.acceptRatingsChangedAfterFreeze = n));
-    case '--accept-delegations-after-freeze':
-      return accept((n) => (draft.acceptDelegationsAfterFreeze = n));
+    case '--accept-consolidations-after-freeze':
+      return accept((n) => (draft.acceptConsolidationsAfterFreeze = n));
     case '--accept-bulk':
       return accept((n) => (draft.acceptBulk = n));
     case '--accept-no-extra-ids':
@@ -567,7 +581,7 @@ function checkDraft(draft: Draft): IdentityExportCommand {
     acceptUnmatchedCms: draft.acceptUnmatchedCms,
     acceptEditsAfterFreeze: draft.acceptEditsAfterFreeze,
     acceptRatingsChangedAfterFreeze: draft.acceptRatingsChangedAfterFreeze,
-    acceptDelegationsAfterFreeze: draft.acceptDelegationsAfterFreeze,
+    acceptConsolidationsAfterFreeze: draft.acceptConsolidationsAfterFreeze,
     acceptNoExtraIds: draft.acceptNoExtraIds,
     acceptBulk: draft.acceptBulk,
     notice,
@@ -600,7 +614,7 @@ export function parseIdentityExportCommand(
     acceptMissingExtraIds: 0,
     acceptProfileWritesAfterFreeze: 0,
     acceptUnmatchedCms: 0,
-    acceptDelegationsAfterFreeze: 0,
+    acceptConsolidationsAfterFreeze: 0,
     acceptNoExtraIds: false,
     acceptBulk: null,
     acceptsGiven: [],

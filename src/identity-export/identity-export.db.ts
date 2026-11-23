@@ -11,6 +11,7 @@ import {
   RATINGS_TABLE,
   TDH_BLOCKS_TABLE
 } from '@/constants';
+import { USE_CASE_PRIMARY_ADDRESS } from '@/constants/delegations';
 import {
   HELP_BOT_CREDIT_CATEGORY,
   HELP_BOT_HANDLE
@@ -128,10 +129,24 @@ export const PROFILE_WRITE_TYPES: Readonly<
   archived: ['PROFILE_ARCHIVED']
 };
 
-/** Consolidations and delegations rows with a block after the TDH block. */
+/**
+ * Consolidations and delegations rows with a block after the TDH block:
+ * written by the delegations loop since the TDH was taken.
+ */
 export interface RowsAfterBlock {
+  /**
+   * Consolidation rows: a registration, or a revocation of a confirmed pair
+   * (it leaves a one-way row at the revocation's block). The delegations
+   * loop applies both to the identities with a partial TDH write.
+   */
   readonly consolidations: number;
+  /** Every delegations row: left out of the export, which stops at the block. */
   readonly delegations: number;
+  /**
+   * Of those, primary-address delegations: the loop applies them to the
+   * identities' primary address.
+   */
+  readonly primaryAddressDelegations: number;
 }
 
 /** The latest TDH block 6529.io computed, and its Ethereum timestamp. */
@@ -167,7 +182,7 @@ export interface IdentityExportSource {
   profileWritesSince(sinceMs: number): Promise<ProfileWrites>;
   /**
    * Consolidations and delegations rows with a block after `block` (the
-   * TDH block): registered after the TDH was taken.
+   * TDH block): written after the TDH was taken.
    */
   rowsAfterBlock(block: number): Promise<RowsAfterBlock>;
   /**
@@ -180,10 +195,11 @@ export interface IdentityExportSource {
   /** The help bot's profile id, by its handle; null when it has none. */
   helpBotProfileId(): Promise<string | null>;
   /**
-   * Every delegations row, by block, then from, to and collection
-   * (lowercase, bytewise), use case and token id.
+   * The delegations rows with a block at or before `maxBlock` (every row
+   * when null), by block, then from, to and collection (lowercase,
+   * bytewise), use case and token id.
    */
-  delegations(): Promise<IdentityExportDelegation[]>;
+  delegations(maxBlock: number | null): Promise<IdentityExportDelegation[]>;
 }
 
 const IN_BATCH = 2000;
@@ -481,15 +497,19 @@ export class SqlIdentityExportSource implements IdentityExportSource {
     const [row] = await this.query<{
       consolidations: number | string;
       delegations: number | string;
+      primary_address: number | string;
     }>(
       `select
          (select count(*) from ${CONSOLIDATIONS_TABLE} where block > :block) as consolidations,
-         (select count(*) from ${DELEGATIONS_TABLE} where block > :block) as delegations`,
-      { block }
+         (select count(*) from ${DELEGATIONS_TABLE} where block > :block) as delegations,
+         (select count(*) from ${DELEGATIONS_TABLE}
+           where block > :block and use_case = :primaryAddress) as primary_address`,
+      { block, primaryAddress: USE_CASE_PRIMARY_ADDRESS }
     );
     return {
       consolidations: Number(row?.consolidations ?? 0),
-      delegations: Number(row?.delegations ?? 0)
+      delegations: Number(row?.delegations ?? 0),
+      primaryAddressDelegations: Number(row?.primary_address ?? 0)
     };
   }
 
@@ -539,7 +559,9 @@ export class SqlIdentityExportSource implements IdentityExportSource {
     return rows[0]?.profile_id?.toLowerCase() ?? null;
   }
 
-  async delegations(): Promise<IdentityExportDelegation[]> {
+  async delegations(
+    maxBlock: number | null
+  ): Promise<IdentityExportDelegation[]> {
     const rows = await this.query<{
       from_address: string;
       to_address: string;
@@ -553,12 +575,14 @@ export class SqlIdentityExportSource implements IdentityExportSource {
       `select from_address, to_address, collection, use_case, expiry,
               all_tokens, token_id, block
        from ${DELEGATIONS_TABLE}
+       ${maxBlock === null ? '' : 'where block <= :maxBlock'}
        order by block,
                 cast(lower(from_address) as binary),
                 cast(lower(to_address) as binary),
                 cast(lower(collection) as binary),
                 use_case,
-                token_id`
+                token_id`,
+      maxBlock === null ? undefined : { maxBlock }
     );
     return rows.map((row) => {
       const allTokens = !!Number(row.all_tokens);

@@ -25,11 +25,11 @@ a job the function knows, or it fails. Each export:
   - a snapshot less than 2 minutes after `frozenAt`, so the replica has the
     writes made before the freeze;
   - a replica as far behind its writer as that gap, or further. The lag
-    comes from `information_schema.replica_host_status` for this server; if
-    that can't be read, the response says so (`null`) and the 2-minute gap
-    is the only guard;
+    comes from `information_schema.replica_host_status` for this server. If
+    that can't be read (`null`), the run refuses unless it is given
+    `acceptUnknownReplicaLag: true`, relying on the 2-minute gap alone;
   - a snapshot holding a site publication, archive or pointer change after
-    `frozenAt`, unless the coordinator accepted those packages
+    `frozenAt`, unless the coordinator accepted each of those writes
     (`acceptWritesAfterFreeze`, below);
 - writes only to the private bucket `6529-chain-exports-<account>-<region>`
   under its own prefix. Every call names the function's own account as the
@@ -81,9 +81,23 @@ stage's region: `us-east-1` for prod, `eu-west-1` for staging. Its value is
 the freeze, `2026-11-24T00:00:00Z`.
 
 Ask 6529.io to set it before Monday's rehearsal. A future time has no effect
-on the site until it arrives. 6529.io's own functions read the secret when a
-container starts, and a container started before the change keeps the old
-value until it restarts, so setting it early is safer than setting it late.
+on the site until it arrives.
+
+The export reads the secret afresh on every run. 6529.io's API doesn't: it
+reads `prod/lambdas` only when its own environment has
+`API_LOAD_SECRETS=true`, and a running instance keeps the values it started
+with. So 6529.io also:
+
+1. confirms that the API's startup log shows `[LOAD SECRETS ENABLED true]`.
+   If it doesn't, they also set `IDENTITY_FREEZE_AT` in the API's own
+   environment, to the same value;
+2. redeploys or restarts the API after setting it, so that every instance
+   has it;
+3. just after 00:00 UTC on Tuesday, before the export runs, has someone try
+   to publish a profile site (in the editor, or
+   `POST /api/profile-cms/packages/{id}/publish`). It must fail with 423
+   and the code `IDENTITY_FROZEN`. If the publish goes through, the site
+   isn't frozen: stop, and tell the coordinator before running the export.
 
 Monday's rehearsal passes only when it reads the setting as `time`, equal
 to Tuesday's freeze.
@@ -170,9 +184,14 @@ Event fields:
   against, as the CLI's `--public-api`.
 - `acceptSnapshotGapMinutes` (optional): allow a snapshot taken up to this
   many minutes after `frozenAt`. Without it the limit is 90.
-- `acceptWritesAfterFreeze` (optional): package ids whose site writes after
-  `frozenAt` the coordinator accepted, at most 100. Use it only as in
-  "A publish that straddles the freeze", below.
+- `acceptWritesAfterFreeze` (optional): site writes after `frozenAt` the
+  coordinator accepted, at most 100, each `source:id@time` exactly as the
+  refusal lists it. Use it only as in "A publish that straddles the
+  freeze", below.
+- `acceptUnknownReplicaLag` (optional, `true`): run although the replica's
+  lag can't be read, relying on the 2-minute gap alone. Only when Monday
+  showed the lag can't be read, and the identity lead agreed; the manifest
+  records it (`accept_unknown_replica_lag`).
 - `replacePointer` (optional, `true`): let this run replace the by-freeze
   pointer an earlier run for the same freeze wrote. Without it, the pointer
   is written only if none is there. Only for a real run of every profile,
@@ -222,7 +241,9 @@ Check in `out.json`:
   secret (see "The freeze setting"), then run the rehearsal again. Each run
   reads the secret afresh.
 - `evidence.replicaLagMs` is a number. If it is `null`, the lag can't be
-  read, and Tuesday relies on the 2-minute gap alone. Tell the identity lead.
+  read, and Tuesday's run will refuse unless it is given
+  `"acceptUnknownReplicaLag":true`. Tell the identity lead, and settle it
+  before Tuesday.
 
 Then test the download links: fetch the manifest and `links.json`, then one
 file by its link, and check each against its sha256.
@@ -242,16 +263,17 @@ Invoke-WebRequest -UseBasicParsing $links.links.($file.name) -OutFile one-file
 ```
 
 bash, with `curl` and `jq` (`shasum -a 256 -c` instead of `sha256sum -c` on
-macOS):
+macOS). `j` drops the carriage returns jq writes on Windows:
 
 ```text
-curl -fsS -o manifest.json "$(jq -r .presignedManifestUrl out.json)"
-curl -fsS -o links.json "$(jq -r .presignedLinksUrl out.json)"
-name=$(jq -r '[.files[] | select(.name | startswith("files/"))][0].name' manifest.json)
-curl -fsS -o one-file "$(jq -r --arg n "$name" '.links[$n]' links.json)"
-echo "$(jq -r .manifestSha256 out.json)  manifest.json" | sha256sum -c
-echo "$(jq -r '.files[] | select(.name == "links.json") | .sha256' manifest.json)  links.json" | sha256sum -c
-echo "$(jq -r --arg n "$name" '.files[] | select(.name == $n) | .sha256' manifest.json)  one-file" | sha256sum -c
+j() { jq -r "$@" | tr -d '\r'; }
+curl -fsS -o manifest.json "$(j .presignedManifestUrl out.json)"
+curl -fsS -o links.json "$(j .presignedLinksUrl out.json)"
+name=$(j '[.files[] | select(.name | startswith("files/"))][0].name' manifest.json)
+curl -fsS -o one-file "$(j --arg n "$name" '.links[$n]' links.json)"
+echo "$(j .manifestSha256 out.json)  manifest.json" | sha256sum -c
+echo "$(j '.files[] | select(.name == "links.json") | .sha256' manifest.json)  links.json" | sha256sum -c
+echo "$(j --arg n "$name" '.files[] | select(.name == $n) | .sha256' manifest.json)  one-file" | sha256sum -c
 ```
 
 Each line must print `True` (PowerShell) or `OK` (bash). Send the result
@@ -282,25 +304,25 @@ is behind, wait a few minutes and run it again.
 ### A publish that straddles the freeze
 
 A site published or changed just as the freeze began can leave a write
-after `frozenAt`. The run then refuses, naming each write and its package
-id: `...writes after the freeze that no one has accepted: packages <id> at
-<time>...`.
+after `frozenAt`. The run then refuses, listing each write as
+`source:id@time`:
+`...writes after the freeze that no one has accepted: packages:<id>@2026-11-24T00:00:00.412Z...`.
 
-1. Stop. Don't run it again with the ids yet.
+1. Stop. Don't run it again with those writes yet.
 2. Send the whole error to the coordinator.
-3. Only after the coordinator accepts those packages, run again with exactly
-   the ids from the error:
+3. Only after the coordinator accepts those writes, run again, listing each
+   one exactly as the error does:
 
 ```text
 $env:AWS_MAX_ATTEMPTS='1'
-Set-Content -Encoding ascii event.json '{"job":"profileSiteExport","frozenAt":"2026-11-24T00:00:00Z","concurrency":4,"acceptWritesAfterFreeze":["<id from the error>"]}'
+Set-Content -Encoding ascii event.json '{"job":"profileSiteExport","frozenAt":"2026-11-24T00:00:00Z","concurrency":4,"acceptWritesAfterFreeze":["<source:id@time from the error>"]}'
 aws lambda invoke --region us-east-1 --function-name dbDumpsDaily --cli-read-timeout 960 --cli-binary-format raw-in-base64-out --payload file://event.json out.json
 ```
 
-A write to a package not on the list is still refused. The manifest and
-the response record the writes (`writes_after_freeze`,
-`writesAfterFreeze`) and the accepted ids (`accepted_writes_after_freeze`,
-`acceptedWritesAfterFreeze`).
+Any other write is still refused, even one to the same package at another
+time. The manifest and the response record the writes
+(`writes_after_freeze`, `writesAfterFreeze`) and the accepted ones
+(`accepted_writes_after_freeze`, `acceptedWritesAfterFreeze`).
 
 ### What to check in the response (`out.json`)
 
@@ -332,32 +354,74 @@ the response record the writes (`writes_after_freeze`,
 - `snapshotAt` and `snapshotGapSeconds`: the snapshot came at least 120
   seconds after the freeze.
 - `evidence.replicaLagMs` is below `snapshotGapSeconds` × 1000, or `null`
-  when it couldn't be read.
+  only in a run given `acceptUnknownReplicaLag`.
 - `latestSiteWrites` (publication, archive and pointer change) and
-  `writesAfterFreeze`: no site writes after the freeze, except packages
-  listed in `acceptedWritesAfterFreeze`.
+  `writesAfterFreeze`: no site writes after the freeze, except those listed
+  in `acceptedWritesAfterFreeze`.
 - `identityFreezeAtReading` is `time` and `identityFreezeAt` equals
   `frozenAt`.
 - `seconds`.
 - `presignedManifestUrl`, `presignedLinksUrl` and `linksLastAtMost`.
   `links.json` holds a presigned link for every object of the run:
   `cms-fields.json`, `report.json`, each `files/<cid>`, and the manifest.
-  The manifest lists `links.json` with its sha256.
-
-To fetch the files, download `links.json`, then each link in it. Check each
-file against the manifest's `sha256`. Anyone with read access to the bucket
-can also use
-`aws s3 cp --recursive s3://<bucket>/<prefix> ./profile-site-export/`.
+  The manifest lists `links.json` with its size and sha256; `linksBytes` is
+  its size too.
 
 Everything in the bucket, the pointer included, expires 30 days after it
-was written. The coordinator keeps a copy of the real export: `out.json`,
-every file in `links.json` (the manifest included), and the pointer, from
-`presignedPointerUrl`.
+was written. Within the links' 6 hours, the coordinator downloads a complete
+copy of the real export and keeps it with `out.json`: every file in the
+links file, the manifest included, and the pointer. These commands download
+everything and check every file's sha256 against the manifest. They work
+for `links-out.json` from the links job too: put its name in place of
+`out.json`.
+
+PowerShell:
+
+```text
+[Net.ServicePointManager]::SecurityProtocol = 'Tls12'
+$ProgressPreference = 'SilentlyContinue'
+$out = Get-Content out.json -Raw | ConvertFrom-Json
+$dir = 'profile-site-export'
+New-Item -ItemType Directory -Force "$dir\files" | Out-Null
+Invoke-WebRequest -UseBasicParsing $out.presignedLinksUrl -OutFile links-now.json
+$links = (Get-Content links-now.json -Raw | ConvertFrom-Json).links
+foreach ($p in $links.PSObject.Properties) { Invoke-WebRequest -UseBasicParsing $p.Value -OutFile (Join-Path $dir $p.Name) }
+if (-not (Test-Path "$dir\links.json")) { Copy-Item links-now.json "$dir\links.json" }
+if ($out.presignedPointerUrl) { Invoke-WebRequest -UseBasicParsing $out.presignedPointerUrl -OutFile pointer.json }
+$manifestFile = Join-Path $dir (Split-Path $out.manifestKey -Leaf)
+$manifest = Get-Content $manifestFile -Raw | ConvertFrom-Json
+$wrong = @($manifest.files | Where-Object { (Get-FileHash (Join-Path $dir $_.name) -Algorithm SHA256).Hash.ToLower() -ne $_.sha256 })
+"$($manifest.files.Count) files, $($wrong.Count) wrong"
+(Get-FileHash $manifestFile -Algorithm SHA256).Hash.ToLower() -eq $out.manifestSha256
+```
+
+It must print `<n> files, 0 wrong` and then `True`.
+
+bash, with `curl` and `jq` (`shasum -a 256 -c` instead of `sha256sum -c` on
+macOS):
+
+```text
+j() { jq -r "$@" | tr -d '\r'; }
+dir=profile-site-export; mkdir -p "$dir/files"
+curl -fsS -o links-now.json "$(j .presignedLinksUrl out.json)"
+j '.links | to_entries[] | "\(.key)\t\(.value)"' links-now.json | while IFS=$'\t' read -r name url; do curl -fsS -o "$dir/$name" "$url" || echo "FAILED $name"; done
+[ -f "$dir/links.json" ] || cp links-now.json "$dir/links.json"
+pointer=$(j '.presignedPointerUrl // empty' out.json); [ -n "$pointer" ] && curl -fsS -o pointer.json "$pointer"
+manifest="$dir/$(basename "$(j .manifestKey out.json)")"
+j '.files[] | "\(.sha256)  \(.name)"' "$manifest" | (cd "$dir" && sha256sum -c --quiet) && echo "every file matches"
+echo "$(j .manifestSha256 out.json)  $manifest" | sha256sum -c
+```
+
+It must print `every file matches` and then `OK`.
+
+Anyone with read access to the bucket can also use
+`aws s3 cp --recursive s3://<bucket>/<prefix> ./profile-site-export/`.
 
 Every `files/<cid>` is at most 2 MiB, the chain's document limit, since each
 becomes a chain document. `cms-fields.json`, `report.json`, `links.json` and
 the manifest are read by the import's builder and by people, never stored on
-the chain, so they have no such limit.
+the chain, so they have no such limit. `links.json` grows with every file
+and can pass 2 MiB; that is expected.
 
 ### Fresh links for an earlier run
 
@@ -371,10 +435,19 @@ Set-Content -Encoding ascii links-event.json '{"job":"profileSiteExportLinks","f
 aws lambda invoke --region us-east-1 --function-name dbDumpsDaily --cli-read-timeout 120 --cli-binary-format raw-in-base64-out --payload file://links-event.json links-out.json
 ```
 
-or by its prefix: `{"job":"profileSiteExportLinks","prefix":"<prefix from
-out.json>"}`. Give one or the other. By freeze, it refuses if the manifest's
-sha256 is no longer the one the pointer names. `links-out.json` carries
-`manifestSha256` too, and, by freeze, `presignedPointerUrl`.
+or by its prefix:
+
+```text
+Set-Content -Encoding ascii links-event.json '{"job":"profileSiteExportLinks","prefix":"<prefix from out.json>"}'
+```
+
+Give one or the other. By freeze, it refuses if the manifest's sha256 is no
+longer the one the pointer names. `links-out.json` carries `manifestSha256`
+too, and, by freeze, `presignedPointerUrl`.
+
+The fresh links file goes beside the run, under
+`profile-site-export/<stage>/renewed-links/<run>/`, never in the run's
+folder, which keeps only what its manifest lists.
 
 ## When a run fails
 
@@ -395,12 +468,16 @@ If the CLI failed and printed no `FunctionError`:
 1. Don't run it again.
 2. Wait 15 minutes from the start: by then the run has ended.
 3. For a real run, ask for its links by `frozenAt` (see "Fresh links for an
-   earlier run"). If the run finished, `links-out.json` names its prefix and
-   manifest. If it says there is no run for that freeze, read the logs, as
-   below.
-4. For a rehearsal (it has no pointer), read `[EXPORT DONE]` in the
-   function's logs. It gives the prefix, the manifest's name and the
-   seconds. Then ask for links by that `prefix`.
+   earlier run"). If `links-out.json`'s prefix starts with this run's start
+   time (`profile-site-export/prod/<UTC start time>-...`), this run
+   finished and its pointer was written. If it names an earlier run, or
+   says there is no run for that freeze, this run may still have finished
+   with a manifest but no pointer: read the logs, as below.
+4. For a rehearsal (it has no pointer), read the logs.
+
+The `[EXPORT DONE]` line gives the run's prefix, its manifest's name and
+sha256, its pointer (or `NOT WRITTEN`) and its seconds. Then ask for links
+by that `prefix`.
 
 Reading the logs needs `logs:FilterLogEvents` on `/aws/lambda/dbDumpsDaily`;
 ask the deploy lead if you don't have it.

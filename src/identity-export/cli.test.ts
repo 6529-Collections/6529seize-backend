@@ -109,8 +109,10 @@ describe('runCli', () => {
     });
 
     /** The inputs of an export at the freeze; the manifest as given. */
-    const atFreeze = (manifest: (cmsSha: string) => object) => {
-      const cms = JSON.stringify({ [ALICE]: { primary: {} } });
+    const atFreeze = (
+      manifest: (cmsSha: string) => object,
+      cms = JSON.stringify({ [ALICE]: { primary: {} } })
+    ) => {
       fs.writeFileSync(path.join(dir, 'cms-fields.json'), cms);
       fs.writeFileSync(path.join(dir, 'waves.json'), JSON.stringify([ALICE]));
       const manifestText = JSON.stringify(manifest(sha256(cms)));
@@ -185,6 +187,20 @@ describe('runCli', () => {
         sha256: cmsSha,
         manifest: { key: null, sha256: manifestSha }
       });
+    });
+
+    it('takes an empty cms-fields.json its manifest lists: a site export with no sites', async () => {
+      process.env.IDENTITY_FREEZE_AT = '2026-11-24T00:00:00Z';
+      const { args: given, cmsSha } = atFreeze(siteManifest, '{}');
+      buildIdentityExport.mockRejectedValue(
+        new IdentityExportNotReadyError([{ cause: 'day', message: 'not yet' }])
+      );
+      expect(await runCli(given)).toBe(3);
+      const options = buildIdentityExport.mock.calls[0][1];
+      expect(options.cmsFields).toEqual({});
+      expect(options.cmsFieldsFile).toEqual(
+        expect.objectContaining({ count: 0, sha256: cmsSha })
+      );
     });
 
     it.each([

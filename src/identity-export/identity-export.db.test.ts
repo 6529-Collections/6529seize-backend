@@ -273,8 +273,10 @@ describeWithSeed(
         delegation(20_000_000, W(1), 2, 61),
         delegation(21_000_000, MIXED, 1, 0),
         delegation(21_000_000, LOWER_E, 1, 0),
-        // After the TDH block (24,000,000).
-        delegation(24_000_002, W(2), 1, 0)
+        // After the TDH block (24,000,000): left out of the file, counted;
+        // the primary-address one (use case 997) is gated too.
+        delegation(24_000_002, W(2), 1, 0),
+        delegation(24_000_003, W(3), 997, 0)
       ]
     },
     {
@@ -378,7 +380,8 @@ describeWithSeed(
       });
       expect(await source.rowsAfterBlock(24_000_000)).toEqual({
         consolidations: 1,
-        delegations: 1
+        delegations: 2,
+        primaryAddressDelegations: 1
       });
       expect(await source.identitySyncProgress()).toEqual({
         pendingGeneration: 3,
@@ -387,7 +390,7 @@ describeWithSeed(
         fullWriteBlock: 24_000_000
       });
       expect(await source.helpBotProfileId()).toBe(HELP_BOT);
-      const delegations = await source.delegations();
+      const delegations = await source.delegations(null);
       expect(delegations.slice(0, 2)).toEqual([
         {
           from_address: W(1),
@@ -415,8 +418,13 @@ describeWithSeed(
         [20_000_001, W(1)],
         [21_000_000, LOWER_E],
         [21_000_000, MIXED.toLowerCase()],
-        [24_000_002, W(2)]
+        [24_000_002, W(2)],
+        [24_000_003, W(3)]
       ]);
+      // Held to the TDH block: the rows at or before it.
+      expect(
+        (await source.delegations(24_000_000)).map((it) => it.block)
+      ).toEqual([20_000_000, 20_000_001, 21_000_000, 21_000_000]);
     });
 
     it('builds the export from the database', async () => {

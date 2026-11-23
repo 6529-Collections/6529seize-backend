@@ -4,6 +4,7 @@ import {
   StatementRow
 } from './identity-export.db';
 import {
+  acceptName,
   acknowledgementProblem,
   buildIdentityExport,
   cicMismatches,
@@ -186,7 +187,11 @@ function world(): {
     ratingEditsSince: async () => 0,
     ratingsChangedSince: async () => [],
     profileWritesSince: async () => NO_PROFILE_WRITES,
-    rowsAfterBlock: async () => ({ consolidations: 0, delegations: 0 }),
+    rowsAfterBlock: async () => ({
+      consolidations: 0,
+      delegations: 0,
+      primaryAddressDelegations: 0
+    }),
     identitySyncProgress: async () => ({
       pendingGeneration: 5,
       pendingBlock: 24_000_000,
@@ -615,7 +620,7 @@ describe('buildIdentityExport', () => {
       xtdh: 'as_stored',
       bulk_threshold: 2,
       cms_fields_sha256: null,
-      delegations: 'included'
+      delegations: 'through_tdh_block'
     });
     expect(doc.rules).toEqual(exportRules(options.bulkThreshold));
     expect(doc.tdh_block_timestamp_ms).toBe(FREEZE - 12_000);
@@ -774,7 +779,7 @@ describe('buildIdentityExport', () => {
       edits_after_freeze: 2,
       ratings_changed_after_freeze: 4,
       profile_writes_after_freeze: 0,
-      delegations_after_freeze: 0,
+      consolidations_after_freeze: 0,
       missing_extra_ids: 1,
       unmatched_cms: 0,
       no_extra_ids: false,
@@ -871,11 +876,12 @@ describe('buildIdentityExport', () => {
     expect(profileWritesSince).not.toHaveBeenCalled();
   });
 
-  it('refuses consolidations and delegations after the TDH block unless acknowledged exactly', async () => {
+  it('takes consolidations and primary addresses after the TDH block up to the ceiling acknowledged, and records the exact counts', async () => {
     const { source } = world();
     const rowsAfterBlock = jest.fn(async () => ({
       consolidations: 1,
-      delegations: 2
+      delegations: 5,
+      primaryAddressDelegations: 1
     }));
     const busy = { ...source, rowsAfterBlock };
     const atFreeze = {
@@ -884,42 +890,54 @@ describe('buildIdentityExport', () => {
       acceptOverCredit: 2,
       acceptMissingExtraIds: 1
     };
-    const refused = await buildIdentityExport(busy, atFreeze).then(
-      () => null,
-      (error: IdentityExportNotReadyError) => error
-    );
-    expect(refused?.causes).toEqual(['after_freeze']);
-    expect(refused?.exitCode).toBe(5);
-    expect(refused?.message).toContain(
-      '3 consolidations and delegations rows have a block after the TDH block (by table in stats); acknowledge with --accept-delegations-after-freeze 3'
+    const run = (extra: Record<string, unknown>) =>
+      buildIdentityExport(busy, { ...atFreeze, ...extra }).then(
+        (doc) => doc,
+        (error: IdentityExportNotReadyError) => error
+      );
+    const refused = (await run({})) as IdentityExportNotReadyError;
+    expect(refused.causes).toEqual(['after_freeze']);
+    expect(refused.exitCode).toBe(5);
+    expect(refused.message).toContain(
+      '2 consolidation rows and primary-address delegations have a block after the TDH block, and the delegations loop has applied them to the identities (by table in stats); acknowledge them with --accept-consolidations-after-freeze 2: a ceiling, so a higher number also passes if more may come before the next run (the file records the exact count)'
     );
     expect(rowsAfterBlock).toHaveBeenCalledWith(24_000_000);
-    const wrong = await buildIdentityExport(busy, {
-      ...atFreeze,
-      acceptDelegationsAfterFreeze: 4
-    }).then(
-      () => null,
-      (error: IdentityExportNotReadyError) => error
+    const under = (await run({
+      acceptConsolidationsAfterFreeze: 1
+    })) as IdentityExportNotReadyError;
+    expect(under.causes).toEqual(['after_freeze']);
+    // A ceiling: the exact count, or more.
+    for (const ceiling of [2, 5]) {
+      const doc = (await run({
+        acceptConsolidationsAfterFreeze: ceiling
+      })) as Awaited<ReturnType<typeof buildIdentityExport>>;
+      expect(doc.acknowledged.consolidations_after_freeze).toBe(ceiling);
+      expect(doc.stats).toEqual(
+        expect.objectContaining({
+          consolidations_after_tdh_block: 1,
+          primary_address_delegations_after_tdh_block: 1,
+          delegations_after_tdh_block: 5
+        })
+      );
+      expect(doc.notes).toEqual(
+        expect.arrayContaining([
+          "after the TDH block 24000000: 1 consolidation rows and 1 primary-address delegations, which the delegations loop has applied to the identities (a consolidation by a partial TDH write; a revoked confirmed pair leaves a one-way row at the revocation's block, so it is counted), and 5 delegations rows in all, which the file leaves out. A delegation revoked after the TDH block is not counted: the loop deletes its row, so it is missing from the file"
+        ])
+      );
+    }
+    // Delegations after the TDH block alone are only recorded.
+    const onlyDelegations = await buildIdentityExport(
+      {
+        ...source,
+        rowsAfterBlock: async () => ({
+          consolidations: 0,
+          delegations: 7,
+          primaryAddressDelegations: 0
+        })
+      },
+      atFreeze
     );
-    expect(wrong?.message).toContain(
-      '--accept-delegations-after-freeze 4 does not match: 3 consolidations and delegations rows'
-    );
-    const doc = await buildIdentityExport(busy, {
-      ...atFreeze,
-      acceptDelegationsAfterFreeze: 3
-    });
-    expect(doc.acknowledged.delegations_after_freeze).toBe(3);
-    expect(doc.stats).toEqual(
-      expect.objectContaining({
-        consolidations_after_tdh_block: 1,
-        delegations_after_tdh_block: 2
-      })
-    );
-    expect(doc.notes).toEqual(
-      expect.arrayContaining([
-        '1 consolidations and 2 delegations rows have a block after the TDH block 24000000: registered after the TDH was taken. The identities are as of the TDH block; the delegations list holds every row read'
-      ])
-    );
+    expect(onlyDelegations.stats.delegations_after_tdh_block).toBe(7);
     // A rehearsal doesn't count them.
     rowsAfterBlock.mockClear();
     const rehearsal = await buildIdentityExport(busy, {
@@ -930,27 +948,81 @@ describe('buildIdentityExport', () => {
     expect(rehearsal.stats.delegations_after_tdh_block).toBe(0);
   });
 
-  it('says whether the delegations were read, and records what was acknowledged', async () => {
+  it("names the job's event fields when the job asks", async () => {
+    const { source } = world();
+    const refused = await buildIdentityExport(
+      {
+        ...source,
+        rowsAfterBlock: async () => ({
+          consolidations: 2,
+          delegations: 2,
+          primaryAddressDelegations: 0
+        })
+      },
+      {
+        ...options,
+        expectTdhBlock: 24_000_000,
+        acceptMissingExtraIds: 3,
+        acceptStyle: 'event'
+      }
+    ).then(
+      () => null,
+      (error: IdentityExportNotReadyError) => error
+    );
+    expect(refused?.message).toContain(
+      'acknowledge with "acceptOverCredit": 2'
+    );
+    expect(refused?.message).toContain(
+      '"acceptMissingExtraIds": 3 does not match: 1 waves-list ids have no identity or profile row (left out); give "acceptMissingExtraIds": 1'
+    );
+    expect(refused?.message).toContain(
+      'with "acceptConsolidationsAfterFreeze": 2'
+    );
+    expect(refused?.message).not.toContain('--accept');
+    expect(acceptName('--accept-ratings-changed-after-freeze', 'event')).toBe(
+      'acceptRatingsChangedAfterFreeze'
+    );
+    expect(acceptName('--accept-over-credit')).toBe('--accept-over-credit');
+    expect(
+      acknowledgementProblem(0, 2, '--accept-unmatched-cms', 'x', 'event')
+    ).toBe(
+      '"acceptUnmatchedCms": 2 does not match: 0 x; leave acceptUnmatchedCms out'
+    );
+  });
+
+  it('holds the delegations to the TDH block, says so, and records what was acknowledged', async () => {
     const { source } = world();
     const log = jest.fn();
-    const doc = await buildIdentityExport(source, {
-      ...options,
-      log,
-      notes: ['a note from the caller'],
-      acceptNoExtraIds: true,
-      acceptBulk: 2
-    });
-    expect(doc.rules.delegations).toBe('included');
+    const delegations = jest.fn(source.delegations);
+    const doc = await buildIdentityExport(
+      { ...source, delegations },
+      {
+        ...options,
+        log,
+        notes: ['a note from the caller'],
+        acceptNoExtraIds: true,
+        acceptBulk: 2
+      }
+    );
+    expect(delegations).toHaveBeenCalledWith(24_000_000);
+    expect(doc.rules.delegations).toBe('through_tdh_block');
     expect(doc.notes[0]).toBe('a note from the caller');
     expect(doc.notes).toEqual(
       expect.arrayContaining([
-        "delegations: every row of 6529.io's delegations table (1), ordered by block, then from, to and collection (lowercase, bytewise), use case and token id (rules.delegations included)"
+        "delegations: the 1 rows of 6529.io's delegations table with a block at or before the TDH block 24000000, ordered by block, then from, to and collection (lowercase, bytewise), use case and token id (rules.delegations through_tdh_block)"
       ])
     );
     expect(log).toHaveBeenCalledWith('delegations: 1 read');
     expect(doc.acknowledged).toEqual(
       expect.objectContaining({ no_extra_ids: true, bulk: 2 })
     );
+    // No TDH block: every row, said so.
+    const noTdh = await buildIdentityExport(
+      { ...source, delegations, latestTdhBlock: async () => null },
+      { ...options, freezeMs: null }
+    );
+    expect(delegations).toHaveBeenLastCalledWith(null);
+    expect(noTdh.rules.delegations).toBe('all_rows');
     const without = await buildIdentityExport(source, {
       ...options,
       includeDelegations: false
@@ -964,6 +1036,29 @@ describe('buildIdentityExport', () => {
     );
     expect(without.acknowledged).toEqual(
       expect.objectContaining({ no_extra_ids: false, bulk: null })
+    );
+  });
+
+  it('takes an empty set of profile site values (a site export with no sites) at the freeze', async () => {
+    const { source } = world();
+    const doc = await buildIdentityExport(source, {
+      ...options,
+      expectTdhBlock: 24_000_000,
+      acceptOverCredit: 2,
+      acceptMissingExtraIds: 1,
+      cmsFields: {},
+      cmsFieldsFile: {
+        count: 0,
+        sha256: 'c'.repeat(64),
+        manifest: { key: null, sha256: 'd'.repeat(64) }
+      }
+    });
+    expect(doc.cms_fields?.count).toBe(0);
+    expect(doc.identities.some((it) => 'cms' in it)).toBe(false);
+    expect(doc.notes).toEqual(
+      expect.arrayContaining([
+        'cms: the profile site export has no profile site values (its cms-fields.json is empty), so no identity carries one'
+      ])
     );
   });
 
@@ -1002,7 +1097,7 @@ describe('buildIdentityExport', () => {
     )) as IdentityExportNotReadyError;
     expect(none.causes).toEqual(['unmatched_cms']);
     expect(none.message).toContain(
-      'none of the 1 profile site values is for a profile in the export'
+      'none of the 1 profile site values is for a profile in the export: the values are of another database or stage. Run the profile site export for this freeze on the same stage'
     );
   });
 
@@ -1020,7 +1115,7 @@ describe('buildIdentityExport', () => {
     );
     expect(error?.causes).toEqual(['missing_extra_ids']);
     expect(error?.message).toContain(
-      'none of the 2 waves-list ids has an identity or profile row'
+      'none of the 2 waves-list ids has an identity or profile row: the wrong list, or a list for another database. Ask the waves lead for the list of this freeze and run again with it'
     );
   });
 
