@@ -98,6 +98,14 @@ const PAGE_KEYS = 2_000;
 const PIN_WINDOW_MS = 8 * 60 * 1000;
 /** Rating event rows written in the last day get profile ids once mapped. */
 const RATING_EVENT_FILL_MS = 24 * 60 * 60 * 1000;
+/**
+ * Rating event ids the fill looks at in one run at most: a whole pass over
+ * the first day's rows (the import's few hundred thousand) in one run or
+ * two; a pass cut short goes on from there next run.
+ */
+const RATING_EVENT_FILL_IDS = 500_000;
+/** The fill's share of the time left for the rating events. */
+const RATING_EVENT_FILL_SHARE = 0.25;
 /** The rating events' share of a run (they go last). */
 const RATING_EVENTS_SHARE = 0.25;
 /** Identities waiting to be retried whose ids a fix of rows can leave out. */
@@ -390,6 +398,11 @@ export class IdentityChainMirror {
   private seenTdhDayHeight: number | null = null;
   /** When the current pin was taken. */
   private pinnedAt = 0;
+  /**
+   * Where the fill of the last day's rating events goes on from (kept
+   * between warm runs; a cold start begins at the day's first row).
+   */
+  private fillAfter: number | null = null;
   private readonly ids: ProfileIds;
   private readonly bindings: WalletBindingsFollower;
   private readonly events: RatingEventsFollower;
@@ -403,8 +416,10 @@ export class IdentityChainMirror {
     private readonly sleep: Sleep = realSleep
   ) {
     this.bindings = new WalletBindingsFollower(gateway, db, now, sleep);
-    this.events = new RatingEventsFollower(gateway, db, now, sleep);
     this.ids = new ProfileIds(gateway, db, now);
+    // The rating events map the raters and targets of the rows that notify
+    // with the identity sync's own ids (after its steps in each run).
+    this.events = new RatingEventsFollower(gateway, db, this.ids, now, sleep);
   }
 
   /** The 6529.io profile id of a chain identity (mapped now if needed). */
@@ -600,8 +615,11 @@ export class IdentityChainMirror {
 
   /**
    * The profile ids of rating events written in the last day whose rater or
-   * target is mapped since, then the rating events follower (from the
-   * stored state, up to the identity sync's place). Failures are reported.
+   * target is mapped since (the import's rows during a first full sync,
+   * and rows past the follower's own mapping), with a share of the time
+   * left and a bound of ids a run; then the rating events follower (from
+   * the stored state, up to the identity sync's place). Failures are
+   * reported.
    */
   private async followRatingEvents(
     importState: { startHeight?: number | null; doneHeight?: number | null },
@@ -609,9 +627,18 @@ export class IdentityChainMirror {
     report: MirrorRunReport
   ) {
     try {
-      report.ratingEventsFilled = await this.db.fillRatingEventProfiles(
-        this.now() - RATING_EVENT_FILL_MS
+      const until =
+        this.now() + (deadline - this.now()) * RATING_EVENT_FILL_SHARE;
+      const fill = await this.db.fillRatingEventProfiles(
+        this.now() - RATING_EVENT_FILL_MS,
+        {
+          after: this.fillAfter,
+          maxIds: RATING_EVENT_FILL_IDS,
+          inTime: () => this.now() < until
+        }
       );
+      this.fillAfter = fill.after;
+      report.ratingEventsFilled = fill.filled;
     } catch (error) {
       const message = messageOf(error);
       logger.error(`[RATING EVENT PROFILE IDS NOT FILLED] ${message}`);

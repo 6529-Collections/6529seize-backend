@@ -29,13 +29,14 @@ import {
   RELAUNCH_ALLOWED_ENV,
   toDelegationRow
 } from './identity-chain-mirror.service';
-import { FOUNDER_WAIT_MS } from './profile-ids';
+import { FOUNDER_WAIT_MS, ProfileIds } from './profile-ids';
 import { ledgerKeyOf, totalKeyOf } from './rating-events';
 import type {
   RatingEventsCursor,
   RatingLedgerRow
 } from './identity-chain-mirror.db';
 import {
+  RATING_EVENTS_MAPPED_A_PAGE,
   RATING_EVENTS_STUCK_RUNS,
   RatingEventsFollower
 } from './rating-events-follower';
@@ -225,7 +226,8 @@ class FakeDb {
       filled++;
       return { ...it, rater_profile_id: rater, target_profile_id: target };
     });
-    return filled;
+    // The whole window in one pass (the chunks are the SQL's: db tests).
+    return { filled, after: null };
   }
   keyWidth: number | null = null;
   bindings = new Map<string, WalletBindingRow>();
@@ -2204,6 +2206,7 @@ describe('IdentityChainMirror', () => {
     const follower = new RatingEventsFollower(
       gateway as never,
       db as unknown as IdentityChainMirrorDb,
+      new ProfileIds(gateway as never, db as never, () => now),
       () => now,
       async () => undefined
     );
@@ -2306,29 +2309,308 @@ describe('IdentityChainMirror', () => {
     ]);
   });
 
-  it('writes no rows before the first full sync has ended', async () => {
+  /** A first full sync that stops after setting the identity sync's place. */
+  const firstSyncStops = (
+    gateway: ReturnType<typeof ratedWorld>['gateway'],
+    runs = 1
+  ) => {
+    for (let i = 0; i < runs; i++) {
+      gateway.listIdentities.mockRejectedValueOnce(new Error('timeout'));
+    }
+  };
+  /** Bob rates Alice 7 after the import, below the full sync's height. */
+  const bobRatesAliceAt70 = (w: ReturnType<typeof ratedWorld>) =>
+    w.chain.feed[0].blocks.push(
+      timed(70, [
+        ratingRecord(w.bob.principalId, w.alice.principalId, 7, ratingSet)
+      ])
+    );
+  const idsOf = (rows: RatingEventRow[]) =>
+    rows.map((it) => [
+      it.height,
+      it.origin,
+      it.rater_profile_id,
+      it.target_profile_id
+    ]);
+
+  it("waits for the identity sync's place only, and maps nothing for the import's rows", async () => {
     const { mirror, db, gateway, bob } = ratedWorld();
-    // The first full sync stops after setting the feed's place.
-    gateway.listIdentities.mockRejectedValueOnce(new Error('timeout'));
+    firstSyncStops(gateway);
     const first = await mirror.run({ budgetMs: 60_000 });
     expect(first.error).toBe('timeout');
     expect(db.state).toMatchObject({
       last_full_sync_at: null,
       next_height: 101,
-      events_next_height: null
+      events_next_height: 101
     });
-    expect(db.ratingEvents).toEqual([]);
+    // Written during the first full sync; an IMPORT row maps no one.
+    expect(idsOf(db.ratingEvents)).toEqual([[60, 'IMPORT', null, null]]);
+    expect(db.mapping.size).toBe(0);
+    expect(gateway.getIdentityByPrincipal).not.toHaveBeenCalled();
     const second = await mirror.run({ budgetMs: 60_000 });
     expect(db.state?.last_full_sync_at).not.toBeNull();
-    // Written once both are mapped: nothing to fill.
-    expect(db.ratingEvents).toEqual([
-      expect.objectContaining({
-        height: 60,
-        rater_profile_id: db.mapping.get(bob.principalId)?.profile ?? null,
-        target_profile_id: ALICE_PROFILE
-      })
+    // The full sync mapped both: the fill sets them.
+    expect(second.ratingEventsFilled).toBe(1);
+    expect(idsOf(db.ratingEvents)).toEqual([
+      [60, 'IMPORT', db.mapping.get(bob.principalId)?.profile, ALICE_PROFILE]
     ]);
-    expect(second.ratingEventsFilled).toBe(0);
+  });
+
+  it('maps the rater and target of a rating during the first full sync, and the sync keeps their ids', async () => {
+    const w = ratedWorld();
+    const { mirror, db, gateway, alice, bob } = w;
+    bobRatesAliceAt70(w);
+    firstSyncStops(gateway);
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.last_full_sync_at).toBeNull();
+    const bobId = principalProfileId(bob.principalId);
+    expect(idsOf(db.ratingEvents)).toEqual([
+      // The import's row of the same page takes the ids mapped for the next.
+      [60, 'IMPORT', bobId, ALICE_PROFILE],
+      [70, 'OPERATION', bobId, ALICE_PROFILE]
+    ]);
+    expect(db.mapping.get(bob.principalId)).toEqual({
+      profile: bobId,
+      origin: 'NEW'
+    });
+    expect(db.mapping.get(alice.principalId)).toEqual({
+      profile: ALICE_PROFILE,
+      origin: 'LEGACY'
+    });
+    // Read at the finalized height, at or past the page.
+    expect(gateway.getIdentityByPrincipal).toHaveBeenCalledWith(
+      bob.principalId,
+      { height: 100 }
+    );
+    // The full sync finds the mappings: the same ids on 6529.io's rows.
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.last_full_sync_at).not.toBeNull();
+    expect(db.mapping.get(bob.principalId)?.profile).toBe(bobId);
+    const profiles = Array.from(db.rows.values()).map((it) => it.profile_id);
+    expect(profiles).toContain(bobId);
+    expect(profiles).toContain(ALICE_PROFILE);
+    expect(
+      db.ratings.get(ALICE_PROFILE)?.map((it) => it.rater_profile_id)
+    ).toEqual([bobId]);
+  });
+
+  it('writes a row whose rater waits on its founder without its id, filled once mapped', async () => {
+    const { mirror, db, chain, gateway, alice, tick } = ratedWorld();
+    // The bindings came from a membership list: the history decides.
+    db.state = {
+      next_height: null,
+      sync_from_height: null,
+      sync_phase: null,
+      sync_after: null,
+      last_full_sync_at: null,
+      bindings_next_height: 101,
+      chain_id: null,
+      placeholders_at: null,
+      bindings_exact: false,
+      levels_tdh_day: null,
+      level_sweep_day: null,
+      level_sweep_after: null,
+      levels_day_height: null,
+      sync_use_case: null,
+      sync_wallet_after: null,
+      pin_floor: null,
+      off_chain_after: null,
+      events_next_height: null,
+      events_rebuild_height: null,
+      events_rebuild_after: null,
+      events_gone_at: null,
+      events_stuck_runs: 0,
+      retry: NOTHING_TO_RETRY
+    };
+    const carol = chainIdentity(PID(99), [W(99)], {
+      legacyId: null,
+      founder: W(99),
+      createdHeight: 52
+    });
+    chain.identities.set(carol.principalId, carol);
+    db.placeholders.set(W(99), 'p-maybe');
+    // The node's history starts after the import's start: it can't say.
+    const historyOf =
+      gateway.getMembershipWalletHistory.getMockImplementation()!;
+    gateway.getMembershipWalletHistory.mockImplementation((async (
+      wallet: string
+    ) =>
+      wallet === W(99)
+        ? {
+            wallet,
+            changes: [{ height: 52, principalId: carol.principalId }],
+            ranges: [[55, 1000]],
+            readHeight: 100
+          }
+        : await historyOf(wallet)) as never);
+    chain.feed[0].blocks.push(
+      timed(70, [
+        ratingRecord(carol.principalId, alice.principalId, 3, ratingSet)
+      ])
+    );
+    firstSyncStops(gateway);
+    await mirror.run({ budgetMs: 60_000 });
+    expect(idsOf(db.ratingEvents.filter((it) => it.height === 70))).toEqual([
+      [70, 'OPERATION', null, ALICE_PROFILE]
+    ]);
+    expect(db.mapping.has(carol.principalId)).toBe(false);
+    expect(db.founderWaits.has(carol.principalId)).toBe(true);
+    // Past the wait the full sync maps it; the fill sets the row's id.
+    tick(FOUNDER_WAIT_MS);
+    const second = await mirror.run({ budgetMs: 60_000 });
+    const carolId = principalProfileId(carol.principalId);
+    expect(db.mapping.get(carol.principalId)?.profile).toBe(carolId);
+    expect(second.ratingEventsFilled).toBeGreaterThanOrEqual(1);
+    expect(idsOf(db.ratingEvents.filter((it) => it.height === 70))).toEqual([
+      [70, 'OPERATION', carolId, ALICE_PROFILE]
+    ]);
+  });
+
+  it('leaves the page for the next run when an identity it maps cannot be read', async () => {
+    const w = ratedWorld();
+    const { mirror, db, gateway, bob } = w;
+    bobRatesAliceAt70(w);
+    firstSyncStops(gateway, 2);
+    gateway.getIdentityByPrincipal.mockRejectedValueOnce(
+      down('/v1/identities')
+    );
+    const first = await mirror.run({ budgetMs: 60_000 });
+    expect(first.ratingEventProblems).toContain('down');
+    expect(db.state?.events_next_height).toBe(50);
+    expect(db.ratingEvents).toEqual([]);
+    const second = await mirror.run({ budgetMs: 60_000 });
+    expect(second.ratingEventProblems).toEqual([]);
+    expect(db.state?.events_next_height).toBe(101);
+    const bobId = principalProfileId(bob.principalId);
+    expect(idsOf(db.ratingEvents)).toEqual([
+      [60, 'IMPORT', bobId, ALICE_PROFILE],
+      [70, 'OPERATION', bobId, ALICE_PROFILE]
+    ]);
+  });
+
+  it(`maps at most ${RATING_EVENTS_MAPPED_A_PAGE} raters and targets a page, leaving the rest to the fill`, async () => {
+    const { mirror, db, chain, gateway, alice } = ratedWorld();
+    const raters = Array.from({ length: RATING_EVENTS_MAPPED_A_PAGE }, (_, i) =>
+      chainIdentity(PID(1000 + i), [W(1000 + i)])
+    );
+    raters.forEach((it) => chain.identities.set(it.principalId, it));
+    chain.feed[0].blocks.push(
+      timed(
+        70,
+        raters.map((it) =>
+          ratingRecord(it.principalId, alice.principalId, 1, ratingSet)
+        )
+      )
+    );
+    firstSyncStops(gateway);
+    const info = jest.spyOn(Logger.get('IDENTITY_CHAIN_RATING_EVENTS'), 'info');
+    try {
+      await mirror.run({ budgetMs: 60_000 });
+      expect(info).toHaveBeenCalledWith(
+        `[RATING EVENTS: ${RATING_EVENTS_MAPPED_A_PAGE} RATERS AND TARGETS MAPPED FOR NOTIFICATIONS] [1 LEFT FOR THE FILL]`
+      );
+    } finally {
+      info.mockRestore();
+    }
+    const last = raters[raters.length - 1].principalId;
+    const rated = () => db.ratingEvents.filter((it) => it.height === 70);
+    expect(rated()).toHaveLength(RATING_EVENTS_MAPPED_A_PAGE);
+    // The first rater, Alice, then the raters in order: the last is left.
+    expect(
+      rated()
+        .filter((it) => it.rater_profile_id === null)
+        .map((it) => it.rater_principal)
+    ).toEqual([last]);
+    expect(rated().every((it) => it.target_profile_id === ALICE_PROFILE)).toBe(
+      true
+    );
+    expect(db.mapping.size).toBe(RATING_EVENTS_MAPPED_A_PAGE);
+    expect(db.mapping.has(last)).toBe(false);
+    // The full sync maps it; the fill sets it.
+    await mirror.run({ budgetMs: 60_000 });
+    expect(rated().filter((it) => it.rater_profile_id === null)).toEqual([]);
+  });
+
+  it('names a merged rater of a rating as the full sync does, without mapping it', async () => {
+    const { mirror, db, chain, gateway, alice } = ratedWorld();
+    const merged = chainIdentity(PID(97), [], {
+      legacyId: null,
+      mergedInto: alice.principalId
+    });
+    chain.identities.set(merged.principalId, merged);
+    chain.feed[0].blocks.push(
+      timed(70, [
+        ratingRecord(merged.principalId, alice.principalId, 2, ratingSet)
+      ])
+    );
+    firstSyncStops(gateway);
+    await mirror.run({ budgetMs: 60_000 });
+    expect(idsOf(db.ratingEvents.filter((it) => it.height === 70))).toEqual([
+      [70, 'OPERATION', principalProfileId(PID(97)), ALICE_PROFILE]
+    ]);
+    expect(db.mapping.has(merged.principalId)).toBe(false);
+  });
+
+  it('drops the page when its time runs out between the ids it maps, keeping those mapped', async () => {
+    const { db, chain, gateway, alice, bob } = ratedWorld();
+    let now = 1_000;
+    const ids = new ProfileIds(gateway as never, db as never, () => now);
+    ids.setImportHeights(50, 60);
+    const follower = new RatingEventsFollower(
+      gateway as never,
+      db as unknown as IdentityChainMirrorDb,
+      ids,
+      () => now,
+      async () => undefined
+    );
+    const report = () => ({
+      ratingEvents: 0,
+      ratingEventProblems: [] as string[],
+      ratingEventProblemsLeftOut: 0,
+      ratingRecordsWithoutWriter: 0,
+      eventsNextHeight: null as number | null
+    });
+    db.state = {
+      next_height: 102,
+      last_full_sync_at: null,
+      chain_id: null,
+      events_next_height: 101,
+      events_rebuild_height: null,
+      events_rebuild_after: null,
+      events_gone_at: null,
+      events_stuck_runs: 0
+    } as unknown as MirrorState;
+    chain.categories.set(CATEGORY, 'Kind');
+    chain.feed.push({
+      from: 101,
+      through: 101,
+      next: 102,
+      blocks: [
+        timed(101, [
+          ratingRecord(bob.principalId, alice.principalId, 4, ratingSet)
+        ])
+      ]
+    });
+    // Each identity read takes five seconds.
+    const read = gateway.getIdentityByPrincipal.getMockImplementation()!;
+    gateway.getIdentityByPrincipal.mockImplementation((async (p: string) => {
+      now += 5_000;
+      return await read(p);
+    }) as never);
+    const short = report();
+    await follower.follow(50, 60, 2_000, short);
+    expect(short.ratingEventProblems).toEqual([]);
+    // Bob was mapped; the time ran out before Alice: nothing written.
+    expect(db.mapping.has(bob.principalId)).toBe(true);
+    expect(db.mapping.has(alice.principalId)).toBe(false);
+    expect(gateway.getIdentityByPrincipal).toHaveBeenCalledTimes(1);
+    expect(db.ratingEvents).toEqual([]);
+    expect(db.state?.events_next_height).toBe(101);
+    await follower.follow(50, 60, now + 60_000, report());
+    expect(idsOf(db.ratingEvents)).toEqual([
+      [101, 'OPERATION', principalProfileId(bob.principalId), ALICE_PROFILE]
+    ]);
+    expect(db.state?.events_next_height).toBe(102);
   });
 
   it('follows the rating events when an identity step throws', async () => {
@@ -2415,6 +2697,30 @@ describe('IdentityChainMirror', () => {
       target_profile_id: ALICE_PROFILE
     });
     expect(db.ratingEvents[1].target_profile_id).toBeNull();
+  });
+
+  it('gives the fill a bound and a share of the time, and its place from the run before', async () => {
+    const { mirror, db, tick } = world();
+    const fill = jest
+      .fn()
+      .mockResolvedValueOnce({ filled: 3, after: 70 })
+      .mockResolvedValue({ filled: 0, after: null });
+    db.fillRatingEventProfiles = fill as never;
+    const first = await mirror.run({ budgetMs: 60_000 });
+    expect(first.ratingEventsFilled).toBe(3);
+    await mirror.run({ budgetMs: 60_000 });
+    await mirror.run({ budgetMs: 60_000 });
+    const opts = fill.mock.calls.map(
+      ([, it]) => it as { after: number | null; maxIds: number }
+    );
+    expect(opts.map((it) => it.after)).toEqual([null, 70, null]);
+    expect(opts.every((it) => it.maxIds === 500_000)).toBe(true);
+    // A quarter of the rating events' time (all of it, here: 60 s).
+    const inTime = (fill.mock.calls[2][1] as { inTime: () => boolean }).inTime;
+    tick(14_000);
+    expect(inTime()).toBe(true);
+    tick(2_000);
+    expect(inTime()).toBe(false);
   });
 
   it('starts a full sync when the feed no longer holds its height', async () => {

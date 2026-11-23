@@ -639,8 +639,14 @@ describeWithSeed(
       );
       await inTx((conn) => db.insertMapping(Q, ALICE, 'LEGACY', 1, conn));
       // Written before the window: left alone.
-      expect(await db.fillRatingEventProfiles(51)).toBe(0);
-      expect(await db.fillRatingEventProfiles(50)).toBe(1);
+      expect(await db.fillRatingEventProfiles(51)).toEqual({
+        filled: 0,
+        after: null
+      });
+      expect(await db.fillRatingEventProfiles(50)).toEqual({
+        filled: 1,
+        after: null
+      });
       const [filled] = await sqlExecutor.execute<any>(
         `select rater_profile_id, target_profile_id from ${IDENTITY_CHAIN_RATING_EVENTS_TABLE}
          where height = 93`
@@ -648,6 +654,93 @@ describeWithSeed(
       expect([filled.rater_profile_id, filled.target_profile_id]).toEqual([
         null,
         ALICE
+      ]);
+    });
+
+    it('fills profile ids by primary key, a bounded number of ids a call, going on from where it got to', async () => {
+      const row = (height: number) => ({
+        height,
+        block_time_ms: 0,
+        rater_principal: P,
+        rater_profile_id: null,
+        target_principal: Q,
+        target_profile_id: null,
+        matter: 'REP' as const,
+        matter_category: 'Kind',
+        old_rating: 0,
+        new_rating: 1,
+        total_after: 1,
+        origin: 'IMPORT',
+        by_import: true,
+        writer: 'system:IMPORT'
+      });
+      // Two rows written before the window, seven in it, and one with a
+      // later id written before it (a clock that went back): left alone.
+      await inTx((conn) => db.insertRatingEvents([row(1), row(2)], 10, conn));
+      await inTx((conn) =>
+        db.insertRatingEvents([3, 4, 5, 6, 7, 8, 9].map(row), 100, conn)
+      );
+      await inTx((conn) => db.insertRatingEvents([row(10)], 10, conn));
+      const ids: number[] = (
+        await sqlExecutor.execute<any>(
+          `select id from ${IDENTITY_CHAIN_RATING_EVENTS_TABLE} order by id`
+        )
+      ).map((it: any) => Number(it.id));
+      const base = ids[0];
+      expect(ids).toEqual(ids.map((_, i) => base + i));
+      const unfilled = async () =>
+        (
+          await sqlExecutor.execute<any>(
+            `select height from ${IDENTITY_CHAIN_RATING_EVENTS_TABLE}
+             where rater_profile_id is null order by id`
+          )
+        ).map((it: any) => Number(it.height));
+      // Nothing mapped yet: nothing to fill, the whole window looked at.
+      expect(await db.fillRatingEventProfiles(100)).toEqual({
+        filled: 0,
+        after: null
+      });
+      await inTx((conn) => db.insertMapping(P, BOB, 'LEGACY', 1, conn));
+      // No time: nothing looked at, from the window's start next time.
+      expect(
+        await db.fillRatingEventProfiles(100, { inTime: () => false })
+      ).toEqual({ filled: 0, after: base + 1 });
+      expect(await unfilled()).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+      // From the place given, three ids a statement, to the window's end.
+      expect(
+        await db.fillRatingEventProfiles(100, {
+          after: base + 4,
+          chunk: 3,
+          maxIds: 4
+        })
+      ).toEqual({ filled: 4, after: null });
+      expect(await unfilled()).toEqual([1, 2, 3, 4, 5, 10]);
+      // From the window's start, four ids a call at most: two statements.
+      expect(
+        await db.fillRatingEventProfiles(100, { chunk: 3, maxIds: 4 })
+      ).toEqual({ filled: 3, after: base + 7 });
+      expect(await unfilled()).toEqual([1, 2, 10]);
+      expect(
+        await db.fillRatingEventProfiles(100, { after: base + 7, chunk: 3 })
+      ).toEqual({ filled: 0, after: null });
+      // A place behind the window, or past its end, starts at its start.
+      await inTx((conn) => db.insertMapping(Q, ALICE, 'LEGACY', 1, conn));
+      expect(
+        await db.fillRatingEventProfiles(100, { after: base - 1, chunk: 3 })
+      ).toEqual({ filled: 7, after: null });
+      expect(
+        await db.fillRatingEventProfiles(100, { after: base + 100 })
+      ).toEqual({ filled: 0, after: null });
+      const targets = await sqlExecutor.execute<any>(
+        `select height, target_profile_id from ${IDENTITY_CHAIN_RATING_EVENTS_TABLE} order by id`
+      );
+      expect(
+        targets.map((it: any) => [Number(it.height), it.target_profile_id])
+      ).toEqual([
+        [1, null],
+        [2, null],
+        ...[3, 4, 5, 6, 7, 8, 9].map((it) => [it, ALICE]),
+        [10, null]
       ]);
     });
 

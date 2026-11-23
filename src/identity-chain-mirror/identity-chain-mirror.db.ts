@@ -208,6 +208,8 @@ function ratingKey(it: {
 }
 
 const STATE_ID = 'identity';
+/** Rating event ids a statement of the fill looks at. */
+const RATING_EVENT_FILL_CHUNK = 5_000;
 const IDENTITY_COLUMNS = [
   'consolidation_key',
   'profile_id',
@@ -1264,22 +1266,68 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
 
   /**
    * Rating event rows written since `createdSince` whose rater or target
-   * wasn't mapped get the profile id now mapped, in one statement.
-   * Returns the rows changed.
+   * wasn't mapped get the profile id now mapped. The rows are taken by
+   * primary key from the window's first id (ids grow with created_at; each
+   * statement still checks created_at), `chunk` ids a statement, from
+   * `after` (exclusive; the window's first row when behind it or past the
+   * last row), until `maxIds` ids are looked at or `inTime` says stop.
+   * Neither null column is indexed: by primary key, each statement reads
+   * and locks one short range, however many null rows the window holds.
+   * Returns the rows changed and where the next call goes on from (null:
+   * the window's end was reached, start again from its first row).
    */
-  async fillRatingEventProfiles(createdSince: number): Promise<number> {
-    const result = await this.db.execute(
-      `update ${IDENTITY_CHAIN_RATING_EVENTS_TABLE} e
-       left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} r on r.principal_id = e.rater_principal
-       left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} t on t.principal_id = e.target_principal
-       set e.rater_profile_id = coalesce(e.rater_profile_id, r.profile_id),
-           e.target_profile_id = coalesce(e.target_profile_id, t.profile_id)
-       where e.created_at >= :createdSince
-         and ((e.rater_profile_id is null and r.profile_id is not null)
-           or (e.target_profile_id is null and t.profile_id is not null))`,
+  async fillRatingEventProfiles(
+    createdSince: number,
+    {
+      after = null,
+      maxIds = Number.POSITIVE_INFINITY,
+      chunk = RATING_EVENT_FILL_CHUNK,
+      inTime = () => true
+    }: {
+      after?: number | null;
+      maxIds?: number;
+      chunk?: number;
+      inTime?: () => boolean;
+    } = {}
+  ): Promise<{ filled: number; after: number | null }> {
+    // Both from the indexes alone (created_at, and the primary key).
+    const [bounds] = await this.db.execute<{
+      first: number | string | null;
+      last: number | string | null;
+    }>(
+      `select (select min(id) from ${IDENTITY_CHAIN_RATING_EVENTS_TABLE}
+               where created_at >= :createdSince) as first,
+              (select max(id) from ${IDENTITY_CHAIN_RATING_EVENTS_TABLE}) as last`,
       { createdSince }
     );
-    return this.db.getAffectedRows(result);
+    if (bounds?.first === null || bounds?.first === undefined) {
+      return { filled: 0, after: null };
+    }
+    const first = Number(bounds.first);
+    const last = Number(bounds.last);
+    let from =
+      after === null || after < first - 1 || after >= last ? first - 1 : after;
+    let filled = 0;
+    let looked = 0;
+    while (from < last && looked < maxIds && inTime()) {
+      const to = Math.min(from + chunk, last);
+      const result = await this.db.execute(
+        `update ${IDENTITY_CHAIN_RATING_EVENTS_TABLE} e
+         left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} r on r.principal_id = e.rater_principal
+         left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} t on t.principal_id = e.target_principal
+         set e.rater_profile_id = coalesce(e.rater_profile_id, r.profile_id),
+             e.target_profile_id = coalesce(e.target_profile_id, t.profile_id)
+         where e.id > :from and e.id <= :to
+           and e.created_at >= :createdSince
+           and ((e.rater_profile_id is null and r.profile_id is not null)
+             or (e.target_profile_id is null and t.profile_id is not null))`,
+        { from, to, createdSince }
+      );
+      filled += this.db.getAffectedRows(result);
+      looked += to - from;
+      from = to;
+    }
+    return { filled, after: from >= last ? null : from };
   }
 
   /**

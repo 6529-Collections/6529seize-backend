@@ -23,7 +23,8 @@ import {
   RatingLedgerKey,
   RatingLedgerRow
 } from './identity-chain-mirror.db';
-import { messageOf } from './mirror-errors';
+import { ChainReadRetryLater, messageOf } from './mirror-errors';
+import { isInactive, ProfileIds } from './profile-ids';
 import {
   categoryKey,
   ChainRatingChange,
@@ -50,6 +51,12 @@ export const RATING_EVENTS_STUCK_RUNS = 5;
 const PROBLEMS_LISTED = 50;
 /** The longest category name the event log holds. */
 const CATEGORY_NAME_MAX = 100;
+/**
+ * Raters and targets of a page's OPERATION rows the follower maps itself
+ * at most; past these the rows are written without the ids, which the fill
+ * sets once the identity sync maps them.
+ */
+export const RATING_EVENTS_MAPPED_A_PAGE = 200;
 
 type Gateway = Pick<
   ChainGatewayClient,
@@ -60,7 +67,11 @@ type Gateway = Pick<
   | 'getHead'
   | 'listIdentities'
   | 'getRatings'
+  | 'getIdentityByPrincipal'
 >;
+
+/** The identity sync's profile ids (one ProfileIds for the whole mirror). */
+type Ids = Pick<ProfileIds, 'profileIdOf' | 'profileIdForSites'>;
 
 type Db = Pick<
   IdentityChainMirrorDb,
@@ -153,9 +164,21 @@ function cursorOf(state: MirrorState): RatingEventsCursor {
  * The rating events (identity_chain_rating_events) and their ledger
  * (identity_chain_rating_ledger), from the feed's rating families with
  * their own place in the state (the events_ columns), from the import's
- * start: whole blocks of the mirror's chain, never past the identity sync's
- * place (so raters and targets are mapped first), each page's rows,
- * ledger, category names and place in one transaction.
+ * start once the import has completed: whole blocks of the mirror's chain,
+ * never past the identity sync's place, each page's rows, ledger, category
+ * names and place in one transaction. It doesn't wait for the first full
+ * sync: the feed goes first in every run of one and moves that place on.
+ * So REP and NIC rating rows start once the import completes and the
+ * follower reaches its end, normally within a run or two; the rows of
+ * ratings made during the import come then.
+ *
+ * A row gets the profile ids its rater and target are mapped to. For the
+ * rows that notify (origin OPERATION), the follower maps a rater or target
+ * the identity sync hasn't reached yet itself, with the identity sync's
+ * own ProfileIds (so the sync later finds the same id), up to
+ * RATING_EVENTS_MAPPED_A_PAGE a page. Other rows, those past the bound and
+ * an id that can't be settled yet are written without it: the fill
+ * (fillRatingEventProfiles) sets it once the identity sync maps it.
  *
  * Each Rating record of an identity gives a row: the value before, the new
  * one, the total after, the origin from its writer. The value before is
@@ -184,6 +207,7 @@ export class RatingEventsFollower {
   constructor(
     private readonly gateway: Gateway,
     private readonly db: Db,
+    private readonly ids: Ids,
     private readonly now: () => number,
     private readonly sleep: Sleep = realSleep
   ) {}
@@ -271,10 +295,11 @@ export class RatingEventsFollower {
       this.forgetNames(state.chain_id);
     }
     report.eventsNextHeight = state.events_next_height;
-    // Rows wait for the first full sync to end and for the identity sync's
-    // place, so their raters and targets are mapped when they are written.
-    if (state.last_full_sync_at === null || state.next_height === null) {
-      logger.info('[RATING EVENTS WAIT FOR THE FIRST FULL SYNC]');
+    // Rows wait for the identity sync's place (set when its first full sync
+    // starts), never for that sync to end: the rows that notify map their
+    // raters and targets themselves (mapForNotifications).
+    if (state.next_height === null) {
+      logger.info("[RATING EVENTS WAIT FOR THE IDENTITY SYNC'S PLACE]");
       return;
     }
     const until = Number(state.next_height);
@@ -714,6 +739,12 @@ export class RatingEventsFollower {
         writer: writerText(change.writer)
       });
     }
+    await this.mapForNotifications(rows, mapped, after.next - 1, deadline);
+    const named = rows.map((it) => ({
+      ...it,
+      rater_profile_id: mapped.get(it.rater_principal) ?? null,
+      target_profile_id: mapped.get(it.target_principal) ?? null
+    }));
     const names = this.unstoredNames(changes, categoryNames);
     const written = await this.db.executeNativeQueriesInTransaction(
       async (conn) => {
@@ -723,7 +754,7 @@ export class RatingEventsFollower {
           conn
         );
         await this.db.writeRatingCategories(names, conn);
-        const count = await this.db.insertRatingEvents(rows, this.now(), conn);
+        const count = await this.db.insertRatingEvents(named, this.now(), conn);
         await this.db.saveRatingEventsCursor(after, this.now(), conn);
         return count;
       }
@@ -731,6 +762,85 @@ export class RatingEventsFollower {
     names.forEach((it) => this.storedCategories.add(it.id));
     report.ratingEvents += written;
     return { cursor: after, withoutWriter };
+  }
+
+  /**
+   * The raters and targets of the page's OPERATION rows that aren't mapped
+   * yet, named into `mapped` as the identity sync names them, at most
+   * RATING_EVENTS_MAPPED_A_PAGE (in the rows' order); the rest are left to
+   * the fill. Each identity is read at one finalized height at or past the
+   * page's last block. The deadline is checked before each one: past it,
+   * OutOfTime drops the page (the ids mapped so far stay mapped).
+   *
+   * The identity sync maps with the same ProfileIds, never at the same
+   * time: within a run the follower runs after the identity steps, and the
+   * delegations loop runs one Lambda at a time (reserved concurrency 1). A
+   * principal both map gets one id all the same: profileIdOf reads the
+   * mapping first, and reads it again after a duplicate insert.
+   */
+  private async mapForNotifications(
+    rows: readonly RatingEventRow[],
+    mapped: Map<string, string>,
+    lastHeight: number,
+    deadline: number
+  ) {
+    const unmapped = Array.from(
+      new Set(
+        rows
+          .filter((it) => it.origin === 'OPERATION')
+          .flatMap((it) => [it.rater_principal, it.target_principal])
+      )
+    ).filter((it) => !mapped.has(it));
+    if (!unmapped.length) return;
+    this.ensureTime(deadline);
+    const head = await this.gateway.getHead();
+    const height = Math.max(Number(head.finalizedHeight), lastHeight);
+    let named = 0;
+    for (const principal of unmapped.slice(0, RATING_EVENTS_MAPPED_A_PAGE)) {
+      this.ensureTime(deadline);
+      const profileId = await this.profileIdAt(principal, height);
+      if (profileId === null) continue;
+      mapped.set(principal, profileId);
+      named++;
+    }
+    logger.info(
+      `[RATING EVENTS: ${named} RATERS AND TARGETS MAPPED FOR NOTIFICATIONS] [${unmapped.length - named} LEFT FOR THE FILL]`
+    );
+  }
+
+  /**
+   * A principal's profile id as the identity sync gives it: an active
+   * identity's mapping (stored now if needed, as applyIdentity does); a
+   * merged, closing or walletless one's id named without storing it, as
+   * syncTargetRatings names such a rater. Null when the chain has no such
+   * identity or its id can't be settled yet (ChainReadRetryLater, as a
+   * founder wait): the row is written without it. Any other failure throws
+   * (the page waits for the next run).
+   */
+  private async profileIdAt(
+    principal: string,
+    height: number
+  ): Promise<string | null> {
+    const identity = await this.gateway.getIdentityByPrincipal(principal, {
+      height
+    });
+    if (!identity) {
+      logger.warn(
+        `[RATING EVENTS: NO IDENTITY ${principal} AT ${height}] [LEFT FOR THE FILL]`
+      );
+      return null;
+    }
+    try {
+      return isInactive(identity)
+        ? (await this.ids.profileIdForSites(identity)).profileId
+        : await this.ids.profileIdOf(identity);
+    } catch (error) {
+      if (!(error instanceof ChainReadRetryLater)) throw error;
+      logger.warn(
+        `[RATING EVENTS: ${principal} NOT SETTLED YET] [${error.reason}] [LEFT FOR THE FILL]`
+      );
+      return null;
+    }
   }
 
   /** The ledger's total when none of its rows is stale; else null. */

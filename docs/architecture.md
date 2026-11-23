@@ -1019,11 +1019,24 @@ the rating families: Rating (0x0701), RatingTotal (0x0704) and Category
 only it writes: the next height (`events_next_height`), a ledger rebuild
 under way (`events_rebuild_height`, `events_rebuild_after`), a gone height
 seen once (`events_gone_at`) and the runs it has been stuck
-(`events_stuck_runs`). It reads nothing until the first full sync has ended,
-and never past the identity sync's place (`next_height`), so raters and
-targets are mostly mapped when their rows are written; a chain-made identity
-in its founder wait, or one on the retry list, can still leave a profile id
-null until the fill below. Each page's rows, ledger
+(`events_stuck_runs`). It starts once the import has completed and the
+identity sync has a place (`next_height`, set when the first full sync
+starts), never goes past that place, and doesn't wait for the first full sync
+to end: during one the feed goes first in every run and moves the place on.
+So REP and NIC rating rows start once the import completes and the follower
+reaches its end, normally within a run or two; the rows of ratings made
+during the import come then. For the rows that notify (origin OPERATION) the
+follower maps a rater or target the identity sync hasn't mapped yet itself,
+up to 200 a page: it reads the identity at a finalized height at or past the
+page and takes the identity sync's own id (`ProfileIds.profileIdOf`, stored,
+so the sync later finds the same one; a merged, closing or walletless one
+named without storing, as the sync names such a rater). The two never map at
+the same time: the follower runs after the identity steps, and one Lambda runs
+at a time. A failed read ends the follower's run before the page is written;
+an id that can't be settled yet (a chain-made identity in its founder wait),
+the rows past the 200 and those of other origins (the import's above all) are
+written with a null id, which the fill below sets once the identity sync maps
+it. Each page's rows, ledger
 changes, category names and place are written in one transaction. The
 follower keeps its own copy of every rating in
 `identity_chain_rating_ledger`, keyed by the record's key fields (rater,
@@ -1040,9 +1053,12 @@ latest finalized height (as after a gap), with no rows before it.
 
 Each Rating record of an identity gives one row: the block's height and time
 (`block_time_ms`, the block's slot start), the rater and target principals
-and, when mapped, their profile ids (none is made here; each run fills in
-those of the rows written in the last day whose principal is mapped since, and
-a principal never mapped, merged or closed, can leave one null), the matter
+and, when mapped, their profile ids (made here only for the rows that notify,
+as above; each run fills in those of the rows written in the last day whose
+principal is mapped since, by primary key, 5,000 ids a statement, at most
+500,000 ids and a quarter of the follower's time a run, going on next run
+from where it got to; a principal never mapped, merged or closed, can leave
+one null), the matter
 (REP, or CIC for NIC), the REP category's name (`''` for CIC; cut to 100
 characters, noted), the value before and the new one (`old_rating` and
 `new_rating`, bigint; 0 when removed), `total_after`, the record's `byImport`
