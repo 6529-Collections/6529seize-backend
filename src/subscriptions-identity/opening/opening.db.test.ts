@@ -72,8 +72,6 @@ const A = wallet(1);
 const B = wallet(2);
 const LONE = wallet(4);
 const C = wallet(3);
-/** Fourteen wallets, too long for subscriptions_redeemed. */
-const WIDE = Array.from({ length: 14 }, (_, i) => wallet(0x40 + i)).join('-');
 const PAIR = `${A}-${B}`;
 const NOV_20 = '2026-11-20 10:00:00.123456';
 const NOV_21 = '2026-11-21 11:30:00.654321';
@@ -354,23 +352,23 @@ describeWithSeed('subscriptions opening file', [], () => {
         VALUES ('0xc0', 9, '2026-10-01 00:00:00', :c, 0.5)`,
       { c: C }
     );
-    // A top-up from a wallet of a 14-wallet identity, waiting in the queue.
+    // A top-up from LONE, queued under its key behind an earlier write.
     await deferSubscriptionWrites(
       [
         {
           kind: 'TOP_UP',
-          consolidationKey: WIDE,
-          dedupe: '0xwide',
+          consolidationKey: LONE,
+          dedupe: '0xwaiting',
           payload: {
             topUp: {
-              hash: '0xwide',
+              hash: '0xwaiting',
               block: 12,
               transaction_date: new Date('2026-11-25T09:00:00Z'),
               from_wallet: LONE,
               amount: 0.06529
             }
           },
-          reason: { narrow: [], pendingEarlier: false }
+          reason: { narrow: [], pendingEarlier: true }
         }
       ],
       executorSink()

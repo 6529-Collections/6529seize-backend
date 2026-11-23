@@ -43,8 +43,8 @@ import {
  *    top-up opens the balance unrounded and, if it covers a card, turns
  *    automatic mode on; later ones add and round to five decimals.
  *
- * A key that spans identities (a split), and a waiting redemption, block
- * the cut.
+ * A key that spans identities (a split), the key of a credited waiting
+ * top-up included, and a waiting redemption block the cut.
  */
 
 export interface CurrentState {
@@ -351,10 +351,28 @@ export function currentState(
     }
   }
 
+  // The key of a waiting top-up credited here is listed with the opening's
+  // keys (opening-assemble.ts). One with no legacy rows is judged by the
+  // same rule as the keys that have them, without joining their merges: a
+  // key whose wallets now span identities, with no waiting re-key deciding
+  // it, blocks the cut.
+  const creditedKeys = mapCurrentKeys(
+    queued
+      .filter((q) => q.effect === 'TOP_UP_CREDITED')
+      .map((q) => q.consolidationKey)
+      .filter((key) => !currentKeys.has(key)),
+    byWallet,
+    (key) => decisions.get(key.toLowerCase())
+  );
+  blocked.push(...creditedKeys.blocked);
+
   const byIdentity = <T extends { identityKey: string }>(a: T, b: T) =>
     compareText(a.identityKey, b.identityKey);
   return {
-    identityOf,
+    identityOf: (key) =>
+      map.identityOf.get(key) ??
+      creditedKeys.identityOf.get(key) ??
+      identitiesOfKey(key, byWallet)[0],
     balances: Array.from(balances.values()).sort(byIdentity),
     modes: Array.from(modes.values()).sort(byIdentity),
     choices: Array.from(choices.values()).sort(

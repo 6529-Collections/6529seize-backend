@@ -256,7 +256,14 @@ export function assembleOpening(
     ...tables.choices.map((r) => r.consolidation_key),
     ...tables.finalRows.map((r) => r.consolidation_key),
     ...tables.redeemed.map((r) => r.consolidation_key),
-    ...tables.logs.map((r) => r.consolidation_key)
+    ...tables.logs.map((r) => r.consolidation_key),
+    // A waiting top-up the cut credits is its sender's current state under
+    // the queue entry's key, which has no legacy rows when the key-width
+    // guard holds every write of it back. One whose wallets now span
+    // identities blocks the cut (opening-current.ts).
+    ...current.queued
+      .filter((q) => q.effect === 'TOP_UP_CREDITED')
+      .map((q) => q.consolidationKey)
   ];
   const keys = openingKeys(allKeys, current.identityOf, byWallet);
   const attribution = Array.from(
