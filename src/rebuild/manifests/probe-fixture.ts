@@ -29,6 +29,5 @@ export const PROBE_UPCOMING_MEME_ID = '4';
 
 export const PROBE_MEMES_CONTRACT = MEMES_CONTRACT.toLowerCase();
 
-/** A fixed window, so both passes ask for the same rows. */
+/** A fixed time in the past, so seeds date rows the same way in every run. */
 export const PROBE_SINCE_MS = 1767225600000;
-export const PROBE_TO_MS = 1767830400000;
