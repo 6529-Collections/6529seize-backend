@@ -6,6 +6,7 @@ import {
 import { AreaManifest, Probe } from '@/rebuild/manifest.types';
 
 const STEPS = 'src/rebuild/steps/e2ee-relay.steps';
+const RELAY_CHECK = 'src/e2ee/relay/e2ee-relay-check';
 
 /**
  * The tables the relay records carry (the delivery service's, and the
@@ -324,6 +325,14 @@ export const dmManifest: AreaManifest = {
       writes: RECORD_TABLES,
       sources: ['relays'],
       timeoutMinutes: 15
+    }
+  ],
+  // Every event of the six families must pass the rebuild's own check
+  // (the orderer's pinned key) for a relay recording to count.
+  relayChecks: [
+    {
+      waves: ['cv/', 'dv/', 'dr/', 'bl/', 'bk/', 'md/'],
+      run: { module: RELAY_CHECK, exportName: 'checkE2eeRelayItem' }
     }
   ],
   probes: PROBES,
