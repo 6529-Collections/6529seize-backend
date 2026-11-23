@@ -185,6 +185,8 @@ export const PROFILE_CMS_UPLOADS_TABLE = 'profile_cms_uploads';
 export const PROFILE_CMS_POINTER_EVENTS_TABLE = 'profile_cms_pointer_events';
 export const PROFILE_CMS_PUBLISH_SIGNATURES_TABLE =
   'profile_cms_publish_signatures';
+export const PROFILE_CMS_CHAIN_HEADS_TABLE = 'profile_cms_chain_heads';
+export const PROFILE_CMS_CHAIN_PARKED_TABLE = 'profile_cms_chain_parked';
 export const WAVES_TABLE = 'waves';
 export const WAVES_METADATA_TABLE = 'waves_metadatas';
 export const OFFICIAL_WAVES_TABLE = 'official_waves';

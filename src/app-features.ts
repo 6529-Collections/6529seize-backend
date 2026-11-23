@@ -82,6 +82,24 @@ export class AppFeatures {
   }
 
   /**
+   * Profile sites follow the person's ProfileDoc on the 6529 chain: the
+   * primary pointer moves by PROFILE_REPLACE, and 6529.io's tables become an
+   * index of it. Rollback: set FEATURE_PROFILE_CMS_CHAIN_POINTER=false.
+   */
+  public isProfileCmsChainPointerEnabled(): boolean {
+    return this.isFeatureEnabled('PROFILE_CMS_CHAIN_POINTER');
+  }
+
+  /**
+   * Profile site drafts and BYO agent grants, proposals and events are
+   * appended to the interim record log's private chain as they are written,
+   * so they can be rebuilt. Rollback: set FEATURE_PROFILE_CMS_PERSONAL_LOG=false.
+   */
+  public isProfileCmsPersonalLogEnabled(): boolean {
+    return this.isFeatureEnabled('PROFILE_CMS_PERSONAL_LOG');
+  }
+
+  /**
    * The interim record log: signed records batched into hash-chained
    * segment files whose heads are posted in the records wave.
    */

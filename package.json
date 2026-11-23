@@ -41,6 +41,9 @@
     "lint:check": "node scripts/require-6529-command.cjs && NODE_OPTIONS=--max-old-space-size=8192 eslint \"src/**/*.ts\" --max-warnings=0",
     "competition:capability": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/competitions/competition-capability.cli.ts",
     "calendar:check": "node scripts/require-6529-command.cjs && node scripts/memes-calendar.mjs check",
+    "profile-cms:chain-sync": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/profile-cms/chain/profile-cms-chain-sync.cli.ts",
+    "profile-cms:export": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/profile-cms/chain/profile-cms-export.cli.ts",
+    "profile-cms:log-existing-rows": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/profile-cms/personal-log/profile-cms-log-existing-rows.cli.ts",
     "ws:delivery-probe": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/ws-delivery/delivery-probe/delivery-probe.cli.ts",
     "signed-records:service-setup": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/signed-records/record-log/service-setup.cli.ts",
     "tdh:chain-compare": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/tdhChain/cli/tdh-chain-compare.cli.ts"

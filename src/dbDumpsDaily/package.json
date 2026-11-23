@@ -13,6 +13,9 @@
   },
   "author": "",
   "license": "ISC",
+  "dependencies": {
+    "mysql": "^2.18.1"
+  },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.110",
     "esbuild": "^0.28.1"
