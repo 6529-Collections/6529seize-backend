@@ -5,6 +5,7 @@ import { Time } from '@/time';
 import {
   ChainObject,
   GatewayWavesChainApi,
+  repeatedCursor,
   WavesChainApi
 } from './waves-chain-index.api';
 import {
@@ -791,9 +792,8 @@ export class WavesChainIndex {
       const page = await this.api.listGroups(after, stamp.height);
       await this.db.upsert('groups', page.items.map(groupRow), stamp);
       report.full.items += page.items.length;
-      if (!page.next || page.next === after) {
-        return this.save(this.nextPhase(state));
-      }
+      if (!page.next) return this.save(this.nextPhase(state));
+      if (page.next === after) throw repeatedCursor('/v1/groups', after);
       after = page.next;
       state = await this.save({ ...state, fullAfter: after });
       if (this.now() >= deadline) return state;
@@ -828,9 +828,8 @@ export class WavesChainIndex {
         });
         if (this.now() >= deadline) return state;
       }
-      if (!page.next || page.next === after) {
-        return this.save(this.nextPhase(state));
-      }
+      if (!page.next) return this.save(this.nextPhase(state));
+      if (page.next === after) throw repeatedCursor('/v1/waves', after);
       after = page.next;
     }
   }
@@ -878,9 +877,8 @@ export class WavesChainIndex {
         state = await this.save({ ...state, fullAfter: decisionId });
         if (this.now() >= deadline) return state;
       }
-      if (!page.next || page.next === after) {
-        return this.save(this.nextPhase(state));
-      }
+      if (!page.next) return this.save(this.nextPhase(state));
+      if (page.next === after) throw repeatedCursor('/v1/decisions', after);
       after = page.next;
     }
   }
@@ -952,8 +950,9 @@ export class WavesChainIndex {
         });
         if (this.now() >= deadline) return { state, finished: false };
       }
-      if (!page.next || page.next === after) {
-        return { state, finished: true };
+      if (!page.next) return { state, finished: true };
+      if (page.next === after) {
+        throw repeatedCursor(`/v1/decisions/${decisionId}/entries`, after);
       }
       after = page.next;
     }

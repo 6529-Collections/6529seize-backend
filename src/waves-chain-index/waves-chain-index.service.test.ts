@@ -647,6 +647,45 @@ describe('WavesChainIndex', () => {
     expect(rowsOf(db)).toEqual(before);
   });
 
+  it('stops a full read at a page whose next repeats its cursor, before any sweep', async () => {
+    chain.pageSize = 1;
+    const { db, index } = indexOf(chain, clock);
+    await index.run({ budgetMs: BIG });
+    const keys = () => ({
+      decisions: db.rows('decisions').map((d) => d.decision_id),
+      entries: db.rows('entries').map((e) => e.entry_id),
+      votes: db.rows('votes').map((v) => `${v.entry_id}:${v.voter}`),
+      results: db.rows('results').map((r) => r.decision_id)
+    });
+    const before = keys();
+    expect(before.decisions).toEqual([D1, D2, D3]);
+    // A day later the full read runs again, and the gateway answers the
+    // decisions' second page with the cursor it was asked from.
+    const listDecisions = chain.listDecisions.bind(chain);
+    let faulty = true;
+    chain.listDecisions = async (after: string | null, at: number) => {
+      const page = await listDecisions(after, at);
+      return faulty && after !== null ? { ...page, next: after } : page;
+    };
+    clock.t += 25 * 3600_000;
+    await expect(index.run({ budgetMs: BIG })).rejects.toThrow(
+      'repeats the cursor'
+    );
+    // Stopped in the decisions phase: nothing swept, every row still there.
+    expect(db.state).toMatchObject({
+      fullPhase: 'decisions',
+      lastError: expect.stringContaining('repeats the cursor')
+    });
+    expect(keys()).toEqual(before);
+    // The gateway answers right again: the full read goes on and ends as a
+    // fresh read.
+    faulty = false;
+    const report = await index.run({ budgetMs: BIG });
+    expect(report.full.completed).toBe(true);
+    expect(keys()).toEqual(before);
+    expect(rowsOf(db)).toEqual(await freshRows(chain, clock));
+  });
+
   it('saves the error and carries on at the next run', async () => {
     const { db, index } = indexOf(chain, clock);
     await index.run({ budgetMs: BIG });
