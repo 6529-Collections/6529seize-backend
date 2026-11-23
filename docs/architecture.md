@@ -175,8 +175,12 @@ takes effect without a redeploy.
   08:15 to 23:45) read the newest final day from the gateway and check its
   roots, counts, totals, clusters and cutoff block. They compute the site's
   TDH at the chain's cutoff block, grouped by the chain's clusters, and
-  compare it and the live tables with the chain's values exactly. The
-  result goes to `tdh_chain_days`. No TDH table is written.
+  compare it with the chain's values exactly; that comparison is the day's
+  verdict. They compare the live tables too, and record those differences
+  split by whether a grouping changed since the cutoff explains them (the
+  delegations loop reruns TDH at the same block after a consolidation
+  change; the chain takes it up the next day). The result goes to
+  `tdh_chain_days`. No TDH table is written.
 - `FEATURE_TDH_FROM_CHAIN`: the same, then the TDH tables are written with the
   chain's totals over the site's computation, ranked again. The wallet and
   consolidated tables, `tdh_blocks`, the identities sync marker and the day's
