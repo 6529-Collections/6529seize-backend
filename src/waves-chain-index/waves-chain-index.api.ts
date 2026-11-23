@@ -9,9 +9,9 @@ import {
 } from '@/chain-gateway/chain-gateway.types';
 
 /**
- * The node API's rule-version-7 objects (D:/t/waves/WAVES-API.md), as the
- * index reads them. Each holds more fields than the index's columns: the
- * index keeps the whole object.
+ * The node API's rule-version-7 objects, as the index reads them. Each
+ * holds more fields than the index's columns: the index keeps the whole
+ * object.
  */
 export type ChainObject = Record<string, unknown>;
 
