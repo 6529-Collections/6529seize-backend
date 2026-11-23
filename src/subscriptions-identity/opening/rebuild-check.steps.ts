@@ -177,13 +177,14 @@ export async function rebuildSubscriptionsInCheck(
 }
 
 /**
- * The rollback copy's final rows and redemptions, copied back from the
- * rebuilt identity tables (legacy-copy.ts). Runs after subs.identity.
+ * The rollback copy's final rows, list uploads and redemptions, copied back
+ * from the rebuilt identity tables (legacy-copy.ts). Runs after
+ * subs.identity.
  */
 export async function rebuildLegacyHistoryInCheck(): Promise<void> {
-  const { finals, redemptions, leftOut } = await copyLegacyHistory();
+  const { finals, uploads, redemptions, leftOut } = await copyLegacyHistory();
   logger.info(
-    `[SUBSCRIPTIONS_LEGACY_HISTORY] [finals ${finals}] [redemptions ${redemptions}] [left out ${leftOut}]`
+    `[SUBSCRIPTIONS_LEGACY_HISTORY] [finals ${finals}] [uploads ${uploads}] [redemptions ${redemptions}] [left out ${leftOut}]`
   );
 }
 

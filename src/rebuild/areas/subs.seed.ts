@@ -13,50 +13,96 @@ import {
   PROFILES_TABLE,
   SUBSCRIPTIONS_ADDRESS,
   SIGNED_RECORD_LOG_ENTRIES_TABLE,
+  SUBSCRIPTIONS_ID_NFTS_FINAL_UPLOAD_TABLE,
+  SUBSCRIPTIONS_ID_REDEEMED_TABLE,
+  SUBSCRIPTIONS_REDEEMED_TABLE,
   TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE,
-  TRANSACTIONS_TABLE,
   WAVES_TABLE
 } from '@/constants';
 import { DropType } from '@/entities/IDrop';
 import type { RebuildContext } from '@/rebuild/manifest.types';
 import { PROBE_CONSOLIDATION_KEYS } from '@/rebuild/manifests/probe-fixture';
+import { encodeSignedRecordsHeader } from '@/signed-records/record-event';
+import { familyWave } from '@/signed-records/record-families';
+import { RecordKind } from '@/signed-records/record-kinds';
 import { recordLogDb } from '@/signed-records/record-log/record-log.db';
-import { RecordLogSegmenter } from '@/signed-records/record-log/record-log.service';
+import {
+  RecordLogSegmenter,
+  RecordLogWriter
+} from '@/signed-records/record-log/record-log.service';
 import { LocalRecordsWaveReader } from '@/signed-records/record-log/records-wave-local-reader';
+import {
+  appGrantFixture,
+  bindingSource,
+  grantSource,
+  signedRecord
+} from '@/signed-records/record-test-fixtures';
 import { loadProviderKeys } from '@/signed-records/sealed-crypto';
+import { signedRecordHeadsDb } from '@/signed-records/signed-record-heads.db';
 import { sqlExecutor } from '@/sql-executor';
 import { updateSubscribeAllEditions } from '@/api/subscriptions/api.subscriptions.db';
+import { mirrorIdentityDirectory } from '@/subscriptions-identity/identity/identity-directory';
+import { subscriptionWritePathNow } from '@/subscriptions-identity/identity/identity-switch';
 import { goLive } from '@/subscriptions-identity/opening/go-live';
 import type { FileUploader } from '@/subscriptions-identity/opening/published-chain';
+import {
+  recordContentOf,
+  SubscriptionChange
+} from '@/subscriptions-identity/records/subscription-records';
+import {
+  legacySubscriptionWrite,
+  SubscriptionChangeWriter
+} from '@/subscriptions-identity/records/subscription-writes';
+import { saveReport } from '@/subscriptions-identity/writers/identity-reports';
 import {
   JOURNAL_LANE,
   JOURNAL_SHADOW_LANE,
   journalCheckpoint
 } from '@/subscriptions-identity/timeline/journal';
-import { runIdentityTopUpWriters } from '@/subscriptions-identity/writers/identity-loop-hooks';
+import {
+  runIdentityRedemptionWriters,
+  runIdentityTopUpWriters,
+  runLegacySubscriptionStep
+} from '@/subscriptions-identity/writers/identity-loop-hooks';
+import { updateSubscriptions } from '@/subscriptionsDaily/subscriptions';
 import { discoverTopUps } from '@/subscriptionsTopUpLoop/subscription_topups';
 import { aWave } from '@/tests/fixtures/wave.fixture';
+import { redeemSubscriptions } from '@/transactionsProcessingLoop/subscriptions';
 
 /**
- * The subscriptions area's seeds for the rebuild check. Before the drop
- * they put the stack where the identity tables are the truth, through the
- * paths production uses. `seedSubscriptions` does step 2;
- * `seedSubscriptionsSwitch`, which needs the identity mirror, the rest:
- * 1. the records service identity and the records wave, only if another
- *    seed has not made them (the same fixture values every area uses);
- * 2. legacy subscriptions for the probe wallets: a top-up each (the top-up
- *    loop's write, which turns automatic mode on for the one that covers a
- *    card) and all editions for the first;
- * 3. the switch: `go-live` cuts, verifies, loads, compares and publishes
- *    the opening files into the run's seed files, and journals its opening
- *    entry;
- * 4. after the switch, a top-up through the top-up loop and the identity
- *    writer, and a checkpoint;
- * 5. the journal into the records wave: a closed segment, its file in the
- *    seed files and its head drop. Every seed closes its own entries, so
- *    an open entry of another record log lane fails the seed.
- * The rebuild then gets the identity tables back from the opening files
- * and the journal alone.
+ * The subscriptions area's seeds for the rebuild check. They put the stack
+ * where the identity tables are the truth, through the paths production
+ * uses, in the world's order: subscriptions and a card's list first, then
+ * the holdings seed mints the cards, then the airdrops are charged.
+ *
+ * `seedSubscriptions`, before any card is minted:
+ * - legacy subscriptions for the probe wallets: a top-up each (the top-up
+ *   loop's write, which turns automatic mode on for the one that covers a
+ *   card) and all editions for the first;
+ * - the transactions loop's processed block, at the chain's head.
+ *
+ * `seedSubscriptionsSwitch`, which needs the identity mirror:
+ * - the records service identity and the records wave, only if another
+ *   seed has not made them (the same fixture values every area uses);
+ * - the switch: `go-live` cuts, verifies, loads, compares and publishes
+ *   the opening files into the run's seed files, and journals its opening
+ *   entry;
+ * - after it, a top-up through the top-up loop and the identity writer,
+ *   and a signed choice through the write route's writer;
+ * - the daily build of the next card's list: the identity tables build it
+ *   and publish it into the seed files, and the legacy tables get the same
+ *   rows;
+ * - a checkpoint, and the journal into the records wave: a closed segment,
+ *   its file in the seed files and its head drop.
+ *
+ * `seedSubscriptionRedemptions`, after the holdings seed has minted and
+ * indexed the cards: the transactions loop's redemption run, which charges
+ * the card's airdrop to its subscriber on both sides, then a checkpoint and
+ * the journal's new segment.
+ *
+ * Every seed closes its own record log entries, so an open entry of
+ * another record log lane fails the seed. The rebuild then gets the
+ * identity tables back from the opening files and the journal alone.
  */
 
 // Fixed, so a second pass minutes later answers the same.
@@ -82,6 +128,8 @@ export type SeedTopUp = (wallet: string, amountEth: string) => Promise<void>;
 
 export interface SubscriptionsSeedDeps {
   readonly topUp: SeedTopUp;
+  /** The chain's newest block. */
+  readonly head: () => Promise<number>;
 }
 
 async function rpc<T>(url: string, method: string, params: unknown[]) {
@@ -127,7 +175,10 @@ function anvilDeps(ctx: RebuildContext): SubscriptionsSeedDeps {
       'The subscriptions seeds top up on Ethereum: the run has no ethereum source'
     );
   }
-  return { topUp: anvilTopUps(url) };
+  return {
+    topUp: anvilTopUps(url),
+    head: async () => Number(await rpc<string>(url, 'eth_blockNumber', []))
+  };
 }
 
 async function insertRow(
@@ -225,7 +276,7 @@ function seedFilesUploader(dir: string): FileUploader {
   };
 }
 
-/** The newest memes card the holdings seed minted (0 when none). */
+/** The newest memes card minted so far: none before the holdings seed. */
 async function newestMemeCard(): Promise<number> {
   const [row] = await sqlExecutor.execute<{ id: number | null }>(
     `select max(id) as id from ${NFTS_TABLE} where contract = :contract`,
@@ -235,20 +286,53 @@ async function newestMemeCard(): Promise<number> {
 }
 
 /**
- * The transactions loop's processed block, as its first run sets it (the
- * newest transaction's): the cut refuses a redemption loop that never ran.
+ * The transactions loop's processed block: the loop has run up to the
+ * chain's head, before any card is minted. The cut refuses a redemption
+ * loop that never ran, and the loop charges airdrops in later blocks only.
  */
-async function markRedemptionLoopRun(): Promise<number> {
-  const [row] = await sqlExecutor.execute<{ block: number | null }>(
-    `select max(block) as block from ${TRANSACTIONS_TABLE}`
-  );
-  const block = Number(row?.block ?? 0);
+async function markRedemptionLoopRun(block: number): Promise<void> {
+  // The loop takes a processed block of 0 as a first run, which charges
+  // nothing.
+  if (block < 1) {
+    throw new Error(
+      `The redemption loop's processed block must be past genesis, not ${block}`
+    );
+  }
   await sqlExecutor.execute(
     `insert into ${TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE} (created_at, block, timestamp)
       values (now(), :block, 0)`,
     { block }
   );
-  return block;
+}
+
+/** The records service and records wave the area's flags name. */
+interface RecordsFlags {
+  readonly waveId: string;
+  readonly serviceProfileId: string;
+  readonly serviceWallet: string;
+  readonly providers: ReturnType<typeof loadProviderKeys>;
+}
+
+function recordsFlags(
+  env: Readonly<Record<string, string | undefined>>
+): RecordsFlags {
+  const waveId = env.SIGNED_RECORDS_WAVE_ID;
+  const serviceProfileId = env.SIGNED_RECORDS_SERVICE_PROFILE_ID;
+  const serviceWallet = env.SIGNED_RECORDS_SERVICE_WALLET?.toLowerCase();
+  const providers = loadProviderKeys(env.SIGNED_RECORDS_PROVIDER_KEYS);
+  if (!waveId || !serviceProfileId || !serviceWallet || !providers.length) {
+    throw new Error("The subscriptions seeds need the area's records flags");
+  }
+  return { waveId, serviceProfileId, serviceWallet, providers };
+}
+
+function seedFilesDir(ctx: RebuildContext): string {
+  if (!ctx.seedFilesDir) {
+    throw new Error(
+      'The subscriptions seeds write the journal and the published files: the run has no files source'
+    );
+  }
+  return ctx.seedFilesDir;
 }
 
 /**
@@ -259,10 +343,7 @@ async function markRedemptionLoopRun(): Promise<number> {
  */
 async function closeJournalSegments(
   dir: string,
-  waveId: string,
-  serviceProfileId: string,
-  serviceWallet: string,
-  providers: ReturnType<typeof loadProviderKeys>
+  { waveId, serviceProfileId, serviceWallet, providers }: RecordsFlags
 ): Promise<void> {
   const lanes = await sqlExecutor.execute<{ lane: string }>(
     `select distinct lane from ${SIGNED_RECORD_LOG_ENTRIES_TABLE} where segment_seq is null`
@@ -328,55 +409,113 @@ async function closeJournalSegments(
   }
 }
 
+/** The card whose list the switch seed builds and whose airdrop is charged. */
+const LIST_CARD = 1;
+
+/** The 6529 chain height the seed's signed choice is anchored at. */
+const CHOICE_ANCHOR = 1;
+
 /**
- * Before the switch: today's subscriptions of the probe wallets, through
- * the legacy write paths (a top-up each, all editions for the first), after
- * the transactions loop's first run.
+ * A signed choice after the switch, through the write route's own writer:
+ * the record verified, its event in the record log, the change applied
+ * through the record index (which keeps the record's head) to the identity
+ * tables and the legacy dual write, and its journal entry. The record is
+ * the signed-records fixture device's, under the fixture app grant of a
+ * test wallet that is bound to no principal, so it owns its own stream.
+ * The rebuild puts its head back from the journal entry.
+ */
+async function signedChoiceAfterSwitch(): Promise<void> {
+  const { grant, proof } = await appGrantFixture();
+  const change: SubscriptionChange = { type: 'subs.all-editions', all: true };
+  const content = recordContentOf(change);
+  const now = Date.now();
+  const writer = new SubscriptionChangeWriter({
+    path: () => subscriptionWritePathNow(),
+    grants: grantSource([grant]),
+    bindings: bindingSource([]),
+    anchors: {
+      getAnchor: async () => ({
+        anchor: CHOICE_ANCHOR,
+        headHeight: CHOICE_ANCHOR,
+        finalizedTime: now,
+        maxAnchorLag: 120
+      })
+    },
+    directory: mirrorIdentityDirectory,
+    log: new RecordLogWriter(recordLogDb, {
+      findGrantProofs: async (ids) => (ids.includes(proof.id) ? [proof] : [])
+    }),
+    heads: signedRecordHeadsDb,
+    legacy: legacySubscriptionWrite,
+    saveReport,
+    now: () => Date.now()
+  });
+  const record = signedRecord(grant, {
+    kind: RecordKind.RECORD,
+    wave: familyWave('ps', grant.wallet),
+    refs: content.key === '' ? [content.type] : [content.type, content.key],
+    body: content.body,
+    seq: 1,
+    anchor: CHOICE_ANCHOR,
+    claimedTime: now
+  });
+  await writer.write({
+    routeKey: grant.wallet,
+    wallet: grant.wallet,
+    walletInKey: true,
+    signedRecords: encodeSignedRecordsHeader([record]),
+    change
+  });
+}
+
+/**
+ * Before the switch and before any card is minted: today's subscriptions
+ * of the probe wallets, through the legacy write paths (a top-up each, all
+ * editions for the first), and the transactions loop's processed block.
  */
 export async function seedSubscriptions(
   ctx: RebuildContext,
   deps: SubscriptionsSeedDeps = anvilDeps(ctx)
 ): Promise<void> {
-  await markRedemptionLoopRun();
   for (const top of BEFORE_TOP_UPS) {
     await deps.topUp(top.wallet, top.amount);
   }
+  await markRedemptionLoopRun(await deps.head());
   await updateSubscribeAllEditions(PROBE_CONSOLIDATION_KEYS[0], true);
 }
 
 /**
  * The switch and the journal: go-live with the opening files in the run's
- * seed files, a top-up after it through the identity writer, a checkpoint,
- * and the journal's closed segment in the records wave.
+ * seed files, a top-up after it through the identity writer, a signed
+ * choice, the next card's list, a checkpoint, and the journal's closed
+ * segment in the records wave.
  */
 export async function seedSubscriptionsSwitch(
   ctx: RebuildContext,
   env: Readonly<Record<string, string | undefined>> = process.env,
   deps: SubscriptionsSeedDeps = anvilDeps(ctx)
 ): Promise<void> {
-  const dir = ctx.seedFilesDir;
-  if (!dir) {
+  const dir = seedFilesDir(ctx);
+  const records = recordsFlags(env);
+  // The list is card 1's, which the holdings seed mints after this seed.
+  const minted = await newestMemeCard();
+  if (minted + 1 !== LIST_CARD) {
     throw new Error(
-      'The subscriptions switch seed writes the opening files: the run has no files source'
+      `The subscriptions switch seed builds card ${LIST_CARD}'s list before any card is minted, but card ${minted} is minted already: subs.seed and subs.switch must run before holdings.seed`
     );
   }
-  const waveId = env.SIGNED_RECORDS_WAVE_ID;
-  const serviceProfileId = env.SIGNED_RECORDS_SERVICE_PROFILE_ID;
-  const serviceWallet = env.SIGNED_RECORDS_SERVICE_WALLET?.toLowerCase();
-  const providers = loadProviderKeys(env.SIGNED_RECORDS_PROVIDER_KEYS);
-  if (!waveId || !serviceProfileId || !serviceWallet || !providers.length) {
-    throw new Error(
-      "The subscriptions switch seed needs the area's records flags"
-    );
-  }
-  await ensureRecordsService(waveId, serviceProfileId, serviceWallet);
+  await ensureRecordsService(
+    records.waveId,
+    records.serviceProfileId,
+    records.serviceWallet
+  );
 
   // The record log's closer does not run in a seed, so go-live's posting
   // probe is answered here: the seed closes the segment itself below.
   const result = await goLive({
     signedWritesLive: true,
     acceptReportDiffs: true,
-    mintedCard: await newestMemeCard(),
+    mintedCard: minted,
     uploader: seedFilesUploader(dir),
     postingProbe: async () => true,
     settleMs: 0
@@ -387,16 +526,67 @@ export async function seedSubscriptionsSwitch(
     );
   }
 
-  // After it: a top-up the identity writer journals, and a checkpoint.
+  // After it: a top-up the identity writer journals, and a signed choice.
   await deps.topUp(AFTER_TOP_UP.wallet, AFTER_TOP_UP.amount);
   await runIdentityTopUpWriters();
-  await journalCheckpoint();
+  await signedChoiceAfterSwitch();
 
-  await closeJournalSegments(
-    dir,
-    waveId,
-    serviceProfileId,
-    serviceWallet,
-    providers
+  // The daily build of the next card's list, as the daily loop runs it,
+  // with the list published into the seed files.
+  await updateSubscriptions({ uploader: seedFilesUploader(dir) });
+  const [list] = await sqlExecutor.execute<{ cards: number | string }>(
+    `select count(*) as cards from ${SUBSCRIPTIONS_ID_NFTS_FINAL_UPLOAD_TABLE}
+      where contract = :contract and token_id = :card`,
+    { contract: MEMES_CONTRACT, card: LIST_CARD }
   );
+  if (!Number(list?.cards)) {
+    throw new Error(
+      `The subscriptions switch seed's daily build published no list for card ${LIST_CARD}`
+    );
+  }
+
+  await journalCheckpoint();
+  await closeJournalSegments(dir, records);
+}
+
+/**
+ * After the holdings seed has minted and indexed the cards: the
+ * transactions loop's redemption run, as its handler runs it (the legacy
+ * loop, then the identity writer), which charges the airdrop of the card
+ * the switch seed built the list for. Then a checkpoint, and the journal's
+ * new entries closed into a segment.
+ */
+export async function seedSubscriptionRedemptions(
+  ctx: RebuildContext,
+  env: Readonly<Record<string, string | undefined>> = process.env
+): Promise<void> {
+  const dir = seedFilesDir(ctx);
+  const records = recordsFlags(env);
+  await runLegacySubscriptionStep('REDEMPTIONS', () => redeemSubscriptions());
+  await runIdentityRedemptionWriters();
+  // Card 1's airdrop is charged on both sides, or the seeds ran out of the
+  // world's order and the copy-back would prove nothing.
+  const [charged] = await sqlExecutor.execute<{
+    identity: number | string;
+    legacy: number | string;
+  }>(
+    `select (select count(*) from ${SUBSCRIPTIONS_ID_REDEEMED_TABLE}
+              where contract = :contract and token_id = :card) as identity,
+            (select count(*) from ${SUBSCRIPTIONS_REDEEMED_TABLE}
+              where contract = :contract and token_id = :card) as legacy`,
+    { contract: MEMES_CONTRACT, card: LIST_CARD }
+  );
+  if (!Number(charged?.identity) || !Number(charged?.legacy)) {
+    // No card at all: the holdings seed, which mints them, hasn't run.
+    if ((await newestMemeCard()) === 0) {
+      throw new Error(
+        `The subscriptions redemption seed charged no airdrop: card ${LIST_CARD} isn't minted: holdings.seed hasn't run (it lands with #2551)`
+      );
+    }
+    throw new Error(
+      `The subscriptions redemption seed charged no airdrop of card ${LIST_CARD} (identity ${charged?.identity}, legacy ${charged?.legacy}): subs.switch must build its list before holdings.seed mints the card, and this seed must run after holdings.seed`
+    );
+  }
+  await journalCheckpoint();
+  await closeJournalSegments(dir, records);
 }

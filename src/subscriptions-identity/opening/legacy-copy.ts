@@ -5,10 +5,12 @@ import {
   SUBSCRIPTIONS_ID_BALANCES_TABLE,
   SUBSCRIPTIONS_ID_MODE_TABLE,
   SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+  SUBSCRIPTIONS_ID_NFTS_FINAL_UPLOAD_TABLE,
   SUBSCRIPTIONS_ID_NFTS_TABLE,
   SUBSCRIPTIONS_ID_REDEEMED_TABLE,
   SUBSCRIPTIONS_MODE_TABLE,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+  SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE,
   SUBSCRIPTIONS_NFTS_TABLE,
   SUBSCRIPTIONS_REDEEMED_TABLE
 } from '@/constants';
@@ -68,6 +70,14 @@ const FINAL_COLUMNS = [
   'redeemed_count'
 ].map((c) => `\`${c}\``);
 
+const UPLOAD_COLUMNS = [
+  'created_at',
+  'contract',
+  'token_id',
+  'date',
+  'upload_url'
+].map((c) => `\`${c}\``);
+
 const REDEEMED_COLUMNS = [
   'created_at',
   'contract',
@@ -82,13 +92,15 @@ const REDEEMED_COLUMNS = [
 ].map((c) => `\`${c}\``);
 
 /**
- * The final rows and redemptions: the identity rows keep the consolidation
- * key they were written under, and a final row shares its id with the
- * legacy row, so they copy back as they are. Rows of keys the guard holds
- * back are left out and counted.
+ * The final rows, the lists' uploads and the redemptions: the identity rows
+ * keep the consolidation key they were written under, a final row shares
+ * its id with the legacy row, and after the switch both tables record the
+ * one published list, so they copy back as they are. Rows of keys the guard
+ * holds back are left out and counted.
  */
 export async function copyLegacyHistory(): Promise<{
   readonly finals: number;
+  readonly uploads: number;
   readonly redemptions: number;
   readonly leftOut: number;
 }> {
@@ -108,6 +120,13 @@ export async function copyLegacyHistory(): Promise<{
       options
     );
     await sqlExecutor.execute(
+      `INSERT INTO ${SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE} (${UPLOAD_COLUMNS.join(', ')})
+        SELECT ${UPLOAD_COLUMNS.join(', ')} FROM ${SUBSCRIPTIONS_ID_NFTS_FINAL_UPLOAD_TABLE}
+         ORDER BY contract, token_id`,
+      {},
+      options
+    );
+    await sqlExecutor.execute(
       `INSERT INTO ${SUBSCRIPTIONS_REDEEMED_TABLE} (${REDEEMED_COLUMNS.join(', ')})
         SELECT ${REDEEMED_COLUMNS.join(', ')} FROM ${SUBSCRIPTIONS_ID_REDEEMED_TABLE}
          WHERE ${fits} ORDER BY id`,
@@ -116,10 +135,12 @@ export async function copyLegacyHistory(): Promise<{
     );
     const [counts] = await sqlExecutor.execute<{
       finals: number | string;
+      uploads: number | string;
       redemptions: number | string;
       left_out: number | string;
     }>(
       `SELECT (SELECT COUNT(*) FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}) AS finals,
+              (SELECT COUNT(*) FROM ${SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE}) AS uploads,
               (SELECT COUNT(*) FROM ${SUBSCRIPTIONS_REDEEMED_TABLE}) AS redemptions,
               (SELECT COUNT(*) FROM ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE} WHERE NOT (${fits}))
               + (SELECT COUNT(*) FROM ${SUBSCRIPTIONS_ID_REDEEMED_TABLE} WHERE NOT (${fits})) AS left_out`,
@@ -134,6 +155,7 @@ export async function copyLegacyHistory(): Promise<{
     }
     return {
       finals: Number(counts.finals),
+      uploads: Number(counts.uploads),
       redemptions: Number(counts.redemptions),
       leftOut
     };

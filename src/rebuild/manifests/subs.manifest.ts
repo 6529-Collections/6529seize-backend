@@ -68,7 +68,9 @@ const LEGACY_WRITES = [
 /**
  * Today's subscriptions of the probe wallets through the legacy write
  * paths (src/rebuild/areas/subs.seed.ts): a top-up each and all editions
- * for the first, after the transactions loop's first run.
+ * for the first, and the transactions loop's processed block at the
+ * chain's head. In the world's order this comes before any card is
+ * minted, so before the holdings seed.
  */
 const SUBS_SEED: RebuildStep = {
   id: 'subs.seed',
@@ -81,18 +83,27 @@ const SUBS_SEED: RebuildStep = {
     'subscriptions_top_up_latest_block',
     'transactions_processed_subscriptions_blocks'
   ],
-  reads: ['transactions'],
-  // The holdings seed's chain and memes, and the probe wallets' keys.
-  after: ['holdings.seed', 'identity.probe-profiles'],
+  // The probe wallets' keys.
+  after: ['identity.probe-profiles'],
   sources: ['ethereum', 'repo'],
   timeoutMinutes: 10
 };
 
+/** The legacy tables the daily build writes, beside the top-up's. */
+const LEGACY_LIST_WRITES = [
+  'subscriptions_nfts_final',
+  'subscriptions_nfts_final_upload'
+];
+
 /**
  * The switch (`go-live`, with the opening files in the seed files), a
- * top-up after it through the identity writer, a checkpoint, and the
- * journal's closed segment in the records wave
- * (src/rebuild/areas/subs.seed.ts). The cut reads the identity mirror.
+ * top-up after it through the identity writer, a signed choice through the
+ * write route's writer, the daily build of the next card's list
+ * (published into the seed files, the legacy tables written
+ * the same rows), a checkpoint, and the journal's closed segment in the
+ * records wave (src/rebuild/areas/subs.seed.ts). The cut and the build
+ * read the identity mirror. Before the holdings seed, so the list is for
+ * card 1, which that seed mints.
  */
 const SUBS_SWITCH_SEED: RebuildStep = {
   id: 'subs.switch',
@@ -102,10 +113,13 @@ const SUBS_SWITCH_SEED: RebuildStep = {
   },
   writes: [
     ...LEGACY_WRITES,
+    ...LEGACY_LIST_WRITES,
     ...IDENTITY_TABLES,
     'subscriptions_id_reports',
     'signed_record_log_entries',
     'signed_record_log_segments',
+    // The signed choice's head, in the subscriptions' (ps, subs.*) types.
+    'signed_record_heads',
     'identities',
     'address_consolidation_keys',
     'profiles',
@@ -123,6 +137,40 @@ const SUBS_SWITCH_SEED: RebuildStep = {
   sources: ['ethereum', 'files', 'repo'],
   needs: NEEDS_IDENTITY_MIRROR,
   timeoutMinutes: 15
+};
+
+/**
+ * After the holdings seed has minted and indexed the cards: the
+ * transactions loop's redemption run, the legacy loop then the identity
+ * writer, which charges card 1's airdrop to its subscriber; then a
+ * checkpoint and the journal's new segment (src/rebuild/areas/subs.seed.ts).
+ * It waits on the identity mirror with the switch, whose journal it
+ * continues.
+ */
+const SUBS_REDEMPTIONS_SEED: RebuildStep = {
+  id: 'subs.redemptions',
+  run: {
+    module: 'src/rebuild/areas/subs.seed',
+    exportName: 'seedSubscriptionRedemptions'
+  },
+  writes: [
+    ...LEGACY_WRITES,
+    'subscriptions_nfts_final',
+    'subscriptions_redeemed',
+    'transactions_processed_subscriptions_blocks',
+    ...IDENTITY_TABLES,
+    'subscriptions_id_reports',
+    'signed_record_log_entries',
+    'signed_record_log_segments',
+    'drops',
+    'drops_parts'
+  ],
+  reads: ['transactions', 'identity_chain_principals'],
+  // The holdings seed's mints, indexed into transactions.
+  after: ['subs.switch', 'holdings.seed'],
+  sources: ['files'],
+  needs: NEEDS_IDENTITY_MIRROR,
+  timeoutMinutes: 10
 };
 
 /**
@@ -164,8 +212,9 @@ const SUBS_TOP_UPS_REBUILD: RebuildStep = {
 };
 
 /**
- * The rollback copy's final rows and redemptions, copied back from the
- * rebuilt identity tables: same key, same final-row id.
+ * The rollback copy's final rows, list uploads and redemptions, copied
+ * back from the rebuilt identity tables: same key, same final-row id, the
+ * same published list.
  */
 const SUBS_LEGACY_HISTORY_REBUILD: RebuildStep = {
   id: 'subs.legacy-history',
@@ -173,9 +222,14 @@ const SUBS_LEGACY_HISTORY_REBUILD: RebuildStep = {
     module: 'src/subscriptions-identity/opening/rebuild-check.steps',
     exportName: 'rebuildLegacyHistoryInCheck'
   },
-  writes: ['subscriptions_nfts_final', 'subscriptions_redeemed'],
+  writes: [
+    'subscriptions_nfts_final',
+    'subscriptions_nfts_final_upload',
+    'subscriptions_redeemed'
+  ],
   reads: [
     'subscriptions_id_nfts_final',
+    'subscriptions_id_nfts_final_upload',
     'subscriptions_id_redeemed',
     // The keys the key-width guard holds back are left out.
     'subscription_deferred_writes'
@@ -387,7 +441,15 @@ export const subsManifest: AreaManifest = {
         }
       ]
     },
-    subscriptions_nfts_final_upload: { class: 'INDEX' },
+    subscriptions_nfts_final_upload: {
+      class: 'INDEX',
+      volatileColumns: [
+        {
+          column: 'created_at',
+          reason: "The row's own write time on each side; no route shows it."
+        }
+      ]
+    },
     subscriptions_redeemed: {
       class: 'INDEX',
       volatileColumns: [
@@ -480,7 +542,7 @@ export const subsManifest: AreaManifest = {
       origin: 'planned'
     }
   },
-  seeds: [SUBS_SEED, SUBS_SWITCH_SEED],
+  seeds: [SUBS_SEED, SUBS_SWITCH_SEED, SUBS_REDEMPTIONS_SEED],
   rebuilders: [
     SUBS_REBUILD,
     SUBS_TOP_UPS_REBUILD,

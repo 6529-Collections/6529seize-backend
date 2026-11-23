@@ -104,6 +104,7 @@ describeWithSeed('the rollback copy and the key-width guard', [], () => {
 
     expect(await copyLegacyHistory()).toEqual({
       finals: 1,
+      uploads: 0,
       redemptions: 1,
       leftOut: 4
     });

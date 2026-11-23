@@ -13,6 +13,7 @@ import {
   SUBSCRIPTIONS_ID_CURSORS_TABLE,
   SUBSCRIPTIONS_ID_STATE_TABLE,
   SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+  SUBSCRIPTIONS_ID_NFTS_FINAL_UPLOAD_TABLE,
   SUBSCRIPTIONS_ID_REDEEMED_TABLE,
   SUBSCRIPTIONS_ID_REPORTS_TABLE,
   SUBSCRIPTIONS_ID_TOP_UP_TABLE,
@@ -20,6 +21,7 @@ import {
   SIGNED_RECORD_LOG_ENTRIES_TABLE,
   SUBSCRIPTIONS_MODE_TABLE,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+  SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE,
   SUBSCRIPTIONS_REDEEMED_TABLE,
   SUBSCRIPTIONS_NFTS_TABLE,
   SUBSCRIPTIONS_TOP_UP_TABLE,
@@ -378,8 +380,10 @@ describeWithSeed('identity writers after the switch', [], () => {
     await seed();
     await updateSubscriptions();
 
-    // Published once, with an identity column.
+    // Published once to Arweave, the default uploader, with an identity
+    // column.
     expect(uploadFile).toHaveBeenCalledTimes(1);
+    expect(uploadFile.mock.calls[0][1]).toBe('text/csv');
     expect(String(uploadFile.mock.calls[0][0])).toContain('identity');
     const identityRows = await finalIds(
       SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
@@ -417,6 +421,61 @@ describeWithSeed('identity writers after the switch', [], () => {
         (r) => [Number(r.id), r.phase]
       )
     );
+  });
+
+  it('publishes the list through the uploader it is given in place of Arweave, after the switch and in shadow', async () => {
+    const given = jest.fn(
+      async (bytes: Buffer, _contentType: string): Promise<{ url: string }> => {
+        const url = 'https://example.test/given-1';
+        published.set(url, bytes.toString('utf8'));
+        return { url };
+      }
+    );
+    const uploadsOf = async (table: string) =>
+      (
+        await sqlExecutor.execute<{ upload_url: string }>(
+          `SELECT upload_url FROM ${table} WHERE token_id = :card`,
+          { card: CARD }
+        )
+      ).map((r) => r.upload_url);
+
+    // After the switch: the identity list, with its identity column.
+    await seed();
+    await updateSubscriptions({ uploader: { uploadFile: given } });
+    expect(uploadFile).not.toHaveBeenCalled();
+    expect(given).toHaveBeenCalledTimes(1);
+    expect(given.mock.calls[0][1]).toBe('text/csv');
+    expect(String(given.mock.calls[0][0])).toContain('identity');
+    expect(await uploadsOf(SUBSCRIPTIONS_ID_NFTS_FINAL_UPLOAD_TABLE)).toEqual([
+      'https://example.test/given-1'
+    ]);
+    expect(await uploadsOf(SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE)).toEqual([
+      'https://example.test/given-1'
+    ]);
+  });
+
+  it('in shadow, publishes the legacy list through the uploader it is given in place of Arweave', async () => {
+    const given = jest.fn(async (_bytes: Buffer, _contentType: string) => ({
+      url: 'https://example.test/given'
+    }));
+    await seedLegacy();
+    await cutAndLoad(false);
+    process.env[SHADOW_ENV] = 'true';
+    subscriptionsIdentitySwitch.invalidate();
+    try {
+      await updateSubscriptions({ uploader: { uploadFile: given } });
+      expect(uploadFile).not.toHaveBeenCalled();
+      expect(given).toHaveBeenCalledTimes(1);
+      expect(given.mock.calls[0][1]).toBe('text/csv');
+      expect(String(given.mock.calls[0][0])).not.toContain('identity');
+      const [upload] = await sqlExecutor.execute<{ upload_url: string }>(
+        `SELECT upload_url FROM ${SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE} WHERE token_id = :card`,
+        { card: CARD }
+      );
+      expect(upload.upload_url).toBe('https://example.test/given');
+    } finally {
+      delete process.env[SHADOW_ENV];
+    }
   });
 
   it('in shadow, publishes the legacy list and builds the identity list beside it with the same ids', async () => {
@@ -2263,7 +2322,7 @@ describeWithSeed('identity writers after the switch', [], () => {
     expect(report.verdict).toBe('MATCH');
   });
 
-  it("copies the rollback copy's final rows and redemptions back from the identity tables exactly", async () => {
+  it("copies the rollback copy's final rows, list upload and redemptions back from the identity tables exactly", async () => {
     await seed();
     await updateSubscriptions();
     await execute(
@@ -2297,19 +2356,29 @@ describeWithSeed('identity writers after the switch', [], () => {
            FROM ${SUBSCRIPTIONS_REDEEMED_TABLE}
           ORDER BY \`transaction\`, consolidation_key`
       );
+    const uploadsOf = () =>
+      sqlExecutor.execute(
+        `SELECT contract, token_id, date, upload_url
+           FROM ${SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE} ORDER BY token_id`
+      );
     const finals = await finalsOf();
+    const uploads = await uploadsOf();
     const redeemed = await redeemedOf();
     expect(finals.length).toBeGreaterThan(0);
+    expect(uploads).toHaveLength(1);
     expect(redeemed).toHaveLength(1);
 
     await execute(`DELETE FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}`);
+    await execute(`DELETE FROM ${SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE}`);
     await execute(`DELETE FROM ${SUBSCRIPTIONS_REDEEMED_TABLE}`);
     expect(await copyLegacyHistory()).toEqual({
       finals: finals.length,
+      uploads: 1,
       redemptions: 1,
       leftOut: 0
     });
     expect(await finalsOf()).toEqual(finals);
+    expect(await uploadsOf()).toEqual(uploads);
     expect(await redeemedOf()).toEqual(redeemed);
   });
 
