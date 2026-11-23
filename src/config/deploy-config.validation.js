@@ -183,7 +183,9 @@ function validateDeployBlackouts(service) {
   if (!('deploy_blackouts' in service)) return;
   const rules = service.deploy_blackouts;
   if (!Array.isArray(rules)) {
-    throw new Error(`service ${service.name} deploy_blackouts must be a list`);
+    throw new TypeError(
+      `service ${service.name} deploy_blackouts must be a list`
+    );
   }
   rules.forEach((rule, index) => {
     const label = `service ${service.name} deploy_blackouts[${index}]`;

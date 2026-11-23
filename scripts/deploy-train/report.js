@@ -3,9 +3,14 @@
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 const MAX_ALERT_DESCRIPTION = 4800;
+const ESCAPED_PIPE = String.raw`\|`;
 
 function shortSha(sha) {
   return sha ? sha.slice(0, 10) : 'none';
+}
+
+function plural(count, noun) {
+  return count === 1 ? `1 ${noun}` : `${count} ${noun}s`;
 }
 
 function formatAge(since, now) {
@@ -18,7 +23,7 @@ function formatAge(since, now) {
 
 function escapeCell(text) {
   return String(text).replace(/\r?\n|\|/g, (match) =>
-    match === '|' ? '\\|' : ' '
+    match === '|' ? ESCAPED_PIPE : ' '
   );
 }
 
@@ -31,10 +36,15 @@ function summarizeReasons(reasons, limit = 3) {
 
 function formatPulls(prs, limit = 8) {
   if (prs.length === 0) return '-';
-  const shown = prs.slice(-limit).map((pr) => `#${pr}`);
-  return prs.length > limit
-    ? `${prs.length} PRs (latest ${shown.join(' ')})`
-    : shown.join(' ');
+  const shown = prs
+    .slice(-limit)
+    .map((pr) => `#${pr}`)
+    .join(' ');
+  return prs.length > limit ? `${prs.length} PRs (latest ${shown})` : shown;
+}
+
+function serviceNames(records) {
+  return records.map((record) => record.service).join(', ');
 }
 
 function groupByStatus(drift) {
@@ -51,14 +61,23 @@ function groupByStatus(drift) {
   return groups;
 }
 
+function behindRow(record, now) {
+  const manual = record.train.mode === 'manual' ? ' (manual)' : '';
+  const deployed = `${shortSha(record.deployed?.sha)} ${record.deployed?.completed_at || ''}`;
+  const pulls = escapeCell(formatPulls(record.prs));
+  const reasons = escapeCell(summarizeReasons(record.reasons));
+  return `| ${record.service}${manual} | ${deployed} | ${formatAge(record.behind_since, now)} | ${pulls} | ${reasons} |`;
+}
+
 /** Markdown for the job summary of a drift run. */
 function renderDriftMarkdown(drift, now = Date.parse(drift.generated_at)) {
   const groups = groupByStatus(drift);
+  const { stats } = drift;
   const lines = [
     `## ${drift.environment} drift against ${shortSha(drift.target_sha)}`,
     '',
-    `Target committed ${drift.target_committed_at}; ${drift.stats.services} services checked in ${drift.stats.seconds}s ` +
-      `(${drift.stats.builds} builds, ${drift.stats.cache_hits} cached, ${drift.stats.reused_target_bundle} unchanged inputs).`,
+    `Target committed ${drift.target_committed_at}; ${stats.services} services checked in ${stats.seconds}s ` +
+      `(${stats.builds} builds, ${stats.cache_hits} cached, ${stats.reused_target_bundle} unchanged inputs).`,
     ''
   ];
   if (groups.behind.length === 0 && groups.error.length === 0) {
@@ -70,33 +89,31 @@ function renderDriftMarkdown(drift, now = Date.parse(drift.generated_at)) {
       `### Behind (${groups.behind.length}), in deploy order`,
       '',
       '| Service | Deployed | Behind for | PRs | Why |',
-      '| --- | --- | --- | --- | --- |'
+      '| --- | --- | --- | --- | --- |',
+      ...groups.behind.map((record) => behindRow(record, now))
     );
-    for (const record of groups.behind) {
-      const manual = record.train.mode === 'manual' ? ' (manual)' : '';
-      lines.push(
-        `| ${record.service}${manual} | ${shortSha(record.deployed && record.deployed.sha)} ${(record.deployed && record.deployed.completed_at) || ''} | ${formatAge(record.behind_since, now)} | ${escapeCell(formatPulls(record.prs))} | ${escapeCell(summarizeReasons(record.reasons))} |`
-      );
-    }
   }
   if (groups.error.length > 0) {
-    lines.push('', `### Could not assess (${groups.error.length})`, '');
-    for (const record of groups.error) {
-      lines.push(
-        `- ${record.service}: ${escapeCell(record.reasons.join('; '))}`
-      );
-    }
+    lines.push(
+      '',
+      `### Could not assess (${groups.error.length})`,
+      '',
+      ...groups.error.map(
+        (record) =>
+          `- ${record.service}: ${escapeCell(record.reasons.join('; '))}`
+      )
+    );
   }
   if (groups['never-deployed'].length > 0) {
     lines.push(
       '',
-      `Never deployed to ${drift.environment}: ${groups['never-deployed'].map((record) => record.service).join(', ')}. A first deploy creates new infrastructure and stays manual.`
+      `Never deployed to ${drift.environment}: ${serviceNames(groups['never-deployed'])}. A first deploy creates new infrastructure and stays manual.`
     );
   }
   if (groups.ahead.length > 0) {
     lines.push(
       '',
-      `Deployed ahead of the target: ${groups.ahead.map((record) => record.service).join(', ')}.`
+      `Deployed ahead of the target: ${serviceNames(groups.ahead)}.`
     );
   }
   lines.push('', `Current: ${groups.current.length} services.`);
@@ -111,41 +128,35 @@ function branchLabel(environment) {
   return environment === 'prod' ? 'main' : '1a-staging';
 }
 
+function behindLine(record, now) {
+  const since = shortSha(record.deployed?.sha);
+  const pulls = formatPulls(record.prs, 4);
+  return `${record.service}: behind ${formatAge(record.behind_since, now)} since ${since}, ${pulls}; ${summarizeReasons(record.reasons, 2)}`;
+}
+
 /** Wave alert fields for the daily drift report. */
 function driftAlert(drift, now = Date.parse(drift.generated_at)) {
   const groups = groupByStatus(drift);
   const behind = groups.behind.length;
   const errors = groups.error.length;
-  const environmentLabel = drift.environment;
   const branch = `${branchLabel(drift.environment)} ${shortSha(drift.target_sha)}`;
+  const neverDeployed = serviceNames(groups['never-deployed']);
   if (behind === 0 && errors === 0) {
-    const notes = groups['never-deployed'].length
-      ? ` Never deployed: ${groups['never-deployed'].map((record) => record.service).join(', ')}.`
-      : '';
+    const notes = neverDeployed ? ` Never deployed: ${neverDeployed}.` : '';
     return {
       status: 'success',
-      title: `Backend drift check: every ${environmentLabel} service matches ${branch}`,
+      title: `Backend drift check: every ${drift.environment} service matches ${branch}`,
       description: `${groups.current.length} services current.${notes}`
     };
   }
-  const lines = groups.behind.map(
-    (record) =>
-      `${record.service}: behind ${formatAge(record.behind_since, now)} since ${shortSha(record.deployed && record.deployed.sha)}, ${formatPulls(record.prs, 4)}; ${summarizeReasons(record.reasons, 2)}`
-  );
+  const lines = groups.behind.map((record) => behindLine(record, now));
   for (const record of groups.error) {
     lines.push(`${record.service}: could not assess (${record.reasons[0]})`);
   }
-  if (groups['never-deployed'].length) {
-    lines.push(
-      `Never deployed: ${groups['never-deployed'].map((record) => record.service).join(', ')}`
-    );
-  }
+  if (neverDeployed) lines.push(`Never deployed: ${neverDeployed}`);
   const parts = [];
-  if (behind) {
-    parts.push(
-      `${behind} ${environmentLabel} service${behind === 1 ? '' : 's'} behind`
-    );
-  }
+  const noun = `${drift.environment} service`;
+  if (behind) parts.push(`${plural(behind, noun)} behind`);
   if (errors) parts.push(`${errors} not assessed`);
   return {
     status: 'failure',
@@ -162,6 +173,13 @@ function publishedPulls(item) {
 
 function deferredLines(deferred) {
   return deferred.map((entry) => `- ${entry.service}: ${entry.reason}`);
+}
+
+function planRow(item, index, now) {
+  const pulls = escapeCell(formatPulls(item.prs));
+  const published = publishedPulls(item).join(' ') || '-';
+  const reasons = escapeCell(summarizeReasons(item.reasons, 2));
+  return `| ${index + 1} | ${item.service} | ${formatAge(item.behind_since, now)} | ${pulls} | ${published} | ${reasons} |`;
 }
 
 /** Job summary for a train plan, in report or prod mode. */
@@ -186,13 +204,9 @@ function renderPlanMarkdown(plan, now = Date.parse(plan.generated_at)) {
       `### ${verb} (${plan.ship.length}), in order`,
       '',
       '| # | Service | Behind for | PRs | Publishes notes for | Why |',
-      '| --- | --- | --- | --- | --- | --- |'
+      '| --- | --- | --- | --- | --- | --- |',
+      ...plan.ship.map((item, index) => planRow(item, index, now))
     );
-    plan.ship.forEach((item, index) => {
-      lines.push(
-        `| ${index + 1} | ${item.service} | ${formatAge(item.behind_since, now)} | ${escapeCell(formatPulls(item.prs))} | ${publishedPulls(item).join(' ') || '-'} | ${escapeCell(summarizeReasons(item.reasons, 2))} |`
-      );
-    });
   }
   if (plan.deferred.length > 0) {
     lines.push(
@@ -223,14 +237,14 @@ function planAlert(plan) {
       `${index + 1}. ${item.service} (${formatPulls(item.prs, 4)})`
   );
   if (plan.deferred.length > 0) {
-    lines.push(
-      `Deferred: ${plan.deferred.map((entry) => `${entry.service} (${entry.kind})`).join(', ')}`
-    );
+    const deferred = plan.deferred
+      .map((entry) => `${entry.service} (${entry.kind})`)
+      .join(', ');
+    lines.push(`Deferred: ${deferred}`);
   }
-  const count = plan.ship.length;
   return {
     status: 'success',
-    title: `Deploy train (report only): would ship ${count} service${count === 1 ? '' : 's'} at ${shortSha(plan.target_sha)}`,
+    title: `Deploy train (report only): would ship ${plural(plan.ship.length, 'service')} at ${shortSha(plan.target_sha)}`,
     description: truncate(lines.join('\n'))
   };
 }
@@ -249,31 +263,43 @@ function stopLabel(stop) {
   return STOP_LABELS[stop.reason] || stop.reason;
 }
 
-/** Job summary for a finished train run. */
-function renderTrainMarkdown(plan, result) {
-  const lines = [`## Deploy train result at ${shortSha(plan.target_sha)}`, ''];
-  if (result.stop) {
+function stopLines(stop) {
+  if (!stop) return [];
+  const lines = [
+    `${stop.halt ? '**Halted**' : 'Stopped'}: ${stopLabel(stop)}. ${stop.detail}`,
+    ''
+  ];
+  if (stop.halt) {
     lines.push(
-      `${result.stop.halt ? '**Halted**' : 'Stopped'}: ${stopLabel(result.stop)}. ${result.stop.detail}`,
+      'Rollback is manual: revert or fix forward on main, or redeploy a known-good commit through Deploy a service. ' +
+        'Then dispatch Deploy train with resume=true.',
       ''
     );
-    if (result.stop.halt) {
-      lines.push(
-        'Rollback is manual: revert or fix forward on main, or redeploy a known-good commit through Deploy a service. ' +
-          'Then dispatch Deploy train with resume=true.',
-        ''
-      );
-    }
   }
+  return lines;
+}
+
+function shippedRow(item) {
+  const run = item.run_url
+    ? `[${item.run_id}](${item.run_url})`
+    : String(item.run_id);
+  const note = item.note ? ` (${escapeCell(item.note)})` : '';
+  return `| ${item.service} | ${run} | ${item.health}${note} |`;
+}
+
+/** Job summary for a finished train run. */
+function renderTrainMarkdown(plan, result) {
+  const lines = [
+    `## Deploy train result at ${shortSha(plan.target_sha)}`,
+    '',
+    ...stopLines(result.stop)
+  ];
   if (result.shipped.length > 0) {
-    lines.push('| Service | Deploy run | Health |', '| --- | --- | --- |');
-    for (const item of result.shipped) {
-      const run = item.run_url
-        ? `[${item.run_id}](${item.run_url})`
-        : String(item.run_id);
-      const note = item.note ? ` (${escapeCell(item.note)})` : '';
-      lines.push(`| ${item.service} | ${run} | ${item.health}${note} |`);
-    }
+    lines.push(
+      '| Service | Deploy run | Health |',
+      '| --- | --- | --- |',
+      ...result.shipped.map(shippedRow)
+    );
   } else {
     lines.push('No service was deployed.');
   }
@@ -290,44 +316,44 @@ function renderTrainMarkdown(plan, result) {
   return `${lines.join('\n')}\n`;
 }
 
+function shippedLine(item) {
+  const note = item.note ? ` (${item.note})` : '';
+  return `${item.service}: ${item.health}${note}`;
+}
+
+function haltAlert(plan, result) {
+  const lines = [
+    `${stopLabel(result.stop)}: ${result.stop.detail}`,
+    'The train is halted. Revert or fix forward on main, check the service, then dispatch Deploy train with resume=true.'
+  ];
+  if (result.shipped.length > 0) {
+    lines.push(
+      `Shipped before the halt: ${result.shipped.map(shippedLine).join('; ')}`
+    );
+  }
+  if (result.not_started.length > 0) {
+    lines.push(`Not started: ${result.not_started.join(', ')}`);
+  }
+  return {
+    status: 'failure',
+    title: `Deploy train halted at ${result.stop.service || 'start'} (${shortSha(plan.target_sha)})`,
+    description: truncate(lines.join('\n'))
+  };
+}
+
 /** Wave alert for a prod train run; null when it did nothing worth a post. */
 function trainAlert(plan, result) {
-  const shipped = result.shipped.map(
-    (item) =>
-      `${item.service}: ${item.health}${item.note ? ` (${item.note})` : ''}`
-  );
-  if (result.stop && result.stop.halt) {
-    const lines = [
-      `${stopLabel(result.stop)}: ${result.stop.detail}`,
-      'The train is halted. Revert or fix forward on main, check the service, then dispatch Deploy train with resume=true.'
-    ];
-    if (shipped.length > 0) {
-      lines.push(`Shipped before the halt: ${shipped.join('; ')}`);
-    }
-    if (result.not_started.length > 0) {
-      lines.push(`Not started: ${result.not_started.join(', ')}`);
-    }
-    return {
-      status: 'failure',
-      title: `Deploy train halted at ${result.stop.service || 'start'} (${shortSha(plan.target_sha)})`,
-      description: truncate(lines.join('\n'))
-    };
-  }
+  if (result.stop?.halt) return haltAlert(plan, result);
   if (result.shipped.length === 0) return null;
-  const lines = [...shipped];
+  const lines = result.shipped.map(shippedLine);
   if (result.stop) {
     lines.push(`Stopped: ${stopLabel(result.stop)}. ${result.stop.detail}`);
   }
   const deferred = result.deferred.concat(plan.deferred);
-  if (deferred.length > 0) {
-    lines.push(
-      `Deferred: ${deferred.map((entry) => entry.service).join(', ')}`
-    );
-  }
-  const count = result.shipped.length;
+  if (deferred.length > 0) lines.push(`Deferred: ${serviceNames(deferred)}`);
   return {
     status: 'success',
-    title: `Deploy train shipped ${count} service${count === 1 ? '' : 's'} at ${shortSha(plan.target_sha)}`,
+    title: `Deploy train shipped ${plural(result.shipped.length, 'service')} at ${shortSha(plan.target_sha)}`,
     description: truncate(lines.join('\n'))
   };
 }

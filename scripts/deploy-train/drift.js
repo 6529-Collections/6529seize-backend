@@ -12,7 +12,7 @@ const PULL_REQUEST_PATTERNS = [
   /^Merge pull request #(\d+)\b/,
   /\(#(\d+)\)\s*$/
 ];
-const DB_MODULES = ['src/db.ts', 'src/db-api.ts'];
+const DB_MODULES = new Set(['src/db.ts', 'src/db-api.ts']);
 
 function pullRequestFromSubject(subject) {
   for (const pattern of PULL_REQUEST_PATTERNS) {
@@ -70,7 +70,7 @@ function createCommitReader(repoRoot, sha, shared) {
     },
     catalogService(name) {
       const config = readJson('src/config/deploy-services.json');
-      const services = (config && config.services) || [];
+      const services = config?.services || [];
       return services.find((service) => service.name === name) || null;
     },
     buildSpec(name) {
@@ -332,7 +332,7 @@ async function computeDrift(options) {
     if (targetSpec.bundle.kind !== 'none') {
       const targetEntry = await entryFor(name, targetSpec, target);
       record.expects_db_auth = targetEntry.sources.some((file) =>
-        DB_MODULES.includes(file)
+        DB_MODULES.has(file)
       );
     }
     if (!info) {

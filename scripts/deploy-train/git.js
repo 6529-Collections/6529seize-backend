@@ -3,13 +3,33 @@
 const { spawn, spawnSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
 const fs = require('node:fs');
+const path = require('node:path');
 
+const TRUSTED_BIN_DIRS = ['/usr/bin', '/bin', '/usr/local/bin'];
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const MAX_BUFFER = 512 * 1024 * 1024;
 
+/**
+ * Absolute path of a system tool, looked up only in fixed system
+ * directories so a writable PATH entry cannot substitute it. Windows
+ * development machines resolve the name through PATH.
+ */
+function systemExecutable(name) {
+  if (process.platform === 'win32') return name;
+  const found = TRUSTED_BIN_DIRS.map((dir) => path.join(dir, name)).find(
+    (candidate) => fs.existsSync(candidate)
+  );
+  if (!found) {
+    throw new Error(
+      `${name} is not installed in ${TRUSTED_BIN_DIRS.join(', ')}`
+    );
+  }
+  return found;
+}
+
 function git(repoRoot, args, { encoding = 'utf8', allowFailure = false } = {}) {
   const result = spawnSync(
-    'git',
+    systemExecutable('git'),
     ['-c', 'core.quotePath=false', '-C', repoRoot, ...args],
     { encoding, maxBuffer: MAX_BUFFER, windowsHide: true }
   );
@@ -161,13 +181,13 @@ function extractTree(repoRoot, sha, destination, paths) {
   fs.mkdirSync(destination, { recursive: true });
   return new Promise((resolve, reject) => {
     const archive = spawn(
-      'git',
+      systemExecutable('git'),
       ['-C', repoRoot, 'archive', '--format=tar', sha, '--', ...paths],
       { windowsHide: true }
     );
     // Run tar inside the destination so no path argument is needed; GNU tar
     // would read a Windows drive letter as a remote host name.
-    const tar = spawn('tar', ['-x', '-f', '-'], {
+    const tar = spawn(systemExecutable('tar'), ['-x', '-f', '-'], {
       cwd: destination,
       windowsHide: true
     });
@@ -194,6 +214,7 @@ function extractTree(repoRoot, sha, destination, paths) {
 
 module.exports = {
   SHA_PATTERN,
+  systemExecutable,
   git,
   assertSha,
   resolveCommit,

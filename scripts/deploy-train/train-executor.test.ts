@@ -232,6 +232,7 @@ describe('deploy train executor', () => {
       service: 'nftsLoop',
       detail: 'nftsLoop deploy failure at Deploy service'
     });
+    expect(result.not_started).toEqual(['teamLoop']);
     expect(h.dispatched).toHaveLength(1);
   });
 

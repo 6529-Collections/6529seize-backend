@@ -73,8 +73,7 @@ function writeFileIfRequested(target, content) {
   if (typeof target === 'string') fs.writeFileSync(target, content);
 }
 
-function requireEnvironment(value) {
-  const environment = value || 'prod';
+function requireEnvironment(environment = 'prod') {
   if (!['prod', 'staging'].includes(environment)) {
     throw new Error('--environment must be prod or staging');
   }
@@ -277,8 +276,14 @@ async function commandPlan(flags) {
 async function commandShip(flags) {
   if (typeof flags.plan !== 'string') throw new Error('--plan is required');
   const plan = JSON.parse(fs.readFileSync(flags.plan, 'utf8'));
-  if (plan.mode !== 'prod' || plan.halt) {
-    throw new Error('Only an unhalted prod plan can ship');
+  // The plan artifact comes from a job that ran npm install scripts, so
+  // re-check everything that decides where the train deploys.
+  if (plan.mode !== 'prod' || plan.halt || plan.environment !== 'prod') {
+    throw new Error('Only an unhalted prod plan for prod can ship');
+  }
+  const expectedAuth = process.env.DEPLOY_TRAIN_DB_AUTH || 'IAM';
+  if (!['IAM', 'PASSWORD'].includes(expectedAuth)) {
+    throw new Error('DEPLOY_TRAIN_DB_AUTH must be IAM or PASSWORD');
   }
   if (process.env.DEPLOY_TRAIN_MODE !== 'prod') {
     throw new Error('DEPLOY_TRAIN_MODE is no longer prod; refusing to ship');
@@ -316,7 +321,7 @@ async function commandShip(flags) {
       health: createHealthChecker({
         aws,
         environment: plan.environment,
-        expectedAuth: process.env.DEPLOY_TRAIN_DB_AUTH || 'IAM'
+        expectedAuth
       }),
       teamWindows: teamWindowsAt(plan.target_sha, catalog),
       log
@@ -327,12 +332,14 @@ async function commandShip(flags) {
       report.renderTrainMarkdown(plan, result)
     );
     writeGithubOutputs({
-      halted: result.stop && result.stop.halt ? 'true' : 'false',
+      halted: result.stop?.halt ? 'true' : 'false',
       shipped_count: result.shipped.length,
       ...alertOutputs(report.trainAlert(plan, result))
     });
     log(
-      `train: ${result.shipped.length} shipped${result.stop ? `, stopped (${result.stop.reason})` : ''}`
+      result.stop
+        ? `train: ${result.shipped.length} shipped, stopped (${result.stop.reason})`
+        : `train: ${result.shipped.length} shipped`
     );
   } finally {
     aws.cleanup();

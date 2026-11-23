@@ -68,28 +68,33 @@ function environmentKey(repoRoot, roots, esbuildVersion) {
  * the listing of each directory on their paths. If all of these match in
  * another commit, esbuild resolves and emits the same bundle there.
  */
+function parentDirectory(file) {
+  const dir = path.posix.dirname(file);
+  return dir === '.' ? '' : dir;
+}
+
+/** Records one directory's listing and the config files directly in it. */
+function recordDirectory(dir, tree, inputs, dirs) {
+  dirs[dir] = tree.listingHash(dir);
+  for (const child of tree.children(dir)) {
+    if (child.type === 'blob' && CONFIG_FILE.test(child.name)) {
+      const configPath = dir ? `${dir}/${child.name}` : child.name;
+      inputs[configPath] = tree.oid(configPath);
+    }
+  }
+}
+
 function validityFor(sources, tree) {
   const inputs = {};
   const dirs = {};
-  const addDirectories = (file) => {
-    let dir = path.posix.dirname(file);
-    for (;;) {
-      const key = dir === '.' ? '' : dir;
-      if (key in dirs) return;
-      dirs[key] = tree.listingHash(key);
-      for (const child of tree.children(key)) {
-        if (child.type === 'blob' && CONFIG_FILE.test(child.name)) {
-          const configPath = key ? `${key}/${child.name}` : child.name;
-          inputs[configPath] = tree.oid(configPath);
-        }
-      }
-      if (!key) return;
-      dir = path.posix.dirname(key);
-    }
-  };
   for (const source of sources) {
     inputs[source] = tree.oid(source);
-    addDirectories(source);
+    let dir = parentDirectory(source);
+    while (!(dir in dirs)) {
+      recordDirectory(dir, tree, inputs, dirs);
+      if (!dir) break;
+      dir = parentDirectory(dir);
+    }
   }
   return { inputs, dirs };
 }
@@ -102,6 +107,18 @@ function isValidFor(entry, tree) {
     if (tree.listingHash(dir) !== listing) return false;
   }
   return true;
+}
+
+/** A cache file's entry; unreadable or outdated files are dropped. */
+function readCacheEntry(file) {
+  try {
+    const entry = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (entry.format === CACHE_FORMAT) return { file, entry };
+  } catch {
+    // Fall through: a corrupt entry is removed and rebuilt.
+  }
+  fs.rmSync(file, { force: true });
+  return null;
 }
 
 /** File cache of built bundle fingerprints, one directory per service. */
@@ -120,22 +137,12 @@ class BundleCache {
   entries(service) {
     if (!this.loaded.has(service)) {
       const dir = this.serviceDir(service);
-      const entries = [];
-      if (fs.existsSync(dir)) {
-        for (const name of fs.readdirSync(dir).sort(compareText)) {
-          if (!name.endsWith('.json')) continue;
-          try {
-            const entry = JSON.parse(
-              fs.readFileSync(path.join(dir, name), 'utf8')
-            );
-            if (entry.format === CACHE_FORMAT) {
-              entries.push({ file: path.join(dir, name), entry });
-            }
-          } catch {
-            fs.rmSync(path.join(dir, name), { force: true });
-          }
-        }
-      }
+      const names = fs.existsSync(dir) ? fs.readdirSync(dir) : [];
+      const entries = names
+        .filter((name) => name.endsWith('.json'))
+        .sort(compareText)
+        .map((name) => readCacheEntry(path.join(dir, name)))
+        .filter(Boolean);
       this.loaded.set(service, entries);
     }
     return this.loaded.get(service);
@@ -189,6 +196,7 @@ class BundleCache {
 }
 
 let captureQueue = Promise.resolve();
+let captureCount = 0;
 
 /**
  * Evaluates an esbuild config module with `esbuild` replaced by a recorder
@@ -209,7 +217,7 @@ function captureConfigOptions(configPath) {
     );
     const temporary = path.join(
       path.dirname(configPath),
-      `.deploy-train-capture-${process.pid}-${Date.now()}.mjs`
+      `.deploy-train-capture-${process.pid}-${Date.now()}-${++captureCount}.mjs`
     );
     fs.writeFileSync(temporary, patched);
     globalThis.__deployTrainEsbuildCapture = [];
@@ -236,8 +244,11 @@ function normalizeBundle(text, workDir, treeDir, roots) {
   const replacements = [];
   for (const root of roots) {
     const label = `<node_modules:${root.owner || 'root'}>`;
-    replacements.push([toPosix(path.relative(workDir, root.dir)), label]);
-    replacements.push([root.dir, label], [toPosix(root.dir), label]);
+    replacements.push(
+      [toPosix(path.relative(workDir, root.dir)), label],
+      [root.dir, label],
+      [toPosix(root.dir), label]
+    );
   }
   replacements.push([treeDir, '<tree>'], [toPosix(treeDir), '<tree>']);
   replacements.sort((left, right) => right[0].length - left[0].length);

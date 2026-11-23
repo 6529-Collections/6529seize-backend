@@ -94,9 +94,13 @@ function createGitHubClient({
           inputs,
           return_run_details: true
         });
-        return (result && result.workflow_run_id) || null;
+        return result?.workflow_run_id || null;
       } catch (error) {
-        if (error.status !== 422) throw error;
+        // Retry only when GitHub rejected the run-details flag itself; a
+        // 422 creates no run, so the plain dispatch cannot duplicate one.
+        if (error.status !== 422 || !/return_run_details/.test(error.message)) {
+          throw error;
+        }
         await request('POST', path, { ref, inputs });
         return null;
       }
@@ -142,7 +146,7 @@ async function findDeployedCommits({
       run_url: run.html_url,
       started_at: startedAt,
       completed_at: run.updated_at,
-      actor: (run.triggering_actor && run.triggering_actor.login) || null
+      actor: run.triggering_actor?.login || null
     });
   };
 
@@ -188,13 +192,13 @@ async function findDeployedCommits({
   return found;
 }
 
-const ACTIVE_STATUSES = [
+const ACTIVE_STATUSES = new Set([
   'queued',
   'in_progress',
   'pending',
   'waiting',
   'requested'
-];
+]);
 
 /** Deploy runs for `environment` that have not completed yet. */
 async function activeDeployRuns(client, environment) {
@@ -204,8 +208,7 @@ async function activeDeployRuns(client, environment) {
   return (result.workflow_runs || []).filter((run) => {
     const match = DEPLOY_TITLE.exec(run.display_title || '');
     return (
-      ACTIVE_STATUSES.includes(run.status) &&
-      (!match || match[2] === environment)
+      ACTIVE_STATUSES.has(run.status) && (!match || match[2] === environment)
     );
   });
 }

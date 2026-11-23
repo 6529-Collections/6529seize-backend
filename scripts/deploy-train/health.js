@@ -4,13 +4,17 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { systemExecutable } = require('./git');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const BAD_LOG_PATTERN =
   '?"Access denied" ?ER_ACCESS_DENIED ?"Cannot find module" ?ImportModuleError';
 const AUTH_LOG_PATTERN = '?"AUTH IAM" ?"AUTH PASSWORD"';
 const TOKEN_REFRESH_MS = 4 * 60 * 1000;
-const UNCHECKED_PROFILES = ['cloudformation-stack', 'lambda-edge-association'];
+const UNCHECKED_PROFILES = new Set([
+  'cloudformation-stack',
+  'lambda-edge-association'
+]);
 
 /**
  * Judges one function after a deploy from its CloudWatch numbers and log
@@ -102,7 +106,10 @@ function combineVerdicts(verdicts) {
 
 function runProcess(command, args, env) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { env, windowsHide: true });
+    const child = spawn(systemExecutable(command), args, {
+      env,
+      windowsHide: true
+    });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (chunk) => (stdout += chunk));
@@ -220,7 +227,7 @@ function createHealthChecker({
       '--statistics',
       'Sum'
     ]);
-    return ((result && result.Datapoints) || []).reduce(
+    return (result?.Datapoints || []).reduce(
       (sum, point) => sum + (point.Sum || 0),
       0
     );
@@ -246,9 +253,7 @@ function createHealthChecker({
       ],
       { allowMissing: true }
     );
-    return ((result && result.events) || []).map(
-      (event) => event.message || ''
-    );
+    return (result?.events || []).map((event) => event.message || '');
   }
 
   async function checkFunction(item, functionName, deployStartedAt) {
@@ -319,7 +324,7 @@ function createHealthChecker({
   return {
     async check(item, deployStartedAt) {
       if (
-        UNCHECKED_PROFILES.includes(item.validation_profile) ||
+        UNCHECKED_PROFILES.has(item.validation_profile) ||
         item.verification_targets.length === 0
       ) {
         return {

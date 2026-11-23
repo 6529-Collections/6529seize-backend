@@ -78,7 +78,9 @@ function parseInstant(value, label) {
       ? Date.parse(value)
       : Number.NaN;
   if (Number.isNaN(time)) {
-    throw new Error(`${label} must be a UTC timestamp like 2026-11-25T14:00Z`);
+    throw new TypeError(
+      `${label} must be a UTC timestamp like 2026-11-25T14:00Z`
+    );
   }
   return time;
 }
@@ -136,9 +138,9 @@ function parseTeamWindows(sources, knownServices) {
     } catch {
       throw new Error(`${name} is not valid JSON`);
     }
-    const list = Array.isArray(parsed) ? parsed : parsed && parsed.windows;
+    const list = Array.isArray(parsed) ? parsed : parsed?.windows;
     if (!Array.isArray(list)) {
-      throw new Error(`${name} must be a list or an object with "windows"`);
+      throw new TypeError(`${name} must be a list or an object with "windows"`);
     }
     list.forEach((entry, index) => {
       const window = validateTeamWindow(entry, `${name}[${index}]`);

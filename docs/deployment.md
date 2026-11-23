@@ -238,12 +238,18 @@ run:
   unverified.
 
 Resources-only stacks and the Lambda@Edge interceptor rely on the deploy
-workflow's own checks.
+workflow's own checks. `dbMigrationsLoop` needs no wait before its dependents:
+`Deploy a service` invokes it synchronously and fails unless the migration
+returns without a function error. For a service that already logged errors in
+the previous 24 hours, only a doubled error rate halts, so a deploy that fixes
+an erroring service is not stopped by the errors it is fixing.
 
 A failed deploy, an unhealthy service, a health check that cannot run, or a
 crash **halts** the train: the ship job fails and posts a failure to the CI
 wave. Later trains plan in report-only mode until someone fixes the cause and
-dispatches `Deploy train` with `resume=true`. Main moving, another deploy
+dispatches `Deploy train` with `resume=true`. If the plan cannot read the
+deploy or train history from GitHub, it fails and ships nothing; the next
+trigger tries again. Main moving, another deploy
 running for more than 30 minutes, a cancelled deploy run, or the 300-minute
 budget only stop the current train.
 

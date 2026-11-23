@@ -236,7 +236,7 @@ describe('GitHub client', () => {
         bodies.push(body);
         if (modern) return response(200, { workflow_run_id: 77 });
         return body.return_run_details
-          ? response(422, { message: 'unknown' })
+          ? response(422, { message: 'Invalid request: return_run_details' })
           : response(204, null);
       }
     });
@@ -248,6 +248,22 @@ describe('GitHub client', () => {
       await client.dispatchWorkflow('deploy.yml', 'main', { service: 'api' })
     ).toBeNull();
     expect(bodies[2]).toEqual({ ref: 'main', inputs: { service: 'api' } });
+  });
+
+  it('does not re-dispatch after any other 422', async () => {
+    let calls = 0;
+    const client = github.createGitHubClient({
+      token: 't',
+      repository: 'owner/repo',
+      fetchImpl: async () => {
+        calls += 1;
+        return response(422, { message: 'Unexpected inputs provided' });
+      }
+    });
+    await expect(
+      client.dispatchWorkflow('deploy.yml', 'main', { service: 'api' })
+    ).rejects.toThrow('Unexpected inputs');
+    expect(calls).toBe(1);
   });
 
   it('rejects a missing token or malformed repository', () => {

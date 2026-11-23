@@ -99,6 +99,116 @@ function deferDependents(catalog, candidates, heldBack, deferred) {
   return remaining;
 }
 
+/** Why a behind service must wait, or null when it can ship now. */
+function holdReason(record, service, blackoutOptions) {
+  if (record.train.mode === 'manual') {
+    return { kind: 'manual', reason: `manual service: ${record.train.reason}` };
+  }
+  if (record.prs.length === 0) {
+    return {
+      kind: 'release-notes',
+      reason:
+        'no merged pull request explains the change; deploy it by hand with release-note metadata'
+    };
+  }
+  if (record.prs.length > MAX_GROUPS_PER_DEPLOY) {
+    return {
+      kind: 'release-notes',
+      reason: `${record.prs.length} pull requests exceed the ${MAX_GROUPS_PER_DEPLOY} release-note groups one deploy can carry; catch up by hand`
+    };
+  }
+  const blackout = evaluateBlackout(service, blackoutOptions);
+  if (!blackout.blocked) return null;
+  return {
+    kind: 'blackout',
+    reason: `quiet window from ${blackout.from}: ${blackout.reasons.join('; ')}`
+  };
+}
+
+/** Splits drift records into ship candidates and deferrals. */
+function triage(catalog, drift, blackoutOptions) {
+  const deferred = [];
+  const heldBack = new Set();
+  const candidates = [];
+  for (const record of drift.services) {
+    if (record.status === 'error') {
+      deferred.push(
+        deferral(record, `not assessed: ${record.reasons[0]}`, 'error')
+      );
+      heldBack.add(record.service);
+    } else if (record.status === 'behind') {
+      const service = catalogLib.getService(catalog, record.service);
+      const hold = holdReason(record, service, blackoutOptions);
+      if (hold) {
+        deferred.push(deferral(record, hold.reason, hold.kind));
+        heldBack.add(record.service);
+      } else {
+        candidates.push(record);
+      }
+    }
+  }
+  return { deferred, heldBack, candidates };
+}
+
+/**
+ * Defers services whose release-note groups would not fit in one dispatch,
+ * with their dependents, until every remaining service fits.
+ */
+function dropOversized(catalog, shipping, heldBack, deferred) {
+  let remaining = shipping;
+  for (;;) {
+    const groups = releaseNoteGroups(remaining);
+    const oversized = remaining.filter(
+      (record) =>
+        JSON.stringify(groups.get(record.service)).length >
+        MAX_GROUP_INPUT_CHARS
+    );
+    if (oversized.length === 0) return remaining;
+    for (const record of oversized) {
+      deferred.push(
+        deferral(
+          record,
+          'release-note groups exceed the workflow input size; catch up by hand',
+          'release-notes'
+        )
+      );
+      heldBack.add(record.service);
+    }
+    remaining = deferDependents(
+      catalog,
+      remaining.filter((record) => !heldBack.has(record.service)),
+      heldBack,
+      deferred
+    );
+  }
+}
+
+function shipItem(catalog, environment, record, shipping, groups) {
+  const service = catalogLib.getService(catalog, record.service);
+  return {
+    service: record.service,
+    deployed_sha: record.deployed.sha,
+    deployed_at: record.deployed.completed_at,
+    behind_since: record.behind_since,
+    prs: record.prs,
+    reasons: record.reasons,
+    expects_db_auth: record.expects_db_auth,
+    region: service.aws_region[environment],
+    verification_targets: service.verification_targets,
+    validation_profile: service.validation_profile,
+    dependencies: Array.from(
+      catalogLib.transitiveDependencies(catalog).get(record.service)
+    ).filter((dependency) => shipping.has(dependency)),
+    release_note_groups: groups.get(record.service)
+  };
+}
+
+function servicesWithStatus(drift, status) {
+  return drift.services
+    .filter((record) => record.status === status)
+    .map((record) => record.service);
+}
+
 /**
  * Turns a drift report into the train's work list: what ships now, in
  * dependency order with release-note groups, and what is deferred and why.
@@ -113,103 +223,26 @@ function buildTrainPlan({
   halt = null,
   notes = []
 }) {
-  const deferred = [];
-  const heldBack = new Set();
-  const candidates = [];
-  for (const record of drift.services) {
-    if (record.status === 'error') {
-      deferred.push(
-        deferral(record, `not assessed: ${record.reasons[0]}`, 'error')
-      );
-      heldBack.add(record.service);
-      continue;
-    }
-    if (record.status !== 'behind') continue;
-    const service = catalogLib.getService(catalog, record.service);
-    let reason = null;
-    let kind = null;
-    if (record.train.mode === 'manual') {
-      reason = `manual service: ${record.train.reason}`;
-      kind = 'manual';
-    } else if (record.prs.length === 0) {
-      reason =
-        'no merged pull request explains the change; deploy it by hand with release-note metadata';
-      kind = 'release-notes';
-    } else if (record.prs.length > MAX_GROUPS_PER_DEPLOY) {
-      reason = `${record.prs.length} pull requests exceed the ${MAX_GROUPS_PER_DEPLOY} release-note groups one deploy can carry; catch up by hand`;
-      kind = 'release-notes';
-    } else {
-      const blackout = evaluateBlackout(service, {
-        now,
-        teamWindows,
-        lookaheadMinutes
-      });
-      if (blackout.blocked) {
-        reason = `quiet window from ${blackout.from}: ${blackout.reasons.join('; ')}`;
-        kind = 'blackout';
-      }
-    }
-    if (reason) {
-      deferred.push(deferral(record, reason, kind));
-      heldBack.add(record.service);
-    } else {
-      candidates.push(record);
-    }
-  }
-  let shipping = deferDependents(catalog, candidates, heldBack, deferred);
-  let groups = releaseNoteGroups(shipping);
-  for (;;) {
-    const oversized = shipping.filter(
-      (record) =>
-        JSON.stringify(groups.get(record.service)).length >
-        MAX_GROUP_INPUT_CHARS
-    );
-    if (oversized.length === 0) break;
-    for (const record of oversized) {
-      deferred.push(
-        deferral(
-          record,
-          'release-note groups exceed the workflow input size; catch up by hand',
-          'release-notes'
-        )
-      );
-      heldBack.add(record.service);
-    }
-    shipping = deferDependents(
-      catalog,
-      shipping.filter((record) => !heldBack.has(record.service)),
-      heldBack,
-      deferred
-    );
-    groups = releaseNoteGroups(shipping);
-  }
-  const byName = new Map(shipping.map((record) => [record.service, record]));
-  const order = catalogLib.dependencyOrder(
-    catalog,
-    shipping.map((record) => record.service),
-    (name) => [Date.parse(byName.get(name).behind_since) || 0]
-  );
-  groups = releaseNoteGroups(order.map((name) => byName.get(name)));
-  const ship = order.map((name) => {
-    const record = byName.get(name);
-    const service = catalogLib.getService(catalog, name);
-    return {
-      service: name,
-      deployed_sha: record.deployed.sha,
-      deployed_at: record.deployed.completed_at,
-      behind_since: record.behind_since,
-      prs: record.prs,
-      reasons: record.reasons,
-      expects_db_auth: record.expects_db_auth,
-      region: service.aws_region[drift.environment],
-      verification_targets: service.verification_targets,
-      validation_profile: service.validation_profile,
-      dependencies: Array.from(
-        catalogLib.transitiveDependencies(catalog).get(name)
-      ).filter((dependency) => byName.has(dependency)),
-      release_note_groups: groups.get(name)
-    };
+  const { deferred, heldBack, candidates } = triage(catalog, drift, {
+    now,
+    teamWindows,
+    lookaheadMinutes
   });
+  const shipping = dropOversized(
+    catalog,
+    deferDependents(catalog, candidates, heldBack, deferred),
+    heldBack,
+    deferred
+  );
+  const byName = new Map(shipping.map((record) => [record.service, record]));
+  const ordered = catalogLib
+    .dependencyOrder(
+      catalog,
+      shipping.map((record) => record.service),
+      (name) => [Date.parse(byName.get(name).behind_since) || 0]
+    )
+    .map((name) => byName.get(name));
+  const groups = releaseNoteGroups(ordered);
   return {
     mode,
     environment: drift.environment,
@@ -218,17 +251,13 @@ function buildTrainPlan({
     halt,
     notes,
     lookahead_minutes: lookaheadMinutes,
-    ship,
+    ship: ordered.map((record) =>
+      shipItem(catalog, drift.environment, record, byName, groups)
+    ),
     deferred,
-    never_deployed: drift.services
-      .filter((record) => record.status === 'never-deployed')
-      .map((record) => record.service),
-    ahead: drift.services
-      .filter((record) => record.status === 'ahead')
-      .map((record) => record.service),
-    current_count: drift.services.filter(
-      (record) => record.status === 'current'
-    ).length
+    never_deployed: servicesWithStatus(drift, 'never-deployed'),
+    ahead: servicesWithStatus(drift, 'ahead'),
+    current_count: servicesWithStatus(drift, 'current').length
   };
 }
 

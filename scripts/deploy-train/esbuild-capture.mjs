@@ -4,7 +4,7 @@
 export async function build(options) {
   const sink = globalThis.__deployTrainEsbuildCapture;
   if (!Array.isArray(sink)) {
-    throw new Error('esbuild option capture is not active');
+    throw new TypeError('esbuild option capture is not active');
   }
   sink.push(options);
   return { errors: [], warnings: [], outputFiles: [] };

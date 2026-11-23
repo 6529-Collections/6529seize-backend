@@ -100,33 +100,32 @@ describe('catalog blackout windows', () => {
   });
 
   it('matches a plain UTC window minute by minute', () => {
-    fc.assert(
-      fc.property(
-        fc.integer({ min: 0, max: 1439 }),
-        fc.integer({ min: 1, max: 1440 }),
-        fc.integer({ min: 0, max: 7 * 24 * 60 - 1 }),
-        (start, end, offset) => {
-          fc.pre(start < end);
-          const pad = (value: number) => `0${value}`.slice(-2);
-          const clock = (minutes: number) =>
-            minutes === 1440
-              ? '24:00'
-              : `${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}`;
-          const rule = {
-            type: 'window',
-            reason: 'r',
-            start: clock(start),
-            end: clock(end)
-          };
-          const instant = new Date(Date.UTC(2026, 10, 23) + offset * 60000);
-          const minuteOfDay = offset % 1440;
-          return (
-            blackouts.isWindowRuleActive(rule, instant) ===
-            (minuteOfDay >= start && minuteOfDay < end)
-          );
-        }
-      )
+    const pad = (value: number) => `0${value}`.slice(-2);
+    const clock = (minutes: number) =>
+      minutes === 1440
+        ? '24:00'
+        : `${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}`;
+    const property = fc.property(
+      fc.integer({ min: 0, max: 1439 }),
+      fc.integer({ min: 1, max: 1440 }),
+      fc.integer({ min: 0, max: 7 * 24 * 60 - 1 }),
+      (start, end, offset) => {
+        fc.pre(start < end);
+        const rule = {
+          type: 'window',
+          reason: 'r',
+          start: clock(start),
+          end: clock(end)
+        };
+        const instant = new Date(Date.UTC(2026, 10, 23) + offset * 60000);
+        const minuteOfDay = offset % 1440;
+        return (
+          blackouts.isWindowRuleActive(rule, instant) ===
+          (minuteOfDay >= start && minuteOfDay < end)
+        );
+      }
     );
+    expect(() => fc.assert(property)).not.toThrow();
   });
 });
 

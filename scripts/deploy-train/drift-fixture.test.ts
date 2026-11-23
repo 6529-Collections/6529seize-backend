@@ -1,10 +1,18 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  utimesSync,
+  writeFileSync
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parse } from 'yaml';
 
 const { computeDrift, pullRequestFromSubject } = require('./drift');
+const { BundleCache, CACHE_FORMAT } = require('./bundles');
 const esbuild = require('esbuild');
 
 const SERVICES = ['alphaLoop', 'betaLoop', 'gammaLoop', 'deltaLoop'];
@@ -86,11 +94,17 @@ describe('drift computation on a fixture repository', () => {
       'jobs:\n  build-and-deploy:\n    steps:\n      - name: Deploy service\n        run: sls deploy\n'
     );
     write(root, 'src/shared.ts', "export const greeting = 'hello';\n");
+    write(root, 'src/db.ts', "export const connect = () => 'db';\n");
     for (const name of SERVICES) {
+      // gammaLoop reaches the database module through a relative import.
+      const db =
+        name === 'gammaLoop'
+          ? "import { connect } from '../db';\nexport const database = connect();\n"
+          : '';
       write(
         root,
         `src/${name}/index.ts`,
-        `import { greeting } from '@/shared';\nexport const handler = () => greeting + ' ${name}';\n`
+        `import { greeting } from '@/shared';\n${db}export const handler = () => greeting + ' ${name}';\n`
       );
       write(
         root,
@@ -193,6 +207,9 @@ describe('drift computation on a fixture repository', () => {
     expect(beta.prs).toEqual([4]);
     expect(beta.behind_since).toBe('2026-11-04T10:00:00Z');
     expect(byName.get('gammaLoop').status).toBe('current');
+    // Services that bundle src/db.ts must log the [AUTH IAM] login line.
+    expect(byName.get('gammaLoop').expects_db_auth).toBe(true);
+    expect(alpha.expects_db_auth).toBe(false);
     expect(byName.get('deltaLoop').status).toBe('never-deployed');
     expect(result.stats.builds).toBeGreaterThan(0);
   });
@@ -230,5 +247,60 @@ describe('drift computation on a fixture repository', () => {
     ).toBe(2549);
     expect(pullRequestFromSubject('Fix the thing (#12)')).toBe(12);
     expect(pullRequestFromSubject('Direct commit')).toBeNull();
+  });
+});
+
+describe('bundle cache', () => {
+  const tree = (oids: Record<string, string>) => ({
+    oid: (file: string) => oids[file] ?? null,
+    listingHash: () => 'listing',
+    children: () => []
+  });
+
+  function entry(builtAt: string) {
+    return {
+      format: CACHE_FORMAT,
+      service: 'alphaLoop',
+      specKey: 'spec',
+      envKey: 'env',
+      builtAt,
+      bundleSha256: builtAt,
+      sources: ['src/a.ts'],
+      packages: [],
+      inputs: { 'src/a.ts': `oid-${builtAt}` },
+      dirs: { src: 'listing', '': 'listing' }
+    };
+  }
+
+  it('finds only entries whose inputs match, and evicts by count and age', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'deploy-drift-prune-'));
+    try {
+      const cache = new BundleCache(dir, {
+        maxEntriesPerService: 2,
+        maxAgeDays: 1
+      });
+      ['one', 'two', 'three'].forEach((name) =>
+        cache.store('alphaLoop', entry(name))
+      );
+      expect(
+        cache.find('alphaLoop', 'spec', 'env', tree({ 'src/a.ts': 'oid-two' }))
+          .builtAt
+      ).toBe('two');
+      expect(
+        cache.find('alphaLoop', 'other', 'env', tree({ 'src/a.ts': 'oid-two' }))
+      ).toBeNull();
+      expect(
+        cache.find('alphaLoop', 'spec', 'env', tree({ 'src/a.ts': 'x' }))
+      ).toBeNull();
+      const files = readdirSync(path.join(dir, 'alphaLoop'));
+      const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+      utimesSync(path.join(dir, 'alphaLoop', files[0]), old, old);
+      cache.prune();
+      const left = readdirSync(path.join(dir, 'alphaLoop'));
+      expect(left.length).toBeLessThanOrEqual(2);
+      expect(left).not.toContain(files[0]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -125,8 +125,19 @@ function packageKeyFromNodeModulesPath(relativePath) {
   return `node_modules/${parts.join('/node_modules/')}`;
 }
 
+/** Drops a trailing `/*` glob and trailing slashes from a copy source. */
+function stripCopyGlob(source) {
+  let clean = source;
+  const glob = clean.lastIndexOf('/*');
+  if (glob !== -1 && !clean.slice(glob + 2).includes('/')) {
+    clean = clean.slice(0, glob);
+  }
+  while (clean.endsWith('/')) clean = clean.slice(0, -1);
+  return clean;
+}
+
 function classifyCopySource(source, serviceDir) {
-  const clean = source.replace(/\/\*[^/]*$/, '').replace(/\/+$/, '');
+  const clean = stripCopyGlob(source);
   if (clean === 'dist' || clean.startsWith('dist/')) return null;
   if (clean === 'node_modules') return { kind: 'service-node-modules' };
   if (clean.startsWith('node_modules/')) {
@@ -148,7 +159,7 @@ function classifyCopySource(source, serviceDir) {
  * build or postbuild copy into the deployed artifact.
  */
 function parseBuildSpec(packageJson, serviceName) {
-  const scripts = (packageJson && packageJson.scripts) || {};
+  const scripts = packageJson?.scripts || {};
   const serviceDir = serviceDirectory(serviceName);
   const commands = splitCommands(scripts.build || '');
   let bundle = { kind: 'none' };
@@ -178,13 +189,13 @@ function parseBuildSpec(packageJson, serviceName) {
 }
 
 function lockSummary(lock, key) {
-  const entry = lock && lock.packages && lock.packages[key];
+  const entry = lock?.packages?.[key];
   if (!entry) return 'missing';
   return `${entry.version || '?'} ${entry.integrity || entry.resolved || ''}`.trim();
 }
 
 function lockVersion(lock, key) {
-  const entry = lock && lock.packages && lock.packages[key];
+  const entry = lock?.packages?.[key];
   return entry ? entry.version || '?' : null;
 }
 
@@ -213,24 +224,19 @@ function adapterStepNames(service, needsWorkflowEnv) {
  */
 function adapterFingerprint(service, environment, workflow, needsWorkflowEnv) {
   if (!service) return 'missing';
-  const steps =
-    (workflow &&
-      workflow.jobs &&
-      workflow.jobs['build-and-deploy'] &&
-      workflow.jobs['build-and-deploy'].steps) ||
-    [];
+  const steps = workflow?.jobs?.['build-and-deploy']?.steps || [];
   const stepRun = (name) => {
     const step = steps.find((candidate) => candidate.name === name);
     return step ? step.run || step.uses || '' : 'missing';
   };
   const workflowEnv =
     service.deploy_adapter === 'api-zip' || needsWorkflowEnv
-      ? (workflow && workflow.env) || null
+      ? workflow?.env || null
       : null;
   return hashText(
     JSON.stringify({
       adapter: service.deploy_adapter,
-      region: service.aws_region && service.aws_region[environment],
+      region: service.aws_region?.[environment],
       memory: service.memory_size ?? null,
       steps: adapterStepNames(service, needsWorkflowEnv).map((name) => [
         name,
@@ -250,6 +256,64 @@ function isServiceFile(name, adapter) {
   return !/\.(ts|md)$/.test(name);
 }
 
+function serviceFileComponents(dir, adapter, tree) {
+  return tree
+    .children(dir)
+    .filter(
+      (child) => child.type === 'blob' && isServiceFile(child.name, adapter)
+    )
+    .map((child) => {
+      const filePath = `${dir}/${child.name}`;
+      return {
+        name: `file ${filePath}`,
+        value: tree.oid(filePath),
+        paths: [filePath]
+      };
+    });
+}
+
+function copyComponents(copies, tree, locks) {
+  const components = [];
+  for (const copy of copies) {
+    if (copy.kind === 'file') {
+      components.push({
+        name: `copied ${copy.path}`,
+        value: tree.oid(copy.path) || 'missing',
+        paths: [copy.path]
+      });
+    } else if (copy.kind === 'package') {
+      components.push({
+        name: `copied package ${copy.key}`,
+        value: lockSummary(locks.service || locks.root, copy.key),
+        paths: [locks.service ? locks.servicePath : 'package-lock.json']
+      });
+    }
+  }
+  return components;
+}
+
+function toolchainComponents(spec, adapter, locks) {
+  const components = [];
+  if (spec.bundle.kind !== 'none') {
+    const esbuildVersion =
+      lockVersion(locks.service, 'node_modules/esbuild') ||
+      lockVersion(locks.root, 'node_modules/esbuild');
+    components.push({
+      name: 'esbuild version',
+      value: esbuildVersion || 'missing',
+      paths: [locks.servicePath, 'package-lock.json']
+    });
+  }
+  if (SERVERLESS_ADAPTERS.includes(adapter)) {
+    components.push({
+      name: 'serverless version',
+      value: lockVersion(locks.root, 'node_modules/serverless') || 'missing',
+      paths: ['package-lock.json']
+    });
+  }
+  return components;
+}
+
 /**
  * Everything besides the bundle that the deployed artifact or its deploy
  * step depends on, as comparable `{ name, value, paths }` components.
@@ -260,60 +324,39 @@ function collectComponents(serviceName, environment, spec, side) {
   const service = side.catalogService;
   const dir = serviceDirectory(serviceName);
   const adapter = service ? service.deploy_adapter : 'missing';
-  const components = [];
-  const add = (name, value, paths) => components.push({ name, value, paths });
-  for (const child of side.tree.children(dir)) {
-    if (child.type !== 'blob' || !isServiceFile(child.name, adapter)) continue;
-    const filePath = `${dir}/${child.name}`;
-    add(`file ${filePath}`, side.tree.oid(filePath), [filePath]);
-  }
-  const serviceLockPath = `${dir}/package-lock.json`;
-  const serviceLock = side.readJson(serviceLockPath);
-  const rootLock = side.readJson('package-lock.json');
-  for (const copy of spec.copies) {
-    if (copy.kind === 'file') {
-      add(`copied ${copy.path}`, side.tree.oid(copy.path) || 'missing', [
-        copy.path
-      ]);
-    } else if (copy.kind === 'package') {
-      const lock = serviceLock || rootLock;
-      add(`copied package ${copy.key}`, lockSummary(lock, copy.key), [
-        serviceLock ? serviceLockPath : 'package-lock.json'
-      ]);
-    }
-  }
-  const yamlText = side.readText(`${dir}/serverless.yaml`);
-  const needsWorkflowEnv =
-    SERVERLESS_ADAPTERS.includes(adapter) &&
-    serverlessUsesWorkflowEnv(yamlText);
-  if (
-    SERVERLESS_ADAPTERS.includes(adapter) &&
-    /serverless-config\//.test(yamlText || '')
-  ) {
+  const servicePath = `${dir}/package-lock.json`;
+  const locks = {
+    servicePath,
+    service: side.readJson(servicePath),
+    root: side.readJson('package-lock.json')
+  };
+  const components = [
+    ...serviceFileComponents(dir, adapter, side.tree),
+    ...copyComponents(spec.copies, side.tree, locks)
+  ];
+  const yamlText = side.readText(`${dir}/serverless.yaml`) || '';
+  const usesServerless = SERVERLESS_ADAPTERS.includes(adapter);
+  if (usesServerless && yamlText.includes('serverless-config/')) {
     const configPath = `serverless-config/${environment}`;
-    add(configPath, side.tree.oid(configPath) || 'missing', [configPath]);
+    components.push({
+      name: configPath,
+      value: side.tree.oid(configPath) || 'missing',
+      paths: [configPath]
+    });
   }
-  add(
-    'deploy adapter',
-    adapterFingerprint(service, environment, side.workflow, needsWorkflowEnv),
-    ['src/config/deploy-services.json', '.github/workflows/deploy.yml']
+  components.push(
+    {
+      name: 'deploy adapter',
+      value: adapterFingerprint(
+        service,
+        environment,
+        side.workflow,
+        usesServerless && serverlessUsesWorkflowEnv(yamlText)
+      ),
+      paths: ['src/config/deploy-services.json', '.github/workflows/deploy.yml']
+    },
+    ...toolchainComponents(spec, adapter, locks)
   );
-  if (spec.bundle.kind !== 'none') {
-    const esbuildVersion =
-      lockVersion(serviceLock, 'node_modules/esbuild') ||
-      lockVersion(rootLock, 'node_modules/esbuild');
-    add('esbuild version', esbuildVersion || 'missing', [
-      serviceLockPath,
-      'package-lock.json'
-    ]);
-  }
-  if (SERVERLESS_ADAPTERS.includes(adapter)) {
-    add(
-      'serverless version',
-      lockVersion(rootLock, 'node_modules/serverless') || 'missing',
-      ['package-lock.json']
-    );
-  }
   return components;
 }
 
@@ -332,12 +375,12 @@ function compareComponents(deployed, target) {
     let reason;
     if (!old) reason = `${name} added`;
     else if (!next) reason = `${name} removed`;
-    else if (/version$/.test(name))
+    else if (name.endsWith('version'))
       reason = `${name} ${old.value} -> ${next.value}`;
     else reason = `${name} changed`;
     reasons.push(reason);
     for (const item of [old, next]) {
-      for (const changedPath of (item && item.paths) || []) {
+      for (const changedPath of item?.paths || []) {
         paths.add(changedPath);
       }
     }
