@@ -11,6 +11,25 @@ interface HeadRow {
   readonly event_id: string;
 }
 
+/**
+ * The record's writes could not be undone (rolling back to its savepoint
+ * failed): an infrastructure error, never a refusal. `cause` is what made
+ * the record fail; `rollbackError` is why the rollback failed.
+ */
+export class SavepointRollbackError extends Error {
+  constructor(
+    readonly cause: unknown,
+    readonly rollbackError: unknown
+  ) {
+    super(
+      `Undoing a record's writes failed (${
+        rollbackError instanceof Error ? rollbackError.message : rollbackError
+      }) after: ${cause instanceof Error ? cause.message : cause}`
+    );
+    Object.setPrototypeOf(this, SavepointRollbackError.prototype);
+  }
+}
+
 const KEY_WHERE =
   'owner = :owner and family = :family and rtype = :type and rkey = :key';
 
@@ -18,16 +37,46 @@ export class SignedRecordHeadsDb
   extends LazyDbAccessCompatibleService
   implements RecordHeadStore
 {
+  private savepoints = 0;
+
+  /**
+   * In the caller's transaction, fn runs after a savepoint and, when it
+   * throws, its writes are rolled back to it: a record refused part way
+   * (a rule) leaves nothing, and the caller may still commit the rest. If
+   * that rollback fails, a SavepointRollbackError with fn's error as its
+   * cause is thrown instead.
+   */
   async inTransaction<T>(
     ctx: RequestContext,
     fn: (ctx: RequestContext) => Promise<T>
   ): Promise<T> {
-    if (ctx.connection) {
-      return fn(ctx);
+    if (!ctx.connection) {
+      return this.executeNativeQueriesInTransaction((connection) =>
+        fn({ ...ctx, connection })
+      );
     }
-    return this.executeNativeQueriesInTransaction((connection) =>
-      fn({ ...ctx, connection })
-    );
+    const options = { wrappedConnection: ctx.connection };
+    const savepoint = `signed_record_${++this.savepoints}`;
+    await this.db.execute(`savepoint ${savepoint}`, undefined, options);
+    let result: T;
+    try {
+      result = await fn(ctx);
+    } catch (error) {
+      try {
+        await this.db.execute(
+          `rollback to savepoint ${savepoint}`,
+          undefined,
+          options
+        );
+      } catch (rollbackError) {
+        // Some of the record's writes may still be in the caller's
+        // transaction: never report this as a clean refusal.
+        throw new SavepointRollbackError(error, rollbackError);
+      }
+      throw error;
+    }
+    await this.db.execute(`release savepoint ${savepoint}`, undefined, options);
+    return result;
   }
 
   /**

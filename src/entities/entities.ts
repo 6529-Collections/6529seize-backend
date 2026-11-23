@@ -182,6 +182,7 @@ export {
 } from './IReleaseNotePublication';
 export { ReleaseNoteStreamStateEntity } from './IReleaseNoteStreamState';
 export { Rememe, RememeUpload } from './IRememe';
+export { RepRatingRemovalEntity } from './IRepRatingRemoval';
 export { ProfileTotalRepScoreAggregation } from './IRepScoreAggregations';
 export { RoyaltiesUpload } from './IRoyalties';
 export { MemesSeason } from './ISeason';
@@ -207,6 +208,7 @@ export {
 } from './ISubscription';
 export { SubscriptionCoverageAlertStateEntity } from './ISubscriptionCoverageAlertState';
 export { SubscriptionCoverageRefreshRequestEntity } from './ISubscriptionCoverageRefreshRequest';
+export { SubscriptionDeferredWriteEntity } from './ISubscriptionDeferredWrite';
 export {
   ConsolidatedTDH,
   ConsolidatedTDHEditions,

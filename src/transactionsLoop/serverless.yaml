@@ -65,6 +65,7 @@ functions:
 resources:
   Resources:
     MemesTransactionsLoopOOMFilter:
+      DependsOn: MemesTransactionsLoopLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/memesTransactionsLoop
@@ -131,6 +132,7 @@ resources:
         TreatMissingData: notBreaching
 
     GradientsTransactionsLoopOOMFilter:
+      DependsOn: GradientsTransactionsLoopLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/gradientsTransactionsLoop
@@ -197,6 +199,7 @@ resources:
         TreatMissingData: notBreaching
 
     MemeLabTransactionsLoopOOMFilter:
+      DependsOn: MemeLabTransactionsLoopLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/memeLabTransactionsLoop

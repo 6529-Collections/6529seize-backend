@@ -9,6 +9,7 @@ import {
 import {
   CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE,
   CONSOLIDATED_OWNERS_BALANCES_TABLE,
+  CONSOLIDATION_KEY_LENGTH,
   OWNERS_BALANCES_MEMES_TABLE,
   OWNERS_BALANCES_TABLE
 } from '@/constants';
@@ -96,7 +97,7 @@ export class OwnerBalancesMemes extends OwnerBalancesMemesBase {
 
 @Entity(CONSOLIDATED_OWNERS_BALANCES_TABLE)
 export class ConsolidatedOwnerBalances extends OwnerBalancesBase {
-  @PrimaryColumn({ type: 'varchar', length: 200 })
+  @PrimaryColumn({ type: 'varchar', length: CONSOLIDATION_KEY_LENGTH })
   consolidation_key!: string;
 }
 
@@ -104,6 +105,6 @@ export class ConsolidatedOwnerBalances extends OwnerBalancesBase {
 @Index('obmc_ck_season_idx', ['consolidation_key', 'season'])
 @Index('obmc_season_balance_idx', ['season', 'balance'])
 export class ConsolidatedOwnerBalancesMemes extends OwnerBalancesMemesBase {
-  @PrimaryColumn({ type: 'varchar', length: 200 })
+  @PrimaryColumn({ type: 'varchar', length: CONSOLIDATION_KEY_LENGTH })
   consolidation_key!: string;
 }

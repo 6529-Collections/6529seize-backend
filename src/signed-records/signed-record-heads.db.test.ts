@@ -8,6 +8,7 @@ import {
   RecordHeadKey,
   RecordIndexer,
   RecordRegistry,
+  RecordRuleError,
   RecordTypeHandler,
   SenderKeyring
 } from './record-index';
@@ -109,6 +110,67 @@ describeWithSeed('SignedRecordHeadsDb', [], () => {
       ['Mute', 2],
       ['mûte', 3]
     ]);
+  });
+
+  it("leaves nothing of a record a rule refuses inside the caller's transaction, which then commits", async () => {
+    const handler: RecordTypeHandler = {
+      family: 'ps',
+      type: 'follow',
+      sealed: false,
+      validate: () => undefined,
+      apply: async (change: RecordChange, _mode, applyCtx) => {
+        // The handler's own table write, then a rule on the second item.
+        await db.lock(key(`written-${change.key}`), applyCtx);
+        await db.put(key(`written-${change.key}`), change.order, applyCtx);
+        if (change.key === 'q') {
+          throw new RecordRuleError('A rule refuses q', 'TEST_RULE');
+        }
+      }
+    };
+    const registry = new RecordRegistry();
+    registry.register(handler);
+    const indexer = new RecordIndexer({
+      registry,
+      heads: db,
+      keyring: new SenderKeyring([])
+    });
+    const change = (rkey: string): RecordChange => ({
+      owner: OWNER,
+      family: 'ps',
+      type: 'follow',
+      key: rkey,
+      body: {},
+      order: order(30),
+      eventId: null,
+      sealedClass: null,
+      writer: 'author'
+    });
+    const outcome = await db.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const callerCtx: RequestContext = { connection };
+        await db.lock(key('caller'), callerCtx);
+        await db.put(key('caller'), order(1), callerCtx);
+        return indexer.ingestImported(
+          [change('p'), change('q')],
+          false,
+          'live',
+          callerCtx
+        );
+      }
+    );
+    expect(outcome).toEqual({
+      kind: 'refused',
+      reason: 'rule',
+      detail: 'A rule refuses q',
+      code: 'TEST_RULE'
+    });
+    // The caller committed: its write stays, nothing of the record does.
+    await db.inTransaction(ctx, async (tx) => {
+      expect(await db.lock(key('caller'), tx)).toEqual(order(1));
+      expect(await db.lock(key('p'), tx)).toBeNull();
+      expect(await db.lock(key('written-p'), tx)).toBeNull();
+      expect(await db.lock(key('q'), tx)).toBeNull();
+    });
   });
 
   it('needs a transaction to lock a head', async () => {

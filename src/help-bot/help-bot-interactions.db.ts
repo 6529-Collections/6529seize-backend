@@ -235,8 +235,9 @@ export class HelpBotInteractionsDb extends LazyDbAccessCompatibleService {
 
   /**
    * Counts interactions accepted for an answer since `sinceMillis`, either in
-   * one wave or across all waves. Declined interactions (spam, credits, daily
-   * limit) are excluded so they do not consume the daily allowance.
+   * one wave or across all waves. Declined interactions (spam, daily limit,
+   * and older insufficient-credit rows) are excluded so they do not consume
+   * the daily allowance.
    */
   public async countRecentAnswerable(
     {
@@ -344,29 +345,6 @@ export class HelpBotInteractionsDb extends LazyDbAccessCompatibleService {
         id,
         status: HelpBotInteractionStatus.SPAM_SUPPRESSED,
         replyDropId: null,
-        failureReason
-      },
-      ctx
-    );
-  }
-
-  public async markInsufficientCredits(
-    {
-      id,
-      replyDropId,
-      failureReason
-    }: {
-      readonly id: string;
-      readonly replyDropId: string | null;
-      readonly failureReason: string;
-    },
-    ctx: RequestContext
-  ): Promise<void> {
-    await this.markCompleted(
-      {
-        id,
-        status: HelpBotInteractionStatus.INSUFFICIENT_CREDITS,
-        replyDropId,
         failureReason
       },
       ctx

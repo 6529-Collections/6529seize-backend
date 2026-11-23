@@ -50,6 +50,11 @@ import {
 import { markSubscriptionCoverageDirty } from '@/subscription-coverage/subscription-coverage-dirty';
 import { synchronizeAutomaticSubscriptionQuantities } from '@/subscriptionsDaily/subscription-quantity-sync.db';
 import {
+  deferralMessage,
+  deferralReason,
+  executorSink
+} from '@/subscription-key-width/subscription-deferred-writes';
+import {
   hasMinimumBalanceForAutomaticMode,
   InsufficientSubscriptionBalanceException
 } from '@/api/subscriptions/insufficient-subscription-balance.exception';
@@ -141,11 +146,31 @@ export async function fetchConsolidationAddresses(
   ).map((address) => address.address);
 }
 
+/**
+ * Refuses a change for a key whose subscription writes must wait: the key
+ * does not fit every subscription table (an identity of more wallets than
+ * the key columns hold), or the key has earlier writes still queued. The
+ * person is told when changes resume; nothing is queued for them.
+ */
+async function assertSubscriptionKeyWritable(
+  consolidationKey: string
+): Promise<void> {
+  const reason = await deferralReason(consolidationKey, executorSink());
+  if (reason) {
+    throw new BadRequestException(await deferralMessage(reason));
+  }
+}
+
 export async function updateSubscriptionMode(
   consolidationKey: string,
   automatic: boolean,
   connection?: any
 ) {
+  // A caller with its own transaction (the first top-up) has already
+  // checked the key as part of its own write.
+  if (!connection) {
+    await assertSubscriptionKeyWritable(consolidationKey);
+  }
   if (automatic) {
     const balance = await getForConsolidationKey(
       consolidationKey,
@@ -283,6 +308,9 @@ export async function updateSubscribeAllEditions(
   subscribe_all_editions: boolean,
   connection?: any
 ) {
+  if (!connection) {
+    await assertSubscriptionKeyWritable(consolidationKey);
+  }
   if (connection) {
     await updateSubscribeAllEditionsInternal(
       consolidationKey,
@@ -456,6 +484,7 @@ export async function updateSubscription(
   tokenId: number,
   subscribed: boolean
 ) {
+  await assertSubscriptionKeyWritable(consolidationKey);
   if (subscribed) {
     const balance = await getForConsolidationKey(
       consolidationKey,
@@ -532,6 +561,7 @@ export async function updateSubscriptionCount(
   tokenId: number,
   count: number
 ) {
+  await assertSubscriptionKeyWritable(consolidationKey);
   await assertSubscriptionOpen(tokenId);
 
   const subscription = await fetchSubscriptionForConsolidationKey(

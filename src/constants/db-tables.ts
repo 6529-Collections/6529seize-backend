@@ -78,6 +78,7 @@ export const REMEMES_TABLE = 'rememes';
 export const REMEMES_UPLOADS = 'uploads_rememes';
 export const RATINGS_TABLE = 'ratings';
 export const RATING_CREDIT_LOCKS_TABLE = 'rating_credit_locks';
+export const REP_RATING_REMOVALS_TABLE = 'rep_rating_removals';
 export const DROPS_VOTES_CREDIT_SPENDINGS_TABLE =
   'drops_votes_credit_spendings';
 export const DROP_VOTER_STATE_TABLE = 'drop_voter_states';
@@ -130,6 +131,8 @@ export const SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE =
   'subscriptions_nfts_final_upload';
 export const SUBSCRIPTIONS_LOGS_TABLE = 'subscriptions_logs';
 export const SUBSCRIPTIONS_REDEEMED_TABLE = 'subscriptions_redeemed';
+export const SUBSCRIPTION_DEFERRED_WRITES_TABLE =
+  'subscription_deferred_writes';
 export const SUBSCRIPTION_COVERAGE_ALERT_STATES_TABLE =
   'subscription_coverage_alert_states';
 export const SUBSCRIPTION_COVERAGE_REFRESH_REQUESTS_TABLE =

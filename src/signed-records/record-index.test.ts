@@ -1,13 +1,16 @@
+import { RequestContext } from '@/request.context';
 import { signRecordEvent } from './record-event';
 import {
   RecordChange,
+  RecordHeadKey,
   RecordIndexer,
   RecordRegistry,
+  RecordRuleError,
   RecordTypeHandler,
   SenderKeyring
 } from './record-index';
 import { RecordKind } from './record-kinds';
-import { importOrderKey } from './record-order';
+import { importOrderKey, RecordOrderKey } from './record-order';
 import {
   bindingSource,
   grantSource,
@@ -21,6 +24,7 @@ import { VerifiedRecord, verifyRecordEvent } from './record-verify';
 import {
   encodeKeysDocument,
   SealedClass,
+  SealedItem,
   sealItems,
   wrapSenderKey
 } from './sealed-crypto';
@@ -38,6 +42,8 @@ const ctx = {};
 
 class RecordingHandler implements RecordTypeHandler {
   readonly applied: { change: RecordChange; mode: string }[] = [];
+  // What apply throws for a key, if anything.
+  readonly failures = new Map<string, Error>();
   constructor(
     readonly family: 'ps' | 'pv',
     readonly type: string,
@@ -49,7 +55,43 @@ class RecordingHandler implements RecordTypeHandler {
     }
   }
   async apply(change: RecordChange, mode: string): Promise<void> {
+    const failure = this.failures.get(change.key);
+    if (failure) {
+      throw failure;
+    }
     this.applied.push({ change, mode });
+  }
+}
+
+/**
+ * Logs locks and puts, and puts the heads back when the transaction's work
+ * throws, as the database rolls back.
+ */
+class TransactionalHeadStore extends MemoryHeadStore {
+  readonly log: string[] = [];
+
+  async lock(key: RecordHeadKey): Promise<RecordOrderKey | null> {
+    this.log.push(`lock ${key.key}`);
+    return super.lock(key);
+  }
+
+  async put(key: RecordHeadKey, order: RecordOrderKey): Promise<void> {
+    this.log.push(`put ${key.key}`);
+    return super.put(key, order);
+  }
+
+  async inTransaction<T>(
+    ctx: RequestContext,
+    fn: (ctx: RequestContext) => Promise<T>
+  ): Promise<T> {
+    const before = new Map(this.heads);
+    try {
+      return await super.inTransaction(ctx, fn);
+    } catch (error) {
+      this.heads.clear();
+      before.forEach((order, id) => this.heads.set(id, order));
+      throw error;
+    }
   }
 }
 
@@ -92,16 +134,72 @@ function record(
   );
 }
 
-function setup() {
+function setup<H extends MemoryHeadStore = MemoryHeadStore>(
+  heads: H = new MemoryHeadStore() as H
+) {
   const registry = new RecordRegistry();
   const follow = new RecordingHandler('ps', 'follow', false);
   const mute = new RecordingHandler('pv', 'mute', true);
   registry.register(follow);
   registry.register(mute);
-  const heads = new MemoryHeadStore();
   const keyring = new SenderKeyring([provider]);
   const indexer = new RecordIndexer({ registry, heads, keyring });
   return { registry, follow, mute, heads, keyring, indexer };
+}
+
+/**
+ * A provider-class settings record holding `items`, after indexing the
+ * device's keys record (anchor 1000) so the keyring can open it. The
+ * settings record is at anchor 1001.
+ */
+async function sealedSettings(
+  keyring: SenderKeyring,
+  items: SealedItem[]
+): Promise<VerifiedRecord> {
+  const senderKey = hexBytes(inputs.senderKey);
+  const wrap = wrapSenderKey({
+    wave: PV_WAVE,
+    cls: SealedClass.PROVIDER,
+    gen: 3,
+    from: inputs.deviceKey,
+    to: `svc:${provider.id}`,
+    recipientPublicKey: provider.publicKey,
+    senderKey
+  });
+  const keys = encodeKeysDocument({
+    v: 1,
+    dev: inputs.deviceKey,
+    box: null,
+    wraps: [wrap]
+  });
+  keyring.addKeysRecord(
+    await verified(
+      record(
+        RecordKind.SEALED,
+        PV_WAVE,
+        ['keys'],
+        { c: keys.toString('base64url'), v: 1 },
+        1000
+      )
+    )
+  );
+  const c = sealItems({
+    wave: PV_WAVE,
+    cls: SealedClass.PROVIDER,
+    gen: 3,
+    deviceKey: inputs.deviceKey,
+    senderKey,
+    items
+  });
+  return verified(
+    record(
+      RecordKind.SEALED,
+      PV_WAVE,
+      ['settings'],
+      { c: c.toString('base64url'), v: 1 },
+      1001
+    )
+  );
 }
 
 describe('RecordIndexer', () => {
@@ -238,53 +336,12 @@ describe('RecordIndexer', () => {
 
   it('keeps the last item per key in a record and counts unknown types', async () => {
     const { indexer, keyring, mute } = setup();
-    const senderKey = hexBytes(inputs.senderKey);
-    const wrap = wrapSenderKey({
-      wave: PV_WAVE,
-      cls: SealedClass.PROVIDER,
-      gen: 3,
-      from: inputs.deviceKey,
-      to: `svc:${provider.id}`,
-      recipientPublicKey: provider.publicKey,
-      senderKey
-    });
-    const keys = encodeKeysDocument({
-      v: 1,
-      dev: inputs.deviceKey,
-      box: null,
-      wraps: [wrap]
-    });
-    keyring.addKeysRecord(
-      await verified(
-        record(
-          RecordKind.SEALED,
-          PV_WAVE,
-          ['keys'],
-          { c: keys.toString('base64url'), v: 1 },
-          1000
-        )
-      )
-    );
-    const c = sealItems({
-      wave: PV_WAVE,
-      cls: SealedClass.PROVIDER,
-      gen: 3,
-      deviceKey: inputs.deviceKey,
-      senderKey,
-      items: [
-        { t: 'mute', k: 'p9', b: {} },
-        { t: 'newer-type', k: 'x', b: {} },
-        { t: 'mute', k: 'p9', b: null }
-      ]
-    });
-    const event = record(
-      RecordKind.SEALED,
-      PV_WAVE,
-      ['settings'],
-      { c: c.toString('base64url'), v: 1 },
-      1001
-    );
-    expect(await indexer.ingest(await verified(event), 'live', ctx)).toEqual({
+    const settings = await sealedSettings(keyring, [
+      { t: 'mute', k: 'p9', b: {} },
+      { t: 'newer-type', k: 'x', b: {} },
+      { t: 'mute', k: 'p9', b: null }
+    ]);
+    expect(await indexer.ingest(settings, 'live', ctx)).toEqual({
       kind: 'applied',
       changes: 1,
       stale: 0,
@@ -422,6 +479,92 @@ describe('RecordIndexer', () => {
       kind: 'skipped',
       reason: 'payload'
     });
+  });
+
+  it("locks every head first, then applies in the record's own item order", async () => {
+    const { indexer, keyring, mute, heads } = setup(
+      new TransactionalHeadStore()
+    );
+    // A head newer than the record (anchor 1001): that item is stale.
+    await heads.put(
+      { owner: PRINCIPAL, family: 'pv', type: 'mute', key: 'p5' },
+      importOrderKey(2000, 0)
+    );
+    heads.log.length = 0;
+    const settings = await sealedSettings(keyring, [
+      { t: 'mute', k: 'p9', b: {} },
+      { t: 'mute', k: 'p5', b: {} },
+      { t: 'mute', k: 'p1', b: null }
+    ]);
+    expect(await indexer.ingest(settings, 'live', ctx)).toEqual({
+      kind: 'applied',
+      changes: 2,
+      stale: 1,
+      unknown: 0
+    });
+    // Locks in one sorted order, then each item as the client wrote them.
+    expect(heads.log).toEqual([
+      'lock p1',
+      'lock p5',
+      'lock p9',
+      'put p9',
+      'put p1'
+    ]);
+    expect(mute.applied.map((it) => it.change.key)).toEqual(['p9', 'p1']);
+  });
+
+  it('applies a repeated key at its last position in the record', async () => {
+    const { indexer, keyring, mute } = setup();
+    const settings = await sealedSettings(keyring, [
+      { t: 'mute', k: 'p9', b: {} },
+      { t: 'mute', k: 'p1', b: {} },
+      { t: 'mute', k: 'p9', b: null }
+    ]);
+    expect(await indexer.ingest(settings, 'live', ctx)).toMatchObject({
+      changes: 2
+    });
+    expect(mute.applied.map((it) => [it.change.key, it.change.body])).toEqual([
+      ['p1', {}],
+      ['p9', null]
+    ]);
+  });
+
+  it("refuses a record today's rules refuse, with the rule's code, and keeps none of it", async () => {
+    const { indexer, keyring, mute, heads } = setup(
+      new TransactionalHeadStore()
+    );
+    mute.failures.set(
+      'p9',
+      new RecordRuleError('the profile cannot be muted', 'NOT_MUTABLE')
+    );
+    const settings = await sealedSettings(keyring, [
+      { t: 'mute', k: 'p1', b: {} },
+      { t: 'mute', k: 'p9', b: {} }
+    ]);
+    await expect(indexer.ingest(settings, 'live', ctx)).resolves.toEqual({
+      kind: 'refused',
+      reason: 'rule',
+      detail: 'the profile cannot be muted',
+      code: 'NOT_MUTABLE'
+    });
+    // p1 went in before p9 was refused; the transaction took it back.
+    expect(heads.log).toContain('put p1');
+    expect(heads.heads.size).toBe(0);
+  });
+
+  it('throws any other error from apply, after rolling the record back', async () => {
+    const { indexer, keyring, mute, heads } = setup(
+      new TransactionalHeadStore()
+    );
+    mute.failures.set('p9', new Error('connection lost'));
+    const settings = await sealedSettings(keyring, [
+      { t: 'mute', k: 'p1', b: {} },
+      { t: 'mute', k: 'p9', b: {} }
+    ]);
+    await expect(indexer.ingest(settings, 'live', ctx)).rejects.toThrow(
+      'connection lost'
+    );
+    expect(heads.heads.size).toBe(0);
   });
 
   it('applies each record in one transaction', async () => {
