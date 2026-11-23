@@ -1,5 +1,6 @@
 import type { ResultSetHeader, TypeCast } from 'mysql2';
 import type { MysqlConnectionOptions } from 'typeorm/driver/mysql/MysqlConnectionOptions';
+import { dbAuthPlugins } from '../db-iam-auth';
 
 /*
  * The backend moved from `mysql` (mysqljs 2.18) to `mysql2`. Callers were
@@ -35,6 +36,7 @@ function mysqljsDate(
   if (timezone !== 'local') {
     parsable += ` ${timezone}`;
   }
+  // The same expression mysqljs evaluated, so every zone parses as it did.
   const date = new Date(parsable);
   // mysqljs returned the server's text when it could not parse it, e.g. for
   // zero dates or a zone Date cannot read such as 'Etc/UTC'.
@@ -110,6 +112,9 @@ const MYSQL2_TIMEZONE = /^(?:local|Z|[+-]\d\d:\d\d)$/;
  * 'local'. mysql2 accepts only 'local', 'Z' or an offset and treats anything
  * else as 'Z', so such a zone reaches mysql2 as 'Z'. The conversion assumes
  * TypeORM's default supportBigNumbers and bigNumberStrings (both on).
+ *
+ * Password logins answer only mysql_native_password, as with mysqljs, unless
+ * `extra.authPlugins` says otherwise (the app's data source adds IAM tokens).
  */
 export function mysql2TypeOrmOptions(
   options: {
@@ -123,6 +128,7 @@ export function mysql2TypeOrmOptions(
     connectorPackage: 'mysql2',
     timezone: MYSQL2_TIMEZONE.test(timezone) ? timezone : 'Z',
     extra: {
+      authPlugins: dbAuthPlugins(null),
       ...options.extra,
       typeCast: mysqljsTypeCast({
         supportBigNumbers: true,

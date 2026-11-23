@@ -62,14 +62,19 @@ it.each(['native', 'app'] as const)(
     await db.acknowledge(rows);
     const [sql, params] = execute.mock.calls[0];
     let rendered = '';
+    const config: {
+      queryFormat?: (sql: string, values: Record<string, unknown>) => string;
+    } = {};
     const connection = {
-      config: {},
-      // Both executors hand the driver the statement with values bound.
+      config,
       query: (
-        input: string | { sql: string },
+        input: string | { sql: string; values: Record<string, unknown> },
         callback?: (error: null, rows: unknown[]) => void
       ) => {
-        rendered = typeof input === 'string' ? input : input.sql;
+        rendered =
+          typeof input === 'string'
+            ? input
+            : config.queryFormat!(input.sql, input.values);
         if (callback) callback(null, []);
         else return Promise.resolve([]);
       }

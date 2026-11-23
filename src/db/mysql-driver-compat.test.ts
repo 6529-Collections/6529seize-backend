@@ -151,6 +151,19 @@ describe('TypeORM values (mysql2TypeOrmOptions)', () => {
     expect(second).toMatchObject({ big: '42', amount: '-0.10', doc: '"123"' });
   });
 
+  it('refuses clear-text and server-key password logins by default', () => {
+    const plugins = mysql2TypeOrmOptions().extra.authPlugins;
+    expect(Object.keys(plugins).sort((a, b) => a.localeCompare(b))).toEqual([
+      'caching_sha2_password',
+      'mysql_clear_password',
+      'sha256_password'
+    ]);
+    const custom = { mysql_clear_password: jest.fn() };
+    expect(
+      mysql2TypeOrmOptions({ extra: { authPlugins: custom } }).extra.authPlugins
+    ).toBe(custom);
+  });
+
   it('keeps valid zones and dateStrings', () => {
     expect(mysql2TypeOrmOptions().timezone).toBe('local');
     expect(mysql2TypeOrmOptions({ timezone: '+02:00' }).timezone).toBe(
@@ -265,5 +278,48 @@ describe('withMysqljsErrorCode', () => {
     expect(withMysqljsErrorCode(error, { state: 'error' })).toBe(error);
     expect(error.code).toBe('ER_DUP_ENTRY');
     expect(withMysqljsErrorCode(null, undefined)).toBeNull();
+  });
+});
+
+describe('withMysqljsErrorCode on mysql2 connections', () => {
+  const connect = async () => {
+    const connection = mysql.createConnection({
+      host: '127.0.0.1',
+      port,
+      user: 'u',
+      password: 'p'
+    });
+    connection.on('error', () => undefined);
+    await new Promise<void>((resolve, reject) =>
+      connection.connect((error) => (error ? reject(error) : resolve()))
+    );
+    return connection;
+  };
+  const statementError = (connection: mysql.Connection) =>
+    new Promise<unknown>((resolve) =>
+      connection.query('SELECT 1', (error) => resolve(error))
+    );
+
+  it('codes a statement on a connection the server dropped', async () => {
+    const connection = await connect();
+    const lost = new Promise((resolve) => connection.once('error', resolve));
+    server.connections.at(-1)!.socket.destroy();
+    await lost;
+    expect(connection.state).toBe('error');
+    expect(
+      withMysqljsErrorCode(await statementError(connection), connection)
+    ).toMatchObject({
+      code: 'PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR',
+      fatal: false
+    });
+  });
+
+  it('codes a statement on a connection the app destroyed', async () => {
+    const connection = await connect();
+    connection.destroy();
+    expect(connection.state).toBe('disconnected');
+    expect(
+      withMysqljsErrorCode(await statementError(connection), connection)
+    ).toMatchObject({ code: 'PROTOCOL_ENQUEUE_AFTER_DESTROY', fatal: false });
   });
 });

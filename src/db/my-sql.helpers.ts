@@ -364,14 +364,10 @@ export async function execSQLWithParams<T>(
   options?: DbQueryOptions,
   timing?: SqlOperationTiming
 ): Promise<T[]> {
-  // Format before the driver sees the statement: a throw past this point
-  // would skip onResult and keep a borrowed connection. The driver's
-  // queryFormat hook is not used because mysql2 shares one connection config
-  // across a pool.
-  let formatted: string;
+  // Check parameter values before the driver formats the statement: a throw
+  // from queryFormat would skip onResult and keep a borrowed connection.
   try {
     assertNamedParametersBindable(sql, params);
-    formatted = params ? prepareStatement(sql, params) : sql;
   } catch (error) {
     settleProxySession({
       connection,
@@ -389,10 +385,27 @@ export async function execSQLWithParams<T>(
     options,
     () =>
       new Promise((resolve, reject) => {
-        const statementBytes = oversizedStatementBytes(formatted);
+        // mysql2 formats synchronously inside query(), so this measures this
+        // statement's final SQL before any other statement can reuse the hook.
+        let measured = false;
+        let statementBytes: number | null = null;
         // The driver invokes onResult in the socket's async context, not this
         // request's; capture the request's pin scope now.
         const pinScope = captureProxyPinScope();
+        // mysql2 shares this config across the pool, so another connection's
+        // statement can call the hook too; it does so only after setting its
+        // own. mysql2 passes [] when a statement has no values: format nothing.
+        connection.config.queryFormat = function (query, values) {
+          const formatted =
+            values && !Array.isArray(values)
+              ? prepareStatement(query, values)
+              : query;
+          if (!measured) {
+            measured = true;
+            statementBytes = oversizedStatementBytes(formatted);
+          }
+          return formatted;
+        };
         const timer = Time.now();
         timing?.queryStarted();
         const onResult = (driverError: unknown, result: unknown) => {
@@ -412,7 +425,11 @@ export async function execSQLWithParams<T>(
           settleProxySession({
             connection,
             sql,
-            statementBytes,
+            // mysql2 always formats through queryFormat; the template fallback
+            // only covers drivers that skip it and cannot see bound values.
+            statementBytes: measured
+              ? statementBytes
+              : oversizedStatementBytes(sql),
             privateFamily,
             closeConnection,
             pool: timing?.pool,
@@ -444,7 +461,8 @@ export async function execSQLWithParams<T>(
         // operational contexts at registration, not the socket's callback context.
         connection.query(
           {
-            sql: formatted,
+            sql,
+            values: params,
             // Field parsing runs on pooled sockets before onResult. Capture
             // this query's conversion mode instead of reading the socket scope.
             typeCast: isLegacyCompetitionGetFacadeScope()

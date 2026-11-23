@@ -1,4 +1,5 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { authPlugins, type Connection } from 'mysql2';
+import { randomBytes } from 'node:crypto';
 import * as net from 'node:net';
 
 /*
@@ -52,11 +53,11 @@ export const FIELD_TYPE = {
 const CHARSET_UTF8MB4 = 45;
 const CHARSET_BINARY = 63;
 const BINARY_FLAG = 0x80;
-const TEXT_TYPES: readonly number[] = [
+const TEXT_TYPES: ReadonlySet<number> = new Set([
   FIELD_TYPE.VAR_STRING,
   FIELD_TYPE.STRING,
   FIELD_TYPE.BLOB
-];
+]);
 
 export interface FakeColumn {
   readonly name: string;
@@ -128,17 +129,13 @@ function nulString(value: string): Buffer {
   return Buffer.from(`${value}\0`, 'utf8');
 }
 
-function sha1(...parts: Buffer[]): Buffer {
-  const hash = createHash('sha1');
-  for (const part of parts) hash.update(part);
-  return hash.digest();
-}
-
-/** mysql_native_password: SHA1(pw) XOR SHA1(seed + SHA1(SHA1(pw))). */
-export function nativePasswordToken(password: string, seed: Buffer): Buffer {
-  const stage1 = sha1(Buffer.from(password, 'utf8'));
-  const stage2 = sha1(seed, sha1(stage1));
-  return Buffer.from(stage1.map((byte, index) => byte ^ stage2[index]));
+/** The answer mysql2's own mysql_native_password plugin gives for a seed. */
+function nativePasswordAnswer(password: string, seed: Buffer): Buffer {
+  const plugin = authPlugins.mysql_native_password({ password })({
+    connection: { config: {} } as Connection,
+    command: ''
+  });
+  return plugin(seed) as Buffer;
 }
 
 class PacketReader {
@@ -308,7 +305,7 @@ class FakeConnection {
     }
     if (
       options.password !== undefined &&
-      !authResponse.equals(nativePasswordToken(options.password, this.seed))
+      !authResponse.equals(nativePasswordAnswer(options.password, this.seed))
     ) {
       this.reply({
         error: {
@@ -396,7 +393,7 @@ class FakeConnection {
     const eof = Buffer.from([0xfe, 0x00, 0x00, 0x02, 0x00]);
     this.send(lengthEncodedInt(reply.columns.length));
     for (const column of reply.columns) {
-      const binary = column.binary ?? !TEXT_TYPES.includes(column.type);
+      const binary = column.binary ?? !TEXT_TYPES.has(column.type);
       const charset = Buffer.alloc(2);
       charset.writeUInt16LE(binary ? CHARSET_BINARY : CHARSET_UTF8MB4);
       const flags = Buffer.alloc(2);
