@@ -507,27 +507,42 @@ describe('the freeze checks', () => {
     replicaLagError: string | null = null
   ) => ({ replicaLagMs, replicaLagAgeMs, replicaLagError });
 
-  it('refuses a replica as far behind its writer as the gap, or further', () => {
-    expect(() => checkReplicaLag(150_000, lag(149_999))).not.toThrow();
-    expect(() => checkReplicaLag(150_000, lag(150_000))).toThrow(
-      /150000 ms behind its writer \(a 150000 ms lag in a row 0 ms old\), not less than the 150000 ms/
+  it('refuses a replica as far behind its writer as the gap, less 1.5 s, or further', () => {
+    expect(() => checkReplicaLag(150_000, lag(148_499))).not.toThrow();
+    expect(() => checkReplicaLag(150_000, lag(148_500))).toThrow(
+      /148500 ms behind its writer \(a 148500 ms lag in a row 0 ms old\), which with 1500 ms for the row's timestamp is not less than the 150000 ms since the freeze.*Wait a few minutes and run again\./
     );
     expect(() => checkReplicaLag(150_000, lag(3_600_000))).toThrow(
       /behind its writer/
     );
-    // The gap isn't rounded: 150.4 s is more than a 150.2 s lag.
-    expect(() => checkReplicaLag(150_400, lag(150_200))).not.toThrow();
-    expect(() => checkReplicaLag(150_400, lag(150_400))).toThrow(/behind/);
+    // The gap isn't rounded: 150.4 s holds a lag up to 148.899 s.
+    expect(() => checkReplicaLag(150_400, lag(148_899))).not.toThrow();
+    expect(() => checkReplicaLag(150_400, lag(148_900))).toThrow(/behind/);
   });
 
-  it('counts a stale row: its lag plus its age', () => {
-    // At 00:05 the reader is 6 minutes behind, but its row, last written
-    // at 23:59, still says 20 ms.
-    expect(() => checkReplicaLag(300_000, lag(20, 360_000))).toThrow(
-      /360020 ms behind its writer \(a 20 ms lag in a row 360000 ms old\)/
+  it('counts a stale row: its lag plus its age, plus 1.5 s for its timestamp', () => {
+    expect(() => checkReplicaLag(150_000, lag(20, 148_479))).not.toThrow();
+    expect(() => checkReplicaLag(150_000, lag(20, 148_480))).toThrow(
+      /148500 ms behind its writer \(a 20 ms lag in a row 148480 ms old\).*run again/
     );
-    expect(() => checkReplicaLag(150_000, lag(20, 149_979))).not.toThrow();
-    expect(() => checkReplicaLag(150_000, lag(20, 149_980))).toThrow(/behind/);
+  });
+
+  it('says not to retry when the row is older than the whole gap', () => {
+    // At 00:05 the reader is 6 minutes behind, but its row, last written
+    // at 23:59, still says 20 ms: the age alone passes the gap.
+    expect(() => checkReplicaLag(300_000, lag(20, 360_000))).toThrow(
+      /lag row is 360000 ms old \(a 20 ms lag\), older than the 300000 ms since the freeze: LAST_UPDATE_TIMESTAMP may not be in UTC, or the reader stopped updating its row\. Running again won't help, as the age only grows: report it to the on-call engineer rather than running again until 01:30\./
+    );
+    expect(() => checkReplicaLag(150_000, lag(20, 150_000))).toThrow(
+      /older than the 150000 ms since the freeze/
+    );
+    // Younger than the gap, the lag passing it: waiting can help.
+    expect(() => checkReplicaLag(150_000, lag(149_000, 10))).toThrow(
+      /Wait a few minutes and run again/
+    );
+    expect(() => checkReplicaLag(150_000, lag(149_000, 10))).not.toThrow(
+      /won't help/
+    );
   });
 
   it('refuses an unknown lag, saying to run again, when to accept it, and why it is unknown', () => {
@@ -1065,7 +1080,7 @@ describe('runProfileSiteExportJob', () => {
   });
 
   it('measures the lag against the gap in milliseconds', async () => {
-    const ok = setup({ snapshotAt: T + 150_400, replicaLagMs: 150_200 });
+    const ok = setup({ snapshotAt: T + 150_400, replicaLagMs: 148_899 });
     const stale = setup({
       snapshotAt: T + 300_000,
       replicaLagMs: 20,
@@ -1073,7 +1088,7 @@ describe('runProfileSiteExportJob', () => {
     });
     await expect(
       runProfileSiteExportJob(event, context, stale.deps)
-    ).rejects.toThrow(/a 20 ms lag in a row 360000 ms old/);
+    ).rejects.toThrow(/lag row is 360000 ms old \(a 20 ms lag\)/);
     expect(stale.order).toEqual([]);
     const result = (await runProfileSiteExportJob(
       event,
@@ -1084,10 +1099,10 @@ describe('runProfileSiteExportJob', () => {
     expect(result.snapshotGapMs).toBe(150_400);
     expect(result.acceptUnknownReplicaLag).toBe(false);
     expect(result.replacePointer).toBe(false);
-    const behind = setup({ snapshotAt: T + 150_400, replicaLagMs: 150_400 });
+    const behind = setup({ snapshotAt: T + 150_400, replicaLagMs: 148_900 });
     await expect(
       runProfileSiteExportJob(event, context, behind.deps)
-    ).rejects.toThrow(/150400 ms behind/);
+    ).rejects.toThrow(/148900 ms behind/);
   });
 
   it('lets a rehearsal run with an unknown replica lag, and reports it', async () => {

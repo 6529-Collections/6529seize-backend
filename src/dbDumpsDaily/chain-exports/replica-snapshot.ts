@@ -153,6 +153,14 @@ export const REPLICA_LAG_SQL =
 const FUTURE_ROW_TOLERANCE_MS = 1_000;
 
 /**
+ * How much younger than it is a row's age can read: a row dated up to
+ * FUTURE_ROW_TOLERANCE_MS ahead reads as age 0, and a timestamp kept in
+ * whole seconds can be rounded up to 0.5 s. A lag check adds this margin
+ * to lag plus age.
+ */
+export const REPLICA_LAG_AGE_MARGIN_MS = FUTURE_ROW_TOLERANCE_MS + 500;
+
+/**
  * The lag and its row's age in milliseconds, or both null with the reason
  * they couldn't be read.
  */
@@ -203,7 +211,7 @@ export async function readReplicaLag(
     );
   }
   const lag = numberOrNull(row.lag_ms);
-  if (lag === null) {
+  if (lag === null || lag < 0) {
     return unknownLag(`REPLICA_LAG_IN_MILLISECONDS is ${String(row.lag_ms)}`);
   }
   const age = numberOrNull(row.age_ms);

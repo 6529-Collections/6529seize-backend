@@ -47,6 +47,7 @@ import {
   openReadOnlySnapshot,
   ReadOnlyEvidence,
   ReadOnlySnapshot,
+  REPLICA_LAG_AGE_MARGIN_MS,
   ReplicaTarget,
   replicaTarget
 } from './chain-exports/replica-snapshot';
@@ -418,11 +419,19 @@ export function checkReplicaLag(
       `The replica's lag can't be read from information_schema.replica_host_status (${lag.replicaLagError ?? 'no reason given'}). Run again first: a passing error, such as a timeout, clears. Accept an unknown lag (acceptUnknownReplicaLag: true) only for an error Monday's rehearsal also showed, ER_UNKNOWN_TABLE 1109 or ER_UNKNOWN_SYSTEM_VARIABLE 1193 (the reader isn't Aurora), and only with the switch owner's agreement. Any other error is a fault in the export: report it.`
     );
   }
-  // The reader's row can be stale: its lag counts from when it was written.
-  const behindMs = lag.replicaLagMs + lag.replicaLagAgeMs;
-  if (behindMs >= gapMs) {
+  // A row older than the whole gap won't get younger by waiting: its
+  // timestamp may not be in UTC, or the reader stopped updating it.
+  if (lag.replicaLagAgeMs >= gapMs) {
     throw new ProfileSiteExportSnapshotError(
-      `The replica may be ${behindMs} ms behind its writer (a ${lag.replicaLagMs} ms lag in a row ${lag.replicaLagAgeMs} ms old), not less than the ${gapMs} ms since the freeze: it may not hold every write made before the freeze. Try again later.`
+      `The replica's lag row is ${lag.replicaLagAgeMs} ms old (a ${lag.replicaLagMs} ms lag), older than the ${gapMs} ms since the freeze: LAST_UPDATE_TIMESTAMP may not be in UTC, or the reader stopped updating its row. Running again won't help, as the age only grows: report it to the on-call engineer rather than running again until 01:30.`
+    );
+  }
+  // The reader's row can be stale: its lag counts from when it was
+  // written, and its age can read up to REPLICA_LAG_AGE_MARGIN_MS low.
+  const behindMs = lag.replicaLagMs + lag.replicaLagAgeMs;
+  if (behindMs + REPLICA_LAG_AGE_MARGIN_MS >= gapMs) {
+    throw new ProfileSiteExportSnapshotError(
+      `The replica may be ${behindMs} ms behind its writer (a ${lag.replicaLagMs} ms lag in a row ${lag.replicaLagAgeMs} ms old), which with ${REPLICA_LAG_AGE_MARGIN_MS} ms for the row's timestamp is not less than the ${gapMs} ms since the freeze: it may not hold every write made before the freeze. Wait a few minutes and run again.`
     );
   }
 }
