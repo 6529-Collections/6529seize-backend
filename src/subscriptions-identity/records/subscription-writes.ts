@@ -5,6 +5,7 @@ import {
   updateSubscriptionCount,
   updateSubscriptionMode
 } from '@/api/subscriptions/api.subscriptions.db';
+import { SubscriptionKeyHeldBackException } from '@/api/subscriptions/subscription-key-held-back.exception';
 import {
   SUBSCRIPTIONS_ID_BALANCES_TABLE,
   SUBSCRIPTIONS_ID_KEY_MAP_TABLE,
@@ -75,6 +76,7 @@ import {
   JournalSelection
 } from '../timeline/journal';
 import { ComparisonReport, saveReport } from '../writers/identity-reports';
+import { recordLegacyDualWriteHeldBack } from './legacy-dual-write-metrics';
 import {
   compareShadowChange,
   failedShadowReport,
@@ -105,7 +107,9 @@ const logger = Logger.get('SUBSCRIPTION_RECORDS');
  *   then the change's journal entry, kind `choice`), all in one
  *   transaction; then it is written to the legacy tables (the rollback copy)
  *   under the identity's consolidation key. A failed legacy write is logged
- *   and does not fail the request.
+ *   and does not fail the request. One the key-width guard refuses (a key
+ *   whose legacy writes are held back) is logged at info and counted, not
+ *   alarmed: before the switch the same change was refused too.
  *
  * In shadow the record is applied and logged the same way. A rebuild
  * writes the change back from its journal entry, as it does every other
@@ -395,14 +399,24 @@ export class SubscriptionChangeWriter {
     try {
       await this.deps.legacy(applied.consolidationKey, checked.change);
     } catch (error) {
-      // The legacy tables (the rollback copy) now lag the identity tables
-      // for this person: alarm. The legacy write marks coverage after its
-      // own transaction; it did not get there, so mark it here.
-      logger.errorWithCode(
-        'SUBSCRIPTIONS_LEGACY_DUAL_WRITE_FAILED',
-        `[LEGACY DUAL WRITE FAILED] [${checked.change.type}] [event ${checked.record.event.id}]`,
-        error
-      );
+      if (error instanceof SubscriptionKeyHeldBackException) {
+        // The key-width guard holds this key's legacy writes back, as it
+        // did before the switch: expected, so counted, not alarmed.
+        logger.info(
+          `[LEGACY DUAL WRITE HELD BACK] [${checked.change.type}] [key of ${applied.consolidationKey.length} characters] [${error.reason.narrow.length ? 'too long for a legacy table' : 'an earlier write is waiting'}]`
+        );
+        recordLegacyDualWriteHeldBack(checked.change.type);
+      } else {
+        // The legacy tables (the rollback copy) now lag the identity tables
+        // for this person: alarm.
+        logger.errorWithCode(
+          'SUBSCRIPTIONS_LEGACY_DUAL_WRITE_FAILED',
+          `[LEGACY DUAL WRITE FAILED] [${checked.change.type}] [event ${checked.record.event.id}]`,
+          error
+        );
+      }
+      // The legacy write marks coverage after its own transaction; it did
+      // not get there, so mark it here.
       try {
         await markSubscriptionCoverageDirty(
           [applied.consolidationKey],

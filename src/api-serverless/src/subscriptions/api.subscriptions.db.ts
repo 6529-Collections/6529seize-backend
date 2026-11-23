@@ -56,6 +56,7 @@ import {
   hasMinimumBalanceForAutomaticMode,
   InsufficientSubscriptionBalanceException
 } from '@/api/subscriptions/insufficient-subscription-balance.exception';
+import { SubscriptionKeyHeldBackException } from '@/api/subscriptions/subscription-key-held-back.exception';
 import { mirrorIdentityDirectory } from '@/subscriptions-identity/identity/identity-directory';
 import {
   LEGACY_SUBSCRIPTION_TABLES,
@@ -181,7 +182,10 @@ async function assertSubscriptionKeyWritable(
 ): Promise<void> {
   const reason = await deferralReason(consolidationKey, executorSink());
   if (reason) {
-    throw new BadRequestException(await deferralMessage(reason));
+    throw new SubscriptionKeyHeldBackException(
+      await deferralMessage(reason),
+      reason
+    );
   }
 }
 
