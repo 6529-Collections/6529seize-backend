@@ -438,13 +438,12 @@ export const wavesManifest: AreaManifest = {
       class: 'EPHEMERAL',
       why: 'Relay publishing cursor: the relays already hold what it passed, and a lost cursor only publishes copies they drop.'
     },
+    // received_at is compared: the rebuild stores when the relays first
+    // held each event (their receipts), as the seed does, so it must come
+    // back the same.
     wave_relay_events: {
       class: 'INDEX',
       volatileColumns: [
-        {
-          column: 'received_at',
-          reason: 'When 6529.io read the event; no route shows it.'
-        },
         {
           column: 'next_try_at',
           reason: 'When the applier tries a waiting event again.'

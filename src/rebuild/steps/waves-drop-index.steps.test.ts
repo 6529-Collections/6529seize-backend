@@ -5,8 +5,14 @@ import { startCrpRelay } from '@/rebuild/sources/crp-relay';
 import { RelayRules } from '@/rebuild/sources/relay-rules';
 import { RunningSource } from '@/rebuild/sources/running-source';
 import { buildRelayWorld } from '@/rebuild/world/waves/relay-world';
-import { DropIndexRunReport } from '@/wave-drop-index/drop-index';
-import { RelayIngestReport } from '@/wave-drop-index/drop-index.subscriber';
+import {
+  DropIndexStore,
+  RelayIngestReport
+} from '@/wave-drop-index/drop-index.subscriber';
+import { IngestRow } from '@/wave-drop-index/drop-index.db';
+import { startCrpRelayReplay } from '@/rebuild/sources/crp-relay';
+import { inProcessVerifier } from '@/rebuild/sources/relay-checks';
+import { checkWavesRelayEvent } from './waves-relay-check';
 import { checkRelayEvent } from '@/wave-drop-index/relay-event-check';
 import {
   dropIndexConfig,
@@ -19,6 +25,7 @@ import {
   dropIndexEnv,
   indexRelays,
   publishRelayWorld,
+  readRelaysOnce,
   REBUILD_LIVE_FROM,
   REBUILD_RELAY_NET
 } from './waves-drop-index.steps';
@@ -26,27 +33,44 @@ import {
 function reportOf(
   stored: number,
   extra: Partial<RelayIngestReport> = {}
-): DropIndexRunReport {
-  return {
-    relays: [
-      {
-        relay: 'ws://127.0.0.1:1',
-        relayId: 'r',
-        received: stored,
-        stored,
-        held: 0,
-        left: 0,
-        rejected: 0,
-        reasons: {},
-        resyncs: 0,
-        readsMembersOnly: false,
-        authError: null,
-        error: null,
-        ...extra
-      }
-    ],
-    applied: null
+): RelayIngestReport[] {
+  return [
+    {
+      relay: 'ws://127.0.0.1:1',
+      relayId: 'r',
+      received: stored,
+      stored,
+      held: 0,
+      left: 0,
+      rejected: 0,
+      reasons: {},
+      resyncs: 0,
+      readsMembersOnly: false,
+      authError: null,
+      error: null,
+      ...extra
+    }
+  ];
+}
+
+/** An in-memory store for the drop index: what it was asked to keep. */
+function memoryStore() {
+  const rows: IngestRow[] = [];
+  const store: DropIndexStore = {
+    cursors: async () => [],
+    knownGrants: async () => new Map(),
+    siteEvents: async () => new Map(),
+    ingest: async (batch) => {
+      rows.push(...batch);
+      return batch.map((row, i) => ({
+        ...row,
+        ingest_seq: rows.length - batch.length + i + 1,
+        apply_attempts: 0,
+        next_try_at: null
+      })) as never;
+    }
   };
+  return { rows, store };
 }
 
 describe('the waves drop index rebuild step', () => {
@@ -100,7 +124,7 @@ describe('the waves drop index rebuild step', () => {
     const run = jest.fn(async () => answers.shift() ?? reportOf(0));
     expect(await indexRelays('ws://127.0.0.1:9', run)).toBe(5);
     expect(run).toHaveBeenCalledTimes(3);
-    expect(run).toHaveBeenCalledWith({ env: dropIndexEnv('ws://127.0.0.1:9') });
+    expect(run).toHaveBeenCalledWith(dropIndexEnv('ws://127.0.0.1:9'));
   });
 
   it('runs again while events are left over', async () => {
@@ -117,6 +141,63 @@ describe('the waves drop index rebuild step', () => {
     );
   });
 
+  describe("with the world's devnet recording replayed", () => {
+    let root: string;
+    let relay: RunningSource;
+    const RECORDING = path.join(__dirname, '..', 'world', 'waves', 'relays');
+
+    beforeEach(async () => {
+      root = fs.mkdtempSync(path.join(os.tmpdir(), 'waves-relay-replay-'));
+      relay = await startCrpRelayReplay(
+        [RECORDING],
+        inProcessVerifier([
+          {
+            area: 'waves',
+            waves: ['00000000-0000-4000-8000-', '0x'],
+            check: checkWavesRelayEvent
+          }
+        ]),
+        path.join(root, 'merged'),
+        RelayRules.of([wavesManifest])
+      );
+    });
+
+    afterEach(async () => {
+      await relay.stop();
+      fs.rmSync(root, { recursive: true, force: true });
+    });
+
+    it('stores each event as first seen when the relay received it, not now', async () => {
+      const recorded = new Map<string, number>(
+        fs
+          .readFileSync(path.join(RECORDING, 'events.jsonl'), 'utf8')
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => JSON.parse(line))
+          .map((item) => [
+            String(item.event.id).toLowerCase(),
+            Math.min(
+              ...item.extra.receipts.map(
+                (r: { received_at: number }) => r.received_at
+              )
+            )
+          ])
+      );
+      const { rows, store } = memoryStore();
+      const before = Date.now();
+      const reports = await readRelaysOnce(dropIndexEnv(relay.url), {
+        store,
+        markSiteWritten: async () => undefined
+      });
+      expect(reports[0]).toMatchObject({ stored: 5, error: null });
+      expect(rows).toHaveLength(5);
+      for (const row of rows) {
+        expect(row.received_at).toBe(recorded.get(row.event_id));
+        expect(row.received_at).toBeLessThan(before);
+      }
+    });
+  });
+
   describe('with the harness relay', () => {
     let dir: string;
     let relay: RunningSource;
@@ -130,6 +211,20 @@ describe('the waves drop index rebuild step', () => {
     afterEach(async () => {
       await relay.stop();
       fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("stores the run's clock as first seen when the relay sends no receipt", async () => {
+      await publishRelayWorld(relay.url);
+      const { rows, store } = memoryStore();
+      const before = Date.now();
+      await readRelaysOnce(dropIndexEnv(relay.url), {
+        store,
+        markSiteWritten: async () => undefined
+      });
+      expect(rows).toHaveLength(5);
+      for (const row of rows) {
+        expect(row.received_at).toBeGreaterThanOrEqual(before);
+      }
     });
 
     it('publishes the world once; publishing again adds nothing', async () => {

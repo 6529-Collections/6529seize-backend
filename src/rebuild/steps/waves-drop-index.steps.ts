@@ -8,8 +8,26 @@ import {
   testGrantProof,
   TEST_DEVICE_SEED
 } from '@/tests/fixtures/relay-events.fixture';
-import { runDropIndex } from '@/wave-drop-index/drop-index';
-import { CrpConnection } from '@/wave-relay-publish/crp-client';
+import {
+  DEFAULT_DROP_INDEX_RUN,
+  dropIndexConfig,
+  readerAuthAnswer
+} from '@/wave-drop-index/drop-index';
+import { dropIndexDb } from '@/wave-drop-index/drop-index.db';
+import {
+  DropIndexStore,
+  DropIndexSubscriber,
+  RelayIngestReport
+} from '@/wave-drop-index/drop-index.subscriber';
+import {
+  CrpConnection,
+  WebSocketFactory
+} from '@/wave-relay-publish/crp-client';
+import {
+  firstSeenFactory,
+  firstSeenStore,
+  RelayFirstSeen
+} from './waves-relay-first-seen';
 
 const logger = Logger.get('WAVES_REBUILD_DROP_INDEX');
 
@@ -57,17 +75,57 @@ function relaysOf(ctx: RebuildContext): string {
 }
 
 /**
+ * One read of the relays, as the live loop's drop index reads them
+ * (runDropIndex with applying off), with one difference: each stored
+ * event's `received_at` is when the relays first held it (their receipts,
+ * or a recording's first sight; see waves-relay-first-seen.ts), not the
+ * run's clock, so a rebuild months later applies it as live would have.
+ */
+export async function readRelaysOnce(
+  env: Record<string, string>,
+  deps: {
+    readonly store?: DropIndexStore;
+    readonly factory?: WebSocketFactory;
+    readonly markSiteWritten?: () => Promise<unknown>;
+  } = {}
+): Promise<RelayIngestReport[]> {
+  const config = dropIndexConfig(env);
+  if (!config) throw new Error('The drop index is off in its settings');
+  const firstSeen = new RelayFirstSeen();
+  const subscriber = new DropIndexSubscriber(
+    firstSeenStore(deps.store ?? dropIndexDb, firstSeen),
+    (relay) =>
+      CrpConnection.open(relay, config.net, {
+        factory: firstSeenFactory(firstSeen, deps.factory)
+      }),
+    // No in-process listeners in a rebuild step.
+    () => [],
+    (message) => logger.info(message),
+    config.reader ? readerAuthAnswer(config.reader) : null
+  );
+  const reports = await subscriber.run({
+    ...DEFAULT_DROP_INDEX_RUN,
+    relays: config.relays,
+    budgetMs: config.budgetMs,
+    liveFrom: config.liveFrom
+  });
+  // As the live loop does: rows learn the drops 6529.io wrote.
+  await (deps.markSiteWritten ?? (() => dropIndexDb.markSiteWritten()))();
+  return reports;
+}
+
+/**
  * The drop index from its cursors (empty after the drop) until a run
  * stores nothing new: the live loop's reads, back to back.
  */
 export async function indexRelays(
   relays: string,
-  run: typeof runDropIndex = runDropIndex
+  read: (env: Record<string, string>) => Promise<RelayIngestReport[]> = (env) =>
+    readRelaysOnce(env)
 ): Promise<number> {
   let stored = 0;
   for (let i = 1; i <= MAX_RUNS; i++) {
-    const report = await run({ env: dropIndexEnv(relays) });
-    const reports = report?.relays ?? [];
+    const reports = await read(dropIndexEnv(relays));
     const failed = reports.find((r) => r.error !== null);
     if (failed) {
       throw new Error(
