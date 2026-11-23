@@ -119,6 +119,64 @@ describe('MysqlAdmin on the private mysqld', () => {
     }
   });
 
+  it('takes a checkpoint table newest row as MySQL orders it, and finds nullable columns', async () => {
+    await admin.query(
+      `CREATE TABLE ${FROM}.checkpoints (
+         id INT NOT NULL PRIMARY KEY,
+         block DECIMAL(10, 1) NULL,
+         run INT NOT NULL
+       )`
+    );
+    // As text '9.5' sorts after '10.0'; as a number it doesn't. A NULL is
+    // never the newest.
+    await admin.query(
+      `INSERT INTO ${FROM}.checkpoints (id, block, run)
+       VALUES (1, 9.5, 1), (2, 10.0, 2), (3, NULL, 3)`
+    );
+    const newest = await admin.orderedRows(
+      FROM,
+      'checkpoints',
+      ['id'],
+      'block'
+    );
+    expect(newest.map((row) => row.id)).toEqual([2]);
+    expect(await admin.columnNullable(FROM, 'checkpoints', 'block')).toBe(true);
+    expect(await admin.columnNullable(FROM, 'checkpoints', 'run')).toBe(false);
+    expect(await admin.columnNullable(FROM, 'checkpoints', 'nope')).toBeNull();
+  });
+
+  it('compares partition tuples under each column own collation', async () => {
+    await admin.query(
+      `CREATE TABLE ${FROM}.heads (
+         family VARCHAR(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
+         n INT
+       )`
+    );
+    // utf8mb4_0900_ai_ci: case and accents fold, and 'ss' equals U+00DF;
+    // NO PAD, so a trailing space differs. INT compares as numbers.
+    expect(
+      await admin.overlappingTuples(
+        FROM,
+        'heads',
+        ['family'],
+        [['\u00e9'], ['\u00df'], ['a '], ['X']],
+        [['E'], ['ss'], ['a'], ['y']]
+      )
+    ).toEqual([
+      [0, 0],
+      [1, 1]
+    ]);
+    expect(
+      await admin.overlappingTuples(
+        FROM,
+        'heads',
+        ['family', 'n'],
+        [['a', '1']],
+        [['A', '01']]
+      )
+    ).toEqual([[0, 0]]);
+  });
+
   it('leaves no pid file once the server stops', async () => {
     const pidFile = path.join(HOME, 'mysql', 'harness-mysqld.pid');
     expect(fs.readFileSync(pidFile, 'utf8').trim()).toBe(String(server.pid));

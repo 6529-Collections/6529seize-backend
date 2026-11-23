@@ -64,11 +64,6 @@ export function redactUrl(url: string): string {
   }
 }
 
-/** A recording counts for the final proof unless it was written by hand. */
-export function isProvisional(provenance: Provenance | null): boolean {
-  return !provenance || provenance.made_by === 'hand';
-}
-
 /** Starts an HTTP server on 127.0.0.1 at a free port. */
 export async function listenLoopback(
   server: http.Server

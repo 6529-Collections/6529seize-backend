@@ -1207,4 +1207,84 @@ describeWithSeed('MarketDepthDb', [] as never[], () => {
     );
     expect(queue.map((row) => row.order_id)).toEqual(['recent-order']);
   });
+
+  it('reads archive windows of events and snapshots by write time', async () => {
+    const at = (iso: string) => new Date(iso);
+    await marketDepthDb.appendEvents({
+      source: 'opensea-stream',
+      contract: CONTRACT,
+      collection_slug: 'project-a',
+      expected_cursor: null,
+      expected_watermark: null,
+      next_cursor: null,
+      provider_watermark: null,
+      provider_at: null,
+      observed_at: at('2026-09-10T09:00:00.000Z'),
+      events: [
+        event({ event_id: 'e-1', observed_at: at('2026-09-10T08:10:00.000Z') }),
+        event({ event_id: 'e-2', observed_at: at('2026-09-10T08:10:00.000Z') }),
+        event({ event_id: 'e-3', observed_at: at('2026-09-10T08:59:59.999Z') }),
+        event({ event_id: 'e-4', observed_at: at('2026-09-10T10:00:00.000Z') })
+      ]
+    });
+
+    expect(
+      await marketDepthDb.getFirstArchivableAtOrAfter({
+        kind: 'events',
+        contract: CONTRACT.toUpperCase().replace('0X', '0x'),
+        from: at('2026-09-10T09:00:00.000Z')
+      })
+    ).toEqual(at('2026-09-10T10:00:00.000Z'));
+    const window = {
+      contract: CONTRACT,
+      from: at('2026-09-10T08:00:00.000Z'),
+      to: at('2026-09-10T09:00:00.000Z')
+    };
+    const first = await marketDepthDb.getEventsObservedBetween({
+      ...window,
+      after: null,
+      limit: 2
+    });
+    const rest = await marketDepthDb.getEventsObservedBetween({
+      ...window,
+      after: { observed_at: first[1].observed_at, event_id: first[1].event_id },
+      limit: 2
+    });
+    expect([...first, ...rest].map((row) => row.event_id)).toEqual([
+      'e-1',
+      'e-2',
+      'e-3'
+    ]);
+    expect(first[0]).toMatchObject({
+      chain: 'ethereum',
+      chain_id: '1',
+      occurred_at: event().provider_at,
+      observed_at: at('2026-09-10T08:10:00.000Z')
+    });
+
+    const early = snapshot('00000000-0000-4000-8000-000000000041');
+    const later = snapshot('00000000-0000-4000-8000-000000000042', {
+      started_at: at('2026-09-10T02:00:00.000Z'),
+      completed_at: at('2026-09-10T02:01:00.000Z')
+    });
+    await marketDepthDb.publishCompletedSnapshot(early);
+    await marketDepthDb.publishCompletedSnapshot(later);
+    expect(
+      await marketDepthDb.getFirstArchivableAtOrAfter({
+        kind: 'snapshots',
+        contract: CONTRACT,
+        from: at('2026-09-10T00:30:00.000Z')
+      })
+    ).toEqual(later.completed_at);
+    const snapshots = await marketDepthDb.getSnapshotsCompletedBetween({
+      contract: CONTRACT,
+      from: at('2026-09-10T00:00:00.000Z'),
+      to: at('2026-09-10T02:00:00.000Z')
+    });
+    expect(snapshots.map((row) => row.id)).toEqual([early.id]);
+    expect(snapshots[0]).toMatchObject({
+      completed_at: early.completed_at,
+      collection_slug: 'project-a'
+    });
+  });
 });

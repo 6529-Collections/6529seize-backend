@@ -84,14 +84,20 @@ export function snapshotRows(
   };
 }
 
+/**
+ * Snapshots a table's rows. With `checkpoint`, only the rows holding the
+ * column's newest value, as MySQL orders it (MAX), the row its readers
+ * take.
+ */
 export async function snapshotTable(
   admin: MysqlAdmin,
   database: string,
   table: string,
-  volatileColumns: readonly string[] = []
+  volatileColumns: readonly string[] = [],
+  checkpoint?: string
 ): Promise<TableSnapshot> {
   const primaryKey = await admin.primaryKey(database, table);
-  const rows = await admin.orderedRows(database, table, primaryKey);
+  const rows = await admin.orderedRows(database, table, primaryKey, checkpoint);
   return snapshotRows(table, rows, primaryKey, new Set(volatileColumns));
 }
 
