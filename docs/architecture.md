@@ -1253,16 +1253,22 @@ stable cursors. There is no continuous review queue or hold-before-publish
 state.
 
 The developer [moderation review API](../ops/docs/developer/moderation-review.md)
-captures REP, About, group-name, signaled pre-publication and reported-content
+captures REP, About, signaled pre-publication and reported-content
 evaluations in `content_moderation_items` and `content_moderation_evaluations`.
 It replaces moderation's Discord notifications with database evidence and
 versioned, idempotent human actions. Existing stricter public-field prompts
 remain separate from permissive wave-content prompts. Exact rejected content
 can receive a seven-day single-use resubmission permit; approval never publishes
-an archived draft. About and group-name suppression uses an exact-revision
-presentation overlay while preserving source values. Routine successes expire
+an archived draft. About suppression uses an exact-revision presentation
+overlay while preserving the source value. Routine successes expire
 after 30 days, resolved evidence after 90 days, and compact history after one
 year; unresolved evidence and active rules retain their required provenance.
+
+Group visibility changes and replacements commit their idempotency receipts in
+`community_group_visibility_requests` alongside the group write. Historical
+group-name reviews remain stored for legacy save replays and exact-revision
+suppression. WatchTower excludes these reviews. Synchronize the additive table
+with `dbMigrationsLoop` before deploying the API.
 
 Standalone moderation capture uses bounded five-second SQL units with at most
 three total attempts; it retries only after acknowledged deadlock rollback.

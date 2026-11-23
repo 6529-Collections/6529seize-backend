@@ -37,10 +37,6 @@ import {
   NotFoundException
 } from '@/exceptions';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
-import {
-  abusivenessCheckService,
-  AbusivenessCheckService
-} from '@/profiles/abusiveness-check.service';
 import { RateMatter } from '@/entities/IRating';
 import { ApiChangeGroupVisibility } from '@/api/generated/models/ApiChangeGroupVisibility';
 import { ApiGroupFull } from '@/api/generated/models/ApiGroupFull';
@@ -101,12 +97,7 @@ import { XTdhGrantStatus, XTdhGrantTokenMode } from '@/entities/IXTdhGrant';
 import { xTdhGrantsFinder } from '@/xtdh/xtdh-grants.finder';
 import { xTdhGrantApiConverter } from '../xtdh/grants/xtdh-grant.api-converter';
 import { Logger } from '@/logging';
-import {
-  moderationReviewDb,
-  moderationConflict,
-  assertModerationPermitReplay
-} from '@/content-moderation/moderation-review.db';
-import { moderationFingerprint } from '@/content-moderation/moderation-review.types';
+import { moderationReviewDb } from '@/content-moderation/moderation-review.db';
 import {
   profilePreferencesDb,
   ProfilePreferencesDb
@@ -115,7 +106,7 @@ import { ConnectionWrapper } from '@/sql-executor';
 import { DirectMessageAdmissionService } from '@/api/direct-messages/direct-message-admission.service';
 
 import { performance } from 'node:perf_hooks';
-import { randomInt } from 'node:crypto';
+import { createHash, randomInt } from 'node:crypto';
 import { moderationPresentationService } from '@/content-moderation/moderation-presentation.service';
 import {
   acquireEligibleGroupsLease,
@@ -264,6 +255,24 @@ async function resolveEligibilityReads<T extends readonly unknown[]>(reads: {
   return Promise.all(reads.map((read) => read())) as unknown as Promise<T>;
 }
 
+type GroupVisibilityChange = ApiChangeGroupVisibility & {
+  group_id: string;
+  profile_id: string;
+  idempotencyKey?: string | undefined;
+};
+
+type BeforeGroupReplacement = (
+  params: {
+    readonly currentGroup: ApiGroupFull;
+    readonly replacedGroupId: string;
+  },
+  ctx: RequestContext
+) => Promise<void>;
+
+function visibilityRequestHash(parts: readonly unknown[]): string {
+  return createHash('sha256').update(JSON.stringify(parts)).digest('hex');
+}
+
 export class UserGroupsService {
   public static readonly GENERATED_VIEW = 'user_groups_view';
 
@@ -289,7 +298,6 @@ export class UserGroupsService {
 
   constructor(
     private readonly userGroupsDb: UserGroupsDb,
-    private readonly abusivenessCheckService: AbusivenessCheckService,
     private readonly metricsRecorder: MetricsRecorder,
     private readonly profilePreferences: ProfilePreferencesDb = profilePreferencesDb,
     directMessageAdmission?: DirectMessageAdmissionService
@@ -1701,222 +1709,150 @@ export class UserGroupsService {
   }
 
   async changeVisibility(
-    {
-      group_id,
-      old_version_id,
-      visible,
-      profile_id
-    }: ApiChangeGroupVisibility & {
-      group_id: string;
-      profile_id: string;
-    },
+    change: GroupVisibilityChange,
     ctx: RequestContext,
-    beforeReplace?:
-      | ((
-          params: {
-            readonly currentGroup: ApiGroupFull;
-            readonly replacedGroupId: string;
-          },
-          ctx: RequestContext
-        ) => Promise<void>)
-      | undefined
+    beforeReplace?: BeforeGroupReplacement
   ): Promise<ApiGroupFull> {
-    const replay = await moderationReviewDb.savedRequest(
-      profile_id,
-      'GROUP_NAME',
-      ctx.moderationRequestId,
-      ctx
-    );
-    if (replay) {
-      if (
-        replay.scope.save_subject_id !== group_id ||
-        replay.scope.old_version_id !== (old_version_id ?? null) ||
-        replay.scope.visible !== visible ||
-        !replay.published_subject_id
-      )
-        moderationConflict();
-      return this.getByIdOrThrow(replay.published_subject_id, ctx);
-    }
-    const initialGroup = await this.getByIdOrThrow(group_id, ctx);
-    if (initialGroup.created_by?.id !== profile_id)
-      throw new ForbiddenException(
-        'Only the group creator can save this group'
-      );
-    const rawGroup =
-      await this.userGroupsDb.getByIdWithoutVisibilityCheck(group_id);
-    if (!rawGroup) throw new NotFoundException('Group not found');
-    const rawOld = old_version_id
-      ? await this.userGroupsDb.getByIdWithoutVisibilityCheck(old_version_id)
+    const { group_id, old_version_id, visible, profile_id, idempotencyKey } =
+      change;
+    const savedGroupId = old_version_id ?? group_id;
+    const requestId = idempotencyKey
+      ? visibilityRequestHash([profile_id, idempotencyKey])
       : null;
-    if (rawOld && rawOld.created_by !== profile_id)
-      throw new ForbiddenException(
-        'Only the group creator can replace this group'
-      );
-    const writeFingerprint = moderationFingerprint({
-      group: rawGroup,
-      replaced: rawOld,
-      visible
-    });
-    const proposedDefinition = await moderationReviewDb.groupDefinition(
-      group_id,
-      ctx
-    );
-    const replacedDefinition = old_version_id
-      ? await moderationReviewDb.groupDefinition(old_version_id, ctx)
-      : null;
-    const contextFingerprint = moderationFingerprint({
-      definition: proposedDefinition,
-      visible
-    });
-    const nameReview = await this.abusivenessCheckService.checkFilterName({
-      text: rawGroup.name,
-      handle: initialGroup.created_by?.handle ?? '',
-      group_id,
-      profile_id,
-      actor_profile_id: ctx.authenticationContext?.getLoggedInUsersProfileId(),
-      current_revision: replacedDefinition
-        ? moderationFingerprint(replacedDefinition)
-        : null,
-      old_version_id: old_version_id ?? null,
-      visible,
-      context_fingerprint: contextFingerprint,
-      previously_reviewed:
-        !!rawOld && rawOld.visible && rawOld.name === rawGroup.name
-    });
-    if (nameReview.status !== 'ALLOWED')
-      throw new BadRequestException(
-        `Group name is not allowed: ${nameReview.explanation}`
-      );
-    const { updatedGroup, replacedGroup } =
+    const { updatedGroup, replacedGroup, replayed } =
       await this.userGroupsDb.executeNativeQueriesInTransaction(
         async (connection) => {
-          const ctxWithConnection = { ...ctx, connection };
+          const tx = { ...ctx, connection };
+          if (
+            requestId &&
+            (await this.userGroupsDb.reserveVisibilityRequest(
+              requestId,
+              visibilityRequestHash([
+                group_id,
+                old_version_id ?? null,
+                visible
+              ]),
+              connection
+            ))
+          ) {
+            return {
+              updatedGroup: await this.getByIdOrThrow(savedGroupId, tx),
+              replacedGroup: null,
+              replayed: true
+            };
+          }
+
           const groupIdsToLock = Array.from(
-            new Set(
-              [group_id, old_version_id].filter((id): id is string => !!id)
-            )
+            new Set([group_id, savedGroupId])
           ).sort((left, right) => {
             if (left < right) return -1;
             if (left > right) return 1;
             return 0;
           });
           for (const id of groupIdsToLock)
-            await moderationReviewDb.lockGroup(id, ctxWithConnection);
-          const replayedGroup = await this.replayReviewedGroup(
-            nameReview.moderation_item_id,
-            ctxWithConnection
+            await this.userGroupsDb.lockForVisibilityChange(id, connection);
+
+          const legacyReplay = await this.findLegacyVisibilityRequest(
+            change,
+            tx
           );
-          if (replayedGroup)
-            return { updatedGroup: replayedGroup, replacedGroup: null };
-          const currentGroup =
-            await this.userGroupsDb.getByIdWithoutVisibilityCheck(
-              group_id,
+          const saved = legacyReplay
+            ? { updatedGroup: legacyReplay, replacedGroup: null }
+            : await this.applyVisibilityChange(change, tx, beforeReplace);
+          if (requestId)
+            await this.userGroupsDb.completeVisibilityRequest(
+              requestId,
               connection
             );
-          const currentOld = old_version_id
-            ? await this.userGroupsDb.getByIdWithoutVisibilityCheck(
-                old_version_id,
-                connection
-              )
-            : null;
-          if (
-            moderationFingerprint({
-              group: currentGroup,
-              replaced: currentOld,
-              visible
-            }) !== writeFingerprint
-          )
-            moderationConflict();
-          const groupEntity = await this.getByIdOrThrow(
-            group_id,
-            ctxWithConnection
-          );
-          if (groupEntity.created_by?.id !== profile_id) {
-            throw new BadRequestException(
-              `You are not allowed to change group ${group_id}. You can save a new one instead.`
-            );
-          }
-          let oldGroupEntity: ApiGroupFull | null = null;
-          if (old_version_id) {
-            if (old_version_id === groupEntity.id) {
-              throw new BadRequestException(
-                'Old version id should not be the same as the current'
-              );
-            }
-            oldGroupEntity = await this.getByIdOrThrow(
-              old_version_id,
-              ctxWithConnection
-            );
-            if (oldGroupEntity.created_by?.id !== profile_id) {
-              throw new BadRequestException(
-                `You are not allowed to change group ${old_version_id}. You can save a new one instead.`
-              );
-            }
-            await beforeReplace?.(
-              {
-                currentGroup: groupEntity,
-                replacedGroupId: old_version_id
-              },
-              ctxWithConnection
-            );
-            await this.userGroupsDb.deleteById(old_version_id, connection);
-          }
-          await this.userGroupsDb.changeVisibilityAndSetId(
-            {
-              currentId: group_id,
-              newId: old_version_id,
-              visibility: visible
-            },
-            connection
-          );
-          if (nameReview.moderation_item_id) {
-            await moderationReviewDb.consume(
-              nameReview.moderation_item_id,
-              old_version_id ?? group_id,
-              {
-                ...ctxWithConnection,
-                moderationPermitGeneration:
-                  nameReview.moderation_permit_generation
-              },
-              group_id
-            );
-            await moderationReviewDb.setPublishedRevision(
-              nameReview.moderation_item_id,
-              moderationFingerprint({ text: rawGroup.name }),
-              ctxWithConnection
-            );
-          }
-          await this.metricsRecorder.recordActiveIdentity(
-            { identityId: profile_id },
-            ctxWithConnection
-          );
-          return {
-            updatedGroup: await this.getByIdOrThrow(
-              old_version_id ?? group_id,
-              ctxWithConnection
-            ),
-            replacedGroup: oldGroupEntity
-          };
+          return { ...saved, replayed: legacyReplay !== null };
         }
       );
-    await giveReadReplicaTimeToCatchUp();
-    await this.invalidateEligibilityCachesAfterVisibilityChange(
-      updatedGroup,
-      replacedGroup
-    );
+    if (!replayed) {
+      await giveReadReplicaTimeToCatchUp();
+      await this.invalidateEligibilityCachesAfterVisibilityChange(
+        updatedGroup,
+        replacedGroup
+      );
+    }
     return updatedGroup;
   }
 
-  private async replayReviewedGroup(
-    itemId: string | undefined,
+  private async findLegacyVisibilityRequest(
+    {
+      group_id,
+      old_version_id,
+      visible,
+      profile_id,
+      idempotencyKey
+    }: GroupVisibilityChange,
     ctx: RequestContext
   ): Promise<ApiGroupFull | null> {
-    if (!itemId) return null;
-    const reviewed = await moderationReviewDb.get(itemId, ctx, true);
-    if (!reviewed.permit_consumed_at) return null;
-    assertModerationPermitReplay(reviewed, ctx.moderationRequestId);
-    if (!reviewed.published_subject_id) moderationConflict();
-    return this.getByIdOrThrow(reviewed.published_subject_id, ctx);
+    if (!idempotencyKey) return null;
+    // Honor receipts written before visibility changes stopped checking names.
+    const replay = await moderationReviewDb.savedRequest(
+      profile_id,
+      'GROUP_NAME',
+      idempotencyKey,
+      ctx
+    );
+    if (!replay) return null;
+    if (
+      replay.scope.save_subject_id !== group_id ||
+      replay.scope.old_version_id !== (old_version_id ?? null) ||
+      replay.scope.visible !== visible ||
+      !replay.published_subject_id
+    ) {
+      throw new CustomApiCompliantException(
+        409,
+        'Idempotency key was used for a different group save'
+      );
+    }
+    return this.getByIdOrThrow(replay.published_subject_id, ctx);
+  }
+
+  private async applyVisibilityChange(
+    { group_id, old_version_id, visible, profile_id }: GroupVisibilityChange,
+    ctx: RequestContext & { connection: ConnectionWrapper<any> },
+    beforeReplace: BeforeGroupReplacement | undefined
+  ): Promise<{
+    updatedGroup: ApiGroupFull;
+    replacedGroup: ApiGroupFull | null;
+  }> {
+    const group = await this.getByIdOrThrow(group_id, ctx);
+    if (group.created_by?.id !== profile_id)
+      throw new ForbiddenException(
+        'Only the group creator can save this group'
+      );
+
+    let replacedGroup: ApiGroupFull | null = null;
+    if (old_version_id) {
+      if (old_version_id === group_id)
+        throw new BadRequestException(
+          'Old version id should not be the same as the current'
+        );
+      replacedGroup = await this.getByIdOrThrow(old_version_id, ctx);
+      if (replacedGroup.created_by?.id !== profile_id)
+        throw new ForbiddenException(
+          'Only the group creator can replace this group'
+        );
+      await beforeReplace?.(
+        { currentGroup: group, replacedGroupId: old_version_id },
+        ctx
+      );
+      await this.userGroupsDb.deleteById(old_version_id, ctx.connection);
+    }
+    await this.userGroupsDb.changeVisibilityAndSetId(
+      { currentId: group_id, newId: old_version_id, visibility: visible },
+      ctx.connection
+    );
+    await this.metricsRecorder.recordActiveIdentity(
+      { identityId: profile_id },
+      ctx
+    );
+    return {
+      updatedGroup: await this.getByIdOrThrow(old_version_id ?? group_id, ctx),
+      replacedGroup
+    };
   }
 
   /**
@@ -3307,6 +3243,5 @@ export class UserGroupsService {
 
 export const userGroupsService = new UserGroupsService(
   userGroupsDb,
-  abusivenessCheckService,
   metricsRecorder
 );
