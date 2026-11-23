@@ -236,11 +236,12 @@ export function checkSnapshotTime(
 export function checkReplicaLag(
   gapMs: number,
   replicaLagMs: number | null,
-  acceptUnknown = false
+  acceptUnknown = false,
+  lagError: string | null = null
 ): void {
   if (replicaLagMs === null && !acceptUnknown) {
     throw new IdentityExportSnapshotError(
-      "The replica's lag can't be read (information_schema.replica_host_status): only the gap since the freeze shows it holds the writes made before it. To rely on that gap alone, run again with acceptUnknownReplicaLag: true."
+      `The replica's lag can't be read from information_schema.replica_host_status (${lagError ?? 'no reason given'}): only the gap since the freeze shows it holds the writes made before it. If that error says this isn't an Aurora reader, or the identity lead agrees, run again with acceptUnknownReplicaLag: true to rely on the gap alone.`
     );
   }
   if (replicaLagMs !== null && replicaLagMs >= gapMs) {
@@ -975,7 +976,7 @@ function pointerErrorOf(
     return `${key} names another run for this freeze, written while this one ran, and was kept. Send both runs' prefix and manifestSha256 to the coordinator; to make this run the export, run again with replacePointer: true`;
   }
   if (read?.owner === 'unknown') {
-    return `S3 refused to write ${key} because one is there, and reading it back failed (${read.reason}): whether it names this run is unknown. Ask for links by freezeAt to see which run it names.`;
+    return `S3 refused to write ${key} because one is there, and reading it back failed (${read.reason}): whether it names this run is unknown. Ask for links by freezeAt: if their prefix is this run's, the pointer is this run's; if not, it names another run, and this run is fetched by its prefix.`;
   }
   return String((error as Error)?.message ?? error);
 }
@@ -1177,7 +1178,7 @@ export async function runIdentityExportJob(
   };
   const snapshot = await deps.openSnapshot(target);
   logger.info(
-    `[READ ONLY SNAPSHOT] [HOST ${snapshot.evidence.host}] [AT ${snapshot.evidence.snapshotAt}] [REPLICA LAG ${snapshot.evidence.replicaLagMs ?? 'unknown'} MS] [TRANSACTION READ ONLY ${snapshot.evidence.transactionReadOnly}] [SERVER READ ONLY ${snapshot.evidence.serverReadOnly}] [INNODB READ ONLY ${snapshot.evidence.innodbReadOnly}]`
+    `[READ ONLY SNAPSHOT] [HOST ${snapshot.evidence.host}] [AT ${snapshot.evidence.snapshotAt}] [REPLICA LAG ${snapshot.evidence.replicaLagMs ?? 'unknown'} MS${snapshot.evidence.replicaLagError ? `: ${snapshot.evidence.replicaLagError}` : ''}] [TRANSACTION READ ONLY ${snapshot.evidence.transactionReadOnly}] [SERVER READ ONLY ${snapshot.evidence.serverReadOnly}] [INNODB READ ONLY ${snapshot.evidence.innodbReadOnly}]`
   );
   let document: IdentityExportDocument;
   let gapSeconds: number | null = null;
@@ -1195,7 +1196,8 @@ export async function runIdentityExportJob(
       checkReplicaLag(
         gap.gapMs,
         snapshot.evidence.replicaLagMs,
-        event.acceptUnknownReplicaLag
+        event.acceptUnknownReplicaLag,
+        snapshot.evidence.replicaLagError
       );
     }
     document = await buildIdentityExport(

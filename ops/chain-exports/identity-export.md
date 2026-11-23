@@ -47,8 +47,8 @@ The event carries the CLI's options, under the same rules.
   minutes after it.
 - `acceptUnknownReplicaLag: true`: at the freeze, run although the replica's
   lag can't be read, relying on the 2-minute gap alone. Only when Monday
-  showed the lag can't be read, and the identity lead agreed. The manifest
-  records it.
+  showed the lag can't be read because the reader isn't Aurora (below), and
+  the identity lead agreed. The manifest records it.
 - `replacePointer: true`: at the freeze, makes this run the freeze's export
   when another run already is.
 
@@ -133,9 +133,14 @@ The job refuses, and writes nothing, when:
   or more than 90 minutes after it (unless `acceptSnapshotGapMinutes`
   covers the gap);
 - the replica is as far behind its writer as the snapshot is after the
-  freeze, or further. The lag comes from
-  `information_schema.replica_host_status`. When it can't be read, the run
-  refuses unless it has `acceptUnknownReplicaLag: true`;
+  freeze, or further, both in milliseconds. The lag comes from
+  `information_schema.replica_host_status`. When it can't be read,
+  `evidence.replicaLagMs` is `null`, `evidence.replicaLagError` holds the
+  server's error, and the run refuses unless it has
+  `acceptUnknownReplicaLag: true`. `ER_UNKNOWN_TABLE 1109` or
+  `ER_UNKNOWN_SYSTEM_VARIABLE 1193` mean the reader isn't Aurora. Any other
+  error, such as `ER_PARSE_ERROR 1064`, is a fault in the export: report
+  it, and don't accept an unknown lag for it;
 - the database is not at the freeze day, or a count is not acknowledged.
   The error names every reason, with the CLI's exit code. The counts include
   profile rows saved after the freeze whether or not the save was logged,
@@ -179,10 +184,64 @@ whose pointer can't be written is still whole: the response has
 `pointerKey: null` and `pointerError`.
 
 Everything in the bucket, the pointer included, expires 30 days after it
-was written. The coordinator keeps a copy of the real export: `out.json`,
-every file in `links.json` (the manifest included), and the pointer, from
-`presignedPointerUrl`. The README's download commands work here too, with
-`identity-export` as the folder.
+was written. Within the links' 6 hours, the coordinator downloads a complete
+copy of the real export and keeps it with `out.json`: every file in the
+links file, the manifest included, and the pointer. These commands download
+everything and check every file's sha256 against the manifest. They are the
+README's, for this job: each run's files go into their own
+`identity-export-<run>/`, the pointer included, so a rehearsal's files never
+mix with Tuesday's. Start in an empty folder, beside `out.json`. They work
+for `links-out.json` from the links job too: put its name in place of
+`out.json`.
+
+PowerShell:
+
+```text
+$ErrorActionPreference = 'Stop'
+& {
+  [Net.ServicePointManager]::SecurityProtocol = 'Tls12'
+  $ProgressPreference = 'SilentlyContinue'
+  $out = Get-Content out.json -Raw | ConvertFrom-Json
+  $run = Split-Path (Split-Path $out.manifestKey -Parent) -Leaf
+  $dir = "identity-export-$run"
+  New-Item -ItemType Directory -Force $dir | Out-Null
+  Invoke-WebRequest -UseBasicParsing $out.presignedLinksUrl -OutFile links-now.json
+  $links = (Get-Content links-now.json -Raw | ConvertFrom-Json).links
+  foreach ($p in $links.PSObject.Properties) { Invoke-WebRequest -UseBasicParsing $p.Value -OutFile (Join-Path $dir $p.Name) }
+  if ($null -eq $links.PSObject.Properties['links.json']) { Copy-Item -Force links-now.json "$dir\links.json" }
+  if ($out.presignedPointerUrl) { Invoke-WebRequest -UseBasicParsing $out.presignedPointerUrl -OutFile "$dir\pointer.json" }
+  $manifestFile = Join-Path $dir (Split-Path $out.manifestKey -Leaf)
+  $manifest = Get-Content $manifestFile -Raw | ConvertFrom-Json
+  $wrong = @($manifest.files | Where-Object { $f = Join-Path $dir $_.name; -not (Test-Path -LiteralPath $f) -or (Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash.ToLower() -ne $_.sha256 })
+  "$($manifest.files.Count) files, $($wrong.Count) wrong"
+  (Get-FileHash $manifestFile -Algorithm SHA256).Hash.ToLower() -eq $out.manifestSha256
+}
+```
+
+It must print `<n> files, 0 wrong` and then `True`. A download that fails
+stops it with an error and no count; a file the links don't name counts as
+wrong. Either way, fetch it again within the links' 6 hours, or ask for
+fresh links first.
+
+bash, with `curl` and `jq` (`shasum -a 256 -c` instead of `sha256sum -c` on
+macOS). `j` drops the carriage returns jq writes on Windows:
+
+```text
+j() { jq -r "$@" | tr -d '\r'; }
+run=$(basename "$(dirname "$(j .manifestKey out.json)")"); dir="identity-export-$run"; mkdir -p "$dir"
+curl -fsS -o links-now.json "$(j .presignedLinksUrl out.json)"
+j '.links | to_entries[] | "\(.key)\t\(.value)"' links-now.json | while IFS=$'\t' read -r name url; do curl -fsS -o "$dir/$name" "$url" || echo "FAILED $name"; done
+[ "$(j '.links | has("links.json")' links-now.json)" = true ] || cp -f links-now.json "$dir/links.json"
+pointer=$(j '.presignedPointerUrl // empty' out.json); [ -n "$pointer" ] && curl -fsS -o "$dir/pointer.json" "$pointer"
+manifest="$dir/$(basename "$(j .manifestKey out.json)")"
+j '.files[] | "\(.sha256)  \(.name)"' "$manifest" | (cd "$dir" && sha256sum -c --quiet) && echo "every file matches"
+echo "$(j .manifestSha256 out.json)  $manifest" | sha256sum -c
+```
+
+It must print `every file matches` and then `OK`.
+
+Anyone with read access to the bucket can also use
+`aws s3 cp --recursive s3://<bucket>/<prefix> ./identity-export-<run>/`.
 
 ## When to call it
 
@@ -243,8 +302,12 @@ about 600, Tuesday's run may not fit one invocation. Check in `out.json`:
   doesn't record its commit, and Tuesday's event needs
   `"revision":"<40-hex commit deployed to production>"`.
 - `evidence.replicaLagMs` is a number. If it is `null`, Tuesday's run will
-  refuse unless it is given `"acceptUnknownReplicaLag":true`. Tell the
-  identity lead, and settle it before Tuesday.
+  refuse unless it is given `"acceptUnknownReplicaLag":true`.
+  `evidence.replicaLagError` says why: `ER_UNKNOWN_TABLE 1109` or
+  `ER_UNKNOWN_SYSTEM_VARIABLE 1193` mean the reader isn't Aurora; any other
+  error, such as `ER_PARSE_ERROR 1064`, is a fault in the export: report it,
+  and don't accept an unknown lag for it. Tell the identity lead, and settle
+  it before Tuesday.
 
 ## Tuesday: the run at the freeze (us-east-1)
 
@@ -297,12 +360,13 @@ replaced.
     that other run stays the export. Send both runs' `prefix` and
     `manifestSha256` to the coordinator. Only if the coordinator picks this
     run, run again with `"replacePointer":true`.
-  - it says reading the pointer back failed: it is unknown which run the
-    pointer names. Ask for links by `freezeAt`: `links-out.json` names that
-    run's prefix and manifest sha256. If they are this run's, it is the
-    export. Otherwise do as in the case above.
-  - Any other `pointerError`: send the coordinator this run's `prefix` and
-    `manifestSha256`, and fetch fresh links by `prefix`, not `freezeAt`.
+  - it says reading the pointer back failed: ask for links by `freezeAt`.
+    If their prefix is this run's, the pointer is this run's and all is
+    well. If not, it names another run: do as in the case above, and fetch
+    this run by its `prefix`.
+  - Any other `pointerError` (the write itself failed): send the
+    coordinator this run's `prefix` and `manifestSha256`, and fetch fresh
+    links by `prefix`, not `freezeAt`.
 - `revision` is the commit deployed, and `buildCommit` is the same commit
   (or `null`, with the revision you gave).
 - `cmsFieldsSource` names the profile site run at the freeze and its
@@ -310,8 +374,8 @@ replaced.
 - `host`, `readOnly: true` and `evidence`:
   - `transactionReadOnly` is true;
   - `serverReadOnly` or `innodbReadOnly` is true;
-  - `replicaLagMs` is below `snapshotGapMs`, or `null` only in a
-    run given `acceptUnknownReplicaLag`.
+  - `replicaLagMs` is below `snapshotGapMs`, or `null` only in a run given
+    `acceptUnknownReplicaLag`, with the reason in `replicaLagError`.
 - `bucketPrivacy.owner` is the function's own account.
 - `identityFreezeAtSecret` is `prod/lambdas`, `identityFreezeAtReading` is
   `time`, and `identityFreezeAt` equals `frozenAt`.

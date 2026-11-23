@@ -6,6 +6,7 @@ import {
   PutObjectCommand
 } from '@aws-sdk/client-s3';
 import { IdentityExportNotReadyError } from '@/identity-export/identity-export.errors';
+import { Logger } from '@/logging';
 import {
   checkReplicaLag,
   checkSnapshotTime,
@@ -126,6 +127,8 @@ function setup(
     publicBlock?: boolean;
     snapshotAt?: string;
     replicaLagMs?: number | null;
+    /** Why the lag couldn't be read (default: when it is null, not Aurora). */
+    replicaLagError?: string | null;
     closeFails?: boolean;
     /** Answer a read of a missing key with 403, as S3 does without ListBucket. */
     missingAs403?: boolean;
@@ -253,7 +256,13 @@ function setup(
         innodbReadOnly: null,
         snapshotAt: options.snapshotAt ?? '2026-11-24T00:30:00.000Z',
         replicaLagMs:
-          options.replicaLagMs === undefined ? 40 : options.replicaLagMs
+          options.replicaLagMs === undefined ? 40 : options.replicaLagMs,
+        replicaLagError:
+          options.replicaLagError !== undefined
+            ? options.replicaLagError
+            : options.replicaLagMs === null
+              ? "ER_UNKNOWN_TABLE 1109: Unknown table 'REPLICA_HOST_STATUS' in information_schema"
+              : null
       },
       close
     })),
@@ -602,7 +611,12 @@ describe('runIdentityExportJob', () => {
       snapshot_at: '2026-11-24T00:30:00.000Z',
       snapshot_gap_seconds: 1800,
       scope: { extraIds: 'inline', cmsFields: `${SITE_PREFIX}cms-fields.json` },
-      read: { host: 'replica-host', read_only: true, replicaLagMs: 40 }
+      read: {
+        host: 'replica-host',
+        read_only: true,
+        replicaLagMs: 40,
+        replicaLagError: null
+      }
     });
     expect(manifest.export_sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(manifest.files).toEqual([
@@ -904,7 +918,7 @@ describe('runIdentityExportJob', () => {
         expect(result.pointerKey).toBeNull();
         expect(result.presignedPointerUrl).toBeNull();
         expect(result.pointerError).toBe(
-          `S3 refused to write ${POINTER} because one is there, and reading it back failed (${reason}): whether it names this run is unknown. Ask for links by freezeAt to see which run it names.`
+          `S3 refused to write ${POINTER} because one is there, and reading it back failed (${reason}): whether it names this run is unknown. Ask for links by freezeAt: if their prefix is this run's, the pointer is this run's; if not, it names another run, and this run is fetched by its prefix.`
         );
       }
     );
@@ -1113,8 +1127,33 @@ describe('runIdentityExportJob', () => {
     mockBuild.mockResolvedValue(document());
     const refused = setup({ replicaLagMs: null });
     await expect(run(refused.deps)).rejects.toThrow(
-      "The replica's lag can't be read (information_schema.replica_host_status): only the gap since the freeze shows it holds the writes made before it. To rely on that gap alone, run again with acceptUnknownReplicaLag: true."
+      "The replica's lag can't be read from information_schema.replica_host_status (ER_UNKNOWN_TABLE 1109: Unknown table 'REPLICA_HOST_STATUS' in information_schema): only the gap since the freeze shows it holds the writes made before it. If that error says this isn't an Aurora reader, or the identity lead agrees, run again with acceptUnknownReplicaLag: true to rely on the gap alone."
     );
+    // The server's own error is named, whatever it is: a parse error is a
+    // fault to report, not an Aurora question.
+    const parseError = setup({
+      replicaLagMs: null,
+      replicaLagError:
+        'ER_PARSE_ERROR 1064: You have an error in your SQL syntax'
+    });
+    await expect(run(parseError.deps)).rejects.toThrow(
+      '(ER_PARSE_ERROR 1064: You have an error in your SQL syntax)'
+    );
+    expect(() => checkReplicaLag(300_000, null)).toThrow('(no reason given)');
+    // And the snapshot's log line names it.
+    const info = jest.spyOn(Logger.prototype, 'info');
+    try {
+      await run(setup({ replicaLagMs: null }).deps).catch(() => undefined);
+      expect(
+        info.mock.calls.some(([line]) =>
+          String(line).includes(
+            "[REPLICA LAG unknown MS: ER_UNKNOWN_TABLE 1109: Unknown table 'REPLICA_HOST_STATUS' in information_schema]"
+          )
+        )
+      ).toBe(true);
+    } finally {
+      info.mockRestore();
+    }
     expect(mockBuild).not.toHaveBeenCalled();
     expect(refused.order).toEqual([]);
     const accepted = setup({ replicaLagMs: null });
