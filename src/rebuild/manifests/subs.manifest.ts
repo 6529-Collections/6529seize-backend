@@ -1,10 +1,103 @@
-import { AreaManifest, Probe } from '@/rebuild/manifest.types';
+import { createHash } from 'node:crypto';
+import { AreaManifest, Probe, RebuildStep } from '@/rebuild/manifest.types';
 import {
   PROBE_CONSOLIDATION_KEYS,
   PROBE_MEME_IDS,
   PROBE_MEMES_CONTRACT,
   PROBE_UPCOMING_MEME_ID
 } from '@/rebuild/manifests/probe-fixture';
+
+/**
+ * The records service identity of a rebuild run: a fake wave, profile and
+ * wallet, and a provider key made only for the rebuild check, derived from
+ * a public label so it can never be mistaken for a real one. The same
+ * values in every area that writes the shared record log.
+ */
+const FIXTURE_PROVIDER_KEY = `0x${createHash('sha256')
+  .update('6529 rebuild check: fixture provider key, never a real one')
+  .digest('hex')}`;
+const FIXTURE_RECORDS_FLAGS = {
+  SIGNED_RECORDS_PROVIDER_KEYS: JSON.stringify([
+    { id: 'rebuild-fixture', private_key: FIXTURE_PROVIDER_KEY }
+  ]),
+  SIGNED_RECORDS_WAVE_ID: '00000000-0000-4000-8000-0000000000a1',
+  SIGNED_RECORDS_SERVICE_PROFILE_ID: 'rebuild-records-service',
+  SIGNED_RECORDS_SERVICE_WALLET: '0x00000000000000000000000000000000000000a1'
+};
+
+/** The identity tables the rebuild fills from the opening files and the journal. */
+const IDENTITY_TABLES = [
+  'subscriptions_id_balances',
+  'subscriptions_id_key_map',
+  'subscriptions_id_logs',
+  'subscriptions_id_mode',
+  'subscriptions_id_nfts',
+  'subscriptions_id_nfts_final',
+  'subscriptions_id_nfts_final_upload',
+  'subscriptions_id_redeemed',
+  'subscriptions_id_top_up',
+  'subscriptions_id_state',
+  'subscriptions_id_cursors'
+];
+
+/**
+ * Today's subscriptions of the probe wallets through the legacy write
+ * paths, then the switch (`go-live`, with the opening files in the seed
+ * files), a top-up after it and a checkpoint, and the journal's closed
+ * segment in the records wave (src/rebuild/areas/subs.seed.ts).
+ */
+const SUBS_SEED: RebuildStep = {
+  id: 'subs.seed',
+  run: {
+    module: 'src/rebuild/areas/subs.seed',
+    exportName: 'seedSubscriptions'
+  },
+  writes: [
+    'subscriptions_balances',
+    'subscriptions_logs',
+    'subscriptions_mode',
+    'subscriptions_nfts',
+    'subscriptions_top_up',
+    'subscription_cache_invalidations',
+    'subscription_coverage_refresh_requests',
+    'subscription_deferred_writes',
+    'transactions_processed_subscriptions_blocks',
+    ...IDENTITY_TABLES,
+    'subscriptions_id_reports',
+    'signed_record_log_entries',
+    'signed_record_log_segments',
+    'identities',
+    'address_consolidation_keys',
+    'profiles',
+    'waves',
+    'drops',
+    'drops_parts'
+  ],
+  reads: ['nfts', 'transactions'],
+  // The memes the holdings seed mints, and the probe wallets' keys.
+  after: ['holdings.seed', 'identity.probe-profiles'],
+  sources: ['files', 'repo'],
+  timeoutMinutes: 15
+};
+
+/**
+ * The identity tables from empty: the production rebuild from the opening
+ * files and the journal, read from the records wave's head drops and the
+ * segment files, then the switch the journal records
+ * (src/subscriptions-identity/opening/rebuild-check.steps.ts).
+ */
+const SUBS_REBUILD: RebuildStep = {
+  id: 'subs.identity',
+  run: {
+    module: 'src/subscriptions-identity/opening/rebuild-check.steps',
+    exportName: 'rebuildSubscriptionsInCheck'
+  },
+  writes: IDENTITY_TABLES,
+  // The records wave: the head drops the records service posted.
+  reads: ['drops', 'drops_parts'],
+  sources: ['files'],
+  timeoutMinutes: 15
+};
 
 /** The subscription answers, for the probe fixture's consolidations. */
 const PROBES: Probe[] = [
@@ -78,8 +171,12 @@ const PROBES: Probe[] = [
  */
 export const subsManifest: AreaManifest = {
   area: 'subs',
-  // Replays queued long-key writes once they fit (the subs area's flag).
-  flags: { FEATURE_SUBSCRIPTION_DEFERRED_REPLAY: 'true' },
+  flags: {
+    // Replays queued long-key writes once they fit (the subs area's flag).
+    FEATURE_SUBSCRIPTION_DEFERRED_REPLAY: 'true',
+    // The shared record log's records service, which the journal posts through.
+    ...FIXTURE_RECORDS_FLAGS
+  },
   tables: {
     subscription_cache_invalidations: {
       class: 'EPHEMERAL',
@@ -133,12 +230,35 @@ export const subsManifest: AreaManifest = {
       origin: 'planned'
     },
     subscriptions_id_redeemed: { class: 'INDEX', origin: 'planned' },
-    subscriptions_id_state: { class: 'INDEX', origin: 'planned' },
+    subscriptions_id_state: {
+      class: 'INDEX',
+      origin: 'planned',
+      volatileColumns: [
+        {
+          column: 'loaded_at',
+          reason:
+            "When the opening was loaded: the load's own time, not shown by any route."
+        },
+        {
+          column: 'verified_at',
+          reason:
+            "When the load was verified: the check's own time, not shown by any route."
+        }
+      ]
+    },
     subscriptions_id_top_up: { class: 'INDEX', origin: 'planned' },
+    // The redemption cursor and the journal's counter, from the opening and
+    // the journal. Go-live's pause marker is gone by the end of each step.
     subscriptions_id_cursors: {
-      class: 'EPHEMERAL',
-      why: "Redemption cursor; restarts from the opening's redemption block.",
-      origin: 'planned'
+      class: 'INDEX',
+      origin: 'planned',
+      volatileColumns: [
+        {
+          column: 'updated_at',
+          reason:
+            'When the row was last written: housekeeping, not shown by any route.'
+        }
+      ]
     },
     subscription_rekey_fallback_state: {
       class: 'EPHEMERAL',
@@ -151,7 +271,7 @@ export const subsManifest: AreaManifest = {
       origin: 'planned'
     }
   },
-  seeds: [],
-  rebuilders: [],
+  seeds: [SUBS_SEED],
+  rebuilders: [SUBS_REBUILD],
   probes: PROBES
 };
