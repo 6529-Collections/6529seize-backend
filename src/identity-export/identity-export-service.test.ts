@@ -13,6 +13,7 @@ import {
   HELP_BOT_CREDIT_RULE_NOTE,
   exportRules,
   identitySyncProblem,
+  isHelpBotCreditCategory,
   readinessProblems,
   tdhBlockTimingProblem,
   leaveOutHelpBotCredits,
@@ -421,6 +422,17 @@ describe('buildIdentityExport', () => {
         expect.stringContaining('help-bot credits left out: 2 REP ratings')
       ])
     );
+  });
+
+  it('tests the help-bot credit category as the removed shared helper did', () => {
+    expect(isHelpBotCreditCategory('Help6529 Credits')).toBe(true);
+    expect(isHelpBotCreditCategory('  Help6529 Credits  ')).toBe(true);
+    expect(isHelpBotCreditCategory('HELP6529 credits')).toBe(true);
+    expect(isHelpBotCreditCategory(null)).toBe(false);
+    expect(isHelpBotCreditCategory(undefined)).toBe(false);
+    expect(isHelpBotCreditCategory('')).toBe(false);
+    expect(isHelpBotCreditCategory('Help6529')).toBe(false);
+    expect(isHelpBotCreditCategory('Kind')).toBe(false);
   });
 
   it('matches the help-bot category whatever its case or surrounding spaces', () => {

@@ -1,8 +1,5 @@
 import { RESERVED_HANDLES } from '@/api/profiles/profiles.constants';
-import {
-  HELP_BOT_CREDIT_CATEGORY,
-  isHelpBotCreditCategory
-} from '@/help-bot/help-bot.config';
+import { HELP_BOT_CREDIT_CATEGORY } from '@/help-bot/help-bot.config';
 import { getLevelFromScore } from '@/profiles/profile-level';
 import { ProfileClassification } from '@/entities/IProfile';
 import { enums } from '@/enums';
@@ -532,6 +529,15 @@ export function repMismatches(
   return identities.filter(
     (it) => it.profile_id !== null && it.rep !== (sums.get(it.profile_id) ?? 0)
   ).length;
+}
+
+/** The export rule's own test, kept here after main removed the shared helper. */
+export function isHelpBotCreditCategory(
+  category: string | null | undefined
+): boolean {
+  return (
+    category?.trim().toLowerCase() === HELP_BOT_CREDIT_CATEGORY.toLowerCase()
+  );
 }
 
 /**
