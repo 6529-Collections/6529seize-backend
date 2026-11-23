@@ -44,6 +44,7 @@ import {
   s3Presigner
 } from './chain-exports/private-export-bucket';
 import {
+  errorCode,
   openReadOnlySnapshot,
   ReadOnlyEvidence,
   ReadOnlySnapshot,
@@ -427,14 +428,7 @@ export function checkReplicaLag(
   >,
   accepted: readonly ReplicaLagAccepted[] = []
 ): ReplicaLagAccepted | null {
-  const lagCase: ReplicaLagAccepted | null =
-    lag.replicaLagUnknown !== null ||
-    lag.replicaLagMs === null ||
-    lag.replicaLagAgeMs === null
-      ? (lag.replicaLagUnknown ?? 'unreadable')
-      : lag.replicaLagAgeMs >= gapMs
-        ? 'older_than_gap'
-        : null;
+  const lagCase = replicaLagCaseOf(gapMs, lag);
   // The lag the row reports counts whenever there is one; its age only
   // when the row's timestamp can be trusted.
   if (lag.replicaLagMs !== null) {
@@ -465,6 +459,66 @@ export function checkReplicaLag(
   }
   throw new ProfileSiteExportSnapshotError(
     `The replica's lag can't be read from information_schema.replica_host_status (${reason}). ${unknownLagSteps(lagCase, ": for an error, only ER_UNKNOWN_TABLE 1109 or ER_UNKNOWN_SYSTEM_VARIABLE 1193 (the reader isn't Aurora)")}`
+  );
+}
+
+/**
+ * The untrusted lag case a run would refuse on unless accepted by name, or
+ * null when the lag and its row's age can be trusted (the lag may still be
+ * too large for the gap).
+ */
+export function replicaLagCaseOf(
+  gapMs: number,
+  lag: Pick<
+    ReadOnlyEvidence,
+    'replicaLagMs' | 'replicaLagAgeMs' | 'replicaLagUnknown'
+  >
+): ReplicaLagAccepted | null {
+  if (
+    lag.replicaLagUnknown !== null ||
+    lag.replicaLagMs === null ||
+    lag.replicaLagAgeMs === null
+  ) {
+    return lag.replicaLagUnknown ?? 'unreadable';
+  }
+  return lag.replicaLagAgeMs >= gapMs ? 'older_than_gap' : null;
+}
+
+/** The read replica failed; its message stays in the function's log. */
+export class ProfileSiteExportDatabaseError extends Error {
+  constructor(message: string) {
+    super(message);
+    Object.setPrototypeOf(this, new.target.prototype);
+    this.name = 'ProfileSiteExportDatabaseError';
+  }
+}
+
+/** A MySQL or network error's code: ER_..., PROTOCOL_..., ENOTFOUND, ... */
+const DATABASE_ERROR_CODE =
+  /^(ER_[A-Z0-9_]+|PROTOCOL_[A-Z_]+|HANDSHAKE_[A-Z_]+|POOL_[A-Z_]+|E[A-Z]+)$/;
+
+/**
+ * A database or connection error as its code and number only: its message
+ * can name the user and host ('user'@'host') or the hostname (ENOTFOUND
+ * <host>), and the response goes to the operator's out.json. The message
+ * goes to the log. Any other error is returned as it is.
+ */
+export function databaseErrorOf(error: unknown, during: string): unknown {
+  const { code, sqlMessage } = (error ?? {}) as {
+    code?: unknown;
+    sqlMessage?: unknown;
+  };
+  if (
+    sqlMessage === undefined &&
+    !(typeof code === 'string' && DATABASE_ERROR_CODE.test(code))
+  ) {
+    return error;
+  }
+  logger.error(
+    `[READ REPLICA FAILED] [${during}] ${String((error as Error)?.message ?? error)}`
+  );
+  return new ProfileSiteExportDatabaseError(
+    `The read replica failed while ${during}: ${errorCode(error)}. Its message, which can name the host or user, is in the function's log.`
   );
 }
 
@@ -712,6 +766,12 @@ export interface ProfileSiteExportResult {
   readonly acceptUnknownReplicaLag: readonly ReplicaLagAccepted[];
   /** The unknown or stale lag the run accepted, or null if none. */
   readonly replicaLagAccepted: ReplicaLagAccepted | null;
+  /**
+   * The untrusted lag case the snapshot showed (unreadable, dated_ahead,
+   * older_than_gap), or null when lag and age could be trusted. A
+   * rehearsal records it too: Tuesday may accept only a case Monday showed.
+   */
+  readonly replicaLagCase: ReplicaLagAccepted | null;
   /** Whether the run was allowed to replace an earlier run's pointer. */
   readonly replacePointer: boolean;
   readonly startedAt: string;
@@ -961,7 +1021,9 @@ export async function runProfileSiteExportJob(
   const exporter = await deps.exporter(event.frozenAt, () =>
     deadline('before fetching a stored record')
   );
-  const snapshot = await deps.openSnapshot(target);
+  const snapshot = await deps.openSnapshot(target).catch((error: unknown) => {
+    throw databaseErrorOf(error, 'opening the read-only snapshot');
+  });
   logger.info(
     `[READ ONLY SNAPSHOT] [HOST ${target.host}] [AT ${snapshot.evidence.snapshotAt}] [REPLICA LAG ${snapshot.evidence.replicaLagMs ?? 'unknown'} MS] [LAG ROW AGE ${snapshot.evidence.replicaLagAgeMs ?? 'unknown'} MS]${snapshot.evidence.replicaLagError ? ` [REPLICA LAG ERROR ${snapshot.evidence.replicaLagError}]` : ''}${snapshot.evidence.replicaLagUnknown ? ` [REPLICA LAG UNKNOWN ${snapshot.evidence.replicaLagUnknown}]` : ''} [TRANSACTION READ ONLY ${snapshot.evidence.transactionReadOnly}] [SERVER READ ONLY ${snapshot.evidence.serverReadOnly}] [INNODB READ ONLY ${snapshot.evidence.innodbReadOnly}]`
   );
@@ -969,6 +1031,7 @@ export async function runProfileSiteExportJob(
   let gapSeconds = 0;
   let gapMs = 0;
   let replicaLagAccepted: ReplicaLagAccepted | null = null;
+  let replicaLagCase: ReplicaLagAccepted | null = null;
   let latest: LatestSiteWrites;
   let late: WriteAfterFreeze[];
   try {
@@ -980,6 +1043,9 @@ export async function runProfileSiteExportJob(
     );
     gapSeconds = gap.gapSeconds;
     gapMs = gap.gapMs;
+    // A rehearsal names the case a real run would refuse on, so Tuesday
+    // knows which name Monday showed.
+    replicaLagCase = replicaLagCaseOf(gap.gapMs, snapshot.evidence);
     latest = await latestSiteWrites(snapshot.executor);
     late = await writesAfterFreeze(snapshot.executor, event.frozenAt);
     // Before the freeze, sites are still published: a rehearsal records
@@ -992,7 +1058,7 @@ export async function runProfileSiteExportJob(
       );
       if (replicaLagAccepted) {
         logger.warn(
-          `[REPLICA LAG ACCEPTED ${replicaLagAccepted}] [RELYING ON THE ${MIN_SNAPSHOT_GAP_SECONDS} S MINIMUM GAP]`
+          `[REPLICA LAG ACCEPTED ${replicaLagAccepted}] [THE ROW'S REPORTED LAG, ${snapshot.evidence.replicaLagMs ?? 'NONE'} MS, STILL CHECKED] [THE ${MIN_SNAPSHOT_GAP_SECONDS} S MINIMUM GAP HELD]`
         );
       }
       checkWritesAfterFreeze(late, event.acceptWritesAfterFreeze);
@@ -1045,7 +1111,7 @@ export async function runProfileSiteExportJob(
       .catch((closeError: unknown) =>
         logger.warn(`[SNAPSHOT CLOSE FAILED] ${String(closeError)}`)
       );
-    throw error;
+    throw databaseErrorOf(error, 'reading the snapshot');
   }
   // Nothing was written in the transaction: a failed close after a full read
   // doesn't make the export wrong.
@@ -1113,6 +1179,7 @@ export async function runProfileSiteExportJob(
     accepted_writes_after_freeze: event.acceptWritesAfterFreeze,
     accept_unknown_replica_lag: event.acceptUnknownReplicaLag,
     replica_lag_accepted: replicaLagAccepted,
+    replica_lag_case: replicaLagCase,
     replace_pointer: event.replacePointer,
     started_at: startedAt.toISOString(),
     finished_at: finishedAt.toISOString(),
@@ -1231,6 +1298,7 @@ export async function runProfileSiteExportJob(
     acceptedWritesAfterFreeze: event.acceptWritesAfterFreeze,
     acceptUnknownReplicaLag: event.acceptUnknownReplicaLag,
     replicaLagAccepted,
+    replicaLagCase,
     replacePointer: event.replacePointer,
     startedAt: startedAt.toISOString(),
     finishedAt: finishedAt.toISOString(),

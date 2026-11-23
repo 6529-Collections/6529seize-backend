@@ -15,11 +15,13 @@ import {
   jobRecordFetcher,
   latestSiteWrites,
   parseProfileSiteExportEvent,
+  ProfileSiteExportDatabaseError,
   ProfileSiteExportDeadlineError,
   ProfileSiteExportDeps,
   ProfileSiteExportEventError,
   ProfileSiteExportLinksResult,
   ProfileSiteExportResult,
+  ProfileSiteExportSnapshotError,
   readFreezeSetting,
   runProfileSiteExportJob,
   WriteAfterFreeze,
@@ -84,6 +86,8 @@ function setup(
     getDenied?: boolean;
     /** Every read of an object fails outright. */
     getFails?: boolean;
+    /** The snapshot's first SELECT fails with this error. */
+    selectFails?: Error;
     verifyFails?: number;
     /** The pointer write lands, but its answer is lost and the retry refused. */
     pointerAnswerLost?: boolean;
@@ -148,6 +152,7 @@ function setup(
   });
   const executor = {
     execute: jest.fn(async (sql: string, _params?: Record<string, any>) => {
+      if (options.selectFails) throw options.selectFails;
       if (/max\(published_at\)/i.test(sql)) {
         return [
           {
@@ -847,6 +852,7 @@ describe('runProfileSiteExportJob', () => {
         replicaLagUnknown: null
       },
       replicaLagAccepted: null,
+      replicaLagCase: null,
       latestSiteWrites: {
         packages: new Date(T - 60_000).toISOString(),
         archived_packages: null,
@@ -925,6 +931,7 @@ describe('runProfileSiteExportJob', () => {
         read_only: true
       },
       replica_lag_accepted: null,
+      replica_lag_case: null,
       latest_site_writes: { archived_packages: null },
       writes_after_freeze: [],
       accepted_writes_after_freeze: []
@@ -1291,6 +1298,97 @@ describe('runProfileSiteExportJob', () => {
       deps
     )) as ProfileSiteExportResult;
     expect(result.evidence.replicaLagMs).toBeNull();
+  });
+
+  it.each([
+    ['a trusted lag', {}, null],
+    ['an unreadable lag', { replicaLagMs: null }, 'unreadable'],
+    [
+      'a row dated ahead',
+      { replicaLagMs: 20, lagRowAhead: true },
+      'dated_ahead'
+    ],
+    [
+      'a row older than the gap',
+      { replicaLagMs: 20, replicaLagAgeMs: 360_000 },
+      'older_than_gap'
+    ]
+  ])(
+    'has a rehearsal name the lag case a real run would refuse on: %s',
+    async (_name, lagOptions, lagCase) => {
+      const { deps, bodies } = setup({
+        snapshotAt: T + 300_000,
+        ...lagOptions
+      });
+      const result = (await runProfileSiteExportJob(
+        { ...event, rehearsal: true },
+        context,
+        deps
+      )) as ProfileSiteExportResult;
+      expect(result.replicaLagCase).toBe(lagCase);
+      expect(result.replicaLagAccepted).toBeNull();
+      expect(JSON.parse(bodies.get(result.manifestKey)!).replica_lag_case).toBe(
+        lagCase
+      );
+    }
+  );
+
+  it('gives the code of a failed connection, never its message', async () => {
+    const { deps, order } = setup();
+    const lookup = Object.assign(
+      new Error('getaddrinfo ENOTFOUND reader.example.invalid'),
+      {
+        code: 'ENOTFOUND',
+        errno: -3008,
+        syscall: 'getaddrinfo',
+        hostname: 'reader.example.invalid'
+      }
+    );
+    (deps as { openSnapshot: unknown }).openSnapshot = jest.fn(async () => {
+      throw lookup;
+    });
+    const error = await runProfileSiteExportJob(event, context, deps).catch(
+      (e) => e
+    );
+    expect(error).toBeInstanceOf(ProfileSiteExportDatabaseError);
+    expect(error.message).toBe(
+      "The read replica failed while opening the read-only snapshot: ENOTFOUND -3008. Its message, which can name the host or user, is in the function's log."
+    );
+    expect(error.message).not.toMatch(/reader\.example/);
+    expect(order).toEqual([]);
+  });
+
+  it('gives the code of a failed SELECT, never its message', async () => {
+    const denied = Object.assign(
+      new Error(
+        "ER_TABLEACCESS_DENIED_ERROR: SELECT command denied to user 'reader'@'192.0.2.10'"
+      ),
+      {
+        code: 'ER_TABLEACCESS_DENIED_ERROR',
+        errno: 1142,
+        sqlMessage: "SELECT command denied to user 'reader'@'192.0.2.10'"
+      }
+    );
+    const { deps, close, order } = setup({ selectFails: denied });
+    const error = await runProfileSiteExportJob(event, context, deps).catch(
+      (e) => e
+    );
+    expect(error).toBeInstanceOf(ProfileSiteExportDatabaseError);
+    expect(error.message).toMatch(
+      /^The read replica failed while reading the snapshot: ER_TABLEACCESS_DENIED_ERROR 1142\./
+    );
+    expect(error.message).not.toMatch(/192\.0\.2\.10|'reader'/);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(order).toEqual([]);
+  });
+
+  it("passes the export's own refusals through as they are", async () => {
+    const { deps } = setup({ snapshotAt: T - 1_000 });
+    const error = await runProfileSiteExportJob(event, context, deps).catch(
+      (e) => e
+    );
+    expect(error).toBeInstanceOf(ProfileSiteExportSnapshotError);
+    expect(error.message).toMatch(/before the freeze/);
   });
 
   it('writes no manifest when an upload fails, and still closes the snapshot', async () => {
