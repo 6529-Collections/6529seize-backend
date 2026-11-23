@@ -271,19 +271,28 @@ export type ReplicaLagAcceptance =
 
 /** Time zones reach 14 hours from UTC; a bound may add a margin to that. */
 const MAX_ZONE_BOUND_MS = 14 * 60 * 60 * 1000 + 10 * 60 * 1000;
-/** A smaller lead over UTC is clock skew, not a time zone. */
-const MIN_DATED_AHEAD_BOUND_MS = 60_000;
+/**
+ * A smaller lead over UTC is no time zone: none is less than 30 minutes
+ * from UTC, and a bound sits a margin under Monday's lead.
+ */
+const MIN_DATED_AHEAD_BOUND_MS = 1_740_000;
+/**
+ * The margin a bound is taken with, from Monday's reading: a reader that
+ * stalled for up to this long still passes it, so an accepted bounded case
+ * counts it as lag.
+ */
+const ACCEPT_MARGIN_MS = 60_000;
 
 const ACCEPT_FORMS =
-  '"unreadable", {"dated_ahead": <smallest lead in ms: Monday\'s replicaLagAheadMs minus a margin>}, or {"older_than_gap": <largest row age in ms: Monday\'s replicaLagAgeMs plus a margin>}';
+  '"unreadable", {"dated_ahead": <smallest lead in ms: Monday\'s replicaLagAheadMs minus 60000>}, or {"older_than_gap": <largest row age in ms: Monday\'s replicaLagAgeMs plus 60000>}';
 
 /** How a refusal says to accept its case. */
 function acceptanceExample(lagCase: ReplicaLagAccepted): string {
   if (lagCase === 'older_than_gap') {
-    return 'acceptUnknownReplicaLag: {"older_than_gap": <Monday\'s replicaLagAgeMs plus a margin, such as 60000>}';
+    return 'acceptUnknownReplicaLag: {"older_than_gap": <Monday\'s replicaLagAgeMs plus 60000>}';
   }
   if (lagCase === 'dated_ahead') {
-    return 'acceptUnknownReplicaLag: {"dated_ahead": <Monday\'s replicaLagAheadMs minus a margin, such as 60000>}';
+    return 'acceptUnknownReplicaLag: {"dated_ahead": <Monday\'s replicaLagAheadMs minus 60000>}';
   }
   return `acceptUnknownReplicaLag: "${lagCase}"`;
 }
@@ -329,17 +338,32 @@ export function checkReplicaLag(
   accepted: readonly ReplicaLagAcceptance[] = []
 ): ReplicaLagAccepted | null {
   const lagCase = replicaLagCaseOf(gapMs, lag);
+  // A reader dated ahead that stopped updating loses its lead as time
+  // passes, and once the lead has run out its row reads as fresh: with a
+  // dated_ahead bound accepted, any other reading is refused.
+  const leadBound = boundFor(accepted, 'dated_ahead');
+  if (leadBound !== undefined && lagCase !== 'dated_ahead') {
+    throw new IdentityExportSnapshotError(
+      `dated_ahead was accepted down to a ${leadBound} ms lead, but this reader's row reads ${lagCase ?? 'as fresh'}: a reader dated ahead that stopped updating reads that way once its lead has run out. Run once more without changing anything; if it reads the same, report it.`
+    );
+  }
   // The lag the row reports counts whenever there is one; its age only
-  // when the row's timestamp can be trusted. The age can read up to
-  // REPLICA_LAG_AGE_MARGIN_MS low.
+  // when the row's timestamp can be trusted, and the age can read up to
+  // REPLICA_LAG_AGE_MARGIN_MS low. A bounded case accepted can hide a
+  // stall up to the bound's margin: that counts as lag.
   if (lag.replicaLagMs !== null) {
     const ageMs = lagCase === null ? (lag.replicaLagAgeMs ?? 0) : 0;
-    const behindMs = lag.replicaLagMs + ageMs;
+    const stallMs =
+      (lagCase === 'dated_ahead' || lagCase === 'older_than_gap') &&
+      boundFor(accepted, lagCase) !== undefined
+        ? ACCEPT_MARGIN_MS
+        : 0;
+    const behindMs = lag.replicaLagMs + ageMs + stallMs;
     if (behindMs + REPLICA_LAG_AGE_MARGIN_MS >= gapMs) {
       const what =
         lagCase === null
           ? `may be ${behindMs} ms behind its writer (a ${lag.replicaLagMs} ms lag in a row ${ageMs} ms old)`
-          : `reports a ${lag.replicaLagMs} ms lag (its row's age not counted: ${lagCase})`;
+          : `reports a ${lag.replicaLagMs} ms lag (its row's age not counted: ${lagCase}${stallMs ? `; ${stallMs} ms more for a stall within the bound's margin` : ''})`;
       // A trusted row's lag falls as the reader catches up; an untrusted
       // (stale) row's lag never changes, so waiting won't help.
       const next =
@@ -500,6 +524,52 @@ export function networkErrorOf(error: unknown, during: string): unknown {
   );
   return new IdentityExportNetworkError(
     failureMessage('A network call', during, error)
+  );
+}
+
+/** An AWS service refused; its message stays in the function's log. */
+export class IdentityExportServiceError extends Error {
+  constructor(message: string) {
+    super(message);
+    Object.setPrototypeOf(this, new.target.prototype);
+    this.name = 'IdentityExportServiceError';
+  }
+}
+
+/**
+ * An error as words the operator may see: a network error's code and
+ * number (for a DNS lookup, saying so), an AWS service error's name and
+ * HTTP status, or the error's name; never its message.
+ */
+export function errorName(error: unknown): string {
+  if (isNetworkError(error)) {
+    return isDnsFailure(error)
+      ? `DNS lookup failed, ${errorCode(error)}`
+      : errorCode(error);
+  }
+  const { name, $metadata } = (error ?? {}) as {
+    name?: unknown;
+    $metadata?: { httpStatusCode?: number };
+  };
+  const status = $metadata?.httpStatusCode;
+  return `${typeof name === 'string' ? name : 'Error'}${status === undefined ? '' : ` (${status})`}`;
+}
+
+/**
+ * An AWS service's refusal (S3, Secrets Manager) as its name and HTTP
+ * status, never its message. Anything else is returned as it is.
+ */
+export function serviceErrorOf(error: unknown, during: string): unknown {
+  const { name, $metadata } = (error ?? {}) as {
+    name?: unknown;
+    $metadata?: unknown;
+  };
+  if ($metadata === undefined || typeof name !== 'string') return error;
+  logger.error(
+    `[AWS CALL REFUSED] [${during}] ${String((error as Error)?.message ?? error)}`
+  );
+  return new IdentityExportServiceError(
+    `An AWS call was refused while ${during}: ${errorName(error)}. Its message is in the function's log.`
   );
 }
 
@@ -1299,10 +1369,10 @@ async function pointerOwner(
           : 'another run'
     };
   } catch (error) {
-    return {
-      owner: 'unknown',
-      reason: String((error as Error)?.message ?? error)
-    };
+    logger.warn(
+      `[POINTER READ-BACK FAILED] ${String((error as Error)?.message ?? error)}`
+    );
+    return { owner: 'unknown', reason: errorName(error) };
   }
 }
 
@@ -1318,7 +1388,7 @@ function pointerErrorOf(
   if (read?.owner === 'unknown') {
     return `S3 refused to write ${key} because one is there, and reading it back failed (${read.reason}): whether it names this run is unknown. Ask for links by freezeAt: if their prefix is this run's, the pointer is this run's; if not, it names another run, and this run is fetched by its prefix.`;
   }
-  return String((error as Error)?.message ?? error);
+  return `The pointer write failed: ${errorName(error)}. Its message is in the function's log.`;
 }
 
 /** Presigns every object and writes the links file. */
@@ -1401,11 +1471,11 @@ export async function runIdentityExportJob(
   try {
     return await runJob(event, context, deps);
   } catch (error) {
-    // What the operator's out.json gets: no hostname from a network error.
-    throw networkErrorOf(
-      error,
-      event.job === LINKS_JOB ? 'renewing the links' : 'running the export'
-    );
+    // What the operator's out.json gets: no hostname from a network error,
+    // no message from an AWS service's refusal.
+    const during =
+      event.job === LINKS_JOB ? 'renewing the links' : 'running the export';
+    throw serviceErrorOf(networkErrorOf(error, during), during);
   }
 }
 
@@ -1742,7 +1812,9 @@ async function runJob(
         logger.warn(`[POINTER WRITTEN, ITS RETRY REFUSED] [${pointerKey}]`);
       } else {
         pointerError = pointerErrorOf(pointerKey, error, read);
-        logger.warn(`[POINTER NOT WRITTEN] [${pointerKey}] ${pointerError}`);
+        logger.warn(
+          `[POINTER NOT WRITTEN] [${pointerKey}] ${pointerError} ${String((error as Error)?.message ?? error)}`
+        );
       }
     }
   }

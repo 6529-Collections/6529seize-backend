@@ -15,6 +15,7 @@ import {
   IdentityExportEventError,
   IdentityExportLinksResult,
   IdentityExportResult,
+  IdentityExportServiceError,
   parseIdentityExportEvent,
   runIdentityExportJob
 } from './identity-export.handler';
@@ -125,6 +126,8 @@ function setup(
      * missing or is refused (403).
      */
     pointerConflictUnread?: 'missing' | 'forbidden';
+    /** The pointer's write is refused (412), and reading it back throws this. */
+    pointerReadFailsWith?: Error;
     publicBlock?: boolean;
     snapshotAt?: string;
     replicaLagMs?: number | null;
@@ -154,6 +157,8 @@ function setup(
   const bodies = new Map<string, string>(
     Object.entries(options.objects ?? siteRun())
   );
+  // Set once the pointer's write is refused: its read-back comes after.
+  let pointerRefused = false;
   const send = jest.fn(async (command: any) => {
     // Every call names the bucket's expected owner: the function's account.
     if (command.input.ExpectedBucketOwner !== OWNER) {
@@ -186,7 +191,11 @@ function setup(
       if (command.input.ChecksumSHA256 !== sum) {
         throw new Error(`bad checksum for ${key}`);
       }
-      if (options.pointerConflictUnread && key.includes('/by-freeze/')) {
+      if (
+        (options.pointerConflictUnread || options.pointerReadFailsWith) &&
+        key.includes('/by-freeze/')
+      ) {
+        pointerRefused = true;
         throw Object.assign(new Error('At least one precondition failed'), {
           name: 'PreconditionFailed',
           $metadata: { httpStatusCode: 412 }
@@ -212,6 +221,14 @@ function setup(
       return {};
     }
     if (command instanceof GetObjectCommand) {
+      if (
+        options.pointerReadFailsWith &&
+        pointerRefused &&
+        command.input.Key!.startsWith('identity-export/') &&
+        command.input.Key!.includes('/by-freeze/')
+      ) {
+        throw options.pointerReadFailsWith;
+      }
       const body = bodies.get(command.input.Key!);
       if (body === undefined) {
         const forbidden =
@@ -389,7 +406,7 @@ describe('parseIdentityExportEvent', () => {
   it('takes bounds at the edges of the time zones', () => {
     for (const bounds of [
       [{ older_than_gap: 120_000 }, { dated_ahead: 51_000_000 }],
-      [{ older_than_gap: 51_000_000 }, { dated_ahead: 60_000 }]
+      [{ older_than_gap: 51_000_000 }, { dated_ahead: 1_740_000 }]
     ]) {
       expect(
         parseIdentityExportEvent({
@@ -544,7 +561,7 @@ describe('parseIdentityExportEvent', () => {
     [{ ...rehearsal, replacePointer: true }, 'a rehearsal writes no pointer'],
     [
       { ...atFreeze, acceptUnknownReplicaLag: true },
-      'acceptUnknownReplicaLag must name each case to accept, as the refusals do: "unreadable", {"dated_ahead": <smallest lead in ms: Monday\'s replicaLagAheadMs minus a margin>}, or {"older_than_gap": <largest row age in ms: Monday\'s replicaLagAgeMs plus a margin>}; one or a list, each once. A bound on a row\'s age is 120000 to 51000000 ms, on its lead 60000 to 51000000 ms. true and a bare "dated_ahead" or "older_than_gap" are not accepted: a rerun that lands on another reader showing another case, or a reader that stopped, must be refused.'
+      'acceptUnknownReplicaLag must name each case to accept, as the refusals do: "unreadable", {"dated_ahead": <smallest lead in ms: Monday\'s replicaLagAheadMs minus 60000>}, or {"older_than_gap": <largest row age in ms: Monday\'s replicaLagAgeMs plus 60000>}; one or a list, each once. A bound on a row\'s age is 120000 to 51000000 ms, on its lead 1740000 to 51000000 ms. true and a bare "dated_ahead" or "older_than_gap" are not accepted: a rerun that lands on another reader showing another case, or a reader that stopped, must be refused.'
     ],
     [
       { ...atFreeze, acceptUnknownReplicaLag: 'older_than_gap' },
@@ -562,6 +579,11 @@ describe('parseIdentityExportEvent', () => {
     // the 2-minute minimum gap or more, neither past 14 h 10 min.
     [
       { ...atFreeze, acceptUnknownReplicaLag: { dated_ahead: 59_999 } },
+      'acceptUnknownReplicaLag must name each case to accept'
+    ],
+    // No time zone is less than 30 minutes from UTC.
+    [
+      { ...atFreeze, acceptUnknownReplicaLag: { dated_ahead: 1_739_999 } },
       'acceptUnknownReplicaLag must name each case to accept'
     ],
     [
@@ -1121,8 +1143,86 @@ describe('runIdentityExportJob', () => {
       const { deps } = setup({ failPutOf: '2026-11-24T00-00-00-000Z.json' });
       const result = await run(deps);
       expect(result.pointerKey).toBeNull();
-      expect(result.pointerError).toBe('upload failed');
+      // Its name only: the message stays in the log.
+      expect(result.pointerError).toBe(
+        "The pointer write failed: Error. Its message is in the function's log."
+      );
       expect(result.manifestKey).toMatch(/manifest\.json$/);
+    });
+
+    it('gives a failed pointer write by its code, never its message', async () => {
+      mockBuild.mockResolvedValue(document());
+      const warn = jest.spyOn(Logger.prototype, 'warn');
+      try {
+        const timedOut = setup({
+          failPutOf: '2026-11-24T00-00-00-000Z.json',
+          failPutWith: Object.assign(
+            new Error('connect ETIMEDOUT 192.0.2.7:443'),
+            {
+              code: 'ETIMEDOUT',
+              errno: -110,
+              syscall: 'connect',
+              address: '192.0.2.7',
+              port: 443
+            }
+          )
+        });
+        const result = await run(timedOut.deps);
+        expect(result.pointerKey).toBeNull();
+        expect(result.pointerError).toBe(
+          "The pointer write failed: ETIMEDOUT -110. Its message is in the function's log."
+        );
+        expect(JSON.stringify(result)).not.toContain('192.0.2.7');
+        // The message goes to the log.
+        expect(
+          warn.mock.calls.some(([line]) =>
+            String(line).includes('connect ETIMEDOUT 192.0.2.7:443')
+          )
+        ).toBe(true);
+        // A DNS failure says so, by its code.
+        const dns = setup({
+          failPutOf: '2026-11-24T00-00-00-000Z.json',
+          failPutWith: Object.assign(
+            new Error('getaddrinfo EAI_AGAIN bucket.s3.example.invalid'),
+            {
+              code: 'EAI_AGAIN',
+              errno: -3001,
+              syscall: 'getaddrinfo',
+              hostname: 'bucket.s3.example.invalid'
+            }
+          )
+        });
+        const looked = await run(dns.deps);
+        expect(looked.pointerError).toBe(
+          "The pointer write failed: DNS lookup failed, EAI_AGAIN -3001. Its message is in the function's log."
+        );
+        expect(JSON.stringify(looked)).not.toContain('example.invalid');
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('gives a failed read-back by its code, never its message', async () => {
+      mockBuild.mockResolvedValue(document());
+      const { deps } = setup({
+        pointerReadFailsWith: Object.assign(
+          new Error('socket hang up from bucket.s3.example.invalid'),
+          { code: 'ECONNRESET' }
+        )
+      });
+      const result = await run(deps);
+      expect(result.pointerKey).toBeNull();
+      expect(result.pointerError).toBe(
+        `S3 refused to write ${POINTER} because one is there, and reading it back failed (ECONNRESET): whether it names this run is unknown. Ask for links by freezeAt: if their prefix is this run's, the pointer is this run's; if not, it names another run, and this run is fetched by its prefix.`
+      );
+      expect(JSON.stringify(result)).not.toMatch(/socket hang up|example/);
+      // An error that is no network error: its name only.
+      const parse = setup({
+        pointerReadFailsWith: new SyntaxError('Unexpected token < in JSON')
+      });
+      expect((await run(parse.deps)).pointerError).toContain(
+        'reading it back failed (SyntaxError)'
+      );
     });
   });
 
@@ -1344,7 +1444,7 @@ describe('runIdentityExportJob', () => {
     expect(() => checkReplicaLag(300_400, lag(100_000, 198_899))).not.toThrow();
     // A row older than the whole gap: checked first, and not a wait.
     const old =
-      "The replica's lag row is 300400 ms old (a 0 ms lag), older than the 300400 ms since the freeze: LAST_UPDATE_TIMESTAMP may not be in UTC, or the reader stopped updating its row. If the same refusal returns with the row's age grown by the time you waited, the reader stopped updating: report it. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: {\"older_than_gap\": <Monday's replicaLagAgeMs plus a margin, such as 60000>}) only for a reading Monday's rehearsal also showed, and only with the identity lead's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it.";
+      "The replica's lag row is 300400 ms old (a 0 ms lag), older than the 300400 ms since the freeze: LAST_UPDATE_TIMESTAMP may not be in UTC, or the reader stopped updating its row. If the same refusal returns with the row's age grown by the time you waited, the reader stopped updating: report it. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: {\"older_than_gap\": <Monday's replicaLagAgeMs plus 60000>}) only for a reading Monday's rehearsal also showed, and only with the identity lead's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it.";
     expect(() => checkReplicaLag(300_400, lag(0, 300_400))).toThrow(old);
     expect(() => checkReplicaLag(300_400, lag(10, 400_000))).toThrow(
       "The replica's lag row is 400000 ms old (a 10 ms lag), older than the 300400 ms since the freeze"
@@ -1500,11 +1600,10 @@ describe('runIdentityExportJob', () => {
     expect(() =>
       checkReplicaLag(300_000, reading(null, null, 'dated_ahead'))
     ).toThrow(
-      "The replica's lag row is dated ahead of UTC (LAST_UPDATE_TIMESTAMP is 7200000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown): LAST_UPDATE_TIMESTAMP may not be in UTC, so the row's age is unknown. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: {\"dated_ahead\": <Monday's replicaLagAheadMs minus a margin, such as 60000>}) only for a reading Monday's rehearsal also showed, and only with the identity lead's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it."
+      "The replica's lag row is dated ahead of UTC (LAST_UPDATE_TIMESTAMP is 7200000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown): LAST_UPDATE_TIMESTAMP may not be in UTC, so the row's age is unknown. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: {\"dated_ahead\": <Monday's replicaLagAheadMs minus 60000>}) only for a reading Monday's rehearsal also showed, and only with the identity lead's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it."
     );
     const all: ReplicaLagAcceptance[] = [
       'unreadable',
-      { dated_ahead: 60_000 },
       { older_than_gap: 400_000 }
     ];
     expect(
@@ -1522,9 +1621,9 @@ describe('runIdentityExportJob', () => {
     ).toBe('older_than_gap');
     // Only the case named: a rerun that lands on a reader showing another
     // case is refused.
-    expect(() => checkReplicaLag(300_000, reading(5, 300_000), LEAD)).toThrow(
-      "The replica's lag row is 300000 ms old"
-    );
+    expect(() =>
+      checkReplicaLag(300_000, reading(5, 300_000), ['unreadable'])
+    ).toThrow("The replica's lag row is 300000 ms old");
     expect(() =>
       checkReplicaLag(300_000, reading(null, null, 'dated_ahead'), [
         'unreadable',
@@ -1541,32 +1640,62 @@ describe('runIdentityExportJob', () => {
     expect(() =>
       checkReplicaLag(300_000, reading(1_000, 298_000), all)
     ).toThrow('Wait a few minutes and run again.');
-    // An accepted case still holds the lag the row reports to the gap.
+    // An accepted case still holds the lag the row reports to the gap. A
+    // bounded case adds the bound's 60 s margin: a stall within it passes
+    // the bound, so it counts as lag.
     expect(() =>
-      checkReplicaLag(300_000, reading(298_500, null, 'dated_ahead'), all)
+      checkReplicaLag(300_000, reading(238_500, null, 'dated_ahead'), LEAD)
     ).toThrow(
-      "The replica reports a 298500 ms lag (its row's age not counted: dated_ahead), which with 1500 ms for the row's timestamp is not less than the 300000 ms since the freeze"
+      "The replica reports a 238500 ms lag (its row's age not counted: dated_ahead; 60000 ms more for a stall within the bound's margin), which with 1500 ms for the row's timestamp is not less than the 300000 ms since the freeze"
     );
     expect(
-      checkReplicaLag(300_000, reading(298_499, null, 'dated_ahead'), all)
+      checkReplicaLag(300_000, reading(238_499, null, 'dated_ahead'), LEAD)
     ).toBe('dated_ahead');
     expect(() =>
-      checkReplicaLag(300_000, reading(298_500, 400_000), all)
+      checkReplicaLag(300_000, reading(238_500, 400_000), all)
     ).toThrow(
-      "reports a 298500 ms lag (its row's age not counted: older_than_gap)"
+      "reports a 238500 ms lag (its row's age not counted: older_than_gap; 60000 ms more for a stall within the bound's margin)"
     );
+    expect(checkReplicaLag(300_000, reading(238_499, 400_000), all)).toBe(
+      'older_than_gap'
+    );
+    // unreadable has no bound, so no margin is added.
     expect(() =>
       checkReplicaLag(300_000, reading(298_500, null, 'unreadable'), all)
-    ).toThrow("(its row's age not counted: unreadable)");
+    ).toThrow("(its row's age not counted: unreadable), which");
+    expect(
+      checkReplicaLag(300_000, reading(298_499, null, 'unreadable'), all)
+    ).toBe('unreadable');
     // An untrusted row's lag never changes: run once more, then report it.
     expect(() =>
-      checkReplicaLag(300_000, reading(298_500, null, 'dated_ahead'), all)
+      checkReplicaLag(300_000, reading(298_500, null, 'dated_ahead'), LEAD)
     ).toThrow(
       "The row can't be trusted, and a stale row's lag never changes: run once more, and if this refusal comes back unchanged, report it."
     );
     expect(() =>
-      checkReplicaLag(300_000, reading(298_500, null, 'dated_ahead'), all)
+      checkReplicaLag(300_000, reading(298_500, null, 'dated_ahead'), LEAD)
     ).not.toThrow('Wait a few minutes');
+    // With a dated_ahead bound accepted, any other reading is refused: a
+    // reader dated ahead that stopped reads as fresh once its lead has run
+    // out (a +2 h reader stalled for about 2 h).
+    expect(() =>
+      checkReplicaLag(300_000, reading(20, 500), [{ dated_ahead: 7_139_000 }])
+    ).toThrow(
+      "dated_ahead was accepted down to a 7139000 ms lead, but this reader's row reads as fresh: a reader dated ahead that stopped updating reads that way once its lead has run out. Run once more without changing anything; if it reads the same, report it."
+    );
+    expect(() =>
+      checkReplicaLag(300_000, reading(20, 360_000), [...LEAD, ...all])
+    ).toThrow(
+      "dated_ahead was accepted down to a 7140000 ms lead, but this reader's row reads older_than_gap"
+    );
+    expect(() =>
+      checkReplicaLag(300_000, reading(null, null, 'unreadable'), [
+        ...LEAD,
+        'unreadable'
+      ])
+    ).toThrow("this reader's row reads unreadable");
+    // Without that bound, the same fresh row passes.
+    expect(checkReplicaLag(300_000, reading(20, 500), all)).toBeNull();
     // older_than_gap only up to the bound given: a row that keeps aging
     // past Monday's reading is refused, a constant offset passes.
     const bounded: ReplicaLagAcceptance[] = [{ older_than_gap: 3_660_000 }];
@@ -1962,6 +2091,89 @@ describe('runIdentityExportJob', () => {
       `Can't read the public access block of ${BUCKET} as its owner's: AccessDenied (403)`
     );
     expect(order).toEqual([]);
+  });
+
+  it('gives an AWS refusal by its name and status, never its message', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error');
+    try {
+      mockBuild.mockResolvedValue(document());
+      const upload = setup({
+        failPutOf: 'summary.json',
+        failPutWith: Object.assign(
+          new Error('Access Denied on bucket.s3.example.invalid'),
+          { name: 'AccessDenied', $metadata: { httpStatusCode: 403 } }
+        )
+      });
+      const refused = await run(upload.deps).then(
+        () => null,
+        (e: Error) => e
+      );
+      expect(refused).toBeInstanceOf(IdentityExportServiceError);
+      expect(refused?.message).toBe(
+        "An AWS call was refused while running the export: AccessDenied (403). Its message is in the function's log."
+      );
+      // The secret's read too.
+      const secret = setup();
+      (secret.deps.identityFreezeAt as jest.Mock).mockRejectedValue(
+        Object.assign(
+          new Error('User is not authorized to perform: GetSecretValue'),
+          {
+            name: 'AccessDeniedException',
+            $metadata: { httpStatusCode: 400 }
+          }
+        )
+      );
+      const unread = await run(secret.deps).then(
+        () => null,
+        (e: Error) => e
+      );
+      expect(unread?.message).toBe(
+        "An AWS call was refused while running the export: AccessDeniedException (400). Its message is in the function's log."
+      );
+      expect(
+        error.mock.calls.map(([line]) => String(line)).join('\n')
+      ).toContain('[AWS CALL REFUSED] [running the export] Access Denied');
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it('counts a TLS failure, and an error naming its host, as network errors', async () => {
+    mockBuild.mockResolvedValue(document());
+    for (const [failure, code] of [
+      [
+        Object.assign(
+          new Error(
+            "Hostname/IP does not match certificate's altnames: Host: bucket.s3.example.invalid"
+          ),
+          { code: 'ERR_TLS_CERT_ALTNAME_INVALID' }
+        ),
+        'ERR_TLS_CERT_ALTNAME_INVALID'
+      ],
+      [
+        Object.assign(
+          new Error('connection to bucket.s3.example.invalid lost'),
+          {
+            name: 'Error',
+            host: 'bucket.s3.example.invalid'
+          }
+        ),
+        'Error'
+      ]
+    ] as const) {
+      const { deps } = setup({
+        failPutOf: 'summary.json',
+        failPutWith: failure
+      });
+      const error = await run(deps).then(
+        () => null,
+        (e: Error) => e
+      );
+      expect(error?.name).toBe('IdentityExportNetworkError');
+      expect(error?.message).toBe(
+        `A network call failed while running the export: ${code}. Its message, which can name the host or user, is in the function's log.`
+      );
+    }
   });
 
   it("leaves a programming error's ERR_ code alone: it is no network call", async () => {

@@ -79,19 +79,23 @@ For each:
    with the identity lead's agreement, by naming its case:
    - `"acceptUnknownReplicaLag":"unreadable"`;
    - `"acceptUnknownReplicaLag":{"older_than_gap":<ms>}`, with the largest
-     row age to accept: Monday's larger `replicaLagAgeMs` plus a margin,
-     such as 60000;
+     row age to accept: Monday's larger `replicaLagAgeMs` plus 60000;
    - `"acceptUnknownReplicaLag":{"dated_ahead":<ms>}`, with the smallest
-     lead over UTC to accept: Monday's smaller `replicaLagAheadMs` minus a
-     margin, such as 60000;
+     lead over UTC to accept: Monday's smaller `replicaLagAheadMs` minus
+     60000;
    - or a list of these, such as `["unreadable",{"dated_ahead":7140000}]`.
 
-   A time zone offset keeps a row's age, or its lead, constant, so it
-   passes; a reader that stopped updating makes the age grow, or the lead
-   shrink, past the bound, so it is refused, as a bare `"older_than_gap"`
-   or `"dated_ahead"` is. An age bound is 120000 to 51000000 ms, a lead
-   bound 60000 to 51000000 ms: time zones reach 14 hours from UTC. A rerun
-   that lands on a reader showing another case is refused, as `true` is.
+   Take the margin as exactly 60000 ms: the run counts that much possible
+   stall as lag, on top of the lag the row reports. A time zone offset
+   keeps a row's age, or its lead, constant, so it passes; a reader that
+   stopped updating makes the age grow, or the lead shrink, past the bound,
+   so it is refused, as a bare `"older_than_gap"` or `"dated_ahead"` is.
+   With a `dated_ahead` bound given, any other reading is refused too: a
+   reader dated ahead that stops updating reads as fresh once its lead has
+   run out. An age bound is 120000 to 51000000 ms, a lead bound 1740000 to
+   51000000 ms: time zones reach 14 hours from UTC, and none is less than
+   30 minutes from it. A rerun that lands on a reader showing another case
+   is refused, as `true` is.
    For an error, accept only `ER_UNKNOWN_TABLE 1109` or
    `ER_UNKNOWN_SYSTEM_VARIABLE 1193` (the reader isn't Aurora). The run
    records the case it accepted (`replicaLagAccepted`, and
@@ -342,8 +346,7 @@ Check in `out.json`:
   the lead shrank, by about the wait, the reader stopped updating its row:
   report it, and never accept it on Tuesday. If it stayed the same (a time
   zone offset), write it down: Tuesday's `older_than_gap` bound is the
-  larger age plus a margin, its `dated_ahead` bound the smaller lead minus
-  a margin, such as 60000 ms.
+  larger age plus 60000, its `dated_ahead` bound the smaller lead minus 60000.
 - If either reading names a case, tell the identity lead and settle it
   before Tuesday: Tuesday can accept only a case Monday showed, by its
   name, as in "An unknown replica lag" (top of this file).
@@ -461,9 +464,9 @@ time. The manifest and the response record the writes
     `frozenAt`. If their prefix is this run's, the pointer is this run's and
     all is well. If not, it names an earlier run: do as in the case above,
     and fetch this run by its `prefix`.
-  - Any other `pointerError` (the write itself failed): send the
-    coordinator this run's `prefix` and `manifestSha256`, and fetch fresh
-    links by `prefix`, not `frozenAt`.
+  - Any other `pointerError` ("The pointer write failed", with the error's
+    code or name only): send the coordinator this run's `prefix` and
+    `manifestSha256`, and fetch fresh links by `prefix`, not `frozenAt`.
 - `endpoint` is `reader`, with `readOnly: true` and `evidence`: the export
   read DB_HOST_READ. `evidence.transactionReadOnly` is true, and
   `serverReadOnly` or `innodbReadOnly` is true. The reader's hostname is in
@@ -593,8 +596,12 @@ message can name the user and host. Any other network call that fails (an
 S3 upload, a stored record's gateway, the public API) says "A network call
 failed", again with the code only. A DNS failure (`EAI_AGAIN`,
 `ENOTFOUND`) on either says "DNS lookup failed, retry" with its code, and
-never the host: run it again. The full messages are in the function's log,
-as `[READ REPLICA FAILED]` and `[NETWORK CALL FAILED]`.
+never the host: run it again. An AWS service's refusal (S3, Secrets
+Manager) says "An AWS call was refused" with its name and HTTP status,
+such as `AccessDenied (403)`. A failed public API request is written into
+`report.json` as `request_failed: <code>`. The full messages are in the
+function's log, as `[READ REPLICA FAILED]`, `[NETWORK CALL FAILED]`,
+`[AWS CALL REFUSED]` and `[PUBLIC API REQUEST FAILED]`.
 
 ### If the CLI fails
 

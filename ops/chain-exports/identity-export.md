@@ -51,17 +51,22 @@ The event carries the CLI's options, under the same rules.
 - `acceptUnknownReplicaLag`: at the freeze, the untrusted lag cases the run
   may go through, as the refusals name them: `"unreadable"`,
   `{"dated_ahead":<smallest lead in ms>}` (the smaller of Monday's two
-  `replicaLagAheadMs` readings minus a margin, such as 60000), or
+  `replicaLagAheadMs` readings minus 60000), or
   `{"older_than_gap":<largest row age in ms>}` (the larger of Monday's two
-  `replicaLagAgeMs` readings plus a margin, such as 60000), one or a list.
-  An age bound is 120000 to 51000000 ms, a lead bound 60000 to 51000000 ms:
-  time zones reach 14 hours from UTC. `true`, a bare `"dated_ahead"` or
-  `"older_than_gap"`, other names and repeats are refused. Only as in the
-  README's "An unknown replica lag": after running once more, for a case
-  Monday's rehearsal also showed, and with the identity lead's agreement.
-  An accepted case still holds the lag the row reports to the gap; an
-  `older_than_gap` row older than its bound, or a `dated_ahead` row whose
-  lead is less than its bound, is refused. The response and the manifest
+  `replicaLagAgeMs` readings plus 60000), one or a list. Take the margin as
+  exactly 60000 ms: with a bound accepted, the run counts that much
+  possible stall as lag, on top of the lag the row reports. An age bound is
+  120000 to 51000000 ms, a lead bound 1740000 to 51000000 ms: time zones
+  reach 14 hours from UTC, and none is less than 30 minutes from it.
+  `true`, a bare `"dated_ahead"` or `"older_than_gap"`, other names and
+  repeats are refused. Only as in the README's "An unknown replica lag":
+  after running once more, for a case Monday's rehearsal also showed, and
+  with the identity lead's agreement. An accepted case still holds the lag
+  the row reports to the gap; an `older_than_gap` row older than its bound,
+  or a `dated_ahead` row whose lead is less than its bound, is refused.
+  With a `dated_ahead` bound given, any other reading is refused too: a
+  reader dated ahead that stops updating reads as fresh once its lead has
+  run out. The response and the manifest
   record the list as given, bounds included, and the case accepted
   (`replicaLagAccepted`, `replica_lag_accepted`). The CLI has no such flag:
   it reads no replica lag.
@@ -350,8 +355,7 @@ about 600, Tuesday's run may not fit one invocation. Check in `out.json`:
   the lead shrank, by about the wait, the reader stopped updating its row:
   report it, and never accept it on Tuesday. If it stayed the same (a time
   zone offset), write it down: Tuesday's `older_than_gap` bound is the
-  larger age plus a margin, its `dated_ahead` bound the smaller lead minus
-  a margin, such as 60000 ms.
+  larger age plus 60000, its `dated_ahead` bound the smaller lead minus 60000.
 - If either reading names a case, tell the identity lead and settle it
   before Tuesday: Tuesday can accept only a case Monday showed, by its
   name, as in the README's "An unknown replica lag".
@@ -401,9 +405,14 @@ If the run is refused because of the replica:
   one whose lead has shrunk below it, means the reader stopped: report it,
   and don't move the bound. Otherwise report it. Don't keep running it
   until 01:30;
-- it says an untrusted row reports a lag of the gap less 1.5 s or more:
-  its lag never changes, so run once more, and if the refusal comes back
-  unchanged, report it.
+- it says an untrusted row reports a lag of the gap less 1.5 s or more
+  (with a bound accepted, less another 60000 ms for a stall within the
+  bound's margin): its lag never changes, so run once more, and if the
+  refusal comes back unchanged, report it;
+- it says `dated_ahead` was accepted but the reader's row reads as fresh,
+  or reads another case: a reader dated ahead that stopped updating reads
+  that way once its lead has run out. Run once more without changing the
+  event; if it reads the same, report it.
 
 If the run is refused because the profile site export's `cms-fields.json`
 is empty: add `"acceptNoCmsFields":true` only if that export really has no
@@ -435,9 +444,10 @@ replaced.
     If their prefix is this run's, the pointer is this run's and all is
     well. If not, it names another run: do as in the case above, and fetch
     this run by its `prefix`.
-  - Any other `pointerError` (the write itself failed): send the
-    coordinator this run's `prefix` and `manifestSha256`, and fetch fresh
-    links by `prefix`, not `freezeAt`.
+  - Any other `pointerError` ("The pointer write failed", with the error's
+    code or name only; "DNS lookup failed" and its code for a DNS failure):
+    send the coordinator this run's `prefix` and `manifestSha256`, and
+    fetch fresh links by `prefix`, not `freezeAt`.
 - `revision` is the commit deployed, and `buildCommit` is the same commit
   (or `null`, with the revision you gave).
 - `cmsFieldsSource` names the profile site run at the freeze and its
@@ -452,7 +462,8 @@ replaced.
     `snapshotGapMs`, and `replicaLagCase` and `replicaLagAccepted` are
     `null`. Otherwise both name the case accepted, which must be in
     `acceptUnknownReplicaLag` and be the case Monday showed; any lag the
-    row reported, plus 1 500 ms, is still below `snapshotGapMs`.
+    row reported, plus 1 500 ms (and 60 000 ms for a bound accepted), is
+    still below `snapshotGapMs`.
 - `bucketPrivacy.owner` is the function's own account.
 - `identityFreezeAtSecret` is `prod/lambdas`, `identityFreezeAtReading` is
   `time`, and `identityFreezeAt` equals `frozenAt`.
@@ -491,11 +502,15 @@ When the read replica itself fails (a connection, a login, a `SELECT`),
 `errorMessage` says "The read replica failed" and gives only the error's
 code and number, such as `ER_ACCESS_DENIED_ERROR 1045`: the server's
 message can name the user and host. Any other network call that fails (an
-S3 upload, the secret's read) says "A network call failed", again with the
-code only. A DNS failure (`EAI_AGAIN`, `ENOTFOUND`) on either says "DNS
-lookup failed, retry" with its code, and never the host: run it again. The
-full messages are in the function's log, as `[READ REPLICA FAILED]` and
-`[NETWORK CALL FAILED]`.
+S3 upload, the secret's read, a TLS handshake) says "A network call
+failed", again with the code only. A DNS failure (`EAI_AGAIN`,
+`ENOTFOUND`) on either says "DNS lookup failed, retry" with its code, and
+never the host: run it again. An AWS service's refusal (S3, Secrets
+Manager) says "An AWS call was refused" with its name and HTTP status,
+such as `AccessDenied (403)`. The full messages are in the function's log,
+as `[READ REPLICA FAILED]`, `[NETWORK CALL FAILED]` and
+`[AWS CALL REFUSED]`; a pointer's, as `[POINTER NOT WRITTEN]` and
+`[POINTER READ-BACK FAILED]`.
 
 A `TooManyRequestsException` means the call was refused before any run
 started: see "When to call it". Call again; none of the steps below apply.
