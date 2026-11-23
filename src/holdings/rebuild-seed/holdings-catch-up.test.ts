@@ -33,6 +33,7 @@ function context(ethBlock: number | null): RebuildContext {
     stepId: 'holdings.catch-up',
     sources: {} as RebuildContext['sources'],
     seedFilesDir: null,
+    final: false,
     mark: { name: 'head', chainHeight: null, ethBlock }
   };
 }
