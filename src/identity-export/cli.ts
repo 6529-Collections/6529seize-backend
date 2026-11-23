@@ -10,7 +10,10 @@ import {
   parseExtraIds,
   parseIdentityExportCommand
 } from './cli-options';
-import { profileSiteManifestProblem } from './profile-site-manifest';
+import {
+  noCmsFieldsProblem,
+  profileSiteManifestProblem
+} from './profile-site-manifest';
 import { CmsFieldsFile } from './identity-export.types';
 
 function sha256(bytes: Buffer): string {
@@ -64,6 +67,14 @@ async function runExport(command: IdentityExportCommand) {
           : null
       }
     : null;
+  // At the freeze an empty set of values (no sites) only acknowledged.
+  if (command.freezeMs !== null && cmsFields) {
+    const empty = noCmsFieldsProblem(
+      Object.keys(cmsFields).length,
+      command.acceptNoCmsFields
+    );
+    if (empty) throw new IdentityExportUsageError(empty);
+  }
   if (command.notice) {
     process.stderr.write(`[identity-export] ${command.notice}\n`);
   }
@@ -123,6 +134,7 @@ async function runExport(command: IdentityExportCommand) {
           acceptConsolidationsAfterFreeze:
             command.acceptConsolidationsAfterFreeze,
           acceptNoExtraIds: command.acceptNoExtraIds,
+          acceptNoCmsFields: command.acceptNoCmsFields,
           acceptBulk: command.acceptBulk,
           extraIdsFile: extraIdsBytes
             ? { count: extraProfileIds.length, sha256: sha256(extraIdsBytes) }

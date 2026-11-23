@@ -75,6 +75,7 @@ describe('parseIdentityExportCommand', () => {
       acceptRatingsChangedAfterFreeze: 0,
       acceptConsolidationsAfterFreeze: 0,
       acceptNoExtraIds: false,
+      acceptNoCmsFields: false,
       acceptBulk: null,
       notice: null,
       overwrite: false
@@ -188,6 +189,7 @@ describe('parseIdentityExportCommand', () => {
       acceptRatingsChangedAfterFreeze: 0,
       acceptConsolidationsAfterFreeze: 0,
       acceptNoExtraIds: false,
+      acceptNoCmsFields: false,
       acceptBulk: null,
       notice: null,
       overwrite: false
@@ -320,9 +322,16 @@ describe('parseIdentityExportCommand', () => {
     );
   });
 
+  it('reads --accept-no-cms-fields at the freeze', () => {
+    expect(
+      parseIdentityExportCommand([...AT_FREEZE, '--accept-no-cms-fields'], {})
+    ).toEqual(expect.objectContaining({ acceptNoCmsFields: true }));
+  });
+
   it('refuses an acknowledgement without --expect-tdh-block', () => {
     for (const accept of [
       ['--accept-unmatched-cms', '0'],
+      ['--accept-no-cms-fields'],
       ['--accept-no-extra-ids'],
       ['--accept-bulk', '0'],
       ['--accept-consolidations-after-freeze', '1']

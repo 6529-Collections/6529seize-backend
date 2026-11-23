@@ -272,6 +272,7 @@ describeWithSeed(
           missing_extra_ids: 0,
           unmatched_cms: 0,
           no_extra_ids: false,
+          no_cms_fields: false,
           bulk: null
         });
         expect(doc.stats).toEqual(

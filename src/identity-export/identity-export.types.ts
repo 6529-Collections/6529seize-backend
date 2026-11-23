@@ -112,6 +112,8 @@ export interface IdentityExportHeader {
     readonly unmatched_cms: number;
     /** --accept-no-extra-ids: at the freeze without the waves list. */
     readonly no_extra_ids: boolean;
+    /** --accept-no-cms-fields: at the freeze, a site export with no sites. */
+    readonly no_cms_fields: boolean;
     /** --accept-bulk N: a bulk threshold other than 2000; null when not. */
     readonly bulk: number | null;
   };

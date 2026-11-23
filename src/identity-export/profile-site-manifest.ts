@@ -57,3 +57,23 @@ export function profileSiteManifestProblem(
   }
   return null;
 }
+
+/**
+ * An empty set of profile site values at the freeze (a site export with no
+ * sites) must be acknowledged, and only an empty one: a fault that wrote {}
+ * would otherwise send every identity to the chain without its cms value.
+ * The acknowledgement is named as the caller gives it: the CLI's flag or
+ * the job's event field.
+ */
+export function noCmsFieldsProblem(
+  count: number,
+  accepted: boolean,
+  style: 'cli' | 'event' = 'cli'
+): string | null {
+  if ((count === 0) === accepted) return null;
+  const name = style === 'cli' ? '--accept-no-cms-fields' : 'acceptNoCmsFields';
+  const given = style === 'cli' ? name : `"${name}": true`;
+  return count === 0
+    ? `the profile site export has no profile site values (its cms-fields.json is empty), so no identity would carry one. Only if that site export really has no sites, acknowledge it with ${given}; one that should have sites is a fault: report it`
+    : `${name} is only for an empty cms-fields.json: this one has ${count} profile site values; leave ${name} out`;
+}

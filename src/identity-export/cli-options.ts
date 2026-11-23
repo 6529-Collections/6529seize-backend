@@ -8,7 +8,8 @@ export const IDENTITY_EXPORT_HELP = `Usage: 6529 run identity:export -- --out FI
          [--accept-profile-writes-after-freeze N]
          [--accept-consolidations-after-freeze N]
          [--accept-missing-extra-ids N] [--accept-unmatched-cms N]
-         [--accept-no-extra-ids] [--accept-bulk N] [--overwrite]
+         [--accept-no-extra-ids] [--accept-no-cms-fields] [--accept-bulk N]
+         [--overwrite]
 
 Writes 6529.io's identities, profiles, REP and CIC ratings and reserved
 handles as a 6529.identity-export.v1 JSON file, the input of the Identities
@@ -73,6 +74,10 @@ Options:
                          acknowledge exactly N profile site values for
                          profiles not in the export; none matching is refused
   --accept-no-extra-ids  at the freeze, export without the waves list
+  --accept-no-cms-fields at the freeze, take an empty cms-fields.json: a
+                         profile site export with no sites. Without it an
+                         empty file is refused (a site export that should
+                         have sites is a fault)
   --accept-bulk N        at the freeze, a --bulk other than 2000; N is the
                          same number
                          Every --accept-* needs --expect-tdh-block
@@ -141,6 +146,8 @@ export interface IdentityExportCommand {
   readonly acceptConsolidationsAfterFreeze: number;
   /** --accept-no-extra-ids: at the freeze without the waves list. */
   readonly acceptNoExtraIds: boolean;
+  /** --accept-no-cms-fields: at the freeze, an empty cms-fields.json. */
+  readonly acceptNoCmsFields: boolean;
   /** --accept-bulk N: at the freeze with a --bulk other than 2000. */
   readonly acceptBulk: number | null;
   /** Printed before the run: IDENTITY_FREEZE_AT ignored by --no-freeze. */
@@ -336,6 +343,7 @@ interface Draft {
   acceptUnmatchedCms: number;
   acceptConsolidationsAfterFreeze: number;
   acceptNoExtraIds: boolean;
+  acceptNoCmsFields: boolean;
   acceptBulk: number | null;
   /** The --accept-* flags given: each needs --expect-tdh-block. */
   acceptsGiven: string[];
@@ -427,6 +435,10 @@ function readOption(
       return accept((n) => (draft.acceptBulk = n));
     case '--accept-no-extra-ids':
       draft.acceptNoExtraIds = true;
+      draft.acceptsGiven.push(arg);
+      return 1;
+    case '--accept-no-cms-fields':
+      draft.acceptNoCmsFields = true;
       draft.acceptsGiven.push(arg);
       return 1;
     case '--overwrite':
@@ -583,6 +595,7 @@ function checkDraft(draft: Draft): IdentityExportCommand {
     acceptRatingsChangedAfterFreeze: draft.acceptRatingsChangedAfterFreeze,
     acceptConsolidationsAfterFreeze: draft.acceptConsolidationsAfterFreeze,
     acceptNoExtraIds: draft.acceptNoExtraIds,
+    acceptNoCmsFields: draft.acceptNoCmsFields,
     acceptBulk: draft.acceptBulk,
     notice,
     overwrite: draft.overwrite
@@ -616,6 +629,7 @@ export function parseIdentityExportCommand(
     acceptUnmatchedCms: 0,
     acceptConsolidationsAfterFreeze: 0,
     acceptNoExtraIds: false,
+    acceptNoCmsFields: false,
     acceptBulk: null,
     acceptsGiven: [],
     acceptEditsAfterFreeze: 0,

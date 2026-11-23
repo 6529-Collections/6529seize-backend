@@ -131,6 +131,8 @@ function setup(
     replicaLagAgeMs?: number | null;
     /** Why the lag couldn't be read (default: when it is null, not Aurora). */
     replicaLagError?: string | null;
+    /** Why the lag is unknown (default: unreadable when it is null). */
+    replicaLagUnknown?: 'unreadable' | 'dated_ahead' | null;
     closeFails?: boolean;
     /** Answer a read of a missing key with 403, as S3 does without ListBucket. */
     missingAs403?: boolean;
@@ -252,7 +254,7 @@ function setup(
     openSnapshot: jest.fn(async (target) => ({
       executor: executor as never,
       evidence: {
-        host: target.host,
+        endpoint: 'reader' as const,
         transactionReadOnly: true,
         serverReadOnly: true,
         innodbReadOnly: null,
@@ -270,6 +272,12 @@ function setup(
             ? options.replicaLagError
             : options.replicaLagMs === null
               ? "ER_UNKNOWN_TABLE 1109: Unknown table 'REPLICA_HOST_STATUS' in information_schema"
+              : null,
+        replicaLagUnknown:
+          options.replicaLagUnknown !== undefined
+            ? options.replicaLagUnknown
+            : options.replicaLagMs === null
+              ? ('unreadable' as const)
               : null
       },
       close
@@ -343,6 +351,7 @@ describe('parseIdentityExportEvent', () => {
       acceptUnmatchedCms: 0,
       acceptConsolidationsAfterFreeze: 0,
       acceptNoExtraIds: false,
+      acceptNoCmsFields: false,
       acceptBulk: null,
       acceptSnapshotGapMinutes: null,
       acceptUnknownReplicaLag: false,
@@ -543,7 +552,7 @@ describe('runIdentityExportJob', () => {
       job: 'identityExport',
       bucket: BUCKET,
       stage: 'staging',
-      host: 'replica-host',
+      endpoint: 'reader',
       readOnly: true,
       usable: true,
       identities: 1,
@@ -620,12 +629,14 @@ describe('runIdentityExportJob', () => {
       snapshot_gap_seconds: 1800,
       scope: { extraIds: 'inline', cmsFields: `${SITE_PREFIX}cms-fields.json` },
       read: {
-        host: 'replica-host',
+        endpoint: 'reader',
         read_only: true,
         replicaLagMs: 40,
         replicaLagAgeMs: 0,
-        replicaLagError: null
-      }
+        replicaLagError: null,
+        replicaLagUnknown: null
+      },
+      replica_lag_accepted: null
     });
     expect(manifest.export_sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(manifest.files).toEqual([
@@ -676,11 +687,28 @@ describe('runIdentityExportJob', () => {
     expect(bad.order).toEqual([]);
   });
 
-  it('takes an empty cms-fields.json at the freeze: a site export with no sites', async () => {
+  it('takes an empty cms-fields.json at the freeze only with acceptNoCmsFields: a site export with no sites', async () => {
     mockBuild.mockResolvedValue(document());
+    // A fault in the site export that wrote {} looks the same: refused
+    // before the database is read.
+    const refused = setup({ objects: siteRun({ cms: '{}' }) });
+    await expect(run(refused.deps)).rejects.toThrow(
+      'the profile site export has no profile site values (its cms-fields.json is empty), so no identity would carry one. Only if that site export really has no sites, acknowledge it with "acceptNoCmsFields": true; one that should have sites is a fault: report it'
+    );
+    expect(refused.deps.openSnapshot).not.toHaveBeenCalled();
+    expect(refused.order).toEqual([]);
+    // The flag with a file that has values: refused too.
+    const full = setup();
+    await expect(
+      run(full.deps, { ...atFreeze, acceptNoCmsFields: true })
+    ).rejects.toThrow(
+      'acceptNoCmsFields is only for an empty cms-fields.json: this one has 1 profile site values; leave acceptNoCmsFields out'
+    );
+    expect(full.deps.openSnapshot).not.toHaveBeenCalled();
     const { deps } = setup({ objects: siteRun({ cms: '{}' }) });
-    const result = await run(deps);
+    const result = await run(deps, { ...atFreeze, acceptNoCmsFields: true });
     const options = mockBuild.mock.calls[0][1];
+    expect(options.acceptNoCmsFields).toBe(true);
     expect(options.cmsFields).toEqual({});
     expect(options.cmsFieldsFile).toEqual(
       expect.objectContaining({ count: 0, sha256: sha('{}') })
@@ -1112,7 +1140,9 @@ describe('runIdentityExportJob', () => {
     const lag = (lagMs: number | null, ageMs: number | null) => ({
       replicaLagMs: lagMs,
       replicaLagAgeMs: ageMs,
-      replicaLagError: lagMs === null || ageMs === null ? 'unknown' : null
+      replicaLagError: lagMs === null || ageMs === null ? 'unknown' : null,
+      replicaLagUnknown:
+        lagMs === null || ageMs === null ? ('unreadable' as const) : null
     });
     expect(() => checkReplicaLag(300_400, lag(300_400, 0))).toThrow(
       'not less than the 300400 ms since the freeze'
@@ -1145,7 +1175,8 @@ describe('runIdentityExportJob', () => {
     const lag = (lagMs: number, ageMs: number) => ({
       replicaLagMs: lagMs,
       replicaLagAgeMs: ageMs,
-      replicaLagError: null
+      replicaLagError: null,
+      replicaLagUnknown: null
     });
     // A small lag in an old row: lag plus age, plus the 1.5 s margin,
     // against the gap.
@@ -1155,7 +1186,7 @@ describe('runIdentityExportJob', () => {
     expect(() => checkReplicaLag(300_400, lag(100_000, 198_899))).not.toThrow();
     // A row older than the whole gap: checked first, and not a wait.
     const old =
-      "The replica's lag row is 300400 ms old (a 0 ms lag), older than the 300400 ms since the freeze: LAST_UPDATE_TIMESTAMP may not be in UTC, or the reader stopped updating its row. Running again won't help, as the age only grows: report it to the identity lead rather than running again until 01:30.";
+      "The replica's lag row is 300400 ms old (a 0 ms lag), older than the 300400 ms since the freeze: LAST_UPDATE_TIMESTAMP may not be in UTC, or the reader stopped updating its row. If the same refusal returns with the row's age grown by the time you waited, the reader stopped updating: report it. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: true) only for a reading Monday's rehearsal also showed, and only with the identity lead's agreement: the run then relies on the 2-minute minimum gap alone. Otherwise report it.";
     expect(() => checkReplicaLag(300_400, lag(0, 300_400))).toThrow(old);
     expect(() => checkReplicaLag(300_400, lag(10, 400_000))).toThrow(
       "The replica's lag row is 400000 ms old (a 10 ms lag), older than the 300400 ms since the freeze"
@@ -1169,7 +1200,8 @@ describe('runIdentityExportJob', () => {
         replicaLagMs: 40,
         replicaLagAgeMs: null,
         replicaLagError:
-          "LAST_UPDATE_TIMESTAMP is null: the row's age is unknown"
+          "LAST_UPDATE_TIMESTAMP is null: the row's age is unknown",
+        replicaLagUnknown: 'unreadable'
       })
     ).toThrow(
       "can't be read from information_schema.replica_host_status (LAST_UPDATE_TIMESTAMP is null: the row's age is unknown)"
@@ -1211,7 +1243,7 @@ describe('runIdentityExportJob', () => {
     mockBuild.mockResolvedValue(document());
     const refused = setup({ replicaLagMs: null });
     await expect(run(refused.deps)).rejects.toThrow(
-      "The replica's lag can't be read from information_schema.replica_host_status (ER_UNKNOWN_TABLE 1109: Unknown table 'REPLICA_HOST_STATUS' in information_schema). Run again first: a passing error, such as a timeout, clears. Accept an unknown lag (acceptUnknownReplicaLag: true) only for an error Monday's rehearsal also showed, ER_UNKNOWN_TABLE 1109 or ER_UNKNOWN_SYSTEM_VARIABLE 1193 (the reader isn't Aurora), and only with the identity lead's agreement. Any other error is a fault in the export: report it."
+      "The replica's lag can't be read from information_schema.replica_host_status (ER_UNKNOWN_TABLE 1109: Unknown table 'REPLICA_HOST_STATUS' in information_schema). Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: true) only for a reading Monday's rehearsal also showed: for an error, only ER_UNKNOWN_TABLE 1109 or ER_UNKNOWN_SYSTEM_VARIABLE 1193 (the reader isn't Aurora), and only with the identity lead's agreement: the run then relies on the 2-minute minimum gap alone. Otherwise report it."
     );
     // The server's own error is named, whatever it is: a parse error is a
     // fault to report, not an Aurora question.
@@ -1227,7 +1259,8 @@ describe('runIdentityExportJob', () => {
       checkReplicaLag(300_000, {
         replicaLagMs: null,
         replicaLagAgeMs: null,
-        replicaLagError: null
+        replicaLagError: null,
+        replicaLagUnknown: null
       })
     ).toThrow('(no reason given)');
     // And the snapshot's log line names it.
@@ -1252,6 +1285,7 @@ describe('runIdentityExportJob', () => {
       acceptUnknownReplicaLag: true
     });
     expect(result.evidence.replicaLagMs).toBeNull();
+    expect(result.replicaLagAccepted).toBe('unreadable');
     expect(
       JSON.parse(accepted.bodies.get(result.manifestKey)!)
         .accept_unknown_replica_lag
@@ -1277,6 +1311,118 @@ describe('runIdentityExportJob', () => {
       replicaLagMs: 298_499
     });
     expect((await run(behind.deps)).evidence.replicaLagMs).toBe(298_499);
+  });
+
+  it('accepts a lag it can not trust only when told to, records which, and never a real lag', async () => {
+    const reading = (
+      lagMs: number | null,
+      ageMs: number | null,
+      unknown: 'unreadable' | 'dated_ahead' | null = null
+    ) => ({
+      replicaLagMs: lagMs,
+      replicaLagAgeMs: ageMs,
+      replicaLagError: unknown
+        ? "LAST_UPDATE_TIMESTAMP is 7200000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown"
+        : null,
+      replicaLagUnknown: unknown
+    });
+    // Each untrustworthy reading: refused, and accepted only when told to.
+    expect(() =>
+      checkReplicaLag(300_000, reading(null, null, 'dated_ahead'))
+    ).toThrow(
+      "The replica's lag row is dated ahead of UTC (LAST_UPDATE_TIMESTAMP is 7200000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown): LAST_UPDATE_TIMESTAMP may not be in UTC, so how far the reader is behind is unknown. Run once more first"
+    );
+    expect(
+      checkReplicaLag(300_000, reading(null, null, 'dated_ahead'), true)
+    ).toBe('dated_ahead');
+    expect(
+      checkReplicaLag(300_000, reading(null, null, 'unreadable'), true)
+    ).toBe('unreadable');
+    expect(checkReplicaLag(300_000, reading(5, 300_000), true)).toBe(
+      'older_than_gap'
+    );
+    // A trusted reading passes with nothing accepted, told or not.
+    expect(checkReplicaLag(300_000, reading(5, 1_000))).toBeNull();
+    expect(checkReplicaLag(300_000, reading(5, 1_000), true)).toBeNull();
+    // A real lag, its row younger than the gap, is never accepted.
+    expect(() =>
+      checkReplicaLag(300_000, reading(299_000, 1_000), true)
+    ).toThrow('The replica may be 300000 ms behind its writer');
+    expect(() =>
+      checkReplicaLag(300_000, reading(1_000, 298_000), true)
+    ).toThrow('Wait a few minutes and run again.');
+    // The job records the case, in the response, the manifest and the log.
+    mockBuild.mockResolvedValue(document());
+    const warn = jest.spyOn(Logger.prototype, 'warn');
+    try {
+      const { deps, bodies } = setup({
+        snapshotAt: '2026-11-24T00:05:00.000Z',
+        replicaLagMs: 5,
+        replicaLagAgeMs: 3_600_000
+      });
+      const result = await run(deps, {
+        ...atFreeze,
+        acceptUnknownReplicaLag: true
+      });
+      expect(result.replicaLagAccepted).toBe('older_than_gap');
+      expect(
+        JSON.parse(bodies.get(result.manifestKey)!).replica_lag_accepted
+      ).toBe('older_than_gap');
+      expect(
+        warn.mock.calls.some(([line]) =>
+          String(line).includes(
+            '[REPLICA LAG ACCEPTED older_than_gap] [RELYING ON THE 120 S MINIMUM GAP]'
+          )
+        )
+      ).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("keeps the reader's hostname out of the response, the manifest, the pointer and the files", async () => {
+    mockBuild.mockResolvedValue(document());
+    const { deps, bodies, order } = setup();
+    const result = await run(deps);
+    expect(result.endpoint).toBe('reader');
+    const written = [
+      JSON.stringify(result),
+      ...order.map((key) => bodies.get(key)!)
+    ];
+    expect(order).toEqual(
+      expect.arrayContaining([result.manifestKey, POINTER])
+    );
+    for (const text of written) {
+      expect(text).not.toContain('replica-host');
+      expect(text).not.toContain('primary-host');
+    }
+    expect(JSON.parse(bodies.get(result.manifestKey)!).read.endpoint).toBe(
+      'reader'
+    );
+  });
+
+  it('logs the manifest sha256 and the pointer in its [EXPORT DONE] line', async () => {
+    mockBuild.mockResolvedValue(document());
+    const info = jest.spyOn(Logger.prototype, 'info');
+    try {
+      const done = () =>
+        info.mock.calls
+          .map(([line]) => String(line))
+          .filter((line) => line.startsWith('[EXPORT DONE]'));
+      const written = setup();
+      const result = await run(written.deps);
+      expect(done().pop()).toContain(
+        `[${result.prefix}] [manifest.json] [MANIFEST SHA256 ${result.manifestSha256}] [POINTER ${POINTER}]`
+      );
+      const failed = setup({ failPutOf: '2026-11-24T00-00-00-000Z.json' });
+      await run(failed.deps);
+      expect(done().pop()).toContain('[POINTER NOT WRITTEN]');
+      mockBuild.mockResolvedValue(document({ freeze_ms: null }));
+      await run(setup().deps, rehearsal);
+      expect(done().pop()).toContain('[POINTER NONE (A REHEARSAL)]');
+    } finally {
+      info.mockRestore();
+    }
   });
 
   it('takes a later snapshot when the gap is acknowledged', async () => {

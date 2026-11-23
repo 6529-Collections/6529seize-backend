@@ -32,6 +32,9 @@ The event carries the CLI's options, under the same rules.
 - `cmsFields` (`--cms-fields`), or `noCmsFields: true` (`--no-cms-fields`):
   a rehearsal only, `{ "key": "<object key>" }` or `{ "inline": {...} }`. At
   the freeze leave both out: see below.
+- `acceptNoCmsFields: true` (`--accept-no-cms-fields`): at the freeze, the
+  profile site export's `cms-fields.json` is empty because it has no sites
+  (below).
 - `bulk` (`--bulk`): default 2000. At the freeze, another number needs
   `acceptBulk` with the same number.
 - `noDelegations: true` (`--no-delegations`): a rehearsal only.
@@ -46,10 +49,12 @@ The event carries the CLI's options, under the same rules.
 - `acceptSnapshotGapMinutes`: at the freeze, accepts a snapshot more than 90
   minutes after it.
 - `acceptUnknownReplicaLag: true`: at the freeze, run although the replica's
-  lag can't be read, relying on the 2-minute gap alone. Only as in the
-  README's "An unknown replica lag": after running again, for an error
-  Monday's rehearsal also showed (1109 or 1193), and with the identity
-  lead's agreement. The manifest records it.
+  lag can't be trusted (it can't be read, its row is dated ahead of UTC, or
+  its row is older than the gap), relying on the 2-minute gap alone. Only as
+  in the README's "An unknown replica lag": after running once more, for a
+  reading Monday's rehearsal also showed, and with the identity lead's
+  agreement. The response and the manifest record it and the case accepted
+  (`replicaLagAccepted`, `replica_lag_accepted`).
 - `replacePointer: true`: at the freeze, makes this run the freeze's export
   when another run already is.
 
@@ -79,8 +84,13 @@ names. It refuses, before reading the database, unless:
   of this freeze and stage;
 - the manifest lists `cms-fields.json` with the sha256 of the file read.
 
-A site export with no sites writes `{}`. That file is taken (no identity
-gets a value), and the file's notes say so.
+A site export with no sites writes `{}`. The run refuses that file, before
+reading the database, unless it has `acceptNoCmsFields: true`
+(`--accept-no-cms-fields`): a fault in the site export that wrote `{}`
+would otherwise send every identity to the chain without its cms value.
+Give it only if that site export really has no sites. With it, no identity
+gets a value, and the file's notes and `acknowledged.no_cms_fields` say so.
+The flag with a file that has values is refused too.
 
 The export's header (`cms_fields.manifest`) and the manifest
 (`cms_fields_source`) record the site manifest's key and sha256. So run the
@@ -137,14 +147,14 @@ The job refuses, and writes nothing, when:
   freeze, or further, in milliseconds: its lag plus the age of the row it
   was read from (`evidence.replicaLagMs`, `evidence.replicaLagAgeMs`), plus
   1.5 s for the row's timestamp, as the README's rules for every export
-  say;
-- the lag row is itself older than the time since the freeze:
-  `LAST_UPDATE_TIMESTAMP` may not be in UTC, or the reader stopped updating
-  its row;
-- the lag can't be read (`evidence.replicaLagMs` `null`, the reason in
-  `evidence.replicaLagError`), unless the run has
-  `acceptUnknownReplicaLag: true`. What to do is in the README's "An
-  unknown replica lag", and the refusal says the same;
+  say. Such a lag is never accepted;
+- the lag can't be trusted, unless the run has
+  `acceptUnknownReplicaLag: true`: it can't be read
+  (`evidence.replicaLagUnknown` `unreadable`, the reason in
+  `evidence.replicaLagError`), its row is dated ahead of UTC
+  (`dated_ahead`), or its row is older than the whole time since the
+  freeze. What to do is in the README's "An unknown replica lag", and the
+  refusal says the same;
 - the database is not at the freeze day, or a count is not acknowledged.
   The error names every reason, with the CLI's exit code. The counts include
   profile rows saved after the freeze whether or not the save was logged,
@@ -306,12 +316,13 @@ about 600, Tuesday's run may not fit one invocation. Check in `out.json`:
   doesn't record its commit, and Tuesday's event needs
   `"revision":"<40-hex commit deployed to production>"`.
 - `evidence.replicaLagMs` and `evidence.replicaLagAgeMs` are numbers, the
-  age well under a minute on a healthy reader. An age of hours means
-  `LAST_UPDATE_TIMESTAMP` isn't in UTC: tell the identity lead before
-  Tuesday, whose run would refuse. If they are `null`, the lag can't be
-  read, and `evidence.replicaLagError` says why: run this again first, then
-  follow the README's "An unknown replica lag", and settle it before
-  Tuesday.
+  age well under a minute on a healthy reader. An age of hours, or
+  `evidence.replicaLagUnknown` `dated_ahead`, means `LAST_UPDATE_TIMESTAMP`
+  isn't in UTC. If they are `null` (`replicaLagUnknown` `unreadable`),
+  `evidence.replicaLagError` says why. In each case run this once more,
+  then tell the identity lead and settle it before Tuesday: Tuesday can
+  accept only a reading this run also showed, as in the README's "An
+  unknown replica lag".
 
 ## Tuesday: the run at the freeze (us-east-1)
 
@@ -344,13 +355,16 @@ ceiling.
 If the run is refused because of the replica:
 
 - it says the replica may be behind its writer: wait a few minutes and run
-  it again;
-- it says the lag row is older than the time since the freeze: running
-  again won't help, as the age only grows. `LAST_UPDATE_TIMESTAMP` may not
-  be in UTC. Report it to the identity lead rather than running again until
-  01:30;
-- it says the lag can't be read: see the README's "An unknown replica
-  lag".
+  it again. This refusal is never accepted;
+- it says the lag can't be read, or its row is dated ahead of UTC or older
+  than the time since the freeze: follow the README's "An unknown replica
+  lag". Run once more; then accept it with `"acceptUnknownReplicaLag":true`
+  only for a reading Monday also showed and with the identity lead's
+  agreement, or report it. Don't keep running it until 01:30.
+
+If the run is refused because the profile site export's `cms-fields.json`
+is empty: add `"acceptNoCmsFields":true` only if that export really has no
+sites; otherwise report it to the coordinator.
 
 If the CLI fails without a `FunctionError`, don't run it again: see "If the
 CLI fails".
@@ -385,12 +399,16 @@ replaced.
   (or `null`, with the revision you gave).
 - `cmsFieldsSource` names the profile site run at the freeze and its
   manifest's sha256.
-- `host`, `readOnly: true` and `evidence`:
+- `endpoint` is `reader`, with `readOnly: true` and `evidence`: the export
+  read DB_HOST_READ. The reader's hostname is in neither the response, the
+  manifest (whose `read.endpoint` is the same label) nor the pointer; it is
+  only in the function's log, as `[READ REPLICA ...]`.
   - `transactionReadOnly` is true;
   - `serverReadOnly` or `innodbReadOnly` is true;
   - `replicaLagMs` plus `replicaLagAgeMs`, plus 1 500 ms, is below
-    `snapshotGapMs`. Both are `null` only in a run given
-    `acceptUnknownReplicaLag`, with the reason in `replicaLagError`.
+    `snapshotGapMs`, and `replicaLagAccepted` is `null`. Otherwise the run
+    was given `acceptUnknownReplicaLag`, and `replicaLagAccepted` names the
+    case it accepted: `unreadable`, `dated_ahead` or `older_than_gap`.
 - `bucketPrivacy.owner` is the function's own account.
 - `identityFreezeAtSecret` is `prod/lambdas`, `identityFreezeAtReading` is
   `time`, and `identityFreezeAt` equals `frozenAt`.
@@ -438,14 +456,21 @@ If the CLI failed that way and printed no `FunctionError`:
 
 1. Don't run it again.
 2. Wait 15 minutes from the start: by then the run has ended.
-3. For a run at the freeze, ask for its links by `freezeAt` (above). If the
-   run finished, `links-out.json` names its prefix and manifest. If it says
-   there is no run for that freeze, read the logs, as below.
-4. For a rehearsal (it has no pointer), read `[EXPORT DONE]` in the
-   function's logs, as the README shows. The identity export's line starts
-   with `[EXPORT DONE] [identity-export/`; the profile site export's lines
-   share the log. It gives the prefix, the manifest's name and the seconds.
-   Then ask for links by that `prefix`.
+3. For a run at the freeze, ask for its links by `freezeAt` (above). If
+   `links-out.json`'s prefix starts with this run's start time
+   (`identity-export/prod/<UTC start time>-...`), this run finished and its
+   pointer was written. If it names an earlier run (as after a
+   `replacePointer` run whose answer was lost), or says there is no run for
+   that freeze, this run may still have finished with a manifest but no
+   pointer: read the logs, as below.
+4. For a rehearsal (it has no pointer), read the logs.
+
+The logs are read as the README shows. The identity export's line starts
+with `[EXPORT DONE] [identity-export/`; the profile site export's lines
+share the log. It gives the run's prefix, its manifest's name and sha256
+(`[MANIFEST SHA256 ...]`), its pointer (`[POINTER ...]`: the key,
+`NOT WRITTEN`, or `NONE (A REHEARSAL)`) and its seconds. Then ask for links
+by that `prefix`.
 
 No identity export `[EXPORT DONE]` line within the hour means the run didn't
 finish: run it again.

@@ -34,6 +34,7 @@ import {
   IdentityExportNotReadyError,
   NotReadyProblem
 } from './identity-export.errors';
+import { noCmsFieldsProblem } from './profile-site-manifest';
 import {
   CmsFieldsFile,
   IDENTITY_EXPORT_FORMAT,
@@ -88,6 +89,11 @@ export interface IdentityExportOptions {
   readonly acceptStyle?: AcceptStyle;
   /** At the freeze without the waves list, acknowledged (recorded). */
   readonly acceptNoExtraIds?: boolean;
+  /**
+   * At the freeze, an empty set of profile site values (a site export with
+   * no sites), acknowledged (recorded).
+   */
+  readonly acceptNoCmsFields?: boolean;
   /** At the freeze with a bulk threshold other than 2000 (recorded). */
   readonly acceptBulk?: number | null;
   /** The waves list's file (count and sha256); null without one. */
@@ -1090,6 +1096,12 @@ export async function buildIdentityExport(
       });
     }
     if (options.cmsFields) {
+      const empty = noCmsFieldsProblem(
+        Object.keys(options.cmsFields).length,
+        options.acceptNoCmsFields ?? false,
+        style
+      );
+      if (empty) problems.push({ cause: 'unmatched_cms', message: empty });
       const unmatched = acknowledgementProblem(
         cms.unmatched,
         options.acceptUnmatchedCms ?? 0,
@@ -1209,6 +1221,7 @@ export async function buildIdentityExport(
       missing_extra_ids: options.acceptMissingExtraIds ?? 0,
       unmatched_cms: options.acceptUnmatchedCms ?? 0,
       no_extra_ids: options.acceptNoExtraIds ?? false,
+      no_cms_fields: options.acceptNoCmsFields ?? false,
       bulk: options.acceptBulk ?? null
     },
     identities,

@@ -783,6 +783,7 @@ describe('buildIdentityExport', () => {
       missing_extra_ids: 1,
       unmatched_cms: 0,
       no_extra_ids: false,
+      no_cms_fields: false,
       bulk: null
     });
     expect(doc.ratings_changed_after_freeze).toEqual(changed);
@@ -1039,9 +1040,9 @@ describe('buildIdentityExport', () => {
     );
   });
 
-  it('takes an empty set of profile site values (a site export with no sites) at the freeze', async () => {
+  it('takes an empty set of profile site values (a site export with no sites) at the freeze only acknowledged', async () => {
     const { source } = world();
-    const doc = await buildIdentityExport(source, {
+    const atFreeze = {
       ...options,
       expectTdhBlock: 24_000_000,
       acceptOverCredit: 2,
@@ -1052,7 +1053,35 @@ describe('buildIdentityExport', () => {
         sha256: 'c'.repeat(64),
         manifest: { key: null, sha256: 'd'.repeat(64) }
       }
+    };
+    const refused = await buildIdentityExport(source, {
+      ...atFreeze,
+      acceptStyle: 'event'
+    }).then(
+      () => null,
+      (error: IdentityExportNotReadyError) => error
+    );
+    expect(refused?.causes).toEqual(['unmatched_cms']);
+    expect(refused?.exitCode).toBe(7);
+    expect(refused?.message).toContain(
+      '"acceptNoCmsFields": true; one that should have sites is a fault: report it'
+    );
+    const wrong = await buildIdentityExport(source, {
+      ...atFreeze,
+      cmsFields: { [ALICE]: { primary: {} } },
+      acceptNoCmsFields: true
+    }).then(
+      () => null,
+      (error: IdentityExportNotReadyError) => error
+    );
+    expect(wrong?.message).toContain(
+      '--accept-no-cms-fields is only for an empty cms-fields.json: this one has 1 profile site values'
+    );
+    const doc = await buildIdentityExport(source, {
+      ...atFreeze,
+      acceptNoCmsFields: true
     });
+    expect(doc.acknowledged.no_cms_fields).toBe(true);
     expect(doc.cms_fields?.count).toBe(0);
     expect(doc.identities.some((it) => 'cms' in it)).toBe(false);
     expect(doc.notes).toEqual(

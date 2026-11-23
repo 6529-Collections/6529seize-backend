@@ -192,14 +192,30 @@ describe('runCli', () => {
     it('takes an empty cms-fields.json its manifest lists: a site export with no sites', async () => {
       process.env.IDENTITY_FREEZE_AT = '2026-11-24T00:00:00Z';
       const { args: given, cmsSha } = atFreeze(siteManifest, '{}');
+      // Not without the flag: a fault that wrote {} looks the same.
+      expect(await runCli(given)).toBe(2);
+      const written = stderr.mock.calls.map(([text]) => String(text)).join('');
+      expect(written).toContain(
+        'the profile site export has no profile site values (its cms-fields.json is empty), so no identity would carry one. Only if that site export really has no sites, acknowledge it with --accept-no-cms-fields; one that should have sites is a fault: report it'
+      );
+      expect(dbApiCalls).toEqual([]);
       buildIdentityExport.mockRejectedValue(
         new IdentityExportNotReadyError([{ cause: 'day', message: 'not yet' }])
       );
-      expect(await runCli(given)).toBe(3);
+      expect(await runCli([...given, '--accept-no-cms-fields'])).toBe(3);
       const options = buildIdentityExport.mock.calls[0][1];
       expect(options.cmsFields).toEqual({});
+      expect(options.acceptNoCmsFields).toBe(true);
       expect(options.cmsFieldsFile).toEqual(
         expect.objectContaining({ count: 0, sha256: cmsSha })
+      );
+      // The flag with a file that has values: refused.
+      const full = atFreeze(siteManifest);
+      expect(await runCli([...full.args, '--accept-no-cms-fields'])).toBe(2);
+      expect(
+        stderr.mock.calls.map(([text]) => String(text)).join('')
+      ).toContain(
+        '--accept-no-cms-fields is only for an empty cms-fields.json: this one has 1 profile site values'
       );
     });
 
