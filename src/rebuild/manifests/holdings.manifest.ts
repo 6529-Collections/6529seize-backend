@@ -122,26 +122,26 @@ const PROBES: Probe[] = [
     each: { id: PROBE_MEME_IDS },
     ignore: writtenAt('$.data[*].created_at')
   },
-  { id: 'holdings.nextgen.collections', path: '/api/nextgen/collections' },
+  {
+    id: 'holdings.nextgen.collections',
+    path: '/api/nextgen/collections',
+    ignore: writtenAt('$.data[*].created_at', '$.data[*].updated_at')
+  },
   {
     id: 'holdings.nextgen.tokens',
-    path: '/api/nextgen/collections/1/tokens?page_size=20'
+    path: '/api/nextgen/collections/1/tokens?page_size=20',
+    ignore: writtenAt('$.data[*].created_at', '$.data[*].updated_at')
   },
   { id: 'holdings.nextgen.traits', path: '/api/nextgen/collections/1/traits' },
-  { id: 'holdings.nextgen.logs', path: '/api/nextgen/collections/1/logs' },
-  // Held until the artists and Meme Lab royalties entities are in the tree:
-  // without their tables these routes answer 500 on a fresh database.
   {
-    id: 'holdings.artists',
-    path: '/api/memes/artists_names',
-    origin: 'planned',
-    needs: ['artists']
+    id: 'holdings.nextgen.logs',
+    path: '/api/nextgen/collections/1/logs',
+    ignore: writtenAt('$.data[*].created_at')
   },
+  { id: 'holdings.artists', path: '/api/memes/artists_names' },
   {
     id: 'holdings.meme-lab-royalties',
-    path: '/api/royalties/collection/memelab?from_block=0&to_block=100000000',
-    origin: 'planned',
-    needs: ['meme_lab_royalties']
+    path: '/api/royalties/collection/memelab?from_block=0&to_block=100000000'
   }
 ];
 
@@ -150,6 +150,16 @@ const PROBES: Probe[] = [
  * ENS, market stats and link cards.
  */
 const step = (module: string, exportName: string) => ({ module, exportName });
+
+/** Columns the loops set to the time they write a row (`new Date()`). */
+const writeTimes = (...columns: string[]) => ({
+  volatileColumns: columns.map((column) => ({
+    column,
+    reason: 'The time the loop wrote the row; each pass writes it anew.'
+  }))
+});
+const CREATED = writeTimes('created_at');
+const CREATED_UPDATED = writeTimes('created_at', 'updated_at');
 
 const HISTORY_TABLES = [
   'nfts_history',
@@ -167,6 +177,19 @@ const HOLDINGS_TABLES = [
   'owners_balances_consolidation',
   'owners_balances_memes_consolidation'
 ];
+const NEXTGEN_TABLES = [
+  'nextgen_collections',
+  'nextgen_logs',
+  'nextgen_tokens',
+  'nextgen_token_traits',
+  'nextgen_token_scores',
+  'nextgen_blocks'
+];
+const WALLET_TRANSFER_TABLES = [
+  'wallet_transfer_pair_days',
+  'wallet_transfer_wallet_days',
+  'wallet_transfer_analysis_states'
+];
 const CATALOGUE_TABLES = [
   'nfts',
   'nfts_meme_lab',
@@ -177,8 +200,10 @@ const CATALOGUE_TABLES = [
 ];
 
 /**
- * The probe fixture's world on the run's anvil (cards 1-3 of the Memes,
- * Meme Lab card 1, wallets 1 and 2), then the holdings tables from it.
+ * The probe fixture's world on the run's anvil (cards 1-4 of the Memes,
+ * card 4 through a Manifold claim, Meme Lab card 1, NextGen collection 1,
+ * wallets 1 and 2), then the holdings tables from it. Its contracts are
+ * test fixtures; holdings-seed.ts says what each stands for.
  */
 const HOLDINGS_SEED: RebuildStep = {
   id: 'holdings.seed',
@@ -192,77 +217,101 @@ const HOLDINGS_SEED: RebuildStep = {
     ...CATALOGUE_TABLES,
     ...HISTORY_TABLES,
     ...HOLDINGS_TABLES,
-    'meme_lab_royalties'
+    ...NEXTGEN_TABLES,
+    'meme_lab_royalties',
+    ...WALLET_TRANSFER_TABLES
   ],
   reads: ['eth_price', 'address_consolidation_keys', 'tdh_nft'],
   // The fixture wallets' consolidation keys first.
   after: ['identity.probe-profiles'],
   sources: ['ethereum', 'files', 'repo'],
-  timeoutMinutes: 30,
-  origin: 'planned'
+  timeoutMinutes: 30
 };
 
 const HOLDINGS_REBUILDERS: RebuildStep[] = [
   {
     id: 'holdings.ethereum',
     run: step('src/holdings/rebuild-seed/holdings-seed', 'rebuildHoldings'),
-    writes: HOLDINGS_SEED.writes,
-    reads: HOLDINGS_SEED.reads,
+    writes: HOLDINGS_SEED.writes.filter(
+      (table) => !WALLET_TRANSFER_TABLES.includes(table)
+    ),
+    // tdh_nft is TDH's, rebuilt after this step, since TDH reads the
+    // transactions this step writes. The catalogue's ranks read it and keep
+    // the legacy ranks when the read fails or finds no rows, as in the seed,
+    // which also runs before TDH's.
+    reads: (HOLDINGS_SEED.reads ?? []).filter((table) => table !== 'tdh_nft'),
     sources: ['ethereum', 'files', 'repo'],
-    timeoutMinutes: 60,
-    origin: 'planned'
+    timeoutMinutes: 60
+  },
+  {
+    id: 'holdings.wallet-transfers',
+    run: step(
+      'src/wallet-transfer-analysis/wallet-transfer-rebuild',
+      'rebuildWalletTransferAnalysis'
+    ),
+    writes: WALLET_TRANSFER_TABLES,
+    reads: ['transactions'],
+    after: ['holdings.ethereum'],
+    sources: [],
+    timeoutMinutes: 15
   }
 ];
 
 export const holdingsManifest: AreaManifest = {
   area: 'holdings',
   // Token metadata from the run's files source instead of the gateways.
-  flags: { DECENTRALIZED_MEDIA_FILES_URL: '{files}' },
+  flags: {
+    DECENTRALIZED_MEDIA_FILES_URL: '{files}',
+    // The check's chain starts at block 0, not at the NextGen deploy block.
+    NEXTGEN_START_BLOCK_OVERRIDE: '0'
+  },
   tables: {
     eth_price: {
       class: 'PROVIDER',
       why: 'USD price from the price provider.'
     },
-    transactions: { class: 'INDEX' },
-    transfer_reconciliations: { class: 'INDEX' },
+    transactions: { class: 'INDEX', ...CREATED },
+    transfer_reconciliations: { class: 'INDEX', ...writeTimes('requested_at') },
+    // Where the analysis has got to; rebuilt with its two tables.
     wallet_transfer_analysis_states: {
-      class: 'EPHEMERAL',
-      why: 'Analysis cursor.'
+      class: 'INDEX',
+      ...writeTimes('updated_at')
     },
     wallet_transfer_pair_days: { class: 'INDEX' },
     wallet_transfer_wallet_days: { class: 'INDEX' },
-    lab_extended_data: { class: 'INDEX' },
-    memes_extended_data: { class: 'INDEX' },
-    memes_seasons: { class: 'INDEX' },
-    nft_owners: { class: 'INDEX' },
+    lab_extended_data: { class: 'INDEX', ...CREATED },
+    memes_extended_data: { class: 'INDEX', ...CREATED },
+    memes_seasons: { class: 'INDEX', ...CREATED },
+    nft_owners: { class: 'INDEX', ...CREATED_UPDATED },
     // The block nft_owners reflects; rebuilt with it.
     nft_owners_sync_state: { class: 'INDEX' },
-    nfts: { class: 'INDEX' },
-    nfts_meme_lab: { class: 'INDEX' },
+    nfts: { class: 'INDEX', ...CREATED },
+    nfts_meme_lab: { class: 'INDEX', ...CREATED },
     s3_uploader_outbox: {
       class: 'EPHEMERAL',
       why: 'Media upload outbox.'
     },
-    nfts_history: { class: 'INDEX' },
+    nfts_history: { class: 'INDEX', ...CREATED },
     // The checkpoint of what nfts_history holds; rebuilt with it, since the
     // history step resumes after it.
-    nfts_history_blocks: { class: 'INDEX' },
-    nfts_history_claims: { class: 'INDEX' },
-    nfts_history_events: { class: 'INDEX' },
+    nfts_history_blocks: { class: 'INDEX', ...CREATED },
+    nfts_history_claims: { class: 'INDEX', ...CREATED },
+    nfts_history_events: { class: 'INDEX', ...CREATED },
     nfts_history_replay_jobs: {
       class: 'EPHEMERAL',
       why: 'Replay job queue.'
     },
-    nextgen_blocks: { class: 'EPHEMERAL', why: 'Loop cursor.' },
-    nextgen_collections: { class: 'INDEX' },
-    nextgen_logs: { class: 'INDEX' },
+    // The block the NextGen tables reflect; rebuilt with them.
+    nextgen_blocks: { class: 'INDEX', ...CREATED },
+    nextgen_collections: { class: 'INDEX', ...CREATED_UPDATED },
+    nextgen_logs: { class: 'INDEX', ...CREATED },
     nextgen_token_listings: {
       class: 'PROVIDER',
       why: 'Marketplace listings.'
     },
-    nextgen_token_scores: { class: 'INDEX' },
-    nextgen_token_traits: { class: 'INDEX' },
-    nextgen_tokens: { class: 'INDEX' },
+    nextgen_token_scores: { class: 'INDEX', ...CREATED_UPDATED },
+    nextgen_token_traits: { class: 'INDEX', ...CREATED_UPDATED },
+    nextgen_tokens: { class: 'INDEX', ...CREATED_UPDATED },
     ens: {
       class: 'PROVIDER',
       why: 'ENS names, fetched again from ENS.'
@@ -299,21 +348,75 @@ export const holdingsManifest: AreaManifest = {
       class: 'PROVIDER',
       why: 'Link cards fetched from marketplaces, keyed by URLs in drops.'
     },
-    aggregated_activity: { class: 'INDEX' },
-    aggregated_activity_consolidation: { class: 'INDEX' },
-    aggregated_activity_memes: { class: 'INDEX' },
-    aggregated_activity_memes_consolidation: { class: 'INDEX' },
-    nft_owners_consolidation: { class: 'INDEX' },
-    owners_balances: { class: 'INDEX' },
-    owners_balances_consolidation: { class: 'INDEX' },
-    owners_balances_memes: { class: 'INDEX' },
-    owners_balances_memes_consolidation: { class: 'INDEX' },
-    // The NFT catalogue's artists and the Meme Lab royalties. Neither has
-    // an entity yet, so a fresh schema lacks both.
-    artists: { class: 'INDEX' },
+    aggregated_activity: { class: 'INDEX', ...CREATED_UPDATED },
+    aggregated_activity_consolidation: { class: 'INDEX', ...CREATED_UPDATED },
+    aggregated_activity_memes: { class: 'INDEX', ...CREATED_UPDATED },
+    aggregated_activity_memes_consolidation: {
+      class: 'INDEX',
+      ...CREATED_UPDATED
+    },
+    nft_owners_consolidation: { class: 'INDEX', ...CREATED_UPDATED },
+    owners_balances: { class: 'INDEX', ...CREATED_UPDATED },
+    owners_balances_consolidation: { class: 'INDEX', ...CREATED_UPDATED },
+    owners_balances_memes: { class: 'INDEX', ...CREATED_UPDATED },
+    owners_balances_memes_consolidation: { class: 'INDEX', ...CREATED_UPDATED },
+    // The NFT catalogue's artists and the Meme Lab royalties.
+    artists: { class: 'INDEX', ...CREATED },
     meme_lab_royalties: { class: 'INDEX' }
   },
   seeds: [HOLDINGS_SEED],
   rebuilders: HOLDINGS_REBUILDERS,
-  probes: PROBES
+  probes: PROBES,
+  waivers: {
+    unseededTables: [
+      {
+        target: 'meme_lab_royalties',
+        reason:
+          "Rebuilt from src/holdings/meme-lab-royalties.json, which is empty until the team exports production's splits; the step writes nothing while it is."
+      },
+      {
+        target: 'transfer_reconciliations',
+        reason:
+          "The queue between the holdings loops; a complete run, the seed's or the rebuild's, leaves it empty."
+      }
+    ],
+    unprobedTables: [
+      {
+        target: 'nft_owners_sync_state',
+        reason:
+          'The block the NFT owners reflect. Only the collect routes read it, beside marketplace orders the check does not serve.'
+      },
+      {
+        target: 'nextgen_blocks',
+        reason: "The NextGen loop's checkpoint; no route reads it."
+      },
+      {
+        target: 'wallet_transfer_analysis_states',
+        reason: "The wallet transfer analysis's checkpoint; no route reads it."
+      },
+      {
+        target: 'wallet_transfer_pair_days',
+        reason:
+          'Read by the wallet transfer analysis report, an operator command, not a route.'
+      },
+      {
+        target: 'wallet_transfer_wallet_days',
+        reason:
+          'Read by the wallet transfer analysis report, an operator command, not a route.'
+      },
+      {
+        target: 'nfts_history_blocks',
+        reason: "The NFT history loop's checkpoint; no route reads it."
+      },
+      {
+        target: 'nfts_history_claims',
+        reason:
+          'Claim state the history loop keeps for its own decoding; no route reads it.'
+      },
+      {
+        target: 'transfer_reconciliations',
+        reason: 'The queue between the holdings loops; no route reads it.'
+      }
+    ]
+  }
 };
