@@ -2,6 +2,7 @@ import { Logger } from '@/logging';
 import {
   ChainDayStepRunner,
   ChainTdhIngestResult,
+  IngestSummary,
   runFollowUpSteps
 } from './chain-tdh-ingest';
 import {
@@ -231,6 +232,23 @@ async function dayToIngest(
   }
 }
 
+/**
+ * In shadow, what the live tables show beyond the day's verdict: they
+ * couldn't be compared as a day, or they differ in a way no consolidation
+ * change since the cutoff explains. Null when neither, or outside shadow.
+ */
+function liveProblem(summary: IngestSummary): string | null {
+  const live = summary.live;
+  if (!live) return null;
+  if ('error' in live) {
+    return 'the live TDH tables could not be compared with the 6529 chain';
+  }
+  const other = summary.liveByGrouping?.other ?? {};
+  return Object.values(other).some((n) => n > 0)
+    ? 'the live TDH tables differ from the 6529 chain beyond regrouping'
+    : null;
+}
+
 /** The day's alerts, sent before any follow-up step runs. */
 async function alertOnResult(
   deps: PollerDeps,
@@ -249,9 +267,21 @@ async function alertOnResult(
       `TDH day ${cycleDay}: the site and the 6529 chain differ (${deps.mode})`,
       JSON.stringify({
         cache: result.summary.cache?.counts,
-        live: result.summary.live
+        live: result.summary.live,
+        liveByGrouping: result.summary.liveByGrouping
       })
     );
+  } else {
+    const live = liveProblem(result.summary);
+    if (live) {
+      await deps.alert(
+        `TDH day ${cycleDay}: ${live} (${deps.mode})`,
+        JSON.stringify({
+          live: result.summary.live,
+          liveByGrouping: result.summary.liveByGrouping
+        })
+      );
+    }
   }
   if (result.deferredKeys.length > 0) {
     await deps.alert(

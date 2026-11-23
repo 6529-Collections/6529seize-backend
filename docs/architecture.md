@@ -180,7 +180,9 @@ takes effect without a redeploy.
   split by whether a grouping changed since the cutoff explains them (the
   delegations loop reruns TDH at the same block after a consolidation
   change; the chain takes it up the next day). The result goes to
-  `tdh_chain_days`. No TDH table is written.
+  `tdh_chain_days`. A verdict MISMATCH raises an alert, and so do live
+  differences no grouping change explains and live tables that can't be
+  compared. No TDH table is written.
 - `FEATURE_TDH_FROM_CHAIN`: the same, then the TDH tables are written with the
   chain's totals over the site's computation, ranked again. The wallet and
   consolidated tables, `tdh_blocks`, the identities sync marker and the day's

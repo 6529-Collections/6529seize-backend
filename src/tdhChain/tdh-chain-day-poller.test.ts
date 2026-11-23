@@ -1,5 +1,9 @@
 import { chainDayFixture } from '@/tests/fixtures/tdh-chain-day.fixture';
-import { ChainDayStepRunner, ChainTdhIngestResult } from './chain-tdh-ingest';
+import {
+  ChainDayStepRunner,
+  ChainTdhIngestResult,
+  IngestSummary
+} from './chain-tdh-ingest';
 import {
   CHAIN_DAY_STEPS,
   ChainDayStep,
@@ -405,6 +409,76 @@ describe('pollChainDays', () => {
       )
     );
     expect(log.alerts).toEqual([]);
+  });
+
+  describe('in SHADOW, the live tables beyond the verdict', () => {
+    const liveDigest = {
+      verdict: 'MISMATCH' as const,
+      siteBlock: 1,
+      counts: { WALLET_TDH: 2 },
+      walletRootFromSite: '0x01',
+      notes: []
+    };
+    const split = (other: Record<string, number>) => ({
+      regroupedKeys: 1,
+      regroupedWallets: 2,
+      regrouped: { WALLET_TDH: 1 },
+      day: {},
+      other
+    });
+    async function alertsFor(summary: Partial<IngestSummary>) {
+      const log = fresh();
+      const bodies: string[] = [];
+      await pollChainDays(
+        poller(
+          {
+            ingest: async () => ({
+              ...result('INGESTED', 'MATCH'),
+              summary: { mode: 'SHADOW', cycleDay: 0, failures: [], ...summary }
+            }),
+            alert: async (title, body) => {
+              log.alerts.push(title);
+              bodies.push(body ?? '');
+            }
+          },
+          log
+        )
+      );
+      return { alerts: log.alerts, bodies };
+    }
+
+    it('alerts on a difference no regrouping explains, though the day matched', async () => {
+      const { alerts, bodies } = await alertsFor({
+        live: liveDigest,
+        liveByGrouping: split({ WALLET_TDH: 1 })
+      });
+      expect(alerts).toEqual([
+        'TDH day 20737: the live TDH tables differ from the 6529 chain beyond regrouping (SHADOW)'
+      ]);
+      expect(JSON.parse(bodies[0]).liveByGrouping.other).toEqual({
+        WALLET_TDH: 1
+      });
+    });
+
+    it('alerts when the live tables could not be compared', async () => {
+      const { alerts, bodies } = await alertsFor({
+        live: { error: 'no rows at block 1' }
+      });
+      expect(alerts).toEqual([
+        'TDH day 20737: the live TDH tables could not be compared with the 6529 chain (SHADOW)'
+      ]);
+      expect(JSON.parse(bodies[0]).live).toEqual({
+        error: 'no rows at block 1'
+      });
+    });
+
+    it('raises no alert when every live difference is a regrouping', async () => {
+      const { alerts } = await alertsFor({
+        live: liveDigest,
+        liveByGrouping: split({})
+      });
+      expect(alerts).toEqual([]);
+    });
   });
 
   it('in CHAIN alerts once an hour while the newest TDH day in the tables is late, and not before there is one', async () => {
