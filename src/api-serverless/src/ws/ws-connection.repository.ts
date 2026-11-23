@@ -1,4 +1,5 @@
 import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
+import { withoutHelpBotCreditsSql } from '@/rates/rating-credit';
 import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
 import {
   dbSupplier,
@@ -1046,7 +1047,9 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
         total_reps as (select matter_target_id as profile_id, sum(rating) as rep from ${RATINGS_TABLE} where matter_target_id in (:profileIds) and matter = 'REP' and rating <> 0 ${
           rep_giver ? ` and rater_profile_id = :rep_giver ` : ``
         } ${
-          rep_category ? ` and matter_category = :rep_category ` : ``
+          rep_category
+            ? ` and matter_category = :rep_category `
+            : withoutHelpBotCreditsSql()
         } group by 1) select i.profile_id as profile_id, i.rep - ifnull(v.credit_spent, 0) as credit_left from total_reps i 
              left join given_votes v on v.profile_id = i.profile_id
              where i.profile_id in (:profileIds)

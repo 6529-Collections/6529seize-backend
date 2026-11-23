@@ -56,6 +56,8 @@ import {
   waveVotingCreditNftKey
 } from '@/waves/wave-voting-credit-nfts';
 
+import { creditTdhSql } from '@/rates/rating-credit';
+
 const mysql = require('mysql2');
 
 export interface WaveMentionSearchCandidate {
@@ -1436,7 +1438,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     return this.db
       .oneOrNull<{ res: number }>(
         `
-        select floor(tdh + xtdh) as res from ${IDENTITIES_TABLE} where profile_id = :profileId`,
+        select floor(${creditTdhSql('i')}) as res from ${IDENTITIES_TABLE} i where i.profile_id = :profileId`,
         { profileId },
         connection ? { wrappedConnection: connection } : undefined
       )

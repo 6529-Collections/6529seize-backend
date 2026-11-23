@@ -1,3 +1,4 @@
+import { withoutHelpBotCreditsSql } from '@/rates/rating-credit';
 import { IDENTITIES_TABLE, RATINGS_TABLE, WAVES_TABLE } from '@/constants';
 import { CountlessPage, PageSortDirection } from '@/api/page-request';
 import { RateMatter } from '@/entities/IRating';
@@ -254,6 +255,7 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
             and r.matter = :waveMatter
           where r.matter in (:profileMatter, :waveMatter)
             and r.rating <> 0
+            ${withoutHelpBotCreditsSql('r')}
             and (
               r.matter = :profileMatter
               or (
