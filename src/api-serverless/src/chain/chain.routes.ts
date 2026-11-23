@@ -5,17 +5,16 @@ import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
 import { getValidatedByJoiOrThrow } from '../validation';
 import {
   chainRelayService,
-  maySeeSignatures,
   RelaySubmitRequest
 } from '@/chain-relay/chain-relay.service';
 import { PendingOperation } from '@/chain-relay/chain-pending-operations.db';
 
 /**
  * Operations people sign with their wallets for the 6529 chain: relayed to
- * the chain, or held until every wallet an operation needs has signed (an
- * identity join needs the identity's wallet and the joining wallet). Drafts
- * come from the chain gateway (POST /v1/draft); the wallet signs its typed
- * data; the signatures come here.
+ * the chain, or, for an identity join, held until both its wallets (the
+ * identity's and the joining one) have signed. Drafts come from the chain
+ * gateway (POST /v1/draft); the wallet signs its typed data; the signatures
+ * come here.
  */
 const router = asyncRouter();
 
@@ -126,17 +125,16 @@ const toSignature = (it: SignatureBody) => ({
 });
 
 /**
- * An operation as the API shows it to `viewer`, the signed-in wallet. The
- * signatures it holds go only to its own signers while it is pending (see
- * maySeeSignatures); everyone else gets `sig: null`, and `signed` still
- * says who has signed.
+ * An operation as the API shows it. A pending one past its expiry is
+ * EXPIRED: it can no longer land. No signature is ever shown, to anyone:
+ * the relay submits, so no wallet needs another's, and a signature handed
+ * out could finish a join its signer had withdrawn. `signed` says who has
+ * signed.
  */
 export function toApiPendingOperation(
   op: PendingOperation,
-  viewer: string,
   now: number = Date.now()
 ) {
-  const showSigs = maySeeSignatures(op, viewer, now);
   return {
     tx_id: op.tx_id,
     op_type: op.op_type,
@@ -145,7 +143,8 @@ export function toApiPendingOperation(
     typed_data: JSON.parse(op.typed_data_json),
     created_by: op.created_by,
     expires_at: op.expires_at,
-    status: op.status,
+    status:
+      op.status === 'PENDING' && op.expires_at <= now ? 'EXPIRED' : op.status,
     result: op.result_json ? JSON.parse(op.result_json) : null,
     last_error: op.last_error,
     created_at: op.created_at,
@@ -156,7 +155,7 @@ export function toApiPendingOperation(
       signer: it.signer,
       // A withdrawn operation keeps when each signer signed, not the sig.
       signed: !!it.sig || it.signed_at !== null,
-      sig: showSigs ? it.sig : null
+      sig: null
     }))
   };
 }
@@ -181,7 +180,7 @@ router.post(
 router.get('/pending', needsAuthenticatedUser(), async (req, res) => {
   const wallet = getWalletOrThrow(req);
   const ops = await chainRelayService.awaiting(wallet);
-  res.send({ data: ops.map((op) => toApiPendingOperation(op, wallet)) });
+  res.send({ data: ops.map((op) => toApiPendingOperation(op)) });
 });
 
 router.post(
@@ -207,7 +206,7 @@ router.post(
       },
       wallet
     );
-    res.status(201).send(toApiPendingOperation(op, wallet));
+    res.status(201).send(toApiPendingOperation(op));
   }
 );
 
@@ -215,12 +214,9 @@ router.get(
   '/pending/:tx_id',
   needsAuthenticatedUser(),
   async (req: Request<{ tx_id: string }>, res: Response) => {
-    const wallet = getWalletOrThrow(req);
+    getWalletOrThrow(req);
     res.send(
-      toApiPendingOperation(
-        await chainRelayService.get(req.params.tx_id),
-        wallet
-      )
+      toApiPendingOperation(await chainRelayService.get(req.params.tx_id))
     );
   }
 );
@@ -239,7 +235,7 @@ router.post(
       toSignature(body),
       wallet
     );
-    res.send(toApiPendingOperation(op, wallet));
+    res.send(toApiPendingOperation(op));
   }
 );
 
@@ -250,8 +246,7 @@ router.post(
     const wallet = getWalletOrThrow(req);
     res.send(
       toApiPendingOperation(
-        await chainRelayService.retry(req.params.tx_id, wallet),
-        wallet
+        await chainRelayService.retry(req.params.tx_id, wallet)
       )
     );
   }
@@ -264,8 +259,7 @@ router.delete(
     const wallet = getWalletOrThrow(req);
     res.send(
       toApiPendingOperation(
-        await chainRelayService.cancel(req.params.tx_id, wallet),
-        wallet
+        await chainRelayService.cancel(req.params.tx_id, wallet)
       )
     );
   }

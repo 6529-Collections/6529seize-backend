@@ -1,10 +1,13 @@
 import 'reflect-metadata';
+import { Wallet } from 'ethers';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import {
   ChainPendingOperationsDb,
   PendingOperation
 } from './chain-pending-operations.db';
+import { ChainRelayService } from './chain-relay.service';
+import { join as joinFixture, JOIN_PRINCIPAL } from './identity-join.fixtures';
 
 const TX = '0x' + '5a'.repeat(32);
 const A = '0x' + '01'.repeat(20);
@@ -197,5 +200,44 @@ describeWithSeed('ChainPendingOperationsDb', [], () => {
     expect(await cancel).toBe(false);
     expect(cancelSawStatus).toBe('SUBMITTED');
     expect((await db.find(TX))?.status).toBe('SUBMITTED');
+  });
+
+  it('holds both wallets first posts of a join, sent at once, as one join sent once', async () => {
+    const anchor = new Wallet('0x' + '11'.repeat(32));
+    const joiner = new Wallet('0x' + '22'.repeat(32));
+    const expiresAt = Date.now() + 3_600_000;
+    const held = joinFixture({
+      signer: anchor.address,
+      joiner: joiner.address,
+      expiresAt
+    });
+    const gateway = {
+      submit: jest.fn(async () => ({ txId: held.txId, accepted: true })),
+      getTx: jest.fn()
+    };
+    const relay = new ChainRelayService(gateway as never, db);
+    const post = (wallet: Wallet, role: number) =>
+      relay.createPending(
+        {
+          txId: held.txId,
+          opType: 'IDENTITY_JOIN',
+          principal: JOIN_PRINCIPAL,
+          unsigned: '0x0102',
+          typedData: held.typedData,
+          expiresAt,
+          required: [
+            { role: 0, keyType: 1, signer: anchor.address },
+            { role: 4, keyType: 1, signer: joiner.address }
+          ],
+          signatures: [{ role, keyType: 1, sig: held.sign(wallet) }]
+        },
+        wallet.address
+      );
+    const both = await Promise.all([post(anchor, 0), post(joiner, 4)]);
+    expect(both.map((it) => it.tx_id)).toEqual([held.txId, held.txId]);
+    const op = await db.find(held.txId);
+    expect(op?.status).toBe('SUBMITTED');
+    expect(op?.signers.map((it) => !!it.sig)).toEqual([true, true]);
+    expect(gateway.submit).toHaveBeenCalledTimes(1);
   });
 });

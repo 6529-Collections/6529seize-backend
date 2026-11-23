@@ -887,29 +887,43 @@ identity data from the chain add calls to this client, not their own.
 
 `/api/chain` relays operations people sign with their wallets: `POST
 /chain/submit` passes a signed operation to the gateway's `/v1/submit`, and
-`/chain/pending` holds an operation that needs more than one wallet (an
-identity join) in `chain_pending_operations` and
-`chain_pending_operation_signers` until every signer has signed, checking each
-signature against its signer, then relays it.
+`/chain/pending` holds an identity join, which needs two wallets, in
+`chain_pending_operations` and `chain_pending_operation_signers` until both
+have signed, checking each signature against its signer, then relays it.
+
+Only identity joins are held. What is held is read from the join's typed
+data, which must hash to its `tx_id`: the principal, the expiry, and the
+signers (role 0, the identity's wallet the header's key id names; role 4,
+the body's joining wallet). A given `principal`, `expires_at` or `required`
+that says otherwise is refused, so no wallet can put an operation in another
+wallet's list that isn't what it would sign. No signature is ever returned
+(`signers[].sig` is always null; `signed` says who has signed): the relay
+submits, and a signature handed out could finish a join its signer had
+withdrawn. A pending operation past its expiry shows as `EXPIRED`.
 
 Every submit carries its draft's txId, the digest every signer signed: a
 direct submit's body needs `tx_id` (400 without it), and a held operation
 uses its own. The client checks that the node's answer is of that
-transaction. A failed direct submit answers `tx_id` and an `outcome`:
-`refused` (422 `CHAIN_REFUSED`), `not_taken` (502 `CHAIN_UNAVAILABLE`, safe
-to send again) or `unknown` (502 `CHAIN_OUTCOME_UNKNOWN`, with `node_tx_id`
-when the node took another transaction): it may have landed, so ask the
-chain rather than send it again. A held operation is sent at most once. It is
-claimed under its row lock, moving from `PENDING` to `SUBMITTED` before
-anything is sent, and stays `SUBMITTED` with `result.outcome: 'unknown'`
-(and `result.txId`) until the node answers, or for good when the answer is
-lost; only an answer that the node surely didn't take it puts it back to
-`PENDING` for a retry, and a refusal of the operation marks it `FAILED`. A
-cancel takes the same lock and moves it only from `PENDING`, so a withdrawn
-join is never sent and a sent one is never shown as withdrawn; a cancel also
-drops the signatures it held. Signature values (`signers[].sig`) go only to
-the operation's own signer wallets while it is pending and unexpired;
-everyone else gets `sig: null`, with `signed` still set.
+transaction. A direct submit answers the node's answer with `outcome:
+'accepted'`; a failure answers `tx_id` and an `outcome`: `refused` (422
+`CHAIN_REFUSED`), `not_taken` (502 `CHAIN_UNAVAILABLE`, safe to send again)
+or `unknown` (502 `CHAIN_OUTCOME_UNKNOWN`, with `node_tx_id` when the node
+took another transaction): it may have landed, so ask the chain rather than
+send it again.
+
+A held operation is sent at most once. It is claimed under its row lock,
+moving from `PENDING` to `SUBMITTED` before anything is sent. Its `result`
+always says its `outcome`: `accepted` (the node's answer, or the chain's
+`tx`), `unknown` (with `txId`, and `nodeTxId` when the node named another),
+or `refused` (with the node's `code`, or `expired`). It stays `SUBMITTED`
+with an unknown outcome while it is sent, and when the answer is lost; a read
+of it (`GET /chain/pending/:tx_id`) then asks the chain, bounded, and records
+`accepted` once the chain holds it, or `FAILED` (`expired`) once it has
+expired and no block or pool holds it. Only an answer that the node surely
+didn't take it puts it back to `PENDING` for a retry, and a refusal of the
+operation marks it `FAILED`. A cancel takes the same lock and moves it only
+from `PENDING`, so a withdrawn join is never sent and a sent one is never
+shown as withdrawn; a cancel also drops the signatures it held.
 
 ### Ordinary Ethereum RPC boundary
 

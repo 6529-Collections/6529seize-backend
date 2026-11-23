@@ -128,7 +128,7 @@ describe('/chain routes', () => {
       });
       expect(answer).toEqual({
         status: 200,
-        body: { txId: TX, accepted: true }
+        body: { txId: TX, accepted: true, outcome: 'accepted' }
       });
       expect(mockGateway.submit).toHaveBeenLastCalledWith({
         unsigned: '0x0102',
@@ -278,27 +278,62 @@ describe('/chain routes', () => {
     };
 
     it.each(routes.map((it) => [it.name, it] as const))(
-      '%s shows held signatures only to its signers while it is pending',
+      '%s shows no signature to anyone, its signers included, whatever its status',
       async (_name, route) => {
-        expect(await sigsSeenBy(route, 'PENDING', STRANGER)).toEqual([
-          null,
-          null
-        ]);
-        expect(await sigsSeenBy(route, 'PENDING', ANCHOR)).toEqual([
-          SIG_A,
-          SIG_B
-        ]);
-        expect(
-          await sigsSeenBy(
-            route,
+        const joiner = JOINER.toUpperCase().replace('0X', '0x');
+        for (const wallet of [STRANGER, ANCHOR, joiner]) {
+          for (const status of [
             'PENDING',
-            JOINER.toUpperCase().replace('0X', '0x')
-          )
-        ).toEqual([SIG_A, SIG_B]);
-        for (const status of ['CANCELLED', 'SUBMITTED', 'FAILED'] as const) {
-          expect(await sigsSeenBy(route, status, ANCHOR)).toEqual([null, null]);
+            'CANCELLED',
+            'SUBMITTED',
+            'FAILED'
+          ] as const) {
+            expect(await sigsSeenBy(route, status, wallet)).toEqual([
+              null,
+              null
+            ]);
+          }
         }
       }
+    );
+  });
+
+  it("doesn't give the joining wallet the identity wallet's signature", async () => {
+    const held = op('PENDING');
+    mockService.get.mockResolvedValue({
+      ...held,
+      signers: [
+        held.signers[0],
+        { ...held.signers[1], sig: null, signed_at: null }
+      ]
+    });
+    const answer = await call('GET', `/pending/${TX}`, JOINER);
+    expect(answer.body.signers).toEqual([
+      { role: 0, key_type: 1, signer: ANCHOR, signed: true, sig: null },
+      { role: 4, key_type: 1, signer: JOINER, signed: false, sig: null }
+    ]);
+    expect(JSON.stringify(answer.body)).not.toContain(SIG_A.slice(2));
+  });
+
+  it('shows a pending operation past its expiry as EXPIRED', async () => {
+    const past = Date.now() - 1;
+    mockService.get.mockResolvedValueOnce({
+      ...op('PENDING'),
+      expires_at: past
+    });
+    expect((await call('GET', `/pending/${TX}`, ANCHOR)).body.status).toBe(
+      'EXPIRED'
+    );
+    mockService.get.mockResolvedValueOnce({
+      ...op('SUBMITTED'),
+      expires_at: past
+    });
+    expect((await call('GET', `/pending/${TX}`, ANCHOR)).body.status).toBe(
+      'SUBMITTED'
+    );
+    mockService.get.mockResolvedValueOnce(op('PENDING'));
+    expect((await call('GET', `/pending/${TX}`, ANCHOR)).body.status).toBe(
+      'PENDING'
     );
   });
 });
