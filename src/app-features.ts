@@ -49,15 +49,6 @@ export class AppFeatures {
   }
 
   /**
-   * Help6529 Credits, the REP-backed question meter. Off unless
-   * FEATURE_HELP_BOT_CREDITS is exactly `true`. While off, help6529 answers
-   * without charging, and nothing grants, charges or refunds credits.
-   */
-  public isHelpBotCreditsEnabled(): boolean {
-    return this.isFeatureEnabled('HELP_BOT_CREDITS');
-  }
-
-  /**
    * Holdings re-key through the reconciliation queue: the identity mirror's
    * membership hook queues the regrouped wallets, an hourly key sweep
    * queues any it missed, and the delegations loop queues instead of
