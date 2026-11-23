@@ -155,20 +155,21 @@ const PASSING_CODES: ReadonlySet<string> = new Set([
   'wrong_network'
 ]);
 
-/** MySQL (and its driver's) codes of failures that pass on their own. */
+/**
+ * MySQL (and its driver's) codes of failures that pass on their own: a
+ * deadlock or lock wait, the pool's acquire or handshake timing out, and a
+ * connection timed out, refused, reset, broken or lost.
+ */
 const PASSING_DB_CODES: ReadonlySet<string> = new Set([
   'ER_LOCK_DEADLOCK',
   'ER_LOCK_WAIT_TIMEOUT',
+  'PROTOCOL_SEQUENCE_TIMEOUT',
+  'ETIMEDOUT',
+  'ECONNREFUSED',
   'ECONNRESET',
+  'EPIPE',
   'PROTOCOL_CONNECTION_LOST'
 ]);
-
-/**
- * Runs the follower has been stuck from which a failure that passes on its
- * own, for one principal, is taken as that principal's for good: its rows
- * are written without the id, and the others go on.
- */
-const STUCK_RUNS_TO_GO_ON = 2;
 
 /**
  * A failure that passes on its own: of the gateway (a height not held yet
@@ -273,8 +274,6 @@ export class RatingEventsFollower {
   } | null = null;
   /** Ids were stored for a page in this run (a step on, written or not). */
   private storedForPage = false;
-  /** The runs the follower had been stuck when this one started. */
-  private stuckRuns = 0;
 
   constructor(
     private readonly gateway: Gateway,
@@ -294,7 +293,6 @@ export class RatingEventsFollower {
     let withoutWriter = 0;
     let state: MirrorState | null = null;
     this.storedForPage = false;
-    this.stuckRuns = 0;
     try {
       // The state as stored: an identity step that threw leaves the run's
       // copy behind it.
@@ -303,7 +301,6 @@ export class RatingEventsFollower {
         logger.warn('[NO MIRROR STATE YET] [RATING EVENTS WAIT]');
         return;
       }
-      this.stuckRuns = Number(state.events_stuck_runs ?? 0);
       await this.read(state, importStart, importDone, deadline, report, (n) => {
         withoutWriter += n;
       });
@@ -464,9 +461,11 @@ export class RatingEventsFollower {
     }
   }
 
+  /** Another chain: the names and the page's memory are of the old one. */
   private forgetNames(chainId: string | null) {
     this.categoryNames.clear();
     this.storedCategories.clear();
+    this.page = null;
     this.namesChain = chainId;
   }
 
@@ -937,9 +936,8 @@ export class RatingEventsFollower {
    * identity's mapping (stored now if needed, as applyIdentity does); a
    * merged, closing or walletless one's id named without storing it, as
    * syncTargetRatings names such a rater. A failure that passes on its own
-   * throws: the page waits for the next run (unless the follower has been
-   * stuck STUCK_RUNS_TO_GO_ON runs: then it is this principal's, as
-   * below). Otherwise null, and
+   * throws: the page waits for the next run (one that keeps coming back
+   * holds it, and the stuck alarm calls a person). Otherwise null, and
    * the row is written without the id, for the fill: when the chain has no
    * such identity, when its id can't be settled yet (ChainReadRetryLater, as
    * a founder wait, or an answer another node may give), and on any other
@@ -974,11 +972,7 @@ export class RatingEventsFollower {
         );
         return null;
       }
-      // Stuck runs in a row: one principal's failure no longer holds the
-      // others back, whatever it is.
-      if (passesOnItsOwn(error) && this.stuckRuns < STUCK_RUNS_TO_GO_ON) {
-        throw error;
-      }
+      if (passesOnItsOwn(error)) throw error;
       const message = `${principal} not mapped: ${messageOf(error)}`;
       logger.error(`[RATING EVENTS: ${message}] [LEFT FOR THE FILL]`);
       noteRatingEventProblem(report, message);

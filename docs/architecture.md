@@ -1034,12 +1034,14 @@ named without storing, as the sync names such a rater). The two never map at
 the same time: the follower runs after the identity steps, and one Lambda runs
 at a time. A failure that passes on its own (of the gateway: a height not
 held, a timeout, the network, 429 or 5xx; of the database: a deadlock, a lock
-wait, a connection reset or lost) ends the follower's run before the page is
-written; once the follower has been stuck two runs, such a failure is taken as
-that principal's and its id left null. When more than 200 are left to map
+wait, the pool timing out, a connection timed out, refused, reset, broken or
+lost) ends the follower's run before the page is written; one that keeps
+coming back for a principal holds the page, and the stuck alarm calls a
+person. When more than 200 are left to map
 after some were newly named, the page is read again while time is left, going
 on from there; ids named without storing (merged, closing or walletless
-identities) are kept for the page in memory, not read or counted again, and
+identities) are kept for the page in memory (forgotten when the chain
+changes), not read or counted again, and
 only ids stored count as a step on for the stuck alarm. An id that can't be settled yet
 (a chain-made identity in its founder wait, an answer another node may give),
 one whose mapping fails some other way (reported with the principal, as the

@@ -2746,58 +2746,67 @@ describe('IdentityChainMirror', () => {
     expect(report?.ratingEventsStuck).toMatch(/^Rating events stuck at 101/);
   });
 
-  it.each(['ER_LOCK_DEADLOCK', 'PROTOCOL_CONNECTION_LOST'])(
-    'leaves the page for the next run on %s while mapping',
-    async (code) => {
-      const w = ratedWorld();
-      const { mirror, db, gateway, bob } = w;
-      bobRatesAliceAt70(w);
-      firstSyncStops(gateway, 2);
-      const insert = db.insertMapping.bind(db);
-      db.insertMapping = jest
-        .fn()
-        .mockRejectedValueOnce(Object.assign(new Error('locked'), { code }))
-        .mockImplementation(insert) as never;
-      const first = await mirror.run({ budgetMs: 60_000 });
-      expect(first.ratingEventProblems).toContain('locked');
-      expect(db.ratingEvents).toEqual([]);
-      await mirror.run({ budgetMs: 60_000 });
-      const bobId = principalProfileId(bob.principalId);
-      expect(idsOf(db.ratingEvents)).toEqual([
-        [60, 'IMPORT', bobId, ALICE_PROFILE],
-        [70, 'OPERATION', bobId, ALICE_PROFILE]
-      ]);
-    }
-  );
+  it.each([
+    'ER_LOCK_DEADLOCK',
+    'PROTOCOL_CONNECTION_LOST',
+    'PROTOCOL_SEQUENCE_TIMEOUT',
+    'ETIMEDOUT'
+  ])('leaves the page for the next run on %s while mapping', async (code) => {
+    const w = ratedWorld();
+    const { mirror, db, gateway, bob } = w;
+    bobRatesAliceAt70(w);
+    firstSyncStops(gateway, 2);
+    const insert = db.insertMapping.bind(db);
+    db.insertMapping = jest
+      .fn()
+      .mockRejectedValueOnce(Object.assign(new Error('locked'), { code }))
+      .mockImplementation(insert) as never;
+    const first = await mirror.run({ budgetMs: 60_000 });
+    expect(first.ratingEventProblems).toContain('locked');
+    expect(db.ratingEvents).toEqual([]);
+    await mirror.run({ budgetMs: 60_000 });
+    const bobId = principalProfileId(bob.principalId);
+    expect(idsOf(db.ratingEvents)).toEqual([
+      [60, 'IMPORT', bobId, ALICE_PROFILE],
+      [70, 'OPERATION', bobId, ALICE_PROFILE]
+    ]);
+  });
 
-  it("takes a failure that passes on its own as the principal's once stuck two runs", async () => {
+  it('holds the page for a principal that keeps failing in passing, and raises the stuck alarm', async () => {
     const w = ratedWorld();
     const { db, gateway } = w;
     const [rater] = ratersAt101(w, 1);
     const { follow } = followerAt101(w);
-    db.state = { ...db.state!, events_stuck_runs: 1 };
     const read = gateway.getIdentityByPrincipal.getMockImplementation()!;
     gateway.getIdentityByPrincipal.mockImplementation((async (p: string) => {
       if (p === rater.principalId) throw down('/v1/identities');
       return await read(p);
     }) as never);
-    // Stuck one run: the page waits.
-    const first = await follow();
-    expect(first.ratingEventProblems).toEqual(['down']);
+    let report: RatingEventsReport | null = null;
+    for (let i = 0; i < RATING_EVENTS_STUCK_RUNS; i++) {
+      report = await follow();
+      expect(report.ratingEventProblems).toEqual(['down']);
+    }
+    // No row written with an empty id: a person looks.
     expect(db.ratingEvents).toEqual([]);
-    expect(db.state?.events_stuck_runs).toBe(2);
-    // Two: the rater's id is left null, and the page is written.
-    const second = await follow();
-    expect(second.ratingEventProblems).toEqual([
-      `${rater.principalId} not mapped: down`
-    ]);
-    expect(idsOf(db.ratingEvents)).toEqual([
-      [101, 'OPERATION', null, ALICE_PROFILE]
-    ]);
-    expect(db.state).toMatchObject({
-      events_next_height: 102,
-      events_stuck_runs: 0
-    });
+    expect(db.state?.events_stuck_runs).toBe(RATING_EVENTS_STUCK_RUNS);
+    expect(report?.ratingEventsStuck).toMatch(/^Rating events stuck at 101/);
+  });
+
+  it('forgets the names of a page it is on when the chain changes', async () => {
+    const w = ratedWorld();
+    const { db, gateway } = w;
+    mergedRatersAt101(w);
+    const { follow } = followerAt101(w, { readMs: 1_000 });
+    // 205 of the 210 named: out of time.
+    await follow(205_000);
+    expect(gateway.getIdentityByPrincipal).toHaveBeenCalledTimes(205);
+    // Another chain: nothing named on the old one is taken, so the same
+    // time names 205 again, and the page isn't written.
+    db.state = { ...db.state!, chain_id: 'another' };
+    await follow(205_000);
+    expect(gateway.getIdentityByPrincipal).toHaveBeenCalledTimes(410);
+    expect(db.ratingEvents).toEqual([]);
   });
 
   it('gives the rating events a minute when the identity steps run into their time, never past the run by more', async () => {
