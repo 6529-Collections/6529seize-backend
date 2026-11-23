@@ -1,6 +1,7 @@
 import type { ResultSetHeader, TypeCast } from 'mysql2';
 import type { MysqlConnectionOptions } from 'typeorm/driver/mysql/MysqlConnectionOptions';
 import { dbAuthPlugins } from '../db-iam-auth';
+import { mysql2TypeOrmDriver } from './mysql-pool';
 
 /*
  * The backend moved from `mysql` (mysqljs 2.18) to `mysql2`. Callers were
@@ -115,6 +116,8 @@ const MYSQL2_TIMEZONE = /^(?:local|Z|[+-]\d\d:\d\d)$/;
  *
  * Password logins answer only mysql_native_password, as with mysqljs, unless
  * `extra.authPlugins` says otherwise (the app's data source adds IAM tokens).
+ * The pool comes from createMysqlPool (login timeout, ping on reuse), with
+ * mysqljs's default 10 s acquireTimeout, which TypeORM never set.
  */
 export function mysql2TypeOrmOptions(
   options: {
@@ -122,10 +125,14 @@ export function mysql2TypeOrmOptions(
     readonly dateStrings?: boolean;
     readonly extra?: Readonly<Record<string, unknown>>;
   } = {}
-): Pick<MysqlConnectionOptions, 'connectorPackage' | 'timezone' | 'extra'> {
+): Pick<
+  MysqlConnectionOptions,
+  'connectorPackage' | 'driver' | 'timezone' | 'extra'
+> {
   const timezone = options.timezone ?? 'local';
   return {
     connectorPackage: 'mysql2',
+    driver: mysql2TypeOrmDriver({ acquireTimeoutMs: 10_000 }),
     timezone: MYSQL2_TIMEZONE.test(timezone) ? timezone : 'Z',
     extra: {
       authPlugins: dbAuthPlugins(null),

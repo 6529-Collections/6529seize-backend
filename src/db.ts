@@ -60,7 +60,6 @@ import {
   mysql2TypeOrmOptions,
   mysqljsWriteResult
 } from '@/db/mysql-driver-compat';
-import { checkPooledConnectionsOnAcquire } from '@/db/mysql-pool-acquire';
 import { writeDelegations } from '@/delegation-row';
 import { Artist } from './entities/IArtist';
 import {
@@ -154,7 +153,6 @@ import {
   withSqlBudgetQueryOptions
 } from '@/db/sql-execution-budget';
 import type { PoolConnection } from 'mysql2';
-import type { MysqlDriver } from 'typeorm/driver/mysql/MysqlDriver';
 import { formatNamedParameters } from '@/db/sql-named-parameters';
 
 const logger = Logger.get('DB');
@@ -245,12 +243,6 @@ export async function connect(
 
   try {
     await AppDataSource.initialize();
-    // TypeORM never set acquireTimeout, so mysqljs bounded this check at its
-    // 10 s default.
-    checkPooledConnectionsOnAcquire(
-      (AppDataSource.driver as MysqlDriver).pool,
-      Time.seconds(10).toMillis()
-    );
   } catch (error) {
     if (selection) {
       // initialize() can fail during driver.connect(), before TypeORM's own cleanup.

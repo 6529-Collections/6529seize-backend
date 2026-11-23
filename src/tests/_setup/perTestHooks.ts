@@ -19,7 +19,7 @@ import {
 import { Time } from '../../time';
 import { selectWorkerDatabaseFromEnv } from '@/tests/_setup/testDatabase';
 import { dbAuthPlugins } from '@/db-iam-auth';
-import { checkPooledConnectionsOnAcquire } from '@/db/mysql-pool-acquire';
+import { createMysqlPool } from '@/db/mysql-pool';
 
 const logger = Logger.get('TEST');
 
@@ -90,19 +90,21 @@ class DbImpl extends SqlExecutor {
 
 beforeEach(async () => {
   // The same driver settings as the API pools in src/db-api.ts.
-  pool = mysql.createPool({
-    connectionLimit: 5,
-    connectTimeout: Time.seconds(30).toMillis(),
-    host: env.getStringOrThrow('DB_HOST'),
-    port: env.getIntOrThrow('DB_PORT'),
-    user: env.getStringOrThrow('DB_USER'),
-    password: env.getStringOrThrow('DB_PASS'),
-    charset: 'utf8mb4',
-    database: env.getStringOrThrow('DB_NAME'),
-    typeCast: CustomTypeCaster,
-    authPlugins: dbAuthPlugins(null)
-  });
-  checkPooledConnectionsOnAcquire(pool, Time.seconds(30).toMillis());
+  pool = createMysqlPool(
+    {
+      connectionLimit: 5,
+      connectTimeout: Time.seconds(30).toMillis(),
+      host: env.getStringOrThrow('DB_HOST'),
+      port: env.getIntOrThrow('DB_PORT'),
+      user: env.getStringOrThrow('DB_USER'),
+      password: env.getStringOrThrow('DB_PASS'),
+      charset: 'utf8mb4',
+      database: env.getStringOrThrow('DB_NAME'),
+      typeCast: CustomTypeCaster,
+      authPlugins: dbAuthPlugins(null)
+    },
+    { acquireTimeoutMs: Time.seconds(30).toMillis() }
+  );
 
   setSqlExecutor(new DbImpl());
 });

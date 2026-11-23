@@ -98,6 +98,11 @@ export interface FakeMysqlServerOptions {
   readonly onQuery?: (sql: string) => FakeReply;
   /** Reply to COM_PING; OK when absent. */
   readonly onPing?: (connectionId: number) => FakeReply | undefined;
+  /**
+   * Leave this connection's login unanswered after the greeting, as a server
+   * or proxy that stalls during authentication would.
+   */
+  readonly stallLogin?: (connectionId: number) => boolean;
 }
 
 function lengthEncodedInt(value: number): Buffer {
@@ -266,6 +271,10 @@ class FakeConnection {
   }
 
   private handshakeResponse(payload: Buffer): void {
+    if (this.server.options.stallLogin?.(this.id)) {
+      this.server.stalledLogins.push(this.id);
+      return;
+    }
     const reader = new PacketReader(payload);
     this.clientFlags = reader.int(4);
     reader.bytes(4 + 1 + 23);
@@ -434,6 +443,7 @@ export class FakeMysqlServer {
   readonly logins: FakeLogin[] = [];
   readonly queries: string[] = [];
   readonly pings: number[] = [];
+  readonly stalledLogins: number[] = [];
   readonly connections: FakeConnection[] = [];
   private readonly server: net.Server;
   private nextId = 1;

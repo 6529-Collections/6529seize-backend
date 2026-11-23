@@ -59,7 +59,7 @@ import {
   resolveDbConnectionTargets,
   sslOptionsFor
 } from './db-iam-auth';
-import { checkPooledConnectionsOnAcquire } from './db/mysql-pool-acquire';
+import { createMysqlPool } from './db/mysql-pool';
 import {
   DEFAULT_PAGE_SIZE,
   NFTSearchResult,
@@ -183,35 +183,36 @@ export async function connect() {
     target: DbConnectionTarget,
     connectionLimit: number
   ): mysql.Pool => {
-    const pool = mysql.createPool({
-      connectionLimit,
-      connectTimeout: Time.seconds(30).toMillis(),
-      host: target.host,
-      port: port,
-      user: target.user,
-      password: target.password,
-      charset: 'utf8mb4',
-      database: process.env.DB_NAME,
-      typeCast: CustomTypeCaster,
-      authPlugins: dbAuthPlugins(
-        target.iam
-          ? createDbAuthTokenSource({
-              host: target.host,
-              port,
-              user: target.user
-            })
-          : null,
-        (error) =>
-          logger.error(
-            `[DB IAM TOKEN SIGNING FAILED] [${target.host}] ${error}`
-          )
-      ),
-      ...sslOptionsFor(target)
-    });
-    // The 30 s bound is the former mysqljs acquireTimeout. mysqljs never read
-    // the pool-level `timeout` option, so it has no replacement.
-    checkPooledConnectionsOnAcquire(pool, Time.seconds(30).toMillis());
-    return pool;
+    // The 30 s acquire bound is the former mysqljs acquireTimeout. mysqljs
+    // never read the pool-level `timeout` option, so it has no replacement.
+    return createMysqlPool(
+      {
+        connectionLimit,
+        connectTimeout: Time.seconds(30).toMillis(),
+        host: target.host,
+        port: port,
+        user: target.user,
+        password: target.password,
+        charset: 'utf8mb4',
+        database: process.env.DB_NAME,
+        typeCast: CustomTypeCaster,
+        authPlugins: dbAuthPlugins(
+          target.iam
+            ? createDbAuthTokenSource({
+                host: target.host,
+                port,
+                user: target.user
+              })
+            : null,
+          (error) =>
+            logger.error(
+              `[DB IAM TOKEN SIGNING FAILED] [${target.host}] ${error}`
+            )
+        ),
+        ...sslOptionsFor(target)
+      },
+      { acquireTimeoutMs: Time.seconds(30).toMillis() }
+    );
   };
   write_pool = createPool(targets.write, 5);
   read_pool = createPool(targets.read, 10);
