@@ -19,12 +19,15 @@ import {
   PROFILE_GROUP_CHANGES,
   PROFILE_GROUPS_TABLE,
   RATINGS_TABLE,
+  USER_GROUP_VISIBILITY_REQUESTS_TABLE,
   USER_GROUPS_TABLE,
   WAVE_CURATIONS_TABLE,
   WAVES_TABLE,
   XTDH_GRANT_TOKENS_TABLE,
   XTDH_GRANTS_TABLE
 } from '@/constants';
+import { CustomApiCompliantException } from '@/exceptions';
+import { UserGroupVisibilityRequestEntity } from '@/entities/IUserGroupVisibilityRequest';
 import { RateMatter } from '../entities/IRating';
 import { randomUUID } from 'crypto';
 import { identitiesDb } from '../identities/identities.db';
@@ -387,6 +390,55 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
         opts
       )
       .then((res) => res[0] ?? null);
+  }
+
+  async lockForVisibilityChange(
+    id: string,
+    connection: ConnectionWrapper<any>
+  ): Promise<void> {
+    await this.db.execute(
+      `select id from ${USER_GROUPS_TABLE} where id=:id for update`,
+      { id },
+      { wrappedConnection: connection }
+    );
+  }
+
+  async reserveVisibilityRequest(
+    id: string,
+    payloadHash: string,
+    connection: ConnectionWrapper<any>
+  ): Promise<boolean> {
+    const options = { wrappedConnection: connection };
+    await this.db.execute(
+      `insert into ${USER_GROUP_VISIBILITY_REQUESTS_TABLE} (id, payload_hash) values (:id, :payloadHash) on duplicate key update id=id`,
+      { id, payloadHash },
+      options
+    );
+    const receipt = await this.db.oneOrNull<UserGroupVisibilityRequestEntity>(
+      `select payload_hash, completed from ${USER_GROUP_VISIBILITY_REQUESTS_TABLE} where id=:id for update`,
+      { id },
+      options
+    );
+    if (!receipt)
+      throw new Error('Group visibility request receipt is missing');
+    if (receipt.payload_hash !== payloadHash) {
+      throw new CustomApiCompliantException(
+        409,
+        'Idempotency key was used for a different group save'
+      );
+    }
+    return Boolean(receipt.completed);
+  }
+
+  async completeVisibilityRequest(
+    id: string,
+    connection: ConnectionWrapper<any>
+  ): Promise<void> {
+    await this.db.execute(
+      `update ${USER_GROUP_VISIBILITY_REQUESTS_TABLE} set completed=true where id=:id`,
+      { id },
+      { wrappedConnection: connection }
+    );
   }
 
   async changeVisibilityAndSetId(

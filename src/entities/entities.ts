@@ -242,6 +242,7 @@ export {
 } from './ITransactionsProcessing';
 export { ConsolidatedTDHUpload, UploadEntity } from './IUpload';
 export { UserGroupEntity } from './IUserGroup';
+export { UserGroupVisibilityRequestEntity } from './IUserGroupVisibilityRequest';
 export { WaveArchiveEntity, WaveEntity } from './IWave';
 export { WalletAuthSessionEntity } from './IWalletAuthSession';
 export type { WalletAuthClientType } from './IWalletAuthSession';
