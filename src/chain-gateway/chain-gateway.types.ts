@@ -74,8 +74,10 @@ export interface ChainHead {
   /** The finalized height the node that answered the status is at. */
   readonly nodeFinalizedHeight?: number;
   /**
-   * The finalized block's slot start, Unix ms, when the pin is the
-   * answering node's own finalized height; null when the pin is above it.
+   * The pinned block's slot start, Unix ms: the answering node's when the
+   * pin is its own finalized height, else the time read with the pin when
+   * it was raised (a status, a feed page or a read stamp of that height);
+   * null when no read carried it.
    */
   readonly finalizedTime: number | null;
   /** The answering node's finalized block's slot start, Unix ms. */

@@ -1962,6 +1962,80 @@ describe('ChainGatewayClient reads', () => {
     );
   });
 
+  it('keeps the time read with the pin, and moves it with a later raise', async () => {
+    let feedAt = 1000;
+    const { client } = setup((call) =>
+      path(call) === '/v1/status'
+        ? status(995)
+        : {
+            status: 200,
+            json: {
+              read: stamp(feedAt),
+              data: { through: feedAt, blocks: [] },
+              next: String(feedAt + 1)
+            }
+          }
+    );
+    await client.getChanges(990);
+    expect(await client.getHead()).toEqual(
+      expect.objectContaining({
+        finalizedHeight: 1000,
+        finalizedTime: stamp(1000).time,
+        nodeFinalizedTime: stamp(995).time
+      })
+    );
+    feedAt = 1004;
+    await client.getChanges(1001);
+    expect(await client.getHead()).toEqual(
+      expect.objectContaining({
+        finalizedHeight: 1004,
+        finalizedTime: stamp(1004).time
+      })
+    );
+  });
+
+  it('keeps no time of another network with the pin', async () => {
+    let network = stamp(1).network;
+    let finalized = 995;
+    const { client, advance } = setup((call) => {
+      if (path(call) === '/v1/status') {
+        const answer = status(finalized);
+        answer.json.data.finalized = { ...answer.json.data.finalized, network };
+        return answer;
+      }
+      return {
+        status: 200,
+        json: {
+          read: { ...stamp(1000), network },
+          data: { through: 1000, blocks: [] },
+          next: '1001'
+        }
+      };
+    });
+    await client.getChanges(990);
+    expect((await client.getHead()).finalizedTime).toBe(stamp(1000).time);
+    // A relaunch: the new chain's head is its own, height and time.
+    network = OTHER_NETWORK;
+    finalized = 7;
+    advance(2_500);
+    expect(await client.getHead()).toEqual(
+      expect.objectContaining({
+        finalizedHeight: 7,
+        finalizedTime: stamp(7).time
+      })
+    );
+    // And the cache cleared, nothing is kept for any network.
+    client.clearCache();
+    network = stamp(1).network;
+    finalized = 995;
+    expect(await client.getHead()).toEqual(
+      expect.objectContaining({
+        finalizedHeight: 995,
+        finalizedTime: stamp(995).time
+      })
+    );
+  });
+
   it('never pins a read below a finalized height already seen', async () => {
     let finalized = 1000;
     const { client, calls, advance } = setup((call) =>
@@ -1987,7 +2061,8 @@ describe('ChainGatewayClient reads', () => {
         finalizedHeight: 1000,
         nodeFinalizedHeight: 997,
         headHeight: 1003,
-        finalizedTime: null,
+        // The time read with 1000 when the pin was raised.
+        finalizedTime: stamp(1000).time,
         nodeFinalizedTime: stamp(997).time
       })
     );
@@ -2582,7 +2657,7 @@ describe('ChainGatewayClient reads', () => {
       expect.objectContaining({
         finalizedHeight: 1000,
         nodeFinalizedHeight: 995,
-        finalizedTime: null
+        finalizedTime: stamp(1000).time
       })
     );
   });
