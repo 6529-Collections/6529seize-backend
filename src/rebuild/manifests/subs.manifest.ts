@@ -25,6 +25,19 @@ const FIXTURE_RECORDS_FLAGS = {
   SIGNED_RECORDS_SERVICE_WALLET: '0x00000000000000000000000000000000000000a1'
 };
 
+/**
+ * The identity mirror's principals table, which the identity mirror branch
+ * (#2516) creates: the opening cut, the identity writers and the dual
+ * write's keys read it. Steps that need it wait while it isn't there.
+ */
+const NEEDS_IDENTITY_MIRROR = [
+  {
+    table: 'identity_chain_principals',
+    reason:
+      'The opening cut, the identity writers and the dual write read the identity mirror table, which the identity mirror branch (#2516) creates'
+  }
+];
+
 /** The identity tables the rebuild fills from the opening files and the journal. */
 const IDENTITY_TABLES = [
   'subscriptions_id_balances',
@@ -108,6 +121,7 @@ const SUBS_SWITCH_SEED: RebuildStep = {
   ],
   after: ['subs.seed'],
   sources: ['ethereum', 'files', 'repo'],
+  needs: NEEDS_IDENTITY_MIRROR,
   timeoutMinutes: 15
 };
 
@@ -127,6 +141,7 @@ const SUBS_REBUILD: RebuildStep = {
   // The records wave: the head drops the records service posted.
   reads: ['drops', 'drops_parts'],
   sources: ['files'],
+  needs: NEEDS_IDENTITY_MIRROR,
   timeoutMinutes: 15
 };
 
@@ -167,6 +182,13 @@ const SUBS_LEGACY_HISTORY_REBUILD: RebuildStep = {
   ],
   after: ['subs.identity'],
   sources: ['repo'],
+  needs: [
+    {
+      table: 'identity_chain_principals',
+      reason:
+        'It copies the identity tables subs.identity rebuilds, which waits for the identity mirror table (#2516)'
+    }
+  ],
   timeoutMinutes: 10
 };
 
@@ -199,6 +221,7 @@ const SUBS_LEGACY_STATE_REBUILD: RebuildStep = {
   ],
   after: ['subs.identity'],
   sources: ['repo'],
+  needs: NEEDS_IDENTITY_MIRROR,
   timeoutMinutes: 10
 };
 
