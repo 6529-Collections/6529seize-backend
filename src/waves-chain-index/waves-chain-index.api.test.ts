@@ -1,3 +1,4 @@
+import { ChainGatewayClient } from '@/chain-gateway/chain-gateway.client';
 import { ChainAnswer } from '@/chain-gateway/chain-gateway.types';
 import {
   GatewayWavesChainApi,
@@ -351,6 +352,192 @@ describe('GatewayWavesChainApi', () => {
       await expect(
         new GatewayWavesChainApi(broken).feed(5, [])
       ).rejects.toThrow('[FEED BLOCK BROKEN] block 5');
+    });
+  });
+
+  describe('the feed and lists over the gateway client', () => {
+    const NETWORK = '0x' + '22'.repeat(32);
+    const stamp = (height: number, at: 'finalized' | 'head' = 'finalized') => ({
+      at,
+      height,
+      root: '0x' + '11'.repeat(32),
+      slot: height + 10,
+      time: 1_764_000_000_000 + height,
+      finalizedHeight: height,
+      headHeight: height + 3,
+      network: NETWORK
+    });
+    const record = (n: number) => ({
+      family: '0x0501',
+      name: 'Wave',
+      key: `0x${String(n).padStart(4, '0')}`,
+      value: '0x'
+    });
+    const block = (
+      height: number,
+      records: number[],
+      complete = true,
+      recordsFrom = 0
+    ) => ({
+      height,
+      slot: 0,
+      root: '0x',
+      time: 1,
+      complete,
+      recordsFrom,
+      records: records.map(record)
+    });
+    /** The real client, with the gateway answering `pages` in order. */
+    function clientOf(pages: { read: number; data: unknown; next: unknown }[]) {
+      const asked: string[] = [];
+      const fetchImpl = async (url: string) => {
+        const u = new URL(url);
+        let json: unknown;
+        if (u.pathname === '/v1/status') {
+          json = {
+            read: stamp(130, 'head'),
+            data: {
+              api: '1',
+              node: 'rc',
+              ready: true,
+              head: stamp(133, 'head'),
+              finalized: stamp(130),
+              pinnable: { from: 67, to: 130 },
+              ruleVersion: 7
+            },
+            next: null
+          };
+        } else {
+          asked.push(
+            u.searchParams.get('from') ?? u.searchParams.get('after') ?? ''
+          );
+          const page = pages.shift()!;
+          json = { read: stamp(page.read), data: page.data, next: page.next };
+        }
+        const text = JSON.stringify(json);
+        return {
+          status: 200,
+          headers: { get: () => null },
+          text: async () => text,
+          arrayBuffer: async () => {
+            const bytes = Buffer.from(text);
+            return bytes.buffer.slice(
+              bytes.byteOffset,
+              bytes.byteOffset + bytes.byteLength
+            ) as ArrayBuffer;
+          }
+        };
+      };
+      const client = new ChainGatewayClient(() => ({
+        baseUrl: 'https://gateway.test',
+        serviceKey: 'service-key',
+        timeoutMs: 1_000,
+        retries: 0,
+        headTtlMs: 2_000,
+        cacheEntries: 0,
+        fetchImpl: fetchImpl as any,
+        sleep: async () => undefined
+      }));
+      return { api: new GatewayWavesChainApi(client), asked };
+    }
+
+    it('takes an empty page that moves on, and its next height', async () => {
+      const { api } = clientOf([
+        { read: 130, data: { from: 100, through: 119, blocks: [] }, next: 120 }
+      ]);
+      const page = await api.feed(100, ['0x0501']);
+      expect(page).toMatchObject({ blocks: [], through: 119, atHead: false });
+      expect(Number(page.next)).toBe(120);
+    });
+
+    it('gives a block cut across three pages whole, read on from the cursor', async () => {
+      const { api, asked } = clientOf([
+        {
+          read: 130,
+          data: {
+            from: 120,
+            through: 119,
+            blocks: [block(120, [1, 2], false)]
+          },
+          next: '120:7'
+        },
+        {
+          read: 130,
+          data: {
+            from: '120:7',
+            through: 119,
+            blocks: [block(120, [3, 4], false, 7)]
+          },
+          next: '120:15'
+        },
+        {
+          read: 130,
+          data: {
+            from: '120:15',
+            through: 121,
+            blocks: [block(120, [5], true, 15), block(121, [6])]
+          },
+          next: 122
+        }
+      ]);
+      const page = await api.feed(120, ['0x0501']);
+      expect(asked).toEqual(['120', '120:7', '120:15']);
+      expect(page).toMatchObject({ through: 120, next: 121, atHead: false });
+      expect(page.blocks.map((b) => b.height)).toEqual([120]);
+      expect(page.blocks[0]).toMatchObject({ complete: true, recordsFrom: 0 });
+      expect(page.blocks[0].records.map((r) => r.key)).toEqual(
+        [1, 2, 3, 4, 5].map((n) => record(n).key)
+      );
+    });
+
+    it('stops before a cut block when a node behind it answers the rest', async () => {
+      const { api } = clientOf([
+        {
+          read: 130,
+          data: { from: 118, through: 119, blocks: [block(120, [1], false)] },
+          next: '120:3'
+        },
+        {
+          read: 119,
+          data: { from: '120:3', through: 119, blocks: [] },
+          next: 120
+        }
+      ]);
+      const page = await api.feed(118, ['0x0501']);
+      expect(page).toMatchObject({
+        blocks: [],
+        through: 119,
+        next: 120,
+        atHead: true
+      });
+    });
+
+    it('follows a list through empty pages that move on, to its end', async () => {
+      const { api, asked } = clientOf([
+        { read: 120, data: [], next: 'k1' },
+        { read: 120, data: [{ voter: '0x01' }], next: 'k2' },
+        { read: 120, data: [], next: 'k3' },
+        { read: 120, data: [{ voter: '0x02' }], next: null }
+      ]);
+      expect(await api.entryVotes('0x' + 'e1'.repeat(32), 120)).toEqual([
+        { voter: '0x01' },
+        { voter: '0x02' }
+      ]);
+      expect(asked).toEqual(['', 'k1', 'k2', 'k3']);
+    });
+
+    it('gives an empty list page that moves on as a page, so a full read goes on', async () => {
+      const { api } = clientOf([{ read: 120, data: [], next: 'k1' }]);
+      expect(await api.listWaves(null, 120)).toEqual({ items: [], next: 'k1' });
+    });
+
+    it('stops at the cut block when the node behind is asked from it', async () => {
+      const { api } = clientOf([
+        { read: 119, data: { from: 120, through: 119, blocks: [] }, next: 120 }
+      ]);
+      const page = await api.feed(120, ['0x0501']);
+      expect(page).toMatchObject({ blocks: [], atHead: true });
+      expect(Number(page.next)).toBe(120);
     });
   });
 });
