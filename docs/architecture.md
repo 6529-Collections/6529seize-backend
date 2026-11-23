@@ -2474,9 +2474,11 @@ the next dispatch. The service catalog records allowed environments and
 default dependencies. The workflow's environment concurrency avoids overlapping
 backend deployment runs; it does not create a cross-repository scheduler.
 
-Drop Forge handler deployments reference dedicated execution roles through versioned
-`serverless-config/{staging,prod}/drop-forge.js`; no feature-specific GitHub role
-variables are required. Only the launch role can sign with the operational KMS key.
+Drop Forge handler deployments select a dedicated deploy role through each
+GitHub environment's `AWS_DROP_FORGE_DEPLOY_ROLE_ARN`. The role must be distinct
+from the shared deploy role and belong to the same AWS account. The execution
+roles are selected through versioned `serverless-config/{staging,prod}/drop-forge.js`.
+Only the launch role can sign with the operational KMS key.
 The separate Scheduler delivery role can publish only to the work queues/DLQs.
 Role provisioning, scoped `iam:PassRole` and rollout are covered by the
 maintained [setup guide](drop-forge-auto-launch-setup.md).
