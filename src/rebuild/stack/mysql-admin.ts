@@ -182,17 +182,37 @@ export class MysqlAdmin {
     return io;
   }
 
-  /** Streams a table's rows in a stable order. */
+  /**
+   * A table's rows in `orderBy` order. With `newestBy`, only the rows
+   * whose column holds its largest value, as MySQL compares it (MAX).
+   */
   async orderedRows(
     database: string,
     table: string,
-    orderBy: readonly string[]
+    orderBy: readonly string[],
+    newestBy?: string
   ): Promise<Row[]> {
+    const from = `${mysql.escapeId(database)}.${mysql.escapeId(table)}`;
+    const where = newestBy
+      ? ` WHERE ${mysql.escapeId(newestBy)} = (SELECT MAX(${mysql.escapeId(newestBy)}) FROM ${from})`
+      : '';
     const order = orderBy.length
       ? ` ORDER BY ${orderBy.map((column) => mysql.escapeId(column)).join(', ')}`
       : '';
-    return this.query(
-      `SELECT * FROM ${mysql.escapeId(database)}.${mysql.escapeId(table)}${order}`
+    return this.query(`SELECT * FROM ${from}${where}${order}`);
+  }
+
+  /** Whether a column may hold NULL; null when the table has no such column. */
+  async columnNullable(
+    database: string,
+    table: string,
+    column: string
+  ): Promise<boolean | null> {
+    const rows = await this.query<{ nullable: string }>(
+      `SELECT IS_NULLABLE AS nullable FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+      [database, table, column]
     );
+    return rows.length ? rows[0].nullable === 'YES' : null;
   }
 }

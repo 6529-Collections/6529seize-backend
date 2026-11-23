@@ -44,6 +44,18 @@ export interface TableEntry {
     readonly column: string;
     readonly reason: string;
   }[];
+  /**
+   * INDEX only, for a table whose readers take only its one newest row by
+   * `column` (a checkpoint each run writes): the row diff compares only
+   * the rows holding the column's largest value (MAX, as MySQL compares
+   * it), which must match in every non-volatile column, and leaves the
+   * older ones out. One newest row for the whole table: a table read as
+   * the newest row per key can't use it. The column must be NOT NULL.
+   */
+  readonly checkpoint?: {
+    readonly column: string;
+    readonly reason: string;
+  };
 }
 
 export interface ReasonedPath {

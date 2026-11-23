@@ -559,6 +559,33 @@ class RebuildRun {
     return ['.ts', '.js'].some((ext) => fs.existsSync(`${base}${ext}`));
   }
 
+  /**
+   * A checkpoint column must exist and be NOT NULL, or its MAX may not be
+   * the row the table's readers take.
+   */
+  private async checkpointColumnsHold(): Promise<boolean> {
+    const entries = this.entries();
+    const problems: string[] = [];
+    for (const [table, { entry }] of Array.from(entries)) {
+      const checkpoint = entry.checkpoint;
+      if (!checkpoint || !this.baseTables.has(table)) continue;
+      const nullable = await this.admin!.columnNullable(
+        MAIN_DB,
+        table,
+        checkpoint.column
+      );
+      if (nullable === null) {
+        problems.push(`${table} has no checkpoint column ${checkpoint.column}`);
+      } else if (nullable) {
+        problems.push(
+          `${table}'s checkpoint column ${checkpoint.column} may hold NULL`
+        );
+      }
+    }
+    this.failures.push(...problems);
+    return problems.length === 0;
+  }
+
   /** The tables a step needs that the fresh schema doesn't have. */
   private missingNeeds(step: RebuildStep): NeededTable[] {
     return (step.needs ?? []).filter(
@@ -690,12 +717,17 @@ class RebuildRun {
     const entries = this.entries();
     const result = new Map<string, TableSnapshot>();
     for (const table of tables) {
-      const volatile = (entries.get(table)?.entry.volatileColumns ?? []).map(
-        (c) => c.column
-      );
+      const entry = entries.get(table)?.entry;
+      const volatile = (entry?.volatileColumns ?? []).map((c) => c.column);
       result.set(
         table,
-        await snapshotTable(this.admin!, MAIN_DB, table, volatile)
+        await snapshotTable(
+          this.admin!,
+          MAIN_DB,
+          table,
+          volatile,
+          entry?.checkpoint?.column
+        )
       );
     }
     return result;
@@ -815,6 +847,7 @@ class RebuildRun {
       this.live.filter((t) => t.type === 'BASE TABLE').map((t) => t.name)
     );
     this.baseTables = base;
+    if (!(await this.checkpointColumnsHold())) return;
     const all = expandAll(this.o.manifests);
     const waits = (call: ProbeCall) =>
       call.probe.origin === 'planned' &&
@@ -1001,16 +1034,31 @@ class RebuildRun {
     );
   }
 
-  /** The rebuilt tables' columns the row comparison leaves out. */
+  /**
+   * What the row comparison leaves out of the rebuilt tables: volatile
+   * columns, and a checkpoint table's rows before its newest.
+   */
   private volatileColumns(): RunReport['tables']['volatileColumns'] {
     const entries = this.entries();
-    return this.rebuiltTables.flatMap((table) =>
-      (entries.get(table)?.entry.volatileColumns ?? []).map((v) => ({
-        table,
-        column: v.column,
-        reason: v.reason
-      }))
-    );
+    return this.rebuiltTables.flatMap((table) => {
+      const entry = entries.get(table)?.entry;
+      return [
+        ...(entry?.volatileColumns ?? []).map((v) => ({
+          table,
+          column: v.column,
+          reason: v.reason
+        })),
+        ...(entry?.checkpoint
+          ? [
+              {
+                table,
+                column: `rows before the newest by ${entry.checkpoint.column}`,
+                reason: entry.checkpoint.reason
+              }
+            ]
+          : [])
+      ];
+    });
   }
 
   /** Rebuilders that declare reads of kept tables. */

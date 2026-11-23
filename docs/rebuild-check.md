@@ -85,6 +85,16 @@ export const mintManifest: AreaManifest = {
   its rows are compared after the rebuild. A volatile primary-key column,
   such as an auto-increment id the API never shows, also stops keying the
   rows: they match by their other columns.
+- An INDEX table whose readers take only its one newest row, such as a
+  checkpoint each indexing run writes, can set
+  `checkpoint: { column, reason }`. The comparison then takes only the
+  rows holding the column's largest value, as MySQL compares it
+  (`MAX`), which must match in every non-volatile column, and leaves
+  older rows out, since a seed that indexed twice has more of them than a
+  rebuild that indexed once. It is one newest row for the whole table: a
+  table whose readers take the newest row per key must not use it. The
+  registry refuses it on other classes and without a column or a reason,
+  and a run fails when the column may hold NULL.
 - `seeds`: steps that put the stack in its "before" state: legacy rows, kept
   rows, and the live loops run forward.
 - `rebuilders`: steps that fill your INDEX tables from empty. A module step

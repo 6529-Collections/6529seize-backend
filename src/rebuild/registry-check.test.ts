@@ -247,6 +247,34 @@ describe('checkRegistry', () => {
     ]);
   });
 
+  it('keeps a checkpoint to INDEX tables, with a column and a reason', () => {
+    const result = checkRegistry({
+      manifests: [
+        area('a', {
+          good: {
+            class: 'INDEX',
+            checkpoint: { column: 'block', reason: 'readers take MAX(block)' }
+          },
+          kept: {
+            class: 'EPHEMERAL',
+            why: 'a cache',
+            checkpoint: { column: 'block', reason: 'x' }
+          },
+          bare: { class: 'INDEX', checkpoint: { column: ' ', reason: ' ' } }
+        })
+      ],
+      codeTables: code('good', 'kept', 'bare')
+    });
+    expect(result.problems.map((p) => [p.kind, p.detail])).toEqual([
+      [
+        'BAD_CHECKPOINT',
+        'kept is EPHEMERAL; only an INDEX table has a checkpoint'
+      ],
+      ['BAD_CHECKPOINT', "bare's checkpoint names no column"],
+      ['BAD_CHECKPOINT', "bare's checkpoint has no reason"]
+    ]);
+  });
+
   it('lets a step wait only for a table a later branch adds, with a reason', () => {
     const result = checkRegistry({
       manifests: [

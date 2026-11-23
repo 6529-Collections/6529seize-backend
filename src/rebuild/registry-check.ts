@@ -28,7 +28,9 @@ export type RegistryProblemKind =
   /** A probe with a repeated id, a bad path or a placeholder without values. */
   | 'BAD_PROBE'
   /** A flag that would set one of the run's own variables. */
-  | 'BAD_FLAG';
+  | 'BAD_FLAG'
+  /** A checkpoint on a table that isn't INDEX, or without a column or reason. */
+  | 'BAD_CHECKPOINT';
 
 export interface RegistryProblem {
   readonly kind: RegistryProblemKind;
@@ -114,6 +116,26 @@ function tableProblems(input: RegistryInput): RegistryProblem[] {
           table,
           detail: `${table} is ${entry.class} without a reason`
         });
+      }
+      if (entry.checkpoint) {
+        const bad = (detail: string) =>
+          problems.push({
+            kind: 'BAD_CHECKPOINT',
+            area: manifest.area,
+            table,
+            detail
+          });
+        if (entry.class !== 'INDEX') {
+          bad(
+            `${table} is ${entry.class}; only an INDEX table has a checkpoint`
+          );
+        }
+        if (!entry.checkpoint.column.trim()) {
+          bad(`${table}'s checkpoint names no column`);
+        }
+        if (!entry.checkpoint.reason.trim()) {
+          bad(`${table}'s checkpoint has no reason`);
+        }
       }
     }
   }
