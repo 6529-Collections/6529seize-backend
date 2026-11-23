@@ -205,22 +205,25 @@ const CATALOGUE_TABLES = [
  * wallets 1 and 2), then the holdings tables from it. Its contracts are
  * test fixtures; holdings-seed.ts says what each stands for.
  */
+/** Every table the seed writes, each whole. */
+const SEEDED_TABLES = [
+  'transactions',
+  'transfer_reconciliations',
+  'nft_owners',
+  'nft_owners_consolidation',
+  'nft_owners_sync_state',
+  ...CATALOGUE_TABLES,
+  ...HISTORY_TABLES,
+  ...HOLDINGS_TABLES,
+  ...NEXTGEN_TABLES,
+  'meme_lab_royalties',
+  ...WALLET_TRANSFER_TABLES
+];
+
 const HOLDINGS_SEED: RebuildStep = {
   id: 'holdings.seed',
   run: step('src/holdings/rebuild-seed/holdings-seed', 'seedHoldings'),
-  writes: [
-    'transactions',
-    'transfer_reconciliations',
-    'nft_owners',
-    'nft_owners_consolidation',
-    'nft_owners_sync_state',
-    ...CATALOGUE_TABLES,
-    ...HISTORY_TABLES,
-    ...HOLDINGS_TABLES,
-    ...NEXTGEN_TABLES,
-    'meme_lab_royalties',
-    ...WALLET_TRANSFER_TABLES
-  ],
+  writes: SEEDED_TABLES,
   reads: ['eth_price', 'address_consolidation_keys', 'tdh_nft'],
   // The fixture wallets' consolidation keys first.
   after: ['identity.probe-profiles'],
@@ -232,7 +235,7 @@ const HOLDINGS_REBUILDERS: RebuildStep[] = [
   {
     id: 'holdings.ethereum',
     run: step('src/holdings/rebuild-seed/holdings-seed', 'rebuildHoldings'),
-    writes: HOLDINGS_SEED.writes.filter(
+    writes: SEEDED_TABLES.filter(
       (table) => !WALLET_TRANSFER_TABLES.includes(table)
     ),
     // tdh_nft is TDH's, rebuilt after this step, since TDH reads the
