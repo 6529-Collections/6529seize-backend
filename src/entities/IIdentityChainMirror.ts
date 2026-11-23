@@ -375,9 +375,11 @@ export class IdentityChainRatingEventEntity {
   readonly rater_principal!: string;
 
   /**
-   * The rater's 6529.io profile id when mapped; null when not (filled in
-   * when it is mapped within a day of the row's writing; a principal never
-   * mapped, merged or closed, can leave it null).
+   * The rater's 6529.io profile id when mapped; null when not. The follower
+   * maps the rater and target of an OPERATION row itself when it can; a
+   * null one is filled in once mapped: any row until the fill has made a
+   * whole pass after a first full sync ended, then a row written in the
+   * last day. A principal never mapped, merged or closed, can leave it null.
    */
   @Column({ type: 'varchar', length: 50, nullable: true, default: null })
   readonly rater_profile_id!: string | null;

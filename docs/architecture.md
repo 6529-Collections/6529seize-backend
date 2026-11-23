@@ -1032,10 +1032,15 @@ page and takes the identity sync's own id (`ProfileIds.profileIdOf`, stored,
 so the sync later finds the same one; a merged, closing or walletless one
 named without storing, as the sync names such a rater). The two never map at
 the same time: the follower runs after the identity steps, and one Lambda runs
-at a time. A gateway failure that passes on its own (a height not held, a
-timeout, the network, 429 or 5xx) ends the follower's run before the page is
-written. When more than 200 are left to map and some were mapped, the page
-waits too, and the next run goes on mapping. An id that can't be settled yet
+at a time. A failure that passes on its own (of the gateway: a height not
+held, a timeout, the network, 429 or 5xx; of the database: a deadlock, a lock
+wait, a connection reset or lost) ends the follower's run before the page is
+written; once the follower has been stuck two runs, such a failure is taken as
+that principal's and its id left null. When more than 200 are left to map
+after some were newly named, the page is read again while time is left, going
+on from there; ids named without storing (merged, closing or walletless
+identities) are kept for the page in memory, not read or counted again, and
+only ids stored count as a step on for the stuck alarm. An id that can't be settled yet
 (a chain-made identity in its founder wait, an answer another node may give),
 one whose mapping fails some other way (reported with the principal, as the
 identity sync isolates such an identity), and the rows of other origins (the
@@ -1050,7 +1055,8 @@ at and a `stale` mark, and the REP category names it has read in
 comes from 6529.io's ratings table, which the identity sync writes at newer
 heights, so that sync can't change an event. Each run fills in profile ids,
 then runs the follower last, after the identity steps (which leave it a
-quarter of the time), also when one of them threw. Its first start clears the
+quarter of the time, and at least a minute when they run into it, never more
+than a minute past the mirror's budget), also when one of them threw. Its first start clears the
 ledger, the rows and the names in the transaction that saves its first place;
 without the import's start it logs an error and builds the ledger at the
 latest finalized height (as after a gap), with no rows before it.

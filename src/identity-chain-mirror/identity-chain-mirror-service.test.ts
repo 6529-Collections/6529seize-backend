@@ -38,7 +38,8 @@ import type {
 import {
   RATING_EVENTS_MAPPED_A_PAGE,
   RATING_EVENTS_STUCK_RUNS,
-  RatingEventsFollower
+  RatingEventsFollower,
+  RatingEventsReport
 } from './rating-events-follower';
 import {
   CHAIN_BLOCK_BASE,
@@ -2538,18 +2539,35 @@ describe('IdentityChainMirror', () => {
     ]);
   });
 
-  /** A follower of its own, with its clock, from height 101 (behind 102). */
-  const followerAt101 = (w: ReturnType<typeof ratedWorld>) => {
-    let now = 1_000;
-    const ids = new ProfileIds(w.gateway as never, w.db as never, () => now);
-    ids.setImportHeights(50, 60);
-    const follower = new RatingEventsFollower(
+  /**
+   * A follower of its own, with its clock, from height 101 (behind 102);
+   * each identity read takes `readMs`.
+   */
+  const followerAt101 = (
+    w: ReturnType<typeof ratedWorld>,
+    { readMs = 0 }: { readMs?: number } = {}
+  ) => {
+    const clock = { now: 1_000 };
+    const ids = new ProfileIds(
       w.gateway as never,
-      w.db as unknown as IdentityChainMirrorDb,
-      ids,
-      () => now,
-      async () => undefined
+      w.db as never,
+      () => clock.now
     );
+    ids.setImportHeights(50, 60);
+    const make = () =>
+      new RatingEventsFollower(
+        w.gateway as never,
+        w.db as unknown as IdentityChainMirrorDb,
+        ids,
+        () => clock.now,
+        async () => undefined
+      );
+    let follower = make();
+    const read = w.gateway.getIdentityByPrincipal.getMockImplementation()!;
+    w.gateway.getIdentityByPrincipal.mockImplementation((async (p: string) => {
+      clock.now += readMs;
+      return await read(p);
+    }) as never);
     w.db.state = {
       next_height: 102,
       last_full_sync_at: null,
@@ -2561,22 +2579,30 @@ describe('IdentityChainMirror', () => {
       events_stuck_runs: 0
     } as unknown as MirrorState;
     w.chain.categories.set(CATEGORY, 'Kind');
-    const report = () => ({
-      ratingEvents: 0,
-      ratingEventProblems: [] as string[],
-      ratingEventProblemsLeftOut: 0,
-      ratingRecordsWithoutWriter: 0,
-      eventsNextHeight: null as number | null
-    });
     return {
-      follow: () => follower.follow(50, 60, (now += 1_000) + 60_000, report())
+      /** One run of `budgetMs`; `cold`: a new follower, nothing in memory. */
+      follow: async (budgetMs = 60_000, cold = false) => {
+        if (cold) follower = make();
+        const report: RatingEventsReport = {
+          ratingEvents: 0,
+          ratingEventProblems: [],
+          ratingEventProblemsLeftOut: 0,
+          ratingRecordsWithoutWriter: 0,
+          eventsNextHeight: null
+        };
+        clock.now += 1_000;
+        await follower.follow(50, 60, clock.now + budgetMs, report);
+        return report;
+      }
     };
   };
-  /** Raters of Alice at 101, each a new identity made on the chain. */
-  const ratersAt101 = (w: ReturnType<typeof ratedWorld>, count: number) => {
-    const raters = Array.from({ length: count }, (_, i) =>
-      chainIdentity(PID(1000 + i), [W(1000 + i)])
-    );
+  /** Raters of Alice at 101, by default each a new identity made on the chain. */
+  const ratersAt101 = (
+    w: ReturnType<typeof ratedWorld>,
+    count: number,
+    make = (i: number) => chainIdentity(PID(1000 + i), [W(1000 + i)])
+  ) => {
+    const raters = Array.from({ length: count }, (_, i) => make(i));
     raters.forEach((it) => w.chain.identities.set(it.principalId, it));
     w.chain.feed.push({
       from: 101,
@@ -2594,29 +2620,30 @@ describe('IdentityChainMirror', () => {
     return raters;
   };
 
-  it(`maps at most ${RATING_EVENTS_MAPPED_A_PAGE} raters and targets a run, the page waiting for the rest`, async () => {
+  it(`maps ${RATING_EVENTS_MAPPED_A_PAGE} raters and targets a try of the page, reading it again for the rest`, async () => {
     const w = ratedWorld();
     const { db } = w;
-    // 249 raters and Alice: 250 to map.
+    // 249 raters and Alice: 250 to map, a second each.
     ratersAt101(w, 249);
-    const { follow } = followerAt101(w);
+    const { follow } = followerAt101(w, { readMs: 1_000 });
     const info = jest.spyOn(Logger.get('IDENTITY_CHAIN_RATING_EVENTS'), 'info');
     try {
-      await follow();
+      // Time for 205: the second try of the page runs out.
+      await follow(205_000);
       expect(info).toHaveBeenCalledWith(
-        `[RATING EVENTS: ${RATING_EVENTS_MAPPED_A_PAGE} RATERS AND TARGETS MAPPED FOR NOTIFICATIONS] [50 NOT TRIED YET: THE PAGE WAITS FOR THE NEXT RUN]`
+        `[RATING EVENTS: ${RATING_EVENTS_MAPPED_A_PAGE} RATERS AND TARGETS MAPPED FOR NOTIFICATIONS] [50 NOT TRIED YET: THE PAGE IS READ AGAIN]`
       );
     } finally {
       info.mockRestore();
     }
     expect(db.ratingEvents).toEqual([]);
-    expect(db.mapping.size).toBe(RATING_EVENTS_MAPPED_A_PAGE);
-    // A step on, not a stuck follower.
+    expect(db.mapping.size).toBe(205);
+    // Ids stored: a step on, not a stuck run.
     expect(db.state).toMatchObject({
       events_next_height: 101,
       events_stuck_runs: 0
     });
-    await follow();
+    await follow(205_000);
     expect(db.mapping.size).toBe(250);
     expect(db.state?.events_next_height).toBe(102);
     expect(db.ratingEvents).toHaveLength(249);
@@ -2645,18 +2672,10 @@ describe('IdentityChainMirror', () => {
       return null;
     }) as never);
     const { follow } = followerAt101(w);
-    // Alice is mapped, the last raters not tried: the page waits.
+    // Alice and 199 unsettled; then the two and the ten not tried yet with
+    // 188 tried before; then none of those left settles: written.
     await follow();
-    expect(db.ratingEvents).toEqual([]);
-    expect(Array.from(db.mapping.values())).toEqual([
-      { profile: ALICE_PROFILE, origin: 'LEGACY' }
-    ]);
-    // Those not tried yet go first: the ten are mapped, the page waits.
-    await follow();
-    expect(db.ratingEvents).toEqual([]);
     expect(db.mapping.size).toBe(11);
-    // None of those left can be settled: the page is written.
-    await follow();
     expect(db.state?.events_next_height).toBe(102);
     expect(db.ratingEvents).toHaveLength(RATING_EVENTS_MAPPED_A_PAGE + 11);
     expect(
@@ -2667,6 +2686,137 @@ describe('IdentityChainMirror', () => {
           it.target_profile_id === ALICE_PROFILE
       )
     ).toBe(true);
+  });
+
+  /** 210 raters of Alice, merged into her; Alice mapped already. */
+  const mergedRatersAt101 = (w: ReturnType<typeof ratedWorld>) => {
+    w.db.mapping.set(w.alice.principalId, {
+      profile: ALICE_PROFILE,
+      origin: 'LEGACY'
+    });
+    return ratersAt101(w, 210, (i) =>
+      chainIdentity(PID(2000 + i), [], {
+        legacyId: null,
+        mergedInto: w.alice.principalId
+      })
+    );
+  };
+
+  it('names merged raters once a page, and writes their rows within a few runs', async () => {
+    const w = ratedWorld();
+    const { db, gateway } = w;
+    const merged = mergedRatersAt101(w);
+    const { follow } = followerAt101(w, { readMs: 1_000 });
+    // 200 named on the first try, five on the second: out of time. Nothing
+    // stored: no step on.
+    await follow(205_000);
+    expect(db.ratingEvents).toEqual([]);
+    expect(db.state?.events_stuck_runs).toBe(1);
+    // The 205 named come from memory: five more to read, then written.
+    await follow(205_000);
+    expect(db.state).toMatchObject({
+      events_next_height: 102,
+      events_stuck_runs: 0
+    });
+    expect(db.ratingEvents).toHaveLength(210);
+    expect(
+      db.ratingEvents.every(
+        (it) =>
+          it.rater_profile_id === principalProfileId(it.rater_principal) &&
+          it.target_profile_id === ALICE_PROFILE
+      )
+    ).toBe(true);
+    expect(merged.some((it) => db.mapping.has(it.principalId))).toBe(false);
+    // Each read once.
+    expect(gateway.getIdentityByPrincipal).toHaveBeenCalledTimes(210);
+  });
+
+  it('raises the stuck alarm when a page of merged raters can never be written', async () => {
+    const w = ratedWorld();
+    const { db } = w;
+    mergedRatersAt101(w);
+    const { follow } = followerAt101(w, { readMs: 1_000 });
+    // A cold start every run: what was named is forgotten each time.
+    let report: RatingEventsReport | null = null;
+    for (let i = 0; i < RATING_EVENTS_STUCK_RUNS; i++) {
+      report = await follow(205_000, true);
+    }
+    expect(db.ratingEvents).toEqual([]);
+    expect(db.state?.events_stuck_runs).toBe(RATING_EVENTS_STUCK_RUNS);
+    expect(report?.ratingEventsStuck).toMatch(/^Rating events stuck at 101/);
+  });
+
+  it.each(['ER_LOCK_DEADLOCK', 'PROTOCOL_CONNECTION_LOST'])(
+    'leaves the page for the next run on %s while mapping',
+    async (code) => {
+      const w = ratedWorld();
+      const { mirror, db, gateway, bob } = w;
+      bobRatesAliceAt70(w);
+      firstSyncStops(gateway, 2);
+      const insert = db.insertMapping.bind(db);
+      db.insertMapping = jest
+        .fn()
+        .mockRejectedValueOnce(Object.assign(new Error('locked'), { code }))
+        .mockImplementation(insert) as never;
+      const first = await mirror.run({ budgetMs: 60_000 });
+      expect(first.ratingEventProblems).toContain('locked');
+      expect(db.ratingEvents).toEqual([]);
+      await mirror.run({ budgetMs: 60_000 });
+      const bobId = principalProfileId(bob.principalId);
+      expect(idsOf(db.ratingEvents)).toEqual([
+        [60, 'IMPORT', bobId, ALICE_PROFILE],
+        [70, 'OPERATION', bobId, ALICE_PROFILE]
+      ]);
+    }
+  );
+
+  it("takes a failure that passes on its own as the principal's once stuck two runs", async () => {
+    const w = ratedWorld();
+    const { db, gateway } = w;
+    const [rater] = ratersAt101(w, 1);
+    const { follow } = followerAt101(w);
+    db.state = { ...db.state!, events_stuck_runs: 1 };
+    const read = gateway.getIdentityByPrincipal.getMockImplementation()!;
+    gateway.getIdentityByPrincipal.mockImplementation((async (p: string) => {
+      if (p === rater.principalId) throw down('/v1/identities');
+      return await read(p);
+    }) as never);
+    // Stuck one run: the page waits.
+    const first = await follow();
+    expect(first.ratingEventProblems).toEqual(['down']);
+    expect(db.ratingEvents).toEqual([]);
+    expect(db.state?.events_stuck_runs).toBe(2);
+    // Two: the rater's id is left null, and the page is written.
+    const second = await follow();
+    expect(second.ratingEventProblems).toEqual([
+      `${rater.principalId} not mapped: down`
+    ]);
+    expect(idsOf(db.ratingEvents)).toEqual([
+      [101, 'OPERATION', null, ALICE_PROFILE]
+    ]);
+    expect(db.state).toMatchObject({
+      events_next_height: 102,
+      events_stuck_runs: 0
+    });
+  });
+
+  it('gives the rating events a minute when the identity steps run into their time, never past the run by more', async () => {
+    for (const [overrun, written] of [
+      [70_000, true],
+      [200_000, false]
+    ] as const) {
+      const w = ratedWorld();
+      bobRatesAliceAt70(w);
+      const list = w.gateway.listIdentities.getMockImplementation()!;
+      w.gateway.listIdentities.mockImplementationOnce((async (opts: {
+        after?: string | null;
+      }) => {
+        w.tick(overrun);
+        return await list(opts);
+      }) as never);
+      await w.mirror.run({ budgetMs: 60_000 });
+      expect(w.db.ratingEvents.length > 0).toBe(written);
+    }
   });
 
   it('names a merged rater of a rating as the full sync does, without mapping it', async () => {

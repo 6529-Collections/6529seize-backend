@@ -113,6 +113,14 @@ const RATING_EVENT_FILL_IDS = 500_000;
 const RATING_EVENT_FILL_SHARE = 0.25;
 /** The rating events' share of a run (they go last). */
 const RATING_EVENTS_SHARE = 0.25;
+/**
+ * The rating events' time when the identity steps ran into their share (a
+ * target with many raters to map has no deadline check): up to this long,
+ * never past the run's deadline by more. The delegations loop keeps four
+ * minutes after the mirror's budget (re-keying, then the end); this takes
+ * at most one of them, and the re-keying sizes its batch to the time left.
+ */
+const RATING_EVENTS_FLOOR_MS = 60 * 1000;
 /** Identities waiting to be retried whose ids a fix of rows can leave out. */
 const MAX_WAITING_LEFT_OUT = 500;
 /** As many for the levels off the chain each run (it reads each one). */
@@ -580,8 +588,16 @@ export class IdentityChainMirror {
       await this.syncInto(state, importState, report, budgetMs, deadline);
     } finally {
       // The rating events after the identity steps, also when one of them
-      // threw; their own failures are reported, never thrown.
-      await this.followRatingEvents(importState, deadline, report);
+      // threw; their own failures are reported, never thrown. They get
+      // RATING_EVENTS_FLOOR_MS at least, never past the deadline by more.
+      const eventsDeadline = Math.max(
+        deadline,
+        Math.min(
+          this.now() + RATING_EVENTS_FLOOR_MS,
+          deadline + RATING_EVENTS_FLOOR_MS
+        )
+      );
+      await this.followRatingEvents(importState, eventsDeadline, report);
     }
   }
 
