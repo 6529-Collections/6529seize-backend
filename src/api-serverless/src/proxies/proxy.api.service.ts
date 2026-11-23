@@ -28,6 +28,10 @@ import {
 } from '../identities/identity.fetcher';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
 import { profileActivityLogsDb } from '../../../profileActivityLogs/profile-activity-logs.db';
+import {
+  assertIdentityNotFrozen,
+  isIdentityFrozen
+} from '../../../identity-freeze/identity-freeze';
 
 const ACTION_MAP: Record<ApiProfileProxyActionType, ProfileProxyActionType> = {
   [ApiProfileProxyActionType.AllocateRep]: ProfileProxyActionType.ALLOCATE_REP,
@@ -40,6 +44,17 @@ const ACTION_MAP: Record<ApiProfileProxyActionType, ProfileProxyActionType> = {
     ProfileProxyActionType.RATE_WAVE_DROP,
   [ApiProfileProxyActionType.PublishCms]: ProfileProxyActionType.PUBLISH_CMS
 };
+
+/**
+ * REP and NIC allocations freeze with the ratings they spend; wave, drop and
+ * CMS proxy actions keep working during the identity freeze.
+ */
+export function isFrozenProxyActionType(type: ProfileProxyActionType): boolean {
+  return (
+    type === ProfileProxyActionType.ALLOCATE_REP ||
+    type === ProfileProxyActionType.ALLOCATE_CIC
+  );
+}
 
 const ACTION_HAVE_CREDIT: Record<ProfileProxyActionType, boolean> = {
   [ProfileProxyActionType.ALLOCATE_REP]: true,
@@ -415,6 +430,9 @@ export class ProfileProxyApiService {
     readonly proxy: ApiProfileProxy;
     readonly action: ProxyApiRequestAction;
   }): Promise<ProfileProxyActionEntity> {
+    if (isFrozenProxyActionType(ACTION_MAP[action.action_type])) {
+      assertIdentityNotFrozen();
+    }
     const action_exists = await this.isActionExists({
       proxy_id: proxy.id,
       action
@@ -763,6 +781,14 @@ export class ProfileProxyApiService {
     readonly acceptance_type: AcceptActionRequestActionEnum;
     readonly profile_id: string;
   }): Promise<ProfileProxyActionEntity> {
+    if (isIdentityFrozen()) {
+      const action = await this.findProfileProxyActionByIdOrThrow({
+        id: payload.action_id
+      });
+      if (isFrozenProxyActionType(action.action_type)) {
+        assertIdentityNotFrozen();
+      }
+    }
     switch (acceptance_type) {
       case AcceptActionRequestActionEnum.Accept:
         return await this.acceptProfileProxyAction(payload);
@@ -805,6 +831,9 @@ export class ProfileProxyApiService {
       throw new BadRequestException(
         'You are not the creator of this proxy action'
       );
+    }
+    if (isFrozenProxyActionType(profileProxyAction.action_type)) {
+      assertIdentityNotFrozen();
     }
     if (
       !!credit_amount &&
