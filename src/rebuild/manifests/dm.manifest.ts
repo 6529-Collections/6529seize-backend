@@ -34,6 +34,9 @@ const RECORD_TABLES = [
   'e2ee_record_items'
 ];
 
+/** The grant wallets of the orderer and the site reader below. */
+const ORDERER_WALLET = `0x${'aa'.repeat(20)}`;
+const READER_WALLET = `0x${'bb'.repeat(20)}`;
 /**
  * Test identities for the relay records: seeds 0x07 and 0x09, grants with
  * placeholder signatures (the relay settings don't verify them), and the
@@ -44,7 +47,7 @@ const ORDERER_GRANT = JSON.stringify({
   message: 'test grant',
   wallet_signature: `0x${'11'.repeat(65)}`,
   chain_id: 1,
-  wallet: `0x${'aa'.repeat(20)}`,
+  wallet: ORDERER_WALLET,
   device_key:
     '0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c',
   scopes: ['post'],
@@ -57,7 +60,7 @@ const READER_GRANT = JSON.stringify({
   message: 'test grant',
   wallet_signature: `0x${'11'.repeat(65)}`,
   chain_id: 1,
-  wallet: `0x${'bb'.repeat(20)}`,
+  wallet: READER_WALLET,
   device_key:
     '0xfd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f618',
   scopes: ['post'],
@@ -335,6 +338,22 @@ export const dmManifest: AreaManifest = {
       run: { module: RELAY_CHECK, exportName: 'checkE2eeRelayItem' }
     }
   ],
+  // The relays serve the e2ee families only to a signed-in orderer or site
+  // reader: the grant wallets above, with the roles the relays give them.
+  relayAccess: {
+    readers: [
+      {
+        wallet: ORDERER_WALLET,
+        roles: ['orderer'],
+        reason: 'The orderer the dm seed signs in as'
+      },
+      {
+        wallet: READER_WALLET,
+        roles: ['site-reader'],
+        reason: 'The site reader the dm rebuild reads every family as'
+      }
+    ]
+  },
   probes: PROBES,
   waivers: {
     unprobedTables: [
