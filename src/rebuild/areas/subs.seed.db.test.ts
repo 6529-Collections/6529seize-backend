@@ -24,6 +24,7 @@ import {
   rebuildLegacyStateInCheck,
   rebuildSubscriptionsInCheck
 } from '@/subscriptions-identity/opening/rebuild-check.steps';
+import { splitAllowlistResults } from '@/api/subscriptions/api.subscriptions.allowlist';
 import { persistTopUps } from '@/subscriptionsTopUpLoop/db.subscriptions_topup';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import {
@@ -229,6 +230,16 @@ async function mintCardOne(): Promise<void> {
   );
 }
 
+/** The record log's `lane` values that have entries no segment closed yet. */
+async function openLanes(): Promise<string[]> {
+  return (
+    await sqlExecutor.execute<{ lane: string }>(
+      `select distinct lane from signed_record_log_entries
+        where segment_seq is null order by lane`
+    )
+  ).map((row) => row.lane);
+}
+
 /** Inserts a row, filling NOT NULL columns without a default with zeros. */
 async function insertFilled(
   table: string,
@@ -295,6 +306,9 @@ describeWithSeed('the subscriptions rebuild check', [], () => {
       deps
     );
     expect(await subscriptionsIdentitySwitch.writeModeOrFail()).toBe('TRUTH');
+    // With the identity tables there and the truth, the seed closed every
+    // record log entry it wrote.
+    expect(await openLanes()).toEqual([]);
 
     // Card 1's list: the first wallet, whose top-up covers a card and
     // turned automatic mode on, on both sides with one id, published into
@@ -327,6 +341,7 @@ describeWithSeed('the subscriptions rebuild check', [], () => {
       contextOf('subs.redemptions', files, dir),
       env
     );
+    expect(await openLanes()).toEqual([]);
     const redeemed = (table: string) =>
       sqlExecutor.execute<{ address: string }>(
         `select address from ${table} where token_id = 1`
@@ -441,6 +456,33 @@ describeWithSeed('the subscriptions rebuild check', [], () => {
     ).rejects.toThrow(
       "charged no airdrop: card 1 isn't minted: holdings.seed hasn't run (it lands with #2551)"
     );
+  });
+
+  it("after the switch, another area's phase split of card 1 journals in lane `subs`, for the seed that ran it to close", async () => {
+    const env = subsManifest.flags;
+    const deps = creditedTopUps();
+    await seedProbeIdentities();
+    await seedSubscriptions(contextOf('subs.seed', files, null), deps);
+    await seedSubscriptionsSwitch(
+      contextOf('subs.switch', files, dir),
+      env,
+      deps
+    );
+    expect(await openLanes()).toEqual([]);
+    // The distribution's phase split, as the mint seed runs it for card 1:
+    // the subscriptions module writes the phase to the identity final rows
+    // and journals it.
+    await splitAllowlistResults(MEMES_CONTRACT, 1, 'Phase 1', [
+      {
+        id: 'phase-split-1',
+        wallet: PROBE_CONSOLIDATION_KEYS[0],
+        phaseId: 'phase-1',
+        allowlistId: 'allowlist-1',
+        phaseComponentId: 'component-1',
+        amount: 1
+      }
+    ]);
+    expect(await openLanes()).toEqual(['subs']);
   });
 
   it("fails the redemption seed, naming the order, when cards are minted but card 1's airdrop was not charged", async () => {
