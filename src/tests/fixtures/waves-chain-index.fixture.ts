@@ -89,7 +89,7 @@ export class FakeChain implements WavesChainApi {
   goneTimes = 0;
   /** The finalized height trails the feed's by this much (a newer node). */
   lag = 0;
-  /** The answering node is below the gateway's pin: no block time. */
+  /** The head comes with no block time (none could be read). */
   timeUnknown = false;
   /** Each call moves the wall clock by this much. */
   callMs = 0;

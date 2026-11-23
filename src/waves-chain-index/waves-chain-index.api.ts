@@ -3,7 +3,10 @@ import {
   ChainGatewayClient,
   ChainGatewayError
 } from '@/chain-gateway/chain-gateway.client';
-import { ChainFeedPage } from '@/chain-gateway/chain-gateway.types';
+import {
+  ChainFeedBlock,
+  ChainFeedPage
+} from '@/chain-gateway/chain-gateway.types';
 
 /**
  * The node API's rule-version-7 objects (D:/t/waves/WAVES-API.md), as the
@@ -26,8 +29,7 @@ export interface WavesChainHead {
   readonly finalizedHeight: number;
   /**
    * The finalized block's time (ms): what the reads at it compare with.
-   * Null when the gateway's pin is above the finalized height of the node
-   * that answered, which can't give that block's time.
+   * Null only when neither the status nor `/v1/blocks/{height}` gave it.
    */
   readonly finalizedTime: number | null;
   /** The chain's network id; another one means a relaunched chain. */
@@ -85,6 +87,15 @@ const LIST_LIMIT = 500;
 export const LEADERBOARD_LIMIT = 1024;
 const FEED_LIMIT = 200;
 /**
+ * The most one block's feed records may take, read across pages, before
+ * the feed gives up on it (a gateway page fills to 4 MiB: 64 MiB is about
+ * 16 full pages), and the most pages it may take.
+ */
+export const FEED_BLOCK_LIMITS = {
+  maxBytes: 64 * 1024 * 1024,
+  maxPages: 256
+};
+/**
  * The index reads each height once, so pinned answers are never read again:
  * its own client keeps few of them (the shared client keeps 10,000).
  */
@@ -109,22 +120,51 @@ function asArray(data: unknown): ChainObject[] {
   return [];
 }
 
+function recordBytes(block: ChainFeedBlock): number {
+  return block.records.reduce((n, r) => n + JSON.stringify(r).length, 0);
+}
+
 export class GatewayWavesChainApi implements WavesChainApi {
   constructor(
     private readonly client: Pick<
       ChainGatewayClient,
       'read' | 'getHead' | 'getChanges'
-    > = wavesIndexGatewayClient()
+    > = wavesIndexGatewayClient(),
+    private readonly feedBlockLimits: typeof FEED_BLOCK_LIMITS = FEED_BLOCK_LIMITS
   ) {}
 
   async head(): Promise<WavesChainHead> {
     const head = await this.client.getHead(true);
     return {
       finalizedHeight: head.finalizedHeight,
-      // Null until the answering node holds the pin: the run waits then.
-      finalizedTime: head.finalizedTime ?? null,
+      // The status gives the answering node's own block time only: when the
+      // client's pin is above that node's height, the pinned block's time
+      // is read from the chain. Null (the run waits) only if that fails too.
+      finalizedTime:
+        head.finalizedTime ?? (await this.blockTime(head.finalizedHeight)),
       network: head.network ?? null
     };
+  }
+
+  /**
+   * A finalized block's slot start (ms) from `/v1/blocks/{height}`, read at
+   * that height; null when it can't be read or isn't a time.
+   */
+  async blockTime(height: number): Promise<number | null> {
+    try {
+      const answer = await this.client.read<{
+        height?: unknown;
+        time?: unknown;
+      }>(`/v1/blocks/${height}`, {}, { height });
+      const data = answer?.data;
+      if (data?.height !== undefined && Number(data.height) !== height) {
+        return null;
+      }
+      const time = Number(data?.time);
+      return Number.isSafeInteger(time) && time > 0 ? time : null;
+    } catch {
+      return null;
+    }
   }
 
   async importState(at: number): Promise<WavesImportState | null> {
@@ -273,10 +313,78 @@ export class GatewayWavesChainApi implements WavesChainApi {
     return this.all(`/v1/entries/${entryId}/votes`, at);
   }
 
-  feed(from: number, families: readonly string[]) {
-    return this.client.getChanges(from, {
-      limit: FEED_LIMIT,
-      families: [...families]
-    });
+  /**
+   * A page of the feed holding whole blocks only, as the index applies
+   * them. A gateway page can end inside a block (its `next` is then
+   * `height:index` and the block is marked `complete: false`):
+   * - whole blocks before that block come back alone, and the next page
+   *   starts at it;
+   * - a block that is the page's only one is read on from that cursor,
+   *   with the same families, until it is complete, and comes back whole.
+   * A block past FEED_BLOCK_LIMITS throws rather than reading without end.
+   */
+  async feed(
+    from: number,
+    families: readonly string[]
+  ): Promise<ChainFeedPage> {
+    const opts = { limit: FEED_LIMIT, families: [...families] };
+    const first = await this.client.getChanges(from, opts);
+    const last = first.blocks[first.blocks.length - 1];
+    if (!last || last.complete !== false) return first;
+    if (first.blocks.length > 1) {
+      return {
+        ...first,
+        blocks: first.blocks.slice(0, -1),
+        next: first.nextHeight
+      };
+    }
+    const limits = this.feedBlockLimits;
+    let block = last;
+    let page = first;
+    let pages = 1;
+    let bytes = recordBytes(block);
+    while (block.complete === false) {
+      if (pages >= limits.maxPages || bytes > limits.maxBytes) {
+        throw new Error(
+          `[FEED BLOCK TOO LARGE] block ${block.height}: its feed records passed ${pages} pages and ${bytes} bytes (limits ${limits.maxPages} pages, ${limits.maxBytes} bytes); the index applies whole blocks only`
+        );
+      }
+      page = await this.client.getChanges(page.next, {
+        ...opts,
+        network: first.network ?? undefined
+      });
+      pages++;
+      const rest = page.blocks[0];
+      if (!rest) {
+        // A node behind the block: nothing past the height before it now.
+        return {
+          ...first,
+          blocks: [],
+          through: block.height - 1,
+          next: block.height,
+          nextHeight: block.height,
+          atHead: true
+        };
+      }
+      if (rest.height !== block.height) {
+        throw new Error(
+          `[FEED BLOCK BROKEN] block ${block.height}: the page from ${String(page.from)} goes on with block ${rest.height}`
+        );
+      }
+      bytes += recordBytes(rest);
+      block = {
+        ...rest,
+        recordsFrom: block.recordsFrom,
+        records: [...block.records, ...rest.records]
+      };
+    }
+    return {
+      ...first,
+      through: block.height,
+      blocks: [block],
+      next: block.height + 1,
+      nextHeight: block.height + 1,
+      atHead: false
+    };
   }
 }

@@ -228,9 +228,9 @@ export class WavesChainIndex {
       return report;
     }
     if (head.finalizedTime === null) {
-      // The gateway's pin is above the answering node's finalized height,
-      // so the pinned block's time is unknown, and what moves with time
-      // can't be judged at it. Wait for a run answered by a node at the pin.
+      // Neither the status nor /v1/blocks/{height} gave the pinned block's
+      // time, so what moves with time can't be judged at it. Wait for the
+      // next run rather than guess.
       report.mode = 'skipped';
       report.skipped = 'head_time_unknown';
       return report;

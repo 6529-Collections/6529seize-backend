@@ -4,7 +4,8 @@ import {
   FakeIndexDb,
   id
 } from '@/tests/fixtures/waves-chain-index.fixture';
-import { ChainObject } from './waves-chain-index.api';
+import { ChainFeedBlock } from '@/chain-gateway/chain-gateway.types';
+import { ChainObject, GatewayWavesChainApi } from './waves-chain-index.api';
 import { IndexTableName } from './waves-chain-index.db';
 import { WavesChainIndex } from './waves-chain-index.service';
 
@@ -95,6 +96,81 @@ async function freshRows(chain: FakeChain, clock: FakeClock) {
 
 const dataOf = (row: Record<string, unknown> | undefined) =>
   row?.data as ChainObject;
+
+/**
+ * The chain with its feed read through GatewayWavesChainApi, from a gateway
+ * whose pages hold at most `perPage` records and end inside a block that
+ * doesn't fit (`next` is then height:index), as its 4 MiB pages do.
+ */
+function splitFeed(chain: FakeChain, perPage: number) {
+  const cursors: (number | string)[] = [];
+  const client = {
+    getChanges: async (from: number | string) => {
+      cursors.push(from);
+      const [height, index = 0] = String(from).split(':').map(Number);
+      const whole = await chain.feed(height);
+      const blocks: ChainFeedBlock[] = [];
+      let room = perPage;
+      for (const b of whole.blocks) {
+        const start = b.height === height ? index : 0;
+        const rest = b.records.slice(start);
+        if (rest.length <= room) {
+          blocks.push({
+            ...b,
+            records: rest,
+            complete: true,
+            recordsFrom: start
+          });
+          room -= rest.length;
+          continue;
+        }
+        const ends = room === 0;
+        if (!ends) {
+          blocks.push({
+            ...b,
+            records: rest.slice(0, room),
+            complete: false,
+            recordsFrom: start
+          });
+        }
+        return {
+          ...whole,
+          from,
+          through: b.height - 1,
+          blocks,
+          next: ends ? b.height : `${b.height}:${start + room}`,
+          nextHeight: b.height,
+          atHead: false
+        };
+      }
+      return { ...whole, from, blocks };
+    }
+  };
+  const gateway = new GatewayWavesChainApi(client as any);
+  const api = new Proxy(chain, {
+    get(target, prop) {
+      if (prop === 'feed') {
+        return (from: number, families: readonly string[]) =>
+          gateway.feed(from, families);
+      }
+      const value = Reflect.get(target, prop, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    }
+  });
+  return { api, cursors };
+}
+
+/** A block of `n` new native groups, committed on the chain. */
+function commitGroups(chain: FakeChain, n: number): number {
+  const groups = Array.from({ length: n }, (_, i) => id(`9${i + 100}`));
+  for (const groupId of groups) {
+    chain.live.groups.set(groupId, { groupId, version: 1, origin: 'native' });
+  }
+  chain.commit(
+    groups.map((groupId) => ({ family: '0x0401', keyFields: { groupId } }))
+  );
+  return chain.height;
+}
 
 describe('WavesChainIndex', () => {
   let clock: FakeClock;
@@ -327,7 +403,7 @@ describe('WavesChainIndex', () => {
     expect(rowsOf(db)).toEqual(before);
   });
 
-  it('waits while the node that answers is below the pin (no block time)', async () => {
+  it('waits when no block time can be read for the head', async () => {
     const { db, index } = indexOf(chain, clock);
     await index.run({ budgetMs: BIG });
     chain.vote(E(1), V(1), 10);
@@ -341,7 +417,7 @@ describe('WavesChainIndex', () => {
     });
     expect(rowsOf(db)).toEqual(before);
     expect(db.state).toEqual(state);
-    // A node at the pin answers: the run goes on from where it was.
+    // The time is known again: the run goes on from where it was.
     chain.timeUnknown = false;
     expect(await index.run({ budgetMs: BIG })).toMatchObject({
       mode: 'indexed'
@@ -408,6 +484,53 @@ describe('WavesChainIndex', () => {
       if (db.state.feedNext! <= big) expect(db.state.feedNext).toBe(big);
     }
     expect(parts).toEqual([1, 2, 0]);
+    chain.callMs = 0;
+    await index.run({ budgetMs: BIG });
+    expect(db.state.feedNext).toBe(chain.height + 1);
+    expect(db.rows('groups').length).toBe(252);
+    expect(rowsOf(db)).toEqual(await freshRows(chain, clock));
+  });
+
+  it('applies a block the gateway splits across three pages in one run, as a fresh read has it', async () => {
+    const { api, cursors } = splitFeed(chain, 10);
+    const db = new FakeIndexDb();
+    const index = new WavesChainIndex(api, db.asDb(), clock.now);
+    await index.run({ budgetMs: BIG });
+    // 25 records: pages of 10, 10 and 5.
+    const big = commitGroups(chain, 25);
+    chain.vote(E(1), V(1), 2);
+    cursors.length = 0;
+    await index.run({ budgetMs: BIG });
+    expect(cursors).toEqual(
+      expect.arrayContaining([big, `${big}:10`, `${big}:20`])
+    );
+    expect(db.state).toMatchObject({ feedNext: chain.height + 1, feedPart: 0 });
+    expect(db.rows('groups').length).toBe(27);
+    expect(rowsOf(db)).toEqual(await freshRows(chain, clock));
+  });
+
+  it('applies a split block too large for one batch in parts across runs', async () => {
+    const { api, cursors } = splitFeed(chain, 100);
+    const db = new FakeIndexDb();
+    const index = new WavesChainIndex(api, db.asDb(), clock.now);
+    await index.run({ budgetMs: BIG });
+    // 250 records: pages of 100, 100 and 50; about 100 reads a part.
+    const big = commitGroups(chain, 250);
+    chain.vote(E(1), V(1), 2);
+    chain.callMs = 10;
+    cursors.length = 0;
+    const parts: number[] = [];
+    for (let run = 0; run < 10 && db.state.feedNext! <= big; run++) {
+      await index.run({ budgetMs: 300 });
+      parts.push(db.state.feedPart);
+      if (db.state.feedNext! <= big) expect(db.state.feedNext).toBe(big);
+    }
+    expect(cursors).toEqual(
+      expect.arrayContaining([`${big}:100`, `${big}:200`])
+    );
+    expect(parts.length).toBeGreaterThan(1);
+    expect(parts.slice(0, -1).every((part) => part > 0)).toBe(true);
+    expect(parts[parts.length - 1]).toBe(0);
     chain.callMs = 0;
     await index.run({ budgetMs: BIG });
     expect(db.state.feedNext).toBe(chain.height + 1);
