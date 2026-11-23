@@ -122,6 +122,27 @@ describe('deferred subscription writes', () => {
     );
   });
 
+  it('reads the waiting writes FOR SHARE only for a writer that locks, never on the API path', async () => {
+    execute.mockResolvedValue([]);
+    // The API's check: no connection, so the executor may send it to the
+    // read replica. A plain read.
+    expect(await deferralReason('short', executorSink())).toBeNull();
+    const [apiSql, , apiOptions] = execute.mock.calls[0];
+    expect(apiSql).toContain(SUBSCRIPTION_DEFERRED_WRITES_TABLE);
+    expect(apiSql).not.toContain('FOR SHARE');
+    expect(apiOptions).toBeUndefined();
+
+    // A writer, inside its own transaction.
+    const sink = { query: jest.fn().mockResolvedValue([]) };
+    expect(
+      await deferralReason('short', sink, 7, { locking: true })
+    ).toBeNull();
+    expect(sink.query).toHaveBeenLastCalledWith(
+      expect.stringMatching(/AND sequence < \?\s+LIMIT 1 FOR SHARE$/),
+      [sha('short'), 7]
+    );
+  });
+
   it('reads a missing queue table as nothing waiting, and other errors as errors', async () => {
     const missing = Object.assign(new Error("Table doesn't exist"), {
       code: 'ER_NO_SUCH_TABLE',

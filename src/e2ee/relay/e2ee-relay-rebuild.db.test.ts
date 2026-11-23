@@ -13,6 +13,7 @@ import {
   CONTENT_MODERATION_REPORTS_TABLE,
   DELETED_DROPS_TABLE,
   DROPS_TABLE,
+  E2EE_KEY_PACKAGES_TABLE,
   E2EE_RELAY_OUTBOX_TABLE,
   E2EE_STREAMS_TABLE
 } from '@/constants/db-tables';
@@ -823,6 +824,61 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
     await emptyTables();
     expect((await rebuild('write')).ok).toBe(true);
     expect(await seen()).toEqual(before);
+  });
+
+  it('rebuilds the last-resort KeyPackages a replace_one_time upload leaves, and no one-time ones', async () => {
+    const a = randomE2eeKey().publicKey;
+    await addDevice(a, 'pa');
+    const nowSeconds = Math.floor(NOW / 1000);
+    /** Test KeyPackage bytes: MLS 1.0, the device's suite (78), a label. */
+    const keyPackage = (label: string, lastResort = false) => ({
+      data: Buffer.concat([
+        Buffer.from([0x00, 0x01, 0x00, 78]),
+        Buffer.from(label)
+      ]).toString('base64'),
+      last_resort: lastResort,
+      expires_at: nowSeconds + (lastResort ? 90 : 30) * 86400
+    });
+    await devices.uploadKeyPackages('pa', a, {
+      key_packages: [
+        keyPackage('old-1'),
+        keyPackage('old-2'),
+        keyPackage('old-3'),
+        keyPackage('old-last-resort', true)
+      ]
+    });
+    await devices.uploadKeyPackages('pa', a, {
+      key_packages: [keyPackage('new-1'), keyPackage('new-last-resort', true)],
+      replace_one_time: true
+    });
+    await publisher.settled();
+    const keyPackages = () =>
+      sqlExecutor.execute<{
+        id: number;
+        data: Buffer;
+        last_resort: boolean;
+      }>(
+        `select id, device_key, data, last_resort, ciphersuite,
+           expires_at_seconds, created_at
+         from ${E2EE_KEY_PACKAGES_TABLE} order by id`
+      );
+    const label = (row: { data: Buffer }) =>
+      Buffer.from(row.data).subarray(4).toString();
+    const live = await keyPackages();
+    // The replace dropped the three old one-time KeyPackages; the new
+    // last-resort KeyPackage replaced the old one, as on every upload.
+    expect(live.map((row) => [label(row), !!row.last_resort])).toEqual([
+      ['new-1', false],
+      ['new-last-resort', true]
+    ]);
+    expect((await rebuild('verify')).ok).toBe(true);
+
+    await emptyTables();
+    expect(await rebuild('write')).toMatchObject({ ok: true, problems: [] });
+    // Rebuilt from its records: the live last-resort row, id and all. The
+    // one-time KeyPackages were never recorded (devices refill them), so
+    // the replace changed nothing a rebuild sees.
+    expect(await keyPackages()).toEqual(live.filter((row) => row.last_resort));
   });
 
   it('appends from 16 writers to one stream at once without a deadlock', async () => {

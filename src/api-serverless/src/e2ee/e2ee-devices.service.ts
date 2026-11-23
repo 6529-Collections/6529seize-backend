@@ -910,6 +910,17 @@ export class E2eeDevicesService {
           atSeconds,
           connection
         );
+        if (request.replace_one_time === true) {
+          // An updated client replaces the pool its older version made.
+          // One-time KeyPackages are never recorded (they are ephemeral:
+          // devices refill them after a rebuild), so this delete needs no
+          // record; the last-resort records below are unchanged by it.
+          await this.db.deleteOneTimeKeyPackages(
+            deviceKey,
+            rows.map((row) => row.ciphersuite),
+            connection
+          );
+        }
         const existing = await this.db.countOneTimeKeyPackages(
           deviceKey,
           atSeconds,
@@ -927,7 +938,8 @@ export class E2eeDevicesService {
           );
         }
         await this.db.insertKeyPackages(rows, connection);
-        // One-time KeyPackages are ephemeral (C1); last-resort ones are kept.
+        // One-time KeyPackages are ephemeral by the dm design
+        // (docs/e2ee-messaging.md); last-resort ones are kept.
         const lastResortSuites = new Set(
           rows.filter((row) => row.last_resort).map((row) => row.ciphersuite)
         );
