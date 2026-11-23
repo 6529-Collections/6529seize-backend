@@ -19,6 +19,11 @@ import {
   TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE,
   WAVES_TABLE
 } from '@/constants';
+import { identitySubscriptionsDb } from '@/api/identity-subscriptions/identity-subscriptions.db';
+import {
+  ActivityEventAction,
+  ActivityEventTargetType
+} from '@/entities/IActivityEvent';
 import { DropType } from '@/entities/IDrop';
 import type { RebuildContext } from '@/rebuild/manifest.types';
 import { PROBE_CONSOLIDATION_KEYS } from '@/rebuild/manifests/probe-fixture';
@@ -393,6 +398,20 @@ async function closeJournalSegments(
           quoted_drop_part_id: null,
           wave_id: waveId
         });
+        // As drop creation does: the author follows their own drop.
+        await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+          identitySubscriptionsDb.addIdentitySubscription(
+            {
+              subscriber_id: serviceProfileId,
+              target_id: id,
+              target_type: ActivityEventTargetType.DROP,
+              target_action: ActivityEventAction.DROP_REPLIED,
+              wave_id: waveId,
+              subscribed_to_all_drops: false
+            },
+            connection
+          )
+        );
         return id;
       }
     },

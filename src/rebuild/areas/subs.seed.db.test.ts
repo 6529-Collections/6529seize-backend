@@ -25,6 +25,7 @@ import {
   rebuildSubscriptionsInCheck
 } from '@/subscriptions-identity/opening/rebuild-check.steps';
 import { splitAllowlistResults } from '@/api/subscriptions/api.subscriptions.allowlist';
+import { fetchFinalSubscriptionsByPhase } from '@/api/subscriptions/api.subscriptions.db';
 import { persistTopUps } from '@/subscriptionsTopUpLoop/db.subscriptions_topup';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import {
@@ -309,6 +310,28 @@ describeWithSeed('the subscriptions rebuild check', [], () => {
     // With the identity tables there and the truth, the seed closed every
     // record log entry it wrote.
     expect(await openLanes()).toEqual([]);
+    // Each head drop it posted is followed by its author, as drop creation
+    // does.
+    const headDrops = await sqlExecutor.execute<{ id: string }>(
+      `select id from drops where wave_id = :wave order by id`,
+      { wave: env.SIGNED_RECORDS_WAVE_ID }
+    );
+    expect(headDrops.length).toBeGreaterThan(0);
+    expect(
+      await sqlExecutor.execute(
+        `select subscriber_id, target_id, target_type, target_action, wave_id
+           from identity_subscriptions
+          where target_type = 'DROP' order by target_id`
+      )
+    ).toEqual(
+      headDrops.map((drop) => ({
+        subscriber_id: env.SIGNED_RECORDS_SERVICE_PROFILE_ID,
+        target_id: drop.id,
+        target_type: 'DROP',
+        target_action: 'DROP_REPLIED',
+        wave_id: env.SIGNED_RECORDS_WAVE_ID
+      }))
+    );
 
     // Card 1's list: the first wallet, whose top-up covers a card and
     // turned automatic mode on, on both sides with one id, published into
@@ -480,9 +503,35 @@ describeWithSeed('the subscriptions rebuild check', [], () => {
         allowlistId: 'allowlist-1',
         phaseComponentId: 'component-1',
         amount: 1
+      },
+      {
+        id: 'phase-split-2',
+        wallet: PROBE_CONSOLIDATION_KEYS[1],
+        phaseId: 'phase-1',
+        allowlistId: 'allowlist-1',
+        phaseComponentId: 'component-1',
+        amount: 3
       }
     ]);
     expect(await openLanes()).toEqual(['subs']);
+    // The split names card 1's phase on both sides, and the final-phase
+    // route answers it under that name, not under any other.
+    const phases = (table: string) =>
+      sqlExecutor.execute<{ phase: string | null }>(
+        `select phase from ${table} where token_id = 1`
+      );
+    expect(await phases('subscriptions_id_nfts_final')).toEqual([
+      { phase: 'Phase 1' }
+    ]);
+    expect(await phases('subscriptions_nfts_final')).toEqual([
+      { phase: 'Phase 1' }
+    ]);
+    expect(
+      await fetchFinalSubscriptionsByPhase(MEMES_CONTRACT, 1, 'Phase 1')
+    ).toEqual([{ wallet: PROBE_CONSOLIDATION_KEYS[0], amount: 1 }]);
+    expect(
+      await fetchFinalSubscriptionsByPhase(MEMES_CONTRACT, 1, 'Subscriptions')
+    ).toEqual([]);
   });
 
   it("fails the redemption seed, naming the order, when cards are minted but card 1's airdrop was not charged", async () => {

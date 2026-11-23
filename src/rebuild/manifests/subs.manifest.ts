@@ -150,7 +150,9 @@ const SUBS_SWITCH_SEED: RebuildStep = {
     'profiles',
     'waves',
     'drops',
-    'drops_parts'
+    'drops_parts',
+    // The records service following its head drops, as drop creation does.
+    'identity_subscriptions'
   ],
   reads: [
     'nfts',
@@ -190,7 +192,9 @@ const SUBS_REDEMPTIONS_SEED: RebuildStep = {
     'signed_record_log_entries',
     'signed_record_log_segments',
     'drops',
-    'drops_parts'
+    'drops_parts',
+    // The records service following its head drops, as drop creation does.
+    'identity_subscriptions'
   ],
   reads: ['transactions', 'identity_chain_principals'],
   // The holdings seed's mints, indexed into transactions.
@@ -309,6 +313,9 @@ const SUBS_LEGACY_STATE_REBUILD: RebuildStep = {
 };
 
 /** The subscription answers, for the probe fixture's consolidations. */
+/** The card the seeds build a list for and charge the airdrop of. */
+const CARD_WITH_LIST = PROBE_MEME_IDS[0];
+
 const PROBES: Probe[] = [
   {
     id: 'subs.details',
@@ -330,12 +337,15 @@ const PROBES: Probe[] = [
   {
     id: 'subs.logs',
     path: '/api/subscriptions/consolidation/logs/{key}',
-    each: { key: PROBE_CONSOLIDATION_KEYS }
+    // Only the first wallet has log lines (its automatic mode and all
+    // editions); the second wallet's top-ups write none.
+    each: { key: [PROBE_CONSOLIDATION_KEYS[0]] }
   },
   {
     id: 'subs.redeemed',
     path: '/api/subscriptions/consolidation/redeemed/{key}',
-    each: { key: PROBE_CONSOLIDATION_KEYS }
+    // Only the first wallet is on card 1's list, whose airdrop is charged.
+    each: { key: [PROBE_CONSOLIDATION_KEYS[0]] }
   },
   {
     id: 'subs.upcoming',
@@ -349,19 +359,18 @@ const PROBES: Probe[] = [
     each: { key: PROBE_CONSOLIDATION_KEYS }
   },
   {
-    id: 'subs.airdrop-address',
-    path: '/api/subscriptions/consolidation/{key}/airdrop-address',
-    each: { key: PROBE_CONSOLIDATION_KEYS }
-  },
-  {
     id: 'subs.final',
     path: `/api/subscriptions/consolidation/final/{key}/${PROBE_MEMES_CONTRACT}/{id}`,
-    each: { key: PROBE_CONSOLIDATION_KEYS, id: PROBE_MEME_IDS }
+    // Card 1's list holds only the first wallet; card 2 has no list.
+    each: { key: [PROBE_CONSOLIDATION_KEYS[0]], id: [CARD_WITH_LIST] }
   },
   {
     id: 'subs.final-phase',
-    path: `/api/subscriptions/final/${PROBE_MEMES_CONTRACT}/{id}/phases/Subscriptions`,
-    each: { id: PROBE_MEME_IDS }
+    // The phase the mint seed's distribution split names for card 1 (in a
+    // run without that seed the list has no phase and the probe proves
+    // nothing).
+    path: `/api/subscriptions/final/${PROBE_MEMES_CONTRACT}/{id}/phases/${encodeURIComponent('Phase 1')}`,
+    each: { id: [CARD_WITH_LIST] }
   },
   {
     id: 'subs.meme-count',
@@ -371,10 +380,6 @@ const PROBES: Probe[] = [
   {
     id: 'subs.upcoming-counts',
     path: '/api/subscriptions/upcoming-memes-counts'
-  },
-  {
-    id: 'subs.redeemed-counts',
-    path: '/api/subscriptions/redeemed-memes-counts?page_size=20'
   },
   {
     id: 'subs.uploads',
@@ -578,5 +583,20 @@ export const subsManifest: AreaManifest = {
     SUBS_LEGACY_HISTORY_REBUILD,
     SUBS_LEGACY_STATE_REBUILD
   ],
-  probes: PROBES
+  probes: PROBES,
+  waivers: {
+    routes: [
+      {
+        target:
+          'GET /api/subscriptions/consolidation/{consolidation_key}/airdrop-address',
+        reason:
+          "No probe wallet delegates its airdrops, so the answer only repeats the wallet asked about: it can't hold data in the probe world."
+      },
+      {
+        target: 'GET /api/subscriptions/redeemed-memes-counts',
+        reason:
+          "It lists cards from 220 on, where subscriptions began; the probe world's cards are 1 to 4, so it can't hold data there."
+      }
+    ]
+  }
 };
