@@ -600,8 +600,7 @@ flowchart TD
     NftLinkRefresherLoop --> NftLinkPreviewQueue["SQS: nft-link-media-previews"] --> NftLinkMediaPreviewLoop["nftLinkMediaPreviewLoop"]
     SeizeAPI --> PushQueue["SQS: firebase-push-notifications"] --> PushNotificationsHandler["pushNotificationsHandler"]
     SeizeAPI --> HelpBotQueue["SQS: help-bot-replies"] --> HelpBotReplyLoop["helpBotReplyLoop"]
-    SeizeAPI --> HelpBotDailyCreditsQueue["SQS: help-bot-daily-activity-credits.fifo"] --> HelpBotDailyActivityCreditLoop["helpBotDailyActivityCreditLoop"]
-    EventBridge --> HelpBotDailyCreditsQueue
+    EventBridge --> HelpBotDailyCreditsQueue["SQS: help-bot-daily-activity-credits.fifo"] --> HelpBotDailyActivityCreditLoop["helpBotDailyActivityCreditLoop"]
     SeizeAPI --> ReleaseNotesQueue["SQS: release-note-generation"] --> ReleaseNotesGenerationLoop["releaseNotesGenerationLoop"]
     SeizeAPI --> WaveDropMetricsDirtyQueue["SQS: wave-drop-metrics-refresh-dirty.fifo"] --> WaveDropMetricsRefreshLoop
     SeizeAPI --> WaveScoreDirtyQueue["SQS: wave-score-refresh-dirty.fifo"] --> WaveScoreRefreshLoop
@@ -742,30 +741,32 @@ reset behavior, and the required writer-before-collector deployment order.
 | `nftLinkMediaPreviewLoop`        | SQS `nft-link-media-previews`                                                                                                       | Generate media previews for NFT links.                                                                                                                                                  |
 | `pushNotificationsHandler`       | SQS `firebase-push-notifications`                                                                                                   | Deliver Firebase pushes and recipient-scoped WebSocket notification invalidations after notification rows are durable; also content-free `e2ee_wake` notifications for encrypted chats. |
 | `helpBotReplyLoop`               | SQS `help-bot-replies`                                                                                                              | Answer `@help6529` interactions and direct follow-ups to bot replies.                                                                                                                   |
-| `helpBotDailyActivityCreditLoop` | SQS `help-bot-daily-activity-credits.fifo` with EventBridge wakeup fallback                                                         | Grant idempotent once-per-UTC-day activity credits from durable post-drop requests.                                                                                                     |
+| `helpBotDailyActivityCreditLoop` | SQS `help-bot-daily-activity-credits.fifo`, woken by a one-minute EventBridge rule                                                  | Complete leftover daily-activity requests without a grant; removed in a later change.                                                                                                   |
 | `releaseNotesGenerationLoop`     | SQS `release-note-generation`                                                                                                       | Publish production Backend, Frontend, and Desktop release notes as `ci6529`.                                                                                                            |
 | `waveDropMetricsRefreshLoop`     | SQS `wave-drop-metrics-refresh-dirty.fifo`; EventBridge fallback                                                                    | Repair materialized wave/dropper drop counts and latest-drop timestamps after drop deletes.                                                                                             |
 | `xTdhLoop`                       | SNS `tdh-calculation-done.fifo` or a direct post-persistence partial-TDH enqueue via SQS `xtdh-start.fifo`; self-queued stats phase | Recalculate the xTDH universe after TDH finishes, then rebuild and publish xTDH stats in a follow-up queue message.                                                                     |
 | `overRatesRevocationLoop`        | SNS `tdh-calculation-done.fifo` via SQS `over-rates-revocation-start.fifo`                                                          | Revoke over-rates after TDH changes.                                                                                                                                                    |
 | `waveScoreRefreshLoop`           | SNS `tdh-calculation-done.fifo` via SQS `wave-score-refresh-start.fifo`; SQS `wave-score-refresh-dirty.fifo`; EventBridge fallback  | Refresh materialized wave REP and Wave Score discovery fields after TDH changes or wave/drop/rating/subscription mutations.                                                             |
-| `mediaResizerLoop`               | CloudFront/request path                                                                                                             | Resize images on demand.                                                                                                                                                                |
+| `mediaResizerLoop`               | Prod: S3 website 404 routing → HTTP API. Staging: media CDN failover origin (function URL) for size paths                           | Resize images on demand.                                                                                                                                                                |
 | `nextgenMediaProxyInterceptor`   | Lambda@Edge / CloudFront request                                                                                                    | Provide NextGen metadata fallback.                                                                                                                                                      |
 | `dropVideoConversionInvokerLoop` | S3 object-created event for `drops/`                                                                                                | Invoke MediaConvert for uploaded drop videos.                                                                                                                                           |
 
 ### Manual Or One-Off Lambdas
 
-| Lambda                            | Purpose                                                                                                                                                              |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dbMigrationsLoop`                | TypeORM entity synchronization, usually run from deploy workflow; plans that drop data are classified first ([schema sync plan check](./schema-sync-plan-check.md)). |
-| `customReplayLoop`                | Controlled replay job.                                                                                                                                               |
-| `populateHistoricConsolidatedTdh` | Historic consolidated TDH backfill.                                                                                                                                  |
-| `teamLoop`                        | Team CSV and Arweave upload.                                                                                                                                         |
+| Lambda                            | Purpose                                                                                                                                                                                        |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dbMigrationsLoop`                | TypeORM entity synchronization, usually run from deploy workflow; plans that drop data are classified first ([schema sync plan check](./schema-sync-plan-check.md)).                           |
+| `customReplayLoop`                | Operator-invoked one-off jobs, chosen by the payload's `job`; `REP_RATINGS_REMOVE` deletes one rater's REP ratings in given categories and recomputes the targets (`src/rep-ratings-removal`). |
+| `populateHistoricConsolidatedTdh` | Historic consolidated TDH backfill.                                                                                                                                                            |
+| `teamLoop`                        | Team CSV and Arweave upload.                                                                                                                                                                   |
 
 ## Runtime Shape
 
 The API Lambda is the public synchronous boundary. It initializes local config or AWS secrets, opens MySQL read/write pools, initializes Redis, configures Passport JWT authentication, registers all routers, and then serves HTTP through `serverless-http`. The same handler also branches on API Gateway WebSocket route keys for `$connect`, `$disconnect`, and `$default` messages.
 
 The API's Redis client is fail-fast: initialization waits a bounded time for the first connection, commands are rejected instead of queued while the client reconnects, and request-path cache reads/writes and rate-limit checks fail open within a short per-command budget, so per-client rate limits are not enforced while Redis is unreachable. Initialization failures are not cached; the next request in the same warm container retries setup, while route wiring runs at most once. Loops keep the default queue-until-reconnected Redis client.
+
+Database login: both the API pools and the TypeORM data source pick their target in `src/db-iam-auth.ts`. When the shared secret sets `DB_IAM_AUTH=true` with `DB_IAM_HOST`, `DB_IAM_USER`, `DB_IAM_HOST_READ` and `DB_IAM_USER_READ`, services connect over verified TLS to an RDS Proxy that only accepts IAM tokens, as the Lambda execution role, with no database password; each new pool connection gets a token at most 10 minutes old. The `mysql` driver only speaks native passwords, so IAM mode adds the plugin-auth handshake and the `mysql_clear_password` reply to it at runtime. Without those settings, services use `DB_HOST`/`DB_USER`/`DB_PASS` as before, so services built before IAM support keep working while the secret carries both.
 
 Background Lambdas that read or write application state use a shared `doInDbContext` wrapper. That wrapper prepares environment/secrets, initializes TypeORM-backed DB access, initializes Redis, runs the job, then disconnects. The `dropVideoConversionInvokerLoop` is intentionally environment-only: it reads only its function environment (no shared secret, no VPC), filters the S3 object key, and invokes MediaConvert without opening MySQL or Redis connections. Its production stack runs in `eu-west-1`, next to the media bucket it watches, while other production services run in `us-east-1`.
 
@@ -1170,7 +1171,10 @@ needed for normalization preserve exact integer strings.
 After each refresh, a bounded retention pass removes the collection's events
 older than 30 days, snapshots older than 14 days and reconciliation rows older
 than 7 days. It keeps the latest snapshot and the history of orders in the live
-book; the activity feed applies the same 30-day event window.
+book; the activity feed applies the same 30-day event window. In production,
+completed hours of events and snapshots are first archived to S3
+(`Prod-MarketArchive`), and retention deletes nothing past the archive
+watermark.
 
 The API exposes currency-specific quoted depth for an individual token and a
 merged feed of canonical transactions and market actions. Quoted quantities can
@@ -2072,9 +2076,7 @@ refresh frequency remain unchanged.
 
 Wave drop metric repairs use the same DB-backed/SQS pattern. Drop deletes apply a bounded in-transaction counter decrement, write `wave_drop_metrics_refresh_requests`, and publish to `wave-drop-metrics-refresh-dirty.fifo` after commit. `waveDropMetricsRefreshLoop` drains from the write pool and runs the full wave/dropper metric reconciliation outside the API path, with an EventBridge fallback for missed wakeups.
 
-Help6529 daily activity credits use the same durable handoff shape. Drop creation inserts one `help_bot_daily_activity_credit_requests` row per profile and UTC date inside the drop transaction, then publishes a small wakeup to `help-bot-daily-activity-credits.fifo` only after commit. `helpBotDailyActivityCreditLoop` grants outside the request path, records retry state and errors on the durable row, prioritizes untouched requests over retrying failures, retains completed rows for 30 days to suppress repeated daily work, and parks repeatedly failing rows as `DEAD`. A single FIFO message group and reserved concurrency of one serialize credit processing in a Lambda isolated from normal bot replies. The queue DLQ surfaces unhandled worker failures and a dead-row log metric alarm surfaces exhausted durable retries; a one-minute EventBridge rule wakes the same queue after a recorded retry or when post-commit SQS publication fails. The existing unique `help_bot_credit_events` grant key remains the final idempotency barrier if processing is redelivered or crashes between granting and marking the request complete.
-
-The zero-downtime rollout order is mandatory: deploy `dbMigrationsLoop` first to create the request table and indexes, deploy `helpBotReplyLoop` second to create the queue and worker, and deploy `api` last to begin inserting requests and publishing wakeups. Follow the same `dbMigrationsLoop -> helpBotReplyLoop -> api` dependency chain when dispatching the services.
+Help6529 Credits are removed, and drop creation no longer writes `help_bot_daily_activity_credit_requests` rows or sends wakeups to `help-bot-daily-activity-credits.fifo`. `helpBotDailyActivityCreditLoop` only completes requests left from before, without granting anything. A one-minute EventBridge rule still wakes the queue, the worker still records retries and parks a row it cannot complete as `DEAD` (with its log metric alarm), and completed rows are deleted after 30 days. The queue, its DLQ, the EventBridge rule and the Lambda are to be removed in a later change. The `help_bot_daily_activity_credit_requests` and `help_bot_credit_events` tables stay as history.
 
 Upcoming automatic subscription quantities are synchronized in the same primary
 DB transaction as incremental consolidated owner balances. Full resets commit
@@ -2280,7 +2282,7 @@ commit it.
 
 The V1 6529 Help Bot is intentionally bounded and fast. Drop creation remains the synchronous user write. After a drop is created, the API checks for an explicit `@help6529` mention or a direct reply to a prior bot-authored reply. When matched, it inserts one `help_bot_interactions` row keyed by `trigger_drop_id`, stores `target_drop_id` for the drop that should receive reactions/replies, reacts with the bot's seen marker, and sends `{ interaction_id }` to `help-bot-replies`.
 
-The daily activity-credit side effect is separate from reply generation. The drop and its durable daily-credit request commit together, and the API never performs the credit rating or identity updates. A dedicated FIFO worker in the same deployable service processes those updates asynchronously, so identities-table locks cannot hold the drop response open or consume reply-worker concurrency.
+Asking the bot is free. It grants, charges and refunds no credits and gives no REP, and drop creation writes no daily-activity request.
 
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 44, "curve": "basis"}} }%%
@@ -2936,6 +2938,79 @@ WatchTower manual-review attention is derived from a subject-based union of
 open reports and pending moderation checks. The API groups this union before
 pagination and shares the case definition across queue and count surfaces; it
 adds no persisted case table, queue, service or background reconciliation.
+
+## Subscription key width guard
+
+Subscription tables key rows by the consolidation key, the identity's wallets
+joined by `-`. Before the key-width migration every key column holds 200
+characters; after it, `subscriptions_nfts` and `subscriptions_nfts_final` hold
+666 and `subscriptions_redeemed` 567, so identities of 14 to 16 wallets still
+do not fit. A subscription write is never truncated, never fails its batch and
+never half made.
+
+**One rule for every writer.** A key is written only when every subscription
+table that stores it (balances, mode, nfts, nfts_final, logs, redeemed) can
+hold it, and only when the key has no earlier write still queued. Otherwise
+the whole write waits in `subscription_deferred_writes`, written in the
+writer's own transaction and logged with `SUBSCRIPTION_KEY_DEFERRED`. An
+identity is therefore either fully on the legacy tables or fully waiting: it
+is never on a final list without a balance to charge. Widths come from
+`information_schema`, cached for five minutes; a failed read keeps the last
+widths read. A process that has never read them treats every column as 200
+characters wide, and a write with a longer key fails (and is retried) rather
+than wait. Until dbMigrationsLoop has created the queue table, the "earlier
+write waiting" check reads as none, so keys that fit are written as before.
+
+- Daily build: a waiting key's final row, automatic row and every log line
+  wait together, and the published list is built after that split, so the
+  file and the table hold the same subscribers.
+- API: subscribe, count, mode and edition changes for a waiting key answer
+  400 with when changes resume ("Subscriptions for identities with more than
+  13 wallets resume on ..."), read from `SUBSCRIPTIONS_WIDE_IDENTITY_RESUME_ON`.
+  Nothing is queued for them.
+- Top-ups: the balance and the top-up row wait together.
+- Redemptions: one entry per token; balance, redeemed row and redeemed count
+  move together.
+- Consolidation: a re-key to a waiting key waits; the old keys keep their rows.
+- Coverage markers for keys that do not fit, or that a process can't judge
+  yet because it has never read the widths, are skipped; coverage is
+  recomputed.
+
+**Queue.** `sequence` orders the entries; `dedupe_key` keeps one entry per
+write, so a re-run of the daily build or a retried batch replaces its entry
+instead of adding one. `key_hash` finds a key's waiting entries.
+
+**Replay.** With `FEATURE_SUBSCRIPTION_DEFERRED_REPLAY=true` (off by default),
+the `subscriptionsTopUpLoop` replays waiting writes whose key now fits (the
+length filter is in the query), in queue order, paging through the whole
+queue; redemptions are replayed by the transactions loop inside its own
+redemption transaction, and their wave notices and coverage markers go out
+only after it commits. Each replay claims its entry (row lock, then mark) in
+the transaction that makes the write, so a write is made once and a failed
+write leaves its entry waiting. A replayed write that has to wait again (its
+key changed, or must still wait) is counted as re-queued. Once one of a key's
+entries cannot be replayed, the key's later entries wait too. A final-list
+row is never inserted as it stood at the build: it is marked skipped and the
+next daily build decides. Queued log lines all come from the daily build and
+are skipped the same way, so an automatic row replayed this way has no log
+line. Other writes that no longer apply (a card already dropped, a row
+already there) are marked skipped too. Replay is off by default. Rollback:
+unset the flag; the queue keeps every write.
+
+**Rebuild.** Every entry can be derived again from its source:
+
+- top-ups from Ethereum, once the top-up loop's cursor
+  (`subscriptions_top_up_latest_block`) is set back before the lost top-up's
+  block; hashes already credited are skipped, so nothing is credited twice;
+- redemptions from the airdrop in the `transactions` table: the redemption
+  loop charges it again when its cursor is set back before the airdrop's
+  block, but it re-charges every later airdrop too, so this is safe only
+  when the lost airdrop is the last one;
+- final and automatic rows and logs by the next daily build;
+- consolidations only at that identity's next membership change.
+
+A key with a final row fits every table, so a redemption waits only if the
+key columns are narrowed again, or behind an earlier write of the same key.
 
 ## Cross-wave message search
 

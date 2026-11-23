@@ -941,7 +941,7 @@ describe('HelpBotAnswerer', () => {
     }
   });
 
-  it('answers compound capability prompts with credits and product areas', async () => {
+  it('answers compound capability prompts with product areas and no credits', async () => {
     const answer = await answerer().answer({
       question:
         '@help6529 what are your capabilities? What can you help me with? tell me about yourself',
@@ -951,28 +951,25 @@ describe('HelpBotAnswerer', () => {
     expect(answer.type).toBe('ANSWER');
     if (answer.type === 'ANSWER') {
       expect(answer.record.id).toBe('help-bot.capabilities');
-      expect(answer.answer).toContain('Help6529 Credits');
+      expect(answer.answer).not.toMatch(/credit/i);
       expect(answer.answer).toContain('Gradients');
       expect(answer.answer).toContain('API');
+      expect(answer.record.facts.join(' ')).not.toMatch(/credit/i);
     }
   });
 
-  it('answers direct credit-system prompts', async () => {
-    const answer = await answerer().answer({
-      question: '@help6529 how do your credits work',
-      baseUrl: BASE_URL
-    });
+  it.each([
+    '@help6529 how do your credits work',
+    'tell me more about this credit system',
+    'why am I out of help6529 credits'
+  ])('says asking is free when asked about credits: %s', async (question) => {
+    const answer = await answerer().answer({ question, baseUrl: BASE_URL });
 
     expect(answer.type).toBe('ANSWER');
     if (answer.type === 'ANSWER') {
       expect(answer.record.id).toBe('help-bot.credits');
-      expect(answer.answer).toContain('Each question costs 1 credit.');
-      expect(answer.answer).toContain(
-        'daily activity each currently grant 10 Help6529 Credit REP.'
-      );
-      expect(answer.answer).not.toContain('HELP_BOT_CREDIT_GRANT');
-      expect(answer.answer).toContain(
-        '[Help6529 Credits](https://6529.io/rep/categories/Help6529%20Credits)'
+      expect(answer.answer).toBe(
+        'Asking help6529 is free. It no longer uses Help6529 Credits.'
       );
     }
   });
@@ -987,20 +984,6 @@ describe('HelpBotAnswerer', () => {
     if (answer.type === 'ANSWER') {
       expect(answer.record.id).toBe('help-bot.capabilities');
       expect(answer.answer).toContain('public 6529 product questions');
-    }
-  });
-
-  it('answers credit-system follow-up prompts', async () => {
-    const answer = await answerer().answer({
-      question: 'tell me more about this credit system',
-      baseUrl: BASE_URL
-    });
-
-    expect(answer.type).toBe('ANSWER');
-    if (answer.type === 'ANSWER') {
-      expect(answer.record.id).toBe('help-bot.credits');
-      expect(answer.answer).toContain('Help6529 Credits');
-      expect(answer.answer).toContain('Each question costs 1 credit.');
     }
   });
 

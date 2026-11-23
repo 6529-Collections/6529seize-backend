@@ -34,7 +34,9 @@ export const corsOptions: ApiCorsOptions = {
     'Origin',
     'Accept',
     'X-Requested-With',
-    'Authorization'
+    'Authorization',
+    // Device-signed records that travel with a write (signed-records module).
+    'x-6529-signed-records'
   ],
   // Lets web clients read the id that matches a response to server logs.
   exposedHeaders: ['X-Request-Id'],

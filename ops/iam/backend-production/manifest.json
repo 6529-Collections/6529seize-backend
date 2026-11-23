@@ -63,6 +63,12 @@
       "file": "BackendProductionDeployment10.json",
       "characters": 5558,
       "sha256": "1fc581cbefde26df9228d9c06f7ef3d4a2339dc50c0deda17854befffb62fd7f"
+    },
+    {
+      "name": "SignedRecordLogProductionDeployment",
+      "file": "SignedRecordLogProductionDeployment.json",
+      "characters": 4853,
+      "sha256": "a7b099ac793540e769476ea2227b1881b56fa8700fe9dd420f077ced3bd71fd6"
     }
   ]
 }

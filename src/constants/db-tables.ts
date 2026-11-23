@@ -48,6 +48,9 @@ export const WALLET_AUTH_SESSIONS_TABLE = 'wallet_auth_sessions';
 export const DEVICE_GRANTS_TABLE = 'device_grants';
 export const DEVICE_SIGNED_EVENTS_TABLE = 'device_signed_events';
 export const DROP_AUTHOR_SIGNATURES_TABLE = 'drop_author_signatures';
+export const SIGNED_RECORD_HEADS_TABLE = 'signed_record_heads';
+export const SIGNED_RECORD_LOG_ENTRIES_TABLE = 'signed_record_log_entries';
+export const SIGNED_RECORD_LOG_SEGMENTS_TABLE = 'signed_record_log_segments';
 export const WALLET_CONNECTION_SHARES_TABLE = 'wallet_connection_shares';
 export const IDENTITIES_TABLE = 'identities';
 export const ADDRESS_CONSOLIDATION_KEY = 'address_consolidation_keys';
@@ -75,6 +78,7 @@ export const REMEMES_TABLE = 'rememes';
 export const REMEMES_UPLOADS = 'uploads_rememes';
 export const RATINGS_TABLE = 'ratings';
 export const RATING_CREDIT_LOCKS_TABLE = 'rating_credit_locks';
+export const REP_RATING_REMOVALS_TABLE = 'rep_rating_removals';
 export const DROPS_VOTES_CREDIT_SPENDINGS_TABLE =
   'drops_votes_credit_spendings';
 export const DROP_VOTER_STATE_TABLE = 'drop_voter_states';
@@ -127,6 +131,8 @@ export const SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE =
   'subscriptions_nfts_final_upload';
 export const SUBSCRIPTIONS_LOGS_TABLE = 'subscriptions_logs';
 export const SUBSCRIPTIONS_REDEEMED_TABLE = 'subscriptions_redeemed';
+export const SUBSCRIPTION_DEFERRED_WRITES_TABLE =
+  'subscription_deferred_writes';
 export const SUBSCRIPTION_COVERAGE_ALERT_STATES_TABLE =
   'subscription_coverage_alert_states';
 export const SUBSCRIPTION_COVERAGE_REFRESH_REQUESTS_TABLE =

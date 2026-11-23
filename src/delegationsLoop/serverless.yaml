@@ -36,6 +36,7 @@ functions:
 resources:
   Resources:
     DelegationsLoopOOMFilter:
+      DependsOn: DelegationsLoopLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/delegationsLoop
