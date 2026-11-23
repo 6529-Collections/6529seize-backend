@@ -12,6 +12,7 @@ import {
   inProcessVerifier,
   RecordingVerifier
 } from '@/rebuild/sources/relay-checks';
+import { RelayRules } from '@/rebuild/sources/relay-rules';
 import { redactUrl, RunningSource } from '@/rebuild/sources/running-source';
 import {
   SourceSpec,
@@ -40,9 +41,14 @@ function live(name: UrlSource, url: string): RunningSource {
 }
 
 export interface SourceOptions {
+  /** Who may read what on the harness relay: the areas' relayAccess. */
+  readonly relayRules?: RelayRules;
   /** Checks a replayed relay recording's events (the run: in a guarded child). */
   readonly verifyRelays?: RecordingVerifier;
 }
+
+const rulesOf = (options: SourceOptions) =>
+  options.relayRules ?? RelayRules.of([]);
 
 /**
  * Relays recorded into `dir`: from a fresh harness relay (`@relay`), so a
@@ -52,7 +58,8 @@ export interface SourceOptions {
 async function recordRelays(
   dir: string,
   upstream: string,
-  runDir: string
+  runDir: string,
+  rules: RelayRules
 ): Promise<RunningSource> {
   if (upstream !== 'relay') {
     return startCrpRelayRecord({
@@ -63,7 +70,7 @@ async function recordRelays(
   }
   const relayDir = path.join(runDir, 'sources', 'relays-recorded');
   fs.mkdirSync(relayDir, { recursive: true });
-  const relay = await startCrpRelay(relayDir);
+  const relay = await startCrpRelay(relayDir, rules);
   const recorder = await startCrpRelayRecord({
     dir,
     upstream: relay.url,
@@ -93,7 +100,8 @@ async function startOne(
         return startCrpRelayReplay(
           [spec.dir, ...(spec.also ?? [])],
           options.verifyRelays ?? inProcessVerifier([]),
-          path.join(runDir, 'sources', 'relays-replayed')
+          path.join(runDir, 'sources', 'relays-replayed'),
+          rulesOf(options)
         );
       }
       if (!fs.existsSync(spec.dir)) {
@@ -102,7 +110,7 @@ async function startOne(
       return startHttpRecording({ name, dir: spec.dir });
     case 'record':
       if (name === 'relays') {
-        return recordRelays(spec.dir, spec.upstream, runDir);
+        return recordRelays(spec.dir, spec.upstream, runDir, rulesOf(options));
       }
       return startHttpRecording({
         name,
@@ -125,7 +133,7 @@ async function startOne(
       const dir = path.join(runDir, 'sources', 'relays');
       fs.mkdirSync(dir, { recursive: true });
       if (spec.dir) fs.cpSync(spec.dir, dir, { recursive: true });
-      return startCrpRelay(dir);
+      return startCrpRelay(dir, rulesOf(options));
     }
   }
 }

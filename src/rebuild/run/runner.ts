@@ -88,6 +88,7 @@ import {
   relayCheckSpecs,
   RelayVerification
 } from '@/rebuild/sources/relay-checks';
+import { RelayRules } from '@/rebuild/sources/relay-rules';
 import { waitForApi } from '@/rebuild/stack/api-ready';
 
 export interface RunOptions {
@@ -799,6 +800,7 @@ class RebuildRun {
     this.releaseLock = acquireHomeLock(path.resolve(this.o.home));
     this.apiPort = this.o.apiPort || (await freePort());
     this.running = await startSources(this.o.sources, this.runDir, {
+      relayRules: RelayRules.of(this.o.manifests),
       verifyRelays: (dirs) => this.verifyRelayRecordings(dirs)
     });
     for (const source of this.running) {

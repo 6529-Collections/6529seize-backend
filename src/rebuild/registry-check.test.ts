@@ -54,7 +54,7 @@ describe('checkRegistry', () => {
     expect(result.classes.INDEX).toBe(2);
   });
 
-  it('checks the relay checks an area declares', () => {
+  it('checks the relay checks and access an area declares', () => {
     const relay = (name: string, parts: Partial<AreaManifest>) =>
       area(name, {}, parts);
     const result = checkRegistry({
@@ -65,8 +65,35 @@ describe('checkRegistry', () => {
               waves: ['dv/'],
               run: { module: 'src/e2ee/check', exportName: 'ok' }
             },
-            { waves: [''], run: { module: 'e2ee/check.ts', exportName: '1x' } }
-          ]
+            { waves: [''], run: { module: 'e2ee/check.ts', exportName: '1x' } },
+            {
+              waves: ['bl/'],
+              run: {
+                module: 'src/rebuild/sources/relay-check.fixture',
+                exportName: 'passWhenAllowed'
+              }
+            }
+          ],
+          relayAccess: {
+            openWaves: ['w1', 'dv/0x1', 'ps'],
+            readers: [
+              {
+                wallet: '0x00000000000000000000000000000000000000AB',
+                reason: 'x'
+              },
+              {
+                wallet: `0x${'cd'.repeat(20)}`,
+                memberOf: ['w2', 'pv/0x1'],
+                reason: 'a member'
+              },
+              {
+                wallet: `0x${'ab'.repeat(20)}`,
+                principal: 'p',
+                roles: ['owner' as never],
+                reason: ' '
+              }
+            ]
+          }
         }),
         relay('waves', {
           relayChecks: [
@@ -80,6 +107,15 @@ describe('checkRegistry', () => {
       'relay check e2ee/check.ts#1x: the module must be a path under src/ with no extension',
       'relay check e2ee/check.ts#1x: the export is not a name',
       'relay check e2ee/check.ts#1x has an empty wave prefix',
+      "relay check src/rebuild/sources/relay-check.fixture#passWhenAllowed: a test fixture, not an area's check",
+      'relay reader 0x00000000000000000000000000000000000000AB: not a lowercase wallet',
+      `relay reader 0x${'cd'.repeat(20)}: member of 'pv/0x1', not a wave of drops`,
+      `relay reader 0x${'cd'.repeat(20)}: a member needs a principal`,
+      `relay reader 0x${'ab'.repeat(20)}: not a lowercase principal`,
+      `relay reader 0x${'ab'.repeat(20)}: unknown role owner`,
+      `relay reader 0x${'ab'.repeat(20)} has no reason`,
+      "open wave 'dv/0x1': a wave of drops, not a family or its stream",
+      "open wave 'ps': a wave of drops, not a family or its stream",
       "relay wave prefix dv/ overlaps waves's dv/0"
     ]);
     expect(new Set(result.problems.map((p) => p.kind))).toEqual(

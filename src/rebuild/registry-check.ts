@@ -7,6 +7,7 @@ import {
 import { orderSteps } from '@/rebuild/step-order';
 import { CodeTables, LiveTable } from '@/rebuild/table-discovery';
 import { protectedFlagNames } from '@/rebuild/stack/child-env';
+import { familyOf } from '@/rebuild/sources/relay-rules';
 
 export type RegistryProblemKind =
   /** A table code or the live schema has, in no manifest. */
@@ -30,8 +31,8 @@ export type RegistryProblemKind =
   /** A flag that would set one of the run's own variables. */
   | 'BAD_FLAG'
   /**
-   * A relay check with a bad module, export or wave prefix, or a prefix
-   * two areas claim.
+   * A relay check with a bad module, export or wave prefix, a prefix two
+   * areas claim, or a relay reader or open wave written wrong.
    */
   | 'BAD_RELAY';
 
@@ -371,11 +372,14 @@ function classCounts(
  */
 const MODULE = /^src\/[\w./-]+$/;
 const EXPORT = /^[A-Za-z_$][\w$]*$/;
+const WALLET = /^0x[0-9a-f]{40}$/;
+const PRINCIPAL = /^0x[0-9a-f]{64}$/;
 
 /**
- * The areas' relay checks: a module path (`src/..`, no extension) and
- * export name each check runs, and non-empty wave prefixes no two areas
- * share or nest.
+ * The areas' relay checks and access: a module path (`src/..`, no
+ * extension) and export name each check runs, non-empty wave prefixes no
+ * two areas share or nest, lowercase reader wallets and principals, known
+ * roles, and a reason for each reader.
  */
 function relayProblems(manifests: readonly AreaManifest[]): RegistryProblem[] {
   const problems: RegistryProblem[] = [];
@@ -390,6 +394,11 @@ function relayProblems(manifests: readonly AreaManifest[]): RegistryProblem[] {
           manifest.area,
           `relay check ${name}: the module must be a path under src/ with no extension`
         );
+      } else if (/\.fixture$|(^|\/)tests\//.test(check.run.module)) {
+        bad(
+          manifest.area,
+          `relay check ${name}: a test fixture, not an area's check`
+        );
       }
       if (!EXPORT.test(check.run.exportName)) {
         bad(manifest.area, `relay check ${name}: the export is not a name`);
@@ -401,6 +410,53 @@ function relayProblems(manifests: readonly AreaManifest[]): RegistryProblem[] {
         if (!prefix)
           bad(manifest.area, `relay check ${name} has an empty wave prefix`);
         else prefixes.push({ area: manifest.area, prefix });
+      }
+    }
+    for (const reader of manifest.relayAccess?.readers ?? []) {
+      if (!WALLET.test(reader.wallet)) {
+        bad(
+          manifest.area,
+          `relay reader ${reader.wallet}: not a lowercase wallet`
+        );
+      }
+      if (reader.principal !== undefined && !PRINCIPAL.test(reader.principal)) {
+        bad(
+          manifest.area,
+          `relay reader ${reader.wallet}: not a lowercase principal`
+        );
+      }
+      for (const role of reader.roles ?? []) {
+        if (role !== 'orderer' && role !== 'site-reader') {
+          bad(
+            manifest.area,
+            `relay reader ${reader.wallet}: unknown role ${String(role)}`
+          );
+        }
+      }
+      for (const wave of reader.memberOf ?? []) {
+        if (!wave || familyOf(wave)) {
+          bad(
+            manifest.area,
+            `relay reader ${reader.wallet}: member of '${wave}', not a wave of drops`
+          );
+        }
+      }
+      if (reader.memberOf?.length && reader.principal === undefined) {
+        bad(
+          manifest.area,
+          `relay reader ${reader.wallet}: a member needs a principal`
+        );
+      }
+      if (!reader.reason?.trim()) {
+        bad(manifest.area, `relay reader ${reader.wallet} has no reason`);
+      }
+    }
+    for (const wave of manifest.relayAccess?.openWaves ?? []) {
+      if (!wave || familyOf(wave)) {
+        bad(
+          manifest.area,
+          `open wave '${wave}': a wave of drops, not a family or its stream`
+        );
       }
     }
   }

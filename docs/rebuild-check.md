@@ -28,8 +28,11 @@ test shards and fails when:
   rebuilders write one table, or steps wait on each other;
 - a probe repeats an id, has a path without a leading `/`, or a placeholder
   with no values.
-- a relay check names a module or export wrong, or covers an empty prefix
-  or one another area's prefix overlaps.
+- a relay check names a module or export wrong or a test fixture, covers
+  an empty prefix or one another area's prefix overlaps; a relay reader's
+  wallet, principal, role or member wave is written wrong, a member has no
+  principal, or a reader has no reason; or an open wave is a family or its
+  stream.
 
 So a new entity needs one line in its area's manifest.
 
@@ -217,23 +220,40 @@ Each `--source <name>=<spec>`:
   after its `since` cursor of this epoch, or from the start with
   `from_start`, ends each with `EOSE` at that wave's head, then sends new
   events live. `HIST` pages a log or one stream of a family; without
-  `after` it answers the newest page.
+  `after` it answers the newest page. A CHALLENGE lives five minutes.
+- It reads as the relays do (crates/wave-relay with the wave-inbox
+  extension), from what the areas declare in `relayAccess`:
+  - a wave of drops is read by anyone when an area lists it in
+    `openWaves`; any other is members-only, read by the `site-reader` or
+    by a principal its `readers` entry makes a member (`memberOf`);
+  - the `ps` family is public; the other families need an AUTHed session
+    whose grant hasn't expired or been revoked: `pv` streams by their
+    owner's principal, or by a wallet while the owner's newest `reader`
+    record for it (refs `["reader", <wallet>]`; a body of `{}` or
+    `{"until": <ms>}` grants, none revokes) grants it and hasn't run out;
+    the rest by the `orderer` or `site-reader`, and `bk` streams also by
+    their owner;
+  - a wallet has the roles, principal and memberships its `readers` entry
+    gives it, and none otherwise; payloads need an AUTHed session;
+  - a named wave a session may not read ends at once (`EOSE` rseq 0),
+    under `*` it is passed over, and `HIST` of it answers `ERR`.
 - Relays can be recorded and replayed too:
   - `record:<dir>@<relay url>` proxies the run's CRP sessions to a relay;
     `record:<dir>@relay` records a fresh harness relay on loopback. When
     the run ends, `<dir>` holds what the run saw: `events.jsonl` (each
     event with the relay's order, the other fields the relay sent with it,
     and `recorded_at`, the time the run first saw it), `payloads/`,
-    `roles.json`, `relay.json` (the head), `reads.json` (the waves the
-    run read), and a fresh `PROVENANCE.json` naming how it was made. No
-    file names the relay's address.
-  - `replay:<dir>` serves the recording read-only; `replay:<a>+<b>` merges
-    several (an area's each) for the run. A PUB that isn't a recorded event
-    under its recorded grant (compared as canonical JSON), a payload or a
-    read of a wave the recording doesn't hold, a recorded event that fails a
-    check, and a payload that doesn't hash to its name all fail the run.
-    AUTH is not compared. EV frames and HIST items carry the recorded
-    `recorded_at`, so area code can use the time its events were first seen.
+    `relay.json` (the head), `reads.json` (the waves the run read), and a
+    fresh `PROVENANCE.json` naming how it was made. No file names the
+    relay's address.
+  - `replay:<dir>` serves the recording read-only, by the same read rules;
+    `replay:<a>+<b>` merges several (an area's each) for the run. A PUB
+    that isn't a recorded event under its recorded grant (compared as
+    canonical JSON), a payload or a read of a wave the recording doesn't
+    hold, a recorded event that fails a check, and a payload that doesn't
+    hash to its name all fail the run. AUTH is not compared. EV frames and
+    HIST items carry the recorded `recorded_at`, so area code can use the
+    time its events were first seen.
   - Every recorded event goes through two checks, in a child under the
     source guard: the signed-event check the relays run on any event (the
     kind and its version, the body against its hash and size, the id
@@ -253,8 +273,12 @@ Each `--source <name>=<spec>`:
     prefixes each covers and a module export
     `(item: RelayItem, flags) => RelayCheckResult` that runs what the
     backend checks beyond the signed event (the grant, whose key may sign),
-    with the area's `flags`. The registry refuses a module or export
-    written wrong, an empty prefix, and a prefix two areas share. Seeds
+    with the area's `flags`. The check runs with no database and no
+    endpoint, so it can't ask the chain or the API whose key may sign: it
+    proves the key's binding to the author offline, from the grant the
+    event came with. The registry refuses a module or export written
+    wrong, a test fixture, an empty prefix, and a prefix two areas share;
+    the registry test fails on a module not in the tree, unless planned. Seeds
     that publish to the relays must publish the same event and grant every
     run (fixed keys, clocks and randomness), so a replay accepts their PUBs
     as the recorded ones.

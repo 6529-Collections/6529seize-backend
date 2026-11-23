@@ -10,7 +10,6 @@ import {
   PAYLOADS_DIR,
   READS_FILE,
   RELAY_FILE,
-  ROLES_FILE,
   sha256Hex,
   StoredEvent,
   WsSocket
@@ -57,12 +56,11 @@ export function others(
 /** What a recorded run saw of the relay, written out when it stops. */
 export class RelayRecording {
   private readonly events_ = new Map<string, Seen>();
-  private readonly roles: Record<string, string[]> = {};
   private readonly reads = new Set<string>();
   private head: number | null = null;
 
   constructor(private readonly dir: string) {
-    for (const file of [EVENTS_FILE, READS_FILE, ROLES_FILE, RELAY_FILE]) {
+    for (const file of [EVENTS_FILE, READS_FILE, RELAY_FILE, 'roles.json']) {
       fs.rmSync(path.join(dir, file), { force: true });
     }
     fs.rmSync(path.join(dir, PAYLOADS_DIR), { recursive: true, force: true });
@@ -104,10 +102,6 @@ export class RelayRecording {
     this.reads.add(wave);
   }
 
-  authed(wallet: string, roles: string[]): void {
-    this.roles[wallet.toLowerCase()] = roles;
-  }
-
   welcome(head: number): void {
     this.head = head;
   }
@@ -145,10 +139,6 @@ export class RelayRecording {
     fs.writeFileSync(
       path.join(this.dir, READS_FILE),
       `${JSON.stringify(Array.from(this.reads).sort(), null, 2)}\n`
-    );
-    fs.writeFileSync(
-      path.join(this.dir, ROLES_FILE),
-      `${JSON.stringify(this.roles, null, 2)}\n`
     );
     if (this.head !== null) {
       fs.writeFileSync(
@@ -215,9 +205,6 @@ function fromRelay(
     case 'WELCOME':
       recording.welcome(Number(frame.head));
       return;
-    case 'AUTHED':
-      recording.authed(String(frame.wallet), (frame.roles as string[]) ?? []);
-      return;
     case 'ACK': {
       const published = pending.get(frame.rid);
       pending.delete(frame.rid);
@@ -255,7 +242,7 @@ function fromRelay(
 /**
  * A CRP v1 proxy on loopback to the relay at `upstream`, saving into `dir`
  * what the run sees: the events it reads or publishes (with the relay's
- * order), payloads, roles, the reported head, and the waves it reads. The
+ * order), payloads, the reported head, and the waves it reads. The
  * recording is written when the source stops; `replay:<dir>` serves it.
  * Recording reaches a relay, so it is never a final source itself.
  */

@@ -86,7 +86,6 @@ export async function captureRelay(options: CaptureOptions): Promise<{
         welcome?.();
         return;
       case 'AUTHED':
-        recording.authed(String(frame.wallet), (frame.roles as string[]) ?? []);
         authed?.();
         return;
       case 'EV':

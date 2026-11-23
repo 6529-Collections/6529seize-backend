@@ -19,6 +19,7 @@ import {
 } from '@/rebuild/sources/relay-checks';
 import { checkSignedEvent } from '@/rebuild/sources/relay-event-check';
 import { signedEvent } from '@/rebuild/sources/relay-fixture';
+import { RelayRules } from '@/rebuild/sources/relay-rules';
 import {
   readProvenance,
   writeProvenance
@@ -34,6 +35,23 @@ const WebSocketClient = require('ws') as new (url: string) => {
 type Frame = Record<string, unknown>;
 
 const READER = '0x00000000000000000000000000000000000000ab';
+const OWNER = `0x${'cc'.repeat(32)}`;
+const ORDERER = '0x00000000000000000000000000000000000000ac';
+
+/**
+ * The tests' rules: w1 and w2 open; READER the orderer, with a principal
+ * that is a member of `members`; ORDERER the orderer and nothing else.
+ */
+const RULES = new RelayRules(
+  new Set(['w1', 'w2']),
+  new Map([
+    [
+      READER,
+      { roles: ['orderer'] as const, principal: OWNER, memberOf: ['members'] }
+    ],
+    [ORDERER, { roles: ['orderer'] as const, principal: null }]
+  ])
+);
 
 /** A CRP client that keeps every text frame it gets; AUTH as `wallet`. */
 async function connect(
@@ -89,11 +107,17 @@ const areaCheck = (waves: string[]): LoadedRelayCheck => ({
       : { ok: true }
 });
 
-const replayOf = (dirs: string[], checks: LoadedRelayCheck[], root: string) =>
+const replayOf = (
+  dirs: string[],
+  checks: LoadedRelayCheck[],
+  root: string,
+  rules = RULES
+) =>
   startCrpRelayReplay(
     dirs,
     inProcessVerifier(checks),
-    path.join(root, 'merged')
+    path.join(root, 'merged'),
+    rules
   );
 
 describe('relay recordings', () => {
@@ -105,7 +129,7 @@ describe('relay recordings', () => {
 
   /** Records one session through the proxy: a publish, a payload, reads. */
   async function record(dir = path.join(root, 'recording')): Promise<string> {
-    const upstream = await startCrpRelay(path.join(root, 'upstream'));
+    const upstream = await startCrpRelay(path.join(root, 'upstream'), RULES);
     const recorder = await startCrpRelayRecord({
       dir,
       upstream: upstream.url,
@@ -352,7 +376,7 @@ describe('relay recordings', () => {
   });
 
   it('captures a whole relay into a recording a replay serves', async () => {
-    const relay = await startCrpRelay(path.join(root, 'relay'));
+    const relay = await startCrpRelay(path.join(root, 'relay'), RULES);
     try {
       const client = await connect(relay.url);
       client.sendBinary(
@@ -388,7 +412,7 @@ describe('relay recordings', () => {
       const replay = await replayOf([dir], [areaCheck(['w', 'dr/'])], root);
       try {
         expect(replay.info.provisional).toBe(false);
-        const reader = await connect(replay.url);
+        const reader = await connect(replay.url, null);
         reader.send({ t: 'HIST', rid: 5, wave: 'w1', after: 0, limit: 10 });
         const res = await reader.waitFor((f) => f.t === 'RES' && f.rid === 5);
         expect((res.items as { rseq: number }[]).map((i) => i.rseq)).toEqual([
@@ -405,7 +429,7 @@ describe('relay recordings', () => {
   });
 
   it('logs each wave (a family by its code) with its own rseq, as the relays do', async () => {
-    const relay = await startCrpRelay(path.join(root, 'relay'));
+    const relay = await startCrpRelay(path.join(root, 'relay'), RULES);
     try {
       const client = await connect(relay.url);
       for (const [rid, id, wave] of [
@@ -486,6 +510,154 @@ describe('relay recordings', () => {
       await client.waitFor((f) => f.t === 'EV' && f.sid === 9 && f.rseq === 3);
       expect(of(10, 'EOSE')).toEqual([]);
       client.close();
+    } finally {
+      await relay.stop();
+    }
+  });
+
+  it('reads as the relays do: open waves to anyone, the rest by membership, role, owner or reader', async () => {
+    const relay = await startCrpRelay(path.join(root, 'relay'), RULES);
+    try {
+      const writer = await connect(relay.url);
+      const publish = async (
+        rid: number,
+        wave: string,
+        body: unknown = null,
+        refs: string[] = []
+      ) => {
+        writer.send({
+          t: 'PUB',
+          rid,
+          event: {
+            id: `e${rid}`,
+            wave,
+            kind: 9,
+            refs,
+            body: body === null ? null : JSON.stringify(body)
+          },
+          grant: {}
+        });
+        await writer.waitFor((f) => f.t === 'ACK' && f.rid === rid);
+      };
+      await publish(1, 'w1');
+      await publish(2, 'members');
+      await publish(3, 'ps/0x1');
+      await publish(4, 'dv/0x1');
+      await publish(5, `pv/${OWNER}`);
+      // A reader record granting 0x..ee another owner's stream.
+      await publish(6, `pv/0x${'dd'.repeat(32)}`, {}, [
+        'reader',
+        '0x00000000000000000000000000000000000000ee'
+      ]);
+      writer.close();
+      const anyone = await connect(relay.url, null);
+      expect(
+        Number((anyone.frames.find((f) => f.t === 'CHALLENGE') ?? {}).expires)
+      ).toBeGreaterThan(Date.now());
+      anyone.send({
+        t: 'SUB',
+        sid: 1,
+        waves: ['*'],
+        from_start: true,
+        since: []
+      });
+      anyone.send({
+        t: 'SUB',
+        sid: 2,
+        waves: ['members', 'dv'],
+        from_start: true,
+        since: []
+      });
+      await anyone.waitFor(
+        (f) => f.t === 'EOSE' && f.sid === 2 && f.wave === 'dv'
+      );
+      anyone.send({ t: 'HIST', rid: 3, wave: 'dv/0x1', after: 0, limit: 10 });
+      expect(await anyone.waitFor((f) => f.rid === 3)).toMatchObject({
+        t: 'ERR',
+        reason: 'dv/0x1: not readable'
+      });
+      const seen = (sid: number) =>
+        anyone.frames
+          .filter((f) => f.t === 'EV' && f.sid === sid)
+          .map((f) => (f.event as { id: string }).id);
+      // Open w1 and public ps, nothing members-only or private.
+      expect(seen(1)).toEqual(['e1', 'e3']);
+      expect(
+        anyone.frames
+          .filter((f) => f.t === 'EOSE' && f.sid === 2)
+          .map((f) => [f.wave, f.rseq])
+      ).toEqual([
+        ['members', 0],
+        ['dv', 0]
+      ]);
+      anyone.close();
+      // The orderer that is a member of `members` reads everything but
+      // other principals' pv streams.
+      const orderer = await connect(relay.url);
+      orderer.send({
+        t: 'SUB',
+        sid: 1,
+        waves: ['*'],
+        from_start: true,
+        since: []
+      });
+      await orderer.waitFor(
+        (f) => f.t === 'EOSE' && f.sid === 1 && f.wave === 'pv'
+      );
+      expect(
+        orderer.frames
+          .filter((f) => f.t === 'EV')
+          .map((f) => (f.event as { id: string }).id)
+      ).toEqual(['e1', 'e2', 'e3', 'e4', 'e5']);
+      orderer.close();
+      // An orderer reads every family, but a members-only wave of drops
+      // only as a member (or the site reader).
+      const notMember = await connect(relay.url, ORDERER);
+      notMember.send({ t: 'HIST', rid: 1, wave: 'dv', after: 0, limit: 10 });
+      const family = await notMember.waitFor((f) => f.rid === 1);
+      expect(
+        (family.items as { event: { id: string } }[]).map((i) => i.event.id)
+      ).toEqual(['e4']);
+      notMember.send({
+        t: 'HIST',
+        rid: 2,
+        wave: 'members',
+        after: 0,
+        limit: 10
+      });
+      expect(await notMember.waitFor((f) => f.rid === 2)).toMatchObject({
+        t: 'ERR'
+      });
+      notMember.close();
+      // A wallet no area names has no role; an expired grant reads no family.
+      const stranger = await connect(
+        relay.url,
+        '0x00000000000000000000000000000000000000ee'
+      );
+      stranger.send({ t: 'HIST', rid: 1, wave: 'pv', after: 0, limit: 10 });
+      const named = await stranger.waitFor((f) => f.rid === 1);
+      expect(
+        (named.items as { event: { id: string } }[]).map((i) => i.event.id)
+      ).toEqual(['e6']);
+      stranger.send({
+        t: 'HIST',
+        rid: 2,
+        wave: 'members',
+        after: 0,
+        limit: 10
+      });
+      expect(await stranger.waitFor((f) => f.rid === 2)).toMatchObject({
+        t: 'ERR'
+      });
+      stranger.close();
+      const expired = await connect(relay.url, READER, {
+        expires_at: Date.now() - 1
+      });
+      expired.send({ t: 'HIST', rid: 1, wave: 'dv', after: 0, limit: 10 });
+      expect(await expired.waitFor((f) => f.rid === 1)).toMatchObject({
+        t: 'ERR'
+      });
+      expired.close();
     } finally {
       await relay.stop();
     }

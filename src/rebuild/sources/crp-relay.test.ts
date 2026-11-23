@@ -7,6 +7,15 @@ import {
   payloadRefs,
   startCrpRelay
 } from '@/rebuild/sources/crp-relay';
+import { RelayRules } from '@/rebuild/sources/relay-rules';
+
+/** The test's reader: 0xab with both roles. */
+const RULES = new RelayRules(
+  new Set(),
+  new Map([
+    ['0xab', { roles: ['orderer', 'site-reader'] as const, principal: null }]
+  ])
+);
 
 const WebSocketClient = require('ws') as new (url: string) => {
   on(event: 'open', listener: () => void): void;
@@ -69,7 +78,7 @@ describe('harness relay', () => {
   });
 
   it('answers CRP frames over a WebSocket', async () => {
-    const relay = await startCrpRelay(dir);
+    const relay = await startCrpRelay(dir, RULES);
     const socket = new WebSocketClient(relay.url);
     const frames: Record<string, unknown>[] = [];
     const waitFor = (type: string) =>
