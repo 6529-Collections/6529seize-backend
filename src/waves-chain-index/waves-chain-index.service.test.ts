@@ -8,6 +8,7 @@ import { ChainFeedBlock } from '@/chain-gateway/chain-gateway.types';
 import { ChainObject, GatewayWavesChainApi } from './waves-chain-index.api';
 import { IndexTableName } from './waves-chain-index.db';
 import { WavesChainIndex } from './waves-chain-index.service';
+import { compareCodeUnits } from './waves-chain-index.order';
 
 const TABLES: IndexTableName[] = [
   'groups',
@@ -547,14 +548,18 @@ describe('WavesChainIndex', () => {
       db
         .rows('leaderboardRows', true)
         .filter((r) => r.decision_id === D3 && r.height === chain.height)
-        .map((r) => r.entry_id);
+        .map((r) => String(r.entry_id));
     expect(
       db.rows('leaderboardRows').filter((r) => r.decision_id === D3)
     ).toHaveLength(21);
     // E12 moves past E13 and E14 (D3 ranks by total): three rows move.
     chain.vote(id('e12'), V(3), 145);
     await index.run({ budgetMs: BIG });
-    expect(written().sort()).toEqual([id('e12'), id('e13'), id('e14')]);
+    expect(written().sort(compareCodeUnits)).toEqual([
+      id('e12'),
+      id('e13'),
+      id('e14')
+    ]);
     // Its total moves, not its place: one row.
     chain.vote(id('e12'), V(3), 146);
     await index.run({ budgetMs: BIG });
