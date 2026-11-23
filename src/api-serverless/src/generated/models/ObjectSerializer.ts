@@ -533,7 +533,6 @@ export * from '../models/ApiIdentityOverview';
 export * from '../models/ApiIdentityOverviewBadges';
 export * from '../models/ApiIdentityOverviewContextProfileContext';
 export * from '../models/ApiIdentitySubscriptionActions';
-export * from '../models/ApiIdentitySubscriptionStatus';
 export * from '../models/ApiIdentitySubscriptionTargetAction';
 export * from '../models/ApiIdentitySubscriptionTargetType';
 export * from '../models/ApiIdentityWaveParticipation';
@@ -1541,7 +1540,6 @@ import { ApiIdentityOverview           } from '../models/ApiIdentityOverview';
 import { ApiIdentityOverviewBadges } from '../models/ApiIdentityOverviewBadges';
 import { ApiIdentityOverviewContextProfileContext } from '../models/ApiIdentityOverviewContextProfileContext';
 import { ApiIdentitySubscriptionActions } from '../models/ApiIdentitySubscriptionActions';
-import { ApiIdentitySubscriptionStatus } from '../models/ApiIdentitySubscriptionStatus';
 import { ApiIdentitySubscriptionTargetAction } from '../models/ApiIdentitySubscriptionTargetAction';
 import { ApiIdentitySubscriptionTargetType } from '../models/ApiIdentitySubscriptionTargetType';
 import { ApiIdentityWaveParticipation } from '../models/ApiIdentityWaveParticipation';
@@ -2813,7 +2811,6 @@ let typeMap: {[index: string]: any} = {
     "ApiIdentityOverviewBadges": ApiIdentityOverviewBadges,
     "ApiIdentityOverviewContextProfileContext": ApiIdentityOverviewContextProfileContext,
     "ApiIdentitySubscriptionActions": ApiIdentitySubscriptionActions,
-    "ApiIdentitySubscriptionStatus": ApiIdentitySubscriptionStatus,
     "ApiIdentityWaveParticipation": ApiIdentityWaveParticipation,
     "ApiIncomingIdentitySubscriptionsPage": ApiIncomingIdentitySubscriptionsPage,
     "ApiIntRange": ApiIntRange,

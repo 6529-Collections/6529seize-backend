@@ -13,7 +13,6 @@ import {
 } from '@/exceptions';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { ApiIdentitySubscriptionActions } from '@/api/generated/models/ApiIdentitySubscriptionActions';
-import { ApiIdentitySubscriptionStatus } from '@/api/generated/models/ApiIdentitySubscriptionStatus';
 import { identitySubscriptionsDb } from '@/api/identity-subscriptions/identity-subscriptions.db';
 import { ActivityEventTargetType } from '@/entities/IActivityEvent';
 import * as Joi from 'joi';
@@ -217,7 +216,7 @@ router.get(
   needsAuthenticatedUser(),
   async (
     req: Request<{ id: string }, any, any, any, any>,
-    res: Response<ApiResponse<ApiIdentitySubscriptionStatus>>
+    res: Response<ApiResponse<ApiIdentitySubscriptionActions>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
     const timer = Timer.getFromRequest(req);
