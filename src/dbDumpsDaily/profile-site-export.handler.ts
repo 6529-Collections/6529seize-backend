@@ -372,28 +372,30 @@ export function checkSnapshotTime(
   snapshotAt: number,
   acceptGapMinutes: number | null,
   minGapSeconds = 0
-): { readonly gapSeconds: number } {
+): { readonly gapMs: number; readonly gapSeconds: number } {
   if (!Number.isFinite(snapshotAt)) {
     throw new ProfileSiteExportSnapshotError("The snapshot's time is unknown");
   }
-  const gapSeconds = Math.round((snapshotAt - frozenAt) / 1000);
-  if (gapSeconds < 0) {
+  // Compared in milliseconds: rounding would let a snapshot taken just
+  // before the freeze, or just short of the minimum gap, through.
+  const gapMs = snapshotAt - frozenAt;
+  if (gapMs < 0) {
     throw new ProfileSiteExportSnapshotError(
       `The snapshot (${new Date(snapshotAt).toISOString()}) is before the freeze (${new Date(frozenAt).toISOString()})`
     );
   }
-  if (gapSeconds < minGapSeconds) {
+  if (gapMs < minGapSeconds * 1000) {
     throw new ProfileSiteExportSnapshotError(
-      `The snapshot is ${gapSeconds} s after the freeze: wait until at least ${minGapSeconds} s after it, so the replica holds every write made before the freeze`
+      `The snapshot is ${gapMs / 1000} s after the freeze: wait until at least ${minGapSeconds} s after it, so the replica holds every write made before the freeze`
     );
   }
   const limit = Math.max(SNAPSHOT_GAP_LIMIT_MINUTES, acceptGapMinutes ?? 0);
-  if (gapSeconds > limit * 60) {
+  if (gapMs > limit * 60_000) {
     throw new ProfileSiteExportSnapshotError(
-      `The snapshot is ${Math.ceil(gapSeconds / 60)} minutes after the freeze, over the ${limit}-minute limit: it would carry changes made since. Pass acceptSnapshotGapMinutes to allow that.`
+      `The snapshot is ${Math.ceil(gapMs / 60_000)} minutes after the freeze, over the ${limit}-minute limit: it would carry changes made since. Pass acceptSnapshotGapMinutes to allow that.`
     );
   }
-  return { gapSeconds };
+  return { gapMs, gapSeconds: Math.round(gapMs / 1000) };
 }
 
 /**
@@ -403,7 +405,7 @@ export function checkSnapshotTime(
  * gap alone.
  */
 export function checkReplicaLag(
-  gapSeconds: number,
+  gapMs: number,
   replicaLagMs: number | null,
   acceptUnknown = false
 ): void {
@@ -412,9 +414,9 @@ export function checkReplicaLag(
       "The replica's lag can't be read (information_schema.replica_host_status): only the gap since the freeze shows it holds the writes made before it. To rely on that gap alone, run again with acceptUnknownReplicaLag: true."
     );
   }
-  if (replicaLagMs !== null && replicaLagMs >= gapSeconds * 1000) {
+  if (replicaLagMs !== null && replicaLagMs >= gapMs) {
     throw new ProfileSiteExportSnapshotError(
-      `The replica is ${replicaLagMs} ms behind its writer, not less than the ${gapSeconds} s since the freeze: it may not hold every write made before the freeze. Try again later.`
+      `The replica is ${replicaLagMs} ms behind its writer, not less than the ${gapMs} ms since the freeze: it may not hold every write made before the freeze. Try again later.`
     );
   }
 }
@@ -636,6 +638,10 @@ export interface ProfileSiteExportResult {
   /** Site writes after the freeze, and the package ids accepted for them. */
   readonly writesAfterFreeze: readonly WriteAfterFreeze[];
   readonly acceptedWritesAfterFreeze: readonly string[];
+  /** Whether the run was told to rely on the gap if the lag was unknown. */
+  readonly acceptUnknownReplicaLag: boolean;
+  /** Whether the run was allowed to replace an earlier run's pointer. */
+  readonly replacePointer: boolean;
   readonly startedAt: string;
   readonly finishedAt: string;
   readonly seconds: number;
@@ -774,28 +780,44 @@ async function linksJson(
 }
 
 /**
- * Whether the pointer at `key` names this run: after a lost answer the
- * SDK writes again, and S3 refuses the retry because the first write
- * landed.
+ * Whose run the pointer at `key` names, after S3 refused to write it: this
+ * run's when the SDK retried a write whose answer was lost (the first
+ * write landed), another run's, or unknown when it can't be read back.
  */
-async function pointerNamesRun(
+async function pointerOwner(
   writer: PrivateExportWriter,
   key: string,
   prefix: string,
   manifestSha256: string
-): Promise<boolean> {
+): Promise<
+  | { readonly owner: 'this run' | 'another run' }
+  | { readonly owner: 'unknown'; readonly reason: string }
+> {
   try {
     const read = await writer.readOutside(key);
-    if (!read.found) return false;
+    if (!read.found) {
+      return {
+        owner: 'unknown',
+        reason:
+          read.reason === 'forbidden' ? 'S3 refused the read' : 'it is missing'
+      };
+    }
     const pointer = JSON.parse(read.text) as {
       prefix?: unknown;
       manifest_sha256?: unknown;
     };
-    return (
-      pointer.prefix === prefix && pointer.manifest_sha256 === manifestSha256
-    );
-  } catch {
-    return false;
+    return {
+      owner:
+        pointer?.prefix === prefix &&
+        pointer?.manifest_sha256 === manifestSha256
+          ? 'this run'
+          : 'another run'
+    };
+  } catch (error) {
+    return {
+      owner: 'unknown',
+      reason: String((error as Error)?.message ?? error)
+    };
   }
 }
 
@@ -876,19 +898,20 @@ export async function runProfileSiteExportJob(
   let latest: LatestSiteWrites;
   let late: WriteAfterFreeze[];
   try {
-    gapSeconds = checkSnapshotTime(
+    const gap = checkSnapshotTime(
       event.frozenAt,
       Date.parse(snapshot.evidence.snapshotAt),
       event.acceptSnapshotGapMinutes,
       event.rehearsal ? 0 : MIN_SNAPSHOT_GAP_SECONDS
-    ).gapSeconds;
+    );
+    gapSeconds = gap.gapSeconds;
     latest = await latestSiteWrites(snapshot.executor);
     late = await writesAfterFreeze(snapshot.executor, event.frozenAt);
     // Before the freeze, sites are still published: a rehearsal records
     // what it saw instead of refusing.
     if (!event.rehearsal) {
       checkReplicaLag(
-        gapSeconds,
+        gap.gapMs,
         snapshot.evidence.replicaLagMs,
         event.acceptUnknownReplicaLag
       );
@@ -1055,17 +1078,20 @@ export async function runProfileSiteExportJob(
       );
       pointerKey = key;
     } catch (error) {
-      if (
-        isWriteConflict(error) &&
-        (await pointerNamesRun(writer, key, prefix, manifestPut.sha256))
-      ) {
+      const read = isWriteConflict(error)
+        ? await pointerOwner(writer, key, prefix, manifestPut.sha256)
+        : null;
+      if (read?.owner === 'this run') {
         // The write landed; only its answer was lost.
         pointerKey = key;
         logger.warn(`[POINTER WRITTEN, ITS RETRY REFUSED] [${key}]`);
       } else {
-        pointerError = isWriteConflict(error)
-          ? `${key} already names an earlier run for this freeze, and was kept. To make this run the export, run again with replacePointer: true.`
-          : String((error as Error)?.message ?? error);
+        pointerError =
+          read?.owner === 'another run'
+            ? `${key} already names an earlier run for this freeze, and was kept. To make this run the export, run again with replacePointer: true.`
+            : read?.owner === 'unknown'
+              ? `S3 refused to write ${key} because one is there, and reading it back failed (${read.reason}): whether it names this run is unknown. Ask for links by frozenAt to see which run it names.`
+              : String((error as Error)?.message ?? error);
         logger.warn(`[POINTER NOT WRITTEN] [${key}] ${pointerError}`);
       }
     }
@@ -1120,6 +1146,8 @@ export async function runProfileSiteExportJob(
     latestSiteWrites: latestWrites,
     writesAfterFreeze: late,
     acceptedWritesAfterFreeze: event.acceptWritesAfterFreeze,
+    acceptUnknownReplicaLag: event.acceptUnknownReplicaLag,
+    replacePointer: event.replacePointer,
     startedAt: startedAt.toISOString(),
     finishedAt: finishedAt.toISOString(),
     seconds,

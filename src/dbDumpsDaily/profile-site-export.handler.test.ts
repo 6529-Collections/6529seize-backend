@@ -77,6 +77,8 @@ function setup(
     };
     late?: { source: string; package_id: string; at: number }[];
     getDenied?: boolean;
+    /** Every read of an object fails outright. */
+    getFails?: boolean;
     verifyFails?: number;
     /** The pointer write lands, but its answer is lost and the retry refused. */
     pointerAnswerLost?: boolean;
@@ -128,6 +130,7 @@ function setup(
       return {};
     }
     if (command instanceof GetObjectCommand) {
+      if (options.getFails) throw new Error('socket hang up');
       const body = bodies.get(command.input.Key!);
       if (body === undefined) {
         throw Object.assign(new Error('denied or missing'), {
@@ -461,30 +464,50 @@ describe('parseProfileSiteExportEvent', () => {
 
 describe('the freeze checks', () => {
   it('measures the gap from the freeze to the snapshot', () => {
-    expect(checkSnapshotTime(T, T, null)).toEqual({ gapSeconds: 0 });
+    expect(checkSnapshotTime(T, T, null)).toEqual({ gapMs: 0, gapSeconds: 0 });
     expect(checkSnapshotTime(T, T + 90 * 60_000, null)).toEqual({
+      gapMs: 5_400_000,
       gapSeconds: 5400
     });
     expect(() => checkSnapshotTime(T, Number.NaN, null)).toThrow(/unknown/);
+    // In milliseconds: a snapshot 400 ms before the freeze is before it.
+    expect(() => checkSnapshotTime(T, T - 400, null)).toThrow(
+      /^The snapshot \(2026-11-23T23:59:59.600Z\) is before the freeze/
+    );
+    expect(() => checkSnapshotTime(T, T + 90 * 60_000 + 400, null)).toThrow(
+      /over the 90-minute limit/
+    );
   });
 
   it('holds a snapshot to a minimum gap after the freeze', () => {
     expect(checkSnapshotTime(T, T + 120_000, null, 120)).toEqual({
+      gapMs: 120_000,
       gapSeconds: 120
     });
     expect(() => checkSnapshotTime(T, T + 119_000, null, 120)).toThrow(
       /119 s after the freeze: wait until at least 120 s/
     );
+    // 119.6 s would round to 120.
+    expect(() => checkSnapshotTime(T, T + 119_600, null, 120)).toThrow(
+      /119.6 s after the freeze/
+    );
   });
 
   it('refuses a replica as far behind its writer as the gap, or further', () => {
-    expect(() => checkReplicaLag(150, null)).toThrow(
+    expect(() => checkReplicaLag(150_000, null)).toThrow(
       /acceptUnknownReplicaLag: true/
     );
-    expect(() => checkReplicaLag(150, null, true)).not.toThrow();
-    expect(() => checkReplicaLag(150, 149_999)).not.toThrow();
-    expect(() => checkReplicaLag(150, 150_000)).toThrow(/150000 ms behind/);
-    expect(() => checkReplicaLag(150, 3_600_000)).toThrow(/behind its writer/);
+    expect(() => checkReplicaLag(150_000, null, true)).not.toThrow();
+    expect(() => checkReplicaLag(150_000, 149_999)).not.toThrow();
+    expect(() => checkReplicaLag(150_000, 150_000)).toThrow(
+      /150000 ms behind its writer, not less than the 150000 ms/
+    );
+    expect(() => checkReplicaLag(150_000, 3_600_000)).toThrow(
+      /behind its writer/
+    );
+    // The gap isn't rounded: 150.4 s is more than a 150.2 s lag.
+    expect(() => checkReplicaLag(150_400, 150_200)).not.toThrow();
+    expect(() => checkReplicaLag(150_400, 150_400)).toThrow(/behind/);
   });
 
   it('reads IDENTITY_FREEZE_AT as the site does', () => {
@@ -992,10 +1015,27 @@ describe('runProfileSiteExportJob', () => {
       deps
     )) as ProfileSiteExportResult;
     expect(result.evidence.replicaLagMs).toBeNull();
+    expect(result.acceptUnknownReplicaLag).toBe(true);
     expect(JSON.parse(bodies.get(result.manifestKey)!)).toMatchObject({
       read: { replicaLagMs: null },
       accept_unknown_replica_lag: true
     });
+  });
+
+  it('measures the lag against the gap in milliseconds', async () => {
+    const ok = setup({ snapshotAt: T + 150_400, replicaLagMs: 150_200 });
+    const result = (await runProfileSiteExportJob(
+      event,
+      context,
+      ok.deps
+    )) as ProfileSiteExportResult;
+    expect(result.snapshotGapSeconds).toBe(150);
+    expect(result.acceptUnknownReplicaLag).toBe(false);
+    expect(result.replacePointer).toBe(false);
+    const behind = setup({ snapshotAt: T + 150_400, replicaLagMs: 150_400 });
+    await expect(
+      runProfileSiteExportJob(event, context, behind.deps)
+    ).rejects.toThrow(/150400 ms behind/);
   });
 
   it('lets a rehearsal run with an unknown replica lag, and reports it', async () => {
@@ -1088,6 +1128,41 @@ describe('runProfileSiteExportJob', () => {
     );
     expect(result.pointerKey).toBeNull();
     expect(result.pointerError).toMatch(/already names an earlier run/);
+  });
+
+  it('says so when a refused pointer write cannot be read back', async () => {
+    const { deps, bodies } = setup({ getFails: true });
+    bodies.set(POINTER, '{"prefix":"profile-site-export/staging/other/"}');
+    const result = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.usable).toBe(true);
+    expect(result.pointerKey).toBeNull();
+    expect(result.pointerError).toMatch(
+      /reading it back failed \(socket hang up\): whether it names this run is unknown/
+    );
+    expect(result.pointerError).not.toMatch(/earlier run/);
+  });
+
+  it('says so when a refused pointer is then not there to read', async () => {
+    const { deps, bodies, send } = setup();
+    bodies.set(POINTER, '{}');
+    const get = send.getMockImplementation()!;
+    send.mockImplementation(async (command: any) => {
+      // Gone again by the time it is read back.
+      if (command instanceof GetObjectCommand) bodies.delete(POINTER);
+      return get(command);
+    });
+    const result = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.pointerError).toMatch(
+      /reading it back failed \(it is missing\)/
+    );
   });
 
   it('keeps a whole run when only the pointer fails, and says so', async () => {
