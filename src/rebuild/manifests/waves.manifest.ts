@@ -496,6 +496,13 @@ export const wavesManifest: AreaManifest = {
         reason:
           'No route reads the drop index: the drop applier and the notifications do. The run compares its rows table by table.'
       }))
+    ],
+    unseededTables: [
+      {
+        target: 'wave_relay_rejects',
+        reason:
+          "Copies a relay served that fail the drop index's check. A correct relay serves none: the devnet's relays check every event, and a replayed recording must pass the waves relay check, so the world holds no rejected copy to rebuild."
+      }
     ]
   }
 };
