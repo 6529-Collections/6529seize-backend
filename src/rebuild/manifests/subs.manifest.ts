@@ -40,11 +40,22 @@ const IDENTITY_TABLES = [
   'subscriptions_id_cursors'
 ];
 
+/** The legacy tables the top-up loop's and the settings' writes touch. */
+const LEGACY_WRITES = [
+  'subscriptions_balances',
+  'subscriptions_logs',
+  'subscriptions_mode',
+  'subscriptions_nfts',
+  'subscriptions_top_up',
+  'subscription_cache_invalidations',
+  'subscription_coverage_refresh_requests',
+  'subscription_deferred_writes'
+];
+
 /**
  * Today's subscriptions of the probe wallets through the legacy write
- * paths, then the switch (`go-live`, with the opening files in the seed
- * files), a top-up after it and a checkpoint, and the journal's closed
- * segment in the records wave (src/rebuild/areas/subs.seed.ts).
+ * paths (src/rebuild/areas/subs.seed.ts): a top-up each and all editions
+ * for the first, after the transactions loop's first run.
  */
 const SUBS_SEED: RebuildStep = {
   id: 'subs.seed',
@@ -52,16 +63,28 @@ const SUBS_SEED: RebuildStep = {
     module: 'src/rebuild/areas/subs.seed',
     exportName: 'seedSubscriptions'
   },
+  writes: [...LEGACY_WRITES, 'transactions_processed_subscriptions_blocks'],
+  reads: ['transactions'],
+  // The memes the holdings seed mints, and the probe wallets' keys.
+  after: ['holdings.seed', 'identity.probe-profiles'],
+  sources: ['repo'],
+  timeoutMinutes: 10
+};
+
+/**
+ * The switch (`go-live`, with the opening files in the seed files), a
+ * top-up after it through the identity writer, a checkpoint, and the
+ * journal's closed segment in the records wave
+ * (src/rebuild/areas/subs.seed.ts). The cut reads the identity mirror.
+ */
+const SUBS_SWITCH_SEED: RebuildStep = {
+  id: 'subs.switch',
+  run: {
+    module: 'src/rebuild/areas/subs.seed',
+    exportName: 'seedSubscriptionsSwitch'
+  },
   writes: [
-    'subscriptions_balances',
-    'subscriptions_logs',
-    'subscriptions_mode',
-    'subscriptions_nfts',
-    'subscriptions_top_up',
-    'subscription_cache_invalidations',
-    'subscription_coverage_refresh_requests',
-    'subscription_deferred_writes',
-    'transactions_processed_subscriptions_blocks',
+    ...LEGACY_WRITES,
     ...IDENTITY_TABLES,
     'subscriptions_id_reports',
     'signed_record_log_entries',
@@ -73,9 +96,12 @@ const SUBS_SEED: RebuildStep = {
     'drops',
     'drops_parts'
   ],
-  reads: ['nfts', 'transactions'],
-  // The memes the holdings seed mints, and the probe wallets' keys.
-  after: ['holdings.seed', 'identity.probe-profiles'],
+  reads: [
+    'nfts',
+    'transactions_processed_subscriptions_blocks',
+    'identity_chain_principals'
+  ],
+  after: ['subs.seed'],
   sources: ['files', 'repo'],
   timeoutMinutes: 15
 };
@@ -271,7 +297,7 @@ export const subsManifest: AreaManifest = {
       origin: 'planned'
     }
   },
-  seeds: [SUBS_SEED],
+  seeds: [SUBS_SEED, SUBS_SWITCH_SEED],
   rebuilders: [SUBS_REBUILD],
   probes: PROBES
 };

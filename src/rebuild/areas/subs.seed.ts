@@ -35,9 +35,10 @@ import { persistTopUps } from '@/subscriptionsTopUpLoop/db.subscriptions_topup';
 import { aWave } from '@/tests/fixtures/wave.fixture';
 
 /**
- * The subscriptions area's seed for the rebuild check. Before the drop it
- * puts the stack where the identity tables are the truth, through the
- * paths production uses:
+ * The subscriptions area's seeds for the rebuild check. Before the drop
+ * they put the stack where the identity tables are the truth, through the
+ * paths production uses. `seedSubscriptions` does step 2;
+ * `seedSubscriptionsSwitch`, which needs the identity mirror, the rest:
  * 1. the records service identity and the records wave, only if another
  *    seed has not made them (the same fixture values every area uses);
  * 2. legacy subscriptions for the probe wallets: a top-up each (the top-up
@@ -49,8 +50,8 @@ import { aWave } from '@/tests/fixtures/wave.fixture';
  * 4. after the switch, a top-up through the top-up loop and the identity
  *    writer, and a checkpoint;
  * 5. the journal into the records wave: a closed segment, its file in the
- *    seed files and its head drop, if every open entry is the journal's;
- *    otherwise the seed that closes the shared log's segments takes them.
+ *    seed files and its head drop. Every seed closes its own entries, so
+ *    an open entry of another record log lane fails the seed.
  * The rebuild then gets the identity tables back from the opening files
  * and the journal alone.
  */
@@ -217,14 +218,19 @@ async function markRedemptionLoopRun(): Promise<number> {
   return block;
 }
 
-/** Closes the log's open segments when every open entry is the journal's. */
+/**
+ * Closes the journal's open entries into a segment. Every seed closes its
+ * own entries before it ends, so an open entry of another record log lane
+ * means another seed left its own open: the seed refuses rather than close
+ * it into the journal's segment.
+ */
 async function closeJournalSegments(
   dir: string,
   waveId: string,
   serviceProfileId: string,
   serviceWallet: string,
   providers: ReturnType<typeof loadProviderKeys>
-): Promise<boolean> {
+): Promise<void> {
   const lanes = await sqlExecutor.execute<{ lane: string }>(
     `select distinct lane from ${SIGNED_RECORD_LOG_ENTRIES_TABLE} where segment_seq is null`
   );
@@ -232,7 +238,9 @@ async function closeJournalSegments(
     .map((row) => row.lane)
     .filter((lane) => lane !== JOURNAL_LANE && lane !== JOURNAL_SHADOW_LANE);
   if (others.length > 0) {
-    return false;
+    throw new Error(
+      `Open record log entries of other lanes (${others.join(', ')}): the seed that wrote them must close them first`
+    );
   }
   const segmenter = new RecordLogSegmenter({
     store: recordLogDb,
@@ -285,17 +293,42 @@ async function closeJournalSegments(
   if (!heads.length) {
     throw new Error('The subscriptions seed closed no segment');
   }
-  return true;
 }
 
-export async function seedSubscriptions(
+/** The top-up blocks: after the transactions loop's processed block. */
+async function topUpBlockBase(): Promise<number> {
+  const [row] = await sqlExecutor.execute<{ block: number | null }>(
+    `select max(block) as block from ${TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE}`
+  );
+  return Number(row?.block ?? 0);
+}
+
+/**
+ * Before the switch: today's subscriptions of the probe wallets, through
+ * the legacy write paths, and the transactions loop's first run.
+ */
+export async function seedSubscriptions(): Promise<void> {
+  const block = await markRedemptionLoopRun();
+  for (let index = 0; index < BEFORE_TOP_UPS.length; index++) {
+    const top = BEFORE_TOP_UPS[index];
+    await topUp(top.hash, top.wallet, top.amount, block + index + 1);
+  }
+  await updateSubscribeAllEditions(PROBE_CONSOLIDATION_KEYS[0], true);
+}
+
+/**
+ * The switch and the journal: go-live with the opening files in the run's
+ * seed files, a top-up after it through the identity writer, a checkpoint,
+ * and the journal's closed segment in the records wave.
+ */
+export async function seedSubscriptionsSwitch(
   ctx: RebuildContext,
   env: Readonly<Record<string, string | undefined>> = process.env
 ): Promise<void> {
   const dir = ctx.seedFilesDir;
   if (!dir) {
     throw new Error(
-      'The subscriptions seed writes the opening files: the run has no files source'
+      'The subscriptions switch seed writes the opening files: the run has no files source'
     );
   }
   const waveId = env.SIGNED_RECORDS_WAVE_ID;
@@ -303,21 +336,14 @@ export async function seedSubscriptions(
   const serviceWallet = env.SIGNED_RECORDS_SERVICE_WALLET?.toLowerCase();
   const providers = loadProviderKeys(env.SIGNED_RECORDS_PROVIDER_KEYS);
   if (!waveId || !serviceProfileId || !serviceWallet || !providers.length) {
-    throw new Error("The subscriptions seed needs the area's records flags");
+    throw new Error(
+      "The subscriptions switch seed needs the area's records flags"
+    );
   }
   await ensureRecordsService(waveId, serviceProfileId, serviceWallet);
 
-  // Before the switch: today's subscriptions of the probe wallets.
-  const block = await markRedemptionLoopRun();
-  for (let index = 0; index < BEFORE_TOP_UPS.length; index++) {
-    const top = BEFORE_TOP_UPS[index];
-    await topUp(top.hash, top.wallet, top.amount, block + index + 1);
-  }
-  await updateSubscribeAllEditions(PROBE_CONSOLIDATION_KEYS[0], true);
-
-  // The switch, with the opening files in the run's seed files. The
-  // record log's closer does not run in a seed, so the posting probe is
-  // answered here: the seed closes the segment itself below.
+  // The record log's closer does not run in a seed, so go-live's posting
+  // probe is answered here: the seed closes the segment itself below.
   const result = await goLive({
     signedWritesLive: true,
     acceptReportDiffs: true,
@@ -328,7 +354,7 @@ export async function seedSubscriptions(
   });
   if (!result.switched) {
     throw new Error(
-      `The subscriptions seed's go-live did not switch: ${result.steps.join('; ')}`
+      `The subscriptions switch seed's go-live did not switch: ${result.steps.join('; ')}`
     );
   }
 
@@ -337,7 +363,7 @@ export async function seedSubscriptions(
     AFTER_TOP_UP.hash,
     AFTER_TOP_UP.wallet,
     AFTER_TOP_UP.amount,
-    block + BEFORE_TOP_UPS.length + 1
+    (await topUpBlockBase()) + BEFORE_TOP_UPS.length + 1
   );
   await runIdentityTopUpWriters();
   await journalCheckpoint();

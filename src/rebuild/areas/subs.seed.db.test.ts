@@ -19,7 +19,7 @@ import {
 import { subscriptionsIdentitySwitch } from '@/subscriptions-identity/identity/identity-switch';
 import { rebuildSubscriptionsInCheck } from '@/subscriptions-identity/opening/rebuild-check.steps';
 import { describeWithSeed } from '@/tests/_setup/seed';
-import { seedSubscriptions } from './subs.seed';
+import { seedSubscriptions, seedSubscriptionsSwitch } from './subs.seed';
 
 jest.mock('@/subscriptionsDaily/subscription-cache', () => ({
   invalidateUpcomingSubscriptionCaches: jest.fn()
@@ -166,7 +166,8 @@ describeWithSeed('the subscriptions rebuild check', [], () => {
   it('seeds a switched opening and rebuilds the identity tables from its files and journal alone', async () => {
     const env = subsManifest.flags;
     await seedProbeIdentities();
-    await seedSubscriptions(contextOf('subs.seed', files, dir), env);
+    await seedSubscriptions();
+    await seedSubscriptionsSwitch(contextOf('subs.switch', files, dir), env);
     expect(await subscriptionsIdentitySwitch.writeModeOrFail()).toBe('TRUTH');
     const before = await snapshot();
     expect(before.subscriptions_id_balances).toHaveLength(2);
@@ -187,19 +188,22 @@ describeWithSeed('the subscriptions rebuild check', [], () => {
     expect(await subscriptionsIdentitySwitch.writeModeOrFail()).toBe('TRUTH');
   });
 
-  it('fails a rebuild whose journal never reached a closed segment', async () => {
+  it("refuses to close another record log lane's open entries into the journal's segment", async () => {
     const env = subsManifest.flags;
     await seedProbeIdentities();
-    // An entry of another record log lane is open: the seed leaves the segment to the seed
-    // that closes the shared log, so nothing is in the records wave yet.
+    // An entry of another record log lane, left open by its own seed.
     await sqlExecutor.execute(
       `insert into signed_record_log_entries (chain, lane, entry, created_at, segment_seq)
         values ('public', 'other', '{}', 0, null)`
     );
-    await seedSubscriptions(contextOf('subs.seed', files, dir), env);
-    for (const [table] of TABLES) {
-      await sqlExecutor.execute(`delete from ${table}`);
-    }
+    await seedSubscriptions();
+    await expect(
+      seedSubscriptionsSwitch(contextOf('subs.switch', files, dir), env)
+    ).rejects.toThrow('Open record log entries of other lanes (other)');
+  });
+
+  it('fails a rebuild whose journal never reached a closed segment', async () => {
+    const env = subsManifest.flags;
     await expect(
       rebuildSubscriptionsInCheck(contextOf('subs.identity', files, null), env)
     ).rejects.toThrow('never reached a closed segment');
