@@ -1,6 +1,9 @@
 import { DbPoolName } from '@/db-query.options';
 import { transferReconciliationDb } from '@/transactions/transfer-reconciliation.db';
+import { deferGroupsThatDoNotFit } from '@/holdings/consolidation-key-fit';
 import {
+  CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE,
+  CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE,
   GRADIENT_CONTRACT,
   MANIFOLD,
   MEME_8_BURN_TRANSACTION,
@@ -287,8 +290,13 @@ export async function consolidateActivity(
 
   // one batched lookup for all addresses, then one computation per unique
   // consolidation instead of one per member address
-  const consolidationGroups = await fetchConsolidationGroupsForAddresses(
-    Array.from(addresses)
+  const consolidationGroups = await deferGroupsThatDoNotFit(
+    await fetchConsolidationGroupsForAddresses(Array.from(addresses)),
+    [
+      CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE,
+      CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE
+    ],
+    'activity'
   );
 
   await Promise.all(

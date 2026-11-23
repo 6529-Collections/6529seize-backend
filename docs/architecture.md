@@ -748,7 +748,7 @@ reset behavior, and the required writer-before-collector deployment order.
 | `xTdhLoop`                       | SNS `tdh-calculation-done.fifo` or a direct post-persistence partial-TDH enqueue via SQS `xtdh-start.fifo`; self-queued stats phase | Recalculate the xTDH universe after TDH finishes, then rebuild and publish xTDH stats in a follow-up queue message.                                                                     |
 | `overRatesRevocationLoop`        | SNS `tdh-calculation-done.fifo` via SQS `over-rates-revocation-start.fifo`                                                          | Revoke over-rates after TDH changes.                                                                                                                                                    |
 | `waveScoreRefreshLoop`           | SNS `tdh-calculation-done.fifo` via SQS `wave-score-refresh-start.fifo`; SQS `wave-score-refresh-dirty.fifo`; EventBridge fallback  | Refresh materialized wave REP and Wave Score discovery fields after TDH changes or wave/drop/rating/subscription mutations.                                                             |
-| `mediaResizerLoop`               | CloudFront/request path                                                                                                             | Resize images on demand.                                                                                                                                                                |
+| `mediaResizerLoop`               | Prod: S3 website 404 routing → HTTP API. Staging: media CDN failover origin (function URL) for size paths                           | Resize images on demand.                                                                                                                                                                |
 | `nextgenMediaProxyInterceptor`   | Lambda@Edge / CloudFront request                                                                                                    | Provide NextGen metadata fallback.                                                                                                                                                      |
 | `dropVideoConversionInvokerLoop` | S3 object-created event for `drops/`                                                                                                | Invoke MediaConvert for uploaded drop videos.                                                                                                                                           |
 
@@ -766,6 +766,8 @@ reset behavior, and the required writer-before-collector deployment order.
 The API Lambda is the public synchronous boundary. It initializes local config or AWS secrets, opens MySQL read/write pools, initializes Redis, configures Passport JWT authentication, registers all routers, and then serves HTTP through `serverless-http`. The same handler also branches on API Gateway WebSocket route keys for `$connect`, `$disconnect`, and `$default` messages.
 
 The API's Redis client is fail-fast: initialization waits a bounded time for the first connection, commands are rejected instead of queued while the client reconnects, and request-path cache reads/writes and rate-limit checks fail open within a short per-command budget, so per-client rate limits are not enforced while Redis is unreachable. Initialization failures are not cached; the next request in the same warm container retries setup, while route wiring runs at most once. Loops keep the default queue-until-reconnected Redis client.
+
+Database login: both the API pools and the TypeORM data source pick their target in `src/db-iam-auth.ts`. When the shared secret sets `DB_IAM_AUTH=true` with `DB_IAM_HOST`, `DB_IAM_USER`, `DB_IAM_HOST_READ` and `DB_IAM_USER_READ`, services connect over verified TLS to an RDS Proxy that only accepts IAM tokens, as the Lambda execution role, with no database password; each new pool connection gets a token at most 10 minutes old. The `mysql` driver only speaks native passwords, so IAM mode adds the plugin-auth handshake and the `mysql_clear_password` reply to it at runtime. Without those settings, services use `DB_HOST`/`DB_USER`/`DB_PASS` as before, so services built before IAM support keep working while the secret carries both.
 
 Background Lambdas that read or write application state use a shared `doInDbContext` wrapper. That wrapper prepares environment/secrets, initializes TypeORM-backed DB access, initializes Redis, runs the job, then disconnects. The `dropVideoConversionInvokerLoop` is intentionally environment-only: it reads only its function environment (no shared secret, no VPC), filters the S3 object key, and invokes MediaConvert without opening MySQL or Redis connections. Its production stack runs in `eu-west-1`, next to the media bucket it watches, while other production services run in `us-east-1`.
 
@@ -870,11 +872,18 @@ chain gateway's service access (`CHAIN_GATEWAY_URL`, bearer
 `CHAIN_GATEWAY_SERVICE_KEY`), relays signed operations (`POST /v1/draft`,
 `POST /v1/submit`), and fetches profile documents from the gateway's document
 store by CID, checking each against its CID. Reads are pinned to the latest
-finalized height it knows (refreshed every two seconds) and cached in memory
-by network and height; network errors, 429 and 5xx are retried. Every answer
-must name the chain the gateway's status names (`wrong_network` otherwise),
-and answers that can't be read, such as feed pages that don't hold together,
-throw `bad_answer` rather than reading as empty. Settings are read at first
+finalized height it knows (refreshed every two seconds, never going back)
+and cached in memory by network and height, except answers of the node's
+own data (wallet histories, saved days, TDH lists, the feed), which can
+change at one height and are never cached. Reads retry network errors, 429
+and 5xx. A submit is sent again only after a 503, a 429 or a connection that
+never opened; after anything else it throws `outcome_unknown` with its txId,
+and callers ask `getTx` rather than wrapping it in a retry of their own.
+Uploads to the document store go through the gateway's public name, not
+service access. Every answer must name the chain the gateway's status names
+(`wrong_network` otherwise), and answers that can't be read, such as feed
+pages that don't hold together, throw `bad_answer` rather than reading as
+empty. Settings are read at first
 use, so loops that never call it need none. Loops and API code that read
 identity data from the chain add calls to this client, not their own.
 
@@ -1466,7 +1475,10 @@ needed for normalization preserve exact integer strings.
 After each refresh, a bounded retention pass removes the collection's events
 older than 30 days, snapshots older than 14 days and reconciliation rows older
 than 7 days. It keeps the latest snapshot and the history of orders in the live
-book; the activity feed applies the same 30-day event window.
+book; the activity feed applies the same 30-day event window. In production,
+completed hours of events and snapshots are first archived to S3
+(`Prod-MarketArchive`), and retention deletes nothing past the archive
+watermark.
 
 The API exposes currency-specific quoted depth for an individual token and a
 merged feed of canonical transactions and market actions. Quoted quantities can
@@ -2368,7 +2380,7 @@ refresh frequency remain unchanged.
 
 Wave drop metric repairs use the same DB-backed/SQS pattern. Drop deletes apply a bounded in-transaction counter decrement, write `wave_drop_metrics_refresh_requests`, and publish to `wave-drop-metrics-refresh-dirty.fifo` after commit. `waveDropMetricsRefreshLoop` drains from the write pool and runs the full wave/dropper metric reconciliation outside the API path, with an EventBridge fallback for missed wakeups.
 
-Help6529 daily activity credits use the same durable handoff shape. Drop creation inserts one `help_bot_daily_activity_credit_requests` row per profile and UTC date inside the drop transaction, then publishes a small wakeup to `help-bot-daily-activity-credits.fifo` only after commit. `helpBotDailyActivityCreditLoop` grants outside the request path, records retry state and errors on the durable row, prioritizes untouched requests over retrying failures, retains completed rows for 30 days to suppress repeated daily work, and parks repeatedly failing rows as `DEAD`. A single FIFO message group and reserved concurrency of one serialize credit processing in a Lambda isolated from normal bot replies. The queue DLQ surfaces unhandled worker failures and a dead-row log metric alarm surfaces exhausted durable retries; a one-minute EventBridge rule wakes the same queue after a recorded retry or when post-commit SQS publication fails. The existing unique `help_bot_credit_events` grant key remains the final idempotency barrier if processing is redelivered or crashes between granting and marking the request complete.
+Help6529 daily activity credits use the same durable handoff shape. They run only while `FEATURE_HELP_BOT_CREDITS` is `true`; by default the credit meter is off, drop creation writes no request and sends no wakeup, and a leftover request completes without a grant. When on, drop creation inserts one `help_bot_daily_activity_credit_requests` row per profile and UTC date inside the drop transaction, then publishes a small wakeup to `help-bot-daily-activity-credits.fifo` only after commit. `helpBotDailyActivityCreditLoop` grants outside the request path, records retry state and errors on the durable row, prioritizes untouched requests over retrying failures, retains completed rows for 30 days to suppress repeated daily work, and parks repeatedly failing rows as `DEAD`. A single FIFO message group and reserved concurrency of one serialize credit processing in a Lambda isolated from normal bot replies. The queue DLQ surfaces unhandled worker failures and a dead-row log metric alarm surfaces exhausted durable retries; a one-minute EventBridge rule wakes the same queue after a recorded retry or when post-commit SQS publication fails. The existing unique `help_bot_credit_events` grant key remains the final idempotency barrier if processing is redelivered or crashes between granting and marking the request complete.
 
 The zero-downtime rollout order is mandatory: deploy `dbMigrationsLoop` first to create the request table and indexes, deploy `helpBotReplyLoop` second to create the queue and worker, and deploy `api` last to begin inserting requests and publishing wakeups. Follow the same `dbMigrationsLoop -> helpBotReplyLoop -> api` dependency chain when dispatching the services.
 
@@ -3232,6 +3244,79 @@ WatchTower manual-review attention is derived from a subject-based union of
 open reports and pending moderation checks. The API groups this union before
 pagination and shares the case definition across queue and count surfaces; it
 adds no persisted case table, queue, service or background reconciliation.
+
+## Subscription key width guard
+
+Subscription tables key rows by the consolidation key, the identity's wallets
+joined by `-`. Before the key-width migration every key column holds 200
+characters; after it, `subscriptions_nfts` and `subscriptions_nfts_final` hold
+666 and `subscriptions_redeemed` 567, so identities of 14 to 16 wallets still
+do not fit. A subscription write is never truncated, never fails its batch and
+never half made.
+
+**One rule for every writer.** A key is written only when every subscription
+table that stores it (balances, mode, nfts, nfts_final, logs, redeemed) can
+hold it, and only when the key has no earlier write still queued. Otherwise
+the whole write waits in `subscription_deferred_writes`, written in the
+writer's own transaction and logged with `SUBSCRIPTION_KEY_DEFERRED`. An
+identity is therefore either fully on the legacy tables or fully waiting: it
+is never on a final list without a balance to charge. Widths come from
+`information_schema`, cached for five minutes; a failed read keeps the last
+widths read. A process that has never read them treats every column as 200
+characters wide, and a write with a longer key fails (and is retried) rather
+than wait. Until dbMigrationsLoop has created the queue table, the "earlier
+write waiting" check reads as none, so keys that fit are written as before.
+
+- Daily build: a waiting key's final row, automatic row and every log line
+  wait together, and the published list is built after that split, so the
+  file and the table hold the same subscribers.
+- API: subscribe, count, mode and edition changes for a waiting key answer
+  400 with when changes resume ("Subscriptions for identities with more than
+  13 wallets resume on ..."), read from `SUBSCRIPTIONS_WIDE_IDENTITY_RESUME_ON`.
+  Nothing is queued for them.
+- Top-ups: the balance and the top-up row wait together.
+- Redemptions: one entry per token; balance, redeemed row and redeemed count
+  move together.
+- Consolidation: a re-key to a waiting key waits; the old keys keep their rows.
+- Coverage markers for keys that do not fit, or that a process can't judge
+  yet because it has never read the widths, are skipped; coverage is
+  recomputed.
+
+**Queue.** `sequence` orders the entries; `dedupe_key` keeps one entry per
+write, so a re-run of the daily build or a retried batch replaces its entry
+instead of adding one. `key_hash` finds a key's waiting entries.
+
+**Replay.** With `FEATURE_SUBSCRIPTION_DEFERRED_REPLAY=true` (off by default),
+the `subscriptionsTopUpLoop` replays waiting writes whose key now fits (the
+length filter is in the query), in queue order, paging through the whole
+queue; redemptions are replayed by the transactions loop inside its own
+redemption transaction, and their wave notices and coverage markers go out
+only after it commits. Each replay claims its entry (row lock, then mark) in
+the transaction that makes the write, so a write is made once and a failed
+write leaves its entry waiting. A replayed write that has to wait again (its
+key changed, or must still wait) is counted as re-queued. Once one of a key's
+entries cannot be replayed, the key's later entries wait too. A final-list
+row is never inserted as it stood at the build: it is marked skipped and the
+next daily build decides. Queued log lines all come from the daily build and
+are skipped the same way, so an automatic row replayed this way has no log
+line. Other writes that no longer apply (a card already dropped, a row
+already there) are marked skipped too. Replay is off by default. Rollback:
+unset the flag; the queue keeps every write.
+
+**Rebuild.** Every entry can be derived again from its source:
+
+- top-ups from Ethereum, once the top-up loop's cursor
+  (`subscriptions_top_up_latest_block`) is set back before the lost top-up's
+  block; hashes already credited are skipped, so nothing is credited twice;
+- redemptions from the airdrop in the `transactions` table: the redemption
+  loop charges it again when its cursor is set back before the airdrop's
+  block, but it re-charges every later airdrop too, so this is safe only
+  when the lost airdrop is the last one;
+- final and automatic rows and logs by the next daily build;
+- consolidations only at that identity's next membership change.
+
+A key with a final row fits every table, so a redemption waits only if the
+key columns are narrowed again, or behind an earlier write of the same key.
 
 ## Cross-wave message search
 

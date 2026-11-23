@@ -40,6 +40,7 @@ functions:
 resources:
   Resources:
     TdhLoopOOMFilter:
+      DependsOn: TdhLoopLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/tdhLoop

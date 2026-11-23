@@ -6,11 +6,14 @@ import {
   fetchLatestNftDelegationBlock,
   persistConsolidations,
   persistDelegations,
-  persistNftDelegationBlock
+  persistNftDelegationBlock,
+  persistNftDelegationLogsAfterFreeze
 } from '../db';
 import {
   fetchBlockTimestamp,
-  findDelegationTransactions
+  fetchDelegationChainHead,
+  findDelegationTransactions,
+  scanDelegationLogsForRecord
 } from '../delegations';
 import { discoverEnsConsolidations, discoverEnsDelegations } from '../ens';
 import {
@@ -24,7 +27,8 @@ import {
   ConsolidationEvent,
   Delegation,
   DelegationEvent,
-  NFTDelegationBlock
+  NFTDelegationBlock,
+  NFTDelegationLogAfterFreeze
 } from '../entities/IDelegation';
 import { NextGenTokenTDH } from '../entities/INextGen';
 import { ConsolidatedNFTOwner, NFTOwner } from '../entities/INFTOwner';
@@ -70,6 +74,12 @@ import { collectGarbageAfter } from './heap-release';
 import { appFeatures } from '../app-features';
 import { identityChainMirror } from '../identity-chain-mirror/identity-chain-mirror.service';
 import {
+  NftDelegationFreeze,
+  readNftDelegationFreeze,
+  resolveFreezeBlock,
+  splitAtFreeze
+} from './nftdelegation-freeze';
+import {
   resumePendingIdentityTdhSync,
   startIdentitySyncBudget
 } from '../identity-tdh-sync';
@@ -104,6 +114,14 @@ export const handler = sentryContext.wrapLambdaHandler(
           // Every identities sync in this invocation shares one time budget.
           startIdentitySyncBudget();
           const scopeBackfill = readScopeBackfillConfig();
+          // Read before any work: a freeze setting that can't be read stops
+          // the run rather than apply events past the freeze.
+          const freeze = readNftDelegationFreeze();
+          if (scopeBackfill && freeze.kind !== 'NONE') {
+            throw new Error(
+              'The scope backfill rewrites delegations up to the last processed block: remove its flag while NFTDelegation is frozen'
+            );
+          }
           if (requestedWallets) {
             if (scopeBackfill) {
               throw new Error(
@@ -146,10 +164,10 @@ export const handler = sentryContext.wrapLambdaHandler(
           // what is left of the invocation's sync budget.
           const delegationsWork = thenResumePendingIdentitySync(async () => {
             const health = await DelegationsLoopHealth.start(false);
-            const delegationsResponse = await handleDelegations(
-              startBlock,
-              health
-            );
+            const delegationsResponse =
+              freeze.kind === 'NONE'
+                ? await handleDelegations(startBlock, health)
+                : await handleDelegationsWithFreeze(startBlock, freeze, health);
             await persistNftDelegationBlock(
               delegationsResponse.block,
               delegationsResponse.blockTimestamp
@@ -184,6 +202,7 @@ export const handler = sentryContext.wrapLambdaHandler(
             Delegation,
             Consolidation,
             NFTDelegationBlock,
+            NFTDelegationLogAfterFreeze,
             TDH,
             ConsolidatedTDH,
             HistoricConsolidatedTDH,
@@ -248,47 +267,116 @@ async function handleDelegations(
     ? await fetchBlockTimestamp(startBlock)
     : undefined;
   const delegationsResponse = await findNewDelegations(startBlock);
+  await applyDelegationEvents(
+    startBlock,
+    resetBlockTimestamp,
+    delegationsResponse,
+    health
+  );
+  return delegationsResponse;
+}
+
+/**
+ * Applies one scan's events: consolidation and delegation rows (rewound
+ * first on a reset block), ENS, reconsolidation of the affected wallets,
+ * primary addresses. From switch-on (the identity mirror on) only ENS.
+ */
+async function applyDelegationEvents(
+  startBlock: number | undefined,
+  resetBlockTimestamp: number | undefined,
+  events: {
+    consolidations: ConsolidationEvent[];
+    registrations: DelegationEvent[];
+    revocation: DelegationEvent[];
+  },
+  health: DelegationsLoopHealth
+) {
   if (appFeatures.isIdentityChainMirrorEnabled()) {
     // From switch-on the identity mirror writes consolidations, delegations,
     // consolidation keys and primary addresses from the 6529 chain; this
-    // contract's events (after the identity freeze) would fight it. They
-    // are read so the checkpoint moves on, and not applied.
+    // contract's events would fight it, before the freeze block as after
+    // it. They are read so the checkpoint moves on, and not applied.
     logger.info(
-      `[IDENTITIES ON THE CHAIN: NFTDELEGATION EVENTS NOT APPLIED] [${delegationsResponse.consolidations.length} CONSOLIDATIONS] [${delegationsResponse.registrations.length} REGISTRATIONS] [${delegationsResponse.revocation.length} REVOCATIONS]`
+      `[IDENTITIES ON THE CHAIN: NFTDELEGATION EVENTS NOT APPLIED] [${events.consolidations.length} CONSOLIDATIONS] [${events.registrations.length} REGISTRATIONS] [${events.revocation.length} REVOCATIONS]`
     );
     await handleENS();
-    return delegationsResponse;
+    return;
   }
   await persistConsolidations(
     startBlock,
-    delegationsResponse.consolidations,
+    events.consolidations,
     resetBlockTimestamp
   );
-  await persistDelegations(
-    startBlock,
-    delegationsResponse.registrations,
-    delegationsResponse.revocation
-  );
+  await persistDelegations(startBlock, events.registrations, events.revocation);
   if (
-    delegationsResponse.consolidations.length ||
-    delegationsResponse.registrations.length ||
-    delegationsResponse.revocation.length
+    events.consolidations.length ||
+    events.registrations.length ||
+    events.revocation.length
   )
     health.committedStage();
 
   await handleENS();
 
-  if (delegationsResponse.consolidations.length > 0) {
-    await reconsolidateWallets(delegationsResponse.consolidations, health);
+  if (events.consolidations.length > 0) {
+    await reconsolidateWallets(events.consolidations, health);
   }
 
   const primaryAddressEvents = [
-    ...delegationsResponse.registrations,
-    ...delegationsResponse.revocation
+    ...events.registrations,
+    ...events.revocation
   ].filter((e) => e.use_case === USE_CASE_PRIMARY_ADDRESS);
   await updatePrimaryAddresses(primaryAddressEvents);
+}
 
-  return delegationsResponse;
+function describeRange(range: { from: number; to: number } | null): string {
+  return range ? `${range.from}-${range.to}` : 'NONE';
+}
+
+/**
+ * The delegations run while NFTDelegation is frozen for the move of
+ * identities to the 6529 chain (nftdelegation-freeze.ts): events up to the
+ * freeze block are applied exactly as handleDelegations applies them; events
+ * after it are stored for the record and applied to nothing. The checkpoint
+ * still moves to the head, so the loop keeps reading forward.
+ */
+async function handleDelegationsWithFreeze(
+  startBlock: number | undefined,
+  freeze: NftDelegationFreeze,
+  health: DelegationsLoopHealth
+): Promise<{ block: number; blockTimestamp: number }> {
+  const resetBlockTimestamp = startBlock
+    ? await fetchBlockTimestamp(startBlock)
+    : undefined;
+  const start = startBlock ?? (await fetchLatestNftDelegationBlock());
+  const head = await fetchDelegationChainHead();
+  const freezeBlock = await resolveFreezeBlock(freeze, head, (block) =>
+    fetchBlockTimestamp(block)
+  );
+  const { apply, record } = splitAtFreeze(start, head.block, freezeBlock);
+  logger.info(
+    `[NFTDELEGATION FREEZE ${freeze.kind}] [FREEZE BLOCK ${freezeBlock}] [START ${start}] [HEAD ${head.block}] [APPLY ${describeRange(apply)}] [RECORD ${describeRange(record)}]`
+  );
+
+  if (apply) {
+    await applyDelegationEvents(
+      startBlock,
+      resetBlockTimestamp,
+      await findNewDelegations(apply.from, apply.to),
+      health
+    );
+  } else {
+    await handleENS();
+  }
+
+  if (record && freezeBlock !== null) {
+    const logs = await scanDelegationLogsForRecord(record.from, record.to);
+    await persistNftDelegationLogsAfterFreeze(logs, freezeBlock);
+    logger.info(
+      `[NFTDELEGATION FROZEN] [${logs.length} LOGS AFTER BLOCK ${freezeBlock} RECORDED, NOT APPLIED] [BLOCKS ${record.from}-${record.to}]`
+    );
+  }
+
+  return { block: head.block, blockTimestamp: head.timestamp };
 }
 
 /** The run's share of time for the identity mirror (a run is 15 minutes). */

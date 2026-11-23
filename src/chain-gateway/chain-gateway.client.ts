@@ -25,7 +25,6 @@ import {
   ChainReadOptions,
   ChainReadStamp,
   ChainStatus,
-  ChainStoredDoc,
   ChainSubmitRequest,
   ChainSubmitResult,
   ChainTdhQuery,
@@ -109,6 +108,8 @@ export interface ChainGatewayConfig {
 export class ChainGatewayError extends Error {
   /** The read stamp of the node's refusal, when it carried one. */
   read?: ChainReadStamp;
+  /** For a submit: the transaction's id, when known. */
+  txId?: string;
 
   constructor(
     message: string,
@@ -129,6 +130,15 @@ function intOr(raw: string | undefined, fallback: number): number {
     : fallback;
 }
 
+function isHttpUrl(text: string): boolean {
+  try {
+    const url = new URL(text);
+    return url.protocol === 'https:' || url.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
 export function chainGatewayConfigFromEnv(
   env: Record<string, string | undefined> = process.env
 ): ChainGatewayConfig {
@@ -141,10 +151,41 @@ export function chainGatewayConfigFromEnv(
       ''
     );
   }
+  if (!isHttpUrl(baseUrl)) {
+    throw new ChainGatewayError(
+      'CHAIN_GATEWAY_URL is not an http(s) URL',
+      null,
+      'not_configured',
+      ''
+    );
+  }
+  // Settings that make every request fail before it is sent are refused
+  // here, so that no submit can read as "maybe landed" because of them:
+  // a URL carrying a user name or password (fetch refuses it), and a key
+  // that isn't plain visible ASCII (no header can carry it).
+  const url = new URL(baseUrl);
+  if (url.username || url.password) {
+    throw new ChainGatewayError(
+      'CHAIN_GATEWAY_URL carries credentials; the key goes in CHAIN_GATEWAY_SERVICE_KEY',
+      null,
+      'not_configured',
+      ''
+    );
+  }
+  const serviceKey = env.CHAIN_GATEWAY_SERVICE_KEY?.trim() || null;
+  if (serviceKey !== null && !/^[!-~]+$/.test(serviceKey)) {
+    throw new ChainGatewayError(
+      'CHAIN_GATEWAY_SERVICE_KEY is not plain visible ASCII',
+      null,
+      'not_configured',
+      ''
+    );
+  }
   return {
     baseUrl: trimTrailingSlashes(baseUrl),
-    serviceKey: env.CHAIN_GATEWAY_SERVICE_KEY?.trim() || null,
-    timeoutMs: intOr(env.CHAIN_GATEWAY_TIMEOUT_MS, 10_000),
+    serviceKey,
+    // 0 would abort every request at once.
+    timeoutMs: intOr(env.CHAIN_GATEWAY_TIMEOUT_MS, 10_000) || 10_000,
     retries: intOr(env.CHAIN_GATEWAY_RETRIES, 3),
     headTtlMs: intOr(env.CHAIN_GATEWAY_HEAD_TTL_MS, 2_000),
     cacheEntries: intOr(env.CHAIN_GATEWAY_CACHE_ENTRIES, 10_000)
@@ -234,7 +275,20 @@ interface Envelope<T> {
 
 const RETRYABLE = new Set([429, 500, 502, 503, 504]);
 
-type RetryableError = ChainGatewayError & { retryAfterMs?: number };
+type RetryableError = ChainGatewayError & {
+  retryAfterMs?: number;
+  /** A network error's own code (ECONNREFUSED, ...), when it has one. */
+  causeCode?: string;
+};
+
+/**
+ * Read options with a height the client chose itself (re-pinned on its
+ * own), not one the caller asked for.
+ */
+type PinnedHere = ChainReadOptions & { readonly pinnedHere?: boolean };
+
+/** A caller's check of an answer; it throws to refuse it. */
+type AnswerCheck<T> = (answer: ChainAnswer<T> | null) => void;
 
 /** Whether a caller takes a retryable status's body as its answer. */
 type Accept = (status: number, json: Envelope<unknown> | null) => boolean;
@@ -383,15 +437,6 @@ function parseFeedCursor(cursor: ChainFeedCursor): {
     );
   }
   return { height, index };
-}
-
-/** The CID the document store answered with, as hex; bad_answer if unreadable. */
-function storedCidHex(cid: string, path: string): string {
-  try {
-    return cidHex(cid);
-  } catch {
-    throw badAnswer(path, `the store answered with a CID that can't be read`);
-  }
 }
 
 /** The sha2-256 digest a CIDv1 names (any codec), or null for another CID. */
@@ -589,16 +634,18 @@ function isReadStamp(value: unknown): value is ChainReadStamp {
  * not_found answers of the node rather than of the data, told apart only by
  * their message (the node's texts, routes.rs and draft.rs): `not_held`,
  * never null, never cached, as another node may hold what this one lacks.
- * The node should send a code of its own for these (such as `not_held`):
+ * The node marks these cacheable for an hour (Cache-Control max-age=3600),
+ * which the gateway's cache honours, so one can outlive what it says. They
+ * are:
  * a route an older release lacks; the import's entry on a node whose
  * release carries no identities file; a membership day it didn't save or
  * has no record of; a TDH day's lists it doesn't keep (by day, or the
  * read's); token rows it never computed; a transaction neither its chain
  * nor its pool holds.
  * The identity's `founder` depends on the identities file the same way:
- * for an imported identity the node takes it from the file it carries
- * (reads.rs, `founder`), so a node without it can name another wallet.
- * That one is for the API to settle; the client can't tell.
+ * for an imported identity the node takes it from the file it carries, so
+ * a node without the file can name another wallet. The client can't tell
+ * these apart, so it takes `founder` as the node gives it.
  */
 const NOT_HELD = [
   /^no such route/i,
@@ -609,6 +656,21 @@ const NOT_HELD = [
   /^this node has no token rows/i,
   /^neither a block on this node's chain nor its pool holds that transaction/i
 ];
+
+/** An answer of another chain than the one expected. */
+function wrongNetwork(
+  path: string,
+  network: string,
+  expected: string,
+  status: number | null
+): ChainGatewayError {
+  return new ChainGatewayError(
+    `${path}: read from network ${network}, not ${expected}`,
+    status,
+    'wrong_network',
+    path
+  );
+}
 
 /** A refusal of data the answering node doesn't hold; another may. */
 function notHeld(
@@ -624,6 +686,277 @@ function notHeld(
   );
   error.read = read;
   return error;
+}
+
+/** Whether an identity holds a wallet (addresses compared in lower case). */
+function holdsWallet(identity: ChainIdentity, wallet: string): boolean {
+  const asked = lower(wallet);
+  return (identity.wallets ?? []).some((it) => lower(it) === asked);
+}
+
+/**
+ * Whether a draft is of the operation asked for: its code (a number or 0x
+ * hex) or its name, as the node reads `opType`.
+ */
+function draftIsOf(draft: ChainDraft, request: ChainDraftRequest): boolean {
+  const asked = request.opType;
+  if (typeof asked === 'number') return draft.opType === asked;
+  const text = String(asked).trim();
+  if (/^0x[0-9a-f]+$/i.test(text)) return draft.opType === parseInt(text, 16);
+  return (draft.opName ?? '').toLowerCase() === text.toLowerCase();
+}
+
+const PRINCIPAL_ARG = /^0x[0-9a-f]{64}$/i;
+const ADDRESS_ARG = /^0x[0-9a-f]{40}$/i;
+const HEX_ARG = /^0x([0-9a-f]{2})+$/i;
+const UUID_ARG =
+  /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
+
+/**
+ * A path argument checked before anything is sent: an empty or malformed
+ * one would reach another route (an empty principal, the list of all).
+ */
+function arg(
+  value: string,
+  what: string,
+  valid: (it: string) => boolean
+): string {
+  const it = String(value ?? '').trim();
+  if (!valid(it)) {
+    throw new ChainGatewayError(
+      `Not ${what}: ${value}`,
+      null,
+      'bad_request',
+      ''
+    );
+  }
+  return it;
+}
+
+const principalArg = (it: string) =>
+  lower(arg(it, 'a principal id', (v) => PRINCIPAL_ARG.test(v)));
+const walletArg = (it: string) =>
+  lower(arg(it, 'an address', (v) => ADDRESS_ARG.test(v)));
+const holderArg = (it: string) =>
+  lower(
+    arg(
+      it,
+      'an address or a principal id',
+      (v) => ADDRESS_ARG.test(v) || PRINCIPAL_ARG.test(v)
+    )
+  );
+/**
+ * A handle that names one path segment the gateway passes: not empty, no
+ * slash or backslash, no dot segment.
+ */
+const isHandleSegment = (v: string) =>
+  v.length > 0 &&
+  !v.includes('/') &&
+  !v.includes('\\') &&
+  v !== '.' &&
+  v !== '..' &&
+  // eslint-disable-next-line no-control-regex
+  !/[\u0000-\u001f\u007f]/.test(v) &&
+  isWellFormed(v);
+/** Text a URL can carry: no lone surrogate. */
+function isWellFormed(v: string): boolean {
+  try {
+    encodeURIComponent(v);
+    return true;
+  } catch {
+    return false;
+  }
+}
+const handleArg = (it: string) =>
+  arg(it, 'a handle', isHandleSegment).toLowerCase();
+/** Longer than any handle can be (they are 3 to 15 bytes): never asked. */
+const tooLongForHandle = (v: string) => Buffer.byteLength(v, 'utf8') > 64;
+
+/** A height, limit or day: a safe integer, not negative. */
+function countArg(value: number | undefined, what: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new ChainGatewayError(
+      `Not ${what}: ${value}`,
+      null,
+      'bad_request',
+      ''
+    );
+  }
+  return value;
+}
+const hexArg = (it: string, what: string) =>
+  lower(arg(it, what, (v) => HEX_ARG.test(v)));
+
+/** Connection errors before anything was sent. */
+const NEVER_SENT = ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN'];
+
+/**
+ * A submit error after which the node surely didn't take the transaction,
+ * so it may be sent again: a 503 (no state, the pool busy or not running),
+ * the gateway's 429, or a connection that never opened.
+ */
+function notTaken(error: RetryableError): boolean {
+  if (error.status === 503 || error.status === 429) return true;
+  return (
+    error.status === null &&
+    error.code === 'network' &&
+    NEVER_SENT.indexOf(error.causeCode ?? '') >= 0
+  );
+}
+
+/**
+ * What a list may use of a query: the gateway refuses one over 2,048
+ * bytes, and the height, network and cursor take the rest.
+ */
+const LIST_QUERY_BYTES = 1600;
+
+/**
+ * Items split so that each list, joined by commas as one query parameter,
+ * stays within LIST_QUERY_BYTES encoded, and at most `most` items.
+ */
+function chunksForQuery(
+  items: string[],
+  name: string,
+  most: number
+): string[][] {
+  const chunks: string[][] = [];
+  let chunk: string[] = [];
+  const size = (list: string[]) =>
+    new URLSearchParams({ [name]: list.join(',') }).toString().length;
+  for (const item of items) {
+    const next = chunk.concat([item]);
+    if (chunk.length && (next.length > most || size(next) > LIST_QUERY_BYTES)) {
+      chunks.push(chunk);
+      chunk = [item];
+    } else {
+      chunk = next;
+    }
+  }
+  if (chunk.length) chunks.push(chunk);
+  return chunks;
+}
+
+/** The document store's own words for a CID it doesn't hold. */
+const STORE_NONE = [
+  'this store holds no document with that CID',
+  'not a CID this store holds'
+];
+
+/** A check that an answer is a list (an empty one is a list too). */
+function listOnly<T>(path: string): AnswerCheck<T> {
+  return (answer) => {
+    if (answer && !Array.isArray(answer.data)) {
+      throw badAnswer(path, 'a list that is not a list');
+    }
+  };
+}
+
+/** Errors raised before a request leaves the process. */
+const NEVER_LEFT = ['not_configured', 'bad_request'];
+
+/** Refusals of a submit that say the transaction wasn't taken. */
+const REFUSALS = [
+  // The node's.
+  'inadmissible',
+  'not_admitted',
+  'bad_request',
+  'too_large',
+  'body_too_large',
+  'head_too_large',
+  // The gateway's own, before passing anything on.
+  'unauthorized',
+  'forbidden',
+  'bad_path',
+  'bad_body',
+  'method_not_allowed',
+  'unsupported_media_type'
+];
+
+/** A txId (0x and 64 hex), lowercased, or undefined. */
+function txIdOf(value: unknown): string | undefined {
+  return typeof value === 'string' && PRINCIPAL_ARG.test(value)
+    ? value.toLowerCase()
+    : undefined;
+}
+
+/** The txId a node's message names ("(txId 0x…)"), if any. */
+function txIdIn(message: unknown): string | undefined {
+  const match = /\(txId (0x[0-9a-f]{64})\)/i.exec(String(message ?? ''));
+  return match ? match[1].toLowerCase() : undefined;
+}
+
+/** A submit whose transaction may or may not have landed: ask getTx. */
+function outcomeUnknown(
+  path: string,
+  error: ChainGatewayError,
+  txId: string | undefined
+): ChainGatewayError {
+  const unknown = new ChainGatewayError(
+    `${path}: the outcome is unknown (${error.code}): ask getTx${txId ? ` for ${txId}` : ''}`,
+    error.status,
+    'outcome_unknown',
+    path
+  );
+  unknown.txId = txId;
+  return unknown;
+}
+
+const ZERO_PRINCIPAL = '0x' + '0'.repeat(64);
+
+/**
+ * What of a draft differs from the request it answers, or null: the
+ * header's principal (zero when none was given), the role-0 signer (a
+ * wallet) or key id (a session key), IDENTITY_JOIN's role-4 joining
+ * wallet, and the envelope's network.
+ */
+function draftMismatch(
+  draft: ChainDraft,
+  request: ChainDraftRequest,
+  network: string | null
+): string | null {
+  const envelope = (draft.envelope ?? {}) as {
+    networkId?: unknown;
+    header?: { principal?: unknown; keyId?: unknown; authRef?: unknown };
+  };
+  const text = (value: unknown) => lower(String(value ?? ''));
+  const principal = request.principal
+    ? lower(request.principal)
+    : ZERO_PRINCIPAL;
+  if (text(envelope.header?.principal) !== principal) return 'principal';
+  const rows = Array.isArray(draft.signatures) ? draft.signatures : [];
+  const role = (n: number) => rows.find((it) => it?.role === n);
+  if ((request.keyType ?? 1) === 1) {
+    if (text(role(0)?.signer) !== text(request.signer)) return 'signer';
+  } else if (
+    text(envelope.header?.keyId) !== text(request.keyId) ||
+    text(envelope.header?.authRef) !== text(request.authRef)
+  ) {
+    return 'key';
+  }
+  const joins = draft.opName === 'IDENTITY_JOIN' || draft.opType === 0x010f;
+  if (joins) {
+    const wallet = (request.body as { wallet?: unknown })?.wallet;
+    if (!wallet || text(role(4)?.signer) !== text(wallet)) {
+      return 'joining wallet';
+    }
+  }
+  // The envelope's network, and the one the wallets sign for (the typed
+  // data's domain salt).
+  const salt = (draft.typedData as { domain?: { salt?: unknown } } | undefined)
+    ?.domain?.salt;
+  if (
+    network !== null &&
+    (text(envelope.networkId) !== network || text(salt) !== network)
+  ) {
+    return 'network';
+  }
+  return null;
+}
+
+/** A UUID compared without its dashes, in lower case. */
+function uuidKey(uuid: string): string {
+  return uuid.replace(/-/g, '').trim().toLowerCase();
 }
 
 /** An identity whose level the node can't give yet (its TDH lists). */
@@ -648,7 +981,11 @@ function nodeLocal(path: string, data: unknown): boolean {
     path === '/v1/membership' ||
     path.startsWith('/v1/membership/days/') ||
     path === '/v1/tdh' ||
-    path.startsWith('/v1/tdh/')
+    path.startsWith('/v1/tdh/') ||
+    path === '/v1/feed' ||
+    path.startsWith('/v1/feed/') ||
+    path.startsWith('/v1/tx/') ||
+    path === '/v1/ops'
   ) {
     return true;
   }
@@ -689,6 +1026,8 @@ export class ChainGatewayClient {
    * so a status flipping between two during a relaunch keeps both.
    */
   private readonly pinFloors = new Map<string, number>();
+  /** The highest head height seen on each network, likewise. */
+  private readonly headFloors = new Map<string, number>();
   private caches: {
     /** JSON text of answers (`null` for a 404), parsed afresh on each hit. */
     readonly answers: LruCache<string>;
@@ -738,6 +1077,7 @@ export class ChainGatewayClient {
   clearCache(): void {
     this.head = null;
     this.pinFloors.clear();
+    this.headFloors.clear();
     this.caches?.answers.clear();
     this.caches?.docs.clear();
   }
@@ -845,13 +1185,17 @@ export class ChainGatewayClient {
       }
       const reason = (error as Error)?.message ?? String(error);
       const code = controller.signal.aborted ? 'timeout' : 'network';
+      const cause = (error as { cause?: { code?: unknown } })?.cause?.code;
       return {
         ok: false,
-        error: new ChainGatewayError(
-          `${method} ${path} failed: ${reason}`,
-          null,
-          code,
-          path
+        error: Object.assign(
+          new ChainGatewayError(
+            `${method} ${path} failed: ${reason}`,
+            null,
+            code,
+            path
+          ),
+          { causeCode: typeof cause === 'string' ? cause : undefined }
         )
       };
     } finally {
@@ -865,7 +1209,8 @@ export class ChainGatewayClient {
     query: Query,
     body?: unknown,
     binary = false,
-    accept?: Accept
+    accept?: Accept,
+    retryable: (error: RetryableError) => boolean = () => true
   ): Promise<{
     status: number;
     json: Envelope<unknown> | null;
@@ -898,6 +1243,7 @@ export class ChainGatewayClient {
         return result;
       }
       lastError = result.error;
+      if (!retryable(lastError)) break;
     }
     logger.warn(
       `[GATEWAY ${method} ${path} GAVE UP] [${lastError.code}] [${lastError.message}]`
@@ -977,7 +1323,8 @@ export class ChainGatewayClient {
   private async toAnswer<T>(
     path: string,
     status: number,
-    json: Envelope<unknown> | null
+    json: Envelope<unknown> | null,
+    asked?: string
   ): Promise<{ read: ChainReadStamp; answer: ChainAnswer<T> | null }> {
     const stamp = json?.read;
     let read: ChainReadStamp | undefined;
@@ -986,7 +1333,7 @@ export class ChainGatewayClient {
         throw badAnswer(path, `a read stamp that can't be read`, status);
       }
       read = stamp;
-      await this.checkNetwork(path, status, read);
+      await this.checkNetwork(path, status, read, asked);
     }
     const error = json?.error;
     const code = typeof error === 'string' ? error : error?.code;
@@ -1023,18 +1370,18 @@ export class ChainGatewayClient {
   private async checkNetwork(
     path: string,
     status: number,
-    read: ChainReadStamp
+    read: ChainReadStamp,
+    asked?: string
   ) {
     const network = read.network;
+    // A network the caller asked for (a walk or a cursor of one chain).
+    if (asked !== undefined && lower(network) !== lower(asked)) {
+      throw wrongNetwork(path, network, asked, status);
+    }
     const expected = (await this.getHead()).network;
     if (lower(network) === expected) return;
     await this.getHead(true).catch(() => undefined);
-    throw new ChainGatewayError(
-      `${path}: read from network ${network}, not ${expected}`,
-      status,
-      'wrong_network',
-      path
-    );
+    throw wrongNetwork(path, network, expected ?? '', status);
   }
 
   // ---------------------------------------------------------------- reads
@@ -1043,7 +1390,7 @@ export class ChainGatewayClient {
   async getHead(force = false): Promise<ChainHead> {
     const config = this.config();
     if (!force && this.head && this.now() - this.head.at < config.headTtlMs) {
-      return this.head.value;
+      return this.steady(this.head.value);
     }
     if (!this.headInFlight) {
       this.headInFlight = (async () => {
@@ -1081,28 +1428,40 @@ export class ChainGatewayClient {
             this.caches?.answers.clear();
           }
           // Reads never pin below a finalized height already seen on this
-          // network (a node behind the others can answer the status), and
-          // the head says so: its finalized height never goes back.
+          // network (a node behind the others can answer the status).
           this.raiseFloor(value.network!, value.finalizedHeight);
-          const pin = this.pinOf(value);
-          const steady: ChainHead = {
-            ...value,
-            headHeight: Math.max(value.headHeight, pin),
-            finalizedHeight: pin,
-            // The answering node's block time, for its own height only.
-            finalizedTime:
-              pin === value.finalizedHeight ? finalized!.time : null,
-            nodeFinalizedHeight: value.finalizedHeight,
-            nodeFinalizedTime: finalized!.time
-          };
-          this.head = { value: steady, at: this.now() };
-          return steady;
+          this.headFloors.set(
+            value.network!,
+            Math.max(this.headFloors.get(value.network!) ?? 0, value.headHeight)
+          );
+          this.head = { value, at: this.now() };
+          return this.steady(value);
         } finally {
           this.headInFlight = null;
         }
       })();
     }
     return await this.headInFlight;
+  }
+
+  /**
+   * The head as reads see it: its finalized height is the pin, the highest
+   * seen on its network (by a status, a feed page or any read), so it never
+   * goes back, even while the node's own head is cached; what the node
+   * said is beside it.
+   */
+  private steady(node: ChainHead): ChainHead {
+    const pin = this.pinOf(node);
+    const headFloor = node.network ? this.headFloors.get(node.network) : 0;
+    return {
+      ...node,
+      headHeight: Math.max(node.headHeight, pin, headFloor ?? 0),
+      finalizedHeight: pin,
+      // The answering node's block time, for its own height only.
+      finalizedTime: pin === node.finalizedHeight ? node.finalizedTime : null,
+      nodeFinalizedHeight: node.finalizedHeight,
+      nodeFinalizedTime: node.finalizedTime ?? undefined
+    };
   }
 
   /**
@@ -1137,8 +1496,11 @@ export class ChainGatewayClient {
   async read<T>(
     path: string,
     query: Query = {},
-    opts: ChainReadOptions = {}
+    opts: ChainReadOptions = {},
+    check?: AnswerCheck<T>
   ): Promise<ChainAnswer<T> | null> {
+    countArg(opts.height, 'a height');
+    countArg((opts as ChainPageOptions).limit, 'a limit');
     if (opts.at === 'head' && opts.height !== undefined) {
       throw new ChainGatewayError(
         `${path}: a read is of the head or at a height, not both`,
@@ -1152,14 +1514,37 @@ export class ChainGatewayClient {
         ...query,
         at: 'head'
       });
-      return (await this.toAnswer<T>(path, status, json)).answer;
+      const { answer } = await this.toAnswer<T>(
+        path,
+        status,
+        json,
+        opts.network
+      );
+      check?.(answer);
+      return answer;
     }
+    const asked = opts.network;
     if (opts.height !== undefined) {
-      return await this.pinnedUntilHeld<T>(path, query, opts.height);
+      // One node may not hold it (restarted, or behind): a height the
+      // caller chose is asked again a few times before it is gone.
+      return await this.pinnedUntilHeld<T>(
+        path,
+        query,
+        opts.height,
+        asked,
+        check,
+        !(opts as PinnedHere).pinnedHere
+      );
     }
     const head = await this.getHead();
     try {
-      return await this.pinnedUntilHeld<T>(path, query, this.pinOf(head));
+      return await this.pinnedUntilHeld<T>(
+        path,
+        query,
+        this.pinOf(head),
+        asked,
+        check
+      );
     } catch (error) {
       if (
         !(error instanceof ChainGatewayError) ||
@@ -1173,7 +1558,7 @@ export class ChainGatewayClient {
     const fresh = await this.getHead(true);
     const pin = this.pinOf(fresh);
     try {
-      return await this.pinnedUntilHeld<T>(path, query, pin);
+      return await this.pinnedUntilHeld<T>(path, query, pin, asked, check);
     } catch (error) {
       if (
         !(error instanceof ChainGatewayError) ||
@@ -1183,7 +1568,7 @@ export class ChainGatewayClient {
       }
     }
     const { status, json } = await this.send('GET', path, query);
-    const { read, answer } = await this.toAnswer<T>(path, status, json);
+    const { read, answer } = await this.toAnswer<T>(path, status, json, asked);
     // Read unpinned, the answer is of the answering node's head: one behind
     // the height reads already pinned would take them back.
     if (read.height < pin) {
@@ -1194,10 +1579,20 @@ export class ChainGatewayClient {
         path
       );
     }
-    // A finalized height read is one the next reads don't go below.
-    if (read.at === 'finalized') {
-      this.raiseFloor(lower(read.network), read.height);
+    // Only a finalized answer: one of a node's head can change.
+    if (read.at !== 'finalized') {
+      const notFinal = new ChainGatewayError(
+        `${path}: answered from the node's head, not its finalized state`,
+        409,
+        'height_gone',
+        path
+      );
+      notFinal.read = read;
+      throw notFinal;
     }
+    check?.(answer);
+    // A finalized height read is one the next reads don't go below.
+    this.raiseFloor(lower(read.network), read.height);
     return answer;
   }
 
@@ -1209,7 +1604,10 @@ export class ChainGatewayClient {
   private async pinnedUntilHeld<T>(
     path: string,
     query: Query,
-    height: number
+    height: number,
+    asked?: string,
+    check?: AnswerCheck<T>,
+    anyGone = false
   ): Promise<ChainAnswer<T> | null> {
     const config = this.config();
     const sleep =
@@ -1217,14 +1615,17 @@ export class ChainGatewayClient {
       ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
     for (let attempt = 0; ; attempt++) {
       try {
-        return await this.pinnedRead<T>(path, query, height);
+        return await this.pinnedRead<T>(path, query, height, asked, check);
       } catch (error) {
+        const gone =
+          error instanceof ChainGatewayError && error.code === 'height_gone';
         const notYet =
-          error instanceof ChainGatewayError &&
-          error.code === 'height_gone' &&
-          error.read !== undefined &&
-          error.read.finalizedHeight < height;
-        if (!notYet || attempt >= config.retries) throw error;
+          gone &&
+          (error as ChainGatewayError).read !== undefined &&
+          (error as ChainGatewayError).read!.finalizedHeight < height;
+        if (!(notYet || (gone && anyGone)) || attempt >= config.retries) {
+          throw error;
+        }
         await sleep(Math.min(1_000, 250 * 2 ** attempt));
       }
     }
@@ -1246,20 +1647,31 @@ export class ChainGatewayClient {
   private async pinnedRead<T>(
     path: string,
     query: Query,
-    height: number
+    height: number,
+    asked?: string,
+    check?: AnswerCheck<T>
   ): Promise<ChainAnswer<T> | null> {
     // Kept by network too: an answer of another chain is never served.
     // The head as of now (read again past its TTL): after a relaunch the
     // old chain's answers are not looked up.
     const network = (await this.getHead()).network;
-    const url = this.url(path, { ...query, height });
-    const cached = this.answers.get(`${network} ${url}`);
+    if (asked !== undefined && lower(asked) !== network) {
+      throw wrongNetwork(path, network ?? '', asked, null);
+    }
+    // The network goes in the query too (the node reads only the keys it
+    // knows): the gateway's caches then keep each chain apart.
+    const pinned = { ...query, height, network: network ?? undefined };
+    const url = this.url(path, pinned);
+    // Answers a typed method checked are kept apart from unchecked ones (the
+    // public read()), so neither serves the other.
+    const space = check ? 'checked' : 'raw';
+    const cached = this.answers.get(`${network} ${space} ${url}`);
     if (cached !== undefined) {
       // Parsed afresh: a caller that changes an answer can't change the cache.
       return JSON.parse(cached) as ChainAnswer<T> | null;
     }
-    const { status, json } = await this.send('GET', path, { ...query, height });
-    const { read, answer } = await this.toAnswer<T>(path, status, json);
+    const { status, json } = await this.send('GET', path, pinned);
+    const { read, answer } = await this.toAnswer<T>(path, status, json, asked);
     // A node that has the height only as its head answers from there: not
     // the finalized state pinned, so the height is gone for this read.
     if (read.at !== 'finalized') {
@@ -1278,11 +1690,17 @@ export class ChainGatewayClient {
         `an answer at height ${read.height}, not ${height}`
       );
     }
+    // The caller's own checks run before an answer is kept: a refused one
+    // is asked again next time, never served from the cache.
+    check?.(answer);
     // Kept under the network it was read from, whatever the head was when
     // it was asked; not kept when it is the node's own data rather than the
     // state at that height.
     if (!nodeLocal(path, answer?.data)) {
-      this.answers.set(`${lower(read.network)} ${url}`, JSON.stringify(answer));
+      this.answers.set(
+        `${lower(read.network)} ${space} ${this.url(path, { ...pinned, network: lower(read.network) })}`,
+        JSON.stringify(answer)
+      );
     }
     return answer;
   }
@@ -1290,9 +1708,10 @@ export class ChainGatewayClient {
   private async data<T>(
     path: string,
     query: Query = {},
-    opts: ChainReadOptions = {}
+    opts: ChainReadOptions = {},
+    check?: AnswerCheck<T>
   ): Promise<T | null> {
-    return (await this.read<T>(path, query, opts))?.data ?? null;
+    return (await this.read<T>(path, query, opts, check))?.data ?? null;
   }
 
   /**
@@ -1306,45 +1725,95 @@ export class ChainGatewayClient {
     opts: ChainPageOptions,
     items: (data: unknown) => unknown = (data) => data
   ): Promise<ChainPage<T> | null> {
+    // A list that isn't one would read as empty: a rebuild could delete
+    // every row it then doesn't see.
     const answer = await this.read<unknown>(
       path,
       { ...query, after: opts.after ?? undefined, limit: opts.limit },
-      opts
+      opts,
+      (it) => {
+        if (!it) return;
+        const list = items(it.data);
+        if (!Array.isArray(list)) {
+          throw badAnswer(path, 'a list that is not a list');
+        }
+        // A walk following `next` must move on, or it loops for ever. A
+        // page can be empty and still move on: the node's walks stop after
+        // so many keys scanned, matching or not.
+        if (it.next !== null && it.next === opts.after) {
+          throw badAnswer(path, 'a page that does not move on');
+        }
+      }
     );
     if (!answer) return null;
-    const rows = items(answer.data);
-    // A list that isn't one would read as empty: a rebuild could delete
-    // every row it then doesn't see.
-    if (!Array.isArray(rows)) {
-      throw badAnswer(path, 'a list that is not a list');
-    }
-    return { items: rows as T[], next: answer.next, read: answer.read };
+    const rows = items(answer.data) as T[];
+    return { items: rows, next: answer.next, read: answer.read };
   }
 
   // Identities
 
-  getIdentityByPrincipal(principalId: string, opts?: ChainReadOptions) {
-    return this.data<ChainIdentity>(
-      `/v1/identities/${segment(lower(principalId))}`,
-      {},
-      opts
+  async getIdentityByPrincipal(principalId: string, opts?: ChainReadOptions) {
+    const asked = principalArg(principalId);
+    return this.identityAnswer(
+      `/v1/identities/${segment(asked)}`,
+      opts,
+      (it) => lower(it.principalId ?? '') === asked
     );
   }
 
-  getIdentityByHandle(handle: string, opts?: ChainReadOptions) {
-    return this.data<ChainIdentity>(
-      `/v1/identities/by-handle/${segment(handle.trim().toLowerCase())}`,
-      {},
-      opts
+  async getIdentityByHandle(handle: string, opts?: ChainReadOptions) {
+    // The node folds a handle to lower case.
+    const asked = handleArg(handle);
+    // Past any handle's length no identity holds it: not asked.
+    if (tooLongForHandle(asked)) return null;
+    return this.identityAnswer(
+      `/v1/identities/by-handle/${segment(asked)}`,
+      opts,
+      (it) => (it.handle ?? '').toLowerCase() === asked
     );
   }
 
-  getIdentityByWallet(wallet: string, opts?: ChainReadOptions) {
-    return this.data<ChainIdentity>(
-      `/v1/identities/by-wallet/${segment(lower(wallet))}`,
-      {},
-      opts
+  async getIdentityByWallet(wallet: string, opts?: ChainReadOptions) {
+    const asked = walletArg(wallet);
+    return this.identityAnswer(
+      `/v1/identities/by-wallet/${segment(asked)}`,
+      opts,
+      (it) => holdsWallet(it, asked)
     );
+  }
+
+  /**
+   * An identity answer, which must be of what was asked (its principal,
+   * handle, wallet or legacy id): another is bad_answer, not a result.
+   */
+  private identityAnswer(
+    path: string,
+    opts: ChainReadOptions | undefined,
+    isAsked: (identity: ChainIdentity) => boolean
+  ): Promise<ChainIdentity | null> {
+    return this.askedAnswer<ChainIdentity>(path, opts, isAsked);
+  }
+
+  /** An answer that must be of what was asked, else bad_answer. */
+  private async askedAnswer<T>(
+    path: string,
+    opts: ChainReadOptions | undefined,
+    isAsked: (data: T) => boolean
+  ): Promise<T | null> {
+    return await this.data<T>(path, {}, opts, (answer) => {
+      // Only a 404 says "none": a 200 must carry what was asked.
+      if (!answer) return;
+      const data: unknown = answer.data;
+      if (
+        data === null ||
+        data === undefined ||
+        typeof data !== 'object' ||
+        Array.isArray(data) ||
+        !isAsked(data as T)
+      ) {
+        throw badAnswer(path, 'an answer of something other than was asked');
+      }
+    });
   }
 
   /**
@@ -1352,20 +1821,27 @@ export class ChainGatewayClient {
    * and the ProfileDoc the import wrote), or null when the import didn't
    * create it.
    */
-  getImportedIdentity(principalId: string, opts?: ChainReadOptions) {
-    return this.data<ChainImportedIdentity>(
-      `/v1/identities/${segment(lower(principalId))}/imported`,
-      {},
-      opts
+  async getImportedIdentity(principalId: string, opts?: ChainReadOptions) {
+    const asked = principalArg(principalId);
+    return this.askedAnswer<ChainImportedIdentity>(
+      `/v1/identities/${segment(asked)}/imported`,
+      opts,
+      (it) => lower(it.principalId ?? '') === asked
     );
   }
 
   /** The identity a 6529.io profile id (UUID) was imported to. */
-  getIdentityByLegacyProfileId(profileId: string, opts?: ChainReadOptions) {
-    return this.data<ChainIdentity>(
-      `/v1/identities/by-legacy/${segment(lower(profileId))}`,
-      {},
-      opts
+  async getIdentityByLegacyProfileId(
+    profileId: string,
+    opts?: ChainReadOptions
+  ) {
+    // The node takes a UUID with or without its dashes.
+    const given = arg(profileId, 'a profile id', (v) => UUID_ARG.test(v));
+    const asked = uuidKey(given);
+    return this.identityAnswer(
+      `/v1/identities/by-legacy/${segment(lower(given))}`,
+      opts,
+      (it) => uuidKey(it.legacyId ?? '') === asked
     );
   }
 
@@ -1379,15 +1855,18 @@ export class ChainGatewayClient {
     wallets: string[],
     opts: ChainReadOptions = {}
   ): Promise<Record<string, ChainIdentity | null>> {
-    const distinct = Array.from(new Set(wallets.map(lower)));
+    // A comma would split one wallet into two at the node.
+    const distinct = Array.from(new Set(wallets.map(walletArg)));
     if (!distinct.length) return {};
     if (opts.at === 'head' || opts.height !== undefined) {
       return await this.walletsAt(distinct, opts);
     }
     try {
       return await this.walletsAt(distinct, {
-        height: this.pinOf(await this.getHead())
-      });
+        height: this.pinOf(await this.getHead()),
+        network: opts.network,
+        pinnedHere: true
+      } as PinnedHere);
     } catch (error) {
       if (
         !(error instanceof ChainGatewayError) ||
@@ -1399,8 +1878,10 @@ export class ChainGatewayClient {
     // A node that doesn't hold that height: every chunk again at a fresh
     // one, once, so that all the chunks are read at one height.
     return await this.walletsAt(distinct, {
-      height: this.pinOf(await this.getHead(true))
-    });
+      height: this.pinOf(await this.getHead(true)),
+      network: opts.network,
+      pinnedHere: true
+    } as PinnedHere);
   }
 
   private async walletsAt(
@@ -1408,20 +1889,36 @@ export class ChainGatewayClient {
     pinned: ChainReadOptions
   ): Promise<Record<string, ChainIdentity | null>> {
     const result: Record<string, ChainIdentity | null> = {};
-    for (let i = 0; i < distinct.length; i += 100) {
-      const chunk = distinct.slice(i, i + 100);
+    // The gateway refuses a query over 2,048 bytes: chunks are cut by
+    // their encoded length (with room for the height, network and cursor),
+    // and at the node's 100 wallets.
+    for (const chunk of chunksForQuery(distinct, 'wallets', 100)) {
       const path = '/v1/identities/by-wallets';
       const data = await this.data<Record<string, ChainIdentity | null>>(
         path,
         { wallets: chunk.join(',') },
-        pinned
+        pinned,
+        (answer) => {
+          const all = answer?.data;
+          for (const wallet of chunk) {
+            // A wallet left out would read as unbound; one answered with
+            // an identity that doesn't hold it, as another's.
+            if (
+              !all ||
+              typeof all !== 'object' ||
+              !Object.prototype.hasOwnProperty.call(all, wallet)
+            ) {
+              throw badAnswer(path, `no answer for ${wallet}`);
+            }
+            const identity = all[wallet] ?? null;
+            if (identity && !holdsWallet(identity, wallet)) {
+              throw badAnswer(path, `an identity that doesn't hold ${wallet}`);
+            }
+          }
+        }
       );
       for (const wallet of chunk) {
-        // A wallet left out would read as unbound.
-        if (!data || !Object.prototype.hasOwnProperty.call(data, wallet)) {
-          throw badAnswer(path, `no answer for ${wallet}`);
-        }
-        result[wallet] = data[wallet] ?? null;
+        result[wallet] = data?.[wallet] ?? null;
       }
     }
     return result;
@@ -1436,12 +1933,15 @@ export class ChainGatewayClient {
    * its latest finalized state and refuses a height or the head here, so
    * this read is neither pinned nor cached (`rankedAt` says its height). A
    * walk over pages must start again when `rankedAt` changes between them:
-   * the cursor belongs to one ranking.
+   * the cursor belongs to one ranking. A page refused with `height_gone`
+   * is worth asking again: the gateway's cache (2 s) can lag the pin by a
+   * block.
    */
   async getLevelRanking(
     opts: { readonly after?: string | null; readonly limit?: number } = {}
   ): Promise<ChainAnswer<ChainLevelRanking>> {
     const path = '/v1/identities/by-level';
+    countArg(opts.limit, 'a limit');
     const { status, json } = await this.send('GET', path, {
       after: opts.after ?? undefined,
       limit: opts.limit
@@ -1479,7 +1979,7 @@ export class ChainGatewayClient {
     principalId: string,
     opts?: ChainReadOptions
   ): Promise<ChainLevel | null> {
-    const path = `/v1/levels/${segment(lower(principalId))}`;
+    const path = `/v1/levels/${segment(principalArg(principalId))}`;
     const answer = await this.read<ChainLevel | null>(path, {}, opts);
     if (!answer) return null;
     if (answer.data === null) {
@@ -1492,12 +1992,47 @@ export class ChainGatewayClient {
     return answer.data;
   }
 
-  getHandle(handle: string, opts?: ChainReadOptions) {
-    return this.data<ChainHandle>(
-      `/v1/handles/${segment(handle.trim().toLowerCase())}`,
-      {},
-      opts
+  /**
+   * Whether a handle can be taken. A free or invalid handle comes without
+   * a principal, `since` or a reservation: those read as null.
+   */
+  async getHandle(
+    handle: string,
+    opts?: ChainReadOptions
+  ): Promise<ChainHandle | null> {
+    const given = String(handle ?? '')
+      .trim()
+      .toLowerCase();
+    // A handle that can't be a path segment can't be a handle either: it
+    // is answered here (a dot segment would reach another route; a long
+    // one, past any handle's 15 bytes, the gateway's path limit).
+    if (
+      given.length > 0 &&
+      (!isHandleSegment(given) || tooLongForHandle(given))
+    ) {
+      return {
+        handle: given,
+        valid: false,
+        available: false,
+        status: 'invalid',
+        principalId: null,
+        since: null,
+        reservedUntil: null
+      };
+    }
+    const asked = handleArg(handle);
+    const answer = await this.askedAnswer<ChainHandle>(
+      `/v1/handles/${segment(asked)}`,
+      opts,
+      (it) => (it.handle ?? '').toLowerCase() === asked
     );
+    if (!answer) return null;
+    return {
+      ...answer,
+      principalId: answer.principalId ?? null,
+      since: answer.since ?? null,
+      reservedUntil: answer.reservedUntil ?? null
+    };
   }
 
   // Membership
@@ -1506,11 +2041,12 @@ export class ChainGatewayClient {
     return this.data<Record<string, unknown>>('/v1/membership', {}, opts);
   }
 
-  getMembershipWallet(wallet: string, opts?: ChainReadOptions) {
-    return this.data<ChainMembershipWallet>(
-      `/v1/membership/wallets/${segment(lower(wallet))}`,
-      {},
-      opts
+  async getMembershipWallet(wallet: string, opts?: ChainReadOptions) {
+    const asked = walletArg(wallet);
+    return this.askedAnswer<ChainMembershipWallet>(
+      `/v1/membership/wallets/${segment(asked)}`,
+      opts,
+      (it) => lower(it.wallet ?? '') === asked
     );
   }
 
@@ -1522,21 +2058,26 @@ export class ChainGatewayClient {
     wallet: string,
     opts: ChainReadOptions & {
       /**
-       * A height before which no wallet was bound (the identity import's
-       * start). When the feed's first range starts at or before it, the
-       * node loaded no binding the history lacks, so the history is exact
-       * from that range's start.
+       * The chain's identity import start height (its first block), before
+       * which no wallet was bound. When the feed's first range starts
+       * strictly before it, the node loaded no binding the history lacks,
+       * so the history is exact from that range's start. Pass nothing else.
        */
       readonly noBindingsBefore?: number | null;
     } = {}
   ): Promise<ChainWalletHistory | null> {
-    const path = `/v1/membership/wallets/${segment(lower(wallet))}/history`;
+    const path = `/v1/membership/wallets/${segment(walletArg(wallet))}/history`;
     const answer = await this.read<{
       wallet?: string;
       changes?: unknown;
       ranges?: unknown;
-    }>(path, {}, opts);
-    if (!answer?.data) return null;
+    }>(path, {}, opts, (it) => {
+      // Only a 404 says "none": a 200 must carry the history.
+      if (it && (it.data === null || typeof it.data !== 'object')) {
+        throw badAnswer(path, 'an answer without its history');
+      }
+    });
+    if (!answer) return null;
     const readHeight = answer.read?.height;
     if (
       lower(answer.data.wallet ?? '') !== lower(wallet) ||
@@ -1555,10 +2096,15 @@ export class ChainGatewayClient {
     // reads its feed whatever the height asked), and within it the history
     // is exact only from the wallet's first change there: before it, the
     // wallet held whatever the loaded membership said. It is exact from the
-    // range's start when that is at or before a height no wallet was bound
-    // before (`noBindingsBefore`). With no change and no such height, no
-    // range is exact. For the API: an `exactFrom`, or Start writing the
-    // bindings it loads into the history, would let more be kept.
+    // range's start when that is before the import's start
+    // (`noBindingsBefore`). With no change and no such height, no
+    // range is exact. A node restarted from a checkpoint in the middle of
+    // the import can report a later import.startHeight than the chain's:
+    // take noBindingsBefore from the chain's record, not one node's word.
+    // The node reads a history's changes and its ranges one after the
+    // other, so one answer can pair them from two moments, and marks it
+    // cacheable for an hour at the gateway: keeping only the first range,
+    // to the read height, from the wallet's first change, stays exact.
     const height = readHeight as number;
     const first = heightRanges(answer.data.ranges, path)[0];
     const end = first && first[0] <= height ? Math.min(first[1], height) : -1;
@@ -1567,7 +2113,7 @@ export class ChainGatewayClient {
     );
     const before = opts.noBindingsBefore;
     const fromStart =
-      !!first && before !== undefined && before !== null && first[0] <= before;
+      !!first && before !== undefined && before !== null && first[0] < before;
     let ranges: [number, number][] = [];
     if (end >= 0 && fromStart) {
       ranges = [[first[0], end]];
@@ -1587,109 +2133,228 @@ export class ChainGatewayClient {
   }
 
   /** TDH day `day`'s membership record (and the node's saved copy). */
-  getMembershipDay(day: number, opts?: ChainReadOptions) {
-    return this.data<ChainMembershipDay>(
-      `/v1/membership/days/${segment(day)}`,
-      {},
-      opts
+  async getMembershipDay(day: number, opts?: ChainReadOptions) {
+    const asked = countArg(day, 'a day') as number;
+    // The record and the node's saved copy, each of the day asked.
+    return this.askedAnswer<ChainMembershipDay>(
+      `/v1/membership/days/${segment(asked)}`,
+      opts,
+      (it) => {
+        const of = it as unknown as {
+          record?: { day?: unknown } | null;
+          saved?: { record?: { day?: unknown } } | null;
+        };
+        const days = [of.record?.day, of.saved?.record?.day].filter(
+          (d) => d !== undefined && d !== null
+        );
+        return days.length > 0 && days.every((d) => d === asked);
+      }
     );
   }
 
   /** Every wallet's principal at day `day`'s cutoff height, by wallet. */
-  listMembershipDayWallets(day: number, opts: ChainPageOptions = {}) {
+  async listMembershipDayWallets(day: number, opts: ChainPageOptions = {}) {
+    const asked = countArg(day, 'a day') as number;
     return this.page<ChainMembershipDayWallets['wallets'][number]>(
-      `/v1/membership/days/${segment(day)}/wallets`,
+      `/v1/membership/days/${segment(asked)}/wallets`,
       {},
       opts,
-      (data) => (data as ChainMembershipDayWallets | null)?.wallets
+      (data) => {
+        const of = data as ChainMembershipDayWallets | null;
+        const ofDay = (of?.record as { day?: unknown } | undefined)?.day;
+        // A list of another day is no list of this one.
+        return ofDay === asked ? of?.wallets : undefined;
+      }
     );
   }
 
   // Delegations
 
-  getDelegations(query: ChainDelegationQuery, opts: ChainPageOptions = {}) {
+  async getDelegations(
+    query: ChainDelegationQuery,
+    opts: ChainPageOptions = {}
+  ) {
     let path: string;
+    let keeps: (row: ChainDelegation) => boolean;
     if ('holder' in query) {
-      path = `/v1/delegations/by-holder/${segment(lower(query.holder))}`;
+      const holder = holderArg(query.holder);
+      path = `/v1/delegations/by-holder/${segment(holder)}`;
+      keeps = (row) => lower(row.holder ?? '') === holder;
     } else if ('byDelegate' in query) {
-      path = `/v1/delegations/by-delegate/${segment(lower(query.byDelegate))}`;
+      const delegate = walletArg(query.byDelegate);
+      path = `/v1/delegations/by-delegate/${segment(delegate)}`;
+      keeps = (row) => lower(row.delegate ?? '') === delegate;
     } else if ('byCollection' in query) {
-      path = `/v1/delegations/by-collection/${segment(lower(query.byCollection))}`;
+      const collection = walletArg(query.byCollection);
+      path = `/v1/delegations/by-collection/${segment(collection)}`;
+      keeps = (row) => lower(row.collection ?? '') === collection;
     } else {
-      path = `/v1/delegations/by-use-case/${segment(query.byUseCase)}`;
+      const useCase = countArg(query.byUseCase, 'a use case') as number;
+      path = `/v1/delegations/by-use-case/${segment(useCase)}`;
+      keeps = (row) => row.useCase === useCase;
     }
+    // The filters, checked as the route and the rows.
+    const useCase = countArg(query.useCase, 'a use case');
+    const collection = query.collection
+      ? walletArg(query.collection)
+      : undefined;
+    const delegate = query.delegate ? walletArg(query.delegate) : undefined;
+    const asked = (row: ChainDelegation) =>
+      !!row &&
+      typeof row === 'object' &&
+      keeps(row) &&
+      (useCase === undefined || row.useCase === useCase) &&
+      (collection === undefined ||
+        lower(row.collection ?? '') === collection) &&
+      (delegate === undefined || lower(row.delegate ?? '') === delegate) &&
+      (!query.live || row.expired !== true);
     return this.page<ChainDelegation>(
       path,
-      {
-        useCase: query.useCase,
-        collection: query.collection ? lower(query.collection) : undefined,
-        delegate: query.delegate ? lower(query.delegate) : undefined,
-        live: query.live
-      },
-      opts
+      { useCase, collection, delegate, live: query.live },
+      opts,
+      (data) =>
+        Array.isArray(data) &&
+        data.every((row) => asked(row as ChainDelegation))
+          ? data
+          : undefined
     );
   }
 
   /** The wallet's own records and its identity's (when bound). */
-  getDelegationsOfWallet(wallet: string, opts?: ChainReadOptions) {
-    return this.data<ChainWalletDelegations[]>(
-      `/v1/delegations/of-wallet/${segment(lower(wallet))}`,
-      {},
-      opts
-    );
+  async getDelegationsOfWallet(wallet: string, opts?: ChainReadOptions) {
+    const path = `/v1/delegations/of-wallet/${segment(walletArg(wallet))}`;
+    return this.data<ChainWalletDelegations[]>(path, {}, opts, listOnly(path));
   }
 
   // Ratings
 
-  getRatings(
+  async getRatings(
     query:
       | { readonly target: string; readonly matter?: ChainRatingMatter }
       | { readonly rater: string; readonly matter?: ChainRatingMatter },
     opts: ChainPageOptions = {}
   ) {
-    const path =
-      'target' in query
-        ? `/v1/ratings/by-target/${segment(lower(query.target))}`
-        : `/v1/ratings/by-rater/${segment(lower(query.rater))}`;
-    return this.page<ChainRating>(path, { matter: query.matter }, opts);
+    const byTarget = 'target' in query;
+    const asked = principalArg(byTarget ? query.target : query.rater);
+    const path = byTarget
+      ? `/v1/ratings/by-target/${segment(asked)}`
+      : `/v1/ratings/by-rater/${segment(asked)}`;
+    const matter = query.matter;
+    const ofAsked = (row: ChainRating) =>
+      !!row &&
+      typeof row === 'object' &&
+      lower((byTarget ? row.target : row.rater) ?? '') === asked &&
+      (matter === undefined ||
+        String(row.matter ?? '').toLowerCase() === matter.toLowerCase());
+    return this.page<ChainRating>(path, { matter }, opts, (data) =>
+      Array.isArray(data) && data.every((row) => ofAsked(row as ChainRating))
+        ? data
+        : undefined
+    );
   }
 
-  getRatingTotals(principalId: string, opts?: ChainReadOptions) {
-    return this.data<ChainRatingTotal[]>(
-      `/v1/ratings/totals/${segment(lower(principalId))}`,
-      {},
-      opts
-    );
+  async getRatingTotals(principalId: string, opts?: ChainReadOptions) {
+    const path = `/v1/ratings/totals/${segment(principalArg(principalId))}`;
+    return this.data<ChainRatingTotal[]>(path, {}, opts, listOnly(path));
   }
 
   // TDH (the TDH loop types the answers)
 
-  getTdh<T = Record<string, unknown>>(
+  async getTdh<T = Record<string, unknown>>(
     query: ChainTdhQuery = {},
     opts: ChainPageOptions = {}
   ): Promise<ChainAnswer<T> | null> {
     let path = '/v1/tdh';
-    if (query.wallet) {
-      path = `/v1/tdh/wallets/${segment(lower(query.wallet))}`;
+    let isAsked: (data: Record<string, unknown>) => boolean = () => true;
+    // Nothing asked is left unread: a list needs its day, and a wallet's
+    // TDH is of the read's day, so no day goes with it.
+    if (
+      (query.list !== undefined && query.day === undefined) ||
+      (query.wallet !== undefined && query.day !== undefined)
+    ) {
+      throw new ChainGatewayError(
+        'A TDH list needs its day, and a wallet takes none',
+        null,
+        'bad_request',
+        '/v1/tdh'
+      );
+    }
+    if (query.wallet !== undefined) {
+      const wallet = walletArg(query.wallet);
+      path = `/v1/tdh/wallets/${segment(wallet)}`;
+      isAsked = (data) => lower(String(data.wallet ?? '')) === wallet;
     } else if (query.day !== undefined) {
+      const day = countArg(query.day, 'a day') as number;
+      if (
+        query.list !== undefined &&
+        ['wallets', 'identities', 'tokens'].indexOf(query.list) < 0
+      ) {
+        throw new ChainGatewayError(
+          `Not a TDH list: ${query.list}`,
+          null,
+          'bad_request',
+          ''
+        );
+      }
       const list = query.list ? '/' + query.list : '';
-      path = `/v1/tdh/days/${segment(query.day)}${list}`;
+      path = `/v1/tdh/days/${segment(day)}${list}`;
+      isAsked = (data) => data.day === day;
     }
     return this.read<T>(
       path,
       query.list ? { after: opts.after ?? undefined, limit: opts.limit } : {},
-      opts
+      opts,
+      (answer) => {
+        // A list page whose next is the cursor it was asked from loops.
+        if (
+          query.list &&
+          answer?.next !== null &&
+          answer?.next !== undefined &&
+          answer.next === opts.after
+        ) {
+          throw badAnswer(path, 'a page that does not move on');
+        }
+        const data = answer?.data as unknown;
+        if (data === null || data === undefined) return;
+        if (
+          typeof data !== 'object' ||
+          Array.isArray(data) ||
+          !isAsked(data as Record<string, unknown>)
+        ) {
+          throw badAnswer(path, 'an answer of something other than was asked');
+        }
+        // A list page's rows are a list, or it would read as empty.
+        if (query.list && !Array.isArray((data as { rows?: unknown }).rows)) {
+          throw badAnswer(path, 'a list that is not a list');
+        }
+      }
     );
   }
 
   // Records, proofs, the change feed
 
-  getState<T = Record<string, unknown>>(key: string, opts?: ChainReadOptions) {
-    return this.data<T>(`/v1/state/${segment(lower(key))}`, {}, opts);
+  async getState<T = Record<string, unknown>>(
+    key: string,
+    opts?: ChainReadOptions
+  ) {
+    const asked = hexArg(key, 'a state key');
+    return this.askedAnswer<T>(
+      `/v1/state/${segment(asked)}`,
+      opts,
+      (it) => lower(String((it as { key?: unknown }).key ?? '')) === asked
+    );
   }
 
-  getProof<T = Record<string, unknown>>(key: string, opts?: ChainReadOptions) {
-    return this.data<T>(`/v1/proof/${segment(lower(key))}`, {}, opts);
+  async getProof<T = Record<string, unknown>>(
+    key: string,
+    opts?: ChainReadOptions
+  ) {
+    const asked = hexArg(key, 'a state key');
+    return this.askedAnswer<T>(
+      `/v1/proof/${segment(asked)}`,
+      opts,
+      (it) => lower(String((it as { key?: unknown }).key ?? '')) === asked
+    );
   }
 
   /**
@@ -1704,10 +2369,36 @@ export class ChainGatewayClient {
    */
   async getChanges(
     from: ChainFeedCursor,
-    opts: { readonly limit?: number; readonly families?: string[] } = {}
+    opts: {
+      readonly limit?: number;
+      readonly families?: string[];
+      /** The chain a cursor belongs to: a page of another is refused. */
+      readonly network?: string;
+    } = {}
   ): Promise<ChainFeedPage> {
     const path = '/v1/feed';
     const cursor = parseFeedCursor(from);
+    countArg(opts.limit, 'a limit');
+    if (
+      new URLSearchParams({
+        families: (opts.families ?? []).join(',')
+      }).toString().length > LIST_QUERY_BYTES
+    ) {
+      throw new ChainGatewayError(
+        'Too many families for one query',
+        null,
+        'bad_request',
+        '/v1/feed'
+      );
+    }
+    for (const family of opts.families ?? []) {
+      // A family id (0x and 4 hex) or a group's name.
+      arg(
+        family,
+        'a family',
+        (v) => /^0x[0-9a-f]{4}$/i.test(v) || /^[a-z]+$/i.test(v)
+      );
+    }
     const query = {
       from: String(from),
       limit: opts.limit,
@@ -1719,7 +2410,7 @@ export class ChainGatewayClient {
         through: number;
         blocks?: unknown;
         ranges?: unknown;
-      }>(path, status, json);
+      }>(path, status, json, opts.network);
     };
     // Each node keeps its own feed from its own start: a younger one behind
     // the load balancer can say gone for a height an older one holds, so a
@@ -1767,6 +2458,11 @@ export class ChainGatewayClient {
       answer.next,
       !!opts.families?.length
     );
+    // A page read at a finalized height is a height later reads don't go
+    // below: what it says changed is then seen by the reads that follow.
+    if (answer.read.at === 'finalized') {
+      this.raiseFloor(lower(answer.read.network), answer.read.height);
+    }
     // A node behind the height asked from answers through its own head:
     // the next height stays where the reader is.
     const nextHeight = Math.max(through + 1, cursor.height);
@@ -1808,32 +2504,188 @@ export class ChainGatewayClient {
     return this.data<Record<string, unknown>>('/v1/ops', {}, { at: 'head' });
   }
 
-  /** The typed data to sign for one operation (POST /v1/draft). */
+  /**
+   * The typed data to sign for one operation (POST /v1/draft). Leave
+   * `maxWork` out: the draft then reserves step 9's bound plus 150,000 RU
+   * (the client margin), enough for the records a handler writes. One
+   * below the bound is refused (400) from 0.27.0; before that the node
+   * raised it to the bound alone, which can fall short. The draft must be of the operation
+   * asked for, and reserve at least the `maxWork` given, else bad_answer.
+   */
   async getDraft(request: ChainDraftRequest): Promise<ChainDraft> {
-    return await this.post<ChainDraft>('/v1/draft', request);
+    const path = '/v1/draft';
+    const draft = await this.post<ChainDraft>(path, request);
+    if (!draftIsOf(draft, request)) {
+      throw badAnswer(path, 'a draft of another operation than was asked');
+    }
+    const given = request.maxWork;
+    const reserved = Number((draft.fee as { maxWork?: unknown })?.maxWork);
+    if (given !== undefined && !(reserved >= given)) {
+      throw badAnswer(
+        path,
+        `a draft reserving ${reserved} work, below ${given}`
+      );
+    }
+    // What every wallet will sign must be of what was asked: a node that
+    // misread a field, or a gateway mixing nodes, could hand over a draft
+    // for another principal, signer, joining wallet or chain.
+    const wrong = draftMismatch(draft, request, (await this.getHead()).network);
+    if (wrong) {
+      throw badAnswer(path, `a draft of another ${wrong} than was asked`);
+    }
+    return draft;
   }
 
   /**
    * Relays a signed operation into the chain's mempool (POST /v1/submit).
-   * The same bytes again answer with the same txId, so a retry is safe.
-   * A refusal by the chain's rules throws code `inadmissible`.
+   * A refusal by the chain's rules throws code `inadmissible` (with the
+   * txId when the node names it).
+   *
+   * It is sent again only when the node surely didn't take it: a 503 (no
+   * state, the pool busy or not running), the gateway's 429, or a
+   * connection that never opened. After a 504 (the node waits 5 s for its
+   * pool, and the transaction can still land), any other 5xx, a timeout or
+   * a connection lost on the way, sending again would be refused as a
+   * duplicate: it throws `outcome_unknown`, and the caller asks getTx. The
+   * txId it carries is the one the node named (in a refusal's message, or
+   * the answer's txId, which an answer of another transaction than drafted
+   * reports), else the request's.
    */
-  async submit(request: ChainSubmitRequest): Promise<ChainSubmitResult> {
-    return await this.post<ChainSubmitResult>('/v1/submit', request);
+  async submit(
+    request: ChainSubmitRequest & {
+      /**
+       * The draft's txId: never sent. The answer must be of it; an unknown
+       * outcome carries it when the node named none.
+       */
+      readonly txId: string;
+    }
+  ): Promise<ChainSubmitResult> {
+    const { txId: given, ...body } = request;
+    const path = '/v1/submit';
+    const txId = lower(
+      arg(given, 'a transaction id', (v) => PRINCIPAL_ARG.test(v))
+    );
+    // Settings are read, and the URL built, before anything is sent: a
+    // request that never left the process is never "unknown".
+    const url = this.url(path, {});
+    if (!isHttpUrl(url)) {
+      throw new ChainGatewayError(
+        `${path}: the gateway URL ${url} is not an http(s) URL`,
+        null,
+        'not_configured',
+        path
+      );
+    }
+    let answered: { status: number; json: Envelope<unknown> | null };
+    try {
+      answered = await this.send(
+        'POST',
+        path,
+        {},
+        body,
+        false,
+        undefined,
+        notTaken
+      );
+    } catch (error) {
+      if (
+        !(error instanceof ChainGatewayError) ||
+        notTaken(error) ||
+        // The client's own refusals (no status: never sent); a server's
+        // answer with the same code still went out.
+        (error.status === null && NEVER_LEFT.indexOf(error.code) >= 0)
+      ) {
+        throw error;
+      }
+      throw outcomeUnknown(path, error, txIdIn(error.message) ?? txId);
+    }
+    // The node answered, not with 503 or 429: from here only its refusals
+    // say the transaction wasn't taken; anything else may have landed.
+    const { status, json } = answered;
+    const named =
+      txIdIn(
+        typeof json?.error === 'string' ? json.message : json?.error?.message
+      ) ??
+      txIdOf((json?.data as { txId?: unknown } | undefined)?.txId) ??
+      txId;
+    try {
+      const result = this.submitAnswer(path, status, json);
+      // Taken, but as another transaction than the one drafted: say so.
+      if (lower(result.txId) !== txId) {
+        throw badAnswer(path, `the node took ${result.txId}, not ${txId}`);
+      }
+      return result;
+    } catch (error) {
+      if (!(error instanceof ChainGatewayError)) throw error;
+      if (REFUSALS.indexOf(error.code) >= 0) {
+        error.txId = named;
+        throw error;
+      }
+      throw outcomeUnknown(path, error, named);
+    }
   }
 
-  getTx(txId: string): Promise<ChainTx | null> {
-    return this.data<ChainTx>(
-      `/v1/tx/${segment(lower(txId))}`,
-      {},
-      {
-        at: 'head'
+  /**
+   * A submit's answer, checked without asking anything more: the stamp,
+   * its network against the head already known (no new status read), the
+   * txId.
+   */
+  private submitAnswer(
+    path: string,
+    status: number,
+    json: Envelope<unknown> | null
+  ): ChainSubmitResult {
+    const stamp = json?.read;
+    if (stamp !== undefined && stamp !== null) {
+      if (!isReadStamp(stamp)) {
+        throw badAnswer(path, `a read stamp that can't be read`, status);
       }
+      const known = this.head?.value.network ?? null;
+      if (known !== null && lower(stamp.network) !== known) {
+        throw wrongNetwork(path, stamp.network, known, status);
+      }
+    }
+    if (status !== 200 || !json || json.error) {
+      throw this.errorOf(path, status, json);
+    }
+    const data = json.data as ChainSubmitResult | undefined;
+    if (!stamp || !data || !txIdOf(data.txId)) {
+      throw badAnswer(path, 'an answer without its read stamp or txId');
+    }
+    return data;
+  }
+
+  /**
+   * A transaction's place: in a block (final or not, with its result) or
+   * held in the pool. One neither the node's chain nor its pool holds (not
+   * yet seen, or dropped) throws `not_held`: another node may hold it, or
+   * it may never land.
+   */
+  async getTx(txId: string): Promise<ChainTx | null> {
+    const asked = lower(
+      arg(txId, 'a transaction id', (v) => PRINCIPAL_ARG.test(v))
+    );
+    return this.askedAnswer<ChainTx>(
+      `/v1/tx/${segment(asked)}`,
+      { at: 'head' },
+      (it) => lower(String((it as { txId?: unknown }).txId ?? '')) === asked
     );
   }
 
-  private async post<T>(path: string, body: unknown): Promise<T> {
-    const { status, json } = await this.send('POST', path, {}, body);
+  private async post<T>(
+    path: string,
+    body: unknown,
+    retryable?: (error: RetryableError) => boolean
+  ): Promise<T> {
+    const { status, json } = await this.send(
+      'POST',
+      path,
+      {},
+      body,
+      false,
+      undefined,
+      retryable
+    );
     const stamp = json?.read;
     const stamped = stamp !== undefined && stamp !== null;
     if (stamped) {
@@ -1891,14 +2743,15 @@ export class ChainGatewayClient {
       true
     );
     if (status === 404) {
-      // The store's own "none": its not_found, or the bucket's NoSuchKey.
-      // Anything else (a misrouted request) says nothing of the document.
+      // The store's own "none" (the gateway's docs route, or the bucket's
+      // NoSuchKey). Any other 404, such as the gateway's own route miss,
+      // says nothing of the document.
       const error = json?.error;
       const code = typeof error === 'string' ? error : error?.code;
       const message =
         (typeof error === 'string' ? json?.message : error?.message) ?? '';
       const none =
-        code === 'not_found' ||
+        (code === 'not_found' && STORE_NONE.indexOf(message) >= 0) ||
         (code === 'http_404' && /<Code>NoSuchKey<\/Code>/.test(message));
       if (!none) {
         throw badAnswer(path, `a 404 that isn't the store's`, 404);
@@ -1923,35 +2776,20 @@ export class ChainGatewayClient {
   }
 
   /**
-   * Stores bytes in the document store and returns their CID as base32
-   * text. The document store's upload route: POST /v1/docs
-   * with the bytes as application/octet-stream, at most 2 MiB, and an
-   * optional `?cid=` it checks; it answers 201, or 200 when stored already,
-   * with `{ cid, cid_hex, codec, size, url }`. The CID it names must be these
-   * bytes' own. Storing the same bytes again is harmless.
+   * Uploads are not served over service access: the gateway's proxy, which
+   * the backend reaches, doesn't serve POST /v1/docs (its own function
+   * does, on the public name, with the gateway's public limits). So this
+   * fails at once with `not_available`, sending nothing; an upload goes
+   * through the public name (POST /v1/docs with the bytes, at most 2 MiB,
+   * `?cid=` checked, answering `{ cid, cid_hex, codec, size, url }`).
    */
   async putDocument(bytes: Buffer): Promise<string> {
-    const expected = rawCidHexOf(bytes);
-    const path = '/v1/docs';
-    const { status, json } = await this.send(
-      'POST',
-      path,
-      { cid: cidPath(expected) },
-      bytes
+    throw new ChainGatewayError(
+      `/v1/docs: uploads go through the gateway's public name, not service access (${bytes.length} bytes not sent)`,
+      null,
+      'not_available',
+      '/v1/docs'
     );
-    const stored = json as unknown as ChainStoredDoc | null;
-    if ((status !== 200 && status !== 201) || !stored?.cid) {
-      throw this.errorOf(path, status, json);
-    }
-    if (storedCidHex(stored.cid, path) !== expected) {
-      throw new ChainGatewayError(
-        `${path}: the store named the document ${stored.cid}, not ${cidPath(expected)}`,
-        status,
-        'cid_mismatch',
-        path
-      );
-    }
-    return cidPath(expected);
   }
 }
 

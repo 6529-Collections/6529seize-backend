@@ -291,9 +291,9 @@ describe('consolidateSubscriptions', () => {
       }
     );
 
-    await expect(
-      consolidateSubscriptions(new Set(['0xd']))
-    ).resolves.toBeUndefined();
+    await expect(consolidateSubscriptions(new Set(['0xd']))).resolves.toBe(
+      true
+    );
 
     const statements = managerQueries.map((q) => q.sql.trim());
     expect(statements).toContain(

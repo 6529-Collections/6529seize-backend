@@ -35,6 +35,12 @@ export interface ChainReadOptions {
   readonly height?: number;
   /** `head` reads the unfinalized head (never cached, never pinned). */
   readonly at?: 'finalized' | 'head';
+  /**
+   * The chain the read must be of (a walk pinned to one chain): an answer
+   * of another throws `wrong_network`, so a relaunch is never crossed
+   * silently.
+   */
+  readonly network?: string;
 }
 
 /**
@@ -47,6 +53,11 @@ export interface ChainPageOptions extends ChainReadOptions {
   readonly limit?: number;
 }
 
+/**
+ * A page of a list. A page can be empty and still have a `next` (the
+ * node's walks stop after so many keys scanned): follow `next` until it
+ * is null, never stop at an empty page.
+ */
 export interface ChainPage<T> {
   readonly items: T[];
   readonly next: string | null;
@@ -158,10 +169,13 @@ export interface ChainHandle {
   readonly handle: string;
   readonly valid: boolean;
   readonly available: boolean;
-  readonly status: 'free' | 'claimed' | 'reserved' | 'invalid';
+  readonly status: 'free' | 'claimed' | 'reserved' | 'invalid' | 'other';
+  /** For an invalid handle: the rule it breaks. */
+  readonly rule?: string;
   readonly principalId: string | null;
   readonly since: number | null;
-  readonly reservedUntil: number | null;
+  /** When a reservation ends (a decimal string), for a reserved handle. */
+  readonly reservedUntil: string | null;
 }
 
 export interface ChainMembershipWallet {
@@ -176,7 +190,8 @@ export interface ChainMembershipWallet {
   readonly index?: number;
   readonly boundCycle?: number;
   readonly wallets?: string[];
-  readonly leftAt?: number | null;
+  /** For a wallet bound to none: when it left, and the identity it left. */
+  readonly leftAt?: { readonly leftMs: number; readonly from: string } | null;
 }
 
 /** Every binding change of a wallet the gateway's feed holds, ascending. */
@@ -373,8 +388,10 @@ export interface ChainFeedPage {
   readonly next: ChainFeedCursor;
   /**
    * The next height to read whole (`through + 1`, never below the height
-   * asked from): what a caller keeps between runs. Reading from it again
-   * repeats at most the block a page ended inside.
+   * asked from): what a caller keeps between runs, rather than `next`.
+   * Reading from it again repeats at most the block a page ended inside.
+   * A `height:index` cursor holds only for the families filter it was
+   * read with: never pass it with another.
    */
   readonly nextHeight: number;
   /**
@@ -401,6 +418,11 @@ export interface ChainDraftRequest {
   readonly notBefore?: number;
   readonly expiresAt?: number;
   readonly maxFee?: string;
+  /**
+   * Best left out: the draft then reserves step 9's bound plus 150,000 RU.
+   * From 0.27.0 a value below the bound is refused (400); before, it was
+   * raised to the bound alone.
+   */
   readonly maxWork?: number;
   readonly tipPerRu?: string;
 }

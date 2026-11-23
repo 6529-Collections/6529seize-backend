@@ -38,6 +38,10 @@ import { wavesApiDb } from '@/api/waves/waves.api.db';
 import { ApiProfileClassification } from '@/api/generated/models/ApiProfileClassification';
 import { getLevelFromScore } from '@/profiles/profile-level';
 import { equalIgnoreCase } from '@/strings';
+import {
+  assertIdentityNotFrozen,
+  IDENTITY_FROZEN_NOMINATION_MESSAGE
+} from '@/identity-freeze/identity-freeze';
 import { enums } from '@/enums';
 import { IdentityEntity } from '@/entities/IIdentity';
 import { Time } from '@/time';
@@ -45,7 +49,7 @@ import { Profile, ProfileClassification } from '@/entities/IProfile';
 import { ids } from '@/ids';
 import { profilesDb } from '@/profiles/profiles.db';
 import { profileWavesDb } from '@/profiles/profile-waves.db';
-import { NULL_ADDRESS } from '@/constants';
+import { getUserMediaOrigin, NULL_ADDRESS } from '@/constants';
 import { findEnsForAddress } from '@/ens-lookup';
 import { helpBotCreditsService } from '@/help-bot/help-bot-credits.service';
 import { Logger } from '@/logging';
@@ -225,6 +229,7 @@ export class IdentitiesService {
     identity: string;
     memeOrFile: { file?: Express.Multer.File; meme?: number };
   }): Promise<{ pfp_url: string }> {
+    assertIdentityNotFrozen();
     const { meme, file } = memeOrFile;
     if (!meme && !file) {
       throw new BadRequestException('No PFP provided');
@@ -325,7 +330,7 @@ export class IdentitiesService {
       })
     );
     if (uploadedScaledImage.$metadata.httpStatusCode == 200) {
-      return `https://d3lqz0a4bldqgf.cloudfront.net/${key}?d=${Date.now()}`;
+      return `${getUserMediaOrigin()}/${key}?d=${Date.now()}`;
     }
     throw new Error('Failed to upload image');
   }
@@ -545,6 +550,14 @@ export class IdentitiesService {
       const addressesMissingIdentities = addresses.filter(
         (it) => !allIdentitiesAndProfiles[it]
       );
+      // Wallets that already have a profile pass during the freeze; making a
+      // new identity or profile (a nominated wallet, bulk REP) does not.
+      if (
+        addressesMissingIdentities.length ||
+        Object.values(allIdentitiesAndProfiles).some((it) => !it.profile)
+      ) {
+        assertIdentityNotFrozen(IDENTITY_FROZEN_NOMINATION_MESSAGE);
+      }
       const newIdentities = addressesMissingIdentities.map<IdentityEntity>(
         (address) => ({
           primary_address: address,
