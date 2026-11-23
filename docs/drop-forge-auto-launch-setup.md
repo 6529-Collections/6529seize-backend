@@ -113,7 +113,9 @@ Manager and the upstream APIs from the configured subnets.
 Scope the launch role's `kms:GetPublicKey` and `kms:Sign` to the Ethereum
 transaction key. Grant both handler roles `kms:Sign` on the separate Ed25519
 report key. Match those grants in the two key policies and review existing broad
-IAM grants when checking effective access.
+IAM grants when checking effective access. In production, install the
+[signing guards](../ops/iam/backend-production/README.md#drop-forge-deployment-policies)
+on both runtime roles to require signing calls to come from their assigned Lambda.
 
 Role names are maintained in the stage configuration:
 
@@ -145,13 +147,15 @@ Required runtime permissions, scoped to this account and region:
 - Deployment role: existing scoped CloudFormation/SQS/alarms/event-source-mapping
   permissions, Scheduler group and readiness schedule management, and
   `iam:PassRole` for the two exact Lambda execution roles and the regional
-  Scheduler delivery role, each restricted to its service.
+  Scheduler delivery role, each restricted to its service. The proposed
+  production permissions also pair each Lambda role with its assigned function.
 
 The API and handlers do not require `lambda:InvokeFunction` for this feature.
 Review/apply the proposed `DropForgeHandlersDeployment.json` and
 `DropForgeDispatchDeployment.json` supplements under
-`ops/iam/backend-{staging,production}/`; their READMEs state the scope and remaining
-administrative step. They have not been applied or AWS-validated in this change.
+`ops/iam/backend-{staging,production}/`. Their READMEs state the scope and
+administrative steps. Verify the effective deployment role in the active AWS
+account before applying the supplements.
 No permissions to edit arbitrary IAM policies are added to deployment. Ensure VPC
 endpoints or outbound networking allow SQS and Scheduler as well as RPC/KMS/EMMA.
 
