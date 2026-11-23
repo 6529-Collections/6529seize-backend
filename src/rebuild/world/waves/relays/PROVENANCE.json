@@ -1,4 +1,5 @@
 {
   "made_by": "6529-relay run without --api (rights off) on network 6529-rebuild-check; buildRelayWorld()'s five events published into a fresh relay and captured with rebuild:relay-capture",
-  "recorded_at": "2026-11-23T01:52:31.753Z"
+  "devnet_scenario": "relay-world-v2",
+  "recorded_at": "2026-11-23T07:54:00.259Z"
 }

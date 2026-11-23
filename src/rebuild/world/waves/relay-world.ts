@@ -6,6 +6,16 @@ import {
 } from '@/tests/fixtures/relay-events.fixture';
 import { dropIdOfEvent } from '@/wave-drop-index/drop-index.subscriber';
 
+/**
+ * When the world's events claim to be signed. 6529.io's write path refuses
+ * a relay event claimed more than 30 days before it was first seen, and a
+ * rebuild takes first-seen from the relays' receipts: a recording made
+ * within 30 days after this time applies at any later date. Inside the
+ * shared test grant's life (18 Oct 2026 to 16 Apr 2027) and before the
+ * run's switch-on, so the events are history.
+ */
+export const RELAY_WORLD_CLAIMED_TIME = Date.parse('2026-11-22T12:00:00Z');
+
 /** A signed event as a client publishes it, with its grant proof. */
 export interface RelayWorldEvent {
   readonly event: Record<string, unknown>;
@@ -23,11 +33,13 @@ export interface RelayWorldEvent {
 export function buildRelayWorld(): RelayWorldEvent[] {
   const wave = WAVES_WORLD_IDS.publicWave;
   const first = testSignedEvent({
+    claimedTime: RELAY_WORLD_CLAIMED_TIME,
     wave,
     seq: 1,
     body: { parts: [{ content: 'First post from the relays' }] }
   });
   const second = testSignedEvent({
+    claimedTime: RELAY_WORLD_CLAIMED_TIME,
     wave,
     seq: 2,
     body: { parts: [{ content: 'A second post' }] }
@@ -35,6 +47,7 @@ export function buildRelayWorld(): RelayWorldEvent[] {
   const firstDrop = dropIdOfEvent(String(first.id));
   const secondDrop = dropIdOfEvent(String(second.id));
   const edit = testSignedEvent({
+    claimedTime: RELAY_WORLD_CLAIMED_TIME,
     kind: DeviceEventKind.EDIT,
     wave,
     seq: 3,
@@ -42,6 +55,7 @@ export function buildRelayWorld(): RelayWorldEvent[] {
     body: { parts: [{ content: 'First post from the relays, edited' }] }
   });
   const react = testSignedEvent({
+    claimedTime: RELAY_WORLD_CLAIMED_TIME,
     kind: DeviceEventKind.REACT,
     wave,
     seq: 4,
@@ -49,6 +63,7 @@ export function buildRelayWorld(): RelayWorldEvent[] {
     body: { reaction: ':+1:' }
   });
   const members = testSignedEvent({
+    claimedTime: RELAY_WORLD_CLAIMED_TIME,
     wave: WAVES_WORLD_IDS.membersWave,
     seq: 5,
     body: { parts: [{ content: 'A post in the members-only wave' }] }

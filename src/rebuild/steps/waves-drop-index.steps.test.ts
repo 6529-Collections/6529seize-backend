@@ -12,6 +12,7 @@ import {
 import { IngestRow } from '@/wave-drop-index/drop-index.db';
 import { startCrpRelayReplay } from '@/rebuild/sources/crp-relay';
 import { inProcessVerifier } from '@/rebuild/sources/relay-checks';
+import { RELAY_EVENT_MAX_AGE_MS } from '@/api/device-signing/device-signed-writes.service';
 import { checkWavesRelayEvent } from './waves-relay-check';
 import { checkRelayEvent } from '@/wave-drop-index/relay-event-check';
 import {
@@ -165,6 +166,31 @@ describe('the waves drop index rebuild step', () => {
     afterEach(async () => {
       await relay.stop();
       fs.rmSync(root, { recursive: true, force: true });
+    });
+
+    it("holds the world's events, each claimed within 6529.io's 30 days before its first receipt", () => {
+      const world = new Set(
+        buildRelayWorld().map((w) => String(w.event.id).toLowerCase())
+      );
+      const items = fs
+        .readFileSync(path.join(RECORDING, 'events.jsonl'), 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      expect(
+        new Set(items.map((i) => String(i.event.id).toLowerCase()))
+      ).toEqual(world);
+      for (const item of items) {
+        const firstSeen = Math.min(
+          ...item.extra.receipts.map(
+            (r: { received_at: number }) => r.received_at
+          )
+        );
+        expect(item.event.claimed_time).toBeGreaterThanOrEqual(
+          firstSeen - RELAY_EVENT_MAX_AGE_MS
+        );
+        expect(item.event.claimed_time).toBeLessThanOrEqual(firstSeen);
+      }
     });
 
     it('stores each event as first seen when the relay received it, not now', async () => {
