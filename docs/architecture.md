@@ -1035,7 +1035,7 @@ the same time: the follower runs after the identity steps, and one Lambda runs
 at a time. A failure that passes on its own (of the gateway: a height not
 held, a timeout, the network, 429 or 5xx; of the database, by its MySQL
 code: a deadlock, a lock wait, too many connections, read-only during a
-failover, a query or the pool timing out, a connection timed out, refused,
+failover, a new connection's handshake or connect timing out, refused,
 reset, broken or lost, a host not found, or any error the driver marks fatal)
 ends the follower's run before the page is written; one that keeps
 coming back for a principal holds the page, and the stuck alarm calls a

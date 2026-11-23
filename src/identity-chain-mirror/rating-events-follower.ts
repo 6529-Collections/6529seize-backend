@@ -158,9 +158,9 @@ const PASSING_CODES: ReadonlySet<string> = new Set([
 
 /**
  * MySQL (and its driver's) codes of failures that pass on their own. With
- * this pool, PROTOCOL_SEQUENCE_TIMEOUT is a query past its 30-second
- * timeout, and a connection the pool can't acquire in time comes back as
- * ETIMEDOUT.
+ * this driver, PROTOCOL_SEQUENCE_TIMEOUT is a new connection's handshake
+ * running past the pool's acquireTimeout, and ETIMEDOUT is the TCP connect
+ * running past connectTimeout. Queries run without a timeout of their own.
  */
 const PASSING_DB_CODES: ReadonlySet<string> = new Set([
   'ER_LOCK_DEADLOCK',
@@ -183,9 +183,9 @@ const PASSING_DB_CODES: ReadonlySet<string> = new Set([
  * Of the gateway: height_gone, timeout, network, starting, wrong_network,
  * 429 or 5xx. Of the database: ER_LOCK_DEADLOCK and ER_LOCK_WAIT_TIMEOUT,
  * ER_CON_COUNT_ERROR (too many connections), ER_OPTION_PREVENTS_STATEMENT
- * (read-only during a failover), PROTOCOL_SEQUENCE_TIMEOUT (a query past
- * its timeout), PROTOCOL_CONNECTION_LOST and
- * PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR, ETIMEDOUT (also the pool's acquire
+ * (read-only during a failover), PROTOCOL_SEQUENCE_TIMEOUT (a new
+ * connection's handshake past the acquire timeout), PROTOCOL_CONNECTION_LOST
+ * and PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR, ETIMEDOUT (a connect past its
  * timeout), ECONNREFUSED, ECONNRESET, EPIPE, ENOTFOUND and EAI_AGAIN, and
  * any error the driver marks fatal (its connection is gone). Anything else
  * may fail the same way every run.
