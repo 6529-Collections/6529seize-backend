@@ -24,7 +24,7 @@ describe('transaction failure log', () => {
     logTransactionFailure(new XTdhIdentitySnapshotChangedError(), logger);
     expect(logger.error).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledWith(
-      'Database transaction rolled back for a retried conflict [XTdhIdentitySnapshotChangedError: Identity consolidation changed during xTDH calculation; retry the universe]'
+      'Database transaction hit a retried conflict; rolling back [XTdhIdentitySnapshotChangedError: Identity consolidation changed during xTDH calculation; retry the universe]'
     );
   });
 

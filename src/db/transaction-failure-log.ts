@@ -27,7 +27,7 @@ export function logTransactionFailure(
 ): void {
   if (isRetriedConflict(error)) {
     logger.warn(
-      `Database transaction rolled back for a retried conflict [${error}]`
+      `Database transaction hit a retried conflict; rolling back [${error}]`
     );
   } else {
     logger.error(`Database transaction failed [${error}]`);
