@@ -20,7 +20,8 @@ import { whileRebuildingEthereumIndexes } from './rebuild-mode';
  * holdings tables, in this order. Each fills its tables from empty with the
  * live loops' own code, in rebuild mode, up to the run's Ethereum mark.
  *
- * NextGen's transactions, tokens and history are not here yet.
+ * NextGen's step is rebuildNextGen (src/nextgen/nextgen-rebuild.ts); the
+ * holdings seed's rebuildHoldings runs them all in order.
  */
 export interface EthereumRebuildContext {
   readonly mark: { readonly ethBlock: number | null };
