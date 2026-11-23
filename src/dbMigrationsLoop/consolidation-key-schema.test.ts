@@ -37,7 +37,9 @@ const INDEX_CAPPED: Record<string, number> = {
 };
 
 // Tables created after the widening, at the full key width from the start:
-// the migration has nothing to widen in them.
+// the migration has nothing to widen in them. Adding a table here needs the
+// same review as a change to the widening migration: confirm it is created
+// at full width and pinned by the test below.
 const BORN_WIDE = new Set<string>([SUBSCRIPTIONS_ID_KEY_MAP_TABLE]);
 
 interface KeyColumn {
