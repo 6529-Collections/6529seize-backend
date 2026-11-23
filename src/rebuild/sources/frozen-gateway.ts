@@ -1,6 +1,7 @@
 import { ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import {
@@ -38,7 +39,7 @@ import { extractTar } from '@/rebuild/sources/tar-reader';
 
 export const FROZEN_OPTION = 'validator run --api-frozen-snapshot';
 
-/** A snapshot's phase: a plain name, since it names a folder. */
+/** A snapshot's phase: a plain name, as reports and messages quote it. */
 const PHASE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 /** Path parts a masked field may not name. */
 const UNSAFE_PARTS = new Set(['__proto__', 'constructor', 'prototype']);
@@ -269,6 +270,25 @@ function lineProblems(
     if (!line.path.startsWith('/')) {
       problems.push(
         `${at} (${line.method} ${line.path}): its path doesn't start with /`
+      );
+      return;
+    }
+    // The key sorts the query's parameters: a second ? or a repeated name
+    // would let two requests share a key.
+    const [, query, ...more] = line.path.split('?');
+    const names = (query ?? '')
+      .split('&')
+      .filter(Boolean)
+      .map((param) => param.split('=')[0]);
+    if (more.length) {
+      problems.push(
+        `${at} (${line.method} ${line.path}): its path has more than one ?`
+      );
+      return;
+    }
+    if (new Set(names).size !== names.length) {
+      problems.push(
+        `${at} (${line.method} ${line.path}): its query repeats a name`
       );
       return;
     }
@@ -844,6 +864,32 @@ export function reviewedProblem(
     : `--frozen-reviewed names ${reviewed}, not this recording's build ${named}`;
 }
 
+/**
+ * The text with each named folder, written with either slash and in any
+ * case, replaced by its label, then the machine's temp and home folders,
+ * so a report quotes no local path.
+ */
+export function redactPaths(
+  text: string,
+  folders: Readonly<Record<string, string>>
+): string {
+  const named: [string, string][] = [
+    ...Object.entries(folders),
+    ['<temp>', os.tmpdir()],
+    ['~', os.homedir()]
+  ];
+  let out = text;
+  for (const [label, folder] of named) {
+    const parts = path.resolve(folder).split(/[\\/]/);
+    // Either slash between the folder's parts, any case.
+    const pattern = parts
+      .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('[\\\\/]');
+    out = out.replace(new RegExp(pattern, 'gi'), label);
+  }
+  return out;
+}
+
 /** A folder `name` inside `workDir`, or null when it would be outside. */
 function workFolder(workDir: string, name: string): string | null {
   const root = path.resolve(workDir);
@@ -903,6 +949,9 @@ export async function verifyFrozenRecording(options: {
         ]
       : []),
     notReplayableWhy(options.header, options.lines),
+    options.header.devnetSha256
+      ? null
+      : "the header doesn't name devnetSha256, so its devnet.toml isn't tied to the capture",
     reviewedProblem(options.reviewed, options.header, binarySha256)
   ].filter((reason): reason is string => !!reason);
   return {
@@ -954,10 +1003,21 @@ async function reServe(
       entry.fields ?? []
     ])
   );
-  for (const snapshot of options.header.frozen ?? []) {
-    // The phase was checked to be a plain name; the folder must still be
-    // inside the work folder before anything there is removed.
-    const base = workFolder(options.workDir, snapshot.phase);
+  // Errors from unpacking and from the node name the run's folders: the
+  // report gets them without the machine's paths.
+  const redact = (message: string) =>
+    redactPaths(message, {
+      '<work folder>': options.workDir,
+      '<recording>': options.dir
+    });
+  const snapshots = options.header.frozen ?? [];
+  for (let index = 0; index < snapshots.length; index++) {
+    const snapshot = snapshots[index];
+    // Folders by position, not by phase name: no name a file system reads
+    // specially, and no two phases that differ only in case share one.
+    // Each must still be inside the work folder before anything there is
+    // removed.
+    const base = workFolder(options.workDir, `snapshot-${index + 1}`);
     if (!base) {
       return {
         problems: [
@@ -974,7 +1034,7 @@ async function reServe(
       unpackSnapshot(options.dir, snapshot, folder);
     } catch (error) {
       return {
-        problems: [(error as Error).message],
+        problems: [redact((error as Error).message)],
         provisionalWhy: 'a kept copy fails its checks'
       };
     }
@@ -990,7 +1050,9 @@ async function reServe(
       });
     } catch (error) {
       return {
-        problems: [`snapshot ${snapshot.phase}: ${(error as Error).message}`],
+        problems: [
+          `snapshot ${snapshot.phase}: ${redact((error as Error).message)}`
+        ],
         provisionalWhy: 'a kept copy could not be re-served'
       };
     }

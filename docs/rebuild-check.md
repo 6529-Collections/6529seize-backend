@@ -314,15 +314,16 @@ Each `--source <name>=<spec>`:
   header's `validatorCommit` and the SHA-256 of the binary that replayed
   it. A recording can't be recorded into. The run checks:
   1. each snapshot's fields (its phase a plain name: letters, digits, `-`
-     and `_`, as it names a folder), that `answers` counts every line and
-     `answersServedFrozen` every line but those listed under
+     and `_`, as reports and messages quote it), that `answers` counts
+     every line and `answersServedFrozen` every line but those listed under
      `notReplayable` (below), and that the header names the build:
      `validatorCommit` in full, `validatorSha256Linux` (the binary that
      served the capture) and `validatorSha256Windows` (the same commit
      built for Windows; `validatorWindowsCommit`, when the Windows binary
      was built from another commit, in full, and the report notes both);
-     and each line: its path starts with `/`, its key is its own method,
-     path and body (the run serves answers by key and the replay asks by
+     and each line: its path starts with `/` and has at most one `?` and
+     no query name twice (the key sorts the query), its key is its own
+     method, path and body (the run serves answers by key and the replay asks by
      path, so a key naming another request would let one answer stand for
      another), the body in the key is JSON or the empty body's hash, and
      no key appears twice;
@@ -335,15 +336,17 @@ Each `--source <name>=<spec>`:
      different build may not) and its `--api-frozen-snapshot` option,
      then for each snapshot the kept copy
      (`<dir>/snapshots/<hash>.tar.gz`) against both hashes, unpacked into
-     a folder of the run's own beside `<dir>/devnet.toml` (which must be
-     there, and match `devnetSha256` when the header names it), served by
+     a folder of the run's own, named by the snapshot's position, beside
+     `<dir>/devnet.toml` (which must be there, and match `devnetSha256`
+     when the header names it; a header without it can't be final), served by
      the validator with the frozen option on 127.0.0.1 and no peers, one
      such node on the machine at a time (the lock names the run's process
      and the node's, and holds while either lives; the node is stopped
      with the run, SIGTERM and then SIGKILL), its `/v1/status` against the
      header, and every answer the snapshot served replayed to the same
      status, content type and bytes. The report's source line gives the
-     replay binary's SHA-256.
+     replay binary's SHA-256, and its errors give the run's folders, the
+     recording, temp and home by label, not by path.
 
   Two header lists keep a recording that passes provisional, so a final
   run fails on it, and no answer may be on both. `retagged` names answers

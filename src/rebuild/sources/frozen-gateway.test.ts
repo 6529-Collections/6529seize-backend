@@ -17,6 +17,7 @@ import {
   frozenHeaderProblems,
   FrozenSnapshot,
   frozenNotes,
+  redactPaths,
   FrozenValidator,
   startFrozenNode,
   unpackSnapshot,
@@ -314,6 +315,7 @@ describe('frozen gateway recordings', () => {
       validatorCommit: 'c'.repeat(40),
       validatorSha256Windows: sha256(fs.readFileSync(script)),
       validatorSha256Linux: sha256(fs.readFileSync(script)),
+      devnetSha256: sha256(fs.readFileSync(path.join(dir, 'devnet.toml'))),
       answers: 2,
       answersServedFrozen: 2,
       frozen: [
@@ -424,6 +426,23 @@ describe('frozen gateway recordings', () => {
         { ...line('/v1/status'), key: 'GET v1/x x', path: 'v1/x' }
       ])
     ).toEqual(["recorded line 2 (GET v1/x): its path doesn't start with /"]);
+    // The key sorts the query: a second ? or a repeated name would let two
+    // requests share one key.
+    for (const [p, why] of [
+      ['/v1/balance?who=1?x=2', 'its path has more than one ?'],
+      ['/v1/balance?who=1&who=2', 'its query repeats a name']
+    ]) {
+      expect(
+        frozenHeaderProblems(header, [
+          line('/v1/status'),
+          {
+            ...line('/v1/status'),
+            key: exchangeKey('GET', p, Buffer.alloc(0)),
+            path: p
+          }
+        ])
+      ).toEqual([`recorded line 2 (GET ${p}): ${why}`]);
+    }
   });
 
   it('refuses a phase that is no plain name, and removes nothing outside the work folder', async () => {
@@ -575,7 +594,13 @@ describe('frozen gateway recordings', () => {
     ]);
     // The frozen node is stopped, its lock given back and its temp gone.
     expect(fs.existsSync(lockDir)).toBe(false);
-    expect(fs.existsSync(path.join(root, 'work', 'mark', 'tmp'))).toBe(false);
+    // The copy's folder is named by position, and its temp is gone.
+    expect(fs.existsSync(path.join(root, 'work', 'snapshot-1', 'data'))).toBe(
+      true
+    );
+    expect(fs.existsSync(path.join(root, 'work', 'snapshot-1', 'tmp'))).toBe(
+      false
+    );
     // An answer tagged after the capture keeps it from being final, and
     // is left out of the replay: here an edited one, which would fail it.
     header = { ...header, retagged: [{ key: edited[1].key }] };
@@ -712,10 +737,33 @@ describe('frozen gateway recordings', () => {
         })
       ).problems
     ).toEqual([]);
+    // Without devnetSha256 the copies replay, but nothing ties devnet.toml
+    // to the capture, so the recording can't be final.
+    expect(
+      (
+        await verify({
+          devnetSha256: undefined
+        })
+      ).provisionalWhy
+    ).toContain(
+      "the header doesn't name devnetSha256, so its devnet.toml isn't tied to the capture"
+    );
     fs.rmSync(path.join(dir, 'devnet.toml'));
     expect((await verify()).problems).toEqual([
       "the recording has no devnet.toml, which its copies' configs name"
     ]);
+  });
+
+  it('quotes no local path: named folders, temp and home become labels', () => {
+    const work = path.join(root, 'work');
+    expect(
+      redactPaths(
+        `failed in ${work}${path.sep}snapshot-1, ${work.split(path.sep).join('/').toUpperCase()}/x, ${path.join(os.homedir(), 'y')}`,
+        { '<work folder>': work }
+      )
+    ).toBe(
+      `failed in <work folder>${path.sep}snapshot-1, <work folder>/x, ~${path.sep}y`
+    );
   });
 
   it('refuses recording into a frozen recording, and needs a work folder', async () => {

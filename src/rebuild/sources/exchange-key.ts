@@ -31,7 +31,9 @@ function sortedQuery(rawPath: string): string {
   const params = query
     .split('&')
     .filter(Boolean)
-    .sort((a, b) => a.localeCompare(b));
+    // Code-unit order, the same on every machine; it gives every recorded
+    // key the order localeCompare gave it.
+    .sort((a, b) => (a < b ? -1 : Number(a > b)));
   return `${pathname}?${params.join('&')}`;
 }
 
