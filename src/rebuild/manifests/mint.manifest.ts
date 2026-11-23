@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import {
   PROBE_COLLAB_DROP,
-  PROBE_MAIN_STAGE_WAVE
+  PROBE_MAIN_STAGE_WAVE,
+  PROBE_PHASE_WALLETS
 } from '@/mint-log/mint-log-rebuild.ids';
 import { AreaManifest, Probe, RebuildStep } from '@/rebuild/manifest.types';
 import {
@@ -149,12 +150,14 @@ const MINT_LOG_REBUILD: RebuildStep = {
 
 /**
  * The merkle roots of cards 1 and 2's Phase 1, from the seed's allowlists
- * (wallet 0x..01 with as many spots as the card id, 0x..02 with 3).
+ * (PROBE_PHASE_WALLETS: 0x..b1 with as many spots as the card id, 0x..b2
+ * with 3). No seed subscribes those wallets, so the roots are the same in
+ * every run.
  */
 const CARD_1_PHASE_1_ROOT =
-  '0x73f1fa4bc0b1d3e88fd896427ff7451c30b1cb6e95edc89eb35ad9055baa1bf3';
+  '0x7870e7e8fb1967594b80549011e3e19033d8789b750bbc4921ac91f0cfcce613';
 const CARD_2_PHASE_1_ROOT =
-  '0x4426169c96985b95ff1494b3cb7548e1e9e2b1941ed2331f9d106c8a411b2af7';
+  '0xd45c4af100eb6308c9a9e22033efe872f0cac5d4a12a1b9d24279118a6db1580';
 
 /**
  * Mint stats, as the NFT loop writes them once a card's mint closes: for
@@ -300,7 +303,7 @@ const PROBES: Probe[] = [
     (card): Probe => ({
       id: `mint.claim-proofs-${card.id}`,
       path: `/api/minting-claims/${PROBE_MEMES_CONTRACT}/${card.id}/${card.root}/proofs/{wallet}`,
-      each: { wallet: PROBE_WALLETS }
+      each: { wallet: PROBE_PHASE_WALLETS }
     })
   ),
   {
@@ -311,7 +314,8 @@ const PROBES: Probe[] = [
   {
     id: 'mint.wallet-allocations',
     path: `/api/distributions/${PROBE_MEMES_CONTRACT}/{id}/wallet-allocations?wallet={wallet}`,
-    each: { id: PROBE_MEME_IDS, wallet: PROBE_WALLETS }
+    // The Phase 1 wallets: the allocations are a phase's spots.
+    each: { id: PROBE_MEME_IDS, wallet: PROBE_PHASE_WALLETS }
   },
   {
     id: 'mint.artist-airdrops',

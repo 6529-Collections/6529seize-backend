@@ -46,6 +46,7 @@ import { distributionCursorBlock } from './mint-log-inputs';
 import { mintCard } from './mint-log-parts';
 import { logPublicationReceipt } from './mint-log-receipts';
 import { getMintLogPorts } from './mint-log-ports';
+import { PROBE_PHASE_WALLETS } from './mint-log-rebuild.ids';
 import { chainHeadTime } from './mint-log-rebuild.chain-clock';
 import { seedCollaboration } from './mint-log-rebuild.seed-collab';
 import {
@@ -162,7 +163,7 @@ async function seedCard(cardId: number, write: SeedWriter): Promise<void> {
     const split = await splitAllowlistResults(CONTRACT, cardId, 'Phase 1', [
       {
         id: `probe-${cardId}-1`,
-        wallet: W1,
+        wallet: PROBE_PHASE_WALLETS[0],
         phaseId: 'phase-1',
         allowlistId: 'allowlist-1',
         phaseComponentId: 'component-1',
@@ -172,7 +173,7 @@ async function seedCard(cardId: number, write: SeedWriter): Promise<void> {
       },
       {
         id: `probe-${cardId}-2`,
-        wallet: W2,
+        wallet: PROBE_PHASE_WALLETS[1],
         phaseId: 'phase-1',
         allowlistId: 'allowlist-1',
         phaseComponentId: 'component-1',
