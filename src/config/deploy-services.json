@@ -107,7 +107,33 @@
         "claimsBuilder"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [],
+      "deploy_blackouts": [
+        {
+          "type": "window",
+          "reason": "Memes mint launch: Phase 0 opens 17:40 and Phase 2 ends 19:20 Europe/Athens",
+          "timezone": "Europe/Athens",
+          "days": [
+            "mon",
+            "wed",
+            "fri"
+          ],
+          "start": "17:30",
+          "end": "19:45"
+        },
+        {
+          "type": "window",
+          "reason": "Memes mint close 17:00, preview 17:15 and post-mint work 18:00 Europe/Athens",
+          "timezone": "Europe/Athens",
+          "days": [
+            "tue",
+            "thu",
+            "sat"
+          ],
+          "start": "16:50",
+          "end": "18:30"
+        }
+      ]
     },
     {
       "name": "claimsMediaArweaveUploader",
@@ -124,7 +150,33 @@
         "claimsMediaArweaveUploader"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [],
+      "deploy_blackouts": [
+        {
+          "type": "window",
+          "reason": "Memes mint launch: Phase 0 opens 17:40 and Phase 2 ends 19:20 Europe/Athens",
+          "timezone": "Europe/Athens",
+          "days": [
+            "mon",
+            "wed",
+            "fri"
+          ],
+          "start": "17:30",
+          "end": "19:45"
+        },
+        {
+          "type": "window",
+          "reason": "Memes mint close 17:00, preview 17:15 and post-mint work 18:00 Europe/Athens",
+          "timezone": "Europe/Athens",
+          "days": [
+            "tue",
+            "thu",
+            "sat"
+          ],
+          "start": "16:50",
+          "end": "18:30"
+        }
+      ]
     },
     {
       "name": "customReplayLoop",
@@ -645,7 +697,13 @@
         "populateHistoricConsolidatedTdh"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [],
+      "deploy_blackouts": [
+        {
+          "type": "team-freeze",
+          "reason": "Historic consolidated TDH must not change during a team freeze"
+        }
+      ]
     },
     {
       "name": "pushNotificationsHandler",
@@ -697,7 +755,15 @@
         "releaseDigestLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [],
+      "deploy_blackouts": [
+        {
+          "type": "window",
+          "reason": "releaseDigestLoop runs at 23:30 UTC for up to 10 minutes",
+          "start": "23:20",
+          "end": "24:00"
+        }
+      ]
     },
     {
       "name": "releaseNotesGenerationLoop",
@@ -766,7 +832,15 @@
         "royaltiesLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [],
+      "deploy_blackouts": [
+        {
+          "type": "window",
+          "reason": "royaltiesLoop runs at 02:01 UTC for up to 15 minutes",
+          "start": "01:55",
+          "end": "02:30"
+        }
+      ]
     },
     {
       "name": "s3Uploader",
@@ -783,7 +857,33 @@
         "s3Uploader"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [],
+      "deploy_blackouts": [
+        {
+          "type": "window",
+          "reason": "Memes mint launch: Phase 0 opens 17:40 and Phase 2 ends 19:20 Europe/Athens",
+          "timezone": "Europe/Athens",
+          "days": [
+            "mon",
+            "wed",
+            "fri"
+          ],
+          "start": "17:30",
+          "end": "19:45"
+        },
+        {
+          "type": "window",
+          "reason": "Memes mint close 17:00, preview 17:15 and post-mint work 18:00 Europe/Athens",
+          "timezone": "Europe/Athens",
+          "days": [
+            "tue",
+            "thu",
+            "sat"
+          ],
+          "start": "16:50",
+          "end": "18:30"
+        }
+      ]
     },
     {
       "name": "subscriptionsDaily",

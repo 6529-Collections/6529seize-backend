@@ -25,6 +25,16 @@ export default [
   },
 
   {
+    files: ['scripts/deploy-train/**/*.js', 'scripts/deploy-train/**/*.mjs'],
+    languageOptions: { globals: globals.node }
+  },
+  {
+    files: ['scripts/deploy-train/**/*.js'],
+    languageOptions: { sourceType: 'commonjs' },
+    rules: { '@typescript-eslint/no-require-imports': 'off' }
+  },
+
+  {
     files: ['**/*.ts', '**/*.tsx'],
 
     languageOptions: {

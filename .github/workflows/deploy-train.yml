@@ -1,0 +1,239 @@
+name: Deploy train
+run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.resume && 'Deploy train (resume)' || 'Deploy train' }}
+
+# Ships every prod backend service whose artifact differs from main, pinned
+# to one main commit, in dependency order, through "Deploy a service".
+# DEPLOY_TRAIN_MODE (repository variable) controls it: unset or off skips
+# every job, report plans without deploying, prod deploys.
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '7,37 * * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        description: 'default follows DEPLOY_TRAIN_MODE; report forces a dry run'
+        required: true
+        default: default
+        options:
+          - default
+          - report
+      resume:
+        type: boolean
+        description: 'Clear a halt left by a failed deploy or health check'
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+# One train at a time. A newer trigger replaces a waiting one and every
+# train recomputes what still differs, so merges never queue up trains.
+concurrency:
+  group: deploy-train-prod
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Plan
+    if: vars.DEPLOY_TRAIN_MODE == 'report' || vars.DEPLOY_TRAIN_MODE == 'prod' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'report')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+      ship_count: ${{ steps.plan.outputs.ship_count }}
+      target_sha: ${{ steps.target.outputs.sha }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pin the train to the current main commit
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          [[ "$sha" =~ ^[a-f0-9]{40}$ ]]
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22.17.1'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            src/api-serverless/package-lock.json
+      - name: Install root and API dependencies
+        run: ./bin/6529 ci && pushd src/api-serverless && ../../bin/6529 ci && popd
+      - name: Restore bundle fingerprint cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/deploy-drift-cache
+          key: deploy-drift-v1-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: deploy-drift-v1-${{ runner.os }}-
+      - name: Plan the train
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
+          DEPLOY_TRAIN_MODE: ${{ vars.DEPLOY_TRAIN_MODE }}
+          DEPLOY_TRAIN_REQUESTED_MODE: ${{ inputs.mode }}
+          DEPLOY_TRAIN_RESUME: ${{ inputs.resume }}
+          DEPLOY_TRAIN_TEAM_WINDOWS: ${{ vars.DEPLOY_TRAIN_TEAM_WINDOWS }}
+        run: |
+          set -euo pipefail
+          mkdir -p train
+          node scripts/deploy-train/cli.js plan \
+            --environment prod --target "$TARGET_SHA" \
+            --cache-dir "$RUNNER_TEMP/deploy-drift-cache" \
+            --json train/plan.json --drift-json train/drift.json \
+            --markdown train/plan.md --github-output
+          cat train/plan.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Save bundle fingerprint cache
+        if: steps.plan.outcome == 'success' && steps.plan.outputs.builds != '0' && steps.plan.outputs.builds != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/deploy-drift-cache
+          key: deploy-drift-v1-${{ runner.os }}-${{ github.run_id }}
+      - name: Upload the plan
+        if: always() && hashFiles('train/plan.json') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: deploy-train-plan
+          path: train/
+          retention-days: 30
+      - name: Post the report-mode plan to the CI wave
+        if: steps.plan.outputs.notify == 'true'
+        continue-on-error: true
+        env:
+          CI_PIPELINES_ALERT_URL: ${{ vars.CI_PIPELINES_ALERT_URL }}
+          CI_PIPELINES_ALERT_SECRET: ${{ secrets.CI_PIPELINES_ALERT_SECRET }}
+          CI_PIPELINES_ALERT_API_AUTH: ${{ secrets.CI_PIPELINES_ALERT_API_AUTH }}
+          CI_PIPELINES_ALERT_TYPE: workflow
+          CI_PIPELINES_TARGET_ENV: prod
+          CI_PIPELINES_STATUS: ${{ steps.plan.outputs.alert_status }}
+          CI_PIPELINES_TITLE: ${{ steps.plan.outputs.alert_title }}
+          CI_PIPELINES_DESCRIPTION: ${{ steps.plan.outputs.alert_description }}
+          CI_PIPELINES_WORKFLOW: Deploy train
+          CI_PIPELINES_SHA: ${{ steps.target.outputs.sha }}
+        run: node scripts/notify-ci-wave.mjs
+      - name: Post a planning failure to the CI wave
+        # Scheduled retries would repeat the same alert every half hour.
+        if: failure() && github.event_name != 'schedule'
+        continue-on-error: true
+        env:
+          CI_PIPELINES_ALERT_URL: ${{ vars.CI_PIPELINES_ALERT_URL }}
+          CI_PIPELINES_ALERT_SECRET: ${{ secrets.CI_PIPELINES_ALERT_SECRET }}
+          CI_PIPELINES_ALERT_API_AUTH: ${{ secrets.CI_PIPELINES_ALERT_API_AUTH }}
+          CI_PIPELINES_ALERT_TYPE: workflow
+          CI_PIPELINES_TARGET_ENV: prod
+          CI_PIPELINES_STATUS: failure
+          CI_PIPELINES_TITLE: Deploy train could not plan
+          CI_PIPELINES_WORKFLOW: Deploy train
+        run: node scripts/notify-ci-wave.mjs
+
+  ship:
+    # The halt check reads this job name; keep them in sync.
+    name: Ship
+    needs: plan
+    if: needs.plan.outputs.mode == 'prod' && needs.plan.outputs.ship_count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    environment: production
+    permissions:
+      contents: read
+      actions: write
+      id-token: write
+    steps:
+      - name: Checkout the train's scripts at the planned commit
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ needs.plan.outputs.target_sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/deploy-train
+            scripts/notify-ci-wave.mjs
+            src/config
+            ops/deploy-train
+          sparse-checkout-cone-mode: false
+      - name: Verify the planned commit
+        shell: bash
+        env:
+          TARGET_SHA: ${{ needs.plan.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$TARGET_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22.17.1'
+      - name: Download the plan
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: deploy-train-plan
+          path: train
+      - name: Ship the train
+        id: ship
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOY_TRAIN_HEALTH_ROLE_ARN: ${{ vars.DEPLOY_TRAIN_HEALTH_ROLE_ARN }}
+          DEPLOY_TRAIN_MODE: ${{ vars.DEPLOY_TRAIN_MODE }}
+          DEPLOY_TRAIN_TEAM_WINDOWS: ${{ vars.DEPLOY_TRAIN_TEAM_WINDOWS }}
+          DEPLOY_TRAIN_DB_AUTH: ${{ vars.DEPLOY_TRAIN_DB_AUTH }}
+        run: |
+          set -euo pipefail
+          node scripts/deploy-train/cli.js ship --plan train/plan.json \
+            --result train/result.json --markdown train/result.md --github-output
+          cat train/result.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the result
+        if: always() && hashFiles('train/result.json') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: deploy-train-result
+          path: train/result.json
+          retention-days: 30
+      - name: Post the train result to the CI wave
+        if: always() && steps.ship.outputs.notify == 'true'
+        continue-on-error: true
+        env:
+          CI_PIPELINES_ALERT_URL: ${{ vars.CI_PIPELINES_ALERT_URL }}
+          CI_PIPELINES_ALERT_SECRET: ${{ secrets.CI_PIPELINES_ALERT_SECRET }}
+          CI_PIPELINES_ALERT_API_AUTH: ${{ secrets.CI_PIPELINES_ALERT_API_AUTH }}
+          CI_PIPELINES_ALERT_TYPE: workflow
+          CI_PIPELINES_TARGET_ENV: prod
+          CI_PIPELINES_STATUS: ${{ steps.ship.outputs.alert_status }}
+          CI_PIPELINES_TITLE: ${{ steps.ship.outputs.alert_title }}
+          CI_PIPELINES_DESCRIPTION: ${{ steps.ship.outputs.alert_description }}
+          CI_PIPELINES_WORKFLOW: Deploy train
+          CI_PIPELINES_SHA: ${{ needs.plan.outputs.target_sha }}
+        run: node scripts/notify-ci-wave.mjs
+      - name: Post a train crash to the CI wave
+        if: failure() && steps.ship.outcome == 'failure'
+        continue-on-error: true
+        env:
+          CI_PIPELINES_ALERT_URL: ${{ vars.CI_PIPELINES_ALERT_URL }}
+          CI_PIPELINES_ALERT_SECRET: ${{ secrets.CI_PIPELINES_ALERT_SECRET }}
+          CI_PIPELINES_ALERT_API_AUTH: ${{ secrets.CI_PIPELINES_ALERT_API_AUTH }}
+          CI_PIPELINES_ALERT_TYPE: workflow
+          CI_PIPELINES_TARGET_ENV: prod
+          CI_PIPELINES_STATUS: failure
+          CI_PIPELINES_TITLE: Deploy train stopped unexpectedly and is halted
+          CI_PIPELINES_DESCRIPTION: Check the run log and any deploy it started, then dispatch Deploy train with resume=true.
+          CI_PIPELINES_WORKFLOW: Deploy train
+          CI_PIPELINES_SHA: ${{ needs.plan.outputs.target_sha }}
+        run: node scripts/notify-ci-wave.mjs
+      - name: Halt the train
+        if: steps.ship.outputs.halted == 'true'
+        run: |
+          echo "::error::The deploy train halted. Fix the cause, then dispatch Deploy train with resume=true."
+          exit 1

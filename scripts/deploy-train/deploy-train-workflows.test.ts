@@ -1,0 +1,152 @@
+import { spawnSync } from 'node:child_process';
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { parse } from 'yaml';
+
+const repoRoot = path.resolve(__dirname, '../..');
+const readWorkflow = (name: string) =>
+  parse(readFileSync(path.join(repoRoot, '.github/workflows', name), 'utf8'));
+const train = readWorkflow('deploy-train.yml');
+const guard = readWorkflow('deploy-drift-guard.yml');
+const deploy = readWorkflow('deploy.yml');
+
+function allSteps(workflow: any) {
+  return Object.keys(workflow.jobs).reduce(
+    (steps: any[], name) => steps.concat(workflow.jobs[name].steps || []),
+    []
+  );
+}
+
+describe('deploy train workflow', () => {
+  it('runs on merges to main, on a half-hour schedule and by hand', () => {
+    expect(train.on.push.branches).toEqual(['main']);
+    expect(train.on.schedule).toEqual([{ cron: '7,37 * * * *' }]);
+    expect(train.on.workflow_dispatch.inputs.mode.options).toEqual([
+      'default',
+      'report'
+    ]);
+    expect(train.on.workflow_dispatch.inputs.resume.type).toBe('boolean');
+  });
+
+  it('runs one train at a time without cancelling a running one', () => {
+    expect(train.concurrency).toEqual({
+      group: 'deploy-train-prod',
+      'cancel-in-progress': false
+    });
+  });
+
+  it('does nothing unless DEPLOY_TRAIN_MODE is report or prod', () => {
+    expect(train.jobs.plan.if).toBe(
+      "vars.DEPLOY_TRAIN_MODE == 'report' || vars.DEPLOY_TRAIN_MODE == 'prod' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'report')"
+    );
+    expect(train.jobs.ship.if).toBe(
+      "needs.plan.outputs.mode == 'prod' && needs.plan.outputs.ship_count != '0'"
+    );
+    expect(train.permissions).toEqual({ contents: 'read' });
+    expect(train.jobs.plan.permissions).toEqual({
+      contents: 'read',
+      actions: 'read'
+    });
+  });
+
+  it('holds deploy credentials only in the ship job, which installs nothing', () => {
+    const ship = train.jobs.ship;
+    expect(ship.name).toBe('Ship');
+    expect(ship.needs).toBe('plan');
+    expect(ship.environment).toBe('production');
+    expect(ship.permissions).toEqual({
+      contents: 'read',
+      actions: 'write',
+      'id-token': 'write'
+    });
+    expect(train.jobs.plan.environment).toBeUndefined();
+    for (const step of ship.steps) {
+      expect(String(step.run || '')).not.toContain('6529 ci');
+    }
+    const checkout = ship.steps[0];
+    expect(checkout.with.ref).toBe('${{ needs.plan.outputs.target_sha }}');
+    expect(checkout.with['persist-credentials']).toBe(false);
+  });
+
+  it('halts by failing the ship job, which the next plan detects by name', () => {
+    const halt = train.jobs.ship.steps.find(
+      (step: { name: string }) => step.name === 'Halt the train'
+    );
+    expect(halt.if).toBe("steps.ship.outputs.halted == 'true'");
+    expect(halt.run).toContain('exit 1');
+    expect(readFileSync(path.join(__dirname, 'cli.js'), 'utf8')).toContain(
+      "const SHIP_JOB_NAME = 'Ship';"
+    );
+    expect(train['run-name']).toContain("'Deploy train (resume)'");
+  });
+});
+
+describe('deploy drift guard workflow', () => {
+  it('runs daily with read-only permissions and no AWS access', () => {
+    expect(guard.on.schedule).toEqual([{ cron: '17 6 * * *' }]);
+    expect(guard.permissions).toEqual({ contents: 'read', actions: 'read' });
+    const job = guard.jobs.drift;
+    expect(job.environment).toBeUndefined();
+    expect(JSON.stringify(job)).not.toContain('id-token');
+    expect(JSON.stringify(job)).not.toContain('configure-aws-credentials');
+  });
+
+  it('posts through the existing CI wave notifier', () => {
+    const post = guard.jobs.drift.steps.find(
+      (step: { name: string }) =>
+        step.name === 'Post the drift report to the CI wave'
+    );
+    expect(post.run).toBe('node scripts/notify-ci-wave.mjs');
+    expect(post.env.CI_PIPELINES_ALERT_TYPE).toBe('workflow');
+    expect(post['continue-on-error']).toBe(true);
+  });
+});
+
+describe('workflow hygiene', () => {
+  it('pins every action to a full commit SHA', () => {
+    for (const step of allSteps(train).concat(allSteps(guard))) {
+      if (step.uses) expect(step.uses).toMatch(/@[0-9a-f]{40}$/);
+    }
+  });
+
+  it('leaves the deploy workflow serialised per environment', () => {
+    expect(deploy.concurrency).toEqual({
+      group: 'deploy-control-${{ github.event.inputs.environment }}',
+      'cancel-in-progress': false
+    });
+  });
+});
+
+describe('esbuild config capture', () => {
+  it('records the API build options without building', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'deploy-train-capture-'));
+    try {
+      const config = path.join(dir, 'esbuild.config.mjs');
+      copyFileSync(
+        path.join(repoRoot, 'src/api-serverless/esbuild.config.mjs'),
+        config
+      );
+      const result = spawnSync(
+        process.execPath,
+        [
+          '-e',
+          `require(${JSON.stringify(path.join(__dirname, 'bundles.js'))})
+            .captureConfigOptions(${JSON.stringify(config)})
+            .then((options) => process.stdout.write(JSON.stringify(options)))
+            .catch((error) => { console.error(error.message); process.exit(1); });`
+        ],
+        { encoding: 'utf8' }
+      );
+      expect(result.stderr).toBe('');
+      const options = JSON.parse(result.stdout);
+      expect(options.entryPoints).toEqual(['src/handler.ts']);
+      expect(options.bundle).toBe(true);
+      expect(options.alias['@/constants']).toBe(
+        path.join(path.dirname(dir), 'constants')
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

@@ -19,7 +19,42 @@ export type DeployServiceConfig = {
     | 'cloudformation-stack'
     | 'lambda-edge-association';
   default_dependencies: string[];
+  /** Deploy-train settings; `manual` keeps the service report-only. */
+  deploy_train?: DeployTrainSettings;
+  /** Quiet windows in which the deploy train must not deploy the service. */
+  deploy_blackouts?: DeployBlackoutRule[];
 };
+
+export type DeployTrainSettings = {
+  mode: 'auto' | 'manual';
+  reason?: string;
+};
+
+export type DeployBlackoutDay =
+  | 'sun'
+  | 'mon'
+  | 'tue'
+  | 'wed'
+  | 'thu'
+  | 'fri'
+  | 'sat';
+
+export type DeployBlackoutRule =
+  | {
+      type: 'window';
+      reason: string;
+      /** HH:MM in `timezone` (UTC by default); `end` may be 24:00. */
+      start: string;
+      end: string;
+      timezone?: string;
+      /** Days on which the window starts; all days when omitted. */
+      days?: DeployBlackoutDay[];
+    }
+  | {
+      /** Blocked whenever any announced team window is active. */
+      type: 'team-freeze';
+      reason: string;
+    };
 
 export type DeployConfig = {
   default_environment: DeployEnvironment;
@@ -31,6 +66,9 @@ export declare const DEPLOY_ENVIRONMENTS: DeployEnvironment[];
 export declare const DEPLOY_SERVICE_NAME_PATTERN: RegExp;
 export declare const DEPLOY_ADAPTERS: DeployServiceConfig['deploy_adapter'][];
 export declare const DEPLOY_VALIDATION_PROFILES: DeployServiceConfig['validation_profile'][];
+export declare const DEPLOY_TRAIN_MODES: DeployTrainSettings['mode'][];
+export declare const DEPLOY_BLACKOUT_TYPES: DeployBlackoutRule['type'][];
+export declare const DEPLOY_BLACKOUT_DAYS: DeployBlackoutDay[];
 
 export declare function isDeployEnvironment(
   value: string
