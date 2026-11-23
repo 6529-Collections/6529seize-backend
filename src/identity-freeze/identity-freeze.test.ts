@@ -58,6 +58,16 @@ describe('identity freeze flag', () => {
     }
   });
 
+  it('with every identity setting unset, nothing is frozen or on the chain, before or after the dates', () => {
+    delete process.env[FLAG];
+    for (const now of [T - 1, T, C, C + 86_400_000]) {
+      expect(isIdentityFrozen(now)).toBe(false);
+      expect(isIdentityOnChain(now)).toBe(false);
+    }
+    expect(() => assertIdentityNotFrozen()).not.toThrow();
+    expect(() => assertIdentityNotFrozen('nomination')).not.toThrow();
+  });
+
   it('answers 423 with the freeze code and a plain message', () => {
     process.env[FLAG] = 'true';
     let thrown: unknown;
