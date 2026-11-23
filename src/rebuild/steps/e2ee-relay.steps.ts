@@ -50,10 +50,35 @@ import { waveGroupNotificationSubscriptionsDb } from '@/notifications/wave-group
 import { dbSupplier } from '@/sql-executor';
 import { e2eeKeyFromSeed } from '@/tests/fixtures/e2ee.fixture';
 import { aWave } from '@/tests/fixtures/wave.fixture';
+import {
+  DeterministicSeed,
+  E2EE_CHECK_T0,
+  installDeterministicSeed
+} from '@/rebuild/steps/e2ee-relay.determinism';
+// The module object itself, so the seed can run after-commit work in order.
+import afterCommitModule = require('@/db/after-commit');
 
 type TestKey = ReturnType<typeof e2eeKeyFromSeed>;
 
 const PUBLISH_WAVES = 50;
+/** When the rebuilder applies retention: an hour after the seed's clock starts. */
+const REBUILD_AT = E2EE_CHECK_T0 + 60 * 60 * 1000;
+
+/**
+ * Runs after-commit work one callback at a time, in order, and waits for
+ * all of it. The moderation records are written after commit, and run
+ * together they would race for the inbox's next position.
+ */
+function serialAfterCommit(): () => void {
+  const hooks = afterCommitModule as unknown as Record<string, unknown>;
+  const original = hooks.runAfterCommitCallbacks;
+  hooks.runAfterCommitCallbacks = async (callbacks: (() => unknown)[]) => {
+    for (const callback of callbacks) await callback();
+  };
+  return () => {
+    hooks.runAfterCommitCallbacks = original;
+  };
+}
 
 function hexBytes(bytes: number): string {
   return `0x${randomBytes(bytes).toString('hex')}`;
@@ -69,7 +94,8 @@ function deviceRow(deviceKey: string, profileId: string): E2eeDeviceRow {
     grant_version: 2,
     ciphersuites: '78',
     issued_at_seconds: Math.floor(now / 1000) - 60,
-    expires_at_seconds: Math.floor(now / 1000) + 86400 * 100,
+    // Ten years: the probes run at real time against the seed's clock.
+    expires_at_seconds: Math.floor(now / 1000) + 86400 * 3650,
     origin: 'test',
     grant_id: hexBytes(32),
     wallet_signature: `0x${'11'.repeat(65)}`,
@@ -439,6 +465,24 @@ async function seedIdentities(): Promise<void> {
  * can name them.
  */
 export async function seedE2ee(): Promise<void> {
+  // The same seed must publish the same events byte for byte, so a
+  // recording of the relays can be replayed: a fixed clock and randomness,
+  // after-commit work in order, and every record signed and published at
+  // the end, one stream at a time.
+  const clock = installDeterministicSeed('6529 rebuild check: e2ee seed');
+  const restoreAfterCommit = serialAfterCommit();
+  const publishLater = e2eeStreamPublisher.publishLater;
+  e2eeStreamPublisher.publishLater = () => undefined;
+  try {
+    await seedAll(clock);
+  } finally {
+    e2eeStreamPublisher.publishLater = publishLater;
+    restoreAfterCommit();
+    clock.restore();
+  }
+}
+
+async function seedAll(clock: DeterministicSeed): Promise<void> {
   await seedIdentities();
   await seedPublicDrop();
   const all = services();
@@ -454,6 +498,7 @@ export async function seedE2ee(): Promise<void> {
   await addDevice(b, pb);
   await addDevice(c, pc);
   await devices.renameDevice(pa, a, 'Laptop');
+  clock.advance(1000);
   const group = E2EE_CHECK_IDS.group;
   await groups.createGroup(pa, {
     group,
@@ -487,6 +532,7 @@ export async function seedE2ee(): Promise<void> {
     sender: a,
     added: c
   });
+  clock.advance(1000);
   // c is revoked: one directory record and one inbox record.
   const revokedAt = Math.floor(Date.now() / 1000);
   await devices.revokeDevice(pc, c, {
@@ -500,6 +546,7 @@ export async function seedE2ee(): Promise<void> {
       })
     )
   });
+  clock.advance(1000);
   plannedIds.push(E2EE_CHECK_IDS.blob);
   const blob = await blobs.createBlob(pa, {
     group,
@@ -514,6 +561,7 @@ export async function seedE2ee(): Promise<void> {
     data: randomBytes(1000).toString('base64')
   });
   await blobs.completeBlob(pa, blob.blob_id);
+  clock.advance(1000);
   const backupId = E2EE_CHECK_IDS.backup;
   await backups.createBackup(pa, {
     backup_id: backupId,
@@ -529,11 +577,16 @@ export async function seedE2ee(): Promise<void> {
   }
   await backups.activate(pa, backupId, a);
   await backups.compact(pa, backupId, { device_key: a, through_seq: 1 });
+  clock.advance(1000);
   await seedReports(all, { group, a, b });
-  // Mirror publishes in the background; wait, then drain what is left.
-  await e2eeStreamPublisher.settled();
-  await e2eeStreamPublisher.publishPending(PUBLISH_WAVES);
-  const outbox = await new MysqlE2eeStreamStore(dbSupplier).countOutbox();
+  clock.advance(1000);
+  // Signed in stream-name order, one stream at a time: each record's seq
+  // follows the signing order, so it is the same every run.
+  const store = new MysqlE2eeStreamStore(dbSupplier);
+  for (const wave of (await store.listPendingWaves(PUBLISH_WAVES)).sort()) {
+    await e2eeStreamPublisher.publishWave(wave);
+  }
+  const outbox = await store.countOutbox();
   if (outbox.rows)
     throw new Error(`${outbox.rows} records are still in the outbox`);
 }
@@ -544,7 +597,9 @@ export async function rebuildE2ee(): Promise<void> {
   do {
     const report = await runE2eeRebuild({
       mode: 'write',
-      now: Date.now(),
+      // The seed's clock, not the real one: a recorded seed must rebuild
+      // the same rows whenever the check runs.
+      now: REBUILD_AT,
       settings: e2eeRelaySettings(),
       after,
       // The check keeps the DEL queue (EPHEMERAL) through its drop, and a
