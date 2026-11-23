@@ -11,7 +11,8 @@ const TABLE_DENIED =
 /**
  * What MySQL refused a step, from its log (errors 1142 and 1143), with the
  * step's own declarations as the reason: a column another step owns, a
- * table the step only owns columns of, or one its writes don't name.
+ * table the step only owns columns of or only reads, or one its reads and
+ * writes don't name.
  */
 export function refusalsIn(step: RebuildStep, log: string): string[] {
   const found = new Set<string>();
@@ -32,11 +33,16 @@ export function refusalsIn(step: RebuildStep, log: string): string[] {
   }
   for (const match of Array.from(log.matchAll(TABLE_DENIED))) {
     const [, command, table] = match;
+    // A step may read the tables in its reads and its writes.
     const why = ownedOf(table).length
       ? 'it owns only columns there'
       : writtenTables(step).includes(table)
         ? 'its grants on the table refuse it'
-        : "the table isn't in its writes";
+        : (step.reads ?? []).includes(table)
+          ? 'it only reads the table'
+          : /SELECT/.test(command)
+            ? "the table isn't in its reads or writes"
+            : "the table isn't in its writes";
     found.add(`${step.id} may not ${command} ${table}: ${why}`);
   }
   return Array.from(found);
