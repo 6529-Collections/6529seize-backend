@@ -933,14 +933,25 @@ describe('runIdentityExportJob', () => {
     const PROFILE = '00000000-0000-4000-8000-0000000a11ce';
     const OTHER = '00000000-0000-4000-8000-000000000b0b';
     const REPORT = 'identity-export/inputs/report-2026-11-24.json';
-    const handCms = '{"00000000-0000-4000-8000-0000000a11ce": {"primary": {}}}';
+    const handCms =
+      '{"00000000-0000-4000-8000-0000000a11ce": {"primary": {}, "archive": "bafyarchive1"}}';
     const report = (over: Record<string, unknown> = {}) =>
       JSON.stringify(
         {
           frozen_at: T,
           profiles: {
-            [PROFILE]: { publication_unavailable: [], primary_carried: true },
-            [OTHER]: { publication_unavailable: [], primary_carried: false }
+            [PROFILE]: {
+              publication_unavailable: [],
+              primary_carried: true,
+              packages: 1,
+              legacy_packages: 0
+            },
+            [OTHER]: {
+              publication_unavailable: [],
+              primary_carried: false,
+              packages: 0,
+              legacy_packages: 0
+            }
           },
           public_check: null,
           ...over
@@ -1143,34 +1154,100 @@ describe('runIdentityExportJob', () => {
       }
     );
 
+    // The report as the CLI writes it, for profiles with or without a
+    // carried primary and published or legacy packages.
+    const reportOf = (
+      entries: Record<
+        string,
+        { primary_carried: boolean; packages: number; legacy_packages: number }
+      >
+    ) =>
+      report({
+        profiles: Object.fromEntries(
+          Object.entries(entries).map(([id, it]) => [
+            id,
+            { publication_unavailable: [], ...it }
+          ])
+        )
+      });
+    const carried = { primary_carried: true, packages: 1, legacy_packages: 0 };
+    const archiveOnly = {
+      primary_carried: false,
+      packages: 2,
+      legacy_packages: 0
+    };
+    const legacyOnly = {
+      primary_carried: false,
+      packages: 0,
+      legacy_packages: 1
+    };
+    const nothing = { primary_carried: false, packages: 0, legacy_packages: 0 };
+    const C0DE = '00000000-0000-4000-8000-00000000c0de';
+
     it.each([
       [
         "a profile the report doesn't list",
-        JSON.stringify({
-          [PROFILE]: { primary: {} },
-          '00000000-0000-4000-8000-00000000c0de': { primary: {} }
-        }),
-        "1 of its profiles aren't in the report (00000000-0000-4000-8000-00000000c0de)"
+        {
+          [PROFILE]: { primary: {}, archive: 'bafya' },
+          [C0DE]: { primary: {} }
+        },
+        { [PROFILE]: carried },
+        `1 of its profiles isn't in the report (${C0DE})`
+      ],
+      [
+        "two profiles the report doesn't list",
+        {
+          [PROFILE]: { primary: {}, archive: 'bafya' },
+          [C0DE]: { primary: {} },
+          [OTHER]: { archive: 'bafyb' }
+        },
+        { [PROFILE]: carried },
+        `2 of its profiles aren't in the report (${C0DE}, ${OTHER})`
       ],
       [
         'a primary the report does not carry',
-        JSON.stringify({
-          [PROFILE]: { primary: {} },
+        {
+          [PROFILE]: { primary: {}, archive: 'bafya' },
           [OTHER]: { primary: {} }
-        }),
-        `1 profiles have a primary in one and not the other (${OTHER})`
+        },
+        { [PROFILE]: carried, [OTHER]: nothing },
+        `1 profile has a primary in one and not the other (${OTHER})`
       ],
       [
         'no primary for one the report carries',
-        JSON.stringify({ [PROFILE]: { archive: 'bafyarchive' } }),
-        `1 profiles have a primary in one and not the other (${PROFILE})`
+        { [PROFILE]: { archive: 'bafya' } },
+        { [PROFILE]: carried },
+        `1 profile has a primary in one and not the other (${PROFILE})`
+      ],
+      [
+        'a stale file missing an archive-only profile',
+        { [PROFILE]: { primary: {}, archive: 'bafya' } },
+        { [PROFILE]: carried, [OTHER]: archiveOnly },
+        `1 profile has an archive in the file and no packages in the report, or packages and no archive (${OTHER})`
+      ],
+      [
+        'no archive for a profile with packages',
+        { [PROFILE]: { primary: {} } },
+        { [PROFILE]: carried },
+        `1 profile has an archive in the file and no packages in the report, or packages and no archive (${PROFILE})`
+      ],
+      [
+        'an archive for a profile with no packages',
+        {
+          [PROFILE]: { primary: {}, archive: 'bafya' },
+          [OTHER]: { archive: 'bafyb' }
+        },
+        { [PROFILE]: carried, [OTHER]: nothing },
+        `1 profile has an archive in the file and no packages in the report, or packages and no archive (${OTHER})`
       ]
     ])(
       'refuses a cms-fields.json from another run than its report: %s',
-      async (_what, cms, reason) => {
+      async (_what, cmsValue, entries, reason) => {
         mockBuild.mockResolvedValue(document());
-        const { deps, order } = setup({ objects: files(cms) });
-        await expect(run(deps, handRun({}, cms))).rejects.toThrow(
+        const cms = JSON.stringify(cmsValue);
+        const rep = reportOf(entries);
+        const { deps, order } = setup({ objects: files(cms, rep) });
+        await expect(run(deps, handRun({}, cms, rep))).rejects.toThrow(
           `${HAND} isn't the cms-fields.json of the run that wrote ${REPORT}: ${reason}. Make both files again in one run of the CLI with --frozen-at ${T}, and upload both.`
         );
         expect(deps.openSnapshot).not.toHaveBeenCalled();
@@ -1178,14 +1255,37 @@ describe('runIdentityExportJob', () => {
       }
     );
 
-    it('takes a cms-fields.json and report.json of the same run, archive-only profiles included', async () => {
+    it.each([['null'], ['[]'], ['"x"'], ['7']])(
+      'refuses a cms-fields.json of %s as an event error, not a TypeError',
+      async (cms) => {
+        mockBuild.mockResolvedValue(document());
+        const { deps } = setup({ objects: files(cms) });
+        const error = await run(deps, handRun({}, cms)).then(
+          () => null,
+          (e: Error) => e
+        );
+        expect(error?.name).toBe('IdentityExportEventError');
+        expect(error?.message).toBe(
+          `${HAND} isn't the cms-fields.json of the run that wrote ${REPORT}: the cms-fields.json isn't an object of profile ids. Make both files again in one run of the CLI with --frozen-at ${T}, and upload both.`
+        );
+      }
+    );
+
+    it('takes a cms-fields.json and report.json of the same run, archive-only and legacy-only profiles included', async () => {
       mockBuild.mockResolvedValue(document());
       const cms = JSON.stringify({
-        [PROFILE]: { primary: {} },
-        [OTHER]: { archive: 'bafyarchive' }
+        [PROFILE]: { primary: {}, archive: 'bafya' },
+        [OTHER]: { archive: 'bafyb' },
+        [C0DE]: { archive: 'bafyc' }
       });
-      const { deps } = setup({ objects: files(cms) });
-      const result = await run(deps, handRun({}, cms));
+      const rep = reportOf({
+        [PROFILE]: carried,
+        [OTHER]: archiveOnly,
+        [C0DE]: legacyOnly,
+        '00000000-0000-4000-8000-0000000000ff': nothing
+      });
+      const { deps } = setup({ objects: files(cms, rep) });
+      const result = await run(deps, handRun({}, cms, rep));
       expect(result.cmsFieldsSource).toMatchObject({
         kind: 'hand_run',
         sha256: sha(cms)
@@ -1258,7 +1358,10 @@ describe('runIdentityExportJob', () => {
         // The export's header has no site manifest, and its notes say why.
         const options = mockBuild.mock.calls[0][1];
         expect(options.cmsFields).toEqual({
-          '00000000-0000-4000-8000-0000000a11ce': { primary: {} }
+          '00000000-0000-4000-8000-0000000a11ce': {
+            primary: {},
+            archive: 'bafyarchive1'
+          }
         });
         expect(options.cmsFieldsFile).toEqual({
           count: 1,

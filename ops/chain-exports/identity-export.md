@@ -171,11 +171,17 @@ The run refuses, before reading the database:
 - if `report.json` doesn't record this freeze as `frozen_at` (in
   milliseconds), records another stage, or lists a profile whose
   publication couldn't be fetched;
-- if `cms-fields.json` isn't the one written with that `report.json`: a
-  profile in the file that the report doesn't list, or a profile with a
-  primary in one and not the other (the report's `primary_carried`). The
-  report carries no hash of the file, so this is how the two are held to
-  each other. Make both again in one run and upload both;
+- if `cms-fields.json` isn't the one written with that `report.json`, as
+  far as the two can show it: a profile in the file that the report doesn't
+  list, a profile with a primary in one and not the other (the report's
+  `primary_carried`), or a profile with an archive in the file and no
+  `packages` or `legacy_packages` in the report, or `packages` and no
+  archive. Make both again in one run and upload both. This is all the two
+  files can show: the report carries no hash of the file, and an archive is
+  only a CID in the file, its `frozen_at` inside the archive's own bytes,
+  which this path doesn't upload. A `cms-fields.json` from another run in
+  which the same profiles had primaries and archives passes. So the two
+  files must come from the same run, as step 2 says;
 - if the file is `{}`, unless `"acceptNoCmsFields":true`, as for a site
   run with no sites.
 

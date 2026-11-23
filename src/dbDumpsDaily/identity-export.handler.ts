@@ -1608,48 +1608,108 @@ export function handRunReportProblem(
   return null;
 }
 
+/** "1 profile has <what> (<id>)", "2 profiles have <what> (<ids>)". */
+function profilesPhrase(
+  ids: readonly string[],
+  one: string,
+  many: string,
+  what: string
+): string {
+  const shown = `${ids.slice(0, 3).join(', ')}${ids.length > 3 ? ', ...' : ''}`;
+  return `${ids.length} ${ids.length === 1 ? one : many} ${what} (${shown})`;
+}
+
 /**
  * Why a hand-run cms-fields.json isn't the one its report.json was written
  * with, or null. The report carries no hash of the file, so the two are
- * held to each other profile by profile: every profile in the file is in
- * the report, and a profile has a primary in the file exactly when the
- * report carries its primary (primary_carried).
+ * held to each other profile by profile, as the CLI writes them:
+ * - every profile in the file is in the report;
+ * - a profile has a primary in the file exactly when the report carries
+ *   it (primary_carried);
+ * - a profile with published packages in the report (packages > 0) has an
+ *   archive in the file, and a profile with an archive in the file has
+ *   packages or legacy packages in the report.
+ * The archive itself is only a CID in the file; the freeze it was made at
+ * (frozen_at inside the archive) can't be read without the archive's
+ * bytes, which the hand-run path doesn't upload.
  */
 export function handRunPairProblem(
   cmsText: string,
   reportText: string
 ): string | null {
-  let cms: Record<string, unknown>;
-  let report: { profiles?: unknown };
+  let cms: unknown;
+  let report: { profiles?: unknown } | null;
   try {
-    cms = JSON.parse(cmsText) as Record<string, unknown>;
-    report = JSON.parse(reportText) as { profiles?: unknown };
+    cms = JSON.parse(cmsText);
+    report = JSON.parse(reportText) as { profiles?: unknown } | null;
   } catch {
     return "one of them isn't JSON";
   }
+  if (!cms || typeof cms !== 'object' || Array.isArray(cms)) {
+    return "the cms-fields.json isn't an object of profile ids";
+  }
+  const file = cms as Record<string, unknown>;
   const profiles =
-    report.profiles &&
+    report?.profiles &&
     typeof report.profiles === 'object' &&
     !Array.isArray(report.profiles)
-      ? (report.profiles as Record<string, { primary_carried?: unknown }>)
+      ? (report.profiles as Record<string, unknown>)
       : null;
   if (profiles === null) return 'the report lists no profiles';
-  const notInReport = Object.keys(cms).filter(
+  const notInReport = Object.keys(file).filter(
     (id) => !Object.prototype.hasOwnProperty.call(profiles, id)
   );
   if (notInReport.length > 0) {
-    return `${notInReport.length} of its profiles aren't in the report (${notInReport.slice(0, 3).join(', ')})`;
+    return profilesPhrase(
+      notInReport,
+      "of its profiles isn't",
+      "of its profiles aren't",
+      'in the report'
+    );
   }
-  const differ = Object.entries(profiles).filter(([id, it]) => {
-    const value = cms[id] as { primary?: unknown } | undefined;
-    const inFile = value?.primary !== undefined && value?.primary !== null;
-    return inFile !== (it?.primary_carried === true);
-  });
-  if (differ.length > 0) {
-    return `${differ.length} profiles have a primary in one and not the other (${differ
-      .slice(0, 3)
-      .map(([id]) => id)
-      .join(', ')})`;
+  const entry = (id: string) => {
+    const value = file[id];
+    return value && typeof value === 'object'
+      ? (value as { primary?: unknown; archive?: unknown })
+      : null;
+  };
+  const has = (value: unknown) => value !== undefined && value !== null;
+  const count = (value: unknown) =>
+    typeof value === 'number' && Number.isFinite(value) ? value : 0;
+  const primaries: string[] = [];
+  const archives: string[] = [];
+  for (const [id, raw] of Object.entries(profiles)) {
+    const it = (raw ?? {}) as {
+      primary_carried?: unknown;
+      packages?: unknown;
+      legacy_packages?: unknown;
+    };
+    const value = entry(id);
+    if (has(value?.primary) !== (it.primary_carried === true)) {
+      primaries.push(id);
+    }
+    const archive = has(value?.archive);
+    const packages = count(it.packages);
+    const legacy = count(it.legacy_packages);
+    if ((packages > 0 && !archive) || (archive && packages + legacy === 0)) {
+      archives.push(id);
+    }
+  }
+  if (primaries.length > 0) {
+    return profilesPhrase(
+      primaries,
+      'profile has',
+      'profiles have',
+      'a primary in one and not the other'
+    );
+  }
+  if (archives.length > 0) {
+    return profilesPhrase(
+      archives,
+      'profile has',
+      'profiles have',
+      'an archive in the file and no packages in the report, or packages and no archive'
+    );
   }
   return null;
 }
