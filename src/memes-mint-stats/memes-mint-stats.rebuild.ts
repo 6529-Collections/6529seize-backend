@@ -19,19 +19,23 @@ const logger = Logger.get('MEMES_MINT_STATS_REBUILD');
 export async function writeClosedMemesMintStats(
   now: Time = Time.now()
 ): Promise<number> {
+  // The mint date as epoch milliseconds, read from the TIMESTAMP's stored
+  // instant: a driver that parses dates in the process's local zone cannot
+  // move it, so the close boundary is the NFT loop's on any machine.
   const cards = await sqlExecutor.execute<{
     id: number | string;
-    mint_date: Date | string | null;
+    mint_millis: number | string | null;
   }>(
-    `select id, mint_date from ${NFTS_TABLE}
+    `select id, unix_timestamp(mint_date) * 1000 as mint_millis
+     from ${NFTS_TABLE}
      where lower(contract) = :contract
      order by id asc`,
     { contract: MEMES_CONTRACT.toLowerCase() }
   );
   let written = 0;
   for (const card of cards) {
-    if (!card.mint_date) continue;
-    const mintDate = new Date(card.mint_date);
+    if (card.mint_millis === null) continue;
+    const mintDate = new Date(Number(card.mint_millis));
     if (
       Number.isNaN(mintDate.getTime()) ||
       !isMemesMintStatsEligible(mintDate, now)
