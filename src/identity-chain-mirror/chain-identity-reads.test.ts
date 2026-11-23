@@ -94,6 +94,15 @@ interface Choice {
   imported?: Map<string, string>;
   /** Each wallet's history, as the gateway gives it. */
   history?: (wallet: string) => unknown;
+  /** The chain the gateway serves, and the one the mirror's tables are of. */
+  network?: string | null;
+  mirrorChain?: string | null;
+  /** The mirror has listed the placeholder profiles (default yes). */
+  placeholdersListed?: boolean;
+  /** The import, as the gateway's membership gives it. */
+  importCompleted?: boolean;
+  importStart?: number;
+  importDone?: number;
 }
 
 function setup({
@@ -124,7 +133,14 @@ function setup({
     ),
     getProfileDoc: jest.fn(async () => DOC),
     getMembership: jest.fn(async () => ({
-      import: { completed: true, startHeight: 50, doneHeight: 60 }
+      import: {
+        completed: choice.importCompleted ?? true,
+        startHeight: choice.importStart ?? 50,
+        doneHeight: choice.importDone ?? 60
+      }
+    })),
+    getHead: jest.fn(async () => ({
+      network: choice.network === undefined ? 'chain' : choice.network
     })),
     getMembershipWallet: jest.fn(async (wallet: string) => {
       const owner = byWallet(wallet);
@@ -189,17 +205,54 @@ function setup({
     founderWaitSince: jest.fn(readOnly),
     founderWaitDone: jest.fn(readOnly),
     founderDecisionOf: jest.fn(async () => null),
-    founderDecided: jest.fn(readOnly)
+    founderDecided: jest.fn(readOnly),
+    getState: jest.fn(async () => ({
+      chain_id: choice.mirrorChain === undefined ? 'chain' : choice.mirrorChain,
+      placeholders_at: (choice.placeholdersListed ?? true) ? 1 : null
+    }))
+  };
+  /**
+   * What the mirror's run stores for the identity in the same state: its
+   * profileIdOf, with the import's heights the run reads, over a copy of
+   * the tables it may write ('wait' when it tries again later).
+   */
+  const mirrorStores = async (identity: ChainIdentity) => {
+    const stored = new Map(mapping);
+    const ids = new ProfileIds(
+      gateway as never,
+      {
+        ...mirrorDb,
+        profileIdOfPrincipal: async (p: string) => stored.get(p) ?? null,
+        executeNativeQueriesInTransaction: async (
+          fn: (c: unknown) => unknown
+        ) => await fn({}),
+        insertMapping: async (p: string, id: string) => {
+          stored.set(p, id);
+        },
+        founderWaitSince: async (_: string, now: number) => now,
+        founderWaitDone: async () => undefined,
+        founderDecided: async () => undefined
+      } as never,
+      () => 1_000
+    );
+    ids.setImportHeights(choice.importStart ?? 50, choice.importDone ?? 60);
+    try {
+      return await ids.profileIdOf(identity);
+    } catch (error) {
+      if ((error as { retryLater?: boolean }).retryLater) return 'wait';
+      throw error;
+    }
   };
   return {
     reads: new ChainIdentityReads(
       gateway as never,
       mappingDb as never,
       rowsDb as never,
-      new ProfileIds(gateway as never, mirrorDb as never, () => 1_000)
+      mirrorDb as never
     ),
     gateway,
-    mirrorDb
+    mirrorDb,
+    mirrorStores
   };
 }
 
@@ -398,6 +451,193 @@ describe('ChainIdentityReads', () => {
       rows
     });
     expect((await mapped.reads.byWallet(W(7)))?.profile_id).toBe('p-7');
+  });
+
+  describe('agrees with the id the mirror stores', () => {
+    const OTHER = '0x' + 'ee'.repeat(32);
+    /** An identity made on the chain at 80 by W(7), whose placeholder is p-7. */
+    const made = (other: Partial<ChainIdentity> = {}) =>
+      chainIdentity({
+        principalId: Q,
+        legacyId: null,
+        handle: null,
+        createdHeight: 80,
+        founder: W(7),
+        anchor: W(7),
+        primary: W(7),
+        wallets: [W(7)],
+        ...other
+      });
+    const placeholders = new Map([[W(7), 'p-7']]);
+    /** W(7)'s history as the gateway gives it, held from `from`. */
+    const historyOf =
+      (changes: { height: number; principalId: string | null }[], from = 50) =>
+      (wallet: string) => ({
+        wallet,
+        changes,
+        ranges: [[from, 1000]],
+        readHeight: 100
+      });
+
+    it.each<[string, ChainIdentity, Choice, 'same' | 'none', string | null]>([
+      [
+        'imported, its legacy id given',
+        made({ legacyId: OLD }),
+        {},
+        'same',
+        OLD
+      ],
+      [
+        'imported, its legacy id asked of the import',
+        made({ createdHeight: 55 }),
+        { imported: new Map([[Q, ALICE]]) },
+        'same',
+        ALICE
+      ],
+      [
+        'made on the chain, no placeholder: derived',
+        made(),
+        {},
+        'same',
+        principalProfileId(Q)
+      ],
+      [
+        "the gateway's history says first: the placeholder",
+        made(),
+        { placeholders, history: historyOf([{ height: 80, principalId: Q }]) },
+        'same',
+        'p-7'
+      ],
+      [
+        "the gateway's history says not first, with a placeholder: derived",
+        made(),
+        {
+          placeholders,
+          history: historyOf([
+            { height: 65, principalId: OTHER },
+            { height: 70, principalId: null },
+            { height: 80, principalId: Q }
+          ])
+        },
+        'same',
+        principalProfileId(Q)
+      ],
+      [
+        "the mirror's own bindings say first: the placeholder",
+        made(),
+        {
+          placeholders,
+          firstBindings: new Map([
+            [W(7), { wallet: W(7), principal_id: Q, height: 80 }]
+          ]),
+          bindings: { exact: true, nextHeight: 100 }
+        },
+        'same',
+        'p-7'
+      ],
+      [
+        "the history can't say: a founder wait",
+        made(),
+        {
+          placeholders,
+          history: historyOf([{ height: 80, principalId: Q }], 70)
+        },
+        'none',
+        null
+      ],
+      [
+        "the mirror's bindings behind the creation",
+        made(),
+        { placeholders, bindings: { exact: true, nextHeight: 70 } },
+        'none',
+        null
+      ],
+      [
+        'no founder from the gateway (the anchor decides, in time)',
+        made({ founder: undefined }),
+        {
+          placeholders,
+          firstBindings: new Map([
+            [W(7), { wallet: W(7), principal_id: Q, height: 80 }]
+          ]),
+          bindings: { exact: true, nextHeight: 100 }
+        },
+        'none',
+        null
+      ],
+      [
+        'the placeholders not listed yet',
+        made(),
+        { placeholdersListed: false },
+        'none',
+        null
+      ],
+      [
+        'the import not complete',
+        made({ legacyId: OLD }),
+        { importCompleted: false },
+        'none',
+        null
+      ],
+      [
+        "the mirror's tables of another chain",
+        made({ legacyId: OLD }),
+        { network: 'relaunched' },
+        'none',
+        null
+      ]
+    ])('%s', async (_, identity, choice, expected, id) => {
+      const { reads, mirrorStores } = setup({
+        identities: new Map([[Q, identity]]),
+        mapping: new Map(),
+        choice
+      });
+      const read = await reads.profileIdOf(identity);
+      const stored = await mirrorStores(identity);
+      expect(read).toBe(id);
+      if (expected === 'same') expect(read).toBe(stored);
+    });
+
+    it('takes the import as complete as soon as it is', async () => {
+      const choice: Choice = { importCompleted: false };
+      const { reads, mirrorStores } = setup({
+        identities: new Map([[Q, made({ legacyId: OLD })]]),
+        mapping: new Map(),
+        choice
+      });
+      expect(await reads.profileIdOf(made({ legacyId: OLD }))).toBeNull();
+      choice.importCompleted = true;
+      expect(await reads.profileIdOf(made({ legacyId: OLD }))).toBe(
+        await mirrorStores(made({ legacyId: OLD }))
+      );
+    });
+
+    it("takes a relaunched chain's import heights at once", async () => {
+      // Made at 100, after the old chain's import (done at 60): derived.
+      const identity = made({ createdHeight: 100 });
+      const choice: Choice = {
+        network: 'old',
+        mirrorChain: 'old',
+        imported: new Map([[Q, ALICE]])
+      };
+      const { reads, mirrorStores } = setup({
+        identities: new Map([[Q, identity]]),
+        mapping: new Map(),
+        choice
+      });
+      expect(await reads.profileIdOf(identity)).toBe(principalProfileId(Q));
+      expect(await mirrorStores(identity)).toBe(principalProfileId(Q));
+      // Relaunched: the gateway serves the new chain before the mirror has
+      // seen it; its tables are the old chain's.
+      choice.network = 'new';
+      expect(await reads.profileIdOf(identity)).toBeNull();
+      // The mirror on the new chain, whose import ended at 200: imported.
+      choice.mirrorChain = 'new';
+      choice.importStart = 150;
+      choice.importDone = 200;
+      expect(await reads.profileIdOf(identity)).toBe(ALICE);
+      expect(await mirrorStores(identity)).toBe(ALICE);
+    });
   });
 
   it('answers handle availability from the chain', async () => {

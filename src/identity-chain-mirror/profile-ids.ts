@@ -211,19 +211,17 @@ export class ProfileIds {
   }
 
   /**
-   * The profile id profileIdOf gives the identity now, read only: its
-   * mapping, else the same choice (its legacy id; the founding wallet's
-   * unmapped placeholder when this is that wallet's first identity; else
-   * the derived id), storing nothing and starting no founder wait. Null
-   * while the choice can't be made yet (a founder wait, a history not read
-   * yet, the bindings behind): an id answered now is never one the mirror
-   * won't store.
+   * For an identity with no mapping (the caller has checked): the profile
+   * id profileIdOf would store for it, read only. The same choice (its
+   * legacy id; the founding wallet's unmapped placeholder when this is
+   * that wallet's first identity; else the derived id), storing nothing
+   * and starting no founder wait. Null while the choice can't be made yet:
+   * a founder wait, a history not read yet, the bindings behind, or no
+   * founder from the gateway (the anchor's binding then decides, and it
+   * changes with time). An id answered now is never one the mirror won't
+   * store, with the import's heights set as the mirror's run sets them.
    */
   async chosenProfileId(identity: ChainIdentity): Promise<string | null> {
-    const mapped = await this.db.profileIdOfPrincipal(
-      identity.principalId.toLowerCase()
-    );
-    if (mapped) return mapped;
     try {
       return (await this.chooseProfileId(identity, true)).profileId;
     } catch (error) {
@@ -244,7 +242,7 @@ export class ProfileIds {
     const principalId = identity.principalId.toLowerCase();
     const legacy = await this.legacyIdOf(identity);
     if (legacy) return { profileId: legacy, origin: 'LEGACY' };
-    const wallet = await this.foundingWalletOf(identity);
+    const wallet = await this.foundingWalletOf(identity, readOnly);
     const placeholder = wallet
       ? await this.db.unmappedPlaceholderProfile(wallet)
       : null;
@@ -306,9 +304,17 @@ export class ProfileIds {
    * whatever order a rebuild reads them in.
    */
   private async foundingWalletOf(
-    identity: ChainIdentity
+    identity: ChainIdentity,
+    readOnly = false
   ): Promise<string | null> {
     if (identity.founder) return identity.founder.toLowerCase();
+    // The anchor's binding now, which a read can't take for the mirror's.
+    if (readOnly) {
+      throw new ChainReadRetryLater(
+        `No founder of ${identity.principalId} from the gateway`,
+        'founder_not_given'
+      );
+    }
     if (!identity.anchor) return null;
     const anchor = identity.anchor;
     const binding = await orRetryLater(() =>
