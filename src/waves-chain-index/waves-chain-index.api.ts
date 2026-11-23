@@ -24,8 +24,12 @@ export interface WavesImportState {
 
 export interface WavesChainHead {
   readonly finalizedHeight: number;
-  /** The finalized block's time (ms): what the reads at it compare with. */
-  readonly finalizedTime: number;
+  /**
+   * The finalized block's time (ms): what the reads at it compare with.
+   * Null when the gateway's pin is above the finalized height of the node
+   * that answered, which can't give that block's time.
+   */
+  readonly finalizedTime: number | null;
   /** The chain's network id; another one means a relaunched chain. */
   readonly network: string | null;
 }
@@ -117,7 +121,8 @@ export class GatewayWavesChainApi implements WavesChainApi {
     const head = await this.client.getHead(true);
     return {
       finalizedHeight: head.finalizedHeight,
-      finalizedTime: head.finalizedTime,
+      // Null until the answering node holds the pin: the run waits then.
+      finalizedTime: head.finalizedTime ?? null,
       network: head.network ?? null
     };
   }

@@ -73,7 +73,7 @@ const GONE_RETRIES = 2;
 
 export interface WavesChainIndexReport {
   mode: 'idle' | 'skipped' | 'indexed';
-  skipped?: 'import_not_complete' | 'gateway_behind';
+  skipped?: 'import_not_complete' | 'gateway_behind' | 'head_time_unknown';
   height: number | null;
   feedFrom: number | null;
   feedNext: number | null;
@@ -225,6 +225,14 @@ export class WavesChainIndex {
       // height would take rows back.
       report.mode = 'skipped';
       report.skipped = 'gateway_behind';
+      return report;
+    }
+    if (head.finalizedTime === null) {
+      // The gateway's pin is above the answering node's finalized height,
+      // so the pinned block's time is unknown, and what moves with time
+      // can't be judged at it. Wait for a run answered by a node at the pin.
+      report.mode = 'skipped';
+      report.skipped = 'head_time_unknown';
       return report;
     }
     report.mode = 'indexed';

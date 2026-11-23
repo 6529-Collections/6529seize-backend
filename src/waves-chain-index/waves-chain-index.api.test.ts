@@ -139,6 +139,24 @@ describe('GatewayWavesChainApi', () => {
     expect(client.getHead).toHaveBeenCalledWith(true);
   });
 
+  it('gives no head time when the answering node is below the pin', async () => {
+    const { client } = aClient({});
+    client.getHead.mockResolvedValueOnce({
+      headHeight: 12,
+      finalizedHeight: 11,
+      finalizedTime: null,
+      nodeFinalizedHeight: 10,
+      nodeFinalizedTime: 1_764_000_000_000,
+      pinnable: null,
+      network: 'net-1'
+    });
+    expect(await new GatewayWavesChainApi(client).head()).toEqual({
+      finalizedHeight: 11,
+      finalizedTime: null,
+      network: 'net-1'
+    });
+  });
+
   it('throws when a later page of a list is not found, and reads a missing list as empty', async () => {
     const { client } = aClient({
       '/v1/decisions/0xd/entries': [answer([{ entryId: '0x1' }], '0x1')]

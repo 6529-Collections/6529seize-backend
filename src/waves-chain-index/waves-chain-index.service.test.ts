@@ -327,6 +327,28 @@ describe('WavesChainIndex', () => {
     expect(rowsOf(db)).toEqual(before);
   });
 
+  it('waits while the node that answers is below the pin (no block time)', async () => {
+    const { db, index } = indexOf(chain, clock);
+    await index.run({ budgetMs: BIG });
+    chain.vote(E(1), V(1), 10);
+    chain.timeUnknown = true;
+    const before = rowsOf(db);
+    const state = { ...db.state };
+    const report = await index.run({ budgetMs: BIG });
+    expect(report).toMatchObject({
+      mode: 'skipped',
+      skipped: 'head_time_unknown'
+    });
+    expect(rowsOf(db)).toEqual(before);
+    expect(db.state).toEqual(state);
+    // A node at the pin answers: the run goes on from where it was.
+    chain.timeUnknown = false;
+    expect(await index.run({ budgetMs: BIG })).toMatchObject({
+      mode: 'indexed'
+    });
+    expect(rowsOf(db)).toEqual(await freshRows(chain, clock));
+  });
+
   it('asks the feed again before taking a gone answer as final', async () => {
     const { db, index } = indexOf(chain, clock);
     await index.run({ budgetMs: BIG });

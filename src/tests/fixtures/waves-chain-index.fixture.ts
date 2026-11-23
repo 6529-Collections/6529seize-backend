@@ -89,6 +89,8 @@ export class FakeChain implements WavesChainApi {
   goneTimes = 0;
   /** The finalized height trails the feed's by this much (a newer node). */
   lag = 0;
+  /** The answering node is below the gateway's pin: no block time. */
+  timeUnknown = false;
   /** Each call moves the wall clock by this much. */
   callMs = 0;
   calls = 0;
@@ -415,7 +417,7 @@ export class FakeChain implements WavesChainApi {
     const finalized = this.height - this.lag;
     return {
       finalizedHeight: finalized,
-      finalizedTime: this.timeAt(finalized),
+      finalizedTime: this.timeUnknown ? null : this.timeAt(finalized),
       network: this.network
     };
   }
@@ -606,7 +608,15 @@ export class FakeChain implements WavesChainApi {
       .filter((b) => b.height >= from && b.height <= through)
       .slice(0, 3);
     const last = blocks.length === 3 ? blocks[2].height : through;
-    return { from, through: last, blocks, next: last + 1 };
+    // Whole blocks only, as the client gives a page that ends at a block.
+    return {
+      from,
+      through: last,
+      blocks,
+      next: last + 1,
+      nextHeight: Math.max(last + 1, from),
+      atHead: !blocks.length && last < from
+    };
   }
 }
 
