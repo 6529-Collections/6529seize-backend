@@ -938,7 +938,8 @@ export class E2eeDevicesService {
           );
         }
         await this.db.insertKeyPackages(rows, connection);
-        // One-time KeyPackages are ephemeral (C1); last-resort ones are kept.
+        // One-time KeyPackages are ephemeral by the dm design
+        // (docs/e2ee-messaging.md); last-resort ones are kept.
         const lastResortSuites = new Set(
           rows.filter((row) => row.last_resort).map((row) => row.ciphersuite)
         );
