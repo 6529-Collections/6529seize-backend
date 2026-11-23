@@ -69,8 +69,12 @@ export function replicaTarget(env: Env = process.env): ReplicaTarget {
 
 /** What the server said about the transaction the export read in. */
 export interface ReadOnlyEvidence {
-  /** The replica host the export connected to (DB_HOST_READ). */
-  readonly host: string;
+  /**
+   * Which endpoint the export read: always the reader, DB_HOST_READ. The
+   * hostname itself stays out of the evidence, which the manifest carries
+   * under a pinned sha256; it is only in the function's log.
+   */
+  readonly endpoint: 'reader';
   /** The session's transaction access mode: true means READ ONLY. */
   readonly transactionReadOnly: boolean;
   /** The server's global read_only, or null when it couldn't be read. */
@@ -93,7 +97,15 @@ export interface ReadOnlyEvidence {
   readonly replicaLagAgeMs: number | null;
   /** Why replicaLagMs is null: the server's error code and message. */
   readonly replicaLagError: string | null;
+  /**
+   * Why the lag is unknown: `unreadable` (an error, no row, no lag, no
+   * timestamp) or `dated_ahead` (the row is dated ahead of UTC: its time
+   * zone may not be UTC). Null when the lag was read.
+   */
+  readonly replicaLagUnknown: ReplicaLagUnknown | null;
 }
+
+export type ReplicaLagUnknown = 'unreadable' | 'dated_ahead';
 
 export interface ReadOnlySnapshot {
   readonly executor: SqlExecutor;
@@ -170,10 +182,18 @@ export type ReplicaLagReading =
       readonly ageMs: number;
       readonly error: null;
     }
-  | { readonly lagMs: null; readonly ageMs: null; readonly error: string };
+  | {
+      readonly lagMs: null;
+      readonly ageMs: null;
+      readonly error: string;
+      readonly unknown: ReplicaLagUnknown;
+    };
 
-function unknownLag(error: string): ReplicaLagReading {
-  return { lagMs: null, ageMs: null, error };
+function unknownLag(
+  error: string,
+  unknown: ReplicaLagUnknown = 'unreadable'
+): ReplicaLagReading {
+  return { lagMs: null, ageMs: null, error, unknown };
 }
 
 /** A server error as `CODE errno: message`. */
@@ -222,7 +242,8 @@ export async function readReplicaLag(
   }
   if (age < -FUTURE_ROW_TOLERANCE_MS) {
     return unknownLag(
-      `LAST_UPDATE_TIMESTAMP is ${-age} ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown`
+      `LAST_UPDATE_TIMESTAMP is ${-age} ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown`,
+      'dated_ahead'
     );
   }
   return { lagMs: lag, ageMs: Math.max(0, age), error: null };
@@ -328,7 +349,7 @@ export async function openReadOnlySnapshot(
     // a server that is itself read-only is the replica.
     if (serverReadOnly !== true && innodb !== true) {
       throw new ReplicaGuardError(
-        `${target.host} is not a read-only server (read_only and innodb_read_only both off): the export runs only on the read replica`
+        'DB_HOST_READ is not a read-only server (read_only and innodb_read_only both off): the export runs only on the read replica'
       );
     }
     // The snapshot's moment on the server's clock (the session is in UTC).
@@ -342,14 +363,15 @@ export async function openReadOnlySnapshot(
     }
     const lag = await readReplicaLag(connection);
     const evidence: ReadOnlyEvidence = {
-      host: target.host,
+      endpoint: 'reader',
       transactionReadOnly,
       serverReadOnly,
       innodbReadOnly: innodb,
       snapshotAt: new Date(snapshotMs).toISOString(),
       replicaLagMs: lag.lagMs,
       replicaLagAgeMs: lag.ageMs,
-      replicaLagError: lag.error
+      replicaLagError: lag.error,
+      replicaLagUnknown: lag.lagMs === null ? lag.unknown : null
     };
     return {
       executor: new ReadOnlySnapshotExecutor(connection),

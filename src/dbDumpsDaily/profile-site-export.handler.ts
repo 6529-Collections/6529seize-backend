@@ -48,6 +48,7 @@ import {
   ReadOnlyEvidence,
   ReadOnlySnapshot,
   REPLICA_LAG_AGE_MARGIN_MS,
+  ReplicaLagUnknown,
   ReplicaTarget,
   replicaTarget
 } from './chain-exports/replica-snapshot';
@@ -121,8 +122,9 @@ export type ProfileSiteExportEvent =
        */
       readonly acceptWritesAfterFreeze: readonly string[];
       /**
-       * Runs although the replica's lag can't be read, relying on the
-       * minimum gap after the freeze alone.
+       * Runs although the replica's lag can't be trusted (unreadable, its
+       * row dated ahead of UTC, or its row older than the gap), relying on
+       * the minimum gap after the freeze alone.
        */
       readonly acceptUnknownReplicaLag: boolean;
       /**
@@ -399,31 +401,47 @@ export function checkSnapshotTime(
   return { gapMs, gapSeconds: Math.round(gapMs / 1000) };
 }
 
+/** Which unreadable or stale lag a run accepted, on the minimum gap alone. */
+export type ReplicaLagAccepted = ReplicaLagUnknown | 'older_than_gap';
+
+/** What to do when the lag can't be trusted: the same in every refusal. */
+function unknownLagSteps(only: string): string {
+  return `Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: true) only for a reading Monday's rehearsal also showed${only}, and only with the switch owner's agreement: the run then relies on the 2-minute minimum gap alone. Otherwise report it.`;
+}
+
 /**
  * Refuses a replica further behind its writer than the snapshot is after
- * the freeze: it might not yet hold writes made before the freeze. An
- * unknown lag is refused unless the invoker accepts relying on the minimum
- * gap alone.
+ * the freeze: it might not yet hold writes made before the freeze. A lag
+ * that can't be read, a row dated ahead of UTC, and a row older than the
+ * whole gap are refused unless the invoker accepts relying on the minimum
+ * gap alone; the case accepted is returned, to be recorded.
  */
 export function checkReplicaLag(
   gapMs: number,
   lag: Pick<
     ReadOnlyEvidence,
-    'replicaLagMs' | 'replicaLagAgeMs' | 'replicaLagError'
+    'replicaLagMs' | 'replicaLagAgeMs' | 'replicaLagError' | 'replicaLagUnknown'
   >,
   acceptUnknown = false
-): void {
+): ReplicaLagAccepted | null {
   if (lag.replicaLagMs === null || lag.replicaLagAgeMs === null) {
-    if (acceptUnknown) return;
+    const unknown = lag.replicaLagUnknown ?? 'unreadable';
+    if (acceptUnknown) return unknown;
+    if (unknown === 'dated_ahead') {
+      throw new ProfileSiteExportSnapshotError(
+        `The replica's lag row is dated ahead of UTC (${lag.replicaLagError ?? 'no reason given'}): LAST_UPDATE_TIMESTAMP may not be in UTC, so how far the reader is behind is unknown. ${unknownLagSteps('')}`
+      );
+    }
     throw new ProfileSiteExportSnapshotError(
-      `The replica's lag can't be read from information_schema.replica_host_status (${lag.replicaLagError ?? 'no reason given'}). Run again first: a passing error, such as a timeout, clears. Accept an unknown lag (acceptUnknownReplicaLag: true) only for an error Monday's rehearsal also showed, ER_UNKNOWN_TABLE 1109 or ER_UNKNOWN_SYSTEM_VARIABLE 1193 (the reader isn't Aurora), and only with the switch owner's agreement. Any other error is a fault in the export: report it.`
+      `The replica's lag can't be read from information_schema.replica_host_status (${lag.replicaLagError ?? 'no reason given'}). ${unknownLagSteps(": for an error, only ER_UNKNOWN_TABLE 1109 or ER_UNKNOWN_SYSTEM_VARIABLE 1193 (the reader isn't Aurora)")}`
     );
   }
-  // A row older than the whole gap won't get younger by waiting: its
-  // timestamp may not be in UTC, or the reader stopped updating it.
+  // A row older than the whole gap: its time zone may not be UTC, or the
+  // reader stopped updating it. Waiting alone won't make it younger.
   if (lag.replicaLagAgeMs >= gapMs) {
+    if (acceptUnknown) return 'older_than_gap';
     throw new ProfileSiteExportSnapshotError(
-      `The replica's lag row is ${lag.replicaLagAgeMs} ms old (a ${lag.replicaLagMs} ms lag), older than the ${gapMs} ms since the freeze: LAST_UPDATE_TIMESTAMP may not be in UTC, or the reader stopped updating its row. Running again won't help, as the age only grows: report it to the on-call engineer rather than running again until 01:30.`
+      `The replica's lag row is ${lag.replicaLagAgeMs} ms old (a ${lag.replicaLagMs} ms lag), older than the ${gapMs} ms since the freeze: LAST_UPDATE_TIMESTAMP may not be in UTC, or the reader stopped updating its row. If the same refusal returns with the row's age grown by the time you waited, the reader stopped updating: report it. ${unknownLagSteps('')}`
     );
   }
   // The reader's row can be stale: its lag counts from when it was
@@ -434,6 +452,7 @@ export function checkReplicaLag(
       `The replica may be ${behindMs} ms behind its writer (a ${lag.replicaLagMs} ms lag in a row ${lag.replicaLagAgeMs} ms old), which with ${REPLICA_LAG_AGE_MARGIN_MS} ms for the row's timestamp is not less than the ${gapMs} ms since the freeze: it may not hold every write made before the freeze. Wait a few minutes and run again.`
     );
   }
+  return null;
 }
 
 /** IDENTITY_FREEZE_AT as the profile site itself reads it. */
@@ -630,8 +649,11 @@ export interface ProfileSiteExportResult {
   readonly usable: boolean;
   readonly rebuiltRefused: number;
   readonly unavailableProfiles: number;
-  /** The read replica the export read from (DB_HOST_READ, not DB_HOST). */
-  readonly host: string;
+  /**
+   * The endpoint the export read: always the reader (DB_HOST_READ, not
+   * DB_HOST). The hostname is only in the function's log.
+   */
+  readonly endpoint: 'reader';
   /** The export read in one READ ONLY transaction with a consistent snapshot. */
   readonly readOnly: true;
   readonly evidence: ReadOnlyEvidence;
@@ -657,6 +679,8 @@ export interface ProfileSiteExportResult {
   readonly acceptedWritesAfterFreeze: readonly string[];
   /** Whether the run was told to rely on the gap if the lag was unknown. */
   readonly acceptUnknownReplicaLag: boolean;
+  /** The unknown or stale lag the run accepted, or null if none. */
+  readonly replicaLagAccepted: ReplicaLagAccepted | null;
   /** Whether the run was allowed to replace an earlier run's pointer. */
   readonly replacePointer: boolean;
   readonly startedAt: string;
@@ -908,11 +932,12 @@ export async function runProfileSiteExportJob(
   );
   const snapshot = await deps.openSnapshot(target);
   logger.info(
-    `[READ ONLY SNAPSHOT] [HOST ${snapshot.evidence.host}] [AT ${snapshot.evidence.snapshotAt}] [REPLICA LAG ${snapshot.evidence.replicaLagMs ?? 'unknown'} MS] [LAG ROW AGE ${snapshot.evidence.replicaLagAgeMs ?? 'unknown'} MS]${snapshot.evidence.replicaLagError ? ` [REPLICA LAG ERROR ${snapshot.evidence.replicaLagError}]` : ''} [TRANSACTION READ ONLY ${snapshot.evidence.transactionReadOnly}] [SERVER READ ONLY ${snapshot.evidence.serverReadOnly}] [INNODB READ ONLY ${snapshot.evidence.innodbReadOnly}]`
+    `[READ ONLY SNAPSHOT] [HOST ${target.host}] [AT ${snapshot.evidence.snapshotAt}] [REPLICA LAG ${snapshot.evidence.replicaLagMs ?? 'unknown'} MS] [LAG ROW AGE ${snapshot.evidence.replicaLagAgeMs ?? 'unknown'} MS]${snapshot.evidence.replicaLagError ? ` [REPLICA LAG ERROR ${snapshot.evidence.replicaLagError}]` : ''}${snapshot.evidence.replicaLagUnknown ? ` [REPLICA LAG UNKNOWN ${snapshot.evidence.replicaLagUnknown}]` : ''} [TRANSACTION READ ONLY ${snapshot.evidence.transactionReadOnly}] [SERVER READ ONLY ${snapshot.evidence.serverReadOnly}] [INNODB READ ONLY ${snapshot.evidence.innodbReadOnly}]`
   );
   let run;
   let gapSeconds = 0;
   let gapMs = 0;
+  let replicaLagAccepted: ReplicaLagAccepted | null = null;
   let latest: LatestSiteWrites;
   let late: WriteAfterFreeze[];
   try {
@@ -929,11 +954,16 @@ export async function runProfileSiteExportJob(
     // Before the freeze, sites are still published: a rehearsal records
     // what it saw instead of refusing.
     if (!event.rehearsal) {
-      checkReplicaLag(
+      replicaLagAccepted = checkReplicaLag(
         gap.gapMs,
         snapshot.evidence,
         event.acceptUnknownReplicaLag
       );
+      if (replicaLagAccepted) {
+        logger.warn(
+          `[REPLICA LAG ACCEPTED ${replicaLagAccepted}] [RELYING ON THE ${MIN_SNAPSHOT_GAP_SECONDS} S MINIMUM GAP]`
+        );
+      }
       checkWritesAfterFreeze(late, event.acceptWritesAfterFreeze);
     }
     run = await runProfileCmsExport(
@@ -1051,6 +1081,7 @@ export async function runProfileSiteExportJob(
     writes_after_freeze: late,
     accepted_writes_after_freeze: event.acceptWritesAfterFreeze,
     accept_unknown_replica_lag: event.acceptUnknownReplicaLag,
+    replica_lag_accepted: replicaLagAccepted,
     replace_pointer: event.replacePointer,
     started_at: startedAt.toISOString(),
     finished_at: finishedAt.toISOString(),
@@ -1153,7 +1184,7 @@ export async function runProfileSiteExportJob(
     usable: manifestName === MANIFEST,
     rebuiltRefused: run.rebuiltRefused,
     unavailableProfiles: run.unavailableProfiles,
-    host: snapshot.evidence.host,
+    endpoint: 'reader',
     readOnly: true,
     evidence: snapshot.evidence,
     bucketPrivacy: privacy,
@@ -1168,6 +1199,7 @@ export async function runProfileSiteExportJob(
     writesAfterFreeze: late,
     acceptedWritesAfterFreeze: event.acceptWritesAfterFreeze,
     acceptUnknownReplicaLag: event.acceptUnknownReplicaLag,
+    replicaLagAccepted,
     replacePointer: event.replacePointer,
     startedAt: startedAt.toISOString(),
     finishedAt: finishedAt.toISOString(),

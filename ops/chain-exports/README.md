@@ -26,22 +26,20 @@ a job the function knows, or it fails. Each export:
     next run;
   - a snapshot less than 2 minutes after the freeze, so the replica has the
     writes made before it;
-  - a replica as far behind its writer as that gap, or further. The lag
-    comes from this reader's newest row in
+  - a replica as far behind its writer as the gap less 1.5 s, or further.
+    The lag comes from this reader's newest row in
     `information_schema.replica_host_status` (`evidence.replicaLagMs`). A
     lagging reader's row can be stale, so the row's age counts too
     (`evidence.replicaLagAgeMs`): lag plus age, plus 1.5 s because the age
     can read that much low (a row up to 1 s ahead reads as 0, and a
     timestamp in whole seconds can round by 0.5 s), must be below the gap.
-    The
-    age reads `LAST_UPDATE_TIMESTAMP` as UTC. That relies on Aurora's time
-    zone being UTC, its default unless the cluster's `time_zone` parameter
-    sets another; the snapshot's session is in UTC too. If that is wrong, a
-    row dated ahead of UTC reads as an unknown lag, and one in a zone
-    behind UTC only looks older, so the check refuses rather than passes;
-  - a lag that can't be read: `evidence.replicaLagMs` is `null` and
-    `evidence.replicaLagError` holds the reason. See "An unknown replica
-    lag", below;
+    The age reads `LAST_UPDATE_TIMESTAMP` as UTC. That relies on Aurora's
+    time zone being UTC, its default unless the cluster's `time_zone`
+    parameter sets another; the snapshot's session is in UTC too;
+  - a lag it can't trust, unless accepted as in "An unknown replica lag",
+    below: a lag that can't be read (`evidence.replicaLagUnknown` is
+    `unreadable`, the reason in `evidence.replicaLagError`), a row dated
+    ahead of UTC (`dated_ahead`), or a row older than the whole gap;
 - writes only to the private bucket `6529-chain-exports-<account>-<region>`
   under its own prefix. Every call names the function's own account as the
   bucket's expected owner, and every upload carries a SHA-256 checksum S3
@@ -55,19 +53,33 @@ Each job's own section adds its own rules.
 
 ### An unknown replica lag
 
-When the run refuses because the lag can't be read:
+Three refusals mean the run can't trust the reader's lag:
 
-1. Run it again first: a passing error, such as a timeout, clears.
-2. Accept an unknown lag (`acceptUnknownReplicaLag: true`) only for an
-   error Monday's rehearsal also showed, `ER_UNKNOWN_TABLE 1109` or
-   `ER_UNKNOWN_SYSTEM_VARIABLE 1193` (the reader isn't Aurora), and only
-   with the switch owner's agreement. The run then relies on the 2-minute
-   gap alone.
-3. Any other error, such as `ER_PARSE_ERROR 1064`, a missing row or a row
-   without a timestamp, is a fault: report it, and don't accept an unknown
-   lag for it.
+- the lag can't be read (an error, no row, no lag, no timestamp);
+- the lag row is dated ahead of UTC: `LAST_UPDATE_TIMESTAMP` may not be in
+  UTC;
+- the lag row is older than the whole time since the freeze:
+  `LAST_UPDATE_TIMESTAMP` may not be in UTC, or the reader stopped
+  updating its row.
 
-The refusal itself says the same.
+For each:
+
+1. Run it once more first. A passing error, such as a timeout, clears, and
+   through the reader endpoint the run may land on another reader. If the
+   row-older-than-the-gap refusal returns with the row's age grown by the
+   time you waited, the reader stopped updating: report it.
+2. Accept it (`acceptUnknownReplicaLag: true`) only for a reading Monday's
+   rehearsal also showed, and only with the switch owner's agreement. For
+   an error, that means only `ER_UNKNOWN_TABLE 1109` or
+   `ER_UNKNOWN_SYSTEM_VARIABLE 1193` (the reader isn't Aurora). The run
+   then relies on the 2-minute minimum gap alone, and records the case it
+   accepted (`replicaLagAccepted`, and `replica_lag_accepted` in the
+   manifest: `unreadable`, `dated_ahead` or `older_than_gap`).
+3. Otherwise report it: any other error, such as `ER_PARSE_ERROR 1064`, is
+   a fault.
+
+A lag that is simply too large, its row younger than the gap, is never
+accepted: wait a few minutes and run again. The refusals say the same.
 
 No database password and no long-lived key is handled by a person.
 
@@ -218,11 +230,12 @@ Event fields:
   refusal lists it. Use it only as in "A publish that straddles the
   freeze", below.
 - `acceptUnknownReplicaLag` (optional, `true`): run although the replica's
-  lag can't be read, relying on the 2-minute gap alone. Only as in "An
-  unknown replica lag" (top of this file): after running again, for an
-  error Monday's rehearsal also showed (1109 or 1193), and with the
-  switch owner's agreement. The manifest records it
-  (`accept_unknown_replica_lag`).
+  lag can't be trusted (unreadable, its row dated ahead of UTC, or its row
+  older than the gap), relying on the 2-minute gap alone. Only as in "An
+  unknown replica lag" (top of this file): after running once more, for a
+  reading Monday's rehearsal also showed, and with the switch owner's
+  agreement. The manifest records it (`accept_unknown_replica_lag`) and the
+  case accepted (`replica_lag_accepted`).
 - `replacePointer` (optional, `true`): let this run replace the by-freeze
   pointer an earlier run for the same freeze wrote. Without it, the pointer
   is written only if none is there. Only for a real run of every profile,
@@ -278,16 +291,13 @@ Check in `out.json`:
   secret (see "The freeze setting"), then run the rehearsal again. Each run
   reads the secret afresh.
 - `evidence.replicaLagMs` and `evidence.replicaLagAgeMs` are numbers, the
-  age well under a minute on a healthy reader. An age of hours means
-  `LAST_UPDATE_TIMESTAMP` isn't in UTC: tell the on-call engineer before
-  Tuesday, whose run would refuse. If they are `null`, the lag can't be
-  read, and `evidence.replicaLagError` says why. Run the rehearsal again
-  first. If it is still `null`, follow "An unknown replica lag" (top of
-  this file): only `ER_UNKNOWN_TABLE 1109`
-  or `ER_UNKNOWN_SYSTEM_VARIABLE 1193` (the reader isn't Aurora) can be
-  accepted on Tuesday, with `"acceptUnknownReplicaLag":true` and the
-  switch owner's agreement; any other error is a fault to report. Settle
-  it before Tuesday.
+  age well under a minute on a healthy reader. An age of hours, or
+  `evidence.replicaLagUnknown` `dated_ahead`, means `LAST_UPDATE_TIMESTAMP`
+  isn't in UTC. If they are `null` (`replicaLagUnknown` `unreadable`),
+  `evidence.replicaLagError` says why. In each case run the rehearsal once
+  more, then tell the on-call engineer and settle it before Tuesday: Tuesday
+  can accept only a reading this rehearsal also showed, as in "An unknown
+  replica lag" (top of this file).
 
 Then test the download links: fetch the manifest and `links.json`, then one
 file by its link, and check each against its sha256.
@@ -346,11 +356,11 @@ CLI fails".
 Start at least 2 minutes after the freeze; 00:05 UTC leaves room. A run
 before 00:02 is refused. Start before 01:30 UTC, or add
 `"acceptSnapshotGapMinutes":N`. If the run is refused because the replica
-may be behind, wait a few minutes and run it again. But if the refusal
-says the lag row is older than the time since the freeze, running again
-won't help, as the age only grows: `LAST_UPDATE_TIMESTAMP` may not be in
-UTC. Report it to the on-call engineer rather than running again until
-01:30.
+may be behind, wait a few minutes and run it again. If the refusal says
+the lag can't be read, or its row is dated ahead of UTC or older than the
+time since the freeze, follow "An unknown replica lag" (top of this file):
+run once more, then accept it only as Monday's rehearsal allows, or report
+it. Don't keep running it until 01:30.
 
 ### A publish that straddles the freeze
 
@@ -403,15 +413,18 @@ time. The manifest and the response record the writes
   - Any other `pointerError` (the write itself failed): send the
     switch owner this run's `prefix` and `manifestSha256`, and fetch fresh
     links by `prefix`, not `frozenAt`.
-- `host`, `readOnly: true` and `evidence`: the replica it read.
-  `evidence.transactionReadOnly` is true, and `serverReadOnly` or
-  `innodbReadOnly` is true.
+- `endpoint` is `reader`, with `readOnly: true` and `evidence`: the export
+  read DB_HOST_READ. `evidence.transactionReadOnly` is true, and
+  `serverReadOnly` or `innodbReadOnly` is true. The reader's hostname is in
+  neither the response nor the manifest (whose `read.endpoint` is the same
+  label); it is only in the function's log, as `[READ REPLICA ...]`.
 - `bucketPrivacy.owner` is the function's own account.
 - `snapshotAt` and `snapshotGapMs`: the snapshot came at least 120 000 ms
   after the freeze (`snapshotGapSeconds` is the same, rounded).
 - `evidence.replicaLagMs` plus `evidence.replicaLagAgeMs`, plus 1 500 ms,
-  is below `snapshotGapMs`. Both are `null` only in a run given
-  `acceptUnknownReplicaLag`, with the reason in `evidence.replicaLagError`.
+  is below `snapshotGapMs`, and `replicaLagAccepted` is `null`. Otherwise
+  the run was given `acceptUnknownReplicaLag`, and `replicaLagAccepted`
+  names the case it accepted.
 - `latestSiteWrites` (publication, archive and pointer change) and
   `writesAfterFreeze`: no site writes after the freeze, except those listed
   in `acceptedWritesAfterFreeze`.

@@ -82,15 +82,18 @@ describe('openReadOnlySnapshot', () => {
       'START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY'
     ]);
     expect(snapshot.evidence).toEqual({
-      host: 'replica-host',
+      endpoint: 'reader',
       transactionReadOnly: true,
       serverReadOnly: true,
       innodbReadOnly: false,
       snapshotAt: '2026-11-24T00:00:05.123Z',
       replicaLagMs: 18.5,
       replicaLagAgeMs: 250,
-      replicaLagError: null
+      replicaLagError: null,
+      replicaLagUnknown: null
     });
+    // The hostname stays out of the evidence the manifest carries.
+    expect(JSON.stringify(snapshot.evidence)).not.toContain('replica-host');
     expect(statements).toContain(REPLICA_LAG_SQL);
     // The reader's newest row, with its age against the UTC clock.
     expect(REPLICA_LAG_SQL).toBe(
@@ -126,7 +129,8 @@ describe('openReadOnlySnapshot', () => {
     [
       'a row dated in the future',
       [{ lag_ms: 20, age_ms: '-5000.0000' }],
-      "LAST_UPDATE_TIMESTAMP is 5000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown"
+      "LAST_UPDATE_TIMESTAMP is 5000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown",
+      'dated_ahead'
     ],
     [
       'a table it cannot read',
@@ -135,7 +139,7 @@ describe('openReadOnlySnapshot', () => {
     ]
   ])(
     'records the lag as unknown with %s, and why',
-    async (_name, answer, why) => {
+    async (_name, answer, why, unknown = 'unreadable') => {
       const { pool, connection } = fakePool({
         transaction_read_only: [{ tro: 1, ro: 1 }],
         innodb_read_only: [{ iro: 0 }],
@@ -161,6 +165,7 @@ describe('openReadOnlySnapshot', () => {
       expect(snapshot.evidence.replicaLagMs).toBeNull();
       expect(snapshot.evidence.replicaLagAgeMs).toBeNull();
       expect(snapshot.evidence.replicaLagError).toBe(why);
+      expect(snapshot.evidence.replicaLagUnknown).toBe(unknown);
       expect(snapshot.evidence.snapshotAt).toBe('2026-11-24T00:00:05.000Z');
     }
   );
@@ -200,7 +205,7 @@ describe('openReadOnlySnapshot', () => {
       'UNIX_TIMESTAMP(NOW(6))': [{ ms: 1795478405000 }]
     });
     await expect(openReadOnlySnapshot(target, () => pool)).rejects.toThrow(
-      /not a read-only server/
+      /^DB_HOST_READ is not a read-only server/
     );
     expect(connection.release).toHaveBeenCalled();
   });
