@@ -38,16 +38,46 @@ describe('deploy train workflow', () => {
 
   it('does nothing unless DEPLOY_TRAIN_MODE is report or prod', () => {
     expect(train.jobs.plan.if).toBe(
-      "vars.DEPLOY_TRAIN_MODE == 'report' || vars.DEPLOY_TRAIN_MODE == 'prod' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'report')"
+      "always() && needs.resume.result != 'failure' && needs.resume.result != 'cancelled' && (vars.DEPLOY_TRAIN_MODE == 'report' || vars.DEPLOY_TRAIN_MODE == 'prod' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'report'))"
     );
+    expect(train.jobs.plan.needs).toBe('resume');
     expect(train.jobs.ship.if).toBe(
       "needs.plan.outputs.mode == 'prod' && needs.plan.outputs.ship_count != '0'"
     );
     expect(train.permissions).toEqual({ contents: 'read' });
     expect(train.jobs.plan.permissions).toEqual({
       contents: 'read',
-      actions: 'read'
+      actions: 'read',
+      issues: 'read'
     });
+  });
+
+  it('passes every repository variable to the plan and ship steps', () => {
+    const step = (job: string, name: string) =>
+      train.jobs[job].steps.find(
+        (entry: { name: string }) => entry.name === name
+      );
+    for (const found of [
+      step('plan', 'Plan the train'),
+      step('ship', 'Ship the train')
+    ]) {
+      expect(found.env.DEPLOY_TRAIN_VARS).toBe('${{ toJSON(vars) }}');
+      expect(found.env.DEPLOY_TRAIN_HOLDS).toBeUndefined();
+    }
+  });
+
+  it('clears a halt only in the resume job of a resume=true dispatch', () => {
+    const resume = train.jobs.resume;
+    expect(resume.if).toBe(
+      "github.event_name == 'workflow_dispatch' && inputs.resume"
+    );
+    expect(resume.permissions).toEqual({ contents: 'read', issues: 'write' });
+    expect(
+      resume.steps.map((step: { run?: string }) => step.run || '')
+    ).toContain('node scripts/deploy-train/cli.js resume');
+    for (const step of resume.steps) {
+      expect(String(step.run || '')).not.toContain('6529 ci');
+    }
   });
 
   it('holds deploy credentials only in the ship job, which installs nothing', () => {
@@ -58,7 +88,8 @@ describe('deploy train workflow', () => {
     expect(ship.permissions).toEqual({
       contents: 'read',
       actions: 'write',
-      'id-token': 'write'
+      'id-token': 'write',
+      issues: 'write'
     });
     expect(train.jobs.plan.environment).toBeUndefined();
     for (const step of ship.steps) {
@@ -79,6 +110,10 @@ describe('deploy train workflow', () => {
       "const SHIP_JOB_NAME = 'Ship';"
     );
     expect(train['run-name']).toContain("'Deploy train (resume)'");
+    const steps = train.jobs.ship.steps;
+    const record = steps[steps.length - 1];
+    expect(record.if).toBe('failure()');
+    expect(record.run).toContain('cli.js record-halt');
   });
 });
 

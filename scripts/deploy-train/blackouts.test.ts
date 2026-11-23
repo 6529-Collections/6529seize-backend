@@ -159,7 +159,9 @@ describe('team windows', () => {
     expect(
       blackouts.evaluateBlackout(catalogService('claimsBuilder'), during)
         .reasons
-    ).toEqual(['team window until 2026-11-25T18:00Z: Card 500 mint']);
+    ).toEqual([
+      'team window until 2026-11-25T18:00Z: Card 500 mint (set by punk6529, DEPLOY_TRAIN_TEAM_WINDOWS)'
+    ]);
     expect(
       blackouts.evaluateBlackout(catalogService('api'), during).blocked
     ).toBe(false);
@@ -321,5 +323,156 @@ describe('catalog validation of train fields', () => {
     expect(() =>
       validation.validateDeployServiceConfig({ ...base, ...fields }, new Set())
     ).toThrow(message);
+  });
+});
+
+describe('temporary holds', () => {
+  const known = new Set(['api', 'nftsLoop', 'claimsBuilder']);
+
+  it('reads holds from the controls file and the variable', () => {
+    const holds = blackouts.parseHolds(
+      [
+        {
+          name: 'ops/deploy-train/controls.json',
+          text: '{"windows": [], "holds": [{"services": ["api"], "reason": "frontend first", "owner": "dev"}]}',
+          keys: ['windows', 'holds']
+        },
+        {
+          name: 'DEPLOY_TRAIN_HOLDS',
+          text: '[{"services": ["*"], "reason": "operator step"}]'
+        }
+      ],
+      known
+    );
+    expect(holds.map((hold: { reason: string }) => hold.reason)).toEqual([
+      'frontend first',
+      'operator step'
+    ]);
+    expect(blackouts.holdFor({ name: 'api' }, holds.slice(0, 1))).toBe(
+      'held: frontend first (set by dev, ops/deploy-train/controls.json)'
+    );
+    expect(
+      blackouts.holdFor({ name: 'nftsLoop' }, holds.slice(0, 1))
+    ).toBeNull();
+    expect(blackouts.holdFor({ name: 'nftsLoop' }, holds)).toBe(
+      'held: operator step (DEPLOY_TRAIN_HOLDS)'
+    );
+  });
+
+  it('has no end time, unlike a team window', () => {
+    const holds = blackouts.parseHolds(
+      [
+        {
+          name: 'DEPLOY_TRAIN_HOLDS',
+          text: '[{"services": ["api"], "reason": "r"}]'
+        }
+      ],
+      known
+    );
+    expect(blackouts.holdFor({ name: 'api' }, holds)).toBe(
+      'held: r (DEPLOY_TRAIN_HOLDS)'
+    );
+  });
+
+  it.each([
+    ['[{"services": ["api"]}]', 'reason is required'],
+    ['[{"services": [], "reason": "r"}]', 'must list services'],
+    [
+      '[{"services": ["ghostLoop"], "reason": "r"}]',
+      'unknown service ghostLoop'
+    ],
+    [
+      '[{"services": ["api"], "reason": "r", "until": "x"}]',
+      'unsupported field until'
+    ],
+    ['{"hold": []}', 'unsupported field hold']
+  ])('fails closed on %s', (text, message) => {
+    expect(() =>
+      blackouts.parseHolds([{ name: 'DEPLOY_TRAIN_HOLDS', text }], known)
+    ).toThrow(message);
+  });
+
+  it('merges per-person variables, each entry tagged with its variable', () => {
+    const variables = {
+      DEPLOY_TRAIN_HOLDS: '[{"services": ["nftsLoop"], "reason": "shared"}]',
+      DEPLOY_TRAIN_HOLDS_PRXT6529:
+        '[{"services": ["api"], "reason": "frontend first"}]',
+      DEPLOY_TRAIN_HOLDS_GELATOGENESIS:
+        '{"holds": [{"services": ["claimsBuilder"], "reason": "claims backfill"}]}',
+      DEPLOY_TRAIN_TEAM_WINDOWS_PRXT6529: '[]',
+      DEPLOY_TRAIN_MODE: 'prod',
+      OTHER_DEPLOY_TRAIN_HOLDS: 'not ours'
+    };
+    const sources = blackouts.variableSources(variables, 'DEPLOY_TRAIN_HOLDS');
+    expect(sources.map((source: { name: string }) => source.name)).toEqual([
+      'DEPLOY_TRAIN_HOLDS',
+      'DEPLOY_TRAIN_HOLDS_GELATOGENESIS',
+      'DEPLOY_TRAIN_HOLDS_PRXT6529'
+    ]);
+    const holds = blackouts.parseHolds(sources, known);
+    expect(
+      holds.map((hold: { source: string; reason: string }) => [
+        hold.source,
+        hold.reason
+      ])
+    ).toEqual([
+      ['DEPLOY_TRAIN_HOLDS', 'shared'],
+      ['DEPLOY_TRAIN_HOLDS_GELATOGENESIS', 'claims backfill'],
+      ['DEPLOY_TRAIN_HOLDS_PRXT6529', 'frontend first']
+    ]);
+    expect(blackouts.holdFor({ name: 'api' }, holds)).toBe(
+      'held: frontend first (DEPLOY_TRAIN_HOLDS_PRXT6529)'
+    );
+    expect(
+      blackouts.variableSources(variables, 'DEPLOY_TRAIN_TEAM_WINDOWS')
+    ).toEqual([{ name: 'DEPLOY_TRAIN_TEAM_WINDOWS_PRXT6529', text: '[]' }]);
+  });
+
+  it('fails on a malformed entry and names the variable it came from', () => {
+    const variables = {
+      DEPLOY_TRAIN_HOLDS_GELATOGENESIS:
+        '[{"services": ["api"], "reason": "ok"}]',
+      DEPLOY_TRAIN_HOLDS_PRXT6529: '[{"services": ["api"]}]'
+    };
+    expect(() =>
+      blackouts.parseHolds(
+        blackouts.variableSources(variables, 'DEPLOY_TRAIN_HOLDS'),
+        known
+      )
+    ).toThrow('DEPLOY_TRAIN_HOLDS_PRXT6529[0].reason is required');
+    expect(() =>
+      blackouts.parseTeamWindows(
+        blackouts.variableSources(
+          { DEPLOY_TRAIN_TEAM_WINDOWS_GELATOGENESIS: 'not json' },
+          'DEPLOY_TRAIN_TEAM_WINDOWS'
+        ),
+        known
+      )
+    ).toThrow('DEPLOY_TRAIN_TEAM_WINDOWS_GELATOGENESIS is not valid JSON');
+  });
+
+  it('rejects a misspelt key in the controls file', () => {
+    expect(() =>
+      blackouts.parseTeamWindows(
+        [
+          {
+            name: 'controls',
+            text: '{"window": []}',
+            keys: ['windows', 'holds']
+          }
+        ],
+        known
+      )
+    ).toThrow('unsupported field window');
+  });
+
+  it('ships an empty committed controls file', () => {
+    const text = readFileSync(
+      path.resolve(__dirname, '../../ops/deploy-train/controls.json'),
+      'utf8'
+    );
+    const source = { name: 'controls', text, keys: ['windows', 'holds'] };
+    expect(blackouts.parseTeamWindows([source], known)).toEqual([]);
+    expect(blackouts.parseHolds([source], known)).toEqual([]);
   });
 });

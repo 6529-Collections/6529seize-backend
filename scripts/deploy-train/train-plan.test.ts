@@ -286,6 +286,32 @@ describe('deploy train plan', () => {
     ).toBe(true);
   });
 
+  it('holds services named by a temporary hold, with their dependents', () => {
+    const result = plan(
+      [record('dbMigrationsLoop'), record('api'), record('teamLoop')],
+      {
+        holds: [
+          {
+            services: ['dbMigrationsLoop'],
+            reason: 'scoped migration first',
+            owner: null
+          }
+        ]
+      }
+    );
+    const kinds = new Map(
+      result.deferred.map((entry: { service: string; kind: string }) => [
+        entry.service,
+        entry.kind
+      ])
+    );
+    expect(kinds.get('dbMigrationsLoop')).toBe('hold');
+    expect(kinds.get('api')).toBe('dependency');
+    expect(
+      result.ship.map((item: { service: string }) => item.service)
+    ).toEqual(['teamLoop']);
+  });
+
   it('lists never-deployed and ahead services without shipping them', () => {
     const result = plan([
       record('signedRecordLogLoop', { status: 'never-deployed' }),

@@ -2402,8 +2402,10 @@ The `Deploy train` workflow automates that production sequence when the
 its last deployed commit with `main` (`scripts/deploy-train/`), then dispatches
 `Deploy a service` for every service that differs, one at a time in dependency
 order. It respects per-service quiet windows from the catalog
-(`deploy_blackouts`) and announced team windows, and checks CloudWatch health
-after each deploy. The read-only `Deploy drift guard` posts the same comparison
+(`deploy_blackouts`), announced team windows and temporary holds, and checks
+the new build's health after each deploy. A failed deploy or unhealthy build
+halts it until a `resume=true` dispatch; the halt is kept as a GitHub issue.
+The read-only `Deploy drift guard` posts the same comparison
 to the production CI wave daily. Both are described in
 [Deployment](deployment.md#deploy-train-and-drift-guard).
 

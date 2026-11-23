@@ -1,7 +1,7 @@
 'use strict';
 
 const catalogLib = require('./catalog');
-const { evaluateBlackout } = require('./blackouts');
+const { evaluateBlackout, holdFor } = require('./blackouts');
 const { DEPLOY_WORKFLOW, activeDeployRuns, deployBranch } = require('./github');
 const { releaseNoteGroups } = require('./plan');
 
@@ -44,6 +44,7 @@ class TrainRun {
     client,
     health,
     teamWindows,
+    holds,
     clock,
     sleep,
     log,
@@ -54,6 +55,7 @@ class TrainRun {
     this.client = client;
     this.health = health;
     this.teamWindows = teamWindows;
+    this.holds = holds;
     this.clock = clock;
     this.sleep = sleep;
     this.log = log;
@@ -226,30 +228,9 @@ class TrainRun {
       );
       return 'stop';
     }
-    const head = await this.client.getBranchSha(this.branch);
-    if (head !== this.plan.target_sha) {
-      this.stopBefore(
-        item,
-        'main-moved',
-        `${this.branch} moved to ${head.slice(0, 10)}; the next train ships what still differs`
-      );
-      return 'stop';
-    }
-    const blackout = evaluateBlackout(
-      catalogLib.getService(this.catalog, item.service),
-      {
-        now: this.clock(),
-        teamWindows: this.teamWindows,
-        lookaheadMinutes: this.plan.lookahead_minutes
-      }
-    );
-    if (blackout.blocked) {
-      this.defer(
-        item,
-        `quiet window from ${blackout.from}: ${blackout.reasons.join('; ')}`
-      );
-      return 'skip';
-    }
+    // Checked before waiting so a held or quiet service does not wait for
+    // other deploys, and again right before dispatch (clearToDispatch).
+    if (!(await this.clearToDispatch(item))) return 'skip';
     const busy = await this.waitUntilIdle();
     if (busy) {
       const urls = busy.map((run) => run.html_url).join(' ');
@@ -259,11 +240,56 @@ class TrainRun {
     return 'go';
   }
 
+  /** Why `item` must not deploy now (a hold or a quiet window), or null. */
+  quietReason(item) {
+    const service = catalogLib.getService(this.catalog, item.service);
+    const held = holdFor(service, this.holds);
+    if (held) return held;
+    const blackout = evaluateBlackout(service, {
+      now: this.clock(),
+      teamWindows: this.teamWindows,
+      lookaheadMinutes: this.plan.lookahead_minutes
+    });
+    return blackout.blocked
+      ? `quiet window from ${blackout.from}: ${blackout.reasons.join('; ')}`
+      : null;
+  }
+
+  /**
+   * Confirms the branch still points at the train's commit and the service
+   * is outside holds and quiet windows. Records a stop or deferral and
+   * returns false otherwise.
+   */
+  async clearToDispatch(item) {
+    const head = await this.client.getBranchSha(this.branch);
+    if (head !== this.plan.target_sha) {
+      this.stopBefore(
+        item,
+        'main-moved',
+        `${this.branch} moved to ${head.slice(0, 10)}; the next train ships what still differs`
+      );
+      return false;
+    }
+    const reason = this.quietReason(item);
+    if (reason) {
+      this.defer(item, reason);
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Dispatches `item` and returns `{ runId }` (null when the run cannot be
+   * found), or null when the last check stopped or deferred it.
+   */
   async dispatch(item) {
     const groups = this.groupsFor(item);
     const priorIds = new Set(
       (await this.listDispatchedRuns()).map((run) => run.id)
     );
+    // Waiting for other deploys can take minutes: check the branch, holds
+    // and quiet windows again immediately before dispatching.
+    if (!(await this.clearToDispatch(item))) return null;
     const dispatchedAt = this.clock();
     this.log(
       `deploying ${item.service} at ${this.plan.target_sha.slice(0, 10)}`
@@ -273,7 +299,10 @@ class TrainRun {
       this.branch,
       deployInputs(this.plan, item, groups)
     );
-    return reportedId || this.findDispatchedRun(item, priorIds, dispatchedAt);
+    const runId =
+      reportedId ||
+      (await this.findDispatchedRun(item, priorIds, dispatchedAt));
+    return { runId };
   }
 
   async recordFailedRun(item, run, runSummary) {
@@ -305,7 +334,9 @@ class TrainRun {
   }
 
   async deployAndCheck(item) {
-    const runId = await this.dispatch(item);
+    const dispatched = await this.dispatch(item);
+    if (!dispatched) return;
+    const { runId } = dispatched;
     if (!runId) {
       this.stop(
         'deploy-unknown',
@@ -411,6 +442,7 @@ function runTrain({
   client,
   health,
   teamWindows = [],
+  holds = [],
   clock = () => Date.now(),
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   log = () => undefined,
@@ -422,6 +454,7 @@ function runTrain({
     client,
     health,
     teamWindows,
+    holds,
     clock,
     sleep,
     log,

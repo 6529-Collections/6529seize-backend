@@ -1,4 +1,5 @@
 const github = require('./github');
+const report = require('./report');
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.parse('2026-11-23T12:00:00Z');
@@ -273,5 +274,161 @@ describe('GitHub client', () => {
     expect(() =>
       github.createGitHubClient({ token: 't', repository: 'nope' })
     ).toThrow('owner/name');
+  });
+});
+
+describe('persistent halts', () => {
+  type Issue = {
+    number: number;
+    title: string;
+    state: string;
+    html_url: string;
+    labels: { name: string }[];
+    pull_request?: unknown;
+  };
+
+  /** A tiny in-memory GitHub: issues, labels and a long run history. */
+  function fakeGitHub(issues: Issue[], runCount = 0) {
+    const requests: string[] = [];
+    const labels = new Set<string>();
+    const runs = Array.from({ length: runCount }, (_, index) => ({
+      id: 1000 + index,
+      created_at: new Date(
+        Date.UTC(2026, 10, 23, 12) + index * 60_000
+      ).toISOString(),
+      status: 'completed',
+      conclusion: 'success',
+      display_title: 'Deploy train',
+      html_url: `https://example.test/runs/${1000 + index}`
+    }));
+    const client = {
+      async request(method: string, path: string, body?: any) {
+        requests.push(`${method} ${path}`);
+        if (method === 'GET' && path.startsWith('/issues?')) {
+          const label = /labels=([^&]+)/.exec(path)![1];
+          return issues.filter((issue) =>
+            issue.labels.some((entry) => entry.name === label)
+          );
+        }
+        if (method === 'POST' && path === '/labels') {
+          if (labels.has(body.name)) {
+            throw Object.assign(new Error('exists'), { status: 422 });
+          }
+          labels.add(body.name);
+          return {};
+        }
+        if (method === 'POST' && path === '/issues') {
+          const issue = {
+            number: issues.length + 1,
+            title: body.title,
+            state: 'open',
+            html_url: `https://example.test/issues/${issues.length + 1}`,
+            labels: body.labels.map((name: string) => ({ name }))
+          };
+          issues.push(issue);
+          return issue;
+        }
+        const number = Number(/\/issues\/(\d+)/.exec(path)![1]);
+        const issue = issues.find((entry) => entry.number === number)!;
+        if (path.endsWith('/labels')) {
+          issue.labels.push(...body.labels.map((name: string) => ({ name })));
+        } else if (method === 'PATCH') {
+          issue.state = body.state;
+        }
+        return {};
+      },
+      async listWorkflowRuns() {
+        return { workflow_runs: runs.slice(-50).reverse() };
+      },
+      async listRunJobs() {
+        return [];
+      }
+    };
+    return { client, requests, issues };
+  }
+
+  const shipJob = { currentRunId: 1, shipJobName: 'Ship' };
+
+  it('stays halted however many train runs follow the halt', async () => {
+    // The halted run fell off the run-history page long ago; the issue
+    // still holds the train.
+    const { client } = fakeGitHub([], 500);
+    await github.recordHalt(client, {
+      title: 'Deploy train halted at api',
+      body: 'x'
+    });
+    expect(await github.currentHalt(client, shipJob)).toEqual({
+      url: 'https://example.test/issues/1',
+      label: 'issue #1'
+    });
+  });
+
+  it('is not cleared by closing the issue by hand', async () => {
+    const { client, issues } = fakeGitHub([]);
+    await github.recordHalt(client, { title: 't', body: 'b' });
+    issues[0].state = 'closed';
+    expect((await github.currentHalt(client, shipJob)).label).toBe('issue #1');
+  });
+
+  it('clears only through a resume, which labels, comments on and closes the issue', async () => {
+    const { client, requests, issues } = fakeGitHub([]);
+    await github.recordHalt(client, { title: 't', body: 'b' });
+    const cleared = await github.resumeHalts(client, {
+      by: 'dev',
+      runUrl: 'https://example.test/runs/9'
+    });
+    expect(cleared.map((halt: { number: number }) => halt.number)).toEqual([1]);
+    expect(issues[0].state).toBe('closed');
+    expect(issues[0].labels.map((label) => label.name)).toEqual([
+      github.HALT_LABEL,
+      github.RESUMED_LABEL
+    ]);
+    expect(requests).toContain('POST /issues/1/comments');
+    expect(await github.currentHalt(client, shipJob)).toBeNull();
+    expect(
+      await github.resumeHalts(client, { by: 'dev', runUrl: 'u' })
+    ).toEqual([]);
+  });
+
+  it('ignores pull requests that carry the label', async () => {
+    const { client } = fakeGitHub([
+      {
+        number: 7,
+        title: 'pr',
+        state: 'open',
+        html_url: 'u',
+        labels: [{ name: github.HALT_LABEL }],
+        pull_request: {}
+      }
+    ]);
+    expect(await github.findHaltIssues(client)).toEqual([]);
+  });
+
+  it('describes the halt and how to resume in the issue', () => {
+    const issue = report.haltIssue(
+      { target_sha: 'f'.repeat(40) },
+      {
+        stop: {
+          reason: 'unhealthy',
+          halt: true,
+          service: 'api',
+          detail: 'api: new build logged "Cannot find module"'
+        },
+        shipped: [
+          { service: 'dbMigrationsLoop', health: 'healthy', note: null }
+        ],
+        not_started: ['nftsLoop']
+      },
+      'https://example.test/runs/5'
+    );
+    expect(issue.title).toBe('Deploy train halted at api (ffffffffff)');
+    expect(issue.body).toContain(
+      '**health check failed**: api: new build logged'
+    );
+    expect(issue.body).toContain('Not started: nftsLoop');
+    expect(issue.body).toContain('resume=true');
+    expect(report.haltIssue(null, null, 'u').title).toBe(
+      'Deploy train halted at start (none)'
+    );
   });
 });

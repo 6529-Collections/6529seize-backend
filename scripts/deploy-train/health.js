@@ -7,24 +7,85 @@ const path = require('node:path');
 const { systemExecutable } = require('./git');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+// Startup and database-login failures: any one of these from the new build
+// halts the train.
 const BAD_LOG_PATTERN =
-  '?"Access denied" ?ER_ACCESS_DENIED ?"Cannot find module" ?ImportModuleError';
+  '?"Access denied" ?ER_ACCESS_DENIED ?"Cannot find module" ?ImportModuleError ?"Status: error" ?"Status: timeout"';
 const AUTH_LOG_PATTERN = '?"AUTH IAM" ?"AUTH PASSWORD"';
+const INVOCATION_LOG_PATTERN = '"REPORT RequestId"';
 const TOKEN_REFRESH_MS = 4 * 60 * 1000;
 const UNCHECKED_PROFILES = new Set([
   'cloudformation-stack',
   'lambda-edge-association'
 ]);
+// Generic Lambda errors halt only when they repeat and clearly exceed the
+// normal rate. Provisional; tune with DEPLOY_TRAIN_ERROR_MIN_COUNT and
+// DEPLOY_TRAIN_ERROR_RATE_FACTOR once there is data from real trains.
+const DEFAULT_ERROR_THRESHOLDS = { minErrors: 3, rateFactor: 2 };
+
+function authModes(lines) {
+  return lines
+    .map((line) => /AUTH (IAM|PASSWORD)/.exec(line))
+    .filter(Boolean)
+    .map((match) => match[1]);
+}
+
+/** Startup or database-login failures logged by the new build. */
+function confirmedFailures({
+  badLines,
+  authLines,
+  expectsDbAuth,
+  expectedAuth
+}) {
+  const findings = [];
+  if (badLines.length > 0) {
+    findings.push(`new build logged "${badLines[0].trim().slice(0, 160)}"`);
+  }
+  const wrongMode = authModes(authLines).find((mode) => mode !== expectedAuth);
+  if (expectsDbAuth && wrongMode) {
+    findings.push(
+      `new build's database login used [AUTH ${wrongMode}], expected [AUTH ${expectedAuth}]`
+    );
+  }
+  return findings;
+}
+
+/** Repeated errors that also clearly exceed the previous day's rate. */
+function errorIncrease({
+  invocations,
+  errors,
+  baselineInvocations,
+  baselineErrors,
+  thresholds
+}) {
+  if (errors < thresholds.minErrors) return null;
+  const baselineRate =
+    baselineInvocations > 0 ? baselineErrors / baselineInvocations : 0;
+  const rate = invocations > 0 ? errors / invocations : 1;
+  if (baselineErrors > 0 && rate < thresholds.rateFactor * baselineRate) {
+    return null;
+  }
+  return `${errors} Lambda errors in ${invocations} invocations since the new build went live; ${baselineErrors} in ${baselineInvocations} over the previous 24 h`;
+}
 
 /**
- * Judges one function after a deploy from its CloudWatch numbers and log
- * lines. Unhealthy: an access-denied or module-loading log line, a database
- * login with the wrong auth mode, or new Lambda errors (any error when the
- * previous 24 hours had none, otherwise more than double the earlier rate).
- * Healthy: invoked at least once and, for database users, the expected
- * `[AUTH <mode>]` login line was logged. Anything else is still pending.
+ * Judges one function after a deploy. Every signal starts when the new
+ * build went live (the function's LastModified), and log signals come only
+ * from log streams created after that, so traffic still served by the old
+ * build cannot pass or fail the check.
+ *
+ * - unhealthy: the Lambda update failed; the new build logged a startup or
+ *   database-login failure; or Lambda errors repeated (at least
+ *   `thresholds.minErrors`) and, when the function already had errors the
+ *   day before, reached `thresholds.rateFactor` times that rate.
+ * - healthy: the new build handled at least one invocation and, for
+ *   services that bundle the database modules, logged the expected
+ *   `[AUTH <mode>]` login line.
+ * - pending: anything else, including no invocation of the new build yet.
  */
 function evaluateFunctionHealth({
+  updateStatus = 'Successful',
+  newInvocations,
   invocations,
   errors,
   baselineInvocations,
@@ -32,48 +93,49 @@ function evaluateFunctionHealth({
   badLines,
   authLines,
   expectsDbAuth,
-  expectedAuth = 'IAM'
+  expectedAuth = 'IAM',
+  thresholds = DEFAULT_ERROR_THRESHOLDS
 }) {
-  const findings = [];
-  if (badLines.length > 0) {
-    findings.push(`logged "${badLines[0].trim().slice(0, 160)}"`);
+  if (updateStatus === 'Failed') {
+    return {
+      status: 'unhealthy',
+      findings: ['the Lambda update failed'],
+      note: null
+    };
   }
-  const modes = authLines
-    .map((line) => /AUTH (IAM|PASSWORD)/.exec(line))
-    .filter(Boolean)
-    .map((match) => match[1]);
-  const wrongMode = modes.find((mode) => mode !== expectedAuth);
-  if (expectsDbAuth && wrongMode) {
-    findings.push(
-      `database login used [AUTH ${wrongMode}], expected [AUTH ${expectedAuth}]`
-    );
-  }
-  const baselineRate =
-    baselineInvocations > 0 ? baselineErrors / baselineInvocations : 0;
-  const rate = invocations > 0 ? errors / invocations : 0;
-  if (
-    errors > 0 &&
-    (baselineErrors === 0 || (errors >= 2 && rate > 2 * baselineRate))
-  ) {
-    findings.push(
-      `${errors} Lambda error(s) in ${invocations} invocation(s) since deploy; ${baselineErrors} in ${baselineInvocations} over the previous 24 h`
-    );
-  }
+  const findings = confirmedFailures({
+    badLines,
+    authLines,
+    expectsDbAuth,
+    expectedAuth
+  });
+  const increase = errorIncrease({
+    invocations,
+    errors,
+    baselineInvocations,
+    baselineErrors,
+    thresholds
+  });
+  if (increase) findings.push(increase);
   if (findings.length > 0) return { status: 'unhealthy', findings, note: null };
-  if (invocations > 0 && (!expectsDbAuth || modes.includes(expectedAuth))) {
+  if (updateStatus === 'InProgress') {
+    return { status: 'pending', findings, note: 'Lambda update in progress' };
+  }
+  const loggedIn = authModes(authLines).includes(expectedAuth);
+  if (newInvocations > 0 && (!expectsDbAuth || loggedIn)) {
     return {
       status: 'healthy',
       findings,
-      note: `${invocations} invocation(s)`
+      note: `${newInvocations} invocation(s) of the new build`
     };
   }
   return {
     status: 'pending',
     findings,
     note:
-      invocations === 0
-        ? 'not invoked since deploy'
-        : `no [AUTH ${expectedAuth}] login line yet`
+      newInvocations === 0
+        ? 'new build not invoked yet'
+        : `no [AUTH ${expectedAuth}] login line from the new build yet`
   };
 }
 
@@ -197,11 +259,18 @@ function isoTime(time) {
   return new Date(time).toISOString();
 }
 
+/** Lambda reports LastModified like 2026-11-23T08:10:31.000+0000. */
+function parseLambdaTime(value) {
+  if (typeof value !== 'string') return Number.NaN;
+  return Date.parse(value.replace(/([+-]\d{2})(\d{2})$/, '$1:$2'));
+}
+
 /** CloudWatch and log reads behind a health check. */
 function createHealthChecker({
   aws,
   environment,
   expectedAuth = 'IAM',
+  thresholds = DEFAULT_ERROR_THRESHOLDS,
   now = () => Date.now()
 }) {
   const baselines = new Map();
@@ -233,7 +302,52 @@ function createHealthChecker({
     );
   }
 
-  async function logLines(region, functionName, start, end, pattern) {
+  /** When the function's current code and configuration went live. */
+  async function liveState(region, functionName) {
+    const config = await aws.json([
+      'lambda',
+      'get-function-configuration',
+      '--region',
+      region,
+      '--function-name',
+      functionName
+    ]);
+    return {
+      liveAt: parseLambdaTime(config?.LastModified),
+      updateStatus: config?.LastUpdateStatus || 'Successful',
+      codeSha256: config?.CodeSha256 || null
+    };
+  }
+
+  /**
+   * Log streams opened since `since`. After a code update Lambda serves new
+   * invocations from new execution environments, each with its own stream,
+   * so these streams hold only the new build's output.
+   */
+  async function newStreams(region, functionName, since) {
+    const result = await aws.json(
+      [
+        'logs',
+        'describe-log-streams',
+        '--region',
+        region,
+        '--log-group-name',
+        `/aws/lambda/${functionName}`,
+        '--order-by',
+        'LastEventTime',
+        '--descending',
+        '--max-items',
+        '50'
+      ],
+      { allowMissing: true }
+    );
+    return (result?.logStreams || [])
+      .filter((stream) => stream.creationTime >= since)
+      .map((stream) => stream.logStreamName);
+  }
+
+  async function streamLines(region, functionName, streams, since, pattern) {
+    if (streams.length === 0) return [];
     const result = await aws.json(
       [
         'logs',
@@ -242,83 +356,88 @@ function createHealthChecker({
         region,
         '--log-group-name',
         `/aws/lambda/${functionName}`,
+        '--log-stream-names',
+        ...streams,
         '--start-time',
-        String(start),
-        '--end-time',
-        String(end),
+        String(since),
         '--filter-pattern',
         pattern,
         '--max-items',
-        '20'
+        '50'
       ],
       { allowMissing: true }
     );
     return (result?.events || []).map((event) => event.message || '');
   }
 
-  async function checkFunction(item, functionName, deployStartedAt) {
-    const end = now();
-    const key = `${functionName}@${deployStartedAt}`;
+  async function baselineFor(region, functionName, since) {
+    const key = `${functionName}@${since}`;
     if (!baselines.has(key)) {
       baselines.set(key, {
         invocations: await metricSum(
-          item.region,
+          region,
           functionName,
           'Invocations',
-          deployStartedAt - DAY_MS,
-          deployStartedAt,
+          since - DAY_MS,
+          since,
           3600
         ),
         errors: await metricSum(
-          item.region,
+          region,
           functionName,
           'Errors',
-          deployStartedAt - DAY_MS,
-          deployStartedAt,
+          since - DAY_MS,
+          since,
           3600
         )
       });
     }
-    const baseline = baselines.get(key);
+    return baselines.get(key);
+  }
+
+  async function checkFunction(item, functionName, deployStartedAt) {
+    const { region } = item;
+    const live = await liveState(region, functionName);
+    // The new build is live from its LastModified; an older LastModified
+    // means this deploy left the function's code and configuration alone.
+    const unchanged = !(live.liveAt >= deployStartedAt);
+    const since = unchanged ? deployStartedAt : live.liveAt;
+    const end = now();
+    const baseline = await baselineFor(region, functionName, since);
+    const streams = await newStreams(region, functionName, since);
+    const lines = (pattern) =>
+      streamLines(region, functionName, streams, since, pattern);
     const verdict = evaluateFunctionHealth({
+      updateStatus: live.updateStatus,
+      newInvocations: (await lines(INVOCATION_LOG_PATTERN)).length,
       invocations: await metricSum(
-        item.region,
+        region,
         functionName,
         'Invocations',
-        deployStartedAt,
+        since,
         end,
         60
       ),
-      errors: await metricSum(
-        item.region,
-        functionName,
-        'Errors',
-        deployStartedAt,
-        end,
-        60
-      ),
+      errors: await metricSum(region, functionName, 'Errors', since, end, 60),
       baselineInvocations: baseline.invocations,
       baselineErrors: baseline.errors,
-      badLines: await logLines(
-        item.region,
-        functionName,
-        deployStartedAt,
-        end,
-        BAD_LOG_PATTERN
-      ),
-      authLines: item.expects_db_auth
-        ? await logLines(
-            item.region,
-            functionName,
-            deployStartedAt,
-            end,
-            AUTH_LOG_PATTERN
-          )
-        : [],
+      badLines: await lines(BAD_LOG_PATTERN),
+      authLines: item.expects_db_auth ? await lines(AUTH_LOG_PATTERN) : [],
       expectsDbAuth: item.expects_db_auth,
-      expectedAuth
+      expectedAuth,
+      thresholds
     });
-    return { ...verdict, functionName };
+    const note =
+      unchanged && verdict.status === 'pending'
+        ? `${verdict.note}; this deploy did not change the function`
+        : verdict.note;
+    return {
+      ...verdict,
+      note,
+      functionName,
+      live_since: isoTime(since),
+      code_sha256: live.codeSha256
+    };
   }
 
   return {
@@ -346,8 +465,11 @@ function createHealthChecker({
 module.exports = {
   BAD_LOG_PATTERN,
   AUTH_LOG_PATTERN,
+  INVOCATION_LOG_PATTERN,
+  DEFAULT_ERROR_THRESHOLDS,
   evaluateFunctionHealth,
   combineVerdicts,
+  parseLambdaTime,
   createAwsCli,
   createHealthChecker
 };

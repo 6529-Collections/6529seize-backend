@@ -2,7 +2,9 @@ import { existsSync, readFileSync } from 'node:fs';
 
 const health = require('./health');
 
-const quiet = {
+const newBuild = {
+  updateStatus: 'Successful',
+  newInvocations: 2,
   invocations: 3,
   errors: 0,
   baselineInvocations: 100,
@@ -13,24 +15,35 @@ const quiet = {
 };
 
 describe('function health verdicts', () => {
-  it('is healthy after an invocation that logged the IAM login', () => {
-    expect(health.evaluateFunctionHealth(quiet).status).toBe('healthy');
+  it('is healthy once the new build ran and logged the IAM login', () => {
+    expect(health.evaluateFunctionHealth(newBuild)).toEqual({
+      status: 'healthy',
+      findings: [],
+      note: '2 invocation(s) of the new build'
+    });
   });
 
-  it('waits for an invocation or for the login line', () => {
+  it('does not count traffic served by the old build', () => {
+    // CloudWatch shows invocations, but none came from the new build's log
+    // streams: the deploy is not verified yet.
     expect(
-      health.evaluateFunctionHealth({ ...quiet, invocations: 0, authLines: [] })
+      health.evaluateFunctionHealth({
+        ...newBuild,
+        newInvocations: 0,
+        invocations: 5,
+        authLines: []
+      })
     ).toEqual({
       status: 'pending',
       findings: [],
-      note: 'not invoked since deploy'
+      note: 'new build not invoked yet'
     });
     expect(
-      health.evaluateFunctionHealth({ ...quiet, authLines: [] }).note
-    ).toBe('no [AUTH IAM] login line yet');
+      health.evaluateFunctionHealth({ ...newBuild, authLines: [] }).note
+    ).toBe('no [AUTH IAM] login line from the new build yet');
     expect(
       health.evaluateFunctionHealth({
-        ...quiet,
+        ...newBuild,
         authLines: [],
         expectsDbAuth: false
       }).status
@@ -39,38 +52,61 @@ describe('function health verdicts', () => {
 
   it.each([
     'Error: Access denied for user lambda',
-    'Runtime.ImportModuleError: Error: Cannot find module mysql2'
-  ])('fails on the log line %s', (line) => {
+    'Runtime.ImportModuleError: Error: Cannot find module mysql2',
+    'INIT_REPORT Init Duration: 9999 ms Phase: init Status: error'
+  ])('halts immediately on the startup or login failure %s', (line) => {
     const verdict = health.evaluateFunctionHealth({
-      ...quiet,
+      ...newBuild,
+      newInvocations: 0,
       badLines: [line]
     });
     expect(verdict.status).toBe('unhealthy');
     expect(verdict.findings[0]).toContain(line.slice(0, 20));
   });
 
-  it('fails when the database login falls back to a password', () => {
+  it('halts when the new build logs in with a password', () => {
     expect(
       health.evaluateFunctionHealth({
-        ...quiet,
+        ...newBuild,
         authLines: ['[AUTH PASSWORD]']
       }).findings
-    ).toEqual(['database login used [AUTH PASSWORD], expected [AUTH IAM]']);
+    ).toEqual([
+      "new build's database login used [AUTH PASSWORD], expected [AUTH IAM]"
+    ]);
   });
 
-  it('fails on new Lambda errors relative to the previous day', () => {
-    expect(health.evaluateFunctionHealth({ ...quiet, errors: 1 }).status).toBe(
-      'unhealthy'
-    );
-    const noisy = { ...quiet, baselineErrors: 10, baselineInvocations: 100 };
+  it('follows the Lambda update status', () => {
     expect(
-      health.evaluateFunctionHealth({ ...noisy, errors: 1, invocations: 5 })
-        .status
-    ).toBe('healthy');
-    expect(
-      health.evaluateFunctionHealth({ ...noisy, errors: 3, invocations: 5 })
+      health.evaluateFunctionHealth({ ...newBuild, updateStatus: 'Failed' })
         .status
     ).toBe('unhealthy');
+    expect(
+      health.evaluateFunctionHealth({ ...newBuild, updateStatus: 'InProgress' })
+    ).toEqual({
+      status: 'pending',
+      findings: [],
+      note: 'Lambda update in progress'
+    });
+  });
+
+  it('needs repeated errors, and a clear increase over a noisy baseline', () => {
+    const status = (overrides: Record<string, unknown>) =>
+      health.evaluateFunctionHealth({ ...newBuild, ...overrides }).status;
+    expect(status({ errors: 2 })).toBe('healthy');
+    expect(status({ errors: 3 })).toBe('unhealthy');
+    const noisy = { baselineErrors: 10, baselineInvocations: 100 };
+    expect(status({ ...noisy, errors: 3, invocations: 20 })).toBe('healthy');
+    expect(status({ ...noisy, errors: 4, invocations: 20 })).toBe('unhealthy');
+    expect(
+      status({
+        errors: 3,
+        thresholds: { minErrors: 5, rateFactor: 2 }
+      })
+    ).toBe('healthy');
+    expect(health.DEFAULT_ERROR_THRESHOLDS).toEqual({
+      minErrors: 3,
+      rateFactor: 2
+    });
   });
 
   it('combines functions: unhealthy wins, then pending', () => {
@@ -80,13 +116,13 @@ describe('function health verdicts', () => {
         functionName: 'b',
         status: 'pending',
         findings: [],
-        note: 'not invoked since deploy'
+        note: 'new build not invoked yet'
       }
     ];
     expect(health.combineVerdicts(verdicts)).toEqual({
       status: 'pending',
       findings: [],
-      note: 'b: not invoked since deploy'
+      note: 'b: new build not invoked yet'
     });
     expect(
       health.combineVerdicts([
@@ -100,9 +136,18 @@ describe('function health verdicts', () => {
       ])
     ).toEqual({ status: 'unhealthy', findings: ['c: boom'], note: null });
   });
+
+  it('parses Lambda LastModified timestamps', () => {
+    expect(health.parseLambdaTime('2026-11-24T10:02:00.000+0000')).toBe(
+      Date.parse('2026-11-24T10:02:00Z')
+    );
+    expect(Number.isNaN(health.parseLambdaTime(undefined))).toBe(true);
+  });
 });
 
 describe('health checker', () => {
+  const DEPLOY_STARTED = Date.parse('2026-11-24T10:00:00Z');
+  const LIVE_AT = Date.parse('2026-11-24T10:02:00Z');
   const item = {
     service: 'teamLoop',
     region: 'us-east-1',
@@ -111,65 +156,145 @@ describe('health checker', () => {
     expects_db_auth: true
   };
 
-  function fakeAws(responses: Record<string, unknown>) {
+  type Event = { stream: string; message: string };
+
+  function fakeAws({
+    lastModified = '2026-11-24T10:02:00.000+0000',
+    streams = [] as { logStreamName: string; creationTime: number }[],
+    events = [] as Event[],
+    metrics = {} as Record<string, number>
+  }) {
     const calls: string[][] = [];
+    const value = (args: string[], flag: string) =>
+      args[args.indexOf(flag) + 1];
+    const matches = (pattern: string, message: string) => {
+      if (pattern === health.INVOCATION_LOG_PATTERN) {
+        return message.startsWith('REPORT RequestId');
+      }
+      if (pattern === health.AUTH_LOG_PATTERN) return message.includes('AUTH ');
+      return /Access denied|Cannot find module|Status: error/.test(message);
+    };
     return {
       calls,
       json: async (args: string[]) => {
         calls.push(args);
-        const metric = args[args.indexOf('--metric-name') + 1];
-        const period = args[args.indexOf('--period') + 1];
-        if (args[0] === 'cloudwatch') {
-          return responses[`${metric}:${period}`] ?? { Datapoints: [] };
+        if (args[1] === 'get-function-configuration') {
+          return {
+            LastModified: lastModified,
+            LastUpdateStatus: 'Successful',
+            CodeSha256: 'new-sha'
+          };
         }
-        const pattern = args[args.indexOf('--filter-pattern') + 1];
-        return responses[pattern] ?? { events: [] };
+        if (args[0] === 'cloudwatch') {
+          const key = `${value(args, '--metric-name')}:${value(args, '--period')}`;
+          return { Datapoints: [{ Sum: metrics[key] ?? 0 }] };
+        }
+        if (args[1] === 'describe-log-streams') return { logStreams: streams };
+        const start = args.indexOf('--log-stream-names') + 1;
+        const end = args.indexOf('--start-time');
+        const requested = args.slice(start, end);
+        const pattern = value(args, '--filter-pattern');
+        return {
+          events: events
+            .filter((event) => requested.indexOf(event.stream) !== -1)
+            .filter((event) => matches(pattern, event.message))
+            .map((event) => ({ message: event.message }))
+        };
       }
     };
   }
 
-  it('reads metrics since the deploy and the previous day, plus log lines', async () => {
-    const aws = fakeAws({
-      'Invocations:60': { Datapoints: [{ Sum: 2 }, { Sum: 1 }] },
-      'Invocations:3600': { Datapoints: [{ Sum: 40 }] },
-      [health.AUTH_LOG_PATTERN]: { events: [{ message: '[AUTH IAM]' }] }
-    });
-    const checker = health.createHealthChecker({
+  const oldStream = {
+    logStreamName: 'old',
+    creationTime: DEPLOY_STARTED - 3600_000
+  };
+  const newStream = { logStreamName: 'new', creationTime: LIVE_AT + 30_000 };
+
+  function checker(aws: ReturnType<typeof fakeAws>) {
+    return health.createHealthChecker({
       aws,
       environment: 'prod',
       now: () => Date.parse('2026-11-24T10:05:00Z')
     });
-    const verdict = await checker.check(
-      item,
-      Date.parse('2026-11-24T10:00:00Z')
+  }
+
+  it('reports old-build traffic as not yet verified', async () => {
+    // Reproduces the bug: the old build kept handling invocations after
+    // the deploy started, and none of them came from the new build.
+    const aws = fakeAws({
+      streams: [oldStream],
+      events: [
+        { stream: 'old', message: 'REPORT RequestId: 1 Duration: 5 ms' },
+        { stream: 'old', message: '[AUTH IAM]' }
+      ],
+      metrics: { 'Invocations:60': 4 }
+    });
+    const verdict = await checker(aws).check(item, DEPLOY_STARTED);
+    expect(verdict.status).toBe('pending');
+    expect(verdict.note).toBe('teamLoop: new build not invoked yet');
+    // Only streams created after the new build went live are read.
+    expect(aws.calls.some((args) => args[1] === 'filter-log-events')).toBe(
+      false
     );
+  });
+
+  it('starts the window when the new build went live and reads only its streams', async () => {
+    const aws = fakeAws({
+      streams: [oldStream, newStream],
+      events: [
+        { stream: 'old', message: 'Error: Access denied for user x' },
+        { stream: 'new', message: 'REPORT RequestId: 2 Duration: 5 ms' },
+        { stream: 'new', message: '[DB HOST h] [AUTH IAM]' }
+      ],
+      metrics: { 'Invocations:60': 1 }
+    });
+    const verdict = await checker(aws).check(item, DEPLOY_STARTED);
     expect(verdict.status).toBe('healthy');
     const metricCall = aws.calls.find(
       (args) => args[0] === 'cloudwatch' && args.indexOf('60') !== -1
     )!;
     expect(metricCall).toEqual(
       expect.arrayContaining([
-        '--region',
-        'us-east-1',
         'Name=FunctionName,Value=teamLoop',
-        '2026-11-24T10:00:00.000Z',
+        '2026-11-24T10:02:00.000Z',
         '2026-11-24T10:05:00.000Z'
       ])
     );
-    expect(
-      aws.calls.some((args) => args.indexOf('/aws/lambda/teamLoop') !== -1)
-    ).toBe(true);
+    for (const args of aws.calls.filter(
+      (call) => call[1] === 'filter-log-events'
+    )) {
+      expect(args).toContain('new');
+      expect(args).not.toContain('old');
+    }
+  });
+
+  it('halts on a startup failure in the new build', async () => {
+    const aws = fakeAws({
+      streams: [newStream],
+      events: [
+        {
+          stream: 'new',
+          message: 'Runtime.ImportModuleError: Cannot find module x'
+        }
+      ]
+    });
+    const verdict = await checker(aws).check(item, DEPLOY_STARTED);
+    expect(verdict.status).toBe('unhealthy');
+  });
+
+  it('says when the deploy left the function unchanged', async () => {
+    const aws = fakeAws({ lastModified: '2026-11-20T10:00:00.000+0000' });
+    const verdict = await checker(aws).check(item, DEPLOY_STARTED);
+    expect(verdict.note).toBe(
+      'teamLoop: new build not invoked yet; this deploy did not change the function'
+    );
   });
 
   it('skips resource-only stacks and Lambda@Edge', async () => {
-    const checker = health.createHealthChecker({
-      aws: fakeAws({}),
-      environment: 'prod'
-    });
+    const check = checker(fakeAws({}));
     for (const profile of ['cloudformation-stack', 'lambda-edge-association']) {
       expect(
-        (await checker.check({ ...item, validation_profile: profile }, 0))
-          .status
+        (await check.check({ ...item, validation_profile: profile }, 0)).status
       ).toBe('skipped');
     }
   });

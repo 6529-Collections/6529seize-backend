@@ -137,18 +137,23 @@ dispatch. One train runs at a time; a newer trigger replaces a waiting one and
 every train recomputes what still differs, so merges never queue up trains.
 
 1. **Plan** (no deploy credentials): pins the current `main` commit, checks for
-   an uncleared halt, reads team windows, runs the drift tool and builds the
-   work list. The job summary shows what ships, in order, and what is deferred.
+   an uncleared halt, reads team windows and holds, runs the drift tool and
+   builds the work list. The job summary shows what ships, in order, and what
+   is deferred.
 2. **Ship** (only in prod mode; the `production` environment, a GitHub token
-   that can dispatch workflows and OIDC for a read-only health role; it
-   installs no packages): for each service in order it
+   that can dispatch workflows and open the halt issue, and OIDC for a
+   read-only health role; it installs no packages): for each service in order
+   it
    - stops if `main` moved since planning, leaving the rest to the next train;
-   - defers the service if it entered a quiet window, with its dependents;
+   - defers the service, with its dependents, if a hold or a quiet window
+     covers it;
    - waits, up to 30 minutes, while any other `deploy.yml` run is active, so it
      never displaces or cancels another developer's deploy;
+   - checks `main`, the holds and the quiet windows again immediately before
+     dispatching, because that wait can carry it into a window;
    - dispatches `Deploy a service` with `environment=prod`, the service,
      `expected_source_sha` set to the train's commit and `release_note_groups`;
-   - waits for the run and checks the service's health.
+   - waits for the run and checks the new build's health.
 
 Services the plan defers instead of shipping:
 
@@ -157,6 +162,7 @@ Services the plan defers instead of shipping:
 | `deploy_train.mode` is `manual` in the catalog | Deploy it by hand when ready. |
 | No merged PR explains the change | Deploy it by hand with release-note metadata. |
 | More than 100 PRs, or groups too large for one dispatch | Catch it up by hand once; the train then keeps it current. |
+| A temporary hold names it | Finish the hand-run step, then clear the hold. |
 | A quiet window is active within 15 minutes | Nothing; a later train ships it. |
 | A dependency is held back or could not be assessed | Fix or ship the dependency first. |
 
@@ -165,39 +171,62 @@ service in the train that ships it, and the group publishes on the last of
 them. If a train stops early, a later train publishes the remaining groups.
 The train never uses the release-note opt-out.
 
-The train deploys `dbMigrationsLoop` with the default `full` schema scope. A
-change that needs a hand-run sequence (a scoped `dbMigrationsLoop` run, a
-backfill between deploys, or a frontend that must ship first) needs a team
-window for the affected services before it merges. Run the sequence by hand,
-then end the window.
+Routine migrations stay in the train. It deploys `dbMigrationsLoop` first, with
+the default `full` schema scope. Services whose catalog entry depends on
+`dbMigrationsLoop` (directly or through another service) deploy only after that
+migration deploy succeeded in the same train. `Deploy a service` invokes the
+migration synchronously and fails on a function error. If the migration is
+deferred, held or fails, its dependents wait.
 
-### Blackouts and team windows
+Urgent fixes keep using `Deploy a service` by hand; the train waits for a
+manual run and never cancels it. A release that needs a non-catalog order or
+an operator step (a scoped `dbMigrationsLoop` run, a backfill between deploys,
+a frontend that must ship first) sets a temporary hold first.
 
-Quiet windows live in the catalog as `deploy_blackouts`. A `window` rule has
-`start` and `end` (`HH:MM`, `end` may be `24:00`, overnight allowed), an
-optional IANA `timezone` (UTC by default) and optional `days` on which the
-window starts. A `team-freeze` rule holds the service during any announced
-team window. The train will not start a deploy that a window covers within the
-next 15 minutes. Current rules:
+### Quiet windows, team windows and holds
+
+Quiet windows live in the catalog as `deploy_blackouts`:
+
+- `window`: `start` and `end` (`HH:MM`, `end` may be `24:00`, overnight
+  allowed), an optional IANA `timezone` (UTC by default) and optional `days` on
+  which the window starts;
+- `team-freeze`: holds the service during any announced team window.
+
+The train will not start a deploy that a window covers within the next 15
+minutes. A window belongs only where a deploy would disrupt a specific
+scheduled run or event. A Lambda code or configuration update does not cancel
+an invocation that is already running (it finishes on the old code), so an
+ordinary scheduled loop needs no window. Current rules:
 
 | Service | Quiet window |
 | --- | --- |
-| `royaltiesLoop` | 01:55-02:30 UTC (its 02:01 run) |
-| `releaseDigestLoop` | 23:20-24:00 UTC (its 23:30 run) |
+| `royaltiesLoop` | 01:55-02:30 UTC (02:01 run) |
+| `releaseDigestLoop` | 23:20-24:00 UTC (23:30 run) |
 | `claimsBuilder`, `claimsMediaArweaveUploader`, `s3Uploader` | Mint launch Mon/Wed/Fri 17:30-19:45 and close Tue/Thu/Sat 16:50-18:30, Europe/Athens |
 | `populateHistoricConsolidatedTdh` | Any team window (team freeze) |
 
-The mint rules follow the regular Mon/Wed/Fri cadence. Announce extra or moved
-mint days as team windows.
+The mint rules cover the launch and close of the regular Mon/Wed/Fri cadence
+only, not the whole public mint. Announce extra or moved mint days as team
+windows.
 
-A team announces a temporary window in either of two places:
+Two temporary controls live in the committed file
+`ops/deploy-train/controls.json` (reviewed, for planned use) and in repository
+variables (immediate, no merge):
 
-- the committed file `ops/deploy-train/team-windows.json`, for planned windows
-  that should go through review;
-- the repository variable `DEPLOY_TRAIN_TEAM_WINDOWS`, which takes effect on
-  the next train without a merge.
+- **Team windows** (`windows`, variables `DEPLOY_TRAIN_TEAM_WINDOWS*`): a time
+  range, at most 31 days, after which the window expires by itself.
+- **Holds** (`holds`, variables `DEPLOY_TRAIN_HOLDS*`): no end time; the train
+  leaves the named services and their dependents alone until the hold is
+  removed. Use a hold for a release that needs a non-catalog order or an
+  operator step.
 
-Both hold the same JSON:
+The train reads every repository variable whose name starts with
+`DEPLOY_TRAIN_HOLDS` or `DEPLOY_TRAIN_TEAM_WINDOWS` and merges their entries.
+Each entry is tagged with the variable it came from, and that name appears in
+the train's deferral reasons. Use one variable per person,
+`DEPLOY_TRAIN_HOLDS_<login>` and `DEPLOY_TRAIN_TEAM_WINDOWS_<login>`, so two
+developers never overwrite each other's entries. The unsuffixed names still
+work for shared entries.
 
 ```json
 {
@@ -209,54 +238,94 @@ Both hold the same JSON:
       "reason": "Holiday freeze",
       "owner": "github-login"
     }
+  ],
+  "holds": [
+    {
+      "services": ["dbMigrationsLoop"],
+      "reason": "Run the pinned-wave-order schema scope by hand first",
+      "owner": "github-login"
+    }
   ]
 }
 ```
 
-Times are UTC; a window may last at most 31 days (use the mode switch for
-longer stops). `"*"` covers every service; named services must exist in the
-catalog. A malformed window fails the plan, so nothing deploys until it is
-fixed. Expired windows are ignored and can be removed at leisure.
+A variable holds the same object, or just the list. To hold before a release
+and clear afterwards, in your own variable:
+
+```bash
+gh variable set DEPLOY_TRAIN_HOLDS_PRXT6529 -R 6529-Collections/6529seize-backend \
+  --body '[{"services":["dbMigrationsLoop","api"],"reason":"scoped migration first","owner":"prxt6529"}]'
+# merge, run the operator steps and the hand-run deploys, then:
+gh variable delete DEPLOY_TRAIN_HOLDS_PRXT6529 -R 6529-Collections/6529seize-backend
+```
+
+Before editing a shared variable such as `DEPLOY_TRAIN_HOLDS`, read it and
+keep the other entries:
+
+```bash
+gh variable get DEPLOY_TRAIN_HOLDS -R 6529-Collections/6529seize-backend
+```
+
+Times are UTC. `"*"` covers every service; named services must exist in the
+catalog. A malformed window or hold, or an unknown field, fails the plan, so
+nothing deploys until it is fixed. A running train read the variables when it
+started; a hold or window set during a train applies from the next one, so
+cancel the running train if it must stop at once.
 
 ### Health check and halts
 
 `Deploy a service` already verifies the deployed code digest, the CloudFormation
 stack or the API's live version. After it succeeds, the train checks every
-verification target of the service in CloudWatch, from the start of its deploy
-run:
+verification target of the service. All signals start when the **new build
+went live**: the function's `LastModified` after the update, not the start of
+the deploy run. Log signals come only from log streams created after that.
+After a code update Lambda serves invocations from new execution environments,
+so those streams hold only the new build's output, and traffic still served by
+the old build cannot pass or fail the check.
 
-- unhealthy: a log line with `Access denied`, `ER_ACCESS_DENIED`,
-  `Cannot find module` or `ImportModuleError`; a database login logged with
-  another mode than `[AUTH IAM]` (`DEPLOY_TRAIN_DB_AUTH` overrides `IAM`); or
-  Lambda errors, any when the previous 24 hours had none, otherwise more than
-  double the earlier error rate;
-- healthy: at least one invocation and, for services that bundle the database
-  modules, the `[AUTH IAM]` login line;
-- pending otherwise. The train waits up to five minutes, then keeps watching
-  the service for 30 minutes while it ships the next ones, and five more
-  minutes at the end. Services that never run in that time are reported as
-  unverified.
+- Halts at once: the Lambda update failed, or the new build logged a startup
+  or database-login failure (`Access denied`, `ER_ACCESS_DENIED`,
+  `Cannot find module`, `ImportModuleError`, an init `Status: error` or
+  `Status: timeout`, or a database login with another mode than `[AUTH IAM]`;
+  `DEPLOY_TRAIN_DB_AUTH` overrides `IAM`).
+- Halts on generic Lambda errors only when they repeat and clearly exceed the
+  normal rate: at least `DEPLOY_TRAIN_ERROR_MIN_COUNT` errors (default 3) since
+  the new build went live, and, when the function had errors in the 24 hours
+  before, at least `DEPLOY_TRAIN_ERROR_RATE_FACTOR` (default 2) times that
+  error rate. These defaults are provisional until there is data from real
+  trains; both are repository variables.
+- Healthy: the new build handled at least one invocation (a `REPORT` line in
+  its own log streams) and, for services that bundle the database modules,
+  logged the `[AUTH IAM]` login line.
+- **Not yet verified** otherwise: the new build has not been invoked. The train
+  waits up to five minutes, then **continues and flags the service**. It keeps
+  checking the service for 30 minutes while it ships the next ones, and five
+  more minutes at the end. A startup or login failure found then still halts.
+  The result and the CI wave post list every service the new build never
+  served during the train. Many loops run hourly or daily, so waiting for
+  every one would stall the train for hours, and the deploy workflow has
+  already verified the code digest. Dependents of a not-verified service still
+  deploy; `dbMigrationsLoop` is verified by its synchronous invocation.
 
 Resources-only stacks and the Lambda@Edge interceptor rely on the deploy
-workflow's own checks. `dbMigrationsLoop` needs no wait before its dependents:
-`Deploy a service` invokes it synchronously and fails unless the migration
-returns without a function error. For a service that already logged errors in
-the previous 24 hours, only a doubled error rate halts, so a deploy that fixes
-an erroring service is not stopped by the errors it is fixing.
+workflow's own checks.
 
 A failed deploy, an unhealthy service, a health check that cannot run, or a
-crash **halts** the train: the ship job fails and posts a failure to the CI
-wave. Later trains plan in report-only mode until someone fixes the cause and
-dispatches `Deploy train` with `resume=true`. If the plan cannot read the
-deploy or train history from GitHub, it fails and ships nothing; the next
-trigger tries again. Main moving, another deploy
-running for more than 30 minutes, a cancelled deploy run, or the 300-minute
-budget only stop the current train.
+crash **halts** the train. The ship job fails, posts a failure to the CI wave
+and opens a GitHub issue labelled `deploy-train-halt`. Later trains plan in
+report-only mode while any such issue is uncleared, however many runs follow.
+Only a `Deploy train` dispatch with `resume=true` clears it: its Resume job
+comments on the issue, labels it `deploy-train-resumed` and closes it. Closing
+the issue by hand does not resume the train. If the plan cannot read the halt
+issues or the deploy history from GitHub, it fails and ships nothing; the next
+trigger tries again. Main moving, another deploy running for more than 30
+minutes, a cancelled deploy run, or the 300-minute budget only stop the
+current train.
 
-Rollback is manual in this version: revert or fix forward on `main` (the train
-ships it after the resume), or dispatch `Deploy a service` for the affected
-service once `main` holds a known-good state. See the rollback section below
-for schema compatibility.
+Rollback is manual: revert or fix forward on `main` (the train ships it after
+the resume), or dispatch `Deploy a service` for the affected service once
+`main` holds a known-good state. See the rollback section below for schema
+compatibility.
 
 ### Mode switch and enablement
 
@@ -285,7 +354,15 @@ GitHub OIDC (audience `sts.amazonaws.com`) with:
     { "Effect": "Allow", "Action": "cloudwatch:GetMetricStatistics", "Resource": "*" },
     {
       "Effect": "Allow",
-      "Action": "logs:FilterLogEvents",
+      "Action": "lambda:GetFunctionConfiguration",
+      "Resource": [
+        "arn:aws:lambda:us-east-1:<account-id>:function:*",
+        "arn:aws:lambda:eu-west-1:<account-id>:function:*"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["logs:DescribeLogStreams", "logs:FilterLogEvents"],
       "Resource": [
         "arn:aws:logs:us-east-1:<account-id>:log-group:/aws/lambda/*",
         "arn:aws:logs:eu-west-1:<account-id>:log-group:/aws/lambda/*"
@@ -295,9 +372,16 @@ GitHub OIDC (audience `sts.amazonaws.com`) with:
 }
 ```
 
+Optional repository variables for the health check: `DEPLOY_TRAIN_DB_AUTH`
+(`IAM` or `PASSWORD`, default `IAM`), `DEPLOY_TRAIN_ERROR_MIN_COUNT` (default
+3) and `DEPLOY_TRAIN_ERROR_RATE_FACTOR` (default 2).
+
 Enablement: set `report` for a few days and compare the per-merge "would ship"
 posts and job summaries with what developers deploy by hand. Catch up anything
 the plan defers for release notes. Create the health role, then set `prod`.
+No service is a permanent exception yet; report mode shows whether the
+CloudFront interceptor, `royaltiesLoop` or the subscription loops need one
+(`deploy_train.mode: manual`).
 
 ### Staging
 

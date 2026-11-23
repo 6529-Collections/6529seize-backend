@@ -178,17 +178,35 @@ Read the repository variable first:
   `Deploy train` run that the push starts (or the next scheduled one): its
   plan summary lists the services, order and release-note groups, and each
   service still runs as an ordinary `Deploy a service` run. Report those runs
-  and the train's health results. Dispatch by hand only what the train defers
-  (manual services, missing release-note attribution, first deploys) or a
-  scoped `dbMigrationsLoop` run; the train waits for your run and never
-  cancels it.
-- Before merging a change that needs a hand-run sequence, announce a team
-  window for the affected services (`DEPLOY_TRAIN_TEAM_WINDOWS` or
-  `ops/deploy-train/team-windows.json`), run the sequence, then end the window.
-- A halted train deploys nothing until someone dispatches `Deploy train` with
-  `resume=true`. Resume only after reading the halt and fixing or reverting the
-  cause on `main`. Changing `DEPLOY_TRAIN_MODE` or resuming is an owner
-  decision, not part of an ordinary release request.
+  and the train's health results, including services it reports as not yet
+  verified. Dispatch by hand only urgent fixes and what the train defers
+  (manual services, missing release-note attribution, first deploys); the
+  train waits for your run and never cancels it.
+- Before merging a change that needs a non-catalog order or an operator step
+  (a scoped `dbMigrationsLoop` run, a backfill between deploys, frontend
+  first), set a temporary hold on the affected services, run the sequence by
+  hand, then clear the hold. Use your own variable,
+  `DEPLOY_TRAIN_HOLDS_<LOGIN>`, so you never overwrite someone else's hold;
+  the train merges every `DEPLOY_TRAIN_HOLDS*` and
+  `DEPLOY_TRAIN_TEAM_WINDOWS*` variable:
+
+  ```bash
+  gh variable set DEPLOY_TRAIN_HOLDS_<LOGIN> -R 6529-Collections/6529seize-backend \
+    --body '[{"services":["dbMigrationsLoop","api"],"reason":"<why>","owner":"<github-login>"}]'
+  gh variable delete DEPLOY_TRAIN_HOLDS_<LOGIN> -R 6529-Collections/6529seize-backend
+  ```
+
+  Before editing a shared variable (`DEPLOY_TRAIN_HOLDS`,
+  `DEPLOY_TRAIN_TEAM_WINDOWS`), read it with
+  `gh variable get <NAME> -R 6529-Collections/6529seize-backend` and keep the
+  other entries. Planned holds and team windows can also go in
+  `ops/deploy-train/controls.json`. A hold set while a train runs applies from
+  the next train.
+- A halted train has an open `deploy-train-halt` issue and deploys nothing
+  until someone dispatches `Deploy train` with `resume=true`; closing the issue
+  by hand does not resume it. Resume only after reading the halt and fixing or
+  reverting the cause on `main`. Changing `DEPLOY_TRAIN_MODE` or resuming is an
+  owner decision, not part of an ordinary release request.
 
 ## Failure and closeout
 

@@ -206,7 +206,7 @@ describe('deploy train executor', () => {
   });
 
   it('stops softly when main moves before a deploy', async () => {
-    const h = harness({ heads: [TARGET, 'd'.repeat(40)] });
+    const h = harness({ heads: [TARGET, TARGET, 'd'.repeat(40)] });
     const result = await h.run(
       trainPlan([
         item('teamLoop', [1]),
@@ -239,7 +239,7 @@ describe('deploy train executor', () => {
   it('treats a refused stale commit as main moving, not a failure', async () => {
     const h = harness({
       conclusions: { nftsLoop: 'failure' },
-      heads: [TARGET, 'e'.repeat(40)]
+      heads: [TARGET, TARGET, 'e'.repeat(40)]
     });
     const result = await h.run(trainPlan([item('nftsLoop', [1])]));
     expect(result.stop).toMatchObject({ reason: 'main-moved', halt: false });
@@ -352,5 +352,80 @@ describe('deploy train executor', () => {
     );
     expect(result.stop).toMatchObject({ reason: 'time-budget', halt: false });
     expect(result.not_started).toEqual(['nftsLoop']);
+  });
+
+  it('rechecks quiet windows right before dispatch, after waiting for other deploys', async () => {
+    // Monday 17:10 Athens: clear of the 17:30 mint launch window, but other
+    // deploys keep the train waiting until 17:31.
+    const h = harness({ busyChecks: 21 });
+    h.advance(Date.parse('2026-11-23T15:10:00Z') - START);
+    const result = await h.run(trainPlan([item('claimsBuilder', [1])]));
+    expect(h.dispatched).toHaveLength(0);
+    expect(result.deferred).toEqual([
+      {
+        service: 'claimsBuilder',
+        reason: expect.stringMatching(
+          /^quiet window from 2026-11-23T15:31Z: Memes mint launch/
+        )
+      }
+    ]);
+  });
+
+  it('defers a held service and the services that depend on it', async () => {
+    const h = harness();
+    const result = await h.run(
+      trainPlan([
+        item('dbMigrationsLoop', [1]),
+        item('api', [1], ['dbMigrationsLoop']),
+        item('teamLoop', [1])
+      ]),
+      {
+        holds: [
+          {
+            services: ['dbMigrationsLoop'],
+            reason: 'operator runs a scoped migration first',
+            owner: 'dev'
+          }
+        ]
+      }
+    );
+    expect(result.deferred).toEqual([
+      {
+        service: 'dbMigrationsLoop',
+        reason: 'held: operator runs a scoped migration first (set by dev)'
+      },
+      { service: 'api', reason: 'waits for dependency dbMigrationsLoop' }
+    ]);
+    expect(h.dispatched.map((entry) => entry.inputs.service)).toEqual([
+      'teamLoop'
+    ]);
+  });
+
+  it('never deploys a migration dependent after the migration deploy fails', async () => {
+    const h = harness({ conclusions: { dbMigrationsLoop: 'failure' } });
+    const result = await h.run(
+      trainPlan([
+        item('dbMigrationsLoop', [1]),
+        item('api', [1], ['dbMigrationsLoop'])
+      ])
+    );
+    expect(result.stop).toMatchObject({ reason: 'deploy-failed', halt: true });
+    expect(result.not_started).toEqual(['api']);
+    expect(h.dispatched).toHaveLength(1);
+  });
+
+  it('continues past a service the new build has not served yet, and flags it', async () => {
+    const h = harness();
+    h.verdicts.nftsLoop = Array(200).fill('pending');
+    const result = await h.run(
+      trainPlan([item('nftsLoop', [1]), item('teamLoop', [1])])
+    );
+    expect(result.stop).toBeNull();
+    expect(
+      result.shipped.map((entry: any) => [entry.service, entry.health])
+    ).toEqual([
+      ['nftsLoop', 'unverified'],
+      ['teamLoop', 'healthy']
+    ]);
   });
 });

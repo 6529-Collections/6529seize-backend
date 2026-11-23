@@ -1,7 +1,11 @@
 'use strict';
 
 const catalogLib = require('./catalog');
-const { evaluateBlackout, DEFAULT_LOOKAHEAD_MINUTES } = require('./blackouts');
+const {
+  evaluateBlackout,
+  holdFor,
+  DEFAULT_LOOKAHEAD_MINUTES
+} = require('./blackouts');
 
 const MODES = ['off', 'report', 'prod'];
 // The CI alert receiver accepts at most 100 release-note groups per deploy.
@@ -117,6 +121,8 @@ function holdReason(record, service, blackoutOptions) {
       reason: `${record.prs.length} pull requests exceed the ${MAX_GROUPS_PER_DEPLOY} release-note groups one deploy can carry; catch up by hand`
     };
   }
+  const held = holdFor(service, blackoutOptions.holds || []);
+  if (held) return { kind: 'hold', reason: held };
   const blackout = evaluateBlackout(service, blackoutOptions);
   if (!blackout.blocked) return null;
   return {
@@ -219,6 +225,7 @@ function buildTrainPlan({
   mode,
   now = Date.now(),
   teamWindows = [],
+  holds = [],
   lookaheadMinutes = DEFAULT_LOOKAHEAD_MINUTES,
   halt = null,
   notes = []
@@ -226,6 +233,7 @@ function buildTrainPlan({
   const { deferred, heldBack, candidates } = triage(catalog, drift, {
     now,
     teamWindows,
+    holds,
     lookaheadMinutes
   });
   const shipping = dropOversized(

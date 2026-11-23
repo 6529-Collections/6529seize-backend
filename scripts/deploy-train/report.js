@@ -192,7 +192,7 @@ function renderPlanMarkdown(plan, now = Date.parse(plan.generated_at)) {
   for (const note of plan.notes) lines.push(`> ${note}`, '');
   if (plan.halt) {
     lines.push(
-      `**Halted** by [run ${plan.halt.run_id}](${plan.halt.run_url}) after a failed deploy or health check. ` +
+      `**Halted** by [${plan.halt.label}](${plan.halt.url}) after a failed deploy or health check. ` +
         'Nothing ships until someone fixes the cause and dispatches Deploy train with resume=true.',
       ''
     );
@@ -279,12 +279,24 @@ function stopLines(stop) {
   return lines;
 }
 
+const HEALTH_LABELS = {
+  healthy: 'healthy',
+  unhealthy: 'unhealthy',
+  unverified: 'not yet verified',
+  pending: 'not yet verified',
+  skipped: 'checked by the deploy workflow'
+};
+
+function healthLabel(status) {
+  return HEALTH_LABELS[status] || status;
+}
+
 function shippedRow(item) {
   const run = item.run_url
     ? `[${item.run_id}](${item.run_url})`
     : String(item.run_id);
   const note = item.note ? ` (${escapeCell(item.note)})` : '';
-  return `| ${item.service} | ${run} | ${item.health}${note} |`;
+  return `| ${item.service} | ${run} | ${healthLabel(item.health)}${note} |`;
 }
 
 /** Job summary for a finished train run. */
@@ -318,7 +330,7 @@ function renderTrainMarkdown(plan, result) {
 
 function shippedLine(item) {
   const note = item.note ? ` (${item.note})` : '';
-  return `${item.service}: ${item.health}${note}`;
+  return `${item.service}: ${healthLabel(item.health)}${note}`;
 }
 
 function haltAlert(plan, result) {
@@ -346,6 +358,14 @@ function trainAlert(plan, result) {
   if (result.stop?.halt) return haltAlert(plan, result);
   if (result.shipped.length === 0) return null;
   const lines = result.shipped.map(shippedLine);
+  const unverified = result.shipped.filter(
+    (item) => item.health === 'unverified'
+  );
+  if (unverified.length > 0) {
+    lines.push(
+      `Not yet verified (the new build was not invoked during the train): ${serviceNames(unverified)}`
+    );
+  }
   if (result.stop) {
     lines.push(`Stopped: ${stopLabel(result.stop)}. ${result.stop.detail}`);
   }
@@ -358,7 +378,40 @@ function trainAlert(plan, result) {
   };
 }
 
+/** Title and body of the issue that keeps a halted train halted. */
+function haltIssue(plan, result, runUrl) {
+  const stop = result?.stop;
+  const service = stop?.service || 'start';
+  const lines = stop
+    ? [`**${stopLabel(stop)}**: ${stop.detail}`]
+    : ['The ship job failed before it could record a result.'];
+  lines.push(
+    '',
+    `Train run: ${runUrl}`,
+    `Commit: ${plan?.target_sha || 'unknown'}`
+  );
+  if (result?.shipped?.length > 0) {
+    lines.push(
+      `Shipped before the halt: ${result.shipped.map(shippedLine).join('; ')}`
+    );
+  }
+  if (result?.not_started?.length > 0) {
+    lines.push(`Not started: ${result.not_started.join(', ')}`);
+  }
+  lines.push(
+    '',
+    'The deploy train ships nothing while this issue is uncleared.',
+    'Fix forward or revert on main, check the service, then dispatch **Deploy train** with `resume=true`.',
+    'Closing this issue by hand does not resume the train.'
+  );
+  return {
+    title: `Deploy train halted at ${service} (${shortSha(plan?.target_sha)})`,
+    body: lines.join('\n')
+  };
+}
+
 module.exports = {
+  haltIssue,
   shortSha,
   formatAge,
   formatPulls,

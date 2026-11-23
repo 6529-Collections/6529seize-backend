@@ -214,8 +214,10 @@ async function activeDeployRuns(client, environment) {
 }
 
 /**
- * The most recent train halt that no later `resume` run has cleared. A halt
- * is a completed train run whose `ship` job failed or timed out.
+ * Fallback halt detection from run history, for a halt whose issue could
+ * not be opened: the most recent completed train run whose `ship` job
+ * failed or timed out, unless a later `resume` run cleared it. It reads
+ * only recent runs; the halt issue is what makes a halt persist.
  */
 async function findUnclearedHalt(client, { currentRunId, shipJobName }) {
   const result = await client.listWorkflowRuns(TRAIN_WORKFLOW, {
@@ -241,7 +243,95 @@ async function findUnclearedHalt(client, { currentRunId, shipJobName }) {
   return null;
 }
 
+const HALT_LABEL = 'deploy-train-halt';
+const RESUMED_LABEL = 'deploy-train-resumed';
+
+async function ensureLabel(client, name, color, description) {
+  try {
+    await client.request('POST', '/labels', { name, color, description });
+  } catch (error) {
+    if (error.status !== 422) throw error; // 422: the label already exists
+  }
+}
+
+function hasLabel(issue, name) {
+  return (issue.labels || []).some((label) => (label.name || label) === name);
+}
+
+/**
+ * Halt issues that no resume has cleared, newest first. A halt stays until
+ * a `resume=true` run labels its issue; closing the issue by hand does not
+ * clear it.
+ */
+async function findHaltIssues(client) {
+  const issues = await client.request(
+    'GET',
+    `/issues?labels=${HALT_LABEL}&state=all&sort=created&direction=desc&per_page=100`
+  );
+  return (issues || [])
+    .filter((issue) => !issue.pull_request && !hasLabel(issue, RESUMED_LABEL))
+    .map((issue) => ({
+      number: issue.number,
+      url: issue.html_url,
+      title: issue.title,
+      state: issue.state
+    }));
+}
+
+/** Opens the issue that keeps the train halted until a resume. */
+async function recordHalt(client, { title, body }) {
+  await ensureLabel(
+    client,
+    HALT_LABEL,
+    'b60205',
+    'The deploy train is halted until a resume dispatch'
+  );
+  const issue = await client.request('POST', '/issues', {
+    title,
+    body,
+    labels: [HALT_LABEL]
+  });
+  return { number: issue.number, url: issue.html_url };
+}
+
+/** Clears every uncleared halt: comments, labels it resumed and closes it. */
+async function resumeHalts(client, { by, runUrl }) {
+  const halts = await findHaltIssues(client);
+  if (halts.length === 0) return [];
+  await ensureLabel(
+    client,
+    RESUMED_LABEL,
+    '0e8a16',
+    'Cleared by a Deploy train resume dispatch'
+  );
+  for (const halt of halts) {
+    await client.request('POST', `/issues/${halt.number}/comments`, {
+      body: `Resumed by ${by} in ${runUrl}.`
+    });
+    await client.request('POST', `/issues/${halt.number}/labels`, {
+      labels: [RESUMED_LABEL]
+    });
+    if (halt.state !== 'closed') {
+      await client.request('PATCH', `/issues/${halt.number}`, {
+        state: 'closed',
+        state_reason: 'completed'
+      });
+    }
+  }
+  return halts;
+}
+
+/** The halt blocking the train: an uncleared halt issue, else run history. */
+async function currentHalt(client, { currentRunId, shipJobName }) {
+  const [issue] = await findHaltIssues(client);
+  if (issue) return { url: issue.url, label: `issue #${issue.number}` };
+  const run = await findUnclearedHalt(client, { currentRunId, shipJobName });
+  return run ? { url: run.run_url, label: `run ${run.run_id}` } : null;
+}
+
 module.exports = {
+  HALT_LABEL,
+  RESUMED_LABEL,
   DEPLOY_WORKFLOW,
   TRAIN_WORKFLOW,
   DEPLOY_TITLE,
@@ -249,5 +339,9 @@ module.exports = {
   createGitHubClient,
   findDeployedCommits,
   activeDeployRuns,
-  findUnclearedHalt
+  findUnclearedHalt,
+  findHaltIssues,
+  recordHalt,
+  resumeHalts,
+  currentHalt
 };

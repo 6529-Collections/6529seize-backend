@@ -37,14 +37,45 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  resume:
+    # Only a resume=true dispatch clears a halt: it labels and closes the
+    # halt issues before planning. It installs no packages.
+    name: Resume
+    if: github.event_name == 'workflow_dispatch' && inputs.resume
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout the train's scripts
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: main
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/deploy-train
+            src/config
+          sparse-checkout-cone-mode: false
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22.17.1'
+      - name: Clear the halt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/deploy-train/cli.js resume
+
   plan:
     name: Plan
-    if: vars.DEPLOY_TRAIN_MODE == 'report' || vars.DEPLOY_TRAIN_MODE == 'prod' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'report')
+    needs: resume
+    if: always() && needs.resume.result != 'failure' && needs.resume.result != 'cancelled' && (vars.DEPLOY_TRAIN_MODE == 'report' || vars.DEPLOY_TRAIN_MODE == 'prod' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'report'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
       contents: read
       actions: read
+      issues: read
     outputs:
       mode: ${{ steps.plan.outputs.mode }}
       ship_count: ${{ steps.plan.outputs.ship_count }}
@@ -88,7 +119,9 @@ jobs:
           DEPLOY_TRAIN_MODE: ${{ vars.DEPLOY_TRAIN_MODE }}
           DEPLOY_TRAIN_REQUESTED_MODE: ${{ inputs.mode }}
           DEPLOY_TRAIN_RESUME: ${{ inputs.resume }}
-          DEPLOY_TRAIN_TEAM_WINDOWS: ${{ vars.DEPLOY_TRAIN_TEAM_WINDOWS }}
+          # Every variable, so per-person DEPLOY_TRAIN_HOLDS_<login> and
+          # DEPLOY_TRAIN_TEAM_WINDOWS_<login> need no extra permission.
+          DEPLOY_TRAIN_VARS: ${{ toJSON(vars) }}
         run: |
           set -euo pipefail
           mkdir -p train
@@ -153,6 +186,7 @@ jobs:
       contents: read
       actions: write
       id-token: write
+      issues: write
     steps:
       - name: Checkout the train's scripts at the planned commit
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -188,8 +222,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           DEPLOY_TRAIN_HEALTH_ROLE_ARN: ${{ vars.DEPLOY_TRAIN_HEALTH_ROLE_ARN }}
           DEPLOY_TRAIN_MODE: ${{ vars.DEPLOY_TRAIN_MODE }}
-          DEPLOY_TRAIN_TEAM_WINDOWS: ${{ vars.DEPLOY_TRAIN_TEAM_WINDOWS }}
+          DEPLOY_TRAIN_VARS: ${{ toJSON(vars) }}
           DEPLOY_TRAIN_DB_AUTH: ${{ vars.DEPLOY_TRAIN_DB_AUTH }}
+          DEPLOY_TRAIN_ERROR_MIN_COUNT: ${{ vars.DEPLOY_TRAIN_ERROR_MIN_COUNT }}
+          DEPLOY_TRAIN_ERROR_RATE_FACTOR: ${{ vars.DEPLOY_TRAIN_ERROR_RATE_FACTOR }}
         run: |
           set -euo pipefail
           node scripts/deploy-train/cli.js ship --plan train/plan.json \
@@ -237,3 +273,10 @@ jobs:
         run: |
           echo "::error::The deploy train halted. Fix the cause, then dispatch Deploy train with resume=true."
           exit 1
+      - name: Record the halt until a resume
+        # Any failure of this job, a halt or a crash, opens the halt issue
+        # that later trains read; only a resume=true dispatch clears it.
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/deploy-train/cli.js record-halt --plan train/plan.json --result train/result.json

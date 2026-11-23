@@ -124,35 +124,136 @@ function validateTeamWindow(window, label) {
 }
 
 /**
+ * The entries under `key` in one JSON source: either a bare list or an
+ * object holding the list. `keys` lists the fields the object may carry
+ * (the committed controls file holds both windows and holds); any other
+ * field throws, so a misspelt freeze is never ignored.
+ */
+function readList({ name, text, keys }, key) {
+  if (typeof text !== 'string' || text.trim() === '') return [];
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error(`${name} is not valid JSON`);
+  }
+  if (Array.isArray(parsed)) return parsed;
+  const allowed = keys || [key];
+  if (parsed && typeof parsed === 'object') {
+    const unknown = Object.keys(parsed).find(
+      (field) => !allowed.includes(field)
+    );
+    if (unknown) throw new Error(`${name} has unsupported field ${unknown}`);
+    if (!(key in parsed)) return [];
+  }
+  const list = parsed?.[key];
+  if (!Array.isArray(list)) {
+    throw new TypeError(`${name} must be a list or an object with "${key}"`);
+  }
+  return list;
+}
+
+function checkServices(services, knownServices, label) {
+  for (const service of services) {
+    if (service !== '*' && knownServices && !knownServices.has(service)) {
+      throw new Error(`${label} names unknown service ${service}`);
+    }
+  }
+}
+
+/**
  * Parses announced team windows from the committed file and the repository
  * variable. Any malformed source throws: the train must not ignore a freeze
  * that someone tried to announce.
  */
 function parseTeamWindows(sources, knownServices) {
   const windows = [];
-  for (const { name, text } of sources) {
-    if (typeof text !== 'string' || text.trim() === '') continue;
-    let parsed;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      throw new Error(`${name} is not valid JSON`);
-    }
-    const list = Array.isArray(parsed) ? parsed : parsed?.windows;
-    if (!Array.isArray(list)) {
-      throw new TypeError(`${name} must be a list or an object with "windows"`);
-    }
-    list.forEach((entry, index) => {
-      const window = validateTeamWindow(entry, `${name}[${index}]`);
-      for (const service of window.services) {
-        if (service !== '*' && knownServices && !knownServices.has(service)) {
-          throw new Error(`${name}[${index}] names unknown service ${service}`);
-        }
-      }
-      windows.push({ ...window, source: name });
+  for (const source of sources) {
+    readList(source, 'windows').forEach((entry, index) => {
+      const label = `${source.name}[${index}]`;
+      const window = validateTeamWindow(entry, label);
+      checkServices(window.services, knownServices, label);
+      windows.push({ ...window, source: source.name });
     });
   }
   return windows;
+}
+
+function validateHold(hold, label) {
+  if (!hold || typeof hold !== 'object' || Array.isArray(hold)) {
+    throw new Error(`${label} must be an object`);
+  }
+  for (const key of Object.keys(hold)) {
+    if (!['services', 'reason', 'owner', 'since'].includes(key)) {
+      throw new Error(`${label} has unsupported field ${key}`);
+    }
+  }
+  if (
+    !Array.isArray(hold.services) ||
+    hold.services.length === 0 ||
+    hold.services.some(
+      (service) => typeof service !== 'string' || service.trim() === ''
+    )
+  ) {
+    throw new Error(`${label}.services must list services or "*"`);
+  }
+  if (typeof hold.reason !== 'string' || hold.reason.trim() === '') {
+    throw new Error(`${label}.reason is required`);
+  }
+  return {
+    services: hold.services.map((service) => service.trim()),
+    reason: hold.reason.trim(),
+    owner: typeof hold.owner === 'string' ? hold.owner.trim() : null
+  };
+}
+
+/**
+ * Parses temporary holds: services the train must leave alone, with no end
+ * time, until someone removes the hold. Used for releases that need a
+ * non-catalog order or an operator step. Malformed holds throw.
+ */
+function parseHolds(sources, knownServices) {
+  const holds = [];
+  for (const source of sources) {
+    readList(source, 'holds').forEach((entry, index) => {
+      const label = `${source.name}[${index}]`;
+      const hold = validateHold(entry, label);
+      checkServices(hold.services, knownServices, label);
+      holds.push({ ...hold, source: source.name });
+    });
+  }
+  return holds;
+}
+
+/** The reason a hold covers `service`, or null. */
+function holdFor(service, holds) {
+  const hold = holds.find(
+    (entry) =>
+      entry.services.includes('*') || entry.services.includes(service.name)
+  );
+  if (!hold) return null;
+  return `held: ${hold.reason}${provenance(hold)}`;
+}
+
+/** " (set by <owner>, <source>)": who announced an entry and where. */
+function provenance(entry) {
+  const tags = [];
+  if (entry.owner) tags.push(`set by ${entry.owner}`);
+  if (entry.source) tags.push(entry.source);
+  return tags.length > 0 ? ` (${tags.join(', ')})` : '';
+}
+
+/**
+ * Parse sources for every variable whose name starts with `prefix`: the
+ * shared `DEPLOY_TRAIN_HOLDS` and per-person ones such as
+ * `DEPLOY_TRAIN_HOLDS_GELATOGENESIS`, so people never edit one shared
+ * value. `variables` maps names to values (the workflow's `toJSON(vars)`).
+ */
+function variableSources(variables, prefix) {
+  return Object.keys(variables || {})
+    .filter((name) => name.startsWith(prefix))
+    .sort((left, right) => left.localeCompare(right))
+    .map((name) => ({ name, text: String(variables[name] ?? '') }));
 }
 
 function isoMinute(time) {
@@ -181,7 +282,7 @@ function blackoutReasonsAt(service, time, teamWindows) {
       window.services.includes(service.name)
     ) {
       reasons.push(
-        `team window until ${isoMinute(window.end)}: ${window.reason}`
+        `team window until ${isoMinute(window.end)}: ${window.reason}${provenance(window)}`
       );
     }
   }
@@ -214,5 +315,8 @@ module.exports = {
   zonedParts,
   isWindowRuleActive,
   parseTeamWindows,
+  parseHolds,
+  holdFor,
+  variableSources,
   evaluateBlackout
 };

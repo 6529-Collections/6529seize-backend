@@ -8,14 +8,18 @@ const path = require('node:path');
 const catalogLib = require('./catalog');
 const gitLib = require('./git');
 const github = require('./github');
-const { parseTeamWindows } = require('./blackouts');
+const {
+  parseHolds,
+  parseTeamWindows,
+  variableSources
+} = require('./blackouts');
 const { computeDrift } = require('./drift');
 const { resolveMode, buildTrainPlan } = require('./plan');
 const report = require('./report');
 
 const repoRoot = path.resolve(__dirname, '..', '..');
 const DEFAULT_REPOSITORY = '6529-Collections/6529seize-backend';
-const TEAM_WINDOWS_FILE = 'ops/deploy-train/team-windows.json';
+const CONTROLS_FILE = 'ops/deploy-train/controls.json';
 const SHIP_JOB_NAME = 'Ship';
 
 function parseArgs(argv) {
@@ -97,25 +101,47 @@ function catalogAt(sha) {
   );
 }
 
-/** Team windows from the committed file at `sha` and the repository variable. */
-function teamWindowsAt(sha, catalog) {
-  const committed = gitLib.git(
-    repoRoot,
-    ['show', `${sha}:${TEAM_WINDOWS_FILE}`],
-    {
-      allowFailure: true
-    }
-  );
-  return parseTeamWindows(
-    [
-      { name: TEAM_WINDOWS_FILE, text: committed || '' },
-      {
-        name: 'DEPLOY_TRAIN_TEAM_WINDOWS',
-        text: process.env.DEPLOY_TRAIN_TEAM_WINDOWS || ''
-      }
-    ],
-    new Set(catalog.services.map((service) => service.name))
-  );
+/**
+ * Repository variables the train reads for holds and team windows. The
+ * workflow passes all of them as DEPLOY_TRAIN_VARS (`toJSON(vars)`), so
+ * per-person variables need no extra token permission; local runs fall back
+ * to the process environment.
+ */
+function trainVariables() {
+  const raw = process.env.DEPLOY_TRAIN_VARS;
+  if (!raw) return process.env;
+  const parsed = JSON.parse(raw);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new TypeError('DEPLOY_TRAIN_VARS must be a JSON object');
+  }
+  return parsed;
+}
+
+/**
+ * Team windows and temporary holds at `sha`: the committed controls file
+ * plus every DEPLOY_TRAIN_TEAM_WINDOWS* and DEPLOY_TRAIN_HOLDS* variable.
+ */
+function controlsAt(sha, catalog) {
+  const committed = gitLib.git(repoRoot, ['show', `${sha}:${CONTROLS_FILE}`], {
+    allowFailure: true
+  });
+  const file = {
+    name: CONTROLS_FILE,
+    text: committed || '',
+    keys: ['windows', 'holds']
+  };
+  const known = new Set(catalog.services.map((service) => service.name));
+  const variables = trainVariables();
+  return {
+    teamWindows: parseTeamWindows(
+      [file, ...variableSources(variables, 'DEPLOY_TRAIN_TEAM_WINDOWS')],
+      known
+    ),
+    holds: parseHolds(
+      [file, ...variableSources(variables, 'DEPLOY_TRAIN_HOLDS')],
+      known
+    )
+  };
 }
 
 function readDeployedFile(file) {
@@ -227,12 +253,13 @@ async function commandPlan(flags) {
   }
   const targetSha = resolveTarget(flags);
   const catalog = catalogAt(targetSha);
-  const teamWindows = teamWindowsAt(targetSha, catalog);
+  const { teamWindows, holds } = controlsAt(targetSha, catalog);
   const client = githubClient(flags);
+  // A resume run's own Resume job has already cleared the halt issues.
   const resuming = process.env.DEPLOY_TRAIN_RESUME === 'true';
   const halt =
     mode === 'prod' && !resuming
-      ? await github.findUnclearedHalt(client, {
+      ? await github.currentHalt(client, {
           currentRunId: Number(process.env.GITHUB_RUN_ID || 0),
           shipJobName: SHIP_JOB_NAME
         })
@@ -243,6 +270,7 @@ async function commandPlan(flags) {
     drift,
     mode,
     teamWindows,
+    holds,
     halt,
     notes: resuming
       ? notes.concat('resume requested: earlier halts are cleared')
@@ -272,33 +300,18 @@ async function commandPlan(flags) {
   );
 }
 
-/** Runs a planned prod train through the deploy workflow. */
-async function commandShip(flags) {
-  if (typeof flags.plan !== 'string') throw new Error('--plan is required');
-  const plan = JSON.parse(fs.readFileSync(flags.plan, 'utf8'));
-  // The plan artifact comes from a job that ran npm install scripts, so
-  // re-check everything that decides where the train deploys.
+/**
+ * The plan artifact comes from a job that ran npm install scripts, so
+ * re-check everything that decides where and what the train deploys.
+ */
+function validatePlanForShip(plan) {
   if (plan.mode !== 'prod' || plan.halt || plan.environment !== 'prod') {
     throw new Error('Only an unhalted prod plan for prod can ship');
-  }
-  const expectedAuth = process.env.DEPLOY_TRAIN_DB_AUTH || 'IAM';
-  if (!['IAM', 'PASSWORD'].includes(expectedAuth)) {
-    throw new Error('DEPLOY_TRAIN_DB_AUTH must be IAM or PASSWORD');
   }
   if (process.env.DEPLOY_TRAIN_MODE !== 'prod') {
     throw new Error('DEPLOY_TRAIN_MODE is no longer prod; refusing to ship');
   }
   gitLib.assertSha(plan.target_sha, 'plan target');
-  const { runTrain } = require('./executor');
-  const { createAwsCli, createHealthChecker } = require('./health');
-  // A read-only role: CloudWatch metrics and Lambda log lines. The deploy
-  // itself runs in "Deploy a service" with that workflow's own role.
-  const roleArn = process.env.DEPLOY_TRAIN_HEALTH_ROLE_ARN || '';
-  if (!/^arn:aws:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(roleArn)) {
-    throw new Error(
-      'DEPLOY_TRAIN_HEALTH_ROLE_ARN must name the read-only health-check role'
-    );
-  }
   if (gitLib.resolveCommit(repoRoot, 'HEAD') !== plan.target_sha) {
     throw new Error('The checkout does not match the planned commit');
   }
@@ -309,8 +322,65 @@ async function commandShip(flags) {
       throw new Error(`${item.service} cannot deploy to ${plan.environment}`);
     }
   }
-  const aws = createAwsCli({
+  return catalog;
+}
+
+function positiveNumber(name, fallback, integer) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const value = Number(raw);
+  if (!(value > 0) || (integer && !Number.isInteger(value))) {
+    throw new Error(
+      `${name} must be a positive ${integer ? 'integer' : 'number'}`
+    );
+  }
+  return value;
+}
+
+/** Health-check settings from repository variables, validated. */
+function healthSettings() {
+  const expectedAuth = process.env.DEPLOY_TRAIN_DB_AUTH || 'IAM';
+  if (!['IAM', 'PASSWORD'].includes(expectedAuth)) {
+    throw new Error('DEPLOY_TRAIN_DB_AUTH must be IAM or PASSWORD');
+  }
+  // A read-only role: CloudWatch metrics and Lambda log lines. The deploy
+  // itself runs in "Deploy a service" with that workflow's own role.
+  const roleArn = process.env.DEPLOY_TRAIN_HEALTH_ROLE_ARN || '';
+  if (!/^arn:aws:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(roleArn)) {
+    throw new Error(
+      'DEPLOY_TRAIN_HEALTH_ROLE_ARN must name the read-only health-check role'
+    );
+  }
+  const { DEFAULT_ERROR_THRESHOLDS } = require('./health');
+  return {
+    expectedAuth,
     roleArn,
+    thresholds: {
+      minErrors: positiveNumber(
+        'DEPLOY_TRAIN_ERROR_MIN_COUNT',
+        DEFAULT_ERROR_THRESHOLDS.minErrors,
+        true
+      ),
+      rateFactor: positiveNumber(
+        'DEPLOY_TRAIN_ERROR_RATE_FACTOR',
+        DEFAULT_ERROR_THRESHOLDS.rateFactor,
+        false
+      )
+    }
+  };
+}
+
+/** Runs a planned prod train through the deploy workflow. */
+async function commandShip(flags) {
+  if (typeof flags.plan !== 'string') throw new Error('--plan is required');
+  const plan = JSON.parse(fs.readFileSync(flags.plan, 'utf8'));
+  const catalog = validatePlanForShip(plan);
+  const settings = healthSettings();
+  const { teamWindows, holds } = controlsAt(plan.target_sha, catalog);
+  const { runTrain } = require('./executor');
+  const { createAwsCli, createHealthChecker } = require('./health');
+  const aws = createAwsCli({
+    roleArn: settings.roleArn,
     sessionName: `deploy-train-${process.env.GITHUB_RUN_ID || 'local'}`
   });
   try {
@@ -321,9 +391,11 @@ async function commandShip(flags) {
       health: createHealthChecker({
         aws,
         environment: plan.environment,
-        expectedAuth
+        expectedAuth: settings.expectedAuth,
+        thresholds: settings.thresholds
       }),
-      teamWindows: teamWindowsAt(plan.target_sha, catalog),
+      teamWindows,
+      holds,
       log
     });
     writeFileIfRequested(flags.result, `${JSON.stringify(result, null, 2)}\n`);
@@ -346,7 +418,52 @@ async function commandShip(flags) {
   }
 }
 
-const COMMANDS = { drift: commandDrift, plan: commandPlan, ship: commandShip };
+function runUrl() {
+  const server = process.env.GITHUB_SERVER_URL || 'https://github.com';
+  const repository = process.env.GITHUB_REPOSITORY || DEFAULT_REPOSITORY;
+  return `${server}/${repository}/actions/runs/${process.env.GITHUB_RUN_ID || 'local'}`;
+}
+
+function readJsonIfPresent(file) {
+  if (typeof file !== 'string' || !fs.existsSync(file)) return null;
+  return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+/** Opens the issue that keeps the train halted until a resume dispatch. */
+async function commandRecordHalt(flags) {
+  const plan = readJsonIfPresent(flags.plan);
+  const result = readJsonIfPresent(flags.result);
+  const issue = await github.recordHalt(
+    githubClient(flags),
+    report.haltIssue(plan, result, runUrl())
+  );
+  log(`halt recorded in ${issue.url}`);
+}
+
+/** Clears halts: run by the Resume job of a resume=true dispatch. */
+async function commandResume(flags) {
+  const by =
+    process.env.GITHUB_TRIGGERING_ACTOR ||
+    process.env.GITHUB_ACTOR ||
+    'unknown';
+  const cleared = await github.resumeHalts(githubClient(flags), {
+    by,
+    runUrl: runUrl()
+  });
+  log(
+    cleared.length > 0
+      ? `resumed: cleared ${cleared.map((halt) => `#${halt.number}`).join(', ')}`
+      : 'resume: no halt to clear'
+  );
+}
+
+const COMMANDS = {
+  drift: commandDrift,
+  plan: commandPlan,
+  ship: commandShip,
+  'record-halt': commandRecordHalt,
+  resume: commandResume
+};
 
 async function main(argv) {
   const { command, flags } = parseArgs(argv);
