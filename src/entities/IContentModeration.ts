@@ -159,6 +159,17 @@ export class ContentModerationReportEntity {
 
   @Column({ type: 'bigint', nullable: true })
   readonly resolved_at!: number | null;
+
+  /**
+   * What the report did for the reporter when it was filed: hid the drop
+   * from them, blocked its author. Null on reports filed before these were
+   * kept. The reporter's later hides and blocks are their own records.
+   */
+  @Column({ type: 'boolean', nullable: true, default: null })
+  readonly hide_drop!: boolean | null;
+
+  @Column({ type: 'boolean', nullable: true, default: null })
+  readonly block_author!: boolean | null;
 }
 
 @Entity(CONTENT_MODERATION_DROP_STATES_TABLE)

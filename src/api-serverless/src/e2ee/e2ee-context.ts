@@ -18,6 +18,10 @@ import {
 } from '@/e2ee/e2ee-blob-stores';
 import { e2eeErrors } from '@/e2ee/e2ee-errors';
 import { isE2eeAttachmentsEnabled } from '@/e2ee/e2ee-flag';
+import { defaultE2eeRecords, E2eeRecords } from '@/e2ee/relay/e2ee-records';
+import { e2eeRelaySettings } from '@/e2ee/relay/e2ee-relay-config';
+import { toApiDeviceGrantProof } from '@/api/device-signing/device-signing.mappers';
+import { ApiDeviceGrantProof } from '@/api/generated/models/ApiDeviceGrantProof';
 import { E2eeContractWalletVerifier } from '@/e2ee/e2ee-grant';
 import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
 import { identitiesDb } from '@/identities/identities.db';
@@ -66,7 +70,47 @@ export interface E2eeServiceDeps {
   readonly loginGrants: E2eeLoginGrantStore;
   /** Attachment chunk storage (E2EE_BLOB_STORE: MySQL or S3). */
   readonly blobStores: E2eeBlobStores;
+  /**
+   * Signed records of every write for the relays (E2EE_RELAY_MODE). Absent
+   * in tests that do not exercise them.
+   */
+  readonly records?: E2eeRecords;
+  /**
+   * What `GET e2ee/me` tells clients about reading from the relays: the
+   * relay settings and the caller's device grant proofs (for AUTH). Absent
+   * in tests that do not exercise it.
+   */
+  readonly relayReads?: E2eeRelayReads;
 }
+
+/** The relay settings clients read from, and a profile's grant proofs. */
+export interface E2eeRelayReads {
+  settings(): {
+    readonly mode: string;
+    readonly urls: readonly string[];
+    readonly net: string;
+    readonly ordererPublicKey: string | null;
+  };
+  grantProofs(profileId: string): Promise<ApiDeviceGrantProof[]>;
+  /** The head of a device's inbox stream (`dv/<device>`), if it has one. */
+  inboxHead(
+    deviceKey: string
+  ): Promise<{ readonly pos: number; readonly hash: string } | null>;
+}
+
+export const defaultE2eeRelayReads: E2eeRelayReads = {
+  settings: () => e2eeRelaySettings(),
+  async grantProofs(profileId) {
+    const grants = await deviceSigningDb.findGrantsOfProfile(profileId, {});
+    const now = Date.now();
+    return grants
+      .filter(
+        (grant) => grant.revoked_at === null && Number(grant.expires_at) > now
+      )
+      .map(toApiDeviceGrantProof);
+  },
+  inboxHead: (deviceKey) => e2eeDb.getStreamHead(`dv/${deviceKey}`)
+};
 
 /** Ethereum mainnet EIP-1271 checks (contract section 2.2 step 3). */
 export const mainnetContractWalletVerifier: E2eeContractWalletVerifier = {
@@ -98,7 +142,9 @@ export const defaultE2eeServiceDeps: E2eeServiceDeps = {
   attachmentsEnabled: () => isE2eeAttachmentsEnabled(),
   admission: directMessageAdmissionService,
   loginGrants: deviceGrantsLoginGrantStore,
-  blobStores: createE2eeBlobStores({ rows: e2eeDb })
+  blobStores: createE2eeBlobStores({ rows: e2eeDb }),
+  records: defaultE2eeRecords,
+  relayReads: defaultE2eeRelayReads
 };
 
 export function nowSeconds(deps: E2eeServiceDeps): number {

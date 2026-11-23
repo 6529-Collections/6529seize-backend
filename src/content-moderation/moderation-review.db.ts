@@ -1,11 +1,19 @@
 import {
+  E2eeModerationRecorder,
+  e2eeModerationRecorder
+} from '@/e2ee/relay/e2ee-moderation-records';
+import {
   moderationCaseIdSql,
   moderationCaseWorkSql,
   moderationNonAdministrativeSql,
   ModerationReviewCase
 } from './moderation-review-cases';
 import { randomUUID } from 'node:crypto';
-import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
+import {
+  dbSupplier,
+  LazyDbAccessCompatibleService,
+  SqlExecutor
+} from '@/sql-executor';
 import { RequestContext } from '@/request.context';
 import { DbPoolName } from '@/db-query.options';
 import {
@@ -138,6 +146,17 @@ type RevisionItem = Pick<
   Partial<ModerationItem>;
 
 export class ModerationReviewDb extends LazyDbAccessCompatibleService {
+  constructor(
+    sqlExecutorGetter: () => SqlExecutor,
+    /** Records report writes for the relays; off unless records are on. */
+    private readonly reportRecords: Pick<
+      E2eeModerationRecorder,
+      'changed'
+    > = e2eeModerationRecorder
+  ) {
+    super(sqlExecutorGetter);
+  }
+
   async lockProfile(id: string, ctx: RequestContext) {
     return this.timed('lockProfile', ctx, async () => {
       await this.db.execute(
@@ -306,6 +325,12 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
         { reportId, itemId },
         this.options(ctx)
       );
+      await this.reportRecords.changed(
+        CONTENT_MODERATION_REPORTS_TABLE,
+        { id: reportId },
+        ctx.connection
+      );
+      await this.reportRecords.changed(ITEMS, { id: itemId }, ctx.connection);
     });
   }
   async refreshReportResolution(id: string, ctx: RequestContext) {
@@ -319,6 +344,7 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
         { id, now: Date.now(), retention: 90 * 86400000 },
         this.options(ctx)
       );
+      await this.reportRecords.changed(ITEMS, { id }, ctx.connection);
     });
   }
   async openReportCount(dropId: string, ctx: RequestContext): Promise<number> {
@@ -349,12 +375,22 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
         this.options(ctx)
       );
       if (this.db.getAffectedRows(result) === 0) moderationConflict();
+      await this.reportRecords.changed(
+        CONTENT_MODERATION_REPORTS_TABLE,
+        { drop_id: dropId },
+        ctx.connection
+      );
       await this.db.execute(
         `update ${ITEMS} i set i.review_status='REVIEWED', i.evidence_expires_at=coalesce(i.evidence_expires_at,:expiry)
         where i.subject_type='DROP' and i.operation='REPORT' and i.published_subject_id=:dropId
           and not exists(select 1 from ${CONTENT_MODERATION_REPORTS_TABLE} r where r.item_id=i.id and r.status='OPEN')`,
         { dropId, expiry: now + 90 * 86400000 },
         this.options(ctx)
+      );
+      await this.reportRecords.changed(
+        ITEMS,
+        { published_subject_id: dropId, operation: 'REPORT' },
+        ctx.connection
       );
     });
   }
@@ -808,6 +844,14 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
           },
           this.options(ctx)
         );
+        await this.reportRecords.changed(
+          ITEMS,
+          {
+            subject_type: item.subject_type,
+            published_subject_id: item.published_subject_id
+          },
+          ctx.connection
+        );
       }
       const expiry =
         action === 'ALLOW' && item.subject_type !== 'REP_CATEGORY'
@@ -834,6 +878,8 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
         },
         this.options(ctx)
       );
+      // A moderator's decision: override, permit, suppression, review.
+      await this.reportRecords.changed(ITEMS, { id: item.id }, ctx.connection);
     });
   }
   async consume(
@@ -879,6 +925,8 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
           },
           this.options(ctx)
         );
+        // The permit a moderator granted is used up.
+        await this.reportRecords.changed(ITEMS, { id }, ctx.connection);
       } else {
         await this.db.execute(
           `update ${ITEMS} set published_subject_id=:publishedId where id=:id`,
@@ -1179,11 +1227,27 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
           this.options(tx)
         );
       });
-      await this.db.execute(
-        `update ${CONTENT_MODERATION_REPORTS_TABLE} set content_snapshot=json_object('evidence_expired',true),notes=null,ai_rationale=null,ai_evidence=null where status<>'OPEN' and resolved_at<:old and json_extract(content_snapshot,'$.evidence_expired') is null limit 1000`,
+      const wiped = await this.db.execute<{ id: string }>(
+        `select id from ${CONTENT_MODERATION_REPORTS_TABLE} where status<>'OPEN' and resolved_at<:old and json_extract(content_snapshot,'$.evidence_expired') is null limit 1000`,
         { old: Date.now() - 90 * 86400000 },
         this.options(ctx)
       );
+      if (wiped.length) {
+        const ids = wiped.map((row) => row.id);
+        await this.db.execute(
+          `update ${CONTENT_MODERATION_REPORTS_TABLE} set content_snapshot=json_object('evidence_expired',true),notes=null,ai_rationale=null,ai_evidence=null where id in (:ids) and json_extract(content_snapshot,'$.evidence_expired') is null`,
+          { ids },
+          this.options(ctx)
+        );
+        // The relays keep the pruned rows only: older records carried the
+        // evidence, and a DEL drops them.
+        await this.reportRecords.changed(
+          CONTENT_MODERATION_REPORTS_TABLE,
+          { id: ids },
+          ctx.connection,
+          { dropOlder: true }
+        );
+      }
     });
   }
 }

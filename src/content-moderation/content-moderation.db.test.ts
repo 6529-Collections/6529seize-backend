@@ -160,6 +160,64 @@ describe('ContentModerationDb', () => {
     );
   });
 
+  it("keeps the reporter's own hide and block out of the moderators' queue", async () => {
+    const { db, executor } = createDb();
+    executor.execute.mockImplementation((sql: string) => {
+      if (sql.includes('count(*) as report_count')) {
+        return Promise.resolve([{ drop_id: 'drop-1', report_count: 1 }]);
+      }
+      return Promise.resolve([
+        { ...reportRow(), hide_drop: 1, block_author: 1 }
+      ]);
+    });
+
+    const [item] = await db.getModerationQueue({ limit: 1 });
+    expect(item).toMatchObject({
+      id: REPORT_ID,
+      reporter_profile_id: 'reporter-1'
+    });
+    expect(item).not.toHaveProperty('hide_drop');
+    expect(item).not.toHaveProperty('block_author');
+  });
+
+  it('stores the hide and block the reporter asked for with the report', async () => {
+    const { db, executor } = createDb();
+    await db.createReport(
+      {
+        dropId: 'drop-1',
+        reporterProfileId: 'reporter-1',
+        authorProfileId: 'author-1',
+        reason: ContentReportReason.OTHER,
+        notes: null,
+        contentSnapshot: {},
+        hideDrop: true,
+        blockAuthor: false
+      },
+      {}
+    );
+    const [sql, params] = executor.execute.mock.calls[0]!;
+    expect(sql).toContain('hide_drop');
+    expect(sql).toContain('block_author');
+    expect(params).toMatchObject({ hideDrop: true, blockAuthor: false });
+    await db.createReport(
+      {
+        dropId: 'drop-2',
+        reporterProfileId: 'reporter-1',
+        authorProfileId: 'author-1',
+        reason: ContentReportReason.OTHER,
+        notes: null,
+        contentSnapshot: {}
+      },
+      {}
+    );
+    // Without viewer actions the report hid nothing and blocked no one.
+    expect(
+      executor.execute.mock.calls.find(
+        (call) => (call[1] as { dropId?: string })?.dropId === 'drop-2'
+      )?.[1]
+    ).toMatchObject({ hideDrop: false, blockAuthor: false });
+  });
+
   it('returns and consumes a stable queue cursor matching its priority order', async () => {
     const { db, executor } = createDb();
     executor.execute.mockImplementation((sql: string) => {

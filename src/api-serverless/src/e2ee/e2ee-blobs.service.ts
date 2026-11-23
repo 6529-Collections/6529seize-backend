@@ -26,6 +26,10 @@ import { E2eeBlobStorageError, E2eeBlobStore } from '@/e2ee/e2ee-blob-store';
 import { e2eeMessageDigest, verifyE2eeEd25519 } from '@/e2ee/e2ee-digests';
 import { decodeE2eeBase64 } from '@/e2ee/e2ee-encoding';
 import { e2eeErrors } from '@/e2ee/e2ee-errors';
+import {
+  recordE2ee,
+  runE2eeRecordTransaction
+} from '@/e2ee/relay/e2ee-records';
 import { Logger } from '@/logging';
 import { ConnectionWrapper } from '@/sql-executor';
 
@@ -159,8 +163,10 @@ export class E2eeBlobsService {
       E2EE_MAX_BLOB_CHUNK_BYTES
     );
     if (!data.length) throw e2eeErrors.badRequest('data is empty');
-    const blob = await this.db.executeNativeQueriesInTransaction(
-      async (connection) => {
+    const blob = await runE2eeRecordTransaction(
+      this.deps.records,
+      this.db,
+      async (connection, batch) => {
         const locked = await this.lockUploaderBlob(
           callerProfileId,
           blobId,
@@ -184,6 +190,9 @@ export class E2eeBlobsService {
             connection
           )
         );
+        await recordE2ee(this.deps.records, batch, (writers, records) =>
+          writers.blobChunkStored(records, connection, { blobId, index, data })
+        );
         return locked;
       }
     );
@@ -195,8 +204,10 @@ export class E2eeBlobsService {
     blobId: string
   ): Promise<ApiE2eeBlob> {
     this.requireAttachments();
-    const blob = await this.db.executeNativeQueriesInTransaction(
-      async (connection) => {
+    const blob = await runE2eeRecordTransaction(
+      this.deps.records,
+      this.db,
+      async (connection, batch) => {
         const locked = await this.lockUploaderBlob(
           callerProfileId,
           blobId,
@@ -219,6 +230,9 @@ export class E2eeBlobsService {
         }
         const completedAt = this.deps.now();
         await this.db.markBlobComplete(blobId, completedAt, connection);
+        await recordE2ee(this.deps.records, batch, (writers, records) =>
+          writers.blobCompleted(records, connection, blobId)
+        );
         return { ...locked, complete: true, completed_at: completedAt };
       }
     );

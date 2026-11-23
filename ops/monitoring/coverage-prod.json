@@ -587,6 +587,18 @@
       ]
     },
     {
+      "service": "e2eeRelayPublishLoop",
+      "region": "us-east-1",
+      "functions": [
+        "e2eeRelayPublishLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
       "service": "signedRecordLogLoop",
       "region": "us-east-1",
       "functions": [
