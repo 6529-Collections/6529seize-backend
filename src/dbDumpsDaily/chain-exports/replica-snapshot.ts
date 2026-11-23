@@ -209,6 +209,32 @@ function unknownLag(
   return { lagMs, ageMs: null, error, unknown, aheadMs };
 }
 
+/** Why the lag can't be read on this server: no row for it. */
+export const NO_LAG_ROW =
+  'information_schema.replica_host_status has no row for this server';
+/** Why the lag can't be read on this server: its row has no lag. */
+export const NULL_LAG = 'REPLICA_LAG_IN_MILLISECONDS is null';
+/** Why the lag's age can't be read on this server: its row has no timestamp. */
+export const NULL_LAG_TIMESTAMP =
+  "LAST_UPDATE_TIMESTAMP is null: the row's age is unknown";
+
+/**
+ * Whether an unreadable lag is one a run may accept: the "can't read the
+ * lag on this server" cases. That is a server that isn't Aurora (no table,
+ * no variable: MySQL errors 1109 and 1193), or an Aurora reader with no row
+ * for itself, a null lag or a null timestamp. A timeout, a refusal or any
+ * other error can come from a reader falling behind, and is never one.
+ */
+export function isAcceptableUnreadableLag(error: string | null): boolean {
+  return (
+    error === 'ER_UNKNOWN_TABLE 1109' ||
+    error === 'ER_UNKNOWN_SYSTEM_VARIABLE 1193' ||
+    error === NO_LAG_ROW ||
+    error === NULL_LAG ||
+    error === NULL_LAG_TIMESTAMP
+  );
+}
+
 /**
  * An error as its code and number only, e.g. `ER_UNKNOWN_TABLE 1109`. The
  * message stays out: a server's can name the user and host
@@ -249,21 +275,20 @@ export async function readReplicaLag(
     return unknownLag(code);
   }
   if (row === undefined) {
-    return unknownLag(
-      'information_schema.replica_host_status has no row for this server'
-    );
+    return unknownLag(NO_LAG_ROW);
+  }
+  if (row.lag_ms === null || row.lag_ms === undefined) {
+    return unknownLag(NULL_LAG);
   }
   const lag = numberOrNull(row.lag_ms);
   if (lag === null || lag < 0) {
-    return unknownLag(`REPLICA_LAG_IN_MILLISECONDS is ${String(row.lag_ms)}`);
+    return unknownLag(
+      `REPLICA_LAG_IN_MILLISECONDS is ${String(row.lag_ms)}: not a lag`
+    );
   }
   const age = numberOrNull(row.age_ms);
   if (age === null) {
-    return unknownLag(
-      "LAST_UPDATE_TIMESTAMP is null: the row's age is unknown",
-      'unreadable',
-      lag
-    );
+    return unknownLag(NULL_LAG_TIMESTAMP, 'unreadable', lag);
   }
   if (age < -FUTURE_ROW_TOLERANCE_MS) {
     return unknownLag(

@@ -1,5 +1,9 @@
 import {
   errorCode,
+  isAcceptableUnreadableLag,
+  NO_LAG_ROW,
+  NULL_LAG,
+  NULL_LAG_TIMESTAMP,
   openReadOnlySnapshot,
   ReadOnlySnapshotExecutor,
   readReplicaLag,
@@ -121,7 +125,7 @@ describe('openReadOnlySnapshot', () => {
     [
       'a negative lag',
       [{ lag_ms: -1, age_ms: 10 }],
-      'REPLICA_LAG_IN_MILLISECONDS is -1'
+      'REPLICA_LAG_IN_MILLISECONDS is -1: not a lag'
     ],
     // The lag is kept when the row has one: only its age is unknown.
     [
@@ -326,5 +330,23 @@ describe('ReadOnlySnapshotExecutor', () => {
     await expect(
       executor.executeNativeQueriesInTransaction(async () => 1)
     ).rejects.toThrow(/write transaction/);
+  });
+});
+
+describe('isAcceptableUnreadableLag', () => {
+  it.each([
+    ['ER_UNKNOWN_TABLE 1109', true],
+    ['ER_UNKNOWN_SYSTEM_VARIABLE 1193', true],
+    [NO_LAG_ROW, true],
+    [NULL_LAG, true],
+    [NULL_LAG_TIMESTAMP, true],
+    // A reader falling behind can time out or be refused: never accepted.
+    ['PROTOCOL_SEQUENCE_TIMEOUT', false],
+    ['ER_TABLEACCESS_DENIED_ERROR 1142', false],
+    ['ER_PARSE_ERROR 1064', false],
+    ['REPLICA_LAG_IN_MILLISECONDS is -1: not a lag', false],
+    [null, false]
+  ])('reads %j as acceptable: %j', (error, acceptable) => {
+    expect(isAcceptableUnreadableLag(error)).toBe(acceptable);
   });
 });

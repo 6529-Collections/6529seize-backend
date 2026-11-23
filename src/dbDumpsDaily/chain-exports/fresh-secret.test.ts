@@ -71,6 +71,20 @@ describe('readFreshSecretValue', () => {
     ).rejects.toThrow('access denied');
   });
 
+  it("refuses a secret that isn't JSON without quoting its text", async () => {
+    const c = client([
+      { SecretString: '{"IDENTITY_FREEZE_AT": "x", "DB_PASS": "hunter2"' }
+    ]);
+    const error = await readFreshSecretValue(
+      c as never,
+      'IDENTITY_FREEZE_AT',
+      undefined,
+      noWait
+    ).catch((e) => e);
+    expect(error.message).toBe('The secret prod/lambdas is not valid JSON');
+    expect(error.message).not.toMatch(/hunter2|DB_PASS/);
+  });
+
   it('refuses a secret with no text value', async () => {
     const c = client([{ SecretBinary: new Uint8Array([1]) }]);
     await expect(
