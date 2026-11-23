@@ -59,9 +59,12 @@ export interface FrozenHeader {
   readonly frozen?: readonly FrozenSnapshot[];
   readonly answers?: number;
   readonly answersServedFrozen?: number;
+  /** The commit the frozen node was built from, in full. */
   readonly validatorCommit?: string;
-  readonly validatorSha256Windows?: string;
+  /** The binary that served the capture, on the devnet. */
   readonly validatorSha256Linux?: string;
+  /** The same commit built for Windows, which re-serves the copies there. */
+  readonly validatorSha256Windows?: string;
   /** Answers whose snapshot tag was set after the capture. */
   readonly retagged?: readonly { readonly key?: string }[];
 }
@@ -70,6 +73,7 @@ export interface FrozenHeader {
 export type FrozenExchange = RecordedExchange & { readonly snapshot?: string };
 
 const HEX64 = /^[0-9a-f]{64}$/;
+const COMMIT = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 const ROOT = /^(0x)?[0-9a-fA-F]{64}$/;
 
 function sha256(bytes: Buffer): string {
@@ -88,6 +92,19 @@ export function frozenHeaderProblems(
   const problems: string[] = [];
   const snapshots = header.frozen ?? [];
   if (!snapshots.length) return ['the header names no frozen snapshot'];
+  // The build that served the capture, and the same build for re-serving
+  // the copies here.
+  if (!COMMIT.test(header.validatorCommit ?? '')) {
+    problems.push('the header names no full validatorCommit');
+  }
+  for (const field of [
+    'validatorSha256Linux',
+    'validatorSha256Windows'
+  ] as const) {
+    if (!HEX64.test(header[field] ?? '')) {
+      problems.push(`the header names no ${field}`);
+    }
+  }
   const phases = new Set<string>();
   for (const s of snapshots) {
     const at = `snapshot ${s.phase ?? '(no phase)'}`;
@@ -198,19 +215,19 @@ export function validatorProblems(
   header: FrozenHeader,
   platform: NodeJS.Platform = process.platform
 ): string[] {
-  const expected =
-    platform === 'win32'
-      ? header.validatorSha256Windows
-      : header.validatorSha256Linux;
-  if (!expected) {
-    return [`the header names no validator hash for ${platform}`];
-  }
+  // Both builds of one commit answer with the same bytes: the status's
+  // node field is the release, not the platform.
+  const field =
+    platform === 'win32' ? 'validatorSha256Windows' : 'validatorSha256Linux';
+  const expected = header[field];
+  if (!expected) return [`the header names no ${field}`];
   if (!fs.existsSync(validator.file)) {
     return [`no validator at ${validator.file}`];
   }
-  if (sha256(fs.readFileSync(validator.file)) !== expected) {
+  const actual = sha256(fs.readFileSync(validator.file));
+  if (actual !== expected) {
     return [
-      `the validator at ${validator.file} isn't the one the header names (${expected.slice(0, 12)}…)`
+      `replay binary ${actual} is not the recording's ${field} ${expected}`
     ];
   }
   const [program, ...args] = validator.command;

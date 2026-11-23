@@ -313,13 +313,16 @@ Each `--source <name>=<spec>`:
   `--frozen-reviewed <commit>` names the header's `validatorCommit`, so a
   reviewer's score of the capture's code stands behind a final one. The
   run checks:
-  1. each snapshot's fields, and that `answers` and `answersServedFrozen`
-     count every line;
+  1. each snapshot's fields, that `answers` and `answersServedFrozen`
+     count every line, and that the header names the build: `validatorCommit`
+     in full, `validatorSha256Linux` (the binary that served the capture)
+     and `validatorSha256Windows` (the same commit built for Windows);
   2. that at least two live nodes other than the copied one reported the
      snapshot's block root and app state root at its height;
   3. with `--validator-bin <file>` and `--frozen-port <n>`: the binary's
-     SHA-256 against the header's for this platform and its
-     `--api-frozen-snapshot` option, then for each snapshot the kept copy
+     SHA-256 against the header's for this platform (any other binary is
+     refused: both builds of one commit answer with the same bytes, a
+     different build may not) and its `--api-frozen-snapshot` option, then for each snapshot the kept copy
      (`<dir>/snapshots/<hash>.tar.gz`) against both hashes, unpacked into
      the run's folder beside `<dir>/devnet.toml`, served by the validator
      with the frozen option on 127.0.0.1 and no peers, one such node on

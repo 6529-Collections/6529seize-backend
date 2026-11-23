@@ -19,6 +19,7 @@ import {
   FrozenValidator,
   startFrozenNode,
   unpackSnapshot,
+  validatorProblems,
   verifyFrozenRecording
 } from '@/rebuild/sources/frozen-gateway';
 import { takeFrozenLock } from '@/rebuild/sources/frozen-guard';
@@ -347,6 +348,46 @@ describe('frozen gateway recordings', () => {
     ]);
   });
 
+  it('refuses a header that leaves out the build that served it', () => {
+    expect(
+      frozenHeaderProblems(
+        {
+          ...header,
+          validatorCommit: 'c'.repeat(12),
+          validatorSha256Windows: undefined
+        },
+        lines()
+      )
+    ).toEqual([
+      'the header names no full validatorCommit',
+      'the header names no validatorSha256Windows'
+    ]);
+    expect(
+      frozenHeaderProblems(
+        { ...header, validatorSha256Linux: undefined },
+        lines()
+      )
+    ).toEqual(['the header names no validatorSha256Linux']);
+  });
+
+  it("replays only with the recording's build for the platform", () => {
+    const served = sha256(fs.readFileSync(validator.file));
+    const other = { ...header, validatorSha256Windows: 'f'.repeat(64) };
+    expect(validatorProblems(validator, other, 'win32')).toEqual([
+      `replay binary ${served} is not the recording's validatorSha256Windows ${'f'.repeat(64)}`
+    ]);
+    expect(validatorProblems(validator, other, 'linux')).toEqual([]);
+    expect(
+      validatorProblems(
+        validator,
+        { ...header, validatorSha256Linux: 'f'.repeat(64) },
+        'linux'
+      )
+    ).toEqual([
+      `replay binary ${served} is not the recording's validatorSha256Linux ${'f'.repeat(64)}`
+    ]);
+  });
+
   it('re-serves the kept copy and replays its answers: final once reviewed', async () => {
     const port = await freePort();
     const verify = (reviewedCommit?: string, recorded = lines()) =>
@@ -413,7 +454,9 @@ describe('frozen gateway recordings', () => {
       validator,
       port
     });
-    expect(otherBinary.problems[0]).toContain("isn't the one the header names");
+    expect(otherBinary.problems[0]).toMatch(
+      /^replay binary [0-9a-f]{64} is not the recording's/
+    );
     const archive = path.join(
       dir,
       'snapshots',
