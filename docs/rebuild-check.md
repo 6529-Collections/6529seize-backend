@@ -211,8 +211,13 @@ Each `--source <name>=<spec>`:
   WebSocket (HELLO, AUTH, PUB, payloads, SUB, HIST) and keeps what the run
   publishes, starting from a copy of `<dir>`. It checks one copy per event
   id, a LOG `seq` once per wave and payloads before the records that name
-  them. It checks no signatures. `SUB` takes `*` for every wave and a
-  `since` cursor per wave.
+  them. It checks no signatures. As on the relays, each wave has its own
+  log, and a family of streams (`dv/0x..`) shares its family's (`dv`);
+  rseq counts per log from 1. `SUB` replays each wave (`*`: every log)
+  after its `since` cursor of this epoch, or from the start with
+  `from_start`, ends each with `EOSE` at that wave's head, then sends new
+  events live. `HIST` pages a log or one stream of a family; without
+  `after` it answers the newest page.
 - Relays can be recorded and replayed too:
   - `record:<dir>@<relay url>` proxies the run's CRP sessions to a relay;
     `record:<dir>@relay` records a fresh harness relay on loopback. When

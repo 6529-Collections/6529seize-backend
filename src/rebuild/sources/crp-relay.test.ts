@@ -40,31 +40,32 @@ describe('harness relay', () => {
 
   it('keeps one copy per id, takes a LOG seq once, and wants payloads first', () => {
     const store = new CrpRelayStore(dir);
-    expect(store.publish(event('e1', 'dr/1'), {})).toBe('accepted');
-    expect(store.publish(event('e1', 'dr/1'), {})).toBe('duplicate');
+    expect(store.publish(event('e1', 'dr/1'), {}).result).toBe('accepted');
+    expect(store.publish(event('e1', 'dr/1'), {}).result).toBe('duplicate');
     const log = (id: string) =>
       event(id, 'cv/1', { kind: 11, body: JSON.stringify({ seq: 1 }) });
-    expect(store.publish(log('l1'), {})).toBe('accepted');
-    expect(store.publish(log('l2'), {})).toBe('seq-taken');
+    expect(store.publish(log('l1'), {}).result).toBe('accepted');
+    expect(store.publish(log('l2'), {}).result).toBe('seq-taken');
     const bytes = Buffer.from('payload');
     const named = event('e2', 'bl/1', {
       body: JSON.stringify({ h: hashOf(bytes) })
     });
-    expect(store.publish(named, {})).toBe(`payload ${hashOf(bytes)}`);
+    expect(store.publish(named, {}).result).toBe(`payload ${hashOf(bytes)}`);
     expect(store.putPayload(`0x${hashOf(bytes)}`, bytes)).toBe('accepted');
     expect(store.putPayload(hashOf(bytes), Buffer.from('other'))).toBe(
       'rejected'
     );
-    expect(store.publish(named, {})).toBe('accepted');
+    expect(store.publish(named, {}).result).toBe('accepted');
     expect(store.matching('dr').map((e) => e.event.id)).toEqual(['e1']);
-    expect(store.matching('cv', 0).map((e) => e.rseq)).toEqual([2]);
+    // Each log counts its own rseq: cv's first event is its 1.
+    expect(store.matching('cv', 0).map((e) => e.rseq)).toEqual([1]);
   });
 
   it('keeps what was published for the next process', () => {
     new CrpRelayStore(dir).publish(event('e1', 'dr/1'), { wallet: '0x01' });
     const reopened = new CrpRelayStore(dir);
     expect(reopened.size).toBe(1);
-    expect(reopened.publish(event('e1', 'dr/1'), {})).toBe('duplicate');
+    expect(reopened.publish(event('e1', 'dr/1'), {}).result).toBe('duplicate');
   });
 
   it('answers CRP frames over a WebSocket', async () => {

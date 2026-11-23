@@ -61,6 +61,7 @@ interface Session {
   readonly socket: WsSocket;
   wallet: string | null;
   roles: string[];
+  readonly subscriptions: Map<unknown, Subscription>;
 }
 
 export const EVENTS_FILE = 'events.jsonl';
@@ -129,9 +130,23 @@ function encodeBinary(header: Record<string, unknown>, bytes: Buffer): Buffer {
 }
 
 /**
+ * The log an event belongs to: a family wave (`dv/0x..`, with `/`) is
+ * logged under its family code (`dv`), any other wave under its own name.
+ * rseq counts per log from 1, as on the relays.
+ */
+export function logOf(wave: string): string {
+  const slash = wave.indexOf('/');
+  return slash < 0 ? wave : wave.slice(0, slash);
+}
+
+/** The relays' log epoch; a cursor of another epoch is no cursor. */
+const LOG_EPOCH = 1;
+
+/**
  * The relay store behind the harness's relay: CRP v1 frames (HELLO, AUTH,
  * PUB, payload put and get, SUB, HIST) over what clients published, kept in
- * a directory so a seed's records are there for the rebuild. It checks what
+ * a directory so a seed's records are there for the rebuild. Each log (a
+ * wave, or a family of streams) counts its own rseq from 1. It checks what
  * the relays' clients depend on (one copy per event id, a LOG `seq` taken
  * once per wave, payloads before the records that name them) but not
  * signatures: it is a store for the run, not a trust boundary.
@@ -141,7 +156,10 @@ function encodeBinary(header: Record<string, unknown>, bytes: Buffer): Buffer {
  * canonical JSON), and a payload only when it is recorded.
  */
 export class CrpRelayStore {
+  /** Every event in the order it arrived. */
   private readonly events: StoredEvent[] = [];
+  /** Each log's events in rseq order. */
+  private readonly logs = new Map<string, StoredEvent[]>();
   private readonly byId = new Map<string, StoredEvent>();
   private readonly logSeqs = new Map<string, string>();
   private readonly roles: Record<string, string[]>;
@@ -149,14 +167,14 @@ export class CrpRelayStore {
   private readonly reads: Set<string> | null;
   /** The chain height the relay says is final (clients anchor records to it). */
   readonly head: number;
-  private rseq = 0;
 
   constructor(
     private readonly dir: string,
     readonly replay = false
   ) {
-    if (!replay)
+    if (!replay) {
       fs.mkdirSync(path.join(dir, PAYLOADS_DIR), { recursive: true });
+    }
     const rolesFile = path.join(dir, ROLES_FILE);
     this.roles = fs.existsSync(rolesFile)
       ? JSON.parse(fs.readFileSync(rolesFile, 'utf8'))
@@ -175,13 +193,14 @@ export class CrpRelayStore {
         if (line.trim()) this.remember(JSON.parse(line) as StoredEvent);
       }
     }
+    this.logs.forEach((log) => log.sort((a, b) => a.rseq - b.rseq));
   }
 
   get size(): number {
     return this.events.length;
   }
 
-  /** Every stored event with its grant, in relay order. */
+  /** Every stored event with its grant, in arrival order. */
   items(): RelayItem[] {
     return this.events.map((stored) => ({
       event: stored.event,
@@ -189,10 +208,23 @@ export class CrpRelayStore {
     }));
   }
 
+  /** Every stored event, in arrival order. */
+  all(): readonly StoredEvent[] {
+    return this.events;
+  }
+
+  /** The names of the logs the relay holds, in the order they began. */
+  logNames(): string[] {
+    return Array.from(this.logs.keys());
+  }
+
   private remember(stored: StoredEvent): void {
     this.events.push(stored);
+    const name = logOf(stored.event.wave);
+    const log = this.logs.get(name) ?? [];
+    log.push(stored);
+    this.logs.set(name, log);
     this.byId.set(stored.event.id, stored);
-    this.rseq = Math.max(this.rseq, stored.rseq);
     if (stored.event.kind === 11) {
       this.logSeqs.set(this.seqKey(stored.event), stored.event.id);
     }
@@ -245,50 +277,66 @@ export class CrpRelayStore {
     return 'accepted';
   }
 
-  /** Stores an event: `accepted`, `duplicate`, or a rejection reason. */
-  publish(event: StoredEvent['event'], grant: StoredEvent['grant']): string {
+  /**
+   * Stores an event: `accepted` with the stored event, `duplicate`, or a
+   * rejection reason.
+   */
+  publish(
+    event: StoredEvent['event'],
+    grant: StoredEvent['grant']
+  ): { result: string; stored?: StoredEvent } {
     const known = this.byId.get(event.id);
     if (this.replay) {
-      if (!known) return 'not in the recording';
+      if (!known) return { result: 'not in the recording' };
       const same =
         canonicalJson(known.event) === canonicalJson(event) &&
         canonicalJson(known.grant) === canonicalJson(grant ?? {});
-      return same ? 'duplicate' : 'differs from the recording';
+      return { result: same ? 'duplicate' : 'differs from the recording' };
     }
-    if (known) return 'duplicate';
+    if (known) return { result: 'duplicate' };
     const missing = payloadRefs(event.body).find(
       (ref) => !this.hasPayload(ref)
     );
-    if (missing) return `payload ${missing}`;
+    if (missing) return { result: `payload ${missing}` };
     if (event.kind === 11) {
       const taken = this.logSeqs.get(this.seqKey(event));
-      if (taken && taken !== event.id) return 'seq-taken';
+      if (taken && taken !== event.id) return { result: 'seq-taken' };
     }
-    const stored: StoredEvent = { rseq: this.rseq + 1, event, grant };
+    const stored: StoredEvent = {
+      rseq: this.headOf(logOf(event.wave)) + 1,
+      event,
+      grant
+    };
     this.remember(stored);
     fs.appendFileSync(
       path.join(this.dir, EVENTS_FILE),
       `${JSON.stringify(stored)}\n`
     );
-    return 'accepted';
+    return { result: 'accepted', stored };
+  }
+
+  /** The newest rseq of a log, 0 when it holds nothing. */
+  headOf(log: string): number {
+    const events = this.logs.get(log);
+    return events?.length ? events[events.length - 1].rseq : 0;
   }
 
   /**
-   * Events of a wave and its sub-waves (`*`: every wave) after `after`,
-   * in relay order.
+   * A wave's events after `after`, in rseq order: a log's (a wave, or a
+   * family by its code), or one stream of a family (`dv/0x..`: the family's
+   * log filtered to it, with the family's rseq).
    */
   matching(wave: string, after = 0): StoredEvent[] {
-    return this.events.filter(
-      (e) =>
-        (wave === '*' ||
-          e.event.wave === wave ||
-          e.event.wave.startsWith(`${wave}/`)) &&
-        e.rseq > after
+    const log = this.logs.get(logOf(wave)) ?? [];
+    return log.filter(
+      (e) => e.rseq > after && (!wave.includes('/') || e.event.wave === wave)
     );
   }
 
-  get lastSeq(): number {
-    return this.rseq;
+  /** The newest rseq a wave (log or stream) reaches. */
+  headOfWave(wave: string): number {
+    const events = this.matching(wave);
+    return events.length ? events[events.length - 1].rseq : 0;
   }
 }
 
@@ -309,11 +357,42 @@ class ReplayProblems {
   }
 }
 
+/** A live subscription: its waves (`*`: every log). */
+interface Subscription {
+  readonly sid: unknown;
+  readonly waves: readonly string[];
+}
+
+/** An EV frame for one stored event, under the wave it was asked for. */
+function evFrame(sid: unknown, wave: string, item: StoredEvent) {
+  return {
+    t: 'EV',
+    sid,
+    wave,
+    log_epoch: LOG_EPOCH,
+    rseq: item.rseq,
+    event: item.event,
+    grant: item.grant,
+    receipts: [],
+    ...served(item)
+  };
+}
+
+/** Whether a live subscription's `wave` (`*`, a log or a stream) covers an event. */
+function covers(wave: string, item: StoredEvent): boolean {
+  return (
+    wave === '*' ||
+    wave === item.event.wave ||
+    (!wave.includes('/') && wave === logOf(item.event.wave))
+  );
+}
+
 function handleFrame(
   store: CrpRelayStore,
   session: Session,
   frame: Frame,
-  problems: ReplayProblems | null
+  problems: ReplayProblems | null,
+  live: (stored: StoredEvent) => void
 ) {
   const send = (reply: Record<string, unknown>) =>
     session.socket.send(JSON.stringify(reply));
@@ -329,7 +408,7 @@ function handleFrame(
         t: 'WELCOME',
         v: 1,
         relay_id: 'rebuild-relay',
-        log_epoch: 1,
+        log_epoch: LOG_EPOCH,
         net: frame.net,
         head: store.head
       });
@@ -352,7 +431,10 @@ function handleFrame(
     }
     case 'PUB': {
       const event = frame.event as StoredEvent['event'];
-      const result = store.publish(event, frame.grant as StoredEvent['grant']);
+      const { result, stored } = store.publish(
+        event,
+        frame.grant as StoredEvent['grant']
+      );
       const accepted = result === 'accepted' || result === 'duplicate';
       if (problems && !accepted) {
         problems.add(
@@ -368,6 +450,7 @@ function handleFrame(
         reason: accepted ? null : result,
         host_ack: null
       });
+      if (stored) live(stored);
       return;
     }
     case 'PAYLOAD_GET': {
@@ -394,63 +477,79 @@ function handleFrame(
       return;
     }
     case 'SUB': {
-      // A cursor per wave (`since`) starts that wave after its rseq.
+      // Each wave in turn: after its cursor (one of this epoch), from the
+      // start when there is none and from_start, else live events only.
       const since = new Map(
-        ((frame.since as { wave?: string; rseq?: number }[]) ?? []).map(
-          (cursor) => [String(cursor.wave), Number(cursor.rseq ?? 0)]
+        (
+          (frame.since as {
+            wave?: string;
+            log_epoch?: number;
+            rseq?: number;
+          }[]) ?? []
         )
+          .filter((cursor) => Number(cursor.log_epoch) === LOG_EPOCH)
+          .map((cursor) => [String(cursor.wave), Number(cursor.rseq ?? 0)])
       );
-      for (const wave of (frame.waves as string[]) ?? []) {
-        noteRead(wave);
-        for (const item of mayRead ? store.matching(wave) : []) {
-          if (item.rseq <= (since.get(item.event.wave) ?? 0)) continue;
-          send({
-            t: 'EV',
-            sid: frame.sid,
-            wave: item.event.wave,
-            log_epoch: 1,
-            rseq: item.rseq,
-            event: item.event,
-            grant: item.grant,
-            receipts: [],
-            ...served(item)
-          });
+      const waves = (frame.waves as string[]) ?? [];
+      waves.forEach(noteRead);
+      const replayed = waves.flatMap((wave) =>
+        wave === '*' ? store.logNames() : [wave]
+      );
+      for (const wave of mayRead ? replayed : []) {
+        const cursor = since.get(wave);
+        if (cursor === undefined && frame.from_start !== true) continue;
+        for (const item of store.matching(wave, cursor ?? 0)) {
+          send(evFrame(frame.sid, wave, item));
         }
-        send({ t: 'EOSE', sid: frame.sid, wave, rseq: store.lastSeq });
+        send({
+          t: 'EOSE',
+          sid: frame.sid,
+          wave,
+          rseq: store.headOfWave(wave)
+        });
       }
+      session.subscriptions.set(frame.sid, { sid: frame.sid, waves });
       return;
     }
     case 'HIST': {
       noteRead(String(frame.wave));
       const limit = Number(frame.limit);
-      const items = mayRead
+      const all = mayRead
         ? store.matching(
             String(frame.wave),
-            frame.after === null ? 0 : Number(frame.after)
+            frame.after === null || frame.after === undefined
+              ? 0
+              : Number(frame.after)
           )
         : [];
+      // Without `after`, the newest page.
+      const page =
+        frame.after === null || frame.after === undefined
+          ? all.slice(Math.max(0, all.length - limit))
+          : all.slice(0, limit);
       send({
         t: 'RES',
         rid: frame.rid,
-        log_epoch: 1,
-        items: items.slice(0, limit).map((item) => ({
+        log_epoch: LOG_EPOCH,
+        items: page.map((item) => ({
           rseq: item.rseq,
           event: item.event,
           grant: item.grant,
           ...served(item)
         })),
-        more: items.length > limit
+        more: all.length > limit
       });
       return;
     }
     case 'UNSUB':
+      session.subscriptions.delete(frame.sid);
       return;
     default:
       send({ t: 'ERR', rid: frame.rid ?? null, reason: 'unknown frame' });
   }
 }
 
-/** Serves a store on loopback over CRP v1. */
+/** Serves a store on loopback over CRP v1, with live EVs to subscribers. */
 async function serveStore(
   store: CrpRelayStore,
   problems: ReplayProblems | null
@@ -460,13 +559,39 @@ async function serveStore(
   stop(): Promise<void>;
 }> {
   const errors: string[] = [];
+  const sessions = new Set<Session>();
+  const live = (stored: StoredEvent) => {
+    sessions.forEach((session) => {
+      if (session.roles.length === 0) return;
+      session.subscriptions.forEach((subscription) => {
+        const wave = subscription.waves.find((w) => covers(w, stored));
+        if (wave === undefined) return;
+        session.socket.send(
+          JSON.stringify(
+            evFrame(
+              subscription.sid,
+              wave === '*' ? logOf(stored.event.wave) : wave,
+              stored
+            )
+          )
+        );
+      });
+    });
+  };
   const server = http.createServer((_request, response) => {
     response.writeHead(426);
     response.end();
   });
   const sockets = new WebSocketServer({ server });
   sockets.on('connection', (socket) => {
-    const session: Session = { socket, wallet: null, roles: [] };
+    const session: Session = {
+      socket,
+      wallet: null,
+      roles: [],
+      subscriptions: new Map()
+    };
+    sessions.add(session);
+    socket.on('close', () => sessions.delete(session));
     socket.on('message', (data, binary) => {
       try {
         if (binary) {
@@ -496,7 +621,8 @@ async function serveStore(
           store,
           session,
           JSON.parse(data.toString('utf8')) as Frame,
-          problems
+          problems,
+          live
         );
       } catch (error) {
         errors.push(String(error));
@@ -607,7 +733,8 @@ function judgeRecording(
 
 /**
  * One recording made of several (`a+b`) in `dir`: each one's events in its
- * own order after the one before, with their payloads, reads and roles.
+ * own order after the one before (rseq counted again per log), with their
+ * payloads, reads and roles.
  */
 function mergeRecordings(dirs: readonly string[], dir: string): void {
   fs.rmSync(dir, { recursive: true, force: true });
@@ -616,10 +743,14 @@ function mergeRecordings(dirs: readonly string[], dir: string): void {
   const reads = new Set<string>();
   const roles: Record<string, string[]> = {};
   let head = DEFAULT_HEAD;
+  const heads = new Map<string, number>();
   for (const from of dirs) {
     const store = new CrpRelayStore(from, true);
-    for (const stored of store.matching('*')) {
-      events.push(JSON.stringify({ ...stored, rseq: events.length + 1 }));
+    for (const stored of store.all()) {
+      const log = logOf(stored.event.wave);
+      const rseq = (heads.get(log) ?? 0) + 1;
+      heads.set(log, rseq);
+      events.push(JSON.stringify({ ...stored, rseq }));
     }
     head = Math.max(head, store.head);
     const readsFile = path.join(from, READS_FILE);

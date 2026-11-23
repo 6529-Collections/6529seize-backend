@@ -332,14 +332,16 @@ describe('relay recordings', () => {
         from_start: true,
         since: []
       });
-      await client.waitFor((f) => f.t === 'EOSE' && f.sid === 1);
+      await client.waitFor(
+        (f) => f.t === 'EOSE' && f.sid === 1 && f.wave === 'cv'
+      );
       expect(
         client.frames
           .filter((f) => f.t === 'EV')
-          .map((f) => [f.rseq, (f.event as { id: string }).id])
+          .map((f) => [f.wave, f.rseq, (f.event as { id: string }).id])
       ).toEqual([
-        [1, GOOD.id],
-        [2, second.id]
+        ['dr', 1, GOOD.id],
+        ['cv', 1, second.id]
       ]);
       client.close();
       expect(merged.problems()).toEqual([]);
@@ -348,14 +350,16 @@ describe('relay recordings', () => {
     }
   });
 
-  it('starts a cursor where SUB says, for every wave with *', async () => {
+  it('logs each wave (a family by its code) with its own rseq, as the relays do', async () => {
     const relay = await startCrpRelay(path.join(root, 'relay'));
     try {
       const client = await connect(relay.url);
       for (const [rid, id, wave] of [
-        [1, 'a', 'dr/0x1'],
-        [2, 'b', 'cv/0x2'],
-        [3, 'c', 'dr/0x1']
+        [1, 'a', 'w1'],
+        [2, 'b', 'dv/0x1'],
+        [3, 'c', 'w1'],
+        [4, 'd', 'dv/0x2'],
+        [5, 'e', 'w2']
       ] as const) {
         client.send({
           t: 'PUB',
@@ -365,19 +369,68 @@ describe('relay recordings', () => {
         });
         await client.waitFor((f) => f.t === 'ACK' && f.rid === rid);
       }
+      // Every log from the start, w1 after its cursor of this epoch; a
+      // cursor of another epoch is no cursor.
       client.send({
         t: 'SUB',
         sid: 9,
         waves: ['*'],
         from_start: true,
-        since: [{ wave: 'dr/0x1', log_epoch: 1, rseq: 1 }]
+        since: [
+          { wave: 'w1', log_epoch: 1, rseq: 1 },
+          { wave: 'w2', log_epoch: 7, rseq: 1 }
+        ]
       });
-      await client.waitFor((f) => f.t === 'EOSE' && f.sid === 9);
+      await client.waitFor(
+        (f) => f.t === 'EOSE' && f.sid === 9 && f.wave === 'w2'
+      );
+      const of = (sid: number, t: string) =>
+        client.frames.filter((f) => f.t === t && f.sid === sid);
       expect(
-        client.frames
-          .filter((f) => f.t === 'EV' && f.sid === 9)
-          .map((f) => (f.event as { id: string }).id)
-      ).toEqual(['b', 'c']);
+        of(9, 'EV').map((f) => [f.wave, f.rseq, (f.event as { id: string }).id])
+      ).toEqual([
+        ['w1', 2, 'c'],
+        ['dv', 1, 'b'],
+        ['dv', 2, 'd'],
+        ['w2', 1, 'e']
+      ]);
+      expect(of(9, 'EOSE').map((f) => [f.wave, f.rseq])).toEqual([
+        ['w1', 2],
+        ['dv', 2],
+        ['w2', 1]
+      ]);
+      client.send({
+        t: 'SUB',
+        sid: 10,
+        waves: ['w1'],
+        from_start: false,
+        since: []
+      });
+      client.send({ t: 'HIST', rid: 6, wave: 'dv/0x2', after: 0, limit: 10 });
+      const stream = await client.waitFor((f) => f.t === 'RES' && f.rid === 6);
+      expect((stream.items as { rseq: number }[]).map((i) => i.rseq)).toEqual([
+        2
+      ]);
+      client.send({ t: 'HIST', rid: 7, wave: 'w1', after: null, limit: 1 });
+      const newest = await client.waitFor((f) => f.t === 'RES' && f.rid === 7);
+      expect(newest).toMatchObject({
+        more: true,
+        items: [expect.objectContaining({ rseq: 2 })]
+      });
+      client.send({
+        t: 'PUB',
+        rid: 8,
+        event: { id: 'f', wave: 'w1', kind: 9, body: null },
+        grant: {}
+      });
+      expect(
+        await client.waitFor((f) => f.t === 'EV' && f.sid === 10)
+      ).toMatchObject({
+        wave: 'w1',
+        rseq: 3
+      });
+      await client.waitFor((f) => f.t === 'EV' && f.sid === 9 && f.rseq === 3);
+      expect(of(10, 'EOSE')).toEqual([]);
       client.close();
     } finally {
       await relay.stop();

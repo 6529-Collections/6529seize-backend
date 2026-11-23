@@ -6,6 +6,7 @@ import {
   decodeBinary,
   EVENTS_FILE,
   Frame,
+  logOf,
   PAYLOADS_DIR,
   READS_FILE,
   RELAY_FILE,
@@ -107,20 +108,25 @@ class RelayRecording {
   }
 
   /**
-   * Writes the recording. Events keep the relay's order; one the run
-   * published but never read back goes after the rest, in publish order.
+   * Writes the recording, events in the order the run first saw them, each
+   * with its log's rseq from the relay. One the run published but never
+   * read back takes the next rseq of its log.
    */
   save(): number {
     const all = Array.from(this.events.values());
-    let last = Math.max(0, ...all.map((seen) => seen.rseq ?? 0));
-    const ordered = [
-      ...all
-        .filter((seen) => seen.rseq !== null)
-        .sort((a, b) => a.rseq! - b.rseq!),
-      ...all.filter((seen) => seen.rseq === null)
-    ].map(
+    const heads = new Map<string, number>();
+    all.forEach((seen) => {
+      const log = logOf(seen.event.wave);
+      heads.set(log, Math.max(heads.get(log) ?? 0, seen.rseq ?? 0));
+    });
+    const next = (wave: string) => {
+      const rseq = (heads.get(logOf(wave)) ?? 0) + 1;
+      heads.set(logOf(wave), rseq);
+      return rseq;
+    };
+    const ordered = all.map(
       (seen): StoredEvent => ({
-        rseq: seen.rseq ?? ++last,
+        rseq: seen.rseq ?? next(seen.event.wave),
         event: seen.event,
         grant: seen.grant,
         ...(Object.keys(seen.extra).length ? { extra: seen.extra } : {}),
