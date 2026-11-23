@@ -278,9 +278,12 @@ Each `--source <name>=<spec>`:
   writes them into `ctx.seedFilesDir` and lists them in that directory's own
   `files.json`; the server checks each one's hash when it is asked for.
   The seeds' files are the run's own world. Files in `<dir>` come from
-  outside the run, and nothing checks their ids against their bytes yet,
-  so a directory that holds any is provisional ("ids not verified"),
-  whatever its `PROVENANCE.json` says.
+  outside the run. A file named by the SHA-256 of its bytes, as lowercase
+  hex or as a raw CIDv1 with a sha2-256 multihash (`bafkrei...`, the
+  document store's naming), has its id checked against its bytes, and one
+  with other bytes fails the run. For any other file nothing checks its id
+  yet, so a directory that holds one is provisional ("ids not verified",
+  naming the files), whatever its `PROVENANCE.json` says.
 - A flag value may name a source: `{gateway}`, `{relays}`, `{ethereum}`
   or `{files}` become its URL in the run.
 
