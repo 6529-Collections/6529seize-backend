@@ -22,6 +22,7 @@ import {
 } from '@/wave-drop-index/drop-index';
 import { TEST_WALLET } from '@/tests/fixtures/relay-events.fixture';
 import { wavesManifest } from '@/rebuild/manifests/waves.manifest';
+import { childEnv } from '@/rebuild/stack/child-env';
 import { RELAY_WORLD_WALLET } from '@/rebuild/world/waves/world-ids';
 import {
   dropIndexEnv,
@@ -123,6 +124,44 @@ describe('the waves drop index rebuild step', () => {
     expect(() =>
       rebuildLiveFrom({ WAVES_DROP_INDEX_LIVE_FROM: 'Friday' })
     ).toThrow('WAVES_DROP_INDEX_LIVE_FROM');
+  });
+
+  it('reads another date only from a waves flag, never from the shell', () => {
+    // Both drop index steps are the waves area's, so both get its flags.
+    const steps = [...wavesManifest.seeds, ...wavesManifest.rebuilders]
+      .filter(
+        (step) =>
+          'exportName' in step.run &&
+          step.run.exportName.endsWith('WavesDropIndex')
+      )
+      .map((step) => step.id);
+    expect(steps).toEqual(['waves.drop-index.seed', 'waves.drop-index']);
+    // As built, no flag sets it: the drop index's default applies.
+    expect(wavesManifest.flags.WAVES_DROP_INDEX_LIVE_FROM).toBeUndefined();
+    const stepEnv = (flags: Record<string, string>) =>
+      childEnv({
+        parent: {
+          PATH: '/bin',
+          WAVES_DROP_INDEX_LIVE_FROM: '2027-01-01T00:00:00Z'
+        },
+        home: '/run',
+        db: {
+          host: '127.0.0.1',
+          port: 1,
+          user: 'u',
+          password: 'p',
+          database: 'd'
+        },
+        jwtSecret: 's',
+        extra: flags
+      });
+    // The shell's value never reaches a step.
+    expect(rebuildLiveFrom(stepEnv({}))).toBe(
+      new Date(DEFAULT_LIVE_FROM).toISOString()
+    );
+    // A waves flag does, and each pass gets the same flags.
+    const flags = { WAVES_DROP_INDEX_LIVE_FROM: '2026-12-01T00:00:00Z' };
+    expect(rebuildLiveFrom(stepEnv(flags))).toBe('2026-12-01T00:00:00.000Z');
   });
 
   it("reads as the site reader the manifest declares, with the test grant's own key", () => {

@@ -35,11 +35,13 @@ const logger = Logger.get('WAVES_REBUILD_DROP_INDEX');
 export const REBUILD_RELAY_NET = '6529-rebuild-check';
 
 /**
- * Switch-on in the run: the drop index's own setting, read by its own
- * parser, so the run and the live loop agree and a move of the date needs
- * no change here. WAVES_DROP_INDEX_LIVE_FROM in the run's environment when
- * given, else the drop index's default (DEFAULT_LIVE_FROM). The seed and
- * the rebuild run in one environment, so both read the same value.
+ * Switch-on in the run, read by the drop index's own parser: the drop
+ * index's default (DEFAULT_LIVE_FROM), so a move of the default in its
+ * code reaches the run with no change here. A step sees only the harness's
+ * inherited variables and its area's flags, never the shell's, so a date
+ * other than the default is a one-line flag in the waves manifest
+ * (WAVES_DROP_INDEX_LIVE_FROM); the seed and the rebuild then both read it,
+ * as both get the area's flags.
  */
 export function rebuildLiveFrom(
   env: Readonly<Record<string, string | undefined>> = process.env
