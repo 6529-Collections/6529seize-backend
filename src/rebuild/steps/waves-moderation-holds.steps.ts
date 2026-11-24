@@ -8,9 +8,10 @@ const logger = Logger.get('WAVES_REBUILD_MODERATION_HOLDS');
 export const HOLDS_TABLE = 'chain_entry_holds';
 
 /**
- * Made-up holds the seed writes: a refusal kept for good and a delay
- * waiting to be tried again. Every column is given, so the check can
- * compare each value.
+ * Made-up holds the seed writes, with the mirror's own reasons: a
+ * moderation refusal kept for good and a moderation delay waiting to be
+ * tried again (the two a rebuild's gate reads as refused and deferred).
+ * Every column is given, so the check can compare each value.
  */
 export const SEEDED_HOLDS: readonly Readonly<
   Record<string, string | number | null>
@@ -18,7 +19,7 @@ export const SEEDED_HOLDS: readonly Readonly<
   {
     entry_id: `0x${'e1'.repeat(32)}`,
     competition_id: '00000000-0000-4000-8000-0000000000c1',
-    reason: 'moderation_refused',
+    reason: 'moderation',
     retry_at: null,
     attempts: 0,
     held_at: 1_764_000_100_000
@@ -26,7 +27,7 @@ export const SEEDED_HOLDS: readonly Readonly<
   {
     entry_id: `0x${'e2'.repeat(32)}`,
     competition_id: '00000000-0000-4000-8000-0000000000c1',
-    reason: 'manifest_not_in_store',
+    reason: 'moderation_deferred',
     retry_at: 1_764_000_900_000,
     attempts: 2,
     held_at: 1_764_000_200_000
