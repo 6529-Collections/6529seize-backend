@@ -467,9 +467,12 @@ describe('WavesExport', () => {
     expect(waves['w-sub'].configuration.stays_on_site).toBe(false);
     expect(waves['w-sub'].stay_reasons).toEqual([]);
     // Its curations, a staying wave's left out.
+    // By wave, every wave written with an entry, the failed one too.
     expect(raw('curations.json')).toEqual({
-      'cu-1': { id: 'cu-1', wave_id: 'w-sub', group_id: 'g-post' },
-      'cu-2': { id: 'cu-2', wave_id: 'w-pub', group_id: 'g-curators' }
+      'w-broken': [],
+      'w-pub': [{ id: 'cu-2', wave_id: 'w-pub', group_id: 'g-curators' }],
+      'w-sub': [{ id: 'cu-1', wave_id: 'w-sub', group_id: 'g-post' }],
+      'w-under-members': []
     });
     // Its parent stays: a subwave moves on its own groups.
     expect(raw('subwave_parents.json')).toEqual({ 'w-sub': 'w-pub' });
@@ -502,7 +505,7 @@ describe('WavesExport', () => {
     // A staying wave's decisions, curations and groups are never read.
     expect(source.competitionCalls).not.toContain('c-2');
     expect(source.curationCalls).toEqual([
-      ['w-pub', 'w-sub', 'w-under-members']
+      ['w-broken', 'w-pub', 'w-sub', 'w-under-members']
     ]);
     for (const group of ['g-read', 'g-hidden', 'g-private', 'g-records-post']) {
       expect(source.groupCalls.flat()).not.toContain(group);
@@ -1060,7 +1063,7 @@ describe('export helpers', () => {
     const uses = exportedGroups(
       { w: { id: 'w', configuration: wave } },
       { c: { participation: { group_id: 's' }, voting: { group_id: 'r' } } },
-      { cu: { id: 'cu', wave_id: 'w', group_id: 'g-cu' } }
+      { w: [{ id: 'cu', wave_id: 'w', group_id: 'g-cu' }] }
     );
     expect(
       Object.fromEntries(

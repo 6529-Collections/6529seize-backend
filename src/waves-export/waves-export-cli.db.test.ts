@@ -21,7 +21,8 @@ import { main } from './cli';
  * With WAVES_SNAPSHOT_TOOL set to the snapshot tooling's directory
  * (validator repository, tools/legacy-snapshot), the export then goes
  * through the tooling as the export run does: normalize, table-check and
- * build must exit 0 and write a Waves v1 file. WAVES_E2E_OUT keeps the
+ * build (each given the records wave: none, since the export already left
+ * it out) must exit 0 and write a Waves v1 file. WAVES_E2E_OUT keeps the
  * output there.
  */
 const AUTHOR = anIdentity(
@@ -232,7 +233,10 @@ describeWithSeed(
       expect(raw('waves_v3.json')[FIRST_ID].configuration.stays_on_site).toBe(
         false
       );
-      expect(raw('curations.json')).toEqual({});
+      expect(raw('curations.json')).toEqual({
+        [FIRST_ID]: [],
+        [SECOND_ID]: []
+      });
       expect(raw('export.json')).toMatchObject({
         records_wave_id: RECORDS_ID,
         left_out: {
@@ -255,7 +259,11 @@ describeWithSeed(
         '--freeze-ms',
         String(Date.now()),
         '--main-stage',
-        'live'
+        'live',
+        // The records wave stays, so the export left it out: none of the
+        // waves the tooling reads is it.
+        '--records-wave',
+        'none'
       ]);
       expect({ step: 'normalize', ...normalize }).toMatchObject({
         status: 0
@@ -265,7 +273,13 @@ describeWithSeed(
       expect({ step: 'table-check', ...tableCheck }).toMatchObject({
         status: 0
       });
-      const build = python(tool, ['build', '--out', out]);
+      const build = python(tool, [
+        'build',
+        '--out',
+        out,
+        '--records-wave',
+        'none'
+      ]);
       expect({ step: 'build', ...build }).toMatchObject({ status: 0 });
       expect(fs.existsSync(path.join(out, 'waves-v1.bin'))).toBe(true);
     });

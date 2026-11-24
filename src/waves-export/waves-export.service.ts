@@ -69,7 +69,11 @@ export const STAYING_WAVES_FILE = 'waves_staying.json';
  */
 export const STAYING_GROUPS_FILE = 'groups_staying.json';
 
-/** The moving waves' curations: each one's id, wave and group. */
+/**
+ * The curations of the waves written, by wave: every wave of waves_v3.json
+ * has an entry (an empty list for none), each curation with its id, wave
+ * and group. The snapshot builder walks their groups (site_scope.py).
+ */
 export const CURATIONS_FILE = 'curations.json';
 
 /** Why a group the export reads is left out. */
@@ -240,7 +244,7 @@ export function namedGroups(
 export function exportedGroups(
   waves: Record<string, WaveV3>,
   competitions: Record<string, Json>,
-  curations: Record<string, ExportCuration>
+  curations: Record<string, readonly ExportCuration[]>
 ): Map<string, Set<string>> {
   const uses = namedGroups(waves, competitions);
   const add = (id: string | null, role: string) => {
@@ -255,8 +259,10 @@ export function exportedGroups(
     add(idOf(asObject(asObject(c.participation).scope).group), 'submit');
     add(idOf(asObject(asObject(c.voting).scope).group), 'vote');
   }
-  for (const curation of Object.values(curations)) {
-    add(curation.group_id || null, 'curation');
+  for (const waveCurations of Object.values(curations)) {
+    for (const curation of waveCurations) {
+      add(curation.group_id || null, 'curation');
+    }
   }
   return uses;
 }
@@ -567,16 +573,18 @@ export class WavesExport {
     await this.options.raw.save('waves_v3.json', sortedKeys(waves));
     await this.options.raw.save('subwave_parents.json', sortedKeys(parents));
     // The curations of the waves written, none of a staying wave's: the
-    // snapshot builder walks their groups to check every wave moves.
-    const written = Object.keys(waves).filter((id) => !waves[id]._error);
-    const curations: Record<string, ExportCuration> = {};
-    for (const curation of await this.source.waveCurations(
-      written.sort(compareCodePoints)
-    )) {
-      curations[curation.id] = curation;
+    // snapshot builder walks their groups to check every wave moves, and
+    // wants an entry for each wave written.
+    const written = Object.keys(waves).sort(compareCodePoints);
+    const curations: Record<string, ExportCuration[]> = {};
+    written.forEach((id) => (curations[id] = []));
+    let curationCount = 0;
+    for (const curation of await this.source.waveCurations(written)) {
+      curations[curation.wave_id]?.push(curation);
+      curationCount++;
     }
     await this.options.raw.save(CURATIONS_FILE, sortedKeys(curations));
-    this.count('curations', Object.keys(curations).length);
+    this.count('curations', curationCount);
     this.count('waves', rows.length - failed);
     this.count('waves_failed', failed);
     this.count('subwaves', Object.keys(parents).length);
@@ -695,7 +703,7 @@ export class WavesExport {
     const uses = exportedGroups(
       waves,
       competitions,
-      await raw.load<Record<string, ExportCuration>>(CURATIONS_FILE, {})
+      await raw.load<Record<string, ExportCuration[]>>(CURATIONS_FILE, {})
     );
     const ids = Array.from(uses.keys()).sort(compareCodePoints);
     const found = await this.source.groups(ids);
