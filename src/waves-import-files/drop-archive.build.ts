@@ -71,12 +71,14 @@ export function archiveLineOf(
         content: part.content,
         media: [],
         attachments: [],
-        quoted_drop: part.quoted_drop_id
-          ? {
-              drop_id: part.quoted_drop_id,
-              part_id: part.quoted_drop_part_id
-            }
-          : null
+        // The API shows a quote only with its part id.
+        quoted_drop:
+          part.quoted_drop_id && part.quoted_drop_part_id
+            ? {
+                drop_id: part.quoted_drop_id,
+                part_id: part.quoted_drop_part_id
+              }
+            : null
       })),
     metadata: [],
     // The API shows a reply's missing part id as 0.
@@ -216,4 +218,46 @@ export function wavesFileCommitting(
     ...rows,
     Buffer.alloc(4 * 7) // decisions to wave REP: empty
   ]);
+}
+
+/**
+ * The wave document a test gives a wave: its description is `parts`
+ * (content only, no media).
+ */
+export function waveDocumentOf(
+  legacyWave: string,
+  parts: readonly DropPartRowForArchive[]
+): Buffer {
+  return Buffer.from(
+    JSON.stringify({
+      v: 1,
+      kind: 'wave',
+      legacy_id: legacyWave,
+      description: [...parts]
+        .sort((a, b) => a.drop_part_id - b.drop_part_id)
+        .map((part) => ({ content: part.content, media: [] }))
+    }),
+    'utf8'
+  );
+}
+
+/**
+ * A Waves v1 file for built archives: one wave row for each archive's wave,
+ * naming the wave's document in `documents` (by 6529.io wave id), or a
+ * made-up CID for a wave without one.
+ */
+export function wavesFileFor(
+  built: BuiltDropArchives,
+  documents: Readonly<Record<string, Uint8Array>> = {}
+): Buffer {
+  return wavesFileCommitting(
+    built.dropArchiveRoot,
+    undefined,
+    built.archives.map((archive) => ({
+      legacyWave: archive.legacyWave,
+      documentCid: rawCidOf(
+        documents[archive.legacyWave] ?? Buffer.from(archive.legacyWave)
+      )
+    }))
+  );
 }

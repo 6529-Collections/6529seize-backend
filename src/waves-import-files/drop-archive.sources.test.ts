@@ -1,8 +1,13 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { PoolConnection } from 'mysql';
+import { execSQLWithParams } from '@/db/my-sql.helpers';
+import { PROXY_PIN_STATEMENT_BYTES } from '@/db/proxy-session-pinning';
+import { Logger } from '@/logging';
 import { startFileServer, checkFiles } from '@/rebuild/sources/file-server';
 import { startHttpRecording } from '@/rebuild/sources/http-recording';
+import { SqlExecutor } from '@/sql-executor';
 import {
   FIXTURE_DROPS,
   FIXTURE_PARTS,
@@ -10,13 +15,12 @@ import {
 } from '@/tests/fixtures/drop-archive.fixture';
 import {
   buildDropArchives,
-  rawCidOf,
-  wavesFileCommitting
+  waveDocumentOf,
+  wavesFileFor
 } from '@/waves-import-files/drop-archive.build';
 import { keccak256Hex } from '@/waves-import-files/drop-archive.format';
 import { importDropArchives } from '@/waves-import-files/drop-archive.reader';
-import { PROXY_PIN_STATEMENT_BYTES } from '@/db/proxy-session-pinning';
-import { SqlExecutor } from '@/sql-executor';
+import { DropArchiveDropRow } from '@/waves-import-files/drop-archive.rows';
 import {
   DROP_ARCHIVE_FILE_IDS,
   dbDropArchiveWriter,
@@ -25,28 +29,24 @@ import {
   layoutSnapshotFiles,
   writeDropArchiveFiles
 } from '@/waves-import-files/drop-archive.sources';
+import { rawCidOf } from '@/waves-import-files/drop-archive.build';
 
-/** Wave B's document: its description is drop 4's one part. */
-const WAVE_B_DOCUMENT = Buffer.from(
-  JSON.stringify({
-    v: 1,
-    kind: 'wave',
-    legacy_id: FIXTURE_WAVES.b,
-    description: [{ content: FIXTURE_PARTS[4].content, media: [] }]
-  }),
-  'utf8'
-);
-const WAVE_B_CID = rawCidOf(WAVE_B_DOCUMENT);
+/** Each wave's document: wave A's description is drop 1, wave B's drop 4. */
+const DOCUMENTS: Record<string, Buffer> = {
+  [FIXTURE_WAVES.a]: waveDocumentOf(
+    FIXTURE_WAVES.a,
+    FIXTURE_PARTS.filter((p) => p.drop_id === FIXTURE_DROPS[0].id)
+  ),
+  [FIXTURE_WAVES.b]: waveDocumentOf(
+    FIXTURE_WAVES.b,
+    FIXTURE_PARTS.filter((p) => p.drop_id === FIXTURE_DROPS[3].id)
+  )
+};
 
-/**
- * The snapshot tooling's output for the fixture: waves-v1.bin (with wave
- * B's row, naming its document) and archives/.
- */
+/** The snapshot tooling's output for the fixture: waves-v1.bin and archives/. */
 function snapshotOut(dir: string) {
   const built = buildDropArchives(FIXTURE_DROPS, FIXTURE_PARTS);
-  const wavesFile = wavesFileCommitting(built.dropArchiveRoot, undefined, [
-    { legacyWave: FIXTURE_WAVES.b, documentCid: WAVE_B_CID }
-  ]);
+  const wavesFile = wavesFileFor(built, DOCUMENTS);
   fs.mkdirSync(path.join(dir, 'archives'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'waves-v1.bin'), wavesFile);
   fs.writeFileSync(path.join(dir, 'archives', 'index.json'), built.index);
@@ -59,68 +59,102 @@ function snapshotOut(dir: string) {
   return { built, wavesFile };
 }
 
+/** The wave documents as the rebuild check's files source names them. */
+function documentFiles(
+  documents: Record<string, Buffer>
+): Record<string, Buffer> {
+  const files: Record<string, Buffer> = {};
+  Object.keys(documents).forEach((wave) => {
+    files[DROP_ARCHIVE_FILE_IDS.document(rawCidOf(DOCUMENTS[wave]))] =
+      documents[wave];
+  });
+  return files;
+}
+
+function aDrop(i: number): DropArchiveDropRow {
+  return {
+    ...FIXTURE_DROPS[0],
+    id: `44444444-4444-4444-8444-${String(i).padStart(12, '0')}`,
+    serial_no: i + 1,
+    parts_count: 1,
+    drop_type: FIXTURE_DROPS[0].drop_type as never,
+    signature: null,
+    is_additional_action_promised: null,
+    hide_link_preview: false,
+    collapse_replies: false
+  };
+}
+
 describe('the drop archive sources', () => {
   let tmp: string;
   beforeEach(() => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'drop-archive-sources-'));
   });
-  afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  afterEach(() => {
+    jest.restoreAllMocks();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
 
-  it("lay out the snapshot tooling's output as a files source the reader reads over HTTP", async () => {
+  async function readOverHttp(documents: Record<string, Buffer>) {
     const out = path.join(tmp, 'out');
     const filesDir = path.join(tmp, 'files');
     const { built, wavesFile } = snapshotOut(out);
     expect(layoutSnapshotFiles(out, filesDir)).toBe(2);
-    const { files, problems } = checkFiles(filesDir);
-    expect(problems).toEqual([]);
-    expect(Array.from(files.keys()).sort()).toEqual(
-      [
-        DROP_ARCHIVE_FILE_IDS.wavesFile,
-        DROP_ARCHIVE_FILE_IDS.index,
-        ...built.archives.map((a) => DROP_ARCHIVE_FILE_IDS.archive(a.waveId))
-      ].sort()
-    );
-    // Documents are served by CID, as the rebuild check's files are.
-    writeDropArchiveFiles(filesDir, {
-      [DROP_ARCHIVE_FILE_IDS.document(WAVE_B_CID)]: WAVE_B_DOCUMENT
-    });
+    writeDropArchiveFiles(filesDir, documentFiles(documents));
     const server = await startFileServer(filesDir);
     try {
-      const source = httpDropArchiveFiles(server.url);
-      expect(await source.archive(`0x${'00'.repeat(32)}`)).toBeNull();
       const written: string[] = [];
       const report = await importDropArchives({
         chain: { importedFileHash: async () => keccak256Hex(wavesFile) },
-        files: source,
+        files: httpDropArchiveFiles(server.url),
         writer: {
           write: async (drops) => {
             written.push(...drops.map((d) => d.id));
           }
         }
       });
-      expect(report.refused).toEqual([]);
-      expect(written.sort()).toEqual(FIXTURE_DROPS.map((d) => d.id).sort());
-      expect(Array.from(report.descriptionDropIds.entries())).toEqual([
-        [FIXTURE_WAVES.b, FIXTURE_DROPS[3].id]
-      ]);
+      return { built, filesDir, report, written };
     } finally {
       await server.stop();
     }
+  }
+
+  it("lay out the snapshot tooling's output as a files source the reader reads over HTTP", async () => {
+    const { built, filesDir, report, written } = await readOverHttp(DOCUMENTS);
+    const { files, problems } = checkFiles(filesDir);
+    expect(problems).toEqual([]);
+    expect(Array.from(files.keys()).sort()).toEqual(
+      [
+        DROP_ARCHIVE_FILE_IDS.wavesFile,
+        DROP_ARCHIVE_FILE_IDS.index,
+        ...built.archives.map((a) => DROP_ARCHIVE_FILE_IDS.archive(a.waveId)),
+        ...Object.keys(documentFiles(DOCUMENTS))
+      ].sort()
+    );
+    expect(report.refused).toEqual([]);
+    expect(written.sort()).toEqual(FIXTURE_DROPS.map((d) => d.id).sort());
+    expect(Array.from(report.descriptionDropIds.entries())).toEqual([
+      [FIXTURE_WAVES.a, FIXTURE_DROPS[0].id],
+      [FIXTURE_WAVES.b, FIXTURE_DROPS[3].id]
+    ]);
   });
 
-  it('refuse a document that does not match its CID', async () => {
-    const filesDir = path.join(tmp, 'files');
-    writeDropArchiveFiles(filesDir, {
-      [DROP_ARCHIVE_FILE_IDS.document(WAVE_B_CID)]: Buffer.from('{}')
+  it('refuse a wave whose document is missing or does not match its CID', async () => {
+    const { built, report, written } = await readOverHttp({
+      [FIXTURE_WAVES.b]: Buffer.from('{"kind":"wave","description":[]}')
     });
-    const server = await startFileServer(filesDir);
-    try {
-      await expect(
-        httpDropArchiveFiles(server.url).document!(WAVE_B_CID)
-      ).rejects.toThrow('does not match its CID');
-    } finally {
-      await server.stop();
-    }
+    const [a, b] = built.archives;
+    expect(report.refused).toEqual([
+      {
+        waveId: a.waveId,
+        reason: `its wave document ${rawCidOf(DOCUMENTS[FIXTURE_WAVES.a])} is missing`
+      },
+      {
+        waveId: b.waveId,
+        reason: `its wave document does not match its CID ${rawCidOf(DOCUMENTS[FIXTURE_WAVES.b])}`
+      }
+    ]);
+    expect(written).toEqual([]);
   });
 
   it('write inserts under the proxy pinning size, one transaction a batch', async () => {
@@ -138,17 +172,7 @@ describe('the drop archive sources', () => {
         return run({ connection: {} });
       }
     } as unknown as SqlExecutor;
-    const drops = Array.from({ length: 300 }, (_, i) => ({
-      ...FIXTURE_DROPS[0],
-      id: `44444444-4444-4444-8444-${String(i).padStart(12, '0')}`,
-      serial_no: i + 1,
-      parts_count: 1,
-      drop_type: FIXTURE_DROPS[0].drop_type as never,
-      signature: null,
-      is_additional_action_promised: null,
-      hide_link_preview: false,
-      collapse_replies: false
-    }));
+    const drops = Array.from({ length: 300 }, (_, i) => aDrop(i));
     const big = 'x'.repeat(PROXY_PIN_STATEMENT_BYTES + 10);
     const parts = drops.map((d, i) => ({
       drop_id: d.id,
@@ -170,11 +194,48 @@ describe('the drop archive sources', () => {
     expect(tuples(over[0])).toBe(1);
     const rowsInto = (table: string) =>
       statements
-        .filter((sql) => sql.startsWith(`insert into ${table} `))
+        .filter((sql) =>
+          sql.startsWith(`/* drop archive import */ insert into ${table} `)
+        )
         .reduce((n, sql) => n + tuples(sql), 0);
     expect(rowsInto('drops')).toBe(300);
     expect(rowsInto('drops_parts')).toBe(300);
     expect(statements.length).toBeGreaterThan(4);
+  });
+
+  it("keep a failed insert's text out of the error and the database layer's logs", async () => {
+    const secret = 'a members-only drop text';
+    // The database layer, as a failed insert meets it.
+    const logged = jest.fn();
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(logged);
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(logged);
+    const connection = {
+      config: {},
+      query: (_query: unknown, callback: (error: Error) => void) =>
+        callback(
+          Object.assign(new Error(`Duplicate entry '${secret}'`), {
+            code: 'ER_DUP_ENTRY'
+          })
+        ),
+      release: jest.fn()
+    } as unknown as PoolConnection;
+    const db = {
+      execute: (sql: string) => execSQLWithParams(sql, connection, true),
+      executeNativeQueriesInTransaction: async (
+        run: (connection: { connection: unknown }) => Promise<unknown>
+      ) => run({ connection: {} })
+    } as unknown as SqlExecutor;
+    const drop = { ...aDrop(1), title: secret };
+    const failed = await dbDropArchiveWriter(db)
+      .write([drop], [])
+      .catch((error: unknown) => error);
+    expect(failed).toBeInstanceOf(Error);
+    expect(failed).toMatchObject({ code: 'ER_DUP_ENTRY' });
+    expect(JSON.stringify(failed)).not.toContain(secret);
+    expect(String(failed)).not.toContain(secret);
+    expect(logged).toHaveBeenCalled();
+    expect(JSON.stringify(logged.mock.calls)).not.toContain(secret);
+    expect(JSON.stringify(logged.mock.calls)).not.toContain('insert into');
   });
 
   it('refuse an index that names a file outside archives/', () => {

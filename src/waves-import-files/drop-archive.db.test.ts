@@ -19,7 +19,7 @@ import {
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import {
   buildDropArchives,
-  wavesFileCommitting
+  wavesFileFor
 } from '@/waves-import-files/drop-archive.build';
 import { keccak256Hex } from '@/waves-import-files/drop-archive.format';
 import { importDropArchives } from '@/waves-import-files/drop-archive.reader';
@@ -67,7 +67,7 @@ function signedIn(profileId: string, n: number): AuthenticationContext {
 
 async function importFixture(drops = FIXTURE_DROPS) {
   const built = buildDropArchives(drops, FIXTURE_PARTS);
-  const wavesFile = wavesFileCommitting(built.dropArchiveRoot);
+  const wavesFile = wavesFileFor(built);
   const archives: Record<string, Uint8Array> = {};
   built.archives.forEach((archive) => {
     archives[archive.waveId] = archive.bytes;

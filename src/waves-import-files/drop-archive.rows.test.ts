@@ -85,6 +85,9 @@ describe('dropArchiveRows', () => {
     expect(reasonOf({ ...line, drop_id: 'x'.repeat(101) })).toBe(
       'drop_id is not an id'
     );
+    expect(reasonOf({ ...line, serial_no: 0 })).toBe(
+      'serial_no is 0, which the table would renumber'
+    );
     expect(reasonOf({ ...line, serial_no: 1.5 })).toBe(
       'serial_no is not an integer'
     );

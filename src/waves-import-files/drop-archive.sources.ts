@@ -2,13 +2,13 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import {
-  bytesMatchCid,
   ChainGatewayClient,
   chainGatewayConfigFromEnv,
   cidPath
 } from '@/chain-gateway/chain-gateway.client';
 import * as mysql from 'mysql';
 import { DROPS_PARTS_TABLE, DROPS_TABLE } from '@/constants';
+import { DROP_ARCHIVE_IMPORT_SQL_MARKER } from '@/db/my-sql.helpers';
 import { PROXY_PIN_STATEMENT_BYTES } from '@/db/proxy-session-pinning';
 import { ConnectionWrapper, SqlExecutor } from '@/sql-executor';
 import {
@@ -42,9 +42,13 @@ export const DROP_ARCHIVE_FILE_IDS = {
 
 /** The largest file the reader takes: above the largest archive, 395 MB. */
 const MAX_FILE_BYTES = 1_500_000_000;
+/** How long one file may take, the largest archive included. */
+export const FILE_READ_TIMEOUT_MS = 10 * 60_000;
 
 async function fetchFile(url: string): Promise<Uint8Array | null> {
-  const response = await fetch(url);
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(FILE_READ_TIMEOUT_MS)
+  });
   if (response.status === 404) return null;
   if (!response.ok) {
     throw new Error(`Reading ${url} answered ${response.status}`);
@@ -64,15 +68,8 @@ export function httpDropArchiveFiles(baseUrl: string): DropArchiveFiles {
     archiveIndex: () => fetchFile(`${base}/${DROP_ARCHIVE_FILE_IDS.index}`),
     archive: (waveId) =>
       fetchFile(`${base}/${DROP_ARCHIVE_FILE_IDS.archive(waveId)}`),
-    document: async (cid) => {
-      const bytes = await fetchFile(
-        `${base}/${DROP_ARCHIVE_FILE_IDS.document(cid)}`
-      );
-      if (bytes && !bytesMatchCid(cid, bytes)) {
-        throw new Error(`The document ${cid} does not match its CID`);
-      }
-      return bytes;
-    }
+    document: (cid) =>
+      fetchFile(`${base}/${DROP_ARCHIVE_FILE_IDS.document(cid)}`)
   };
 }
 
@@ -166,6 +163,9 @@ export function gatewayDropArchiveChain(
 /**
  * The rows as plain inserts, each statement kept under the database proxy's
  * pinning size (PROXY_PIN_STATEMENT_BYTES) unless one row alone is larger.
+ * The values are inline, so every statement starts with the marker that
+ * keeps it out of the database layer's logs, and a failure is rethrown
+ * with its error code only: neither may carry a drop's text.
  */
 async function insertRows(
   db: SqlExecutor,
@@ -174,16 +174,20 @@ async function insertRows(
   rows: readonly object[],
   connection: ConnectionWrapper<unknown>
 ): Promise<void> {
-  const head = `insert into ${table} (${columns
+  const head = `${DROP_ARCHIVE_IMPORT_SQL_MARKER} insert into ${table} (${columns
     .map((column) => mysql.escapeId(column))
     .join(', ')}) values `;
   let values: string[] = [];
   let bytes = Buffer.byteLength(head, 'utf8');
   const flush = async () => {
     if (!values.length) return;
-    await db.execute(head + values.join(', '), undefined, {
-      wrappedConnection: connection
-    });
+    try {
+      await db.execute(head + values.join(', '), undefined, {
+        wrappedConnection: connection
+      });
+    } catch (error) {
+      throw withoutStatement(error, table);
+    }
     values = [];
     bytes = Buffer.byteLength(head, 'utf8');
   };
@@ -200,6 +204,19 @@ async function insertRows(
     bytes += size;
   }
   await flush();
+}
+
+/** A failed insert as an error with its code only, never the statement. */
+function withoutStatement(error: unknown, table: string): Error {
+  const code =
+    error && typeof error === 'object' && 'code' in error
+      ? String((error as { code: unknown }).code)
+      : null;
+  const safe = code && /^[A-Z][A-Z0-9_]*$/.test(code) ? code : 'unknown';
+  return Object.assign(
+    new Error(`Writing drop archive rows into ${table} failed: ${safe}`),
+    { code: safe }
+  );
 }
 
 /** Plain inserts into drops and drops_parts, one transaction a batch. */

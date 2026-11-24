@@ -2,7 +2,6 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { DROPS_TABLE } from '@/constants';
-import { RebuildContext } from '@/rebuild/manifest.types';
 import { startFileServer } from '@/rebuild/sources/file-server';
 import { startHttpRecording } from '@/rebuild/sources/http-recording';
 import { RunningSource } from '@/rebuild/sources/running-source';
@@ -14,20 +13,22 @@ import {
 } from '@/tests/fixtures/drop-archive.fixture';
 import {
   buildDropArchives,
-  wavesFileCommitting
+  waveDocumentOf,
+  wavesFileFor
 } from '@/waves-import-files/drop-archive.build';
 import { keccak256Hex } from '@/waves-import-files/drop-archive.format';
 import {
   DROP_ARCHIVE_FILE_IDS,
   writeDropArchiveFiles
 } from '@/waves-import-files/drop-archive.sources';
-import { rebuildWavesImportFiles } from './waves-import-files.steps';
+import { rawCidOf } from '@/waves-import-files/drop-archive.build';
+import { importDropArchivesFromSources } from './waves-import-files.steps';
 
 /**
- * The rebuild step end to end: the waves world's recorded gateway (its
- * status and its waves import at the mark), with the import's file hash
- * replaced by the fixture's, and a files source serving the fixture's
- * Waves v1 file and archives, into MySQL.
+ * The import as a rebuild runs it, end to end: the waves world's recorded
+ * gateway (its status and its waves import at the mark), with the import's
+ * file hash replaced by the fixture's, and a files source serving the
+ * fixture's Waves v1 file, archives and wave documents, into MySQL.
  */
 const RECORDING = path.resolve(__dirname, '../world/waves/gateway');
 const MARK = 2798;
@@ -51,17 +52,7 @@ function gatewayFor(dir: string, fileHash: string): void {
   );
 }
 
-function context(gateway: string, files: string): RebuildContext {
-  return {
-    area: 'waves',
-    stepId: 'waves.import-files',
-    sources: { gateway, files, relays: null, ethereum: null, repo: null },
-    seedFilesDir: null,
-    mark: { name: 'head', chainHeight: MARK, ethBlock: null }
-  };
-}
-
-describeWithSeed('the waves import-files rebuild step', [], () => {
+describeWithSeed('the drop archive import for a rebuild', [], () => {
   let tmp: string;
   let running: RunningSource[];
   beforeEach(() => {
@@ -75,12 +66,20 @@ describeWithSeed('the waves import-files rebuild step', [], () => {
 
   async function sources(tamper: boolean) {
     const built = buildDropArchives(FIXTURE_DROPS, FIXTURE_PARTS);
-    const wavesFile = wavesFileCommitting(built.dropArchiveRoot);
+    const documents: Record<string, Buffer> = {};
+    built.archives.forEach((archive) => {
+      documents[archive.legacyWave] = waveDocumentOf(archive.legacyWave, []);
+    });
+    const wavesFile = wavesFileFor(built, documents);
     const filesDir = path.join(tmp, 'files');
     const files: Record<string, Uint8Array> = {
       [DROP_ARCHIVE_FILE_IDS.wavesFile]: wavesFile,
       [DROP_ARCHIVE_FILE_IDS.index]: built.index
     };
+    Object.keys(documents).forEach((wave) => {
+      files[DROP_ARCHIVE_FILE_IDS.document(rawCidOf(documents[wave]))] =
+        documents[wave];
+    });
     built.archives.forEach((archive, i) => {
       const bytes = Buffer.from(archive.bytes);
       if (tamper && i === 0) bytes[bytes.indexOf('an entry')] = 0x41;
@@ -95,11 +94,16 @@ describeWithSeed('the waves import-files rebuild step', [], () => {
     running.push(gateway);
     const server = await startFileServer(filesDir);
     running.push(server);
-    return context(gateway.url, server.url);
+    return { gateway: gateway.url, files: server.url };
   }
 
   it("writes the archives' drops, checked against the recorded import", async () => {
-    await rebuildWavesImportFiles(await sources(false));
+    const report = await importDropArchivesFromSources(
+      await sources(false),
+      () => sqlExecutor,
+      MARK
+    );
+    expect(report.written).toBe(2);
     const rows = await sqlExecutor.execute<{ id: string; serial_no: number }>(
       `select id, serial_no from ${DROPS_TABLE} order by serial_no`
     );
@@ -111,9 +115,13 @@ describeWithSeed('the waves import-files rebuild step', [], () => {
   });
 
   it('fails on a tampered archive and writes none of its drops', async () => {
-    await expect(rebuildWavesImportFiles(await sources(true))).rejects.toThrow(
-      '[DROP ARCHIVES REFUSED] 1 refused'
-    );
+    await expect(
+      importDropArchivesFromSources(
+        await sources(true),
+        () => sqlExecutor,
+        MARK
+      )
+    ).rejects.toThrow('[DROP ARCHIVES REFUSED] 1 refused');
     const rows = await sqlExecutor.execute<{ wave_id: string }>(
       `select distinct wave_id from ${DROPS_TABLE}`
     );

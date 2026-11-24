@@ -91,9 +91,20 @@ type PrivateQueryFamily =
   | 'CMS agent'
   | 'competition authorization'
   | 'membership runtime'
-  | 'signed records';
+  | 'signed records'
+  | 'drop archive import';
+
+/**
+ * Starts every statement of the drop archive import (src/waves-import-files):
+ * its inserts carry drops' text inline, members-only waves' included.
+ */
+export const DROP_ARCHIVE_IMPORT_SQL_MARKER = '/* drop archive import */';
 
 function privateQueryFamily(sql: string): PrivateQueryFamily | null {
+  // At the start only, where no inserted value can be.
+  if (sql.startsWith(DROP_ARCHIVE_IMPORT_SQL_MARKER)) {
+    return 'drop archive import';
+  }
   // Encrypted-messaging rows carry ciphertext, KeyPackages, welcomes and
   // notify hints; neither statements nor bound values may reach logs.
   if (/\be2ee_[a-z_]+\b/i.test(sql)) {

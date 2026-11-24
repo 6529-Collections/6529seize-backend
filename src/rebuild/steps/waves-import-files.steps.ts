@@ -1,6 +1,5 @@
 import { Logger } from '@/logging';
-import { RebuildContext } from '@/rebuild/manifest.types';
-import { dbSupplier, SqlExecutor } from '@/sql-executor';
+import { SqlExecutor } from '@/sql-executor';
 import {
   DropArchiveReport,
   importDropArchives
@@ -26,13 +25,18 @@ export function assertNoRefusals(report: DropArchiveReport): void {
 }
 
 /**
- * Reads the drop archives the chain's waves import committed, from the
- * files source at `files` (the Waves v1 file, the archives and the wave
- * documents, under the ids in DROP_ARCHIVE_FILE_IDS; layoutSnapshotFiles
- * makes that directory from the snapshot tooling's output), checked
- * against the import at `height` (null: the gateway's finalized height),
- * and writes drops and drops_parts. Fails on any refused archive. Returns
- * the report, with each imported wave's description drop.
+ * 6529.io's drops from before the waves switch, for a rebuild: reads the
+ * drop archives the chain's waves import committed from the files source
+ * at `files` (the Waves v1 file, the archives and the wave documents,
+ * under the ids in DROP_ARCHIVE_FILE_IDS; layoutSnapshotFiles makes that
+ * directory from the snapshot tooling's output), checks them against the
+ * import at `height` (null: the gateway's finalized height), and writes
+ * drops and drops_parts. Fails on any refusal. Returns the report, which
+ * carries each imported wave's description drop.
+ *
+ * drops and drops_parts have one rebuilder, the chain mirror's step, which
+ * runs this first (its DropArchivesImport) and then the mirror's rebuild;
+ * this is not a step of its own, and it runs once per rebuild.
  */
 export async function importDropArchivesFromSources(
   sources: { readonly files: string; readonly gateway: string },
@@ -46,8 +50,16 @@ export async function importDropArchivesFromSources(
     log: (message) => logger.info(message)
   });
   logger.info(
-    `[DROP ARCHIVES] archives ${report.archives}, written ${report.written}, drops ${report.drops}, parts ${report.parts}, refused ${report.refused.length}, description drops ${report.descriptionDropIds.size}`
+    `[DROP ARCHIVES] archives ${report.archives}, written ${report.written}, drops ${report.drops}, parts ${report.parts}, refused ${report.refused.length}, skipped ${report.skipped.length}, description drops ${report.descriptionDropIds.size}`
   );
+  if (report.skipped.length) {
+    logger.warn(
+      `[DROP ARCHIVES] ${report.skipped.length} archives of waves the import has no row for, not written, first: ${report.skipped
+        .slice(0, 5)
+        .map((s) => s.legacyWave)
+        .join(', ')}`
+    );
+  }
   if (report.descriptionsUnresolved.length) {
     logger.warn(
       `[DROP ARCHIVES] ${report.descriptionsUnresolved.length} imported waves without a description drop, first: ${report.descriptionsUnresolved
@@ -58,25 +70,4 @@ export async function importDropArchivesFromSources(
   }
   assertNoRefusals(report);
   return report;
-}
-
-/**
- * Rebuilder: 6529.io's drops from before the waves switch (drops and
- * drops_parts) from the drop archives the chain's waves import committed,
- * read at the run's mark. See src/waves-import-files.
- */
-export async function rebuildWavesImportFiles(
-  ctx: RebuildContext
-): Promise<void> {
-  const { gateway, files } = ctx.sources;
-  if (!gateway || !files) {
-    throw new Error(
-      `${ctx.stepId} reads the chain and the drop archives: the run needs a gateway and a files source`
-    );
-  }
-  await importDropArchivesFromSources(
-    { gateway, files },
-    dbSupplier,
-    ctx.mark.chainHeight
-  );
 }

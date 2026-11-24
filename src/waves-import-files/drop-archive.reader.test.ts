@@ -10,7 +10,8 @@ import {
   BuiltDropArchives,
   DropPartRowForArchive,
   DropRowForArchive,
-  wavesFileCommitting
+  wavesFileCommitting,
+  wavesFileFor
 } from '@/waves-import-files/drop-archive.build';
 import {
   canonicalJson,
@@ -44,7 +45,7 @@ interface World {
 
 /** A chain, files and a writer over built archives, each part replaceable. */
 function world(built: BuiltDropArchives): World {
-  const wavesFile = wavesFileCommitting(built.dropArchiveRoot);
+  const wavesFile = wavesFileFor(built);
   const archives: Record<string, Uint8Array> = {};
   built.archives.forEach((archive) => {
     archives[archive.waveId] = archive.bytes;
@@ -334,6 +335,34 @@ describe('importDropArchives', () => {
       }
     ]);
     expect(w.written.drops).toHaveLength(1);
+  });
+
+  it('skips an archive of a wave the file has no row for', async () => {
+    const built = buildDropArchives(FIXTURE_DROPS, FIXTURE_PARTS);
+    const [a, b] = built.archives;
+    const wavesFile = wavesFileCommitting(built.dropArchiveRoot, undefined, [
+      { legacyWave: b.legacyWave, documentCid: `0x01551220${'00'.repeat(32)}` }
+    ]);
+    const written: string[] = [];
+    const report = await importDropArchives({
+      chain: { importedFileHash: async () => keccak256Hex(wavesFile) },
+      files: {
+        wavesFile: async () => wavesFile,
+        archiveIndex: async () => built.index,
+        archive: async (waveId) =>
+          waveId === a.waveId ? a.bytes : waveId === b.waveId ? b.bytes : null
+      },
+      writer: {
+        write: async (drops) => {
+          written.push(...drops.map((d) => d.wave_id));
+        }
+      }
+    });
+    expect(report.refused).toEqual([]);
+    expect(report.skipped).toEqual([
+      { waveId: a.waveId, legacyWave: a.legacyWave }
+    ]);
+    expect(written).toEqual([b.legacyWave]);
   });
 
   it('writes in batches', async () => {

@@ -10,7 +10,8 @@ import { DropType } from '@/entities/IDrop';
  * `hide_link_preview` or `collapse_replies`: a row gets the column's
  * default (null, null, false, false) unless the line carries the field.
  * The API shows a native competition entry's type COMPETITION as
- * PARTICIPATORY and a reply's null part id as 0, so the rows hold those.
+ * PARTICIPATORY, a reply's null part id as 0, and a quote without a part
+ * id not at all, so the rows hold those.
  */
 
 export interface DropArchiveDropRow {
@@ -133,6 +134,17 @@ function integer(value: unknown, what: string, min?: number): number {
   return value;
 }
 
+/**
+ * Any integer but 0: 6529.io holds a few drops with negative serials, and
+ * drops.serial_no is an auto-increment key, which stores 0 as the next
+ * number instead.
+ */
+function serialOf(value: unknown): number {
+  const serial = integer(value, 'serial_no');
+  if (serial === 0) fail('serial_no is 0, which the table would renumber');
+  return serial;
+}
+
 function optional<T>(
   line: Json,
   key: string,
@@ -212,8 +224,7 @@ export function dropArchiveRows(
   if (partIds.size !== parts.length) fail('two parts share a part_id');
   const drop: DropArchiveDropRow = {
     id: dropId,
-    // Any integer: 6529.io holds a few drops with negative serials.
-    serial_no: integer(line.serial_no, 'serial_no'),
+    serial_no: serialOf(line.serial_no),
     wave_id: legacyWave,
     author_id: id(line.author, 'author'),
     created_at: integer(line.created_at, 'created_at', 0),

@@ -218,17 +218,39 @@ describe("the reader's description drops", () => {
     ]);
   });
 
-  it('report a missing document and a wave with no archive written', async () => {
+  it('refuse a wave whose document is missing, and report waves with no archive written', async () => {
     const wave = '22222222-2222-4222-8222-000000000009';
     const report = await run(built, {
       [FIXTURE_WAVES.a]: null,
       [FIXTURE_WAVES.b]: waveDocument(FIXTURE_WAVES.b, DESCRIPTION_B),
       [wave]: waveDocument(wave, [])
     });
+    expect(report.refused).toEqual([
+      {
+        waveId: built.archives[0].waveId,
+        reason: `its wave document ${rawCidOf(Buffer.from(FIXTURE_WAVES.a))} is missing`
+      }
+    ]);
+    expect(report.descriptionsUnresolved).toEqual([
+      {
+        legacyWave: FIXTURE_WAVES.a,
+        reason: 'no archive of the wave was written'
+      },
+      { legacyWave: wave, reason: 'no archive of the wave was written' }
+    ]);
+  });
+
+  it('leave a wave unresolved whose document is not a wave document', async () => {
+    const report = await run(built, {
+      [FIXTURE_WAVES.a]: waveDocument(FIXTURE_WAVES.a, DESCRIPTION_A),
+      [FIXTURE_WAVES.b]: Buffer.from(JSON.stringify({ kind: 'group' }))
+    });
     expect(report.refused).toEqual([]);
     expect(report.descriptionsUnresolved).toEqual([
-      { legacyWave: FIXTURE_WAVES.a, reason: 'its wave document is missing' },
-      { legacyWave: wave, reason: 'no archive of the wave was written' }
+      {
+        legacyWave: FIXTURE_WAVES.b,
+        reason: 'the document is not a wave document'
+      }
     ]);
   });
 
