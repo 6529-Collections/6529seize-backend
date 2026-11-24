@@ -576,6 +576,14 @@ export class WavesExport {
     // names are never read.
     const staying = considered.filter((wave) => wave.stay_reasons.length);
     const rows = considered.filter((wave) => !wave.stay_reasons.length);
+    // The waves with a subwave that moves. The API's has_subwaves also
+    // counts a guest-visible subwave that stays: the export says nothing of
+    // a staying wave, so it counts moving subwaves only.
+    const withMovingSubwaves = new Set(
+      all
+        .filter((wave) => !wave.stay_reasons.length && wave.parent_wave_id)
+        .map((wave) => wave.parent_wave_id)
+    );
     await this.saveStayingWaves(staying);
     const waves: Record<string, WaveV3> = {};
     let failed = 0;
@@ -586,11 +594,14 @@ export class WavesExport {
         );
         // It moves: stays_on_site false, as the API's ApiWave says it (#2553),
         // with its reasons to stay (none) beside it.
+        const shown: Json = { ...configuration, stays_on_site: false };
+        delete shown.has_subwaves;
+        if (withMovingSubwaves.has(wave.id)) shown.has_subwaves = true;
         waves[wave.id] = {
           id: wave.id,
           name: configuration.name,
           picture: configuration.picture,
-          configuration: { ...configuration, stays_on_site: false },
+          configuration: shown,
           stay_reasons: wave.stay_reasons
         } as WaveV3;
       } catch (error) {

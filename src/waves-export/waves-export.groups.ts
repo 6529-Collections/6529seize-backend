@@ -1,9 +1,9 @@
 /**
  * Which groups the 6529 chain can't evaluate, so the waves import takes them
- * as their members at the freeze (waves INTERFACES 4.5's fallback). The same
- * rule as the waves snapshot tooling's groups.py `criteria_reasons`, over the
- * API group object (`ApiGroupFull.group`); the export writes the members of
- * exactly these groups, as the public exporter reads them from
+ * as their members at the freeze (the import's fallback for such a group).
+ * The same rule as the waves snapshot tooling's groups.py `criteria_reasons`,
+ * over the API group object (`ApiGroupFull.group`); the export writes the
+ * members of exactly these groups, as the public exporter reads them from
  * /community-members/top.
  */
 

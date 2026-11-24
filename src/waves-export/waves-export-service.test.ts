@@ -863,6 +863,56 @@ describe('WavesExport', () => {
     }
   });
 
+  it('says a moving wave has subwaves only when one of them moves', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'waves-export-sub-'));
+    try {
+      class Subwaves extends FakeSource {
+        async listWaves() {
+          return [
+            wave('w-a', null),
+            // Its only subwave stays, for a reason of its own.
+            wave('w-a-sub', 'w-a', { admin_group_id: 'g-hidden' }, [
+              StayReason.HIDDEN_OR_PRIVATE_GROUP
+            ]),
+            wave('w-b', null),
+            wave('w-b-sub', 'w-b'),
+            wave(RECORDS, null, {}, [StayReason.RECORDS_WAVE])
+          ];
+        }
+        async waveConfiguration(row: ExportWaveRow) {
+          // The API counts every subwave a guest can see, staying ones too.
+          return {
+            ...configuration(row.id, null, null, null),
+            has_subwaves: row.id === 'w-a' || row.id === 'w-b'
+          };
+        }
+      }
+      await new WavesExport(new Subwaves(), {
+        raw: new RawDirectory(path.join(dir, 'raw')),
+        stages: ['waves'],
+        freezeMs: T_W,
+        exporterRevision: 'a'.repeat(40),
+        waveIds: null,
+        dropPageSize: 2,
+        concurrency: 1,
+        bothMetric: false,
+        recordsWaveId: RECORDS,
+        retryDelayMs: 0,
+        now: () => T_W,
+        log: () => undefined
+      }).run();
+      const waves = JSON.parse(
+        fs.readFileSync(path.join(dir, 'raw', 'waves_v3.json'), 'utf8')
+      );
+      expect(Object.keys(waves).sort()).toEqual(['w-a', 'w-b', 'w-b-sub']);
+      expect(waves['w-a'].configuration).not.toHaveProperty('has_subwaves');
+      expect(waves['w-b'].configuration.has_subwaves).toBe(true);
+      expect(waves['w-b-sub'].configuration).not.toHaveProperty('has_subwaves');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('leaves out a group a moving wave names that stays by now, and says why', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'waves-export-group-'));
     try {
