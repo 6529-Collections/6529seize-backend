@@ -35,6 +35,8 @@ const AUTHOR = anIdentity(
 );
 const FIRST_ID = 'e1000000-0000-4000-8000-000000000001';
 const SECOND_ID = 'e1000000-0000-4000-8000-000000000002';
+const STAYING_ID = 'e1000000-0000-4000-8000-000000000003';
+const RECORDS_ID = 'e1000000-0000-4000-8000-000000000004';
 const DROP = (n: number) => `e2000000-0000-4000-8000-00000000000${n}`;
 const FIRST_WAVE = aWave(
   { created_by: AUTHOR.profile_id!, description_drop_id: DROP(1) },
@@ -43,6 +45,20 @@ const FIRST_WAVE = aWave(
 const SECOND_WAVE = aWave(
   { created_by: AUTHOR.profile_id!, description_drop_id: DROP(4) },
   { id: SECOND_ID, name: 'Second', serial_no: 2 }
+);
+// A members-only wave: it stays on 6529.io, and the export leaves it out.
+const STAYING_WAVE = aWave(
+  {
+    created_by: AUTHOR.profile_id!,
+    description_drop_id: DROP(5),
+    visibility_group_id: 'e3000000-made-up-read-group'
+  },
+  { id: STAYING_ID, name: 'Staying', serial_no: 3 }
+);
+// The signed records wave: it stays by its id.
+const RECORDS_WAVE = aWave(
+  { created_by: AUTHOR.profile_id!, description_drop_id: DROP(6) },
+  { id: RECORDS_ID, name: 'Records', serial_no: 4 }
 );
 
 function dropRow(waveId: string, id: string, serial: number) {
@@ -94,7 +110,9 @@ const DROPS = [
     reply_to_drop_id: DROP(2),
     reply_to_part_id: null
   },
-  dropRow(SECOND_ID, DROP(4), 4)
+  dropRow(SECOND_ID, DROP(4), 4),
+  dropRow(STAYING_ID, DROP(5), 5),
+  dropRow(RECORDS_ID, DROP(6), 6)
 ];
 
 function readLines(file: string): Record<string, unknown>[] {
@@ -119,7 +137,7 @@ describeWithSeed(
   'waves:export through the CLI',
   [
     withIdentities([AUTHOR]),
-    withWaves([FIRST_WAVE, SECOND_WAVE]),
+    withWaves([FIRST_WAVE, SECOND_WAVE, STAYING_WAVE, RECORDS_WAVE]),
     { table: DROPS_TABLE, rows: DROPS },
     {
       table: DROPS_PARTS_TABLE,
@@ -155,8 +173,10 @@ describeWithSeed(
           '--revision',
           'ab'.repeat(20),
           '--rehearsal',
+          '--records-wave-id',
+          RECORDS_ID,
           '--waves',
-          `${FIRST_ID},${SECOND_ID}`
+          `${FIRST_ID},${SECOND_ID},${STAYING_ID},${RECORDS_ID}`
         ]);
       } finally {
         stdout.mockRestore();
@@ -197,6 +217,34 @@ describeWithSeed(
           (line) => line.id
         )
       ).toEqual([DROP(4)]);
+      // The members-only wave and the records wave stay on 6529.io: left
+      // out whole, and counted.
+      const raw = (name: string) =>
+        JSON.parse(fs.readFileSync(path.join(out, 'raw', name), 'utf8'));
+      expect(Object.keys(raw('waves_v3.json')).sort()).toEqual(
+        [FIRST_ID, SECOND_ID].sort()
+      );
+      for (const id of [STAYING_ID, RECORDS_ID]) {
+        expect(
+          fs.existsSync(path.join(out, 'raw', 'drops', `${id}.jsonl.gz`))
+        ).toBe(false);
+      }
+      expect(raw('waves_v3.json')[FIRST_ID].configuration.stays_on_site).toBe(
+        false
+      );
+      expect(raw('curations.json')).toEqual({});
+      expect(raw('export.json')).toMatchObject({
+        records_wave_id: RECORDS_ID,
+        left_out: {
+          waves: {
+            total: 2,
+            members_only: 1,
+            records_wave: 1,
+            direct_message: 0,
+            hidden_or_private_group: 0
+          }
+        }
+      });
 
       const tool = process.env.WAVES_SNAPSHOT_TOOL;
       if (!tool) return;

@@ -22,8 +22,11 @@ import {
 } from './waves-export.errors';
 import type { ReplicaLagRecord } from './waves-export.replica-lag';
 import { RawDirectory } from './waves-export.writer';
+import { StayReason } from '@/waves-scope/waves-scope';
 
 const T_W = Date.UTC(2026, 10, 25, 0, 0, 0);
+/** The signed records wave: it stays on 6529.io. */
+const RECORDS = 'w-records';
 
 const EXPORT_LAG: ReplicaLagRecord = {
   checked_by: 'export',
@@ -53,10 +56,12 @@ const PERSON_LAG: ReplicaLagRecord = {
 function wave(
   id: string,
   parent: string | null,
-  groups: Partial<ExportWaveRow> = {}
+  groups: Partial<ExportWaveRow> = {},
+  stayReasons: StayReason[] = []
 ): ExportWaveRow {
   return {
     id,
+    stay_reasons: stayReasons,
     parent_wave_id: parent,
     visibility_group_id: null,
     admin_group_id: null,
@@ -122,17 +127,58 @@ function drop(
 class FakeSource implements WavesExportSource {
   readonly configurationCalls: [string, string[]][] = [];
   readonly signedBatches: number[] = [];
+  readonly competitionCalls: string[] = [];
+  readonly dropCalls: string[] = [];
+  readonly groupCalls: string[][] = [];
+  readonly curationCalls: string[][] = [];
 
-  async listWaves() {
+  /**
+   * Three waves that move and one the backend can't read; five that stay on
+   * 6529.io, one for each reason and one with two (the backend's reasons are
+   * the shared rule's); and a public subwave of a members-only wave, which
+   * moves, since a wave's parent is not walked.
+   */
+  async listWaves(scope: { readonly recordsWaveId: string }) {
     return [
       wave('w-pub', null, { admin_group_id: 'g-admin' }),
-      wave('w-sub', 'w-pub', { chat_group_id: 'g-post' }),
-      wave('w-members', null, {
-        visibility_group_id: 'g-read',
-        admin_group_id: 'g-admin'
+      wave('w-sub', 'w-pub', {
+        chat_group_id: 'g-post',
+        admin_group_id: 'g-missing'
       }),
-      wave('w-broken', null)
+      wave('w-broken', null),
+      wave('w-under-members', 'w-members'),
+      wave(
+        'w-members',
+        null,
+        { visibility_group_id: 'g-read', admin_group_id: 'g-admin' },
+        [StayReason.MEMBERS_ONLY]
+      ),
+      wave('w-dm', null, {}, [StayReason.DIRECT_MESSAGE]),
+      // An ordinary, public post group: it stays by its id alone.
+      wave(
+        RECORDS,
+        null,
+        { chat_group_id: 'g-records-post' },
+        scope.recordsWaveId === RECORDS ? [StayReason.RECORDS_WAVE] : []
+      ),
+      // A public wave with a hidden admin group.
+      wave('w-hidden-admin', null, { admin_group_id: 'g-hidden' }, [
+        StayReason.HIDDEN_OR_PRIVATE_GROUP
+      ]),
+      wave('w-members-private', null, { visibility_group_id: 'g-private' }, [
+        StayReason.MEMBERS_ONLY,
+        StayReason.HIDDEN_OR_PRIVATE_GROUP
+      ])
     ];
+  }
+
+  async waveCurations(waveIds: string[]) {
+    this.curationCalls.push([...waveIds]);
+    return [
+      { id: 'cu-2', wave_id: 'w-pub', group_id: 'g-curators' },
+      { id: 'cu-1', wave_id: 'w-sub', group_id: 'g-post' },
+      { id: 'cu-3', wave_id: 'w-members', group_id: 'g-read' }
+    ].filter((curation) => waveIds.includes(curation.wave_id));
   }
 
   async waveConfiguration(row: ExportWaveRow, eligible: string[]) {
@@ -148,10 +194,16 @@ class FakeSource implements WavesExportSource {
 
   async listCompetitionIds(waveIds: string[]) {
     expect(waveIds).not.toContain('w-broken');
-    return ['c-1', 'c-2', 'c-elsewhere'];
+    // As the backend lists them: by wave_id. c-elsewhere's record names
+    // another wave, which the export checks.
+    return [
+      ...(waveIds.includes('w-pub') ? ['c-1', 'c-elsewhere'] : []),
+      ...(waveIds.includes('w-members') ? ['c-2'] : [])
+    ];
   }
 
   async competition(id: string) {
+    this.competitionCalls.push(id);
     const competitions: Record<string, Json> = {
       'c-1': {
         id: 'c-1',
@@ -225,13 +277,16 @@ class FakeSource implements WavesExportSource {
   }
 
   async groups(ids: string[]) {
+    this.groupCalls.push([...ids]);
     const out: Record<string, Json> = {};
     for (const id of ids) {
-      if (id === 'g-missing') continue;
+      if (id === 'g-missing' || id === 'g-gone') continue;
       out[id] = {
         id,
         name: id,
-        visible: true,
+        visible: id !== 'g-hidden',
+        is_private: id === 'g-private',
+        is_direct_message: id === 'g-dm-group',
         created_at: 1,
         created_by: { id: 'p-creator' },
         group:
@@ -272,7 +327,7 @@ class FakeSource implements WavesExportSource {
   }
 
   async waveRep(waveIds: string[]) {
-    expect(waveIds).toEqual(['w-members', 'w-pub', 'w-sub']);
+    expect(waveIds).toEqual(['w-pub', 'w-sub', 'w-under-members']);
     return {
       'w-pub': [
         { category: 'Good', profile_id: 'p1', rating: 3, last_modified: 1 },
@@ -290,6 +345,7 @@ class FakeSource implements WavesExportSource {
 
   async *wavePagesOfDrops(waveId: string, pageSize: number) {
     expect(pageSize).toBe(2);
+    this.dropCalls.push(waveId);
     if (waveId !== 'w-pub') return;
     yield [drop('d-9', 9, true), drop('d-8', 8, false)];
     yield [
@@ -335,6 +391,7 @@ describe('WavesExport', () => {
       dropPageSize: 2,
       concurrency: 2,
       bothMetric: false,
+      recordsWaveId: RECORDS,
       replicaLag: EXPORT_LAG,
       now: () => T_W + 1,
       log: (message) => messages.push(message)
@@ -350,33 +407,93 @@ describe('WavesExport', () => {
   const raw = (name: string) =>
     JSON.parse(fs.readFileSync(path.join(out, 'raw', name), 'utf8'));
 
-  it('writes every wave read, its configuration and its parent', () => {
+  it('writes every wave that moves, its configuration and its parent', () => {
     const waves = raw('waves_v3.json');
     expect(Object.keys(waves)).toEqual([
       'w-broken',
-      'w-members',
       'w-pub',
-      'w-sub'
+      'w-sub',
+      'w-under-members'
     ]);
     expect(waves['w-broken']._error).toContain('not found');
-    expect(waves['w-members'].configuration.visibility.scope.group.id).toBe(
-      'g-read'
-    );
+    expect(waves['w-sub'].configuration.chat.scope.group.id).toBe('g-post');
+    // Each says it moves, as the API's ApiWave does.
+    expect(waves['w-sub'].configuration.stays_on_site).toBe(false);
+    expect(waves['w-sub'].stay_reasons).toEqual([]);
+    // Its curations, a staying wave's left out.
+    expect(raw('curations.json')).toEqual({
+      'cu-1': { id: 'cu-1', wave_id: 'w-sub', group_id: 'g-post' },
+      'cu-2': { id: 'cu-2', wave_id: 'w-pub', group_id: 'g-curators' }
+    });
+    // Its parent stays: a subwave moves on its own groups.
     expect(raw('subwave_parents.json')).toEqual({ 'w-sub': 'w-pub' });
     expect(raw('waves_all.json')).toEqual([
       { id: 'w-broken' },
-      { id: 'w-members' },
       { id: 'w-pub' }
     ]);
     // A subwave's read shows its parent's read group too.
-    expect(Object.fromEntries(source.configurationCalls)['w-members']).toEqual([
-      'g-admin',
-      'g-read'
+    expect(
+      Object.fromEntries(source.configurationCalls)['w-under-members']
+    ).toEqual(['g-read']);
+  });
+
+  it('leaves out every wave that stays, whole, and counts them by reason', () => {
+    const staying = [
+      'w-dm',
+      'w-hidden-admin',
+      'w-members',
+      'w-members-private',
+      RECORDS
+    ];
+    const read = new Set(source.configurationCalls.map(([id]) => id));
+    for (const id of staying) {
+      expect(read.has(id)).toBe(false);
+      expect(source.dropCalls).not.toContain(id);
+      expect(
+        fs.existsSync(path.join(out, 'raw', 'drops', `${id}.jsonl.gz`))
+      ).toBe(false);
+    }
+    // A staying wave's decisions, curations and groups are never read.
+    expect(source.competitionCalls).not.toContain('c-2');
+    expect(source.curationCalls).toEqual([
+      ['w-pub', 'w-sub', 'w-under-members']
     ]);
+    for (const group of ['g-read', 'g-hidden', 'g-private', 'g-records-post']) {
+      expect(source.groupCalls.flat()).not.toContain(group);
+    }
+    expect(raw('waves_staying.json')).toEqual({
+      total: 5,
+      by_reason: {
+        direct_message: 1,
+        records_wave: 1,
+        members_only: 2,
+        hidden_or_private_group: 2
+      },
+      // Direct messages are counted, not named.
+      waves: {
+        'w-hidden-admin': ['hidden_or_private_group'],
+        'w-members': ['members_only'],
+        'w-members-private': ['members_only', 'hidden_or_private_group'],
+        [RECORDS]: ['records_wave']
+      }
+    });
+    expect(raw('export.json')).toMatchObject({
+      records_wave_id: RECORDS,
+      left_out: {
+        waves: {
+          total: 5,
+          direct_message: 1,
+          records_wave: 1,
+          members_only: 2,
+          hidden_or_private_group: 2
+        },
+        groups: { total: 0, hidden_or_private_group: 0, direct_message: 0 }
+      }
+    });
   });
 
   it('writes the decisions of exported waves only', () => {
-    expect(Object.keys(raw('competitions.json'))).toEqual(['c-1', 'c-2']);
+    expect(Object.keys(raw('competitions.json'))).toEqual(['c-1']);
     expect(raw('competition_details.json')['c-1'].entries).toHaveLength(3);
   });
 
@@ -392,15 +509,17 @@ describe('WavesExport', () => {
 
   it('writes the named groups, their lists, raters and static members', () => {
     const groups = raw('groups.json');
+    // The groups waves that move and their decisions name; none a staying
+    // wave alone names (g-read, g-records-post).
     expect(Object.keys(groups)).toEqual([
       'g-admin',
       'g-missing',
       'g-post',
-      'g-read',
       'g-submit',
       'g-vote'
     ]);
     expect(groups['g-missing']).toEqual({ _error: 404 });
+    expect(raw('groups_staying.json')).toEqual({});
     expect(raw('group_lists.json')).toEqual({
       'g-vote': {
         include: [
@@ -470,12 +589,14 @@ describe('WavesExport', () => {
       started_at: T_W + 1,
       finished_at: T_W + 1,
       counts: {
-        decisions: 2,
+        decisions: 1,
         drops: 3,
-        entries: 4,
-        groups: 5,
+        entries: 3,
+        curations: 2,
+        groups: 4,
         groups_as_members: 1,
         groups_missing: 1,
+        groups_staying: 0,
         polls: 1,
         signed_drops: 2,
         subwaves: 1,
@@ -483,7 +604,8 @@ describe('WavesExport', () => {
         vote_rows: 1,
         wave_rep_rows: 2,
         waves: 3,
-        waves_failed: 1
+        waves_failed: 1,
+        waves_staying: 5
       },
       both_metric: false,
       failed_waves: [
@@ -494,6 +616,7 @@ describe('WavesExport', () => {
           run_started_at: T_W + 1,
           freeze_ms: T_W,
           exporter_revision: 'a'.repeat(40),
+          records_wave_id: RECORDS,
           stages: [...WAVES_EXPORT_STAGES],
           replica_lag: EXPORT_LAG
         }
@@ -523,6 +646,7 @@ describe('WavesExport', () => {
         dropPageSize: 2,
         concurrency: 1,
         bothMetric: false,
+        recordsWaveId: RECORDS,
         resumeDrops,
         retryDelayMs: 0,
         log: () => undefined
@@ -568,6 +692,7 @@ describe('WavesExport', () => {
         dropPageSize: 2,
         concurrency: 1,
         bothMetric: false,
+        recordsWaveId: RECORDS,
         retryDelayMs: 0,
         log: () => undefined
       }).run()
@@ -594,6 +719,7 @@ describe('WavesExport', () => {
         dropPageSize: 2,
         concurrency: 1,
         bothMetric: false,
+        recordsWaveId: RECORDS,
         resumeDrops: true,
         retryDelayMs: 0,
         replicaLag,
@@ -617,6 +743,7 @@ describe('WavesExport', () => {
         run_started_at: T_W + 1,
         freeze_ms: T_W,
         exporter_revision: 'a'.repeat(40),
+        records_wave_id: RECORDS,
         stages: [...WAVES_EXPORT_STAGES],
         replica_lag: PERSON_LAG
       };
@@ -632,6 +759,7 @@ describe('WavesExport', () => {
           run_started_at: T_W + 2,
           freeze_ms: T_W,
           exporter_revision: 'a'.repeat(40),
+          records_wave_id: RECORDS,
           stages: ['drops'],
           replica_lag: EXPORT_LAG
         }
@@ -651,6 +779,50 @@ describe('WavesExport', () => {
     }
   });
 
+  it('leaves out a group a moving wave names that is private by now, and says so', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'waves-export-group-'));
+    try {
+      const changed = new FakeSource();
+      const read = changed.groups.bind(changed);
+      changed.groups = async (ids: string[]) => {
+        const found = await read(ids);
+        found['g-post'] = { ...found['g-post'], is_private: true };
+        return found;
+      };
+      const log: string[] = [];
+      await new WavesExport(changed, {
+        raw: new RawDirectory(path.join(dir, 'raw')),
+        stages: ['waves', 'decisions', 'groups'],
+        freezeMs: T_W,
+        exporterRevision: 'a'.repeat(40),
+        waveIds: null,
+        dropPageSize: 2,
+        concurrency: 1,
+        bothMetric: false,
+        recordsWaveId: RECORDS,
+        retryDelayMs: 0,
+        now: () => T_W,
+        log: (message) => log.push(message)
+      }).run();
+      const file = (name: string) =>
+        JSON.parse(fs.readFileSync(path.join(dir, 'raw', name), 'utf8'));
+      expect(Object.keys(file('groups.json'))).not.toContain('g-post');
+      expect(file('groups_staying.json')).toEqual({
+        'g-post': 'hidden_or_private_group'
+      });
+      expect(file('export.json').left_out.groups).toEqual({
+        total: 1,
+        hidden_or_private_group: 1,
+        direct_message: 0
+      });
+      expect(log).toContain(
+        'group g-post stays on 6529.io (hidden_or_private_group) but a wave that moves names it: left out'
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   describe('a DIR from another freeze', () => {
     let dir: string;
     beforeEach(() => {
@@ -661,9 +833,12 @@ describe('WavesExport', () => {
     const exportInto = (
       freezeMs: number | null,
       stages: (typeof WAVES_EXPORT_STAGES)[number][],
-      resumeDrops = false
+      resumeDrops = false,
+      recordsWaveId = RECORDS,
+      log: (message: string) => void = () => undefined,
+      source = new FakeSource()
     ) =>
-      new WavesExport(new FakeSource(), {
+      new WavesExport(source, {
         raw: new RawDirectory(path.join(dir, 'raw')),
         stages,
         freezeMs,
@@ -672,16 +847,56 @@ describe('WavesExport', () => {
         dropPageSize: 2,
         concurrency: 1,
         bothMetric: false,
+        recordsWaveId,
         resumeDrops,
         retryDelayMs: 0,
         replicaLag: null,
         now: () => T_W,
-        log: () => undefined
+        log
       }).run();
     const runsFile = () =>
       JSON.parse(
         fs.readFileSync(path.join(dir, 'raw', 'export_runs.json'), 'utf8')
       );
+
+    it('is refused when its earlier run kept another records wave', async () => {
+      await exportInto(T_W, ['waves']);
+      const refusal = exportInto(T_W, ['decisions'], false, 'w-pub');
+      await expect(refusal).rejects.toThrow(WavesExportUsageError);
+      await expect(refusal).rejects.toThrow(
+        `holds an earlier run that kept wave ${RECORDS} on 6529.io as the records wave, and this run keeps wave w-pub.`
+      );
+      expect(runsFile()).toHaveLength(1);
+    });
+
+    it("refuses a run when no wave has the records wave's id; a rehearsal says so and goes on", async () => {
+      const source = new FakeSource();
+      const refusal = exportInto(
+        T_W,
+        ['waves'],
+        false,
+        'w-nope',
+        () => undefined,
+        source
+      );
+      await expect(refusal).rejects.toThrow(
+        "No wave of 6529.io has the records wave's id, w-nope (--records-wave-id or SIGNED_RECORDS_WAVE_ID): check it, or the records wave would move with the rest."
+      );
+      expect(source.configurationCalls).toEqual([]);
+      // The refused run left no record: the same OUT takes the right id.
+      expect(fs.existsSync(path.join(dir, 'raw', 'export_runs.json'))).toBe(
+        false
+      );
+      await expect(exportInto(T_W, ['waves'])).resolves.toBeDefined();
+      fs.rmSync(path.join(dir, 'raw'), { recursive: true, force: true });
+      const log: string[] = [];
+      await exportInto(null, ['waves'], false, 'w-nope', (message) =>
+        log.push(message)
+      );
+      expect(log).toContain(
+        "rehearsal: No wave of 6529.io has the records wave's id, w-nope (--records-wave-id or SIGNED_RECORDS_WAVE_ID): check it, or the records wave would move with the rest. A run after the freeze refuses on this."
+      );
+    });
 
     it("is refused after a rehearsal's run, whatever the stages", async () => {
       await exportInto(null, ['waves']);
@@ -812,7 +1027,10 @@ describe('WavesExport stopped by its caller in the drops stage', () => {
     readonly dropsRead: string[] = [];
 
     async listWaves() {
-      return WAVES.map((id) => wave(id, null));
+      return [
+        ...WAVES.map((id) => wave(id, null)),
+        wave(RECORDS, null, {}, [StayReason.RECORDS_WAVE])
+      ];
     }
 
     async waveConfiguration(row: ExportWaveRow) {
@@ -840,6 +1058,7 @@ describe('WavesExport stopped by its caller in the drops stage', () => {
       dropPageSize: 2,
       concurrency: 2,
       bothMetric: false,
+      recordsWaveId: RECORDS,
       resumeDrops: true,
       stopBeforeWave,
       retryDelayMs: 0,

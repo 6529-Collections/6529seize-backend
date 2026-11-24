@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 import { legacyCompetitionId } from '@/competitions/competition-id';
-import { DROPS_TABLE } from '@/constants';
+import { DROPS_TABLE, WAVE_CURATIONS_TABLE } from '@/constants';
 import { DropType } from '@/entities/IDrop';
 import { RateMatter } from '@/entities/IRating';
 import { WaveType } from '@/entities/IWave';
@@ -70,6 +70,25 @@ const DECISION_WAVE = aWave(
   { type: WaveType.RANK },
   { id: 'a0000000-0000-4000-8000-000000000006', name: 'Decision', serial_no: 6 }
 );
+const PUBLIC_GROUP = aUserGroup(
+  { is_private: false, is_direct_message: false, visible: true },
+  { id: 'public-00000000000000000000001', name: 'Public' }
+);
+// A public wave whose admin group is hidden: it stays on 6529.io.
+const HIDDEN_ADMIN_WAVE = aWave(
+  { admin_group_id: HIDDEN_GROUP.id },
+  {
+    id: 'a0000000-0000-4000-8000-000000000007',
+    name: 'Hidden admin',
+    serial_no: 7
+  }
+);
+// The signed records wave: it stays by its id, though its post group is an
+// ordinary, public one.
+const RECORDS_WAVE = aWave(
+  { chat_group_id: PUBLIC_GROUP.id },
+  { id: 'a0000000-0000-4000-8000-000000000008', name: 'Records', serial_no: 8 }
+);
 
 function dropRow(waveId: string, id: string, serial: number) {
   return {
@@ -114,7 +133,9 @@ describeWithSeed(
       MEMBERS_WAVE,
       DM_WAVE,
       UNDER_DM,
-      DECISION_WAVE
+      DECISION_WAVE,
+      HIDDEN_ADMIN_WAVE,
+      RECORDS_WAVE
     ]),
     withIdentities([AUTHOR]),
     {
@@ -138,7 +159,30 @@ describeWithSeed(
         dropRow(DM_WAVE.id, 'dm-drop-5', 5)
       ]
     },
-    withUserGroups([PRIVATE_GROUP, HIDDEN_GROUP]),
+    withUserGroups([PRIVATE_GROUP, HIDDEN_GROUP, PUBLIC_GROUP]),
+    {
+      table: WAVE_CURATIONS_TABLE,
+      rows: [
+        {
+          id: 'curation-public',
+          name: 'Picks',
+          wave_id: PUBLIC_WAVE.id,
+          community_group_id: PUBLIC_GROUP.id,
+          created_at: 1,
+          updated_at: 1,
+          priority_order: null
+        },
+        {
+          id: 'curation-members',
+          name: 'Picks',
+          wave_id: MEMBERS_WAVE.id,
+          community_group_id: PRIVATE_GROUP.id,
+          created_at: 1,
+          updated_at: 1,
+          priority_order: null
+        }
+      ]
+    },
     withRatings([
       waveRep(PUBLIC_WAVE.id, 'rater-1', 'Good', 3),
       waveRep(PUBLIC_WAVE.id, 'rater-2', 'Good', 0),
@@ -157,20 +201,34 @@ describeWithSeed(
   () => {
     const source = new BackendWavesExportSource();
 
-    it('reads waves, wave REP, groups and decisions, never direct messages', async () => {
-      const waves = await source.listWaves();
-      expect(waves.map((wave) => wave.id)).toEqual([
-        PUBLIC_WAVE.id,
-        SUBWAVE.id,
-        MEMBERS_WAVE.id,
-        DECISION_WAVE.id
+    it('reads waves with why they stay, wave REP, groups and decisions', async () => {
+      const waves = await source.listWaves({ recordsWaveId: RECORDS_WAVE.id });
+      // The shared rule's reasons (src/waves-scope), by its SQL form.
+      expect(waves.map((wave) => [wave.id, wave.stay_reasons])).toEqual([
+        [PUBLIC_WAVE.id, []],
+        [SUBWAVE.id, []],
+        [MEMBERS_WAVE.id, ['members_only', 'hidden_or_private_group']],
+        [DM_WAVE.id, ['direct_message']],
+        // Under a direct message: it stays with it, as before.
+        [UNDER_DM.id, ['direct_message']],
+        [DECISION_WAVE.id, []],
+        [HIDDEN_ADMIN_WAVE.id, ['hidden_or_private_group']],
+        [RECORDS_WAVE.id, ['records_wave']]
       ]);
       expect(waves.find((wave) => wave.id === MEMBERS_WAVE.id)).toMatchObject({
         visibility_group_id: PRIVATE_GROUP.id,
         chat_group_id: PRIVATE_GROUP.id
       });
+      // A wave's curations: each one's id, wave and group.
+      expect(await source.waveCurations([PUBLIC_WAVE.id, SUBWAVE.id])).toEqual([
+        {
+          id: 'curation-public',
+          wave_id: PUBLIC_WAVE.id,
+          group_id: PUBLIC_GROUP.id
+        }
+      ]);
 
-      const rep = await source.waveRep(waves.map((wave) => wave.id));
+      const rep = await source.waveRep([PUBLIC_WAVE.id, MEMBERS_WAVE.id]);
       expect(rep).toEqual({
         [PUBLIC_WAVE.id]: [
           {
@@ -230,9 +288,9 @@ describeWithSeed(
     });
 
     it("reads a members-only wave's configuration and drops", async () => {
-      const members = (await source.listWaves()).find(
-        (wave) => wave.id === MEMBERS_WAVE.id
-      )!;
+      const members = (
+        await source.listWaves({ recordsWaveId: RECORDS_WAVE.id })
+      ).find((wave) => wave.id === MEMBERS_WAVE.id)!;
       const configuration = await source.waveConfiguration(members, [
         PRIVATE_GROUP.id
       ]);

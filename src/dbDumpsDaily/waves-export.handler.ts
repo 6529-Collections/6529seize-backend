@@ -117,7 +117,8 @@ const EVENT_FIELDS = [
   'concurrency',
   'pageSize',
   'bothMetric',
-  'allowFailedWaves'
+  'allowFailedWaves',
+  'recordsWaveId'
 ] as const;
 
 /** An event this job can't run: nothing was read or written. */
@@ -158,6 +159,12 @@ export interface WavesExportJobEvent {
   readonly pageSize: number | null;
   readonly bothMetric: boolean;
   readonly allowFailedWaves: boolean;
+  /**
+   * The signed records wave, which stays on 6529.io, as the export's
+   * --records-wave-id; null to let the export take SIGNED_RECORDS_WAVE_ID
+   * from the function's environment. Without either it refuses.
+   */
+  readonly recordsWaveId: string | null;
 }
 
 function fail(message: string): never {
@@ -274,6 +281,16 @@ export function parseWavesExportEvent(
     }
     waveIds.sort();
   }
+  const recordsWaveId = record.recordsWaveId;
+  if (
+    recordsWaveId !== undefined &&
+    (typeof recordsWaveId !== 'string' ||
+      !/^[A-Za-z0-9_-]+$/.test(recordsWaveId))
+  ) {
+    fail(
+      'recordsWaveId must be a wave id: letters, digits, dashes and underscores'
+    );
+  }
   const person = personText(record, 'replicaLagCheckedBy');
   const note = personText(record, 'replicaLagCheckNote');
   if ((person === null) !== (note === null)) {
@@ -300,7 +317,8 @@ export function parseWavesExportEvent(
     concurrency: wholeNumber(record, 'concurrency', 1, 16),
     pageSize: wholeNumber(record, 'pageSize', 1, 5000),
     bothMetric: flag(record, 'bothMetric'),
-    allowFailedWaves: flag(record, 'allowFailedWaves')
+    allowFailedWaves: flag(record, 'allowFailedWaves'),
+    recordsWaveId: typeof recordsWaveId === 'string' ? recordsWaveId : null
   };
 }
 
@@ -348,6 +366,9 @@ export function stageCommand(
     args.push('--concurrency', String(event.concurrency));
   }
   if (event.bothMetric) args.push('--both-metric');
+  if (event.recordsWaveId) {
+    args.push('--records-wave-id', event.recordsWaveId);
+  }
   if (event.replicaLagCheckedBy) {
     args.push(
       '--replica-lag-checked-by',

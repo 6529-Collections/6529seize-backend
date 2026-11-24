@@ -11,6 +11,7 @@ import {
   PutObjectCommand
 } from '@aws-sdk/client-s3';
 import {
+  recordsWaveIdFor,
   refuseBeforeExportStart,
   WavesExportRunHooks
 } from '@/waves-export/cli';
@@ -27,6 +28,7 @@ import {
   WavesExportSource
 } from '@/waves-export/waves-export.types';
 import { RawDirectory } from '@/waves-export/waves-export.writer';
+import { StayReason } from '@/waves-scope/waves-scope';
 import {
   PRESIGNED_URL_SECONDS,
   PrivateBucketError
@@ -53,10 +55,13 @@ const T_W = Date.UTC(2026, 10, 26);
 const BUILD = 'c'.repeat(40);
 const PREFIX = 'waves-export/staging/freeze-2026-11-26T00-00-00-000Z/';
 const WAVES = ['w-1', 'w-2', 'w-3', 'w-4', 'w-5', 'w-6', 'w-7', 'w-8'];
+/** The signed records wave: it stays on 6529.io. */
+const RECORDS_WAVE = 'w-records';
 /** Files the stages before drops write, and the run's own. */
 const STAGE_FILES = [
   'competition_details.json',
   'competitions.json',
+  'curations.json',
   'entry_logs.json',
   'entry_votes.json',
   'export.json',
@@ -65,10 +70,12 @@ const STAGE_FILES = [
   'group_members.json',
   'group_users.json',
   'groups.json',
+  'groups_staying.json',
   'polls.json',
   'subwave_parents.json',
   'wave_rep.json',
   'waves_all.json',
+  'waves_staying.json',
   'waves_v3.json'
 ];
 
@@ -209,16 +216,26 @@ class FakeWaves implements WavesExportSource {
     private readonly perWaveMs = 25_000
   ) {}
 
-  async listWaves(): Promise<ExportWaveRow[]> {
-    return this.ids.map((id) => ({
+  async listWaves(scope: {
+    readonly recordsWaveId: string;
+  }): Promise<ExportWaveRow[]> {
+    const row = (id: string): ExportWaveRow => ({
       id,
+      stay_reasons:
+        id === RECORDS_WAVE && scope.recordsWaveId === RECORDS_WAVE
+          ? [StayReason.RECORDS_WAVE]
+          : [],
       parent_wave_id: null,
       visibility_group_id: null,
       admin_group_id: null,
       chat_group_id: null,
       participation_group_id: null,
       voting_group_id: null
-    }));
+    });
+    return [...this.ids, RECORDS_WAVE].map(row);
+  }
+  async waveCurations() {
+    return [];
   }
   async waveConfiguration(row: ExportWaveRow): Promise<Json> {
     return { id: row.id, name: `Wave ${row.id}`, picture: null };
@@ -325,6 +342,7 @@ function setup(
     DB_HOST_READ: 'the-reader',
     DB_USER_READ: 'reader-user',
     DB_PASS_READ: 'reader-pass',
+    SIGNED_RECORDS_WAVE_ID: RECORDS_WAVE,
     ...options.env
   };
   const calls: Call[] = [];
@@ -355,6 +373,7 @@ function setup(
         dropPageSize: command.pageSize,
         concurrency: command.concurrency,
         bothMetric: command.bothMetric,
+        recordsWaveId: recordsWaveIdFor(command.recordsWaveId, env),
         resumeDrops: command.resume,
         stopBeforeWave: hooks.stopBeforeWave,
         replicaLag: command.replicaLagCheckedBy
@@ -453,8 +472,12 @@ describe('the waves export job event', () => {
       concurrency: null,
       pageSize: null,
       bothMetric: false,
-      allowFailedWaves: false
+      allowFailedWaves: false,
+      recordsWaveId: null
     });
+    expect(
+      parse({ freezeAt: '2026-11-26T00:00:00Z', recordsWaveId: 'w-records' })
+    ).toMatchObject({ recordsWaveId: 'w-records' });
     expect(
       parse({
         rehearsal: true,
@@ -483,6 +506,10 @@ describe('the waves export job event', () => {
     [{ freezeAt: '2026-11-26T00:00:00Z', waves: [] }, /lists no wave/],
     [{ freezeAt: '2026-11-26T00:00:00Z', waves: ['a/b'] }, /wave id/],
     [{ freezeAt: '2026-11-26T00:00:00Z', workSeconds: 900 }, /workSeconds/],
+    [
+      { freezeAt: '2026-11-26T00:00:00Z', recordsWaveId: '--waves x' },
+      /recordsWaveId must be a wave id/
+    ],
     [
       { freezeAt: '2026-11-26T00:00:00Z', replicaLagCheckedBy: 'someone' },
       /go together/
@@ -687,6 +714,30 @@ describe('the waves export job', () => {
       waveIds: ['w-2']
     });
     expect(run.source.dropsRead).toEqual(['w-2']);
+  });
+
+  it('keeps the records wave on 6529.io, from the event or the function settings', async () => {
+    const fromEnv = setup();
+    await fromEnv.invoke(AT_FREEZE);
+    expect(fromEnv.calls.map((call) => call.command.recordsWaveId)).toEqual(
+      Array(fromEnv.calls.length).fill(null)
+    );
+    const runs = fromEnv.bucket.json(`${PREFIX}raw/export_runs.json`);
+    expect(runs[0].records_wave_id).toBe(RECORDS_WAVE);
+    const exported = fromEnv.bucket.json(`${PREFIX}raw/waves_v3.json`);
+    expect(Object.keys(exported)).not.toContain(RECORDS_WAVE);
+
+    const fromEvent = setup({ env: { SIGNED_RECORDS_WAVE_ID: undefined } });
+    await fromEvent.invoke({ ...AT_FREEZE, recordsWaveId: RECORDS_WAVE });
+    expect(fromEvent.calls.map((call) => call.command.recordsWaveId)).toEqual(
+      Array(fromEvent.calls.length).fill(RECORDS_WAVE)
+    );
+
+    // Neither: the export refuses, and the job says so.
+    const neither = setup({ env: { SIGNED_RECORDS_WAVE_ID: undefined } });
+    await expect(neither.invoke(AT_FREEZE)).rejects.toThrow(
+      'The export needs the signed records wave'
+    );
   });
 
   it('passes the person-only lag flags only from the invocation that gives them', async () => {

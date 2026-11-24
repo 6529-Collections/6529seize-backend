@@ -7,15 +7,22 @@ export const WAVES_EXPORT_HELP = `Usage: 6529 run waves:export -- --out DIR --re
          (--freeze-at TIME | --rehearsal) [--stages LIST]
          [--waves LIST | --waves-file FILE] [--page-size N]
          [--concurrency N] [--both-metric] [--resume]
-         [--allow-failed-waves]
+         [--allow-failed-waves] [--records-wave-id ID]
          [--replica-lag-checked-by WHO --replica-lag-check-note HOW]
 
 Writes 6529.io's waves, the groups they use, decisions, entries, votes,
 vote logs, results, wave REP, polls and every wave's drops into DIR/raw,
 in the layout of the waves snapshot tooling's fetch stage (validator
 repository, tools/legacy-snapshot). Its normalize and build stages then make
-the Waves v1 file and the drop archives from it. Members-only waves are
-included; direct messages are not. Read-only.
+the Waves v1 file and the drop archives from it. Read-only.
+
+Only waves that move to the chain are written. A wave stays on 6529.io, and
+the export leaves it out with its decisions, entries, votes, wave REP, polls
+and drops, when it is members-only, a direct message, the signed records
+wave, or names a hidden or private group (src/waves-scope). Hidden and
+private groups stay too. export.json counts what was left out, by reason.
+The records wave is named by --records-wave-id or SIGNED_RECORDS_WAVE_ID;
+without either, the export refuses.
 
 It reads through DB_HOST, not DB_HOST_READ: point DB_HOST at the cluster's
 reader endpoint, with DB_USER and DB_PASS for it. (With DB_IAM_AUTH=true and
@@ -46,6 +53,9 @@ Options:
   --waves-file FILE   only the wave ids in FILE (JSON list or one a line)
   --page-size N       drops read at a time (default 500)
   --concurrency N     waves or decisions read at once (default 4)
+  --records-wave-id ID
+                      the signed records wave, which stays on 6529.io (or
+                      SIGNED_RECORDS_WAVE_ID; both given must agree)
   --both-metric       count TDH plus xTDH as a clause the chain evaluates
                       (the snapshot tooling's --both-metric), so such groups
                       are not written as their members
@@ -91,6 +101,11 @@ export interface WavesExportCommand {
    * checked the replica lag instead of the export, and how; null otherwise.
    */
   readonly replicaLagCheckedBy: ReplicaLagCheckedBy | null;
+  /**
+   * --records-wave-id: the signed records wave, which stays on 6529.io; null
+   * to take SIGNED_RECORDS_WAVE_ID when the run starts.
+   */
+  readonly recordsWaveId: string | null;
 }
 
 /** Who checked the replica lag instead of the export, and how. */
@@ -191,6 +206,7 @@ export function parseWavesExportCommand(
   let resume = false;
   let allowFailedWaves = false;
   let lagCheckedBy: string | null = null;
+  let recordsWaveId: string | null = null;
   let lagCheckNote: string | null = null;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -240,6 +256,12 @@ export function parseWavesExportCommand(
         break;
       case '--allow-failed-waves':
         allowFailedWaves = true;
+        break;
+      case '--records-wave-id':
+        recordsWaveId = value().trim();
+        if (!recordsWaveId) {
+          throw new WavesExportUsageError('--records-wave-id needs a wave id');
+        }
         break;
       case '--replica-lag-checked-by':
         lagCheckedBy = value().trim();
@@ -300,6 +322,7 @@ export function parseWavesExportCommand(
     replicaLagCheckedBy:
       lagCheckedBy && lagCheckNote
         ? { person: lagCheckedBy, note: lagCheckNote }
-        : null
+        : null,
+    recordsWaveId
   };
 }

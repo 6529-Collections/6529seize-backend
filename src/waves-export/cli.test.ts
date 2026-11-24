@@ -36,6 +36,7 @@ jest.mock('./waves-export.service', () => ({
 import {
   EXPORT_AFTER_FREEZE_MS,
   main,
+  recordsWaveIdFor,
   refuseBeforeExportStart,
   runExport
 } from './cli';
@@ -149,9 +150,12 @@ describe('waves:export and the read replica lag', () => {
   const replicaLagGiven = () => mockWavesExport.mock.calls[0][1].replicaLag;
   const sqlRun = () => mockExecute.mock.calls.map(([sql]) => sql);
   let tz: string | undefined;
+  let recordsWave: string | undefined;
   let stderr: string[];
   beforeEach(() => {
     tz = process.env.TZ;
+    recordsWave = process.env.SIGNED_RECORDS_WAVE_ID;
+    process.env.SIGNED_RECORDS_WAVE_ID = 'w-records';
     mockDoInDbContext
       .mockReset()
       .mockImplementation((work: () => Promise<unknown>) => work());
@@ -177,6 +181,26 @@ describe('waves:export and the read replica lag', () => {
     jest.restoreAllMocks();
     if (tz === undefined) delete process.env.TZ;
     else process.env.TZ = tz;
+    if (recordsWave === undefined) delete process.env.SIGNED_RECORDS_WAVE_ID;
+    else process.env.SIGNED_RECORDS_WAVE_ID = recordsWave;
+  });
+
+  it('keeps the records wave on 6529.io, by its setting or the environment', async () => {
+    dbHost([reader(40)]);
+    await main(EXPORT);
+    expect(mockWavesExport.mock.calls[0][1].recordsWaveId).toBe('w-records');
+    await main([...EXPORT, '--records-wave-id', 'w-records']);
+    expect(mockWavesExport.mock.calls[1][1].recordsWaveId).toBe('w-records');
+    delete process.env.SIGNED_RECORDS_WAVE_ID;
+    await main([...EXPORT, '--records-wave-id', 'w-other']);
+    expect(mockWavesExport.mock.calls[2][1].recordsWaveId).toBe('w-other');
+    // Neither: refused before any read.
+    mockExecute.mockClear();
+    await expect(main(EXPORT)).rejects.toThrow(
+      'The export needs the signed records wave'
+    );
+    expect(mockExecute).not.toHaveBeenCalled();
+    expect(mockWavesExport).toHaveBeenCalledTimes(3);
   });
 
   it("reads DB_HOST's state and every reader's lag before any stage, and records it", async () => {
@@ -362,5 +386,30 @@ describe('waves:export and the read replica lag', () => {
       unknown_reason:
         'reading @@GLOBAL.read_only failed (ER_NO_SUCH_TABLE); reading information_schema.replica_host_status failed (ER_NO_SUCH_TABLE)'
     });
+  });
+});
+
+describe('the records wave the export keeps on 6529.io', () => {
+  it('takes the setting, else SIGNED_RECORDS_WAVE_ID', () => {
+    expect(recordsWaveIdFor('w-1', {})).toBe('w-1');
+    expect(recordsWaveIdFor(null, { SIGNED_RECORDS_WAVE_ID: ' w-2 ' })).toBe(
+      'w-2'
+    );
+    expect(recordsWaveIdFor('w-3', { SIGNED_RECORDS_WAVE_ID: 'w-3' })).toBe(
+      'w-3'
+    );
+  });
+
+  it('refuses when neither names it, or the two differ', () => {
+    for (const env of [{}, { SIGNED_RECORDS_WAVE_ID: '  ' }]) {
+      expect(() => recordsWaveIdFor(null, env)).toThrow(
+        'The export needs the signed records wave, which stays on 6529.io: give --records-wave-id <its id>, or set SIGNED_RECORDS_WAVE_ID. Without it the records wave would move with the rest.'
+      );
+    }
+    expect(() =>
+      recordsWaveIdFor('w-1', { SIGNED_RECORDS_WAVE_ID: 'w-2' })
+    ).toThrow(
+      '--records-wave-id w-1 and SIGNED_RECORDS_WAVE_ID w-2 name different waves'
+    );
   });
 });

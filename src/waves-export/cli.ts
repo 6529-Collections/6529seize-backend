@@ -41,6 +41,35 @@ export function refuseBeforeExportStart(
   return earliestMs;
 }
 
+/**
+ * The signed records wave's id, which stays on 6529.io: --records-wave-id,
+ * else SIGNED_RECORDS_WAVE_ID as the run's environment has it. Refuses when
+ * neither names it, so it can't move by a missing setting, and when both
+ * name different waves.
+ */
+export function recordsWaveIdFor(
+  option: string | null,
+  env: Readonly<Record<string, string | undefined>>
+): string {
+  const fromEnv = env.SIGNED_RECORDS_WAVE_ID?.trim() || null;
+  if (option && fromEnv && option !== fromEnv) {
+    throw new WavesExportUsageError(
+      `--records-wave-id ${option} and SIGNED_RECORDS_WAVE_ID ${fromEnv} name different waves: give one, or make them agree.`,
+      { showHelp: false }
+    );
+  }
+  const id = option ?? fromEnv;
+  if (!id) {
+    throw new WavesExportUsageError(
+      'The export needs the signed records wave, which stays on 6529.io: give ' +
+        '--records-wave-id <its id>, or set SIGNED_RECORDS_WAVE_ID. Without it ' +
+        'the records wave would move with the rest.',
+      { showHelp: false }
+    );
+  }
+  return id;
+}
+
 /** What a caller other than the command line adds to a run. */
 export interface WavesExportRunHooks {
   /** WavesExportOptions.stopBeforeWave: a job's time limit. */
@@ -90,6 +119,11 @@ export async function runExport(
           // reads, so they read one server.
           const { sqlExecutor } = await import('@/sql-executor');
           const { resolveDbConnectionTargets } = await import('@/db-iam-auth');
+          // The environment is loaded by now (the shared secret in a job).
+          const recordsWaveId = recordsWaveIdFor(
+            command.recordsWaveId,
+            process.env
+          );
           const replicaLag = await replicaLagAtStart({
             caughtUpMs: earliestMs,
             checkedByPerson: command.replicaLagCheckedBy,
@@ -115,6 +149,7 @@ export async function runExport(
             dropPageSize: command.pageSize,
             concurrency: command.concurrency,
             bothMetric: command.bothMetric,
+            recordsWaveId,
             resumeDrops: command.resume,
             stopBeforeWave: hooks.stopBeforeWave,
             replicaLag,

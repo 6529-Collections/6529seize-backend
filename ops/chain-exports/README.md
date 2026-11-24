@@ -726,6 +726,13 @@ with the same event until it answers `{"done": true, ...}` with its links.
   `workSeconds` (60 to 840, default 720). `replicaLagCheckedBy` and
   `replicaLagCheckNote` are for a person only, as the CLI's options are:
   the job takes them from the event that gives them and never keeps them.
+- **What it leaves out:** every wave that stays on 6529.io (src/waves-scope:
+  members-only, a direct message, the signed records wave, or a wave that
+  uses a hidden or private group), whole, with its decisions, entries,
+  votes, wave REP, polls, drops and curations; `export.json` counts them by
+  reason. The records wave is `SIGNED_RECORDS_WAVE_ID` from the function's
+  settings, or the event's optional `recordsWaveId`; with neither, the
+  export refuses.
 - **Checks, every invocation:** the bucket's privacy, as above; the
   export's own start time (five minutes after the freeze); and, in every
   run of a stage, the export's replica lag and read-only checks. The job

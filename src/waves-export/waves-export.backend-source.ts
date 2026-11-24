@@ -37,6 +37,7 @@ import {
   COMPETITIONS_TABLE,
   DROPS_TABLE,
   RATINGS_TABLE,
+  WAVE_CURATIONS_TABLE,
   WAVES_TABLE
 } from '@/constants';
 import { dropsDb } from '@/drops/drops.db';
@@ -45,6 +46,11 @@ import { DropType } from '@/entities/IDrop';
 import { RateMatter } from '@/entities/IRating';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
+import {
+  STAY_REASONS,
+  StayReason,
+  wavesScopeSql
+} from '@/waves-scope/waves-scope';
 import { stableGrant } from './waves-export.compact';
 import {
   DropTableRow,
@@ -55,6 +61,7 @@ import { compareCodePoints } from './waves-export.json';
 import {
   ExportActiveEntry,
   ExportCompetition,
+  ExportCuration,
   ExportGroupMember,
   ExportSignedDrop,
   ExportVoteLogRow,
@@ -141,31 +148,91 @@ function chunks<T>(items: readonly T[], size: number): T[][] {
   return out;
 }
 
+/** A 0/1 column, as MySQL gives a boolean expression. */
+const isSet = (value: unknown) =>
+  value === true ||
+  (value !== null && value !== undefined && Number(value) === 1);
+
 /**
  * The export's reads, through 6529.io's own services and mappers, with the
  * context of a reader who is not signed in: what the public API shows a
- * guest, except that the entry points' read checks are skipped, so
- * members-only waves, private groups, every entry status and draft decisions
- * come out too. Direct-message waves are never read.
+ * guest, except that the entry points' read checks are skipped, so every
+ * entry status and draft decisions come out too. Which waves move is the
+ * shared rule's (src/waves-scope); the export never reads a staying wave's
+ * configuration, decisions or drops.
  */
 export class BackendWavesExportSource implements WavesExportSource {
   private readonly ctx: RequestContext = {
     authenticationContext: AuthenticationContext.notAuthenticated()
   };
 
-  async listWaves(): Promise<ExportWaveRow[]> {
-    const rows = await sqlExecutor.execute<ExportWaveRow>(
+  async listWaves(scope: {
+    readonly recordsWaveId: string;
+  }): Promise<ExportWaveRow[]> {
+    const rows = await sqlExecutor.execute<
+      Omit<ExportWaveRow, 'stay_reasons'> &
+        Record<StayReason | 'under_direct_message', unknown>
+    >(
       // The submit and vote groups of a wave's original decision come from
-      // the legacy view, as every other wave read takes them.
+      // the legacy view, as every other wave read takes them. The reasons
+      // to stay are the shared rule's SQL form (src/waves-scope), each a
+      // 0/1 column named for its reason.
       `select w.id, w.parent_wave_id, w.visibility_group_id, w.admin_group_id,
-          w.chat_group_id, lw.participation_group_id, lw.voting_group_id
+          w.chat_group_id, lw.participation_group_id, lw.voting_group_id,
+          ${STAY_REASONS.map((reason) => `s.${reason}`).join(', ')},
+          coalesce(p.is_direct_message, 0) as under_direct_message
         from ${WAVES_TABLE} w
+        join (${wavesScopeSql('sw', 'recordsWaveId').select}) s on s.id = w.id
         left join ${legacyGetView(WAVES_TABLE)} lw on lw.id = w.id
-        left join ${WAVES_TABLE} p on p.id = w.parent_wave_id
-        where coalesce(w.is_direct_message, 0) = 0
-          and coalesce(p.is_direct_message, 0) = 0`
+        left join ${WAVES_TABLE} p on p.id = w.parent_wave_id`,
+      { recordsWaveId: scope.recordsWaveId }
     );
-    return [...rows].sort((a, b) => compareCodePoints(a.id, b.id));
+    return rows
+      .map((row) => {
+        const reasons = STAY_REASONS.filter((reason) => isSet(row[reason]));
+        // DMs stay, as before: a wave under one stays with it.
+        if (
+          isSet(row.under_direct_message) &&
+          !reasons.includes(StayReason.DIRECT_MESSAGE)
+        ) {
+          reasons.unshift(StayReason.DIRECT_MESSAGE);
+        }
+        return {
+          id: row.id,
+          stay_reasons: reasons,
+          parent_wave_id: row.parent_wave_id,
+          visibility_group_id: row.visibility_group_id,
+          admin_group_id: row.admin_group_id,
+          chat_group_id: row.chat_group_id,
+          participation_group_id: row.participation_group_id,
+          voting_group_id: row.voting_group_id
+        };
+      })
+      .sort((a, b) => compareCodePoints(a.id, b.id));
+  }
+
+  async waveCurations(waveIds: string[]): Promise<ExportCuration[]> {
+    const out: ExportCuration[] = [];
+    for (const batch of chunks(waveIds, IN_BATCH)) {
+      if (!batch.length) continue;
+      const rows = await sqlExecutor.execute<{
+        id: string;
+        wave_id: string;
+        community_group_id: string;
+      }>(
+        `select id, wave_id, community_group_id
+          from ${WAVE_CURATIONS_TABLE} where wave_id in (:waveIds)`,
+        { waveIds: batch }
+      );
+      out.push(
+        ...rows.map((row) => ({
+          id: row.id,
+          wave_id: row.wave_id,
+          group_id: row.community_group_id
+        }))
+      );
+    }
+    return out.sort((a, b) => compareCodePoints(a.id, b.id));
   }
 
   async waveConfiguration(

@@ -8,17 +8,34 @@
  * hidden groups, withdrawn and disqualified entries, draft decisions.
  */
 
+import type { StayReason } from '@/waves-scope/waves-scope';
+
 export type Json = Record<string, unknown>;
 
-/** A wave the import carries: not a direct message, not under one. */
+/**
+ * A wave of 6529.io, with why it stays on 6529.io (src/waves-scope): none
+ * when it moves to the chain, which is when the import carries it.
+ */
 export interface ExportWaveRow {
   readonly id: string;
+  /**
+   * The reasons it stays, in STAY_REASONS order; empty when it moves.
+   * A wave under a direct message stays as `direct_message` too.
+   */
+  readonly stay_reasons: readonly StayReason[];
   readonly parent_wave_id: string | null;
   readonly visibility_group_id: string | null;
   readonly admin_group_id: string | null;
   readonly chat_group_id: string | null;
   readonly participation_group_id: string | null;
   readonly voting_group_id: string | null;
+}
+
+/** A wave's curation (wave_curation_groups): the group it names. */
+export interface ExportCuration {
+  readonly id: string;
+  readonly wave_id: string;
+  readonly group_id: string;
 }
 
 /** One decision as the fetch stage holds it. */
@@ -73,8 +90,12 @@ export interface ExportSignedDrop {
 
 /** Everything the export reads. Backed by 6529.io's services; faked in tests. */
 export interface WavesExportSource {
-  /** Every wave the import carries (no direct messages), by id. */
-  listWaves(): Promise<ExportWaveRow[]>;
+  /** Every wave, by id, each with its reasons to stay (src/waves-scope). */
+  listWaves(scope: {
+    readonly recordsWaveId: string;
+  }): Promise<ExportWaveRow[]>;
+  /** The curations of these waves: each one's id, wave and group. */
+  waveCurations(waveIds: string[]): Promise<ExportCuration[]>;
   /** The `/v3/waves/{id}` configuration (ApiWave), its groups shown. */
   waveConfiguration(
     wave: ExportWaveRow,

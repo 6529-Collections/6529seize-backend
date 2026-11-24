@@ -54,8 +54,21 @@ describe('parseWavesExportCommand', () => {
       bothMetric: false,
       resume: false,
       allowFailedWaves: false,
-      replicaLagCheckedBy: null
+      replicaLagCheckedBy: null,
+      recordsWaveId: null
     });
+  });
+
+  it('reads the records wave the export keeps on 6529.io', () => {
+    expect(
+      parseWavesExportCommand(
+        [...AFTER_FREEZE, '--records-wave-id', ' w-records '],
+        {}
+      )
+    ).toMatchObject({ recordsWaveId: 'w-records' });
+    expect(() =>
+      parseWavesExportCommand([...AFTER_FREEZE, '--records-wave-id', ' '], {})
+    ).toThrow('--records-wave-id needs a wave id');
   });
 
   it('reads who checked the replica lag and how, for a run after the freeze', () => {

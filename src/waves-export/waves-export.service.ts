@@ -7,8 +7,14 @@ import { groupCriteriaReasons, groupRaterKeys } from './waves-export.groups';
 import { compareCodePoints } from './waves-export.json';
 import type { ReplicaLagRecord } from './waves-export.replica-lag';
 import {
+  groupStays,
+  STAY_REASONS,
+  StayReason
+} from '@/waves-scope/waves-scope';
+import {
   ExportActiveEntry,
   ExportSignedDrop,
+  ExportCuration,
   ExportWaveRow,
   Json,
   WavesExportSource
@@ -42,9 +48,40 @@ export interface WavesExportRun {
   /** T_w in ms; null for a rehearsal. */
   readonly freeze_ms: number | null;
   readonly exporter_revision: string;
+  /** The signed records wave this run kept on 6529.io. */
+  readonly records_wave_id: string;
   readonly stages: readonly WavesExportStage[];
   /** The replica lag check this run started on (null when none was given). */
   readonly replica_lag: ReplicaLagRecord | null;
+}
+
+/**
+ * The waves stage's staying waves (src/waves-scope): how many stay by each
+ * reason, and which ones, direct messages but counted. Nothing else of a
+ * staying wave is read.
+ */
+export const STAYING_WAVES_FILE = 'waves_staying.json';
+
+/**
+ * Groups a wave that moves names but the groups stage left out: hidden or
+ * private, or a direct message's. The rule keeps such a group's waves on
+ * 6529.io, so there are none unless a group changed since the waves stage.
+ */
+export const STAYING_GROUPS_FILE = 'groups_staying.json';
+
+/** The moving waves' curations: each one's id, wave and group. */
+export const CURATIONS_FILE = 'curations.json';
+
+/** Why a group the export reads is left out. */
+export type GroupStayReason =
+  | StayReason.HIDDEN_OR_PRIVATE_GROUP
+  | StayReason.DIRECT_MESSAGE;
+
+interface StayingWaves {
+  readonly total: number;
+  readonly by_reason: Record<StayReason, number>;
+  /** Each staying wave but direct messages, with its reasons. */
+  readonly waves: Record<string, readonly StayReason[]>;
 }
 
 /** Drops a batch read of signed events takes (the public batch's size). */
@@ -66,6 +103,11 @@ export interface WavesExportOptions {
   readonly concurrency: number;
   /** TDH plus xTDH as a clause metric (the snapshot tooling's --both-metric). */
   readonly bothMetric: boolean;
+  /**
+   * The signed records wave's id (SIGNED_RECORDS_WAVE_ID, or the export's own
+   * setting): it stays on 6529.io, matched by id only.
+   */
+  readonly recordsWaveId: string;
   /** Keep a wave's drops already written by an earlier run of this export. */
   readonly resumeDrops?: boolean;
   /**
@@ -214,6 +256,8 @@ export function activeEntries(
 export class WavesExport {
   private readonly counts: Record<string, number> = {};
   private failedWaves: { id: string; error: string }[] = [];
+  /** Every wave with its reasons to stay, read before the run's record. */
+  private allWaves: ExportWaveRow[] = [];
 
   constructor(
     private readonly source: WavesExportSource,
@@ -254,10 +298,16 @@ export class WavesExport {
     const startedAt = (this.options.now ?? Date.now)();
     const runs = await raw.load<WavesExportRun[]>(EXPORT_RUNS_FILE, []);
     await this.refuseAnotherFreeze(runs);
+    if (this.options.stages.includes('waves')) {
+      // Before the run's record, so a records wave the database doesn't
+      // have refuses a run without tying the OUT to it.
+      this.allWaves = await this.wavesWithRecordsWave();
+    }
     runs.push({
       run_started_at: startedAt,
       freeze_ms: this.options.freezeMs,
       exporter_revision: this.options.exporterRevision,
+      records_wave_id: this.options.recordsWaveId,
       stages: this.options.stages,
       replica_lag: this.options.replicaLag ?? null
     });
@@ -292,6 +342,8 @@ export class WavesExport {
     await raw.save('export.json', {
       ...summary,
       source: "6529.io's database (a read replica at the waves freeze)",
+      records_wave_id: this.options.recordsWaveId,
+      left_out: await this.leftOut(),
       runs,
       wave_subset: this.options.waveIds,
       started_at: startedAt,
@@ -337,6 +389,51 @@ export class WavesExport {
         { showHelp: false }
       );
     }
+    // Which waves stay depends on the records wave: one OUT, one of it.
+    const other = runs.find(
+      (run) => run.records_wave_id !== this.options.recordsWaveId
+    );
+    if (other) {
+      throw new WavesExportUsageError(
+        `${raw.root} holds an earlier run that kept ` +
+          `${other.records_wave_id ? `wave ${other.records_wave_id}` : 'no recorded wave'} ` +
+          `on 6529.io as the records wave, and this run keeps wave ` +
+          `${this.options.recordsWaveId}. Their files would mix. Run the ` +
+          `export into a new, empty OUT, or give the records wave the earlier ` +
+          `run kept.`,
+        { showHelp: false }
+      );
+    }
+  }
+
+  /** export.json's `left_out`: what stays on 6529.io, counted by reason. */
+  private async leftOut(): Promise<Json> {
+    const raw = this.options.raw;
+    const staying = await raw.load<Partial<StayingWaves>>(
+      STAYING_WAVES_FILE,
+      {}
+    );
+    const groups = await raw.load<Record<string, GroupStayReason>>(
+      STAYING_GROUPS_FILE,
+      {}
+    );
+    const waves: Record<string, number> = { total: staying.total ?? 0 };
+    for (const reason of STAY_REASONS) {
+      waves[reason] = staying.by_reason?.[reason] ?? 0;
+    }
+    const groupReasons = Object.values(groups);
+    const groupsBy = (reason: GroupStayReason) =>
+      groupReasons.filter((it) => it === reason).length;
+    return {
+      waves,
+      groups: {
+        total: groupReasons.length,
+        [StayReason.HIDDEN_OR_PRIVATE_GROUP]: groupsBy(
+          StayReason.HIDDEN_OR_PRIVATE_GROUP
+        ),
+        [StayReason.DIRECT_MESSAGE]: groupsBy(StayReason.DIRECT_MESSAGE)
+      }
+    };
   }
 
   private async runStage(stage: WavesExportStage): Promise<void> {
@@ -368,11 +465,40 @@ export class WavesExport {
       .sort(compareCodePoints);
   }
 
+  /**
+   * Every wave with its reasons to stay. A run after the freeze refuses when
+   * no wave has the records wave's id: a wrong id would let it move. A
+   * rehearsal says so and goes on.
+   */
+  private async wavesWithRecordsWave(): Promise<ExportWaveRow[]> {
+    const recordsWaveId = this.options.recordsWaveId;
+    const all = await this.source.listWaves({ recordsWaveId });
+    if (
+      !all.some((wave) => wave.stay_reasons.includes(StayReason.RECORDS_WAVE))
+    ) {
+      const message =
+        `No wave of 6529.io has the records wave's id, ${recordsWaveId} ` +
+        `(--records-wave-id or SIGNED_RECORDS_WAVE_ID): check it, or the ` +
+        `records wave would move with the rest.`;
+      if (this.options.freezeMs !== null) {
+        throw new WavesExportUsageError(message, { showHelp: false });
+      }
+      this.log(`rehearsal: ${message} A run after the freeze refuses on this.`);
+    }
+    return all;
+  }
+
   private async stageWaves(): Promise<void> {
-    const all = await this.source.listWaves();
+    const all = this.allWaves;
     const byId = new Map(all.map((wave) => [wave.id, wave]));
     const subset = this.options.waveIds ? new Set(this.options.waveIds) : null;
-    const rows = subset ? all.filter((wave) => subset.has(wave.id)) : all;
+    const considered = subset ? all.filter((wave) => subset.has(wave.id)) : all;
+    // A staying wave is left out whole, from every stage: its configuration,
+    // decisions, wave REP, polls, drops, curations and the groups only it
+    // names are never read.
+    const staying = considered.filter((wave) => wave.stay_reasons.length);
+    const rows = considered.filter((wave) => !wave.stay_reasons.length);
+    await this.saveStayingWaves(staying);
     const waves: Record<string, WaveV3> = {};
     let failed = 0;
     await forEachLimited(rows, this.options.concurrency, async (wave) => {
@@ -380,11 +506,14 @@ export class WavesExport {
         const configuration = await this.attempt(`wave ${wave.id}`, () =>
           this.source.waveConfiguration(wave, eligibleGroupsForWave(wave, byId))
         );
+        // It moves: stays_on_site false, as the API's ApiWave says it (#2553),
+        // with its reasons to stay (none) beside it.
         waves[wave.id] = {
           id: wave.id,
           name: configuration.name,
           picture: configuration.picture,
-          configuration
+          configuration: { ...configuration, stays_on_site: false },
+          stay_reasons: wave.stay_reasons
         } as WaveV3;
       } catch (error) {
         failed++;
@@ -407,12 +536,45 @@ export class WavesExport {
     await this.options.raw.save('waves_all.json', roots);
     await this.options.raw.save('waves_v3.json', sortedKeys(waves));
     await this.options.raw.save('subwave_parents.json', sortedKeys(parents));
+    // The curations of the waves written, none of a staying wave's: the
+    // snapshot builder walks their groups to check every wave moves.
+    const written = Object.keys(waves).filter((id) => !waves[id]._error);
+    const curations: Record<string, ExportCuration> = {};
+    for (const curation of await this.source.waveCurations(
+      written.sort(compareCodePoints)
+    )) {
+      curations[curation.id] = curation;
+    }
+    await this.options.raw.save(CURATIONS_FILE, sortedKeys(curations));
+    this.count('curations', Object.keys(curations).length);
     this.count('waves', rows.length - failed);
     this.count('waves_failed', failed);
     this.count('subwaves', Object.keys(parents).length);
+    this.count('waves_staying', staying.length);
     this.log(
-      `waves: ${rows.length} (${Object.keys(parents).length} subwaves, ${failed} not read)`
+      `waves: ${rows.length} (${Object.keys(parents).length} subwaves, ${failed} not read); ${staying.length} stay on 6529.io`
     );
+  }
+
+  private async saveStayingWaves(staying: ExportWaveRow[]): Promise<void> {
+    const byReason = Object.fromEntries(
+      STAY_REASONS.map((reason) => [
+        reason,
+        staying.filter((wave) => wave.stay_reasons.includes(reason)).length
+      ])
+    ) as Record<StayReason, number>;
+    const waves: Record<string, readonly StayReason[]> = {};
+    for (const wave of staying) {
+      if (!wave.stay_reasons.includes(StayReason.DIRECT_MESSAGE)) {
+        waves[wave.id] = wave.stay_reasons;
+      }
+    }
+    const file: StayingWaves = {
+      total: staying.length,
+      by_reason: byReason,
+      waves: sortedKeys(waves)
+    };
+    await this.options.raw.save(STAYING_WAVES_FILE, file);
   }
 
   private async stageDecisions(): Promise<void> {
@@ -497,16 +659,39 @@ export class WavesExport {
       'competitions.json',
       {}
     );
+    // The groups the waves that move and their decisions name: a group only
+    // staying waves name is never read.
     const uses = namedGroups(waves, competitions);
     const ids = Array.from(uses.keys()).sort(compareCodePoints);
     const found = await this.source.groups(ids);
     const groups: Record<string, Json> = {};
+    const left: Record<string, GroupStayReason> = {};
     for (const id of ids) {
-      groups[id] = found[id] ?? { _error: 404 };
+      const group = found[id];
+      if (!group) {
+        groups[id] = { _error: 404 };
+        continue;
+      }
+      // The rule keeps a hidden or private group's waves on 6529.io, so a
+      // wave that moves names none unless a group changed since: it stays.
+      const reason: GroupStayReason | null =
+        group.is_direct_message === true
+          ? StayReason.DIRECT_MESSAGE
+          : groupStays(group as { visible: boolean; is_private: boolean })
+            ? StayReason.HIDDEN_OR_PRIVATE_GROUP
+            : null;
+      if (reason) {
+        left[id] = reason;
+        this.log(
+          `group ${id} stays on 6529.io (${reason}) but a wave that moves names it: left out`
+        );
+        continue;
+      }
+      groups[id] = group;
     }
     const lists: Record<string, Record<string, string[]>> = {};
     const users: Record<string, string | null> = {};
-    for (const id of ids) {
+    for (const id of Object.keys(groups)) {
       const group = groups[id];
       if (group._error) continue;
       const definition = asObject(group.group);
@@ -529,7 +714,7 @@ export class WavesExport {
       }
     }
     const members: Record<string, Json[]> = {};
-    for (const id of ids) {
+    for (const id of Object.keys(groups)) {
       const group = groups[id];
       if (group._error) continue;
       const definition = asObject(group.group);
@@ -549,12 +734,15 @@ export class WavesExport {
     await raw.save('group_lists.json', sortedKeys(lists));
     await raw.save('group_members.json', sortedKeys(members));
     await raw.save('group_users.json', sortedKeys(users));
-    const missing = ids.filter((id) => groups[id]._error).length;
-    this.count('groups', ids.length - missing);
+    await raw.save(STAYING_GROUPS_FILE, sortedKeys(left));
+    const written = Object.keys(groups);
+    const missing = written.filter((id) => groups[id]._error).length;
+    this.count('groups', written.length - missing);
     this.count('groups_missing', missing);
     this.count('groups_as_members', Object.keys(members).length);
+    this.count('groups_staying', Object.keys(left).length);
     this.log(
-      `groups: ${ids.length} (${missing} missing), lists ${Object.keys(lists).length}, as members ${Object.keys(members).length}`
+      `groups: ${written.length} (${missing} missing), lists ${Object.keys(lists).length}, as members ${Object.keys(members).length}; ${Object.keys(left).length} stay on 6529.io`
     );
   }
 
