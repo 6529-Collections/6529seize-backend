@@ -90,7 +90,7 @@
       "Effect": "Allow",
       "Action": "s3:CreateBucket",
       "Resource": [
-        "arn:aws:s3:::dropforgelaunchhandler-pro*-serverlessdeploy*",
+        "arn:aws:s3:::dropforgelaunchhandler-pr*-serverlessdeploy*",
         "arn:aws:s3:::memesdistributionhandler-*-serverlessdeploy*"
       ],
       "Condition": {
@@ -124,7 +124,7 @@
         "s3:PutEncryptionConfiguration"
       ],
       "Resource": [
-        "arn:aws:s3:::dropforgelaunchhandler-pro*-serverlessdeploy*",
+        "arn:aws:s3:::dropforgelaunchhandler-pr*-serverlessdeploy*",
         "arn:aws:s3:::memesdistributionhandler-*-serverlessdeploy*"
       ],
       "Condition": {
@@ -148,7 +148,7 @@
         "s3:PutObjectTagging"
       ],
       "Resource": [
-        "arn:aws:s3:::dropforgelaunchhandler-pro*-serverlessdeploy*/*",
+        "arn:aws:s3:::dropforgelaunchhandler-pr*-serverlessdeploy*/*",
         "arn:aws:s3:::memesdistributionhandler-*-serverlessdeploy*/*"
       ],
       "Condition": {

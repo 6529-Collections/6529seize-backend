@@ -125,12 +125,19 @@ has no KMS signing or IAM policy-editing permission.
 Production resolves network settings from the checked-in production deployment
 configuration.
 
-After staging validation, an AWS administrator creates
-`gha-backend-deploy-drop-forge-production` with `DropForgeDeployTrust.json`
-and attaches both documents as customer-managed policies. Set the GitHub
-`production` environment's `AWS_DROP_FORGE_DEPLOY_ROLE_ARN` to that role ARN
-before the first Drop Forge deployment. Install each signing guard as an
-inline identity policy on its corresponding runtime role.
+After staging validation, an AWS administrator creates these customer-managed
+policies in production account `987989283142`.
+
+| Policy name | Policy document |
+| --- | --- |
+| `DropForgeProductionHandlersDeployment` | `DropForgeHandlersDeployment.json` |
+| `DropForgeProductionDispatchDeployment` | `DropForgeDispatchDeployment.json` |
+
+Create `gha-backend-deploy-drop-forge-production` with `DropForgeDeployTrust.json`
+and attach both policies. Set the GitHub `production` environment's
+`AWS_DROP_FORGE_DEPLOY_ROLE_ARN` to that role ARN before the first Drop Forge
+deployment. Install each signing guard as an inline identity policy on its
+corresponding runtime role.
 
 | Inline policy file | Runtime role |
 | --- | --- |
