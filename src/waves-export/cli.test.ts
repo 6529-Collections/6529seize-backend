@@ -6,7 +6,7 @@ jest.mock('./waves-export.backend-source', () => ({
   BackendWavesExportSource: jest.fn()
 }));
 
-import { main } from './cli';
+import { EXPORT_AFTER_FREEZE_MS, main } from './cli';
 import { WavesExportUsageError } from './cli-options';
 
 const REVISION = 'ab'.repeat(20);
@@ -42,8 +42,21 @@ describe('waves:export and the freeze time', () => {
     expect(mockDoInDbContext).not.toHaveBeenCalled();
   });
 
-  it('exports from the freeze on', async () => {
-    jest.spyOn(Date, 'now').mockReturnValue(T_W);
+  it.each([
+    ['at the freeze', T_W],
+    ['a minute after it', T_W + 60_000],
+    ['just under five minutes after it', T_W + EXPORT_AFTER_FREEZE_MS - 1]
+  ])('refuses to export %s, naming the earliest start', async (_when, now) => {
+    jest.spyOn(Date, 'now').mockReturnValue(now);
+    await expect(main(EXPORT)).rejects.toThrow(
+      'export from 2026-11-25T00:05:00.000Z on'
+    );
+    expect(mockDoInDbContext).not.toHaveBeenCalled();
+  });
+
+  it('exports from five minutes after the freeze on', async () => {
+    expect(EXPORT_AFTER_FREEZE_MS).toBe(300_000);
+    jest.spyOn(Date, 'now').mockReturnValue(T_W + EXPORT_AFTER_FREEZE_MS);
     await main(EXPORT);
     expect(mockDoInDbContext).toHaveBeenCalledTimes(1);
   });

@@ -12,8 +12,10 @@ in the layout of the waves snapshot tooling's fetch stage (validator
 repository, tools/legacy-snapshot). Its normalize and build stages then make
 the Waves v1 file and the drop archives from it. Members-only waves are
 included; direct messages are not. Read-only. Run it against a read replica
-after the waves freeze: it refuses to run before the freeze time it is
-given, unless --rehearsal.
+after the waves freeze: it refuses to run until five minutes after the
+freeze time it is given, unless --rehearsal. A request admitted just before
+the freeze can commit after it, after a lock wait. Start it only once the
+read replica has also caught up past that time.
 
 Options:
   --out DIR           where to write (DIR/raw; required)

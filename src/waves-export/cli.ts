@@ -8,13 +8,28 @@ import {
   WavesExportUsageError
 } from './cli-options';
 
+/**
+ * How long after the freeze the export may start. A request 6529.io admitted
+ * just before the freeze can still commit after it, once a lock wait ends
+ * (MySQL's innodb_lock_wait_timeout, 50 s by default). Five minutes covers
+ * that with room to spare. The read replica's lag comes on top: whoever runs
+ * the export checks that the replica has caught up past this time.
+ */
+export const EXPORT_AFTER_FREEZE_MS = 5 * 60 * 1000;
+
 async function runExport(command: WavesExportCommand) {
   // Dates read from MySQL in UTC, whatever the host.
   process.env.TZ = 'UTC';
-  if (command.freezeMs !== null && Date.now() < command.freezeMs) {
-    throw new WavesExportUsageError(
-      `The waves freeze is at ${new Date(command.freezeMs).toISOString()}: export after it (or --rehearsal)`
-    );
+  if (command.freezeMs !== null) {
+    const earliestMs = command.freezeMs + EXPORT_AFTER_FREEZE_MS;
+    if (Date.now() < earliestMs) {
+      throw new WavesExportUsageError(
+        `The waves freeze is at ${new Date(command.freezeMs).toISOString()}: ` +
+          `export from ${new Date(earliestMs).toISOString()} on, five minutes ` +
+          `after it, once the read replica has caught up past that time ` +
+          `(or --rehearsal)`
+      );
+    }
   }
   const waveIds = command.wavesFile
     ? parseWaveIds(fs.readFileSync(command.wavesFile, 'utf8'))
