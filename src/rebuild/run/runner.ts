@@ -284,13 +284,21 @@ class RebuildRun {
    * a module that appears while the run goes doesn't make a step left out
    * of the order check run.
    */
-  private readonly codeHere: ReadonlyMap<string, boolean> = new Map(
+  private readonly codeHere: ReadonlyMap<RebuildStep, boolean> = new Map(
     this.o.manifests
       .flatMap((m) => [...m.seeds, ...m.rebuilders])
-      .map((step) => [step.id, stepCodeIn(this.o.repoRoot)(step)])
+      .map((step) => [step, stepCodeIn(this.o.repoRoot)(step)])
   );
-  private readonly stepCodeHere = (step: RebuildStep): boolean =>
-    this.codeHere.get(step.id) ?? stepCodeIn(this.o.repoRoot)(step);
+  /** By the step itself: a seed and a rebuilder may not share an id. */
+  private readonly stepCodeHere = (step: RebuildStep): boolean => {
+    const here = this.codeHere.get(step);
+    if (here === undefined) {
+      throw new Error(
+        `step ${step.id} is not one of the run's manifests' steps`
+      );
+    }
+    return here;
+  };
   /**
    * Owned columns this run doesn't rebuild, because their owner is outside
    * the area or skipped: left out of the row comparison.

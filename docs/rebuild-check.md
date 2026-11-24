@@ -210,8 +210,11 @@ export const mintManifest: AreaManifest = {
     wait on it yet, and the report notes each such step with its tables.
     Its own reads are still checked: it must wait on the writers of the
     tables it reads. Whether its module is here is decided once, when the
-    run starts. A module path must be a path in the repo without an
-    extension, spelled as the tree spells it.
+    run starts, for each step: a seed and a rebuilder may not share an
+    id. A module path must be a path in the repo without an extension,
+    spelled as the tree spells it, with no part ending in a dot or a space
+    or holding a colon; a module reached through a link or a junction is
+    not here.
     Once the module is here, they are checked like any other step's. An
     unknown id in its `after` or `before` still fails. A final run also
     fails on a step still marked planned whose code is here: nothing

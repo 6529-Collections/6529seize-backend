@@ -629,6 +629,24 @@ describe('checkRegistry', () => {
     ]);
   });
 
+  it('refuses an id a seed and a rebuilder share', () => {
+    expect(
+      checkRegistry({
+        manifests: [
+          area(
+            'a',
+            { ids: index() },
+            {
+              seeds: [step('a.ids', { writes: ['ids'] })],
+              rebuilders: [step('a.ids', { writes: ['ids'] })]
+            }
+          )
+        ],
+        codeTables: code('ids')
+      }).problems.map((p) => p.detail)
+    ).toEqual(['id a.ids names both a seed and a rebuilder']);
+  });
+
   it('refuses a module path that leaves the repo or names its extension', () => {
     const at = (module: string) =>
       step('a.rows', { run: { module, exportName: 'run' }, writes: ['ids'] });

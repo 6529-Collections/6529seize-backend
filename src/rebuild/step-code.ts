@@ -15,6 +15,11 @@ export function modulePathProblem(module: string): string | null {
   if (parts.some((part) => part === '..' || part === '.' || part === '')) {
     return 'leaves the repo or has an empty part';
   }
+  // Windows drops a trailing dot or space and reads a colon as a stream:
+  // such a part names another file there than on Linux.
+  if (parts.some((part) => /[. ]$/.test(part) || part.includes(':'))) {
+    return 'has a part ending in a dot or a space, or with a colon';
+  }
   // A module may have dots of its own (mint-log-rebuild.seed).
   if (/\.(ts|tsx|js|mjs|cjs|json)$/.test(module)) {
     return 'carries an extension';
@@ -38,6 +43,13 @@ function fileExactlyAt(root: string, relative: string): boolean {
     }
     if (!names.includes(part)) return false;
     at = path.join(at, part);
+    // A link or junction leads out of the tree, or to a copy of it
+    // (node_modules): its module is not this tree's code.
+    try {
+      if (fs.lstatSync(at).isSymbolicLink()) return false;
+    } catch {
+      return false;
+    }
   }
   try {
     return fs.statSync(at).isFile();

@@ -532,6 +532,22 @@ function lastProblems(manifests: readonly AreaManifest[]): RegistryProblem[] {
   ];
 }
 
+/** An id names one step: a seed and a rebuilder never share one. */
+function sharedIdProblems(
+  manifests: readonly AreaManifest[]
+): RegistryProblem[] {
+  const seeds = new Set(manifests.flatMap((m) => m.seeds.map((s) => s.id)));
+  return manifests
+    .flatMap((m) => m.rebuilders)
+    .filter((step) => seeds.has(step.id))
+    .map(
+      (step): RegistryProblem => ({
+        kind: 'BAD_STEP',
+        detail: `id ${step.id} names both a seed and a rebuilder`
+      })
+    );
+}
+
 function orderProblems(
   label: string,
   steps: readonly RebuildStep[]
@@ -854,6 +870,7 @@ export function checkRegistry(input: RegistryInput): RegistryResult {
     // Unknown ids in `after` and `before` fail whether or not the step's
     // code is here.
     ...orderProblems('rebuilder', rebuilders),
+    ...sharedIdProblems(input.manifests),
     ...writerProblems(input.manifests)
   ];
   return {
