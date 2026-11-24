@@ -118,6 +118,12 @@ From `on`, a row an old writer adds is archived as it is written, so `seal` is n
 
 A cause's old writer has to keep writing until its cut. If a cause's source takes over before the switch and its old writer stops seeing the events, set that cause's cut to that time, in `shadow`: from it the deriver writes the cause's rows and their copies, and readers see the copies at once, with their pushes. The ratings do this: they leave 6529.io at the identity switch-on, a day before the rest. `copy-old-rows` keeps such rows as the deriver's, since they lie after their cut, so at `on` each row is served once, under its view id: its id changes then, to one above every `identity_notifications` id. A client that remembered the copy's id still marks it read by that id. The desktop app shows unread rows above the highest id it has seen as new, so at `on` the early cause's rows still unread show once more as new desktop notifications. A last-seen reset, asked of the frontend for a rollback (when ids fall), would not prevent this, since these ids rise.
 
+### Waves that stay on 6529.io
+
+Members-only waves stay on 6529.io after the waves switch, served from MySQL as today, and so does any public wave whose groups include a hidden or private group. Their events never reach the chain's event log or the drop index, so their notifications keep coming from today's writers, before and after `on`, as CARRIED rows. A wave has moved when the chain holds a LegacyId for it.
+
+The gate is per cause: a cause in `NOTIFY_DERIVED_CAUSES` skips its old writers for every wave. So no waves cause may join it until the gate also checks that the row's wave has moved, and skips the old writer only then. `NOTIFY_LEGACY_OUTPUT=false` stops only the deriver's copies in `identity_notifications`; old writers, including those of staying waves, keep writing.
+
 ### Handing a cause back
 
 A cause's windows only grow. To hand a cause back to its old writer, close its window with an end later than the deploy that sets it (`CAUSE@start..end`); to derive it again, add a window that starts after that end (`CAUSE@start..end,CAUSE@later`). Run `record-cuts` after every change. A cause never leaves `NOTIFY_DERIVED_CAUSES` once logged: a rebuild derives it in its windows and restores what its old writer wrote between them from the archive.
