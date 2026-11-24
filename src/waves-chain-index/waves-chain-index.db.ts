@@ -1203,33 +1203,36 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
   }
 
   /**
-   * The log's decided RESULT_FINAL events of these decisions that have no
-   * claim build on `network`, oldest first, at most `limit`: the builds the
-   * log should have called for and didn't (claim builds were off when the
-   * result was logged, or MAIN_STAGE_DECISION_IDS named other decisions).
+   * Final, decided results counted on the chain (origin native: not one
+   * the import carried) of these decisions that have no claim build on
+   * `network`, oldest first, at most `limit`. Read from the index's own
+   * rows, so a result the event log never saw is found too: one that went
+   * final before the log started, or while claim builds were off or the
+   * setting named other decisions.
    */
   async resultsWithoutClaimBuild(
     decisionIds: readonly string[],
     network: string,
     limit: number
-  ): Promise<ChainEvent[]> {
+  ): Promise<{ decisionId: string; data: Record<string, unknown> }[]> {
     if (!decisionIds.length) return [];
-    const rows = await this.db.execute<EventRowRead>(
-      `select e.* from ${CHAIN_EVENTS_TABLE} e
-        where e.kind = 'RESULT_FINAL'
-          and e.decision_id in (:decisionIds)
-          and json_unquote(json_extract(e.data, '$.status')) = 'decided'
-          and json_extract(e.data, '$.occurrence') is not null
+    const rows = await this.db.execute<{ decision_id: string; data: unknown }>(
+      `select r.decision_id, r.data from ${CHAIN_RESULTS_TABLE} r
+        where r.decision_id in (:decisionIds)
+          and r.stage = 'final' and r.status = 'decided' and r.origin = 'native'
           and not exists (
             select 1 from ${CHAIN_CLAIM_BUILDS_TABLE} b
              where b.network = :network
-               and b.decision_id = e.decision_id
-               and b.occurrence = cast(json_unquote(json_extract(e.data, '$.occurrence')) as signed))
-        order by e.height, e.seq
+               and b.decision_id = r.decision_id
+               and b.occurrence = cast(json_unquote(json_extract(r.data, '$.occurrence')) as signed))
+        order by r.result_time
         limit :limit`,
       { decisionIds: [...decisionIds], network, limit }
     );
-    return rows.map(eventOf);
+    return rows.map((row) => ({
+      decisionId: String(row.decision_id).toLowerCase(),
+      data: jsonOf(row.data)
+    }));
   }
 
   /** Writes claim builds on their own; one already there is kept as it is. */

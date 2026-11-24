@@ -14,7 +14,8 @@ import {
 import {
   claimBuildQueue,
   ClaimBuildPort,
-  claimBuildsOf
+  claimBuildsOf,
+  resultFinalEventOf
 } from './waves-chain-index.claims';
 import {
   EMPTY_INDEX_STATE,
@@ -28,6 +29,7 @@ import {
 import {
   BatchObject,
   batchObjects,
+  ChainEvent,
   deriveEvents,
   emptyEventContext,
   EVENT_ONLY_FAMILIES,
@@ -677,12 +679,16 @@ export class WavesChainIndex {
   }
 
   /**
-   * The claim builds the log should have called for and didn't: a Main
-   * Stage RESULT_FINAL logged while claim builds were off, or while
-   * MAIN_STAGE_DECISION_IDS named other decisions. Each run reads them from
-   * the log (one read, at most CLAIM_CATCH_UP_PER_RUN) and writes them as
+   * The claim builds the log didn't call for: a final Main Stage result
+   * counted on the chain (not one the import carried) that went final
+   * before the log started (the index's first run reads the chain after
+   * the waves import, and a settlement can land first), or while claim
+   * builds were off, or while MAIN_STAGE_DECISION_IDS named other
+   * decisions. Each run reads the index's result rows that have no build
+   * (one read, at most CLAIM_CATCH_UP_PER_RUN), and writes their builds as
    * the log would have, with the same key, so none is written twice; the
-   * run then sends them as any other, the collaboration frozen first.
+   * run then sends them as any other, the collaboration frozen first. A
+   * result whose rank-1 entry the index doesn't hold yet waits.
    */
   private async catchUpClaimBuilds(
     state: WavesChainIndexState,
@@ -697,7 +703,22 @@ export class WavesChainIndex {
       CLAIM_CATCH_UP_PER_RUN
     );
     if (!results.length) return;
-    const builds = claimBuildsOf(results, mainStage, state.network);
+    const winnerIds = results
+      .map(({ data }) =>
+        (Array.isArray(data.winners) ? data.winners : []).find(
+          (winner: Record<string, unknown>) => Number(winner?.rank) === 1
+        )
+      )
+      .map((winner) => String(winner?.entryId ?? '').toLowerCase())
+      .filter((id) => id.length > 0);
+    const { entries } = await this.db.eventObjects({ entries: winnerIds });
+    const events = results
+      .map(({ decisionId, data }) =>
+        resultFinalEventOf(decisionId, data, entries)
+      )
+      .filter((event): event is ChainEvent => event !== null);
+    const builds = claimBuildsOf(events, mainStage, state.network);
+    if (!builds.length) return;
     await this.db.writeClaimBuilds(builds);
     const queued = builds.filter((build) => build.status === 'pending');
     report.claimBuilds.queued += queued.length;

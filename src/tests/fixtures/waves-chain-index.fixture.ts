@@ -1095,7 +1095,8 @@ export class FakeChain implements WavesChainApi {
     decisionId: string,
     resultTime: number,
     winners: string[],
-    occurrence = 1
+    occurrence = 1,
+    origin: 'native' | 'legacy' = 'native'
   ) {
     const result: ChainObject = {
       id: decisionId,
@@ -1103,7 +1104,9 @@ export class FakeChain implements WavesChainApi {
       occurrence,
       status: winners.length ? 'decided' : 'skipped',
       stage: 'final',
-      origin: 'native',
+      origin,
+      // The block it goes final in, as the API gives it.
+      settledHeight: this.nextHeight,
       winners: winners.map((entryId, i) => ({
         entryId,
         rank: i + 1,
@@ -1736,25 +1739,29 @@ export class FakeIndexDb {
   /** chain_claim_builds, by `network|decision|occurrence`. */
   readonly claims = new Map<string, FakeClaimBuild>();
 
-  /** As the SQL: decided RESULT_FINAL events of these with no build. */
+  /** As the SQL: final, decided, native results of these with no build. */
   async resultsWithoutClaimBuild(
     decisionIds: readonly string[],
     network: string,
     limit: number
   ) {
-    return this.events
-      .filter(
-        (e) =>
-          e.kind === 'RESULT_FINAL' &&
-          e.decisionId !== null &&
-          decisionIds.includes(e.decisionId) &&
-          e.data.status === 'decided' &&
-          e.data.occurrence !== null &&
-          e.data.occurrence !== undefined &&
-          !this.claims.has(`${network}|${e.decisionId}|${e.data.occurrence}`)
-      )
+    return Array.from(this.table('results').values())
+      .filter((row) => {
+        const data = row.data as ChainObject;
+        return (
+          decisionIds.includes(row.decision_id as string) &&
+          row.stage === 'final' &&
+          row.status === 'decided' &&
+          row.origin === 'native' &&
+          !this.claims.has(`${network}|${row.decision_id}|${data.occurrence}`)
+        );
+      })
+      .sort((a, b) => Number(a.result_time) - Number(b.result_time))
       .slice(0, limit)
-      .map((e) => JSON.parse(JSON.stringify(e)) as ChainEvent);
+      .map((row) => ({
+        decisionId: row.decision_id as string,
+        data: JSON.parse(JSON.stringify(row.data)) as ChainObject
+      }));
   }
 
   /** As the SQL: a build already there is kept as it is. */

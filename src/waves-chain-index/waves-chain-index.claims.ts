@@ -1,7 +1,7 @@
 import { appFeatures } from '@/app-features';
 import { Logger } from '@/logging';
 import { sqs } from '@/sqs';
-import { ChainEvent } from './waves-chain-index.events';
+import { ChainEvent, ObjectInfo } from './waves-chain-index.events';
 
 /**
  * Claim builds for the Main Stage: the chain has no Main Stage designation
@@ -175,6 +175,67 @@ export function claimBuildsOf(
     });
   }
   return out;
+}
+
+/**
+ * A final result as the index holds it (the chain API's Result), with its
+ * winners' entries, as the RESULT_FINAL event the log writes for it: the
+ * block it went final in (settledHeight), each winner with its 6529.io
+ * legacy id and manifest hash. Null, to wait for a later run, while the
+ * rank-1 winner's entry or its manifest hash isn't in the index yet, or
+ * the result names no block it went final in.
+ */
+export function resultFinalEventOf(
+  decisionId: string,
+  result: Record<string, unknown>,
+  entries: ReadonlyMap<string, ObjectInfo>
+): ChainEvent | null {
+  const height = Number(result.settledHeight);
+  if (!Number.isSafeInteger(height) || height <= 0) return null;
+  const winners = (
+    Array.isArray(result.winners) ? result.winners : []
+  ) as Record<string, unknown>[];
+  const first = winners.find((winner) => Number(winner.rank) === 1);
+  const firstId = hexId(String(first?.entryId ?? '').toLowerCase());
+  if (!firstId || !hexId(entries.get(firstId)?.manifestHash ?? null)) {
+    return null;
+  }
+  return {
+    height,
+    seq: 0,
+    blockTime: 0,
+    kind: 'RESULT_FINAL',
+    origin: 'OPERATION',
+    waveId: null,
+    waveLegacyId: null,
+    decisionId,
+    decisionLegacyId: null,
+    entryId: null,
+    entryLegacyId: null,
+    pollId: null,
+    pollLegacyId: null,
+    groupId: null,
+    groupLegacyId: null,
+    actor: null,
+    data: {
+      resultTime: Number(result.resultTime),
+      occurrence: result.occurrence,
+      status: result.status,
+      winnerCount: winners.length,
+      winners: winners.map((winner) => {
+        const entryId = String(winner.entryId ?? '').toLowerCase();
+        const entry = entries.get(entryId);
+        return {
+          entryId,
+          rank: Number(winner.rank),
+          score: winner.score ?? null,
+          legacyId: entry?.legacyId ?? null,
+          manifestHash: entry?.manifestHash ?? null
+        };
+      }),
+      settledHeight: height
+    }
+  };
 }
 
 /** What the index needs to queue claim builds; tests give their own. */

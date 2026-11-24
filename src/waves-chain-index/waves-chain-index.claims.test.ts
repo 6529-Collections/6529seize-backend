@@ -9,7 +9,8 @@ import {
   ClaimBuildMessage,
   ClaimBuildPort,
   claimBuildsOf,
-  parseMainStageDecisionIds
+  parseMainStageDecisionIds,
+  resultFinalEventOf
 } from './waves-chain-index.claims';
 import { EMPTY_INDEX_STATE, WavesChainIndexDb } from './waves-chain-index.db';
 import { ChainEvent } from './waves-chain-index.events';
@@ -518,7 +519,7 @@ describe('the claim build catch-up', () => {
     expect(read).toHaveBeenCalledTimes(1);
   });
 
-  it("asks the database for decided results with no build on the index's network", async () => {
+  it("asks the database for the index's final, decided, native results with no build on its network", async () => {
     const calls: { sql: string; params: Record<string, unknown> }[] = [];
     const executor = {
       execute: async (sql: string, params: Record<string, unknown>) => {
@@ -533,13 +534,13 @@ describe('the claim build catch-up', () => {
     expect(calls).toEqual([]);
     await sqlDb.resultsWithoutClaimBuild([D1], 'net', 50);
     const sql = calls[0].sql.replace(/\s+/g, ' ');
-    expect(sql).toContain("e.kind = 'RESULT_FINAL'");
-    expect(sql).toContain('e.decision_id in (:decisionIds)');
+    expect(sql).toContain('from chain_results r');
+    expect(sql).toContain('r.decision_id in (:decisionIds)');
     expect(sql).toContain(
-      "json_unquote(json_extract(e.data, '$.status')) = 'decided'"
+      "r.stage = 'final' and r.status = 'decided' and r.origin = 'native'"
     );
     expect(sql).toContain('b.network = :network');
-    expect(sql).toContain('order by e.height, e.seq limit :limit');
+    expect(sql).toContain('order by r.result_time limit :limit');
     expect(calls[0].params).toEqual({
       decisionIds: [D1],
       network: 'net',
@@ -548,5 +549,146 @@ describe('the claim build catch-up', () => {
     calls.length = 0;
     await sqlDb.writeClaimBuilds([]);
     expect(calls).toEqual([]);
+  });
+});
+
+describe('a Main Stage result the event log never saw', () => {
+  const fresh = () => {
+    const clock = new FakeClock();
+    const chain = aWorld(clock);
+    const queue = new FakeQueue();
+    const db = new FakeIndexDb();
+    const index = new WavesChainIndex(
+      chain,
+      db.asDb(),
+      clock.now,
+      undefined,
+      queue
+    );
+    return { clock, chain, queue, db, index };
+  };
+
+  it('gets one build when it went final before the index first read the chain', async () => {
+    const { chain, queue, db, index } = fresh();
+    // Settled right after the import, before the index's first run: its
+    // block is at or below the height the log starts above.
+    chain.settle(D1, 3, [E(2), E(1)], 16);
+    const settled = chain.height;
+    await index.run({ budgetMs: BIG });
+    expect(db.events.filter((e) => e.kind === 'RESULT_FINAL')).toEqual([]);
+    await index.run({ budgetMs: BIG });
+    expect(queue.sent).toEqual([
+      {
+        drop_id: DROP(2),
+        chain: {
+          decision_id: D1,
+          occurrence: 16,
+          entry_id: E(2),
+          height: settled,
+          manifest_hash: manifest(E(2))
+        }
+      }
+    ]);
+    expect(queue.log).toEqual([`freeze ${DROP(2)}`, `send ${DROP(2)}`]);
+    for (let run = 0; run < 3; run++) await index.run({ budgetMs: BIG });
+    expect(queue.sent).toHaveLength(1);
+  });
+
+  it('gets none when the import carried it (6529.io counted it)', async () => {
+    const { chain, queue, db, index } = fresh();
+    chain.settle(D1, 3, [E(1)], 15, 'legacy');
+    for (let run = 0; run < 3; run++) await index.run({ budgetMs: BIG });
+    expect(queue.sent).toEqual([]);
+    expect(db.claims.size).toBe(0);
+  });
+
+  it('builds the same message whichever path finds it first', async () => {
+    const logged = fresh();
+    logged.chain.settle(D4, 1, [E(4)], 2); // first block after the first run
+    await logged.index.run({ budgetMs: BIG });
+    logged.chain.settle(D1, 3, [E(1)], 17);
+    await logged.index.run({ budgetMs: BIG });
+    const fromLog = logged.queue.sent;
+    const caught = fresh();
+    caught.chain.settle(D4, 1, [E(4)], 2);
+    caught.chain.settle(D1, 3, [E(1)], 17);
+    // Claim builds off while it was logged: the catch-up builds it later.
+    caught.queue.on = false;
+    await caught.index.run({ budgetMs: BIG });
+    await caught.index.run({ budgetMs: BIG });
+    caught.queue.on = true;
+    await caught.index.run({ budgetMs: BIG });
+    expect(fromLog).toHaveLength(1);
+    expect(caught.queue.sent).toEqual(fromLog);
+  });
+});
+
+describe('resultFinalEventOf', () => {
+  const entries = new Map([
+    [E(1), { legacyId: DROP(1), manifestHash: manifest(E(1)) }],
+    [E(2), { legacyId: null, manifestHash: manifest(E(2)) }],
+    [E(3), { legacyId: DROP(3), manifestHash: null }]
+  ]);
+  const result = (fields: Record<string, unknown> = {}) => ({
+    resultTime: 3,
+    occurrence: 7,
+    status: 'decided',
+    settledHeight: 40,
+    winners: [
+      { entryId: E(1).toUpperCase().replace('0X', '0x'), rank: 1, score: '9' },
+      { entryId: E(2), rank: 2, score: '5' }
+    ],
+    ...fields
+  });
+
+  it('gives the RESULT_FINAL the log writes: the block it went final in, the winners with legacy id and manifest', () => {
+    expect(resultFinalEventOf(D1, result(), entries)).toEqual(
+      expect.objectContaining({
+        height: 40,
+        kind: 'RESULT_FINAL',
+        decisionId: D1,
+        data: expect.objectContaining({
+          occurrence: 7,
+          status: 'decided',
+          winners: [
+            {
+              entryId: E(1),
+              rank: 1,
+              score: '9',
+              legacyId: DROP(1),
+              manifestHash: manifest(E(1))
+            },
+            {
+              entryId: E(2),
+              rank: 2,
+              score: '5',
+              legacyId: null,
+              manifestHash: manifest(E(2))
+            }
+          ]
+        })
+      })
+    );
+  });
+
+  it("waits while the rank-1 entry or its manifest isn't in the index, or no block is named", () => {
+    expect(
+      resultFinalEventOf(
+        D1,
+        result({ winners: [{ entryId: E(9), rank: 1 }] }),
+        entries
+      )
+    ).toBeNull();
+    expect(
+      resultFinalEventOf(
+        D1,
+        result({ winners: [{ entryId: E(3), rank: 1 }] }),
+        entries
+      )
+    ).toBeNull();
+    expect(
+      resultFinalEventOf(D1, result({ settledHeight: 0 }), entries)
+    ).toBeNull();
+    expect(resultFinalEventOf(D1, result({ winners: [] }), entries)).toBeNull();
   });
 });
