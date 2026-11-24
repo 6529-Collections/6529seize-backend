@@ -19,6 +19,7 @@ const clean: VerdictInput = {
   plannedSteps: [],
   plannedStepsHere: [],
   orderLeftOut: [],
+  unresolvedEdges: [],
   waitingSteps: [],
   staleNeeds: [],
   unownedRows: [],
@@ -112,6 +113,11 @@ const findings: [string, Partial<VerdictInput>, RegExp][] = [
     'plans of planned rows',
     { plannedRows: [plan({ seeded: 2, missing: 2 })] },
     /^1 plans of planned rows, seeded rows only a later change rebuilds; a final run fails on every plan: identities by identity\.mirror: seeded 2, missing 2, until 2026-12-04 \(the derived ids\)$/
+  ],
+  [
+    'unresolved cross-area edges',
+    { unresolvedEdges: ['waves.chain-mirror before subs.identity'] },
+    /^1 unresolved cross-area edges: order edges to another area's step that isn't in this tree, which a final run fails on: waves\.chain-mirror before subs\.identity$/
   ],
   [
     'steps marked planned whose code is here',

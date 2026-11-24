@@ -882,7 +882,9 @@ describe('rebuild check, end to end', () => {
     const writer: RebuildStep = {
       ...step('self-check.later-writer', 'rebuildTeam', ['distribution_photo']),
       run: { module: 'src/rebuild/run/no-such-steps', exportName: 'run' },
-      origin: 'planned'
+      origin: 'planned',
+      // A step of another area this run doesn't carry.
+      before: ['subs.identity']
     };
     const reader = (id: string): RebuildStep =>
       step(id, 'rebuildTeam', ['team'], ['distribution_photo']);
@@ -900,6 +902,12 @@ describe('rebuild check, end to end', () => {
       expect(report.notes).toContain(leftOut);
       expect(report.notes.join(' ')).toContain(
         '1 planned steps were skipped because their code is not in this tree'
+      );
+      expect(report.unresolvedEdges).toEqual([
+        'self-check.later-writer before subs.identity'
+      ]);
+      expect(report.notes).toContain(
+        "1 unresolved cross-area edges: order edges to another area's step that isn't in this tree, which a final run fails on: self-check.later-writer before subs.identity"
       );
       // With a plan that matches no seeded row, which a final run fails on
       // too.
@@ -924,6 +932,9 @@ describe('rebuild check, end to end', () => {
       expect(final.report.notes).toContain(leftOut);
       expect(final.report.failures.join(' ')).toContain(
         '1 planned steps were skipped because their code is not in this tree'
+      );
+      expect(final.report.failures.join(' ')).toContain(
+        '1 unresolved cross-area edges'
       );
       expect(final.report.failures).toContain(
         '1 plans of planned rows, seeded rows only a later change rebuilds; a final run fails on every plan: team by self-check.reads-later-final: seeded 0, missing 0, until 9999-12-31 (none)'

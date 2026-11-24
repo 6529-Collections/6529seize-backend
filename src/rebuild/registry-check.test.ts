@@ -670,6 +670,64 @@ describe('checkRegistry', () => {
     ]);
   });
 
+  describe('order edges to another area', () => {
+    const check = (writer: Partial<RebuildStep>, readers: RebuildStep[] = []) =>
+      checkRegistry({
+        manifests: [
+          area(
+            'waves',
+            { waves: index() },
+            {
+              rebuilders: [
+                step('waves.mirror', { writes: ['waves'], ...writer })
+              ]
+            }
+          ),
+          area('subs', { subs: index() }, { rebuilders: readers })
+        ],
+        codeTables: code('waves', 'subs')
+      });
+
+    it('notes an edge to a step of another known area that is not here', () => {
+      const result = check({ before: ['subs.identity'], after: ['subs.seed'] });
+      expect(result.problems).toEqual([]);
+      expect(result.crossAreaEdges).toEqual([
+        { step: 'waves.mirror', field: 'after', id: 'subs.seed' },
+        { step: 'waves.mirror', field: 'before', id: 'subs.identity' }
+      ]);
+    });
+
+    it("still fails an unknown id of the step's own area, or of no area", () => {
+      const result = check({ before: ['waves.ghost', 'sbus.identity'] });
+      expect(result.problems.map((p) => p.detail)).toEqual([
+        'a rebuilder waits on unknown step waves.ghost',
+        'a rebuilder waits on unknown step sbus.identity'
+      ]);
+      expect(result.crossAreaEdges).toEqual([]);
+    });
+
+    it('checks a resolved edge in full', () => {
+      const reader = step('subs.identity', {
+        writes: ['subs'],
+        reads: ['waves']
+      });
+      // The writer's before orders the reader after it: no problem.
+      expect(check({ before: ['subs.identity'] }, [reader]).problems).toEqual(
+        []
+      );
+      // Without it, the read of a table the writer rebuilds fails.
+      expect(check({}, [reader]).problems.map((p) => p.kind)).toEqual([
+        'BAD_ORDER'
+      ]);
+      // And an edge both ways is a cycle.
+      expect(
+        check({ before: ['subs.identity'] }, [
+          { ...reader, before: ['waves.mirror'] }
+        ]).problems.map((p) => p.detail)
+      ).toEqual(['rebuilders wait on each other: waves.mirror, subs.identity']);
+    });
+  });
+
   it('refuses an id a seed and a rebuilder share', () => {
     expect(
       checkRegistry({

@@ -1782,6 +1782,7 @@ class RebuildRun {
       plannedTables: (this.registry?.plannedAbsent ?? []).length,
       plannedSteps: this.plannedSteps,
       plannedStepsHere: this.plannedStepsHere(),
+      unresolvedEdges: this.unresolvedEdges(),
       orderLeftOut: (this.registry?.orderLeftOut ?? []).map(
         (entry) => `${entry.step} (${entry.tables.join(', ')})`
       ),
@@ -1985,6 +1986,13 @@ class RebuildRun {
       });
   }
 
+  /** Unresolved cross-area order edges, as the verdict and report list them. */
+  private unresolvedEdges(): string[] {
+    return (this.registry?.crossAreaEdges ?? []).map(
+      (edge) => `${edge.step} ${edge.field} ${edge.id}`
+    );
+  }
+
   /** Steps of this run marked planned whose code is in this tree. */
   private plannedStepsHere(): string[] {
     return this.scopeManifests
@@ -2086,6 +2094,7 @@ class RebuildRun {
         exemptUntil: this.exemptTablesUntil,
         plannedRows: this.plannedRowsFound()
       },
+      unresolvedEdges: this.unresolvedEdges(),
       failures: this.failures,
       notes: this.notes
     };

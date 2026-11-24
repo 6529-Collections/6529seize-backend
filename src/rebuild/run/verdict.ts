@@ -84,6 +84,11 @@ export interface VerdictInput {
    * tables it writes: the order checks left those writes out.
    */
   readonly orderLeftOut: readonly string[];
+  /**
+   * Order edges to another area's step this tree doesn't have, each as
+   * "<step> <field> <id>".
+   */
+  readonly unresolvedEdges: readonly string[];
   /** Steps skipped as planned, one entry per table they need and lack. */
   readonly waitingSteps: readonly WaitingStep[];
   /** Needs on tables the schema already has, each naming its step. */
@@ -207,6 +212,11 @@ export function judge(input: VerdictInput): Verdict {
   if (input.plannedStepsHere.length) {
     finalOnly(
       `${input.plannedStepsHere.length} steps are marked planned though their code is in this tree; drop origin 'planned': ${input.plannedStepsHere.join(', ')}`
+    );
+  }
+  if (input.unresolvedEdges.length) {
+    finalOnly(
+      `${input.unresolvedEdges.length} unresolved cross-area edges: order edges to another area's step that isn't in this tree, which a final run fails on: ${input.unresolvedEdges.join('; ')}`
     );
   }
   if (input.orderLeftOut.length) {

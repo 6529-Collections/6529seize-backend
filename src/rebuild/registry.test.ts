@@ -21,6 +21,12 @@ describe('rebuild registry', () => {
     expect(result.problems).toEqual([]);
   });
 
+  it('has the unresolved cross-area order edges listed here', () => {
+    // A branch that adds one lists it here: the edge resolves once the
+    // other area's step is in the tree.
+    expect(result.crossAreaEdges).toEqual([]);
+  });
+
   it('leaves out of the order checks only the planned rebuilders listed here', () => {
     // A module that lands, moves or goes changes this list: the order
     // checks then cover its writes.

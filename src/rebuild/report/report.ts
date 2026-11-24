@@ -147,6 +147,11 @@ export interface RunReport {
       plans: PlannedRowsPlan[];
     }[];
   };
+  /**
+   * Order edges to another area's step this tree doesn't have, each as
+   * "<step> <field> <id>".
+   */
+  readonly unresolvedEdges: string[];
   readonly failures: string[];
   readonly notes: string[];
 }
@@ -194,7 +199,7 @@ export function headline(report: RunReport): string[] {
       ? `probes ${report.probes.calls}: differ ${report.probes.differences.length}, unproven ${report.probes.unproven.length}; INDEX tables no probe read ${report.probes.unreadTables.length}`
       : `probes ${report.probes.calls}: not compared: the run stopped before pass B (${report.probes.stoppedBefore})`,
     `GET routes ${report.routes.documented}: probed ${report.routes.probed}, waived ${report.routes.waived}, open ${report.routes.open.length}`,
-    `steps ${report.steps.length}: failed ${failed}; source violations ${report.violations.length}; provisional sources ${provisional.length ? provisional.join(', ') : 'none'}`,
+    `steps ${report.steps.length}: failed ${failed}; source violations ${report.violations.length}; provisional sources ${provisional.length ? provisional.join(', ') : 'none'}; unresolved cross-area edges ${report.unresolvedEdges.length}`,
     // Seen on every run, not left in the body.
     ...(overdue ? [overdue] : [])
   ];
@@ -359,6 +364,10 @@ export function renderMarkdown(report: RunReport): string {
       ])
     ),
     ...section(
+      'Unresolved cross-area order edges',
+      report.unresolvedEdges.map((edge) => `- ${edge}`)
+    ),
+    ...section(
       'Owned columns left out: their owner does not run here',
       report.tables.ownedColumnsLeftOut.map(
         (o) => `- ${o.table}.${o.column}: ${o.owner}, ${o.why}`
@@ -387,7 +396,7 @@ export function renderMarkdown(report: RunReport): string {
 /** One line per run for the status file. */
 export function statusLine(report: RunReport, runDir: string): string {
   const overdue = overdueLine(report.tables.exemptUntil, plansOf(report));
-  return `- ${report.finishedAt} ${report.scope}: ${report.verdict}, rebuilt ${report.tables.rebuilt.length}, pending ${report.pending.length}, ${report.probes.stoppedBefore === null ? `probe differences ${report.probes.differences.length}` : 'probes not compared'}, failures ${report.failures.length}${overdue ? `; ${overdue}` : ''}. ${runDir}`;
+  return `- ${report.finishedAt} ${report.scope}: ${report.verdict}, rebuilt ${report.tables.rebuilt.length}, pending ${report.pending.length}, ${report.probes.stoppedBefore === null ? `probe differences ${report.probes.differences.length}` : 'probes not compared'}, failures ${report.failures.length}${overdue ? `; ${overdue}` : ''}${report.unresolvedEdges.length ? `; unresolved cross-area edges ${report.unresolvedEdges.length}` : ''}. ${runDir}`;
 }
 
 export function writeReport(

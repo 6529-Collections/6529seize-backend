@@ -71,6 +71,18 @@ export interface RegistryResult {
    * is here.
    */
   readonly orderLeftOut: { step: string; tables: string[] }[];
+  /**
+   * `after` and `before` ids naming a step of another area that this tree
+   * doesn't have yet: unresolved, noted, and a final run fails on them.
+   */
+  readonly crossAreaEdges: CrossAreaEdge[];
+}
+
+/** An order edge from a step to another area's step that isn't here. */
+export interface CrossAreaEdge {
+  readonly step: string;
+  readonly field: 'after' | 'before';
+  readonly id: string;
 }
 
 export interface RegistryInput {
@@ -599,10 +611,21 @@ function sharedIdProblems(
     );
 }
 
+/**
+ * Duplicate ids, unknown ids in `after` and `before`, and cycles among
+ * one kind of step. An unknown id whose prefix (up to its first dot) is
+ * another known area than the declaring step's is a cross-area edge to a
+ * step a later branch brings: it goes to `edges`, not to the problems.
+ * An unknown id of the step's own area, or with a prefix that names no
+ * area (a misspelled area), fails.
+ */
 function orderProblems(
   label: string,
-  steps: readonly RebuildStep[]
+  manifests: readonly AreaManifest[],
+  stepsOf: (manifest: AreaManifest) => readonly RebuildStep[],
+  edges: CrossAreaEdge[]
 ): RegistryProblem[] {
+  const steps = manifests.flatMap(stepsOf);
   const problems: RegistryProblem[] = [];
   const seen = new Set<string>();
   for (const step of steps) {
@@ -614,13 +637,31 @@ function orderProblems(
     }
     seen.add(step.id);
   }
-  const { unknown, cyclic } = orderSteps(steps);
-  for (const id of unknown) {
+  const known = new Set(steps.map((step) => step.id));
+  const areas = new Set(manifests.map((manifest) => manifest.area));
+  const unknown = new Set<string>();
+  for (const manifest of manifests) {
+    for (const step of stepsOf(manifest)) {
+      for (const field of ['after', 'before'] as const) {
+        for (const id of step[field] ?? []) {
+          if (known.has(id)) continue;
+          const area = id.includes('.') ? id.slice(0, id.indexOf('.')) : '';
+          if (area && area !== manifest.area && areas.has(area)) {
+            edges.push({ step: step.id, field, id });
+          } else {
+            unknown.add(id);
+          }
+        }
+      }
+    }
+  }
+  for (const id of Array.from(unknown)) {
     problems.push({
       kind: 'BAD_ORDER',
       detail: `a ${label} waits on unknown step ${id}`
     });
   }
+  const { cyclic } = orderSteps(steps);
   if (cyclic.length) {
     problems.push({
       kind: 'BAD_ORDER',
@@ -890,6 +931,7 @@ export function checkRegistry(input: RegistryInput): RegistryResult {
     (step) => step.origin === 'planned' && !codeHere(step)
   );
   const leftOut = new Set(notHere.map((step) => step.id));
+  const crossAreaEdges: CrossAreaEdge[] = [];
   const problems = [
     ...tableProblems(input),
     ...liveProblems(input),
@@ -913,14 +955,21 @@ export function checkRegistry(input: RegistryInput): RegistryResult {
     ]),
     ...orderProblems(
       'seed',
-      input.manifests.flatMap((manifest) => manifest.seeds)
+      input.manifests,
+      (manifest) => manifest.seeds,
+      crossAreaEdges
     ),
     ...lastProblems(input.manifests),
     ...readOrderProblems(rebuilders, leftOut),
     ...columnOrderProblems(rebuilders, leftOut),
     // Unknown ids in `after` and `before` fail whether or not the step's
     // code is here.
-    ...orderProblems('rebuilder', rebuilders),
+    ...orderProblems(
+      'rebuilder',
+      input.manifests,
+      (manifest) => manifest.rebuilders,
+      crossAreaEdges
+    ),
     ...sharedIdProblems(input.manifests),
     ...writerProblems(input.manifests)
   ];
@@ -938,6 +987,7 @@ export function checkRegistry(input: RegistryInput): RegistryResult {
     ),
     orderLeftOut: notHere
       .map((step) => ({ step: step.id, tables: writtenTables(step) }))
-      .filter((entry) => entry.tables.length)
+      .filter((entry) => entry.tables.length),
+    crossAreaEdges
   };
 }

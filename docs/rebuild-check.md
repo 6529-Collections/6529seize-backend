@@ -252,7 +252,14 @@ export const mintManifest: AreaManifest = {
     without editing that area's manifest. The registry refuses an unknown
     id (a planned step counts as known), a cycle across `before` and
     `after`, and a last seed's `before` onto a seed that isn't last; a
-    seed may run before a last one.
+    seed may run before a last one. An id whose prefix (up to its first
+    dot) is another known area than the step's own, for a step this tree
+    doesn't have yet, is an unresolved cross-area edge rather than an
+    unknown id: the run notes it, the headline and the status line count
+    it, and a final run fails on it. The step that writes the table
+    declares the edge; once the other area's step is in the tree, the
+    edge is checked like any other. An unknown id of the step's own area,
+    or with a prefix that names no area, still fails.
 - `probes`: API requests whose answers must match before and after. `ignore`
   and `unordered` paths each need a reason, which the registry checks. A
   probe with `origin: 'planned'` and `needs: [tables]` reads tables a later

@@ -117,6 +117,7 @@ function report(parts: Partial<RunReport> = {}): RunReport {
       exemptUntil: [],
       plannedRows: []
     },
+    unresolvedEdges: [],
     failures: [],
     notes: [],
     ...parts
@@ -130,8 +131,30 @@ describe('rebuild report', () => {
       'tables 3: index 2, ephemeral 1, provider 0, schema 0, view 0, retired 0, exempt 0; rebuilt 1, pending 1, planned 1, differing 0',
       'probes 2: differ 0, unproven 0; INDEX tables no probe read 0',
       'GET routes 3: probed 1, waived 1, open 1',
-      'steps 1: failed 0; source violations 0; provisional sources relays'
+      'steps 1: failed 0; source violations 0; provisional sources relays; unresolved cross-area edges 0'
     ]);
+  });
+
+  it('counts and lists unresolved cross-area edges', () => {
+    const edged = report({
+      unresolvedEdges: [
+        'waves.chain-mirror before subs.identity',
+        'waves.chain-mirror before mint.log'
+      ]
+    });
+    expect(headline(edged)[4]).toMatch(/; unresolved cross-area edges 2$/);
+    expect(statusLine(edged, 'runs/x')).toContain(
+      '; unresolved cross-area edges 2. runs/x'
+    );
+    expect(statusLine(report(), 'runs/x')).not.toContain('cross-area');
+    expect(renderMarkdown(edged)).toContain(
+      [
+        '## Unresolved cross-area order edges',
+        '',
+        '- waves.chain-mirror before subs.identity',
+        '- waves.chain-mirror before mint.log'
+      ].join('\n')
+    );
   });
 
   it('says the answers were not compared when the run stopped before pass B', () => {
