@@ -43,9 +43,11 @@ const HOLDS_STEPS = 'src/rebuild/steps/waves-moderation-holds.steps';
  * The chain mirror's rebuild (src/waves-chain-mirror): it fills 6529.io's
  * wave, group and competition rows from the chain index, frozen, at the
  * chain's time, with no outbox, claim, follow, notification, activity or
- * socket effects. Planned until its code is in this tree. It also needs
- * the identity mirror's principal map (identity_chain_principals), which
- * no rebuilder writes yet; its step goes in `after` when one does.
+ * socket effects. It reads the chain through the gateway and each document
+ * from the capture's files, by CID. Planned until its code is in this
+ * tree. It also needs the identity mirror's principal map
+ * (identity_chain_principals), which the identity rebuilder writes on its
+ * branch; that step goes in `after` when it is in this tree.
  */
 const MIRROR_STEPS = 'src/waves-chain-mirror/waves-chain-mirror.rebuild';
 // The drop tables (drops, drops_parts, drop_medias, drops_metadatas) are
@@ -633,7 +635,8 @@ export const wavesManifest: AreaManifest = {
         'address_consolidation_keys'
       ],
       after: ['waves.chain-index'],
-      sources: ['gateway'],
+      // The chain through the gateway; the documents from the capture's files.
+      sources: ['gateway', 'files'],
       timeoutMinutes: 30,
       origin: 'planned'
     },
