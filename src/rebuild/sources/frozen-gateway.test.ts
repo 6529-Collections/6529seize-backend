@@ -430,7 +430,9 @@ describe('frozen gateway recordings', () => {
     // requests share one key.
     for (const [p, why] of [
       ['/v1/balance?who=1?x=2', 'its path has more than one ?'],
-      ['/v1/balance?who=1&who=2', 'its query repeats a name']
+      ['/v1/balance?who=1&who=2', 'its query repeats a name'],
+      // Names are compared decoded, as the application reads them.
+      ['/v1/balance?wh%6F=2&who=1', 'its query repeats a name']
     ]) {
       expect(
         frozenHeaderProblems(header, [
@@ -864,6 +866,38 @@ describe('frozen gateway recordings', () => {
     ).toEqual([
       "snapshot mark: the archive doesn't match its hash in the header"
     ]);
+  });
+
+  it('quotes no part of a long copy path when the node exits', async () => {
+    // A copy path long enough that the quoted tail would cut it in half.
+    const folder = path.join(root, `long-${'w'.repeat(170)}`, 'data');
+    unpackSnapshot(dir, header.frozen[0], folder);
+    const failing = path.join(root, 'failing.cjs');
+    fs.writeFileSync(
+      failing,
+      [
+        'const args = process.argv.slice(2);',
+        "if (args.includes('--help')) { console.log('run --api-frozen-snapshot'); process.exit(0); }",
+        "const dir = args[args.indexOf('--data-dir') + 1];",
+        "console.error('could not open ' + dir + ' for the copy ' + 'x'.repeat(250));",
+        'process.exit(1);'
+      ].join('\n')
+    );
+    const error = await startFrozenNode({
+      validator: { file: failing, command: [process.execPath, failing] },
+      folder,
+      port: await freePort(),
+      tmpDir: path.join(root, 'tmp'),
+      logFile: path.join(root, 'node.log'),
+      lockDir,
+      readyTimeoutMs: 20_000
+    }).catch((e: Error) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(
+      /^the frozen node exited: .*x{50}/
+    );
+    expect((error as Error).message).not.toContain('w'.repeat(10));
+    expect(fs.existsSync(lockDir)).toBe(false);
   });
 
   it('refuses a node that names a peer, binds elsewhere, or would run beside another', async () => {

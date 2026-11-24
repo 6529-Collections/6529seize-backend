@@ -279,7 +279,15 @@ function lineProblems(
     const names = (query ?? '')
       .split('&')
       .filter(Boolean)
-      .map((param) => param.split('=')[0]);
+      .map((param) => param.split('=')[0])
+      // The application reads names decoded: wh%6F is who.
+      .map((name) => {
+        try {
+          return decodeURIComponent(name);
+        } catch {
+          return name;
+        }
+      });
     if (more.length) {
       problems.push(
         `${at} (${line.method} ${line.path}): its path has more than one ?`
@@ -631,6 +639,12 @@ export async function startFrozenNode(options: {
   readonly lockDir?: string;
   readonly readyTimeoutMs?: number;
   readonly killTimeoutMs?: number;
+  /**
+   * Applied to the node's whole output before the tail an error quotes,
+   * so a long path can't survive cut in half. By default the copy and
+   * its temp folder become labels.
+   */
+  readonly redact?: (text: string) => string;
 }): Promise<FrozenNode> {
   const configFile = path.join(options.folder, 'config.toml');
   if (!fs.existsSync(configFile)) {
@@ -733,10 +747,17 @@ export async function startFrozenNode(options: {
       // Our own child, by its own handle: never a process found by name.
       if (!closed) {
         node.kill('SIGTERM');
-        const timeout = new Promise<'timeout'>((resolve) =>
-          setTimeout(() => resolve('timeout'), options.killTimeoutMs ?? 10_000)
-        );
-        if ((await Promise.race([done, timeout])) === 'timeout') {
+        let timer: NodeJS.Timeout | undefined;
+        const timeout = new Promise<'timeout'>((resolve) => {
+          timer = setTimeout(
+            () => resolve('timeout'),
+            options.killTimeoutMs ?? 10_000
+          );
+        });
+        const first = await Promise.race([done, timeout]);
+        // A node that closed in time leaves no timer behind.
+        clearTimeout(timer);
+        if (first === 'timeout') {
           node.kill('SIGKILL');
           await done;
         }
@@ -751,7 +772,16 @@ export async function startFrozenNode(options: {
   try {
     for (;;) {
       if (closed) {
-        throw new Error(`the frozen node exited: ${output.trim().slice(-300)}`);
+        const redact =
+          options.redact ??
+          ((text: string) =>
+            redactPaths(text, {
+              '<copy>': options.folder,
+              '<temp>': options.tmpDir
+            }));
+        throw new Error(
+          `the frozen node exited: ${redact(output.trim()).slice(-300)}`
+        );
       }
       if (/serves .* on /.test(output)) {
         if (!serving.test(output)) {
@@ -1046,7 +1076,8 @@ async function reServe(
         port,
         tmpDir: path.join(base, 'tmp'),
         logFile: path.join(base, 'frozen-node.log'),
-        lockDir: options.lockDir
+        lockDir: options.lockDir,
+        redact
       });
     } catch (error) {
       return {
