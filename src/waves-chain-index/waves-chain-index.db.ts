@@ -1203,12 +1203,14 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
   }
 
   /**
-   * Final, decided results counted on the chain (origin native: not one
-   * the import carried) of these decisions that have no claim build on
+   * Final, decided results counted on the chain (origin native, in the
+   * column and in the chain's own answer: not one the import carried) of
+   * these decisions, with a rank-1 winner, that have no claim build on
    * `network`, oldest first, at most `limit`. Read from the index's own
    * rows, so a result the event log never saw is found too: one that went
-   * final before the log started, or while claim builds were off or the
-   * setting named other decisions.
+   * final before the log started, or in a feed gap, or while claim builds
+   * were off or the setting named other decisions. A decided result with
+   * no winners (no active entries) is never read: it has nothing to build.
    */
   async resultsWithoutClaimBuild(
     decisionIds: readonly string[],
@@ -1220,6 +1222,8 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
       `select r.decision_id, r.data from ${CHAIN_RESULTS_TABLE} r
         where r.decision_id in (:decisionIds)
           and r.stage = 'final' and r.status = 'decided' and r.origin = 'native'
+          and json_unquote(json_extract(r.data, '$.origin')) = 'native'
+          and json_contains(json_extract(r.data, '$.winners[*].rank'), '1')
           and not exists (
             select 1 from ${CHAIN_CLAIM_BUILDS_TABLE} b
              where b.network = :network

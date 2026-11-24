@@ -506,12 +506,14 @@ export class ChainEventEntity {
 }
 
 /**
- * The claim builds the event log called for (waves-chain-index.claims.ts):
- * one a (network, decision, occurrence), written with the events of the
- * block whose Result went final, sent to the claims-builder queue after
- * that commits and retried each run until a send succeeds. A row is never
- * written twice, so a replayed or rebuilt log sends nothing again. Not
- * emptied with the index.
+ * The Main Stage claim builds (waves-chain-index.claims.ts): one a
+ * (network, decision, occurrence), written by the event log with the
+ * events of the block whose Result went final, or by the claim build
+ * catch-up from the index's result rows for a result the log never saw.
+ * Sent to the claims-builder queue after that commits and retried each run
+ * until a send succeeds. A row is never written twice, so a replayed or
+ * rebuilt log, or the catch-up, sends nothing again. Not emptied with the
+ * index.
  */
 @Entity(CHAIN_CLAIM_BUILDS_TABLE)
 @Index(['status', 'height'])

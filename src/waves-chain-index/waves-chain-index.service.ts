@@ -15,7 +15,8 @@ import {
   claimBuildQueue,
   ClaimBuildPort,
   claimBuildsOf,
-  resultFinalEventOf
+  resultFinalEventOf,
+  resultWaitReason
 } from './waves-chain-index.claims';
 import {
   EMPTY_INDEX_STATE,
@@ -104,7 +105,7 @@ const BATCH_READS = 100;
 const READ_CONCURRENCY = 8;
 /** Claim builds a run sends at most. */
 const CLAIM_SENDS_PER_RUN = 20;
-/** Logged Main Stage results a run catches up claim builds for, at most. */
+/** Main Stage results without a claim build a run catches up, at most. */
 export const CLAIM_CATCH_UP_PER_RUN = 50;
 /** A feed read answered `gone` is asked again this many times first. */
 const GONE_RETRIES = 2;
@@ -254,12 +255,34 @@ export class WavesChainIndex {
     private readonly claims: ClaimBuildPort = claimBuildQueue
   ) {}
 
+  /** The Main Stage ids last logged as in force, so each is logged once. */
+  private mainStageNoted: string | null = null;
+  /** Results logged as waiting for a claim build, each logged once. */
+  private readonly waitingNoted = new Set<string>();
+
+  /** Logs the Main Stage decisions claim builds are for, once a change. */
+  private noteMainStage() {
+    const on = this.claims.enabled();
+    const ids = on ? Array.from(this.claims.mainStage()).sort() : [];
+    const note = on ? ids.join(',') : 'off';
+    if (note === this.mainStageNoted) return;
+    this.mainStageNoted = note;
+    logger.info(
+      !on
+        ? '[MAIN STAGE CLAIM BUILDS OFF]'
+        : ids.length
+          ? `[MAIN STAGE CLAIM BUILDS] for MAIN_STAGE_DECISION_IDS ${ids.join(', ')}`
+          : '[MAIN STAGE CLAIM BUILDS] MAIN_STAGE_DECISION_IDS names none: no claim builds'
+    );
+  }
+
   async run({
     budgetMs
   }: {
     budgetMs: number;
   }): Promise<WavesChainIndexReport> {
     const deadline = this.now() + budgetMs;
+    this.noteMainStage();
     let state = await this.db.loadState();
     const report: WavesChainIndexReport = {
       mode: 'idle',
@@ -328,7 +351,14 @@ export class WavesChainIndex {
       network: head.network ?? state.network
     });
     try {
-      await this.catchUpClaimBuilds(state, report);
+      try {
+        await this.catchUpClaimBuilds(state, report);
+      } catch (error) {
+        // A side job: the feed and the full read go on without it.
+        logger.error(
+          `[CLAIM BUILD CATCH-UP FAILED] ${error instanceof Error ? error.message : String(error)}; the index goes on, and the next run tries again`
+        );
+      }
       const fullDue =
         state.lastFullAt !== null &&
         this.now() - state.lastFullAt > this.fullEveryMs;
@@ -388,10 +418,11 @@ export class WavesChainIndex {
             ? Array.from(this.claims.mainStage())
             : [];
           if (mainStage.length) {
-            // A Main Stage result that went final in the gap has no event,
-            // so no claim build: a person checks (an error alarms).
-            logger.error(
-              `[CLAIM BUILD GAP] the event log lacks heights ${from} to ${height}: a Main Stage result that went final there got no claim build. Check the results of ${mainStage.join(', ')} (GET /v1/decisions/{id}/results) and send any missing build by hand.`
+            // A Main Stage result that went final in the gap has no event.
+            // The full read reads it again, and the catch-up builds it: a
+            // warning, not an error, as nobody need act unless it hasn't.
+            logger.warn(
+              `[CLAIM BUILD GAP] the event log lacks heights ${from} to ${height}. A Main Stage result of ${mainStage.join(', ')} that went final there has no event; full read ${current.generation + 1} reads it again, and the claim build catch-up builds it on the run after (once a network, decision and occurrence, as any other). Send nothing by hand. Only if chain_claim_builds still has no row for such a result an hour after [FULL READ ${current.generation + 1} DONE], and no [CLAIM BUILD WAITING] or [CLAIM BUILD CATCH-UP FAILED] says why, look into it.`
             );
           }
         }
@@ -688,7 +719,9 @@ export class WavesChainIndex {
    * (one read, at most CLAIM_CATCH_UP_PER_RUN), and writes their builds as
    * the log would have, with the same key, so none is written twice; the
    * run then sends them as any other, the collaboration frozen first. A
-   * result whose rank-1 entry the index doesn't hold yet waits.
+   * result whose rank-1 entry the index doesn't hold yet waits, logged once
+   * as [CLAIM BUILD WAITING]. A decided result with no winners isn't read.
+   * A failure here is logged and the run goes on (see run).
    */
   private async catchUpClaimBuilds(
     state: WavesChainIndexState,
@@ -712,18 +745,27 @@ export class WavesChainIndex {
       .map((winner) => String(winner?.entryId ?? '').toLowerCase())
       .filter((id) => id.length > 0);
     const { entries } = await this.db.eventObjects({ entries: winnerIds });
-    const events = results
-      .map(({ decisionId, data }) =>
-        resultFinalEventOf(decisionId, data, entries)
-      )
-      .filter((event): event is ChainEvent => event !== null);
+    const events: ChainEvent[] = [];
+    for (const { decisionId, data } of results) {
+      const event = resultFinalEventOf(decisionId, data, entries);
+      if (event) {
+        events.push(event);
+        continue;
+      }
+      const key = `${decisionId}:${String(data.occurrence)}`;
+      if (this.waitingNoted.has(key)) continue;
+      this.waitingNoted.add(key);
+      logger.warn(
+        `[CLAIM BUILD WAITING] decision ${decisionId} occurrence ${String(data.occurrence)}: ${resultWaitReason(data, entries)}. It is built once the index holds it; each run looks again`
+      );
+    }
     const builds = claimBuildsOf(events, mainStage, state.network);
     if (!builds.length) return;
     await this.db.writeClaimBuilds(builds);
     const queued = builds.filter((build) => build.status === 'pending');
     report.claimBuilds.queued += queued.length;
     logger.info(
-      `[CLAIM BUILDS CAUGHT UP] ${builds.length} for logged results (${queued.length} to send): ${builds
+      `[CLAIM BUILDS CAUGHT UP] ${builds.length} from the index's results (${queued.length} to send): ${builds
         .map((build) => `${build.decisionId} occurrence ${build.occurrence}`)
         .join(', ')}`
     );

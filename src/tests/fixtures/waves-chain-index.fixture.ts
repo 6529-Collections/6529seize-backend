@@ -1096,15 +1096,17 @@ export class FakeChain implements WavesChainApi {
     resultTime: number,
     winners: string[],
     occurrence = 1,
-    origin: 'native' | 'legacy' = 'native'
+    // null: the answer names no origin.
+    origin: 'native' | 'legacy' | null = 'native',
+    status = winners.length ? 'decided' : 'skipped'
   ) {
     const result: ChainObject = {
       id: decisionId,
       resultTime,
       occurrence,
-      status: winners.length ? 'decided' : 'skipped',
+      status,
       stage: 'final',
-      origin,
+      ...(origin === null ? {} : { origin }),
       // The block it goes final in, as the API gives it.
       settledHeight: this.nextHeight,
       winners: winners.map((entryId, i) => ({
@@ -1739,7 +1741,10 @@ export class FakeIndexDb {
   /** chain_claim_builds, by `network|decision|occurrence`. */
   readonly claims = new Map<string, FakeClaimBuild>();
 
-  /** As the SQL: final, decided, native results of these with no build. */
+  /**
+   * As the SQL: final, decided, native results of these (native in the
+   * chain's answer too) with a rank-1 winner and no build.
+   */
   async resultsWithoutClaimBuild(
     decisionIds: readonly string[],
     network: string,
@@ -1753,6 +1758,9 @@ export class FakeIndexDb {
           row.stage === 'final' &&
           row.status === 'decided' &&
           row.origin === 'native' &&
+          data.origin === 'native' &&
+          Array.isArray(data.winners) &&
+          (data.winners as ChainObject[]).some((winner) => winner.rank === 1) &&
           !this.claims.has(`${network}|${row.decision_id}|${data.occurrence}`)
         );
       })

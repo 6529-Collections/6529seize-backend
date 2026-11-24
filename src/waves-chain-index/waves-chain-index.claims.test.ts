@@ -10,7 +10,8 @@ import {
   ClaimBuildPort,
   claimBuildsOf,
   parseMainStageDecisionIds,
-  resultFinalEventOf
+  resultFinalEventOf,
+  resultWaitReason
 } from './waves-chain-index.claims';
 import { EMPTY_INDEX_STATE, WavesChainIndexDb } from './waves-chain-index.db';
 import { ChainEvent } from './waves-chain-index.events';
@@ -353,31 +354,50 @@ describe('Main Stage claim builds', () => {
     expect(plain.log).toEqual([`send ${DROP(1)}`]);
   });
 
-  it('raises an alarm when a feed gap may hide a Main Stage result', async () => {
+  it('warns of a feed gap that may hide a Main Stage result, and the catch-up builds it once', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn');
     const error = jest.spyOn(Logger.prototype, 'error');
+    const gapWarnings = () =>
+      warn.mock.calls
+        .map(([message]) => String(message))
+        .filter((message) => message.startsWith('[CLAIM BUILD GAP]'));
     // Settled where the feed no longer reaches: the log gets a GAP, no event.
     chain.settle(D1, 3, [E(2)], 3);
+    const settled = chain.height;
     chain.goneBelow = chain.height + 1;
     const report = await index.run({ budgetMs: BIG });
     expect(report.restartedFull).toBe('feed_gone');
     expect(queue.sent).toEqual([]);
-    expect(
-      error.mock.calls.filter(([message]) =>
-        String(message).startsWith('[CLAIM BUILD GAP]')
-      )
-    ).toHaveLength(1);
-    expect(String(error.mock.calls[0][0])).toContain(D1);
-    error.mockClear();
+    expect(gapWarnings()).toHaveLength(1);
+    expect(gapWarnings()[0]).toContain(D1);
+    expect(gapWarnings()[0]).toContain('Send nothing by hand');
+    expect(gapWarnings()[0]).toContain(
+      `[FULL READ ${report.full.generation} DONE]`
+    );
+    expect(gapWarnings()[0]).not.toContain('send any missing build by hand');
+    // Not an error: nobody need act, the catch-up builds it.
+    expect(error).not.toHaveBeenCalled();
+    for (let run = 0; run < 4; run++) await index.run({ budgetMs: BIG });
+    expect(queue.sent).toEqual([
+      {
+        drop_id: DROP(2),
+        chain: {
+          decision_id: D1,
+          occurrence: 3,
+          entry_id: E(2),
+          height: settled,
+          manifest_hash: manifest(E(2))
+        }
+      }
+    ]);
+    warn.mockClear();
     // Off, or with no Main Stage listed, a gap is only the GAP event.
     queue.ids = new Set();
     chain.goneBelow = chain.height + 1;
     chain.vote(E(1), V(1), 6);
     await index.run({ budgetMs: BIG });
-    expect(
-      error.mock.calls.filter(([message]) =>
-        String(message).startsWith('[CLAIM BUILD GAP]')
-      )
-    ).toHaveLength(0);
+    expect(gapWarnings()).toHaveLength(0);
+    warn.mockRestore();
     error.mockRestore();
   });
 });
@@ -497,7 +517,7 @@ describe('parseMainStageDecisionIds', () => {
 });
 
 describe('the claim build catch-up', () => {
-  it('reads the log once a run, for the listed decisions, at most 50', async () => {
+  it("reads the index's results once a run, for the listed decisions, at most 50", async () => {
     const clock = new FakeClock();
     const chain = aWorld(clock);
     const queue = new FakeQueue();
@@ -538,6 +558,12 @@ describe('the claim build catch-up', () => {
     expect(sql).toContain('r.decision_id in (:decisionIds)');
     expect(sql).toContain(
       "r.stage = 'final' and r.status = 'decided' and r.origin = 'native'"
+    );
+    expect(sql).toContain(
+      "json_unquote(json_extract(r.data, '$.origin')) = 'native'"
+    );
+    expect(sql).toContain(
+      "json_contains(json_extract(r.data, '$.winners[*].rank'), '1')"
     );
     expect(sql).toContain('b.network = :network');
     expect(sql).toContain('order by r.result_time limit :limit');
@@ -690,5 +716,147 @@ describe('resultFinalEventOf', () => {
       resultFinalEventOf(D1, result({ settledHeight: 0 }), entries)
     ).toBeNull();
     expect(resultFinalEventOf(D1, result({ winners: [] }), entries)).toBeNull();
+  });
+
+  it('says why a result waits, and nothing when it can be built', () => {
+    expect(resultWaitReason(result(), entries)).toBeNull();
+    expect(resultWaitReason(result({ settledHeight: 0 }), entries)).toBe(
+      'the result names no block it went final in'
+    );
+    expect(resultWaitReason(result({ winners: [] }), entries)).toBe(
+      'its rank-1 winner names no entry'
+    );
+    expect(
+      resultWaitReason(
+        result({ winners: [{ entryId: E(9), rank: 1 }] }),
+        entries
+      )
+    ).toBe(`the index doesn't hold its rank-1 entry ${E(9)} yet`);
+    expect(
+      resultWaitReason(
+        result({ winners: [{ entryId: E(3), rank: 1 }] }),
+        entries
+      )
+    ).toBe(`the index holds no manifest hash for its rank-1 entry ${E(3)}`);
+  });
+});
+
+describe('the claim build catch-up: what it leaves out, waits for and survives', () => {
+  const fresh = () => {
+    const clock = new FakeClock();
+    const chain = aWorld(clock);
+    const queue = new FakeQueue();
+    const db = new FakeIndexDb();
+    const index = new WavesChainIndex(
+      chain,
+      db.asDb(),
+      clock.now,
+      undefined,
+      queue
+    );
+    return { clock, chain, queue, db, index };
+  };
+
+  it('never reads a decided result with no winners, so they hold none of the 50 places', async () => {
+    const { chain, queue, db, index } = fresh();
+    // Decided with no active entries: nothing to build, ever.
+    for (let n = 1; n <= CLAIM_CATCH_UP_PER_RUN; n++) {
+      chain.settle(D1, n, [], n, 'native', 'decided');
+    }
+    chain.settle(D1, 100, [E(1)], 100);
+    await index.run({ budgetMs: BIG });
+    const read = jest.spyOn(db, 'resultsWithoutClaimBuild');
+    await index.run({ budgetMs: BIG });
+    expect(await read.mock.results[0].value).toHaveLength(1);
+    expect(
+      queue.sent.map((message) => [message.drop_id, message.chain.occurrence])
+    ).toEqual([[DROP(1), 100]]);
+    read.mockRestore();
+  });
+
+  it('builds none for a result whose answer names no origin', async () => {
+    const { chain, queue, index } = fresh();
+    chain.settle(D1, 3, [E(1)], 15, null);
+    for (let run = 0; run < 3; run++) await index.run({ budgetMs: BIG });
+    expect(queue.sent).toEqual([]);
+  });
+
+  it('logs a result it waits for once, and builds it when the index holds what it needs', async () => {
+    const { chain, queue, index } = fresh();
+    const warn = jest.spyOn(Logger.prototype, 'warn');
+    chain.putEntry(E(5), D1, {
+      legacyId: DROP(5),
+      origin: 'legacy',
+      manifestHash: null
+    });
+    chain.settle(D1, 3, [E(5)], 7);
+    for (let run = 0; run < 3; run++) await index.run({ budgetMs: BIG });
+    const waiting = warn.mock.calls
+      .map(([message]) => String(message))
+      .filter((message) => message.startsWith('[CLAIM BUILD WAITING]'));
+    expect(waiting).toEqual([
+      `[CLAIM BUILD WAITING] decision ${D1} occurrence 7: the index holds no manifest hash for its rank-1 entry ${E(5)}. It is built once the index holds it; each run looks again`
+    ]);
+    expect(queue.sent).toEqual([]);
+    chain.putEntry(E(5), D1, { manifestHash: manifest(E(5)) });
+    await index.run({ budgetMs: BIG });
+    await index.run({ budgetMs: BIG });
+    expect(queue.sent.map((message) => message.drop_id)).toEqual([DROP(5)]);
+    warn.mockRestore();
+  });
+
+  it('logs a failed catch-up as an error, and the feed and the rest of the run go on', async () => {
+    const { chain, queue, db, index } = fresh();
+    chain.settle(D1, 3, [E(2)], 16);
+    await index.run({ budgetMs: BIG });
+    const error = jest.spyOn(Logger.prototype, 'error');
+    const read = jest
+      .spyOn(db, 'resultsWithoutClaimBuild')
+      .mockRejectedValueOnce(new Error('results read failed'));
+    chain.vote(E(1), V(1), 7);
+    const before = db.state.feedNext as number;
+    const report = await index.run({ budgetMs: BIG });
+    expect(report.mode).toBe('indexed');
+    expect(report.feedNext).toBeGreaterThan(before);
+    expect(report.votes).toBeGreaterThan(0);
+    expect(
+      error.mock.calls
+        .map(([message]) => String(message))
+        .filter((message) =>
+          message.startsWith('[CLAIM BUILD CATCH-UP FAILED]')
+        )
+    ).toEqual([
+      '[CLAIM BUILD CATCH-UP FAILED] results read failed; the index goes on, and the next run tries again'
+    ]);
+    expect(queue.sent).toEqual([]);
+    await index.run({ budgetMs: BIG });
+    expect(queue.sent.map((message) => message.drop_id)).toEqual([DROP(2)]);
+    read.mockRestore();
+    error.mockRestore();
+  });
+
+  it('logs the Main Stage decisions it builds for once, and again when that changes', async () => {
+    const info = jest.spyOn(Logger.prototype, 'info');
+    const { queue, index } = fresh();
+    const noted = () =>
+      info.mock.calls
+        .map(([message]) => String(message))
+        .filter((message) => message.startsWith('[MAIN STAGE CLAIM BUILDS'));
+    await index.run({ budgetMs: BIG });
+    await index.run({ budgetMs: BIG });
+    expect(noted()).toEqual([
+      `[MAIN STAGE CLAIM BUILDS] for MAIN_STAGE_DECISION_IDS ${D1}`
+    ]);
+    queue.ids = new Set();
+    await index.run({ budgetMs: BIG });
+    queue.on = false;
+    await index.run({ budgetMs: BIG });
+    await index.run({ budgetMs: BIG });
+    expect(noted()).toEqual([
+      `[MAIN STAGE CLAIM BUILDS] for MAIN_STAGE_DECISION_IDS ${D1}`,
+      '[MAIN STAGE CLAIM BUILDS] MAIN_STAGE_DECISION_IDS names none: no claim builds',
+      '[MAIN STAGE CLAIM BUILDS OFF]'
+    ]);
+    info.mockRestore();
   });
 });
