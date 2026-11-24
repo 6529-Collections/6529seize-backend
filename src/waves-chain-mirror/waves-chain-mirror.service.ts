@@ -31,7 +31,7 @@ import {
 } from './waves-chain-mirror.freeze';
 import {
   chainExecutionKeyPrefix,
-  legacyIdOf,
+  InvalidLegacyIds,
   nativeCompetitionId,
   resultDecisionId
 } from './waves-chain-mirror.ids';
@@ -74,6 +74,7 @@ import { nativeEntryModel } from './waves-chain-mirror.apply';
 import { defaultObjectEffects } from './waves-chain-mirror.objects.effects';
 import {
   ChainDecisionState,
+  ChainEntryRow,
   MirrorLookups,
   SkippedClaimBuild,
   TargetCompetitionState
@@ -199,8 +200,18 @@ export interface WavesChainMirrorReport {
   changes: Record<string, TableChanges>;
   /** Chain rows waiting for a mapping, by reason. */
   waiting: Record<string, number>;
+  /**
+   * Rows written short of the chain's, by reason (an imported wave's
+   * description drop id its document gave and couldn't be used).
+   */
+  notes: Record<string, number>;
   /** The chain's groups and waves (written before its decisions). */
   objects: ObjectsReport | null;
+  /**
+   * The chain's objects this mirror left out so far (its runs together)
+   * for a legacy id that isn't an RFC 4122 UUID.
+   */
+  invalidLegacyIds: number;
   /** Report-only: the first decisions with differences. */
   differences: {
     decisionId: string;
@@ -272,6 +283,7 @@ export type MirrorStore = Pick<
   | 'removeOtherNetworksResults'
   | 'releaseChainMadeEntries'
   | 'decisionVoteEvents'
+  | 'writeImportedDecisionRows'
 >;
 
 export type MirrorIndex = Pick<WavesChainIndexDb, 'loadState' | 'readEvents'>;
@@ -319,7 +331,11 @@ export class WavesChainMirror {
       'run'
     > | null = null,
     /** What the collaboration write's checks read. */
-    private readonly collaborations: CollaborationReads = collaborationReads
+    private readonly collaborations: CollaborationReads = collaborationReads,
+    /** Objects left out for a legacy id that isn't an RFC 4122 UUID. */
+    private readonly legacyIds: InvalidLegacyIds = new InvalidLegacyIds(
+      (message) => logger.warn(`[WAVES CHAIN MIRROR] ${message}`)
+    )
   ) {}
 
   async run({
@@ -344,11 +360,12 @@ export class WavesChainMirror {
     if (!(await this.store.hasPrincipalMap())) return skip('no_principal_map');
     report.height = index.feedNext - 1;
     report.network = index.network;
-    if (!settings.write) {
+    if (settings.write) {
+      await this.writeRun(report, index, settings, deadline);
+    } else {
       await this.reportAll(report, settings, deadline);
-      return report;
     }
-    await this.writeRun(report, index, settings, deadline);
+    report.invalidLegacyIds = this.legacyIds.count;
     return report;
   }
 
@@ -643,13 +660,15 @@ export class WavesChainMirror {
         write,
         documents: this.documents(write),
         counter,
-        outOfTime: () => this.outOfTime(deadline)
+        outOfTime: () => this.outOfTime(deadline),
+        legacyIds: this.legacyIds
       });
     } catch (error) {
       logger.error(`[WAVES CHAIN MIRROR] groups and waves failed: ${error}`);
     }
     addChanges(report.changes, counter.changes);
     addCounts(report.waiting, counter.waiting);
+    addCounts(report.notes, counter.notes);
   }
 
   private outOfTime(deadline: number): boolean {
@@ -695,17 +714,38 @@ export class WavesChainMirror {
     }
   }
 
+  /**
+   * A decision with its legacy ids as 6529.io writes them: null when its
+   * own isn't an RFC 4122 UUID (left out); an entry whose legacy id isn't
+   * one is left out of it (6529.io has no row of it).
+   */
+  private withLegacyIds(chain: ChainDecisionState): ChainDecisionState | null {
+    const legacyId = this.legacyIds.of(
+      'decision',
+      chain.decision.decisionId,
+      chain.decision.legacyId
+    );
+    if (legacyId === undefined) return null;
+    const entries: ChainEntryRow[] = [];
+    for (const entry of chain.entries) {
+      const id = this.legacyIds.of('entry', entry.entryId, entry.legacyId);
+      if (id !== undefined) entries.push({ ...entry, legacyId: id });
+    }
+    return { ...chain, decision: { ...chain.decision, legacyId }, entries };
+  }
+
   private async mirrorDecision(
     decisionId: string,
     run: MirrorRun
   ): Promise<DecisionOutcome> {
-    const chain = await this.store.chainDecision(decisionId);
-    if (!chain) return { kind: 'skipped', reason: 'gone' };
+    const read = await this.store.chainDecision(decisionId);
+    if (!read) return { kind: 'skipped', reason: 'gone' };
+    const chain = this.withLegacyIds(read);
+    if (!chain) return { kind: 'skipped', reason: 'legacy_id_invalid' };
     // A decision made on the chain has its row once the groups-and-waves
     // pass wrote it (no_competition until then).
     const competitionId =
-      legacyIdOf(chain.decision.legacyId) ??
-      nativeCompetitionId(chain.decision.decisionId);
+      chain.decision.legacyId ?? nativeCompetitionId(chain.decision.decisionId);
     const resultIds = chainFinalResults(chain).map((r) =>
       resultDecisionId(competitionId, r.resultTime)
     );
@@ -713,6 +753,16 @@ export class WavesChainMirror {
     const plan = async (
       connection?: ConnectionWrapper<any>
     ): Promise<DecisionOutcome> => {
+      // A rebuild's rows of an imported decision's entries and results
+      // 6529.io has none of (the live mirror writes none).
+      const imported =
+        connection && chain.decision.legacyId
+          ? await this.store.writeImportedDecisionRows(
+              chain,
+              competitionId,
+              connection
+            )
+          : {};
       const target = await this.store.targetCompetition(
         competitionId,
         resultIds,
@@ -735,6 +785,7 @@ export class WavesChainMirror {
         connection
       );
       const planned = planDecision({ chain, target, lookups });
+      addCounts(planned.waiting, imported);
       if (connection && planWrites(planned)) {
         await this.store.applyWrites(planned, connection);
       }
@@ -1114,7 +1165,9 @@ function emptyReport(mode: 'report' | 'write'): WavesChainMirrorReport {
     decisions: { mirrored: 0, unchanged: 0, skipped: {}, failed: 0, left: 0 },
     changes: {},
     waiting: {},
+    notes: {},
     objects: null,
+    invalidLegacyIds: 0,
     differences: []
   };
 }

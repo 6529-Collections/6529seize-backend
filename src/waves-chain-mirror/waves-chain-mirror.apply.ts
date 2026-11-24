@@ -424,14 +424,18 @@ export async function applyNativeEntryWrites(
   collaborations: Pick<
     MemeCollaborationsService,
     'onWrite'
-  > = memeCollaborationsService
+  > = memeCollaborationsService,
+  /** False in a rebuild: wave metrics are recomputed from drops after it. */
+  waveMetrics = true
 ): Promise<void> {
   const drops = new DropsDb(() => db);
   for (const write of writes) {
     const { content } = write;
     const dropId = write.dropId;
     const waveId = write.waveId;
-    await drops.insertDrop(nativeEntryDrop(write), connection);
+    await drops.insertDrop(nativeEntryDrop(write), connection, {
+      deferMetrics: !waveMetrics
+    });
     await drops.insertDropParts(
       content.parts.map((part, index) => ({
         drop_id: dropId,

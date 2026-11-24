@@ -74,6 +74,24 @@ describe('waves chain mirror waves', () => {
     ).toBeNull();
   });
 
+  it("reads an imported wave document's description drop id as a UUID", () => {
+    const UUID = '00000000-0000-4000-8000-0000000001b1';
+    const read = (value: unknown) => {
+      const doc = parseWaveDocument(
+        bytes({ ...aWaveDoc(), description_drop_id: value })
+      );
+      if (!doc.ok) throw new Error(doc.reason);
+      return [doc.doc.descriptionDropId, doc.doc.descriptionDropIdInvalid];
+    };
+    expect(read(UUID.toUpperCase())).toEqual([UUID, false]);
+    expect(read(null)).toEqual([null, false]);
+    expect(read('')).toEqual([null, true]);
+    expect(read('not-a-uuid')).toEqual([null, true]);
+    // A version digit of 0: no RFC 4122 UUID.
+    expect(read('00000000-0000-0000-8000-0000000001b1')).toEqual([null, true]);
+    expect(read(42)).toEqual([null, true]);
+  });
+
   it("reads a wave document's fields, and refuses one that isn't a wave", () => {
     expect(docOf()).toEqual({
       name: 'Made on the chain',
@@ -89,7 +107,9 @@ describe('waves chain mirror waves', () => {
       },
       adminDropDeletionEnabled: true,
       createdAt: 1_764_000_000_000,
-      metadata: { 'wave_display.rules.custom': 'Be kind' }
+      metadata: { 'wave_display.rules.custom': 'Be kind' },
+      descriptionDropId: null,
+      descriptionDropIdInvalid: false
     });
     expect(parseWaveDocument(bytes({ ...aWaveDoc(), kind: 'group' }))).toEqual({
       ok: false,

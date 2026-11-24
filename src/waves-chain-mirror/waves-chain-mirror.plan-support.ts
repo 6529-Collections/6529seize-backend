@@ -17,6 +17,8 @@ export interface TableChanges {
 export class PlanCounter {
   readonly changes: Record<string, TableChanges> = {};
   readonly waiting: Record<string, number> = {};
+  /** What was written short of the chain's (not waiting), by reason. */
+  readonly notes: Record<string, number> = {};
 
   change(table: string, kind: keyof TableChanges, n = 1) {
     if (n <= 0) return;
@@ -31,6 +33,11 @@ export class PlanCounter {
   wait(reason: string, n = 1) {
     if (n <= 0) return;
     this.waiting[reason] = (this.waiting[reason] ?? 0) + n;
+  }
+
+  note(reason: string, n = 1) {
+    if (n <= 0) return;
+    this.notes[reason] = (this.notes[reason] ?? 0) + n;
   }
 }
 

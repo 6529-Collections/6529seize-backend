@@ -17,7 +17,9 @@ import { ContentGate, GateVerdict } from './waves-chain-mirror.gate';
 import {
   groupListId,
   groupShortIdOf,
+  legacyUuidOfGroupId,
   nativeCompetitionId,
+  readLegacyId,
   waveDescriptionDropId
 } from './waves-chain-mirror.ids';
 import {
@@ -71,13 +73,13 @@ function world() {
     gate,
     () => now
   );
-  const run = async (write = true) => {
+  const run = async (write = true, outOfTime = () => false) => {
     const counter = new PlanCounter();
     const report = await mirror.run({
       write,
       documents,
       counter,
-      outOfTime: () => false
+      outOfTime
     });
     return { report, counter };
   };
@@ -239,6 +241,173 @@ describe('WavesChainObjectsMirror: groups', () => {
     const { report } = await run();
     expect(report.groups).toMatchObject({ mirrored: 0, unchanged: 0 });
     expect(store.writes()).toBe(0);
+  });
+});
+
+describe("WavesChainObjectsMirror: a rebuild's imported wave", () => {
+  const imported = (descriptionDropId: unknown) => {
+    const w = world();
+    w.store.mode = 'rebuild';
+    w.store.chainWaves = [
+      aChainWaveRow(chainWord('0c'), {
+        origin: 'legacy',
+        legacyId: LEGACY_WAVE,
+        controller: P1,
+        metadataCid: CID2
+      })
+    ];
+    w.documents.put(CID2, aWaveDoc({ description_drop_id: descriptionDropId }));
+    w.store.descriptionDropIds.set(LEGACY_WAVE, 'from-the-mapping');
+    return w;
+  };
+
+  it("takes its description drop id from its document, a malformed one noted and the mapping's used", async () => {
+    const valid = imported('00000000-0000-4000-8000-0000000001b1');
+    await valid.run();
+    expect(valid.store.importedWaves[0].description_drop_id).toBe(
+      '00000000-0000-4000-8000-0000000001b1'
+    );
+
+    for (const bad of ['', 'not-a-uuid']) {
+      const w = imported(bad);
+      const { counter } = await w.run();
+      // Noted, not waiting: the wave is written.
+      expect(counter.notes).toEqual({ wave_description_drop_id_invalid: 1 });
+      expect(counter.waiting.wave_description_drop_id_invalid).toBeUndefined();
+      expect(w.store.importedWaves[0].description_drop_id).toBe(
+        'from-the-mapping'
+      );
+    }
+
+    // A dry run shows it too.
+    const dry = imported('not-a-uuid');
+    const { counter: dryCounter } = await dry.run(false);
+    expect(dryCounter.notes).toEqual({ wave_description_drop_id_invalid: 1 });
+    expect(dry.store.importedWaves).toEqual([]);
+
+    // No field: the mapping, nothing noted.
+    const none = imported(undefined);
+    const { counter } = await none.run();
+    expect(counter.notes).toEqual({});
+    expect(none.store.importedWaves[0].description_drop_id).toBe(
+      'from-the-mapping'
+    );
+  });
+
+  it("checks the document's id against the drops the drop archives' import wrote", async () => {
+    const id = '00000000-0000-4000-8000-0000000001b1';
+    // A drop of the wave: written.
+    const found = imported(id);
+    found.store.archivedDrops = new Map([[id, LEGACY_WAVE]]);
+    const first = await found.run();
+    expect(first.counter.notes).toEqual({});
+    expect(found.store.importedWaves[0].description_drop_id).toBe(id);
+    // No such drop, or another wave's: noted, the mapping's used.
+    for (const drops of [new Map<string, string>(), new Map([[id, 'other']])]) {
+      const w = imported(id);
+      w.store.archivedDrops = drops;
+      const { counter } = await w.run();
+      expect(counter.notes).toEqual({ wave_description_drop_id_invalid: 1 });
+      expect(w.store.importedWaves[0].description_drop_id).toBe(
+        'from-the-mapping'
+      );
+    }
+  });
+});
+
+describe("WavesChainObjectsMirror: a rebuild's imported groups", () => {
+  it('matches every imported group the chain never replaced to its 6529.io row, keeping the match; a live run none', async () => {
+    for (const mode of ['live', 'rebuild'] as const) {
+      const { store, run } = world();
+      store.mode = mode;
+      store.importedGroups.set(LEGACY_GROUP, IMPORTED_GROUP_ID);
+      store.importedChainGroups = [
+        aChainGroupRow(G, {}, { origin: 'legacy', legacyId: LEGACY_GROUP })
+      ];
+      const { report } = await run();
+      // Matched now: counted as mirrored, then unchanged.
+      expect(report.groups).toMatchObject(
+        mode === 'rebuild'
+          ? { mirrored: 1, unchanged: 0, failed: 0 }
+          : { mirrored: 0, unchanged: 0, failed: 0 }
+      );
+      if (mode === 'rebuild') {
+        expect((await run()).report.groups).toMatchObject({
+          mirrored: 0,
+          unchanged: 1
+        });
+      }
+      expect(store.groupRecords.get(G)).toEqual(
+        mode === 'rebuild'
+          ? expect.objectContaining({
+              groupId: IMPORTED_GROUP_ID,
+              version: null
+            })
+          : undefined
+      );
+      // 6529.io's row stays as it is.
+      expect(store.groupWrites).toEqual([]);
+    }
+  });
+
+  it('leaves the imported groups it has no time for to the next run, and counts one with no row as waiting', async () => {
+    const { store, run } = world();
+    store.mode = 'rebuild';
+    store.importedGroups.set(LEGACY_GROUP, IMPORTED_GROUP_ID);
+    store.importedChainGroups = [
+      aChainGroupRow(G, {}, { origin: 'legacy', legacyId: LEGACY_GROUP }),
+      aChainGroupRow(
+        chainWord('0d'),
+        {},
+        {
+          origin: 'legacy',
+          legacyId: '0b1c2d3e-0000-4000-8000-0000000000dd'
+        }
+      )
+    ];
+    const late = await run(true, () => true);
+    expect(late.report.groups).toMatchObject({ left: 2, mirrored: 0 });
+    expect(store.groupRecords.size).toBe(0);
+    const { report, counter } = await run();
+    expect(report.groups).toMatchObject({ mirrored: 1, waiting: 1 });
+    expect(counter.waiting).toMatchObject({ imported_group_unmatched: 1 });
+  });
+});
+
+describe('WavesChainObjectsMirror: an imported group with a hashed legacy id', () => {
+  it('mirrors its replacement in either mode: its legacy id is no UUID to check', async () => {
+    // The import's legacy id of a 6529.io group id with no short id: the
+    // first 16 bytes of keccak256 of the id, not an RFC 4122 UUID.
+    const hashed = legacyUuidOfGroupId('an-old-group');
+    expect(readLegacyId(hashed).ok).toBe(false);
+    for (const mode of ['live', 'rebuild'] as const) {
+      const { store, run } = world();
+      store.mode = mode;
+      store.importedGroups.set(hashed, 'an-old-group');
+      store.groups.set('an-old-group', {
+        id: 'an-old-group',
+        name: 'An old group',
+        created_at: new Date(1_700_000_000_000),
+        created_by: 'group-creator',
+        visible: true,
+        is_private: false,
+        profile_group_id: 'old-list',
+        excluded_profile_group_id: null
+      } as unknown as UserGroupEntity);
+      store.chainGroups = [
+        aChainGroupRow(
+          G,
+          { includes: [{ kind: 'principal', value: P1 }] },
+          { origin: 'legacy', legacyId: hashed, version: 2 }
+        )
+      ];
+      const { report } = await run();
+      expect(report.groups).toMatchObject({ mirrored: 1, failed: 0 });
+      expect(store.groupRecords.get(G)).toMatchObject({
+        groupId: 'an-old-group',
+        version: 2
+      });
+    }
   });
 });
 
@@ -502,6 +671,16 @@ describe('WavesChainObjectsMirror: waves', () => {
       EMPTY_DESCRIPTION
     );
     expect(counter.waiting).toMatchObject({ description_moderation: 1 });
+    // The hold is kept under the description drop id, as an entry's; the
+    // wave's record keeps a copy.
+    expect(refused.store.descriptionHolds).toEqual(
+      new Map([
+        [
+          waveDescriptionDropId(W),
+          { reason: 'description_moderation', retryAt: null, attempts: 1 }
+        ]
+      ])
+    );
     expect(refused.store.waveRecords.get(W)).toMatchObject({
       held: 'description_moderation',
       retryAt: null
@@ -511,6 +690,13 @@ describe('WavesChainObjectsMirror: waves', () => {
     const deferred = nativeWave();
     deferred.verdicts.push({ kind: 'deferred', code: 'LIMIT' });
     await deferred.run();
+    expect(
+      deferred.store.descriptionHolds.get(waveDescriptionDropId(W))
+    ).toEqual({
+      reason: 'description_moderation_deferred',
+      retryAt: NOW + retryDelayMs(1),
+      attempts: 1
+    });
     expect(deferred.store.waveRecords.get(W)).toMatchObject({
       held: 'description_moderation_deferred',
       retryAt: NOW + retryDelayMs(1)
@@ -530,6 +716,149 @@ describe('WavesChainObjectsMirror: waves', () => {
     expect(deferred.store.waveRecords.get(W)).toMatchObject({
       held: null,
       retryAt: null
+    });
+    expect(deferred.store.descriptionHolds.size).toBe(0);
+  });
+
+  it("reads a description's hold from where it is kept, not from the wave's record", async () => {
+    const { store, verdicts, gate, run, at } = nativeWave();
+    verdicts.push({ kind: 'deferred', code: 'LIMIT' });
+    await run();
+    const dropId = waveDescriptionDropId(W);
+    // The kept deferral waits longer than the record's copy says.
+    store.descriptionHolds.set(dropId, {
+      reason: 'description_moderation_deferred',
+      retryAt: NOW + retryDelayMs(3),
+      attempts: 2
+    });
+    at(NOW + retryDelayMs(1));
+    await run();
+    expect(gate.check).toHaveBeenCalledTimes(1);
+    expect(store.waveRecords.get(W)).toMatchObject({
+      held: 'description_moderation_deferred',
+      retryAt: NOW + retryDelayMs(3),
+      attempts: 2
+    });
+    // Due where it is kept: judged again, the third time counted.
+    verdicts.push({ kind: 'deferred', code: 'LIMIT' });
+    at(NOW + retryDelayMs(3));
+    await run();
+    expect(gate.check).toHaveBeenCalledTimes(2);
+    expect(store.descriptionHolds.get(dropId)).toEqual({
+      reason: 'description_moderation_deferred',
+      retryAt: NOW + retryDelayMs(3) + retryDelayMs(3),
+      attempts: 3
+    });
+  });
+
+  it("keeps an imported wave's description hold under its own drop id, until the description changes", async () => {
+    const { store, documents, verdicts, run } = world();
+    const dropId = `description-of-${LEGACY_WAVE}`;
+    store.waves.set(
+      LEGACY_WAVE,
+      aWaveRow(LEGACY_WAVE, {
+        name: 'Made on the chain',
+        picture: aWaveDoc().picture,
+        created_by: 'profile-1',
+        chat_replies_open: true,
+        admin_drop_deletion_enabled: true
+      })
+    );
+    store.drops.set(dropId, {
+      authorId: 'profile-1',
+      parts: [{ content: 'The imported description', media: [] }]
+    });
+    const replaced = aChainWaveRow(chainWord('0c'), {
+      origin: 'legacy',
+      legacyId: LEGACY_WAVE,
+      policyVersion: 2,
+      controller: P1,
+      metadataCid: CID2
+    });
+    store.chainWaves = [replaced];
+    documents.put(CID2, aWaveDoc());
+    verdicts.push({ kind: 'refused', code: 'REJECTED' });
+    const { counter } = await run();
+    expect(counter.waiting).toMatchObject({ description_moderation: 1 });
+    expect(store.descriptions).toEqual([]);
+    expect(store.descriptionHolds.get(dropId)).toEqual({
+      reason: 'description_moderation',
+      retryAt: null,
+      attempts: 1
+    });
+    expect((await run()).report.waves.unchanged).toBe(1);
+
+    // A new document with another description: judged again, and written.
+    const CID3 = `0x01551220${'cf'.repeat(32)}`;
+    documents.put(
+      CID3,
+      aWaveDoc({ description: [{ content: 'Rewritten', media: [] }] })
+    );
+    store.chainWaves = [
+      aChainWaveRow(chainWord('0c'), {
+        origin: 'legacy',
+        legacyId: LEGACY_WAVE,
+        policyVersion: 2,
+        controller: P1,
+        metadataCid: CID3
+      })
+    ];
+    expect((await run()).report.waves.mirrored).toBe(1);
+    expect(store.drops.get(dropId)?.parts).toEqual([
+      { content: 'Rewritten', media: [] }
+    ]);
+    expect(store.descriptionHolds.size).toBe(0);
+    expect(store.waveRecords.get(chainWord('0c'))).toMatchObject({
+      held: null
+    });
+  });
+
+  it('carries the description holds the wave records kept over, once', async () => {
+    const { store, run } = nativeWave();
+    await run();
+    const record = store.waveRecords.get(W)!;
+    store.waveRecords.set(W, {
+      ...record,
+      held: 'description_moderation',
+      retryAt: null,
+      attempts: 1
+    });
+    store.descriptionHoldsCarried = false;
+    await run();
+    expect(store.descriptionHolds).toEqual(
+      new Map([
+        [
+          waveDescriptionDropId(W),
+          { reason: 'description_moderation', retryAt: null, attempts: 1 }
+        ]
+      ])
+    );
+    // Released where it is kept: not carried over again.
+    store.descriptionHolds.clear();
+    await run();
+    expect(store.descriptionHolds.size).toBe(0);
+  });
+
+  it("writes no description hold in a rebuild: it reads the live mirror's", async () => {
+    const { store, verdicts, run } = nativeWave();
+    store.mode = 'rebuild';
+    const kept = {
+      reason: 'description_moderation',
+      retryAt: null,
+      attempts: 1
+    };
+    store.descriptionHolds.set(waveDescriptionDropId(W), kept);
+    verdicts.push({ kind: 'refused', code: 'description_moderation' });
+    await run();
+    expect(store.waveCreates[0].description.parts).toEqual(EMPTY_DESCRIPTION);
+    expect(store.descriptionHolds).toEqual(
+      new Map([[waveDescriptionDropId(W), kept]])
+    );
+    // Its record's copy is the live mirror's.
+    expect(store.waveRecords.get(W)).toMatchObject({
+      held: 'description_moderation',
+      retryAt: null,
+      attempts: 1
     });
   });
 

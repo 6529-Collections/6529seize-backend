@@ -21,6 +21,7 @@ import {
   templateOutcomes
 } from './waves-chain-mirror.decisions';
 import { DOC_CLASS, DocumentSource } from './waves-chain-mirror.docs';
+import type { EntryHold } from './waves-chain-mirror.db';
 import { ContentGate } from './waves-chain-mirror.gate';
 import {
   ChainGroup,
@@ -32,9 +33,15 @@ import {
 } from './waves-chain-mirror.groups';
 import {
   groupListId,
+  InvalidLegacyIds,
   nativeCompetitionId,
   waveDescriptionDropId
 } from './waves-chain-mirror.ids';
+import {
+  ImportedDecisionDoc,
+  importedCompetitionRecord,
+  parseImportedDecisionDoc
+} from './waves-chain-mirror.legacy-rows';
 import { NativeEntryContent } from './waves-chain-mirror.native-entries';
 import {
   MirroredDecision,
@@ -47,6 +54,8 @@ import {
   ChainWave,
   chainWaveOf,
   checkedWaveRequest,
+  DESCRIPTION_DEFERRED,
+  DESCRIPTION_REFUSED,
   EMPTY_DESCRIPTION,
   isChainOwnedWave,
   metadataChangesOf,
@@ -77,7 +86,10 @@ export interface ObjectCounts {
 export interface ObjectsReport {
   readonly groups: ObjectCounts;
   readonly waves: ObjectCounts;
-  /** Decisions made on the chain: their competitions rows. */
+  /**
+   * Decisions made on the chain: their competitions rows (and in a
+   * rebuild, imported ones 6529.io has none of).
+   */
   readonly decisions: ObjectCounts;
 }
 
@@ -137,6 +149,10 @@ export type ObjectsStore = Pick<
   | 'saveMirroredGroup'
   | 'mirroredWaves'
   | 'saveMirroredWave'
+  | 'descriptionHold'
+  | 'holdDescription'
+  | 'releaseDescription'
+  | 'carryDescriptionHolds'
   | 'importedGroupId'
   | 'profilesOfAddresses'
   | 'addAddressIdentities'
@@ -157,6 +173,13 @@ export type ObjectsStore = Pick<
   | 'saveMirroredDecision'
   | 'nativeCompetition'
   | 'writeNativeCompetition'
+  | 'chainImportedDecisions'
+  | 'competitionExists'
+  | 'importedDescriptionDropId'
+  | 'descriptionDropInWave'
+  | 'chainImportedGroups'
+  | 'insertImportedWave'
+  | 'insertImportedCompetition'
   | 'mode'
 >;
 
@@ -172,8 +195,6 @@ const UNMATCHED_RETRY_MS = 24 * 60 * 60_000;
 export const FOLLOW_TARGET_MAX = 50;
 
 const WAVE_DOCUMENT_MISSING = 'wave_document_missing';
-const DESCRIPTION_REFUSED = 'description_moderation';
-const DESCRIPTION_DEFERRED = 'description_moderation_deferred';
 
 type Outcome = 'mirrored' | 'unchanged' | 'waiting';
 
@@ -308,9 +329,19 @@ export class WavesChainObjectsMirror {
     readonly documents: DocumentSource;
     readonly counter: PlanCounter;
     readonly outOfTime: () => boolean;
+    /** Objects left out for a legacy id that isn't an RFC 4122 UUID. */
+    readonly legacyIds?: InvalidLegacyIds;
   }): Promise<ObjectsReport> {
     const report = emptyObjectsReport();
     const now = this.clock();
+    const legacyIds =
+      input.legacyIds ??
+      new InvalidLegacyIds((message) =>
+        logger.warn(`[WAVES CHAIN MIRROR] ${message}`)
+      );
+    if (input.write) await this.store.carryDescriptionHolds(now);
+    // A group's legacy id is never checked as a UUID: it feeds no uuid v5,
+    // and is matched by its short id, or the import's keccak fallback.
     const groups = (await this.store.chainGroupsToMirror()).map(chainGroupOf);
     const groupRecords = await this.store.mirroredGroups(
       groups.map((g) => g.groupId)
@@ -329,9 +360,37 @@ export class WavesChainObjectsMirror {
         this.mirrorGroup(group, record, input, now)
       );
     }
+    // A rebuild matches every imported group the chain never replaced to
+    // 6529.io's row, keeping the match (the rows it can't make are these).
+    const imported = (await this.store.chainImportedGroups()).map(chainGroupOf);
+    const importedRecords = await this.store.mirroredGroups(
+      imported.map((g) => g.groupId)
+    );
+    for (const group of imported) {
+      const record = importedRecords.get(group.groupId);
+      if (record?.groupId) {
+        report.groups.unchanged++;
+        continue;
+      }
+      if (input.outOfTime()) {
+        report.groups.left++;
+        continue;
+      }
+      if (await this.importedGroupId(group, record, input.write, now)) {
+        report.groups.mirrored++;
+      } else {
+        input.counter.wait('imported_group_unmatched');
+        report.groups.waiting++;
+      }
+    }
     const waves = (await this.store.chainWavesToMirror())
+      .filter(
+        (row) => legacyIds.of('wave', row.wave_id, row.legacy_id) !== undefined
+      )
       .map(chainWaveOf)
-      .filter(isChainOwnedWave);
+      // A rebuild takes every imported wave: it writes the rows 6529.io
+      // has none of.
+      .filter((w) => this.store.mode === 'rebuild' || isChainOwnedWave(w));
     const waveRecords = await this.store.mirroredWaves(
       waves.map((w) => w.waveId)
     );
@@ -409,7 +468,96 @@ export class WavesChainObjectsMirror {
       await pass(again);
     }
     await this.mirrorDecisions(input, now, report);
+    await this.importedDecisions(input, legacyIds, report);
     return report;
+  }
+
+  /**
+   * A rebuild's competitions rows of the imported decisions 6529.io has
+   * none of, from their documents (waves-chain-mirror.legacy-rows.ts); the
+   * live mirror writes none (the store gives it no decision). Their
+   * entries and results are the decisions pass's.
+   */
+  private async importedDecisions(
+    input: {
+      readonly write: boolean;
+      readonly documents: DocumentSource;
+      readonly counter: PlanCounter;
+      readonly outOfTime: () => boolean;
+    },
+    legacyIds: InvalidLegacyIds,
+    report: ObjectsReport
+  ): Promise<void> {
+    for (const row of await this.store.chainImportedDecisions()) {
+      const legacyId = legacyIds.of('decision', row.decision_id, row.legacy_id);
+      if (!legacyId) continue;
+      if (await this.store.competitionExists(legacyId)) {
+        report.decisions.unchanged++;
+        continue;
+      }
+      if (input.outOfTime()) {
+        report.decisions.left++;
+        continue;
+      }
+      await this.count(
+        report.decisions,
+        `imported decision ${row.decision_id}`,
+        async () => {
+          const read = await this.importedDecisionDoc(
+            row.data,
+            input.documents
+          );
+          if (!read.ok) {
+            input.counter.wait(read.reason);
+            return 'waiting';
+          }
+          if (read.doc.id !== legacyId) {
+            input.counter.wait('decision_document_of_another_decision');
+            return 'waiting';
+          }
+          input.counter.change('competitions', 'insert');
+          if (!input.write) return 'mirrored';
+          const record = importedCompetitionRecord(read.doc);
+          await this.store.inTransaction((connection) =>
+            this.store.insertImportedCompetition(
+              {
+                record,
+                capabilities: read.doc.capabilities,
+                outcomes: read.doc.outcomes
+              },
+              connection
+            )
+          );
+          return 'mirrored';
+        }
+      );
+    }
+  }
+
+  /** An imported decision's document, as its chain data names it. */
+  private async importedDecisionDoc(
+    data: unknown,
+    documents: DocumentSource
+  ): Promise<
+    { ok: true; doc: ImportedDecisionDoc } | { ok: false; reason: string }
+  > {
+    const parsed = typeof data === 'string' ? JSON.parse(data) : data;
+    const cid =
+      parsed && typeof parsed === 'object'
+        ? (parsed as Record<string, unknown>).metadataCid
+        : null;
+    if (typeof cid !== 'string' || !cid) {
+      return { ok: false, reason: 'decision_without_document' };
+    }
+    let bytes: Uint8Array | null;
+    try {
+      bytes = await documents.get(cid, DOC_CLASS.DECISION);
+    } catch (error) {
+      logger.warn(`[DECISION DOCUMENT] ${cid} not read: ${error}`);
+      bytes = null;
+    }
+    if (!bytes) return { ok: false, reason: 'decision_document_missing' };
+    return parseImportedDecisionDoc(bytes);
   }
 
   private async count(
@@ -704,21 +852,41 @@ export class WavesChainObjectsMirror {
   ): Promise<Outcome> {
     const { counter } = input;
     const waveId = waveIdOf(wave);
+    if (!isChainOwnedWave(wave) && (await this.store.waveRow(waveId))) {
+      // An imported wave the chain left as imported (a rebuild visits every
+      // one): 6529.io's row stays as it is.
+      return 'unchanged';
+    }
     const groups = await this.waveGroups(wave, input.write, now);
     if (!groups.ok) {
       counter.wait(groups.reason);
       return 'waiting';
     }
-    // An imported wave only closed keeps 6529.io's fields: no document.
+    const existing = await this.store.waveRow(waveId);
+    // An imported wave only closed keeps 6529.io's fields: no document,
+    // unless a rebuild writes its row.
     const document =
-      wave.origin === 'native' || wave.policyVersion > 1
+      wave.origin === 'native' ||
+      wave.policyVersion > 1 ||
+      (!existing && this.store.mode === 'rebuild')
         ? await this.document(wave, input.documents)
         : ({ kind: 'none' } as const);
-    const existing = await this.store.waveRow(waveId);
     if (!existing) {
       if (wave.origin !== 'native') {
-        counter.wait('imported_wave_missing');
-        return 'waiting';
+        if (this.store.mode !== 'rebuild') {
+          counter.wait('imported_wave_missing');
+          return 'waiting';
+        }
+        return this.createImportedWave(
+          wave,
+          waveId,
+          record,
+          groups.groups,
+          groups.chatWait,
+          document,
+          input,
+          now
+        );
       }
       return this.createWave(
         wave,
@@ -829,6 +997,46 @@ export class WavesChainObjectsMirror {
       held:
         verdict.kind === 'refused' ? DESCRIPTION_REFUSED : DESCRIPTION_DEFERRED
     };
+  }
+
+  /**
+   * A description's hold after it was judged: a refusal for good (until
+   * the description changes), a deferral until its retry, longer each
+   * time; null when it went through. A rebuild's verdict is the kept hold
+   * it read, so its record's copy is the live mirror's.
+   */
+  private descriptionVerdict(
+    held: string | null,
+    kept: EntryHold | null,
+    now: number
+  ): EntryHold | null {
+    if (!held) return null;
+    if (this.store.mode === 'rebuild' && kept?.reason === held) return kept;
+    const attempts = (kept?.reason === held ? kept.attempts : 0) + 1;
+    return {
+      reason: held,
+      retryAt:
+        held === DESCRIPTION_DEFERRED ? now + retryDelayMs(attempts) : null,
+      attempts
+    };
+  }
+
+  /**
+   * Keeps a description's verdict in chain_entry_holds, under its drop id:
+   * the hold a rebuild's moderation reads.
+   */
+  private async keepDescriptionVerdict(
+    dropId: string,
+    verdict: EntryHold | null,
+    kept: EntryHold | null,
+    now: number,
+    connection: Parameters<ObjectsStore['holdDescription']>[3]
+  ): Promise<void> {
+    if (verdict) {
+      await this.store.holdDescription(dropId, verdict, now, connection);
+    } else if (kept) {
+      await this.store.releaseDescription(dropId, connection);
+    }
   }
 
   private async createWave(
@@ -958,10 +1166,8 @@ export class WavesChainObjectsMirror {
       createdBy: creatorId,
       descriptionDropId
     });
-    const attempts =
-      moderated.held && record?.held === moderated.held
-        ? record.attempts + 1
-        : 1;
+    const kept = await this.store.descriptionHold(descriptionDropId);
+    const verdict = this.descriptionVerdict(moderated.held, kept, now);
     await this.store.inTransaction(async (connection) => {
       await this.store.createWave(
         {
@@ -977,6 +1183,14 @@ export class WavesChainObjectsMirror {
         },
         connection
       );
+      await this.keepDescriptionVerdict(
+        descriptionDropId,
+        verdict,
+        kept,
+        now,
+        connection
+      );
+      // The record's copy of the hold only schedules the wave's next look.
       await this.store.saveMirroredWave(
         wave.waveId,
         {
@@ -984,12 +1198,9 @@ export class WavesChainObjectsMirror {
           written: waveWrittenKey(wave),
           metadataCid: wave.metadataCid,
           metadataKeys: Object.keys(metadata ?? {}),
-          held: moderated.held,
-          retryAt:
-            moderated.held === DESCRIPTION_DEFERRED
-              ? now + retryDelayMs(attempts)
-              : null,
-          attempts: moderated.held ? attempts : 0
+          held: verdict?.reason ?? null,
+          retryAt: verdict?.retryAt ?? null,
+          attempts: verdict?.attempts ?? 0
         },
         now,
         connection
@@ -1002,6 +1213,129 @@ export class WavesChainObjectsMirror {
       ),
       followerId: creatorId
     });
+    return 'mirrored';
+  }
+
+  /**
+   * A rebuild's row of an imported wave 6529.io has none of: as 6529.io's
+   * create makes a wave from its document and the chain's policy, under
+   * its legacy id (waves-chain-mirror.legacy-rows.ts). No description drop
+   * (the import-files reader's), no metadata, no follows or activity. A
+   * wave the chain owns (a replaced policy, closed) then goes on as the
+   * live mirror updates one.
+   */
+  private async createImportedWave(
+    wave: ChainWave,
+    waveId: string,
+    record: MirroredWave | undefined,
+    groups: WaveGroups,
+    chatWait: string | null,
+    document: Awaited<ReturnType<WavesChainObjectsMirror['document']>>,
+    input: {
+      readonly write: boolean;
+      readonly documents: DocumentSource;
+      readonly counter: PlanCounter;
+    },
+    now: number
+  ): Promise<Outcome> {
+    const { counter, write } = input;
+    if (document.kind !== 'read') {
+      const reason =
+        document.kind === 'missing'
+          ? WAVE_DOCUMENT_MISSING
+          : document.kind === 'refused'
+            ? document.reason
+            : 'wave_without_document';
+      await this.hold(
+        wave,
+        record,
+        { waveId, metadataCid: wave.metadataCid },
+        reason,
+        document.kind === 'missing',
+        write,
+        now
+      );
+      counter.wait(reason);
+      return 'waiting';
+    }
+    const { doc } = document;
+    const creator = wave.controller
+      ? ((await this.principals([wave.controller])).get(wave.controller) ??
+        null)
+      : null;
+    if (!creator) {
+      counter.wait('wave_creator_unmapped');
+      return 'waiting';
+    }
+    if (!doc.createdAt) {
+      counter.wait('wave_without_time');
+      return 'waiting';
+    }
+    const chatEnabled = doc.chat.enabled && wave.status !== 'closed';
+    if (chatEnabled && chatWait) {
+      counter.wait(chatWait);
+      return 'waiting';
+    }
+    const checked = checkedWaveRequest({
+      doc,
+      groups: { ...groups, chat: chatEnabled ? groups.chat : null },
+      chatEnabled,
+      parentWaveId: doc.parentWave
+    });
+    if (!checked.ok) {
+      counter.wait(checked.reason);
+      return 'waiting';
+    }
+    // The description drop is the drop archives' import's: its id from the
+    // wave document when the import carries it (a UUID, of a drop of the
+    // wave once that step wrote them), else from that step's mapping; one
+    // empty, malformed or naming no drop of the wave is noted and not
+    // written. Planned without either: '' leaves 6529.io's wave reads
+    // failing for this wave until that step runs.
+    let documentDropId = doc.descriptionDropId;
+    if (
+      documentDropId &&
+      (await this.store.descriptionDropInWave(documentDropId, waveId)) === false
+    ) {
+      documentDropId = null;
+    }
+    if (
+      !documentDropId &&
+      (doc.descriptionDropId || doc.descriptionDropIdInvalid)
+    ) {
+      counter.note('wave_description_drop_id_invalid');
+      logger.warn(
+        `[WAVE ${wave.waveId}] its document's description_drop_id is no UUID of a drop of the wave; the drop archives' import's mapping is used`
+      );
+    }
+    counter.change('waves', 'insert');
+    if (!write) return 'mirrored';
+    const entity = await this.effects.newWaveEntity({
+      id: waveId,
+      createdAt: doc.createdAt,
+      request: checked.request,
+      createdBy: creator,
+      descriptionDropId:
+        documentDropId ??
+        (await this.store.importedDescriptionDropId(waveId)) ??
+        ''
+    });
+    await this.store.inTransaction((connection) =>
+      this.store.insertImportedWave(entity, connection)
+    );
+    if (!isChainOwnedWave(wave)) return 'mirrored';
+    // The chain's own changes of the wave, and its record, as the live
+    // mirror keeps them.
+    await this.updateWave(
+      wave,
+      entity as unknown as WaveEntity,
+      record,
+      groups,
+      chatWait,
+      document,
+      input,
+      now
+    );
     return 'mirrored';
   }
 
@@ -1312,10 +1646,13 @@ export class WavesChainObjectsMirror {
     if (document.kind === 'missing') counter.wait(WAVE_DOCUMENT_MISSING);
     const docChanged =
       doc !== null && (!record || record.metadataCid !== wave.metadataCid);
+    // The description's hold, as chain_entry_holds keeps it: judged again
+    // when the document changes the description, or a deferral is due.
+    const kept = await this.store.descriptionHold(existing.description_drop_id);
     const descriptionRetry =
-      !!record?.held?.startsWith('description') &&
-      record.retryAt !== null &&
-      record.retryAt <= now;
+      kept?.reason === DESCRIPTION_DEFERRED &&
+      kept.retryAt !== null &&
+      kept.retryAt <= now;
     let chatEnabled = existing.chat_enabled;
     if (doc && docChanged) chatEnabled = doc.chat.enabled;
     if (wave.status === 'closed') chatEnabled = false;
@@ -1381,10 +1718,10 @@ export class WavesChainObjectsMirror {
       parts: readonly WaveDocumentPart[];
       authorId: string;
     } | null = null;
-    // A description held stays held until it is judged again.
-    let held: string | null = record?.held?.startsWith('description')
-      ? record.held
-      : null;
+    // The description's verdict, when it is judged again; a hold not
+    // judged again stays as it is kept.
+    let held: string | null = null;
+    let judged = false;
     if (descriptionParts) {
       const current = await this.store.dropParts(existing.description_drop_id);
       if (current && !sameDescription(current.parts, descriptionParts)) {
@@ -1398,6 +1735,7 @@ export class WavesChainObjectsMirror {
           write
         );
         held = moderated.held;
+        judged = true;
         if (moderated.parts) {
           description = { parts: moderated.parts, authorId: current.authorId };
         } else {
@@ -1405,6 +1743,7 @@ export class WavesChainObjectsMirror {
         }
       } else if (current) {
         held = null;
+        judged = true;
       }
     }
     let metadata: ReturnType<typeof metadataChangesOf> | null = null;
@@ -1433,9 +1772,18 @@ export class WavesChainObjectsMirror {
     // The document is written once it is read; a missing one is asked
     // for again later.
     const docDone = document.kind !== 'missing';
-    const docHeld = docDone ? held : WAVE_DOCUMENT_MISSING;
-    const attempts =
-      docHeld && record?.held === docHeld ? record.attempts + 1 : 1;
+    const verdict = judged ? this.descriptionVerdict(held, kept, now) : kept;
+    // A deferral due that wasn't judged (no document to judge it by) is
+    // looked at again later, not every run.
+    const copy =
+      verdict && verdict.retryAt !== null && verdict.retryAt <= now
+        ? {
+            ...verdict,
+            retryAt: now + retryDelayMs(verdict.attempts + 1)
+          }
+        : verdict;
+    const missingAttempts =
+      record?.held === WAVE_DOCUMENT_MISSING ? record.attempts + 1 : 1;
     const groupsMoved =
       patch.visibility !== undefined ||
       patch.admin_group !== undefined ||
@@ -1458,6 +1806,16 @@ export class WavesChainObjectsMirror {
       }
       if (metadata)
         await this.store.writeMetadata(waveId, metadata, connection);
+      if (judged) {
+        await this.keepDescriptionVerdict(
+          existing.description_drop_id,
+          verdict,
+          kept,
+          now,
+          connection
+        );
+      }
+      // The record's copy of the hold only schedules the wave's next look.
       await this.store.saveMirroredWave(
         wave.waveId,
         {
@@ -1468,13 +1826,17 @@ export class WavesChainObjectsMirror {
               ? wave.metadataCid
               : (record?.metadataCid ?? null),
           metadataKeys,
-          held: docHeld,
-          retryAt:
-            docHeld === DESCRIPTION_DEFERRED ||
-            docHeld === WAVE_DOCUMENT_MISSING
-              ? now + retryDelayMs(attempts)
-              : null,
-          attempts: docHeld ? attempts : 0
+          ...(docDone
+            ? {
+                held: copy?.reason ?? null,
+                retryAt: copy?.retryAt ?? null,
+                attempts: copy?.attempts ?? 0
+              }
+            : {
+                held: WAVE_DOCUMENT_MISSING,
+                retryAt: now + retryDelayMs(missingAttempts),
+                attempts: missingAttempts
+              })
         },
         now,
         connection

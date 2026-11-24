@@ -42,7 +42,8 @@ import {
 import { CompetitionCapability } from '@/entities/ICompetition';
 import { freezeMemeCollaborationForNativeDecision } from '@/meme-collaborations/meme-collaboration-mint-selection';
 import { DocumentCache } from './waves-chain-mirror.docs';
-import { HistoryRead } from './waves-chain-mirror.plan-support';
+import { importedDecisionRows } from './waves-chain-mirror.legacy-rows';
+import { HistoryRead, PlanCounter } from './waves-chain-mirror.plan-support';
 import { writerPoolExecutor } from './waves-chain-mirror.writer';
 import { DecisionPlan } from './waves-chain-mirror.plan';
 import {
@@ -544,9 +545,10 @@ export class WavesChainMirrorDb
   /**
    * The decision's claim builds the index skipped because the rank-1 entry
    * had no 6529.io drop (waves-chain-index.claims.ts: no drop id, no
-   * message).
+   * message). A rebuild writes no claim builds, so it reads none.
    */
   async skippedClaimBuilds(decisionId: string): Promise<SkippedClaimBuild[]> {
+    if (this.mode === 'rebuild') return [];
     const rows = await this.db.execute<Record<string, unknown>>(
       `select network, occurrence, height, entry_id
          from ${CHAIN_CLAIM_BUILDS_TABLE}
@@ -1011,7 +1013,8 @@ export class WavesChainMirrorDb
       plan.competitionId,
       plan.writes.nativeEntries,
       connection,
-      rebuild ? NO_COLLABORATIONS : undefined
+      rebuild ? NO_COLLABORATIONS : undefined,
+      !rebuild
     );
     await applyEntryRemovals(plan.writes.entryRemovals, connection);
     await applyHistoryWrites(
@@ -1121,7 +1124,8 @@ export class WavesChainMirrorDb
 
   /**
    * Holds an entry back: for good (retryAt null), or until retryAt, a
-   * delay counted in attempts. A refusal is never turned into a delay.
+   * delay counted in attempts. A refusal is never turned into a delay. A
+   * rebuild keeps no holds: it reads the live mirror's.
    */
   async holdEntry(
     entryId: string,
@@ -1129,6 +1133,7 @@ export class WavesChainMirrorDb
     hold: EntryHold,
     now: number
   ): Promise<void> {
+    if (this.mode === 'rebuild') return;
     await this.db.execute(
       `insert into ${CHAIN_ENTRY_HOLDS_TABLE}
          (entry_id, competition_id, reason, held_at, retry_at, attempts)
@@ -1151,13 +1156,99 @@ export class WavesChainMirrorDb
     );
   }
 
-  /** An entry no longer held (it went through). */
+  /** An entry no longer held (it went through); a rebuild keeps them. */
   async releaseHold(entryId: string): Promise<void> {
+    if (this.mode === 'rebuild') return;
     await this.db.execute(
       `delete from ${CHAIN_ENTRY_HOLDS_TABLE}
         where entry_id = :entryId and retry_at is not null`,
       { entryId }
     );
+  }
+
+  // ------------------------------------------------------------ imported rows
+
+  /**
+   * A rebuild's rows of an imported decision's entries, results and winners
+   * that 6529.io has none of (waves-chain-mirror.legacy-rows.ts), in the
+   * decision's transaction; a row there is left as it is. The live mirror
+   * writes none (6529.io's own rows are there). Returns what waits, by
+   * reason.
+   */
+  async writeImportedDecisionRows(
+    chain: ChainDecisionState,
+    competitionId: string,
+    connection: Conn
+  ): Promise<Record<string, number>> {
+    if (this.mode !== 'rebuild') return {};
+    const options = opts(connection);
+    const competition = await this.db.oneOrNull<{
+      wave_id: string;
+      legacy_wave_id: string | null;
+      config_version: number | string;
+    }>(
+      `select wave_id, legacy_wave_id, config_version
+         from ${COMPETITIONS_TABLE} where id = :competitionId`,
+      { competitionId },
+      options
+    );
+    if (!competition) return {};
+    const authors = await this.profilesOfPrincipals(
+      chain.entries.filter((e) => e.legacyId).map((e) => e.author),
+      connection
+    );
+    const counter = new PlanCounter();
+    const rows = importedDecisionRows(
+      chain,
+      {
+        id: competitionId,
+        waveId: competition.wave_id,
+        primary: competition.legacy_wave_id !== null,
+        configVersion: num(competition.config_version)
+      },
+      authors,
+      counter
+    );
+    await this.insertIgnore(
+      COMPETITION_ENTRIES_TABLE,
+      rows.entries as unknown as Record<string, unknown>[],
+      options
+    );
+    await this.insertIgnore(
+      COMPETITION_DECISIONS_TABLE,
+      rows.results as unknown as Record<string, unknown>[],
+      options
+    );
+    await this.insertIgnore(
+      COMPETITION_DECISION_WINNERS_TABLE,
+      rows.winners as unknown as Record<string, unknown>[],
+      options
+    );
+    return counter.waiting;
+  }
+
+  /** Rows inserted where none is, in statements under the proxy's limit. */
+  private async insertIgnore(
+    table: string,
+    rows: readonly Record<string, unknown>[],
+    options: ReturnType<typeof opts>
+  ): Promise<void> {
+    if (!rows.length) return;
+    const columns = Object.keys(rows[0]);
+    for (const chunk of statementChunks(rows, () => 400)) {
+      const params: Record<string, unknown> = {};
+      const values = chunk.map((row, i) => {
+        for (const column of columns) params[`${column}_${i}`] = row[column];
+        return `(${columns.map((column) => `:${column}_${i}`).join(', ')})`;
+      });
+      await this.db.execute(
+        `insert ignore into ${table}
+           (${columns.map((column) => `\`${column}\``).join(', ')})
+         values ${values.join(', ')}`,
+        params,
+        options
+      );
+    }
   }
 
   // ------------------------------------------------------------ documents

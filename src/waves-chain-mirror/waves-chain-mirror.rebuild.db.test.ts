@@ -2,12 +2,20 @@
 // same rows, but for the columns the run's clock or an auto-increment
 // stamps; and nothing outside the mirror's rows.
 import 'reflect-metadata';
+import * as fs from 'fs';
 import * as mysql from 'mysql';
-import { rawCidHexOf } from '@/chain-gateway/chain-gateway.client';
+import * as os from 'os';
+import * as path from 'path';
+import {
+  ChainGatewayClient,
+  cidPath,
+  rawCidHexOf
+} from '@/chain-gateway/chain-gateway.client';
 import {
   ACTIVITY_EVENTS_TABLE,
   ADDRESS_CONSOLIDATION_KEY,
   CHAIN_DOCS_TABLE,
+  CHAIN_ENTRY_HOLDS_TABLE,
   COMPETITION_CAPABILITIES_TABLE,
   COMPETITION_CONFIG_VERSIONS_TABLE,
   COMPETITION_ENTRIES_TABLE,
@@ -35,7 +43,10 @@ import {
   WAVES_CHAIN_MIRROR_DECISIONS_TABLE,
   WAVES_CHAIN_MIRROR_EVENTS_TABLE,
   WAVES_CHAIN_MIRROR_GROUPS_TABLE,
+  WAVES_CHAIN_MIRROR_STATE_TABLE,
   WAVES_CHAIN_MIRROR_WAVES_TABLE,
+  WAVE_DROPPER_METRICS_TABLE,
+  WAVE_METRICS_TABLE,
   WAVES_METADATA_TABLE,
   WAVES_TABLE
 } from '@/constants';
@@ -73,10 +84,15 @@ import {
 } from '@/waves-chain-index/waves-chain-index.rows';
 import { WavesChainMirrorDb } from './waves-chain-mirror.db';
 import { DOC_CLASS, docCommitment } from './waves-chain-mirror.docs';
+import { GateVerdict } from './waves-chain-mirror.gate';
+import { waveDescriptionDropId } from './waves-chain-mirror.ids';
 import { WavesChainObjectsMirror } from './waves-chain-mirror.objects';
 import { WavesChainObjectsDb } from './waves-chain-mirror.objects.db';
 import { defaultObjectEffects } from './waves-chain-mirror.objects.effects';
-import { rebuildWavesChainMirror } from './waves-chain-mirror.rebuild';
+import {
+  rebuildWavesChainMirror,
+  seedWavesChainMirror
+} from './waves-chain-mirror.rebuild';
 import { WavesChainMirror } from './waves-chain-mirror.service';
 
 const NOW = 1_765_000_000_000;
@@ -98,8 +114,37 @@ const WAVE = '00000000-0000-4000-8000-0000000000a0';
 const DROP1 = '00000000-0000-4000-8000-0000000000c1';
 const DROP2 = '00000000-0000-4000-8000-0000000000c2';
 const NONCE = `0x${'5a'.repeat(16)}`;
+/** Made-up legacy ids with a version digit of 0, which uuid v5 refuses. */
+const BAD_WAVE = chainWord('0f');
+const BAD_DECISION = chainWord('df');
+const BAD_LEGACY = '00000000-5662-01f5-4000-8000000001f5';
 /** A group's listed address with no profile: 6529.io makes its identity. */
 const ADDRESS = `0x${'a2'.repeat(20)}`;
+
+/**
+ * The run's files source: the world's documents in a folder, each named by
+ * its CID as the files source names it.
+ */
+const FILES = 'http://files.example/run';
+const filesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'waves-mirror-files-'));
+const filesFetch = jest.fn(async (url: string | URL | Request) => {
+  const file = path.join(filesDir, String(url).slice(FILES.length + 1));
+  return fs.existsSync(file)
+    ? new Response(fs.readFileSync(file))
+    : new Response(null, { status: 404 });
+});
+/** The run's gateway source, as CHAIN_GATEWAY_URL names it. */
+const GATEWAY = 'http://gateway.example/run';
+const rebuildCtx = { sources: { files: FILES, gateway: GATEWAY } };
+const rebuild = () =>
+  rebuildWavesChainMirror(
+    rebuildCtx,
+    () => sqlExecutor,
+    { CHAIN_GATEWAY_URL: GATEWAY },
+    {
+      fetchImpl: filesFetch as unknown as typeof fetch
+    }
+  );
 
 /** The rows the mirror owns, compared table by table. */
 const MIRRORED = [
@@ -156,8 +201,13 @@ const VOLATILE: Record<string, readonly string[]> = {
   [CHAIN_DOCS_TABLE]: ['first_seen']
 };
 
-/** Tables outside the mirror's rows: a rebuild writes none of them. */
+/**
+ * Tables outside the mirror's rows: a rebuild writes none of them (wave
+ * metrics are recomputed from drops after it).
+ */
 const OTHERS = [
+  WAVE_METRICS_TABLE,
+  WAVE_DROPPER_METRICS_TABLE,
   COMPETITION_OUTBOX_TABLE,
   ACTIVITY_EVENTS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
@@ -265,8 +315,78 @@ describe("the mirror's rebuild", () => {
   const index = new WavesChainIndexDb(() => sqlExecutor);
   const stamp = { height: 20, generation: 1 };
 
-  /** A chain-made group, wave and decision, and an imported decision. */
-  async function seedWorld() {
+  afterAll(() => fs.rmSync(filesDir, { recursive: true, force: true }));
+
+  /**
+   * A document of the world: in chain_docs for the live mirror (as the
+   * gateway's store gave it), and in the run's files source.
+   */
+  async function saveDocument(
+    cid: string,
+    docClass: number,
+    bytes: Uint8Array
+  ) {
+    await db.saveDocument(cid, docClass, bytes);
+    fs.writeFileSync(path.join(filesDir, cidPath(cid)), bytes);
+  }
+
+  /** The rebuild's start: chain_docs is the mirror's, made again. */
+  async function forgetDocuments() {
+    await sqlExecutor.execute(`delete from ${CHAIN_DOCS_TABLE}`);
+  }
+
+  /** An imported wave and decision with legacy ids uuid v5 refuses. */
+  async function seedBadLegacyIds(
+    entry: (id: string, drop: string, total: string) => ChainObject
+  ) {
+    const badWave = aChainWaveRow(BAD_WAVE, {
+      origin: 'legacy',
+      legacyId: BAD_LEGACY,
+      policyVersion: 2
+    });
+    await index.upsert(
+      'waves',
+      [
+        waveRow({
+          ...(badWave.data as ChainObject),
+          legacyId: BAD_LEGACY,
+          origin: 'legacy',
+          status: 'open',
+          readGroup: { groupId: ZERO },
+          postGroup: { groupId: ZERO },
+          adminGroup: { groupId: ZERO }
+        })
+      ],
+      stamp
+    );
+    await seedChainDecision(
+      index,
+      {
+        decision: {
+          decisionId: BAD_DECISION,
+          legacyId: BAD_LEGACY,
+          waveId: BAD_WAVE,
+          status: 'published',
+          kind: 'rank',
+          origin: 'legacy',
+          counted: true,
+          nextResultTime: 0
+        },
+        entries: [entry(chainWord('ef'), DROP1, '1')].map((e) => ({
+          ...e,
+          decisionId: BAD_DECISION
+        }))
+      },
+      60
+    );
+  }
+
+  /**
+   * A chain-made group, wave and decision, and an imported decision; with
+   * `badLegacyIds`, an imported wave and decision whose legacy ids aren't
+   * RFC 4122 UUIDs too.
+   */
+  async function seedWorld({ badLegacyIds = false } = {}) {
     await clearMirrorTables(sqlExecutor);
     await sqlExecutor.execute(`delete from ${PROFILES_TABLE}`);
     await sqlExecutor.execute(`delete from ${PROFILE_GROUP_CHANGES}`);
@@ -321,7 +441,7 @@ describe("the mirror's rebuild", () => {
       stamp
     );
     const waveDoc = bytesOf(aWaveDoc());
-    await db.saveDocument(rawCidHexOf(waveDoc), DOC_CLASS.WAVE, waveDoc);
+    await saveDocument(rawCidHexOf(waveDoc), DOC_CLASS.WAVE, waveDoc);
     const wave = aChainWaveRow(W, { metadataCid: rawCidHexOf(waveDoc) });
     await index.upsert(
       'waves',
@@ -351,7 +471,7 @@ describe("the mirror's rebuild", () => {
       ],
       nonce: NONCE
     });
-    await db.saveDocument(
+    await saveDocument(
       rawCidHexOf(template),
       DOC_CLASS.OUTCOME_TEMPLATE,
       template
@@ -359,7 +479,7 @@ describe("the mirror's rebuild", () => {
     const doc = bytesOf(
       aDecisionDoc({ outcome_template_cid: rawCidHexOf(template) })
     );
-    await db.saveDocument(rawCidHexOf(doc), DOC_CLASS.DECISION, doc);
+    await saveDocument(rawCidHexOf(doc), DOC_CLASS.DECISION, doc);
     await index.upsert(
       'decisions',
       [
@@ -439,7 +559,7 @@ describe("the mirror's rebuild", () => {
         mentioned_waves: []
       }
     });
-    await db.saveDocument(
+    await saveDocument(
       artwork.contentCid,
       DOC_CLASS.ENTRY_MANIFEST,
       artwork.bytes
@@ -522,6 +642,7 @@ describe("the mirror's rebuild", () => {
       },
       60
     );
+    if (badLegacyIds) await seedBadLegacyIds(entry);
     await index.writeEvents(
       [
         anEvent(18, { kind: 'GROUP_CREATED', groupId: G }),
@@ -557,12 +678,23 @@ describe("the mirror's rebuild", () => {
     );
   }
 
-  async function liveRun() {
+  /** The live mirror; moderation gives the wave's description a verdict. */
+  async function liveRun(
+    description: GateVerdict = { kind: 'allowed' },
+    supplier: () => typeof sqlExecutor = () => sqlExecutor
+  ) {
     const objects = new WavesChainObjectsMirror(
-      new WavesChainObjectsDb(() => sqlExecutor),
+      new WavesChainObjectsDb(supplier),
       (ids) => db.profilesOfPrincipals(ids),
       defaultObjectEffects,
-      { check: jest.fn().mockResolvedValue({ kind: 'allowed' }) },
+      {
+        check: jest.fn(
+          async ({ dropId }: { dropId: string }): Promise<GateVerdict> =>
+            dropId === waveDescriptionDropId(W)
+              ? description
+              : { kind: 'allowed' }
+        )
+      },
       () => NOW
     );
     const settings = {
@@ -571,8 +703,9 @@ describe("the mirror's rebuild", () => {
       keepMainStage: false,
       mainStageWaveId: null
     };
+    const reports = [];
     for (let run = 0; run < 3; run++) {
-      await new WavesChainMirror(
+      const report = await new WavesChainMirror(
         db,
         index,
         () => settings,
@@ -583,7 +716,9 @@ describe("the mirror's rebuild", () => {
         async () => null,
         { run: (input) => objects.run(input) }
       ).run({ budgetMs: 60_000 });
+      reports.push(report);
     }
+    return reports;
   }
 
   it('gives the rows the live mirror gives, from the same index, and writes nothing else', async () => {
@@ -607,23 +742,55 @@ describe("the mirror's rebuild", () => {
     ).toBe(1);
     const identity = await addressIdentityRows();
     expect(identity[IDENTITIES_TABLE]).toHaveLength(1);
+    // The live mirror's drops (the wave's description, the artwork) move
+    // 6529.io's wave metrics, as a drop's create does.
+    const liveMetrics = await counts([
+      WAVE_METRICS_TABLE,
+      WAVE_DROPPER_METRICS_TABLE
+    ]);
+    expect(liveMetrics[WAVE_METRICS_TABLE]).toBeGreaterThan(0);
+    expect(liveMetrics[WAVE_DROPPER_METRICS_TABLE]).toBeGreaterThan(0);
     // The group lists the creator and the address's new identity.
     expect(live[PROFILE_GROUPS_TABLE]).toHaveLength(2);
 
     await seedWorld();
     await restoreRows(identity);
+    await forgetDocuments();
+    // A metrics row there before the rebuild stays as it is.
+    await sqlExecutor.execute(
+      `insert into ${WAVE_METRICS_TABLE}
+         (wave_id, drops_count, subscribers_count, participatory_drops_count,
+          latest_drop_timestamp)
+       values (:w, 7, 0, 0, 1)`,
+      { w: W }
+    );
+    const metricsBefore = await sqlExecutor.execute(
+      `select * from ${WAVE_METRICS_TABLE}`
+    );
     const before = await counts(OTHERS);
-    const rebuilt = await rebuildWavesChainMirror({}, () => sqlExecutor, {});
+    const gatewayDocs = jest.spyOn(ChainGatewayClient.prototype, 'getDocument');
+    filesFetch.mockClear();
+    const rebuilt = await rebuild();
     // The chain's time: the newest block the index's log holds.
     expect(rebuilt.at).toBe(T + 52 * 1000);
     expect(await dump(VOLATILE)).toEqual(live);
     expect(await counts(OTHERS)).toEqual(before);
+    expect(
+      await sqlExecutor.execute(`select * from ${WAVE_METRICS_TABLE}`)
+    ).toEqual(metricsBefore);
+    // Every document from the files source, none from the gateway's store.
+    expect(rebuilt.missingDocuments).toBe(0);
+    expect(rebuilt.last.invalidLegacyIds).toBe(0);
+    expect(filesFetch).toHaveBeenCalledTimes(4);
+    expect(gatewayDocs).not.toHaveBeenCalled();
+    gatewayDocs.mockRestore();
     const first = await dump({});
 
     // Twice from the same index: the same rows, times included.
     await seedWorld();
     await restoreRows(identity);
-    await rebuildWavesChainMirror({}, () => sqlExecutor, {});
+    await forgetDocuments();
+    await rebuild();
     const autoIncrements: Record<string, readonly string[]> = {
       [WAVES_TABLE]: ['serial_no'],
       [WAVES_METADATA_TABLE]: ['id'],
@@ -650,5 +817,256 @@ describe("the mirror's rebuild", () => {
         ])
       );
     expect(strip(await dump({}))).toEqual(strip(first));
+
+    // The seed is the rebuild's own run: the same rows.
+    await seedWorld();
+    await restoreRows(identity);
+    await forgetDocuments();
+    await seedWavesChainMirror(
+      rebuildCtx,
+      () => sqlExecutor,
+      {
+        CHAIN_GATEWAY_URL: GATEWAY
+      },
+      { fetchImpl: filesFetch as unknown as typeof fetch }
+    );
+    expect(strip(await dump({}))).toEqual(strip(first));
+  });
+
+  it('writes no content for a description the live mirror refused, and leaves its hold as it is', async () => {
+    await seedWorld();
+    await liveRun({ kind: 'refused', code: 'REJECTED' });
+    const live = await dump(VOLATILE);
+    const holds = await sqlExecutor.execute<Record<string, unknown>>(
+      `select * from ${CHAIN_ENTRY_HOLDS_TABLE}`
+    );
+    expect(holds).toEqual([
+      expect.objectContaining({
+        entry_id: waveDescriptionDropId(W),
+        competition_id: '',
+        reason: 'description_moderation',
+        retry_at: null
+      })
+    ]);
+    const description = () =>
+      sqlExecutor.execute(
+        `select content from ${DROPS_PARTS_TABLE} where drop_id = :dropId`,
+        { dropId: waveDescriptionDropId(W) }
+      );
+    expect(await description()).toEqual([{ content: null }]);
+    const identity = await addressIdentityRows();
+
+    // The rebuild's world: the index, the identities and the kept holds.
+    await seedWorld();
+    await restoreRows({ ...identity, [CHAIN_ENTRY_HOLDS_TABLE]: holds });
+    await forgetDocuments();
+    await rebuild();
+    expect(await dump(VOLATILE)).toEqual(live);
+    expect(await description()).toEqual([{ content: null }]);
+    expect(
+      await sqlExecutor.execute(`select * from ${CHAIN_ENTRY_HOLDS_TABLE}`)
+    ).toEqual(holds);
+  });
+
+  it('leaves an object waiting for a document the files source lacks, counted, and asks no one else', async () => {
+    await seedWorld();
+    await forgetDocuments();
+    const waveDoc = cidPath(rawCidHexOf(bytesOf(aWaveDoc())));
+    fs.renameSync(
+      path.join(filesDir, waveDoc),
+      path.join(filesDir, `${waveDoc}.away`)
+    );
+    const gatewayDocs = jest.spyOn(ChainGatewayClient.prototype, 'getDocument');
+    try {
+      const rebuilt = await rebuild();
+      expect(rebuilt.missingDocuments).toBe(1);
+      expect(rebuilt.last.objects?.waves).toMatchObject({
+        mirrored: 0,
+        failed: 0
+      });
+      // The wave waits for its document, and its decision for the wave.
+      expect(rebuilt.last.waiting).toMatchObject({
+        wave_held_wave_document_missing: 1,
+        decision_wave_not_mirrored: 1
+      });
+      expect(
+        await sqlExecutor.execute(
+          `select 1 from ${WAVES_TABLE} where id = :w`,
+          {
+            w: W
+          }
+        )
+      ).toEqual([]);
+      expect(gatewayDocs).not.toHaveBeenCalled();
+    } finally {
+      gatewayDocs.mockRestore();
+      fs.renameSync(
+        path.join(filesDir, `${waveDoc}.away`),
+        path.join(filesDir, waveDoc)
+      );
+    }
+  });
+
+  it("rebuilds the rest past objects whose legacy ids aren't RFC 4122 UUIDs, then fails naming them; the live mirror only counts them", async () => {
+    await seedWorld({ badLegacyIds: true });
+    // Live, each run left them out, counted, and went on.
+    const reports = await liveRun();
+    expect(reports.map((r) => r.invalidLegacyIds)).toEqual([2, 2, 2]);
+    expect(reports.map((r) => r.decisions.failed)).toEqual([0, 0, 0]);
+    const live = await dump(VOLATILE);
+    expect(live[COMPETITIONS_TABLE]).toHaveLength(2);
+    const identity = await addressIdentityRows();
+
+    await seedWorld({ badLegacyIds: true });
+    await restoreRows(identity);
+    await forgetDocuments();
+    const failure = await rebuild().then(
+      () => null,
+      (error: Error) => error.message
+    );
+    expect(failure).toContain('left out 2 object(s)');
+    expect(failure).toContain(`decision ${BAD_DECISION} (${BAD_LEGACY})`);
+    expect(failure).toContain(`wave ${BAD_WAVE} (${BAD_LEGACY})`);
+    // The whole pass was done first: the live mirror's rows.
+    expect(await dump(VOLATILE)).toEqual(live);
+  });
+
+  it('runs the drop archives import first, and keeps its rows', async () => {
+    await seedWorld();
+    await forgetDocuments();
+    const archived = '00000000-0000-4000-8000-0000000000f1';
+    const importDropArchives = jest.fn(
+      async (
+        sources: { files: string; gateway: string },
+        db: () => typeof sqlExecutor,
+        _height: number | null
+      ) => {
+        // Nothing of the mirror's is written yet.
+        const [state] = await db().execute<{ n: number }>(
+          `select count(*) as n from ${WAVES_CHAIN_MIRROR_STATE_TABLE}`
+        );
+        const [waves] = await db().execute<{ n: number }>(
+          `select count(*) as n from ${WAVES_TABLE} where id = :w`,
+          { w: W }
+        );
+        expect([Number(state.n), Number(waves.n)]).toEqual([0, 0]);
+        await db().execute(
+          `insert into ${DROPS_TABLE}
+             (id, wave_id, author_id, created_at, updated_at, title,
+              parts_count, reply_to_drop_id, reply_to_part_id, drop_type,
+              signature, hide_link_preview)
+           values (:id, :wave, 'profile-1', 1, null, null, 1, null, null,
+              'CHAT', null, false)`,
+          { id: archived, wave: WAVE }
+        );
+        return { descriptionDropIds: new Map<string, string>() };
+      }
+    );
+    const rebuilt = await rebuildWavesChainMirror(
+      { ...rebuildCtx, mark: { chainHeight: 60 } },
+      () => sqlExecutor,
+      { CHAIN_GATEWAY_URL: GATEWAY },
+      {
+        fetchImpl: filesFetch as unknown as typeof fetch,
+        importDropArchives
+      }
+    );
+    expect(importDropArchives).toHaveBeenCalledTimes(1);
+    // The run's sources, and its mark's height to read the import at.
+    expect(importDropArchives.mock.calls[0][0]).toEqual({
+      files: FILES,
+      gateway: GATEWAY
+    });
+    expect(importDropArchives.mock.calls[0][2]).toBe(60);
+    expect(rebuilt.dropArchives).toEqual({ descriptionDropIds: new Map() });
+    expect(
+      await sqlExecutor.execute(
+        `select id from ${DROPS_TABLE} where id = :id`,
+        {
+          id: archived
+        }
+      )
+    ).toEqual([{ id: archived }]);
+  });
+
+  it('reads no wave_metrics in a rebuild, where the live mirror reads the hub with them', async () => {
+    // Every statement through the executor a run is given.
+    const recording = () => {
+      const statements: string[] = [];
+      const executor = new Proxy(sqlExecutor, {
+        get(target, prop, receiver) {
+          const value = Reflect.get(target, prop, receiver);
+          if (typeof value !== 'function') return value;
+          return (...args: unknown[]) => {
+            if (typeof args[0] === 'string') statements.push(args[0]);
+            return value.apply(target, args);
+          };
+        }
+      });
+      return { statements, supplier: () => executor };
+    };
+    const metrics = (statements: string[]) =>
+      statements.filter((sql) => sql.includes(WAVE_METRICS_TABLE));
+    await seedWorld();
+    const live = recording();
+    await liveRun({ kind: 'allowed' }, live.supplier);
+    const liveReads = metrics(live.statements).filter((sql) =>
+      /^\s*select/i.test(sql)
+    );
+    expect(liveReads.length).toBeGreaterThan(0);
+
+    await seedWorld();
+    await forgetDocuments();
+    const rebuilt = recording();
+    await rebuildWavesChainMirror(
+      rebuildCtx,
+      rebuilt.supplier,
+      { CHAIN_GATEWAY_URL: GATEWAY },
+      { fetchImpl: filesFetch as unknown as typeof fetch }
+    );
+    expect(rebuilt.statements.length).toBeGreaterThan(0);
+    expect(metrics(rebuilt.statements)).toEqual([]);
+  });
+
+  it('fails on a document the files source gives wrong, rather than wait for it', async () => {
+    await seedWorld();
+    await forgetDocuments();
+    const file = path.join(filesDir, cidPath(rawCidHexOf(bytesOf(aWaveDoc()))));
+    const bytes = fs.readFileSync(file);
+    fs.writeFileSync(file, Buffer.concat([bytes, Buffer.from(' ')]));
+    try {
+      await expect(rebuild()).rejects.toThrow(
+        'The files source failed for 1 document(s)'
+      );
+    } finally {
+      fs.writeFileSync(file, bytes);
+    }
+  });
+
+  it('needs the gateway source as CHAIN_GATEWAY_URL, and the files source', async () => {
+    const step = { stepId: 'waves.mirror' };
+    await expect(
+      rebuildWavesChainMirror(
+        { ...step, sources: { files: FILES } },
+        () => sqlExecutor,
+        { CHAIN_GATEWAY_URL: GATEWAY }
+      )
+    ).rejects.toThrow('waves.mirror reads the 6529 chain');
+    await expect(
+      rebuildWavesChainMirror(
+        { ...step, sources: { files: FILES, gateway: GATEWAY } },
+        () => sqlExecutor,
+        { CHAIN_GATEWAY_URL: 'http://gateway.example/other' }
+      )
+    ).rejects.toThrow("CHAIN_GATEWAY_URL is not the run's gateway source");
+    await expect(
+      rebuildWavesChainMirror(
+        { ...step, sources: { gateway: GATEWAY } },
+        () => sqlExecutor,
+        { CHAIN_GATEWAY_URL: `${GATEWAY}/` }
+      )
+    ).rejects.toThrow(
+      "waves.mirror reads the chain's documents from the files source"
+    );
   });
 });

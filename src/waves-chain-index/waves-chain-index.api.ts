@@ -23,6 +23,8 @@ export interface ChainPage<T> {
 
 export interface WavesImportState {
   readonly completed: boolean;
+  /** The import's start (startMs, ms); null when the answer has none. */
+  readonly startedAt: number | null;
 }
 
 export interface WavesChainHead {
@@ -189,7 +191,13 @@ export class GatewayWavesChainApi implements WavesChainApi {
       { height: at }
     );
     const data = answer?.data;
-    return data ? { completed: data.completed === true } : null;
+    if (!data) return null;
+    const startedAt = Number(data.startMs);
+    return {
+      completed: data.completed === true,
+      startedAt:
+        Number.isSafeInteger(startedAt) && startedAt > 0 ? startedAt : null
+    };
   }
 
   private async page(

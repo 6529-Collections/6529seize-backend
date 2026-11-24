@@ -23,6 +23,9 @@ import {
   WaveDocumentPart
 } from '@/waves-chain-mirror/waves-chain-mirror.waves';
 import { DocumentSource } from '@/waves-chain-mirror/waves-chain-mirror.docs';
+import { EntryHold } from '@/waves-chain-mirror/waves-chain-mirror.db';
+import { InsertWaveEntity } from '@/api/waves/waves.api.db';
+import { CompetitionEntity } from '@/entities/ICompetition';
 import { aWave } from './wave.fixture';
 
 export const chainWord = (byte: string) => `0x${byte.repeat(32)}`;
@@ -160,6 +163,87 @@ export class FakeObjectsStore implements ObjectsStore {
   }
   async saveMirroredWave(chainWaveId: string, record: MirroredWave) {
     this.waveRecords.set(chainWaveId, record);
+  }
+  /** chain_decisions' imported decisions (a rebuild's). */
+  importedDecisions: {
+    decision_id: string;
+    legacy_id: string | null;
+    data: unknown;
+  }[] = [];
+  competitionIds = new Set<string>();
+  importedWaves: InsertWaveEntity[] = [];
+  importedCompetitions: {
+    record: CompetitionEntity;
+    capabilities: readonly string[];
+    outcomes: readonly Record<string, unknown>[];
+  }[] = [];
+  async chainImportedDecisions() {
+    return this.mode === 'rebuild' ? this.importedDecisions : [];
+  }
+  async competitionExists(id: string) {
+    return this.competitionIds.has(id);
+  }
+  /** The drop archives' import's description drop ids, by wave id. */
+  descriptionDropIds = new Map<string, string>();
+  async importedDescriptionDropId(waveId: string) {
+    return this.descriptionDropIds.get(waveId) ?? null;
+  }
+  /** The drops the drop archives' import wrote, by id: their wave; null when none ran. */
+  archivedDrops: Map<string, string> | null = null;
+  async descriptionDropInWave(dropId: string, waveId: string) {
+    if (!this.archivedDrops) return null;
+    return this.archivedDrops.get(dropId) === waveId;
+  }
+  /** chain_groups' imported groups the chain never replaced (a rebuild's). */
+  importedChainGroups: ChainGroupRow[] = [];
+  async chainImportedGroups() {
+    return this.mode === 'rebuild' ? this.importedChainGroups : [];
+  }
+  async insertImportedWave(entity: InsertWaveEntity) {
+    if (this.mode !== 'rebuild') return;
+    this.importedWaves.push(entity);
+    this.waves.set(entity.id, entity as unknown as WaveEntity);
+  }
+  async insertImportedCompetition(input: {
+    record: CompetitionEntity;
+    capabilities: readonly string[];
+    outcomes: readonly Record<string, unknown>[];
+  }) {
+    if (this.mode !== 'rebuild') return;
+    this.importedCompetitions.push(input);
+    this.competitionIds.add(input.record.id);
+  }
+  /** chain_entry_holds' description rows, by description drop id. */
+  descriptionHolds = new Map<string, EntryHold>();
+  /** Whether the records' description holds were carried over. */
+  descriptionHoldsCarried = false;
+  async descriptionHold(dropId: string) {
+    return this.descriptionHolds.get(dropId) ?? null;
+  }
+  async holdDescription(dropId: string, hold: EntryHold) {
+    if (this.mode === 'rebuild') return;
+    this.descriptionHolds.set(dropId, hold);
+  }
+  async releaseDescription(dropId: string) {
+    if (this.mode === 'rebuild') return;
+    this.descriptionHolds.delete(dropId);
+  }
+  async carryDescriptionHolds() {
+    if (this.mode === 'rebuild' || this.descriptionHoldsCarried) return 0;
+    this.descriptionHoldsCarried = true;
+    let n = 0;
+    for (const record of Array.from(this.waveRecords.values())) {
+      if (!record.held?.startsWith('description')) continue;
+      n++;
+      const dropId = this.waves.get(record.waveId)?.description_drop_id;
+      if (!dropId || this.descriptionHolds.has(dropId)) continue;
+      this.descriptionHolds.set(dropId, {
+        reason: record.held,
+        retryAt: record.retryAt,
+        attempts: record.attempts
+      });
+    }
+    return n;
   }
   async importedGroupId(legacyUuid: string) {
     return this.importedGroups.get(legacyUuid) ?? null;

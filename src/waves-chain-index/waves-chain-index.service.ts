@@ -322,7 +322,9 @@ export class WavesChainIndex {
     state = await this.save({
       ...state,
       readHeight: height,
-      network: head.network ?? state.network
+      network: head.network ?? state.network,
+      // The import's start, kept from the first run that read it complete.
+      importStartedAt: state.importStartedAt ?? imported.startedAt
     });
     try {
       const fullDue =

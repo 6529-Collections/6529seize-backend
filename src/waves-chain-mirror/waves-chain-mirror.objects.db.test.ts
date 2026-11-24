@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import {
   ACTIVITY_EVENTS_TABLE,
   ADDRESS_CONSOLIDATION_KEY,
+  CHAIN_ENTRY_HOLDS_TABLE,
   CONTENT_MODERATION_PRE_PUBLICATION_CHECKS_TABLE,
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
@@ -13,6 +14,7 @@ import {
   USER_GROUPS_TABLE,
   WAVE_GROUP_NOTIFICATION_SUBSCRIPTIONS_TABLE,
   WAVES_CHAIN_MIRROR_GROUPS_TABLE,
+  WAVES_CHAIN_MIRROR_STATE_TABLE,
   WAVES_CHAIN_MIRROR_WAVES_TABLE,
   WAVES_METADATA_TABLE,
   WAVES_TABLE
@@ -44,6 +46,7 @@ import { ChainObject } from '@/waves-chain-index/waves-chain-index.api';
 import { WavesChainMirrorDb } from './waves-chain-mirror.db';
 import { StoredDocuments } from './waves-chain-mirror.docs';
 import {
+  GateVerdict,
   ModerationContentGate,
   moderationSubjectId
 } from './waves-chain-mirror.gate';
@@ -117,13 +120,13 @@ describe('WavesChainObjectsMirror in the database', () => {
   const groups = new UserGroupsDb(() => sqlExecutor);
   const stamp = { height: 20, generation: 1 };
 
-  const run = async () => {
+  const run = async (verdict: GateVerdict = { kind: 'allowed' }) => {
     const counter = new PlanCounter();
     const report = await new WavesChainObjectsMirror(
       objectsDb,
       (ids) => db.profilesOfPrincipals(ids),
       defaultObjectEffects,
-      { check: jest.fn().mockResolvedValue({ kind: 'allowed' }) },
+      { check: jest.fn().mockResolvedValue(verdict) },
       () => NOW
     ).run({
       write: true,
@@ -420,6 +423,120 @@ describe('WavesChainObjectsMirror in the database', () => {
     const again = await run();
     expect(again.report.waves).toMatchObject({ mirrored: 0, unchanged: 1 });
     expect(await dumpTables(sqlExecutor, TABLES)).toEqual(first);
+  });
+
+  it("keeps a wave description's moderation hold in chain_entry_holds, and reads it from there", async () => {
+    await ensurePrincipalMap(sqlExecutor);
+    await mapPrincipals(sqlExecutor, { [P1]: 'profile-1' });
+    await seedGroup(
+      aChainGroupRow(G, { includes: [{ kind: 'principal', value: P1 }] })
+    );
+    const cid = await seedDocument(aWaveDoc());
+    await seedWave(aChainWaveRow(W, { read: G, admin: G, metadataCid: cid }));
+    await index.writeEvents([waveCreated(W)], 21, UNKNOWN_SCAN);
+    const dropId = waveDescriptionDropId(W);
+    const holdRows = () =>
+      sqlExecutor.execute<Record<string, unknown>>(
+        `select entry_id, competition_id, reason, retry_at, attempts, held_at
+           from ${CHAIN_ENTRY_HOLDS_TABLE}`
+      );
+    const content = async () =>
+      (
+        await sqlExecutor.execute<{ content: string | null }>(
+          `select content from ${DROPS_PARTS_TABLE} where drop_id = :dropId`,
+          { dropId }
+        )
+      ).map((row) => row.content);
+
+    // Refused: the wave is written with an empty description, the hold kept
+    // under the description drop id.
+    await run({ kind: 'refused', code: 'REJECTED' });
+    expect(await content()).toEqual([null]);
+    expect(await holdRows()).toEqual([
+      {
+        entry_id: dropId,
+        competition_id: '',
+        reason: 'description_moderation',
+        retry_at: null,
+        attempts: 1,
+        held_at: NOW
+      }
+    ]);
+    expect(await objectsDb.descriptionHold(dropId)).toEqual({
+      reason: 'description_moderation',
+      retryAt: null,
+      attempts: 1
+    });
+    expect(
+      await sqlExecutor.execute(
+        `select held, retry_at from ${WAVES_CHAIN_MIRROR_WAVES_TABLE}`
+      )
+    ).toEqual([{ held: 'description_moderation', retry_at: null }]);
+
+    // A rebuild's store keeps the live mirror's holds as they are.
+    const rebuildDb = new WavesChainObjectsDb(() => sqlExecutor, 'rebuild');
+    await rebuildDb.holdDescription(
+      dropId,
+      { reason: 'description_moderation_deferred', retryAt: 1, attempts: 9 },
+      NOW
+    );
+    await rebuildDb.releaseDescription(dropId);
+    expect(await rebuildDb.carryDescriptionHolds(NOW)).toBe(0);
+    expect(await holdRows()).toHaveLength(1);
+    expect(await objectsDb.descriptionHold(dropId)).toMatchObject({
+      reason: 'description_moderation'
+    });
+
+    // A new description, allowed: written, and the hold released.
+    const next = await seedDocument(
+      aWaveDoc({ description: [{ content: 'Rewritten', media: [] }] })
+    );
+    await seedWave(aChainWaveRow(W, { read: G, admin: G, metadataCid: next }));
+    await run();
+    expect(await content()).toEqual(['Rewritten']);
+    expect(await holdRows()).toEqual([]);
+  });
+
+  it('carries the description holds the wave records kept over into chain_entry_holds, once', async () => {
+    await ensurePrincipalMap(sqlExecutor);
+    await mapPrincipals(sqlExecutor, { [P1]: 'profile-1' });
+    await seedGroup(
+      aChainGroupRow(G, { includes: [{ kind: 'principal', value: P1 }] })
+    );
+    const cid = await seedDocument(aWaveDoc());
+    await seedWave(aChainWaveRow(W, { read: G, admin: G, metadataCid: cid }));
+    await index.writeEvents([waveCreated(W)], 21, UNKNOWN_SCAN);
+    await run();
+    // As an earlier mirror left it: the hold in the wave's record only.
+    await sqlExecutor.execute(`delete from ${WAVES_CHAIN_MIRROR_STATE_TABLE}`);
+    await sqlExecutor.execute(
+      `update ${WAVES_CHAIN_MIRROR_WAVES_TABLE}
+          set held = 'description_moderation_deferred', retry_at = :retryAt,
+              attempts = 2, updated_at = :updatedAt`,
+      { retryAt: NOW + 60_000, updatedAt: NOW - 1_000 }
+    );
+    expect(await objectsDb.carryDescriptionHolds(NOW)).toBe(1);
+    const kept = {
+      entry_id: waveDescriptionDropId(W),
+      competition_id: '',
+      reason: 'description_moderation_deferred',
+      retry_at: NOW + 60_000,
+      attempts: 2,
+      held_at: NOW - 1_000
+    };
+    expect(
+      await sqlExecutor.execute(
+        `select entry_id, competition_id, reason, retry_at, attempts, held_at
+           from ${CHAIN_ENTRY_HOLDS_TABLE}`
+      )
+    ).toEqual([kept]);
+    // Once: a hold released afterwards is not carried over again.
+    await sqlExecutor.execute(`delete from ${CHAIN_ENTRY_HOLDS_TABLE}`);
+    expect(await objectsDb.carryDescriptionHolds(NOW)).toBe(0);
+    await run();
+    expect(
+      await sqlExecutor.execute(`select 1 from ${CHAIN_ENTRY_HOLDS_TABLE}`)
+    ).toEqual([]);
   });
 });
 

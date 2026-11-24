@@ -1,9 +1,11 @@
 import {
   ADDRESS_CONSOLIDATION_KEY,
   CHAIN_DECISIONS_TABLE,
+  CHAIN_ENTRY_HOLDS_TABLE,
   CHAIN_EVENTS_TABLE,
   CHAIN_GROUPS_TABLE,
   CHAIN_WAVES_TABLE,
+  COMPETITION_CAPABILITIES_TABLE,
   COMPETITION_CONFIG_VERSIONS_TABLE,
   COMPETITION_LIFECYCLE_EVENTS_TABLE,
   COMPETITIONS_TABLE,
@@ -15,8 +17,10 @@ import {
   USER_GROUPS_TABLE,
   WAVES_CHAIN_MIRROR_DECISIONS_TABLE,
   WAVES_CHAIN_MIRROR_GROUPS_TABLE,
+  WAVES_CHAIN_MIRROR_STATE_TABLE,
   WAVES_CHAIN_MIRROR_WAVES_TABLE,
-  WAVES_METADATA_TABLE
+  WAVES_METADATA_TABLE,
+  WAVES_TABLE
 } from '@/constants';
 import { ApiCompetitionDraftInput } from '@/api/generated/models/ApiCompetitionDraftInput';
 import { competitionCommandRepository } from '@/competitions/competition-command.repository';
@@ -45,11 +49,16 @@ import {
   SqlExecutor
 } from '@/sql-executor';
 import { statementChunks } from '@/waves-chain-index/waves-chain-index.db';
-import type { MirrorMode } from './waves-chain-mirror.db';
+import type { EntryHold, MirrorMode } from './waves-chain-mirror.db';
 import { ChainDecisionRowRead } from './waves-chain-mirror.decisions';
 import { ChainGroupRow } from './waves-chain-mirror.groups';
 import { groupShortIdOf, legacyUuidOfGroupId } from './waves-chain-mirror.ids';
-import { ChainWaveRow, WaveDocumentPart } from './waves-chain-mirror.waves';
+import {
+  ChainWaveRow,
+  DESCRIPTION_DEFERRED,
+  DESCRIPTION_REFUSED,
+  WaveDocumentPart
+} from './waves-chain-mirror.waves';
 import { writerPoolExecutor } from './waves-chain-mirror.writer';
 
 type Conn = ConnectionWrapper<any>;
@@ -59,6 +68,8 @@ function opts(connection?: Conn) {
 }
 
 const ID_BYTES = 72;
+/** The mirror's state row that marks the description holds carried over. */
+const DESCRIPTION_HOLDS_STATE_NAME = 'description_holds';
 const SCAN_PAGE = 5_000;
 
 /** What the mirror last wrote of a decision made on the chain. */
@@ -179,7 +190,15 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
   constructor(
     supplier: () => SqlExecutor,
     /** A rebuild writes no follows, activity or outbox events. */
-    readonly mode: MirrorMode = 'live'
+    readonly mode: MirrorMode = 'live',
+    /**
+     * A rebuild's drop archives' import, run before it: its imported
+     * waves' description drop ids (lowercase legacy wave id to drop id).
+     * Null when none ran.
+     */
+    private readonly dropArchives: {
+      readonly descriptionDropIds: ReadonlyMap<string, string>;
+    } | null = null
   ) {
     super(supplier);
     this.waves = new WavesApiDb(supplier);
@@ -224,7 +243,7 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
 
   /**
    * Waves made on the chain, and imported ones whose policy it replaced or
-   * that it closed.
+   * that it closed; in a rebuild, every imported wave too.
    */
   async chainWavesToMirror(): Promise<ChainWaveRow[]> {
     return this.db.execute<ChainWaveRow>(
@@ -234,7 +253,9 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
         where origin = 'native' or status = 'closed'
            or cast(json_unquote(json_extract(data, '$.policyVersion'))
                    as unsigned) > 1
-        order by wave_id`
+           or :rebuild
+        order by wave_id`,
+      { rebuild: this.mode === 'rebuild' }
     );
   }
 
@@ -454,6 +475,110 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  // ------------------------------------------------------------ holds
+
+  /**
+   * A wave description's moderation hold: a row of chain_entry_holds under
+   * the description drop id, with no competition (''), as an entry's.
+   */
+  async descriptionHold(dropId: string): Promise<EntryHold | null> {
+    const row = await this.db.oneOrNull<Record<string, unknown>>(
+      `select reason, retry_at, attempts from ${CHAIN_ENTRY_HOLDS_TABLE}
+        where entry_id = :dropId and competition_id = ''`,
+      { dropId }
+    );
+    if (!row) return null;
+    return {
+      reason: String(row.reason),
+      retryAt: row.retry_at === null ? null : Number(row.retry_at),
+      attempts: Number(row.attempts ?? 0)
+    };
+  }
+
+  /**
+   * Keeps a description's verdict, replacing the one before (a refusal
+   * holds only the description it judged). A rebuild keeps none: it reads
+   * the live mirror's.
+   */
+  async holdDescription(
+    dropId: string,
+    hold: EntryHold,
+    now: number,
+    connection?: Conn
+  ): Promise<void> {
+    if (this.mode === 'rebuild') return;
+    await this.db.execute(
+      `insert into ${CHAIN_ENTRY_HOLDS_TABLE}
+         (entry_id, competition_id, reason, held_at, retry_at, attempts)
+       values (:dropId, '', :reason, :now, :retryAt, :attempts)
+       on duplicate key update reason = :reason, retry_at = :retryAt,
+          attempts = :attempts`,
+      {
+        dropId,
+        reason: hold.reason,
+        retryAt: hold.retryAt,
+        attempts: hold.attempts,
+        now
+      },
+      opts(connection)
+    );
+  }
+
+  /** A description that went through; a rebuild keeps the holds. */
+  async releaseDescription(dropId: string, connection?: Conn): Promise<void> {
+    if (this.mode === 'rebuild') return;
+    await this.db.execute(
+      `delete from ${CHAIN_ENTRY_HOLDS_TABLE}
+        where entry_id = :dropId and competition_id = ''`,
+      { dropId },
+      opts(connection)
+    );
+  }
+
+  /**
+   * Once: the description holds an earlier mirror kept in its wave records
+   * (waves_chain_mirror_waves.held), copied into chain_entry_holds under
+   * each wave's description drop id; a hold already there is left as it
+   * is. Returns how many records held one. A rebuild copies nothing.
+   */
+  async carryDescriptionHolds(now: number): Promise<number> {
+    if (this.mode === 'rebuild') return 0;
+    const done = await this.db.oneOrNull<{ name: string }>(
+      `select name from ${WAVES_CHAIN_MIRROR_STATE_TABLE} where name = :name`,
+      { name: DESCRIPTION_HOLDS_STATE_NAME }
+    );
+    if (done) return 0;
+    const reasons = [DESCRIPTION_REFUSED, DESCRIPTION_DEFERRED];
+    return this.inTransaction(async (connection) => {
+      const options = opts(connection);
+      const [row] = await this.db.execute<{ n: number | string }>(
+        `select count(*) as n from ${WAVES_CHAIN_MIRROR_WAVES_TABLE}
+          where held in (:reasons)`,
+        { reasons },
+        options
+      );
+      await this.db.execute(
+        `insert ignore into ${CHAIN_ENTRY_HOLDS_TABLE}
+           (entry_id, competition_id, reason, held_at, retry_at, attempts)
+         select w.description_drop_id, '', m.held, m.updated_at, m.retry_at,
+                m.attempts
+           from ${WAVES_CHAIN_MIRROR_WAVES_TABLE} m
+           join ${WAVES_TABLE} w on w.id = m.wave_id
+          where m.held in (:reasons)`,
+        { reasons },
+        options
+      );
+      await this.db.execute(
+        `insert into ${WAVES_CHAIN_MIRROR_STATE_TABLE} (name, updated_at)
+         values (:name, :now)
+         on duplicate key update updated_at = updated_at`,
+        { name: DESCRIPTION_HOLDS_STATE_NAME, now },
+        options
+      );
+      return Number(row?.n ?? 0);
+    });
+  }
+
   // ------------------------------------------------------------ 6529.io reads
 
   /**
@@ -465,7 +590,8 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
     const short = groupShortIdOf(legacyUuid);
     if (!short) return null;
     const matches = await this.db.execute<{ id: string }>(
-      `select id from ${USER_GROUPS_TABLE} where id like :pattern or id = :short`,
+      `select id from ${USER_GROUPS_TABLE}
+        where (id like :pattern or id = :short) and is_direct_message = false`,
       { pattern: `%-${short}`, short }
     );
     const exact = matches.filter(
@@ -540,9 +666,13 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
   }
 
   async waveRow(id: string, connection?: Conn): Promise<WaveEntity | null> {
-    return this.waves.findWaveHubById(id, !!connection, {
-      connection
-    });
+    // A rebuild reads waves alone: wave_metrics is recomputed after it.
+    return this.waves.findWaveHubById(
+      id,
+      !!connection,
+      { connection },
+      { withoutMetrics: this.mode === 'rebuild' }
+    );
   }
 
   /** A drop's author and its parts' content and media, in order. */
@@ -757,7 +887,10 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
         reply_to_part_id: null,
         serial_no: null
       },
-      connection
+      connection,
+      // A rebuild writes no wave metrics: they are recomputed from drops
+      // after it.
+      { deferMetrics: this.mode === 'rebuild' }
     );
     await this.insertParts(input, connection);
   }
@@ -833,7 +966,9 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
     connection: Conn
   ): Promise<{ before: WaveEntity; after: WaveEntity } | null> {
     const ctx = { connection };
-    const before = await this.waves.findWaveHubById(input.waveId, true, ctx);
+    const before = await this.waves.findWaveHubById(input.waveId, true, ctx, {
+      withoutMetrics: this.mode === 'rebuild'
+    });
     if (!before) return null;
     const patched = applyWaveHubPatch(before, input.patch);
     const after: WaveEntity = {
@@ -1021,6 +1156,162 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
           lifecycle: record.lifecycle
         }
       },
+      { connection }
+    );
+  }
+
+  // ------------------------------------------------------------ imported rows
+
+  /**
+   * Imported decisions (a rebuild writes the rows 6529.io has none of):
+   * their chain ids, legacy ids and data.
+   */
+  async chainImportedDecisions(): Promise<
+    { decision_id: string; legacy_id: string | null; data: unknown }[]
+  > {
+    if (this.mode !== 'rebuild') return [];
+    return this.db.execute(
+      `select decision_id, legacy_id, data from ${CHAIN_DECISIONS_TABLE}
+        where origin = 'legacy'
+        order by decision_id`
+    );
+  }
+
+  /** Whether 6529.io has a competitions row of this id. */
+  async competitionExists(id: string): Promise<boolean> {
+    const row = await this.db.oneOrNull<{ id: string }>(
+      `select id from ${COMPETITIONS_TABLE} where id = :id`,
+      { id }
+    );
+    return !!row;
+  }
+
+  /**
+   * An imported wave's description drop id, as the drop archives' import
+   * gave it (the import-files reader writes the description drops under
+   * their original ids); null without it.
+   */
+  async importedDescriptionDropId(waveId: string): Promise<string | null> {
+    return (
+      this.dropArchives?.descriptionDropIds.get(waveId.toLowerCase()) ?? null
+    );
+  }
+
+  /**
+   * Whether a drop of this id is in the wave, once the drop archives'
+   * import wrote them; null when none ran (nothing to check against).
+   */
+  async descriptionDropInWave(
+    dropId: string,
+    waveId: string
+  ): Promise<boolean | null> {
+    if (!this.dropArchives) return null;
+    const row = await this.db.oneOrNull<{ id: string }>(
+      `select id from ${DROPS_TABLE} where id = :dropId and wave_id = :waveId`,
+      { dropId, waveId }
+    );
+    return !!row;
+  }
+
+  /**
+   * A rebuild's imported groups the chain never replaced (version 1): the
+   * rebuild matches each to 6529.io's row, as the live mirror matches the
+   * groups it meets, and keeps the match in its records.
+   */
+  async chainImportedGroups(): Promise<ChainGroupRow[]> {
+    if (this.mode !== 'rebuild') return [];
+    return this.db.execute<ChainGroupRow>(
+      `select group_id, legacy_id, version, origin, data
+         from ${CHAIN_GROUPS_TABLE}
+        where origin = 'legacy' and version <= 1
+        order by group_id`
+    );
+  }
+
+  /** A rebuild's row of an imported wave; the live mirror writes none. */
+  async insertImportedWave(
+    entity: InsertWaveEntity,
+    connection: Conn
+  ): Promise<void> {
+    if (this.mode !== 'rebuild') return;
+    await this.waves.insertWave(entity, { connection });
+  }
+
+  /**
+   * A rebuild's rows of an imported decision: its competitions row, the
+   * row of its current config version, its capabilities, and its outcomes
+   * unless it is a wave's primary (written by 6529.io's retired
+   * migration). The live mirror writes none.
+   */
+  async insertImportedCompetition(
+    input: {
+      readonly record: CompetitionEntity;
+      readonly capabilities: readonly string[];
+      readonly outcomes: readonly Record<string, unknown>[];
+    },
+    connection: Conn
+  ): Promise<void> {
+    if (this.mode !== 'rebuild') return;
+    const { record } = input;
+    const options = { wrappedConnection: connection };
+    const row = record as unknown as Record<string, unknown>;
+    const columns = Object.keys(row);
+    await this.db.execute(
+      `insert into ${COMPETITIONS_TABLE} (${columns.join(', ')})
+       values (${columns.map((c) => `:${c}`).join(', ')})`,
+      Object.fromEntries(
+        columns.map((c) => [
+          c,
+          COMPETITION_JSON_COLUMNS.has(c) && row[c] !== null
+            ? JSON.stringify(row[c])
+            : (row[c] ?? null)
+        ])
+      ),
+      options
+    );
+    await this.db.execute(
+      `insert ignore into ${COMPETITION_CONFIG_VERSIONS_TABLE}
+         (competition_id, version, config, created_by, created_at)
+       values (:id, :version, :config, null, :createdAt)`,
+      {
+        id: record.id,
+        version: record.config_version,
+        config: JSON.stringify(record),
+        createdAt: record.created_at
+      },
+      options
+    );
+    for (const capability of input.capabilities) {
+      await this.db.execute(
+        `insert ignore into ${COMPETITION_CAPABILITIES_TABLE}
+           (capability, competition_id, wave_id, assigned_by,
+            legacy_source_wave_id, assigned_at)
+         values (:capability, :id, :waveId, null, null, :at)`,
+        {
+          capability,
+          id: record.id,
+          waveId: record.wave_id,
+          at: record.created_at
+        },
+        options
+      );
+    }
+    if (record.legacy_wave_id !== null) return;
+    const outcomes = input.outcomes.flatMap((o) =>
+      typeof o.type === 'string' && typeof o.description === 'string'
+        ? [
+            o as {
+              type: string;
+              description: string;
+              distribution?: { amount?: number | null }[];
+            }
+          ]
+        : []
+    );
+    await competitionCommandRepository.replaceOutcomeDefinitions(
+      record.id,
+      outcomes,
+      record.created_at,
       { connection }
     );
   }

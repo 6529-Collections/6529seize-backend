@@ -16,8 +16,10 @@ import {
   legacyUuidOfGroupId,
   waveDescriptionDropId,
   isChainExecutionKey,
+  InvalidLegacyIds,
   legacyIdOf,
   nativeCompetitionId,
+  readLegacyId,
   nativeEntryRowId,
   NS_CHAIN_DECISION,
   resultDecisionId
@@ -60,6 +62,36 @@ describe('waves chain mirror ids', () => {
     expect(legacyIdOf(UUID.replace(/-/g, ''))).toBe(UUID);
     expect(legacyIdOf('not-a-uuid')).toBeNull();
     expect(legacyIdOf(null)).toBeNull();
+  });
+
+  it("reads a legacy id as an RFC 4122 UUID, and tells one that isn't", () => {
+    expect(readLegacyId(UUID.replace(/-/g, '').toUpperCase())).toEqual({
+      ok: true,
+      id: UUID
+    });
+    expect(readLegacyId(null)).toEqual({ ok: true, id: null });
+    expect(readLegacyId('')).toEqual({ ok: true, id: null });
+    const zeroVersion = '00000000-5662-01f5-4000-8000000001f5';
+    expect(readLegacyId(zeroVersion)).toEqual({ ok: false, text: zeroVersion });
+    expect(() => stableUuid(zeroVersion, 'x')).toThrow();
+    expect(readLegacyId('not-a-uuid')).toEqual({
+      ok: false,
+      text: 'not-a-uuid'
+    });
+
+    const log = jest.fn();
+    const invalid = new InvalidLegacyIds(log);
+    expect(invalid.of('decision', D, UUID)).toBe(UUID);
+    expect(invalid.of('decision', D, null)).toBeNull();
+    expect(invalid.of('decision', D, zeroVersion)).toBeUndefined();
+    expect(invalid.of('decision', D, zeroVersion)).toBeUndefined();
+    expect(invalid.of('entry', D, 'nope')).toBeUndefined();
+    expect(invalid.count).toBe(2);
+    expect(invalid.first(5)).toEqual([
+      `decision ${D} (${zeroVersion})`,
+      `entry ${D} (nope)`
+    ]);
+    expect(log).toHaveBeenCalledTimes(2);
   });
 
   it('keys a chain result by network, decision and time, within 160 characters', () => {

@@ -119,6 +119,11 @@ export interface WavesChainIndexState {
    * on from there.
    */
   readonly feedPart: number;
+  /**
+   * The waves import's start (ms), from the first run that read it
+   * complete; null before.
+   */
+  readonly importStartedAt: number | null;
 }
 
 export interface VoteRereads {
@@ -142,10 +147,13 @@ export const EMPTY_INDEX_STATE: WavesChainIndexState = {
   trustFrom: 0,
   scanState: UNKNOWN_SCAN,
   voteRereads: NO_REREADS,
-  feedPart: 0
+  feedPart: 0,
+  importStartedAt: null
 };
 
-const STATE_NAME = 'waves';
+/** The index's state row (waves_chain_index_state.name). */
+export const WAVES_CHAIN_INDEX_STATE_NAME = 'waves';
+const STATE_NAME = WAVES_CHAIN_INDEX_STATE_NAME;
 /** Rows a statement writes at most. */
 const CHUNK_ROWS = 200;
 /**
@@ -358,6 +366,7 @@ interface StateRow {
   readonly scan_state?: string | null;
   readonly vote_rereads?: string | null;
   readonly feed_part?: number | string | null;
+  readonly import_started_at?: number | string | null;
 }
 
 function voteRereadsOf(text: string | null | undefined): VoteRereads {
@@ -426,7 +435,8 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
       trustFrom: Number(row.trust_from ?? 0),
       scanState: scanStateOf(row.scan_state),
       voteRereads: voteRereadsOf(row.vote_rereads),
-      feedPart: Number(row.feed_part ?? 0)
+      feedPart: Number(row.feed_part ?? 0),
+      importStartedAt: nullableNumber(row.import_started_at)
     };
   }
 
@@ -436,10 +446,11 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
          (name, generation, full_phase, full_after, full_from_height,
           last_full_at, feed_next, read_height, network, last_error,
           events_next, trust_from, scan_state, vote_rereads, feed_part,
-          updated_at)
+          import_started_at, updated_at)
        values (:name, :generation, :fullPhase, :fullAfter, :fullFromHeight,
           :lastFullAt, :feedNext, :readHeight, :network, :lastError,
-          :eventsNext, :trustFrom, :scanState, :voteRereads, :feedPart, :now)
+          :eventsNext, :trustFrom, :scanState, :voteRereads, :feedPart,
+          :importStartedAt, :now)
        on duplicate key update
          generation = :generation, full_phase = :fullPhase,
          full_after = :fullAfter, full_from_height = :fullFromHeight,
@@ -448,7 +459,7 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
          last_error = :lastError, events_next = :eventsNext,
          trust_from = :trustFrom, scan_state = :scanState,
          vote_rereads = :voteRereads, feed_part = :feedPart,
-         updated_at = :now`,
+         import_started_at = :importStartedAt, updated_at = :now`,
       {
         name: STATE_NAME,
         generation: state.generation,
@@ -465,6 +476,7 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
         scanState: JSON.stringify(state.scanState),
         voteRereads: JSON.stringify(state.voteRereads),
         feedPart: state.feedPart,
+        importStartedAt: state.importStartedAt,
         now
       }
     );

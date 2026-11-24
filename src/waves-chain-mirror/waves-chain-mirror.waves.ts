@@ -7,7 +7,7 @@ import { NewWaveDropSchema } from '@/api/drops/drop.validator';
 import { WaveSchema } from '@/api/waves/wave-write.schemas';
 import { WaveEntity } from '@/entities/IWave';
 import { jsonObjectOf } from './waves-chain-mirror.groups';
-import { chainIdOf, legacyIdOf } from './waves-chain-mirror.ids';
+import { chainIdOf, legacyIdOf, readLegacyId } from './waves-chain-mirror.ids';
 
 /**
  * The chain's waves in 6529.io's `waves`. A wave made on the
@@ -137,6 +137,13 @@ export interface WaveDocument {
   readonly createdAt: number | null;
   /** waves_metadatas by data key; null when the document has none. */
   readonly metadata: Readonly<Record<string, string>> | null;
+  /**
+   * An imported wave's description drop id, when the import's document
+   * carries it (description_drop_id, a UUID); null otherwise.
+   */
+  readonly descriptionDropId: string | null;
+  /** The document carries description_drop_id, but empty or no UUID. */
+  readonly descriptionDropIdInvalid: boolean;
 }
 
 export type WaveDocumentRead =
@@ -232,9 +239,23 @@ export function parseWaveDocument(bytes: Uint8Array): WaveDocumentRead {
       adminDropDeletionEnabled: boolOr(doc.admin_drop_deletion_enabled, false),
       createdAt:
         Number.isSafeInteger(createdAt) && createdAt > 0 ? createdAt : null,
-      metadata
+      metadata,
+      ...descriptionDropIdOf(doc.description_drop_id)
     }
   };
+}
+
+/** A wave document's description_drop_id, read as a legacy id is. */
+function descriptionDropIdOf(
+  value: unknown
+): Pick<WaveDocument, 'descriptionDropId' | 'descriptionDropIdInvalid'> {
+  if (value === undefined || value === null) {
+    return { descriptionDropId: null, descriptionDropIdInvalid: false };
+  }
+  const read = readLegacyId(value);
+  return read.ok && read.id
+    ? { descriptionDropId: read.id, descriptionDropIdInvalid: false }
+    : { descriptionDropId: null, descriptionDropIdInvalid: true };
 }
 
 /** A wave's groups as 6529.io's ids (null: none). */
@@ -243,6 +264,14 @@ export interface WaveGroups {
   readonly chat: string | null;
   readonly admin: string | null;
 }
+
+/**
+ * A wave description's moderation hold, kept in chain_entry_holds under its
+ * description drop id: a refusal (for good, until the description changes)
+ * and a deferral (until its retry).
+ */
+export const DESCRIPTION_REFUSED = 'description_moderation';
+export const DESCRIPTION_DEFERRED = 'description_moderation_deferred';
 
 /** An empty description part: what a held description shows. */
 export const EMPTY_DESCRIPTION: readonly WaveDocumentPart[] = [
