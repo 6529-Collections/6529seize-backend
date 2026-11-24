@@ -12,7 +12,13 @@ import {
   expectedChainNetwork,
   waveOnChainSql
 } from '@/waves-chain-index/waves-chain-mapping';
-import { SCOPE_SQL_PARAMS, wavesScopeSql } from '@/waves-scope/waves-scope';
+import {
+  NO_RECORDS_WAVE,
+  readRecordsWaveSetting,
+  RecordsWaveSetting,
+  SCOPE_SQL_PARAMS,
+  wavesScopeSql
+} from '@/waves-scope/waves-scope';
 
 /**
  * Which waves' drops go to the 6529 relays: only waves that move to the
@@ -41,8 +47,8 @@ export const WAVES_SWITCH_ON_AT_ENV = 'WAVES_SWITCH_ON_AT';
 export const WAVES_ON_CHAIN_FLAG_ENV = 'FEATURE_WAVES_ON_CHAIN';
 export const WAVES_FREEZE_AT_ENV = 'WAVES_FREEZE_AT';
 export const RECORDS_WAVE_ENV = 'SIGNED_RECORDS_WAVE_ID';
-/** The records wave setting that says, on purpose, there is none. */
-export const NO_RECORDS_WAVE = 'none';
+export { NO_RECORDS_WAVE };
+export type { RecordsWaveSetting };
 
 const ISO_UTC =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]00:00)$/;
@@ -110,29 +116,20 @@ export function wavesSwitchedOn(
 }
 
 /**
- * SIGNED_RECORDS_WAVE_ID: the records wave's id, `none` (there is none, on
- * purpose), or unset. Only `none` itself, in lowercase, says none: `None`
- * or `NONE` is read as an id, which names no wave.
+ * SIGNED_RECORDS_WAVE_ID, read as the shared module reads it: the records
+ * wave's id, `none` in any case (there is none, on purpose), or unset.
  */
-export type RecordsWaveSetting =
-  | { readonly kind: 'id'; readonly id: string }
-  | { readonly kind: 'none' }
-  | { readonly kind: 'unset' };
-
 export function recordsWaveSetting(
   env: Readonly<Record<string, string | undefined>> = process.env
 ): RecordsWaveSetting {
-  const value = env[RECORDS_WAVE_ENV]?.trim();
-  if (!value) return { kind: 'unset' };
-  if (value === NO_RECORDS_WAVE) return { kind: 'none' };
-  return { kind: 'id', id: value };
+  return readRecordsWaveSetting(env);
 }
 
 let toldAboutRecordsWave = false;
 
 /**
  * The records wave's id for the SQL form, or null for none and for unset
- * (each logged once: none as information, unset as a warning).
+ * (each logged once a cold start: none as information, unset as an error).
  */
 export function recordsWaveId(
   env: Readonly<Record<string, string | undefined>> = process.env
@@ -144,7 +141,7 @@ export function recordsWaveId(
     if (setting.kind === 'none') {
       logger.info(`[${RECORDS_WAVE_ENV} IS none] [NO RECORDS WAVE]`);
     } else {
-      logger.warn(
+      logger.error(
         `[${RECORDS_WAVE_ENV} IS NOT SET] [NO WAVE STAYS AS THE RECORDS WAVE] [SET IT, OR TO none WHEN THERE IS NONE]`
       );
     }
@@ -194,6 +191,20 @@ const NOT_READY_TEXT: Record<string, string> = {
     'THE CHAIN INDEX IS ON ANOTHER NETWORK THAN WAVES_SETTLEMENT_NETWORK_ID'
 };
 
+/** Whether a waves row has this id. */
+async function waveExists(
+  db: Pick<SqlExecutor, 'execute'>,
+  options: DbQueryOptions,
+  id: string
+): Promise<boolean> {
+  const rows = await db.execute<{ found: number }>(
+    `select 1 as found from ${WAVES_TABLE} where id = :id limit 1`,
+    { id },
+    options
+  );
+  return rows.length > 0;
+}
+
 /** One publishing run's scope: publish in a mode, or don't, and why. */
 export type RelayRunScope =
   | {
@@ -209,9 +220,11 @@ export type RelayRunScope =
 
 /**
  * Whether this run publishes, and how. Before the switch-on the rule needs
- * the records wave named (its id, or `none`): unset, the records wave would
- * read as a moving wave and its signed drops would go to the relays, so
- * nothing is published and that is an error each run. After the switch-on
+ * the records wave named (its id, or `none`): unset, or an id that names no
+ * wave, the records wave would read as a moving wave and its signed drops
+ * would go to the relays, so nothing is published and that is an error
+ * each run (one read of the waves table a run checks the id). After the
+ * switch-on
  * the chain's mapping keeps the records wave off without the setting; until
  * the index's full read the run holds, with a warning each run.
  */
@@ -235,12 +248,24 @@ export async function relayRunScope(
       reason: `[WAVE RELAY PUBLISHING HOLDS AFTER THE SWITCH-ON] [${why}]${error} [NOTHING IS PASSED OVER]`
     };
   }
-  if (mode === 'rule' && recordsWaveSetting(env).kind === 'unset') {
-    return {
-      publish: false,
-      level: 'error',
-      reason: `[WAVE RELAY PUBLISHING REFUSED] [${RECORDS_WAVE_ENV} IS NOT SET] [THE RECORDS WAVE WOULD GO TO THE RELAYS] [SET IT TO ITS ID, OR TO none WHEN THERE IS NONE]`
-    };
+  if (mode === 'rule') {
+    const setting = recordsWaveSetting(env);
+    if (setting.kind === 'unset') {
+      return {
+        publish: false,
+        level: 'error',
+        reason: `[WAVE RELAY PUBLISHING REFUSED] [${RECORDS_WAVE_ENV} IS NOT SET] [THE RECORDS WAVE WOULD GO TO THE RELAYS] [SET IT TO ITS ID, OR TO none WHEN THERE IS NONE]`
+      };
+    }
+    // An id that names no wave (a typo) keeps nothing off the relays: the
+    // records wave would read as a moving wave.
+    if (setting.kind === 'id' && !(await waveExists(db, options, setting.id))) {
+      return {
+        publish: false,
+        level: 'error',
+        reason: `[WAVE RELAY PUBLISHING REFUSED] [${RECORDS_WAVE_ENV} NAMES NO WAVE] [VALUE ${setting.id.slice(0, 100)}] [THE RECORDS WAVE WOULD GO TO THE RELAYS] [SET IT TO ITS ID, OR TO none WHEN THERE IS NONE]`
+      };
+    }
   }
   return { publish: true, mode, recordsWaveId: recordsWaveId(env) };
 }

@@ -71,6 +71,8 @@ describe('runWaveRelayPublishing: runs that publish nothing say why, every run',
     const db = {
       execute: async (sql: string) => {
         reads.push(sql);
+        // The records wave's check: no waves row has its id.
+        if (sql.includes('from waves where id = :id')) return [];
         if (!sql.includes('from waves_chain_index_state')) {
           throw new Error(`read more than the index's state: ${sql}`);
         }
@@ -96,6 +98,28 @@ describe('runWaveRelayPublishing: runs that publish nothing say why, every run',
       'SIGNED_RECORDS_WAVE_ID IS NOT SET'
     );
     expect(reads).toEqual([]);
+  });
+
+  it('refuses before the switch-on while SIGNED_RECORDS_WAVE_ID names no wave, with an error each run', async () => {
+    const { reads, scopeDb } = aScopeDb(null);
+    const env = {
+      ...on,
+      WAVES_SWITCH_ON_AT: '2026-11-27T00:00:00Z',
+      SIGNED_RECORDS_WAVE_ID: 'records-wav'
+    };
+    for (let run = 0; run < 2; run++) {
+      await expect(
+        runWaveRelayPublishing({ env, scopeDb, now: () => SWITCH_ON - 1 })
+      ).resolves.toEqual([]);
+    }
+    expect(
+      error.mock.calls.filter((c) =>
+        String(c[0]).startsWith(
+          '[WAVE RELAY PUBLISHING REFUSED] [SIGNED_RECORDS_WAVE_ID NAMES NO WAVE]'
+        )
+      )
+    ).toHaveLength(2);
+    expect(reads).toHaveLength(2);
   });
 
   it("holds after the switch-on until the index's full read, with a warning and its reason each run", async () => {

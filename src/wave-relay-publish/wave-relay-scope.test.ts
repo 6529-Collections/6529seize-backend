@@ -133,11 +133,12 @@ describe('the records wave setting', () => {
     for (const unset of [{}, { SIGNED_RECORDS_WAVE_ID: '  ' }]) {
       expect(recordsWaveSetting(unset)).toEqual({ kind: 'unset' });
     }
-    // Only `none` itself: `None` is an id (one that names no wave).
-    expect(recordsWaveSetting({ SIGNED_RECORDS_WAVE_ID: 'None' })).toEqual({
-      kind: 'id',
-      id: 'None'
-    });
+    // As the shared module reads it: `none` in any case.
+    for (const none of ['None', 'NONE']) {
+      expect(recordsWaveSetting({ SIGNED_RECORDS_WAVE_ID: none })).toEqual({
+        kind: 'none'
+      });
+    }
   });
 
   it("fills exactly the module's SQL parameters", () => {
@@ -207,11 +208,27 @@ describe('relayScopeMode', () => {
 });
 
 describe('relayRunScope: one run publishes, holds or refuses', () => {
+  /** Waves rows that exist (the records wave's check). */
+  const WAVES = new Set(['records-wave']);
+  let waveReads: Record<string, any>[] = [];
   const scope = (
     state: Record<string, unknown> | null | 'missing',
     env: Record<string, string>,
     now: number
-  ) => relayRunScope(anExecutor(state).executor(), options, env, now);
+  ) => {
+    waveReads = [];
+    const fake = anExecutor(state, () => []);
+    const executor = fake.executor();
+    const execute = executor.execute;
+    executor.execute = async (sql: string, params?: any, opts?: any) => {
+      if (sql.includes('from waves where id = :id')) {
+        waveReads.push({ params, opts });
+        return WAVES.has(params.id) ? [{ found: 1 }] : [];
+      }
+      return execute(sql, params, opts);
+    };
+    return relayRunScope(executor, options, env, now);
+  };
 
   it('publishes by the rule before the switch-on with the records wave named, or none on purpose', async () => {
     expect(
@@ -224,6 +241,39 @@ describe('relayRunScope: one run publishes, holds or refuses', () => {
     expect(
       await scope(null, { ...BEFORE, SIGNED_RECORDS_WAVE_ID: 'none' }, 0)
     ).toEqual({ publish: true, mode: 'rule', recordsWaveId: null });
+  });
+
+  it('refuses before the switch-on when the records wave id names no wave (a typo): it would go to the relays', async () => {
+    const refused = await scope(
+      null,
+      { ...BEFORE, SIGNED_RECORDS_WAVE_ID: 'records-wav' },
+      SWITCH_ON - 1
+    );
+    expect(refused).toMatchObject({ publish: false, level: 'error' });
+    expect((refused as { reason: string }).reason).toContain(
+      'SIGNED_RECORDS_WAVE_ID NAMES NO WAVE] [VALUE records-wav]'
+    );
+    expect(waveReads).toEqual([
+      { params: { id: 'records-wav' }, opts: options }
+    ]);
+    // A real id is read once and passes; none reads nothing.
+    await scope(
+      null,
+      { ...BEFORE, SIGNED_RECORDS_WAVE_ID: 'records-wave' },
+      SWITCH_ON - 1
+    );
+    expect(waveReads).toHaveLength(1);
+    await scope(null, { ...BEFORE, SIGNED_RECORDS_WAVE_ID: 'none' }, 0);
+    expect(waveReads).toEqual([]);
+    // After the switch-on the mapping keeps it off: no check.
+    expect(
+      await scope(
+        fullRead(),
+        { ...AFTER_ENV, SIGNED_RECORDS_WAVE_ID: 'records-wav' },
+        SWITCH_ON
+      )
+    ).toMatchObject({ publish: true, mode: 'chain' });
+    expect(waveReads).toEqual([]);
   });
 
   it('refuses before the switch-on when the records wave is not set: it would go to the relays', async () => {
@@ -410,5 +460,39 @@ describe("WaveRelayPublishDb.candidatesAfter: only moving waves' events", () => 
     expect(call.sql).toContain(
       'and w.visibility_group_id is null and pw.visibility_group_id is null'
     );
+  });
+});
+
+describe('recordsWaveId logs once a cold start', () => {
+  it('none as information, unset as an error', () => {
+    for (const [value, level] of [
+      ['none', 'info'],
+      [undefined, 'error']
+    ] as const) {
+      jest.isolateModules(() => {
+        const { Logger } = require('@/logging');
+        const spies = Object.fromEntries(
+          (['info', 'warn', 'error'] as const).map((l) => [
+            l,
+            jest.spyOn(Logger.prototype, l).mockImplementation(() => undefined)
+          ])
+        );
+        const fresh = require('./wave-relay-scope');
+        const env = { SIGNED_RECORDS_WAVE_ID: value };
+        expect(fresh.recordsWaveId(env)).toBeNull();
+        expect(fresh.recordsWaveId(env)).toBeNull();
+        const told = (l: string) =>
+          spies[l].mock.calls.filter((c: unknown[]) =>
+            String(c[0]).includes('SIGNED_RECORDS_WAVE_ID')
+          ).length;
+        expect(told(level)).toBe(1);
+        for (const other of ['info', 'warn', 'error'].filter(
+          (l) => l !== level
+        )) {
+          expect(told(other)).toBe(0);
+        }
+        Object.values(spies).forEach((s) => s.mockRestore());
+      });
+    }
   });
 });

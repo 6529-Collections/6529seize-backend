@@ -1,8 +1,7 @@
 /**
  * Which waves move to the 6529 chain and which stay on 6529.io, served from
  * MySQL as today: the chain's import rule for waves, as code, as far as
- * 6529.io's own tables can tell. The plain text of this rule is the
- * moved-predicate brief; the two say the same thing.
+ * 6529.io's own tables can tell.
  *
  * This file is self-contained (no imports): the waves export copies it byte
  * for byte, so the export and this site never disagree about a wave.
@@ -10,7 +9,7 @@
  * Before the switch-on, a wave stays, whole, when at least one reason holds:
  * - direct_message: waves.is_direct_message;
  * - records_wave: waves.id is the configured SIGNED_RECORDS_WAVE_ID (by id,
- *   never by its group);
+ *   never by its group; `none` means 6529.io has no records wave);
  * - members_only: waves.visibility_group_id is set;
  * - hidden_or_private_group: a group the wave uses stays: it is hidden
  *   (community_groups.visible = false), private (is_private), a direct
@@ -27,11 +26,11 @@
  * Every other wave moves. A group stays when it is hidden, private, a
  * direct message's, or made after the freeze.
  *
- * Two of the import rule's reasons need the identities file, which 6529.io's tables
- * don't hold: a controller the file doesn't hold, and a made result naming
- * such an author. The snapshot builder keeps those waves. Until the
- * switch-on they read as moving here, so 6529.io keeps them frozen; after
- * it they read not_on_chain and stay.
+ * Two of the import rule's reasons need the identities file, which
+ * 6529.io's tables don't hold: a controller the file doesn't hold, and a
+ * made result naming such an author. The snapshot builder keeps those
+ * waves. Until the switch-on they read as moving here, so 6529.io keeps
+ * them frozen; after it they read not_on_chain and stay.
  *
  * The groups a wave uses (the walk):
  * - waves.admin_group_id and waves.chat_group_id;
@@ -202,15 +201,17 @@ export interface WaveScope {
    * rule's reasons.
    */
   readonly reasons: readonly StayReason[];
-  /** False when SIGNED_RECORDS_WAVE_ID is unset: no wave is records_wave. */
+  /** False when SIGNED_RECORDS_WAVE_ID is unset (a mistake): no id, no none. */
   readonly recordsWaveConfigured: boolean;
   /** True when the wave has moved after the switch-on. */
   readonly movedOnChain: boolean;
 }
 
 export interface ScopeOptions {
-  /** The configured records wave id, or null when unset. */
+  /** The records wave's id; null when SIGNED_RECORDS_WAVE_ID is not an id. */
   readonly recordsWaveId: string | null;
+  /** SIGNED_RECORDS_WAVE_ID is set (an id or none); defaults to an id given. */
+  readonly recordsWaveConfigured?: boolean;
   /** The waves freeze's time (WAVES_FREEZE_AT) in ms, or null when unknown. */
   readonly freezeAtMs?: number | null;
   /** The chain's state for the wave; BEFORE_SWITCH_ON when left out. */
@@ -297,7 +298,8 @@ export function staysOnSite(
   groupsById: GroupsById,
   options: ScopeOptions
 ): WaveScope {
-  const recordsWaveConfigured = !!options.recordsWaveId;
+  const recordsWaveConfigured =
+    options.recordsWaveConfigured ?? !!options.recordsWaveId;
   const freezeAtMs = options.freezeAtMs ?? null;
   const own = ownReasons(wave, groupsById, options.recordsWaveId, freezeAtMs);
   const above = [wave, ...ancestorsOf(wave)];
@@ -343,27 +345,27 @@ export function staysOnSite(
   };
 }
 
-let warnedAboutRecordsWave = false;
+/** SIGNED_RECORDS_WAVE_ID's value for "6529.io has no records wave". */
+export const NO_RECORDS_WAVE = 'none';
 
 /**
- * The records wave id from the environment, or null when unset. When unset
- * the records wave can move with the rest, so it is logged once through
- * `warn` and every WaveScope says recordsWaveConfigured: false.
+ * SIGNED_RECORDS_WAVE_ID, read: a wave id; `none` (6529.io has no records
+ * wave, set on purpose); or unset (a mistake: ops sets the id or none).
+ * When it is not an id, no wave stays as records_wave. Callers log `none`
+ * once and unset as an error once, per cold start.
  */
-export function recordsWaveIdFromEnv(
-  env: Readonly<Record<string, string | undefined>>,
-  warn: (message: string) => void
-): string | null {
-  const id = env[RECORDS_WAVE_ID_ENV]?.trim();
-  if (id) return id;
-  if (!warnedAboutRecordsWave) {
-    warnedAboutRecordsWave = true;
-    warn(
-      `[WAVES_SCOPE] [${RECORDS_WAVE_ID_ENV} IS NOT SET] ` +
-        `[NO WAVE STAYS AS THE RECORDS WAVE]`
-    );
-  }
-  return null;
+export type RecordsWaveSetting =
+  | { readonly kind: 'id'; readonly id: string }
+  | { readonly kind: 'none' }
+  | { readonly kind: 'unset' };
+
+export function readRecordsWaveSetting(
+  env: Readonly<Record<string, string | undefined>>
+): RecordsWaveSetting {
+  const value = env[RECORDS_WAVE_ID_ENV]?.trim();
+  if (!value) return { kind: 'unset' };
+  if (value.toLowerCase() === NO_RECORDS_WAVE) return { kind: 'none' };
+  return { kind: 'id', id: value };
 }
 
 /** The SQL table names the SQL form reads. */
