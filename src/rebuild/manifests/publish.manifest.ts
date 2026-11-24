@@ -157,7 +157,9 @@ const PUBLISH_SEED: RebuildStep = {
     'profiles',
     'waves',
     'drops',
-    'drops_parts'
+    'drops_parts',
+    'wave_metrics',
+    'wave_dropper_metrics'
   ],
   reads: ['profile_cms_chain_heads'],
   // The first probe profile's identity first.

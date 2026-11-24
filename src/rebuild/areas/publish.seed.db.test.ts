@@ -256,6 +256,18 @@ describeWithSeed('the publish area of the rebuild check', [], () => {
       { waveId }
     );
     expect(authorsOff).toEqual([]);
+    // The whole tables: the seed's one wave and author, nothing beside them.
+    const waveRows = await sqlExecutor.execute<{ wave_id: string }>(
+      `select wave_id from ${WAVE_METRICS_TABLE}`
+    );
+    expect(waveRows).toEqual([{ wave_id: waveId }]);
+    const dropperRows = await sqlExecutor.execute<{
+      wave_id: string;
+      dropper_id: string;
+    }>(`select wave_id, dropper_id from ${WAVE_DROPPER_METRICS_TABLE}`);
+    expect(dropperRows).toEqual([
+      { wave_id: waveId, dropper_id: FLAGS.SIGNED_RECORDS_SERVICE_PROFILE_ID }
+    ]);
   });
 
   it('with the chain flag on, also applies the Profile changes from the chain port', async () => {

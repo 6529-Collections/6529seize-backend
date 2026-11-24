@@ -398,17 +398,21 @@ async function closeOpenEntries(
       post: async (text) => {
         const id = randomUUID();
         const createdAt = Date.now();
-        await insertIgnore(DROPS_TABLE, {
-          id,
+        // One description of the drop for its row and its metrics.
+        const drop = {
           wave_id: service.waveId,
           author_id: service.profileId,
+          drop_type: DropType.CHAT
+        };
+        await insertIgnore(DROPS_TABLE, {
+          id,
+          ...drop,
           created_at: createdAt,
           updated_at: null,
           title: null,
           parts_count: 1,
           reply_to_drop_id: null,
           reply_to_part_id: null,
-          drop_type: DropType.CHAT,
           signature: null,
           hide_link_preview: true
         });
@@ -434,14 +438,7 @@ async function closeOpenEntries(
             connection
           )
         );
-        await applyCreatedDropMetrics(
-          {
-            wave_id: service.waveId,
-            author_id: service.profileId,
-            drop_type: DropType.CHAT
-          },
-          createdAt
-        );
+        await applyCreatedDropMetrics(drop, createdAt);
         return id;
       }
     },
@@ -449,7 +446,18 @@ async function closeOpenEntries(
     serviceWallets: [service.wallet]
   });
   await assertOnlyPublishEntriesOpen();
-  return (await segmenter.closeSegments({})).length;
+  const closed = (await segmenter.closeSegments({})).length;
+  // The records service logs a head it could not post and goes on. The
+  // seed fails instead, so a missing drop or metrics row can't pass unseen.
+  const headless = await recordLogDb.findSegmentsWithoutHead({});
+  if (headless.length) {
+    throw new Error(
+      `The publish seed could not post the head of ${headless
+        .map((segment) => `${segment.chain} segment ${segment.seq}`)
+        .join(', ')}`
+    );
+  }
+  return closed;
 }
 
 export async function seedProfileSites(
