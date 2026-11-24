@@ -30,6 +30,9 @@ import {
   SETTLEMENT_MAX_BACKOFF_MS,
   SETTLEMENT_MAX_FAILURES,
   SETTLEMENT_RESEND_AFTER_MS,
+  mainStageDecisionIdsOf,
+  mainStageFirst,
+  WAVES_IMPORT_RUNNING_CODE,
   WavesSettlementSender
 } from './waves-settlement.sender';
 
@@ -147,6 +150,9 @@ class FakeGateway {
   reportedCount: number | null = null;
   /** The worst-case fee the drafts name. */
   worst = '1000000000000000000';
+  /** Whether the chain's waves import is complete; null: no answer. */
+  importCompleted: boolean | null = true;
+  importReads = 0;
   /** How long each call takes on the fake clock. */
   callMs = 0;
   submitAnswer: () => ChainSubmitResult | Error = () => ({
@@ -180,6 +186,17 @@ class FakeGateway {
 
   async read<T>(path: string, query: unknown, opts: unknown) {
     this.tick();
+    if (path === '/v1/waves/import') {
+      expect(opts).toEqual({ at: 'head' });
+      this.importReads++;
+      return this.importCompleted === null
+        ? null
+        : {
+            read: { network: this.network } as never,
+            data: { completed: this.importCompleted } as T,
+            next: null
+          };
+    }
     expect(path).toBe('/v1/decisions/due');
     expect(opts).toEqual({ at: 'head' });
     this.reads.push(query);
@@ -256,17 +273,16 @@ class FakeGateway {
   }
 
   /** The request lands: its nonce is spent. */
-  land(txId: string, status: ChainTx['status'] = 'in_block') {
+  land(
+    txId: string,
+    status: ChainTx['status'] = 'in_block',
+    result: ChainTx['result'] = status === 'failed'
+      ? { code: '0x261b', name: 'RESULT_NOT_DUE', feePaid: '900' }
+      : undefined
+  ) {
     const sent = this.submitted.find((it) => it.txId === txId)!;
     this.nonces.set(sent.lane, (this.nonces.get(sent.lane) ?? 0) + 1);
-    this.txs.set(txId, {
-      status,
-      height: 10,
-      result:
-        status === 'failed'
-          ? { code: '0x261b', name: 'RESULT_NOT_DUE', feePaid: '900' }
-          : undefined
-    });
+    this.txs.set(txId, { status, height: 10, result });
   }
 
   lastTx(): string {
@@ -300,11 +316,13 @@ const testSigner = () =>
 function setup({
   signer = testSigner,
   env = {},
-  realTime = false
+  realTime = false,
+  mainStage = []
 }: {
   signer?: () => SettlementSignerResult;
   env?: NodeJS.ProcessEnv;
   realTime?: boolean;
+  mainStage?: string[];
 } = {}) {
   // The fake gateway drafts at the clock's time.
   const clock = { now: realTime ? Date.now() : START };
@@ -315,7 +333,9 @@ function setup({
     store,
     signer,
     settings: () => settlementSettingsFromEnv(env),
-    now: realTime ? () => Date.now() : () => clock.now
+    now: realTime ? () => Date.now() : () => clock.now,
+    // As MAIN_STAGE_DECISION_IDS is read.
+    mainStage: () => mainStageDecisionIdsOf(mainStage.join(','))
   });
   const run = (budgetMs = 20_000) => sender.run({ budgetMs });
   const later = (ms = MINUTE) => {
@@ -328,9 +348,12 @@ const [D1, D2] = idsOnDistinctLanes(2);
 
 let warn: jest.SpyInstance;
 let error: jest.SpyInstance;
+let info: jest.SpyInstance;
 
 beforeEach(() => {
-  jest.spyOn(Logger.prototype, 'info').mockImplementation(() => undefined);
+  info = jest
+    .spyOn(Logger.prototype, 'info')
+    .mockImplementation(() => undefined);
   warn = jest
     .spyOn(Logger.prototype, 'warn')
     .mockImplementation(() => undefined);
@@ -947,15 +970,22 @@ describe('WavesSettlementSender', () => {
   it('starts nothing past its budget', async () => {
     const { gateway, store, run } = setup();
     for (const id of idsOnDistinctLanes(5)) gateway.due(id);
-    // Each call takes 3 s: a due read, then a draft and a submit per
-    // decision.
+    // Each call takes 3 s: the waves import's read, a due read, then a
+    // draft and a submit per decision.
     gateway.callMs = 3_000;
 
     const report = await run(20_000);
     expect(report).toEqual(expect.objectContaining({ budgetSpent: true }));
-    expect(report.sent).toBe(3);
-    expect(gateway.submitted).toHaveLength(3);
+    expect(report.sent).toBe(2);
+    expect(gateway.submitted).toHaveLength(2);
+    // The third was drafted and saved before the budget ran out; its
+    // submit wasn't made, and the next run asks the gateway about it.
     expect(store.rows.size).toBe(3);
+    expect(
+      Array.from(store.rows.values()).filter(
+        (row) => row.status === 'submitting'
+      )
+    ).toHaveLength(1);
   });
 
   it('stops waiting on a gateway call at the end of its budget', async () => {
@@ -991,5 +1021,190 @@ describe('WavesSettlementSender', () => {
     );
     expect(gateway.drafts).toHaveLength(1);
     expect(store.rows.get(D1)?.status).toBe('unknown');
+  });
+});
+
+describe('WavesSettlementSender and the Main Stage', () => {
+  it('sends the Main Stage first, even last of 45 due in the gateway list', async () => {
+    const ids = Array.from({ length: 45 }, (_, n) => decisionId(n + 1));
+    const main = ids[44];
+    const { gateway, run } = setup({
+      mainStage: [main.toUpperCase().replace('0X', '0x')]
+    });
+    for (const id of ids) gateway.due(id);
+    const report = await run();
+    expect(report.due).toBe(45);
+    expect((gateway.drafts[0].body as { decisionId: string }).decisionId).toBe(
+      main
+    );
+    expect(gateway.submitted[0].lane).toBe(nonceLaneOf(main));
+    // The rest go in the gateway's order, as before (a decision whose lane
+    // a request already holds waits for a later run).
+    const rest = gateway.drafts
+      .slice(1)
+      .map((d) => (d.body as { decisionId: string }).decisionId);
+    expect(rest.length).toBeGreaterThan(5);
+    expect(rest).not.toContain(main);
+    expect(rest).toEqual([...rest].sort());
+  });
+
+  it('reads MAIN_STAGE_DECISION_IDS in lowercase and orders the Main Stage first', () => {
+    const [a, b] = [decisionId(7), decisionId(8)];
+    expect(
+      mainStageDecisionIdsOf(
+        ` ${a.toUpperCase().replace('0X', '0x')} , nope, ${b}`
+      )
+    ).toEqual(new Set([a, b]));
+    expect(mainStageDecisionIdsOf(undefined)).toEqual(new Set());
+    const row = (id: string) => ({ decisionId: id }) as ChainSettlement;
+    expect(
+      mainStageFirst(
+        [row(decisionId(1)), row(b), row(decisionId(2))],
+        new Set([b])
+      ).map((it) => it.decisionId)
+    ).toEqual([b, decisionId(1), decisionId(2)]);
+  });
+
+  it('never gives the Main Stage up: it keeps trying every 15 minutes at most, with an error for each failure from the eighth', async () => {
+    const { gateway, store, run, later } = setup({ mainStage: [D1] });
+    gateway.due(D1);
+    const sentAt: number[] = [];
+    for (let minute = 0; minute < 200; minute++) {
+      const before = gateway.submitted.length;
+      await run();
+      if (gateway.submitted.length > before) {
+        sentAt.push(minute);
+        // Each of the first 10 lands and fails in its block.
+        if (sentAt.length <= 10) gateway.land(gateway.lastTx(), 'failed');
+      }
+      later();
+    }
+    // Waits of 1, 2, 4, 8, then 15 minutes, with no pause after the eighth.
+    expect(sentAt.slice(0, 12)).toEqual([
+      0, 1, 3, 7, 15, 30, 45, 60, 75, 90, 105, 120
+    ]);
+    expect(logged(error, '[SETTLEMENT GIVEN UP]')).toHaveLength(0);
+    const failing = logged(error, '[MAIN STAGE SETTLEMENT FAILING]');
+    expect(failing).toHaveLength(3);
+    expect(failing[0]).toContain(`[decision ${D1}]`);
+    expect(failing[0]).toContain('8 requests failed');
+    expect(failing[0]).toContain('RESULT_NOT_DUE');
+    expect(failing[2]).toContain('10 requests failed');
+    expect(store.rows.get(D1)?.status).not.toBe('given_up');
+  });
+
+  it('tries again at once a Main Stage step an earlier version gave up', async () => {
+    const { gateway, store, run } = setup({ mainStage: [D1] });
+    gateway.due(D1);
+    await store.save({
+      decision_id: D1,
+      occurrence: 1,
+      count_next: null as unknown as number,
+      nonce_lane: nonceLaneOf(D1),
+      attempts: 8,
+      failures: 8,
+      sent_at: START,
+      tx_id: null,
+      status: 'given_up',
+      last_error: 'failed'
+    } as never);
+    expect(await run()).toEqual(expect.objectContaining({ sent: 1 }));
+  });
+
+  it('keeps the six-hour pause for every other decision', async () => {
+    const { gateway, store, run, later } = setup({ mainStage: [D2] });
+    gateway.due(D1);
+    for (let minute = 0; minute <= 100; minute++) {
+      const before = gateway.submitted.length;
+      await run();
+      if (gateway.submitted.length > before) {
+        gateway.land(gateway.lastTx(), 'failed');
+      }
+      later();
+    }
+    expect(store.rows.get(D1)?.status).toBe('given_up');
+    expect(logged(error, '[MAIN STAGE SETTLEMENT FAILING]')).toHaveLength(0);
+  });
+});
+
+describe('WavesSettlementSender and the waves import', () => {
+  it('sends nothing while the chain says its waves import is not complete, logged once', async () => {
+    const { gateway, store, run, later } = setup();
+    gateway.due(D1);
+    for (const answer of [false, null] as const) {
+      gateway.importCompleted = answer;
+      expect(await run()).toEqual(
+        expect.objectContaining({ skipped: 'waves_import_running', due: 0 })
+      );
+      later();
+    }
+    expect(gateway.reads).toEqual([]);
+    expect(gateway.drafts).toEqual([]);
+    expect(store.rows.size).toBe(0);
+    expect(logged(info, '[SETTLEMENT SENDER WAITS]')).toHaveLength(1);
+    gateway.importCompleted = true;
+    expect(await run()).toEqual(expect.objectContaining({ sent: 1 }));
+    expect(gateway.importReads).toBe(3);
+  });
+
+  it('takes a refusal for the running import as "not yet": no failure, no wait', async () => {
+    const { gateway, store, run } = setup();
+    gateway.due(D1);
+    gateway.submitAnswer = () =>
+      new ChainGatewayError(
+        '/v1/submit: inadmissible: 0x2507 WAVES_IMPORT_RUNNING, detail 0',
+        422,
+        'inadmissible',
+        '/v1/submit'
+      );
+    for (let run_ = 0; run_ < 3; run_++) {
+      expect(await run()).toEqual(
+        expect.objectContaining({ waiting: 1, refused: 0 })
+      );
+      expect(store.rows.get(D1)).toEqual(
+        expect.objectContaining({ status: 'refused', attempts: 0, failures: 0 })
+      );
+    }
+    // Each run asked again, with no backoff between.
+    expect(gateway.drafts).toHaveLength(3);
+    gateway.submitAnswer = () => ({ txId: '', accepted: true });
+    expect(await run()).toEqual(expect.objectContaining({ sent: 1 }));
+  });
+
+  it('takes a draft the running import refused as "not yet"', async () => {
+    const { gateway, store, run } = setup();
+    gateway.due(D1);
+    const getDraft = gateway.getDraft.bind(gateway);
+    gateway.getDraft = async () => {
+      throw new ChainGatewayError(
+        '/v1/draft: inadmissible: 0x2507 WAVES_IMPORT_RUNNING',
+        422,
+        'inadmissible',
+        '/v1/draft'
+      );
+    };
+    expect(await run()).toEqual(expect.objectContaining({ waiting: 1 }));
+    expect(store.rows.get(D1)).toEqual(
+      expect.objectContaining({ attempts: 0, failures: 0 })
+    );
+    gateway.getDraft = getDraft;
+    expect(await run()).toEqual(expect.objectContaining({ sent: 1 }));
+  });
+
+  it('takes a request that failed in its block on the running import as "not yet"', async () => {
+    const { gateway, store, run } = setup();
+    gateway.due(D1);
+    await run();
+    gateway.land(gateway.lastTx(), 'failed', {
+      code: WAVES_IMPORT_RUNNING_CODE,
+      name: 'WAVES_IMPORT_RUNNING',
+      feePaid: '900'
+    });
+    // No failure counted, and sent again at once.
+    expect(await run()).toEqual(expect.objectContaining({ sent: 1 }));
+    expect(store.rows.get(D1)).toEqual(
+      expect.objectContaining({ failures: 0, attempts: 1 })
+    );
+    expect(logged(warn, '[SETTLEMENT FAILED]')).toHaveLength(0);
   });
 });
