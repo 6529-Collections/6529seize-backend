@@ -211,10 +211,12 @@ function warnOnce(message: string) {
 export const NO_RECORDS_WAVE = 'none';
 
 /**
- * 6529.io's records wave (SIGNED_RECORDS_WAVE_ID), or null for none. `none`
- * says there is none, on purpose. Unset, no wave is refused as the records
- * wave either (the chain's mapping still keeps it, as any wave the chain
- * doesn't hold), and that is told to `warn` (by default, logged once).
+ * 6529.io's records wave (SIGNED_RECORDS_WAVE_ID), or null for none.
+ * `none` (exactly, in lowercase) says there is none, on purpose; `None` or
+ * `NONE` is read as an id, which names no wave. Unset, no wave is refused
+ * as the records wave either (the chain's mapping still keeps it, as any
+ * wave the chain doesn't hold), and that is told to `warn` (by default,
+ * logged once).
  */
 export function recordsWaveIdOf(
   env: Readonly<Record<string, string | undefined>> = process.env,

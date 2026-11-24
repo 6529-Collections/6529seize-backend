@@ -65,12 +65,12 @@ describe('chainIndexProgress and chainIndexReady', () => {
   const progress = (state: unknown, network: string | null = null) =>
     chainIndexProgress(aReader(() => [state]).db, undefined, network);
 
-  it("reads the index's whole state row: ready once a full read has finished, read through its read's block time less five minutes", async () => {
+  it("reads the index's whole state row: ready once a full read has finished, read through its read's block time less an hour", async () => {
     const reader = aReader(() => [aState()]);
     expect(await chainIndexProgress(reader.db)).toEqual(
-      ready(READ_TIME - 5 * MINUTE)
+      ready(READ_TIME - 60 * MINUTE)
     );
-    expect(READ_THROUGH_MARGIN_MS).toBe(5 * MINUTE);
+    expect(READ_THROUGH_MARGIN_MS).toBe(60 * MINUTE);
     expect(reader.calls[0].sql).toBe(
       'select * from waves_chain_index_state where name = :name'
     );
@@ -124,7 +124,7 @@ describe('chainIndexProgress and chainIndexReady', () => {
         await progress(
           aState({ updated_at: String(READ_TIME + savedMinutesLater * MINUTE) })
         )
-      ).toEqual(ready(READ_TIME - 5 * MINUTE));
+      ).toEqual(ready(READ_TIME - 60 * MINUTE));
     }
   });
 
@@ -148,7 +148,7 @@ describe('chainIndexProgress and chainIndexReady', () => {
     // A full read past its waves (its decisions, or the sweep) reads on.
     expect(
       (await progress(aState({ full_phase: 'decisions' }))).readThrough
-    ).toBe(READ_TIME - 5 * MINUTE);
+    ).toBe(READ_TIME - 60 * MINUTE);
   });
 
   it("is not ready while the index's tables aren't there; other errors throw", async () => {

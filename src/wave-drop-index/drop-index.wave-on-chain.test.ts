@@ -163,10 +163,10 @@ describe('DropIndexDb.waveOnChain', () => {
       }
     ];
     const seenAt = T0;
-    // Read through the chain until five minutes past the event: not yet.
-    tables.state = caughtUp(seenAt + 5 * MINUTE - 1);
+    // Read through the chain until an hour past the event: not yet.
+    tables.state = caughtUp(seenAt + 60 * MINUTE - 1);
     expect(await db.waveOnChain('site-wave', seenAt)).toBe('behind');
-    tables.state = caughtUp(seenAt + 5 * MINUTE);
+    tables.state = caughtUp(seenAt + 60 * MINUTE);
     expect(await db.waveOnChain('site-wave', seenAt)).toBe('stays');
     // Saved late, but behind its own read, failing, or in a full read's waves.
     for (const fields of [
@@ -316,6 +316,34 @@ describe('an index stall of 90 minutes loses no event of a wave made on the chai
     tables.chainWaves = [{ wave_id: made, legacy_id: null, origin: 'native' }];
     tables.siteWaves.set(made, { is_direct_message: false });
     expect(await at(91)).toEqual([['applied', null]]);
+    expect(created).toHaveLength(1);
+  });
+
+  it('writes a post first seen before the block that made its wave, up to an hour before', async () => {
+    delete process.env.WAVES_SETTLEMENT_NETWORK_ID;
+    const tables = new FakeTables();
+    const db = new DropIndexDb(tables.executor());
+    const event = aPost();
+    const { writes, created } = aWrites();
+    const at = async (minutes: number) => {
+      const { store, marks } = aStore(db, event);
+      await new RelayDropApplier(
+        store,
+        writes,
+        () => T0 + minutes * MINUTE,
+        null
+      ).applyPending({ limit: 10, deadline: Number.MAX_SAFE_INTEGER });
+      return marks;
+    };
+    // The wave's creation waits in the pool; its block comes 50 minutes
+    // after the post was first seen. The index has read the chain to just
+    // before that block: the post waits, not refused.
+    tables.state = caughtUp(T0 + 50 * MINUTE - 1);
+    expect(await at(52)).toEqual([['waiting', INDEX_BEHIND_REASON]]);
+    tables.state = caughtUp(T0 + 50 * MINUTE);
+    tables.chainWaves = [{ wave_id: made, legacy_id: null, origin: 'native' }];
+    tables.siteWaves.set(made, { is_direct_message: false });
+    expect(await at(53)).toEqual([['applied', null]]);
     expect(created).toHaveLength(1);
   });
 
