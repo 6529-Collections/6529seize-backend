@@ -31,10 +31,12 @@ import { Logger } from '@/logging';
 import { Time } from '@/time';
 import {
   CreateOrUpdateDropUseCase,
+  dropModerationFingerprint,
   normalizeDropGroupMentions,
   sanitizeDropStructuredFields,
   validateDropMediaAttachment
 } from './create-or-update-drop.use-case';
+import { moderationFingerprint } from '@/content-moderation/moderation-review.types';
 import { PrePublicationModerationService } from '@/content-moderation/pre-publication-moderation.service';
 import {
   DROP_MAX_MEDIA,
@@ -1553,6 +1555,48 @@ describe('CreateOrUpdateDropUseCase', () => {
     });
   });
 
+  it("keys a drop's moderation by its content, not its preset id or notify flag", () => {
+    const model = createChatDropModel({ title: ' Title ' }) as never;
+    const plain = dropModerationFingerprint(model);
+    expect(plain).toBe(
+      moderationFingerprint(sanitizeDropStructuredFields(model))
+    );
+    expect(
+      dropModerationFingerprint({
+        ...(model as object),
+        new_drop_id: 'event-drop',
+        notify: false
+      } as never)
+    ).toBe(plain);
+    expect(
+      dropModerationFingerprint({
+        ...(model as object),
+        title: 'Other'
+      } as never)
+    ).not.toBe(plain);
+  });
+
+  it('moderates a new drop under its preset id, keyed without it', async () => {
+    const moderationService = createModerationServiceMock();
+    const useCase = createUseCaseWithMocks({ moderationService });
+    const model = createChatDropModel({ new_drop_id: 'event-drop' }) as never;
+
+    const prepared = await useCase.preparePrePublication(model, {});
+
+    expect((prepared as { dropId: string }).dropId).toBe('event-drop');
+    expect(moderationService.evaluate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dropId: 'event-drop',
+        contextFingerprint: dropModerationFingerprint({
+          ...(model as object),
+          new_drop_id: 'another-event-drop'
+        } as never)
+      }),
+      expect.anything(),
+      expect.anything()
+    );
+  });
+
   it('keeps identity nomination pre-resolution best-effort for empty metadata after trimming', async () => {
     const useCase = createUseCase({ existingNominations: [] });
 
@@ -2739,6 +2783,116 @@ describe('CreateOrUpdateDropUseCase', () => {
       null,
       { timer: undefined, connection: {} }
     );
+  });
+
+  it.each([
+    [false, false],
+    [true, true],
+    [undefined, true]
+  ])('with notify %s, a drop notifies: %s', async (notify, notifies) => {
+    const identitySubscriptionsDb = {
+      findWaveFollowersEligibleForDropNotifications: jest
+        .fn()
+        .mockResolvedValue([
+          {
+            identity_id: 'follower-1',
+            subscribed_to_all_drops: true,
+            has_group_mention: false
+          }
+        ]),
+      findMutedWaveReaders: jest.fn().mockResolvedValue([])
+    };
+    const userNotifier = {
+      notifyWaveDropCreatedRecipients: jest.fn().mockResolvedValue([105])
+    };
+    const useCase = createUseCaseWithMocks({
+      identitySubscriptionsDb,
+      userNotifier
+    });
+
+    const pending = await (useCase as any).notifyWaveDropRecipients(
+      {
+        model: createNotificationDropModel({ notify }),
+        wave: { id: 'public-wave', visibility_group_id: null },
+        directlyMentionedIdentityIds: ['mentioned-1'],
+        groupMentionNotificationsEnabled: true
+      },
+      { connection: {} }
+    );
+
+    expect(pending).toEqual(notifies ? [105] : []);
+    expect(userNotifier.notifyWaveDropCreatedRecipients.mock.calls.length).toBe(
+      notifies ? 1 : 0
+    );
+    expect(
+      identitySubscriptionsDb.findWaveFollowersEligibleForDropNotifications.mock
+        .calls.length
+    ).toBe(notifies ? 1 : 0);
+  });
+
+  it('keeps notify false through to the notifier step of a write', async () => {
+    const dropsDb = {
+      insertDrop: jest.fn(),
+      insertMentionedWaves: jest.fn(),
+      insertDropGroupMentions: jest.fn(),
+      insertReferencedNfts: jest.fn(),
+      insertDropMetadata: jest.fn(),
+      insertDropMedia: jest.fn(),
+      insertDropParts: jest.fn()
+    };
+    const userNotifier = { notifyWaveDropCreatedRecipients: jest.fn() };
+    const identitySubscriptionsDb = {
+      addIdentitySubscription: jest.fn(),
+      findWaveFollowersEligibleForDropNotifications: jest.fn(),
+      findMutedWaveReaders: jest.fn()
+    };
+    const useCase = createUseCaseWithMocks({
+      dropsDb,
+      userNotifier,
+      identitySubscriptionsDb,
+      attachmentsDb: { insertDropAttachments: jest.fn() },
+      dropNftLinksDb: { replaceDropLinks: jest.fn() },
+      dropMediaUploadsDb: { attachUploadsToDrop: jest.fn() }
+    });
+    jest.spyOn(profileActivityLogsDb, 'insert').mockResolvedValue(undefined);
+    jest
+      .spyOn(waveScoreService, 'markWaveScoresDirtyBestEffort')
+      .mockResolvedValue(undefined);
+    jest
+      .spyOn(useCase as any, 'resolveMentionedUsers')
+      .mockResolvedValue({ mentionEntities: [], mentionedUserIds: ['m-1'] });
+    jest
+      .spyOn(useCase as any, 'recordDropCreatedActivity')
+      .mockResolvedValue(undefined);
+    jest
+      .spyOn(useCase as any, 'insertMentionsInDrop')
+      .mockResolvedValue(undefined);
+    const notifyStep = jest.spyOn(useCase as any, 'notifyWaveDropRecipients');
+
+    await expect(
+      (useCase as any).insertAllDropComponents(
+        {
+          model: createChatDropModel({ drop_id: 'drop-1', notify: false }),
+          wave: createSlowModeWave({ visibility_group_id: null }),
+          createdAt: Date.now(),
+          updatedAt: null,
+          serialNo: null
+        },
+        { connection: {} }
+      )
+    ).resolves.toEqual([]);
+
+    expect(dropsDb.insertDrop).toHaveBeenCalled();
+    expect(notifyStep).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: expect.objectContaining({ notify: false })
+      }),
+      expect.anything()
+    );
+    expect(userNotifier.notifyWaveDropCreatedRecipients).not.toHaveBeenCalled();
+    expect(
+      identitySubscriptionsDb.findWaveFollowersEligibleForDropNotifications
+    ).not.toHaveBeenCalled();
   });
 
   it('resolves reply and quote notification context in one drop lookup', async () => {

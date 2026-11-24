@@ -16,6 +16,7 @@ import { DeviceSigningDb } from './device-signing.db';
 import {
   DeviceSignedWritesService,
   InvalidDeviceSignatureException,
+  RELAY_EVENT_MAX_AGE_MS,
   stripDeviceSignature
 } from './device-signed-writes.service';
 
@@ -294,6 +295,62 @@ describe('DeviceSignedWritesService', () => {
       expect(db.deleteReservedEvent).not.toHaveBeenCalled();
     });
 
+    it("hands the write its verified event's id", async () => {
+      const write = jest.fn().mockResolvedValue({ id: 'new-drop' });
+      await createVectorDrop(VECTOR_ENVELOPE, write);
+      expect(write).toHaveBeenCalledWith(VECTOR_EVENT_ID);
+    });
+
+    it('answers the same signed post again with what it wrote, writing nothing', async () => {
+      jest.mocked(db.reserveEvent).mockResolvedValue(false);
+      const write = jest.fn();
+      const alreadyWritten = jest.fn().mockResolvedValue({ id: 'first-drop' });
+      await expect(
+        service.createDrop(
+          {
+            envelope: VECTOR_ENVELOPE,
+            waveId: WAVE_ID,
+            replyToDropId: DROP_ID,
+            body: JSON.parse(JSON.stringify(VECTOR_BODY)),
+            alreadyWritten
+          },
+          write,
+          ctx()
+        )
+      ).resolves.toEqual({ id: 'first-drop' });
+      expect(alreadyWritten).toHaveBeenCalledWith(VECTOR_EVENT_ID);
+      expect(write).not.toHaveBeenCalled();
+      expect(db.deleteReservedEvent).not.toHaveBeenCalled();
+      expect(db.attachEventToDrop).not.toHaveBeenCalled();
+    });
+
+    it('refuses a used event when nothing of it was written, and asks only then', async () => {
+      jest.mocked(db.reserveEvent).mockResolvedValue(false);
+      const alreadyWritten = jest.fn().mockResolvedValue(null);
+      const target = {
+        envelope: VECTOR_ENVELOPE,
+        waveId: WAVE_ID,
+        replyToDropId: DROP_ID,
+        body: JSON.parse(JSON.stringify(VECTOR_BODY)),
+        alreadyWritten
+      };
+      await expectInvalid(
+        service.createDrop(target, jest.fn(), ctx()),
+        /already used/
+      );
+      expect(alreadyWritten).toHaveBeenCalledTimes(1);
+      // Any other refusal: not asked.
+      await expectInvalid(
+        service.createDrop(
+          { ...target, body: { ...target.body, title: 'changed' } },
+          jest.fn(),
+          ctx()
+        ),
+        /does not verify/
+      );
+      expect(alreadyWritten).toHaveBeenCalledTimes(1);
+    });
+
     it('signs an empty refs list when there is no reply target', async () => {
       const body = { wave_id: WAVE_ID, parts: [] };
       const canonical = '{"parts":[],"wave_id":"' + WAVE_ID + '"}';
@@ -356,10 +413,119 @@ describe('DeviceSignedWritesService', () => {
         )
       ).resolves.toEqual({ id: 'unsigned' });
 
+      expect(write).toHaveBeenCalledWith();
       expect(db.findGrantById).not.toHaveBeenCalled();
       expect(db.reserveEvent).not.toHaveBeenCalled();
       expect(db.executeNativeQueriesInTransaction).not.toHaveBeenCalled();
       expect(db.deleteDropAuthorSignature).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('events read from the relays', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const SEEN = CLAIMED_TIME + 1000;
+    const relayCtx = (
+      times: Partial<{ signedAt: number; seenAt: number; anchor: number }> = {}
+    ) => ({
+      ...ctx(),
+      relayEvent: { signedAt: CLAIMED_TIME, seenAt: SEEN, anchor: 0, ...times }
+    });
+
+    beforeEach(() => {
+      // Written a day after it was signed and seen.
+      service = new DeviceSignedWritesService(
+        db,
+        identities,
+        drops,
+        () => NOW + DAY
+      );
+    });
+
+    it('takes an event long after it was seen, its grant counted when signed and seen', async () => {
+      jest
+        .mocked(db.findGrantById)
+        .mockResolvedValue(
+          aGrant({ expires_at: SEEN + 1, revoked_at: SEEN + 1 })
+        );
+      await expect(
+        createVectorDrop(VECTOR_ENVELOPE, undefined, relayCtx())
+      ).resolves.toEqual({ id: 'new-drop' });
+      expect(db.reserveEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: VECTOR_EVENT_ID,
+          anchor: 0,
+          created_at: NOW + DAY
+        }),
+        expect.anything()
+      );
+    });
+
+    it('still checks the clock without the relay times', async () => {
+      jest
+        .mocked(db.findGrantById)
+        .mockResolvedValue(aGrant({ expires_at: NOW + 2 * DAY }));
+      await expectInvalid(createVectorDrop(), /claimed_time/);
+    });
+
+    it.each([
+      // A key revoked before 6529.io saw the event cannot post under an
+      // earlier claimed time.
+      [
+        'revoked before it was seen',
+        aGrant({ revoked_at: SEEN - 1 }),
+        /revoked/
+      ],
+      [
+        'revoked before it was signed',
+        aGrant({ revoked_at: CLAIMED_TIME - 1 }),
+        /revoked/
+      ],
+      ['expired before it was seen', aGrant({ expires_at: SEEN }), /expired/]
+    ])('refuses a grant %s', async (_name, grant, reason) => {
+      jest.mocked(db.findGrantById).mockResolvedValue(grant);
+      await expectInvalid(
+        createVectorDrop(VECTOR_ENVELOPE, undefined, relayCtx()),
+        reason
+      );
+    });
+
+    it('refuses relay times that do not fit the event', async () => {
+      await expectInvalid(
+        createVectorDrop(
+          VECTOR_ENVELOPE,
+          undefined,
+          relayCtx({ signedAt: CLAIMED_TIME + 1 })
+        ),
+        /relay event time/
+      );
+      await expectInvalid(
+        createVectorDrop(
+          VECTOR_ENVELOPE,
+          undefined,
+          relayCtx({ seenAt: CLAIMED_TIME + RELAY_EVENT_MAX_AGE_MS + 1 })
+        ),
+        /too far from when it was first seen/
+      );
+      await expectInvalid(
+        createVectorDrop(
+          VECTOR_ENVELOPE,
+          undefined,
+          relayCtx({ seenAt: CLAIMED_TIME - 11 * 60 * 1000 })
+        ),
+        /too far from when it was first seen/
+      );
+      expect(db.findGrantById).not.toHaveBeenCalled();
+    });
+
+    it("recomputes the event id with the event's anchor", async () => {
+      jest
+        .mocked(db.findGrantById)
+        .mockResolvedValue(aGrant({ expires_at: NOW + 2 * DAY }));
+      // Signed with anchor 0: under anchor 7 it is another event.
+      await expectInvalid(
+        createVectorDrop(VECTOR_ENVELOPE, undefined, relayCtx({ anchor: 7 })),
+        /signature does not verify/
+      );
     });
   });
 

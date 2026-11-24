@@ -16,7 +16,7 @@ import { ApiUpdateDropRequest } from '../generated/models/ApiUpdateDropRequest';
 import {
   createOrUpdateDrop,
   CreateOrUpdateDropUseCase,
-  sanitizeDropStructuredFields,
+  dropModerationFingerprint,
   PrePublicationPreparation
 } from '../../../drops/create-or-update-drop.use-case';
 import {
@@ -238,12 +238,18 @@ export class DropCreationApiService {
       createDropRequest,
       authorId,
       representativeId,
-      hideLinkPreview
+      hideLinkPreview,
+      newDropId,
+      notify = true
     }: {
       createDropRequest: ApiCreateDropRequest;
       authorId: string;
       representativeId: string;
       hideLinkPreview?: boolean;
+      /** The new drop's id when its source names it; else random. */
+      newDropId?: string;
+      /** False: no notifications or pushes (history from the relays). */
+      notify?: boolean;
     },
     ctx: RequestContext
   ): Promise<ApiDrop> {
@@ -268,17 +274,18 @@ export class DropCreationApiService {
       createDropRequest,
       { publishedDropId: replay?.published_subject_id ?? null }
     );
-    const createModel: typeof model =
-      hideLinkPreview === undefined
-        ? model
-        : {
-            ...model,
-            hide_link_preview: hideLinkPreview
-          };
+    const createModel: typeof model = {
+      ...model,
+      ...(hideLinkPreview === undefined
+        ? {}
+        : { hide_link_preview: hideLinkPreview }),
+      ...(newDropId ? { new_drop_id: newDropId } : {}),
+      ...(notify ? {} : { notify: false })
+    };
     if (replay) {
       if (
         replay.scope.context_fingerprint !==
-          moderationFingerprint(sanitizeDropStructuredFields(createModel)) ||
+          dropModerationFingerprint(createModel) ||
         !replay.published_subject_id
       )
         moderationConflict();
@@ -539,6 +546,34 @@ export class DropCreationApiService {
       throw error;
     }
     return { ...drop, client_drop_id: clientDrop.clientDropId };
+  }
+
+  /**
+   * The drop under this id when `authorId` wrote it, read on the writer as
+   * its author sees it; else null. A signed post whose event was used
+   * already (sent twice, or written first from the 6529 relays) answers
+   * with the drop its event's id names.
+   */
+  public async findAuthorsDrop(
+    { dropId, authorId }: { dropId: string; authorId: string },
+    ctx: RequestContext
+  ): Promise<ApiDrop | null> {
+    return this.dropsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const drop = await this.dropsDb.findDropById(dropId, connection);
+        if (drop?.author_id !== authorId) return null;
+        return this.dropsService.findDropByIdOrThrow(
+          { dropId, skipEligibilityCheck: true },
+          {
+            connection,
+            authenticationContext:
+              AuthenticationContext.fromProfileId(authorId),
+            timer: ctx.timer
+          }
+        );
+      },
+      { isolationLevel: 'READ COMMITTED' }
+    );
   }
 
   /**
@@ -1054,12 +1089,15 @@ export class DropCreationApiService {
       dropId,
       request,
       authorId,
-      representativeId
+      representativeId,
+      notify = true
     }: {
       dropId: string;
       request: ApiUpdateDropRequest;
       authorId: string;
       representativeId: string;
+      /** False: no notifications or pushes (history from the relays). */
+      notify?: boolean;
     },
     ctx: RequestContext
   ): Promise<{ drop: ApiDrop; changed: boolean }> {
@@ -1086,7 +1124,7 @@ export class DropCreationApiService {
     const dropType = drop.drop_type
       ? enums.resolveOrThrow(ApiDropType, drop.drop_type)
       : ApiDropType.Chat;
-    const model: CreateOrUpdateDropModel = await withOwnedMediaUploadIds(
+    const mapped: CreateOrUpdateDropModel = await withOwnedMediaUploadIds(
       this.dropsMappers.updateDropApiToUseCaseModel({
         request: {
           ...request,
@@ -1101,6 +1139,9 @@ export class DropCreationApiService {
       }),
       request
     );
+    const model: CreateOrUpdateDropModel = notify
+      ? mapped
+      : { ...mapped, notify: false };
     const replay = await moderationReviewDb.savedRequest(
       authorId,
       'DROP',
@@ -1109,8 +1150,7 @@ export class DropCreationApiService {
     );
     if (replay) {
       if (
-        replay.scope.context_fingerprint !==
-          moderationFingerprint(sanitizeDropStructuredFields(model)) ||
+        replay.scope.context_fingerprint !== dropModerationFingerprint(model) ||
         replay.published_subject_id !== dropId
       )
         moderationConflict();
