@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import {
+  bytesMatchCid,
   ChainGatewayClient,
   chainGatewayConfigFromEnv,
   cidPath
@@ -95,11 +96,16 @@ export function writeDropArchiveFiles(
 }
 
 /**
- * Lays out the snapshot tooling's output (`outDir` holding waves-v1.bin
- * and archives/ with index.json) as a files source directory under the ids
- * above, one file at a time. Returns how many archives it copied.
+ * Lays out the snapshot tooling's output (`outDir` holding waves-v1.bin,
+ * archives/ and docs/, each with its index.json) as a files source
+ * directory under the ids above, one file at a time: every document with
+ * a CID goes under its CID, checked against it. Returns how many archives
+ * and documents it copied.
  */
-export function layoutSnapshotFiles(outDir: string, filesDir: string): number {
+export function layoutSnapshotFiles(
+  outDir: string,
+  filesDir: string
+): { archives: number; documents: number } {
   const archivesDir = path.join(outDir, 'archives');
   const indexBytes = fs.readFileSync(path.join(archivesDir, 'index.json'));
   const archives = (
@@ -123,7 +129,26 @@ export function layoutSnapshotFiles(outDir: string, filesDir: string): number {
       )
     });
   });
-  return archives.length;
+  const docsDir = path.join(outDir, 'docs');
+  const docs = (
+    JSON.parse(fs.readFileSync(path.join(docsDir, 'index.json'), 'utf8')) as {
+      docs: { cid?: string; file: string }[];
+    }
+  ).docs.filter((doc) => !!doc.cid);
+  docs.forEach((doc) => {
+    if (path.basename(doc.file) !== doc.file) {
+      throw new Error(`The documents index names a file outside docs/`);
+    }
+    const cid = `0x${String(doc.cid).replace(/^0x/, '')}`;
+    const bytes = fs.readFileSync(path.join(docsDir, doc.file));
+    if (!bytesMatchCid(cid, bytes)) {
+      throw new Error(`The document ${doc.file} does not match its CID`);
+    }
+    writeDropArchiveFiles(filesDir, {
+      [DROP_ARCHIVE_FILE_IDS.document(cid)]: bytes
+    });
+  });
+  return { archives: archives.length, documents: docs.length };
 }
 
 /**

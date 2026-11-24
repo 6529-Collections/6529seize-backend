@@ -96,7 +96,10 @@ type PrivateQueryFamily =
 
 /**
  * Starts every statement of the drop archive import (src/waves-import-files):
- * its inserts carry drops' text inline, members-only waves' included.
+ * its inserts carry drops' text inline, members-only waves' included. A
+ * statement that starts with it doesn't start with its verb, so the API
+ * server's pool choice by statement (db-api getPoolNameBySql) would take
+ * the read pool: the import always runs on its transaction's connection.
  */
 export const DROP_ARCHIVE_IMPORT_SQL_MARKER = '/* drop archive import */';
 

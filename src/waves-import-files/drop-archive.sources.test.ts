@@ -43,11 +43,15 @@ const DOCUMENTS: Record<string, Buffer> = {
   )
 };
 
-/** The snapshot tooling's output for the fixture: waves-v1.bin and archives/. */
-function snapshotOut(dir: string) {
+/**
+ * The snapshot tooling's output for the fixture: waves-v1.bin, archives/
+ * and docs/ (holding `documents`, by wave), each with its index.json.
+ */
+function snapshotOut(dir: string, documents: Record<string, Buffer>) {
   const built = buildDropArchives(FIXTURE_DROPS, FIXTURE_PARTS);
   const wavesFile = wavesFileFor(built, DOCUMENTS);
   fs.mkdirSync(path.join(dir, 'archives'), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'docs'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'waves-v1.bin'), wavesFile);
   fs.writeFileSync(path.join(dir, 'archives', 'index.json'), built.index);
   built.archives.forEach((archive) =>
@@ -55,6 +59,18 @@ function snapshotOut(dir: string) {
       path.join(dir, 'archives', `${archive.waveId.slice(2)}.jsonl`),
       archive.bytes
     )
+  );
+  const docs = Object.keys(documents).map((wave, i) => {
+    const file = `3-${i}.json`;
+    fs.writeFileSync(path.join(dir, 'docs', file), documents[wave]);
+    return { cid: rawCidOf(documents[wave]).slice(2), docClass: 3, file };
+  });
+  // A commitment document has no CID: not served by one.
+  fs.writeFileSync(path.join(dir, 'docs', '6-0.json'), '{}');
+  docs.push({ cid: '', docClass: 6, file: '6-0.json' });
+  fs.writeFileSync(
+    path.join(dir, 'docs', 'index.json'),
+    JSON.stringify({ docs })
   );
   return { built, wavesFile };
 }
@@ -95,12 +111,22 @@ describe('the drop archive sources', () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  async function readOverHttp(documents: Record<string, Buffer>) {
+  /**
+   * Reads the fixture over HTTP from a files directory laid out from the
+   * tooling's output with `laidOut` in docs/, plus `added` as served.
+   */
+  async function readOverHttp(
+    laidOut: Record<string, Buffer>,
+    added: Record<string, Buffer> = {}
+  ) {
     const out = path.join(tmp, 'out');
     const filesDir = path.join(tmp, 'files');
-    const { built, wavesFile } = snapshotOut(out);
-    expect(layoutSnapshotFiles(out, filesDir)).toBe(2);
-    writeDropArchiveFiles(filesDir, documentFiles(documents));
+    const { built, wavesFile } = snapshotOut(out, laidOut);
+    expect(layoutSnapshotFiles(out, filesDir)).toEqual({
+      archives: 2,
+      documents: Object.keys(laidOut).length
+    });
+    writeDropArchiveFiles(filesDir, documentFiles(added));
     const server = await startFileServer(filesDir);
     try {
       const written: string[] = [];
@@ -140,9 +166,10 @@ describe('the drop archive sources', () => {
   });
 
   it('refuse a wave whose document is missing or does not match its CID', async () => {
-    const { built, report, written } = await readOverHttp({
-      [FIXTURE_WAVES.b]: Buffer.from('{"kind":"wave","description":[]}')
-    });
+    const { built, report, written } = await readOverHttp(
+      {},
+      { [FIXTURE_WAVES.b]: Buffer.from('{"kind":"wave","description":[]}') }
+    );
     const [a, b] = built.archives;
     expect(report.refused).toEqual([
       {
@@ -238,9 +265,18 @@ describe('the drop archive sources', () => {
     expect(JSON.stringify(logged.mock.calls)).not.toContain('insert into');
   });
 
+  it('refuse a document that does not match its CID when laying out', () => {
+    const out = path.join(tmp, 'out');
+    snapshotOut(out, DOCUMENTS);
+    fs.writeFileSync(path.join(out, 'docs', '3-0.json'), '{}');
+    expect(() => layoutSnapshotFiles(out, path.join(tmp, 'files'))).toThrow(
+      'does not match its CID'
+    );
+  });
+
   it('refuse an index that names a file outside archives/', () => {
     const out = path.join(tmp, 'out');
-    snapshotOut(out);
+    snapshotOut(out, DOCUMENTS);
     const indexFile = path.join(out, 'archives', 'index.json');
     const index = JSON.parse(fs.readFileSync(indexFile, 'utf8'));
     index.archives[0].file = '../waves-v1.bin';
