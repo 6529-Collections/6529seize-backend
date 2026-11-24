@@ -129,7 +129,14 @@ export async function startRecorder(upstream: string, dir: string) {
         };
         // The status is kept once, at the mark: before it, the node's
         // finalized height is not the mark's.
-        if ((!isStatus || state.keepStatus) && !isDocumentRead(url)) {
+        // A node's passing failure (a 5xx or 429) is answered but never
+        // kept, so a retry asks the node again.
+        const transient = exchange.status >= 500 || exchange.status === 429;
+        if (
+          (!isStatus || state.keepStatus) &&
+          !isDocumentRead(url) &&
+          !transient
+        ) {
           kept.set(key, exchange);
           fs.appendFileSync(file, `${JSON.stringify(exchange)}\n`);
         }

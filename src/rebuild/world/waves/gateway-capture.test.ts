@@ -143,8 +143,10 @@ describe('the waves gateway capture', () => {
 
   it("fails the capture when the node can't answer one of the mirror's reads", async () => {
     // The world, except that every block read fails on the node's side.
+    let blockReads = 0;
     const broken = http.createServer((request, response) => {
       if ((request.url ?? '').startsWith('/v1/blocks/')) {
+        blockReads++;
         response.writeHead(500, { 'content-type': 'application/json' });
         response.end(JSON.stringify({ error: 'broken' }));
         return;
@@ -158,16 +160,23 @@ describe('the waves gateway capture', () => {
       });
     });
     const url = (await listenLoopback(broken)).url;
+    const recorder = await startRecorder(url, dir);
     try {
       await expect(
-        readMirrorExtras(url, () => [
+        readMirrorExtras(recorder.url, () => [
           {
             body: JSON.stringify({ data: { updatedHeight: 5 } }),
             encoding: 'utf8' as const
           }
         ])
       ).rejects.toThrow("The capture of the mirror's read /v1/blocks/5 failed");
+      // Each retry reached the node, and no failure was kept.
+      expect(blockReads).toBeGreaterThan(1);
+      expect(
+        fs.readFileSync(path.join(dir, 'recording.jsonl'), 'utf8')
+      ).not.toContain('/v1/blocks/');
     } finally {
+      await recorder.stop();
       await closeServer(broken);
     }
   });
