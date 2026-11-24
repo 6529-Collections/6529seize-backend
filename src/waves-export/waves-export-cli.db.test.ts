@@ -20,8 +20,9 @@ import { main } from './cli';
  *
  * With WAVES_SNAPSHOT_TOOL set to the snapshot tooling's directory
  * (validator repository, tools/legacy-snapshot), the export then goes
- * through the tooling as the export run does: normalize and build must
- * exit 0 and write a Waves v1 file. WAVES_E2E_OUT keeps the output there.
+ * through the tooling as the export run does: normalize, table-check and
+ * build must exit 0 and write a Waves v1 file. WAVES_E2E_OUT keeps the
+ * output there.
  */
 const AUTHOR = anIdentity(
   {},
@@ -82,7 +83,17 @@ const DROPS = [
     reply_to_part_id: 1
   },
   // A native entry's drop with no entry: the legacy view shows it as chat.
-  { ...dropRow(FIRST_ID, DROP(3), 3), drop_type: DropType.COMPETITION },
+  // With the table values the API doesn't show, and a reply with no part id.
+  {
+    ...dropRow(FIRST_ID, DROP(3), 3),
+    drop_type: DropType.COMPETITION,
+    signature: 'made-up-signature',
+    is_additional_action_promised: true,
+    hide_link_preview: true,
+    collapse_replies: true,
+    reply_to_drop_id: DROP(2),
+    reply_to_part_id: null
+  },
   dropRow(SECOND_ID, DROP(4), 4)
 ];
 
@@ -166,8 +177,21 @@ describeWithSeed(
         drop_id: DROP(1),
         part_id: 1
       });
-      // The legacy view, as the public API shows it.
+      // The legacy view, as the public API shows it, and the table's own
+      // values beside it.
       expect(byId.get(DROP(3))?.drop_type).toBe('CHAT');
+      expect(byId.get(DROP(3))?.table).toEqual({
+        signature: 'made-up-signature',
+        is_additional_action_promised: true,
+        hide_link_preview: true,
+        collapse_replies: true,
+        drop_type: 'COMPETITION',
+        reply_to_part_id: null
+      });
+      expect(byId.get(DROP(2))?.table).toMatchObject({
+        drop_type: 'CHAT',
+        reply_to_part_id: 1
+      });
       expect(
         readLines(path.join(out, 'raw', 'drops', `${SECOND_ID}.jsonl.gz`)).map(
           (line) => line.id
@@ -186,6 +210,11 @@ describeWithSeed(
         'live'
       ]);
       expect({ step: 'normalize', ...normalize }).toMatchObject({
+        status: 0
+      });
+      // The gate on the drops table's values before the build.
+      const tableCheck = python(tool, ['table-check', '--out', out]);
+      expect({ step: 'table-check', ...tableCheck }).toMatchObject({
         status: 0
       });
       const build = python(tool, ['build', '--out', out]);

@@ -46,6 +46,11 @@ import { RateMatter } from '@/entities/IRating';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 import { stableGrant } from './waves-export.compact';
+import {
+  DropTableRow,
+  dropTableValues,
+  withTableValues
+} from './waves-export.table';
 import { compareCodePoints } from './waves-export.json';
 import {
   ExportActiveEntry,
@@ -98,40 +103,6 @@ function toMillis(value: unknown): number | null {
 /** A JSON round trip: what the API's response body holds. */
 function asJson<T>(value: T): Json {
   return JSON.parse(JSON.stringify(value)) as Json;
-}
-
-/** A tinyint column as MySQL drivers give it: a boolean, 0/1 or their text. */
-function flag(value: unknown): boolean | null {
-  if (value === null || value === undefined) return null;
-  return value === true || Number(value) === 1;
-}
-
-/** A drops row's columns that dropTableValues reads. */
-interface DropTableRow {
-  readonly id: string;
-  readonly signature: string | null;
-  readonly is_additional_action_promised: unknown;
-  readonly hide_link_preview: unknown;
-  readonly collapse_replies: unknown;
-  readonly drop_type: string;
-  readonly reply_to_part_id: unknown;
-}
-
-/**
- * The drops table's own values the API shows differently or not at all
- * (waves-export.compact TABLE_KEYS), set on each exported drop as `table`.
- */
-export function dropTableValues(row: DropTableRow): Json {
-  const replyPart = row.reply_to_part_id;
-  return {
-    signature: row.signature ?? null,
-    is_additional_action_promised: flag(row.is_additional_action_promised),
-    hide_link_preview: flag(row.hide_link_preview) ?? false,
-    collapse_replies: flag(row.collapse_replies) ?? false,
-    drop_type: row.drop_type,
-    reply_to_part_id:
-      replyPart === null || replyPart === undefined ? null : Number(replyPart)
-  };
 }
 
 /**
@@ -507,11 +478,7 @@ export class BackendWavesExportSource implements WavesExportSource {
       const tableOf = await dropTableValuesByIds(
         read.entities.map((entity) => entity.id)
       );
-      yield read.drops.map((drop) => {
-        const json = asJson(drop);
-        const table = tableOf.get(String(json.id));
-        return table ? { ...json, table } : json;
-      });
+      yield withTableValues(read.drops.map(asJson), tableOf);
       serialNoLimit = Math.min(
         ...read.entities.map((entity) => entity.serial_no)
       );
