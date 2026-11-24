@@ -32,6 +32,7 @@ import {
   TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE
 } from '@/constants';
 import { connect, disconnect } from '@/db';
+import { Logger } from '@/logging';
 import * as Entities from '@/entities/entities';
 import {
   encodeSignedRecordsHeader,
@@ -56,6 +57,10 @@ import {
 } from '@/signed-records/record-verify';
 import { signedRecordHeadsDb } from '@/signed-records/signed-record-heads.db';
 import { sqlExecutor } from '@/sql-executor';
+import {
+  deferSubscriptionWrites,
+  executorSink
+} from '@/subscription-key-width/subscription-deferred-writes';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { mirrorIdentityDirectory } from '../identity/identity-directory';
 import {
@@ -78,13 +83,15 @@ import { identityTablesHash, journalBodyOf } from '../timeline/journal';
 import { JournalSource, rebuildIdentityTables } from '../opening/rebuild';
 import { recordContentOf, SubscriptionChange } from './subscription-records';
 import {
+  LegacySubscriptionWrite,
   legacySubscriptionWrite,
   SubscriptionChangeWriter,
   SubscriptionWriteDeps,
   SubscriptionWriteRequest
 } from './subscription-writes';
 import * as cutoffModule from '@/api/subscriptions/subscription-cutoff';
-import { CustomApiCompliantException } from '@/exceptions';
+import { SubscriptionKeyHeldBackException } from '@/api/subscriptions/subscription-key-held-back.exception';
+import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
 import { shadowReportsMatch } from '../writers/identity-reports';
 
 jest.mock('@/subscriptionsDaily/subscription-cache', () => ({
@@ -224,6 +231,7 @@ function writer(
     readonly grants?: readonly VerifiedGrant[];
     readonly bindings?: PrincipalBindingSource;
     readonly anchors?: SubscriptionWriteDeps['anchors'];
+    readonly legacy?: LegacySubscriptionWrite;
   } = {}
 ): SubscriptionChangeWriter {
   return new SubscriptionChangeWriter({
@@ -246,7 +254,7 @@ function writer(
         ids.includes(fixture.proof.id) ? [fixture.proof] : []
     }),
     heads: signedRecordHeadsDb,
-    legacy: legacySubscriptionWrite,
+    legacy: options.legacy ?? legacySubscriptionWrite,
     saveReport,
     now: () => Date.now()
   });
@@ -440,6 +448,159 @@ describeWithSeed('signed subscription changes', [], () => {
   });
 
   describe('after the switch (IDENTITY)', () => {
+    /** The process's held-back counts, as their EMF lines. */
+    const heldBackCounts = (stdout: jest.SpyInstance) =>
+      stdout.mock.calls
+        .map(([line]) => String(line))
+        .filter((line) => line.includes('"LegacyDualWriteHeldBack"'))
+        .map((line) => JSON.parse(line));
+
+    it('logs and counts a legacy dual write the key-width guard holds back, without the alarm', async () => {
+      await seedLegacy();
+      await cutAndLoad(true);
+      // An earlier write of W's key waits in the queue, so the guard holds
+      // back its legacy writes, as it did before the switch.
+      await deferSubscriptionWrites(
+        [
+          {
+            kind: 'LOG',
+            consolidationKey: W,
+            dedupe: 'earlier',
+            payload: {},
+            reason: { narrow: [], pendingEarlier: false }
+          }
+        ],
+        executorSink()
+      );
+      const legacyBefore = await rowsOf('legacy', W);
+      const info = jest.spyOn(Logger.prototype, 'info');
+      const alarm = jest.spyOn(Logger.prototype, 'errorWithCode');
+      const stdout = jest.spyOn(process.stdout, 'write');
+      try {
+        const event = record(card(C1, true));
+        await writer().write(request(card(C1, true), header(event)));
+
+        expect((await rowsOf('identity', P)).cards).toContainEqual([
+          C1,
+          1,
+          1,
+          0
+        ]);
+        expect(await rowsOf('legacy', W)).toEqual(legacyBefore);
+        expect(alarm).not.toHaveBeenCalled();
+        expect(info).toHaveBeenCalledWith(
+          `[LEGACY DUAL WRITE HELD BACK] [subs.card] [event ${event.id}] [key of ${W.length} characters] [an earlier write is waiting]`
+        );
+        expect(heldBackCounts(stdout)).toEqual([
+          expect.objectContaining({
+            _aws: expect.objectContaining({
+              CloudWatchMetrics: [
+                {
+                  Namespace: '6529/Subscriptions',
+                  Dimensions: [['ChangeType']],
+                  Metrics: [{ Name: 'LegacyDualWriteHeldBack', Unit: 'Count' }]
+                }
+              ]
+            }),
+            ChangeType: 'subs.card',
+            LegacyDualWriteHeldBack: 1
+          })
+        ]);
+      } finally {
+        info.mockRestore();
+        alarm.mockRestore();
+        stdout.mockRestore();
+      }
+    });
+
+    it('names a key too long for a legacy table in the held-back line', async () => {
+      await seedLegacy();
+      await cutAndLoad(true);
+      const info = jest.spyOn(Logger.prototype, 'info');
+      const alarm = jest.spyOn(Logger.prototype, 'errorWithCode');
+      const stdout = jest.spyOn(process.stdout, 'write');
+      try {
+        const event = record(card(C1, true));
+        await writer({
+          // The guard's refusal for a key wider than a legacy column.
+          legacy: async () => {
+            throw new SubscriptionKeyHeldBackException(
+              'Subscriptions for identities with more than 13 wallets resume after the identity switch.',
+              {
+                narrow: [{ table: 'subscriptions_redeemed', width: 567 }],
+                pendingEarlier: false
+              }
+            );
+          }
+        }).write(request(card(C1, true), header(event)));
+
+        expect(alarm).not.toHaveBeenCalled();
+        expect(info).toHaveBeenCalledWith(
+          `[LEGACY DUAL WRITE HELD BACK] [subs.card] [event ${event.id}] [key of ${W.length} characters] [too long for a legacy table]`
+        );
+        expect(heldBackCounts(stdout)).toEqual([
+          expect.objectContaining({
+            ChangeType: 'subs.card',
+            LegacyDualWriteHeldBack: 1
+          })
+        ]);
+      } finally {
+        info.mockRestore();
+        alarm.mockRestore();
+        stdout.mockRestore();
+      }
+    });
+
+    it('still alarms on any other legacy dual write failure, a bad request with the same words included', async () => {
+      await seedLegacy();
+      await cutAndLoad(true);
+      const failures: Error[] = [
+        new Error('legacy tables unreachable'),
+        // Told apart by type, not by message: the guard's own words on a
+        // plain bad request still alarm.
+        new BadRequestException(
+          'Subscription changes for this identity resume once its earlier updates are applied, after the identity switch.'
+        )
+      ];
+      for (let i = 0; i < failures.length; i++) {
+        const failure = failures[i];
+        const alarm = jest
+          .spyOn(Logger.prototype, 'errorWithCode')
+          .mockImplementation(() => undefined);
+        const info = jest.spyOn(Logger.prototype, 'info');
+        const stdout = jest.spyOn(process.stdout, 'write');
+        try {
+          const token = i === 0 ? C1 : C2;
+          const event = record(card(token, true));
+          await writer({
+            legacy: async () => {
+              throw failure;
+            }
+          }).write(request(card(token, true), header(event)));
+
+          expect((await rowsOf('identity', P)).cards).toContainEqual([
+            token,
+            1,
+            1,
+            0
+          ]);
+          expect(alarm).toHaveBeenCalledWith(
+            'SUBSCRIPTIONS_LEGACY_DUAL_WRITE_FAILED',
+            expect.stringContaining('[LEGACY DUAL WRITE FAILED] [subs.card]'),
+            failure
+          );
+          expect(info).not.toHaveBeenCalledWith(
+            expect.stringContaining('[LEGACY DUAL WRITE HELD BACK]')
+          );
+          expect(heldBackCounts(stdout)).toEqual([]);
+        } finally {
+          alarm.mockRestore();
+          info.mockRestore();
+          stdout.mockRestore();
+        }
+      }
+    });
+
     it('applies a valid record, logs its event and journal entry, and dual-writes the legacy tables', async () => {
       await seedLegacy();
       await cutAndLoad(true);
