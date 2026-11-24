@@ -88,8 +88,8 @@ cp "$timing_dir/snapshot.json" scripts/pr-ci-jest-timings.json
 
 Jest discovers the test files on each run. The snapshot supplies runtime
 estimates for matching paths, and suites without a usable estimate are
-assigned using a default. Removed paths drop out with discovery. The initial
-snapshot uses durations printed in the four-shard baseline's Jest logs.
+assigned using a default. Removed paths drop out with discovery. The
+snapshot records the workflow run ID that supplied its suite timings.
 
 The API has its own package and lockfile, so run API commands from its package
 directory:
