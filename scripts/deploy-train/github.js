@@ -216,23 +216,96 @@ async function activeDeployRuns(client, environment) {
 }
 
 const HISTORY_FALLBACK_PAGES = 5;
+const DEPLOY_HISTORY_PAGES = 10;
+// How long after its creation a train run can still end its Ship job: it can
+// wait behind one whole run in the concurrency group, then run itself
+// (Resume 10, Plan 45 and Ship 330 minutes at most, each time), with margin.
+const MAX_RUN_SPAN_MS = 14 * 60 * 60 * 1000;
+const STOPPED_CONCLUSIONS = new Set(['failure', 'timed_out', 'cancelled']);
 
 function isFailed(conclusion) {
   return conclusion === 'failure' || conclusion === 'timed_out';
 }
 
-/** A halt recorded by `run`, or null when its Ship job did not fail. */
-async function haltFromRun(client, run, shipJobName) {
-  if (!isFailed(run.conclusion)) return null;
+/**
+ * Reads, at most once, the prod deploys dispatched since `since`, and
+ * answers whether one was dispatched between two times. When the history
+ * runs past its page limit, a window older than what was read counts as
+ * dispatched, so an unreadable stretch keeps the train halted.
+ */
+function prodDispatchLookup(client, since) {
+  let loaded = null;
+  async function load() {
+    const times = [];
+    let readBack = since;
+    for (let page = 1; page <= DEPLOY_HISTORY_PAGES; page++) {
+      const result = await client.listWorkflowRuns(DEPLOY_WORKFLOW, {
+        event: 'workflow_dispatch',
+        branch: deployBranch('prod'),
+        created: `>=${isoSecond(since)}`,
+        per_page: '100',
+        page: String(page)
+      });
+      const batch = result.workflow_runs || [];
+      for (const run of batch) {
+        const match = DEPLOY_TITLE.exec(run.display_title || '');
+        if (match && match[2] === 'prod')
+          times.push(Date.parse(run.created_at));
+      }
+      if (batch.length < 100) return { times, readBack };
+      readBack = Math.min(
+        ...batch.map((run) => Date.parse(run.created_at)),
+        Number.POSITIVE_INFINITY
+      );
+    }
+    // Too many deploys to read: only the newest pages are known.
+    return { times, readBack, truncated: true };
+  }
+  return async (from, to) => {
+    loaded ||= await load();
+    if (loaded.truncated && from < loaded.readBack) return true;
+    return loaded.times.some((time) => time >= from && time <= to);
+  };
+}
+
+/**
+ * A halt recorded by `run`: its Ship job failed or timed out, or was
+ * cancelled after a prod deploy was dispatched while it ran (the train
+ * dispatches only from Ship, one train at a time). Null otherwise.
+ */
+async function haltFromRun(client, run, shipJobName, dispatchedBetween) {
+  if (!STOPPED_CONCLUSIONS.has(run.conclusion)) return null;
+  const runEnd = Date.parse(run.updated_at || run.created_at);
+  // Most cancelled runs were replaced while waiting in the concurrency
+  // group; one with no prod deploy during its lifetime dispatched nothing.
+  if (
+    run.conclusion === 'cancelled' &&
+    !(await dispatchedBetween(Date.parse(run.created_at), runEnd))
+  ) {
+    return null;
+  }
   const jobs = await client.listRunJobs(run.id);
   const ship = jobs.find((job) => job.name === shipJobName);
-  if (!ship || !isFailed(ship.conclusion)) return null;
+  if (!ship) return null;
+  // When the halt was opened: the Ship job's end.
+  const endedAt = ship.completed_at || run.updated_at || run.created_at;
+  const stopped =
+    isFailed(ship.conclusion) ||
+    (ship.conclusion === 'cancelled' &&
+      Boolean(ship.started_at) &&
+      (await dispatchedBetween(
+        Date.parse(ship.started_at),
+        Date.parse(endedAt)
+      )));
+  if (!stopped) return null;
   return {
     run_id: run.id,
     run_url: run.html_url,
     created_at: run.created_at,
-    // When the halt was opened: the Ship job's failure.
-    failed_at: ship.completed_at || run.updated_at || run.created_at
+    failed_at: endedAt,
+    cause: isFailed(ship.conclusion)
+      ? ship.conclusion
+      : 'cancelled-after-dispatch'
   };
 }
 
@@ -247,65 +320,74 @@ async function isCompletedResume(client, run, resumeJobName) {
   return Boolean(resume) && resume.conclusion === 'success';
 }
 
-/**
- * What one past train run, read newest first, says about a halt.
- * `resumedAt` is the dispatch time of the newest completed resume seen so
- * far, or null. Returns `{ done: true, halt }` once the answer is known,
- * else `{ done: false, resumedAt }` to read the next older run.
- */
-async function historyVerdict(client, run, resumedAt, jobNames) {
-  // This run, and every older one, ended before the resume was dispatched.
-  if (resumedAt !== null && Date.parse(run.updated_at) < resumedAt) {
-    return { done: true, halt: null };
-  }
-  const halt = await haltFromRun(client, run, jobNames.shipJobName);
-  if (halt) {
-    const kept = resumedAt === null || Date.parse(halt.failed_at) >= resumedAt;
-    return { done: true, halt: kept ? halt : null };
-  }
-  const resumed =
-    resumedAt === null &&
-    (await isCompletedResume(client, run, jobNames.resumeJobName));
-  return {
-    done: false,
-    resumedAt: resumed ? Date.parse(run.created_at) : resumedAt
-  };
-}
-
-/**
- * Fallback halt detection from run history, for a halt whose issue could
- * not be opened: the most recent completed train run whose Ship job
- * failed or timed out, unless the Resume job of a run dispatched after
- * that failure completed successfully: like the Resume job itself, a resume
- * clears only halts opened before its dispatch, so a train that was still
- * running when the resume was dispatched and failed later stays halted.
- * It pages through the newest HISTORY_FALLBACK_PAGES pages of 100 runs
- * (several days of trains); the halt issue makes a halt persist beyond that.
- */
-async function findUnclearedHalt(
-  client,
-  { currentRunId, shipJobName, resumeJobName = 'Resume', resumedAt = null }
-) {
-  // In a resume run, its own completed Resume job (resumedAt, its dispatch
-  // time) covers the halts opened before it, like a later resume would.
-  let clearedBefore = resumedAt;
+/** Completed train runs other than `currentRunId`, newest created first. */
+async function readTrainHistory(client, currentRunId) {
+  const runs = [];
   for (let page = 1; page <= HISTORY_FALLBACK_PAGES; page++) {
     const result = await client.listWorkflowRuns(TRAIN_WORKFLOW, {
       per_page: '100',
       page: String(page)
     });
-    const runs = (result.workflow_runs || [])
-      .filter((run) => run.id !== currentRunId && run.status === 'completed')
-      .sort((left, right) => right.created_at.localeCompare(left.created_at));
-    for (const run of runs) {
-      const verdict = await historyVerdict(client, run, clearedBefore, {
-        shipJobName,
-        resumeJobName
-      });
-      if (verdict.done) return verdict.halt;
-      clearedBefore = verdict.resumedAt;
+    const batch = result.workflow_runs || [];
+    runs.push(
+      ...batch.filter(
+        (run) => run.id !== currentRunId && run.status === 'completed'
+      )
+    );
+    if (batch.length < 100) break;
+  }
+  return runs.sort((left, right) =>
+    right.created_at.localeCompare(left.created_at)
+  );
+}
+
+/**
+ * Fallback halt detection from run history, for a halt whose issue could
+ * not be opened: a completed train run whose Ship job failed, timed out or
+ * was cancelled after dispatching a deploy, unless the Resume job of a run
+ * dispatched after that stop completed successfully. Like the Resume job
+ * itself, a resume clears only halts opened before its dispatch, so a train
+ * that was still running when the resume was dispatched and stopped later
+ * stays halted, even when newer runs ended before the resume.
+ *
+ * Runs are read newest first. Only the newest completed resume matters (it
+ * clears everything an older one would), and every older run is checked
+ * until no run created that early could still have been shipping at the
+ * resume's dispatch (MAX_RUN_SPAN_MS). It reads the newest
+ * HISTORY_FALLBACK_PAGES pages of 100 runs (several days of trains); the
+ * halt issue makes a halt persist beyond that.
+ */
+async function findUnclearedHalt(
+  client,
+  { currentRunId, shipJobName, resumeJobName = 'Resume', resumedAt = null }
+) {
+  const runs = await readTrainHistory(client, currentRunId);
+  if (runs.length === 0) return null;
+  const dispatchedBetween = prodDispatchLookup(
+    client,
+    Date.parse(runs.at(-1).created_at)
+  );
+  // In a resume run, its own completed Resume job (resumedAt, its dispatch
+  // time) covers the halts opened before it, like a later resume would.
+  let clearedBefore = resumedAt;
+  for (const run of runs) {
+    const created = Date.parse(run.created_at);
+    if (clearedBefore !== null && created < clearedBefore - MAX_RUN_SPAN_MS) {
+      return null;
     }
-    if ((result.workflow_runs || []).length < 100) return null;
+    const halt = await haltFromRun(client, run, shipJobName, dispatchedBetween);
+    if (
+      halt &&
+      (clearedBefore === null || Date.parse(halt.failed_at) >= clearedBefore)
+    ) {
+      return halt;
+    }
+    if (
+      clearedBefore === null &&
+      (await isCompletedResume(client, run, resumeJobName))
+    ) {
+      clearedBefore = created;
+    }
   }
   return null;
 }
@@ -505,6 +587,7 @@ async function currentHalt(
 module.exports = {
   HALT_LABEL,
   RESUMED_LABEL,
+  MAX_RUN_SPAN_MS,
   DEPLOY_WORKFLOW,
   TRAIN_WORKFLOW,
   DEPLOY_TITLE,

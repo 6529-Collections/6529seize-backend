@@ -125,16 +125,37 @@ describe('deployed commit history', () => {
 });
 
 describe('train halts', () => {
-  function client(runs: any[], jobs: Record<number, any[]>) {
+  function client(
+    runs: any[],
+    jobs: Record<number, any[]>,
+    deploys: any[] | ((page: number) => any[]) = []
+  ) {
+    const jobReads: number[] = [];
     return {
-      async listWorkflowRuns() {
-        return { workflow_runs: runs };
+      jobReads,
+      async listWorkflowRuns(workflow: string, params: Record<string, string>) {
+        if (workflow !== github.DEPLOY_WORKFLOW) return { workflow_runs: runs };
+        const page = Number(params.page);
+        return {
+          workflow_runs:
+            typeof deploys === 'function'
+              ? deploys(page)
+              : page === 1
+                ? deploys
+                : []
+        };
       },
       async listRunJobs(id: number) {
+        jobReads.push(id);
         return jobs[id] ?? [];
       }
     };
   }
+  const prodDeploy = (id: number, created: string, service = 'api') => ({
+    id,
+    created_at: created,
+    display_title: `Deploy ${service} to prod`
+  });
   const trainRun = (
     id: number,
     created: string,
@@ -328,6 +349,186 @@ describe('train halts', () => {
     expect(halt).toMatchObject({
       run_id: 2,
       failed_at: '2026-11-23T10:20:00Z'
+    });
+  });
+
+  it('finds a halt behind a newer run that ended before the resume', async () => {
+    // prxt's case: train 2 is shipping when train 3 queues and is replaced
+    // at 10:05; the resume is dispatched at 10:10 and waits; train 2's Ship
+    // then fails at 10:40. Run 3 ending before the resume must not end the
+    // scan before run 2.
+    const halt = await github.findUnclearedHalt(
+      client(
+        [
+          trainRun(
+            4,
+            '2026-11-23T10:10:00Z',
+            'success',
+            'Deploy train (resume)'
+          ),
+          {
+            ...trainRun(3, '2026-11-23T09:55:00Z', 'cancelled'),
+            updated_at: '2026-11-23T10:05:00Z'
+          },
+          {
+            ...trainRun(2, '2026-11-23T09:50:00Z', 'failure'),
+            updated_at: '2026-11-23T10:40:00Z'
+          }
+        ],
+        {
+          2: [
+            {
+              name: 'Ship',
+              conclusion: 'failure',
+              completed_at: '2026-11-23T10:40:00Z'
+            }
+          ],
+          4: [{ name: 'Resume', conclusion: 'success' }]
+        }
+      ),
+      { currentRunId: 5, shipJobName: 'Ship' }
+    );
+    expect(halt).toMatchObject({
+      run_id: 2,
+      failed_at: '2026-11-23T10:40:00Z'
+    });
+  });
+
+  it('stops reading once no older run could have been shipping at the resume', async () => {
+    const c = client(
+      [
+        trainRun(9, '2026-11-23T10:00:00Z', 'success', 'Deploy train (resume)'),
+        {
+          ...trainRun(2, '2026-11-22T18:00:00Z', 'failure'),
+          updated_at: '2026-11-22T18:30:00Z'
+        }
+      ],
+      { 9: [{ name: 'Resume', conclusion: 'success' }] }
+    );
+    expect(
+      await github.findUnclearedHalt(c, {
+        currentRunId: 10,
+        shipJobName: 'Ship'
+      })
+    ).toBeNull();
+    // Run 2 was created 16 hours before the resume: never read.
+    expect(c.jobReads).toEqual([9]);
+  });
+
+  describe('a cancelled Ship job without a halt issue', () => {
+    const cancelledRun = (id: number) => ({
+      ...trainRun(id, '2026-11-23T09:00:00Z', 'cancelled'),
+      updated_at: '2026-11-23T10:00:00Z'
+    });
+    const cancelledShip = [
+      { name: 'Plan', conclusion: 'success' },
+      {
+        name: 'Ship',
+        conclusion: 'cancelled',
+        started_at: '2026-11-23T09:10:00Z',
+        completed_at: '2026-11-23T10:00:00Z'
+      }
+    ];
+
+    it('halts once a prod deploy was dispatched while it ran', async () => {
+      const halt = await github.findUnclearedHalt(
+        client([cancelledRun(2)], { 2: cancelledShip }, [
+          prodDeploy(70, '2026-11-23T09:30:00Z')
+        ]),
+        { currentRunId: 3, shipJobName: 'Ship' }
+      );
+      expect(halt).toMatchObject({
+        run_id: 2,
+        failed_at: '2026-11-23T10:00:00Z',
+        cause: 'cancelled-after-dispatch'
+      });
+    });
+
+    it('is cleared by a later completed resume like any halt', async () => {
+      expect(
+        await github.findUnclearedHalt(
+          client(
+            [
+              trainRun(
+                4,
+                '2026-11-23T11:00:00Z',
+                'success',
+                'Deploy train (resume)'
+              ),
+              cancelledRun(2)
+            ],
+            {
+              2: cancelledShip,
+              4: [{ name: 'Resume', conclusion: 'success' }]
+            },
+            [prodDeploy(70, '2026-11-23T09:30:00Z')]
+          ),
+          { currentRunId: 5, shipJobName: 'Ship' }
+        )
+      ).toBeNull();
+    });
+
+    it('is a soft stop when nothing was dispatched while it ran', async () => {
+      for (const deploys of [
+        [],
+        // Before the Ship job started (the previous train's), or a staging one.
+        [
+          prodDeploy(70, '2026-11-23T09:05:00Z'),
+          {
+            ...prodDeploy(71, '2026-11-23T09:30:00Z'),
+            display_title: 'Deploy api to staging'
+          }
+        ]
+      ]) {
+        expect(
+          await github.findUnclearedHalt(
+            client([cancelledRun(2)], { 2: cancelledShip }, deploys),
+            { currentRunId: 3, shipJobName: 'Ship' }
+          )
+        ).toBeNull();
+      }
+    });
+
+    it('skips runs replaced while waiting without reading their jobs', async () => {
+      const c = client(
+        [
+          {
+            ...trainRun(2, '2026-11-23T09:00:00Z', 'cancelled'),
+            updated_at: '2026-11-23T09:20:00Z'
+          }
+        ],
+        {},
+        [prodDeploy(70, '2026-11-23T09:30:00Z')]
+      );
+      expect(
+        await github.findUnclearedHalt(c, {
+          currentRunId: 3,
+          shipJobName: 'Ship'
+        })
+      ).toBeNull();
+      expect(c.jobReads).toEqual([]);
+    });
+
+    it('stays halted when the deploy history is too long to read', async () => {
+      // Ten full pages of newer deploys: the Ship window is older than
+      // anything read, so it counts as dispatched.
+      const page = (n: number) =>
+        Array.from({ length: 100 }, (_, i) =>
+          prodDeploy(
+            n * 1000 + i,
+            new Date(
+              Date.parse('2026-11-23T11:00:00Z') + (n * 100 + i) * 1000
+            ).toISOString()
+          )
+        );
+      const halt = await github.findUnclearedHalt(
+        client([cancelledRun(2)], { 2: cancelledShip }, page),
+        { currentRunId: 3, shipJobName: 'Ship' }
+      );
+      expect(halt).toMatchObject({
+        run_id: 2,
+        cause: 'cancelled-after-dispatch'
+      });
     });
   });
 });
@@ -761,7 +962,7 @@ describe('persistent halts', () => {
       );
     });
 
-    it('lets a ship continue without recording groups when the ledger is unreadable', async () => {
+    it('refuses every save when the ledger is unreadable, so new groups wait', async () => {
       const { shipLedger } = require('./cli');
       const { client, issues } = fakeGitHub([]);
       const ready = await shipLedger(client);
@@ -771,7 +972,12 @@ describe('persistent halts', () => {
       expect(issues).toHaveLength(1);
       issues[0].body = 'edited by hand';
       const broken = await shipLedger(client);
-      expect(broken.saveLedger).toBeNull();
+      expect(broken.ledger).toEqual({});
+      await expect(broken.saveLedger({})).rejects.toThrow(
+        'the ledger could not be read'
+      );
+      // Nothing was written over the broken issue.
+      expect(issues[0].body).toBe('edited by hand');
       expect(broken.ledgerWarning).toContain('release-note ledger not read');
     });
   });

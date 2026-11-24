@@ -616,7 +616,7 @@ describe('deploy train executor', () => {
     ]);
   });
 
-  it('keeps a group open while a member is held, and records it in the ledger', async () => {
+  it('keeps a group open while a member is held, recording its services before the first deploy', async () => {
     const h = harness();
     const saved: any[] = [];
     const result = await h.run(
@@ -625,7 +625,10 @@ describe('deploy train executor', () => {
       ),
       {
         saveLedger: async (groups: any) => {
-          saved.push(structuredClone(groups));
+          saved.push({
+            dispatchedBefore: h.dispatched.length,
+            groups: structuredClone(groups)
+          });
         }
       }
     );
@@ -637,12 +640,22 @@ describe('deploy train executor', () => {
         publish_release_note: false
       }
     ]);
+    const opened_at = new Date(START).toISOString();
     expect(saved).toEqual([
       {
-        '5': {
-          services: ['nftsLoop', 'teamLoop'],
-          shipped: ['teamLoop'],
-          opened_at: new Date(START).toISOString()
+        dispatchedBefore: 0,
+        groups: {
+          '5': { services: ['nftsLoop', 'teamLoop'], shipped: [], opened_at }
+        }
+      },
+      {
+        dispatchedBefore: 1,
+        groups: {
+          '5': {
+            services: ['nftsLoop', 'teamLoop'],
+            shipped: ['teamLoop'],
+            opened_at
+          }
         }
       }
     ]);
@@ -704,22 +717,129 @@ describe('deploy train executor', () => {
     expect(saved.at(-1)['6'].shipped).toEqual(['teamLoop']);
   });
 
-  it('keeps deploying and warns when the ledger cannot be saved', async () => {
+  it('defers a deploy whose new group cannot be recorded first, and still ships one that completes its group', async () => {
     const h = harness();
     const result = await h.run(
-      trainPlan(
-        withGroups([item('teamLoop', [5])], [{ service: 'nftsLoop', prs: [5] }])
-      ),
+      trainPlan([
+        ...withGroups(
+          [item('teamLoop', [5])],
+          [{ service: 'nftsLoop', prs: [5] }]
+        ),
+        ...withGroups([item('api', [7])])
+      ]),
       {
         saveLedger: async () => {
           throw new Error('API rate limit');
         }
       }
     );
-    expect(result.shipped).toHaveLength(1);
+    expect(result.deferred).toEqual([
+      {
+        service: 'teamLoop',
+        reason:
+          'release-note group pr-5 could not be recorded before its first deploy: API rate limit'
+      }
+    ]);
     expect(result.stop).toBeNull();
+    // api's group is complete with this deploy: nothing to record first.
+    expect(h.dispatched.map((entry) => entry.inputs.service)).toEqual(['api']);
+  });
+
+  it('keeps the recorded group when only the save after the deploy fails', async () => {
+    // prxt's case: the first deploy succeeds and the ledger write after it
+    // fails. The service set was saved before the deploy, so the next
+    // train sends the same set and the receiver accepts it.
+    const h = harness();
+    let persisted: Record<string, any> = {};
+    let saves = 0;
+    const result = await h.run(
+      trainPlan(
+        withGroups([item('teamLoop', [5])], [{ service: 'nftsLoop', prs: [5] }])
+      ),
+      {
+        saveLedger: async (groups: any) => {
+          saves += 1;
+          if (saves > 1) throw new Error('API rate limit');
+          persisted = structuredClone(groups);
+        }
+      }
+    );
+    expect(result.shipped).toHaveLength(1);
     expect(result.warnings).toEqual([
       'release-note ledger not saved after teamLoop: API rate limit'
+    ]);
+    const [next] = withGroups([item('nftsLoop', [5])], [], persisted);
+    expect(next.release_note_groups).toEqual([
+      {
+        release_group_id: 'pr-5',
+        release_group_services: ['nftsLoop', 'teamLoop'],
+        pull_request_number: 5,
+        publish_release_note: true
+      }
+    ]);
+  });
+
+  it('records a group again when its ledger entry has expired', async () => {
+    const h = harness();
+    const stale = {
+      '5': {
+        services: ['teamLoop'],
+        shipped: [],
+        opened_at: new Date(START - 8 * 86_400_000).toISOString()
+      }
+    };
+    const saved: any[] = [];
+    await h.run(
+      // The plan ignores the expired entry and fixes a fresh set.
+      trainPlan(
+        withGroups([item('teamLoop', [5])], [{ service: 'nftsLoop', prs: [5] }])
+      ),
+      {
+        ledger: structuredClone(stale),
+        saveLedger: async (groups: any) => {
+          saved.push({
+            dispatchedBefore: h.dispatched.length,
+            groups: structuredClone(groups)
+          });
+        }
+      }
+    );
+    expect(saved[0]).toEqual({
+      dispatchedBefore: 0,
+      groups: {
+        '5': {
+          services: ['nftsLoop', 'teamLoop'],
+          shipped: [],
+          opened_at: new Date(START).toISOString()
+        }
+      }
+    });
+  });
+
+  it('records a group only once across its members', async () => {
+    const h = harness();
+    const saved: any[] = [];
+    await h.run(
+      trainPlan(
+        withGroups(
+          [item('teamLoop', [5]), item('nftsLoop', [5])],
+          [{ service: 'api', prs: [5] }]
+        )
+      ),
+      {
+        saveLedger: async (groups: any) => {
+          saved.push({
+            dispatchedBefore: h.dispatched.length,
+            shipped: structuredClone(groups['5'].shipped)
+          });
+        }
+      }
+    );
+    // One save before the first deploy, then one after each deploy.
+    expect(saved).toEqual([
+      { dispatchedBefore: 0, shipped: [] },
+      { dispatchedBefore: 1, shipped: ['teamLoop'] },
+      { dispatchedBefore: 2, shipped: ['teamLoop', 'nftsLoop'] }
     ]);
   });
 });

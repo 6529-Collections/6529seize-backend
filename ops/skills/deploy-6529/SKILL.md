@@ -185,6 +185,10 @@ Read the repository variable first:
   release-note group the train has started (an open `deploy-train-ledger`
   issue lists them), send that group's full service set in
   `release_note_groups` and publish only when your deploy is its last member.
+  A service outside a pull request's recorded set cannot report into it: send
+  only the groups that list it (usually the fix's own pull request), as
+  `docs/deployment.md` shows; opt out only when the user explicitly asks for
+  no release note.
 - Before merging a change that needs a non-catalog order or an operator step
   (a scoped `dbMigrationsLoop` run, a backfill between deploys, frontend
   first), set a temporary hold on the affected services, run the sequence by

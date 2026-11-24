@@ -145,17 +145,60 @@ class TrainRun {
     });
   }
 
-  /**
-   * Remembers, for each group a deploy carried, its service set and which
-   * members shipped, so later trains send the same set. A completed group
-   * leaves the ledger, and so does one the receiver has forgotten.
-   */
-  async recordGroups(item, groups) {
-    if (!this.saveLedger || groups.length === 0) return;
+  dropExpiredGroups() {
     const expiry = this.clock() - LEDGER_DAYS * 86_400_000;
     for (const [key, entry] of Object.entries(this.ledger)) {
       if (Date.parse(entry.opened_at) <= expiry) delete this.ledger[key];
     }
+  }
+
+  /**
+   * Saves, before `item` deploys, the service set of every group it is
+   * about to send without completing, unless the ledger already holds that
+   * group: the receiver keeps the first set it sees, so the set must be on
+   * record before any deploy sends it. Returns the reason to defer `item`
+   * when it cannot be saved, else null.
+   */
+  async reserveGroups(item, groups) {
+    if (!this.saveLedger) return null;
+    // An entry the receiver has forgotten does not count as recorded.
+    this.dropExpiredGroups();
+    const opening = groups.filter(
+      (group) =>
+        !group.publish_release_note &&
+        !this.ledger[String(group.pull_request_number)]
+    );
+    if (opening.length === 0) return null;
+    const opened_at = new Date(this.clock()).toISOString();
+    for (const group of opening) {
+      this.ledger[String(group.pull_request_number)] = {
+        services: group.release_group_services,
+        shipped: [],
+        opened_at
+      };
+    }
+    try {
+      await this.saveLedger(this.ledger);
+      return null;
+    } catch (error) {
+      for (const group of opening) {
+        delete this.ledger[String(group.pull_request_number)];
+      }
+      const ids = opening.map((group) => group.release_group_id).join(', ');
+      return `release-note group ${ids} could not be recorded before its first deploy: ${errorMessage(error)}`;
+    }
+  }
+
+  /**
+   * Remembers, for each group a deploy carried, which members shipped. A
+   * completed group leaves the ledger, and so does one the receiver has
+   * forgotten. The service set was recorded before the deploy (see
+   * reserveGroups), so a failed save here loses only progress the next
+   * plan reads again from what is still behind.
+   */
+  async recordGroups(item, groups) {
+    if (!this.saveLedger || groups.length === 0) return;
+    this.dropExpiredGroups();
     for (const group of groups) {
       const key = String(group.pull_request_number);
       if (group.publish_release_note) {
@@ -383,6 +426,11 @@ class TrainRun {
     // Waiting for other deploys can take minutes: check the branch, holds
     // and quiet windows again immediately before dispatching.
     if (!(await this.clearToDispatch(item))) return null;
+    const unrecorded = await this.reserveGroups(item, groups);
+    if (unrecorded) {
+      this.defer(item, unrecorded);
+      return null;
+    }
     const dispatchedAt = this.clock();
     this.onDispatch(item.service);
     this.log(

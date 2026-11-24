@@ -430,9 +430,10 @@ function progressRecorder(target) {
 }
 
 /**
- * The release-note ledger for a train, and how to save it. The plan already
- * fixed this train's groups, so an unreadable ledger only stops the train
- * from recording them: release notes are best effort and must not halt it.
+ * The release-note ledger for a train, and how to save it. An unreadable
+ * ledger cannot record a new group, so its save always fails: a deploy that
+ * would open or continue an incomplete group is deferred to a later train,
+ * and one that completes its group still ships. Release notes never halt it.
  */
 async function shipLedger(client) {
   let current;
@@ -442,8 +443,10 @@ async function shipLedger(client) {
     const message = error instanceof Error ? error.message : String(error);
     return {
       ledger: {},
-      saveLedger: null,
-      ledgerWarning: `release-note ledger not read, so this train's groups are not recorded: ${message}`
+      saveLedger: async () => {
+        throw new Error(`the ledger could not be read: ${message}`);
+      },
+      ledgerWarning: `release-note ledger not read, so deploys that would send an incomplete group wait for a later train: ${message}`
     };
   }
   let number = current.number;

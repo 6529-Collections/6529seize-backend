@@ -166,21 +166,60 @@ Services the plan defers instead of shipping:
 | A temporary hold names it | Finish the hand-run step, then clear the hold. |
 | A quiet window is active within 15 minutes | Nothing; a later train ships it. |
 | A dependency is held back, could not be assessed or was never deployed | Fix or ship the dependency first. |
-| Its PR's release-note group was fixed before the service fell behind | Nothing; the train ships it once that group has published or expired (7 days). |
+| Its PR's release-note group was fixed before the service fell behind | Nothing; the train ships it once that group has published or expired (7 days). For an urgent fix, see the hand-deploy inputs below. |
 
 Release notes: each PR becomes one group (`pr-<number>`) that lists every
 service behind `main` because of that PR, including services the train holds
-back or defers. The group keeps that service set across trains: the first
-deploy that carries an incomplete group records it in an open issue labelled
-`deploy-train-ledger` (only the train edits it), and later trains send the
-same set while any member is still behind, for up to 7 days, the release-note
-receiver's memory. `publish_release_note` is `true` only on the deploy that
-completes the group, after every member that was behind has shipped; a held
-member keeps the note unpublished until it ships. To deploy a member by hand,
-copy its group's services from the ledger issue into `release_note_groups`,
-and publish only if it is the last member. If the ledger cannot be read
-during a train, the train still deploys with the groups its plan fixed and
-reports a warning. The train never uses the release-note opt-out.
+back or defers. The group keeps that service set across trains. Before the
+first deploy that carries an incomplete group, the train records the set in an
+open issue labelled `deploy-train-ledger` (only the train edits it), because
+the release-note receiver keeps the first set it sees for a pull request and
+rejects a different one. Later trains send the same set while any member is
+still behind, for up to 7 days, the receiver's memory. If the set cannot be
+recorded (the ledger cannot be read or saved), that deploy is deferred to a
+later train; a deploy that completes its group still ships. After each deploy
+the train records which members shipped; if only that save fails, it warns,
+and the next plan works the progress out again from what is still behind.
+`publish_release_note` is `true` only on the deploy that completes the group,
+after every member that was behind has shipped; a held member keeps the note
+unpublished until it ships. The train never uses the release-note opt-out.
+
+Deploying a group member by hand: dispatch `Deploy a service` with
+`environment=prod`, the service, `expected_source_sha` set to the `main`
+commit you reviewed, and `release_note_groups` holding one entry per pull
+request whose group lists the service, for example:
+
+```json
+[
+  {
+    "release_group_id": "pr-2601",
+    "release_group_services": ["nftsLoop", "teamLoop"],
+    "pull_request_number": 2601,
+    "publish_release_note": false
+  }
+]
+```
+
+- `release_group_services`: copied exactly from that pull request's entry in
+  the ledger issue. With no entry, list every service behind `main` because of
+  that pull request (the latest train summary lists them), including this one.
+- `publish_release_note`: `true` only if every other service in the set has
+  already shipped.
+
+A service missing from an existing group (it fell behind because of that pull
+request after its group was fixed) cannot report into that group: the receiver
+rejects a service outside the recorded set until the group publishes or
+expires. For an urgent fix:
+
+- If the fix is its own merged pull request, which is the usual case, send
+  only the groups that list the service: the fix's group, with the services
+  behind because of it. Leave the older pull request out; its note keeps its
+  own set. The train does the same on its own, so it ships such a service
+  without waiting.
+- If no newer pull request lists the service, either wait for the older group
+  to publish or expire (7 days), or deploy with `release_note_opt_out=true`
+  and no other release-note inputs. The opt-out is the deployer's explicit
+  choice to publish no note for that deploy; the train never makes it.
 
 Routine migrations stay in the train. It deploys `dbMigrationsLoop` first, with
 the default `full` schema scope. Services whose catalog entry depends on
@@ -355,9 +394,16 @@ a later halt, which needs a fresh dispatch. Closing the issue by hand does not
 resume the train. If the plan cannot read the halt
 issues or the deploy history from GitHub, it fails and ships nothing; the next
 trigger tries again. If the halt issue itself cannot be opened, later trains
-still find the failed Ship job among the newest 500 train runs. Only a resume
-run dispatched after that failure whose Resume job completed successfully
-clears it; a cancelled, skipped or failed Resume job does not.
+still find the stopped Ship job among the newest 500 train runs: one that
+failed or timed out, or one cancelled while a prod `Deploy a service` run was
+dispatched (any prod dispatch in that window counts, so a hand deploy during a
+cancelled Ship also keeps the train halted). Only a resume run dispatched
+after that stop whose Resume job completed successfully clears it; a
+cancelled, skipped or failed Resume job does not. Runs are checked one by one
+back to 14 hours before that resume, the longest a train can wait and then
+run, so a train that stopped after the resume was dispatched stays halted even
+when newer runs ended before it. If the deploy history is too long to read, a
+cancelled Ship in the unread stretch counts as a halt.
 
 A `Deploy a service` run that fails or is cancelled halts the train unless the
 run shows it changed nothing in production: its source guard refused a commit
@@ -424,9 +470,23 @@ Optional repository variables for the health check: `DEPLOY_TRAIN_DB_AUTH`
 (`IAM` or `PASSWORD`, default `IAM`), `DEPLOY_TRAIN_ERROR_MIN_COUNT` (default
 3) and `DEPLOY_TRAIN_ERROR_RATE_FACTOR` (default 2).
 
-Enablement: set `report` for a few days and compare the per-merge "would ship"
-posts and job summaries with what developers deploy by hand. Catch up anything
-the plan defers for release notes. Create the health role, then set `prod`.
+Enablement:
+
+1. Set `report` for a few days and compare the per-merge "would ship" posts
+   and job summaries with what developers deploy by hand. Catch up anything
+   the plan defers for release notes.
+2. Create the health role.
+3. Run one supervised end-to-end release-note check before leaving `prod` on.
+   Pick a merged pull request that put two services behind, A and B. Add a
+   hold on B and on every other behind service except A, set `prod`, and
+   dispatch the train. Expected: the train ships A only, the ledger issue
+   records the pull request's group with both services, and no note
+   publishes. Then deploy B by hand with that group copied from the ledger and
+   `publish_release_note=true`. Expected: exactly one release note publishes,
+   for the pull request, listing A and B. Set `report` again if anything else
+   happens.
+4. Clear the holds and leave `prod` on.
+
 No service is a permanent exception yet; report mode shows whether the
 CloudFront interceptor, `royaltiesLoop` or the subscription loops need one
 (`deploy_train.mode: manual`).
