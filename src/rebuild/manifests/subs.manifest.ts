@@ -151,8 +151,11 @@ const SUBS_SWITCH_SEED: RebuildStep = {
     'waves',
     'drops',
     'drops_parts',
-    // The records service following its head drops, as drop creation does.
-    'identity_subscriptions'
+    // The records service following its head drops, and the drops'
+    // metrics, as drop creation does.
+    'identity_subscriptions',
+    'wave_metrics',
+    'wave_dropper_metrics'
   ],
   reads: [
     'nfts',
@@ -193,8 +196,11 @@ const SUBS_REDEMPTIONS_SEED: RebuildStep = {
     'signed_record_log_segments',
     'drops',
     'drops_parts',
-    // The records service following its head drops, as drop creation does.
-    'identity_subscriptions'
+    // The records service following its head drops, and the drops'
+    // metrics, as drop creation does.
+    'identity_subscriptions',
+    'wave_metrics',
+    'wave_dropper_metrics'
   ],
   reads: ['transactions', 'identity_chain_principals'],
   // The holdings seed's mints, indexed into transactions.

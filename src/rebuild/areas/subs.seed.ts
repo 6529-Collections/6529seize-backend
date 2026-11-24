@@ -24,6 +24,7 @@ import {
   ActivityEventAction,
   ActivityEventTargetType
 } from '@/entities/IActivityEvent';
+import { dropsDb } from '@/drops/drops.db';
 import { DropType } from '@/entities/IDrop';
 import type { RebuildContext } from '@/rebuild/manifest.types';
 import { PROBE_CONSOLIDATION_KEYS } from '@/rebuild/manifests/probe-fixture';
@@ -343,6 +344,17 @@ function seedFilesDir(ctx: RebuildContext): string {
   return ctx.seedFilesDir;
 }
 
+/** Runs `fn` with the clock held at `atMs`, as Time.currentMillis reads it. */
+async function atClock<T>(atMs: number, fn: () => Promise<T>): Promise<T> {
+  const realNow = Date.now;
+  Date.now = () => atMs;
+  try {
+    return await fn();
+  } finally {
+    Date.now = realNow;
+  }
+}
+
 /**
  * Closes the journal's open entries into a segment. Every seed closes its
  * own entries before it ends, so an open entry of another record log lane
@@ -377,19 +389,20 @@ async function closeJournalSegments(
       }
     },
     // Posts a head drop as the records service, as a drop of the records
-    // wave: the drop, its part and the author's follow. Drop creation also
-    // records the activity event, the profile activity log line and the
-    // deferred drop metrics; no area rebuilds those from the records wave
+    // wave: the drop, its part, the author's follow and the drop metrics.
+    // Drop creation also records the activity event and the profile
+    // activity log line; no area rebuilds those from the records wave
     // today, so the seed leaves them out. Posting through the drop creation
     // service is the better end state, a follow-up.
     poster: {
       post: async (text) => {
         const id = randomUUID();
+        const createdAt = Date.now();
         await insertRow(DROPS_TABLE, {
           id,
           wave_id: waveId,
           author_id: serviceProfileId,
-          created_at: Date.now(),
+          created_at: createdAt,
           updated_at: null,
           title: null,
           parts_count: 1,
@@ -419,6 +432,21 @@ async function closeJournalSegments(
               subscribed_to_all_drops: false
             },
             connection
+          )
+        );
+        // As drop creation does after its commit: the wave's and the
+        // author's drop metrics, with the clock at the drop's own time, so
+        // the latest drop time is the drop's created_at.
+        await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+          atClock(createdAt, () =>
+            dropsDb.applyInsertedDropMetricsDelta(
+              {
+                wave_id: waveId,
+                author_id: serviceProfileId,
+                drop_type: DropType.CHAT
+              },
+              { connection }
+            )
           )
         );
         return id;

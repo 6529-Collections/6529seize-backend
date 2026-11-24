@@ -233,6 +233,65 @@ async function mintCardOne(): Promise<void> {
   );
 }
 
+/**
+ * The listed waves' drop metrics are what their drops make them, as drop
+ * creation leaves them: each wave has drops, its row's chat and
+ * participatory counts and latest drop time match them, and so does each
+ * author's row. Plain SQL, not the metrics recount, so the seed's metrics
+ * aren't checked against themselves.
+ */
+async function expectDropMetricsOfDrops(
+  waveIds: readonly string[]
+): Promise<void> {
+  for (const wave_id of waveIds) {
+    const [row] = await sqlExecutor.execute<{
+      drops_count: number;
+      participatory_drops_count: number;
+      latest_drop_timestamp: number;
+    }>(
+      `select drops_count, participatory_drops_count, latest_drop_timestamp
+         from wave_metrics where wave_id = :wave_id`,
+      { wave_id }
+    );
+    const [want] = await sqlExecutor.execute<{
+      chat: number;
+      participatory: number;
+      latest: number;
+    }>(
+      `select sum(drop_type = 'CHAT') as chat,
+              sum(drop_type = 'PARTICIPATORY') as participatory,
+              max(created_at) as latest
+         from drops where wave_id = :wave_id`,
+      { wave_id }
+    );
+    expect(Number(want.chat) + Number(want.participatory)).toBeGreaterThan(0);
+    expect(row).toBeDefined();
+    expect(Number(row.drops_count)).toBe(Number(want.chat));
+    expect(Number(row.participatory_drops_count)).toBe(
+      Number(want.participatory)
+    );
+    expect(Number(row.latest_drop_timestamp)).toBe(Number(want.latest));
+  }
+  const authorsOff = await sqlExecutor.execute(
+    `select d.wave_id, d.author_id
+       from (select wave_id, author_id,
+                    sum(drop_type = 'CHAT') as chat,
+                    sum(drop_type = 'PARTICIPATORY') as participatory,
+                    max(created_at) as latest
+               from drops
+              where wave_id in (:waveIds)
+              group by wave_id, author_id) d
+       left join wave_dropper_metrics m
+         on m.wave_id = d.wave_id and m.dropper_id = d.author_id
+      where m.wave_id is null
+         or m.drops_count <> d.chat
+         or m.participatory_drops_count <> d.participatory
+         or m.latest_drop_timestamp <> d.latest`,
+    { waveIds }
+  );
+  expect(authorsOff).toEqual([]);
+}
+
 /** The record log's `lane` values that have entries no segment closed yet. */
 async function openLanes(): Promise<string[]> {
   return (
@@ -359,6 +418,8 @@ describeWithSeed('the subscriptions rebuild check', [], () => {
         wave_id: env.SIGNED_RECORDS_WAVE_ID
       }))
     );
+    // And the records wave's drop metrics, as drop creation leaves them.
+    await expectDropMetricsOfDrops([env.SIGNED_RECORDS_WAVE_ID]);
 
     // Card 1's list: the first wallet, whose top-up covers a card and
     // turned automatic mode on, on both sides with one id, published into
@@ -392,6 +453,7 @@ describeWithSeed('the subscriptions rebuild check', [], () => {
       env
     );
     expect(await openLanes()).toEqual([]);
+    await expectDropMetricsOfDrops([env.SIGNED_RECORDS_WAVE_ID]);
     const redeemed = (table: string) =>
       sqlExecutor.execute<{ address: string }>(
         `select address from ${table} where token_id = 1`
