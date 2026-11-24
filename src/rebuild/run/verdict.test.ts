@@ -12,6 +12,7 @@ const clean: VerdictInput = {
   differingTables: 0,
   unseededTables: [],
   exemptTables: 0,
+  exemptUntil: [],
   sourceProblems: [],
   provisionalSources: [],
   plannedTables: 0,
@@ -97,6 +98,20 @@ const findings: [string, Partial<VerdictInput>, RegExp][] = [
     },
     /Planned rows are missing from the rebuild in 1 tables.*identities: 2 rows \(identity\.mirror, until the derived ids\)/
   ],
+  [
+    'EXEMPT tables with an until',
+    {
+      exemptUntil: [
+        {
+          table: 'chain_entry_holds',
+          until: '2026-12-04',
+          why: 'held entries move later',
+          overdue: false
+        }
+      ]
+    },
+    /1 EXEMPT tables are exempt only until a day, so a final run fails on them: chain_entry_holds until 2026-12-04 \(held entries move later\)/
+  ],
   ['held probes', { heldProbes: ['a.p'] }, /planned probes were held/],
   [
     'tables a fresh schema lacks',
@@ -106,6 +121,28 @@ const findings: [string, Partial<VerdictInput>, RegExp][] = [
 ];
 
 describe('the verdict', () => {
+  it('notes an overdue exemption in a normal run and fails it in a final one', () => {
+    const overdue = {
+      exemptUntil: [
+        {
+          table: 'chain_entry_holds',
+          until: '2026-12-04',
+          why: 'held entries move later',
+          overdue: true
+        }
+      ]
+    };
+    const normal = judge({ ...clean, ...overdue });
+    expect(normal.failures).toEqual([]);
+    expect(normal.notes).toContain(
+      'EXEMPT overdue: chain_entry_holds since 2026-12-04'
+    );
+    const final = judge({ ...clean, ...overdue, final: true });
+    expect(final.failures.join()).toMatch(
+      /1 EXEMPT tables are exempt only until a day, so a final run fails on them/
+    );
+  });
+
   it('passes a clean run with nothing to note', () => {
     expect(judge(clean)).toEqual({ failures: [], notes: [] });
     expect(judge({ ...clean, final: true })).toEqual({

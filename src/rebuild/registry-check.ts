@@ -5,6 +5,7 @@ import {
   TableClass
 } from '@/rebuild/manifest.types';
 import { orderSteps, waitsOn } from '@/rebuild/step-order';
+import { validUntil } from '@/rebuild/run/exempt-until';
 import {
   partitionsOf,
   rowWrittenTables,
@@ -122,6 +123,23 @@ function tableProblems(input: RegistryInput): RegistryProblem[] {
           table,
           detail: `${table} is named nowhere in code`
         });
+      }
+      if (entry.until !== undefined) {
+        if (entry.class !== 'EXEMPT') {
+          problems.push({
+            kind: 'BAD_EXEMPT',
+            area: manifest.area,
+            table,
+            detail: `${table} is ${entry.class}; only an EXEMPT table has an until`
+          });
+        } else if (!validUntil(entry.until)) {
+          problems.push({
+            kind: 'BAD_EXEMPT',
+            area: manifest.area,
+            table,
+            detail: `${table}'s until '${entry.until}' is not a day written YYYY-MM-DD`
+          });
+        }
       }
       if (entry.class !== 'INDEX' && !entry.why?.trim()) {
         problems.push({

@@ -67,6 +67,13 @@ export interface TableEntry {
     readonly column: string;
     readonly reason: string;
   };
+  /**
+   * EXEMPT only: the last day of the exemption, YYYY-MM-DD. The report
+   * lists the table with its day and notes it as overdue once the run's
+   * day is past it; a final run fails on any EXEMPT table with one,
+   * whatever the day, so an exemption with an end is never final.
+   */
+  readonly until?: string;
 }
 
 export interface ReasonedPath {

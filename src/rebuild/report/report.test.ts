@@ -111,6 +111,7 @@ function report(parts: Partial<RunReport> = {}): RunReport {
         }
       ],
       ownedColumnsLeftOut: [],
+      exemptUntil: [],
       plannedRows: []
     },
     failures: [],
@@ -204,6 +205,45 @@ describe('rebuild report', () => {
     expect(headline(base)[1]).not.toContain('planned rows');
     expect(renderMarkdown(planned)).toContain(
       '## Planned rows missing from the rebuild\n\n- identities: 2 rows, keys ["k1"] ["k2"]; planned by identity.mirror until the derived ids (TDH-only identities; where profile_id IS NULL, matching 2 seeded rows)'
+    );
+  });
+
+  it('puts overdue exemptions on the headline and the status line, and lists every dated one', () => {
+    const base = report();
+    const dated = report({
+      tables: {
+        ...base.tables,
+        exemptUntil: [
+          {
+            table: 'chain_entry_holds',
+            until: '2026-12-04',
+            why: 'held entries move later',
+            overdue: true
+          },
+          {
+            table: 'later_holds',
+            until: '2027-01-31',
+            why: 'a later ruling',
+            overdue: false
+          }
+        ]
+      }
+    });
+    expect(headline(dated)).toContain(
+      'EXEMPT overdue: chain_entry_holds since 2026-12-04'
+    );
+    expect(headline(base).join()).not.toContain('EXEMPT overdue');
+    expect(statusLine(dated, 'runs/x')).toContain(
+      '; EXEMPT overdue: chain_entry_holds since 2026-12-04. runs/x'
+    );
+    const markdown = renderMarkdown(dated);
+    expect(markdown).toContain(
+      [
+        '## EXEMPT tables exempt only until a day',
+        '',
+        '- chain_entry_holds: until 2026-12-04, overdue since 2026-12-04; held entries move later',
+        '- later_holds: until 2027-01-31; a later ruling'
+      ].join('\n')
     );
   });
 

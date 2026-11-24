@@ -1,3 +1,4 @@
+import { ExemptUntil, overdueLine } from '@/rebuild/run/exempt-until';
 /** A step skipped as planned: a table it needs isn't in the schema. */
 export interface WaitingStep {
   readonly step: string;
@@ -27,6 +28,8 @@ export interface VerdictInput {
   /** Rebuilt tables with no rows after the seeds, unless waived. */
   readonly unseededTables: readonly string[];
   readonly exemptTables: number;
+  /** EXEMPT tables exempt only until a day. */
+  readonly exemptUntil: readonly ExemptUntil[];
   /** Problems the sources report (an unrecorded request, a bad file). */
   readonly sourceProblems: readonly string[];
   readonly provisionalSources: readonly string[];
@@ -120,6 +123,17 @@ export function judge(input: VerdictInput): Verdict {
       `${input.exemptTables} EXEMPT tables are kept and not covered by this proof.`
     );
   }
+  if (input.exemptUntil.length) {
+    finalOnly(
+      `${input.exemptUntil.length} EXEMPT tables are exempt only until a day, so a final run fails on them: ${input.exemptUntil
+        .map((e) => `${e.table} until ${e.until} (${e.why})`)
+        .join('; ')}`
+    );
+  }
+  const overdue = overdueLine(input.exemptUntil);
+  // Past its day an exemption is overdue: noted, not failed, so a run
+  // never turns red because the clock moved; a final run fails above.
+  if (overdue) notes.push(overdue);
   failures.push(...input.sourceProblems);
   if (input.provisionalSources.length) {
     finalOnly(

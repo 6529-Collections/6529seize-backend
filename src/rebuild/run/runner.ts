@@ -99,6 +99,7 @@ import {
   stopSources
 } from '@/rebuild/sources/start-sources';
 import { judge, WaitingStep } from '@/rebuild/run/verdict';
+import { exemptUntil, runDay } from '@/rebuild/run/exempt-until';
 import { refusalsIn } from '@/rebuild/run/refusals';
 import { waitForApi } from '@/rebuild/stack/api-ready';
 
@@ -252,6 +253,8 @@ class RebuildRun {
   private seededRows: Record<string, number> = {};
   /** Partitioned tables with rows no writer's partition owns, after the seeds. */
   private unownedRows: string[] = [];
+  /** EXEMPT tables exempt only until a day, against the run's day. */
+  private readonly exemptUntil = exemptUntil(this.o.manifests, runDay());
   /**
    * Owned columns this run doesn't rebuild, because their owner is outside
    * the area or skipped: left out of the row comparison.
@@ -1582,6 +1585,7 @@ class RebuildRun {
       differingTables: this.tableDiffs.filter((d) => !d.same).length,
       unseededTables: this.unseededTables(),
       exemptTables: this.registry?.classes.EXEMPT ?? 0,
+      exemptUntil: this.exemptUntil,
       sourceProblems: this.running.flatMap((source) => source.problems()),
       provisionalSources: this.running
         .filter((source) => source.info.provisional)
@@ -1843,6 +1847,7 @@ class RebuildRun {
         seededRows: this.seededRows,
         volatileColumns: this.volatileColumns(),
         ownedColumnsLeftOut: this.unrunOwnedColumns,
+        exemptUntil: this.exemptUntil,
         plannedRows: this.plannedRowsMissing()
       },
       failures: this.failures,

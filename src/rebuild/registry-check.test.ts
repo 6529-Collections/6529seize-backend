@@ -696,6 +696,31 @@ describe('checkRegistry', () => {
     ]);
   });
 
+  it('takes an until only on an EXEMPT table, and only as a real day', () => {
+    const result = checkRegistry({
+      manifests: [
+        area('a', {
+          held: { class: 'EXEMPT', why: 'held entries', until: '2026-12-04' },
+          bad_day: { class: 'EXEMPT', why: 'x', until: '2026-02-30' },
+          bad_form: { class: 'EXEMPT', why: 'x', until: '4 Dec 2026' },
+          kept: { class: 'EPHEMERAL', why: 'a cache', until: '2026-12-04' }
+        })
+      ],
+      codeTables: code('held', 'bad_day', 'bad_form', 'kept')
+    });
+    expect(result.problems.map((p) => [p.kind, p.detail])).toEqual([
+      [
+        'BAD_EXEMPT',
+        "bad_day's until '2026-02-30' is not a day written YYYY-MM-DD"
+      ],
+      [
+        'BAD_EXEMPT',
+        "bad_form's until '4 Dec 2026' is not a day written YYYY-MM-DD"
+      ],
+      ['BAD_EXEMPT', 'kept is EPHEMERAL; only an EXEMPT table has an until']
+    ]);
+  });
+
   it('lets a step wait only for a table a later branch adds, with a reason', () => {
     const result = checkRegistry({
       manifests: [

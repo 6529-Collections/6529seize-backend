@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { TableClass } from '@/rebuild/manifest.types';
 import { RegistryProblem } from '@/rebuild/registry-check';
+import { ExemptUntil, overdueLine } from '@/rebuild/run/exempt-until';
 import { SourceViolation } from '@/rebuild/guard/source-guard';
 import { ProbeDifference } from '@/rebuild/probes/probe-runner';
 import { TableDiff } from '@/rebuild/snapshot/table-snapshot';
@@ -127,6 +128,8 @@ export interface RunReport {
      * Seeded rows missing from the rebuild that a rebuilder planned (a
      * later change rebuilds them): how many, up to 20 keys, and the plans.
      */
+    /** EXEMPT tables exempt only until a day (see TableEntry.until). */
+    readonly exemptUntil: ExemptUntil[];
     readonly plannedRows: {
       table: string;
       rows: number;
@@ -166,6 +169,7 @@ export function headline(report: RunReport): string[] {
   const failed = report.steps.filter((s) => s.exitCode !== 0).length;
   const leftOut = report.tables.ownedColumnsLeftOut.length;
   const planned = report.tables.plannedRows.reduce((n, p) => n + p.rows, 0);
+  const overdue = overdueLine(report.tables.exemptUntil ?? []);
   const provisional = Object.entries(report.sources)
     .filter(([, info]) => info.provisional)
     .map(([name]) => name);
@@ -176,7 +180,9 @@ export function headline(report: RunReport): string[] {
       ? `probes ${report.probes.calls}: differ ${report.probes.differences.length}, unproven ${report.probes.unproven.length}; INDEX tables no probe read ${report.probes.unreadTables.length}`
       : `probes ${report.probes.calls}: not compared: the run stopped before pass B (${report.probes.stoppedBefore})`,
     `GET routes ${report.routes.documented}: probed ${report.routes.probed}, waived ${report.routes.waived}, open ${report.routes.open.length}`,
-    `steps ${report.steps.length}: failed ${failed}; source violations ${report.violations.length}; provisional sources ${provisional.length ? provisional.join(', ') : 'none'}`
+    `steps ${report.steps.length}: failed ${failed}; source violations ${report.violations.length}; provisional sources ${provisional.length ? provisional.join(', ') : 'none'}`,
+    // Seen on every run, not left in the body.
+    ...(overdue ? [overdue] : [])
   ];
 }
 
@@ -310,6 +316,13 @@ export function renderMarkdown(report: RunReport): string {
       report.routes.open.length ? [report.routes.open.join(', ')] : []
     ),
     ...section(
+      'EXEMPT tables exempt only until a day',
+      (report.tables.exemptUntil ?? []).map(
+        (e) =>
+          `- ${e.table}: until ${e.until}${e.overdue ? `, overdue since ${e.until}` : ''}; ${e.why}`
+      )
+    ),
+    ...section(
       'Planned rows missing from the rebuild',
       report.tables.plannedRows.map(
         (p) =>
@@ -349,7 +362,8 @@ export function renderMarkdown(report: RunReport): string {
 
 /** One line per run for the status file. */
 export function statusLine(report: RunReport, runDir: string): string {
-  return `- ${report.finishedAt} ${report.scope}: ${report.verdict}, rebuilt ${report.tables.rebuilt.length}, pending ${report.pending.length}, ${report.probes.stoppedBefore === null ? `probe differences ${report.probes.differences.length}` : 'probes not compared'}, failures ${report.failures.length}. ${runDir}`;
+  const overdue = overdueLine(report.tables.exemptUntil ?? []);
+  return `- ${report.finishedAt} ${report.scope}: ${report.verdict}, rebuilt ${report.tables.rebuilt.length}, pending ${report.pending.length}, ${report.probes.stoppedBefore === null ? `probe differences ${report.probes.differences.length}` : 'probes not compared'}, failures ${report.failures.length}${overdue ? `; ${overdue}` : ''}. ${runDir}`;
 }
 
 export function writeReport(

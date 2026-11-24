@@ -57,6 +57,14 @@ A cursor its rebuilder rewrites is INDEX, not EPHEMERAL: kept, it would
 make the rebuilder resume from it and write nothing. The identity mirror's
 `identity_chain_mirror_state` is one.
 
+An EXEMPT table can name the last day of its exemption, `until:
+'YYYY-MM-DD'`. The report lists it with its day and reason. Once the run's
+day (UTC) is past it, the run notes "EXEMPT overdue: <table> since <day>"
+on the headline and the status line; it doesn't fail, so a run doesn't
+turn red because the clock moved. A final run fails on every EXEMPT table
+that names an `until`, whatever the day. The registry refuses an `until`
+on any other class, and one that isn't a real day.
+
 ## Registering an area's parts
 
 Edit only your area's manifest.
