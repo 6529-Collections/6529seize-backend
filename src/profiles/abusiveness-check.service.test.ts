@@ -147,42 +147,6 @@ describe('AbusivenessCheckService durable moderation', () => {
     );
     expect(reviews.finish).toHaveBeenCalledTimes(1);
   });
-  it.each(['Only Me', 'Can message me'])(
-    'records the built-in group name %s without requesting AI',
-    async (text) => {
-      await expect(
-        service.checkFilterName({
-          text,
-          handle: 'alice',
-          profile_id: 'profile-alice',
-          group_id: 'group'
-        })
-      ).resolves.toMatchObject({ status: 'ALLOWED' });
-      expect(detector.checkUserGroupName).not.toHaveBeenCalled();
-      expect(reviews.finish).toHaveBeenCalledWith(
-        'evaluation',
-        expect.objectContaining({ outcome: 'ALLOW', model: null })
-      );
-    }
-  );
-  it('requires moderation for a user-supplied variation of the built-in title', async () => {
-    jest
-      .mocked(detector.checkUserGroupName)
-      .mockRejectedValue(new Error('evaluator unavailable'));
-    const text = 'Can message me whenever';
-    await expect(
-      service.checkFilterName({
-        text,
-        handle: 'alice',
-        profile_id: 'profile-alice',
-        group_id: 'group'
-      })
-    ).rejects.toThrow('temporarily unavailable');
-    expect(detector.checkUserGroupName).toHaveBeenCalledWith({
-      text,
-      handle: 'alice'
-    });
-  });
   it('keeps BIO evaluator errors blocking and distinct from rejection', async () => {
     jest
       .mocked(detector.checkBioText)
@@ -220,19 +184,12 @@ describe('AbusivenessCheckService durable moderation', () => {
     expect(result.moderation_permit_generation).toBe(7);
     expect(detector.checkBioText).not.toHaveBeenCalled();
   });
-  it('requires stable profile IDs before capturing BIO or group moderation', async () => {
+  it('requires stable profile IDs before capturing BIO moderation', async () => {
     await expect(
       service.checkBio({
         text: 'bio',
         handle: 'alice',
         profile_type: 'PSEUDONYM',
-        profile_id: ''
-      })
-    ).rejects.toThrow('Profile ID is required');
-    await expect(
-      service.checkFilterName({
-        text: 'Only Me',
-        handle: 'alice',
         profile_id: ''
       })
     ).rejects.toThrow('Profile ID is required');

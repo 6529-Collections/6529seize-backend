@@ -159,8 +159,7 @@ router.post(
     const authenticationContext = await getAuthenticationContext(req, timer);
     const requestContext: RequestContext = {
       timer,
-      authenticationContext,
-      moderationRequestId: req.get('Idempotency-Key')
+      authenticationContext
     };
     const savingProfileId = authenticationContext.getActingAsId();
     if (!savingProfileId) {
@@ -180,7 +179,7 @@ router.post(
       ChangeUserGroupVisibilitySchema
     );
     const response = await userGroupsService.changeVisibility(
-      request,
+      { ...request, idempotencyKey: req.get('Idempotency-Key') },
       requestContext,
       async (replacement, ctx) =>
         await waveApiService.assertGroupReplacementPreservesWaveViewAccess(

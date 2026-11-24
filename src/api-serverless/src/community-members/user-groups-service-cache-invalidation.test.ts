@@ -11,7 +11,6 @@ import {
   evictWaveGroupsEntityCache,
   getRedisClient
 } from '@/redis';
-import { AbusivenessCheckService } from '@/profiles/abusiveness-check.service';
 import { MetricsRecorder } from '@/metrics/MetricsRecorder';
 import { ApiGroupBeneficiaryGrantMatchMode } from '@/api/generated/models/ApiGroupBeneficiaryGrantMatchMode';
 import { ApiGroupFull } from '@/api/generated/models/ApiGroupFull';
@@ -175,7 +174,9 @@ function buildUserGroupsDbMock() {
     deleteById: jest.fn().mockResolvedValue(undefined),
     changeVisibilityAndSetId: jest.fn().mockResolvedValue(undefined),
     getByIds: jest.fn().mockResolvedValue([]),
-    getByIdWithoutVisibilityCheck: jest.fn().mockResolvedValue(aGroupEntity()),
+    lockForVisibilityChange: jest.fn().mockResolvedValue(undefined),
+    reserveVisibilityRequest: jest.fn().mockResolvedValue(false),
+    completeVisibilityRequest: jest.fn().mockResolvedValue(undefined),
     findUserGroupsIdentityGroupProfileIds: jest.fn().mockResolvedValue({}),
     insertGroupChanges: jest.fn().mockResolvedValue(undefined)
   };
@@ -183,15 +184,9 @@ function buildUserGroupsDbMock() {
 
 type UserGroupsDbMock = ReturnType<typeof buildUserGroupsDbMock>;
 
-function buildService(
-  userGroupsDb: UserGroupsDbMock,
-  checkFilterName = jest.fn().mockResolvedValue({ status: 'ALLOWED' })
-) {
+function buildService(userGroupsDb: UserGroupsDbMock) {
   return new UserGroupsService(
     userGroupsDb as unknown as UserGroupsDb,
-    {
-      checkFilterName
-    } as unknown as AbusivenessCheckService,
     {
       recordActiveIdentity: jest.fn().mockResolvedValue(undefined)
     } as unknown as MetricsRecorder
@@ -280,97 +275,40 @@ describe('UserGroupsService eligibility cache invalidation scoping', () => {
   });
 
   describe('changeVisibility', () => {
-    it.each([
-      { name: 'Only creator-handle', handle: 'creator-handle' },
-      { name: 'Only Me', handle: undefined }
-    ])(
-      'records the exact safe personal group name "$name" for moderation',
-      async ({ name, handle }) => {
-        const userGroupsDb = buildUserGroupsDbMock();
-        userGroupsDb.getByIdWithoutVisibilityCheck.mockResolvedValue(
-          aGroupEntity({ name })
-        );
-        const checkFilterName = jest
-          .fn()
-          .mockResolvedValue({ status: 'ALLOWED' });
-        const service = buildService(userGroupsDb, checkFilterName);
-        jest.spyOn(service, 'getByIdOrThrow').mockResolvedValue(
-          anApiGroupFull(
-            {},
-            {
-              name,
-              created_by: {
-                id: CREATOR_ID,
-                handle
-              } as ApiGroupFull['created_by']
-            }
-          )
-        );
+    it('publishes a group and replays a committed save without rewriting it', async () => {
+      const userGroupsDb = buildUserGroupsDbMock();
+      const service = buildService(userGroupsDb);
+      const group = anApiGroupFull();
+      jest.spyOn(service, 'getByIdOrThrow').mockResolvedValue(group);
+      const change = {
+        group_id: GROUP_ID,
+        old_version_id: null,
+        visible: true,
+        profile_id: CREATOR_ID,
+        idempotencyKey: 'group-save'
+      };
+      const legacy = jest
+        .spyOn(moderationReviewDb, 'savedRequest')
+        .mockResolvedValue(null);
+      userGroupsDb.reserveVisibilityRequest
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
 
-        await service.changeVisibility(
-          {
-            group_id: GROUP_ID,
-            old_version_id: null,
-            visible: true,
-            profile_id: CREATOR_ID
-          },
-          ctx
-        );
+      await expect(service.changeVisibility(change, ctx)).resolves.toEqual(
+        group
+      );
+      await expect(service.changeVisibility(change, ctx)).resolves.toEqual(
+        group
+      );
 
-        expect(checkFilterName).toHaveBeenCalledWith(
-          expect.objectContaining({ text: name, handle: handle ?? '' })
-        );
-      }
-    );
-
-    it.each([
-      {
-        name: 'Only creator-handle and friends',
-        handle: 'creator-handle'
-      },
-      { name: 'Only somebody', handle: undefined }
-    ])(
-      'checks the name "$name" when it is not an exact canonical personal group name',
-      async ({ name, handle }) => {
-        const userGroupsDb = buildUserGroupsDbMock();
-        userGroupsDb.getByIdWithoutVisibilityCheck.mockResolvedValue(
-          aGroupEntity({ name })
-        );
-        const checkFilterName = jest
-          .fn()
-          .mockResolvedValue({ status: 'ALLOWED' });
-        const service = buildService(userGroupsDb, checkFilterName);
-        jest.spyOn(service, 'getByIdOrThrow').mockResolvedValue(
-          anApiGroupFull(
-            {},
-            {
-              name,
-              created_by: {
-                id: CREATOR_ID,
-                handle
-              } as ApiGroupFull['created_by']
-            }
-          )
-        );
-
-        await service.changeVisibility(
-          {
-            group_id: GROUP_ID,
-            old_version_id: null,
-            visible: true,
-            profile_id: CREATOR_ID
-          },
-          ctx
-        );
-
-        expect(checkFilterName).toHaveBeenCalledWith(
-          expect.objectContaining({
-            text: name,
-            handle: handle ?? ''
-          })
-        );
-      }
-    );
+      expect(userGroupsDb.changeVisibilityAndSetId).toHaveBeenCalledTimes(1);
+      expect(userGroupsDb.completeVisibilityRequest).toHaveBeenCalledWith(
+        userGroupsDb.reserveVisibilityRequest.mock.calls[0][0],
+        expect.anything()
+      );
+      expect(legacy).toHaveBeenCalledTimes(1);
+      legacy.mockRestore();
+    });
 
     it('bumps only the members of a pure inclusion-list group instead of the global version', async () => {
       const userGroupsDb = buildUserGroupsDbMock();
@@ -430,8 +368,8 @@ describe('UserGroupsService eligibility cache invalidation scoping', () => {
     });
 
     it('bumps members of both new and replaced pure list groups when publishing a new version', async () => {
-      const lockGroup = jest.spyOn(moderationReviewDb, 'lockGroup');
       const userGroupsDb = buildUserGroupsDbMock();
+      const lockGroup = userGroupsDb.lockForVisibilityChange;
       userGroupsDb.findUserGroupsIdentityGroupProfileIds.mockResolvedValue({
         'identity-group-new': ['member-1', 'member-2'],
         'identity-group-old': ['member-2', 'member-3']
@@ -451,7 +389,6 @@ describe('UserGroupsService eligibility cache invalidation scoping', () => {
       jest
         .spyOn(service, 'getByIdOrThrow')
         .mockResolvedValueOnce(newGroupInitial)
-        .mockResolvedValueOnce(newGroupInitial)
         .mockResolvedValueOnce(oldGroup)
         .mockResolvedValueOnce(updatedGroupAfterSwap);
 
@@ -469,7 +406,6 @@ describe('UserGroupsService eligibility cache invalidation scoping', () => {
         OLD_GROUP_ID,
         GROUP_ID
       ]);
-      lockGroup.mockRestore();
       expect(clearWaveGroupsCache).not.toHaveBeenCalled();
       expect(evictWaveGroupsEntityCache).toHaveBeenCalledTimes(1);
       expect(
