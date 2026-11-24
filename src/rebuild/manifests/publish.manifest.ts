@@ -21,7 +21,7 @@ const FIXTURE_RECORDS_FLAGS = {
   SIGNED_RECORDS_PROVIDER_KEYS: JSON.stringify([
     { id: 'rebuild-fixture', private_key: FIXTURE_PROVIDER_KEY }
   ]),
-  SIGNED_RECORDS_WAVE_ID: '00000000-0000-4000-8000-0000000000a1',
+  SIGNED_RECORDS_WAVE_ID: '00000000-0000-4000-8000-0000000000e1',
   SIGNED_RECORDS_SERVICE_PROFILE_ID: 'rebuild-records-service',
   SIGNED_RECORDS_SERVICE_WALLET: '0x00000000000000000000000000000000000000a1'
 };
@@ -157,7 +157,9 @@ const PUBLISH_SEED: RebuildStep = {
     'profiles',
     'waves',
     'drops',
-    'drops_parts'
+    'drops_parts',
+    'wave_metrics',
+    'wave_dropper_metrics'
   ],
   reads: ['profile_cms_chain_heads'],
   // The first probe profile's identity first.

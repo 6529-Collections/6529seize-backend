@@ -1,5 +1,6 @@
 import {
   isProfileCmsIdentityFreezeOn,
+  parseProfileCmsFreezeAt,
   profileCmsFrozenError
 } from '@/profile-cms/profile-cms-identity-freeze';
 
@@ -26,6 +27,22 @@ describe('isProfileCmsIdentityFreezeOn', () => {
     ['a local time', { IDENTITY_FREEZE_AT: '2026-11-24T00:00:00+01:00' }, true]
   ])('with %s', (_name, env, frozen) => {
     expect(isProfileCmsIdentityFreezeOn(NOON, env)).toBe(frozen);
+  });
+
+  it.each([
+    [undefined, undefined],
+    ['', undefined],
+    ['  ', undefined],
+    ['2026-11-24T00:00:00Z', Date.UTC(2026, 10, 24)],
+    ['2026-11-24T00:00:00+00:00', Date.UTC(2026, 10, 24)],
+    ['2026-11-24T00:00:00.000-00:00', Date.UTC(2026, 10, 24)],
+    ['2026-11-24T00:00:00.250Z', Date.UTC(2026, 10, 24) + 250],
+    [' 1795996800000 ', 1795996800000],
+    ['tomorrow', null],
+    ['2026-11-24T00:00:00+01:00', null],
+    ['2026-11-24', null]
+  ])('reads IDENTITY_FREEZE_AT %j as %j', (raw, expected) => {
+    expect(parseProfileCmsFreezeAt(raw)).toBe(expected);
   });
 
   it('answers as the identity routes do: 423 IDENTITY_FROZEN', () => {
