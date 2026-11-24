@@ -111,6 +111,7 @@ function report(parts: Partial<RunReport> = {}): RunReport {
         }
       ],
       ownedColumnsLeftOut: [],
+      day: '2026-11-24',
       exemptUntil: [],
       plannedRows: []
     },
@@ -178,8 +179,18 @@ describe('rebuild report', () => {
     );
   });
 
-  it('counts and lists planned rows missing from the rebuild', () => {
+  it('counts planned rows missing from the rebuild, and lists every plan', () => {
     const base = report();
+    const plan = {
+      step: 'identity.mirror',
+      where: 'profile_id IS NULL',
+      reason: 'TDH-only identities',
+      until: '2026-12-04',
+      change: 'the derived ids',
+      seeded: 2,
+      missing: 2,
+      overdue: false
+    };
     const planned = report({
       tables: {
         ...base.tables,
@@ -188,13 +199,21 @@ describe('rebuild report', () => {
             table: 'identities',
             rows: 2,
             keys: ['["k1"]', '["k2"]'],
+            plans: [plan]
+          },
+          // A plan whose rows the rebuild writes now: none missing.
+          {
+            table: 'waves',
+            rows: 0,
+            keys: [],
             plans: [
               {
-                step: 'identity.mirror',
-                where: 'profile_id IS NULL',
-                reason: 'TDH-only identities',
-                until: 'the derived ids',
-                seeded: 2
+                ...plan,
+                step: 'waves.mirror',
+                where: 'id > 9',
+                missing: 0,
+                until: '2026-11-20',
+                overdue: true
               }
             ]
           }
@@ -204,7 +223,21 @@ describe('rebuild report', () => {
     expect(headline(planned)[1]).toMatch(/; planned rows missing 2$/);
     expect(headline(base)[1]).not.toContain('planned rows');
     expect(renderMarkdown(planned)).toContain(
-      '## Planned rows missing from the rebuild\n\n- identities: 2 rows, keys ["k1"] ["k2"]; planned by identity.mirror until the derived ids (TDH-only identities; where profile_id IS NULL, matching 2 seeded rows)'
+      [
+        '## Planned rows: seeded rows only a later change rebuilds',
+        '',
+        '- identities: 2 planned rows missing from the rebuild, keys ["k1"] ["k2"]',
+        '  - planned by identity.mirror: seeded 2, missing 2; until 2026-12-04, the derived ids; TDH-only identities; where profile_id IS NULL',
+        '- waves: 0 planned rows missing from the rebuild',
+        '  - planned by waves.mirror: seeded 2, missing 0; until 2026-11-20 (overdue: its last day has passed), the derived ids; TDH-only identities; where id > 9'
+      ].join('\n')
+    );
+    // An overdue plan goes on the headline and the status line.
+    expect(headline(planned)).toContain(
+      'planned rows overdue: waves since 2026-11-20'
+    );
+    expect(statusLine(planned, 'runs/x')).toContain(
+      '; planned rows overdue: waves since 2026-11-20. runs/x'
     );
   });
 
@@ -241,7 +274,7 @@ describe('rebuild report', () => {
       [
         '## EXEMPT tables exempt only until a day',
         '',
-        '- chain_entry_holds: until 2026-12-04, overdue since 2026-12-04; held entries move later',
+        '- chain_entry_holds: until 2026-12-04 (overdue: its last day has passed); held entries move later',
         '- later_holds: until 2027-01-31; a later ruling'
       ].join('\n')
     );

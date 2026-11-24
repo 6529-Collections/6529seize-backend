@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { TableClass } from '@/rebuild/manifest.types';
 import { RegistryProblem } from '@/rebuild/registry-check';
 import { ExemptUntil, overdueLine } from '@/rebuild/run/exempt-until';
+import { PlannedRowsPlan } from '@/rebuild/run/verdict';
 import { SourceViolation } from '@/rebuild/guard/source-guard';
 import { ProbeDifference } from '@/rebuild/probes/probe-runner';
 import { TableDiff } from '@/rebuild/snapshot/table-snapshot';
@@ -124,24 +125,20 @@ export interface RunReport {
       owner: string;
       why: string;
     }[];
-    /**
-     * Seeded rows missing from the rebuild that a rebuilder planned (a
-     * later change rebuilds them): how many, up to 20 keys, and the plans.
-     */
+    /** The run's day (UTC), YYYY-MM-DD, that `until` days are judged against. */
+    readonly day: string;
     /** EXEMPT tables exempt only until a day (see TableEntry.until). */
     readonly exemptUntil: ExemptUntil[];
+    /**
+     * Every plan of the running rebuilders' planned rows (seeded rows only
+     * a later change rebuilds), by table: the planned rows missing from
+     * the rebuild, up to 20 of their keys, and each plan.
+     */
     readonly plannedRows: {
       table: string;
       rows: number;
       keys: string[];
-      plans: {
-        step: string;
-        where: string;
-        reason: string;
-        until: string;
-        /** Seeded rows the plan's condition matched. */
-        seeded: number;
-      }[];
+      plans: PlannedRowsPlan[];
     }[];
   };
   readonly failures: string[];
@@ -158,6 +155,13 @@ const COUNT_ORDER: TableClass[] = [
   'EXEMPT'
 ];
 
+/** Every plan of planned rows, each with its table. */
+function plansOf(report: RunReport): (PlannedRowsPlan & { table: string })[] {
+  return report.tables.plannedRows.flatMap((p) =>
+    p.plans.map((plan) => ({ ...plan, table: p.table }))
+  );
+}
+
 /** The first lines of a report: what ran and the verdict. */
 export function headline(report: RunReport): string[] {
   const total = COUNT_ORDER.reduce((n, c) => n + report.classes[c], 0);
@@ -169,7 +173,7 @@ export function headline(report: RunReport): string[] {
   const failed = report.steps.filter((s) => s.exitCode !== 0).length;
   const leftOut = report.tables.ownedColumnsLeftOut.length;
   const planned = report.tables.plannedRows.reduce((n, p) => n + p.rows, 0);
-  const overdue = overdueLine(report.tables.exemptUntil ?? []);
+  const overdue = overdueLine(report.tables.exemptUntil, plansOf(report));
   const provisional = Object.entries(report.sources)
     .filter(([, info]) => info.provisional)
     .map(([name]) => name);
@@ -184,6 +188,11 @@ export function headline(report: RunReport): string[] {
     // Seen on every run, not left in the body.
     ...(overdue ? [overdue] : [])
   ];
+}
+
+/** After an `until` day the run is past. */
+function overdueNote(dated: { overdue: boolean }): string {
+  return dated.overdue ? ' (overdue: its last day has passed)' : '';
 }
 
 function section(title: string, lines: string[]): string[] {
@@ -317,22 +326,19 @@ export function renderMarkdown(report: RunReport): string {
     ),
     ...section(
       'EXEMPT tables exempt only until a day',
-      (report.tables.exemptUntil ?? []).map(
-        (e) =>
-          `- ${e.table}: until ${e.until}${e.overdue ? `, overdue since ${e.until}` : ''}; ${e.why}`
+      report.tables.exemptUntil.map(
+        (e) => `- ${e.table}: until ${e.until}${overdueNote(e)}; ${e.why}`
       )
     ),
     ...section(
-      'Planned rows missing from the rebuild',
-      report.tables.plannedRows.map(
-        (p) =>
-          `- ${p.table}: ${p.rows} rows, keys ${p.keys.join(' ')}; ${p.plans
-            .map(
-              (plan) =>
-                `planned by ${plan.step} until ${plan.until} (${plan.reason}; where ${plan.where}, matching ${plan.seeded} seeded rows)`
-            )
-            .join('; ')}`
-      )
+      'Planned rows: seeded rows only a later change rebuilds',
+      report.tables.plannedRows.flatMap((p) => [
+        `- ${p.table}: ${p.rows} planned rows missing from the rebuild${p.keys.length ? `, keys ${p.keys.join(' ')}` : ''}`,
+        ...p.plans.map(
+          (plan) =>
+            `  - planned by ${plan.step}: seeded ${plan.seeded}, missing ${plan.missing ?? 'not compared'}; until ${plan.until}${overdueNote(plan)}, ${plan.change}; ${plan.reason}; where ${plan.where}`
+        )
+      ])
     ),
     ...section(
       'Owned columns left out: their owner does not run here',
@@ -362,7 +368,7 @@ export function renderMarkdown(report: RunReport): string {
 
 /** One line per run for the status file. */
 export function statusLine(report: RunReport, runDir: string): string {
-  const overdue = overdueLine(report.tables.exemptUntil ?? []);
+  const overdue = overdueLine(report.tables.exemptUntil, plansOf(report));
   return `- ${report.finishedAt} ${report.scope}: ${report.verdict}, rebuilt ${report.tables.rebuilt.length}, pending ${report.pending.length}, ${report.probes.stoppedBefore === null ? `probe differences ${report.probes.differences.length}` : 'probes not compared'}, failures ${report.failures.length}${overdue ? `; ${overdue}` : ''}. ${runDir}`;
 }
 

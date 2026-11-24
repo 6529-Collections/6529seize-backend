@@ -1,5 +1,7 @@
+import * as path from 'node:path';
 import { AREA_MANIFESTS } from '@/rebuild/manifests';
 import { checkRegistry } from '@/rebuild/registry-check';
+import { stepCodeIn } from '@/rebuild/step-code';
 import { discoverCodeTables } from '@/rebuild/table-discovery';
 
 // The rebuild check's table registry: every table and view code knows sits
@@ -7,7 +9,13 @@ import { discoverCodeTables } from '@/rebuild/table-discovery';
 // until its area classifies it (see docs/rebuild-check.md).
 describe('rebuild registry', () => {
   const codeTables = discoverCodeTables();
-  const result = checkRegistry({ manifests: AREA_MANIFESTS, codeTables });
+  // As a run checks it: a planned step whose module isn't in this tree
+  // yet is left out of the order checks on its writes.
+  const result = checkRegistry({
+    manifests: AREA_MANIFESTS,
+    codeTables,
+    stepCodeHere: stepCodeIn(path.resolve(__dirname, '..', '..'))
+  });
 
   it('classifies every table once, with well-formed steps and probes', () => {
     expect(result.problems).toEqual([]);

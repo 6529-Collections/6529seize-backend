@@ -311,6 +311,28 @@ export class MysqlAdmin {
   }
 
   /**
+   * How many of a table's rows match an SQL condition on its columns and
+   * lie in a partition: their `columns` hold one of the tuples in `values`.
+   */
+  async rowsWhereInPartition(
+    database: string,
+    table: string,
+    where: string,
+    columns: readonly string[],
+    values: readonly (readonly string[])[]
+  ): Promise<number> {
+    // The tuples go in before the condition joins, so a ? in its text is
+    // never taken for a placeholder.
+    const inside = mysql.format(partitionWhere(columns, true), [
+      values.map((v) => [...v])
+    ]);
+    const [row] = await this.query<{ n: string }>(
+      `SELECT COUNT(*) AS n FROM ${mysql.escapeId(database)}.${mysql.escapeId(table)} WHERE (${where}) AND ${inside}`
+    );
+    return Number(row.n);
+  }
+
+  /**
    * A table's rows in `orderBy` order. With `newestBy`, only the rows
    * whose column holds its largest value, as MySQL compares it (MAX).
    */

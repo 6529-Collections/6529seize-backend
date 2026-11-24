@@ -1,4 +1,4 @@
-import { AreaManifest } from '@/rebuild/manifest.types';
+import { AreaManifest, validUntil } from '@/rebuild/manifest.types';
 
 /** An EXEMPT table exempt only until a day, as a run sees it. */
 export interface ExemptUntil {
@@ -10,11 +10,11 @@ export interface ExemptUntil {
   readonly overdue: boolean;
 }
 
-/** Whether `until` is a real calendar day written YYYY-MM-DD. */
-export function validUntil(until: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(until)) return false;
-  const day = new Date(`${until}T00:00:00Z`);
-  return !Number.isNaN(day.getTime()) && day.toISOString().startsWith(until);
+/** Anything with a last day: an EXEMPT table, or a plan of planned rows. */
+export interface Dated {
+  readonly table: string;
+  readonly until: string;
+  readonly overdue: boolean;
 }
 
 /** The run's day, UTC, YYYY-MM-DD. */
@@ -24,29 +24,53 @@ export function runDay(now: Date = new Date()): string {
 
 /**
  * The EXEMPT tables that name an `until`, in table order, each marked
- * overdue once `today` is past its day. A malformed date never gets here:
- * the registry check refuses it.
+ * overdue once `today` is past its day. One that isn't a real day is left
+ * out: the registry check refuses it.
  */
 export function exemptUntil(
   manifests: readonly AreaManifest[],
   today: string
 ): ExemptUntil[] {
-  return manifests
-    .flatMap((manifest) => Object.entries(manifest.tables))
-    .filter(([, entry]) => entry.class === 'EXEMPT' && entry.until)
-    .map(([table, entry]) => ({
-      table,
-      until: entry.until as string,
-      why: entry.why ?? '',
-      overdue: today > (entry.until as string)
-    }))
-    .sort((a, b) => (a.table < b.table ? -1 : Number(a.table > b.table)));
+  const result: ExemptUntil[] = [];
+  for (const manifest of manifests) {
+    for (const [table, entry] of Object.entries(manifest.tables)) {
+      if (entry.class !== 'EXEMPT' || entry.until === undefined) continue;
+      if (!validUntil(entry.until)) continue;
+      result.push({
+        table,
+        until: entry.until,
+        why: entry.why ?? '',
+        overdue: today > entry.until
+      });
+    }
+  }
+  return result.sort((a, b) =>
+    a.table < b.table ? -1 : Number(a.table > b.table)
+  );
 }
 
-/** The headline's line for the overdue ones, or null when none is. */
-export function overdueLine(entries: readonly ExemptUntil[]): string | null {
-  const overdue = entries.filter((e) => e.overdue);
-  return overdue.length
-    ? `EXEMPT overdue: ${overdue.map((e) => `${e.table} since ${e.until}`).join(', ')}`
-    : null;
+/**
+ * The headline's line for what is past its day: EXEMPT tables, then
+ * plans of planned rows; null when nothing is.
+ */
+export function overdueLine(
+  exempt: readonly Dated[],
+  plans: readonly Dated[] = []
+): string | null {
+  const since = (entries: readonly Dated[]) =>
+    Array.from(
+      new Set(
+        entries
+          .filter((e) => e.overdue)
+          .map((e) => `${e.table} since ${e.until}`)
+      )
+    );
+  const parts: string[] = [];
+  const tables = since(exempt);
+  if (tables.length) parts.push(`EXEMPT overdue: ${tables.join(', ')}`);
+  const planned = since(plans);
+  if (planned.length) {
+    parts.push(`planned rows overdue: ${planned.join(', ')}`);
+  }
+  return parts.length ? parts.join('; ') : null;
 }

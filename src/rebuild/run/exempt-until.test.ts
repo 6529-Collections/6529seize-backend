@@ -1,10 +1,5 @@
-import { AreaManifest } from '@/rebuild/manifest.types';
-import {
-  exemptUntil,
-  overdueLine,
-  runDay,
-  validUntil
-} from '@/rebuild/run/exempt-until';
+import { AreaManifest, validUntil } from '@/rebuild/manifest.types';
+import { exemptUntil, overdueLine, runDay } from '@/rebuild/run/exempt-until';
 
 const manifest = (tables: AreaManifest['tables']): AreaManifest =>
   ({
@@ -58,5 +53,37 @@ describe('EXEMPT until a day', () => {
     expect(overdueLine(on('2026-12-05'))).toBe(
       'EXEMPT overdue: chain_entry_holds since 2026-12-04'
     );
+  });
+
+  it("leaves out an until that isn't a real day, which the registry refuses", () => {
+    // Compared as text, '2026-1-5' would read as overdue on 2026-12-05.
+    const manifests = [
+      manifest({
+        loose_day: { class: 'EXEMPT', why: 'a loose day', until: '2026-1-5' }
+      })
+    ];
+    expect(exemptUntil(manifests, '2026-12-05')).toEqual([]);
+  });
+
+  it('puts overdue plans of planned rows on the same line, after the tables', () => {
+    const table = { table: 'chain_entry_holds', until: '2026-12-04' };
+    const plan = { table: 'team', until: '2026-12-01' };
+    expect(
+      overdueLine(
+        [{ ...table, overdue: true }],
+        [
+          { ...plan, overdue: true },
+          // Two plans of one table on one day read once.
+          { ...plan, overdue: true },
+          { table: 'artists', until: '2026-12-31', overdue: false }
+        ]
+      )
+    ).toBe(
+      'EXEMPT overdue: chain_entry_holds since 2026-12-04; planned rows overdue: team since 2026-12-01'
+    );
+    expect(overdueLine([], [{ ...plan, overdue: true }])).toBe(
+      'planned rows overdue: team since 2026-12-01'
+    );
+    expect(overdueLine([{ ...table, overdue: false }], [])).toBeNull();
   });
 });

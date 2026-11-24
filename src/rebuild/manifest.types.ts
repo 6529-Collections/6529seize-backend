@@ -76,6 +76,16 @@ export interface TableEntry {
   readonly until?: string;
 }
 
+/**
+ * Whether `until` (an EXEMPT table's or a plan's last day) is a real
+ * calendar day written YYYY-MM-DD.
+ */
+export function validUntil(until: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(until)) return false;
+  const day = new Date(`${until}T00:00:00Z`);
+  return !Number.isNaN(day.getTime()) && day.toISOString().startsWith(until);
+}
+
 export interface ReasonedPath {
   readonly path: string;
   readonly reason: string;
@@ -147,8 +157,13 @@ export interface PlannedRows {
    */
   readonly where: string;
   readonly reason: string;
-  /** The later change that rebuilds these rows. */
+  /**
+   * The last day of the plan, YYYY-MM-DD. Once the run's day is past it,
+   * the plan is noted as overdue on the headline and the status line.
+   */
   readonly until: string;
+  /** The later change that brings the source of these rows. */
+  readonly change: string;
 }
 
 /** A table a step writes: all of it, or a rebuilder's partition of it. */

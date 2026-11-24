@@ -2,6 +2,7 @@ import * as fc from 'fast-check';
 import {
   canonicalRow,
   diffSnapshots,
+  goneRows,
   snapshotRows
 } from '@/rebuild/snapshot/table-snapshot';
 
@@ -118,7 +119,7 @@ describe('table snapshots', () => {
         ['id']
       );
     const seeded = rows([1, 'a'], [2, 'b'], [3, 'c']);
-    const planned = new Set(['[3]']);
+    const planned = ['[3]'];
 
     it('lists a planned row missing apart, and the table is the same', () => {
       expect(
@@ -159,22 +160,123 @@ describe('table snapshots', () => {
       });
     });
 
-    it('keeps rows without a key apart by count, not only by hash', () => {
+    describe('rows without a key, which match by hash', () => {
       const keyless = (...values: string[]) =>
         snapshotRows(
           't',
           values.map((v) => ({ v })),
           []
         );
-      const before = keyless('a', 'a', 'b');
-      const [hashB] = keyless('b').keys;
-      // One of the two equal rows is gone and isn't planned: it differs.
-      expect(
-        diffSnapshots(before, keyless('a'), 20, new Set([hashB])).same
-      ).toBe(false);
-      expect(
-        diffSnapshots(before, keyless('a', 'a'), 20, new Set([hashB])).same
-      ).toBe(true);
+      // One key per planned row, as the run takes a plan's rows.
+      const plannedOf = (...values: string[]) => keyless(...values).keys;
+      const [hashA] = plannedOf('a');
+      const [hashB] = plannedOf('b');
+
+      it('keeps them apart by count, not only by hash', () => {
+        const before = keyless('a', 'a', 'b');
+        // One of the two equal rows is gone and isn't planned: it differs.
+        expect(
+          diffSnapshots(before, keyless('a'), 20, plannedOf('b'))
+        ).toMatchObject({
+          same: false,
+          missing: [hashA],
+          planned: [hashB],
+          plannedRows: 1
+        });
+        expect(
+          diffSnapshots(before, keyless('a', 'a'), 20, plannedOf('b'))
+        ).toMatchObject({ same: true, missing: [], plannedRows: 1 });
+      });
+
+      it('compares the count of every hash, not the set of hashes', () => {
+        // P,A,A,B to A,B,B with P planned: one A gone, one B more.
+        const moved = diffSnapshots(
+          keyless('p', 'a', 'a', 'b'),
+          keyless('a', 'b', 'b'),
+          20,
+          plannedOf('p')
+        );
+        expect(moved).toMatchObject({
+          same: false,
+          missing: [hashA],
+          extra: [hashB],
+          plannedRows: 1
+        });
+        // X,X,Y to Y with one X planned: the other X is missing.
+        const [hashX] = plannedOf('x');
+        expect(
+          diffSnapshots(
+            keyless('x', 'x', 'y'),
+            keyless('y'),
+            20,
+            plannedOf('x')
+          )
+        ).toMatchObject({
+          same: false,
+          missing: [hashX],
+          planned: [hashX],
+          plannedRows: 1
+        });
+        // With both X planned, the rebuild lacks only planned rows.
+        expect(
+          diffSnapshots(
+            keyless('x', 'x', 'y'),
+            keyless('y'),
+            20,
+            plannedOf('x', 'x')
+          )
+        ).toMatchObject({ same: true, missing: [], plannedRows: 2 });
+      });
+
+      it('counts like a multiset: only rows no plan covers differ', () => {
+        const value = fc.constantFrom('a', 'b', 'c');
+        const flags = fc.array(fc.boolean(), { minLength: 8, maxLength: 8 });
+        fc.assert(
+          fc.property(
+            fc.array(value, { maxLength: 8 }),
+            flags,
+            flags,
+            value,
+            (seeded, isPlanned, isGone, one) => {
+              const planned = seeded.filter((_, i) => isPlanned[i]);
+              // The rebuild lacks some of the planned rows.
+              const gone = seeded.filter((_, i) => isPlanned[i] && isGone[i]);
+              const kept = seeded.filter(
+                (_, i) => !(isPlanned[i] && isGone[i])
+              );
+              const before = keyless(...seeded);
+              const keys = plannedOf(...planned);
+              const count = (list: string[], v: string) =>
+                list.filter((x) => x === v).length;
+              const diff = diffSnapshots(before, keyless(...kept), 20, keys);
+              expect(diff).toMatchObject({
+                same: true,
+                missing: [],
+                extra: [],
+                plannedRows: gone.length
+              });
+              expect(goneRows(before, keyless(...kept), keys)).toBe(
+                gone.length
+              );
+              // One more row of a value lacking: equal rows can't be told
+              // apart, so it differs only once that value's planned rows
+              // are all gone.
+              const at = kept.indexOf(one);
+              if (at >= 0) {
+                const fewer = kept.filter((_, i) => i !== at);
+                expect(
+                  diffSnapshots(before, keyless(...fewer), 20, keys).same
+                ).toBe(count(planned, one) > count(gone, one));
+              }
+              // One more row of a value: the same only while it stands for
+              // a planned row the rebuild lacked.
+              expect(
+                diffSnapshots(before, keyless(...kept, one), 20, keys).same
+              ).toBe(count(gone, one) > 0);
+            }
+          )
+        );
+      });
     });
   });
 });

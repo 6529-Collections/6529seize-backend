@@ -108,41 +108,87 @@ export async function snapshotTable(
   return snapshotRows(table, rows, primaryKey, new Set(volatileColumns));
 }
 
+/** How many times each key occurs. */
+function counts(keys: readonly string[]): Map<string, number> {
+  const result = new Map<string, number>();
+  for (const key of keys) result.set(key, (result.get(key) ?? 0) + 1);
+  return result;
+}
+
+/** Per key, how many more rows `before` holds than `after`. */
+function goneCounts(
+  before: TableSnapshot,
+  after: TableSnapshot
+): Map<string, number> {
+  const countAfter = counts(after.keys);
+  const result = new Map<string, number>();
+  counts(before.keys).forEach((n, key) => {
+    const gone = n - (countAfter.get(key) ?? 0);
+    if (gone > 0) result.set(key, gone);
+  });
+  return result;
+}
+
 /**
- * Compares two snapshots of one table by key. A row only before whose key
- * is `planned` (one a later change rebuilds) is listed apart and doesn't
- * make the table differ; extra and changed rows always do.
+ * How many of the rows `keys` names (one key per row, as `planned` takes
+ * them) are gone from `before` to `after`.
+ */
+export function goneRows(
+  before: TableSnapshot,
+  after: TableSnapshot,
+  keys: readonly string[]
+): number {
+  const gone = goneCounts(before, after);
+  let rows = 0;
+  counts(keys).forEach((n, key) => {
+    rows += Math.min(n, gone.get(key) ?? 0);
+  });
+  return rows;
+}
+
+/**
+ * Compares two snapshots of one table, counting rows per key: rows
+ * without a key are keyed by their hash, so identical ones share it. A
+ * row only before that `planned` names (one key per planned row, repeated
+ * for identical rows; one a later change rebuilds) is listed apart and
+ * doesn't make the table differ; extra and changed rows always do, and so
+ * does a row only before beyond the planned count of its key.
  */
 export function diffSnapshots(
   before: TableSnapshot,
   after: TableSnapshot,
   limit = 20,
-  planned: ReadonlySet<string> = new Set()
+  planned: readonly string[] = []
 ): TableDiff {
   const index = (snapshot: TableSnapshot) =>
     new Map(snapshot.keys.map((key, i) => [key, snapshot.hashes[i]]));
   const a = index(before);
   const b = index(after);
-  const gone = before.keys.filter((key) => !b.has(key));
-  const missing = gone.filter((key) => !planned.has(key));
-  const plannedGone = gone.filter((key) => planned.has(key));
-  const extra = after.keys.filter((key) => !a.has(key));
-  const changed = before.keys.filter(
+  const plannedCount = counts(planned);
+  const missing: string[] = [];
+  const plannedGone: string[] = [];
+  goneCounts(before, after).forEach((gone, key) => {
+    const excused = Math.min(gone, plannedCount.get(key) ?? 0);
+    for (let i = 0; i < gone; i += 1) {
+      (i < excused ? plannedGone : missing).push(key);
+    }
+  });
+  const extra: string[] = [];
+  goneCounts(after, before).forEach((more, key) => {
+    for (let i = 0; i < more; i += 1) extra.push(key);
+  });
+  const changed = Array.from(counts(before.keys).keys()).filter(
     (key) => b.has(key) && b.get(key) !== a.get(key)
   );
   return {
     table: before.table,
     rowsBefore: before.rows,
     rowsAfter: after.rows,
+    // With only planned rows gone, before less those rows is after, key
+    // by key, so the row counts agree too.
     same:
       before.digest === after.digest ||
-      // Only planned rows gone: the same once they are left out. Row
-      // counts too, since rows without a key match by hash.
-      (plannedGone.length > 0 &&
-        !missing.length &&
-        !extra.length &&
-        !changed.length &&
-        before.rows - plannedGone.length === after.rows),
+      (!missing.length && !extra.length && !changed.length),
     missing: missing.slice(0, limit),
     planned: plannedGone.slice(0, limit),
     plannedRows: plannedGone.length,

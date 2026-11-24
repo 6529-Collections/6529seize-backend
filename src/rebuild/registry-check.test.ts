@@ -579,12 +579,13 @@ describe('checkRegistry', () => {
     });
   });
 
-  it('keeps planned rows to a rebuilder of the rows, with where, reason and until', () => {
+  it('keeps planned rows to a rebuilder of the rows, with where, reason, a last day and a change', () => {
     const plan = (parts: Partial<PlannedRows> = {}): PlannedRows => ({
       table: 'ids',
       where: 'NOT EXISTS (SELECT 1 FROM map m WHERE m.id = ids.id)',
       reason: 'rows only a later step creates',
-      until: 'the derived ids',
+      until: '2026-12-04',
+      change: 'the derived ids',
       ...parts
     });
     const check = (rebuilders: RebuildStep[], seeds: RebuildStep[] = []) =>
@@ -604,7 +605,10 @@ describe('checkRegistry', () => {
             writes: ['ids'],
             plannedRows: [
               plan({ table: 'other' }),
-              plan({ where: ' ', reason: '', until: ' ' })
+              plan({ where: ' ', reason: '', until: 'the derived ids' }),
+              plan({ until: '2026-1-5', change: ' ' }),
+              // A manifest written without the type's help.
+              { table: 'ids' } as PlannedRows
             ]
           })
         ],
@@ -615,8 +619,91 @@ describe('checkRegistry', () => {
       "rebuilder a.rows plans rows of other, whose rows it doesn't write",
       "rebuilder a.rows's planned rows of ids have no where",
       "rebuilder a.rows's planned rows of ids have no reason",
-      "rebuilder a.rows's planned rows of ids name no change they wait for (until)"
+      "rebuilder a.rows's planned rows of ids need an until, their last day written YYYY-MM-DD",
+      "rebuilder a.rows's planned rows of ids need an until, their last day written YYYY-MM-DD",
+      "rebuilder a.rows's planned rows of ids name no change that brings their source",
+      "rebuilder a.rows's planned rows of ids have no where",
+      "rebuilder a.rows's planned rows of ids have no reason",
+      "rebuilder a.rows's planned rows of ids need an until, their last day written YYYY-MM-DD",
+      "rebuilder a.rows's planned rows of ids name no change that brings their source"
     ]);
+  });
+
+  describe('a planned rebuilder whose module is not here yet', () => {
+    // The mirror's module lands with a later change; the reader of its
+    // table and the owner of a column of it don't wait on it yet.
+    const mirror = step('a.mirror', {
+      run: { module: 'src/later/mirror', exportName: 'run' },
+      origin: 'planned',
+      writes: ['mirrored', 'drops']
+    });
+    const rebuilders = (planned: RebuildStep) => [
+      step('a.reader', { writes: ['derived'], reads: ['mirrored'] }),
+      step('a.owner', {
+        writes: [{ table: 'drops', columns: ['rank'], reason: 'ranks' }]
+      }),
+      planned
+    ];
+    const check = (codeHere: boolean, planned: RebuildStep = mirror) =>
+      checkRegistry({
+        manifests: [
+          area(
+            'a',
+            { mirrored: index(), drops: index(), derived: index() },
+            { rebuilders: rebuilders(planned) }
+          )
+        ],
+        codeTables: code('mirrored', 'drops', 'derived'),
+        stepCodeHere: (s) => s.origin !== 'planned' || codeHere
+      });
+
+    it('leaves its writes out of the order checks, and names them', () => {
+      const result = check(false);
+      expect(result.problems).toEqual([]);
+      expect(result.orderLeftOut).toEqual([
+        { step: 'a.mirror', tables: ['mirrored', 'drops'] }
+      ]);
+    });
+
+    it('checks them once the module is here', () => {
+      const result = check(true);
+      expect(result.problems.map((p) => [p.kind, p.detail])).toEqual([
+        [
+          'BAD_ORDER',
+          "rebuilder a.reader reads mirrored, which a.mirror rebuilds; add after: ['a.mirror']"
+        ],
+        [
+          'BAD_ORDER',
+          "column owner a.owner of drops must run after its row writer; add after: ['a.mirror']"
+        ]
+      ]);
+      expect(result.orderLeftOut).toEqual([]);
+      // As without a check of the code: every write is checked.
+      expect(
+        checkRegistry({
+          manifests: [
+            area(
+              'a',
+              { mirrored: index(), drops: index(), derived: index() },
+              { rebuilders: rebuilders(mirror) }
+            )
+          ],
+          codeTables: code('mirrored', 'drops', 'derived')
+        }).problems.map((p) => p.kind)
+      ).toEqual(['BAD_ORDER', 'BAD_ORDER']);
+    });
+
+    it('still fails an unknown id in its after or before', () => {
+      const result = check(false, {
+        ...mirror,
+        after: ['a.nowhere'],
+        before: ['b.nowhere']
+      });
+      expect(result.problems.map((p) => [p.kind, p.detail])).toEqual([
+        ['BAD_ORDER', 'a rebuilder waits on unknown step a.nowhere'],
+        ['BAD_ORDER', 'a rebuilder waits on unknown step b.nowhere']
+      ]);
+    });
   });
 
   it('keeps a checkpoint to INDEX tables, with a column and a reason', () => {

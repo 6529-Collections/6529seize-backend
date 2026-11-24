@@ -177,17 +177,39 @@ export const mintManifest: AreaManifest = {
     API's answers keep them; they are still left out of the comparison and
     listed with why (another area's, planned, or waiting for a table), as
     planned tables are, and a final run fails on them.
-  - A rebuilder can list `plannedRows: [{ table, where, reason, until }]`:
-    rows of a table it writes that only a later change rebuilds, such as
-    rows another step creates once their ids change. `where` is an SQL
+  - A rebuilder can list
+    `plannedRows: [{ table, where, reason, until, change }]`: rows of a
+    table it writes that only a later change rebuilds, such as rows
+    another step creates once their ids change. `where` is an SQL
     condition on the table's columns, which may use a `NOT EXISTS` against
-    other tables, evaluated on the seeded rows; `until` names the later
-    change. A seeded row it matches that the rebuild lacks is listed as
-    planned with its key, doesn't make the table differ, and fails a final
-    run. A row the rebuild adds or changes still differs, matching or not.
+    other tables, evaluated on the seeded rows; `until` is the plan's last
+    day, `YYYY-MM-DD`, and `change` names the later change that brings
+    the rows' source. A seeded row it matches that the rebuild lacks is
+    listed as planned with its key and doesn't make the table differ. A
+    row the rebuild adds or changes still differs, matching or not, and
+    rows without a primary key are counted per identical row, so a plan
+    excuses only as many as it matched. The report lists every plan with
+    the seeded rows it matched and how many the rebuild lacks, and notes
+    a plan that matched no seeded rows and one whose rows the rebuild
+    writes now (drop the plan). Past its day a plan is noted as overdue on
+    the headline and the status line ("planned rows overdue: <table> since
+    <day>"). A final run fails on every plan of a running rebuilder,
+    whatever it matched. A plan covers only rows its own rebuilder writes:
+    a run that finds a planned row in another running writer's partition
+    fails.
+    Plans don't excuse probe answers: a probe over planned rows would
+    answer differently while they are missing, so it stays a planned
+    probe, held by its `needs`, until the rows' source exists.
   - A step with `origin: 'planned'` names a module a branch adds later.
     Until it is in the tree, runs skip the step and note it, and keep a
     skipped rebuilder's tables like pending ones; a final run fails.
+    While its module isn't here, the order checks leave its writes out: a
+    reader of a table it writes, and an owner of columns of it, needn't
+    wait on it yet, and the report notes each such step with its tables.
+    Once the module is here, they are checked like any other step's. An
+    unknown id in its `after` or `before` still fails. A final run also
+    fails on a step still marked planned whose code is here: nothing
+    planned passes a final check.
   - A step (seed or rebuilder) with `needs: [{ table, reason }]` runs only
     when every table it needs is in the run's schema. While one is missing
     (a table another branch creates), runs skip it the same way, and the
@@ -279,7 +301,8 @@ proves nothing whatever its probes answered.
 
 - unproven and held probes;
 - INDEX tables without a rebuilder, and planned steps or tables whose code
-  isn't in the tree;
+  isn't in the tree; steps marked planned whose code is;
+- plans of planned rows, and EXEMPT tables that name an `until`;
 - rebuilt tables that differ row by row outside their volatile columns;
 - rebuilt tables with no rows after the seeds (unless waived), and rebuilt
   tables no probe read (unless waived);

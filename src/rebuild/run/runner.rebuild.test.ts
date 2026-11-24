@@ -6,7 +6,7 @@ import {
   TableEntry
 } from '@/rebuild/manifest.types';
 import { AREA_MANIFESTS } from '@/rebuild/manifests';
-import { headline } from '@/rebuild/report/report';
+import { headline, statusLine } from '@/rebuild/report/report';
 import { runRebuildCheck } from '@/rebuild/run/runner';
 
 // The harness's end-to-end check: a private mysqld, the schema from code,
@@ -51,6 +51,8 @@ function run(
     full?: boolean;
     /** Table entries that replace the manifests' own. */
     tables?: Readonly<Record<string, TableEntry>>;
+    /** The run's day, when not the day it starts. */
+    today?: string;
   }
 ) {
   const tables = (manifest: AreaManifest) =>
@@ -92,7 +94,8 @@ function run(
     sources: {},
     chainHeight: null,
     ethBlock: null,
-    log: () => undefined
+    log: () => undefined,
+    today: parts.today
   });
 }
 
@@ -671,11 +674,26 @@ describe('rebuild check, end to end', () => {
       table: 'team',
       where: "collection = '6529'",
       reason: 'a later change writes the 6529 rows',
-      until: 'the 6529 writer'
+      until: '9999-12-31',
+      change: 'the 6529 writer'
     };
-    const planning = (id: string, exportName: string): RebuildStep => ({
+    const planning = (
+      id: string,
+      exportName: string,
+      plans = [PLAN]
+    ): RebuildStep => ({
       ...step(id, exportName, ['team']),
-      plannedRows: [PLAN]
+      plannedRows: plans
+    });
+    const listed = (stepId: string, seeded: number, missing: number) => ({
+      step: stepId,
+      where: PLAN.where,
+      reason: PLAN.reason,
+      until: PLAN.until,
+      change: PLAN.change,
+      seeded,
+      missing,
+      overdue: false
     });
 
     it('names a planned row missing from the rebuild, and fails a final run on it', async () => {
@@ -695,27 +713,19 @@ describe('rebuild check, end to end', () => {
           keys: [
             JSON.stringify(['0x0000000000000000000000000000000000000002'])
           ],
-          plans: [
-            {
-              step: 'self-check.planned',
-              where: PLAN.where,
-              reason: PLAN.reason,
-              until: PLAN.until,
-              seeded: 1
-            }
-          ]
+          plans: [listed('self-check.planned', 1, 1)]
         }
       ]);
       expect(report.notes.join(' ')).toContain(
-        'Planned rows are missing from the rebuild in 1 tables'
+        '1 plans of planned rows, seeded rows only a later change rebuilds'
       );
       const final = await teamRun(
         planning('self-check.planned-final', 'rebuildMemesTeam'),
         true
       );
       expect(final.report.verdict).toBe('FAIL');
-      expect(final.report.failures.join(' ')).toContain(
-        'Planned rows are missing from the rebuild in 1 tables: seeded rows only a later change rebuilds; a final run fails on them: team: 1 rows (self-check.planned-final, until the 6529 writer)'
+      expect(final.report.failures).toContain(
+        '1 plans of planned rows, seeded rows only a later change rebuilds; a final run fails on every plan: team by self-check.planned-final: seeded 1, missing 1, until 9999-12-31 (the 6529 writer)'
       );
     });
 
@@ -727,7 +737,126 @@ describe('rebuild check, end to end', () => {
       expect(diff.same).toBe(false);
       expect(diff.changed).toHaveLength(3);
       expect(diff.plannedRows).toBe(0);
-      expect(report.tables.plannedRows).toEqual([]);
+      expect(report.tables.plannedRows).toEqual([
+        {
+          table: 'team',
+          rows: 0,
+          keys: [],
+          plans: [listed('self-check.planned-changed', 1, 0)]
+        }
+      ]);
+    });
+
+    it('notes a plan that matched no seeded rows, and one whose rows the rebuild writes now', async () => {
+      const nowhere = { ...PLAN, where: "collection = 'none'" };
+      const { report } = await teamRun(
+        planning('self-check.planned-stale', 'rebuildTeam', [PLAN, nowhere])
+      );
+      expect(report.failures).toEqual([]);
+      expect(report.verdict).toBe('PASS');
+      expect(report.tables.diffs.map((d) => [d.same, d.plannedRows])).toEqual([
+        [true, 0]
+      ]);
+      expect(report.tables.plannedRows[0].plans.map((p) => p.seeded)).toEqual([
+        1, 0
+      ]);
+      expect(report.notes).toEqual(
+        expect.arrayContaining([
+          'Planned rows of team by self-check.planned-stale: the rebuild writes these rows now: drop the plan',
+          'Planned rows of team by self-check.planned-stale: plan matched no seeded rows'
+        ])
+      );
+    });
+
+    it("fails a run on a planned condition MySQL can't read", async () => {
+      const { report } = await teamRun(
+        planning('self-check.planned-bad', 'rebuildMemesTeam', [
+          { ...PLAN, where: 'no_such_column = 1' }
+        ])
+      );
+      expect(report.verdict).toBe('FAIL');
+      expect(report.failures.join(' ')).toContain(
+        "self-check.planned-bad's planned rows of team can't be read (where no_such_column = 1)"
+      );
+    });
+
+    it("refuses a planned row in another running writer's partition", async () => {
+      // The MEMES writer plans the 6529 row, which the other writer
+      // rebuilds: in a full run both run.
+      const { report } = await run('mint', {
+        seed: teamSeed,
+        rebuilder: {
+          ...memes,
+          id: 'self-check.memes-plans',
+          plannedRows: [PLAN]
+        },
+        others: {
+          tdh: [
+            {
+              ...step('self-check.other-6529', 'rebuildTeam', []),
+              writes: [partition('6529')]
+            }
+          ]
+        },
+        full: true
+      });
+      expect(report.verdict).toBe('FAIL');
+      expect(report.failures).toContain(
+        "self-check.memes-plans's planned rows of team include 1 rows of self-check.other-6529's partition; a plan covers only rows its rebuilder writes"
+      );
+    });
+  });
+
+  describe('EXEMPT tables exempt until a day', () => {
+    const artdoc = AREA_MANIFESTS.find((m) => m.area === 'artdoc')!.tables;
+    const tables = {
+      artwork_documentation_artist_records: {
+        ...artdoc.artwork_documentation_artist_records,
+        until: '2000-01-01'
+      },
+      artwork_documentation_assets: {
+        ...artdoc.artwork_documentation_assets,
+        until: '9999-12-31'
+      }
+    };
+    const overdue =
+      'EXEMPT overdue: artwork_documentation_artist_records since 2000-01-01';
+
+    it('notes the overdue one on the headline and the status line, and passes', async () => {
+      const { report } = await run('mint', {
+        seed: teamSeed,
+        rebuilder: step('self-check.exempt-days', 'rebuildTeam', ['team']),
+        tables,
+        today: '2000-01-02'
+      });
+      expect(report.failures).toEqual([]);
+      expect(report.verdict).toBe('PASS');
+      expect(report.tables.day).toBe('2000-01-02');
+      expect(
+        report.tables.exemptUntil.map((e) => [e.table, e.overdue])
+      ).toEqual([
+        ['artwork_documentation_artist_records', true],
+        ['artwork_documentation_assets', false]
+      ]);
+      expect(headline(report)).toContain(overdue);
+      expect(statusLine(report, 'runs/x')).toContain(`; ${overdue}. runs/x`);
+    });
+
+    it('fails a final run on every EXEMPT table with an until', async () => {
+      const { report } = await run('mint', {
+        seed: teamSeed,
+        rebuilder: step('self-check.exempt-days-final', 'rebuildTeam', [
+          'team'
+        ]),
+        tables,
+        final: true
+      });
+      expect(report.verdict).toBe('FAIL');
+      expect(report.failures.join(' ')).toContain(
+        '2 EXEMPT tables are exempt only until a day, so a final run fails on them'
+      );
+      // Without a day given, the run's day is the day it started.
+      expect(report.tables.day).toBe(report.startedAt.slice(0, 10));
     });
   });
 

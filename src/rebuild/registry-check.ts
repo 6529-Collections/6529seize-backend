@@ -2,10 +2,10 @@ import {
   AreaManifest,
   Probe,
   RebuildStep,
-  TableClass
+  TableClass,
+  validUntil
 } from '@/rebuild/manifest.types';
 import { orderSteps, waitsOn } from '@/rebuild/step-order';
-import { validUntil } from '@/rebuild/run/exempt-until';
 import {
   partitionsOf,
   rowWrittenTables,
@@ -62,6 +62,12 @@ export interface RegistryResult {
   readonly classes: Record<TableClass, number>;
   /** Tables marked `planned` that code doesn't name yet. */
   readonly plannedAbsent: { area: string; table: string }[];
+  /**
+   * Planned rebuilders whose module isn't in the tree, with the tables
+   * they write: the order checks leave those writes out until the module
+   * is here.
+   */
+  readonly orderLeftOut: { step: string; tables: string[] }[];
 }
 
 export interface RegistryInput {
@@ -69,6 +75,14 @@ export interface RegistryInput {
   readonly codeTables: CodeTables;
   /** When given, the live schema is checked against the classes too. */
   readonly liveTables?: readonly LiveTable[];
+  /**
+   * Whether a step's code is in the tree (see stepCodeIn). A planned
+   * rebuilder whose module isn't here yet writes nothing a run could
+   * wait on, so the order checks leave its writes out; once the module
+   * is here, they check them. Without it, every step's code counts as
+   * here.
+   */
+  readonly stepCodeHere?: (step: RebuildStep) => boolean;
 }
 
 const PLACEHOLDER = /\{([a-zA-Z0-9_]+)\}/g;
@@ -390,19 +404,24 @@ function stepProblems(
           `rebuilder ${step.id} plans rows of ${plan.table}, whose rows it doesn't write`
         );
       }
-      if (!plan.where.trim()) {
+      if (!plan.where?.trim()) {
         problem(
           `${kind} ${step.id}'s planned rows of ${plan.table} have no where`
         );
       }
-      if (!plan.reason.trim()) {
+      if (!plan.reason?.trim()) {
         problem(
           `${kind} ${step.id}'s planned rows of ${plan.table} have no reason`
         );
       }
-      if (!plan.until.trim()) {
+      if (plan.until === undefined || !validUntil(plan.until)) {
         problem(
-          `${kind} ${step.id}'s planned rows of ${plan.table} name no change they wait for (until)`
+          `${kind} ${step.id}'s planned rows of ${plan.table} need an until, their last day written YYYY-MM-DD`
+        );
+      }
+      if (!plan.change?.trim()) {
+        problem(
+          `${kind} ${step.id}'s planned rows of ${plan.table} name no change that brings their source`
         );
       }
     }
@@ -420,12 +439,14 @@ function stepProblems(
 /**
  * A rebuilder that reads a table another rebuilder writes must run after
  * it, or it reads an empty table (holdings reads identity's consolidation
- * keys, for example).
+ * keys, for example). Writes of the steps in `leftOut` (planned, their
+ * module not here yet) are left out until the module is here.
  */
 function readOrderProblems(
-  rebuilders: readonly RebuildStep[]
+  rebuilders: readonly RebuildStep[],
+  leftOut: ReadonlySet<string>
 ): RegistryProblem[] {
-  const writers = writersOf(rebuilders);
+  const writers = writersOf(rebuilders.filter((s) => !leftOut.has(s.id)));
   const waits = waitsOn(rebuilders);
   const problems: RegistryProblem[] = [];
   for (const step of rebuilders) {
@@ -587,14 +608,17 @@ function foldLikeCollation(value: string): string {
 
 /**
  * A column owner updates rows its table's row writer wrote, so it runs
- * after every row writer of the table.
+ * after every row writer of the table. As for reads, writes of the steps
+ * in `leftOut` are left out.
  */
 function columnOrderProblems(
-  rebuilders: readonly RebuildStep[]
+  rebuilders: readonly RebuildStep[],
+  leftOut: ReadonlySet<string>
 ): RegistryProblem[] {
   const waits = waitsOn(rebuilders);
   const problems: RegistryProblem[] = [];
-  writersOf(rebuilders).forEach((writers, table) => {
+  const writing = rebuilders.filter((s) => !leftOut.has(s.id));
+  writersOf(writing).forEach((writers, table) => {
     const rowWriters = writers.filter((w) => !w.columns);
     for (const owner of writers.filter((w) => w.columns)) {
       for (const writer of rowWriters) {
@@ -783,6 +807,12 @@ export function checkRegistry(input: RegistryInput): RegistryResult {
     input.manifests.flatMap((manifest) => Object.keys(manifest.tables))
   );
   const seenProbes = new Set<string>();
+  const rebuilders = input.manifests.flatMap((manifest) => manifest.rebuilders);
+  const codeHere = input.stepCodeHere ?? (() => true);
+  const notHere = rebuilders.filter(
+    (step) => step.origin === 'planned' && !codeHere(step)
+  );
+  const leftOut = new Set(notHere.map((step) => step.id));
   const problems = [
     ...tableProblems(input),
     ...liveProblems(input),
@@ -809,16 +839,11 @@ export function checkRegistry(input: RegistryInput): RegistryResult {
       input.manifests.flatMap((manifest) => manifest.seeds)
     ),
     ...lastProblems(input.manifests),
-    ...readOrderProblems(
-      input.manifests.flatMap((manifest) => manifest.rebuilders)
-    ),
-    ...columnOrderProblems(
-      input.manifests.flatMap((manifest) => manifest.rebuilders)
-    ),
-    ...orderProblems(
-      'rebuilder',
-      input.manifests.flatMap((manifest) => manifest.rebuilders)
-    ),
+    ...readOrderProblems(rebuilders, leftOut),
+    ...columnOrderProblems(rebuilders, leftOut),
+    // Unknown ids in `after` and `before` fail whether or not the step's
+    // code is here.
+    ...orderProblems('rebuilder', rebuilders),
     ...writerProblems(input.manifests)
   ];
   return {
@@ -832,6 +857,9 @@ export function checkRegistry(input: RegistryInput): RegistryResult {
             entry.origin === 'planned' && !input.codeTables.has(table)
         )
         .map(([table]) => ({ area: manifest.area, table }))
-    )
+    ),
+    orderLeftOut: notHere
+      .map((step) => ({ step: step.id, tables: writtenTables(step) }))
+      .filter((entry) => entry.tables.length)
   };
 }

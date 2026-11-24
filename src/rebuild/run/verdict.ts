@@ -1,4 +1,28 @@
 import { ExemptUntil, overdueLine } from '@/rebuild/run/exempt-until';
+
+/**
+ * A running rebuilder's plan of planned rows (seeded rows only a later
+ * change rebuilds), as a run found it.
+ */
+export interface PlannedRowsPlan {
+  readonly step: string;
+  readonly where: string;
+  readonly reason: string;
+  /** The plan's last day, YYYY-MM-DD. */
+  readonly until: string;
+  /** The later change that brings the rows' source. */
+  readonly change: string;
+  /** Seeded rows the plan's condition matched. */
+  readonly seeded: number;
+  /**
+   * Of those, rows missing from the rebuild; null when the run stopped
+   * before the rows were compared.
+   */
+  readonly missing: number | null;
+  /** The run's day is past `until`. */
+  readonly overdue: boolean;
+}
+
 /** A step skipped as planned: a table it needs isn't in the schema. */
 export interface WaitingStep {
   readonly step: string;
@@ -37,6 +61,13 @@ export interface VerdictInput {
   readonly plannedTables: number;
   /** Planned steps skipped because their module isn't in the tree. */
   readonly plannedSteps: readonly string[];
+  /** Steps marked planned whose code is in the tree, so they ran. */
+  readonly plannedStepsHere: readonly string[];
+  /**
+   * Planned rebuilders whose module isn't in the tree, each with the
+   * tables it writes: the order checks left those writes out.
+   */
+  readonly orderLeftOut: readonly string[];
   /** Steps skipped as planned, one entry per table they need and lack. */
   readonly waitingSteps: readonly WaitingStep[];
   /** Needs on tables the schema already has, each naming its step. */
@@ -45,8 +76,8 @@ export interface VerdictInput {
   readonly unownedRows: readonly string[];
   /** Owned columns left out because their owner doesn't run here. */
   readonly unrunOwnedColumns: readonly string[];
-  /** Planned rows missing from the rebuild, one entry per table. */
-  readonly plannedRowsMissing: readonly string[];
+  /** Every plan of planned rows of the running rebuilders. */
+  readonly plannedRows: readonly (PlannedRowsPlan & { table: string })[];
   /** Planned probes held because a table they read isn't in the schema. */
   readonly heldProbes: readonly string[];
   /** Tables a manifest keeps or rebuilds that a fresh schema lacks. */
@@ -130,9 +161,10 @@ export function judge(input: VerdictInput): Verdict {
         .join('; ')}`
     );
   }
-  const overdue = overdueLine(input.exemptUntil);
-  // Past its day an exemption is overdue: noted, not failed, so a run
-  // never turns red because the clock moved; a final run fails above.
+  const overdue = overdueLine(input.exemptUntil, input.plannedRows);
+  // Past its day an exemption or a plan is overdue: noted, not failed, so
+  // a run never turns red because the clock moved; a final run fails on
+  // every one of them, whatever the day.
   if (overdue) notes.push(overdue);
   failures.push(...input.sourceProblems);
   if (input.provisionalSources.length) {
@@ -155,6 +187,17 @@ export function judge(input: VerdictInput): Verdict {
       `${input.plannedSteps.length} planned steps were skipped because their code is not in this tree, and ${skippedTables}: ${input.plannedSteps.join(', ')}`
     );
   }
+  // Nothing planned passes a final run, even a step whose code is here.
+  if (input.plannedStepsHere.length) {
+    finalOnly(
+      `${input.plannedStepsHere.length} steps are marked planned though their code is in this tree; drop origin 'planned': ${input.plannedStepsHere.join(', ')}`
+    );
+  }
+  if (input.orderLeftOut.length) {
+    notes.push(
+      `${input.orderLeftOut.length} planned rebuilders' writes were left out of the order check while their module is not in this tree: ${input.orderLeftOut.join('; ')}`
+    );
+  }
   if (input.waitingSteps.length) {
     const steps = new Set(input.waitingSteps.map((w) => w.step));
     finalOnly(
@@ -173,10 +216,26 @@ export function judge(input: VerdictInput): Verdict {
       `${input.unownedRows.length} partitioned tables hold rows no rebuilder owns after the seeds: ${input.unownedRows.join(', ')}`
     );
   }
-  if (input.plannedRowsMissing.length) {
+  if (input.plannedRows.length) {
     finalOnly(
-      `Planned rows are missing from the rebuild in ${input.plannedRowsMissing.length} tables: seeded rows only a later change rebuilds; a final run fails on them: ${input.plannedRowsMissing.join(', ')}`
+      `${input.plannedRows.length} plans of planned rows, seeded rows only a later change rebuilds; a final run fails on every plan: ${input.plannedRows
+        .map(
+          (p) =>
+            `${p.table} by ${p.step}: seeded ${p.seeded}, missing ${p.missing ?? 'not compared'}, until ${p.until} (${p.change})`
+        )
+        .join('; ')}`
     );
+  }
+  for (const p of input.plannedRows) {
+    if (p.seeded === 0) {
+      notes.push(
+        `Planned rows of ${p.table} by ${p.step}: plan matched no seeded rows`
+      );
+    } else if (p.missing === 0) {
+      notes.push(
+        `Planned rows of ${p.table} by ${p.step}: the rebuild writes these rows now: drop the plan`
+      );
+    }
   }
   if (input.unrunOwnedColumns.length) {
     finalOnly(
