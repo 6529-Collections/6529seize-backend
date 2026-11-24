@@ -133,7 +133,11 @@ export class UploadMediaService {
     content_type: string;
   }): Promise<ApiCreateMediaUrlResponse> {
     this.assertSinglePutImageUploadAllowed(content_type);
-    const { key, uploadId } = this.createWaveMediaKey({ file_name, author_id });
+    const { key, uploadId } = this.createWaveMediaKey({
+      file_name,
+      author_id,
+      content_type
+    });
     return await this.withBudgetedUpload(
       {
         id: uploadId,
@@ -182,7 +186,7 @@ export class UploadMediaService {
     author_id: string;
   }): Promise<ApiStartMultipartMediaUploadResponse> {
     return await this.createMultipartUpload({
-      ...this.createWaveMediaKey({ file_name, author_id }),
+      ...this.createWaveMediaKey({ file_name, author_id, content_type }),
       content_type,
       author_id,
       source: DropMediaUploadSource.WAVE,
@@ -466,14 +470,20 @@ export class UploadMediaService {
   /** The author prefix stays: untracked wave keys are owner-checked by it. */
   private createWaveMediaKey({
     file_name,
-    author_id
+    author_id,
+    content_type
   }: {
     file_name: string;
     author_id: string;
+    content_type: string;
   }): ReservedMediaKey {
     const uploadId = randomUUID();
+    const publicFileName =
+      content_type === 'image/webp'
+        ? `${uploadId}.webp`
+        : neutralMediaFileName(uploadId, file_name);
     return {
-      key: `waves/author_${author_id}/${neutralMediaFileName(uploadId, file_name)}`,
+      key: `waves/author_${author_id}/${publicFileName}`,
       uploadId
     };
   }
@@ -581,11 +591,11 @@ export class UploadMediaService {
       bucket: ingestBucket,
       s3: this.getIngestS3(),
       metadata: {
-        // Decision entries are never stripped, even by a sanitizer that
-        // predates the purpose column.
+        // Wave pictures always use the metadata stripping policy.
         [DROP_MEDIA_SANITIZE_UPLOAD_METADATA_KEY]: String(
-          isDropMediaSanitizationEnabled() &&
-            purpose !== DropMediaUploadPurpose.DECISION_ENTRY
+          purpose !== DropMediaUploadPurpose.DECISION_ENTRY &&
+            (source === DropMediaUploadSource.WAVE ||
+              isDropMediaSanitizationEnabled())
         )
       }
     });
