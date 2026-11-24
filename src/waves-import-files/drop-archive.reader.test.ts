@@ -6,6 +6,7 @@ import {
   FIXTURE_WAVES
 } from '@/tests/fixtures/drop-archive.fixture';
 import {
+  ArchiveExporter,
   buildDropArchives,
   BuiltDropArchives,
   DropPartRowForArchive,
@@ -77,9 +78,10 @@ function world(built: BuiltDropArchives): World {
 
 function worldOf(
   drops: readonly DropRowForArchive[],
-  parts: readonly DropPartRowForArchive[]
+  parts: readonly DropPartRowForArchive[],
+  exporter: ArchiveExporter = 'site'
 ): World {
-  return world(buildDropArchives(drops, parts));
+  return world(buildDropArchives(drops, parts, exporter));
 }
 
 /** An index whose entries are replaced, keeping the tooling's layout. */
@@ -127,18 +129,27 @@ describe('importDropArchives', () => {
     );
   });
 
-  it("writes the API's values: a native entry as PARTICIPATORY, a reply's missing part as 0", async () => {
-    const w = worldOf(FIXTURE_DROPS, FIXTURE_PARTS);
-    const report = await w.run();
-    expect(report.refused).toEqual([]);
-    const entry = w.written.drops.find((d) => d.id === FIXTURE_DROPS[2].id);
-    expect(entry).toMatchObject({
-      drop_type: 'PARTICIPATORY',
+  it("writes the table's own values from 6529.io's export, the API's view from a public fetch", async () => {
+    const entryOf = async (exporter: ArchiveExporter) => {
+      const w = worldOf(FIXTURE_DROPS, FIXTURE_PARTS, exporter);
+      expect((await w.run()).refused).toEqual([]);
+      return w.written.drops.find((d) => d.id === FIXTURE_DROPS[2].id);
+    };
+    // The native entry: COMPETITION with a reply's null part id in the
+    // table; PARTICIPATORY and part 0 as the API shows it.
+    expect(await entryOf('site')).toMatchObject({
+      drop_type: 'COMPETITION',
       reply_to_drop_id: FIXTURE_DROPS[0].id,
-      reply_to_part_id: 0,
+      reply_to_part_id: null,
       serial_no: 8,
       created_at: FIXTURE_DROPS[2].created_at
     });
+    expect(await entryOf('public')).toMatchObject({
+      drop_type: 'PARTICIPATORY',
+      reply_to_part_id: 0
+    });
+    const w = worldOf(FIXTURE_DROPS, FIXTURE_PARTS);
+    await w.run();
     const quote = w.written.parts.find(
       (p) => p.drop_id === FIXTURE_DROPS[1].id
     );

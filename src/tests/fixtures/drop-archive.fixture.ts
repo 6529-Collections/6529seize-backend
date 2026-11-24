@@ -111,26 +111,53 @@ export const FIXTURE_PARTS: (DropPartRowForArchive & { wave_id: string })[] = [
   }
 ];
 
-/** What the snapshot tooling writes for the rows above. */
+/**
+ * What the snapshot tooling writes for the rows above (validator
+ * tools/legacy-snapshot, with `table`): from 6529.io's export, which sets
+ * the drops table's own values on each drop, and from a public fetch, which
+ * has none.
+ */
 export const FIXTURE_EXPECTED = {
-  archives: [
-    {
-      legacyWave: WAVE_A,
-      waveId:
-        '0xbcae0ad924b2565bc4c96405e2c3e66f9f1ff30e959f657ab419e0e0298a0cee',
-      hash: '0xa2454634a0f57adf10e4de5dc880ea0cee06bb175f9669cc0b015c58da4ab873',
-      bytes: 2117
-    },
-    {
-      legacyWave: WAVE_B,
-      waveId:
-        '0xf776cf6e58f415903662f759dba2776ee0a4e942e7149fa1c25a1bc553b37bc4',
-      hash: '0x706e74e9430535f73e39ef3c2d2cd22051a285237de0bebc86daa92099426c24',
-      bytes: 606
-    }
-  ],
-  dropArchiveRoot:
-    '0x9303884aba60c3f4bfdd993d41df4616d42883874a66a01f559bb4ee0fb52130',
+  site: {
+    archives: [
+      {
+        legacyWave: WAVE_A,
+        waveId:
+          '0xbcae0ad924b2565bc4c96405e2c3e66f9f1ff30e959f657ab419e0e0298a0cee',
+        hash: '0x9a0f1d6cfdc643b3d383a15237bd4d670f846a37efb4e6f84d02421aa5cb779e',
+        bytes: 2604
+      },
+      {
+        legacyWave: WAVE_B,
+        waveId:
+          '0xf776cf6e58f415903662f759dba2776ee0a4e942e7149fa1c25a1bc553b37bc4',
+        hash: '0x6404d66be71161a557c6296b132618d015ea3047594aea26bbaa71e5f6499c08',
+        bytes: 766
+      }
+    ],
+    dropArchiveRoot:
+      '0x0040a74446effb2c8ee330f961293834bbd03470ce31b7a7d7d2e526224c6a2d'
+  },
+  public: {
+    archives: [
+      {
+        legacyWave: WAVE_A,
+        waveId:
+          '0xbcae0ad924b2565bc4c96405e2c3e66f9f1ff30e959f657ab419e0e0298a0cee',
+        hash: '0x67a274906309fe41fdc9cea10f2bb9b8ae171753ef1d03827e3a7cdf67d71c2d',
+        bytes: 2156
+      },
+      {
+        legacyWave: WAVE_B,
+        waveId:
+          '0xf776cf6e58f415903662f759dba2776ee0a4e942e7149fa1c25a1bc553b37bc4',
+        hash: '0xa7bad160ec523ca2d7cf1d6991296b7719077e73f92ab3a6885b96e1bceb36d1',
+        bytes: 619
+      }
+    ],
+    dropArchiveRoot:
+      '0x669b7c722b6914c16a5d773ab47d4955117d8e8e1ca89cbe5a896d4d2b4392a5'
+  },
   /** The first line's author_principal, DerivedId(profile 1, 0, 0x0101). */
   firstPrincipal:
     '2b87e4b5bf45418194c54400858ff77838ee526b87a6946d03ec0da9d963ac15'

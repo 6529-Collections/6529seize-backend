@@ -150,12 +150,8 @@ describeWithSeed(
           .map((d) => ({
             ...d,
             parts_count: FIXTURE_PARTS.filter((p) => p.drop_id === d.id).length,
-            // The API's values the archive holds.
-            drop_type:
-              d.drop_type === 'COMPETITION' ? 'PARTICIPATORY' : d.drop_type,
-            reply_to_part_id: d.reply_to_drop_id
-              ? (d.reply_to_part_id ?? 0)
-              : null,
+            // The table's own values, as 6529.io's export writes them: the
+            // native entry's COMPETITION and its reply's null part id.
             signature: null,
             is_additional_action_promised: null,
             hide_link_preview: false,

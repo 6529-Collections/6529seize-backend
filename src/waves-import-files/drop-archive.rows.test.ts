@@ -35,23 +35,40 @@ describe('dropArchiveRows', () => {
     });
   });
 
-  it('takes those columns from a line that carries them', () => {
+  it("takes the drops table's own values from a line that carries them", () => {
+    const table = {
+      signature: 'sig',
+      is_additional_action_promised: true,
+      hide_link_preview: true,
+      collapse_replies: true,
+      drop_type: 'COMPETITION',
+      reply_to_part_id: null
+    };
+    // A reply the API shows with part 0, a native entry it shows as
+    // PARTICIPATORY: the table's values win.
     const line = {
       ...firstLine(),
-      signature: 'sig',
-      is_additional_action_promised: true,
-      hide_link_preview: true,
-      collapse_replies: true
+      drop_type: 'PARTICIPATORY',
+      reply_to: { drop_id: FIXTURE_DROPS[1].id, part_id: 0 },
+      table
     };
     expect(dropArchiveRows(line, FIXTURE_WAVES.a).drop).toMatchObject({
-      signature: 'sig',
-      is_additional_action_promised: true,
-      hide_link_preview: true,
-      collapse_replies: true
+      ...table,
+      reply_to_drop_id: FIXTURE_DROPS[1].id
     });
-    expect(reasonOf({ ...firstLine(), hide_link_preview: 'yes' })).toBe(
-      'hide_link_preview has the wrong type'
+    expect(
+      dropArchiveRows({ ...firstLine(), table: null }, FIXTURE_WAVES.a).drop
+    ).toMatchObject({ signature: null, hide_link_preview: false });
+    expect(
+      reasonOf({ ...line, table: { ...table, hide_link_preview: 'yes' } })
+    ).toBe('table hide_link_preview has the wrong type');
+    expect(reasonOf({ ...line, table: { ...table, drop_type: 'POLL' } })).toBe(
+      'table drop_type has the wrong type'
     );
+    expect(
+      reasonOf({ ...line, table: { ...table, reply_to_part_id: -1 } })
+    ).toBe('table reply_to_part_id has the wrong type');
+    expect(reasonOf({ ...line, table: 'x' })).toBe('table is not an object');
   });
 
   it('takes any integer serial: 6529.io holds a few negative ones', () => {

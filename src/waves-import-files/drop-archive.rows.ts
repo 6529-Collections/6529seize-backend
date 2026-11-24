@@ -6,12 +6,15 @@ import { DropType } from '@/entities/IDrop';
  * public API's drop: ids, serial, times, type, title, parts, reply and
  * quotes are 6529.io's own values, so the rows take them as they are.
  *
- * The v1 line has no `signature`, `is_additional_action_promised`,
- * `hide_link_preview` or `collapse_replies`: a row gets the column's
- * default (null, null, false, false) unless the line carries the field.
  * The API shows a native competition entry's type COMPETITION as
- * PARTICIPATORY, a reply's null part id as 0, and a quote without a part
- * id not at all, so the rows hold those.
+ * PARTICIPATORY, a reply's null part id as 0, and no `signature`,
+ * `is_additional_action_promised`, `hide_link_preview` or
+ * `collapse_replies`. A line from an export that read the drops table
+ * carries the table's own values of those six as `table`, and the rows take
+ * them from there. A line without them (`table` null or absent, as a
+ * public fetch writes it) gives the API's type and reply part id and the
+ * columns' defaults (null, null, false, false). A quote without a part id
+ * the API doesn't show at all, so the rows can't hold it.
  */
 
 export interface DropArchiveDropRow {
@@ -145,15 +148,14 @@ function serialOf(value: unknown): number {
   return serial;
 }
 
-function optional<T>(
-  line: Json,
+/** One of the table's values, checked. */
+function tableValue<T>(
+  table: Json,
   key: string,
-  check: (value: unknown) => value is T,
-  fallback: T
+  check: (value: unknown) => value is T
 ): T {
-  if (!(key in line)) return fallback;
-  const value = line[key];
-  if (!check(value)) fail(`${key} has the wrong type`);
+  const value = table[key];
+  if (!check(value)) fail(`table ${key} has the wrong type`);
   return value;
 }
 
@@ -163,6 +165,36 @@ const isNullableBoolean = (value: unknown): value is boolean | null =>
   value === null || typeof value === 'boolean';
 const isNullableString = (value: unknown): value is string | null =>
   value === null || typeof value === 'string';
+const isDropType = (value: unknown): value is DropType =>
+  typeof value === 'string' && DROP_TYPES.has(value);
+const isNullablePart = (value: unknown): value is number | null =>
+  value === null ||
+  (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0);
+
+/** The drops table's own values a line carries, or null when it has none. */
+function tableOf(line: Json): {
+  signature: string | null;
+  is_additional_action_promised: boolean | null;
+  hide_link_preview: boolean;
+  collapse_replies: boolean;
+  drop_type: DropType;
+  reply_to_part_id: number | null;
+} | null {
+  if (line.table === undefined || line.table === null) return null;
+  const table = object(line.table, 'table');
+  return {
+    signature: tableValue(table, 'signature', isNullableString),
+    is_additional_action_promised: tableValue(
+      table,
+      'is_additional_action_promised',
+      isNullableBoolean
+    ),
+    hide_link_preview: tableValue(table, 'hide_link_preview', isBoolean),
+    collapse_replies: tableValue(table, 'collapse_replies', isBoolean),
+    drop_type: tableValue(table, 'drop_type', isDropType),
+    reply_to_part_id: tableValue(table, 'reply_to_part_id', isNullablePart)
+  };
+}
 
 /** A reply's or quote's part id: the API's integer, 0 for none given. */
 function partRef(value: Json, what: string): number | null {
@@ -222,6 +254,7 @@ export function dropArchiveRows(
   });
   const partIds = new Set(parts.map((part) => part.drop_part_id));
   if (partIds.size !== parts.length) fail('two parts share a part_id');
+  const table = tableOf(line);
   const drop: DropArchiveDropRow = {
     id: dropId,
     serial_no: serialOf(line.serial_no),
@@ -232,17 +265,18 @@ export function dropArchiveRows(
     title,
     parts_count: parts.length,
     reply_to_drop_id: replyTo ? id(replyTo.drop_id, 'reply_to drop') : null,
-    reply_to_part_id: replyTo ? partRef(replyTo, 'reply_to part') : null,
-    drop_type: dropType as DropType,
-    signature: optional(line, 'signature', isNullableString, null),
-    is_additional_action_promised: optional(
-      line,
-      'is_additional_action_promised',
-      isNullableBoolean,
-      null
-    ),
-    hide_link_preview: optional(line, 'hide_link_preview', isBoolean, false),
-    collapse_replies: optional(line, 'collapse_replies', isBoolean, false)
+    reply_to_part_id: table
+      ? table.reply_to_part_id
+      : replyTo
+        ? partRef(replyTo, 'reply_to part')
+        : null,
+    drop_type: table ? table.drop_type : (dropType as DropType),
+    signature: table ? table.signature : null,
+    is_additional_action_promised: table
+      ? table.is_additional_action_promised
+      : null,
+    hide_link_preview: table ? table.hide_link_preview : false,
+    collapse_replies: table ? table.collapse_replies : false
   };
   return { drop, parts };
 }

@@ -31,7 +31,19 @@ export interface DropRowForArchive {
   readonly reply_to_drop_id: string | null;
   readonly reply_to_part_id: number | null;
   readonly drop_type: string;
+  /** Columns the table holds and the API doesn't show; default null or false. */
+  readonly signature?: string | null;
+  readonly is_additional_action_promised?: boolean | null;
+  readonly hide_link_preview?: boolean;
+  readonly collapse_replies?: boolean;
 }
+
+/**
+ * Which exporter the lines stand for: 6529.io's, which reads the drops
+ * table and writes its values as `table`, or a public fetch, which can't
+ * and writes null.
+ */
+export type ArchiveExporter = 'site' | 'public';
 
 /** The `drops_parts` columns an archive line is built from. */
 export interface DropPartRowForArchive {
@@ -45,7 +57,8 @@ export interface DropPartRowForArchive {
 /** The archive line (format v1) of one drop and its parts. */
 export function archiveLineOf(
   drop: DropRowForArchive,
-  parts: readonly DropPartRowForArchive[]
+  parts: readonly DropPartRowForArchive[],
+  exporter: ArchiveExporter = 'site'
 ): Record<string, unknown> {
   const principal = legacyDerivedId(drop.author_id, PRINCIPAL_KIND);
   return {
@@ -92,7 +105,19 @@ export function archiveLineOf(
     nfts: { referenced: [], links: [] },
     collaborators: [],
     reactions: [],
-    signed: null
+    signed: null,
+    table:
+      exporter === 'site'
+        ? {
+            signature: drop.signature ?? null,
+            is_additional_action_promised:
+              drop.is_additional_action_promised ?? null,
+            hide_link_preview: drop.hide_link_preview ?? false,
+            collapse_replies: drop.collapse_replies ?? false,
+            drop_type: drop.drop_type,
+            reply_to_part_id: drop.reply_to_part_id
+          }
+        : null
   };
 }
 
@@ -117,7 +142,8 @@ export interface BuiltDropArchives {
 /** One archive per wave with drops, lines ascending by serial number. */
 export function buildDropArchives(
   drops: readonly DropRowForArchive[],
-  parts: readonly DropPartRowForArchive[]
+  parts: readonly DropPartRowForArchive[],
+  exporter: ArchiveExporter = 'site'
 ): BuiltDropArchives {
   const partsOf = new Map<string, DropPartRowForArchive[]>();
   for (const part of parts) {
@@ -136,7 +162,9 @@ export function buildDropArchives(
       .sort((a, b) => a.serial_no - b.serial_no)
       .map(
         (drop) =>
-          canonicalJson(archiveLineOf(drop, partsOf.get(drop.id) ?? [])) + '\n'
+          canonicalJson(
+            archiveLineOf(drop, partsOf.get(drop.id) ?? [], exporter)
+          ) + '\n'
       );
     const bytes = Buffer.from(lines.join(''), 'utf8');
     archives.push({
