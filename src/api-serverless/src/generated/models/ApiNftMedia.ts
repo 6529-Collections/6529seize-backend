@@ -22,9 +22,17 @@ export class ApiNftMedia {
     */
     'image': string;
     /**
+    * The URL of a smaller rendition of the NFT image
+    */
+    'image_compact': string;
+    /**
     * The URL of the NFT animation, if available
     */
     'animation': string;
+    /**
+    * The URL of a compressed rendition of the NFT animation. Absent for collections that do not produce one.
+    */
+    'animation_compact'?: string | null;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -44,8 +52,20 @@ export class ApiNftMedia {
             "format": ""
         },
         {
+            "name": "image_compact",
+            "baseName": "image_compact",
+            "type": "string",
+            "format": ""
+        },
+        {
             "name": "animation",
             "baseName": "animation",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "animation_compact",
+            "baseName": "animation_compact",
             "type": "string",
             "format": ""
         }    ];
