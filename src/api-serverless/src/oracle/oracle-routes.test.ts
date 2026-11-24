@@ -7,7 +7,9 @@ import { ApiCompliantException } from '@/exceptions';
 import * as db from '@/api/oracle/api.oracle.db';
 import router from '@/api/oracle/api.oracle.routes';
 
-jest.mock('yamljs', () => ({ load: jest.fn() }));
+jest.mock('@/api/openapi-spec-loader', () => ({
+  loadOpenApiSpec: jest.fn(() => ({ raw: '', document: {} }))
+}));
 jest.mock('swagger-ui-express', () => ({
   serveFiles: () => (_req: Request, _res: Response, next: NextFunction) =>
     next(),
