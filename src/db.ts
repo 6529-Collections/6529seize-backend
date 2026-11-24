@@ -156,6 +156,7 @@ import {
 } from '@/db/sql-execution-budget';
 import type { PoolConnection } from 'mysql2';
 import { formatNamedParameters } from '@/db/sql-named-parameters';
+import { logTransactionFailure } from '@/db/transaction-failure-log';
 
 const logger = Logger.get('DB');
 
@@ -385,7 +386,7 @@ async function execNativeTransactionally<T>(
     committed = { result, afterCommit: closeAfterCommitScope(queryRunner) };
   } catch (err: any) {
     closeAfterCommitScope(queryRunner);
-    logger.error(`Database transaction failed [${err}]`);
+    logTransactionFailure(err, logger);
     if (queryRunner.isTransactionActive) {
       await queryRunner.rollbackTransaction();
     }
