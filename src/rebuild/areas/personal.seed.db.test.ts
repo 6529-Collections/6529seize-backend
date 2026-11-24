@@ -48,6 +48,13 @@ const TABLES: readonly [string, string][] = [
   ['collect_rule_operations', '*']
 ];
 
+/** The record heads, in one order: (family, rtype) and what they hold. */
+const heads = () =>
+  sqlExecutor.execute<Record<string, unknown>>(
+    `select owner, family, rtype, rkey, anchor, claimed_time, event_id
+     from signed_record_heads order by family, rtype, owner, rkey`
+  );
+
 async function snapshot(): Promise<Record<string, unknown[]>> {
   const rows: Record<string, unknown[]> = {};
   for (const [table, columns] of TABLES) {
@@ -119,11 +126,20 @@ describeWithSeed('the personal seed and its rebuild', [], () => {
         env
       );
       const seeded = await snapshot();
+      const seededHeads = await heads();
       const state = await sqlExecutor.execute(
         `select id, frozen, import_anchor, import_at from personal_records_state`
       );
       expect(seeded.identity_subscriptions.length).toBeGreaterThan(0);
       expect(seeded.eula_consent).toHaveLength(1);
+      // The live follow after the import: its own head and its owner's
+      // order mark. The import keeps none.
+      expect(
+        seededHeads.map((head) => [head.family, head.rtype, head.anchor])
+      ).toEqual([
+        ['ps', 'follow', 2],
+        ['pv', '~owner', 2]
+      ]);
       const listed = JSON.parse(
         fs.readFileSync(path.join(dir, 'files.json'), 'utf8')
       );
@@ -161,10 +177,8 @@ describeWithSeed('the personal seed and its rebuild', [], () => {
         ['rebuild-collect-op-1', true, true],
         ['rebuild-collect-op-2', true, false]
       ]);
-      // As live: the import never goes through the indexer, so no heads.
-      expect(
-        await sqlExecutor.execute(`select * from signed_record_heads`)
-      ).toEqual([]);
+      // As live: the live record's heads, and none from the import.
+      expect(await heads()).toEqual(seededHeads);
       expect(
         await sqlExecutor.execute(
           `select id, frozen, import_anchor, import_at from personal_records_state`

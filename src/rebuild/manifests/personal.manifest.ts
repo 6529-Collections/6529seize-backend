@@ -31,6 +31,16 @@ const FIXTURE_RECORDS_FLAGS = {
 // select: neither has an ORDER BY, live or after a rebuild.
 const FOLLOW_ACTIONS_UNORDERED =
   "A follow's actions are a set, read with no ORDER BY: MySQL's plan decides their order.";
+// subscribed_actions (the caller's follow actions for a profile or a drop)
+// come from a plain select of the caller's rows, with no ORDER BY either
+// (identity-subscriptions.db.ts, read by identity.fetcher.ts and
+// drops.mappers.ts). A profile's hold up to four actions, a drop's two
+// (DROP_REPLIED, DROP_VOTED); a wave's one at most (DROP_CREATED).
+const SUBSCRIBED_ACTIONS_UNORDERED =
+  "Subscribed actions are a set the API returns without an order: MySQL's plan decides it.";
+/** Each path to a profile's or a drop's subscribed_actions, as a set. */
+const subscribedActionsUnordered = (...paths: string[]) =>
+  paths.map((path) => ({ path, reason: SUBSCRIBED_ACTIONS_UNORDERED }));
 
 /** Every GET route that reads a personal settings or Collect plans table. */
 const PROBES: Probe[] = [
@@ -39,7 +49,18 @@ const PROBES: Probe[] = [
     path: '/api/identity-subscriptions/outgoing/{type}',
     each: { type: ['IDENTITY', 'WAVE', 'DROP'] },
     as: PROBE_CALLER,
-    unordered: [{ path: '$.data[*].actions', reason: FOLLOW_ACTIONS_UNORDERED }]
+    unordered: [
+      { path: '$.data[*].actions', reason: FOLLOW_ACTIONS_UNORDERED },
+      // The followed target's own (a profile's or a drop's; a wave's holds
+      // one action at most), its author's, and its description drop's and
+      // that drop's author's.
+      ...subscribedActionsUnordered(
+        '$.data[*].target.subscribed_actions',
+        '$.data[*].target.author.subscribed_actions',
+        '$.data[*].target.description_drop.subscribed_actions',
+        '$.data[*].target.description_drop.author.subscribed_actions'
+      )
+    ]
   },
   {
     id: 'personal.follows-in',
@@ -82,9 +103,19 @@ const PROBES: Probe[] = [
   {
     id: 'personal.pinned-waves',
     path: '/api/v2/waves/pinned',
-    as: PROBE_CALLER
+    as: PROBE_CALLER,
+    unordered: subscribedActionsUnordered('$[*].creator.subscribed_actions')
   },
-  { id: 'personal.bookmarks', path: '/api/drops-bookmarked', as: PROBE_CALLER },
+  {
+    id: 'personal.bookmarks',
+    path: '/api/drops-bookmarked',
+    as: PROBE_CALLER,
+    // Each bookmarked drop's own, and its author's.
+    unordered: subscribedActionsUnordered(
+      '$.data[*].subscribed_actions',
+      '$.data[*].author.subscribed_actions'
+    )
+  },
   {
     id: 'personal.bookmarks-status',
     path: `/api/drops-bookmarked/status?drop_id=${PROBE_DROP}`,
