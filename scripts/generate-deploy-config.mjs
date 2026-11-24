@@ -293,19 +293,17 @@ jobs:
           fi
           account_id="\${BASH_REMATCH[1]}"
           role_arn="$AWS_DEPLOY_ROLE_ARN"
-          case "$INPUT_SERVICE" in
-            dropForgeLaunchHandler|memesDistributionHandler)
-              if ! [[ "$AWS_DROP_FORGE_DEPLOY_ROLE_ARN" =~ $role_arn_pattern ]]; then
-                echo "::error::Configure AWS_DROP_FORGE_DEPLOY_ROLE_ARN in the selected GitHub environment with a valid IAM role ARN"
-                exit 1
-              fi
-              if [[ "\${BASH_REMATCH[1]}" != "$account_id" || "$AWS_DROP_FORGE_DEPLOY_ROLE_ARN" == "$role_arn" ]]; then
-                echo "::error::AWS_DROP_FORGE_DEPLOY_ROLE_ARN must select a dedicated role in the same AWS account as AWS_DEPLOY_ROLE_ARN"
-                exit 1
-              fi
-              role_arn="$AWS_DROP_FORGE_DEPLOY_ROLE_ARN"
-              ;;
-          esac
+          if [[ "$INPUT_SERVICE" == dropForgeLaunchHandler || "$INPUT_SERVICE" == memesDistributionHandler ]]; then
+            if ! [[ "$AWS_DROP_FORGE_DEPLOY_ROLE_ARN" =~ $role_arn_pattern ]]; then
+              echo "::error::Configure AWS_DROP_FORGE_DEPLOY_ROLE_ARN in the selected GitHub environment with a valid IAM role ARN"
+              exit 1
+            fi
+            if [[ "\${BASH_REMATCH[1]}" != "$account_id" || "$AWS_DROP_FORGE_DEPLOY_ROLE_ARN" == "$role_arn" ]]; then
+              echo "::error::AWS_DROP_FORGE_DEPLOY_ROLE_ARN must select a dedicated role in the same AWS account as AWS_DEPLOY_ROLE_ARN"
+              exit 1
+            fi
+            role_arn="$AWS_DROP_FORGE_DEPLOY_ROLE_ARN"
+          fi
           echo "arn=$role_arn" >> "$GITHUB_OUTPUT"
           echo "account_id=$account_id" >> "$GITHUB_OUTPUT"
       - name: Checkout
