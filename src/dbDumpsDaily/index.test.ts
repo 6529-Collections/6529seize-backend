@@ -12,9 +12,11 @@ jest.mock('./profile-site-export.handler', () => ({
   runProfileSiteExportJob: mockSiteRun
 }));
 const mockWavesRun = jest.fn(async () => ({ job: 'wavesExport' }));
+const mockUploadLink = jest.fn(async () => ({ key: 'made-up' }));
 jest.mock('./waves-export.handler', () => ({
   ...jest.requireActual('./waves-export.handler'),
-  runWavesExportJob: mockWavesRun
+  runWavesExportJob: mockWavesRun,
+  runWavesExportUploadLink: mockUploadLink
 }));
 
 import { handler } from './index';
@@ -108,6 +110,31 @@ describe('dbDumpsDaily handler', () => {
     expect(mockIdentityRun).not.toHaveBeenCalled();
     expect(mockSiteRun).not.toHaveBeenCalled();
     expect(mockDoInDbContext).not.toHaveBeenCalled();
+  });
+
+  it('signs the waves export upload link for its action, and runs no export', async () => {
+    await expect(
+      invoke({ job: 'wavesExport', action: 'upload-link', name: 'a.tar.gz' })
+    ).resolves.toEqual({ key: 'made-up' });
+    expect(mockUploadLink).toHaveBeenCalledWith(
+      {
+        job: 'wavesExport',
+        action: 'upload-link',
+        name: 'a.tar.gz',
+        seconds: 7_200
+      },
+      context
+    );
+    expect(mockWavesRun).not.toHaveBeenCalled();
+    expect(mockDoInDbContext).not.toHaveBeenCalled();
+    await expect(
+      invoke({ job: 'wavesExport', action: 'upload-link', name: '../a' })
+    ).rejects.toThrow(/plain file name/);
+    await expect(
+      invoke({ job: 'wavesExport', action: 'export', name: 'a' })
+    ).rejects.toThrow(/action must be "upload-link"/);
+    expect(mockUploadLink).toHaveBeenCalledTimes(1);
+    expect(mockWavesRun).not.toHaveBeenCalled();
   });
 
   it('runs the dump for an empty event', async () => {

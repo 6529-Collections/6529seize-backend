@@ -757,3 +757,15 @@ with the same event until it answers `{"done": true, ...}` with its links.
   one stage with no file finished, the job refuses: the stage, or one
   wave's drops, takes longer than an invocation, and the command line has
   to run the export instead.
+- **Upload link:** an event with `"action": "upload-link"`, a `name` and
+  optionally `seconds` (beside `"job": "wavesExport"`) runs no export and
+  reads no database. After the bucket's privacy check, refusing on any
+  doubt, it answers
+  `{"putUrl", "key", "expiresAt"}`: a presigned PUT of
+  `waves-export/<stage>/uploads/<run>-<name>`, where `<run>` is the call's
+  own UTC time and request id, so a second link never names an earlier
+  upload. The upload needs only the link: `curl -T <file> "<putUrl>"`.
+  `name` is a plain file name (letters, digits, `.`, `_` and `-`, 1 to 100,
+  no `..`); `seconds` is 60 to 21600, 7200 when not given, and the link can
+  stop sooner when the function's credentials do. The log names the key and
+  the expiry, never the link.

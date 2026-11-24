@@ -2,7 +2,13 @@ import { createHash, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
+import {
+  ListObjectsV2Command,
+  PutObjectCommand,
+  S3Client,
+  S3ClientConfig
+} from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { resolveDbConnectionTargets } from '@/db-iam-auth';
 import { Logger } from '@/logging';
 import {
@@ -64,6 +70,10 @@ import {
  * - `manifest.json`: written once every stage is done, listing every file;
  * - `links-<time>.json`: presigned links to every file, written by each
  *   invocation of a finished run.
+ *
+ * With `"action": "upload-link"` an invocation runs no export: it signs one
+ * upload link under `waves-export/<stage>/uploads/` instead (see
+ * runWavesExportUploadLink).
  */
 
 const logger = Logger.get('WAVES_EXPORT_JOB');
@@ -323,6 +333,110 @@ export function parseWavesExportEvent(
   };
 }
 
+/**
+ * The job's one action besides the export: a presigned PUT link into the
+ * private bucket, for a file made outside 6529.io's account (the drop
+ * archives) to go up with no credentials but the link. No export run, no
+ * database.
+ */
+const UPLOAD_LINK_ACTION = 'upload-link';
+const UPLOAD_LINK_FIELDS = ['job', 'action', 'name', 'seconds'] as const;
+export const UPLOAD_LINK_MIN_SECONDS = 60;
+export const UPLOAD_LINK_MAX_SECONDS = 21_600;
+export const UPLOAD_LINK_DEFAULT_SECONDS = 7_200;
+const UPLOAD_NAME = /^[A-Za-z0-9._-]{1,100}$/;
+
+export interface WavesExportUploadLinkEvent {
+  readonly job: typeof JOB;
+  readonly action: typeof UPLOAD_LINK_ACTION;
+  /** A plain file name: the last part of the key. */
+  readonly name: string;
+  /** How long the link is signed for. */
+  readonly seconds: number;
+}
+
+/** What the upload link action returns, and nothing else. */
+export interface WavesExportUploadLink {
+  readonly putUrl: string;
+  readonly key: string;
+  /** The latest the link works: it can stop sooner (see s3PutPresigner). */
+  readonly expiresAt: string;
+}
+
+function isUploadName(name: unknown): name is string {
+  return (
+    typeof name === 'string' && UPLOAD_NAME.test(name) && !name.includes('..')
+  );
+}
+
+/**
+ * The upload link event: the waves export's job with `action`. Null for
+ * an event that isn't one, so the export's own event is read as before.
+ */
+export function parseWavesExportUploadLinkEvent(
+  event: unknown
+): WavesExportUploadLinkEvent | null {
+  if (!event || typeof event !== 'object' || Array.isArray(event)) {
+    return null;
+  }
+  const record = event as Record<string, unknown>;
+  if (record.job !== JOB || record.action === undefined) return null;
+  if (record.action !== UPLOAD_LINK_ACTION) {
+    fail(`action must be "${UPLOAD_LINK_ACTION}", the job's one action`);
+  }
+  const unknown = Object.keys(record).filter(
+    (key) => !(UPLOAD_LINK_FIELDS as readonly string[]).includes(key)
+  );
+  if (unknown.length) {
+    fail(
+      `Unknown fields for ${UPLOAD_LINK_ACTION}: ${unknown.join(', ')} (it takes name and seconds only)`
+    );
+  }
+  if (!isUploadName(record.name)) {
+    fail(
+      'name must be a plain file name: 1 to 100 letters, digits, dots, dashes and underscores, with no / and no ..'
+    );
+  }
+  const seconds =
+    record.seconds === undefined ? UPLOAD_LINK_DEFAULT_SECONDS : record.seconds;
+  if (
+    typeof seconds !== 'number' ||
+    !Number.isInteger(seconds) ||
+    seconds < UPLOAD_LINK_MIN_SECONDS ||
+    seconds > UPLOAD_LINK_MAX_SECONDS
+  ) {
+    fail(
+      `seconds must be a whole number from ${UPLOAD_LINK_MIN_SECONDS} to ${UPLOAD_LINK_MAX_SECONDS} (${UPLOAD_LINK_DEFAULT_SECONDS} when not given)`
+    );
+  }
+  return {
+    job: JOB,
+    action: UPLOAD_LINK_ACTION,
+    name: record.name,
+    seconds
+  };
+}
+
+/**
+ * `waves-export/<stage>/uploads/<run>-<name>`. The run is this call's own,
+ * in a run prefix's form (its UTC time to the millisecond and the start of
+ * its request id), so a second link never names an earlier upload's key.
+ */
+export function uploadKeyOf(
+  stage: string,
+  at: Date,
+  requestId: string | undefined,
+  name: string
+): string {
+  if (!isUploadName(name)) {
+    throw new WavesExportJobEventError('Not a plain file name');
+  }
+  const safeStage = stage.toLowerCase().replace(/[^a-z0-9-]/g, '') || 'unknown';
+  const time = at.toISOString().replace(/[:.]/g, '-');
+  const run = (requestId ?? 'local').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8);
+  return `${JOB_PREFIX}/${safeStage}/uploads/${time}-${run}-${name}`;
+}
+
 /** The run's folder under the stage: one per freeze, and per name. */
 export function runFolder(event: WavesExportJobEvent): string {
   if (event.freezeMs === null) return `rehearsal-${event.run}`;
@@ -464,6 +578,102 @@ function defaultDeps(): WavesExportJobDeps {
     buildCommit,
     runExport
   };
+}
+
+/** Signs a PUT of one key in the bucket for `seconds`. */
+export type PutPresigner = (
+  bucket: ExportBucket,
+  key: string,
+  seconds: number
+) => Promise<string>;
+
+/**
+ * The settings of the client that signs upload links. It signs no checksum
+ * unless S3 requires one: by default the SDK signs a checksum of an empty
+ * body into a PUT link, and S3 then refuses the file sent to it.
+ */
+export function putPresignerClientConfig(
+  region: string | undefined
+): S3ClientConfig {
+  return { region, requestChecksumCalculation: 'WHEN_REQUIRED' };
+}
+
+/**
+ * Presigned PUTs that name the expected owner, which the SDK carries in the
+ * link's query: an upload needs nothing but the link. Give it a client made
+ * with putPresignerClientConfig. A link lasts no longer than the
+ * credentials that signed it.
+ */
+export function s3PutPresigner(s3: S3Client): PutPresigner {
+  return (bucket, key, seconds) =>
+    getSignedUrl(
+      s3,
+      new PutObjectCommand({
+        Bucket: bucket.name,
+        Key: key,
+        ExpectedBucketOwner: bucket.owner
+      }),
+      { expiresIn: seconds }
+    );
+}
+
+export interface WavesExportUploadLinkDeps {
+  readonly prepareEnvironment: () => Promise<void>;
+  readonly env: () => Record<string, string | undefined>;
+  readonly s3: Pick<S3Client, 'send'>;
+  readonly presignPut: PutPresigner;
+  readonly now: () => number;
+}
+
+function defaultUploadLinkDeps(): WavesExportUploadLinkDeps {
+  const region = process.env.AWS_REGION;
+  return {
+    prepareEnvironment: async () => {
+      const { prepEnvironment } = await import('@/env');
+      await prepEnvironment();
+    },
+    env: () => process.env,
+    s3: new S3Client({ region }),
+    presignPut: s3PutPresigner(new S3Client(putPresignerClientConfig(region))),
+    now: () => Date.now()
+  };
+}
+
+/**
+ * The upload link: the bucket's privacy checked first, as every invocation
+ * does, refusing on any doubt; then one presigned PUT of a key no earlier
+ * link named. Logs the key and the expiry, never the link.
+ */
+export async function runWavesExportUploadLink(
+  event: WavesExportUploadLinkEvent,
+  context: WavesExportJobContext,
+  deps: WavesExportUploadLinkDeps = defaultUploadLinkDeps()
+): Promise<WavesExportUploadLink> {
+  try {
+    await deps.prepareEnvironment();
+    const env = deps.env();
+    const bucket = exportBucketOf(
+      context.invokedFunctionArn,
+      env.AWS_REGION ?? ''
+    );
+    await assertBucketPrivate(deps.s3, bucket);
+    const at = new Date(deps.now());
+    const key = uploadKeyOf(
+      exportStage(env.NODE_ENV),
+      at,
+      context.awsRequestId,
+      event.name
+    );
+    const putUrl = await deps.presignPut(bucket, key, event.seconds);
+    const expiresAt = new Date(
+      at.getTime() + event.seconds * 1000
+    ).toISOString();
+    logger.info(`[UPLOAD LINK] [${key}] [EXPIRES ${expiresAt}]`);
+    return { putUrl, key, expiresAt };
+  } catch (error) {
+    const during = 'making the waves export upload link';
+    throw serviceErrorOf(networkErrorOf(fileErrorOf(error), during), during);
+  }
 }
 
 export interface WavesExportJobLink {
