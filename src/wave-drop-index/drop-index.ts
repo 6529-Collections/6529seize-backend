@@ -36,7 +36,7 @@ import {
  *   relay-only events into 6529.io's drop tables, as 6529.io's API writes
  *   a signed drop by its author (relay-drop-applier.ts); 60% of the run
  *   reads the relays, the rest writes.
- * - WAVES_DROP_INDEX_LIVE_FROM (optional, default 2026-11-26T00:00:00Z):
+ * - WAVES_DROP_INDEX_LIVE_FROM (optional, default 2026-11-27T00:00:00Z):
  *   switch-on, as ISO 8601 UTC or Unix milliseconds. An event claimed
  *   before it is history (event_origin IMPORT): the first run reads each
  *   wave's whole log, and history is written into 6529.io's tables with no
@@ -68,7 +68,7 @@ export class DropIndexConfigError extends Error {
 
 const DEFAULT_BUDGET_MS = 25_000;
 
-export const DEFAULT_LIVE_FROM = Date.UTC(2026, 10, 26);
+export const DEFAULT_LIVE_FROM = Date.UTC(2026, 10, 27);
 
 const ISO_UTC =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]00:00)$/;

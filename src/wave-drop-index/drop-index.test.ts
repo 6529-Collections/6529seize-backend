@@ -37,7 +37,7 @@ describe('dropIndexConfig', () => {
       reader: null,
       budgetMs: 25_000,
       apply: false,
-      liveFrom: Date.parse('2026-11-26T00:00:00Z')
+      liveFrom: Date.parse('2026-11-27T00:00:00Z')
     });
     const reader = JSON.stringify({
       device_seed: TEST_DEVICE_SEED,
@@ -56,7 +56,7 @@ describe('dropIndexConfig', () => {
   });
 
   it('reads switch-on as ISO 8601 UTC or Unix ms', () => {
-    expect(DEFAULT_LIVE_FROM).toBe(Date.parse('2026-11-26T00:00:00Z'));
+    expect(DEFAULT_LIVE_FROM).toBe(Date.parse('2026-11-27T00:00:00Z'));
     for (const [raw, at] of [
       ['2026-11-27T12:30:00Z', Date.parse('2026-11-27T12:30:00Z')],
       ['2026-11-27T12:30:00.250+00:00', Date.parse('2026-11-27T12:30:00.250Z')],
