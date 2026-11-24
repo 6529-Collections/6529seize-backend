@@ -15,7 +15,8 @@ const USAGE = `Usage: rebuild:check -- [options]
   --mysqld <path>       the mysqld binary
   --source <name=spec>  repeatable; spec is a URL (a devnet), replay:<dir>,
                         record:<dir>@<url>, files: <dir>, ethereum: anvil[:<state>],
-                        relays: relay[:<dir>]
+                        relays: relay[:<dir>], replay:<dir>[+<dir>],
+                        record:<dir>@<url or relay>
   --chain-height <n>    the chain height of the mark
   --eth-block <n>       the Ethereum block of the mark`;
 

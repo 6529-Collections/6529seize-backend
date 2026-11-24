@@ -243,6 +243,62 @@ export interface Waiver {
   readonly reason: string;
 }
 
+/** An event as the relays serve it, with the grant it was published under. */
+export interface RelayItem {
+  readonly event: Readonly<Record<string, unknown>> & {
+    readonly id: string;
+    readonly wave: string;
+  };
+  readonly grant: Readonly<Record<string, unknown>>;
+}
+
+export type RelayCheckResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly reason: string };
+
+/**
+ * The area's own check of the relay events in some waves: a module export
+ * `(item: RelayItem, flags) => RelayCheckResult` that runs what the backend
+ * runs on them beyond the signed-event check the harness runs on every
+ * event (the grant, whose key may sign). `flags` are the area's manifest
+ * flags. It runs in a child under the source guard. A replayed relay
+ * recording counts for a final run only when it has events and every one
+ * passes both checks.
+ */
+export interface RelayCheck {
+  /** Wave prefixes it covers, for example `dr/`. */
+  readonly waves: readonly string[];
+  readonly run: { readonly module: string; readonly exportName: string };
+  /** `planned`: a later branch adds the module; until then it is skipped. */
+  readonly origin?: 'planned';
+}
+
+/** A role a relay grants a reader's wallet. */
+export type RelayRole = 'orderer' | 'site-reader';
+
+/** A wallet the run's relays know as a reader, with a reason. */
+export interface RelayReader {
+  /** `0x` and 40 lowercase hex digits. */
+  readonly wallet: string;
+  readonly roles?: readonly RelayRole[];
+  /** The wallet's principal (`0x` and 64 hex), for its own streams. */
+  readonly principal?: string;
+  /** Members-only waves of drops its principal may read; needs a principal. */
+  readonly memberOf?: readonly string[];
+  readonly reason: string;
+}
+
+/**
+ * What the run's relays let a reader see of the area's waves, as the chain
+ * and the relays' operator would: a wave of drops is members-only unless
+ * declared open, and a wallet has no role unless declared.
+ */
+export interface RelayAccess {
+  /** Waves of drops anyone may read. */
+  readonly openWaves?: readonly string[];
+  readonly readers?: readonly RelayReader[];
+}
+
 export interface AreaManifest {
   readonly area: string;
   /** Feature flags and settings the area's code needs for its new path. */
@@ -251,6 +307,10 @@ export interface AreaManifest {
   readonly seeds: readonly RebuildStep[];
   readonly rebuilders: readonly RebuildStep[];
   readonly probes: readonly Probe[];
+  /** Checks of the area's relay events, for replayed relay recordings. */
+  readonly relayChecks?: readonly RelayCheck[];
+  /** Who may read the area's waves on the run's relays. */
+  readonly relayAccess?: RelayAccess;
   readonly waivers?: {
     readonly routes?: readonly Waiver[];
     readonly unprobedTables?: readonly Waiver[];

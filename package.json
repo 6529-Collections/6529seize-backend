@@ -41,6 +41,7 @@
     "lint:check": "node scripts/require-6529-command.cjs && NODE_OPTIONS=--max-old-space-size=8192 eslint \"src/**/*.ts\" --max-warnings=0",
     "competition:capability": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/competitions/competition-capability.cli.ts",
     "rebuild:check": "node scripts/require-6529-command.cjs && ts-node --transpile-only -r tsconfig-paths/register src/rebuild/cli.ts",
+    "rebuild:relay-capture": "node scripts/require-6529-command.cjs && ts-node --transpile-only -r tsconfig-paths/register src/rebuild/relay-capture.cli.ts",
     "calendar:check": "node scripts/require-6529-command.cjs && node scripts/memes-calendar.mjs check",
     "ws:delivery-probe": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/ws-delivery/delivery-probe/delivery-probe.cli.ts",
     "signed-records:service-setup": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/signed-records/record-log/service-setup.cli.ts"

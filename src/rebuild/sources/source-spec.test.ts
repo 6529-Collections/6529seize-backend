@@ -34,6 +34,15 @@ describe('source specs', () => {
       kind: 'relay',
       dir: null
     });
+    expect(parseSourceArg('relays=replay:rec/relays')[1]).toEqual({
+      kind: 'replay',
+      dir: path.resolve('rec/relays')
+    });
+    expect(parseSourceArg('relays=record:rec/relays@relay')[1]).toEqual({
+      kind: 'record',
+      dir: path.resolve('rec/relays'),
+      upstream: 'relay'
+    });
     expect(parseSourceArg('relays=wss://relay.example.test')[1]).toEqual({
       kind: 'live',
       url: 'wss://relay.example.test'
@@ -47,8 +56,8 @@ describe('source specs', () => {
   it('refuses sources a name can not have', () => {
     expect(() => parseSourceArg('chain=x')).toThrow('name one of');
     expect(() => parseSourceArg('gateway=anvil')).toThrow();
-    expect(() => parseSourceArg('relays=replay:x')).toThrow(
-      "relays can't be replay"
+    expect(() => parseSourceArg('relays=anvil')).toThrow(
+      "relays can't be anvil"
     );
     expect(() => parseSourceArg('files=relay')).toThrow("files can't be relay");
     expect(() => parseSourceArg('gateway=record:dir')).toThrow('record needs');

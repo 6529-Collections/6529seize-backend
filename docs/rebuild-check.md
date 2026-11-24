@@ -38,6 +38,11 @@ test shards and fails when:
   marked `last`, or a seed that isn't last waits on one that is;
 - a probe repeats an id, has a path without a leading `/`, or a placeholder
   with no values.
+- a relay check names a module or export wrong or a test fixture, covers
+  an empty prefix or one another area's prefix overlaps; a relay reader's
+  wallet, principal, role or member wave is written wrong, a member has no
+  principal, or a reader has no reason; or an open wave is a family or its
+  stream.
 
 So a new entity needs one line in its area's manifest.
 
@@ -271,10 +276,13 @@ export const mintManifest: AreaManifest = {
     area has a step whose id is a couple of letters off, the note asks
     "did you mean <id>?".
 - `probes`: API requests whose answers must match before and after. `ignore`
-  and `unordered` paths each need a reason, which the registry checks. A
-  probe with `origin: 'planned'` and `needs: [tables]` reads tables a later
-  branch creates: runs hold it while any of them is missing from the fresh
-  schema and say so, and a final run fails on it.
+  and `unordered` paths each need a reason, which the registry checks. Mark
+  `unordered` any list the backend selects without `ORDER BY`, such as
+  follows' `actions` and the `subscribed_actions` of drops and identities:
+  MySQL may return it in another order in the second pass. A probe with
+  `origin: 'planned'` and `needs: [tables]` reads tables a later branch
+  creates: runs hold it while any of them is missing from the fresh schema
+  and say so, and a final run fails on it.
 - `waivers`: `routes` (documented GET routes no probe needs to call),
   `unprobedTables` (rebuilt tables no probe needs to read) and
   `unseededTables` (rebuilt tables that may have no rows after the seeds),
@@ -363,7 +371,7 @@ Each `--source <name>=<spec>`:
 | Source   | Specs                                                                        |
 | -------- | ---------------------------------------------------------------------------- |
 | gateway  | a devnet URL; `replay:<dir>`; `record:<dir>@<url>`                           |
-| relays   | a devnet URL; `relay` or `relay:<dir>`: the harness relay                    |
+| relays   | a devnet URL; `relay[:<dir>]`; `replay:<dir>[+<dir>]`; `record:<dir>@<url>`  |
 | ethereum | a URL; `anvil` or `anvil:<state file>`; `replay:<dir>`; `record:<dir>@<url>` |
 | files    | a directory of content-addressed files; a URL                                |
 
@@ -382,10 +390,78 @@ Each `--source <name>=<spec>`:
   nothing and counts.
 - The report shows source URLs without credentials, query values or
   key-like path segments.
-- The harness relay speaks CRP v1 over WebSocket (HELLO, AUTH, PUB, payloads,
-  SUB, HIST). It keeps what the run publishes, starting from a copy of
-  `<dir>`, and checks one copy per event id, a LOG `seq` once per wave
-  and payloads before the records that name them. It checks no signatures.
+- `relay` or `relay:<dir>` is the harness relay. It speaks CRP v1 over
+  WebSocket (HELLO, AUTH, PUB, payloads, SUB, HIST) and keeps what the run
+  publishes, starting from a copy of `<dir>`. It checks one copy per event
+  id, a LOG `seq` once per wave and payloads before the records that name
+  them. It checks no signatures. As on the relays, each wave has its own
+  log, and a family of streams (`dv/0x..`) shares its family's (`dv`);
+  rseq counts per log from 1. `SUB` replays each wave (`*`: every log)
+  after its `since` cursor of this epoch, or from the start with
+  `from_start`, ends each with `EOSE` at that wave's head, then sends new
+  events live. `HIST` pages a log or one stream of a family; without
+  `after` it answers the newest page. A CHALLENGE lives five minutes.
+- It reads as the relays do (crates/wave-relay with the wave-inbox
+  extension), from what the areas declare in `relayAccess`:
+  - a wave of drops is read by anyone when an area lists it in
+    `openWaves`; any other is members-only, read by the `site-reader` or
+    by a principal its `readers` entry makes a member (`memberOf`);
+  - the `ps` family is public; the other families need an AUTHed session
+    whose grant hasn't expired or been revoked: `pv` streams by their
+    owner's principal, or by a wallet while the owner's newest `reader`
+    record for it (refs `["reader", <wallet>]`; a body of `{}` or
+    `{"until": <ms>}` grants, none revokes) grants it and hasn't run out;
+    the rest by the `orderer` or `site-reader`, and `bk` streams also by
+    their owner;
+  - a wallet has the roles, principal and memberships its `readers` entry
+    gives it, and none otherwise; payloads need an AUTHed session;
+  - a named wave a session may not read ends at once (`EOSE` rseq 0),
+    under `*` it is passed over, and `HIST` of it answers `ERR`.
+- Relays can be recorded and replayed too:
+  - `record:<dir>@<relay url>` proxies the run's CRP sessions to a relay;
+    `record:<dir>@relay` records a fresh harness relay on loopback. When
+    the run ends, `<dir>` holds what the run saw: `events.jsonl` (each
+    event with the relay's order, the other fields the relay sent with it,
+    and `recorded_at`, the time the run first saw it), `payloads/`,
+    `relay.json` (the head), `reads.json` (the waves the run read), and a
+    fresh `PROVENANCE.json` naming how it was made. No file names the
+    relay's address.
+  - `replay:<dir>` serves the recording read-only, by the same read rules;
+    `replay:<a>+<b>` merges several (an area's each) for the run. A PUB
+    that isn't a recorded event under its recorded grant (compared as
+    canonical JSON), a payload or a read of a wave the recording doesn't
+    hold, a recorded event that fails a check, and a payload that doesn't
+    hash to its name all fail the run. AUTH is not compared. EV frames and
+    HIST items carry the recorded `recorded_at`, so area code can use the
+    time its events were first seen.
+  - Every recorded event goes through two checks, in a child under the
+    source guard: the signed-event check the relays run on any event (the
+    kind and its version, the body against its hash and size, the id
+    recomputed from the fields, and the Ed25519 signature by the event's
+    device key), then its area's check. A replayed recording counts for
+    `--final` only when it has events and every one passes both.
+    `PROVENANCE.json`'s `made_by` and `devnet_scenario` are labels the
+    report shows; they never make a recording final.
+  - `6529 run rebuild:relay-capture` records a whole relay without a run:
+    every log it serves from its start (SUB `*`, then HIST to each log's
+    end) and every payload its events name. It takes `--relay <url>`,
+    `--dir <dir>`, `--net <name>`, `--made-by <text>` and, for a devnet's
+    recording, `--devnet-scenario <name>`. Its `reads.json` holds `*`, so
+    any run's reads replay. It needs Node and this repository, not MySQL: a
+    devnet's operator runs it next to the relay.
+  - An area declares its checks in its manifest's `relayChecks`: the wave
+    prefixes each covers and a module export
+    `(item: RelayItem, flags) => RelayCheckResult` that runs what the
+    backend checks beyond the signed event (the grant, whose key may sign),
+    with the area's `flags`. The check runs with no database and no
+    endpoint, so it can't ask the chain or the API whose key may sign: it
+    proves the key's binding to the author offline, from the grant the
+    event came with. The registry refuses a module or export written
+    wrong, a test fixture, an empty prefix, and a prefix two areas share;
+    the registry test fails on a module not in the tree, unless planned. Seeds
+    that publish to the relays must publish the same event and grant every
+    run (fixed keys, clocks and randomness), so a replay accepts their PUBs
+    as the recorded ones.
 - `anvil` starts a local anvil (chain id 1) behind a shim that answers
   `alchemy_getAssetTransfers` from its logs and blocks. Children get the
   shim as `ETHEREUM_RPC_URL` and `ALCHEMY_BASE_URL`. The Alchemy NFT API and
