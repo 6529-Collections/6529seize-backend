@@ -89,6 +89,11 @@ const ID_MAX = 100;
 /** drops.title is varchar(250). */
 const TITLE_MAX = 250;
 
+/** A text's length as MySQL's utf8mb4 columns count it: code points. */
+function characters(text: string): number {
+  return Array.from(text).length;
+}
+
 type Json = Record<string, unknown>;
 
 function fail(reason: string): never {
@@ -103,7 +108,11 @@ function object(value: unknown, what: string): Json {
 }
 
 function id(value: unknown, what: string): string {
-  if (typeof value !== 'string' || !value.length || value.length > ID_MAX) {
+  if (
+    typeof value !== 'string' ||
+    !value.length ||
+    characters(value) > ID_MAX
+  ) {
     fail(`${what} is not an id`);
   }
   return value;
@@ -170,7 +179,7 @@ export function dropArchiveRows(
   const title = line.title;
   if (
     !isNullableString(title) ||
-    (title !== null && title.length > TITLE_MAX)
+    (title !== null && characters(title) > TITLE_MAX)
   ) {
     fail('title is not a title');
   }

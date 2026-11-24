@@ -61,6 +61,19 @@ describe('dropArchiveRows', () => {
     ).toBe(-3);
   });
 
+  it('counts a title in characters, as MySQL does', () => {
+    const wave = '\u{1F30A}';
+    expect(
+      dropArchiveRows(
+        { ...firstLine(), title: wave.repeat(250) },
+        FIXTURE_WAVES.a
+      ).drop.title
+    ).toBe(wave.repeat(250));
+    expect(reasonOf({ ...firstLine(), title: wave.repeat(251) })).toBe(
+      'title is not a title'
+    );
+  });
+
   it('refuses a line that is not a v1 drop of the wave', () => {
     const line = firstLine();
     expect(reasonOf(null)).toBe('the line is not an object');
