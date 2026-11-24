@@ -49,8 +49,10 @@ Options:
   --both-metric       count TDH plus xTDH as a clause the chain evaluates
                       (the snapshot tooling's --both-metric), so such groups
                       are not written as their members
-  --resume            keep each wave's drops an earlier run of this export
-                      finished (with --stages drops after a stopped run)
+  --resume            keep each wave's drops file an earlier run into this
+                      DIR finished, and nothing else. After a stopped run,
+                      rerun from the stage it stopped in, into the same DIR:
+                      --stages <that stage and the later ones> --resume
   --allow-failed-waves
                       exit 0 even when some waves could not be read (they
                       are left out and listed in export.json); without it
