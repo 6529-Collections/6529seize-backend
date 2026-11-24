@@ -16,7 +16,10 @@ import {
   Json,
   WavesExportSource
 } from './waves-export.types';
-import { WavesExportUsageError } from './waves-export.errors';
+import {
+  WavesExportStoppedError,
+  WavesExportUsageError
+} from './waves-export.errors';
 import type { ReplicaLagRecord } from './waves-export.replica-lag';
 import { RawDirectory } from './waves-export.writer';
 
@@ -798,5 +801,93 @@ describe('export helpers', () => {
     });
     expect(most).toBe(2);
     expect(done.sort()).toEqual([1, 2, 3, 4, 5]);
+  });
+});
+
+describe('WavesExport stopped by its caller in the drops stage', () => {
+  const WAVES = ['w-1', 'w-2', 'w-3', 'w-4', 'w-5'];
+
+  /** Five waves of two drops each, the first signed. */
+  class FiveWaves extends FakeSource {
+    readonly dropsRead: string[] = [];
+
+    async listWaves() {
+      return WAVES.map((id) => wave(id, null));
+    }
+
+    async waveConfiguration(row: ExportWaveRow) {
+      return configuration(row.id, null, null, null);
+    }
+
+    async *wavePagesOfDrops(waveId: string) {
+      this.dropsRead.push(waveId);
+      yield [drop(`${waveId}-b`, 2, true), drop(`${waveId}-a`, 1, false)];
+    }
+  }
+
+  const exportOf = (
+    out: string,
+    source: FakeSource,
+    stages: readonly (typeof WAVES_EXPORT_STAGES)[number][],
+    stopBeforeWave?: () => boolean
+  ) =>
+    new WavesExport(source, {
+      raw: new RawDirectory(path.join(out, 'raw')),
+      stages,
+      freezeMs: T_W,
+      exporterRevision: 'a'.repeat(40),
+      waveIds: null,
+      dropPageSize: 2,
+      concurrency: 2,
+      bothMetric: false,
+      resumeDrops: true,
+      stopBeforeWave,
+      retryDelayMs: 0,
+      log: () => undefined
+    }).run();
+
+  it('finishes the waves it started, writes no export.json, and a resumed run reads only the rest', async () => {
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), 'waves-export-stop-'));
+    await exportOf(out, new FiveWaves(), ['waves']);
+    fs.rmSync(path.join(out, 'raw', 'export.json'));
+    const first = new FiveWaves();
+    let asked = 0;
+    const stopped = exportOf(out, first, ['drops'], () => ++asked > 2);
+    await expect(stopped).rejects.toThrow(WavesExportStoppedError);
+    await expect(stopped).rejects.toMatchObject({ wavesLeft: 3, waves: 5 });
+    expect(first.dropsRead).toEqual(['w-1', 'w-2']);
+    const raw = path.join(out, 'raw');
+    // Each wave it read is whole: its drops and its signed file.
+    for (const id of ['w-1', 'w-2']) {
+      expect(readLines(path.join(raw, 'drops', `${id}.jsonl.gz`))).toHaveLength(
+        2
+      );
+      expect(
+        readLines(path.join(raw, 'signed', `${id}.jsonl.gz`))
+      ).toHaveLength(1);
+    }
+    expect(fs.readdirSync(path.join(raw, 'drops')).sort()).toEqual([
+      'w-1.jsonl.gz',
+      'w-2.jsonl.gz'
+    ]);
+    expect(fs.existsSync(path.join(raw, 'export.json'))).toBe(false);
+    // The stopped run is in the run log all the same.
+    expect(
+      JSON.parse(
+        fs.readFileSync(path.join(raw, 'export_runs.json'), 'utf8')
+      ).map((run: { stages: string[] }) => run.stages.join(','))
+    ).toEqual(['waves', 'drops']);
+    const second = new FiveWaves();
+    const summary = await exportOf(out, second, ['drops'], () => false);
+    expect(second.dropsRead.sort()).toEqual(['w-3', 'w-4', 'w-5']);
+    expect(summary.counts).toMatchObject({ drops: 6, drop_waves_kept: 2 });
+    expect(fs.readdirSync(path.join(raw, 'drops'))).toHaveLength(5);
+  });
+
+  it('never stops a run that has no stopBeforeWave', async () => {
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), 'waves-export-stop-'));
+    const source = new FiveWaves();
+    await exportOf(out, source, ['waves', 'drops']);
+    expect(source.dropsRead.sort()).toEqual(WAVES);
   });
 });
