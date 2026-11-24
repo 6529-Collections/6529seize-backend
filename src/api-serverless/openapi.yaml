@@ -29235,7 +29235,14 @@ components:
         - ended_at
         - cancelled_at
         - archived_at
+        - stays_on_site
       properties:
+        stays_on_site:
+          type: boolean
+          description: >-
+            The decision's wave's stays_on_site: true when the wave, and with
+            it this decision, stays on 6529.io; false when it moves to the
+            6529 chain.
         main_stage_trait_rules:
           type: array
           description: >-
@@ -35873,7 +35880,13 @@ components:
         - created_by
         - visible
         - is_private
+        - stays_on_site
       properties:
+        stays_on_site:
+          type: boolean
+          description: >-
+            True when the group stays on 6529.io: it is hidden or private.
+            False when it moves to the 6529 chain.
         id:
           type: string
         name:
@@ -44332,7 +44345,16 @@ components:
         - pauses
         - pinned
         - identity_wave
+        - stays_on_site
       properties:
+        stays_on_site:
+          type: boolean
+          description: >-
+            True when the wave stays on 6529.io, served from its database as
+            today: a direct message, the records wave, a members-only wave, or a
+            wave that uses a hidden or private group. False when the wave moves
+            to the 6529 chain. After the switch-on, a wave the chain has taken
+            over is false.
         id:
           description: The ID of the wave
           type: string
@@ -45031,7 +45053,16 @@ components:
         - forbid_negative_votes
         - pinned
         - identity_wave
+        - stays_on_site
       properties:
+        stays_on_site:
+          type: boolean
+          description: >-
+            True when the wave stays on 6529.io, served from its database as
+            today: a direct message, the records wave, a members-only wave, or a
+            wave that uses a hidden or private group. False when the wave moves
+            to the 6529 chain. After the switch-on, a wave the chain has taken
+            over is false.
         is_direct_message:
           type: boolean
           description: Whether conversation links should open in Messages.

@@ -28,6 +28,10 @@ import { HttpFile } from '../http/http';
 
 export class ApiWave {
     /**
+    * True when the wave stays on 6529.io, served from its database as today: a direct message, the records wave, a members-only wave, or a wave that uses a hidden or private group. False when the wave moves to the 6529 chain. After the switch-on, a wave the chain has taken over is false.
+    */
+    'stays_on_site': boolean;
+    /**
     * The ID of the wave
     */
     'id': string;
@@ -71,6 +75,12 @@ export class ApiWave {
     static readonly mapping: {[index: string]: string} | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
+        {
+            "name": "stays_on_site",
+            "baseName": "stays_on_site",
+            "type": "boolean",
+            "format": ""
+        },
         {
             "name": "id",
             "baseName": "id",

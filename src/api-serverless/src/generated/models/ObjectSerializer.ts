@@ -1232,7 +1232,7 @@ import { ApiCommunityMetric } from '../models/ApiCommunityMetric';
 import { ApiCommunityMetricSample } from '../models/ApiCommunityMetricSample';
 import { ApiCommunityMetrics } from '../models/ApiCommunityMetrics';
 import { ApiCommunityMetricsSeries } from '../models/ApiCommunityMetricsSeries';
-import { ApiCompetition                         } from '../models/ApiCompetition';
+import { ApiCompetition                          } from '../models/ApiCompetition';
 import { ApiCompetitionActionRequest } from '../models/ApiCompetitionActionRequest';
 import { ApiCompetitionAward } from '../models/ApiCompetitionAward';
 import { ApiCompetitionAwardPage } from '../models/ApiCompetitionAwardPage';
@@ -1886,7 +1886,7 @@ import { ApiWaveMentionSearchResult } from '../models/ApiWaveMentionSearchResult
 import { ApiWaveMetadata } from '../models/ApiWaveMetadata';
 import { ApiWaveMetadataType } from '../models/ApiWaveMetadataType';
 import { ApiWaveMetrics } from '../models/ApiWaveMetrics';
-import { ApiWaveMin                            } from '../models/ApiWaveMin';
+import { ApiWaveMin                             } from '../models/ApiWaveMin';
 import { ApiWaveNotificationPreferences } from '../models/ApiWaveNotificationPreferences';
 import { ApiWaveOutcome        } from '../models/ApiWaveOutcome';
 import { ApiWaveOutcomeCredit } from '../models/ApiWaveOutcomeCredit';
