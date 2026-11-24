@@ -174,33 +174,24 @@ export class BackendWavesExportSource implements WavesExportSource {
     readonly recordsWaveId: string;
   }): Promise<ExportWaveRow[]> {
     const rows = await sqlExecutor.execute<
-      Omit<ExportWaveRow, 'stay_reasons'> &
-        Record<StayReason | 'under_direct_message', unknown>
+      Omit<ExportWaveRow, 'stay_reasons'> & Record<StayReason, unknown>
     >(
       // The submit and vote groups of a wave's original decision come from
       // the legacy view, as every other wave read takes them. The reasons
       // to stay are the shared rule's SQL form (src/waves-scope), each a
-      // 0/1 column named for its reason.
+      // 0/1 column named for its reason, before the switch-on: a subwave
+      // stays when any wave above it stays (parent_stays).
       `select w.id, w.parent_wave_id, w.visibility_group_id, w.admin_group_id,
           w.chat_group_id, lw.participation_group_id, lw.voting_group_id,
-          ${STAY_REASONS.map((reason) => `s.${reason}`).join(', ')},
-          coalesce(p.is_direct_message, 0) as under_direct_message
+          ${STAY_REASONS.map((reason) => `s.${reason}`).join(', ')}
         from ${WAVES_TABLE} w
         join (${wavesScopeSql('sw', 'recordsWaveId').select}) s on s.id = w.id
-        left join ${legacyGetView(WAVES_TABLE)} lw on lw.id = w.id
-        left join ${WAVES_TABLE} p on p.id = w.parent_wave_id`,
+        left join ${legacyGetView(WAVES_TABLE)} lw on lw.id = w.id`,
       { recordsWaveId: scope.recordsWaveId }
     );
     return rows
       .map((row) => {
         const reasons = STAY_REASONS.filter((reason) => isSet(row[reason]));
-        // DMs stay, as before: a wave under one stays with it.
-        if (
-          isSet(row.under_direct_message) &&
-          !reasons.includes(StayReason.DIRECT_MESSAGE)
-        ) {
-          reasons.unshift(StayReason.DIRECT_MESSAGE);
-        }
         return {
           id: row.id,
           stay_reasons: reasons,

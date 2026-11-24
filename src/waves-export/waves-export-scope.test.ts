@@ -82,6 +82,25 @@ describe('which waves the export leaves out (src/waves-scope)', () => {
     ).toMatchObject({ stays: false, reasons: [] });
   });
 
+  it('keeps a subwave when any wave above it stays, up to the root', () => {
+    const members = wave('w-members', { visibility_group_id: 'g-public' });
+    const dm = wave('w-dm', { is_direct_message: true });
+    const between = wave('w-between', { parent: dm });
+    expect(scope({ parent: members }, 'w-sub')).toMatchObject({
+      stays: true,
+      reasons: [StayReason.PARENT_STAYS]
+    });
+    expect(scope({ parent: between }, 'w-deep').reasons).toEqual([
+      StayReason.PARENT_STAYS
+    ]);
+    // A direct message keeps its own reason; a public subwave of a public
+    // wave moves.
+    expect(scope({ is_direct_message: true, parent: members }).reasons).toEqual(
+      [StayReason.DIRECT_MESSAGE, StayReason.PARENT_STAYS]
+    );
+    expect(scope({ parent: wave('w-public') }, 'w-sub2').stays).toBe(false);
+  });
+
   it('keeps a hidden or private group on 6529.io', () => {
     expect(groupStays({ visible: true, is_private: false })).toBe(false);
     expect(groupStays({ visible: false, is_private: false })).toBe(true);
@@ -95,5 +114,7 @@ describe('which waves the export leaves out (src/waves-scope)', () => {
     }
     expect(select).toContain(':recordsWaveId');
     expect(select).toContain('from waves sw');
+    // parent_stays walks up to the root.
+    expect(select).toContain('with recursive');
   });
 });

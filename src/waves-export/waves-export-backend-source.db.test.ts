@@ -209,8 +209,8 @@ describeWithSeed(
         [SUBWAVE.id, []],
         [MEMBERS_WAVE.id, ['members_only', 'hidden_or_private_group']],
         [DM_WAVE.id, ['direct_message']],
-        // Under a direct message: it stays with it, as before.
-        [UNDER_DM.id, ['direct_message']],
+        // Under a direct message: it stays as its parent does.
+        [UNDER_DM.id, ['parent_stays']],
         [DECISION_WAVE.id, []],
         [HIDDEN_ADMIN_WAVE.id, ['hidden_or_private_group']],
         [RECORDS_WAVE.id, ['records_wave']]

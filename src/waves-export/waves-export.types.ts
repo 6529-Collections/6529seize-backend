@@ -20,7 +20,7 @@ export interface ExportWaveRow {
   readonly id: string;
   /**
    * The reasons it stays, in STAY_REASONS order; empty when it moves.
-   * A wave under a direct message stays as `direct_message` too.
+   * A subwave under a wave that stays stays too (`parent_stays`).
    */
   readonly stay_reasons: readonly StayReason[];
   readonly parent_wave_id: string | null;

@@ -6,13 +6,16 @@
  * This file is self-contained (no imports): the waves export copies it byte
  * for byte, so the export and this site never disagree about a wave.
  *
- * A wave stays, whole, when at least one reason holds:
+ * Before the switch-on, a wave stays, whole, when at least one reason holds:
  * - direct_message: waves.is_direct_message;
  * - records_wave: waves.id is the configured SIGNED_RECORDS_WAVE_ID (by id,
  *   never by its group);
  * - members_only: waves.visibility_group_id is set;
  * - hidden_or_private_group: a group the wave uses is hidden
- *   (community_groups.visible = false) or private (is_private = true).
+ *   (community_groups.visible = false) or private (is_private = true);
+ * - parent_stays: the wave is a subwave (waves.parent_wave_id) and a wave
+ *   above it, walked up to the root, has one of the reasons above, so a
+ *   whole tree of waves stays together.
  * Every other wave moves. A group stays when it is hidden or private.
  *
  * The groups a wave uses (the walk):
@@ -30,28 +33,21 @@
  * are never read; the hub configs and the decisions' configs hold those
  * groups. A group id that matches no community_groups row is ignored.
  *
- * A subwave's parent: see SUBWAVE_STAYS_WITH_PARENT.
- *
- * After the switch-on, a wave the chain index has mapped (a LegacyId, or a
- * chain id for the wave) has moved, whatever the predicate says; a wave the
- * chain index has not mapped keeps the predicate.
+ * After the switch-on, a wave stays unless the chain holds it: the chain
+ * index names it by its LegacyId, or it has a chain id (a wave made on the
+ * chain keeps its chain id as its 6529.io id). Direct messages and the
+ * records wave stay always. Until the chain index has finished its first
+ * full read, a wave stays unless it was made on the chain. A wave that
+ * stays after the switch-on also has the reason not_on_chain.
  */
-
-/**
- * The subwave rule, in one place. A subwave has waves.parent_wave_id set
- * (subwaves are one level deep). While this is false the parent is not
- * walked: a subwave stays or moves on its own reasons, so a public subwave
- * of a members-only wave moves. Set to true and a subwave also stays when
- * its parent does, with its parent's reasons added to its own. Both the
- * TypeScript and the SQL forms read this constant.
- */
-export const SUBWAVE_STAYS_WITH_PARENT = false;
 
 export enum StayReason {
   MEMBERS_ONLY = 'members_only',
   HIDDEN_OR_PRIVATE_GROUP = 'hidden_or_private_group',
   DIRECT_MESSAGE = 'direct_message',
-  RECORDS_WAVE = 'records_wave'
+  RECORDS_WAVE = 'records_wave',
+  PARENT_STAYS = 'parent_stays',
+  NOT_ON_CHAIN = 'not_on_chain'
 }
 
 /** The order reasons are reported in. */
@@ -59,11 +55,38 @@ export const STAY_REASONS: readonly StayReason[] = [
   StayReason.DIRECT_MESSAGE,
   StayReason.RECORDS_WAVE,
   StayReason.MEMBERS_ONLY,
+  StayReason.HIDDEN_OR_PRIVATE_GROUP,
+  StayReason.PARENT_STAYS,
+  StayReason.NOT_ON_CHAIN
+];
+
+/** The reasons a wave has of its own, before the switch-on. */
+const OWN_REASONS: readonly StayReason[] = [
+  StayReason.DIRECT_MESSAGE,
+  StayReason.RECORDS_WAVE,
+  StayReason.MEMBERS_ONLY,
   StayReason.HIDDEN_OR_PRIVATE_GROUP
+];
+
+/** The reasons that keep a wave on 6529.io after the switch-on too. */
+const ALWAYS_STAYS: readonly StayReason[] = [
+  StayReason.DIRECT_MESSAGE,
+  StayReason.RECORDS_WAVE
 ];
 
 /** The environment variable that names the records wave. */
 export const RECORDS_WAVE_ID_ENV = 'SIGNED_RECORDS_WAVE_ID';
+
+/** How far up the walk to the root goes, against a loop in the data. */
+export const MAX_WAVE_DEPTH = 64;
+
+/** A chain id, as a wave made on the chain has it for its 6529.io id. */
+const CHAIN_WAVE_ID = /^0x[0-9a-f]{64}$/i;
+
+/** Whether this 6529.io wave id is a chain id (a wave made on the chain). */
+export function isChainWaveId(id: string): boolean {
+  return CHAIN_WAVE_ID.test(id);
+}
 
 export interface ScopeGroup {
   readonly id: string;
@@ -91,27 +114,40 @@ export interface ScopeWave {
   readonly curation_group_ids: readonly string[];
   /** participation and voting $.group_id of every decision of the wave. */
   readonly decision_group_ids: readonly (string | null)[];
-  /** The parent wave of a subwave; read only under the subwave rule. */
+  /** The wave above a subwave (waves.parent_wave_id), with its own parent. */
   readonly parent?: ScopeWave | null;
 }
 
+/**
+ * Where the move to the 6529 chain stands, for one wave. Before the
+ * switch-on the rule decides. After it, `held` is whether the chain index
+ * holds the wave, or null until the index has finished its first full read.
+ */
+export type ChainState =
+  | { readonly switchedOn: false }
+  | { readonly switchedOn: true; readonly held: boolean | null };
+
+export const BEFORE_SWITCH_ON: ChainState = { switchedOn: false };
+
 export interface WaveScope {
   readonly stays: boolean;
-  /** Every reason that holds, in STAY_REASONS order; empty when it moves. */
+  /**
+   * Every reason that holds, in STAY_REASONS order. After the switch-on a
+   * moved wave has none, and a staying wave has not_on_chain with the
+   * rule's reasons.
+   */
   readonly reasons: readonly StayReason[];
   /** False when SIGNED_RECORDS_WAVE_ID is unset: no wave is records_wave. */
   readonly recordsWaveConfigured: boolean;
-  /** True when the chain index has mapped the wave (after the switch-on). */
+  /** True when the wave has moved after the switch-on. */
   readonly movedOnChain: boolean;
 }
 
 export interface ScopeOptions {
   /** The configured records wave id, or null when unset. */
   readonly recordsWaveId: string | null;
-  /** After the switch-on: whether the chain index has mapped the wave. */
-  readonly chainMapped?: boolean;
-  /** The subwave rule; SUBWAVE_STAYS_WITH_PARENT unless a test sets it. */
-  readonly subwaveStaysWithParent?: boolean;
+  /** The chain's state for the wave; BEFORE_SWITCH_ON when left out. */
+  readonly chain?: ChainState;
 }
 
 /** The distinct group ids a wave uses (not its visibility group). */
@@ -126,20 +162,26 @@ export function walkedGroupIds(wave: ScopeWave): string[] {
   return Array.from(new Set(ids));
 }
 
+/** The waves above `wave`, nearest first, up to the root (no loops). */
+export function ancestorsOf(wave: ScopeWave): ScopeWave[] {
+  const ancestors: ScopeWave[] = [];
+  const seen = new Set<string>([wave.id]);
+  let next = wave.parent ?? null;
+  while (next && !seen.has(next.id) && ancestors.length < MAX_WAVE_DEPTH) {
+    ancestors.push(next);
+    seen.add(next.id);
+    next = next.parent ?? null;
+  }
+  return ancestors;
+}
+
 /**
- * The group ids staysOnSite reads for this wave: the walk, and under the
- * subwave rule its parent's walk too.
+ * The group ids staysOnSite reads for this wave: the walk of the wave and
+ * of every wave above it.
  */
-export function scopeGroupIds(
-  wave: ScopeWave,
-  subwaveStaysWithParent: boolean = SUBWAVE_STAYS_WITH_PARENT
-): string[] {
-  const parent = subwaveStaysWithParent && wave.parent ? wave.parent : null;
+export function scopeGroupIds(wave: ScopeWave): string[] {
   return Array.from(
-    new Set([
-      ...walkedGroupIds(wave),
-      ...(parent ? walkedGroupIds(parent) : [])
-    ])
+    new Set([wave, ...ancestorsOf(wave)].flatMap(walkedGroupIds))
   );
 }
 
@@ -148,7 +190,7 @@ type GroupsById = ReadonlyMap<
   Pick<ScopeGroup, 'visible' | 'is_private'>
 >;
 
-/** Which reasons hold for the wave on its own. */
+/** Whether each of the wave's own reasons holds. */
 function ownReasons(
   wave: ScopeWave,
   groupsById: GroupsById,
@@ -161,7 +203,9 @@ function ownReasons(
     [StayReason.HIDDEN_OR_PRIVATE_GROUP]: walkedGroupIds(wave).some((id) => {
       const group = groupsById.get(id);
       return group !== undefined && groupStays(group);
-    })
+    }),
+    [StayReason.PARENT_STAYS]: false,
+    [StayReason.NOT_ON_CHAIN]: false
   };
 }
 
@@ -175,22 +219,28 @@ export function staysOnSite(
   options: ScopeOptions
 ): WaveScope {
   const recordsWaveConfigured = !!options.recordsWaveId;
-  if (options.chainMapped) {
-    return {
-      stays: false,
-      reasons: [],
-      recordsWaveConfigured,
-      movedOnChain: true
-    };
+  const holds = ownReasons(wave, groupsById, options.recordsWaveId);
+  holds[StayReason.PARENT_STAYS] = ancestorsOf(wave).some((ancestor) => {
+    const above = ownReasons(ancestor, groupsById, options.recordsWaveId);
+    return OWN_REASONS.some((reason) => above[reason]);
+  });
+  const chain = options.chain ?? BEFORE_SWITCH_ON;
+  if (chain.switchedOn) {
+    const alwaysStays = ALWAYS_STAYS.some((reason) => holds[reason]);
+    const moved =
+      !alwaysStays &&
+      (chain.held === null ? isChainWaveId(wave.id) : chain.held);
+    if (moved) {
+      return {
+        stays: false,
+        reasons: [],
+        recordsWaveConfigured,
+        movedOnChain: true
+      };
+    }
+    holds[StayReason.NOT_ON_CHAIN] = true;
   }
-  const own = ownReasons(wave, groupsById, options.recordsWaveId);
-  const parent =
-    (options.subwaveStaysWithParent ?? SUBWAVE_STAYS_WITH_PARENT) && wave.parent
-      ? ownReasons(wave.parent, groupsById, options.recordsWaveId)
-      : null;
-  const reasons = STAY_REASONS.filter(
-    (reason) => own[reason] || (parent?.[reason] ?? false)
-  );
+  const reasons = STAY_REASONS.filter((reason) => holds[reason]);
   return {
     stays: reasons.length > 0,
     reasons,
@@ -250,11 +300,17 @@ function waveRowGroupIdsSql(alias: string): string[] {
   ];
 }
 
-/** Each reason, on its own, as a 0/1 expression over the waves row `alias`. */
+/** Each own reason as a 0/1 expression over the waves row `alias`. */
 function ownReasonsSql(
   alias: string,
   recordsParam: string
-): Record<StayReason, string> {
+): Record<
+  | StayReason.DIRECT_MESSAGE
+  | StayReason.RECORDS_WAVE
+  | StayReason.MEMBERS_ONLY
+  | StayReason.HIDDEN_OR_PRIVATE_GROUP,
+  string
+> {
   const g = `${alias}_g`;
   const c = `${alias}_c`;
   const d = `${alias}_d`;
@@ -268,12 +324,44 @@ function ownReasonsSql(
   };
 }
 
+/**
+ * parent_stays in SQL for the waves row `alias`: a wave above it, walked up
+ * to the root (at most MAX_WAVE_DEPTH steps), has an own reason. A
+ * recursive common table expression that reads the outer row (MySQL 8.0.14
+ * and later).
+ */
+function parentStaysSql(alias: string, recordsParam: string): string {
+  const anc = `${alias}_anc`;
+  const step = `${alias}_up`;
+  const above = `${alias}_aw`;
+  const own = ownReasonsSql(above, recordsParam);
+  return `(${alias}.parent_wave_id is not null and exists (with recursive ${anc} (id, parent_wave_id, depth) as (select ${step}.id, ${step}.parent_wave_id, 1 from ${SCOPE_TABLES.waves} ${step} where ${step}.id = ${alias}.parent_wave_id union all select ${step}.id, ${step}.parent_wave_id, ${anc}.depth + 1 from ${SCOPE_TABLES.waves} ${step} join ${anc} on ${step}.id = ${anc}.parent_wave_id where ${anc}.depth < ${MAX_WAVE_DEPTH} and ${step}.id <> ${alias}.id) select 1 from ${anc} join ${SCOPE_TABLES.waves} ${above} on ${above}.id = ${anc}.id where ${OWN_REASONS.map((reason) => own[reason as keyof typeof own]).join(' or ')}))`;
+}
+
+/**
+ * The chain's state for the SQL form. Before the switch-on the rule decides.
+ * After it, `heldSql(idSql)` is the condition "the chain index holds the
+ * wave whose 6529.io id is idSql", or null until the index has finished its
+ * first full read.
+ */
+export type ChainStateSql =
+  | { readonly switchedOn: false }
+  | {
+      readonly switchedOn: true;
+      readonly heldSql: ((idSql: string) => string) | null;
+    };
+
+/** "The 6529.io id in idSql is a chain id", in SQL. */
+export function chainWaveIdSql(idSql: string): string {
+  return `(${idSql} regexp '^0x[0-9a-fA-F]{64}$')`;
+}
+
 export interface WavesScopeSql {
   /** Each reason as a 0/1 expression over the waves row `alias`. */
   readonly reasons: Readonly<Record<StayReason, string>>;
-  /** The OR of the reasons: the wave stays. */
+  /** The wave stays on 6529.io. */
   readonly stays: string;
-  /** For each wave: id, the four reasons and stays_on_site. */
+  /** For each wave: id, every reason and stays_on_site. */
   readonly select: string;
 }
 
@@ -285,18 +373,27 @@ export interface WavesScopeSql {
 export function wavesScopeSql(
   alias = 'w',
   recordsParam = 'recordsWaveId',
-  subwaveStaysWithParent: boolean = SUBWAVE_STAYS_WITH_PARENT
+  chain: ChainStateSql = { switchedOn: false }
 ): WavesScopeSql {
   const own = ownReasonsSql(alias, recordsParam);
-  const p = `${alias}_p`;
-  const parent = ownReasonsSql(p, recordsParam);
-  const reasons = {} as Record<StayReason, string>;
-  for (const reason of STAY_REASONS)
-    reasons[reason] = subwaveStaysWithParent
-      ? `(${own[reason]} or exists (select 1 from ${SCOPE_TABLES.waves} ${p} where ${p}.id = ${alias}.parent_wave_id and ${parent[reason]}))`
-      : own[reason];
-  const stays = `(${STAY_REASONS.map((reason) => reasons[reason]).join(' or ')})`;
-  const select = `select ${alias}.id as id, ${STAY_REASONS.map((reason) => `${reasons[reason]} as ${reason}`).join(', ')}, ${stays} as stays_on_site from ${SCOPE_TABLES.waves} ${alias}`;
+  const parentStays = parentStaysSql(alias, recordsParam);
+  const before = `(${[...OWN_REASONS.map((reason) => own[reason as keyof typeof own]), parentStays].join(' or ')})`;
+  const alwaysStays = `(${own[StayReason.DIRECT_MESSAGE]} or ${own[StayReason.RECORDS_WAVE]})`;
+  const moved = chain.switchedOn
+    ? `(not ${alwaysStays} and ${chain.heldSql ? chain.heldSql(`${alias}.id`) : chainWaveIdSql(`${alias}.id`)})`
+    : null;
+  const reasons: Record<StayReason, string> = {
+    ...own,
+    [StayReason.PARENT_STAYS]: parentStays,
+    [StayReason.NOT_ON_CHAIN]: moved ? `(not ${moved})` : '(0 = 1)'
+  };
+  const stays = moved ? `(not ${moved})` : before;
+  // After the switch-on a moved wave reports no reason.
+  const reported = (reason: StayReason) =>
+    moved && reason !== StayReason.NOT_ON_CHAIN
+      ? `(${reasons[reason]} and not ${moved})`
+      : reasons[reason];
+  const select = `select ${alias}.id as id, ${STAY_REASONS.map((reason) => `${reported(reason)} as ${reason}`).join(', ')}, ${stays} as stays_on_site from ${SCOPE_TABLES.waves} ${alias}`;
   return { reasons, stays, select };
 }
 
@@ -328,7 +425,7 @@ export function movingWaveUsesGroupsSql(
   alias = 'w',
   recordsParam = 'recordsWaveId',
   groupsParam = 'groupIds',
-  subwaveStaysWithParent: boolean = SUBWAVE_STAYS_WITH_PARENT
+  chain: ChainStateSql = { switchedOn: false }
 ): string {
-  return `(not ${wavesScopeSql(alias, recordsParam, subwaveStaysWithParent).stays} and ${waveUsesGroupsSql(alias, groupsParam)})`;
+  return `(${waveUsesGroupsSql(alias, groupsParam)} and not ${wavesScopeSql(alias, recordsParam, chain).stays})`;
 }

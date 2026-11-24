@@ -134,10 +134,10 @@ class FakeSource implements WavesExportSource {
   readonly curationCalls: string[][] = [];
 
   /**
-   * Three waves that move and one the backend can't read; five that stay on
-   * 6529.io, one for each reason and one with two (the backend's reasons are
-   * the shared rule's); and a public subwave of a members-only wave, which
-   * moves, since a wave's parent is not walked.
+   * Two waves that move, one the backend can't read, and a public subwave
+   * of a wave that moves; six that stay on 6529.io, one for each reason, one
+   * with two, and a public subwave of a members-only wave (parent_stays).
+   * The backend's reasons are the shared rule's.
    */
   async listWaves(scope: { readonly recordsWaveId: string }) {
     return [
@@ -147,7 +147,7 @@ class FakeSource implements WavesExportSource {
         admin_group_id: 'g-missing'
       }),
       wave('w-broken', null),
-      wave('w-under-members', 'w-members'),
+      wave('w-under-members', 'w-members', {}, [StayReason.PARENT_STAYS]),
       wave(
         'w-members',
         null,
@@ -373,7 +373,7 @@ class FakeSource implements WavesExportSource {
   }
 
   async waveRep(waveIds: string[]) {
-    expect(waveIds).toEqual(['w-pub', 'w-sub', 'w-under-members']);
+    expect(waveIds).toEqual(['w-pub', 'w-sub']);
     return {
       'w-pub': [
         { category: 'Good', profile_id: 'p1', rating: 3, last_modified: 1 },
@@ -455,12 +455,7 @@ describe('WavesExport', () => {
 
   it('writes every wave that moves, its configuration and its parent', () => {
     const waves = raw('waves_v3.json');
-    expect(Object.keys(waves)).toEqual([
-      'w-broken',
-      'w-pub',
-      'w-sub',
-      'w-under-members'
-    ]);
+    expect(Object.keys(waves)).toEqual(['w-broken', 'w-pub', 'w-sub']);
     expect(waves['w-broken']._error).toContain('not found');
     expect(waves['w-sub'].configuration.chat.scope.group.id).toBe('g-post');
     // Each says it moves, as the API's ApiWave does.
@@ -471,19 +466,19 @@ describe('WavesExport', () => {
     expect(raw('curations.json')).toEqual({
       'w-broken': [],
       'w-pub': [{ id: 'cu-2', wave_id: 'w-pub', group_id: 'g-curators' }],
-      'w-sub': [{ id: 'cu-1', wave_id: 'w-sub', group_id: 'g-post' }],
-      'w-under-members': []
+      'w-sub': [{ id: 'cu-1', wave_id: 'w-sub', group_id: 'g-post' }]
     });
-    // Its parent stays: a subwave moves on its own groups.
+    // Each subwave written, with its parent.
     expect(raw('subwave_parents.json')).toEqual({ 'w-sub': 'w-pub' });
     expect(raw('waves_all.json')).toEqual([
       { id: 'w-broken' },
       { id: 'w-pub' }
     ]);
     // A subwave's read shows its parent's read group too.
-    expect(
-      Object.fromEntries(source.configurationCalls)['w-under-members']
-    ).toEqual(['g-read']);
+    expect(Object.fromEntries(source.configurationCalls)['w-sub']).toEqual([
+      'g-missing',
+      'g-post'
+    ]);
   });
 
   it('leaves out every wave that stays, whole, and counts them by reason', () => {
@@ -492,6 +487,7 @@ describe('WavesExport', () => {
       'w-hidden-admin',
       'w-members',
       'w-members-private',
+      'w-under-members',
       RECORDS
     ];
     const read = new Set(source.configurationCalls.map(([id]) => id));
@@ -504,25 +500,26 @@ describe('WavesExport', () => {
     }
     // A staying wave's decisions, curations and groups are never read.
     expect(source.competitionCalls).not.toContain('c-2');
-    expect(source.curationCalls).toEqual([
-      ['w-broken', 'w-pub', 'w-sub', 'w-under-members']
-    ]);
+    expect(source.curationCalls).toEqual([['w-broken', 'w-pub', 'w-sub']]);
     for (const group of ['g-read', 'g-hidden', 'g-private', 'g-records-post']) {
       expect(source.groupCalls.flat()).not.toContain(group);
     }
     expect(raw('waves_staying.json')).toEqual({
-      total: 5,
+      total: 6,
       by_reason: {
         direct_message: 1,
         records_wave: 1,
         members_only: 2,
-        hidden_or_private_group: 2
+        hidden_or_private_group: 2,
+        parent_stays: 1,
+        not_on_chain: 0
       },
       // Direct messages are counted, not named.
       waves: {
         'w-hidden-admin': ['hidden_or_private_group'],
         'w-members': ['members_only'],
         'w-members-private': ['members_only', 'hidden_or_private_group'],
+        'w-under-members': ['parent_stays'],
         [RECORDS]: ['records_wave']
       }
     });
@@ -530,11 +527,13 @@ describe('WavesExport', () => {
       records_wave_id: RECORDS,
       left_out: {
         waves: {
-          total: 5,
+          total: 6,
           direct_message: 1,
           records_wave: 1,
           members_only: 2,
-          hidden_or_private_group: 2
+          hidden_or_private_group: 2,
+          parent_stays: 1,
+          not_on_chain: 0
         },
         groups: { total: 0, hidden_or_private_group: 0, direct_message: 0 }
       }
@@ -676,9 +675,9 @@ describe('WavesExport', () => {
         vote_log_rows: 2,
         vote_rows: 1,
         wave_rep_rows: 2,
-        waves: 3,
+        waves: 2,
         waves_failed: 1,
-        waves_staying: 5
+        waves_staying: 6
       },
       both_metric: false,
       failed_waves: [
