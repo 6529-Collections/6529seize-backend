@@ -207,6 +207,11 @@ export class WavesChainIndex {
       logger.warn(
         `[NETWORK ${state.network} -> ${head.network}] emptying the index`
       );
+      // No full read counts before any row goes: a reader of which waves
+      // the chain holds (waves-chain-mapping.ts) must not take the emptied
+      // tables for the chain's answer. The network stays the old one until
+      // the tables are empty, so a run that stops here empties them again.
+      state = await this.save({ ...state, lastFullAt: null });
       await this.db.clearAll();
       state = await this.save({
         ...EMPTY_INDEX_STATE,
