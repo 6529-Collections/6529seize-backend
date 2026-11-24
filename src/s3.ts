@@ -43,12 +43,13 @@ axiosRetry(axios as Parameters<typeof axiosRetry>[0], {
 
 const fetchUrl = async (url: string): Promise<Buffer> => {
   const fetchOne = async (u: string, signal: AbortSignal) => {
-    const response = await axios.get(u, {
-      responseType: 'arraybuffer',
+    const requestOptions = {
+      responseType: 'arraybuffer' as const,
       signal,
       timeout: 15000,
       'axios-retry': { retries: 0 }
-    });
+    };
+    const response = await axios.get(u, requestOptions);
     return Buffer.from(response.data);
   };
   return withArweaveFallback(url, fetchOne);

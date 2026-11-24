@@ -1,3 +1,4 @@
+import { isArweavePolicyRejection } from '@/arweave/recovery';
 import { withArweaveFallback } from '@/arweave-gateway-fallback';
 import {
   openPublicResponse,
@@ -85,7 +86,8 @@ export class ProfileCmsPublicationStorage {
               maxBytes: CMS_MAX_STORAGE_BYTES,
               signal
             });
-          } catch {
+          } catch (error) {
+            if (isArweavePolicyRejection(error)) throw error;
             throw new CustomApiCompliantException(
               503,
               'CMS storage is not yet retrievable; retry after the upload propagates',

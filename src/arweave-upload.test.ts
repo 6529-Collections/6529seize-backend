@@ -135,7 +135,11 @@ describe('durable Arweave uploads', () => {
       expect(create).toHaveBeenCalledTimes(1);
       expect(sign).toHaveBeenCalledTimes(1);
       expect(status).toHaveBeenCalledWith(transactionId);
-      expect(post.mock.calls.map(([url]) => url)).toEqual(['tx', 'chunk']);
+      expect(post.mock.calls.map(([url]) => url)).toEqual([
+        'tx',
+        'tx',
+        'chunk'
+      ]);
       expect(resumed[0].txPosted).toBe(true);
       expect(
         resumed.every((state) => state.data_base64 === bytes.toString('base64'))
@@ -185,7 +189,7 @@ describe('durable Arweave uploads', () => {
     expect(status).not.toHaveBeenCalled();
   });
 
-  it('resumes a multi-chunk upload from its last durable checkpoint without reposting the transaction', async () => {
+  it('resumes a multi-chunk upload and registers its original signed header before chunks', async () => {
     const { uploader, create, sign, post } = setup();
     const largeBytes = Buffer.alloc(600000, 7);
     let savedState: ArweaveUploadState | undefined;
@@ -207,7 +211,7 @@ describe('durable Arweave uploads', () => {
       }
     });
     expect(checkpoints).toEqual([1, 2, 3]);
-    expect(post.mock.calls.filter(([url]) => url === 'tx')).toHaveLength(1);
+    expect(post.mock.calls.filter(([url]) => url === 'tx')).toHaveLength(2);
     expect(create).toHaveBeenCalledTimes(1);
     expect(sign).toHaveBeenCalledTimes(1);
   });
@@ -231,4 +235,88 @@ describe('durable Arweave uploads', () => {
     ).rejects.toThrow('Data mismatch');
     expect(post).toHaveBeenCalledTimes(2);
   });
+});
+
+it('resumes twice from the committed prefix and only replays chunks whose checkpoint was lost', async () => {
+  const { uploader, create, sign, post } = setup();
+  const input = Buffer.alloc(600000, 7);
+  let savedState: ArweaveUploadState | undefined;
+  const uploadUntil = async (failAt: number) => {
+    await expect(
+      uploader.uploadFileWithTransactionId(input, 'application/json', {
+        savedState,
+        onState: async (state) => {
+          if (state.chunkIndex === failAt) throw new Error('checkpoint lost');
+          savedState = state;
+        }
+      })
+    ).rejects.toThrow('checkpoint lost');
+  };
+  try {
+    await uploadUntil(2);
+    expect(savedState!.chunkIndex).toBe(1);
+    await uploadUntil(3);
+    expect(savedState!.chunkIndex).toBe(2);
+    await uploader.uploadFileWithTransactionId(input, 'application/json', {
+      savedState,
+      onState: async (state) => {
+        savedState = state;
+      }
+    });
+    expect(savedState!.chunkIndex).toBe(3);
+    const chunks = post.mock.calls
+      .filter(([path]) => path === 'chunk')
+      .map(([, body]) => JSON.parse(body));
+    expect(chunks).toHaveLength(5);
+    expect(chunks[1]).toEqual(chunks[2]);
+    expect(chunks[3]).toEqual(chunks[4]);
+    expect(new Set(chunks.map((chunk) => chunk.offset)).size).toBe(3);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(sign).toHaveBeenCalledTimes(1);
+    const headers = post.mock.calls
+      .filter(([path]) => path === 'tx')
+      .map(([, body]) => body);
+    expect(headers).toHaveLength(3);
+    expect(new Set(headers).size).toBe(1);
+  } finally {
+    jest.restoreAllMocks();
+  }
+});
+
+it('waits for a durable chunk checkpoint before starting the next chunk', async () => {
+  const { uploader, post } = setup();
+  let release!: () => void;
+  let reached!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const checkpoint = new Promise<void>((resolve) => {
+    reached = resolve;
+  });
+  try {
+    const result = uploader.uploadFileWithTransactionId(
+      Buffer.alloc(600000, 7),
+      'text/csv',
+      {
+        onState: async (state) => {
+          if (state.chunkIndex === 1) {
+            reached();
+            await blocked;
+          }
+        }
+      }
+    );
+    await checkpoint;
+    expect(post.mock.calls.filter(([path]) => path === 'chunk')).toHaveLength(
+      1
+    );
+    release();
+    await result;
+    expect(post.mock.calls.filter(([path]) => path === 'chunk')).toHaveLength(
+      3
+    );
+  } finally {
+    release?.();
+    jest.restoreAllMocks();
+  }
 });

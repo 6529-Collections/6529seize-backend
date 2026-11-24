@@ -68,24 +68,27 @@ it('abandons an idle body, closes its stream, and downloads a usable preview fro
   expect(body.destroyed).toBe(true);
 });
 
-it('validates metadata JSON inside each attempt instead of accepting a broken successful response', async () => {
-  const open = jest
-    .spyOn(transport, 'openPublicResponse')
-    .mockResolvedValueOnce({
-      response: new Response('<html>gateway error</html>'),
-      finalUrl: url,
-      cancel: jest.fn()
-    })
-    .mockResolvedValueOnce({
-      response: new Response('{"name":"Durga","image":"ar://image"}'),
-      finalUrl: `https://ardrive.net/${id}`,
-      cancel: jest.fn()
-    });
-  await expect(
-    fetchJsonWithTimeout(url, { timeoutMs: 500 })
-  ).resolves.toMatchObject({ name: 'Durga' });
-  expect(open).toHaveBeenCalledTimes(2);
-});
+it.each(['<html>gateway error</html>', 'null', '123', '"invalid"', '[]'])(
+  'validates invalid metadata %s inside each gateway attempt',
+  async (invalid) => {
+    const open = jest
+      .spyOn(transport, 'openPublicResponse')
+      .mockResolvedValueOnce({
+        response: new Response(invalid),
+        finalUrl: url,
+        cancel: jest.fn()
+      })
+      .mockResolvedValueOnce({
+        response: new Response('{"name":"Durga","image":"ar://image"}'),
+        finalUrl: `https://ardrive.net/${id}`,
+        cancel: jest.fn()
+      });
+    await expect(
+      fetchJsonWithTimeout(url, { timeoutMs: 500 })
+    ).resolves.toMatchObject({ name: 'Durga' });
+    expect(open).toHaveBeenCalledTimes(2);
+  }
+);
 
 it('preserves a real HTTP failure after exhausting preview gateways', async () => {
   const service = fixture();

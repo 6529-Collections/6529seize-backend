@@ -11,6 +11,7 @@ const UPLOAD_TIMEOUT_MS = 120_000;
 const ATTEMPTS_PER_GATEWAY = 2;
 const CHUNK_CONCURRENCY = 8;
 const PROPAGATION_DELAY_MS = 30_000;
+const MAX_RESPONSE_BYTES = 64 * 1024;
 const FATAL_CHUNK_ERRORS = new Set([
   'invalid_json',
   'chunk_too_big',
@@ -42,6 +43,32 @@ class GatewayError extends Error {
   }
 }
 
+async function boundedResponseText(response: Response): Promise<string> {
+  if (Number(response.headers.get('content-length')) > MAX_RESPONSE_BYTES) {
+    await response.body?.cancel();
+    throw new GatewayError(response.status, 'response_too_large', true);
+  }
+  if (!response.body) return '';
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  const readNext = async (): Promise<string> => {
+    const { done, value } = await reader.read();
+    if (done) return Buffer.concat(chunks, bytes).toString('utf8');
+    bytes += value.byteLength;
+    if (bytes > MAX_RESPONSE_BYTES)
+      throw new GatewayError(response.status, 'response_too_large', true);
+    chunks.push(Buffer.from(value));
+    return readNext();
+  };
+  try {
+    return await readNext();
+  } finally {
+    await reader.cancel();
+    reader.releaseLock();
+  }
+}
+
 function peerStatus(result: unknown): number[] {
   return result &&
     typeof result === 'object' &&
@@ -59,8 +86,10 @@ function peerFailureCode(details: object): string | undefined {
     !('results' in details) ||
     !Array.isArray(details.results) ||
     !('successCount' in details) ||
+    typeof details.successCount !== 'number' ||
     !Number.isSafeInteger(details.successCount) ||
     !('failureCount' in details) ||
+    typeof details.failureCount !== 'number' ||
     !Number.isSafeInteger(details.failureCount)
   )
     return undefined;
@@ -182,10 +211,6 @@ export class ArweaveUploadSession {
             `Unable to verify persisted Arweave transaction: ${status.status}`
           );
       }
-      // A durable acknowledgement already establishes submission. Try its chunks
-      // directly; alternate gateways still register this identical header first.
-      if (this.state.txPosted)
-        this.headers.set(GATEWAYS[this.gatewayIndex], Promise.resolve());
       return { transaction, data };
     }
     const [anchor, reward] = await Promise.all([
@@ -235,6 +260,8 @@ export class ArweaveUploadSession {
     this.signedHeader = JSON.stringify(
       new Transaction({ ...transaction, data: new Uint8Array(0) }).toJSON()
     );
+    // Re-emit the saved prefix before resuming; chunkIndex is a count of
+    // acknowledged, durably checkpointed chunks, not a zero-based chunk ID.
     await this.checkpoint();
     if (!this.state!.txPosted) {
       await this.request({
@@ -263,30 +290,34 @@ export class ArweaveUploadSession {
     const total = transaction.chunks!.chunks.length;
     let next = this.state!.chunkIndex;
     let completed = next;
-    const workers = Array.from(
-      { length: Math.min(this.hooks ? 1 : CHUNK_CONCURRENCY, total - next) },
-      async () => {
-        while (next < total) {
-          this.throwIfStopped();
-          const chunk = next++;
-          await this.request({
-            path: 'chunk',
-            method: 'POST',
-            body: JSON.stringify(transaction.getChunk(chunk, data)),
-            chunk
-          });
-          completed++;
-          if (this.hooks) {
-            this.state!.chunkIndex = completed;
-            await this.checkpoint();
-          }
-          if (completed % 25 === 0 || completed === total) {
-            this.logger.info(
-              `[ARWEAVE UPLOAD] [TX ${transaction.id}] [CHUNKS ${completed}/${total}]`
-            );
-          }
-        }
+    const uploadNext = async (): Promise<void> => {
+      this.throwIfStopped();
+      if (next >= total) return;
+      const chunk = next++;
+      await this.request({
+        path: 'chunk',
+        method: 'POST',
+        body: JSON.stringify(transaction.getChunk(chunk, data)),
+        chunk
+      });
+      completed++;
+      if (this.hooks) {
+        this.state!.chunkIndex = completed;
+        await this.checkpoint();
       }
+      if (completed % 25 === 0 || completed === total) {
+        this.logger.info(
+          `[ARWEAVE UPLOAD] [TX ${transaction.id}] [CHUNKS ${completed}/${total}]`
+        );
+      }
+      return uploadNext();
+    };
+    // A persisted index must describe a contiguous prefix. Durable mode must
+    // finish each checkpoint before another chunk starts; TDH retains parallelism.
+    const concurrency = this.hooks ? 1 : CHUNK_CONCURRENCY;
+    const workers = Array.from(
+      { length: Math.min(concurrency, total - next) },
+      uploadNext
     );
     try {
       await Promise.all(workers);
@@ -300,51 +331,54 @@ export class ArweaveUploadSession {
     }
   }
 
-  private async request(operation: Operation): Promise<string> {
-    const firstGateway = this.gatewayIndex;
+  private request(operation: Operation): Promise<string> {
+    return this.requestAttempt(operation, this.gatewayIndex, 0);
+  }
+
+  private async requestAttempt(
+    operation: Operation,
+    firstGateway: number,
+    attempt: number
+  ): Promise<string> {
+    this.throwIfStopped();
     const attempts = GATEWAYS.length * ATTEMPTS_PER_GATEWAY;
-    for (let attempt = 0; attempt < attempts; attempt++) {
-      this.throwIfStopped();
-      const index = (firstGateway + attempt) % GATEWAYS.length;
-      const gateway = GATEWAYS[index];
-      let requestedOperation = operation;
-      try {
-        if (operation.path === 'chunk') {
-          requestedOperation = {
-            path: 'tx',
-            method: 'POST',
-            body: this.signedHeader
-          };
-          await this.ensureHeader(gateway, requestedOperation);
-          requestedOperation = operation;
-        }
-        const body = await this.fetch(gateway, operation);
-        if (operation.path === 'tx')
-          this.headers.set(gateway, Promise.resolve());
-        this.gatewayIndex = index;
-        return body;
-      } catch (error) {
-        this.throwIfStopped();
-        const failure =
-          error instanceof GatewayError
-            ? error
-            : new GatewayError(0, 'network_error', true);
-        const context = `[TX ${this.transactionId}] [GATEWAY ${gateway}] [OP ${requestedOperation.method} ${requestedOperation.path}] [CHUNK ${operation.chunk ?? '-'}] [ATTEMPT ${attempt + 1}/${attempts}] [STATUS ${failure.status}] [ERROR ${failure.code}]`;
-        this.logger.warn(`[ARWEAVE REQUEST FAILED] ${context}`);
-        if (!failure.retryable || attempt + 1 === attempts) {
-          throw new Error(`Arweave request failed ${context}`);
-        }
-        // Try each gateway promptly, then allow fresh headers to propagate
-        // before the second round. The overall upload deadline still applies.
-        await this.pause(retryDelay(operation, attempt));
+    const index = (firstGateway + attempt) % GATEWAYS.length;
+    const gateway = GATEWAYS[index];
+    let requestedOperation = operation;
+    try {
+      if (operation.path === 'chunk') {
+        requestedOperation = {
+          path: 'tx',
+          method: 'POST',
+          body: this.signedHeader
+        };
+        await this.ensureHeader(gateway, requestedOperation);
+        requestedOperation = operation;
       }
+      const body = await this.fetch(gateway, operation);
+      if (operation.path === 'tx') this.headers.set(gateway, Promise.resolve());
+      this.gatewayIndex = index;
+      return body;
+    } catch (error) {
+      this.throwIfStopped();
+      const failure =
+        error instanceof GatewayError
+          ? error
+          : new GatewayError(0, 'network_error', true);
+      const context = `[TX ${this.transactionId}] [GATEWAY ${gateway}] [OP ${requestedOperation.method} ${requestedOperation.path}] [CHUNK ${operation.chunk ?? '-'}] [ATTEMPT ${attempt + 1}/${attempts}] [STATUS ${failure.status}] [ERROR ${failure.code}]`;
+      this.logger.warn(`[ARWEAVE REQUEST FAILED] ${context}`);
+      if (!failure.retryable || attempt + 1 === attempts)
+        throw new Error(`Arweave request failed ${context}`);
+      // Gateway attempts depend on the preceding result; a second chunk round
+      // allows fresh headers to propagate, within the overall upload deadline.
+      await this.pause(retryDelay(operation, attempt));
+      return this.requestAttempt(operation, firstGateway, attempt + 1);
     }
-    throw new Error('Arweave request exhausted its retry budget');
   }
 
   private ensureHeader(gateway: string, operation: Operation): Promise<void> {
     const existing = this.headers.get(gateway);
-    if (existing) return existing;
+    if (existing !== undefined) return existing;
     const pending = this.fetch(gateway, operation)
       .then(() => undefined)
       .catch((error: unknown) => {
@@ -390,7 +424,7 @@ export class ArweaveUploadSession {
         body: operation.body,
         signal: requestController.signal
       });
-      const body = await response.text();
+      const body = await boundedResponseText(response);
       if (!response.ok) throw providerError(response.status, body);
       if (operation.validate && !operation.validate(body)) {
         throw new GatewayError(response.status, 'invalid_response', true);

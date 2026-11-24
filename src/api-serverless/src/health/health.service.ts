@@ -1,3 +1,4 @@
+import type { JWKInterface } from 'arweave/node/lib/wallet';
 import { createArweaveClient } from '@/arweave/client';
 import fetch from 'node-fetch';
 import { Logger } from '../../../logging';
@@ -6,7 +7,7 @@ import { sqlExecutor } from '../../../sql-executor';
 import { getRateLimitConfig } from '../rate-limiting/rate-limiting.utils';
 
 const logger = Logger.get('HEALTH');
-let arweaveHealthClient: { arweave: any; key: any } | null = null;
+let arweaveHealthKey: JWKInterface | null = null;
 const ARWEAVE_HEALTH_TIMEOUT_MS = 5_000;
 const ARWEAVE_HEALTH_CACHE_TTL_MS = 60_000;
 const IPFS_HEALTH_TIMEOUT_MS = 5_000;
@@ -38,16 +39,10 @@ function withTimeout<T>(
   });
 }
 
-function getArweaveHealthClient(): { arweave: any; key: any } {
-  if (!process.env.ARWEAVE_KEY) {
-    throw new Error('ARWEAVE_KEY not set');
-  }
-  if (!arweaveHealthClient) {
-    const arweaveKey = JSON.parse(process.env.ARWEAVE_KEY);
-    const arweave = createArweaveClient();
-    arweaveHealthClient = { arweave, key: arweaveKey };
-  }
-  return arweaveHealthClient;
+function getArweaveHealthKey(): JWKInterface {
+  if (!process.env.ARWEAVE_KEY) throw new Error('ARWEAVE_KEY not set');
+  arweaveHealthKey ??= JSON.parse(process.env.ARWEAVE_KEY) as JWKInterface;
+  return arweaveHealthKey;
 }
 
 function resolveArweaveBalanceLevel(
@@ -66,7 +61,7 @@ async function fetchArweaveHealthUncached(): Promise<HealthData['arweave']> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ARWEAVE_HEALTH_TIMEOUT_MS);
   try {
-    const { key } = getArweaveHealthClient();
+    const key = getArweaveHealthKey();
     const arweave = createArweaveClient({
       signal: controller.signal,
       timeoutMs: ARWEAVE_HEALTH_TIMEOUT_MS,

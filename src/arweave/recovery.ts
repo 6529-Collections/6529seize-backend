@@ -36,6 +36,54 @@ function host(url: string): string {
   }
 }
 
+interface GatewayAttempt {
+  signal: AbortSignal;
+  interrupted: Promise<never>;
+  close(): void;
+}
+
+function gatewayAttempt(
+  parent: AbortSignal | undefined,
+  remaining: number,
+  attemptTimeoutMs: number
+): GatewayAttempt {
+  const controller = new AbortController();
+  const abort = () => controller.abort(parent?.reason);
+  const rejectAbort = () => rejectInterrupted(controller.signal.reason);
+  let rejectInterrupted!: (error: unknown) => void;
+  const interrupted = new Promise<never>((_resolve, reject) => {
+    rejectInterrupted = reject;
+  });
+  controller.signal.addEventListener('abort', rejectAbort, { once: true });
+  parent?.addEventListener('abort', abort, { once: true });
+  const timeout = setTimeout(
+    () =>
+      controller.abort(
+        new ArweaveTimeoutError(
+          remaining <= attemptTimeoutMs ? 'overall' : 'attempt'
+        )
+      ),
+    Math.max(1, Math.min(remaining, attemptTimeoutMs))
+  );
+  if (parent?.aborted) abort();
+  return {
+    signal: controller.signal,
+    interrupted,
+    close: () => {
+      clearTimeout(timeout);
+      parent?.removeEventListener('abort', abort);
+      controller.signal.removeEventListener('abort', rejectAbort);
+      controller.abort();
+    }
+  };
+}
+
+function failureCategory(error: unknown): string {
+  return error instanceof ArweaveTimeoutError
+    ? error.stage
+    : 'request_or_content';
+}
+
 /** The callback must use the supplied signal and finish validation before returning. */
 export async function recoverArweave<T>(
   candidates: readonly string[],
@@ -49,37 +97,16 @@ export async function recoverArweave<T>(
     options.signal?.throwIfAborted();
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw new ArweaveTimeoutError('overall');
-    const controller = new AbortController();
-    const abort = () => controller.abort(options.signal?.reason);
-    options.signal?.addEventListener('abort', abort, { once: true });
+    const attempt = gatewayAttempt(
+      options.signal,
+      remaining,
+      options.attemptTimeoutMs ?? 15_000
+    );
     const startedAt = Date.now();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let rejectAbort: (() => void) | undefined;
     try {
-      const interrupted = new Promise<never>((_resolve, reject) => {
-        rejectAbort = () =>
-          reject(
-            controller.signal.reason ?? new Error('Arweave request aborted')
-          );
-        controller.signal.addEventListener('abort', rejectAbort, {
-          once: true
-        });
-        timer = setTimeout(
-          () =>
-            controller.abort(
-              new ArweaveTimeoutError(
-                remaining <= (options.attemptTimeoutMs ?? 15_000)
-                  ? 'overall'
-                  : 'attempt'
-              )
-            ),
-          Math.max(1, Math.min(remaining, options.attemptTimeoutMs ?? 15_000))
-        );
-      });
-      if (options.signal?.aborted) abort();
       const result = await Promise.race([
-        operation(urls[index], controller.signal),
-        interrupted
+        operation(urls[index], attempt.signal),
+        attempt.interrupted
       ]);
       if (index > 0)
         logger.info({
@@ -102,17 +129,10 @@ export async function recoverArweave<T>(
         gateway: host(urls[index]),
         attempt: index + 1,
         elapsed_ms: Date.now() - startedAt,
-        category:
-          error instanceof ArweaveTimeoutError
-            ? error.stage
-            : 'request_or_content'
+        category: failureCategory(error)
       });
     } finally {
-      clearTimeout(timer);
-      options.signal?.removeEventListener('abort', abort);
-      if (rejectAbort)
-        controller.signal.removeEventListener('abort', rejectAbort);
-      controller.abort();
+      attempt.close();
     }
   }
   throw lastError ?? new Error('No Arweave gateways available');

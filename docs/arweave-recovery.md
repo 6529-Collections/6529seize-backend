@@ -36,14 +36,15 @@ Durable consumers checkpoint the signed transaction and original bytes before
 submission and after each acknowledged step. They upload sequentially so the
 persisted chunk index is a monotonic contiguous prefix. A resumed upload rebuilds
 and verifies the signed data root; regenerated caller bytes never replace the
-saved bytes. Re-registering the identical signed header at another gateway does
+saved bytes. Each resumed gateway registers the original signed header before
+receiving chunks; a prior acknowledgement does not establish gateway-local state. Re-registering the identical signed header at another gateway does
 not create or sign a replacement transaction. A failed checkpoint stops work.
 The SDK's potentially hour-long internal upload retry loop is not used.
 
 TDH retains eight concurrent chunk workers and its 120-second total budget. The
 shared file-uploader facade uses a bounded ten-minute budget for larger media;
 this is separate from NFT preview timing. Network requests have a ten-second
-attempt bound. Parent upload cancellation stops in-flight network requests and
+attempt bound and a 64 KiB response cap, including gateway error bodies. Parent upload cancellation stops in-flight network requests and
 backoff. No private signing keys are included in checkpoints or diagnostics.
 
 ## NFT preview behavior

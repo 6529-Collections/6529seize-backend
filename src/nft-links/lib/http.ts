@@ -1,4 +1,7 @@
-import { withArweaveFallback } from '@/arweave-gateway-fallback';
+import {
+  getArweaveFallbackUrls,
+  withArweaveFallback
+} from '@/arweave-gateway-fallback';
 import { env } from '@/env';
 import {
   openPublicResponse,
@@ -185,7 +188,10 @@ export async function fetchJsonWithTimeout<T>(
     { ...opts, headers: { accept: 'application/json', ...opts.headers } },
     (body) => {
       const value: unknown = JSON.parse(body);
-      if (value === null || typeof value !== 'object')
+      if (
+        getArweaveFallbackUrls(url).length > 0 &&
+        (value === null || typeof value !== 'object' || Array.isArray(value))
+      )
         throw new Error('Invalid metadata JSON');
       return value as T;
     }

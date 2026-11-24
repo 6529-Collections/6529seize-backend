@@ -1,6 +1,8 @@
 import { withArweaveFallback } from '@/arweave-gateway-fallback';
-import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-media';
-import { getDecentralizedMediaFetchUrls } from '@/decentralized-media/decentralized-media';
+import {
+  parseDecentralizedMediaRef,
+  getDecentralizedMediaFetchUrls
+} from '@/decentralized-media/decentralized-media';
 import { publicFetch } from '@/http/public-fetch';
 import { Time } from '@/time';
 

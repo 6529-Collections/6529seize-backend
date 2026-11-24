@@ -486,3 +486,39 @@ describe('TDH Arweave gateway uploads', () => {
     expect(fetch).toHaveBeenCalledTimes(calls);
   });
 });
+
+it.each(['header', 'stream'] as const)(
+  'bounds %s gateway response bytes and rotates without changing the signed header',
+  async (mode) => {
+    const fetch = setup();
+    const canceled = jest.fn();
+    try {
+      fetch.mockImplementation(async (input, init) => {
+        if (init?.method === 'GET') return metadata(input);
+        if (new URL(String(input)).hostname === 'ardrive.net') {
+          const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new Uint8Array(65537));
+            },
+            cancel: canceled
+          });
+          return new Response(
+            body,
+            mode === 'header'
+              ? { headers: { 'content-length': '65537' } }
+              : undefined
+          );
+        }
+        return new Response('');
+      });
+      await uploadTdhCsvToArweave('content', key, logger);
+      expect(canceled).toHaveBeenCalledTimes(1);
+      const posts = fetch.mock.calls.filter(([input]) => path(input) === '/tx');
+      expect(posts).toHaveLength(2);
+      expect(posts[0][1]!.body).toBe(posts[1][1]!.body);
+      expect(Arweave.crypto.sign).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.restoreAllMocks();
+    }
+  }
+);

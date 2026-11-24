@@ -81,6 +81,7 @@ export async function fetchPublicUrlToBuffer(
     result = await withArweaveFallback(
       url,
       async (candidate, signal) => {
+        parseAndValidatePublicHttpUrl(candidate);
         const response = await publicFetch(candidate, {
           method: 'GET',
           signal,
@@ -113,9 +114,6 @@ export async function fetchPublicUrlToBuffer(
       throw new Error(`Fetch timed out after ${timeoutMs}ms: ${url}`);
     }
     throw err;
-  }
-  if (!result.ok) {
-    throw new Error(`Fetch failed: ${result.status} ${result.finalUrl}`);
   }
   const contentType = result.headers.get('content-type');
   return {

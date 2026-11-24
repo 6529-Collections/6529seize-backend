@@ -134,6 +134,24 @@ describe('CMS durable storage', () => {
     }
   });
 
+  it('stops at a storage byte-policy rejection while preserving the API error contract', async () => {
+    const download = jest.fn().mockImplementation(
+      async () =>
+        new Response('', {
+          headers: { 'content-length': String(CMS_MAX_STORAGE_BYTES + 1) }
+        })
+    );
+    const storage = new ProfileCmsPublicationStorage(
+      undefined,
+      undefined,
+      download as unknown as typeof fetch
+    );
+    await expect(storage.verify(receipt)).rejects.toMatchObject({
+      code: 'cms_storage_pending'
+    });
+    expect(download).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects oversized native identifiers before making a gateway request', async () => {
     const download = jest.fn();
     const storage = new ProfileCmsPublicationStorage(

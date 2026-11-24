@@ -20,6 +20,8 @@ module.exports = {
     '<rootDir>/src/nft-history/metadata*.test.ts',
     '<rootDir>/src/s3-rememes.test.ts',
     '<rootDir>/src/s3.test.ts',
+    '<rootDir>/src/s3-image-recovery.test.ts',
+    '<rootDir>/src/nft-links/adapters/*.test.ts',
     '<rootDir>/src/http/safe-fetch.test.ts',
     '<rootDir>/src/api-serverless/src/health/health-service.test.ts'
   ],
