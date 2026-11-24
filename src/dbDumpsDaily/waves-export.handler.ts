@@ -1187,9 +1187,13 @@ async function runStages(
       let summary: WavesExportSummary;
       try {
         summary = await whileFlushing(
-          deps.runExport(command, { stopBeforeWave }).finally(() => {
-            ended = true;
-          }),
+          // One DB scope for every run in this process: DB services keep
+          // the executor they first read.
+          deps
+            .runExport(command, { stopBeforeWave, keepDbScope: true })
+            .finally(() => {
+              ended = true;
+            }),
           deps.flushEveryMs ?? FLUSH_EVERY_MS,
           async () => {
             try {

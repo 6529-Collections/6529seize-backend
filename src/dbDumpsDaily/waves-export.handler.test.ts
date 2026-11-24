@@ -719,6 +719,10 @@ describe('the waves export job', () => {
   it('keeps the records wave on 6529.io, from the event or the function settings', async () => {
     const fromEnv = setup();
     await fromEnv.invoke(AT_FREEZE);
+    // Every stage's run keeps the export's DB scope for the next one.
+    expect(fromEnv.calls.map((call) => call.hooks.keepDbScope)).toEqual(
+      Array(fromEnv.calls.length).fill(true)
+    );
     expect(fromEnv.calls.map((call) => call.command.recordsWaveId)).toEqual(
       Array(fromEnv.calls.length).fill(null)
     );

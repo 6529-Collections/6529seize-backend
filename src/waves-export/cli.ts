@@ -74,6 +74,11 @@ export function recordsWaveIdFor(
 export interface WavesExportRunHooks {
   /** WavesExportOptions.stopBeforeWave: a job's time limit. */
   readonly stopBeforeWave?: () => boolean;
+  /**
+   * Keep the export's DB scope open for the next run in this process: the
+   * job runs the export once per stage. The command line runs it once.
+   */
+  readonly keepDbScope?: boolean;
 }
 
 /**
@@ -112,50 +117,54 @@ export async function runExport(
       // Every read through the API's own SQL executor: the legacy GET view
       // and the API's number types, as the public API reads.
       () =>
-        withApiSqlExecutor(async () => {
-          // Before any stage reads, through the DB layer the reads go through:
-          // its write-side pool, on DB_HOST (DB_IAM_HOST in IAM mode). The
-          // check's queries share one connection, in a transaction that only
-          // reads, so they read one server.
-          const { sqlExecutor } = await import('@/sql-executor');
-          const { resolveDbConnectionTargets } = await import('@/db-iam-auth');
-          // The environment is loaded by now (the shared secret in a job).
-          const recordsWaveId = recordsWaveIdFor(
-            command.recordsWaveId,
-            process.env
-          );
-          const replicaLag = await replicaLagAtStart({
-            caughtUpMs: earliestMs,
-            checkedByPerson: command.replicaLagCheckedBy,
-            onOneConnection: (work) =>
-              sqlExecutor.executeNativeQueriesInTransaction((connection) =>
-                work((sql) =>
-                  sqlExecutor.execute(sql, undefined, {
-                    wrappedConnection: connection
-                  })
-                )
-              ),
-            hostSetting: resolveDbConnectionTargets().write.iam
-              ? 'DB_IAM_HOST'
-              : 'DB_HOST',
-            log
-          });
-          return new WavesExport(new BackendWavesExportSource(), {
-            raw: new RawDirectory(path.join(command.out, 'raw')),
-            stages: command.stages,
-            freezeMs: command.freezeMs,
-            exporterRevision: command.revision,
-            waveIds,
-            dropPageSize: command.pageSize,
-            concurrency: command.concurrency,
-            bothMetric: command.bothMetric,
-            recordsWaveId,
-            resumeDrops: command.resume,
-            stopBeforeWave: hooks.stopBeforeWave,
-            replicaLag,
-            log
-          }).run();
-        }),
+        withApiSqlExecutor(
+          async () => {
+            // Before any stage reads, through the DB layer the reads go through:
+            // its write-side pool, on DB_HOST (DB_IAM_HOST in IAM mode). The
+            // check's queries share one connection, in a transaction that only
+            // reads, so they read one server.
+            const { sqlExecutor } = await import('@/sql-executor');
+            const { resolveDbConnectionTargets } =
+              await import('@/db-iam-auth');
+            // The environment is loaded by now (the shared secret in a job).
+            const recordsWaveId = recordsWaveIdFor(
+              command.recordsWaveId,
+              process.env
+            );
+            const replicaLag = await replicaLagAtStart({
+              caughtUpMs: earliestMs,
+              checkedByPerson: command.replicaLagCheckedBy,
+              onOneConnection: (work) =>
+                sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+                  work((sql) =>
+                    sqlExecutor.execute(sql, undefined, {
+                      wrappedConnection: connection
+                    })
+                  )
+                ),
+              hostSetting: resolveDbConnectionTargets().write.iam
+                ? 'DB_IAM_HOST'
+                : 'DB_HOST',
+              log
+            });
+            return new WavesExport(new BackendWavesExportSource(), {
+              raw: new RawDirectory(path.join(command.out, 'raw')),
+              stages: command.stages,
+              freezeMs: command.freezeMs,
+              exporterRevision: command.revision,
+              waveIds,
+              dropPageSize: command.pageSize,
+              concurrency: command.concurrency,
+              bothMetric: command.bothMetric,
+              recordsWaveId,
+              resumeDrops: command.resume,
+              stopBeforeWave: hooks.stopBeforeWave,
+              replicaLag,
+              log
+            }).run();
+          },
+          { keepOpen: hooks.keepDbScope }
+        ),
       { syncEntities: false, skipRedis: true }
     );
   } finally {

@@ -17,8 +17,13 @@ jest.mock('@/sql-executor', () => ({
 }));
 // True while the export's reads go through the API's SQL executor.
 let mockInApiSqlExecutor = false;
+const mockScopeOptions: unknown[] = [];
 jest.mock('./waves-export.db', () => ({
-  withApiSqlExecutor: async (action: () => Promise<unknown>) => {
+  withApiSqlExecutor: async (
+    action: () => Promise<unknown>,
+    options: unknown
+  ) => {
+    mockScopeOptions.push(options);
     mockInApiSqlExecutor = true;
     try {
       return await action();
@@ -272,7 +277,8 @@ describe('waves:export and the read replica lag', () => {
       '--resume'
     ]) as WavesExportCommand;
     const stopBeforeWave = () => true;
-    await runExport(command, { stopBeforeWave });
+    mockScopeOptions.length = 0;
+    await runExport(command, { stopBeforeWave, keepDbScope: true });
     expect(mockWavesExport.mock.calls[0][1]).toMatchObject({
       stages: ['drops'],
       resumeDrops: true,
@@ -280,6 +286,11 @@ describe('waves:export and the read replica lag', () => {
     });
     await main(EXPORT);
     expect(mockWavesExport.mock.calls[1][1].stopBeforeWave).toBeUndefined();
+    // A job keeps the DB scope for its next stage; the command line doesn't.
+    expect(mockScopeOptions).toEqual([
+      { keepOpen: true },
+      { keepOpen: undefined }
+    ]);
   });
 
   it('refuses before any stage reads when a reader is too far behind', async () => {

@@ -136,6 +136,46 @@ describe('withApiSqlExecutor', () => {
     expect(mockCreateApiDbPool).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the scope for a caller's next run in the process, on the same server", async () => {
+    const { executor, db } = load();
+    executor.setSqlExecutor(before);
+    const first = await db.withApiSqlExecutor(
+      async () => executor.sqlExecutor,
+      { keepOpen: true }
+    );
+    expect(executor.sqlExecutor).toBe(before);
+    expect(mockPoolEnd).not.toHaveBeenCalled();
+    // The job's next stage: the same executor and pool, which the DB
+    // services keep.
+    const second = await db.withApiSqlExecutor(
+      async () => executor.sqlExecutor,
+      { keepOpen: true }
+    );
+    expect(second).toBe(first);
+    expect(mockCreateApiDbPool).toHaveBeenCalledTimes(1);
+    // A run that doesn't keep it ends it, and the process's one scope is
+    // used up.
+    const third = await db.withApiSqlExecutor(async () => executor.sqlExecutor);
+    expect(third).toBe(first);
+    expect(mockPoolEnd).toHaveBeenCalledTimes(1);
+    await expect(db.withApiSqlExecutor(async () => undefined)).rejects.toThrow(
+      'once per process'
+    );
+    expect(executor.sqlExecutor).toBe(before);
+  });
+
+  it('refuses a kept scope on another server', async () => {
+    const { db } = load();
+    await db.withApiSqlExecutor(async () => undefined, { keepOpen: true });
+    process.env.DB_HOST = 'other.invalid';
+    const action = jest.fn();
+    await expect(
+      db.withApiSqlExecutor(action, { keepOpen: true })
+    ).rejects.toThrow("The export's DB scope is open on another server");
+    expect(action).not.toHaveBeenCalled();
+    expect(mockCreateApiDbPool).toHaveBeenCalledTimes(1);
+  });
+
   it.each(['DB_HOST', 'DB_USER', 'DB_PASS', 'DB_PORT'])(
     'refuses without %s, before opening a pool',
     async (setting) => {
