@@ -661,12 +661,19 @@ describe('checkRegistry', () => {
       }).problems.map((p) => p.detail);
     expect(check([plan(['name', 'updated_at'])])).toEqual([]);
     expect(
-      check([plan([]), plan(['a b', 'name', 'name']), plan(['rank', 'name'])])
+      check([
+        plan([]),
+        plan(['a b', 'name', 'name']),
+        plan(['rank', 'name']),
+        // MySQL column names compare case-insensitively.
+        plan(['Rank'])
+      ])
     ).toEqual([
       "rebuilder a.rows's planned columns of ids name none",
       "rebuilder a.rows's planned columns of ids name 'a b', not a plain column name",
       "rebuilder a.rows's planned columns of ids name a column twice",
-      "rebuilder a.rows's planned columns of ids include rank, which a.ranks owns"
+      "rebuilder a.rows's planned columns of ids include rank, which a.ranks owns",
+      "rebuilder a.rows's planned columns of ids include Rank, which a.ranks owns"
     ]);
   });
 

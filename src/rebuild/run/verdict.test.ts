@@ -210,19 +210,39 @@ describe('the verdict', () => {
     };
     const plans = {
       plannedRows: [
-        plan({ table: 'competitions', ...columns, differing: 3, missing: 0 }),
-        plan({ table: 'waves', ...columns, differing: 0, missing: 0 })
+        plan({
+          table: 'competitions',
+          ...columns,
+          differing: 3,
+          excused: 2,
+          missing: 0
+        }),
+        plan({
+          table: 'waves',
+          ...columns,
+          differing: 0,
+          excused: 0,
+          missing: 0
+        }),
+        // Rows missing: the plan still matters, though none came back changed.
+        plan({
+          table: 'drops',
+          ...columns,
+          differing: 0,
+          excused: 0,
+          missing: 2
+        })
       ]
     };
     const normal = judge({ ...clean, ...plans });
     expect(normal.notes).toEqual([
       expect.stringMatching(
-        /^2 plans of planned rows.*competitions columns updated_at, cancelled_at by identity\.mirror: seeded 2, differing 3, missing 0, until 2026-12-04 \(the derived ids\); waves columns updated_at, cancelled_at by identity\.mirror: seeded 2, differing 0, missing 0/
+        /^3 plans of planned rows.*competitions columns updated_at, cancelled_at by identity\.mirror: seeded 2, differing 3, excused 2, missing 0, until 2026-12-04 \(the derived ids\); waves columns updated_at, cancelled_at by identity\.mirror: seeded 2, differing 0, excused 0, missing 0.*drops columns updated_at, cancelled_at by identity\.mirror: seeded 2, differing 0, excused 0, missing 2/
       ),
       'Planned columns of waves by identity.mirror: the rebuild writes these columns now: drop the plan'
     ]);
     expect(judge({ ...clean, ...plans, final: true }).failures).toEqual([
-      expect.stringMatching(/^2 plans of planned rows/)
+      expect.stringMatching(/^3 plans of planned rows/)
     ]);
   });
 

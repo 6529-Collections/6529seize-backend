@@ -498,7 +498,10 @@ function plannedColumnProblems(
     if (other.id === step.id) continue;
     for (const write of columnWritesOf(other)) {
       if (write.table !== plan.table) continue;
-      const owned = columns.filter((column) => write.columns.includes(column));
+      // MySQL column names compare case-insensitively.
+      const owned = columns.filter((column) =>
+        write.columns.some((c) => c.toLowerCase() === column.toLowerCase())
+      );
       if (owned.length) {
         problems.push(
           `${at} include ${owned.join(', ')}, which ${other.id} owns`

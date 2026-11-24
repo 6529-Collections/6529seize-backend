@@ -180,6 +180,30 @@ export async function rebuildTeamDifferently(): Promise<void> {
   await insertTeam(true);
 }
 
+/** The MEMES rows renamed: one partition's writer. */
+export async function rebuildMemesTeamRenamed(): Promise<void> {
+  await insertTeam(true, 'MEMES');
+}
+
+/** Writes nothing: a partition writer whose rows a later change brings. */
+export async function writeNothing(): Promise<void> {
+  // Its rows are planned.
+}
+
+/**
+ * Restores the MEMES rows, and the 6529 row renamed and without its
+ * created_at: changed in a planned column and in another.
+ */
+export async function rebuildTeamRenaming6529Undated(): Promise<void> {
+  await insertTeam(false, 'MEMES');
+  const row = ROWS.find((r) => r.collection === '6529')!;
+  await dbSupplier().execute(
+    `INSERT INTO ${TEAM_TABLE} (wallet, collection, name)
+     VALUES (:wallet, :collection, :name)`,
+    { ...row, name: `${row.name} renamed` }
+  );
+}
+
 /** Restores the MEMES rows, and the 6529 row with another name. */
 export async function rebuildTeamRenaming6529(): Promise<void> {
   await insertTeam(false, 'MEMES');

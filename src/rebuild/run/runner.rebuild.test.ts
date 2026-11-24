@@ -806,6 +806,7 @@ describe('rebuild check, end to end', () => {
               ...listed('self-check.planned-name', 1, 0),
               columns: ['name'],
               differing: 1,
+              excused: 1,
               differingByColumn: { name: 1 }
             }
           ]
@@ -823,6 +824,33 @@ describe('rebuild check, end to end', () => {
         2,
         1
       ]);
+      // The 6529 row renamed and changed in a column the plan doesn't name
+      // (created_at, compared in this run): it still differs.
+      const team = AREA_MANIFESTS.find((m) => m.area === 'mint')!.tables.team;
+      const unplanned = await run('mint', {
+        seed: teamSeed,
+        rebuilder: planning(
+          'self-check.planned-name-undated',
+          'rebuildTeamRenaming6529Undated',
+          [names]
+        ),
+        tables: { team: { ...team, volatileColumns: [] } }
+      });
+      const [changed] = unplanned.report.tables.diffs;
+      expect([
+        changed.same,
+        changed.changed,
+        changed.plannedColumnRows
+      ]).toEqual([
+        false,
+        [JSON.stringify(['0x0000000000000000000000000000000000000002'])],
+        0
+      ]);
+      expect(unplanned.report.tables.plannedRows[0].plans[0]).toMatchObject({
+        differing: 1,
+        excused: 0,
+        differingByColumn: { name: 1 }
+      });
       // A column the schema doesn't have stops the run at its start.
       const unknown = await teamRun(
         planning('self-check.planned-nothing', 'rebuildTeam', [
@@ -833,6 +861,60 @@ describe('rebuild check, end to end', () => {
       expect(unknown.report.failures).toContain(
         "self-check.planned-nothing plans columns no_such_column of team, which the schema doesn't have"
       );
+      // At its start: no step ran.
+      expect(unknown.report.steps).toEqual([]);
+    });
+
+    it('takes a NOT EXISTS against another table in a row plan and a column plan, beside another writer', async () => {
+      // Each partition's writer plans its own rows: the 6529 writer writes
+      // nothing yet, the MEMES writer renames its rows. Both conditions
+      // read another table, unqualified, and the partition check runs.
+      const empty = 'NOT EXISTS (SELECT 1 FROM distribution_photo)';
+      const { report } = await run('mint', {
+        seed: teamSeed,
+        rebuilder: {
+          ...memes,
+          id: 'self-check.memes-renamed',
+          run: { module: MODULE, exportName: 'rebuildMemesTeamRenamed' },
+          plannedRows: [
+            {
+              ...PLAN,
+              where: `collection = 'MEMES' AND ${empty}`,
+              columns: ['name']
+            }
+          ]
+        },
+        others: {
+          tdh: [
+            {
+              ...step('self-check.later-6529', 'writeNothing', []),
+              writes: [partition('6529')],
+              plannedRows: [
+                { ...PLAN, where: `collection = '6529' AND ${empty}` }
+              ]
+            }
+          ]
+        },
+        full: true
+      });
+      expect(report.failures).toEqual([]);
+      expect(report.verdict).toBe('PASS');
+      expect(
+        report.tables.diffs
+          .filter((d) => d.table === 'team')
+          .map((d) => [d.same, d.plannedRows, d.plannedColumnRows])
+      ).toEqual([[true, 1, 2]]);
+      const plans = report.tables.plannedRows.find(
+        (p) => p.table === 'team'
+      )!.plans;
+      expect(
+        plans
+          .map((p) => [p.step, p.seeded, p.missing, p.differing, p.excused])
+          .sort()
+      ).toEqual([
+        ['self-check.later-6529', 1, 1, undefined, undefined],
+        ['self-check.memes-renamed', 2, 0, 2, 2]
+      ]);
     });
 
     it("fails a run on a planned condition MySQL can't read", async () => {

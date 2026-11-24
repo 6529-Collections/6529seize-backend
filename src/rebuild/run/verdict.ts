@@ -31,11 +31,16 @@ export interface PlannedRowsPlan {
    */
   readonly columns?: readonly string[];
   /**
-   * A column plan's matched rows that came back changed only in planned
+   * A column plan's matched rows that came back changed in any of its
    * columns, and how many differ in each of its columns; null before the
    * rows were compared.
    */
   readonly differing?: number | null;
+  /**
+   * Of those, the rows left out of the differences: changed only in
+   * columns their plans name.
+   */
+  readonly excused?: number | null;
   readonly differingByColumn?: Readonly<Record<string, number>>;
 }
 
@@ -247,7 +252,7 @@ export function judge(input: VerdictInput): Verdict {
       `${input.plannedRows.length} plans of planned rows, seeded rows only a later change rebuilds; a final run fails on every plan: ${input.plannedRows
         .map(
           (p) =>
-            `${p.table}${p.columns ? ` columns ${p.columns.join(', ')}` : ''} by ${p.step}: seeded ${p.seeded ?? 'not read'}, ${p.columns ? `differing ${p.differing ?? 'not compared'}, ` : ''}missing ${p.missing ?? 'not compared'}, until ${p.until} (${p.change})`
+            `${p.table}${p.columns ? ` columns ${p.columns.join(', ')}` : ''} by ${p.step}: seeded ${p.seeded ?? 'not read'}, ${p.columns ? `differing ${p.differing ?? 'not compared'}, excused ${p.excused ?? 'not compared'}, ` : ''}missing ${p.missing ?? 'not compared'}, until ${p.until} (${p.change})`
         )
         .join('; ')}`
     );
@@ -258,7 +263,7 @@ export function judge(input: VerdictInput): Verdict {
         `Planned rows of ${p.table} by ${p.step}: plan matched no seeded rows`
       );
     } else if (p.columns) {
-      if (p.differing === 0) {
+      if (p.differing === 0 && p.missing === 0) {
         notes.push(
           `Planned columns of ${p.table} by ${p.step}: the rebuild writes these columns now: drop the plan`
         );

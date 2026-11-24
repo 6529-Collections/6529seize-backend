@@ -359,7 +359,7 @@ export function renderMarkdown(report: RunReport): string {
         `- ${p.table}: ${p.rows} planned rows missing from the rebuild${p.keys.length ? `, keys ${p.keys.join(' ')}` : ''}${p.columnRows ? `; ${p.columnRows} rows changed only in planned columns, keys ${p.columnKeys.join(' ')}` : ''}`,
         ...p.plans.map(
           (plan) =>
-            `  - planned by ${plan.step}${plan.columns ? `, columns ${plan.columns.join(', ')}` : ''}: seeded ${plan.seeded ?? 'not read'}, ${plan.columns ? `differing ${plan.differing ?? 'not compared'}${byColumn(plan)}, ` : ''}missing ${plan.missing ?? 'not compared'}; until ${plan.until}${overdueNote(plan)}, ${plan.change}; ${plan.reason}; where ${plan.where}`
+            `  - planned by ${plan.step}${plan.columns ? `, columns ${plan.columns.join(', ')}` : ''}: seeded ${plan.seeded ?? 'not read'}, ${plan.columns ? `differing ${plan.differing ?? 'not compared'}${byColumn(plan)}, excused ${plan.excused ?? 'not compared'}, ` : ''}missing ${plan.missing ?? 'not compared'}; until ${plan.until}${overdueNote(plan)}, ${plan.change}; ${plan.reason}; where ${plan.where}`
         )
       ])
     ),

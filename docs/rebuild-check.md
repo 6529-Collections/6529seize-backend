@@ -202,14 +202,20 @@ export const mintManifest: AreaManifest = {
     A plan with `columns: [...]` plans only those columns of the rows it
     matches: the rows must come back, and may differ only in those
     columns; every other column of them, and every other row, is
-    compared as usual. The report lists each such plan with its columns,
-    the rows it matched, how many came back changed in its columns (per
-    column), and the keys of those rows; a plan whose rows all came back
-    the same is noted as one to drop. A run refuses, at its start, a
-    planned column the schema doesn't have, and a column plan on a table
-    without a primary key free of volatile columns, as the rows are found
-    by key. The registry refuses a column name that isn't plain, a name
-    twice, and a column another rebuilder owns.
+    compared as usual, and a matched row that is missing still differs.
+    Where two column plans match one row, their columns add up. The
+    report lists each such plan with its columns, the rows it matched,
+    how many came back changed in any of its columns (per column), how
+    many of those were left out of the differences, and the keys of the
+    rows left out; a plan none of whose rows is missing or changed in its
+    columns is noted as one to drop. A run refuses, at its start, a
+    planned column the schema doesn't have or that sits in the primary
+    key, and a column plan on a table without a primary key free of
+    volatile columns, as the rows are found by key. A row that both a
+    plan of whole rows and a column plan match is refused too: one says
+    it may be missing, the other that it must come back. The registry
+    refuses a column name that isn't plain, a name twice, and a column
+    another rebuilder owns, compared without regard to case.
     Plans don't excuse probe answers: a probe over planned rows would
     answer differently while they are missing, so it stays a planned
     probe, held by its `needs`, until the rows' source exists.

@@ -241,6 +241,7 @@ describe('rebuild report', () => {
                 step: 'waves.mirror',
                 columns: ['updated_at', 'cancelled_at'],
                 differing: 1,
+                excused: 1,
                 differingByColumn: { updated_at: 1 },
                 where: 'id > 9',
                 missing: 0,
@@ -263,7 +264,7 @@ describe('rebuild report', () => {
         '- identities: 2 planned rows missing from the rebuild, keys ["k1"] ["k2"]',
         '  - planned by identity.mirror: seeded 2, missing 2; until 2026-12-04, the derived ids; TDH-only identities; where profile_id IS NULL',
         '- waves: 0 planned rows missing from the rebuild; 1 rows changed only in planned columns, keys [7]',
-        '  - planned by waves.mirror, columns updated_at, cancelled_at: seeded 2, differing 1 (updated_at 1), missing 0; until 2026-11-20 (overdue: its last day has passed), the derived ids; TDH-only identities; where id > 9'
+        '  - planned by waves.mirror, columns updated_at, cancelled_at: seeded 2, differing 1 (updated_at 1), excused 1, missing 0; until 2026-11-20 (overdue: its last day has passed), the derived ids; TDH-only identities; where id > 9'
       ].join('\n')
     );
     // An overdue plan goes on the headline and the status line.
