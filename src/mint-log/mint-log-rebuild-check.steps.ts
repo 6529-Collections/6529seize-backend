@@ -40,9 +40,10 @@ function filesFetcher(base: string): SegmentFetcher {
 /**
  * The rebuild check's rebuilder for the mint log's tables: the production
  * rebuild (rebuildMintLogFromRecordLog) from empty tables, reading
- * - the record log from the records wave's head drops (the drops table, as
- *   the records service posted them) and its segment files from the files
- *   source, and
+ * - the record log from the records wave's head drops in 6529.io's drops
+ *   table (LocalRecordsWaveReader), as the record log closer reads them: the
+ *   records wave stays on 6529.io after the waves switch, and its segment
+ *   files from the files source, and
  * - the genesis files from the files source.
  * It fails when the log holds no mint entry, so a seed whose entries never
  * reached a segment cannot pass as an empty rebuild.
