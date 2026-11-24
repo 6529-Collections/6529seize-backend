@@ -33,7 +33,12 @@ import {
   legacyGetView,
   withLegacyCompetitionGetFacade
 } from '@/competitions/legacy-competition-get-facade';
-import { COMPETITIONS_TABLE, RATINGS_TABLE, WAVES_TABLE } from '@/constants';
+import {
+  COMPETITIONS_TABLE,
+  DROPS_TABLE,
+  RATINGS_TABLE,
+  WAVES_TABLE
+} from '@/constants';
 import { dropsDb } from '@/drops/drops.db';
 import { CompetitionEntryStatus } from '@/entities/ICompetition';
 import { DropType } from '@/entities/IDrop';
@@ -93,6 +98,58 @@ function toMillis(value: unknown): number | null {
 /** A JSON round trip: what the API's response body holds. */
 function asJson<T>(value: T): Json {
   return JSON.parse(JSON.stringify(value)) as Json;
+}
+
+/** A tinyint column as MySQL drivers give it: a boolean, 0/1 or their text. */
+function flag(value: unknown): boolean | null {
+  if (value === null || value === undefined) return null;
+  return value === true || Number(value) === 1;
+}
+
+/** A drops row's columns that dropTableValues reads. */
+interface DropTableRow {
+  readonly id: string;
+  readonly signature: string | null;
+  readonly is_additional_action_promised: unknown;
+  readonly hide_link_preview: unknown;
+  readonly collapse_replies: unknown;
+  readonly drop_type: string;
+  readonly reply_to_part_id: unknown;
+}
+
+/**
+ * The drops table's own values the API shows differently or not at all
+ * (waves-export.compact TABLE_KEYS), set on each exported drop as `table`.
+ */
+export function dropTableValues(row: DropTableRow): Json {
+  const replyPart = row.reply_to_part_id;
+  return {
+    signature: row.signature ?? null,
+    is_additional_action_promised: flag(row.is_additional_action_promised),
+    hide_link_preview: flag(row.hide_link_preview) ?? false,
+    collapse_replies: flag(row.collapse_replies) ?? false,
+    drop_type: row.drop_type,
+    reply_to_part_id:
+      replyPart === null || replyPart === undefined ? null : Number(replyPart)
+  };
+}
+
+/**
+ * The table values of the drops `ids`, by id, read from the drops table
+ * itself: outside the legacy competition facade, whose view of drops
+ * shows a native entry's type as the API does.
+ */
+async function dropTableValuesByIds(
+  ids: readonly string[]
+): Promise<Map<string, Json>> {
+  if (!ids.length) return new Map();
+  const rows = await sqlExecutor.execute<DropTableRow>(
+    `select id, signature, is_additional_action_promised, hide_link_preview,
+       collapse_replies, drop_type, reply_to_part_id
+     from ${DROPS_TABLE} where id in (:ids)`,
+    { ids }
+  );
+  return new Map(rows.map((row) => [row.id, dropTableValues(row)]));
 }
 
 /**
@@ -446,7 +503,15 @@ export class BackendWavesExportSource implements WavesExportSource {
         return { entities, drops };
       });
       if (!read.entities.length) return;
-      yield read.drops.map(asJson);
+      // Each drop with its table's own values, which the API's drop lacks.
+      const tableOf = await dropTableValuesByIds(
+        read.entities.map((entity) => entity.id)
+      );
+      yield read.drops.map((drop) => {
+        const json = asJson(drop);
+        const table = tableOf.get(String(json.id));
+        return table ? { ...json, table } : json;
+      });
       serialNoLimit = Math.min(
         ...read.entities.map((entity) => entity.serial_no)
       );

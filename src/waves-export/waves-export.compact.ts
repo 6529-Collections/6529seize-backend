@@ -51,6 +51,34 @@ const NFT_LINK_DATA_KEYS = [
   'platform'
 ] as const;
 
+/**
+ * The drops table's own values of a drop that the API shows differently or
+ * not at all (a native entry's COMPETITION shows as PARTICIPATORY, a reply's
+ * null part id as 0, and no signature). The export sets them on each drop as
+ * `table`; a public fetch has none and writes null.
+ */
+export const TABLE_KEYS = [
+  'signature',
+  'is_additional_action_promised',
+  'hide_link_preview',
+  'collapse_replies',
+  'drop_type',
+  'reply_to_part_id'
+] as const;
+
+/** compact_drop's `table`: the drop's table values by TABLE_KEYS, or null. */
+function tableOf(drop: Json): Json | null {
+  const table = drop.table;
+  if (!table || typeof table !== 'object' || Array.isArray(table)) {
+    return null;
+  }
+  const out: Json = {};
+  for (const key of TABLE_KEYS) {
+    out[key] = get(table, key);
+  }
+  return out;
+}
+
 const ATTACHMENT_KEYS = new Set([
   'attachment_id',
   'file_name',
@@ -147,7 +175,8 @@ export function compactDrop(drop: unknown): Json {
     is_author_signed: truthy(get(d, 'is_author_signed')),
     is_signed: truthy(get(d, 'is_signed')),
     moderation: get(d, 'moderation'),
-    collaborators
+    collaborators,
+    table: tableOf(d)
   };
 }
 
