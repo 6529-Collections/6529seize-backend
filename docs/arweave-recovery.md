@@ -1,0 +1,110 @@
+# Backend Arweave recovery
+
+All backend Arweave network operations use the shared subsystem in `src/arweave/`.
+Canonical transaction identity and historical input URLs remain distinct from the
+active gateway endpoints used to retrieve or submit that transaction.
+
+## Ownership and active gateways
+
+`gateways.ts` is the only active endpoint registry. Reads prefer ArDrive and
+`gateway.ar.io` before the Arweave endpoints when recovering a failed input URL.
+Native wallet, price, transaction and chunk operations use ArDrive and
+`arweave.net`. The old `ar-io.net` and `turbo-gateway.com` addresses remain
+recognized inputs but are not offered as active fallback candidates. They failed
+DNS and TLS hostname validation, respectively, during the incident audit.
+Do not disable TLS validation to make a candidate appear healthy.
+
+`withArweaveFallback` is the compatibility entry point for content reads. A
+callback must use its supplied abort signal and consume and validate the full
+response before returning. HTTP error checks outside the callback do not trigger
+failover. Unknown HTTP origins retain their existing fetch policy; IPFS handling
+is unchanged. Every alternate content request still passes through the caller's
+public-network/redirect validation, byte caps and content validation.
+`createArweaveClient` provides SDK network reads through the same registry and
+bounded recovery policy. Local signing and conversion do not contact gateways.
+
+## Upload identity and recovery
+
+`ArweaveUploadSession` is the shared uploader, extracted from the existing TDH
+engine. It signs once, submits the same public transaction header to each
+required gateway, and retries identical chunk proofs and bytes. Each gateway's
+header registration is coordinated before concurrent chunks. Explicit protocol
+validation errors are terminal; transient failures rotate gateways and may get a
+second round after a propagation delay.
+
+Durable consumers checkpoint the signed transaction and original bytes before
+submission and after each acknowledged step. They upload sequentially so the
+persisted chunk index is a monotonic contiguous prefix. A resumed upload rebuilds
+and verifies the signed data root; regenerated caller bytes never replace the
+saved bytes. Re-registering the identical signed header at another gateway does
+not create or sign a replacement transaction. A failed checkpoint stops work.
+The SDK's potentially hour-long internal upload retry loop is not used.
+
+TDH retains eight concurrent chunk workers and its 120-second total budget. The
+shared file-uploader facade uses a bounded ten-minute budget for larger media;
+this is separate from NFT preview timing. Network requests have a ten-second
+attempt bound. Parent upload cancellation stops in-flight network requests and
+backoff. No private signing keys are included in checkpoints or diagnostics.
+
+## NFT preview behavior
+
+The existing size limits are preserved and still read from runtime configuration.
+This change does not assume a production size override or increase a size cap.
+The preview worker retains its 15-second per-hop response-header timeout,
+90-second maximum overall download, and 120-second Lambda timeout. An Arweave
+gateway gets at most 30 seconds within that download budget, leaving room for
+alternatives. Body inactivity aborts an attempt after ten seconds by default.
+`NFT_LINK_MEDIA_PREVIEW_BODY_IDLE_TIMEOUT_MS` is an optional positive integer
+runtime setting, owned by `nftLinkMediaPreviewLoop`; unset means `10000`.
+Existing download/header settings continue to apply.
+
+A size rejection is a typed, persisted policy outcome and does not emit an
+operational error alert. Existing source-and-size-policy cooldown checks prevent
+immediate requeueing. Cached preview URLs are preserved by fenced failure writes.
+Animation-to-image fallback remains available for its existing supported cases.
+A gateway timeout or HTTP failure recovered elsewhere is not a terminal failure.
+If recovery fails, the preview worker still persists and reports the final error;
+failed persistence still rejects the invocation. Gateway attempts and recoveries
+record only host, attempt, duration and fixed categories. Stalled-body diagnostics
+also record received bytes; they do not publish arbitrary URLs, payloads or keys.
+
+## Caller and deployment inventory
+
+| Deploy unit                  | Arweave work                                                                                                         |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `nftLinkRefresherLoop`       | NFT metadata reads through the shared resolver HTTP helper                                                           |
+| `nftLinkMediaPreviewLoop`    | Media downloads, idle detection, policy rejection handling                                                           |
+| `api` (`seizeAPI`)           | CMS verification/upload, claim-media inspection, health balance/price queries; API policies unchanged                |
+| `claimsBuilder`              | Claim-media inspection through safe fetch                                                                            |
+| `claimsMediaArweaveUploader` | Source-media reads and shared uploads                                                                                |
+| `nftsLoop`                   | Metadata reads and validation inside gateway attempts                                                                |
+| `nftHistoryLoop`             | Metadata reads, including approved sandbox redirects                                                                 |
+| `s3Uploader`                 | Shared image/media retrieval                                                                                         |
+| `tdhHistoryLoop`             | CSV retrieval, HTTP/body/CSV validation inside fallback                                                              |
+| `rememesLoop`                | Source-media reads/probes and CSV uploads; includes `rememesS3Loop`, `rememesRefreshMetadataLoop`, `rememesFileLoop` |
+| `subscriptionsDaily`         | Shared snapshot uploader; bundle also contains `subscriptionCoverageReconciliationLoop`                              |
+| `overRatesRevocationLoop`    | Optional ratings-snapshot upload                                                                                     |
+| `signedRecordLogLoop`        | Shared archival upload; bundle contains `signedRecordLogCloser` and `signedRecordLogArchiver`                        |
+| `royaltiesLoop`              | Shared CSV uploader                                                                                                  |
+| `teamLoop`                   | Shared CSV uploader                                                                                                  |
+| `tdhLoop`                    | Shared upload engine with existing TDH budget/concurrency                                                            |
+
+No API schema, database schema, queue or event-payload change is required. These
+units can roll out independently because no cross-service wire contract changes.
+Recommended verification order is NFT refresher and preview, other read consumers,
+upload consumers, then API. No schema deployment is required for this change.
+
+## Verification and boundaries
+
+Run `./bin/6529 exec jest --config scripts/arweave-jest.config.cjs` for the
+DB-independent recovery, native upload integrity, caller and loopback transport
+checks. The boundary test prevents SDK creation and upload/chunk handling outside
+the shared subsystem. Caller tests cover JSON validation, policy failures,
+content hashes, redirects, body-idle recovery, partial progress, lost responses,
+terminal errors and bounded cancellation. These tests never submit live uploads.
+
+After an independently authorized rollout, verify the previously failing NFT
+metadata and media, including a real `READY` preview or accurate policy outcome.
+Compare a full day of processing successes and final failures, accounting for
+traffic, before evaluating Discord volume. Size-limit increases and broader
+persisted backoff for ordinary failures remain separate follow-ups.

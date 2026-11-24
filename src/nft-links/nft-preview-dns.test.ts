@@ -31,7 +31,7 @@ it('cancels both outstanding DNS queries when the download deadline expires', as
     );
   await expect(
     service['downloadRemoteImage']('https://example.com/video')
-  ).rejects.toThrow('download deadline exceeded');
+  ).rejects.toThrow('overall deadline exceeded');
   expect(lookup).toHaveBeenCalledTimes(2);
   expect(cancel).toHaveBeenCalled();
   expect(pending).toHaveLength(0);

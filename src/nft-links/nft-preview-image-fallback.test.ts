@@ -165,7 +165,7 @@ it('shares one deadline across the original download and the fallback', async ()
         })) as never
     );
   await expect(service['downloadRemoteImage'](video, image)).rejects.toThrow(
-    'download deadline exceeded'
+    'overall deadline exceeded'
   );
   expect(download).toHaveBeenCalledTimes(2);
   expect(download.mock.calls[0][1]).toBe(download.mock.calls[1][1]);

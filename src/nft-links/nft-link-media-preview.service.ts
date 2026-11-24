@@ -1,3 +1,5 @@
+import { withArweaveFallback } from '@/arweave-gateway-fallback';
+import { ArweaveTimeoutError } from '@/arweave/recovery';
 import { createHash } from 'node:crypto';
 import { HttpError } from './lib/http';
 import type { Readable } from 'node:stream';
@@ -332,6 +334,16 @@ export class NftLinkMediaPreviewService {
         this.logger.info(
           `Preview failure superseded by a newer lease/source for ${prepared.canonicalId}`
         );
+        return;
+      }
+      if (e instanceof NftPreviewOversizeError) {
+        this.logger.info({
+          event: 'nft_preview_policy_rejected',
+          reason: 'size_limit',
+          canonical_id: prepared.canonicalId,
+          limit_bytes: e.limitBytes,
+          observed_bytes: e.observedBytes
+        });
         return;
       }
       this.logger.error(
@@ -1054,7 +1066,7 @@ export class NftLinkMediaPreviewService {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
-        reject(new Error('NFT preview download deadline exceeded'));
+        reject(new ArweaveTimeoutError('overall'));
         controller.abort();
       }, deadlineMs);
     });
@@ -1105,6 +1117,23 @@ export class NftLinkMediaPreviewService {
     url: string,
     signal: AbortSignal,
     imageOnly = false
+  ): Promise<DownloadedRemoteImage> {
+    return withArweaveFallback(
+      url,
+      (candidate, attemptSignal) =>
+        this.downloadOneGateway(candidate, attemptSignal, imageOnly),
+      {
+        signal,
+        timeoutMs: 90_000,
+        attemptTimeoutMs: 30_000
+      }
+    );
+  }
+
+  private async downloadOneGateway(
+    url: string,
+    signal: AbortSignal,
+    imageOnly: boolean
   ): Promise<DownloadedRemoteImage> {
     const timeoutMs =
       env.getIntOrNull('NFT_LINK_MEDIA_PREVIEW_HTTP_TIMEOUT_MS') ?? 15000;
@@ -1204,15 +1233,45 @@ export class NftLinkMediaPreviewService {
       const chunks: Uint8Array[] = [];
       let total = 0;
       let prefix = Buffer.alloc(0);
+      let settled = false;
+      const idleMs = Math.max(
+        1,
+        env.getIntOrNull('NFT_LINK_MEDIA_PREVIEW_BODY_IDLE_TIMEOUT_MS') ?? 10000
+      );
+      let idle: ReturnType<typeof setTimeout>;
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(idle);
+        if (error) {
+          this.logger.info({
+            event: 'nft_preview_body_failed',
+            bytes_received: total,
+            category:
+              error instanceof ArweaveTimeoutError ? error.stage : 'stream'
+          });
+          reject(error);
+          (body as Readable).destroy();
+        } else resolve(Buffer.concat(chunks));
+      };
+      const resetIdle = () => {
+        clearTimeout(idle);
+        idle = setTimeout(
+          () => finish(new ArweaveTimeoutError('body_idle')),
+          idleMs
+        );
+      };
+      resetIdle();
       body.on('data', (chunk: Buffer | string) => {
+        if (settled) return;
+        resetIdle();
         const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
         total += buf.length;
-        if (prefix.length < 4096) {
+        if (prefix.length < 4096)
           prefix = Buffer.concat([
             prefix,
             buf.subarray(0, 4096 - prefix.length)
           ]);
-        }
         const limit =
           !imageOnly &&
           videoBytes !== undefined &&
@@ -1220,7 +1279,7 @@ export class NftLinkMediaPreviewService {
             ? videoBytes
             : maxBytes;
         if (total > limit) {
-          reject(
+          finish(
             new NftPreviewOversizeError(
               limit,
               total,
@@ -1230,13 +1289,16 @@ export class NftLinkMediaPreviewService {
                 : { imageBytes: maxBytes, videoBytes }
             )
           );
-          (body as Readable).destroy();
           return;
         }
         chunks.push(Uint8Array.from(buf));
       });
-      body.on('end', () => resolve(Buffer.concat(chunks)));
-      body.on('error', (err) => reject(err));
+      body.on('end', () => finish());
+      body.on('error', (err) => finish(err));
+      body.on('close', () => {
+        if (!settled)
+          finish(new Error('NFT preview response closed before completion'));
+      });
     });
   }
 

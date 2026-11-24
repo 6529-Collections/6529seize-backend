@@ -214,7 +214,7 @@ it('aborts a stalled body after headers and closes the actual request', async ()
   });
   useVideoLimits(50);
   await expect(service['downloadRemoteImage'](url)).rejects.toThrow(
-    'download deadline exceeded'
+    'overall deadline exceeded'
   );
   await remoteClosed;
 });
@@ -226,7 +226,7 @@ it('bounds slow DNS before a request is created', async () => {
     .mockReturnValue(new Promise(() => {}) as never);
   await expect(
     service['downloadRemoteImage']('https://example.com/video')
-  ).rejects.toThrow('download deadline exceeded');
+  ).rejects.toThrow('overall deadline exceeded');
 });
 
 it('enforces the image stream cap when declared length falls between image and video limits', async () => {
