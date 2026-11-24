@@ -438,6 +438,20 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  /** Which of these drops have a poll, with the poll rows locked. */
+  public async findDropIdsWithPollForUpdate(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<string[]> {
+    if (!dropIds.length) return [];
+    const rows = await this.db.execute<{ drop_id: string }>(
+      `select drop_id from ${DROP_POLLS_TABLE} where drop_id in (:dropIds) for update`,
+      { dropIds },
+      { wrappedConnection: ctx.connection }
+    );
+    return rows.map((row) => row.drop_id);
+  }
+
   public async deleteByDropId(
     dropId: string,
     ctx: RequestContext

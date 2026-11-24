@@ -1022,12 +1022,41 @@ describe('DropCreationApiService bounded chat history purge', () => {
         waveId: 'wave',
         authorId: 'author',
         cutoffSerialNo: 60000,
-        pinnedDropId: 'pin'
+        pinnedDropId: 'pin',
+        keepPolls: false
       },
       expect.anything()
     );
     expect(deletion.execute).not.toHaveBeenCalled();
     expect(deletion.executeChatHistoryBatch).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps drops with a poll out of the batch while waves are frozen', async () => {
+    const original = process.env.FEATURE_WAVES_FROZEN;
+    process.env.FEATURE_WAVES_FROZEN = 'true';
+    try {
+      const { service, ctx, purgeDb, waves } = setup();
+      await service.deleteMyWaveChatHistory({ waveId: 'wave' }, ctx as never);
+      expect(purgeDb.findBatchForUpdate).toHaveBeenLastCalledWith(
+        expect.objectContaining({ keepPolls: true }),
+        expect.anything()
+      );
+      // Direct messages are chat: their polls go with them.
+      waves.findWaveByIdForUpdate.mockResolvedValue({
+        id: 'wave',
+        description_drop_id: 'pin',
+        visibility_group_id: null,
+        is_direct_message: true
+      });
+      await service.deleteMyWaveChatHistory({ waveId: 'wave' }, ctx as never);
+      expect(purgeDb.findBatchForUpdate).toHaveBeenLastCalledWith(
+        expect.objectContaining({ keepPolls: false }),
+        expect.anything()
+      );
+    } finally {
+      if (original === undefined) delete process.env.FEATURE_WAVES_FROZEN;
+      else process.env.FEATURE_WAVES_FROZEN = original;
+    }
   });
 
   it('refuses an oversized legacy purge before mutation', async () => {

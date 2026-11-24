@@ -7,6 +7,8 @@ import { withLegacyPrimaryMutation } from '@/competitions/legacy-competition-mut
 import { moderationReviewDb } from '@/content-moderation/moderation-review.db';
 import { getPrePublicationContentFingerprint } from '@/content-moderation/pre-publication-moderation.service';
 import { DropType } from '@/entities/IDrop';
+import { CompetitionEntryDropHooks } from '@/competitions/competition-entry-drop-hooks';
+import { CompetitionEntryStatus } from '@/entities/ICompetition';
 import { memeCollaborationsService } from '@/meme-collaborations/meme-collaborations.service';
 import { Time } from '@/time';
 import {
@@ -292,9 +294,39 @@ describe('legacy entries during the waves freeze', () => {
       ).rejects.toBe(PAST_FREEZE);
     });
 
-    it('lets an edit replace its rows', async () => {
-      await expect(deleteDrop(DropType.PARTICIPATORY, 'UPDATE')).rejects.toBe(
+    it("refuses an entry edit's delete step, while chat edits stay open", async () => {
+      await expect(
+        deleteDrop(DropType.PARTICIPATORY, 'UPDATE')
+      ).rejects.toBeInstanceOf(WavesFrozenException);
+      await expect(deleteDrop(DropType.CHAT, 'UPDATE')).rejects.toBe(
         PAST_FREEZE
+      );
+    });
+
+    it("checks after the entries' lock, which can wait past the freeze", async () => {
+      delete process.env.FEATURE_WAVES_FROZEN;
+      process.env.WAVES_FREEZE_AT = new Date(FREEZE).toISOString();
+      const now = jest.spyOn(Time, 'currentMillis').mockReturnValue(FREEZE - 1);
+      const forEntry = useCase(DropType.PARTICIPATORY);
+      (forEntry as any).entryHooks.lockForDelete.mockImplementation(
+        async () => {
+          now.mockReturnValue(FREEZE + 1);
+          return [];
+        }
+      );
+      await expect(
+        forEntry.execute(
+          {
+            drop_id: 'drop',
+            deleter_id: 'author',
+            deleter_identity: 'author',
+            deletion_purpose: 'DELETE'
+          } as any,
+          { connection }
+        )
+      ).rejects.toBeInstanceOf(WavesFrozenException);
+      expect((forEntry as any).entryHooks.lockForDelete).toHaveBeenCalledTimes(
+        1
       );
     });
 
@@ -442,6 +474,113 @@ describe('legacy entries during the waves freeze', () => {
       expect(
         forDrop.dropPollsDb.findPollByDropIdForUpdate
       ).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('chat history purge batches', () => {
+    const scope = { waveId: 'wave', authorId: 'author', cutoffSerialNo: 10 };
+    const drops = ['plain', 'with-poll'].map((id, i) => ({
+      id,
+      wave_id: 'wave',
+      author_id: 'author',
+      drop_type: DropType.CHAT,
+      serial_no: i + 1
+    }));
+
+    function useCase(pollDropIds: string[]) {
+      const dropPollsDb = {
+        findDropIdsWithPollForUpdate: jest.fn().mockResolvedValue(pollDropIds)
+      };
+      const purgeDb = { deleteBatch: jest.fn().mockRejectedValue(PAST_FREEZE) };
+      const result = new DeleteDropUseCase(
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        dropPollsDb as any,
+        {} as any,
+        purgeDb as any,
+        {} as any
+      );
+      return { result, dropPollsDb, purgeDb };
+    }
+
+    function purge(
+      forBatch: ReturnType<typeof useCase>,
+      directMessage = false
+    ) {
+      return forBatch.result.executeChatHistoryBatch(
+        scope,
+        drops as any,
+        {
+          id: 'wave',
+          is_direct_message: directMessage,
+          description_drop_id: 'pin'
+        } as any,
+        { connection } as any
+      );
+    }
+
+    it('refuses a batch that would delete a poll while frozen', async () => {
+      const forBatch = useCase(['with-poll']);
+      await expect(purge(forBatch)).rejects.toThrow(WAVES_FROZEN_POLL_MESSAGE);
+      expect(
+        forBatch.dropPollsDb.findDropIdsWithPollForUpdate
+      ).toHaveBeenCalledWith(['plain', 'with-poll'], { connection });
+      expect(forBatch.purgeDb.deleteBatch).not.toHaveBeenCalled();
+    });
+
+    it('purges a batch with no poll while frozen, and direct messages as before', async () => {
+      await expect(purge(useCase([]))).rejects.toBe(PAST_FREEZE);
+      const forMessages = useCase(['with-poll']);
+      await expect(purge(forMessages, true)).rejects.toBe(PAST_FREEZE);
+      expect(
+        forMessages.dropPollsDb.findDropIdsWithPollForUpdate
+      ).not.toHaveBeenCalled();
+    });
+
+    it('purges polls as before when not frozen', async () => {
+      delete process.env.FEATURE_WAVES_FROZEN;
+      const forBatch = useCase(['with-poll']);
+      await expect(purge(forBatch)).rejects.toBe(PAST_FREEZE);
+      expect(
+        forBatch.dropPollsDb.findDropIdsWithPollForUpdate
+      ).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('entry presentation changes', () => {
+    const entry = {
+      id: 'entry',
+      wave_id: 'wave',
+      competition_id: 'decision',
+      drop_id: 'drop',
+      legacy_origin: true,
+      status: CompetitionEntryStatus.ACTIVE
+    } as any;
+
+    it('changes no entry while frozen, but a drop with no entry still', async () => {
+      const hooks = new CompetitionEntryDropHooks();
+      await expect(
+        hooks.preparePresentationUpdate({} as any, [entry], {})
+      ).rejects.toBeInstanceOf(WavesFrozenException);
+      await expect(
+        hooks.preparePresentationUpdate({} as any, [], {})
+      ).resolves.toEqual({ entries: [], reset_votes: false });
+    });
+
+    it('changes entries as before when not frozen', async () => {
+      delete process.env.FEATURE_WAVES_FROZEN;
+      await expect(
+        new CompetitionEntryDropHooks().preparePresentationUpdate(
+          {} as any,
+          [entry],
+          {}
+        )
+      ).resolves.toEqual({ entries: [entry], reset_votes: false });
     });
   });
 });

@@ -31,10 +31,12 @@ import { Time } from '@/time';
  * go on as before, for one more cycle. Everything else stays frozen.
  *
  * The export starts no earlier than WAVES_FREEZE_AT + 5 minutes. Each write
- * path checks the freeze early and again right before it writes (inside its
- * transaction, after its last lock, where it has them), but a check and a
- * commit are still two steps: a request let in before the freeze can commit
- * just after it. Each lock wait is bounded (the server's default
+ * path checks the freeze early and again inside its transaction, after the
+ * locks it waits on and right before it writes; an entry edit checks once
+ * more in its delete step, after that step's locks and before the old rows
+ * go. Paths without a transaction check right before the write. A check and
+ * a commit are still two steps: a request let in before the freeze can
+ * commit just after it. Each lock wait is bounded (the server's default
  * innodb_lock_wait_timeout is 50 s; API post and reaction transactions set
  * 10 s, and the API Lambda stops at 30 s). The margin covers that.
  */

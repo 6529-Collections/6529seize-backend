@@ -176,6 +176,20 @@ export class DeleteDropUseCase {
     ) {
       throw new Error('Invalid chat history purge batch');
     }
+    // Purging deletes the drops' polls. While waves are frozen the batch is
+    // chosen without poll drops (direct messages aside); check again under
+    // the poll rows' locks, in case the freeze started since.
+    if (
+      !wave.is_direct_message &&
+      isWavesFrozen() &&
+      (
+        await this.dropPollsDb.findDropIdsWithPollForUpdate(
+          drops.map((drop) => drop.id),
+          ctx
+        )
+      ).length
+    )
+      throw new WavesFrozenException(WAVES_FROZEN_POLL_MESSAGE);
     await this.purgeDb.deleteBatch(
       scope,
       drops.map((drop) => drop.id),
@@ -264,15 +278,13 @@ export class DeleteDropUseCase {
                       : ownershipDrop.drop_type
             };
         const waveId = drop.wave_id;
-        // Deleting an entry withdraws it: while waves move to the 6529 chain
-        // entries are held as they stood at the freeze. Chat deletes stay
-        // open, and so do the backend's own deletes (SYSTEM_DELETE, today only
-        // the cleanup of duplicate identity nominations).
-        if (
-          isPermanentDelete &&
-          !isBackendDelete &&
-          drop.drop_type !== DropType.CHAT
-        )
+        // Deleting an entry withdraws it, and editing one deletes its old
+        // rows first: while waves move to the 6529 chain entries are held as
+        // they stood at the freeze. Checked here, after this step's locks and
+        // before its writes. Chat deletes and edits stay open, and so do the
+        // backend's own deletes (SYSTEM_DELETE, today only the cleanup of
+        // duplicate identity nominations).
+        if (!isBackendDelete && drop.drop_type !== DropType.CHAT)
           assertDecisionNotFrozen({ wave_id: waveId });
         const wave = await this.dropsDb.findWaveByIdOrNull(waveId, connection);
         if (!isBackendDelete) {

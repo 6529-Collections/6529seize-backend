@@ -38,6 +38,10 @@ import { competitionVotingService } from './competition-voting.service';
 import { createOrUpdateDrop } from '@/drops/create-or-update-drop.use-case';
 import * as pushNotifications from '@/api/push-notifications/push-notifications.service';
 import { apiDropV2Service } from '@/api/drops/api-drop-v2.service';
+import { moderationReviewDb } from '@/content-moderation/moderation-review.db';
+import { competitionCommandRepository } from '@/competitions/competition-command.repository';
+import { Time } from '@/time';
+import { WavesFrozenException } from '@/waves-freeze/waves-freeze';
 import { PageSortDirection } from '@/api/page-request';
 import {
   withLegacyCompetitionGetFacade,
@@ -257,6 +261,67 @@ describeWithSeed(
       jest.restoreAllMocks();
       if (originalApiBaseUrl === undefined) delete process.env.API_BASE_URL;
       else process.env.API_BASE_URL = originalApiBaseUrl;
+    });
+
+    describe('when the waves freeze starts during a lock wait', () => {
+      const freeze = Date.UTC(2026, 10, 25);
+      const names = ['FEATURE_WAVES_FROZEN', 'WAVES_FREEZE_AT'];
+      const saved: Record<string, string | undefined> = {};
+      beforeEach(() => {
+        for (const name of names) saved[name] = process.env[name];
+        delete process.env.FEATURE_WAVES_FROZEN;
+        process.env.WAVES_FREEZE_AT = new Date(freeze).toISOString();
+      });
+      afterEach(() => {
+        for (const name of names) {
+          if (saved[name] === undefined) delete process.env[name];
+          else process.env[name] = saved[name];
+        }
+      });
+
+      /** The freeze time passes once `method` has its lock. */
+      function freezeAfter(target: object, method: string) {
+        const now = jest
+          .spyOn(Time, 'currentMillis')
+          .mockReturnValue(freeze - 1);
+        const spyOn = jest.spyOn as (
+          object: object,
+          method: string
+        ) => jest.SpyInstance;
+        const original = (target as Record<string, any>)[method].bind(target);
+        spyOn(target, method).mockImplementation(async (...args: unknown[]) => {
+          const result = await original(...args);
+          now.mockReturnValue(freeze + 1);
+          return result;
+        });
+      }
+
+      async function entryRows() {
+        return sqlExecutor.execute(
+          `select id from ${tables.COMPETITION_ENTRIES_TABLE}`
+        );
+      }
+
+      it("refuses the entry before its drop is written (the author's profile lock)", async () => {
+        freezeAfter(moderationReviewDb, 'lockProfile');
+        const insertDrop = jest.spyOn(dropsDb, 'insertDrop');
+        await expect(
+          service.create(wave.id, competitionId, request(), ctx)
+        ).rejects.toBeInstanceOf(WavesFrozenException);
+        expect(insertDrop).not.toHaveBeenCalled();
+        expect(await entryRows()).toEqual([]);
+      });
+
+      it("refuses the entry after its drop is written (the drop's lock)", async () => {
+        freezeAfter(competitionCommandRepository, 'lockDrop');
+        const insertDrop = jest.spyOn(dropsDb, 'insertDrop');
+        await expect(
+          service.create(wave.id, competitionId, request(), ctx)
+        ).rejects.toBeInstanceOf(WavesFrozenException);
+        // The drop write was rolled back with the refused entry.
+        expect(insertDrop).toHaveBeenCalledTimes(1);
+        expect(await entryRows()).toEqual([]);
+      });
     });
 
     it.each([false, true])(

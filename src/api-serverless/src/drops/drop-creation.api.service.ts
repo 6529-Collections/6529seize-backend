@@ -38,7 +38,8 @@ import {
 import { ApiDropType } from '../generated/models/ApiDropType';
 import {
   assertDecisionNotFrozen,
-  assertWavesNotFrozen
+  assertWavesNotFrozen,
+  isWavesFrozen
 } from '@/waves-freeze/waves-freeze';
 import {
   wsListenersNotifier,
@@ -824,7 +825,13 @@ export class DropCreationApiService {
             ));
           const scope = { waveId, authorId, cutoffSerialNo };
           const candidates = await this.purgeDb.findBatchForUpdate(
-            { ...scope, pinnedDropId: wave.description_drop_id },
+            {
+              ...scope,
+              pinnedDropId: wave.description_drop_id,
+              // Purging deletes polls, which the waves freeze keeps: while
+              // frozen, drops with a poll stay (direct messages aside).
+              keepPolls: !wave.is_direct_message && isWavesFrozen()
+            },
             transactionContext
           );
           const hasMore = candidates.length > CHAT_HISTORY_PURGE_BATCH_SIZE;
