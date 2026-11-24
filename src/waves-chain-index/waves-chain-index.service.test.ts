@@ -5,6 +5,7 @@ import {
   id
 } from '@/tests/fixtures/waves-chain-index.fixture';
 import { ChainFeedBlock } from '@/chain-gateway/chain-gateway.types';
+import { Logger } from '@/logging';
 import { ChainObject, GatewayWavesChainApi } from './waves-chain-index.api';
 import { IndexTableName } from './waves-chain-index.db';
 import { WavesChainIndex } from './waves-chain-index.service';
@@ -426,6 +427,34 @@ describe('WavesChainIndex', () => {
     chain.timeUnknown = true;
     await index.run({ budgetMs: BIG });
     expect(db.readTime).toBe(second.finalizedTime);
+    // Each time was saved after its height: a run that stops between the
+    // two leaves an earlier time beside the new height, never a later one.
+    expect(db.readTimeSavedAtHeight).toEqual([
+      first.finalizedHeight,
+      second.finalizedHeight
+    ]);
+  });
+
+  it('goes on without the read_time column, saying so once', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn');
+    const { db, index } = indexOf(chain, clock);
+    db.noReadTimeColumn = true;
+    expect(await index.run({ budgetMs: BIG })).toMatchObject({
+      mode: 'indexed'
+    });
+    chain.vote(E(1), V(1), 12);
+    expect(await index.run({ budgetMs: BIG })).toMatchObject({
+      mode: 'indexed'
+    });
+    expect(db.state.lastFullAt).not.toBeNull();
+    expect(rowsOf(db)).toEqual(await freshRows(chain, clock));
+    expect(db.readTime).toBeNull();
+    expect(
+      warn.mock.calls.filter(([message]) =>
+        String(message).includes('HAS NO READ_TIME COLUMN YET')
+      )
+    ).toHaveLength(1);
+    warn.mockRestore();
   });
 
   it('waits when no block time can be read for the head', async () => {

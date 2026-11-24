@@ -41,6 +41,17 @@ import {
 
 const logger = Logger.get('WAVES_CHAIN_INDEX');
 
+let warnedAboutReadTime = false;
+
+/** Logged once a cold start: the state has no read_time column yet. */
+function warnNoReadTimeOnce() {
+  if (warnedAboutReadTime) return;
+  warnedAboutReadTime = true;
+  logger.warn(
+    '[WAVES_CHAIN_INDEX_STATE HAS NO READ_TIME COLUMN YET] [THE INDEX GOES ON] [STAYING-WAVE GUARDS READ THROUGH NOTHING UNTIL THE SCHEMA SYNC ADDS IT]'
+  );
+}
+
 /**
  * 6529.io's index of the 6529 chain's waves (entities/IWavesChainIndex.ts).
  *
@@ -247,7 +258,9 @@ export class WavesChainIndex {
       readHeight: height,
       network: head.network ?? state.network
     });
-    await this.db.saveReadTime(head.finalizedTime);
+    if (!(await this.db.saveReadTime(head.finalizedTime))) {
+      warnNoReadTimeOnce();
+    }
     try {
       const fullDue =
         state.lastFullAt !== null &&
