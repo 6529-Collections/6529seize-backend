@@ -9,9 +9,9 @@ import { WavesExportUsageError } from './waves-export.errors';
 
 /**
  * The read replica's lag, checked before any stage reads. The export reads
- * through the shared DB layer's pool on DB_HOST, several connections at once,
- * and the reader endpoint can put each on a different Aurora reader with its
- * own lag. One reader's own row, which the chain exports read
+ * through its own pool on DB_HOST (waves-export.db.ts), several connections
+ * at once, and the reader endpoint can put each on a different Aurora reader
+ * with its own lag. One reader's own row, which the chain exports read
  * (REPLICA_LAG_SQL in dbDumpsDaily/chain-exports/replica-snapshot.ts), says
  * nothing for the others, so this reads every reader's row and holds the
  * worst to the bound. It also reads whether DB_HOST's server is read-only,

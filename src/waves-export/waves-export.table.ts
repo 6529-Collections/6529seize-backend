@@ -40,8 +40,9 @@ export function dropTableValues(row: DropTableRow): Json {
 
 /**
  * A page's drops, each with its table values as `table`. A drop the table
- * read didn't return fails the page (and so its wave) rather than going out
- * without them.
+ * read didn't return fails the page rather than going out without them: its
+ * wave fails, and a wave that still fails after the stage's tries fails the
+ * drops stage and so the run.
  */
 export function withTableValues(
   drops: readonly Json[],
