@@ -170,6 +170,8 @@ export const CHAIN_POLLS_TABLE = 'chain_polls';
 export const CHAIN_WAVE_REP_TABLE = 'chain_wave_rep';
 export const CHAIN_DECISION_LEADERBOARDS_TABLE = 'chain_decision_leaderboards';
 export const CHAIN_LEADERBOARD_ROWS_TABLE = 'chain_leaderboard_rows';
+export const CHAIN_EVENTS_TABLE = 'chain_events';
+export const CHAIN_CLAIM_BUILDS_TABLE = 'chain_claim_builds';
 export const WAVE_OUTCOMES_TABLE = 'wave_outcomes';
 export const WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE =
   'wave_outcome_distribution_items';
