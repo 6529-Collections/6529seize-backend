@@ -298,6 +298,13 @@ async function answerAtHeight(
     }
     return notFound(chain, path, height);
   }
+  if (parts.length === 3 && kind === 'blocks') {
+    // A finalized block's time, as the chain mirror reads it.
+    const block = Number(objectId);
+    return Number.isSafeInteger(block) && block > 0 && block <= chain.height
+      ? one(chain, path, height, { height: block, time: timeAt(chain, block) })
+      : notFound(chain, path, height);
+  }
   if (parts.length === 3) {
     const read: Record<string, (id: string, at: number) => Promise<unknown>> = {
       groups: (x, at) => chain.group(x, at),
@@ -323,6 +330,18 @@ async function answerAtHeight(
   }
   if (kind === 'waves' && sub === 'rep' && subId === 'ratings') {
     return all(chain, path, height, await chain.waveRep(objectId, height));
+  }
+  if (kind === 'decisions' && sub === 'policies') {
+    // One policy version, active from the height the decision appeared.
+    let from = 0;
+    for (let at = 1; at <= height && !from; at++) {
+      if (await chain.decision(objectId, at)) from = at;
+    }
+    return from
+      ? all(chain, path, height, [
+          { version: 1, activationHeight: String(from) }
+        ])
+      : notFound(chain, path, height);
   }
   if (kind === 'decisions' && sub === 'entries') {
     return page(

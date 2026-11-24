@@ -2,6 +2,10 @@ import * as fs from 'node:fs';
 import * as http from 'node:http';
 import * as path from 'node:path';
 import {
+  ChainGatewayClient,
+  chainGatewayConfigFromEnv
+} from '@/chain-gateway/chain-gateway.client';
+import {
   exchangeKey,
   RecordedExchange
 } from '@/rebuild/sources/http-recording';
@@ -31,6 +35,14 @@ import { FakeIndexDb } from '@/tests/fixtures/waves-chain-index.fixture';
  * /v1/status. Phase 2 reads from empty, as a rebuild does: what phase 1
  * recorded is answered from the recording, the rest from the node.
  *
+ * Then the chain mirror's own reads beyond the index, as the mirror makes
+ * them (the gateway client, pinned at the mark): the block of every
+ * height a recorded vote, result or policy names (`/v1/blocks/{h}`, its
+ * time), and each chain-made decision's policies
+ * (`/v1/decisions/{id}/policies`) and the blocks of their activation
+ * heights. A block the mirror finds in the index is asked for here too:
+ * an extra answer is harmless, a missing one is not.
+ *
  * Documents are not recorded: a rebuild reads them from the capture's
  * files directory (files named by CID), and a frozen node has no document
  * store, so a recorded /v1/docs answer (its 404) would answer before the
@@ -58,6 +70,8 @@ export interface GatewayCaptureResult {
   readonly startHeight: number;
   readonly markHeight: number;
   readonly exchanges: number;
+  /** The chain mirror's reads: blocks and decisions' policies asked. */
+  readonly mirrorReads: { readonly blocks: number; readonly policies: number };
 }
 
 const RECORDING_FILE = 'recording.jsonl';
@@ -131,6 +145,112 @@ export async function startRecorder(upstream: string, dir: string) {
   });
   const { url } = await listenLoopback(server);
   return { url, state, kept, stop: () => closeServer(server) };
+}
+
+/** Height fields whose blocks the chain mirror may ask for. */
+const HEIGHT_FIELDS = new Set([
+  'updatedHeight',
+  'settledHeight',
+  'activationHeight'
+]);
+
+function positiveHeight(value: unknown): number | null {
+  const height =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string'
+        ? Number(value)
+        : NaN;
+  return Number.isSafeInteger(height) && height > 0 ? height : null;
+}
+
+/** Every height named in a field the chain mirror reads a block for. */
+function heightsIn(value: unknown, into: Set<number>): void {
+  if (Array.isArray(value)) {
+    value.forEach((item) => heightsIn(item, into));
+  } else if (value && typeof value === 'object') {
+    for (const [name, item] of Object.entries(value)) {
+      const height = HEIGHT_FIELDS.has(name) ? positiveHeight(item) : null;
+      if (height !== null) into.add(height);
+      else heightsIn(item, into);
+    }
+  }
+}
+
+/** Every decision made on the chain (origin native) in an answer. */
+function nativeDecisionsIn(value: unknown, into: Set<string>): void {
+  if (Array.isArray(value)) {
+    value.forEach((item) => nativeDecisionsIn(item, into));
+  } else if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    if (typeof record.decisionId === 'string' && record.origin === 'native') {
+      into.add(record.decisionId.toLowerCase());
+    }
+    Object.values(record).forEach((item) => nativeDecisionsIn(item, into));
+  }
+}
+
+/**
+ * What the chain mirror reads beyond the index, from the recorded
+ * answers: the heights of votes, results and policies, and the decisions
+ * made on the chain, each once and in order.
+ */
+export function mirrorReadTargets(
+  exchanges: Iterable<Pick<RecordedExchange, 'body' | 'encoding'>>
+): { heights: number[]; decisions: string[] } {
+  const heights = new Set<number>();
+  const decisions = new Set<string>();
+  for (const exchange of Array.from(exchanges)) {
+    if (exchange.encoding !== 'utf8') continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(exchange.body);
+    } catch {
+      continue;
+    }
+    heightsIn(parsed, heights);
+    nativeDecisionsIn(parsed, decisions);
+  }
+  return {
+    heights: Array.from(heights).sort((a, b) => a - b),
+    decisions: Array.from(decisions).sort((a, b) =>
+      a < b ? -1 : Number(a > b)
+    )
+  };
+}
+
+/**
+ * The chain mirror's reads beyond the index, through the recorder with the
+ * same client the mirror uses, so each answer is kept under the key the
+ * mirror's replayed read asks for: each chain-made decision's policies,
+ * then the block of every height found. A read the node can't answer is
+ * kept as it answered.
+ */
+export async function readMirrorExtras(
+  recorderUrl: string,
+  exchanges: () => Iterable<Pick<RecordedExchange, 'body' | 'encoding'>>
+): Promise<{ blocks: number; policies: number }> {
+  const client = new ChainGatewayClient(() => ({
+    ...chainGatewayConfigFromEnv({ CHAIN_GATEWAY_URL: recorderUrl }),
+    retries: 0
+  }));
+  const quietly = async (read: () => Promise<unknown>) => {
+    try {
+      await read();
+    } catch {
+      // Kept as the node answered; the mirror falls back the same way.
+    }
+  };
+  const { decisions } = mirrorReadTargets(exchanges());
+  for (const decisionId of decisions) {
+    await quietly(() => client.read(`/v1/decisions/${decisionId}/policies`));
+  }
+  // The policies' activation heights are among the heights now.
+  const { heights } = mirrorReadTargets(exchanges());
+  for (const height of heights) {
+    await quietly(() => client.read(`/v1/blocks/${height}`));
+  }
+  return { blocks: heights.length, policies: decisions.length };
 }
 
 async function json(url: string): Promise<Record<string, unknown> | null> {
@@ -211,19 +331,24 @@ export async function captureWavesGateway(
         `The rebuild's heights ${heights.join(', ')} don't start at phase 1's ${start.finalizedHeight}`
       );
     }
+    // Phase 3: the chain mirror's own reads, pinned at the mark as well.
+    const mirrorReads = await readMirrorExtras(recorder.url, () =>
+      recorder.kept.values()
+    );
     writeProvenance(options.dir, {
       made_by: options.madeBy,
       note: `The waves import completed at height ${doneHeight}; the index starts at ${start.finalizedHeight}, the first finalized height from it; the mark is height ${markHeight}.`,
       recorded_at: new Date().toISOString()
     });
     log(
-      `[GATEWAY CAPTURE] done: ${recorder.kept.size} answers, import ${doneHeight}, heights ${start.finalizedHeight} and ${markHeight}`
+      `[GATEWAY CAPTURE] done: ${recorder.kept.size} answers, import ${doneHeight}, heights ${start.finalizedHeight} and ${markHeight}, the mirror's reads: ${mirrorReads.blocks} blocks, ${mirrorReads.policies} decisions' policies`
     );
     return {
       doneHeight,
       startHeight: start.finalizedHeight,
       markHeight,
-      exchanges: recorder.kept.size
+      exchanges: recorder.kept.size,
+      mirrorReads
     };
   } finally {
     await recorder.stop();

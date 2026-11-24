@@ -3,7 +3,10 @@ import * as fs from 'node:fs';
 import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { cidPath } from '@/chain-gateway/chain-gateway.client';
+import {
+  ChainGatewayClient,
+  cidPath
+} from '@/chain-gateway/chain-gateway.client';
 import { startHttpRecording } from '@/rebuild/sources/http-recording';
 import { closeServer, listenLoopback } from '@/rebuild/sources/running-source';
 import {
@@ -11,7 +14,11 @@ import {
   indexChainTo
 } from '@/rebuild/steps/waves-chain-index.steps';
 import { FakeIndexDb } from '@/tests/fixtures/waves-chain-index.fixture';
-import { captureWavesGateway, startRecorder } from './gateway-capture';
+import {
+  captureWavesGateway,
+  mirrorReadTargets,
+  startRecorder
+} from './gateway-capture';
 import {
   buildWavesGatewayWorld,
   startGatewayWorld,
@@ -83,6 +90,54 @@ describe('the waves gateway capture', () => {
     expect(
       JSON.parse(fs.readFileSync(path.join(dir, 'PROVENANCE.json'), 'utf8'))
     ).toMatchObject({ made_by: 'a test of the capture' });
+  });
+
+  it("records the chain mirror's own reads at the mark, as its client asks them", async () => {
+    const result = await captureWavesGateway({
+      gateway: node.url,
+      dir,
+      madeBy: 'a test of the capture',
+      pollMs: 10,
+      waitForMark: async () => undefined
+    });
+    expect(result.mirrorReads.blocks).toBeGreaterThan(0);
+    expect(result.mirrorReads.policies).toBeGreaterThan(0);
+    const keys = fs
+      .readFileSync(path.join(dir, 'recording.jsonl'), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line).path as string);
+    const blocks = keys.filter((p) => p.startsWith('/v1/blocks/'));
+    const policies = keys.filter((p) =>
+      /\/v1\/decisions\/[^/]+\/policies/.test(p)
+    );
+    expect(blocks).toHaveLength(result.mirrorReads.blocks);
+    expect(policies).toHaveLength(result.mirrorReads.policies);
+    // Pinned at the mark on the world's network, as the mirror's reads are.
+    for (const p of [...blocks, ...policies]) {
+      expect(p).toContain(`height=${world.markHeight}`);
+      expect(p).toContain('network=');
+    }
+    // A replay answers the mirror's block read from the recording.
+    const replay = await startHttpRecording({ name: 'gateway', dir });
+    try {
+      const client = new ChainGatewayClient(() => ({
+        baseUrl: replay.url,
+        serviceKey: null,
+        timeoutMs: 5_000,
+        retries: 0,
+        headTtlMs: 0,
+        cacheEntries: 10
+      }));
+      const height = Number(blocks[0].split('/')[3].split('?')[0]);
+      const answer = await client.read<{ time: number }>(
+        `/v1/blocks/${height}`
+      );
+      expect(answer?.data.time).toBeGreaterThan(0);
+      expect(replay.problems()).toEqual([]);
+    } finally {
+      await replay.stop();
+    }
   });
 
   it('replays: a rebuild asks nothing the recording lacks and reads the same', async () => {
@@ -158,6 +213,31 @@ describe('the waves gateway capture', () => {
     } finally {
       await skippedNode.close();
     }
+  });
+});
+
+describe("the chain mirror's read targets", () => {
+  const json = (value: unknown) => ({
+    body: JSON.stringify(value),
+    encoding: 'utf8' as const
+  });
+
+  it('take every vote, result and policy height, and the chain-made decisions', () => {
+    expect(
+      mirrorReadTargets([
+        json({
+          data: [
+            { decisionId: '0xAB', origin: 'native', updatedHeight: '12' },
+            { decisionId: '0xcd', origin: 'legacy', updatedHeight: 7 }
+          ]
+        }),
+        json({ data: { data: { settledHeight: '30' }, other: 99 } }),
+        json({ data: [{ version: 1, activationHeight: '5' }] }),
+        json({ data: { settledHeight: '0', updatedHeight: 'soon' } }),
+        { body: 'not json', encoding: 'utf8' as const },
+        { body: 'AAAA', encoding: 'base64' as const }
+      ])
+    ).toEqual({ heights: [5, 7, 12, 30], decisions: ['0xab'] });
   });
 });
 
