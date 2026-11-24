@@ -217,7 +217,8 @@ class FakeWaves implements WavesExportSource {
   ) {}
 
   async listWaves(scope: {
-    readonly recordsWaveId: string;
+    readonly recordsWaveId: string | null;
+    readonly freezeMs: number | null;
   }): Promise<ExportWaveRow[]> {
     const row = (id: string): ExportWaveRow => ({
       id,

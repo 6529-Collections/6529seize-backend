@@ -38,6 +38,7 @@ import {
   COMPETITIONS_TABLE,
   DROPS_TABLE,
   RATINGS_TABLE,
+  USER_GROUPS_TABLE,
   WAVE_CURATIONS_TABLE,
   WAVES_TABLE
 } from '@/constants';
@@ -48,8 +49,10 @@ import { RateMatter } from '@/entities/IRating';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 import {
-  STAY_REASONS,
-  StayReason,
+  ChainStateSql,
+  MOVED_ON_CHAIN_COLUMN,
+  SCOPE_SQL_PARAMS,
+  scopeFromRow,
   wavesScopeSql
 } from '@/waves-scope/waves-scope';
 import { stableGrant } from './waves-export.compact';
@@ -152,10 +155,11 @@ function chunks<T>(items: readonly T[], size: number): T[][] {
   return out;
 }
 
-/** A 0/1 column, as MySQL gives a boolean expression. */
-const isSet = (value: unknown) =>
-  value === true ||
-  (value !== null && value !== undefined && Number(value) === 1);
+/**
+ * The rule as the waves freeze holds it, before the switch-on: the export
+ * runs at the freeze, and the chain holds no wave yet.
+ */
+const RULE_BEFORE_SWITCH_ON: ChainStateSql = { switchedOn: false };
 
 /**
  * The export's reads, through 6529.io's own services and mappers, with the
@@ -172,26 +176,41 @@ export class BackendWavesExportSource implements WavesExportSource {
 
   async listWaves(scope: {
     readonly recordsWaveId: string | null;
+    readonly freezeMs: number | null;
   }): Promise<ExportWaveRow[]> {
+    // The shared rule's SQL form (src/waves-scope) before the switch-on:
+    // each reason a 0/1 column named for it, and moved_on_chain. A subwave
+    // stays when any wave above it stays (parent_stays).
+    const scopeSql = wavesScopeSql('sw', RULE_BEFORE_SWITCH_ON);
+    const columns = [...Object.keys(scopeSql.reasons), MOVED_ON_CHAIN_COLUMN];
     const rows = await sqlExecutor.execute<
-      Omit<ExportWaveRow, 'stay_reasons'> & Record<StayReason, unknown>
+      Omit<ExportWaveRow, 'stay_reasons'> & Record<string, unknown>
     >(
       // The submit and vote groups of a wave's original decision come from
-      // the legacy view, as every other wave read takes them. The reasons
-      // to stay are the shared rule's SQL form (src/waves-scope), each a
-      // 0/1 column named for its reason, before the switch-on: a subwave
-      // stays when any wave above it stays (parent_stays).
+      // the legacy view, as every other wave read takes them.
       `select w.id, w.parent_wave_id, w.visibility_group_id, w.admin_group_id,
           w.chat_group_id, lw.participation_group_id, lw.voting_group_id,
-          ${STAY_REASONS.map((reason) => `s.${reason}`).join(', ')}
+          ${columns.map((column) => `s.${column}`).join(', ')}
         from ${WAVES_TABLE} w
-        join (${wavesScopeSql('sw', 'recordsWaveId').select}) s on s.id = w.id
+        join (${scopeSql.select}) s on s.id = w.id
         left join ${legacyGetView(WAVES_TABLE)} lw on lw.id = w.id`,
-      { recordsWaveId: scope.recordsWaveId }
+      {
+        [SCOPE_SQL_PARAMS.records]: scope.recordsWaveId,
+        // The freeze as the rule reads it: ms for waves.created_at, a Date
+        // for community_groups.created_at (written in UTC: runExport sets
+        // TZ).
+        [SCOPE_SQL_PARAMS.freezeAtMs]: scope.freezeMs,
+        [SCOPE_SQL_PARAMS.freezeAt]:
+          scope.freezeMs === null ? null : new Date(scope.freezeMs)
+      }
     );
     return rows
       .map((row) => {
-        const reasons = STAY_REASONS.filter((reason) => isSet(row[reason]));
+        const { reasons } = scopeFromRow(row, {
+          chain: RULE_BEFORE_SWITCH_ON,
+          // The export refuses an unset records wave: it is an id or none.
+          recordsWaveConfigured: true
+        });
         return {
           id: row.id,
           stay_reasons: reasons,
@@ -409,6 +428,16 @@ export class BackendWavesExportSource implements WavesExportSource {
         userGroupsService.findByIdsForExport(batch, this.ctx)
       )) {
         out[group.id] = asJson(group);
+      }
+      // The API's group leaves out is_direct_message, which the shared rule
+      // reads (groupStays): a direct message's group gets it, and stays.
+      const direct = await sqlExecutor.execute<{ id: string }>(
+        `select id from ${USER_GROUPS_TABLE}
+          where id in (:groupIds) and is_direct_message = 1`,
+        { groupIds: batch }
+      );
+      for (const { id } of direct) {
+        if (out[id]) out[id] = { ...out[id], is_direct_message: true };
       }
     }
     return out;

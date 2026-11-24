@@ -92,9 +92,14 @@ export interface ExportSignedDrop {
 
 /** Everything the export reads. Backed by 6529.io's services; faked in tests. */
 export interface WavesExportSource {
-  /** Every wave, by id, each with its reasons to stay (src/waves-scope). */
+  /**
+   * Every wave, by id, each with its reasons to stay (src/waves-scope), for
+   * the records wave (null for none) and the waves freeze in ms (null in a
+   * rehearsal: then nothing counts as made after the freeze).
+   */
   listWaves(scope: {
     readonly recordsWaveId: string | null;
+    readonly freezeMs: number | null;
   }): Promise<ExportWaveRow[]>;
   /** The curations of these waves: each one's id, wave and group. */
   waveCurations(waveIds: string[]): Promise<ExportCuration[]>;

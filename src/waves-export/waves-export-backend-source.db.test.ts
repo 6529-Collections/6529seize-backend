@@ -26,8 +26,13 @@ const AUTHOR = anIdentity(
   }
 );
 
+// Dates read and written in UTC, as runExport sets it.
+process.env.TZ = 'UTC';
+
 const PUBLIC_ID = 'a0000000-0000-4000-8000-000000000001';
 const MEMBERS_ID = 'a0000000-0000-4000-8000-000000000003';
+/** The waves freeze the reads are at: every fixture is older but those after it. */
+const FREEZE_MS = Date.UTC(2100, 0, 1);
 
 function descriptionDrop(waveId: string): string {
   return `description-${waveId}`;
@@ -89,6 +94,61 @@ const RECORDS_WAVE = aWave(
   { chat_group_id: PUBLIC_GROUP.id },
   { id: 'a0000000-0000-4000-8000-000000000008', name: 'Records', serial_no: 8 }
 );
+// A public group made after the freeze, and a direct message's group.
+const LATE_GROUP = aUserGroup(
+  {
+    is_private: false,
+    is_direct_message: false,
+    visible: true,
+    created_at: new Date(FREEZE_MS + 60_000)
+  },
+  { id: 'late-0000000000000000000000001', name: 'Late' }
+);
+const DM_GROUP = aUserGroup(
+  { is_private: false, is_direct_message: true, visible: true },
+  { id: 'dm-000000000000000000000000001', name: 'DM group' }
+);
+// One wave for each of the rule's other reasons.
+const LATE_WAVE = aWave(
+  { created_at: FREEZE_MS + 1 },
+  { id: 'a0000000-0000-4000-8000-0000000000a1', name: 'Late', serial_no: 9 }
+);
+const LATE_GROUP_WAVE = aWave(
+  { admin_group_id: LATE_GROUP.id },
+  {
+    id: 'a0000000-0000-4000-8000-0000000000a2',
+    name: 'Late group',
+    serial_no: 10
+  }
+);
+const CHAT_OFF_WAVE = aWave(
+  { chat_enabled: false },
+  {
+    id: 'a0000000-0000-4000-8000-0000000000a3',
+    name: 'Chat off',
+    serial_no: 11
+  }
+);
+const GONE_GROUP_WAVE = aWave(
+  { chat_group_id: 'gone-0000000000000000000000001' },
+  {
+    id: 'a0000000-0000-4000-8000-0000000000a4',
+    name: 'Gone group',
+    serial_no: 12
+  }
+);
+const ORPHAN_WAVE = aWave(
+  { parent_wave_id: 'a0000000-0000-4000-8000-0000000000ff' },
+  { id: 'a0000000-0000-4000-8000-0000000000a5', name: 'Orphan', serial_no: 13 }
+);
+const DM_GROUP_WAVE = aWave(
+  { admin_group_id: DM_GROUP.id },
+  {
+    id: 'a0000000-0000-4000-8000-0000000000a6',
+    name: 'DM group',
+    serial_no: 14
+  }
+);
 
 function dropRow(waveId: string, id: string, serial: number) {
   return {
@@ -135,7 +195,13 @@ describeWithSeed(
       UNDER_DM,
       DECISION_WAVE,
       HIDDEN_ADMIN_WAVE,
-      RECORDS_WAVE
+      RECORDS_WAVE,
+      LATE_WAVE,
+      LATE_GROUP_WAVE,
+      CHAT_OFF_WAVE,
+      GONE_GROUP_WAVE,
+      ORPHAN_WAVE,
+      DM_GROUP_WAVE
     ]),
     withIdentities([AUTHOR]),
     {
@@ -159,7 +225,13 @@ describeWithSeed(
         dropRow(DM_WAVE.id, 'dm-drop-5', 5)
       ]
     },
-    withUserGroups([PRIVATE_GROUP, HIDDEN_GROUP, PUBLIC_GROUP]),
+    withUserGroups([
+      PRIVATE_GROUP,
+      HIDDEN_GROUP,
+      PUBLIC_GROUP,
+      LATE_GROUP,
+      DM_GROUP
+    ]),
     {
       table: WAVE_CURATIONS_TABLE,
       rows: [
@@ -202,7 +274,10 @@ describeWithSeed(
     const source = new BackendWavesExportSource();
 
     it('reads waves with why they stay, wave REP, groups and decisions', async () => {
-      const waves = await source.listWaves({ recordsWaveId: RECORDS_WAVE.id });
+      const waves = await source.listWaves({
+        recordsWaveId: RECORDS_WAVE.id,
+        freezeMs: FREEZE_MS
+      });
       // The shared rule's reasons (src/waves-scope), by its SQL form.
       expect(waves.map((wave) => [wave.id, wave.stay_reasons])).toEqual([
         [PUBLIC_WAVE.id, []],
@@ -213,8 +288,28 @@ describeWithSeed(
         [UNDER_DM.id, ['parent_stays']],
         [DECISION_WAVE.id, []],
         [HIDDEN_ADMIN_WAVE.id, ['hidden_or_private_group']],
-        [RECORDS_WAVE.id, ['records_wave']]
+        [RECORDS_WAVE.id, ['records_wave']],
+        [LATE_WAVE.id, ['created_after_freeze']],
+        [LATE_GROUP_WAVE.id, ['group_created_after_freeze']],
+        [CHAT_OFF_WAVE.id, ['chat_disabled_no_admin_group']],
+        // A group id with no row stays, and so does a direct message's group.
+        [GONE_GROUP_WAVE.id, ['hidden_or_private_group']],
+        // A parent with no row.
+        [ORPHAN_WAVE.id, ['parent_stays']],
+        [DM_GROUP_WAVE.id, ['hidden_or_private_group']]
       ]);
+      // A rehearsal has no freeze: nothing is made after it.
+      const rehearsal = await source.listWaves({
+        recordsWaveId: RECORDS_WAVE.id,
+        freezeMs: null
+      });
+      expect(
+        rehearsal
+          .filter((wave) =>
+            [LATE_WAVE.id, LATE_GROUP_WAVE.id].includes(wave.id)
+          )
+          .map((wave) => wave.stay_reasons)
+      ).toEqual([[], []]);
       expect(waves.find((wave) => wave.id === MEMBERS_WAVE.id)).toMatchObject({
         visibility_group_id: PRIVATE_GROUP.id,
         chat_group_id: PRIVATE_GROUP.id
@@ -251,11 +346,18 @@ describeWithSeed(
       const groups = await source.groups([
         PRIVATE_GROUP.id,
         HIDDEN_GROUP.id,
+        DM_GROUP.id,
+        LATE_GROUP.id,
         'no-such-group'
       ]);
       expect(Object.keys(groups).sort()).toEqual(
-        [HIDDEN_GROUP.id, PRIVATE_GROUP.id].sort()
+        [HIDDEN_GROUP.id, PRIVATE_GROUP.id, DM_GROUP.id, LATE_GROUP.id].sort()
       );
+      // The rule's fields: a direct message's group says so, and created_at
+      // is in ms.
+      expect(groups[DM_GROUP.id]).toMatchObject({ is_direct_message: true });
+      expect(groups[PRIVATE_GROUP.id].is_direct_message).toBeUndefined();
+      expect(groups[LATE_GROUP.id].created_at).toBe(FREEZE_MS + 60_000);
       expect(groups[PRIVATE_GROUP.id]).toMatchObject({
         id: PRIVATE_GROUP.id,
         is_private: true
@@ -289,7 +391,10 @@ describeWithSeed(
 
     it("reads a members-only wave's configuration and drops", async () => {
       const members = (
-        await source.listWaves({ recordsWaveId: RECORDS_WAVE.id })
+        await source.listWaves({
+          recordsWaveId: RECORDS_WAVE.id,
+          freezeMs: FREEZE_MS
+        })
       ).find((wave) => wave.id === MEMBERS_WAVE.id)!;
       const configuration = await source.waveConfiguration(members, [
         PRIVATE_GROUP.id

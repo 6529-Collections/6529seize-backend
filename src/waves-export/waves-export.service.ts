@@ -64,8 +64,9 @@ export const STAYING_WAVES_FILE = 'waves_staying.json';
 
 /**
  * Groups a wave that moves names but the groups stage left out: hidden or
- * private, or a direct message's. The rule keeps such a group's waves on
- * 6529.io, so there are none unless a group changed since the waves stage.
+ * private, a direct message's, or made after the freeze. The rule keeps
+ * such a group's waves on 6529.io, so there are none unless a group
+ * changed since the waves stage.
  */
 export const STAYING_GROUPS_FILE = 'groups_staying.json';
 
@@ -79,7 +80,14 @@ export const CURATIONS_FILE = 'curations.json';
 /** Why a group the export reads is left out. */
 export type GroupStayReason =
   | StayReason.HIDDEN_OR_PRIVATE_GROUP
-  | StayReason.DIRECT_MESSAGE;
+  | StayReason.DIRECT_MESSAGE
+  | StayReason.GROUP_CREATED_AFTER_FREEZE;
+
+const GROUP_STAY_REASONS: readonly GroupStayReason[] = [
+  StayReason.DIRECT_MESSAGE,
+  StayReason.HIDDEN_OR_PRIVATE_GROUP,
+  StayReason.GROUP_CREATED_AFTER_FREEZE
+];
 
 interface StayingWaves {
   readonly total: number;
@@ -183,6 +191,36 @@ export async function forEachLimited<T>(
     }
   );
   await Promise.all(workers);
+}
+
+/**
+ * Why a group, as the API shows it, stays on 6529.io (the shared rule's
+ * groupStays, with the waves freeze in ms; null in a rehearsal), or null
+ * when it moves. A group made after the freeze says so first, as the rule
+ * names it for a wave that uses it.
+ */
+export function groupStayReason(
+  group: Json,
+  freezeMs: number | null
+): GroupStayReason | null {
+  const fields = {
+    visible: group.visible === true,
+    is_private: group.is_private === true,
+    is_direct_message: group.is_direct_message === true,
+    created_at: typeof group.created_at === 'number' ? group.created_at : null
+  };
+  if (!groupStays(fields, freezeMs)) return null;
+  if (
+    groupStays(
+      { ...fields, visible: true, is_private: false, is_direct_message: false },
+      freezeMs
+    )
+  ) {
+    return StayReason.GROUP_CREATED_AFTER_FREEZE;
+  }
+  return fields.is_direct_message
+    ? StayReason.DIRECT_MESSAGE
+    : StayReason.HIDDEN_OR_PRIVATE_GROUP;
 }
 
 /**
@@ -464,18 +502,11 @@ export class WavesExport {
       waves[reason] = staying.by_reason?.[reason] ?? 0;
     }
     const groupReasons = Object.values(groups);
-    const groupsBy = (reason: GroupStayReason) =>
-      groupReasons.filter((it) => it === reason).length;
-    return {
-      waves,
-      groups: {
-        total: groupReasons.length,
-        [StayReason.HIDDEN_OR_PRIVATE_GROUP]: groupsBy(
-          StayReason.HIDDEN_OR_PRIVATE_GROUP
-        ),
-        [StayReason.DIRECT_MESSAGE]: groupsBy(StayReason.DIRECT_MESSAGE)
-      }
-    };
+    const left: Record<string, number> = { total: groupReasons.length };
+    for (const reason of GROUP_STAY_REASONS) {
+      left[reason] = groupReasons.filter((it) => it === reason).length;
+    }
+    return { waves, groups: left };
   }
 
   private async runStage(stage: WavesExportStage): Promise<void> {
@@ -514,7 +545,10 @@ export class WavesExport {
    */
   private async wavesWithRecordsWave(): Promise<ExportWaveRow[]> {
     const recordsWaveId = this.options.recordsWaveId;
-    const all = await this.source.listWaves({ recordsWaveId });
+    const all = await this.source.listWaves({
+      recordsWaveId,
+      freezeMs: this.options.freezeMs
+    });
     // None, on purpose: no wave is the records wave.
     if (
       recordsWaveId !== null &&
@@ -723,14 +757,10 @@ export class WavesExport {
         groups[id] = { _error: 404 };
         continue;
       }
-      // The rule keeps a hidden or private group's waves on 6529.io, so a
-      // wave that moves names none unless a group changed since: it stays.
-      const reason: GroupStayReason | null =
-        group.is_direct_message === true
-          ? StayReason.DIRECT_MESSAGE
-          : groupStays(group as { visible: boolean; is_private: boolean })
-            ? StayReason.HIDDEN_OR_PRIVATE_GROUP
-            : null;
+      // The rule keeps a staying group's waves on 6529.io (src/waves-scope:
+      // hidden, private, a direct message's, or made after the freeze), so
+      // a wave that moves names none unless a group changed since: it stays.
+      const reason = groupStayReason(group, this.options.freezeMs);
       if (reason) {
         left[id] = reason;
         this.log(

@@ -132,6 +132,7 @@ class FakeSource implements WavesExportSource {
   readonly dropCalls: string[] = [];
   readonly groupCalls: string[][] = [];
   readonly curationCalls: string[][] = [];
+  readonly listScopes: unknown[] = [];
 
   /**
    * Two waves that move, one the backend can't read, and a public subwave
@@ -139,7 +140,11 @@ class FakeSource implements WavesExportSource {
    * with two, and a public subwave of a members-only wave (parent_stays).
    * The backend's reasons are the shared rule's.
    */
-  async listWaves(scope: { readonly recordsWaveId: string }) {
+  async listWaves(scope: {
+    readonly recordsWaveId: string | null;
+    readonly freezeMs: number | null;
+  }) {
+    this.listScopes.push(scope);
     return [
       wave('w-pub', null, { admin_group_id: 'g-admin' }),
       wave('w-sub', 'w-pub', {
@@ -504,6 +509,10 @@ describe('WavesExport', () => {
     for (const group of ['g-read', 'g-hidden', 'g-private', 'g-records-post']) {
       expect(source.groupCalls.flat()).not.toContain(group);
     }
+    // The rule is read at the run's freeze, with its records wave.
+    expect(source.listScopes).toEqual([
+      { recordsWaveId: RECORDS, freezeMs: T_W }
+    ]);
     expect(raw('waves_staying.json')).toEqual({
       total: 6,
       by_reason: {
@@ -511,6 +520,9 @@ describe('WavesExport', () => {
         records_wave: 1,
         members_only: 2,
         hidden_or_private_group: 2,
+        group_created_after_freeze: 0,
+        chat_disabled_no_admin_group: 0,
+        created_after_freeze: 0,
         parent_stays: 1,
         not_on_chain: 0
       },
@@ -851,7 +863,7 @@ describe('WavesExport', () => {
     }
   });
 
-  it('leaves out a group a moving wave names that is private by now, and says so', async () => {
+  it('leaves out a group a moving wave names that stays by now, and says why', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'waves-export-group-'));
     try {
       const changed = new FakeSource();
@@ -859,6 +871,12 @@ describe('WavesExport', () => {
       changed.groups = async (ids: string[]) => {
         const found = await read(ids);
         found['g-post'] = { ...found['g-post'], is_private: true };
+        found['g-curators'] = {
+          ...found['g-curators'],
+          is_direct_message: true
+        };
+        // Made after the freeze, though public.
+        found['g-admin'] = { ...found['g-admin'], created_at: T_W + 1 };
         return found;
       };
       const log: string[] = [];
@@ -878,17 +896,25 @@ describe('WavesExport', () => {
       }).run();
       const file = (name: string) =>
         JSON.parse(fs.readFileSync(path.join(dir, 'raw', name), 'utf8'));
-      expect(Object.keys(file('groups.json'))).not.toContain('g-post');
+      for (const id of ['g-admin', 'g-curators', 'g-post']) {
+        expect(Object.keys(file('groups.json'))).not.toContain(id);
+      }
       expect(file('groups_staying.json')).toEqual({
+        'g-admin': 'group_created_after_freeze',
+        'g-curators': 'direct_message',
         'g-post': 'hidden_or_private_group'
       });
       expect(file('export.json').left_out.groups).toEqual({
-        total: 1,
+        total: 3,
+        direct_message: 1,
         hidden_or_private_group: 1,
-        direct_message: 0
+        group_created_after_freeze: 1
       });
       expect(log).toContain(
         'group g-post stays on 6529.io (hidden_or_private_group) but a wave that moves names it: left out'
+      );
+      expect(log).toContain(
+        'group g-admin stays on 6529.io (group_created_after_freeze) but a wave that moves names it: left out'
       );
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });

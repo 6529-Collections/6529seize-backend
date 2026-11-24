@@ -19,8 +19,11 @@ the Waves v1 file and the drop archives from it. Read-only.
 Only waves that move to the chain are written. A wave stays on 6529.io, and
 the export leaves it out with its decisions, entries, votes, wave REP, polls
 and drops, when it is members-only, a direct message, the signed records
-wave, or names a hidden or private group (src/waves-scope). Hidden and
-private groups stay too. export.json counts what was left out, by reason.
+wave, made after the freeze, has its chat off and no admin group, uses a
+group that stays (hidden, private, a direct message's, made after the
+freeze, or gone), or is under a wave that stays (src/waves-scope). Such
+groups stay too. A rehearsal has no freeze, so nothing counts as made after
+it. export.json counts what was left out, by reason.
 The records wave is named by --records-wave-id or SIGNED_RECORDS_WAVE_ID,
 or set to none when there is none; without either, the export refuses.
 

@@ -419,6 +419,11 @@ describe('the records wave the export keeps on 6529.io', () => {
 
   it('takes none, given on purpose, as no records wave', () => {
     expect(recordsWaveIdFor('none', {})).toBeNull();
+    // In any case, as 6529.io reads the setting.
+    expect(recordsWaveIdFor('NONE', {})).toBeNull();
+    expect(
+      recordsWaveIdFor('none', { SIGNED_RECORDS_WAVE_ID: ' None ' })
+    ).toBeNull();
     expect(
       recordsWaveIdFor(null, { SIGNED_RECORDS_WAVE_ID: 'none' })
     ).toBeNull();

@@ -7,6 +7,11 @@ import {
   WavesExportCommand,
   WavesExportUsageError
 } from './cli-options';
+import {
+  readRecordsWaveSetting,
+  RECORDS_WAVE_ID_ENV,
+  RecordsWaveSetting
+} from '@/waves-scope/waves-scope';
 
 /**
  * How long after the freeze the export may start. A write 6529.io admitted
@@ -41,29 +46,39 @@ export function refuseBeforeExportStart(
   return earliestMs;
 }
 
-/** The records wave setting that says there is none. */
-export const NO_RECORDS_WAVE = 'none';
+/** The same setting as two values: both ids alike, or both none. */
+function sameRecordsWave(a: RecordsWaveSetting, b: RecordsWaveSetting) {
+  return a.kind === 'id' && b.kind === 'id' ? a.id === b.id : a.kind === b.kind;
+}
 
 /**
  * The signed records wave's id, which stays on 6529.io: --records-wave-id,
- * else SIGNED_RECORDS_WAVE_ID as the run's environment has it. `none`, given
- * on purpose, says there is no records wave: null. Refuses when neither
- * names it, so it can't move by a missing setting, and when the two
- * disagree.
+ * else SIGNED_RECORDS_WAVE_ID as the run's environment has it, each read as
+ * 6529.io reads the setting (src/waves-scope, readRecordsWaveSetting).
+ * `none`, in any case, given on purpose, says there is no records wave:
+ * null. Refuses when neither names it, so it can't move by a missing
+ * setting, and when the two disagree.
  */
 export function recordsWaveIdFor(
   option: string | null,
   env: Readonly<Record<string, string | undefined>>
 ): string | null {
-  const fromEnv = env.SIGNED_RECORDS_WAVE_ID?.trim() || null;
-  if (option && fromEnv && option !== fromEnv) {
+  const given = readRecordsWaveSetting({
+    [RECORDS_WAVE_ID_ENV]: option ?? undefined
+  });
+  const fromEnv = readRecordsWaveSetting(env);
+  if (
+    given.kind !== 'unset' &&
+    fromEnv.kind !== 'unset' &&
+    !sameRecordsWave(given, fromEnv)
+  ) {
     throw new WavesExportUsageError(
-      `--records-wave-id ${option} and SIGNED_RECORDS_WAVE_ID ${fromEnv} name different waves: give one, or make them agree.`,
+      `--records-wave-id ${option?.trim()} and SIGNED_RECORDS_WAVE_ID ${env[RECORDS_WAVE_ID_ENV]?.trim()} name different waves: give one, or make them agree.`,
       { showHelp: false }
     );
   }
-  const id = option ?? fromEnv;
-  if (!id) {
+  const setting = given.kind !== 'unset' ? given : fromEnv;
+  if (setting.kind === 'unset') {
     throw new WavesExportUsageError(
       'The export needs the signed records wave, which stays on 6529.io: give ' +
         '--records-wave-id <its id>, or set SIGNED_RECORDS_WAVE_ID (or give ' +
@@ -72,7 +87,7 @@ export function recordsWaveIdFor(
       { showHelp: false }
     );
   }
-  return id === NO_RECORDS_WAVE ? null : id;
+  return setting.kind === 'id' ? setting.id : null;
 }
 
 /** What a caller other than the command line adds to a run. */
