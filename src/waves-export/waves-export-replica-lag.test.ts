@@ -670,7 +670,7 @@ describe('in the waves export job', () => {
       hostSetting: 'DB_HOST_READ'
     });
     await expect(result).rejects.toThrow(
-      "DB_HOST_READ's server is not read-only (read_only and innodb_read_only are both off), so it is not a read replica, and the export reads only from one. Point the function's DB_HOST_READ at the cluster's reader endpoint, with DB_USER_READ and DB_PASS_READ for it: the waves export job reads through DB_HOST_READ, and never changes DB_HOST."
+      "DB_HOST_READ's server is not read-only (read_only and innodb_read_only are both off), so it is not a read replica, and the export reads only from one. Point the function's DB_HOST_READ at the cluster's reader endpoint, with DB_USER_READ and DB_PASS_READ for it: the waves export job reads through DB_HOST_READ, and doesn't read DB_HOST."
     );
     await expect(
       check([], { hostSetting: 'DB_HOST_READ' }).result
@@ -686,7 +686,7 @@ describe('in the waves export job', () => {
       hostSetting: 'DB_IAM_HOST_READ'
     });
     await expect(result).rejects.toThrow(
-      "DB_IAM_HOST_READ's server is not read-only (read_only and innodb_read_only are both off), so it is not a read replica, and the export reads only from one. Point the function's DB_IAM_HOST_READ at a read-only endpoint, with DB_IAM_USER_READ for it: the waves export job reads through DB_IAM_HOST_READ, and never changes DB_IAM_HOST."
+      "DB_IAM_HOST_READ's server is not read-only (read_only and innodb_read_only are both off), so it is not a read replica, and the export reads only from one. Point the function's DB_IAM_HOST_READ at a read-only endpoint, with DB_IAM_USER_READ for it: the waves export job reads through DB_IAM_HOST_READ, and doesn't read DB_IAM_HOST."
     );
     await expect(
       check([], { hostSetting: 'DB_IAM_HOST_READ' }).result

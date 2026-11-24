@@ -239,13 +239,13 @@ function pointAt(host: HostSetting): string {
       return (
         `Point the function's DB_IAM_HOST_READ at a read-only endpoint, with ` +
         `DB_IAM_USER_READ for it: the waves export job reads through ` +
-        `DB_IAM_HOST_READ, and never changes DB_IAM_HOST.`
+        `DB_IAM_HOST_READ, and doesn't read DB_IAM_HOST.`
       );
     case 'DB_HOST_READ':
       return (
         `Point the function's DB_HOST_READ at the cluster's reader endpoint, ` +
         `with DB_USER_READ and DB_PASS_READ for it: the waves export job ` +
-        `reads through DB_HOST_READ, and never changes DB_HOST.`
+        `reads through DB_HOST_READ, and doesn't read DB_HOST.`
       );
   }
 }

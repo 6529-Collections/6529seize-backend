@@ -46,7 +46,7 @@ Options:
   --revision HEX      the exporter's 40-hex git commit, such as
                       $(git rev-parse HEAD) (or EXPORTER_REVISION; required)
   --freeze-at TIME    the waves freeze T_w, as ISO 8601 UTC (such as
-                      2026-11-26T00:00:00Z) or 13-digit Unix milliseconds
+                      2026-11-27T00:00:00Z) or 13-digit Unix milliseconds
                       (or WAVES_FREEZE_AT)
   --rehearsal         a dry run at any time (freeze_ms null, no time check;
                       the replica lag is reported, never refused on)
