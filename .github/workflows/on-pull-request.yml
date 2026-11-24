@@ -77,12 +77,12 @@ jobs:
         run: pushd src/api-serverless && ../../bin/6529 run build && popd
 
   test:
-    name: Test backend (shard ${{ matrix.shard }}/4)
+    name: Test backend (shard ${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -103,6 +103,7 @@ jobs:
         timeout-minutes: 45
         env:
           SHARD: ${{ matrix.shard }}
+          SHARD_COUNT: ${{ strategy.job-total }}
           LC_ALL: C
         run: |
           set -euo pipefail
@@ -112,18 +113,18 @@ jobs:
             | sed "s|^${GITHUB_WORKSPACE}/||" \
             | sort -u > "pr-ci-jest-inventory/complete-$SHARD.txt"
           test -s "pr-ci-jest-inventory/complete-$SHARD.txt"
-          NODE_ENV=test ./bin/6529 exec jest --listTests --shard="$SHARD/4" \
-            | sed "s|^${GITHUB_WORKSPACE}/||" \
-            | sort -u > "pr-ci-jest-inventory/shard-$SHARD.txt"
-          test -s "pr-ci-jest-inventory/shard-$SHARD.txt"
           NODE_ENV=test NODE_OPTIONS=--max-old-space-size=3072 \
-            ./bin/6529 exec jest --maxWorkers=2 --shard="$SHARD/4"
+            ./bin/6529 exec jest --maxWorkers=2 --shard="$SHARD/$SHARD_COUNT" \
+            --testSequencer=./scripts/pr-ci-jest-sequencer.cjs \
+            --testResultsProcessor=./scripts/pr-ci-jest-results.cjs
+          test -s "pr-ci-jest-inventory/shard-$SHARD.txt"
+          test -s "pr-ci-jest-inventory/timings-$SHARD.json"
           ./bin/6529 run ci:assert-source-clean
-      - name: Upload shard inventory
+      - name: Upload shard inventory and timings
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: pr-ci-jest-inventory-${{ matrix.shard }}
-          path: pr-ci-jest-inventory/*.txt
+          path: pr-ci-jest-inventory/
           if-no-files-found: error
           retention-days: 7
           overwrite: true
@@ -149,14 +150,14 @@ jobs:
           pattern: pr-ci-jest-inventory-*
           path: pr-ci-jest-inventory
           merge-multiple: true
-      - name: Verify every test belongs to exactly one shard
+      - name: Verify every discovered suite appears in exactly one shard result
         env:
           LC_ALL: C
         run: |
           set -euo pipefail
           # All runners must agree on Jest's complete discovery inventory.
           # Shard 1 is the comparison baseline, not an independent test catalog.
-          for shard in 1 2 3 4; do
+          for shard in 1 2 3 4 5 6; do
             test -s "pr-ci-jest-inventory/complete-$shard.txt"
             test -s "pr-ci-jest-inventory/shard-$shard.txt"
             diff -u pr-ci-jest-inventory/complete-1.txt \
