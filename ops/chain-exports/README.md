@@ -446,7 +446,7 @@ back to it. `IDENTITY_FREEZE_AT` must be set to the freeze in the
 If the CLI fails without a `FunctionError`, don't run it again: see "If the
 CLI fails".
 
-Start at least 5 minutes after the freeze, at 00:05 UTC or later. A run
+Start at least 5 minutes after the freeze: 00:07 UTC leaves room. A run
 before 00:05 is refused. Start before 01:30 UTC, or add
 `"acceptSnapshotGapMinutes":N`. If the run is refused because the replica
 may be behind, wait a few minutes and run it again. If the refusal says
@@ -514,7 +514,7 @@ time. The manifest and the response record the writes
   neither the response nor the manifest (whose `read.endpoint` is the same
   label); it is only in the function's log, as `[READ REPLICA ...]`.
 - `bucketPrivacy.owner` is the function's own account.
-- `snapshotAt` and `snapshotGapMs`: the snapshot came at least 120 000 ms
+- `snapshotAt` and `snapshotGapMs`: the snapshot came at least 300 000 ms
   after the freeze (`snapshotGapSeconds` is the same, rounded).
 - `evidence.replicaLagMs` plus `evidence.replicaLagAgeMs`, plus 1 500 ms,
   is below `snapshotGapMs`, and `replicaLagCase` and `replicaLagAccepted`

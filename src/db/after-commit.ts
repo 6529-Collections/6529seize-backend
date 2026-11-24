@@ -97,7 +97,7 @@ export async function afterCommit(
  * right before its COMMIT. A check that throws rolls the whole transaction
  * back, and the caller gets its error. Checks sharing a `key` run once.
  * Without a tracked transaction (no connection, or a transaction helper that
- * does not track it) the write commits on its own, so `check` runs now.
+ * does not track it) nothing would run it at COMMIT, so `check` runs now.
  * A transaction that registers nothing does no extra work.
  */
 export function beforeCommit(

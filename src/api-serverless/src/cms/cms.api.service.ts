@@ -4,6 +4,7 @@ import {
   profileCmsRollout
 } from '@/profile-cms/profile-cms-identity-freeze';
 import { AuthenticationContext } from '@/auth-context';
+import { isIdentityFreezeConfigured } from '@/identity-freeze/identity-freeze';
 import {
   BadRequestException,
   CustomApiCompliantException,
@@ -351,7 +352,13 @@ export class CmsApiService {
         published_at: publishedAt,
         published_by_wallet: wallet
       },
-      request.set_primary ?? true
+      request.set_primary ?? true,
+      // The same check again right before COMMIT: a publish let in just
+      // before the freeze can wait on a lock and commit after it, with a
+      // published_at from before it.
+      isIdentityFreezeConfigured()
+        ? () => this.assertLegacyWritesOpen()
+        : undefined
     );
     const primarySite =
       await cmsDb.findPrimaryPublishedSiteByOwnerProfileId(ownerProfileId);
