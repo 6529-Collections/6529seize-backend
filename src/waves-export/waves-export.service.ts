@@ -49,7 +49,7 @@ export interface WavesExportOptions {
   readonly resumeDrops?: boolean;
   /** Wait before trying a failed read again (tests pass 0). */
   readonly retryDelayMs?: number;
-  /** The replica lag checked at the start (null for a rehearsal). */
+  /** The replica lag read at the start (a rehearsal's is only reported). */
   readonly replicaLag?: ReplicaLagRecord | null;
   readonly now?: () => number;
   readonly log: (message: string) => void;

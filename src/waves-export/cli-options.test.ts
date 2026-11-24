@@ -8,6 +8,14 @@ import {
 
 const REVISION = 'ab'.repeat(20);
 const T_W = Date.UTC(2026, 10, 25, 0, 0, 0);
+const AFTER_FREEZE = [
+  '--out',
+  'O',
+  '--revision',
+  REVISION,
+  '--freeze-at',
+  '2026-11-25T00:00:00Z'
+];
 
 describe('parseWavesExportCommand', () => {
   it('reads an export at the freeze with defaults', () => {
@@ -46,11 +54,11 @@ describe('parseWavesExportCommand', () => {
       bothMetric: false,
       resume: false,
       allowFailedWaves: false,
-      replicaLagChecked: false
+      replicaLagCheckedBy: null
     });
   });
 
-  it('reads --replica-lag-checked for a run after the freeze', () => {
+  it('reads who checked the replica lag and how, for a run after the freeze', () => {
     expect(
       parseWavesExportCommand(
         [
@@ -60,11 +68,20 @@ describe('parseWavesExportCommand', () => {
           REVISION,
           '--freeze-at',
           '2026-11-25T00:00:00Z',
-          '--replica-lag-checked'
+          '--replica-lag-checked-by',
+          ' the operator ',
+          '--replica-lag-check-note',
+          'AuroraReplicaLagMaximum read at 00:06 UTC: 20 ms'
         ],
         {}
       )
-    ).toMatchObject({ freezeMs: T_W, replicaLagChecked: true });
+    ).toMatchObject({
+      freezeMs: T_W,
+      replicaLagCheckedBy: {
+        person: 'the operator',
+        note: 'AuroraReplicaLagMaximum read at 00:06 UTC: 20 ms'
+      }
+    });
   });
 
   it('takes the revision and freeze time from the environment', () => {
@@ -156,6 +173,35 @@ describe('parseWavesExportCommand', () => {
       ['--out', 'O', '--revision', REVISION, '--rehearsal', '--bogus'],
       'Unknown argument'
     ],
+    [[...AFTER_FREEZE, '--replica-lag-checked'], 'Unknown argument'],
+    [
+      [...AFTER_FREEZE, '--replica-lag-checked-by', 'the operator'],
+      'go together'
+    ],
+    [
+      [...AFTER_FREEZE, '--replica-lag-check-note', 'metric read'],
+      'go together'
+    ],
+    [
+      [
+        ...AFTER_FREEZE,
+        '--replica-lag-checked-by',
+        '  ',
+        '--replica-lag-check-note',
+        'metric read'
+      ],
+      'neither empty'
+    ],
+    [
+      [
+        ...AFTER_FREEZE,
+        '--replica-lag-checked-by',
+        'the operator',
+        '--replica-lag-check-note',
+        ' '
+      ],
+      'neither empty'
+    ],
     [
       [
         '--out',
@@ -163,9 +209,24 @@ describe('parseWavesExportCommand', () => {
         '--revision',
         REVISION,
         '--rehearsal',
-        '--replica-lag-checked'
+        '--replica-lag-checked-by',
+        'the operator',
+        '--replica-lag-check-note',
+        'metric read'
       ],
-      'a rehearsal checks no lag'
+      'a rehearsal only reports the lag'
+    ],
+    [
+      [
+        '--out',
+        'O',
+        '--revision',
+        REVISION,
+        '--rehearsal',
+        '--replica-lag-checked-by',
+        'the operator'
+      ],
+      'a rehearsal only reports the lag'
     ],
     [['--out'], 'needs a value']
   ])('refuses %j', (args, message) => {

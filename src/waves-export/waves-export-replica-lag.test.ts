@@ -148,7 +148,7 @@ describe('checkReplicaLag', () => {
   it('says a reading a minute old or more may never pass', async () => {
     const stale = check([reader('r1', 0, 60_000)], CAUGHT_UP + 30_000).result;
     await expect(stale).rejects.toThrow(
-      'Try again after 00:06:02 UTC. If that reading is older still then, the reader has stopped updating it: read the largest lag over all readers another way and run with --replica-lag-checked once that much time has passed since 00:05:00 UTC.'
+      'Try again after 00:06:02 UTC. If that reading is older still then, the reader has stopped updating it: read the largest lag over all readers another way (on Aurora, the AuroraReplicaLagMaximum metric) and, once that much time has passed since 00:05:00 UTC, run the export again with --replica-lag-checked-by <your name> --replica-lag-check-note <how you checked it>.'
     );
     await expect(
       check([reader('r1', 0, 59_999)], CAUGHT_UP + 30_000).result
@@ -238,7 +238,9 @@ describe('checkReplicaLag', () => {
       "The export can't tell how far the read replica is behind"
     );
     await expect(result).rejects.toThrow(reason);
-    await expect(result).rejects.toThrow('--replica-lag-checked');
+    await expect(result).rejects.toThrow(
+      '--replica-lag-checked-by <your name> --replica-lag-check-note <how you checked it>'
+    );
     if (rows instanceof Error) {
       // The server's message, which can name the user and host, is logged only.
       await expect(result).rejects.not.toThrow(rows.message);
@@ -258,7 +260,7 @@ describe('checkReplicaLag', () => {
 
   it('says why an unknown lag refuses and what a person can do', async () => {
     await expect(check([]).result).rejects.toThrow(
-      "The export can't tell how far the read replica is behind: information_schema.replica_host_status has no row for any reader. It needs every reader caught up past 00:05:00 UTC, five minutes after the freeze. If you read the largest lag over all readers another way (on Aurora, the AuroraReplicaLagMaximum metric), run the export again with --replica-lag-checked once that much time has passed since 00:05:00 UTC."
+      "The export can't tell how far the read replica is behind: information_schema.replica_host_status has no row for any reader. It needs every reader caught up past 00:05:00 UTC, five minutes after the freeze. If you can, read the largest lag over all readers another way (on Aurora, the AuroraReplicaLagMaximum metric) and, once that much time has passed since 00:05:00 UTC, run the export again with --replica-lag-checked-by <your name> --replica-lag-check-note <how you checked it>."
     );
   });
 });
@@ -270,7 +272,7 @@ describe('replicaLagAtStart', () => {
     await expect(
       replicaLagAtStart({
         caughtUpMs: CAUGHT_UP,
-        checkedByPerson: false,
+        checkedByPerson: null,
         readRows,
         now: () => NOW,
         log: (message) => log.push(message)
@@ -288,36 +290,104 @@ describe('replicaLagAtStart', () => {
     ]);
   });
 
-  it('runs with --replica-lag-checked without reading the lag, says so loudly and records it', async () => {
+  it("runs on a person's word without reading the lag, names them loudly and records both", async () => {
     const log: string[] = [];
     const readRows = lagSource(new Error('not to be read'));
     await expect(
       replicaLagAtStart({
         caughtUpMs: CAUGHT_UP,
-        checkedByPerson: true,
+        checkedByPerson: {
+          person: 'the operator',
+          note: 'AuroraReplicaLagMaximum read at 00:06 UTC: 20 ms'
+        },
         readRows,
         now: () => CAUGHT_UP,
         log: (message) => log.push(message)
       })
-    ).resolves.toEqual({ checked_by: 'person' });
+    ).resolves.toEqual({
+      checked_by: 'person',
+      person: 'the operator',
+      note: 'AuroraReplicaLagMaximum read at 00:06 UTC: 20 ms'
+    });
     expect(readRows).not.toHaveBeenCalled();
     expect(log).toEqual([
-      'WARNING: --replica-lag-checked: the export does not check the read replica\'s lag. It takes your word that every reader has caught up past 00:05:00 UTC, and export.json records replica_lag.checked_by "person".'
+      `WARNING: the export does not check the read replica's lag. It takes the word of "the operator" that every reader has caught up past 00:05:00 UTC, checked this way: "AuroraReplicaLagMaximum read at 00:06 UTC: 20 ms". export.json records both.`
+    ]);
+  });
+});
+
+describe('a rehearsal', () => {
+  function rehearse(readRows: (sql: string) => Promise<unknown[]>) {
+    const log: string[] = [];
+    const result = replicaLagAtStart({
+      caughtUpMs: null,
+      checkedByPerson: null,
+      readRows,
+      now: () => NOW,
+      log: (message) => log.push(message)
+    });
+    return { result, log };
+  }
+
+  it('reads and reports the lag, held to no bound', async () => {
+    const readRows = lagSource([
+      writer,
+      reader('r1', 600_000, 2.5),
+      reader('r2', 7)
+    ]);
+    const { result, log } = rehearse(readRows);
+    await expect(result).resolves.toEqual({
+      checked_by: 'rehearsal',
+      readers: 2,
+      worst_lag_ms: 600_000,
+      worst_lag_age_ms: 3,
+      read_at: new Date(NOW).toISOString(),
+      unknown_reason: null
+    });
+    expect(readRows).toHaveBeenCalledWith(ALL_READERS_LAG_SQL);
+    expect(log).toEqual([
+      'rehearsal: the largest lag over its 2 readers is 600000 ms, in a reading 3 ms old (a rehearsal holds it to no bound)'
     ]);
   });
 
-  it('skips the check for a rehearsal', async () => {
-    const log: string[] = [];
-    const readRows = lagSource(new Error('not to be read'));
+  it('records a lag it cannot know, never refusing', async () => {
+    const { result, log } = rehearse(
+      lagSource([reader('r1', 10), reader('r2', null)])
+    );
+    await expect(result).resolves.toEqual({
+      checked_by: 'rehearsal',
+      readers: 2,
+      worst_lag_ms: null,
+      worst_lag_age_ms: null,
+      read_at: new Date(NOW).toISOString(),
+      unknown_reason:
+        'the row of one of its 2 readers says REPLICA_LAG_IN_MILLISECONDS is null'
+    });
+    expect(log).toEqual([
+      "rehearsal: the read replica's lag can't be read: the row of one of its 2 readers says REPLICA_LAG_IN_MILLISECONDS is null. A run after the freeze would refuse on this."
+    ]);
+  });
+
+  it('logs and records a query error, never fatal', async () => {
+    const failure = Object.assign(
+      new Error("Unknown table 'replica_host_status' for 'user'@'host'"),
+      { code: 'ER_UNKNOWN_TABLE', errno: 1109 }
+    );
+    const { result, log } = rehearse(lagSource(failure));
+    await expect(result).resolves.toMatchObject({
+      checked_by: 'rehearsal',
+      readers: null,
+      worst_lag_ms: null,
+      unknown_reason:
+        'reading information_schema.replica_host_status failed (ER_UNKNOWN_TABLE 1109)'
+    });
+    expect(log[0]).toContain(failure.message);
+    // A result the reading can't use at all is recorded too.
     await expect(
-      replicaLagAtStart({
-        caughtUpMs: null,
-        checkedByPerson: false,
-        readRows,
-        log: (message) => log.push(message)
-      })
-    ).resolves.toBeNull();
-    expect(readRows).not.toHaveBeenCalled();
-    expect(log).toEqual([]);
+      rehearse(async () => null as never).result
+    ).resolves.toMatchObject({
+      checked_by: 'rehearsal',
+      unknown_reason: expect.stringContaining('failed (TypeError)')
+    });
   });
 });

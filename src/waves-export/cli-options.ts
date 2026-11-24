@@ -4,7 +4,8 @@ export const WAVES_EXPORT_HELP = `Usage: 6529 run waves:export -- --out DIR --re
          (--freeze-at TIME | --rehearsal) [--stages LIST]
          [--waves LIST | --waves-file FILE] [--page-size N]
          [--concurrency N] [--both-metric] [--resume]
-         [--allow-failed-waves] [--replica-lag-checked]
+         [--allow-failed-waves]
+         [--replica-lag-checked-by WHO --replica-lag-check-note HOW]
 
 Writes 6529.io's waves, the groups they use, decisions, entries, votes,
 vote logs, results, wave REP, polls and every wave's drops into DIR/raw,
@@ -14,9 +15,10 @@ the Waves v1 file and the drop archives from it. Members-only waves are
 included; direct messages are not. Read-only. Run it against a read replica,
 five minutes or more after the waves freeze: it refuses to start earlier,
 unless --rehearsal, because a write admitted just before the freeze can
-still commit during a lock wait. It also refuses until every reader has
-caught up past that five-minute mark, by the largest lag over all readers in
-information_schema.replica_host_status, and names when to try again.
+still commit after it, once a lock wait ends. It also refuses until every
+reader has caught up past that five-minute mark, by the largest lag over all
+readers in information_schema.replica_host_status, and names when to try
+again. A rehearsal reads and reports that lag but never refuses on it.
 
 Options:
   --out DIR           where to write (DIR/raw; required)
@@ -25,7 +27,8 @@ Options:
   --freeze-at TIME    the waves freeze T_w (2026-11-25T00:00:00Z), as ISO
                       8601 UTC or 13-digit Unix milliseconds (or
                       WAVES_FREEZE_AT)
-  --rehearsal         a dry run at any time (freeze_ms null, no time check)
+  --rehearsal         a dry run at any time (freeze_ms null, no time check;
+                      the replica lag is reported, never refused on)
   --stages LIST       comma separated, in order: ${WAVES_EXPORT_STAGES.join(',')}
                       (default all; a later stage reads what earlier ones wrote)
   --waves LIST        only these wave ids, comma separated (a rehearsal)
@@ -41,11 +44,13 @@ Options:
                       exit 0 even when some waves could not be read (they
                       are left out and listed in export.json); without it
                       the export exits 3
-  --replica-lag-checked
-                      only when the export can't read the readers' lag:
-                      you read the largest lag over all readers yourself
-                      and waited that long past five minutes after the
-                      freeze (export.json records it as checked by a person)
+  --replica-lag-checked-by WHO
+  --replica-lag-check-note HOW
+                      for a person only, never a script: when the export
+                      can't read the readers' lag, who checked the largest
+                      lag over all readers another way, and how. Both
+                      together, once that much time has passed since five
+                      minutes after the freeze; export.json records both
   --help              this text
 `;
 
@@ -64,8 +69,17 @@ export interface WavesExportCommand {
   readonly bothMetric: boolean;
   readonly resume: boolean;
   readonly allowFailedWaves: boolean;
-  /** --replica-lag-checked: a person read the replica lag, not the export. */
-  readonly replicaLagChecked: boolean;
+  /**
+   * --replica-lag-checked-by and --replica-lag-check-note: the person who
+   * checked the replica lag instead of the export, and how; null otherwise.
+   */
+  readonly replicaLagCheckedBy: ReplicaLagCheckedBy | null;
+}
+
+/** Who checked the replica lag instead of the export, and how. */
+export interface ReplicaLagCheckedBy {
+  readonly person: string;
+  readonly note: string;
 }
 
 export type WavesExportCliCommand =
@@ -171,7 +185,8 @@ export function parseWavesExportCommand(
   let bothMetric = false;
   let resume = false;
   let allowFailedWaves = false;
-  let replicaLagChecked = false;
+  let lagCheckedBy: string | null = null;
+  let lagCheckNote: string | null = null;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     const value = () => {
@@ -221,8 +236,11 @@ export function parseWavesExportCommand(
       case '--allow-failed-waves':
         allowFailedWaves = true;
         break;
-      case '--replica-lag-checked':
-        replicaLagChecked = true;
+      case '--replica-lag-checked-by':
+        lagCheckedBy = value().trim();
+        break;
+      case '--replica-lag-check-note':
+        lagCheckNote = value().trim();
         break;
       default:
         throw new WavesExportUsageError(`Unknown argument "${arg}"`);
@@ -244,9 +262,15 @@ export function parseWavesExportCommand(
       'Give --freeze-at or --rehearsal, not both'
     );
   }
-  if (rehearsal && replicaLagChecked) {
+  const lagCheckedByGiven = lagCheckedBy !== null || lagCheckNote !== null;
+  if (rehearsal && lagCheckedByGiven) {
     throw new WavesExportUsageError(
-      '--replica-lag-checked is for a run after the freeze: a rehearsal checks no lag'
+      '--replica-lag-checked-by and --replica-lag-check-note are for a run after the freeze: a rehearsal only reports the lag'
+    );
+  }
+  if (lagCheckedByGiven && (!lagCheckedBy || !lagCheckNote)) {
+    throw new WavesExportUsageError(
+      '--replica-lag-checked-by (who checked the lag) and --replica-lag-check-note (how) go together, neither empty'
     );
   }
   if (!rehearsal && !freezeAt) {
@@ -268,6 +292,9 @@ export function parseWavesExportCommand(
     bothMetric,
     resume,
     allowFailedWaves,
-    replicaLagChecked
+    replicaLagCheckedBy:
+      lagCheckedBy && lagCheckNote
+        ? { person: lagCheckedBy, note: lagCheckNote }
+        : null
   };
 }

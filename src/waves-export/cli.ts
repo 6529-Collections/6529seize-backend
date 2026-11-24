@@ -22,7 +22,7 @@ export const EXPORT_AFTER_FREEZE_MS = 5 * 60 * 1000;
 async function runExport(command: WavesExportCommand) {
   // Dates read from MySQL in UTC, whatever the host.
   process.env.TZ = 'UTC';
-  // Stays null for a rehearsal, which checks neither the time nor the lag.
+  // Stays null for a rehearsal: no time check, and the lag only reported.
   let earliestMs: number | null = null;
   if (command.freezeMs !== null) {
     earliestMs = command.freezeMs + EXPORT_AFTER_FREEZE_MS;
@@ -59,7 +59,7 @@ async function runExport(command: WavesExportCommand) {
         const { sqlExecutor } = await import('@/sql-executor');
         const replicaLag = await replicaLagAtStart({
           caughtUpMs: earliestMs,
-          checkedByPerson: command.replicaLagChecked,
+          checkedByPerson: command.replicaLagCheckedBy,
           readRows: (sql) => sqlExecutor.execute(sql),
           log
         });

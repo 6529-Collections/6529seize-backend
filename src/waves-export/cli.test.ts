@@ -143,17 +143,53 @@ describe('waves:export and the read replica lag', () => {
     expect(mockWavesExport).not.toHaveBeenCalled();
   });
 
-  it('runs with --replica-lag-checked without reading the lag, loudly, and records it', async () => {
-    await main([...EXPORT, '--replica-lag-checked']);
+  it("runs on a person's word without reading the lag, loudly, and records who and how", async () => {
+    await main([
+      ...EXPORT,
+      '--replica-lag-checked-by',
+      'the operator',
+      '--replica-lag-check-note',
+      'AuroraReplicaLagMaximum read at 00:06 UTC: 20 ms'
+    ]);
     expect(mockExecute).not.toHaveBeenCalled();
-    expect(replicaLagGiven()).toEqual({ checked_by: 'person' });
-    expect(stderr.join('')).toContain('WARNING: --replica-lag-checked');
+    expect(replicaLagGiven()).toEqual({
+      checked_by: 'person',
+      person: 'the operator',
+      note: 'AuroraReplicaLagMaximum read at 00:06 UTC: 20 ms'
+    });
+    expect(stderr.join('')).toContain(
+      `WARNING: the export does not check the read replica's lag. It takes the word of "the operator"`
+    );
   });
 
-  it('checks no lag for a rehearsal', async () => {
+  it('reports the lag in a rehearsal and never refuses on it', async () => {
     jest.spyOn(Date, 'now').mockReturnValue(T_W - 1);
+    mockExecute.mockResolvedValue([reader(600_000)]);
     await main(['--out', 'OUT', '--revision', REVISION, '--rehearsal']);
-    expect(mockExecute).not.toHaveBeenCalled();
-    expect(replicaLagGiven()).toBeNull();
+    expect(mockExecute).toHaveBeenCalledWith(ALL_READERS_LAG_SQL);
+    expect(replicaLagGiven()).toMatchObject({
+      checked_by: 'rehearsal',
+      readers: 1,
+      worst_lag_ms: 600_000,
+      unknown_reason: null
+    });
+    expect(stderr.join('')).toContain(
+      'rehearsal: the largest lag over its one reader is 600000 ms'
+    );
+  });
+
+  it('runs a rehearsal when the lag query fails, and records why', async () => {
+    jest.spyOn(Date, 'now').mockReturnValue(T_W - 1);
+    mockExecute.mockRejectedValue(
+      Object.assign(new Error('no such table'), { code: 'ER_NO_SUCH_TABLE' })
+    );
+    await main(['--out', 'OUT', '--revision', REVISION, '--rehearsal']);
+    expect(mockWavesExport).toHaveBeenCalledTimes(1);
+    expect(replicaLagGiven()).toMatchObject({
+      checked_by: 'rehearsal',
+      readers: null,
+      unknown_reason:
+        'reading information_schema.replica_host_status failed (ER_NO_SUCH_TABLE)'
+    });
   });
 });
