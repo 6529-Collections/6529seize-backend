@@ -989,7 +989,7 @@ describe('rebuild check, end to end', () => {
         'self-check.later-writer before subs.identity'
       ]);
       expect(report.notes).toContain(
-        "1 unresolved cross-area edges: order edges to another area's step that isn't in this tree, which a final run fails on: self-check.later-writer before subs.identity"
+        "1 unresolved cross-area edges, of every area: order edges to another area's step that isn't in this tree, which a final run fails on: self-check.later-writer before subs.identity"
       );
       // With a plan that matches no seeded row, which a final run fails on
       // too.

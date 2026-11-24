@@ -220,10 +220,58 @@ describe('MysqlAdmin on the private mysqld', () => {
     await expect(
       admin.rowsWhere(FROM, 'planned', 'id IN (SELECT id FROM no_such_table)')
     ).rejects.toThrow(/no_such_table/);
+    expect(await noDefault()).toBeNull();
     await expect(
       admin.rowsWhereInPartition(FROM, 'planned', 'nope = 1', ['kind'], [['a']])
     ).rejects.toThrow(/nope/);
     expect(await noDefault()).toBeNull();
+    // A database the server doesn't have: the open fails, and leaves no
+    // connection behind.
+    const connections = async () =>
+      Number(
+        (
+          await admin.query<{ n: string }>(
+            "SELECT COUNT(*) AS n FROM information_schema.PROCESSLIST WHERE COMMAND <> 'Daemon'"
+          )
+        )[0].n
+      );
+    const open = await connections();
+    await expect(
+      admin.rowsWhere('rebuild_no_such_db', 'planned', '1 = 1')
+    ).rejects.toThrow(/rebuild_no_such_db/);
+    expect(await connections()).toBe(open);
+    expect(await noDefault()).toBeNull();
+  });
+
+  it("reads a plan's rows as the admin connection reads them, in the same session settings", async () => {
+    await admin.query(
+      `CREATE TABLE ${FROM}.typed (
+         id BIGINT NOT NULL PRIMARY KEY,
+         amount DECIMAL(30, 10) NOT NULL,
+         big BIGINT UNSIGNED NOT NULL,
+         at TIMESTAMP(3) NULL
+       )`
+    );
+    await admin.query(
+      `INSERT INTO ${FROM}.typed VALUES
+         (9007199254740993, 12345678901234567890.0123456789, 18446744073709551615, '2026-01-01 00:00:00.123'),
+         (2, 0.5, 0, NULL)`
+    );
+    const ordered = await admin.orderedRows(FROM, 'typed', ['id']);
+    expect(await admin.rowsWhere(FROM, 'typed', '1 = 1')).toEqual(
+      expect.arrayContaining(ordered)
+    );
+    expect(ordered).toHaveLength(2);
+    // The plan's connection has the admin session's time zone and SQL mode.
+    const [session] = await admin.query<{ tz: string; mode: string }>(
+      'SELECT @@session.time_zone AS tz, @@session.sql_mode AS mode'
+    );
+    const same = await admin.rowsWhere(
+      FROM,
+      'typed',
+      `@@session.time_zone = '${session.tz}' AND @@session.sql_mode = '${session.mode}'`
+    );
+    expect(same).toHaveLength(2);
   });
 
   it('leaves no pid file once the server stops', async () => {

@@ -221,7 +221,7 @@ export function judge(input: VerdictInput): Verdict {
   }
   if (input.unresolvedEdges.length) {
     finalOnly(
-      `${input.unresolvedEdges.length} unresolved cross-area edges: order edges to another area's step that isn't in this tree, which a final run fails on: ${input.unresolvedEdges.join('; ')}`
+      `${input.unresolvedEdges.length} unresolved cross-area edges, of every area: order edges to another area's step that isn't in this tree, which a final run fails on: ${input.unresolvedEdges.join('; ')}`
     );
   }
   if (input.orderLeftOut.length) {

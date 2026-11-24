@@ -83,7 +83,29 @@ export interface CrossAreaEdge {
   readonly step: string;
   readonly field: 'after' | 'before';
   readonly id: string;
+  /** A step of the target area whose id is a small edit away: a typo? */
+  readonly nearest?: string;
 }
+
+/** Edits (insert, delete, replace) between two strings. */
+function editDistance(a: string, b: string): number {
+  let previous = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      current[j] = Math.min(
+        previous[j] + 1,
+        current[j - 1] + 1,
+        previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+    }
+    previous = current;
+  }
+  return previous[b.length];
+}
+
+/** How close an id must be to another to suggest it. */
+const NEAR = 2;
 
 export interface RegistryInput {
   readonly manifests: readonly AreaManifest[];
@@ -626,7 +648,9 @@ function orderProblems(
   label: string,
   manifests: readonly AreaManifest[],
   stepsOf: (manifest: AreaManifest) => readonly RebuildStep[],
-  edges: CrossAreaEdge[]
+  edges: CrossAreaEdge[],
+  /** The other kind of step: its ids are known, but out of this order. */
+  other: { readonly label: string; readonly ids: ReadonlySet<string> }
 ): RegistryProblem[] {
   const steps = manifests.flatMap(stepsOf);
   const problems: RegistryProblem[] = [];
@@ -641,22 +665,49 @@ function orderProblems(
     seen.add(step.id);
   }
   const known = new Set(steps.map((step) => step.id));
-  const areas = new Set(manifests.map((manifest) => manifest.area));
+  const areas = new Map(manifests.map((manifest) => [manifest.area, manifest]));
   const unknown = new Set<string>();
+  const otherKind = new Set<string>();
   for (const manifest of manifests) {
     for (const step of stepsOf(manifest)) {
       for (const field of ['after', 'before'] as const) {
         for (const id of step[field] ?? []) {
           if (known.has(id)) continue;
-          const area = id.includes('.') ? id.slice(0, id.indexOf('.')) : '';
-          if (area && area !== manifest.area && areas.has(area)) {
-            edges.push({ step: step.id, field, id });
+          // Order holds within one kind: seeds run before rebuilders.
+          if (other.ids.has(id)) {
+            otherKind.add(id);
+            continue;
+          }
+          const parts = id.split('.');
+          const target = areas.get(parts[0]);
+          if (
+            parts.length > 1 &&
+            !parts.includes('') &&
+            target &&
+            target.area !== manifest.area
+          ) {
+            const near = [...target.seeds, ...target.rebuilders]
+              .map((s) => s.id)
+              .filter((s) => editDistance(s, id) <= NEAR)
+              .sort((a, b) => editDistance(a, id) - editDistance(b, id));
+            edges.push({
+              step: step.id,
+              field,
+              id,
+              ...(near.length ? { nearest: near[0] } : {})
+            });
           } else {
             unknown.add(id);
           }
         }
       }
     }
+  }
+  for (const id of Array.from(otherKind)) {
+    problems.push({
+      kind: 'BAD_ORDER',
+      detail: `a ${label} waits on ${other.label} ${id}: order holds within one kind`
+    });
   }
   for (const id of Array.from(unknown)) {
     problems.push({
@@ -960,7 +1011,8 @@ export function checkRegistry(input: RegistryInput): RegistryResult {
       'seed',
       input.manifests,
       (manifest) => manifest.seeds,
-      crossAreaEdges
+      crossAreaEdges,
+      { label: 'rebuilder', ids: new Set(rebuilders.map((s) => s.id)) }
     ),
     ...lastProblems(input.manifests),
     ...readOrderProblems(rebuilders, leftOut),
@@ -971,7 +1023,11 @@ export function checkRegistry(input: RegistryInput): RegistryResult {
       'rebuilder',
       input.manifests,
       (manifest) => manifest.rebuilders,
-      crossAreaEdges
+      crossAreaEdges,
+      {
+        label: 'seed',
+        ids: new Set(input.manifests.flatMap((m) => m.seeds.map((s) => s.id)))
+      }
     ),
     ...sharedIdProblems(input.manifests),
     ...writerProblems(input.manifests)

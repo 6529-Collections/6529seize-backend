@@ -117,7 +117,7 @@ const findings: [string, Partial<VerdictInput>, RegExp][] = [
   [
     'unresolved cross-area edges',
     { unresolvedEdges: ['waves.chain-mirror before subs.identity'] },
-    /^1 unresolved cross-area edges: order edges to another area's step that isn't in this tree, which a final run fails on: waves\.chain-mirror before subs\.identity$/
+    /^1 unresolved cross-area edges, of every area: order edges to another area's step that isn't in this tree, which a final run fails on: waves\.chain-mirror before subs\.identity$/
   ],
   [
     'steps marked planned whose code is here',

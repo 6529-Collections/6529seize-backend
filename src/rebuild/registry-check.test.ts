@@ -713,6 +713,62 @@ describe('checkRegistry', () => {
       expect(result.crossAreaEdges).toEqual([]);
     });
 
+    it('keeps order within one kind: a seed id is no edge for a rebuilder', () => {
+      const seeded = checkRegistry({
+        manifests: [
+          area(
+            'waves',
+            { waves: index() },
+            {
+              seeds: [
+                step('waves.seed', {
+                  writes: ['waves'],
+                  before: ['subs.identity']
+                })
+              ],
+              rebuilders: [
+                step('waves.mirror', {
+                  writes: ['waves'],
+                  after: ['subs.seed']
+                })
+              ]
+            }
+          ),
+          area(
+            'subs',
+            { subs: index() },
+            {
+              seeds: [step('subs.seed', { writes: ['subs'] })],
+              rebuilders: [step('subs.identity', { writes: ['subs'] })]
+            }
+          )
+        ],
+        codeTables: code('waves', 'subs')
+      });
+      expect(seeded.problems.map((p) => p.detail)).toEqual([
+        'a seed waits on rebuilder subs.identity: order holds within one kind',
+        'a rebuilder waits on seed subs.seed: order holds within one kind'
+      ]);
+      expect(seeded.crossAreaEdges).toEqual([]);
+    });
+
+    it('refuses an id with an empty part, and names a near step of the target area', () => {
+      const result = check({ before: ['subs.', 'subs.identty'] }, [
+        step('subs.identity', { writes: ['subs'] })
+      ]);
+      expect(result.problems.map((p) => p.detail)).toEqual([
+        'a rebuilder waits on unknown step subs.'
+      ]);
+      expect(result.crossAreaEdges).toEqual([
+        {
+          step: 'waves.mirror',
+          field: 'before',
+          id: 'subs.identty',
+          nearest: 'subs.identity'
+        }
+      ]);
+    });
+
     it('checks a resolved edge in full', () => {
       const reader = step('subs.identity', {
         writes: ['subs'],

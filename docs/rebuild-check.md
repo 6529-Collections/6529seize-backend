@@ -265,7 +265,11 @@ export const mintManifest: AreaManifest = {
     it, and a final run fails on it. The step that writes the table
     declares the edge; once the other area's step is in the tree, the
     edge is checked like any other. An unknown id of the step's own area,
-    or with a prefix that names no area, still fails.
+    with a prefix that names no area, or with an empty part, still fails,
+    and so does an id of the other kind of step (a rebuilder naming a seed,
+    or a seed a rebuilder): order holds within one kind. When the other
+    area has a step whose id is a couple of letters off, the note asks
+    "did you mean <id>?".
 - `probes`: API requests whose answers must match before and after. `ignore`
   and `unordered` paths each need a reason, which the registry checks. A
   probe with `origin: 'planned'` and `needs: [tables]` reads tables a later

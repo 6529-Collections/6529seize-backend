@@ -1997,7 +1997,8 @@ class RebuildRun {
   /** Unresolved cross-area order edges, as the verdict and report list them. */
   private unresolvedEdges(): string[] {
     return (this.registry?.crossAreaEdges ?? []).map(
-      (edge) => `${edge.step} ${edge.field} ${edge.id}`
+      (edge) =>
+        `${edge.step} ${edge.field} ${edge.id}${edge.nearest ? ` (did you mean ${edge.nearest}?)` : ''}`
     );
   }
 
