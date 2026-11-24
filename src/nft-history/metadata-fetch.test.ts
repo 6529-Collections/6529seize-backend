@@ -99,7 +99,9 @@ it('shares one deadline across Arweave fallback attempts', async () => {
     name: 'fallback'
   });
   expect(fetchMock).toHaveBeenCalledTimes(2);
-  expect(signals[0]).toBe(signals[1]);
+  expect(signals[0]).toBeInstanceOf(AbortSignal);
+  expect(signals[1]).toBeInstanceOf(AbortSignal);
+  expect((signals[0] as AbortSignal).aborted).toBe(true);
 });
 
 it('keeps IPFS metadata on approved gateways', async () => {

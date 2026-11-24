@@ -72,7 +72,9 @@ describe('persistRememesS3', () => {
     process.env.AWS_6529_IMAGES_BUCKET_NAME = 'test-bucket';
     jest
       .mocked(withArweaveFallback)
-      .mockImplementation((url, fetchFn) => fetchFn(url));
+      .mockImplementation((url, fetchFn) =>
+        fetchFn(url, new AbortController().signal)
+      );
     jest.mocked(detectRasterImageFormat).mockResolvedValue('png');
   });
 
@@ -193,7 +195,11 @@ describe('persistRememesS3', () => {
     );
     expect(withArweaveFallback).toHaveBeenCalledWith(
       'https://example.test/rememe.png',
-      expect.any(Function)
+      expect.any(Function),
+      expect.objectContaining({
+        timeoutMs: expect.any(Number),
+        attemptTimeoutMs: expect.any(Number)
+      })
     );
     expect(PutObjectCommand).toHaveBeenCalledTimes(4);
     expect(PutObjectCommand).toHaveBeenNthCalledWith(
@@ -268,7 +274,11 @@ describe('persistRememesS3', () => {
     );
     expect(withArweaveFallback).toHaveBeenCalledWith(
       'https://gateway.example.test/rememe.png',
-      expect.any(Function)
+      expect.any(Function),
+      expect.objectContaining({
+        timeoutMs: expect.any(Number),
+        attemptTimeoutMs: expect.any(Number)
+      })
     );
     expect(PutObjectCommand).toHaveBeenCalledTimes(4);
     expect(persistRememes).toHaveBeenCalledWith([

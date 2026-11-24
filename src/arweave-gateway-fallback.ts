@@ -1,17 +1,16 @@
+import { recoverArweave, ArweaveRecoveryOptions } from '@/arweave/recovery';
 import {
   parseDecentralizedMediaRef,
   toExternalFallbackUrls
 } from '@/decentralized-media/decentralized-media';
 
-function dedupe(list: readonly string[]): string[] {
-  return Array.from(new Set(list));
-}
-
 /**
  * Returns all external Arweave gateway variants for the given URL.
  */
 export function getArweaveFallbackUrls(url: string): string[] {
-  const ref = parseDecentralizedMediaRef(url);
+  const ref = parseDecentralizedMediaRef(
+    url.replace(/^(https:\/\/[^/]+)\/raw\/([A-Za-z0-9_-]{43})(?=\/|$)/, '$1/$2')
+  );
   if (ref?.protocol !== 'arweave') return [];
 
   return toExternalFallbackUrls(ref);
@@ -42,37 +41,20 @@ function stripQueryAndHash(url: string): string {
   return url.slice(0, Math.min(...indexes));
 }
 
-function stringifyErr(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-/**
- * Tries the URL first, then external Arweave fallbacks in order.
- * If url is not a recognized Arweave reference, it just tries url once.
- */
+/** Complete the response/body validation inside fetchFn so failures advance gateways. */
 export async function withArweaveFallback<T>(
   url: string,
-  fetchFn: (url: string) => Promise<T>
+  fetchFn: (url: string, signal: AbortSignal) => Promise<T>,
+  options: ArweaveRecoveryOptions = {}
 ): Promise<T> {
   const urls = getArweaveFallbackUrls(url);
-  const toTry = urls.length > 0 ? [url, ...urls] : [url];
-  const uniqueToTry = dedupe(toTry);
-
-  let lastErr: unknown;
-  for (const tryUrl of uniqueToTry) {
-    try {
-      return await fetchFn(tryUrl);
-    } catch (err) {
-      lastErr = err;
-    }
+  if (!urls.length) {
+    // Unrelated URLs retain their caller's transport and timeout policy.
+    return fetchFn(url, options.signal ?? new AbortController().signal);
   }
-
-  const msg =
-    uniqueToTry.length > 1
-      ? `Arweave: all ${uniqueToTry.length} URLs failed. Last: ${stringifyErr(
-          lastErr
-        )}`
-      : stringifyErr(lastErr);
-
-  throw Object.assign(new Error(msg), { cause: lastErr });
+  return recoverArweave(
+    /^https?:\/\//i.test(url) ? [url, ...urls] : urls,
+    fetchFn,
+    options
+  );
 }

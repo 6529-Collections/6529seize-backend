@@ -112,7 +112,6 @@ describe('decentralized media resolver', () => {
         `https://arweave.net/${dnsSafeTxid}/metadata.json`,
         `https://gateway.arweave.net/${dnsSafeTxid}/metadata.json`,
         `https://gateway.ar.io/${dnsSafeTxid}/metadata.json`,
-        `https://ar-io.net/${dnsSafeTxid}/metadata.json`,
         `https://ardrive.net/${dnsSafeTxid}/metadata.json`,
         `https://${dnsSafeTxid}.arweave.net/metadata.json`,
         `https://${dnsSafeTxid}.ar.io/metadata.json`

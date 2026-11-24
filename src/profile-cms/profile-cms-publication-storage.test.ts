@@ -1,3 +1,4 @@
+import { routePublicNetworkToFixtures } from '@/tests/fixtures/public-network-fixture';
 import { Response } from 'node-fetch';
 import fetch from 'node-fetch';
 import {
@@ -23,14 +24,21 @@ const receipt: CmsPackageV1['storage'][number] = {
 };
 
 describe('CMS durable storage', () => {
+  let restoreNetwork: () => void;
+  beforeEach(() => {
+    restoreNetwork = routePublicNetworkToFixtures();
+  });
   const originalKey = process.env.ARWEAVE_KEY;
   afterEach(() => {
+    restoreNetwork();
     if (originalKey === undefined) delete process.env.ARWEAVE_KEY;
     else process.env.ARWEAVE_KEY = originalKey;
   });
 
   it('retrieves bounded bytes from an allowlisted gateway and checks their actual hash', async () => {
-    const download = jest.fn().mockResolvedValue(new Response(bytes));
+    const download = jest
+      .fn()
+      .mockImplementation(async () => new Response(bytes));
     const storage = new ProfileCmsPublicationStorage(
       undefined,
       undefined,
@@ -40,7 +48,7 @@ describe('CMS durable storage', () => {
     expect(download).toHaveBeenCalledWith(
       `https://arweave.net/raw/${'a'.repeat(43)}`,
       expect.objectContaining({
-        redirect: 'error',
+        redirect: 'manual',
         timeout: 8000,
         size: CMS_MAX_STORAGE_BYTES,
         signal: expect.any(AbortSignal)
@@ -62,27 +70,26 @@ describe('CMS durable storage', () => {
     });
   });
 
-  it('treats HTTP 202 as pending and verifies the same receipt after propagation', async () => {
+  it('recovers pending HTTP 202 through another gateway without accepting pending bytes', async () => {
     const pending = new Response('pending', { status: 202 });
     const download = jest
       .fn()
       .mockResolvedValueOnce(pending)
-      .mockResolvedValueOnce(new Response(bytes));
+      .mockImplementation(async () => new Response(bytes));
     const storage = new ProfileCmsPublicationStorage(
       undefined,
       undefined,
       download as unknown as typeof fetch
     );
-
-    await expect(storage.verify(receipt)).rejects.toMatchObject({
-      code: 'cms_storage_pending'
-    });
-    expect(pending.bodyUsed).toBe(false);
     await expect(storage.verify(receipt)).resolves.toEqual(bytes);
+    expect(download).toHaveBeenCalledTimes(2);
+    expect(pending.bodyUsed).toBe(false);
   });
 
   it('rejects hash mismatches and unsupported URLs before following redirects or arbitrary hosts', async () => {
-    const download = jest.fn().mockResolvedValue(new Response('different'));
+    const download = jest
+      .fn()
+      .mockImplementation(async () => new Response('different'));
     const storage = new ProfileCmsPublicationStorage(
       undefined,
       undefined,

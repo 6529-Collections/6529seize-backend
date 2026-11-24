@@ -13,14 +13,17 @@ export async function fetchHistoryMetadata(
   const fetchUri = uri.startsWith('ipfs://')
     ? `https://ipfs.io/ipfs/${uri.slice(7)}`
     : uri;
-  const signal = AbortSignal.timeout(15000);
-  return withArweaveFallback(fetchUri, async (url) => {
-    const metadata = normalizeMetadataPayload(
-      await fetchGatewayMetadata(url, signal)
-    );
-    if (!metadata) throw new Error(`Invalid metadata: ${url}`);
-    return metadata;
-  });
+  return withArweaveFallback(
+    fetchUri,
+    async (url, signal) => {
+      const metadata = normalizeMetadataPayload(
+        await fetchGatewayMetadata(url, signal)
+      );
+      if (!metadata) throw new Error(`Invalid metadata: ${url}`);
+      return metadata;
+    },
+    { timeoutMs: 15000, attemptTimeoutMs: 5000 }
+  );
 }
 
 function sameValue(a: unknown, b: unknown): boolean {

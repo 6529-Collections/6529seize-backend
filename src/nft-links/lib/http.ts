@@ -1,3 +1,4 @@
+import { withArweaveFallback } from '@/arweave-gateway-fallback';
 import { env } from '@/env';
 import {
   openPublicResponse,
@@ -62,9 +63,10 @@ function getMaxBytes(opts: FetchOptions): number {
   return opts.maxBytes ?? ((envMax ?? 0) > 0 ? envMax! : 2_000_000);
 }
 
-export async function fetchTextWithTimeout(
+async function fetchTextAttempt(
   url: string,
-  opts: FetchOptions
+  opts: FetchOptions,
+  signal?: AbortSignal
 ): Promise<string> {
   const budget = getNftLinkResolutionBudget();
   budget?.check();
@@ -78,6 +80,10 @@ export async function fetchTextWithTimeout(
     controller.abort();
   };
   const abort = () => cancel('resolution_budget');
+  const cancelAttempt = () =>
+    cancel(budget?.signal.aborted ? 'resolution_budget' : 'request_timeout');
+  signal?.addEventListener('abort', cancelAttempt, { once: true });
+  if (signal?.aborted) cancelAttempt();
   budget?.signal.addEventListener('abort', abort, { once: true });
   const t = setTimeout(() => cancel('request_timeout'), opts.timeoutMs);
   let opened: OpenedPublicResponse | undefined;
@@ -121,6 +127,7 @@ export async function fetchTextWithTimeout(
     opened?.cancel();
     if (budget) controller.abort();
     budget?.signal.removeEventListener('abort', abort);
+    signal?.removeEventListener('abort', cancelAttempt);
     if (opts.diagnosticPurpose) {
       // One line, no URL path/query/credentials or error payload. Preserve the
       // original exception and the caller's existing operational alert policy.
@@ -140,13 +147,47 @@ export async function fetchTextWithTimeout(
   }
 }
 
+async function fetchAndValidate<T>(
+  url: string,
+  opts: FetchOptions,
+  validate: (body: string) => T
+): Promise<T> {
+  const budget = getNftLinkResolutionBudget();
+  return withArweaveFallback(
+    url,
+    async (candidate, signal) =>
+      validate(await fetchTextAttempt(candidate, opts, signal)),
+    {
+      signal: budget?.signal,
+      timeoutMs: Math.min(
+        opts.timeoutMs * 4,
+        budget?.remainingMs() ?? Number.MAX_SAFE_INTEGER
+      ),
+      // The transport's own timer supplies the existing typed timeout first.
+      attemptTimeoutMs: opts.timeoutMs + 50
+    }
+  );
+}
+
+export async function fetchTextWithTimeout(
+  url: string,
+  opts: FetchOptions
+): Promise<string> {
+  return fetchAndValidate(url, opts, (body) => body);
+}
+
 export async function fetchJsonWithTimeout<T>(
   url: string,
   opts: FetchOptions
 ): Promise<T> {
-  const txt = await fetchTextWithTimeout(url, {
-    ...opts,
-    headers: { accept: 'application/json', ...opts.headers }
-  });
-  return JSON.parse(txt) as T;
+  return fetchAndValidate(
+    url,
+    { ...opts, headers: { accept: 'application/json', ...opts.headers } },
+    (body) => {
+      const value: unknown = JSON.parse(body);
+      if (value === null || typeof value !== 'object')
+        throw new Error('Invalid metadata JSON');
+      return value as T;
+    }
+  );
 }

@@ -1,3 +1,4 @@
+import { withArweaveFallback } from '@/arweave-gateway-fallback';
 import { isIP } from 'node:net';
 import { publicFetch, PublicFetchTimeoutError } from '@/http/public-fetch';
 import { isPublicIpAddress } from '@/http/public-network-address';
@@ -77,14 +78,29 @@ export async function fetchPublicUrlToBuffer(
   parseAndValidatePublicHttpUrl(url);
   let result;
   try {
-    result = await publicFetch(url, {
-      method: 'GET',
-      headers: options.headers,
-      maxBytes,
-      maxRedirects,
-      requestTimeoutMs: timeoutMs,
-      timeoutMs: timeoutMs * OVERALL_DEADLINE_TIMEOUT_MULTIPLIER
-    });
+    result = await withArweaveFallback(
+      url,
+      async (candidate, signal) => {
+        const response = await publicFetch(candidate, {
+          method: 'GET',
+          signal,
+          headers: options.headers,
+          maxBytes,
+          maxRedirects,
+          requestTimeoutMs: timeoutMs,
+          timeoutMs: timeoutMs * OVERALL_DEADLINE_TIMEOUT_MULTIPLIER
+        });
+        if (!response.ok)
+          throw new Error(
+            `Fetch failed: ${response.status} ${response.finalUrl}`
+          );
+        return response;
+      },
+      {
+        timeoutMs: timeoutMs * OVERALL_DEADLINE_TIMEOUT_MULTIPLIER,
+        attemptTimeoutMs: timeoutMs
+      }
+    );
   } catch (err) {
     if (err instanceof PublicFetchTimeoutError) {
       throw new Error(`Fetch timed out after ${err.timeoutMs}ms: ${url}`);

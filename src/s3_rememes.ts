@@ -417,21 +417,25 @@ async function fetchRememeMedia(
   imageUrl: string,
   expectedFormat: string
 ): Promise<Buffer> {
-  const response = await withArweaveFallback(imageUrl, (u) =>
-    publicFetch(u, {
-      method: 'GET',
-      maxBytes: MAX_REMEME_MEDIA_BYTES,
-      maxRedirects: FETCH_MAX_REDIRECTS,
-      requestTimeoutMs: FETCH_TIMEOUT_MS,
-      timeoutMs: FETCH_DEADLINE_MS
-    })
+  return withArweaveFallback(
+    imageUrl,
+    async (candidate, signal) => {
+      const response = await publicFetch(candidate, {
+        method: 'GET',
+        signal,
+        maxBytes: MAX_REMEME_MEDIA_BYTES,
+        maxRedirects: FETCH_MAX_REDIRECTS,
+        requestTimeoutMs: FETCH_TIMEOUT_MS,
+        timeoutMs: FETCH_DEADLINE_MS
+      });
+      if (!response.ok)
+        throw new Error(
+          `Failed to fetch rememe ${expectedFormat} media: ${response.status}`
+        );
+      return response.body;
+    },
+    { timeoutMs: FETCH_DEADLINE_MS, attemptTimeoutMs: FETCH_TIMEOUT_MS }
   );
-  if (!response.ok) {
-    throw new Error(
-      `Failed to fetch rememe ${expectedFormat} media: ${response.status}`
-    );
-  }
-  return response.body;
 }
 
 async function persistRememeS3Result(

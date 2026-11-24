@@ -150,18 +150,17 @@ async function fetchConsolidatedTDH(block: number): Promise<ConsolidatedTDH[]> {
       `[BLOCK ${block}] [FOUND ARWEAVE URL] [${uploadEntry.url}] [FETCHING CSV DATA]`
     );
 
-    const csvResponse = await withArweaveFallback(uploadEntry.url, (u) =>
-      fetch(u)
+    const csvData = await withArweaveFallback(
+      uploadEntry.url,
+      async (candidate, signal) => {
+        const response = await fetch(candidate, { signal });
+        if (!response.ok)
+          throw new Error(
+            `Failed to fetch CSV from arweave: ${response.status}`
+          );
+        return parseCsvFromText(await response.text());
+      }
     );
-    if (!csvResponse.ok) {
-      throw new Error(
-        `Failed to fetch CSV from arweave: ${csvResponse.status} ${csvResponse.statusText}`
-      );
-    }
-
-    // Parse CSV data
-    const csvText = await csvResponse.text();
-    const csvData = await parseCsvFromText(csvText);
 
     // Convert CSV rows to ConsolidatedTDH format
     const consolidatedTdh: ConsolidatedTDH[] = csvData.map((row: any) => {
