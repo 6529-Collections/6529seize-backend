@@ -278,17 +278,33 @@ const MIRROR_WRITES = [
  * hidden or private group, direct messages, the records wave) in the
  * tables the mirror writes. After the switch-on a wave has moved when the
  * chain holds a LegacyId for it, so a staying wave is one that is neither
- * made on the chain (a 0x id) nor named by a LegacyId in the chain index;
- * a staying group is one that is neither made on the chain nor matched to
- * a chain group in the mirror's own match table. The rebuild can't bring
- * these rows back until private waves exist on the chain.
+ * made on the chain (a 0x id) nor named by a LegacyId in the chain index.
+ * The rebuild can't bring these rows back until private waves exist on
+ * the chain.
  */
-function stayingWave(column: string): string {
-  return `(${column} not like '0x%' and not exists (select 1 from chain_waves cw where cw.legacy_id is not null and replace(lower(cw.legacy_id), '-', '') = replace(lower(${column}), '-', '')))`;
+function movedWave(column: string): string {
+  return `exists (select 1 from chain_waves cw where cw.legacy_id is not null and replace(lower(cw.legacy_id), '-', '') = replace(lower(${column}), '-', ''))`;
 }
 
-function stayingGroup(column: string): string {
-  return `(${column} not like '0x%' and not exists (select 1 from waves_chain_mirror_groups mg where mg.group_id = ${column}))`;
+function stayingWave(column: string): string {
+  return `(${column} not like '0x%' and not ${movedWave(column)})`;
+}
+
+/**
+ * A staying group, by the export's own rule (the snapshot tool's
+ * site_scope and model), from 6529.io's rows: hidden, private or a direct
+ * message's, or else named by no moved wave as its read, post or admin
+ * group and by no decision of a moved wave as its submit or vote group,
+ * so the Waves v1 file never held it. A group made on the chain is the
+ * mirror's.
+ */
+function stayingGroup(alias: string): string {
+  const id = `${alias}.id`;
+  const named = [
+    `exists (select 1 from waves mw where ${movedWave('mw.id')} and ${id} in (mw.visibility_group_id, mw.chat_group_id, mw.admin_group_id))`,
+    `exists (select 1 from competitions md where ${movedWave('md.wave_id')} and ${id} in (json_unquote(json_extract(md.participation_config, '$.group_id')), json_unquote(json_extract(md.voting_config, '$.group_id'))))`
+  ];
+  return `(${id} not like '0x%' and (${alias}.visible = 0 or ${alias}.is_private = 1 or coalesce(${alias}.is_direct_message, 0) = 1 or not (${named.join(' or ')})))`;
 }
 
 const STAYING_COMPETITION = `competition_id in (select d.id from competitions d where ${stayingWave('d.wave_id')})`;
@@ -297,8 +313,8 @@ const STAYING_WHERE: Readonly<Record<string, string>> = {
   waves: stayingWave('waves.id'),
   waves_metadatas: stayingWave('waves_metadatas.wave_id'),
   waves_archive: stayingWave('waves_archive.id'),
-  community_groups: stayingGroup('community_groups.id'),
-  profile_groups: `profile_groups.profile_group_id in (select g.profile_group_id from community_groups g where ${stayingGroup('g.id')} union select g.excluded_profile_group_id from community_groups g where ${stayingGroup('g.id')})`,
+  community_groups: stayingGroup('community_groups'),
+  profile_groups: `profile_groups.profile_group_id in (select g.profile_group_id from community_groups g where ${stayingGroup('g')} union select g.excluded_profile_group_id from community_groups g where ${stayingGroup('g')})`,
   competitions: stayingWave('competitions.wave_id'),
   competition_config_versions: STAYING_COMPETITION,
   competition_capabilities: STAYING_COMPETITION,
