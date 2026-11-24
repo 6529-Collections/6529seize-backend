@@ -34,8 +34,25 @@ const logger = Logger.get('WAVES_REBUILD_DROP_INDEX');
 /** The relay network the run's relays speak (the dm area uses the same). */
 export const REBUILD_RELAY_NET = '6529-rebuild-check';
 
-/** Switch-on in the run, fixed rather than the code's default. */
-export const REBUILD_LIVE_FROM = '2026-11-26T00:00:00Z';
+/**
+ * Switch-on in the run: the drop index's own setting, read by its own
+ * parser, so the run and the live loop agree and a move of the date needs
+ * no change here. WAVES_DROP_INDEX_LIVE_FROM in the run's environment when
+ * given, else the drop index's default (DEFAULT_LIVE_FROM). The seed and
+ * the rebuild run in one environment, so both read the same value.
+ */
+export function rebuildLiveFrom(
+  env: Readonly<Record<string, string | undefined>> = process.env
+): string {
+  // Only the switch-on is read; the rest satisfies the parser.
+  const config = dropIndexConfig({
+    FEATURE_WAVES_DROP_INDEX: 'true',
+    WAVES_RELAY_URLS: 'ws://127.0.0.1:1',
+    WAVES_RELAY_NET: REBUILD_RELAY_NET,
+    WAVES_DROP_INDEX_LIVE_FROM: env.WAVES_DROP_INDEX_LIVE_FROM ?? ''
+  });
+  return new Date(config!.liveFrom).toISOString();
+}
 
 /** Runs of the drop index before the step gives up on the relays. */
 const MAX_RUNS = 20;
@@ -47,7 +64,10 @@ const MAX_RUNS = 20;
  * 6529.io's drop tables (FEATURE_WAVES_DROP_INDEX_APPLY) is the drops
  * step's, not this one's.
  */
-export function dropIndexEnv(relays: string): Record<string, string> {
+export function dropIndexEnv(
+  relays: string,
+  env: Readonly<Record<string, string | undefined>> = process.env
+): Record<string, string> {
   return {
     FEATURE_WAVES_DROP_INDEX: 'true',
     WAVES_RELAY_URLS: relays,
@@ -55,7 +75,7 @@ export function dropIndexEnv(relays: string): Record<string, string> {
     WAVES_DROP_INDEX_BUDGET_MS: '20000',
     // Switch-on: the world's events are claimed before it, so they are
     // history (IMPORT), as the switch's first run reads them.
-    WAVES_DROP_INDEX_LIVE_FROM: REBUILD_LIVE_FROM,
+    WAVES_DROP_INDEX_LIVE_FROM: rebuildLiveFrom(env),
     // 6529.io reads members-only waves as the relays' site reader: here the
     // shared test device key under its grant, which the waves manifest
     // declares a site reader of the run's relays.

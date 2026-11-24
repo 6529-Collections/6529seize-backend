@@ -1,4 +1,4 @@
-import { REBUILD_LIVE_FROM } from '@/rebuild/steps/waves-drop-index.steps';
+import { rebuildLiveFrom } from '@/rebuild/steps/waves-drop-index.steps';
 import {
   testGrantProof,
   TEST_CLAIMED_TIME
@@ -19,7 +19,7 @@ describe('the relay world', () => {
       Number(testGrantProof().expires_at)
     );
     expect(RELAY_WORLD_CLAIMED_TIME).toBeLessThan(
-      Date.parse(REBUILD_LIVE_FROM)
+      Date.parse(rebuildLiveFrom({}))
     );
   });
 });

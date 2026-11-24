@@ -16,6 +16,7 @@ import { RELAY_EVENT_MAX_AGE_MS } from '@/api/device-signing/device-signed-write
 import { checkWavesRelayEvent } from './waves-relay-check';
 import { checkRelayEvent } from '@/wave-drop-index/relay-event-check';
 import {
+  DEFAULT_LIVE_FROM,
   dropIndexConfig,
   readerAuthAnswer
 } from '@/wave-drop-index/drop-index';
@@ -27,7 +28,7 @@ import {
   indexRelays,
   publishRelayWorld,
   readRelaysOnce,
-  REBUILD_LIVE_FROM,
+  rebuildLiveFrom,
   REBUILD_RELAY_NET
 } from './waves-drop-index.steps';
 
@@ -86,14 +87,42 @@ describe('the waves drop index rebuild step', () => {
   });
 
   it('reads the relays with the drop index on and applying off', () => {
-    expect(dropIndexEnv('ws://127.0.0.1:9')).toEqual({
+    expect(dropIndexEnv('ws://127.0.0.1:9', {})).toEqual({
       FEATURE_WAVES_DROP_INDEX: 'true',
       WAVES_RELAY_URLS: 'ws://127.0.0.1:9',
       WAVES_RELAY_NET: REBUILD_RELAY_NET,
       WAVES_DROP_INDEX_BUDGET_MS: '20000',
-      WAVES_DROP_INDEX_LIVE_FROM: REBUILD_LIVE_FROM,
+      WAVES_DROP_INDEX_LIVE_FROM: new Date(DEFAULT_LIVE_FROM).toISOString(),
       WAVES_DROP_INDEX_READER: expect.any(String)
     });
+  });
+
+  it("switches on at the drop index's own setting, or its default", () => {
+    // Not given: the drop index's default, the same in both passes.
+    expect(rebuildLiveFrom({})).toBe(new Date(DEFAULT_LIVE_FROM).toISOString());
+    expect(rebuildLiveFrom({ WAVES_DROP_INDEX_LIVE_FROM: '' })).toBe(
+      new Date(DEFAULT_LIVE_FROM).toISOString()
+    );
+    // Given: read by the drop index's parser, in either of its forms.
+    expect(
+      rebuildLiveFrom({ WAVES_DROP_INDEX_LIVE_FROM: '2026-12-01T00:00:00Z' })
+    ).toBe('2026-12-01T00:00:00.000Z');
+    expect(
+      rebuildLiveFrom({
+        WAVES_DROP_INDEX_LIVE_FROM: String(Date.UTC(2026, 11, 2))
+      })
+    ).toBe('2026-12-02T00:00:00.000Z');
+    expect(
+      dropIndexConfig(
+        dropIndexEnv('ws://127.0.0.1:9', {
+          WAVES_DROP_INDEX_LIVE_FROM: '2026-12-01T00:00:00Z'
+        })
+      )?.liveFrom
+    ).toBe(Date.UTC(2026, 11, 1));
+    // A value the drop index refuses fails the step, as it would the loop.
+    expect(() =>
+      rebuildLiveFrom({ WAVES_DROP_INDEX_LIVE_FROM: 'Friday' })
+    ).toThrow('WAVES_DROP_INDEX_LIVE_FROM');
   });
 
   it("reads as the site reader the manifest declares, with the test grant's own key", () => {
