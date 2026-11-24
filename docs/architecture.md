@@ -18,6 +18,13 @@ after lease replacement or explicit invalidation. See
 - SQS and EventBridge as the async execution fabric.
 - S3, CloudFront, Arweave, Ethereum/RPC providers, Firebase, Sentry, CloudWatch, Discord, and SNS around the core.
 
+Cookie-consent country checks prefer the WAF country header on REST API Gateway
+requests, with FindIP retained as a permanent fallback. Before deploying this
+code in an environment, configure every WAF Allow path to overwrite the header.
+This changes the geolocation source without changing sanctions enforcement,
+EU/EEA classification or the response contract. See [country checks](country-check.md).
+Only the `api` service needs deployment.
+
 The six Sharp media packages also accept the exact direct-invocation payload
 `{"operator_action":"verify_media_dependencies_v1"}` for release diagnostics.
 This IAM-invoked path runs fixed synthetic codec operations in memory and
