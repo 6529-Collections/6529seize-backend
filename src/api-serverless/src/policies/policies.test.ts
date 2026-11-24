@@ -4,7 +4,7 @@ import * as fc from 'fast-check';
 import * as mcache from 'memory-cache';
 import * as http from 'node:http';
 import { AddressInfo, isIP } from 'node:net';
-import { getIp, getIpInfo, normalizeIp } from './policies';
+import { getIp, getIpInfo, getWafCountry, normalizeIp } from './policies';
 
 jest.mock('axios');
 
@@ -170,6 +170,94 @@ describe('getIp', () => {
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));
     }
+  });
+});
+
+describe('getWafCountry', () => {
+  const originalTrust = process.env.TRUST_WAF_COUNTRY_HEADER;
+  const gatewayContext = { identity: { sourceIp: '203.0.113.10' } };
+
+  beforeEach(() => {
+    process.env.TRUST_WAF_COUNTRY_HEADER = 'true';
+  });
+
+  afterEach(() => {
+    if (originalTrust === undefined) {
+      delete process.env.TRUST_WAF_COUNTRY_HEADER;
+    } else {
+      process.env.TRUST_WAF_COUNTRY_HEADER = originalTrust;
+    }
+  });
+
+  function withCountry(
+    country: unknown,
+    requestContext: unknown = gatewayContext
+  ) {
+    return requestWith({
+      headers: { 'x-amzn-waf-country': country },
+      requestContext
+    });
+  }
+
+  it.each(['CY', 'US', 'GB', 'AX', 'BQ', 'AQ'])(
+    'accepts the assigned country code %s on an opted-in REST API',
+    (country) => {
+      expect(getWafCountry(withCountry(country))).toBe(country);
+    }
+  );
+
+  it.each([
+    undefined,
+    null,
+    '',
+    'XX',
+    'ZZ',
+    'AA',
+    'EU',
+    'cy',
+    ' CY ',
+    'CY, US',
+    '${awswaf:clientip:geo:country:}',
+    ['CY'],
+    ['CY', 'US']
+  ])('rejects missing, unknown or ambiguous country %p', (country) => {
+    expect(getWafCountry(withCountry(country))).toBeNull();
+  });
+
+  it.each([undefined, '', 'false', 'TRUE', '1'])(
+    'ignores the header unless trust is explicitly enabled (%p)',
+    (enabled) => {
+      if (enabled === undefined) {
+        delete process.env.TRUST_WAF_COUNTRY_HEADER;
+      } else {
+        process.env.TRUST_WAF_COUNTRY_HEADER = enabled;
+      }
+      expect(getWafCountry(withCountry('US'))).toBeNull();
+    }
+  );
+
+  it.each([
+    null,
+    {},
+    { identity: { sourceIp: 'not-an-ip' } },
+    { http: { sourceIp: '203.0.113.10' } }
+  ])(
+    'ignores the header outside a REST API Gateway request (%p)',
+    (context) => {
+      expect(getWafCountry(withCountry('US', context))).toBeNull();
+    }
+  );
+
+  it.each([
+    { 'x-amzn-waf-country': [] },
+    { 'x-amzn-waf-country': 'CY' },
+    { 'x-amzn-waf-country': ['CY', 'CY'] },
+    { 'X-Amzn-Waf-Country': ['CY'], 'x-amzn-waf-country': ['US'] }
+  ])('rejects ambiguous original gateway headers (%p)', (multiValueHeaders) => {
+    const req = withCountry('CY');
+    Object.assign(req, { apiGateway: { event: { multiValueHeaders } } });
+
+    expect(getWafCountry(req)).toBeNull();
   });
 });
 

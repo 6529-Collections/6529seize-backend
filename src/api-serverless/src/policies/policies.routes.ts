@@ -1,13 +1,19 @@
 import { Request } from 'express';
 import { asyncRouter } from '../async.router';
-import { getIp, getIpInfo, isEUCountry, isLocalhost } from './policies';
+import {
+  getIp,
+  getIpInfo,
+  getWafCountry,
+  isEUCountry,
+  isLocalhost
+} from './policies';
 import { deleteCookiesConsent, saveCookiesConsent } from './policies.db';
 
 const router = asyncRouter();
 
 export default router;
 
-router.get(`/country-check`, function (req: Request, res: any) {
+router.get(`/country-check`, async function (req: Request, res: any) {
   const ip: string = getIp(req);
 
   if (!ip) {
@@ -23,16 +29,15 @@ router.get(`/country-check`, function (req: Request, res: any) {
     });
   }
 
-  getIpInfo(ip).then(async (ipInfo) => {
-    if (!ipInfo?.country) {
-      return res.status(400).send({
-        message: 'Failed to get country from IP address'
-      });
-    }
-    return res.status(200).send({
-      is_eu: isEUCountry(ipInfo.country),
-      country: ipInfo.country
+  const country = getWafCountry(req) ?? (await getIpInfo(ip))?.country;
+  if (!country) {
+    return res.status(400).send({
+      message: 'Failed to get country from IP address'
     });
+  }
+  return res.status(200).send({
+    is_eu: isEUCountry(country),
+    country
   });
 });
 
