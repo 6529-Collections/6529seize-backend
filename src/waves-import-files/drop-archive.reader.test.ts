@@ -319,6 +319,23 @@ describe('importDropArchives', () => {
     expect(w.written.drops).toHaveLength(1);
   });
 
+  it('refuses a serial number that two archives hold', async () => {
+    const drops = [
+      FIXTURE_DROPS[0],
+      { ...FIXTURE_DROPS[3], serial_no: FIXTURE_DROPS[0].serial_no }
+    ];
+    const built = buildDropArchives(drops, []);
+    const w = world(built);
+    const report = await w.run();
+    expect(report.refused).toEqual([
+      {
+        waveId: built.archives[1].waveId,
+        reason: 'a serial number appears twice'
+      }
+    ]);
+    expect(w.written.drops).toHaveLength(1);
+  });
+
   it('writes in batches', async () => {
     const drops: DropRowForArchive[] = Array.from(
       { length: WRITE_BATCH + 3 },

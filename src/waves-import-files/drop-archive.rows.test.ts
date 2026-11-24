@@ -54,6 +54,13 @@ describe('dropArchiveRows', () => {
     );
   });
 
+  it('takes any integer serial: 6529.io holds a few negative ones', () => {
+    expect(
+      dropArchiveRows({ ...firstLine(), serial_no: -3 }, FIXTURE_WAVES.a).drop
+        .serial_no
+    ).toBe(-3);
+  });
+
   it('refuses a line that is not a v1 drop of the wave', () => {
     const line = firstLine();
     expect(reasonOf(null)).toBe('the line is not an object');
@@ -65,8 +72,11 @@ describe('dropArchiveRows', () => {
     expect(reasonOf({ ...line, drop_id: 'x'.repeat(101) })).toBe(
       'drop_id is not an id'
     );
-    expect(reasonOf({ ...line, serial_no: 0 })).toBe(
-      'serial_no is not an integer of at least 1'
+    expect(reasonOf({ ...line, serial_no: 1.5 })).toBe(
+      'serial_no is not an integer'
+    );
+    expect(reasonOf({ ...line, serial_no: '7' })).toBe(
+      'serial_no is not an integer'
     );
     expect(reasonOf({ ...line, created_at: '1' })).toBe(
       'created_at is not an integer of at least 0'

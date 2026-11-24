@@ -154,34 +154,45 @@ class ArchiveCursor {
   }
 }
 
+/** Drop ids and serials of the archives already taken. */
+interface Taken {
+  readonly ids: Set<string>;
+  readonly serials: Set<number>;
+}
+
 /**
  * Why the archive can't be written, or null when every line is a drop of
- * its wave and no drop id repeats here or in an archive already taken
- * (`seen`, which gets this archive's ids when it is taken).
+ * its wave and no drop id or serial repeats, here or in an archive already
+ * taken (`taken`, which gets this archive's when it is taken).
  */
 function lineProblem(
   bytes: Uint8Array,
   legacyWave: string,
-  seen: Set<string>
+  taken: Taken
 ): string | null {
-  const ids: string[] = [];
-  const here = new Set<string>();
+  const ids = new Set<string>();
+  const serials = new Set<number>();
   try {
     const cursor = new ArchiveCursor(bytes, legacyWave);
     let rows = cursor.next();
     while (rows) {
-      if (here.has(rows.drop.id) || seen.has(rows.drop.id)) {
+      const { id, serial_no } = rows.drop;
+      if (ids.has(id) || taken.ids.has(id)) {
         return 'a drop id appears twice';
       }
-      here.add(rows.drop.id);
-      ids.push(rows.drop.id);
+      if (serials.has(serial_no) || taken.serials.has(serial_no)) {
+        return 'a serial number appears twice';
+      }
+      ids.add(id);
+      serials.add(serial_no);
       rows = cursor.next();
     }
   } catch (error) {
     if (error instanceof DropArchiveLineError) return error.message;
     throw error;
   }
-  ids.forEach((dropId) => seen.add(dropId));
+  ids.forEach((id) => taken.ids.add(id));
+  serials.forEach((serial) => taken.serials.add(serial));
   return null;
 }
 
@@ -302,7 +313,7 @@ export async function importDropArchives({
   log(
     `Waves v1 file ${fileHash} is the chain's import; ${index.length} archives under root ${committed}`
   );
-  const seen = new Set<string>();
+  const taken: Taken = { ids: new Set(), serials: new Set() };
   let written = 0;
   let drops = 0;
   let parts = 0;
@@ -325,7 +336,7 @@ export async function importDropArchives({
       refuse(`it hashes to ${hash}, the root commits ${entry.hash}`);
       continue;
     }
-    const problem = lineProblem(bytes, entry.legacyWave, seen);
+    const problem = lineProblem(bytes, entry.legacyWave, taken);
     if (problem) {
       refuse(problem);
       continue;

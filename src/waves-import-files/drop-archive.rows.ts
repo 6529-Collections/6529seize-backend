@@ -109,13 +109,17 @@ function id(value: unknown, what: string): string {
   return value;
 }
 
-function integer(value: unknown, what: string, min: number): number {
+function integer(value: unknown, what: string, min?: number): number {
   if (
     typeof value !== 'number' ||
     !Number.isSafeInteger(value) ||
-    value < min
+    (min !== undefined && value < min)
   ) {
-    fail(`${what} is not an integer of at least ${min}`);
+    fail(
+      min === undefined
+        ? `${what} is not an integer`
+        : `${what} is not an integer of at least ${min}`
+    );
   }
   return value;
 }
@@ -199,7 +203,8 @@ export function dropArchiveRows(
   if (partIds.size !== parts.length) fail('two parts share a part_id');
   const drop: DropArchiveDropRow = {
     id: dropId,
-    serial_no: integer(line.serial_no, 'serial_no', 1),
+    // Any integer: 6529.io holds a few drops with negative serials.
+    serial_no: integer(line.serial_no, 'serial_no'),
     wave_id: legacyWave,
     author_id: id(line.author, 'author'),
     created_at: integer(line.created_at, 'created_at', 0),

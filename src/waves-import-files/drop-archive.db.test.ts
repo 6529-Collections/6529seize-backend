@@ -175,6 +175,18 @@ describeWithSeed(
       );
     });
 
+    it('writes a negative serial as 6529.io holds a few', async () => {
+      const report = await importFixture(
+        FIXTURE_DROPS.map((d, i) => (i === 0 ? { ...d, serial_no: -3 } : d))
+      );
+      expect(report.refused).toEqual([]);
+      const [row] = await sqlExecutor.execute<{ serial_no: number }>(
+        `select serial_no from ${DROPS_TABLE} where id = :id`,
+        { id: FIXTURE_DROPS[0].id }
+      );
+      expect(Number(row.serial_no)).toBe(-3);
+    });
+
     it("keeps a members-only wave's drops to its members through 6529.io's reads", async () => {
       // A winner drop's read needs its decision's rows, which this test
       // has no part in: the public wave's drop is chat here.
