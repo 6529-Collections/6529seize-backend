@@ -18,7 +18,7 @@ import { HttpFile } from '../http/http';
 
 export class ApiWaveMin {
     /**
-    * True when the wave stays on 6529.io, served from its database as today: a direct message, the records wave, a members-only wave, or a wave that uses a hidden or private group. False when the wave moves to the 6529 chain. After the switch-on, a wave the chain has taken over is false.
+    * True when the wave stays on 6529.io, served from its database as today. Before the switch-on a wave stays when it is a direct message, the records wave or members-only; when a group it uses stays (hidden, private, a direct message\'s, missing, or made after the waves freeze); when its chat is off and it has no admin group; when it was made after the freeze; or when a wave above it stays. False when the wave moves to the 6529 chain. After the switch-on a wave stays unless the chain holds it, and a direct message or the records wave always stays.
     */
     'stays_on_site': boolean;
     /**

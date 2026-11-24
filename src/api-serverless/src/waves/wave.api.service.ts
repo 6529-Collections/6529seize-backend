@@ -8,7 +8,10 @@ import {
   reconcileAcceptedLegacySettings
 } from '@/competitions/legacy-competition-mutation';
 import { competitionHistoryRepository } from '@/competitions/competition-history.repository';
-import { assertWavesNotFrozen } from '@/waves-freeze/waves-freeze';
+import {
+  assertWaveCreationOpen,
+  assertWaveWritable
+} from '@/waves-freeze/waves-freeze-scope';
 import { wavesChangedNotifier } from '@/api/waves/waves-changed.notifier';
 import { waveGroupIds } from '@/waves/wave-group-ids';
 import { randomUUID } from 'crypto';
@@ -556,7 +559,7 @@ export class WaveApiService {
   ): Promise<ApiWave> {
     // Waves move to the 6529 chain: no new waves here once they are frozen.
     // Direct messages are chat and stay open.
-    if (!isDirectMessage) assertWavesNotFrozen();
+    if (!isDirectMessage) assertWaveCreationOpen();
     const timer = this.getRequiredTimer(ctx);
     const authenticationContext = this.getRequiredAuthenticationContext(ctx);
     const actingAsId = this.getRequiredActingAsId(authenticationContext);
@@ -600,7 +603,7 @@ export class WaveApiService {
             isDirectMessage
           });
           // The request may have waited past the freeze: check again here.
-          if (!isDirectMessage) assertWavesNotFrozen();
+          if (!isDirectMessage) assertWaveCreationOpen();
           await this.wavesApiDb.insertWave(newEntity, ctxWithConnection);
           const {
             drop_id: descriptionDropId,
@@ -617,7 +620,7 @@ export class WaveApiService {
               // the wave row is written: check again after that wait.
               recheckWavesFreeze: isDirectMessage
                 ? undefined
-                : () => assertWavesNotFrozen()
+                : () => assertWaveCreationOpen()
             }
           );
           await this.wavesApiDb.updateDescriptionDropId(
@@ -2139,8 +2142,10 @@ export class WaveApiService {
         if (!waveEntity) {
           throw new NotFoundException(`Wave ${waveId} not found`);
         }
-        // Direct messages are chat and stay open through the waves freeze.
-        if (!waveEntity.is_direct_message) assertWavesNotFrozen();
+        // Direct messages are chat and stay open through the waves freeze,
+        // as does every wave that stays on 6529.io.
+        if (!waveEntity.is_direct_message)
+          await assertWaveWritable(waveId, ctxWithConnection);
         const groupsUserIsEligibleFor =
           await this.userGroupsService.getGroupsUserIsEligibleFor(
             authenticatedUserId
@@ -2410,8 +2415,9 @@ export class WaveApiService {
           };
         }
         // An empty patch (the legacy pause routes send one) changes nothing.
-        // Direct messages are chat and stay open through the waves freeze.
-        if (!before.is_direct_message) assertWavesNotFrozen();
+        // Direct messages are chat and stay open through the waves freeze,
+        // as does every wave that stays on 6529.io.
+        if (!before.is_direct_message) await assertWaveWritable(waveId, tx);
         const after = applyWaveHubPatch(before, patch);
         await this.validateWaveHubUpdate(before, after, actor, groups, tx);
         const hubConfiguration =
@@ -2438,6 +2444,9 @@ export class WaveApiService {
             tx
           );
         }
+        // While waves are frozen the edit must leave a staying wave staying
+        // (it can't drop the group that keeps it on 6529.io).
+        if (!before.is_direct_message) await assertWaveWritable(waveId, tx);
         await this.metricsRecorder.recordActiveIdentity(
           { identityId: actor },
           tx
@@ -2502,8 +2511,10 @@ export class WaveApiService {
             if (!waveBeforeUpdate) {
               throw new NotFoundException(`Wave ${waveId} not found`);
             }
-            // Direct messages are chat and stay open through the freeze.
-            if (!waveBeforeUpdate.is_direct_message) assertWavesNotFrozen();
+            // Direct messages are chat and stay open through the freeze, as
+            // does every wave that stays on 6529.io.
+            if (!waveBeforeUpdate.is_direct_message)
+              await assertWaveWritable(waveId, ctxWithConnection);
             const currentMillis = Time.currentMillis();
             await this.validateWaveUpdateAccessAndConstraints({
               waveId,
@@ -2582,6 +2593,10 @@ export class WaveApiService {
                 updatedEntity.next_decision_time,
                 ctxWithConnection
               );
+            // While waves are frozen the update must leave a staying wave
+            // staying (it can't drop the group that keeps it on 6529.io).
+            if (!waveBeforeUpdate.is_direct_message)
+              await assertWaveWritable(waveId, ctxWithConnection);
 
             await this.metricsRecorder.recordActiveIdentity(
               { identityId: authenticatedProfileId },
@@ -2699,9 +2714,10 @@ export class WaveApiService {
           );
         }
         // The pinned drop is the wave's description drop, which the export
-        // reads with the wave: frozen with the waves, right before the write.
-        // Direct messages are chat and stay open.
-        if (!wave.is_direct_message) assertWavesNotFrozen();
+        // reads with the wave: frozen with a moving wave, right before the
+        // write. Direct messages and staying waves stay open.
+        if (!wave.is_direct_message)
+          await assertWaveWritable(waveId, ctxWithConnection);
         await this.wavesApiDb.updateDescriptionDropId(
           {
             waveId,

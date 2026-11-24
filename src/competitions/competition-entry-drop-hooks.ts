@@ -15,7 +15,7 @@ import { ForbiddenException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
 import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
 import { nativeCompetitionRuntimeRepository } from '@/competitions/native-competition-runtime.repository';
-import { assertDecisionNotFrozen } from '@/waves-freeze/waves-freeze';
+import { assertEntriesWritable } from '@/waves-freeze/waves-freeze-scope';
 
 export type NativeEntryEdit = {
   readonly entries: readonly NativeDropEntry[];
@@ -57,13 +57,14 @@ export class CompetitionEntryDropHooks {
   public async preparePresentationUpdate(
     _drop: DropEntity,
     entries: readonly NativeDropEntry[],
-    _ctx: RequestContext
+    ctx: RequestContext
   ): Promise<NativeEntryEdit> {
     // A presentation change (hiding link previews) records a new content
-    // revision of each entry: entries are held as they stood at the waves
-    // freeze. Called under the entries' locks, right before the write.
-    for (const entry of entries)
-      assertDecisionNotFrozen({ wave_id: entry.wave_id });
+    // revision of each entry: entries of a moving wave are held as they
+    // stood at the waves freeze. Each entry is checked against its own
+    // decision, so the Main Stage's pass when the freeze keeps it running.
+    // Called under the entries' locks, right before the write.
+    await assertEntriesWritable(entries, ctx);
     if (
       entries.some(
         (entry) =>

@@ -3,6 +3,7 @@ import { AuthenticationContext } from '@/auth-context';
 import { DropType } from '@/entities/IDrop';
 import { Time } from '@/time';
 import { WavesFrozenException } from '@/waves-freeze/waves-freeze';
+import { stubWavesScope } from '@/tests/fixtures/waves-scope.fixture';
 
 const FLAG = 'FEATURE_WAVES_FROZEN';
 const AT = 'WAVES_FREEZE_AT';
@@ -59,6 +60,11 @@ const ctx = {
     activeProxyActions: []
   })
 };
+
+// Every wave moves unless a test says otherwise.
+beforeEach(() => {
+  stubWavesScope();
+});
 
 describe('polls during the waves freeze', () => {
   const original: Record<string, string | undefined> = {};
@@ -120,13 +126,30 @@ describe('polls during the waves freeze', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('takes no poll vote while frozen', async () => {
+  it("takes no poll vote in a moving wave while frozen, but takes a staying wave's", async () => {
     process.env[FLAG] = 'true';
-    const { service, dropsDb } = createService();
+    stubWavesScope({ staying: ['staying-wave'] });
+    const { service, dropsDb, wavesApiDb } = createService();
+    // Read the drop, which names its wave; refused before the wave is read.
+    dropsDb.findDropByIdWithEligibilityCheck.mockResolvedValue({
+      id: 'drop',
+      wave_id: 'moving-wave'
+    });
     await expect(
       service.vote({ dropId: 'drop', voterId: 'voter', options: [1] }, ctx)
     ).rejects.toBeInstanceOf(WavesFrozenException);
-    expect(dropsDb.findDropByIdWithEligibilityCheck).not.toHaveBeenCalled();
+    expect(wavesApiDb.findById).not.toHaveBeenCalled();
+
+    dropsDb.findDropByIdWithEligibilityCheck.mockResolvedValue({
+      id: 'drop',
+      wave_id: 'staying-wave'
+    });
+    wavesApiDb.findById.mockRejectedValue(
+      new Error('past the waves freeze check')
+    );
+    await expect(
+      service.vote({ dropId: 'drop', voterId: 'voter', options: [1] }, ctx)
+    ).rejects.toThrow('past the waves freeze check');
   });
 
   it('takes poll votes as before when not frozen', async () => {

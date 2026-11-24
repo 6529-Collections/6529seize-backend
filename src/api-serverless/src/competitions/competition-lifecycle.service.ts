@@ -26,7 +26,11 @@ import {
 } from '@/entities/ICompetition';
 import { BadRequestException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
-import { assertWavesNotFrozen } from '@/waves-freeze/waves-freeze';
+import {
+  assertWaveWritable,
+  decisionWaveId,
+  keepingWaveScope
+} from '@/waves-freeze/waves-freeze-scope';
 import {
   administerCompetitionWave,
   competitionActor,
@@ -153,8 +157,9 @@ export class CompetitionLifecycleService {
     request: ApiCreateCompetitionRequest,
     ctx: RequestContext
   ) {
-    // No new decisions while waves move to the 6529 chain.
-    assertWavesNotFrozen();
+    // No new decisions on a moving wave while waves move to the 6529 chain;
+    // a wave that stays on 6529.io gets them as usual.
+    await assertWaveWritable(waveId, ctx);
     await administerCompetitionWave(waveId, ctx);
     const actor = competitionActor(ctx);
     return competitionCommandRepository.command(
@@ -170,7 +175,9 @@ export class CompetitionLifecycleService {
           tx
         );
         // The wave lock can wait past the freeze: check again before writing.
-        assertWavesNotFrozen();
+        // A new decision only adds groups to its wave, so a staying wave
+        // still stays after it.
+        await assertWaveWritable(waveId, tx);
         const record = newRecord(waveId, config, Date.now());
         await this.persistNew(record, config, actor, tx);
         return competitionService.getCompetition(waveId, record.id, tx);
@@ -308,11 +315,12 @@ export class CompetitionLifecycleService {
           now,
           tx
         );
-        await competitionCommandRepository.saveCompetition(
-          next,
-          actor,
-          config,
-          tx
+        // While waves are frozen no edit may change which side the wave is
+        // on. New rules can drop the hidden or private group that keeps a
+        // wave on 6529.io, or, on a Main Stage the freeze keeps running, add
+        // one to a moving wave.
+        await keepingWaveScope(decisionWaveId(competition) ?? waveId, tx, () =>
+          competitionCommandRepository.saveCompetition(next, actor, config, tx)
         );
         if (approvalRulesChanged)
           await competitionCommandRepository.clearApprovalThresholds(
@@ -374,9 +382,9 @@ export class CompetitionLifecycleService {
             ].includes(record.lifecycle)
           )
             competitionConflict('Only terminal decisions can be cloned');
-          // A clone is a new decision: none while waves are frozen, even of
-          // the Main Stage when the freeze keeps it running.
-          assertWavesNotFrozen();
+          // A clone is a new decision: none on a moving wave while waves are
+          // frozen, even of the Main Stage when the freeze keeps it running.
+          await assertWaveWritable(waveId, tx);
           const clone = newRecord(waveId, config, now);
           await this.persistNew(clone, config, actor, tx);
           return competitionService.getCompetition(waveId, clone.id, tx);

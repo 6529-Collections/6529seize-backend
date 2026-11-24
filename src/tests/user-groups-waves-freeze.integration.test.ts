@@ -32,9 +32,12 @@ const group = (visible: boolean) =>
     visible,
     is_direct_message: false
   });
+// A moving wave uses waveGroup (as its admin group), so the freeze holds it.
 const waveGroup = group(true);
 const newVersion = group(false);
 const directMessageGroup = group(true);
+// Only a members-only wave uses stayingGroup; that wave stays on 6529.io.
+const stayingGroup = group(true);
 
 function replaceWaveGroup(idempotencyKey: string, visible = true) {
   return {
@@ -73,9 +76,10 @@ describeWithSeed(
   'POST /groups/:id/visible during the waves freeze',
   [
     withIdentities([creator]),
-    withUserGroups([waveGroup, newVersion, directMessageGroup]),
+    withUserGroups([waveGroup, newVersion, directMessageGroup, stayingGroup]),
     withWaves([
-      aWave({ visibility_group_id: waveGroup.id }),
+      aWave({ admin_group_id: waveGroup.id }),
+      aWave({ visibility_group_id: stayingGroup.id }),
       aWave({
         is_direct_message: true,
         visibility_group_id: directMessageGroup.id,
@@ -180,6 +184,22 @@ describeWithSeed(
       expect(await receipts()).toEqual([]);
       expect(await groupName(waveGroup.id)).toBe(waveGroup.name);
       expect(await groupName(newVersion.id)).toBe(newVersion.name);
+    });
+
+    it('still hides a group only a staying wave uses', async () => {
+      process.env[FLAG] = 'true';
+      await service.changeVisibility(
+        {
+          group_id: stayingGroup.id,
+          old_version_id: null,
+          visible: false,
+          profile_id: creatorKey.profile_id,
+          idempotencyKey: 'hide-staying'
+        },
+        {}
+      );
+      expect(await isVisible(stayingGroup.id)).toBe(false);
+      expect(await receipts()).toEqual([true]);
     });
 
     it("still hides a direct message's group: direct messages are chat", async () => {

@@ -17,6 +17,7 @@ import {
 } from '@/waves-freeze/waves-freeze';
 import { CreateOrUpdateDropUseCase } from './create-or-update-drop.use-case';
 import { DeleteDropUseCase } from './delete-drop.use-case';
+import { stubWavesScope } from '@/tests/fixtures/waves-scope.fixture';
 
 const NAMES = [
   'FEATURE_WAVES_FROZEN',
@@ -27,6 +28,11 @@ const NAMES = [
 const PAST_FREEZE = new Error('past the waves freeze check');
 const FREEZE = Date.UTC(2026, 10, 25);
 const connection = {} as any;
+
+// Every wave moves unless a test says otherwise.
+beforeEach(() => {
+  stubWavesScope();
+});
 
 describe('legacy entries during the waves freeze', () => {
   const original: Record<string, string | undefined> = {};

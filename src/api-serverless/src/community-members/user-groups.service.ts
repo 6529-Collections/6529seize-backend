@@ -55,11 +55,13 @@ import * as mcache from 'memory-cache';
 import { RequestContext } from '@/request.context';
 import { readWaveCatalogueWithDiagnostics } from './wave-catalogue-read-diagnostics';
 import {
-  isWavesFrozen,
+  wavesFreezeAtMs,
   WAVES_FROZEN_GROUP_MESSAGE,
   WAVES_FROZEN_GROUP_VISIBILITY_MESSAGE,
   WavesFrozenException
 } from '@/waves-freeze/waves-freeze';
+import { groupStays } from '@/waves-scope/waves-scope';
+import { isAnyGroupFrozen } from '@/waves-freeze/waves-freeze-scope';
 import {
   CatalogueRead,
   RedisWaveGroupsCatalogueStore,
@@ -1717,24 +1719,23 @@ export class UserGroupsService {
   }
 
   /**
-   * Whether this change touches a group a wave, decision or curation uses,
-   * while waves are frozen. Replacing a group gives the new version the old
-   * one's id, so every wave and decision that names it changes with it, and
-   * eligibility reads only visible groups, so hiding or showing a group
-   * changes who may use those waves. While waves move to the 6529 chain,
-   * neither may happen to such a group. Direct messages are chat: their
-   * groups stay open. Read from the primary, or the transaction's connection
-   * when there is one.
+   * Whether this change touches a group that a wave moving to the 6529
+   * chain uses (as a wave, decision or curation group), while waves are
+   * frozen. Replacing a group gives the new version the old one's id, so
+   * every wave and decision that names it changes with it, and eligibility
+   * reads only visible groups, so hiding or showing a group changes who may
+   * use those waves. While waves move, neither may happen to a group a
+   * moving wave uses. Groups only staying waves use (direct messages,
+   * members-only waves, waves with a hidden or private group) stay open.
+   * Read from the primary, or the transaction's connection when there is
+   * one: run again after the write, it also refuses a change that makes a
+   * staying wave that uses the group move.
    */
   private async touchesFrozenWaveGroup(
     { group_id, old_version_id }: GroupVisibilityChange,
     ctx: RequestContext
   ): Promise<boolean> {
-    if (!isWavesFrozen()) return false;
-    return this.userGroupsDb.isUsedByWaves(
-      [group_id, old_version_id].filter((id): id is string => !!id),
-      ctx
-    );
+    return isAnyGroupFrozen([group_id, old_version_id], ctx);
   }
 
   /** A replacement is told to save a new group; hiding or showing is not. */
@@ -1838,6 +1839,10 @@ export class UserGroupsService {
           const saved = legacyReplay
             ? { updatedGroup: legacyReplay, replacedGroup: null }
             : await this.applyVisibilityChange(change, tx, beforeReplace);
+          // After the write: a wave that stayed on 6529.io because of this
+          // group must not move while waves are frozen.
+          if (!legacyReplay && (await this.touchesFrozenWaveGroup(change, tx)))
+            throw this.frozenGroupChange(change);
           if (requestId)
             await this.userGroupsDb.completeVisibilityRequest(
               requestId,
@@ -3140,6 +3145,15 @@ export class UserGroupsService {
       name: displayNames[it.id],
       visible: it.visible,
       is_private: !!it.is_private,
+      stays_on_site: groupStays(
+        {
+          visible: !!it.visible,
+          is_private: !!it.is_private,
+          is_direct_message: !!it.is_direct_message,
+          created_at: new Date(it.created_at).getTime()
+        },
+        wavesFreezeAtMs()
+      ),
       created_at: new Date(it.created_at).getTime(),
       group: {
         cic: {

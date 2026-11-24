@@ -6,16 +6,21 @@ import { Logger } from '@/logging';
 import { Time } from '@/time';
 
 /**
- * Waves, groups and decisions move to the 6529 chain. From the waves freeze
- * 6529.io stops changing them: the chain imports them as they stand at the
- * freeze, and from switch-on people change them on the chain through this
- * site. Frozen: wave create and edit, a wave's pinned (description) drop,
- * replacing, hiding or showing a group a wave, decision or curation uses,
- * decision create, edit, clone and actions, decision pauses, entries, votes,
- * wave REP, polls and poll votes, and the decision loop's results. Chat
- * (posting, editing and deleting chat drops, reactions, DMs) stays open,
- * except that a chat drop with a poll can't be edited or deleted: that
- * would delete the poll.
+ * Waves, groups and decisions move to the 6529 chain, except those that
+ * stay on 6529.io: src/waves-scope/waves-scope.ts holds the rule, with
+ * every reason a wave or a group stays.
+ * From the waves freeze 6529.io stops changing
+ * what moves: the chain imports it as it stands at the freeze, and from
+ * switch-on people change it on the chain through this site. Frozen, for a
+ * wave that moves: wave create and edit, its pinned (description) drop,
+ * replacing, hiding or showing a group it, its decisions or curations use,
+ * decision create, edit, clone and actions, decision pauses, entries,
+ * votes, wave REP, polls and poll votes, and the decision loop's results.
+ * Chat (posting, editing and deleting chat drops, reactions, DMs) stays
+ * open, except that a chat drop with a poll can't be edited or deleted:
+ * that would delete the poll. A wave that stays keeps everything working.
+ * While frozen, no write may move a wave from one side to the other.
+ * The checks that read a wave's side are in waves-freeze-scope.ts.
  *
  * The freeze is on when FEATURE_WAVES_FROZEN is `true`, or from the time in
  * WAVES_FREEZE_AT (ISO 8601 UTC such as `2026-11-25T00:00:00Z`, or Unix
@@ -47,6 +52,8 @@ export const WAVES_FROZEN_STATUS = 423;
 export const WAVES_FREEZE_AT_ENV = 'WAVES_FREEZE_AT';
 
 export const MAIN_STAGE_WAVE_ID_ENV = 'MAIN_STAGE_WAVE_ID';
+
+export const WAVES_SWITCH_ON_AT_ENV = 'WAVES_SWITCH_ON_AT';
 
 export const WAVES_FROZEN_MESSAGE =
   `Waves and decisions are moving to the 6529 Network. ` +
@@ -136,6 +143,15 @@ export function parseWavesFreezeAt(
 
 let warnedAboutBadFreezeAt = false;
 
+/**
+ * The waves freeze's time from WAVES_FREEZE_AT, in milliseconds, or null
+ * when it is unset or not a valid time (FEATURE_WAVES_FROZEN alone has no
+ * time). The waves scope reads it for "made after the freeze".
+ */
+export function wavesFreezeAtMs(): number | null {
+  return parseWavesFreezeAt(process.env[WAVES_FREEZE_AT_ENV]) ?? null;
+}
+
 export function isWavesFrozen(
   nowMillis: number = Time.currentMillis()
 ): boolean {
@@ -159,13 +175,54 @@ export function isWavesFrozen(
   return nowMillis >= start;
 }
 
-/** Throws WavesFrozenException while waves are frozen. */
-export function assertWavesNotFrozen(
-  message: string = WAVES_FROZEN_MESSAGE
-): void {
-  if (isWavesFrozen()) {
-    throw new WavesFrozenException(message);
+/**
+ * Whether any waves setting is configured: WAVES_FREEZE_AT or
+ * WAVES_SWITCH_ON_AT set, or FEATURE_WAVES_FROZEN or FEATURE_WAVES_ON_CHAIN
+ * on. Until one is, a missing setting the waves need is only a warning, not
+ * an operational error.
+ */
+export function wavesConfigured(
+  env: Readonly<Record<string, string | undefined>> = process.env
+): boolean {
+  return (
+    !!env[WAVES_FREEZE_AT_ENV]?.trim() ||
+    !!env[WAVES_SWITCH_ON_AT_ENV]?.trim() ||
+    env.FEATURE_WAVES_FROZEN === 'true' ||
+    env.FEATURE_WAVES_ON_CHAIN === 'true'
+  );
+}
+
+let warnedAboutBadSwitchOnAt = false;
+
+/**
+ * Whether waves have switched on on the 6529 chain: FEATURE_WAVES_ON_CHAIN
+ * is `true`, or the time in WAVES_SWITCH_ON_AT (written as WAVES_FREEZE_AT
+ * is) has come. From then a wave stays on 6529.io unless the chain holds it
+ * (src/waves-scope/waves-scope.ts). A WAVES_SWITCH_ON_AT that is not such a
+ * time does not switch on, and is logged: before the switch-on the rule
+ * keeps every moving wave frozen, which is the safe side.
+ */
+export function isWavesSwitchedOn(
+  nowMillis: number = Time.currentMillis()
+): boolean {
+  if (appFeatures.isWavesOnChain()) {
+    return true;
   }
+  const raw = process.env[WAVES_SWITCH_ON_AT_ENV];
+  const start = parseWavesFreezeAt(raw);
+  if (start === undefined) {
+    return false;
+  }
+  if (start === null) {
+    if (!warnedAboutBadSwitchOnAt) {
+      warnedAboutBadSwitchOnAt = true;
+      logger.error(
+        `[${WAVES_SWITCH_ON_AT_ENV} IS NOT A UTC TIME] [VALUE ${raw}] [NOT SWITCHED ON]`
+      );
+    }
+    return false;
+  }
+  return nowMillis >= start;
 }
 
 /**
@@ -203,8 +260,10 @@ export function isMainStageKeptDuringWavesFreeze(): boolean {
 }
 
 /**
- * Whether the freeze holds this decision: always while waves are frozen,
- * except the Main Stage when FEATURE_WAVES_FREEZE_KEEP_MAIN_STAGE is on.
+ * Whether the freeze holds this decision, before its wave's side is read:
+ * always while waves are frozen, except the Main Stage when
+ * FEATURE_WAVES_FREEZE_KEEP_MAIN_STAGE is on. A decision of a wave that
+ * stays on 6529.io is let through by waves-freeze-scope.ts.
  */
 export function isDecisionFrozen(
   decision: FreezeDecisionRef,
@@ -214,17 +273,4 @@ export function isDecisionFrozen(
     return false;
   }
   return !(isMainStageKeptDuringWavesFreeze() && isMainStageDecision(decision));
-}
-
-/**
- * Throws WavesFrozenException when the freeze holds this decision: its
- * entries, votes, pauses, edits and actions are refused.
- */
-export function assertDecisionNotFrozen(
-  decision: FreezeDecisionRef,
-  message: string = WAVES_FROZEN_MESSAGE
-): void {
-  if (isDecisionFrozen(decision)) {
-    throw new WavesFrozenException(message);
-  }
 }

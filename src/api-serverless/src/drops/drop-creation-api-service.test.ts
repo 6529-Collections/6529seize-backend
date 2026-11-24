@@ -14,6 +14,7 @@ import { dropsMappers } from '@/api/drops/drops.mappers';
 import { moderationReviewDb } from '@/content-moderation/moderation-review.db';
 import { moderationFingerprint } from '@/content-moderation/moderation-review.types';
 import { sanitizeDropStructuredFields } from '@/drops/create-or-update-drop.use-case';
+import { stubWavesScope } from '@/tests/fixtures/waves-scope.fixture';
 
 jest.mock('@/api/waves/wave-unread-cache', () => ({
   // After-commit bumps from the DB chokepoints (drop insert/delete, reader
@@ -96,6 +97,11 @@ function makeService({
     wsListenersNotifier
   };
 }
+
+// Waves scope lookups read the database; here every wave moves.
+beforeEach(() => {
+  stubWavesScope();
+});
 
 describe('DropCreationApiService.setDropReplyCollapse', () => {
   function setup({

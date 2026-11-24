@@ -7,6 +7,7 @@ jest.mock('@/competitions/native-competition.reader', () => ({
 
 import { WavesFrozenException } from '@/waves-freeze/waves-freeze';
 import { voteForMigratedLegacyEntry } from './legacy-competition-vote.service';
+import { stubWavesScope } from '@/tests/fixtures/waves-scope.fixture';
 
 const NAMES = [
   'FEATURE_WAVES_FROZEN',
@@ -14,6 +15,11 @@ const NAMES = [
   'WAVES_FREEZE_AT',
   'MAIN_STAGE_WAVE_ID'
 ];
+
+// Every wave moves unless a test says otherwise.
+beforeEach(() => {
+  stubWavesScope();
+});
 
 describe('legacy votes during the waves freeze', () => {
   const original: Record<string, string | undefined> = {};

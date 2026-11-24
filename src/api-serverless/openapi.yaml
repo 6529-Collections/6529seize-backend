@@ -35885,8 +35885,9 @@ components:
         stays_on_site:
           type: boolean
           description: >-
-            True when the group stays on 6529.io: it is hidden or private.
-            False when it moves to the 6529 chain.
+            True when the group stays on 6529.io: it is hidden, private, a
+            direct message's group, or made after the waves freeze. False
+            when it moves to the 6529 chain.
         id:
           type: string
         name:
@@ -44351,10 +44352,14 @@ components:
           type: boolean
           description: >-
             True when the wave stays on 6529.io, served from its database as
-            today: a direct message, the records wave, a members-only wave, or a
-            wave that uses a hidden or private group. False when the wave moves
-            to the 6529 chain. After the switch-on, a wave the chain has taken
-            over is false.
+            today. Before the switch-on a wave stays when it is a direct
+            message, the records wave or members-only; when a group it uses
+            stays (hidden, private, a direct message's, missing, or made after
+            the waves freeze); when its chat is off and it has no admin group;
+            when it was made after the freeze; or when a wave above it stays.
+            False when the wave moves to the 6529 chain. After the switch-on a
+            wave stays unless the chain holds it, and a direct message or the
+            records wave always stays.
         id:
           description: The ID of the wave
           type: string
@@ -45059,10 +45064,14 @@ components:
           type: boolean
           description: >-
             True when the wave stays on 6529.io, served from its database as
-            today: a direct message, the records wave, a members-only wave, or a
-            wave that uses a hidden or private group. False when the wave moves
-            to the 6529 chain. After the switch-on, a wave the chain has taken
-            over is false.
+            today. Before the switch-on a wave stays when it is a direct
+            message, the records wave or members-only; when a group it uses
+            stays (hidden, private, a direct message's, missing, or made after
+            the waves freeze); when its chat is off and it has no admin group;
+            when it was made after the freeze; or when a wave above it stays.
+            False when the wave moves to the 6529 chain. After the switch-on a
+            wave stays unless the chain holds it, and a direct message or the
+            records wave always stays.
         is_direct_message:
           type: boolean
           description: Whether conversation links should open in Messages.

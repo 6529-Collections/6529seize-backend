@@ -23,7 +23,7 @@ import { competitionRepository } from '@/competitions/competition.repository';
 import { NativeCompetitionReader } from '@/competitions/native-competition.reader';
 import { Competition } from '@/competitions/competition.types';
 import { isCompetitionDecisionPending } from '@/competitions/competition-decision-gate';
-import { assertDecisionNotFrozen } from '@/waves-freeze/waves-freeze';
+import { assertDecisionWritable } from '@/waves-freeze/waves-freeze-scope';
 
 export function competitionActor(ctx: RequestContext): string {
   const actor = ctx.authenticationContext?.getActingAsId();
@@ -89,8 +89,9 @@ export async function lockNativeCompetition(
     ctx
   ).getCompetition(record, Date.now());
   // Every entry, vote, edit and action takes this lock: while waves move to
-  // the 6529 chain the decision is held as it stood at the freeze.
-  assertDecisionNotFrozen(competition);
+  // the 6529 chain a decision of a moving wave is held as it stood at the
+  // freeze. A decision of a wave that stays on 6529.io goes on.
+  await assertDecisionWritable(competition, ctx);
   return { record, competition };
 }
 

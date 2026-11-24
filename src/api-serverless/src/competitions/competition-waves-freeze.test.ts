@@ -44,6 +44,8 @@ import * as commandAccess from './competition-command-access';
 import { lockNativeCompetition } from './competition-command-access';
 import { competitionLifecycleService } from './competition-lifecycle.service';
 import { WaveHubCreationService } from './wave-hub-creation.service';
+import { waveApiService } from '@/api/waves/wave.api.service';
+import { stubWavesScope } from '@/tests/fixtures/waves-scope.fixture';
 
 const NAMES = [
   'FEATURE_WAVES_FROZEN',
@@ -51,6 +53,11 @@ const NAMES = [
   'WAVES_FREEZE_AT',
   'MAIN_STAGE_WAVE_ID'
 ];
+
+// Every wave moves unless a test says otherwise.
+beforeEach(() => {
+  stubWavesScope();
+});
 
 describe('decision writes during the waves freeze', () => {
   const original: Record<string, string | undefined> = {};
@@ -104,6 +111,19 @@ describe('decision writes during the waves freeze', () => {
     ).rejects.toBeInstanceOf(WavesFrozenException);
   });
 
+  it("keeps a staying wave's decisions open while frozen", async () => {
+    process.env.FEATURE_WAVES_FROZEN = 'true';
+    stubWavesScope({ staying: ['members-only'] });
+    mockReadCompetition.mockResolvedValue(decision([], 'members-only'));
+    await expect(
+      lockNativeCompetition('members-only', 'comp', 3, ctx)
+    ).resolves.toEqual(expect.objectContaining({ record: expect.anything() }));
+    mockReadCompetition.mockResolvedValue(decision([], 'wave'));
+    await expect(
+      lockNativeCompetition('wave', 'comp', 3, ctx)
+    ).rejects.toBeInstanceOf(WavesFrozenException);
+  });
+
   it('keeps the Main Stage open when the freeze keeps it', async () => {
     process.env.FEATURE_WAVES_FROZEN = 'true';
     process.env.FEATURE_WAVES_FREEZE_KEEP_MAIN_STAGE = 'true';
@@ -132,7 +152,13 @@ describe('decision writes during the waves freeze', () => {
   it('creates no wave hub while frozen, but replays one made before', async () => {
     process.env.FEATURE_WAVES_FROZEN = 'true';
     const service = new WaveHubCreationService();
-    const request = { idempotency_key: 'k', name: 'Hub' } as any;
+    const request = {
+      idempotency_key: 'k',
+      name: 'Hub',
+      visibility: { scope: { group_id: null } },
+      chat: { scope: { group_id: null } },
+      admin_group: { group_id: 'admins' }
+    } as any;
     mockFindSaved.mockResolvedValue(null);
     await expect(service.create(request, ctx)).rejects.toBeInstanceOf(
       WavesFrozenException
@@ -140,6 +166,27 @@ describe('decision writes during the waves freeze', () => {
     mockFindSaved.mockResolvedValue({ id: 'hub' });
     mockGetHub.mockResolvedValue({ id: 'hub' });
     await expect(service.create(request, ctx)).resolves.toEqual({ id: 'hub' });
+  });
+
+  it('creates no members-only wave hub while frozen either', async () => {
+    process.env.FEATURE_WAVES_FROZEN = 'true';
+    mockFindSaved.mockResolvedValue(null);
+    jest
+      .mocked(waveApiService.prepareWaveCreation)
+      .mockRejectedValue(new Error('past the waves freeze check'));
+    await expect(
+      new WaveHubCreationService().create(
+        {
+          idempotency_key: 'k',
+          name: 'Hub',
+          visibility: { scope: { group_id: 'members' } },
+          chat: { scope: { group_id: 'members' } },
+          admin_group: { group_id: 'admins' }
+        } as any,
+        ctx
+      )
+    ).rejects.toBeInstanceOf(WavesFrozenException);
+    expect(waveApiService.prepareWaveCreation).not.toHaveBeenCalled();
   });
 
   describe('inside the command transaction', () => {

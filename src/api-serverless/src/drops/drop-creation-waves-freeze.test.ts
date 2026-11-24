@@ -1,6 +1,7 @@
 import { DropCreationApiService } from '@/api/drops/drop-creation.api.service';
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
 import { WavesFrozenException } from '@/waves-freeze/waves-freeze';
+import { stubWavesScope } from '@/tests/fixtures/waves-scope.fixture';
 
 const NAMES = [
   'FEATURE_WAVES_FROZEN',
@@ -46,6 +47,11 @@ function create(request: Record<string, unknown>) {
   );
 }
 
+// Every wave moves unless a test says otherwise.
+beforeEach(() => {
+  stubWavesScope();
+});
+
 describe('new drops during the waves freeze', () => {
   const original: Record<string, string | undefined> = {};
   beforeAll(() => {
@@ -84,6 +90,20 @@ describe('new drops during the waves freeze', () => {
     await expect(
       create({ drop_type: ApiDropType.Participatory, wave_id: 'wave' })
     ).rejects.toBeInstanceOf(WavesFrozenException);
+  });
+
+  it('takes a poll and a legacy entry in a staying wave', async () => {
+    stubWavesScope({ staying: ['members-only'] });
+    await expect(
+      create({
+        drop_type: ApiDropType.Chat,
+        wave_id: 'members-only',
+        poll: { options: ['a', 'b'] }
+      })
+    ).rejects.toBe(PAST_FREEZE);
+    await expect(
+      create({ drop_type: ApiDropType.Participatory, wave_id: 'members-only' })
+    ).rejects.toBe(PAST_FREEZE);
   });
 
   it('posts chat as before', async () => {

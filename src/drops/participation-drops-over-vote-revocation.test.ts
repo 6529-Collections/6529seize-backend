@@ -59,6 +59,7 @@ import { wavesApiDb } from '@/api/waves/waves.api.db';
 import { userNotifier } from '@/notifications/user.notifier';
 import { competitionTdhOvervotesDb } from '@/competitions/competition-tdh-overvotes.db';
 import { appFeatures } from '@/app-features';
+import { stubWavesScope } from '@/tests/fixtures/waves-scope.fixture';
 
 const connection = {} as never;
 const competition = {
@@ -76,6 +77,8 @@ const competition = {
 
 beforeEach(() => {
   jest.resetAllMocks();
+  // Every wave moves unless a test says otherwise.
+  stubWavesScope();
   jest
     .mocked(runtime.findOvervoteCandidateCompetitions)
     .mockResolvedValueOnce([competition.id])
@@ -149,6 +152,14 @@ it.each([
   expect(runtime.lockCompetition).not.toHaveBeenCalled();
   expect(service.reconcileVoterCredit).not.toHaveBeenCalled();
   expect(userNotifier.notifyOfDropVote).not.toHaveBeenCalled();
+});
+
+it("keeps reconciling a staying wave's decision while waves are frozen", async () => {
+  stubWavesScope({ staying: [competition.wave_id] });
+  jest.mocked(appFeatures.isWavesFrozen).mockReturnValue(true);
+  await revokeTdhBasedDropWavesOverVotes(connection);
+  expect(runtime.lockCompetition).toHaveBeenCalled();
+  expect(service.reconcileVoterCredit).toHaveBeenCalled();
 });
 
 it('keeps reconciling the Main Stage when the waves freeze keeps it', async () => {

@@ -16,7 +16,7 @@ import { HttpFile } from '../http/http';
 
 export class ApiGroupFull {
     /**
-    * True when the group stays on 6529.io: it is hidden or private. False when it moves to the 6529 chain.
+    * True when the group stays on 6529.io: it is hidden, private, a direct message\'s group, or made after the waves freeze. False when it moves to the 6529 chain.
     */
     'stays_on_site': boolean;
     'id': string;

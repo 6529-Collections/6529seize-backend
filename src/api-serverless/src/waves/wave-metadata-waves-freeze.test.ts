@@ -1,6 +1,7 @@
 import { WaveMetadataApiService } from '@/api/waves/wave-metadata.api.service';
 import { Time } from '@/time';
 import { WavesFrozenException } from '@/waves-freeze/waves-freeze';
+import { stubWavesScope } from '@/tests/fixtures/waves-scope.fixture';
 
 const FLAG = 'FEATURE_WAVES_FROZEN';
 const AT = 'WAVES_FREEZE_AT';
@@ -24,6 +25,11 @@ function createService() {
     .mockRejectedValue(PAST_FREEZE);
   return { service, waveMetadataDb };
 }
+
+// Every wave moves unless a test says otherwise.
+beforeEach(() => {
+  stubWavesScope();
+});
 
 describe('wave metadata during the waves freeze', () => {
   const original: Record<string, string | undefined> = {};

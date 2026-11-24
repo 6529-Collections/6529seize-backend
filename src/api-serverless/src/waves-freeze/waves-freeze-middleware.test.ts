@@ -3,6 +3,7 @@ import { AddressInfo } from 'node:net';
 import * as http from 'node:http';
 import {
   classifyWavesWrite,
+  findWavesWrite,
   isRefusedByWavesFreeze,
   wavesFreezeMiddleware
 } from '@/api/waves-freeze/waves-freeze.middleware';
@@ -116,6 +117,44 @@ describe('classifyWavesWrite', () => {
   });
 });
 
+describe('findWavesWrite', () => {
+  it.each([
+    ['POST', '/waves', { newWave: true }],
+    ['POST', '/v3/waves', { newWave: true }],
+    ['POST', '/v2/waves/wave-1/metadata', { waveId: 'wave-1' }],
+    ['DELETE', '/v2/waves/wave-1/metadata/7', { waveId: 'wave-1' }],
+    ['POST', '/waves/wave%201/rep/rating', { waveId: 'wave 1' }],
+    ['POST', '/v2/drops/drop-1/poll/vote', { dropId: 'drop-1' }],
+    ['POST', '/v3/waves/wave-1/competitions', { waveId: 'wave-1' }],
+    ['PATCH', '/v3/waves/wave-1/competitions/comp-1', { waveId: 'wave-1' }],
+    [
+      'PUT',
+      '/v3/waves/wave-1/competitions/comp-1/entries/entry-1/votes/me',
+      { waveId: 'wave-1' }
+    ]
+  ])('finds the wave of %s %s', (method, path, target) => {
+    expect(findWavesWrite({ method, path })?.target).toEqual(target);
+  });
+
+  it("takes a new drop's wave from its body", () => {
+    const post = (body: unknown) =>
+      findWavesWrite({ method: 'POST', path: '/drops', body });
+    expect(post({ wave_id: 'w', poll: { options: [] } })).toEqual({
+      kind: 'WAVE',
+      target: { waveId: 'w' }
+    });
+    expect(post({ drop_type: 'PARTICIPATORY', wave_id: 'w' })).toEqual({
+      kind: 'DECISION',
+      target: { waveId: 'w' }
+    });
+    // No wave named: the drop service refuses it.
+    expect(post({ poll: { options: [] } })).toEqual({
+      kind: 'WAVE',
+      target: null
+    });
+  });
+});
+
 describe('isRefusedByWavesFreeze', () => {
   let restore: () => void;
   beforeEach(() => {
@@ -154,7 +193,15 @@ describe('wavesFreezeMiddleware', () => {
     const app = express();
     app.use(express.json());
     const apiRouter = express.Router();
-    apiRouter.use(wavesFreezeMiddleware());
+    // 'staying' stays on 6529.io; every other wave moves. Drop d-staying is
+    // in it, drop d-moving in a moving wave.
+    apiRouter.use(
+      wavesFreezeMiddleware({
+        waveStays: async (waveId) => waveId === 'staying',
+        dropWaveId: async (dropId) =>
+          ({ 'd-staying': 'staying', 'd-moving': 'w-1' })[dropId] ?? null
+      })
+    );
     const reached = (_req: express.Request, res: express.Response) => {
       res.status(200).send({ reached: true });
     };
@@ -164,6 +211,7 @@ describe('wavesFreezeMiddleware', () => {
     apiRouter.post('/waves/:id/rep/rating', reached);
     apiRouter.post('/drops', reached);
     apiRouter.post('/drops/:id/reaction', reached);
+    apiRouter.post('/v2/drops/:id/poll/vote', reached);
     apiRouter.put(
       '/v3/waves/:waveId/competitions/:competitionId/entries/:entryId/votes/me',
       reached
@@ -223,13 +271,19 @@ describe('wavesFreezeMiddleware', () => {
   }
 
   const vote = '/api/v3/waves/main-wave/competitions/c-1/entries/e-1/votes/me';
+  const stayingVote =
+    '/api/v3/waves/staying/competitions/c-1/entries/e-1/votes/me';
 
-  it('refuses waves writes with 423 and the freeze code when on', async () => {
+  it('refuses writes to a moving wave with 423 and the freeze code when on', async () => {
     process.env[FLAG] = 'true';
     for (const [method, path, body] of [
-      ['POST', '/api/waves', { name: 'A wave' }],
       ['POST', '/api/waves/w-1/rep/rating', { amount: 1 }],
-      ['POST', '/api/drops', { drop_type: 'CHAT', poll: { options: [] } }],
+      [
+        'POST',
+        '/api/drops',
+        { drop_type: 'CHAT', wave_id: 'w-1', poll: { options: [] } }
+      ],
+      ['POST', '/api/v2/drops/d-moving/poll/vote', { options: [1] }],
       ['PUT', vote, { value: 1 }]
     ] as const) {
       const response = await call(method, path, body);
@@ -239,6 +293,35 @@ describe('wavesFreezeMiddleware', () => {
         code: WAVES_FROZEN_CODE
       });
     }
+  });
+
+  it('lets writes to a staying wave through when on', async () => {
+    process.env[FLAG] = 'true';
+    for (const [method, path, body] of [
+      ['POST', '/api/waves/staying/rep/rating', { amount: 1 }],
+      [
+        'POST',
+        '/api/drops',
+        { drop_type: 'CHAT', wave_id: 'staying', poll: { options: [] } }
+      ],
+      ['POST', '/api/v2/drops/d-staying/poll/vote', { options: [1] }],
+      ['PUT', stayingVote, { value: 1 }]
+    ] as const) {
+      expect((await call(method, path, body)).status).toBe(200);
+    }
+  });
+
+  it('leaves new waves, and writes that name no wave, to the services', async () => {
+    process.env[FLAG] = 'true';
+    expect((await call('POST', '/api/waves', { name: 'A wave' })).status).toBe(
+      200
+    );
+    expect(
+      (await call('POST', '/api/drops', { poll: { options: [] } })).status
+    ).toBe(200);
+    expect(
+      (await call('POST', '/api/v2/drops/no-such-drop/poll/vote', {})).status
+    ).toBe(200);
   });
 
   it('keeps chat and reads working when on', async () => {
@@ -260,7 +343,9 @@ describe('wavesFreezeMiddleware', () => {
     process.env[FLAG] = 'true';
     process.env[KEEP] = 'true';
     expect((await call('PUT', vote, { value: 1 })).status).toBe(200);
-    expect((await call('POST', '/api/waves', {})).status).toBe(423);
+    expect((await call('POST', '/api/waves/w-1/rep/rating', {})).status).toBe(
+      423
+    );
   });
 
   it.each([undefined, 'false', 'TRUE', '1', ''])(

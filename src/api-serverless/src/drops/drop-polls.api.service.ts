@@ -28,7 +28,7 @@ import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
 import { DropType } from '@/entities/IDrop';
 import { DropPollEntity, DropPollOptionEntity } from '@/entities/IDropPoll';
 import { WaveEntity } from '@/entities/IWave';
-import { assertWavesNotFrozen } from '@/waves-freeze/waves-freeze';
+import { assertWaveWritable } from '@/waves-freeze/waves-freeze-scope';
 import {
   BadRequestException,
   ForbiddenException,
@@ -100,9 +100,9 @@ export class DropPollsApiService {
     if (!poll) {
       return;
     }
-    // Polls move to the 6529 chain with the waves: none are made here once
-    // waves are frozen.
-    assertWavesNotFrozen();
+    // Polls move to the 6529 chain with their wave: none are made in a
+    // moving wave once waves are frozen. A staying wave takes them.
+    await assertWaveWritable(waveId, ctx);
     if (dropType !== DropType.CHAT) {
       throw new BadRequestException(`Polls can only be created on chat drops`);
     }
@@ -134,7 +134,7 @@ export class DropPollsApiService {
     }
     // In the drop's transaction, after its writes and locks: the freeze may
     // have started meanwhile, so check again right before the poll is made.
-    assertWavesNotFrozen();
+    await assertWaveWritable(waveId, ctx);
     await this.dropPollsDb.createPoll(
       {
         id: randomUUID(),
@@ -218,11 +218,12 @@ export class DropPollsApiService {
     if (ctx.authenticationContext?.isAuthenticatedAsProxy()) {
       throw new ForbiddenException(`Proxy is not allowed to vote in polls`);
     }
-    assertWavesNotFrozen();
     const drop = await this.findVisibleDropOrThrow(dropId, {
       ...ctx,
       authenticationContext: AuthenticationContext.fromProfileId(voterId)
     });
+    // Poll votes in a moving wave are held while waves are frozen.
+    await assertWaveWritable(drop.wave_id, ctx);
     const uniqueOptions = Array.from(new Set(options));
     if (uniqueOptions.length !== options.length) {
       throw new BadRequestException(`Poll options must be unique`);
@@ -280,7 +281,7 @@ export class DropPollsApiService {
           uniqueOptions
         );
         // The poll row lock can wait past the freeze: check again here.
-        assertWavesNotFrozen();
+        await assertWaveWritable(drop.wave_id, txCtx);
         pollVoteChanged = await this.dropPollsDb.replaceVoterVotes(
           {
             pollId: poll.id,

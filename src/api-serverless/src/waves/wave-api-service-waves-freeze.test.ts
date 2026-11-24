@@ -17,6 +17,8 @@ import { AuthenticationContext } from '@/auth-context';
 import { Time, Timer } from '@/time';
 import { WavesFrozenException } from '@/waves-freeze/waves-freeze';
 import { WaveApiService } from './wave.api.service';
+import { stubWavesScope } from '@/tests/fixtures/waves-scope.fixture';
+import { wavesScopeService } from '@/waves-scope/waves-scope.service';
 
 const NAMES = [
   'FEATURE_WAVES_FROZEN',
@@ -75,7 +77,18 @@ const ctx = {
   })
 };
 
-const chatWaveRequest = { wave: { type: 'CHAT' } } as any;
+const chatWaveRequest = {
+  wave: { type: 'CHAT', admin_group: { group_id: null } },
+  visibility: { scope: { group_id: null } },
+  chat: { scope: { group_id: null } },
+  participation: { scope: { group_id: null } },
+  voting: { scope: { group_id: null } }
+} as any;
+
+// Every wave moves unless a test says otherwise.
+beforeEach(() => {
+  stubWavesScope();
+});
 
 describe('wave writes during the waves freeze', () => {
   const original: Record<string, string | undefined> = {};
@@ -110,6 +123,23 @@ describe('wave writes during the waves freeze', () => {
     await expect(forDm.createWave(chatWaveRequest, true, ctx)).rejects.toBe(
       PAST_FREEZE
     );
+  });
+
+  it('makes no new wave while frozen, members-only or private ones too', async () => {
+    for (const request of [
+      { ...chatWaveRequest, visibility: { scope: { group_id: 'members' } } },
+      { ...chatWaveRequest, chat: { scope: { group_id: 'private-group' } } }
+    ]) {
+      stubWavesScope({ staying: ['wave'] });
+      const forWave = service(wave);
+      const relations = jest
+        .spyOn(forWave as any, 'validateWaveRelations')
+        .mockRejectedValue(PAST_FREEZE);
+      await expect(
+        forWave.createWave(request, false, ctx)
+      ).rejects.toBeInstanceOf(WavesFrozenException);
+      expect(relations).not.toHaveBeenCalled();
+    }
   });
 
   it('checks again in the transaction, right before the wave is written', async () => {
@@ -163,7 +193,7 @@ describe('wave writes during the waves freeze', () => {
     (forWave as any).createOrUpdateDrop = {
       execute: jest.fn(async (_model, _isDescription, options) => {
         now.mockReturnValue(freeze + 1);
-        options.recheckWavesFreeze();
+        await options.recheckWavesFreeze();
         throw PAST_FREEZE;
       })
     };
@@ -220,6 +250,48 @@ describe('wave writes during the waves freeze', () => {
     await expect(
       forWave.setPinnedDrop('wave', { drop_id: 'drop' } as any, ctx)
     ).rejects.toBe(PAST_FREEZE);
+  });
+
+  it('edits, pins and deletes a wave that stays on 6529.io while frozen', async () => {
+    stubWavesScope({ staying: ['wave'] });
+    await expect(service(wave).updateWave('wave', {} as any, ctx)).rejects.toBe(
+      PAST_FREEZE
+    );
+    await expect(service(wave).deleteWave('wave', ctx)).rejects.toBe(
+      PAST_FREEZE
+    );
+    const forHub = service(wave);
+    jest
+      .spyOn(forHub as any, 'validateWaveHubUpdate')
+      .mockRejectedValue(PAST_FREEZE);
+    await expect(
+      forHub.updateWaveHub('wave', { name: 'Renamed' } as any, ctx)
+    ).rejects.toBe(PAST_FREEZE);
+  });
+
+  it('refuses a hub edit that would make a staying wave move', async () => {
+    let staysNow = true;
+    jest
+      .spyOn(wavesScopeService, 'waveStays')
+      .mockImplementation(async () => staysNow);
+    const forWave = service(wave);
+    const db = (forWave as any).wavesApiDb;
+    db.findWaveHubConfigurationForUpdate = jest.fn().mockResolvedValue({});
+    db.deleteWave = jest.fn();
+    db.insertWave = jest.fn(async () => {
+      // Say the edit dropped the wave's visibility group.
+      staysNow = false;
+    });
+    jest
+      .spyOn(forWave as any, 'validateWaveHubUpdate')
+      .mockResolvedValue(undefined);
+    (forWave as any).metricsRecorder = {
+      recordActiveIdentity: jest.fn().mockRejectedValue(PAST_FREEZE)
+    };
+    await expect(
+      forWave.updateWaveHub('wave', { name: 'Renamed' } as any, ctx)
+    ).rejects.toBeInstanceOf(WavesFrozenException);
+    expect(db.insertWave).toHaveBeenCalledTimes(1);
   });
 
   it('edits no wave, but a direct message still can be', async () => {

@@ -42,6 +42,7 @@ import { moderationReviewDb } from '@/content-moderation/moderation-review.db';
 import { competitionCommandRepository } from '@/competitions/competition-command.repository';
 import { Time } from '@/time';
 import { WavesFrozenException } from '@/waves-freeze/waves-freeze';
+import { stubWavesScope } from '@/tests/fixtures/waves-scope.fixture';
 import { PageSortDirection } from '@/api/page-request';
 import {
   withLegacyCompetitionGetFacade,
@@ -271,6 +272,10 @@ describeWithSeed(
         for (const name of names) saved[name] = process.env[name];
         delete process.env.FEATURE_WAVES_FROZEN;
         process.env.WAVES_FREEZE_AT = new Date(freeze).toISOString();
+        // The hub's chat group has no group row, so the hub stays on
+        // 6529.io and is never frozen. Here it moves: which waves move is
+        // the waves scope's own test.
+        stubWavesScope();
       });
       afterEach(() => {
         for (const name of names) {

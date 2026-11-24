@@ -1,7 +1,10 @@
 import { apiCompliantErrorBody } from '@/exceptions';
+import { stubWavesScope } from '@/tests/fixtures/waves-scope.fixture';
 import {
-  assertDecisionNotFrozen,
-  assertWavesNotFrozen,
+  assertDecisionWritable,
+  assertWaveWritable
+} from '@/waves-freeze/waves-freeze-scope';
+import {
   isDecisionFrozen,
   isMainStageDecision,
   isWavesFrozen,
@@ -26,6 +29,9 @@ describe('waves freeze', () => {
   });
   beforeEach(() => {
     for (const name of ENV_NAMES) delete process.env[name];
+    // Every wave moves here; staying waves are covered in
+    // waves-freeze-scope.test.ts.
+    stubWavesScope();
   });
   afterAll(() => {
     for (const name of ENV_NAMES) {
@@ -41,21 +47,23 @@ describe('waves freeze', () => {
     ['TRUE', false],
     ['1', false],
     ['', false]
-  ])('reads FEATURE_WAVES_FROZEN=%s as %s', (value, frozen) => {
+  ])('reads FEATURE_WAVES_FROZEN=%s as %s', async (value, frozen) => {
     if (value !== undefined) process.env[FLAG] = value;
     expect(isWavesFrozen()).toBe(frozen);
     if (frozen) {
-      expect(() => assertWavesNotFrozen()).toThrow(WavesFrozenException);
+      await expect(assertWaveWritable('wave', {})).rejects.toThrow(
+        WavesFrozenException
+      );
     } else {
-      expect(() => assertWavesNotFrozen()).not.toThrow();
+      await expect(assertWaveWritable('wave', {})).resolves.toBeUndefined();
     }
   });
 
-  it('answers 423 with the freeze code and a plain message', () => {
+  it('answers 423 with the freeze code and a plain message', async () => {
     process.env[FLAG] = 'true';
     let thrown: unknown;
     try {
-      assertWavesNotFrozen();
+      await assertWaveWritable('wave', {});
     } catch (error) {
       thrown = error;
     }
@@ -221,29 +229,31 @@ describe('waves freeze', () => {
     const mainStage = { capabilities: ['MAIN_STAGE'], wave_id: 'w-main' };
     const other = { capabilities: [], wave_id: 'w-other' };
 
-    it('are open when waves are not frozen', () => {
+    it('are open when waves are not frozen', async () => {
       process.env[KEEP] = 'true';
       expect(isDecisionFrozen(other)).toBe(false);
       expect(isDecisionFrozen(mainStage)).toBe(false);
-      expect(() => assertDecisionNotFrozen(other)).not.toThrow();
+      await expect(assertDecisionWritable(other, {})).resolves.toBeUndefined();
     });
 
-    it('all freeze with the waves by default, the Main Stage too', () => {
+    it('all freeze with the waves by default, the Main Stage too', async () => {
       process.env[FLAG] = 'true';
       expect(isDecisionFrozen(other)).toBe(true);
       expect(isDecisionFrozen(mainStage)).toBe(true);
-      expect(() => assertDecisionNotFrozen(mainStage)).toThrow(
+      await expect(assertDecisionWritable(mainStage, {})).rejects.toThrow(
         WavesFrozenException
       );
     });
 
-    it('the Main Stage keeps running when the freeze keeps it', () => {
+    it('the Main Stage keeps running when the freeze keeps it', async () => {
       process.env[FLAG] = 'true';
       process.env[KEEP] = 'true';
       expect(isDecisionFrozen(mainStage)).toBe(false);
       expect(isDecisionFrozen(other)).toBe(true);
-      expect(() => assertDecisionNotFrozen(mainStage)).not.toThrow();
-      expect(() => assertDecisionNotFrozen(other)).toThrow(
+      await expect(
+        assertDecisionWritable(mainStage, {})
+      ).resolves.toBeUndefined();
+      await expect(assertDecisionWritable(other, {})).rejects.toThrow(
         WavesFrozenException
       );
     });

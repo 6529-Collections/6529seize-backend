@@ -1,17 +1,26 @@
 import { CompetitionExecutionRouter } from '@/competitions/competition-execution.router';
 import { CompetitionExecutionMode } from '@/entities/ICompetition';
+import { stubWavesScope } from '@/tests/fixtures/waves-scope.fixture';
 
 const router = new CompetitionExecutionRouter();
+const allowed = (
+  record: Parameters<CompetitionExecutionRouter['isNativeExecutionAllowed']>[0]
+) => router.isNativeExecutionAllowed(record, {});
 
 it.each([
   [CompetitionExecutionMode.ACTIVE, true],
   [CompetitionExecutionMode.DISABLED, false]
 ])(
   'enforces execution mode %s independently of storage',
-  (execution_mode, expected) => {
-    expect(router.isNativeExecutionAllowed({ execution_mode })).toBe(expected);
+  async (execution_mode, expected) => {
+    expect(await allowed({ execution_mode })).toBe(expected);
   }
 );
+
+// Every wave moves unless a test says otherwise.
+beforeEach(() => {
+  stubWavesScope();
+});
 
 describe('during the waves freeze', () => {
   const names = [
@@ -37,16 +46,16 @@ describe('during the waves freeze', () => {
 
   const active = CompetitionExecutionMode.ACTIVE;
 
-  it('runs no competition: results and leaderboards stay as frozen', () => {
+  it('runs no competition: results and leaderboards stay as frozen', async () => {
     expect(
-      router.isNativeExecutionAllowed({
+      await allowed({
         execution_mode: active,
         capabilities: [],
         wave_id: 'wave'
       })
     ).toBe(false);
     expect(
-      router.isNativeExecutionAllowed({
+      await allowed({
         execution_mode: active,
         capabilities: ['MAIN_STAGE'],
         wave_id: 'main'
@@ -54,24 +63,45 @@ describe('during the waves freeze', () => {
     ).toBe(false);
   });
 
-  it('runs only the Main Stage when the freeze keeps it', () => {
+  it("runs a staying wave's decisions as usual", async () => {
+    stubWavesScope({ staying: ['members-only'] });
+    expect(
+      await allowed({
+        execution_mode: active,
+        capabilities: [],
+        wave_id: 'members-only'
+      })
+    ).toBe(true);
+    expect(
+      await allowed({
+        execution_mode: CompetitionExecutionMode.DISABLED,
+        capabilities: [],
+        wave_id: 'members-only'
+      })
+    ).toBe(false);
+    expect(
+      await allowed({ execution_mode: active, capabilities: [], wave_id: 'w' })
+    ).toBe(false);
+  });
+
+  it('runs only the Main Stage when the freeze keeps it', async () => {
     process.env.FEATURE_WAVES_FREEZE_KEEP_MAIN_STAGE = 'true';
     expect(
-      router.isNativeExecutionAllowed({
+      await allowed({
         execution_mode: active,
         capabilities: ['MAIN_STAGE'],
         wave_id: 'main'
       })
     ).toBe(true);
     expect(
-      router.isNativeExecutionAllowed({
+      await allowed({
         execution_mode: CompetitionExecutionMode.DISABLED,
         capabilities: ['MAIN_STAGE'],
         wave_id: 'main'
       })
     ).toBe(false);
     expect(
-      router.isNativeExecutionAllowed({
+      await allowed({
         execution_mode: active,
         capabilities: ['CURATION'],
         wave_id: 'curation'
@@ -102,23 +132,23 @@ describe('during the waves freeze', () => {
     const at = (millis: number) =>
       jest.spyOn(Date, 'now').mockReturnValue(millis);
 
-    it('settles the result before the freeze as usual', () => {
+    it('settles the result before the freeze as usual', async () => {
       at(tueResult);
-      expect(router.isNativeExecutionAllowed(mainStage)).toBe(true);
-      expect(router.isNativeExecutionAllowed(other)).toBe(true);
+      expect(await allowed(mainStage)).toBe(true);
+      expect(await allowed(other)).toBe(true);
     });
 
-    it('holds it by default', () => {
+    it('holds it by default', async () => {
       at(wedResult);
-      expect(router.isNativeExecutionAllowed(mainStage)).toBe(false);
-      expect(router.isNativeExecutionAllowed(other)).toBe(false);
+      expect(await allowed(mainStage)).toBe(false);
+      expect(await allowed(other)).toBe(false);
     });
 
-    it('settles it here when the freeze keeps the Main Stage', () => {
+    it('settles it here when the freeze keeps the Main Stage', async () => {
       process.env.FEATURE_WAVES_FREEZE_KEEP_MAIN_STAGE = 'true';
       at(wedResult);
-      expect(router.isNativeExecutionAllowed(mainStage)).toBe(true);
-      expect(router.isNativeExecutionAllowed(other)).toBe(false);
+      expect(await allowed(mainStage)).toBe(true);
+      expect(await allowed(other)).toBe(false);
     });
   });
 });

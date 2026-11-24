@@ -25,7 +25,7 @@ import {
   withLegacyPrimaryMutation,
   readLegacyMutationSource
 } from '@/competitions/legacy-competition-mutation';
-import { assertDecisionNotFrozen } from '@/waves-freeze/waves-freeze';
+import { assertDecisionWritable } from '@/waves-freeze/waves-freeze-scope';
 import { dbSupplier } from '@/sql-executor';
 import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
 import { getPublishedDropMediaMimeType } from '@/drops/drop-media-upload.config';
@@ -530,7 +530,7 @@ export class CreateOrUpdateDropUseCase {
        * The caller's waves freeze check, run again after this drop's last
        * lock (wave creation passes it for the wave's description drop).
        */
-      recheckWavesFreeze?: () => void;
+      recheckWavesFreeze?: () => void | Promise<void>;
     }
   ): Promise<{
     drop_id: string;
@@ -551,12 +551,15 @@ export class CreateOrUpdateDropUseCase {
       !!nativeEntryContent ||
       (await this.isOrdinaryChatMutation(model, connection));
     // A legacy entry (a participatory or winner drop) is a decision write:
-    // while waves move to the 6529 chain it is held as it stood at the
-    // freeze. Native entries were checked under their competition's lock.
-    if (!ownerFree) assertDecisionNotFrozen({ wave_id: model.wave_id });
+    // while waves move to the 6529 chain, one in a moving wave is held as it
+    // stood at the freeze. Native entries were checked under their
+    // competition's lock.
+    if (!ownerFree)
+      await assertDecisionWritable({ wave_id: model.wave_id }, { connection });
     const freezeCheck = ownerFree
       ? recheckWavesFreeze
-      : () => assertDecisionNotFrozen({ wave_id: model.wave_id });
+      : () =>
+          assertDecisionWritable({ wave_id: model.wave_id }, { connection });
     const withOwner: typeof withLegacyPrimaryMutation = ownerFree
       ? async (_waveId, _ctx, action) => action(null)
       : withLegacyPrimaryMutation;
@@ -565,7 +568,11 @@ export class CreateOrUpdateDropUseCase {
       { timer, connection },
       async (nativeOwner) => {
         // The owner lock can wait past the freeze: check again before writing.
-        if (!ownerFree) assertDecisionNotFrozen({ wave_id: model.wave_id });
+        if (!ownerFree)
+          await assertDecisionWritable(
+            { wave_id: model.wave_id },
+            { connection }
+          );
         let resolvedModel = sanitizeDropStructuredFields(model);
         timer?.start(`${CreateOrUpdateDropUseCase.name}->execute`);
         let authorId = resolvedModel.author_id;
@@ -989,7 +996,7 @@ export class CreateOrUpdateDropUseCase {
       nativeCompetitionId?: string;
       prePublication: PrePublicationPreparation;
       /** Throws while the freeze holds this write; run after the last lock. */
-      freezeCheck?: () => void;
+      freezeCheck?: () => void | Promise<void>;
     }
   ): Promise<{
     drop_id: string;
@@ -1146,7 +1153,7 @@ export class CreateOrUpdateDropUseCase {
     }
     // The profile, drop and review locks above can wait past the waves
     // freeze: check again right before the first drop write.
-    freezeCheck?.();
+    await freezeCheck?.();
     let pendingPushNotificationIds: number[] = [];
     let dmUnreadRecipientIds: string[] = [];
     if (preExistingDropId) {

@@ -1,13 +1,12 @@
 import { UserGroupsService } from '@/api/community-members/user-groups.service';
 import { moderationReviewDb } from '@/content-moderation/moderation-review.db';
-import { DbPoolName } from '@/db-query.options';
 import { Time } from '@/time';
-import { UserGroupsDb } from '@/user-groups/user-groups.db';
 import {
   WAVES_FROZEN_GROUP_MESSAGE,
   WAVES_FROZEN_GROUP_VISIBILITY_MESSAGE,
   WavesFrozenException
 } from '@/waves-freeze/waves-freeze';
+import { stubWavesScope } from '@/tests/fixtures/waves-scope.fixture';
 
 const FLAG = 'FEATURE_WAVES_FROZEN';
 const AT = 'WAVES_FREEZE_AT';
@@ -18,10 +17,12 @@ const TX_CONNECTION = { connection: 'the transaction' };
 const WAVE_GROUPS = ['wave-admin-group', 'decision-vote-group'];
 
 function createService() {
+  // A moving wave uses WAVE_GROUPS; every other group only staying waves
+  // use, or none.
+  const { usedByMovingWave } = stubWavesScope({
+    movingWaveGroups: WAVE_GROUPS
+  });
   const userGroupsDb = {
-    isUsedByWaves: jest.fn(async (ids: string[]) =>
-      ids.some((id) => WAVE_GROUPS.includes(id))
-    ),
     executeNativeQueriesInTransaction: jest.fn(
       (work: (connection: unknown) => Promise<unknown>) => work(TX_CONNECTION)
     ),
@@ -37,7 +38,7 @@ function createService() {
     {} as any
   );
   jest.spyOn(service, 'getByIdOrThrow').mockRejectedValue(PAST_FREEZE);
-  return { service, userGroupsDb };
+  return { service, userGroupsDb, usedByMovingWave };
 }
 
 function change(old_version_id: string | null, idempotencyKey?: string) {
@@ -143,7 +144,7 @@ describe('group replacement during the waves freeze', () => {
 
   it('still replaces a group no wave uses, and publishes new groups', async () => {
     process.env[FLAG] = 'true';
-    const { service, userGroupsDb } = createService();
+    const { service, usedByMovingWave } = createService();
     await expect(
       service.changeVisibility(change('filter-group'), {})
     ).rejects.toBe(PAST_FREEZE);
@@ -152,7 +153,7 @@ describe('group replacement during the waves freeze', () => {
     );
     // Once before the transaction, with no connection (so the primary), and
     // once inside it, on the transaction's connection.
-    expect(userGroupsDb.isUsedByWaves.mock.calls).toEqual([
+    expect(usedByMovingWave.mock.calls).toEqual([
       [['new-version', 'filter-group'], {}],
       [['new-version', 'filter-group'], { connection: TX_CONNECTION }],
       [['new-version'], {}],
@@ -160,26 +161,31 @@ describe('group replacement during the waves freeze', () => {
     ]);
   });
 
-  it('asks about the given groups only, from the primary outside a transaction', async () => {
-    const oneOrNull = jest.fn().mockResolvedValue({ used: 1 });
-    const db = new UserGroupsDb(() => ({ oneOrNull }) as any);
-    await expect(db.isUsedByWaves(['a', 'b'], {})).resolves.toBe(true);
-    expect(oneOrNull).toHaveBeenLastCalledWith(
-      expect.any(String),
-      { groupIds: ['a', 'b'] },
-      { forcePool: DbPoolName.WRITE }
-    );
-    oneOrNull.mockResolvedValue({ used: 0 });
+  it('refuses a change that would make a staying wave using the group move', async () => {
+    process.env[FLAG] = 'true';
+    const { service, userGroupsDb, usedByMovingWave } = createService();
+    jest.spyOn(moderationReviewDb, 'savedRequest').mockResolvedValue(null);
+    // Before the write only staying waves use the group; after it, one of
+    // them would move (say the group was its only hidden group).
+    usedByMovingWave
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    const applied = jest
+      .spyOn(service as any, 'applyVisibilityChange')
+      .mockResolvedValue({ updatedGroup: {}, replacedGroup: null });
     await expect(
-      db.isUsedByWaves(['a'], { connection: TX_CONNECTION as any })
-    ).resolves.toBe(false);
-    expect(oneOrNull).toHaveBeenLastCalledWith(
-      expect.any(String),
-      { groupIds: ['a'] },
-      { wrappedConnection: TX_CONNECTION }
-    );
-    await expect(db.isUsedByWaves([], {})).resolves.toBe(false);
-    expect(oneOrNull).toHaveBeenCalledTimes(2);
+      service.changeVisibility(
+        { ...visibility('hidden-group', true), idempotencyKey: 'k' },
+        {}
+      )
+    ).rejects.toThrow(WAVES_FROZEN_GROUP_VISIBILITY_MESSAGE);
+    expect(applied).toHaveBeenCalledTimes(1);
+    expect(usedByMovingWave).toHaveBeenLastCalledWith(['hidden-group'], {
+      connection: TX_CONNECTION
+    });
+    // The thrown error rolls the write back with its receipt.
+    expect(userGroupsDb.completeVisibilityRequest).not.toHaveBeenCalled();
   });
 
   it.each([false, true])(
@@ -229,7 +235,7 @@ describe('group replacement during the waves freeze', () => {
       const freeze = Date.UTC(2026, 10, 25);
       process.env[AT] = new Date(freeze).toISOString();
       const now = jest.spyOn(Time, 'currentMillis').mockReturnValue(freeze - 1);
-      const { service, userGroupsDb } = createService();
+      const { service, userGroupsDb, usedByMovingWave } = createService();
       jest.spyOn(moderationReviewDb, 'savedRequest').mockResolvedValue(null);
       userGroupsDb.lockForVisibilityChange.mockImplementation(async () => {
         now.mockReturnValue(freeze + 1);
@@ -238,11 +244,10 @@ describe('group replacement during the waves freeze', () => {
         message
       );
       // The check that refused it read on the transaction's connection.
-      expect(userGroupsDb.isUsedByWaves).toHaveBeenCalledTimes(1);
-      expect(userGroupsDb.isUsedByWaves).toHaveBeenCalledWith(
-        expect.any(Array),
-        { connection: TX_CONNECTION }
-      );
+      expect(usedByMovingWave).toHaveBeenCalledTimes(1);
+      expect(usedByMovingWave).toHaveBeenCalledWith(expect.any(Array), {
+        connection: TX_CONNECTION
+      });
       expect(userGroupsDb.reserveVisibilityRequest).toHaveBeenCalledTimes(1);
       expect(userGroupsDb.lockForVisibilityChange).toHaveBeenCalled();
       // The write never started, and the thrown error rolls back the receipt.
@@ -253,10 +258,10 @@ describe('group replacement during the waves freeze', () => {
 
   it('replaces groups as before when not frozen', async () => {
     delete process.env[FLAG];
-    const { service, userGroupsDb } = createService();
+    const { service, usedByMovingWave } = createService();
     await expect(
       service.changeVisibility(change('wave-admin-group'), {})
     ).rejects.toBe(PAST_FREEZE);
-    expect(userGroupsDb.isUsedByWaves).not.toHaveBeenCalled();
+    expect(usedByMovingWave).not.toHaveBeenCalled();
   });
 });
