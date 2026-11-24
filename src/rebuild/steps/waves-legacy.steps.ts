@@ -9,6 +9,7 @@ import {
   COMPETITION_DECISION_WINNERS_TABLE,
   COMPETITION_DECISIONS_TABLE,
   COMPETITION_ENTRIES_TABLE,
+  COMPETITION_LIFECYCLE_EVENTS_TABLE,
   COMPETITIONS_TABLE,
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
@@ -54,7 +55,9 @@ export const WAVES_LEGACY_TABLES = [
   COMPETITION_CAPABILITIES_TABLE,
   COMPETITION_DECISIONS_TABLE,
   COMPETITION_ENTRIES_TABLE,
+  COMPETITION_LIFECYCLE_EVENTS_TABLE,
   COMPETITION_DECISION_WINNERS_TABLE,
+  COMPETITION_LIFECYCLE_EVENTS_TABLE,
   WAVE_METRICS_TABLE,
   WAVE_DROPPER_METRICS_TABLE
 ] as const;
@@ -65,14 +68,11 @@ const CREATED_AT = 1_764_000_000_000;
 const DECISION_AT = CREATED_AT + 86_400_000;
 
 /**
- * The rank wave's competition after its one decision: its series is used
- * up, so it ended then (a published competition with no result left can't
- * be imported to the chain).
+ * When the rank wave's competition ended: its series is used up after its
+ * one decision (a published competition with no result left can't be
+ * imported to the chain).
  */
-export const RANK_COMPETITION_END = {
-  lifecycle: 'ENDED',
-  endedAt: DECISION_AT
-} as const;
+export const RANK_COMPETITION_ENDED_AT = DECISION_AT;
 
 /**
  * The rank wave, whose competition the native fixture writes. Its
@@ -394,7 +394,7 @@ export async function seedWavesLegacy(_ctx: RebuildContext): Promise<void> {
     await nativeCompetitionRuntimeRepository.updateSchedule(
       legacyCompetitionId(WAVES_LEGACY_IDS.rankWave),
       null,
-      RANK_COMPETITION_END.endedAt,
+      RANK_COMPETITION_ENDED_AT,
       true,
       { connection }
     );

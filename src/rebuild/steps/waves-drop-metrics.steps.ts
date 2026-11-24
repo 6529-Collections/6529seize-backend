@@ -17,14 +17,19 @@ export const DROP_METRIC_COLUMNS = [
 const WAVES_PER_STATEMENT = 500;
 
 /**
- * Every (wave, author) that has or had a drop: 6529.io makes a metrics row
- * with a drop's insert and keeps it, at zero, when the drop is deleted
- * (deleted_drops keeps the deleted drop's wave and author).
+ * Every (wave, author) of a wave that still exists and has or had a drop:
+ * 6529.io makes a metrics row with a drop's insert and keeps it, at zero,
+ * when the drop is deleted (deleted_drops keeps the deleted drop's wave
+ * and author). Deleting a wave deletes its drops with no record and its
+ * wave_metrics row, and leaves its authors' rows as they were: nothing
+ * can rebuild those (the step's plan names them).
  */
-const DROPPERS = `select wave_id, author_id from drops where wave_id is not null
-  union select wave_id, author_id from deleted_drops where wave_id is not null`;
+const DROPPERS = `select wave_id, author_id from drops
+   where wave_id in (select id from waves)
+  union select wave_id, author_id from deleted_drops
+   where wave_id in (select id from waves)`;
 
-/** Every wave that has or had a drop, in id order. */
+/** Every wave that still exists and has or had a drop, in id order. */
 async function wavesWithDrops(): Promise<string[]> {
   const rows = await dbSupplier().execute<{ wave_id: string }>(
     `select distinct wave_id from (${DROPPERS}) droppers order by wave_id`
@@ -33,10 +38,10 @@ async function wavesWithDrops(): Promise<string[]> {
 }
 
 /**
- * The drop metrics of every wave that has or had drops, from the drops
- * alone, as 6529.io keeps them: a wave's row, and a row per wave and
- * author, appear with their first drop (drop inserts upsert them) and stay
- * when the drops are deleted, and their counts and latest drop are what
+ * The drop metrics of every wave that still exists and has or had drops,
+ * from the drops alone, as 6529.io keeps them: a wave's row, and a row per
+ * wave and author, appear with their first drop (drop inserts upsert them)
+ * and stay when the drops are deleted, and their counts and latest drop are what
  * 6529.io's own recount (resyncDropCountsForWaves) makes them, from each
  * drop's created_at rather than a clock (zero when none is left). A wave
  * that never had a drop gets no row here; its subscribers' and scores'

@@ -8,6 +8,8 @@ import { rebuildWavesDropMetrics } from './waves-drop-metrics.steps';
 const W1 = 'wave-with-drops';
 const W2 = 'wave-with-only-a-deleted-drop';
 const W3 = 'wave-never-dropped-in';
+/** A wave 6529.io deleted: gone from waves, a deleted drop still on record. */
+const W4 = 'wave-deleted';
 
 async function rows(table: string, key: string) {
   return sqlExecutor.execute<Record<string, unknown>>(
@@ -49,7 +51,14 @@ describeWithSeed('the waves drop metrics rebuild', [], () => {
       created_at: 7,
       deleted_at: 8
     });
-    await insertRow('waves', { id: W3 });
+    for (const wave of [W1, W2, W3]) await insertRow('waves', { id: wave });
+    await insertRow('deleted_drops', {
+      id: 'd6',
+      wave_id: W4,
+      author_id: 'author-e',
+      created_at: 9,
+      deleted_at: 10
+    });
   });
 
   it('recounts every wave and author that has or had a drop, from the drops alone', async () => {
