@@ -737,6 +737,20 @@ describe('the waves export job', () => {
       Array(fromEvent.calls.length).fill(RECORDS_WAVE)
     );
 
+    // None, on purpose: the event passes it through, and no wave stays as
+    // the records wave.
+    const none = setup({ env: { SIGNED_RECORDS_WAVE_ID: undefined } });
+    await none.invoke({ ...AT_FREEZE, recordsWaveId: 'none' });
+    expect(none.calls.map((call) => call.command.recordsWaveId)).toEqual(
+      Array(none.calls.length).fill('none')
+    );
+    expect(none.bucket.json(`${PREFIX}raw/export_runs.json`)[0]).toMatchObject({
+      records_wave_id: null
+    });
+    expect(
+      Object.keys(none.bucket.json(`${PREFIX}raw/waves_v3.json`))
+    ).toContain(RECORDS_WAVE);
+
     // Neither: the export refuses, and the job says so.
     const neither = setup({ env: { SIGNED_RECORDS_WAVE_ID: undefined } });
     await expect(neither.invoke(AT_FREEZE)).rejects.toThrow(

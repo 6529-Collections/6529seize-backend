@@ -220,6 +220,60 @@ describe('withApiSqlExecutor', () => {
     expect(executor.sqlExecutor).toBe(before);
   });
 
+  it("makes a kept scope's new connections read-only too, in a later run", async () => {
+    const { executor, db } = load();
+    await db.withApiSqlExecutor(async () => undefined, { keepOpen: true });
+    // The job's next stage: a new connection of the kept pool waits for its
+    // SET, and one whose SET fails refuses its statement.
+    let finishSet: (error: Error | null) => void = () => undefined;
+    const fresh = {
+      query: jest.fn((sql: string, ...rest: unknown[]) => {
+        const done = rest[rest.length - 1] as (
+          error: Error | null,
+          rows?: unknown
+        ) => void;
+        if (sql === 'SET SESSION TRANSACTION READ ONLY') finishSet = done;
+        else done(null, [{ n: 1 }]);
+      }),
+      release: jest.fn(),
+      config: {},
+      destroy: jest.fn()
+    };
+    handsOut(fresh);
+    const refused = {
+      query: jest.fn((sql: string, ...rest: unknown[]) => {
+        const done = rest[rest.length - 1] as (error: Error | null) => void;
+        done(
+          sql === 'SET SESSION TRANSACTION READ ONLY'
+            ? Object.assign(new Error('refused'), { code: 'ER_PARSE_ERROR' })
+            : null
+        );
+      }),
+      release: jest.fn(),
+      config: {},
+      destroy: jest.fn()
+    };
+    handsOut(refused);
+    await db.withApiSqlExecutor(
+      async () => {
+        const read = executor.sqlExecutor.execute('SELECT 1 AS n');
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(fresh.query.mock.calls.map(([sql]) => sql)).toEqual([
+          'SET SESSION TRANSACTION READ ONLY'
+        ]);
+        finishSet(null);
+        await expect(read).resolves.toEqual([{ n: 1 }]);
+        await expect(executor.sqlExecutor.execute('SELECT 1')).rejects.toThrow(
+          'An export connection could not be made read-only: ER_PARSE_ERROR'
+        );
+      },
+      { keepOpen: true }
+    );
+    expect(mockCreateApiDbPool).toHaveBeenCalledTimes(1);
+    expect(fresh.destroy).not.toHaveBeenCalled();
+    expect(refused.destroy).toHaveBeenCalledTimes(1);
+  });
+
   it('refuses a kept scope on another server', async () => {
     const { db } = load();
     await db.withApiSqlExecutor(async () => undefined, { keepOpen: true });

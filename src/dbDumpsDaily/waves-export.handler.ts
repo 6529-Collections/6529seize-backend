@@ -161,8 +161,9 @@ export interface WavesExportJobEvent {
   readonly allowFailedWaves: boolean;
   /**
    * The signed records wave, which stays on 6529.io, as the export's
-   * --records-wave-id; null to let the export take SIGNED_RECORDS_WAVE_ID
-   * from the function's environment. Without either it refuses.
+   * --records-wave-id ("none" when 6529.io has none); null to let the
+   * export take SIGNED_RECORDS_WAVE_ID from the function's environment.
+   * Without either it refuses.
    */
   readonly recordsWaveId: string | null;
 }

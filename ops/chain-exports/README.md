@@ -731,8 +731,9 @@ with the same event until it answers `{"done": true, ...}` with its links.
   uses a hidden or private group), whole, with its decisions, entries,
   votes, wave REP, polls, drops and curations; `export.json` counts them by
   reason. The records wave is `SIGNED_RECORDS_WAVE_ID` from the function's
-  settings, or the event's optional `recordsWaveId`; with neither, the
-  export refuses.
+  settings, or the event's optional `recordsWaveId`; `"none"` says there is
+  no records wave, and export.json records that. With neither, the export
+  refuses.
 - **Checks, every invocation:** the bucket's privacy, as above; the
   export's own start time (five minutes after the freeze); and, in every
   run of a stage, the export's replica lag and read-only checks. The job

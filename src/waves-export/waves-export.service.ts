@@ -48,8 +48,8 @@ export interface WavesExportRun {
   /** T_w in ms; null for a rehearsal. */
   readonly freeze_ms: number | null;
   readonly exporter_revision: string;
-  /** The signed records wave this run kept on 6529.io. */
-  readonly records_wave_id: string;
+  /** The signed records wave this run kept on 6529.io; null for none. */
+  readonly records_wave_id: string | null;
   readonly stages: readonly WavesExportStage[];
   /** The replica lag check this run started on (null when none was given). */
   readonly replica_lag: ReplicaLagRecord | null;
@@ -109,9 +109,10 @@ export interface WavesExportOptions {
   readonly bothMetric: boolean;
   /**
    * The signed records wave's id (SIGNED_RECORDS_WAVE_ID, or the export's own
-   * setting): it stays on 6529.io, matched by id only.
+   * setting): it stays on 6529.io, matched by id only. Null when the setting
+   * says there is none.
    */
-  readonly recordsWaveId: string;
+  readonly recordsWaveId: string | null;
   /** Keep a wave's drops already written by an earlier run of this export. */
   readonly resumeDrops?: boolean;
   /**
@@ -430,13 +431,18 @@ export class WavesExport {
       (run) => run.records_wave_id !== this.options.recordsWaveId
     );
     if (other) {
+      const kept = (id: string | null | undefined) =>
+        id === undefined
+          ? 'a records wave it did not record'
+          : id === null
+            ? 'no records wave'
+            : `wave ${id} as the records wave`;
       throw new WavesExportUsageError(
         `${raw.root} holds an earlier run that kept ` +
-          `${other.records_wave_id ? `wave ${other.records_wave_id}` : 'no recorded wave'} ` +
-          `on 6529.io as the records wave, and this run keeps wave ` +
-          `${this.options.recordsWaveId}. Their files would mix. Run the ` +
-          `export into a new, empty OUT, or give the records wave the earlier ` +
-          `run kept.`,
+          `${kept(other.records_wave_id)} on 6529.io, and this run keeps ` +
+          `${kept(this.options.recordsWaveId)}. Their files would mix. Run ` +
+          `the export into a new, empty OUT, or give the records wave setting ` +
+          `the earlier run had.`,
         { showHelp: false }
       );
     }
@@ -509,7 +515,9 @@ export class WavesExport {
   private async wavesWithRecordsWave(): Promise<ExportWaveRow[]> {
     const recordsWaveId = this.options.recordsWaveId;
     const all = await this.source.listWaves({ recordsWaveId });
+    // None, on purpose: no wave is the records wave.
     if (
+      recordsWaveId !== null &&
       !all.some((wave) => wave.stay_reasons.includes(StayReason.RECORDS_WAVE))
     ) {
       const message =

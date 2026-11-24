@@ -94,7 +94,7 @@ export interface ExportSignedDrop {
 export interface WavesExportSource {
   /** Every wave, by id, each with its reasons to stay (src/waves-scope). */
   listWaves(scope: {
-    readonly recordsWaveId: string;
+    readonly recordsWaveId: string | null;
   }): Promise<ExportWaveRow[]>;
   /** The curations of these waves: each one's id, wave and group. */
   waveCurations(waveIds: string[]): Promise<ExportCuration[]>;

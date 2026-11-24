@@ -41,16 +41,20 @@ export function refuseBeforeExportStart(
   return earliestMs;
 }
 
+/** The records wave setting that says there is none. */
+export const NO_RECORDS_WAVE = 'none';
+
 /**
  * The signed records wave's id, which stays on 6529.io: --records-wave-id,
- * else SIGNED_RECORDS_WAVE_ID as the run's environment has it. Refuses when
- * neither names it, so it can't move by a missing setting, and when both
- * name different waves.
+ * else SIGNED_RECORDS_WAVE_ID as the run's environment has it. `none`, given
+ * on purpose, says there is no records wave: null. Refuses when neither
+ * names it, so it can't move by a missing setting, and when the two
+ * disagree.
  */
 export function recordsWaveIdFor(
   option: string | null,
   env: Readonly<Record<string, string | undefined>>
-): string {
+): string | null {
   const fromEnv = env.SIGNED_RECORDS_WAVE_ID?.trim() || null;
   if (option && fromEnv && option !== fromEnv) {
     throw new WavesExportUsageError(
@@ -62,12 +66,13 @@ export function recordsWaveIdFor(
   if (!id) {
     throw new WavesExportUsageError(
       'The export needs the signed records wave, which stays on 6529.io: give ' +
-        '--records-wave-id <its id>, or set SIGNED_RECORDS_WAVE_ID. Without it ' +
-        'the records wave would move with the rest.',
+        '--records-wave-id <its id>, or set SIGNED_RECORDS_WAVE_ID (or give ' +
+        '--records-wave-id none when there is none). Without it the records ' +
+        'wave would move with the rest.',
       { showHelp: false }
     );
   }
-  return id;
+  return id === NO_RECORDS_WAVE ? null : id;
 }
 
 /** What a caller other than the command line adds to a run. */
@@ -131,6 +136,11 @@ export async function runExport(
               command.recordsWaveId,
               process.env
             );
+            if (recordsWaveId === null) {
+              log(
+                'no records wave: the records wave setting is none, so no wave stays as the records wave'
+              );
+            }
             const replicaLag = await replicaLagAtStart({
               caughtUpMs: earliestMs,
               checkedByPerson: command.replicaLagCheckedBy,

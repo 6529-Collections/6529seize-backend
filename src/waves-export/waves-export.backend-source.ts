@@ -171,7 +171,7 @@ export class BackendWavesExportSource implements WavesExportSource {
   };
 
   async listWaves(scope: {
-    readonly recordsWaveId: string;
+    readonly recordsWaveId: string | null;
   }): Promise<ExportWaveRow[]> {
     const rows = await sqlExecutor.execute<
       Omit<ExportWaveRow, 'stay_reasons'> & Record<StayReason, unknown>

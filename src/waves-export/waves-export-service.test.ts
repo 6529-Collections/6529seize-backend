@@ -906,7 +906,7 @@ describe('WavesExport', () => {
       freezeMs: number | null,
       stages: (typeof WAVES_EXPORT_STAGES)[number][],
       resumeDrops = false,
-      recordsWaveId = RECORDS,
+      recordsWaveId: string | null = RECORDS,
       log: (message: string) => void = () => undefined,
       source = new FakeSource()
     ) =>
@@ -936,9 +936,28 @@ describe('WavesExport', () => {
       const refusal = exportInto(T_W, ['decisions'], false, 'w-pub');
       await expect(refusal).rejects.toThrow(WavesExportUsageError);
       await expect(refusal).rejects.toThrow(
-        `holds an earlier run that kept wave ${RECORDS} on 6529.io as the records wave, and this run keeps wave w-pub.`
+        `holds an earlier run that kept wave ${RECORDS} as the records wave on 6529.io, and this run keeps wave w-pub as the records wave.`
       );
       expect(runsFile()).toHaveLength(1);
+    });
+
+    it('runs with no records wave when the setting says none, and records it', async () => {
+      const source = new FakeSource();
+      await exportInto(T_W, ['waves'], false, null, () => undefined, source);
+      const file = (name: string) =>
+        JSON.parse(fs.readFileSync(path.join(dir, 'raw', name), 'utf8'));
+      // No wave is the records wave, so that one moves on its own groups.
+      expect(Object.keys(file('waves_v3.json'))).toContain(RECORDS);
+      expect(file('waves_staying.json').by_reason.records_wave).toBe(0);
+      expect(file('export.json')).toMatchObject({
+        records_wave_id: null,
+        left_out: { waves: { records_wave: 0 } }
+      });
+      expect(runsFile()[0].records_wave_id).toBeNull();
+      // An OUT run with none takes no records wave after it.
+      await expect(exportInto(T_W, ['decisions'])).rejects.toThrow(
+        `holds an earlier run that kept no records wave on 6529.io, and this run keeps wave ${RECORDS} as the records wave.`
+      );
     });
 
     it("refuses a run when no wave has the records wave's id; a rehearsal says so and goes on", async () => {

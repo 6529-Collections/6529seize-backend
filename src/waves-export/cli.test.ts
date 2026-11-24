@@ -199,13 +199,19 @@ describe('waves:export and the read replica lag', () => {
     delete process.env.SIGNED_RECORDS_WAVE_ID;
     await main([...EXPORT, '--records-wave-id', 'w-other']);
     expect(mockWavesExport.mock.calls[2][1].recordsWaveId).toBe('w-other');
+    // None, on purpose: no records wave, said in the log.
+    await main([...EXPORT, '--records-wave-id', 'none']);
+    expect(mockWavesExport.mock.calls[3][1].recordsWaveId).toBeNull();
+    expect(stderr.join('')).toContain(
+      'no records wave: the records wave setting is none, so no wave stays as the records wave'
+    );
     // Neither: refused before any read.
     mockExecute.mockClear();
     await expect(main(EXPORT)).rejects.toThrow(
       'The export needs the signed records wave'
     );
     expect(mockExecute).not.toHaveBeenCalled();
-    expect(mockWavesExport).toHaveBeenCalledTimes(3);
+    expect(mockWavesExport).toHaveBeenCalledTimes(4);
   });
 
   it("reads DB_HOST's state and every reader's lag before any stage, and records it", async () => {
@@ -411,10 +417,24 @@ describe('the records wave the export keeps on 6529.io', () => {
     );
   });
 
+  it('takes none, given on purpose, as no records wave', () => {
+    expect(recordsWaveIdFor('none', {})).toBeNull();
+    expect(
+      recordsWaveIdFor(null, { SIGNED_RECORDS_WAVE_ID: 'none' })
+    ).toBeNull();
+    expect(
+      recordsWaveIdFor('none', { SIGNED_RECORDS_WAVE_ID: 'none' })
+    ).toBeNull();
+    // None against an id is a disagreement, not a choice.
+    expect(() =>
+      recordsWaveIdFor('none', { SIGNED_RECORDS_WAVE_ID: 'w-2' })
+    ).toThrow('--records-wave-id none and SIGNED_RECORDS_WAVE_ID w-2');
+  });
+
   it('refuses when neither names it, or the two differ', () => {
     for (const env of [{}, { SIGNED_RECORDS_WAVE_ID: '  ' }]) {
       expect(() => recordsWaveIdFor(null, env)).toThrow(
-        'The export needs the signed records wave, which stays on 6529.io: give --records-wave-id <its id>, or set SIGNED_RECORDS_WAVE_ID. Without it the records wave would move with the rest.'
+        'The export needs the signed records wave, which stays on 6529.io: give --records-wave-id <its id>, or set SIGNED_RECORDS_WAVE_ID (or give --records-wave-id none when there is none). Without it the records wave would move with the rest.'
       );
     }
     expect(() =>

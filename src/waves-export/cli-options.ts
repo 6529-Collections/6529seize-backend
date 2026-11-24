@@ -21,8 +21,8 @@ the export leaves it out with its decisions, entries, votes, wave REP, polls
 and drops, when it is members-only, a direct message, the signed records
 wave, or names a hidden or private group (src/waves-scope). Hidden and
 private groups stay too. export.json counts what was left out, by reason.
-The records wave is named by --records-wave-id or SIGNED_RECORDS_WAVE_ID;
-without either, the export refuses.
+The records wave is named by --records-wave-id or SIGNED_RECORDS_WAVE_ID,
+or set to none when there is none; without either, the export refuses.
 
 It reads through DB_HOST, not DB_HOST_READ: point DB_HOST at the cluster's
 reader endpoint, with DB_USER and DB_PASS for it. (With DB_IAM_AUTH=true and
@@ -55,7 +55,8 @@ Options:
   --concurrency N     waves or decisions read at once (default 4)
   --records-wave-id ID
                       the signed records wave, which stays on 6529.io (or
-                      SIGNED_RECORDS_WAVE_ID; both given must agree)
+                      SIGNED_RECORDS_WAVE_ID; both given must agree); none
+                      when 6529.io has no records wave
   --both-metric       count TDH plus xTDH as a clause the chain evaluates
                       (the snapshot tooling's --both-metric), so such groups
                       are not written as their members
