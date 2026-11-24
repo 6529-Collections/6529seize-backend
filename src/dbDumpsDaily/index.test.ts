@@ -11,6 +11,11 @@ jest.mock('./profile-site-export.handler', () => ({
   ...jest.requireActual('./profile-site-export.handler'),
   runProfileSiteExportJob: mockSiteRun
 }));
+const mockWavesRun = jest.fn(async () => ({ job: 'wavesExport' }));
+jest.mock('./waves-export.handler', () => ({
+  ...jest.requireActual('./waves-export.handler'),
+  runWavesExportJob: mockWavesRun
+}));
 
 import { handler } from './index';
 
@@ -84,6 +89,27 @@ describe('dbDumpsDaily handler', () => {
     expect(mockDoInDbContext).not.toHaveBeenCalled();
   });
 
+  it('runs the waves export for its job, and no dump or other job', async () => {
+    await expect(
+      invoke({
+        job: 'wavesExport',
+        freezeAt: '2026-11-26T00:00:00Z',
+        revision: 'a'.repeat(40)
+      })
+    ).resolves.toEqual({ job: 'wavesExport' });
+    expect(mockWavesRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        job: 'wavesExport',
+        freezeMs: Date.UTC(2026, 10, 26),
+        replicaLagCheckedBy: null
+      }),
+      context
+    );
+    expect(mockIdentityRun).not.toHaveBeenCalled();
+    expect(mockSiteRun).not.toHaveBeenCalled();
+    expect(mockDoInDbContext).not.toHaveBeenCalled();
+  });
+
   it('runs the dump for an empty event', async () => {
     await invoke({});
     expect(mockDoInDbContext).toHaveBeenCalledTimes(1);
@@ -116,8 +142,15 @@ describe('dbDumpsDaily handler', () => {
     await expect(invoke({ job: 'profileSiteExport' })).rejects.toThrow(
       /frozenAt/
     );
+    await expect(invoke({ job: 'wavesExprt' })).rejects.toThrow(
+      /unknown job wavesExprt/
+    );
+    await expect(invoke({ job: 'wavesExport' })).rejects.toThrow(
+      /freezeAt, or rehearsal/
+    );
     expect(mockDoInDbContext).not.toHaveBeenCalled();
     expect(mockIdentityRun).not.toHaveBeenCalled();
     expect(mockSiteRun).not.toHaveBeenCalled();
+    expect(mockWavesRun).not.toHaveBeenCalled();
   });
 });
