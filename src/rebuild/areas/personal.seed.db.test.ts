@@ -108,12 +108,16 @@ function contextOf(
 }
 
 /**
- * Each wave's drop metrics are what 6529.io's drop creation leaves: counted
- * from the drops in plain SQL (not 6529.io's own recount, which the rebuild
- * uses), with the latest drop's own time, and a row for each author.
+ * Each wave's drop metrics are what 6529.io's drop creation leaves, checked
+ * in plain SQL against the drops (not 6529.io's own recount, which the
+ * rebuild uses): the wave holds exactly `drops` drops; its row counts them
+ * by type with the latest drop's own time; and each author's row counts
+ * that author's drops the same way.
  */
-async function expectDropMetricsOf(waveIds: readonly string[]) {
-  for (const waveId of waveIds) {
+async function expectDropMetricsOf(
+  waves: readonly { readonly waveId: string; readonly drops: number }[]
+) {
+  for (const { waveId, drops } of waves) {
     const [row] = await sqlExecutor.execute<{
       drops_count: number;
       participatory_drops_count: number;
@@ -134,6 +138,7 @@ async function expectDropMetricsOf(waveIds: readonly string[]) {
          from drops where wave_id = :waveId`,
       { waveId }
     );
+    expect(Number(want.chat) + Number(want.participatory)).toBe(drops);
     expect(row).toBeDefined();
     expect(Number(row.drops_count)).toBe(Number(want.chat));
     expect(Number(row.participatory_drops_count)).toBe(
@@ -141,12 +146,23 @@ async function expectDropMetricsOf(waveIds: readonly string[]) {
     );
     expect(Number(row.latest_drop_timestamp)).toBe(Number(want.latest));
   }
+  const waveIds = waves.map((wave) => wave.waveId);
   expect(
     await sqlExecutor.execute(
-      `select distinct d.wave_id, d.author_id from drops d
+      `select d.wave_id, d.author_id
+         from (select wave_id, author_id,
+                      sum(drop_type = 'CHAT') as chat,
+                      sum(drop_type = 'PARTICIPATORY') as participatory,
+                      max(created_at) as latest
+                 from drops
+                where wave_id in (:waveIds)
+                group by wave_id, author_id) d
          left join wave_dropper_metrics m
            on m.wave_id = d.wave_id and m.dropper_id = d.author_id
-        where d.wave_id in (:waveIds) and m.wave_id is null`,
+        where m.wave_id is null
+           or m.drops_count <> d.chat
+           or m.participatory_drops_count <> d.participatory
+           or m.latest_drop_timestamp <> d.latest`,
       { waveIds }
     )
   ).toEqual([]);
@@ -178,11 +194,18 @@ describeWithSeed('the personal seed and its rebuild', [], () => {
       expect(seeded.identity_subscriptions.length).toBeGreaterThan(0);
       expect(seeded.eula_consent).toHaveLength(1);
       // The seed's drops have their metrics, as drop creation writes them:
-      // the probe wave's and the records wave's (its description drop and
-      // the segment heads the seed posts).
+      // the probe wave's two (its description and the probe drop) and the
+      // records wave's (its description, then one head per closed segment).
+      const [segments] = await sqlExecutor.execute<{ n: number }>(
+        `select count(*) as n from signed_record_log_segments`
+      );
+      expect(Number(segments.n)).toBeGreaterThan(0);
       await expectDropMetricsOf([
-        PERSONAL_PROBE_WAVE,
-        String(env.SIGNED_RECORDS_WAVE_ID)
+        { waveId: PERSONAL_PROBE_WAVE, drops: 2 },
+        {
+          waveId: String(env.SIGNED_RECORDS_WAVE_ID),
+          drops: 1 + Number(segments.n)
+        }
       ]);
       // The live follow after the import: its own head and its owner's
       // order mark. The import keeps none.
