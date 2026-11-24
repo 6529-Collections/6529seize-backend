@@ -48,9 +48,12 @@ describe('waves:export and the freeze time', () => {
     ['just under five minutes after it', T_W + EXPORT_AFTER_FREEZE_MS - 1]
   ])('refuses to export %s, naming the earliest start', async (_when, now) => {
     jest.spyOn(Date, 'now').mockReturnValue(now);
-    await expect(main(EXPORT)).rejects.toThrow(
-      'export from 2026-11-25T00:05:00.000Z on'
+    const refusal = main(EXPORT);
+    await expect(refusal).rejects.toThrow(
+      'The export starts from 2026-11-25T00:05:00.000Z'
     );
+    await expect(refusal).rejects.toMatchObject({ showHelp: false });
+    await expect(refusal).rejects.not.toThrow('--rehearsal');
     expect(mockDoInDbContext).not.toHaveBeenCalled();
   });
 

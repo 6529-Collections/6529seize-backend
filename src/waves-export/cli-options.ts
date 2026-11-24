@@ -11,11 +11,11 @@ vote logs, results, wave REP, polls and every wave's drops into DIR/raw,
 in the layout of the waves snapshot tooling's fetch stage (validator
 repository, tools/legacy-snapshot). Its normalize and build stages then make
 the Waves v1 file and the drop archives from it. Members-only waves are
-included; direct messages are not. Read-only. Run it against a read replica
-after the waves freeze: it refuses to run until five minutes after the
-freeze time it is given, unless --rehearsal. A request admitted just before
-the freeze can commit after it, after a lock wait. Start it only once the
-read replica has also caught up past that time.
+included; direct messages are not. Read-only. Run it against a read replica,
+five minutes or more after the waves freeze: it refuses to start earlier,
+unless --rehearsal, because a write admitted just before the freeze can
+still commit during a lock wait. Also wait until the read replica has caught
+up past that five-minute mark.
 
 Options:
   --out DIR           where to write (DIR/raw; required)
@@ -24,7 +24,7 @@ Options:
   --freeze-at TIME    the waves freeze T_w (2026-11-25T00:00:00Z), as ISO
                       8601 UTC or 13-digit Unix milliseconds (or
                       WAVES_FREEZE_AT)
-  --rehearsal         an export before the freeze (freeze_ms null, no check)
+  --rehearsal         a dry run at any time (freeze_ms null, no time check)
   --stages LIST       comma separated, in order: ${WAVES_EXPORT_STAGES.join(',')}
                       (default all; a later stage reads what earlier ones wrote)
   --waves LIST        only these wave ids, comma separated (a rehearsal)
@@ -65,10 +65,14 @@ export type WavesExportCliCommand =
   | { readonly command: 'help' };
 
 export class WavesExportUsageError extends Error {
-  constructor(message: string) {
+  /** Whether the command line was wrong, so the help is worth printing. */
+  readonly showHelp: boolean;
+
+  constructor(message: string, options: { showHelp?: boolean } = {}) {
     super(message);
     Object.setPrototypeOf(this, new.target.prototype);
     this.name = 'WavesExportUsageError';
+    this.showHelp = options.showHelp ?? true;
   }
 }
 

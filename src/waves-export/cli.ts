@@ -9,11 +9,13 @@ import {
 } from './cli-options';
 
 /**
- * How long after the freeze the export may start. A request 6529.io admitted
- * just before the freeze can still commit after it, once a lock wait ends
- * (MySQL's innodb_lock_wait_timeout, 50 s by default). Five minutes covers
- * that with room to spare. The read replica's lag comes on top: whoever runs
- * the export checks that the replica has caught up past this time.
+ * How long after the freeze the export may start. A write 6529.io admitted
+ * just before the freeze, by a request or by a background job that checked
+ * the freeze once, can still commit after it, once its lock waits end
+ * (MySQL's innodb_lock_wait_timeout, 50 s per wait by default). Five minutes
+ * covers that with room to spare. The read replica's lag comes on top:
+ * whoever runs the export checks that the replica has caught up past this
+ * time.
  */
 export const EXPORT_AFTER_FREEZE_MS = 5 * 60 * 1000;
 
@@ -24,10 +26,11 @@ async function runExport(command: WavesExportCommand) {
     const earliestMs = command.freezeMs + EXPORT_AFTER_FREEZE_MS;
     if (Date.now() < earliestMs) {
       throw new WavesExportUsageError(
-        `The waves freeze is at ${new Date(command.freezeMs).toISOString()}: ` +
-          `export from ${new Date(earliestMs).toISOString()} on, five minutes ` +
-          `after it, once the read replica has caught up past that time ` +
-          `(or --rehearsal)`
+        `The waves freeze is at ${new Date(command.freezeMs).toISOString()}. ` +
+          `The export starts from ${new Date(earliestMs).toISOString()}, ` +
+          `five minutes after it: run it again then, once the read replica ` +
+          `has caught up past that time.`,
+        { showHelp: false }
       );
     }
   }
@@ -91,7 +94,11 @@ export async function main(
 if (require.main === module) {
   main().catch((error) => {
     if (error instanceof WavesExportUsageError) {
-      process.stderr.write(`${error.message}\n\n${WAVES_EXPORT_HELP}`);
+      process.stderr.write(
+        error.showHelp
+          ? `${error.message}\n\n${WAVES_EXPORT_HELP}`
+          : `${error.message}\n`
+      );
       process.exitCode = 2;
       return;
     }
