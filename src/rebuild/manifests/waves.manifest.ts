@@ -48,13 +48,14 @@ const HOLDS_STEPS = 'src/rebuild/steps/waves-moderation-holds.steps';
  * no rebuilder writes yet; its step goes in `after` when one does.
  */
 const MIRROR_STEPS = 'src/waves-chain-mirror/waves-chain-mirror.rebuild';
+// The drop tables (drops, drops_parts, drop_medias, drops_metadatas) are
+// left out until their writers are settled: the mirror writes the drops of
+// entries and descriptions made on the chain, and a reader of the import's
+// files writes the drops from before the switch. They come back with that
+// split and with the order other areas' readers of drops need.
 const MIRROR_WRITES = [
   'waves',
   'waves_metadatas',
-  'drops',
-  'drops_parts',
-  'drop_medias',
-  'drops_metadatas',
   'community_groups',
   'profile_groups',
   'competitions',
@@ -226,6 +227,13 @@ export const wavesManifest: AreaManifest = {
     waves_archive: { class: 'INDEX' },
     waves_metadatas: { class: 'INDEX' },
     community_groups: { class: 'INDEX' },
+    // Not in this tree's schema yet (main adds it with the group visibility
+    // route); planned until this branch takes main.
+    community_group_visibility_requests: {
+      class: 'EPHEMERAL',
+      why: 'Idempotency keys of group visibility requests: a retried request with the same id is answered once. A lost row lets a retry apply again, which sets the same visibility.',
+      origin: 'planned'
+    },
     membership_generation_members: {
       class: 'RETIRED',
       why: 'Retired membership storage: no table in a fresh schema.'
