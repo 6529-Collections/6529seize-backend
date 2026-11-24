@@ -6,9 +6,14 @@ jest.mock('./waves-export.backend-source', () => ({
   BackendWavesExportSource: jest.fn()
 }));
 const mockExecute = jest.fn();
+const mockTransaction = jest.fn();
 jest.mock('@/sql-executor', () => ({
   ...jest.requireActual('@/sql-executor'),
-  sqlExecutor: { execute: (...args: unknown[]) => mockExecute(...args) }
+  sqlExecutor: {
+    execute: (...args: unknown[]) => mockExecute(...args),
+    executeNativeQueriesInTransaction: (...args: unknown[]) =>
+      mockTransaction(...args)
+  }
 }));
 const mockWavesExport = jest.fn();
 jest.mock('./waves-export.service', () => ({
@@ -110,6 +115,7 @@ describe('waves:export and the read replica lag', () => {
     'AuroraReplicaLagMaximum read at 00:06 UTC: 20 ms'
   ];
   const replicaLagGiven = () => mockWavesExport.mock.calls[0][1].replicaLag;
+  const sqlRun = () => mockExecute.mock.calls.map(([sql]) => sql);
   let tz: string | undefined;
   let stderr: string[];
   beforeEach(() => {
@@ -118,6 +124,12 @@ describe('waves:export and the read replica lag', () => {
       .mockReset()
       .mockImplementation((work: () => Promise<unknown>) => work());
     mockExecute.mockReset();
+    mockTransaction
+      .mockReset()
+      .mockImplementation(
+        (work: (connection: { connection: string }) => Promise<unknown>) =>
+          work({ connection: 'one' })
+      );
     mockWavesExport
       .mockReset()
       .mockReturnValue({ run: async () => ({ failed_waves: [] }) });
@@ -138,7 +150,15 @@ describe('waves:export and the read replica lag', () => {
   it("reads DB_HOST's state and every reader's lag before any stage, and records it", async () => {
     dbHost([reader(40)]);
     await main(EXPORT);
-    expect(mockExecute).toHaveBeenCalledWith(ALL_READERS_LAG_SQL);
+    // All three on one connection, in one transaction.
+    expect(mockTransaction).toHaveBeenCalledTimes(1);
+    expect(mockExecute.mock.calls).toEqual(
+      [READ_ONLY_SQL, INNODB_READ_ONLY_SQL, ALL_READERS_LAG_SQL].map((sql) => [
+        sql,
+        undefined,
+        { wrappedConnection: { connection: 'one' } }
+      ])
+    );
     expect(Math.max(...mockExecute.mock.invocationCallOrder)).toBeLessThan(
       mockWavesExport.mock.invocationCallOrder[0]
     );
@@ -157,7 +177,7 @@ describe('waves:export and the read replica lag', () => {
   it('reads the lag first on a resumed run of later stages too', async () => {
     dbHost([reader(40)]);
     await main([...EXPORT, '--stages', 'drops', '--resume']);
-    expect(mockExecute).toHaveBeenCalledWith(ALL_READERS_LAG_SQL);
+    expect(sqlRun()).toContain(ALL_READERS_LAG_SQL);
     expect(Math.max(...mockExecute.mock.invocationCallOrder)).toBeLessThan(
       mockWavesExport.mock.invocationCallOrder[0]
     );
@@ -186,10 +206,40 @@ describe('waves:export and the read replica lag', () => {
     expect(mockWavesExport).not.toHaveBeenCalled();
   });
 
+  it('names DB_IAM_HOST in IAM mode, with all four IAM settings', async () => {
+    const iam = {
+      DB_IAM_AUTH: 'true',
+      DB_IAM_HOST: 'iam-host',
+      DB_IAM_USER: 'iam-user',
+      DB_IAM_HOST_READ: 'iam-host-read',
+      DB_IAM_USER_READ: 'iam-user-read'
+    };
+    const saved = Object.fromEntries(
+      Object.keys(iam).map((key) => [key, process.env[key]])
+    );
+    Object.assign(process.env, iam);
+    try {
+      dbHost([reader(40)], { ro: 0, iro: 0 });
+      await expect(main(EXPORT)).rejects.toThrow(
+        "DB_IAM_HOST's server is not read-only"
+      );
+      // Without all four, the export reads through DB_HOST.
+      delete process.env.DB_IAM_USER_READ;
+      await expect(main(EXPORT)).rejects.toThrow(
+        "DB_HOST's server is not read-only"
+      );
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
   it("goes ahead on a person's word when it can't tell, loudly, with what it read", async () => {
     dbHost([]);
     await main([...EXPORT, ...PERSON_FLAGS]);
-    expect(mockExecute).toHaveBeenCalledWith(ALL_READERS_LAG_SQL);
+    expect(sqlRun()).toContain(ALL_READERS_LAG_SQL);
     expect(replicaLagGiven()).toMatchObject({
       checked_by: 'person',
       person: 'the operator',
@@ -216,7 +266,7 @@ describe('waves:export and the read replica lag', () => {
     jest.spyOn(Date, 'now').mockReturnValue(T_W - 1);
     dbHost([reader(600_000)]);
     await main(['--out', 'OUT', '--revision', REVISION, '--rehearsal']);
-    expect(mockExecute).toHaveBeenCalledWith(ALL_READERS_LAG_SQL);
+    expect(sqlRun()).toContain(ALL_READERS_LAG_SQL);
     expect(replicaLagGiven()).toMatchObject({
       checked_by: 'rehearsal',
       readers: 1,

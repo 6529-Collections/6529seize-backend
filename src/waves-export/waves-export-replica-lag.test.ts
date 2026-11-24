@@ -3,6 +3,7 @@ import { ReplicaLagCheckedBy, WavesExportUsageError } from './cli-options';
 import {
   ALL_READERS_LAG_SQL,
   checkReplicaLag,
+  HostSetting,
   INNODB_READ_ONLY_SQL,
   READ_ONLY_SQL,
   replicaLagAtStart
@@ -75,10 +76,12 @@ function check(
   {
     now = NOW,
     person = null,
+    hostSetting = undefined,
     ...server
   }: Omit<Server, 'lag'> & {
     now?: number;
     person?: ReplicaLagCheckedBy | null;
+    hostSetting?: HostSetting;
   } = {}
 ) {
   const log: string[] = [];
@@ -86,7 +89,8 @@ function check(
   const result = checkReplicaLag({
     caughtUpMs: CAUGHT_UP,
     checkedByPerson: person,
-    readRows,
+    onOneConnection: (work) => work(readRows),
+    hostSetting,
     now: () => now,
     log: (message) => log.push(message)
   });
@@ -162,7 +166,7 @@ describe('checkReplicaLag', () => {
     await expect(refusal).rejects.not.toThrow('largest lag');
   });
 
-  it("leaves out every row of the writer's server, a failover leftover too", async () => {
+  it("leaves out every row of the current writer's server, a failover leftover too", async () => {
     const leftover = {
       server_id: 'w',
       session_id: 'old-reader-session',
@@ -173,6 +177,35 @@ describe('checkReplicaLag', () => {
     await expect(
       check([leftover, writer, reader('r1', 10)]).result
     ).resolves.toMatchObject({ readers: 1, worst_lag_ms: 10 });
+  });
+
+  it('checks an old writer that now serves as a reader', async () => {
+    // After a failover: B writes now; A's writer row is old, and A reads.
+    const writerRow = (server: string, age: number) => ({
+      server_id: server,
+      session_id: 'MASTER_SESSION_ID',
+      lag_ms: 0,
+      age_ms: age,
+      now_ms: NOW
+    });
+    // The old writer row comes first: the newest one decides, not the first.
+    const rows = [
+      writerRow('A', 900_000),
+      writerRow('B', 5),
+      reader('A', 40_000),
+      reader('C', 10)
+    ];
+    const refusal = check(rows, { now: CAUGHT_UP + 30_000 }).result;
+    await expect(refusal).rejects.toThrow(
+      'The read replica may be up to 41.5 s behind: of its 2 readers, the one furthest behind has a lag of 40.0 s'
+    );
+    // Not yet come back as a reader: its old writer row can't be told.
+    await expect(
+      check([writerRow('A', 900_000), writerRow('B', 5), reader('C', 10)])
+        .result
+    ).rejects.toThrow(
+      "the row of one of its 2 readers stopped updating 900.0 s ago, so its lag can't be known"
+    );
   });
 
   it("takes each reader's newest row, as the chain exports do", async () => {
@@ -224,7 +257,7 @@ describe('checkReplicaLag', () => {
         now: CAUGHT_UP + 30_000
       }).result
     ).rejects.toThrow(
-      'of its 2 readers, the one furthest behind on an up-to-date row has a lag of 40.0 s, in a reading 0.0 s old, and 1.5 s more covers clock and timestamp rounding. The export needs every reader caught up past 00:05:00 UTC, five minutes after the freeze. Try again after 00:05:42 UTC.'
+      "of its 2 readers, the one furthest behind on an up-to-date row has a lag of 40.0 s, in a reading 0.0 s old, and 1.5 s more covers clock and timestamp rounding. The export needs every reader caught up past 00:05:00 UTC, five minutes after the freeze. Try again after 00:05:42 UTC. Another reader's row stopped updating, so then it may say it can't tell instead: follow what it says there."
     );
   });
 
@@ -463,7 +496,7 @@ describe('a rehearsal', () => {
     const result = replicaLagAtStart({
       caughtUpMs: null,
       checkedByPerson: null,
-      readRows,
+      onOneConnection: (work) => work(readRows),
       now: () => NOW,
       log: (message) => log.push(message)
     });
@@ -526,7 +559,7 @@ describe('a rehearsal', () => {
       server_read_only: false
     });
     expect(log[0]).toBe(
-      "rehearsal: DB_HOST's server is not read-only, so it is not a read replica: a run after the freeze would refuse on this. Point DB_HOST at the cluster's reader endpoint."
+      "rehearsal: DB_HOST's server is not read-only, so it is not a read replica: a run after the freeze would refuse on this. Point DB_HOST at the cluster's reader endpoint, with DB_USER and DB_PASS for it: the export reads through DB_HOST, not DB_HOST_READ."
     );
   });
 
@@ -546,12 +579,85 @@ describe('a rehearsal', () => {
         'reading @@GLOBAL.read_only failed (ER_UNKNOWN_TABLE 1109); reading information_schema.replica_host_status failed (ER_UNKNOWN_TABLE 1109)'
     });
     expect(log[0]).toContain(error.message);
-    // A result the reading can't use at all is recorded too.
+    // A result the reading can't use is recorded too, read-only state kept.
     await expect(
       rehearse({ lag: null as never }).result
     ).resolves.toMatchObject({
       checked_by: 'rehearsal',
-      unknown_reason: expect.stringContaining('failed (TypeError)')
+      server_read_only: true,
+      unknown_reason:
+        'reading information_schema.replica_host_status gave no rows'
     });
+  });
+});
+
+describe('one connection', () => {
+  it("runs the check's three queries on the one it is given", async () => {
+    const readRows = serverSource({ lag: [reader('r1', 10)] });
+    const connections: string[] = [];
+    let opened = 0;
+    await checkReplicaLag({
+      caughtUpMs: CAUGHT_UP,
+      onOneConnection: async (work) => {
+        const id = `connection-${++opened}`;
+        return work(async (sql) => {
+          connections.push(id);
+          return readRows(sql);
+        });
+      },
+      now: () => NOW,
+      log: () => undefined
+    });
+    expect(opened).toBe(1);
+    expect(connections).toEqual([
+      'connection-1',
+      'connection-1',
+      'connection-1'
+    ]);
+  });
+
+  it("keeps what it read when ending the connection fails, and can't tell when it fails first", async () => {
+    const readRows = serverSource({ lag: [reader('r1', 10)] });
+    await expect(
+      checkReplicaLag({
+        caughtUpMs: CAUGHT_UP,
+        onOneConnection: async (work) => {
+          await work(readRows);
+          throw failure('commit failed', 'PROTOCOL_CONNECTION_LOST');
+        },
+        now: () => NOW,
+        log: () => undefined
+      })
+    ).resolves.toMatchObject({ checked_by: 'export', worst_lag_ms: 10 });
+    const log: string[] = [];
+    await expect(
+      checkReplicaLag({
+        caughtUpMs: CAUGHT_UP,
+        onOneConnection: async () => {
+          throw failure("connect failed for 'user'@'host'", 'ECONNREFUSED');
+        },
+        now: () => NOW,
+        log: (message) => log.push(message)
+      })
+    ).rejects.toThrow(
+      "can't tell whether every reader has caught up past 00:05:00 UTC, five minutes after the freeze: reading DB_HOST's read-only state failed (ECONNREFUSED); reading information_schema.replica_host_status failed (ECONNREFUSED)."
+    );
+    expect(log.join('\n')).toContain("connect failed for 'user'@'host'");
+  });
+});
+
+describe('in IAM mode', () => {
+  it('names DB_IAM_HOST, which the export then reads through', async () => {
+    const { result } = check([reader('r1', 10)], {
+      ro: 0,
+      iro: 0,
+      hostSetting: 'DB_IAM_HOST'
+    });
+    await expect(result).rejects.toThrow(
+      "DB_IAM_HOST's server is not read-only (read_only and innodb_read_only are both off), so it is not a read replica, and the export reads only from one. Point DB_IAM_HOST at a read-only endpoint, with DB_IAM_USER for it: with DB_IAM_AUTH=true the export reads through DB_IAM_HOST, not DB_HOST or DB_IAM_HOST_READ."
+    );
+    await expect(
+      check([], { hostSetting: 'DB_IAM_HOST' }).result
+    ).rejects.toThrow('make sure DB_IAM_HOST is a read-only endpoint.');
   });
 });

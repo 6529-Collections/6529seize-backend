@@ -55,12 +55,26 @@ async function runExport(command: WavesExportCommand) {
       );
     return await doInDbContext(
       async () => {
-        // Before any stage reads, through the DB layer the reads go through.
+        // Before any stage reads, through the DB layer the reads go through:
+        // its write-side pool, on DB_HOST (DB_IAM_HOST in IAM mode). The
+        // check's queries share one connection, in a transaction that only
+        // reads, so they read one server.
         const { sqlExecutor } = await import('@/sql-executor');
+        const { resolveDbConnectionTargets } = await import('@/db-iam-auth');
         const replicaLag = await replicaLagAtStart({
           caughtUpMs: earliestMs,
           checkedByPerson: command.replicaLagCheckedBy,
-          readRows: (sql) => sqlExecutor.execute(sql),
+          onOneConnection: (work) =>
+            sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+              work((sql) =>
+                sqlExecutor.execute(sql, undefined, {
+                  wrappedConnection: connection
+                })
+              )
+            ),
+          hostSetting: resolveDbConnectionTargets().write.iam
+            ? 'DB_IAM_HOST'
+            : 'DB_HOST',
           log
         });
         return new WavesExport(new BackendWavesExportSource(), {

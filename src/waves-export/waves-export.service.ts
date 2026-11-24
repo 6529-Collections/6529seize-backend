@@ -1,4 +1,5 @@
 import { compactDrop } from './waves-export.compact';
+import { WavesExportUsageError } from './waves-export.errors';
 import { groupCriteriaReasons, groupRaterKeys } from './waves-export.groups';
 import { compareCodePoints } from './waves-export.json';
 import type { ReplicaLagRecord } from './waves-export.replica-lag';
@@ -35,6 +36,9 @@ export const EXPORT_RUNS_FILE = 'export_runs.json';
 
 export interface WavesExportRun {
   readonly run_started_at: number;
+  /** T_w in ms; null for a rehearsal. */
+  readonly freeze_ms: number | null;
+  readonly exporter_revision: string;
   readonly stages: readonly WavesExportStage[];
   /** The replica lag check this run started on (null when none was given). */
   readonly replica_lag: ReplicaLagRecord | null;
@@ -238,8 +242,11 @@ export class WavesExport {
     await raw.ensure();
     const startedAt = (this.options.now ?? Date.now)();
     const runs = await raw.load<WavesExportRun[]>(EXPORT_RUNS_FILE, []);
+    await this.refuseAnotherFreeze(runs);
     runs.push({
       run_started_at: startedAt,
+      freeze_ms: this.options.freezeMs,
+      exporter_revision: this.options.exporterRevision,
       stages: this.options.stages,
       replica_lag: this.options.replicaLag ?? null
     });
@@ -280,6 +287,45 @@ export class WavesExport {
       finished_at: (this.options.now ?? Date.now)()
     });
     return summary;
+  }
+
+  /**
+   * Refuses a DIR whose earlier runs were for another freeze, or for one they
+   * didn't record: a rehearsal's (null), or a run from before the run records
+   * (export.json's freeze, else unknown). Its files would mix with this
+   * run's: --resume keeps their drops, a run without the waves stage reads
+   * their wave list, and drops files of waves gone since stay in the DIR.
+   */
+  private async refuseAnotherFreeze(runs: WavesExportRun[]): Promise<void> {
+    const raw = this.options.raw;
+    let earlier: (number | null | undefined)[] = runs.map(
+      (run) => run.freeze_ms
+    );
+    if (!runs.length && raw.exists('export.json')) {
+      earlier = [
+        (await raw.load<{ freeze_ms?: number | null }>('export.json', {}))
+          .freeze_ms
+      ];
+    } else if (!runs.length && raw.exists('waves_v3.json')) {
+      earlier = [undefined];
+    }
+    const freeze = (ms: number | null | undefined) =>
+      ms === undefined
+        ? 'a freeze it did not record'
+        : ms === null
+          ? 'a rehearsal'
+          : `the freeze at ${new Date(ms).toISOString()}`;
+    const at = earlier.findIndex((ms) => ms !== this.options.freezeMs);
+    if (at >= 0) {
+      throw new WavesExportUsageError(
+        `${raw.root} holds an earlier run for ${freeze(earlier[at])}, and this run ` +
+          `is for ${freeze(this.options.freezeMs)}. Their files would mix: ` +
+          `its drops of waves gone since would stay, --resume would keep its ` +
+          `drops, and a run without the waves stage would read its wave ` +
+          `list. Run the export into a new, empty OUT.`,
+        { showHelp: false }
+      );
+    }
   }
 
   private async runStage(stage: WavesExportStage): Promise<void> {

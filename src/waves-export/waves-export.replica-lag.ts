@@ -4,7 +4,8 @@ import {
   REPLICA_LAG_AGE_MARGIN_MS,
   ReplicaLagReading
 } from '@/dbDumpsDaily/chain-exports/replica-snapshot';
-import { ReplicaLagCheckedBy, WavesExportUsageError } from './cli-options';
+import type { ReplicaLagCheckedBy } from './cli-options';
+import { WavesExportUsageError } from './waves-export.errors';
 
 /**
  * The read replica's lag, checked before any stage reads. The export reads
@@ -15,6 +16,7 @@ import { ReplicaLagCheckedBy, WavesExportUsageError } from './cli-options';
  * nothing for the others, so this reads every reader's row and holds the
  * worst to the bound. It also reads whether DB_HOST's server is read-only,
  * as the chain exports do: a server that isn't is the writer, not a reader.
+ * The three queries run on one connection, so they read one server.
  */
 
 /**
@@ -66,9 +68,22 @@ export type ReplicaLagRecord =
     } & ReplicaLagSeen)
   | ({ readonly checked_by: 'rehearsal' } & ReplicaLagSeen);
 
+/** Runs a SELECT and gives its rows. */
+export type ReadRows = (sql: string) => Promise<unknown[]>;
+
+/** The setting that names the server the export reads. */
+export type HostSetting = 'DB_HOST' | 'DB_IAM_HOST';
+
 export interface ReplicaLagReadOptions {
-  /** Runs a SELECT through the export's own DB context, as its reads do. */
-  readonly readRows: (sql: string) => Promise<unknown[]>;
+  /**
+   * Runs `work` on one connection of the export's own DB context, the one
+   * its reads go through, so every query of the check reads one server.
+   */
+  readonly onOneConnection: <T>(
+    work: (readRows: ReadRows) => Promise<T>
+  ) => Promise<T>;
+  /** DB_HOST, or DB_IAM_HOST in IAM mode (DB_IAM_AUTH=true). */
+  readonly hostSetting?: HostSetting;
   readonly now?: () => number;
   readonly log: (message: string) => void;
 }
@@ -130,28 +145,39 @@ function flag(value: unknown): boolean | null {
 }
 
 /**
- * Each reader's newest row, as REPLICA_LAG_SQL picks one for its own reader
- * (LAST_UPDATE_TIMESTAMP DESC: the youngest age first, no timestamp last).
- * Every row of a server with a writer's row is left out, so a row the
- * writer kept from a reader session before a failover can't block a run.
+ * Whether `row` is newer than `than`, as REPLICA_LAG_SQL orders a reader's
+ * rows (LAST_UPDATE_TIMESTAMP DESC: the youngest age first, no timestamp
+ * last).
+ */
+function isNewer(row: LagRow, than: LagRow | undefined): boolean {
+  if (!than) return true;
+  const age = numberOrNull(row.age_ms);
+  const thanAge = numberOrNull(than.age_ms);
+  return age !== null && (thanAge === null || age < thanAge);
+}
+
+/**
+ * Each reader's newest row. Only the current writer's server is left out:
+ * the server of the newest MASTER_SESSION_ID row, with all its rows, so a
+ * reader row it kept from before a failover can't block a run. An old
+ * writer that now serves as a reader keeps its rows and is checked: its
+ * newest row is its reader row, or its old writer row if it hasn't come
+ * back, which then can't be told.
  */
 function newestRowPerReader(rows: readonly unknown[]): LagRow[] {
   const all = rows.map((value) => (value ?? {}) as LagRow);
-  const writers = new Set(
-    all
-      .filter((row) => row.session_id === WRITER_SESSION_ID)
-      .map((row) => String(row.server_id))
-  );
+  let writer: LagRow | undefined;
+  for (const row of all) {
+    if (row.session_id === WRITER_SESSION_ID && isNewer(row, writer)) {
+      writer = row;
+    }
+  }
+  const writerServer = writer ? String(writer.server_id) : null;
   const newest = new Map<string, LagRow>();
   for (const row of all) {
     const reader = String(row.server_id);
-    if (writers.has(reader)) continue;
-    const kept = newest.get(reader);
-    const age = numberOrNull(row.age_ms);
-    const keptAge = kept ? numberOrNull(kept.age_ms) : null;
-    if (!kept || (age !== null && (keptAge === null || age < keptAge))) {
-      newest.set(reader, row);
-    }
+    if (reader === writerServer) continue;
+    if (isNewer(row, newest.get(reader))) newest.set(reader, row);
   }
   return Array.from(newest.values());
 }
@@ -178,6 +204,23 @@ const furthest = (count: number, onFreshRows = false) =>
       (onFreshRows ? ' on an up-to-date row' : '');
 const failed = (what: string, error: unknown) =>
   `reading ${what} failed (${errorCode(error)})`;
+const hostOf = (options: { hostSetting?: HostSetting }) =>
+  options.hostSetting ?? 'DB_HOST';
+
+const readerEndpoint = (host: HostSetting) =>
+  host === 'DB_IAM_HOST'
+    ? 'a read-only endpoint'
+    : "the cluster's reader endpoint";
+
+/** Where to point the export, by the setting it reads through. */
+function pointAt(host: HostSetting): string {
+  return host === 'DB_IAM_HOST'
+    ? `Point DB_IAM_HOST at a read-only endpoint, with DB_IAM_USER for it: ` +
+        `with DB_IAM_AUTH=true the export reads through DB_IAM_HOST, not ` +
+        `DB_HOST or DB_IAM_HOST_READ.`
+    : `Point DB_HOST at the cluster's reader endpoint, with DB_USER and ` +
+        `DB_PASS for it: the export reads through DB_HOST, not DB_HOST_READ.`;
+}
 
 /** A UTC time, with its date when that isn't the reading's day. */
 function utcTime(ms: number, todayMs: number): string {
@@ -200,11 +243,12 @@ function logError(
 }
 
 async function readReadOnly(
+  readRows: ReadRows,
   options: ReplicaLagReadOptions
 ): Promise<{ readOnly: boolean | null; unknown: string | null }> {
   let ro: boolean | null;
   try {
-    const [row] = await options.readRows(READ_ONLY_SQL);
+    const [row] = await readRows(READ_ONLY_SQL);
     ro = flag((row as { ro?: unknown } | undefined)?.ro);
   } catch (error) {
     logError(options, 'read_only', error);
@@ -212,7 +256,7 @@ async function readReadOnly(
   }
   let iro: boolean | null = null;
   try {
-    const [row] = await options.readRows(INNODB_READ_ONLY_SQL);
+    const [row] = await readRows(INNODB_READ_ONLY_SQL);
     iro = flag((row as { iro?: unknown } | undefined)?.iro);
   } catch {
     iro = null;
@@ -221,15 +265,49 @@ async function readReadOnly(
   if (ro === false && iro === false) return { readOnly: false, unknown: null };
   return {
     readOnly: null,
-    unknown: "DB_HOST's server did not say whether it is read-only"
+    unknown: `${hostOf(options)}'s server did not say whether it is read-only`
   };
 }
 
-/** Reads the server's state and every reader's lag; never throws for either. */
+/**
+ * Reads the server's state and every reader's lag on one connection. Never
+ * throws: what it can't read is unknown. A failure after the reads, such as
+ * on ending the connection's transaction, changes nothing they read.
+ */
 async function readServer(
   options: ReplicaLagReadOptions
 ): Promise<ServerReading> {
-  const { readOnly, unknown: readOnlyUnknown } = await readReadOnly(options);
+  const got: { reading?: ServerReading } = {};
+  try {
+    await options.onOneConnection(async (readRows) => {
+      got.reading = await readServerOn(readRows, options);
+    });
+  } catch (error) {
+    if (got.reading) return got.reading;
+    logError(options, "the check's connection", error);
+    return {
+      readMs: (options.now ?? Date.now)(),
+      readOnly: null,
+      readOnlyUnknown: failed(`${hostOf(options)}'s read-only state`, error),
+      lag: {
+        known: false,
+        readers: null,
+        reason: failed('information_schema.replica_host_status', error)
+      }
+    };
+  }
+  if (!got.reading) throw new Error('The replica lag check read nothing');
+  return got.reading;
+}
+
+async function readServerOn(
+  readRows: ReadRows,
+  options: ReplicaLagReadOptions
+): Promise<ServerReading> {
+  const { readOnly, unknown: readOnlyUnknown } = await readReadOnly(
+    readRows,
+    options
+  );
   const localMs = (options.now ?? Date.now)();
   const reading = (lag: ServerReading['lag'], readMs = localMs) => ({
     readMs,
@@ -239,13 +317,20 @@ async function readServer(
   });
   let rows: unknown[];
   try {
-    rows = await options.readRows(ALL_READERS_LAG_SQL);
+    rows = await readRows(ALL_READERS_LAG_SQL);
   } catch (error) {
     logError(options, 'replica lag', error);
     return reading({
       known: false,
       readers: null,
       reason: failed('information_schema.replica_host_status', error)
+    });
+  }
+  if (!Array.isArray(rows)) {
+    return reading({
+      known: false,
+      readers: null,
+      reason: 'reading information_schema.replica_host_status gave no rows'
     });
   }
   const readers = newestRowPerReader(rows);
@@ -315,8 +400,8 @@ type Verdict =
       readonly kind: 'behind';
       readonly worst: ReaderLag;
       readonly readers: number;
-      /** Readers whose row stopped updating also block, and are left out. */
-      readonly staleLeftOut: boolean;
+      /** Readers whose row stopped updating also block, left out here. */
+      readonly staleBlocking: number;
     }
   | { readonly kind: 'cannot_tell'; readonly reasons: string }
   | { readonly kind: 'caught_up' };
@@ -342,7 +427,7 @@ function verdict(reading: ServerReading, caughtUpMs: number): Verdict {
         kind: 'behind',
         worst: worstOf(fresh),
         readers: lag.readers.length,
-        staleLeftOut: fresh.length < blocking.length
+        staleBlocking: blocking.length - fresh.length
       };
     }
     if (blocking.length) {
@@ -372,6 +457,7 @@ export async function checkReplicaLag(
   options: ReplicaLagCheckOptions
 ): Promise<ReplicaLagRecord> {
   const { caughtUpMs, checkedByPerson } = options;
+  const host = hostOf(options);
   const reading = await readServer(options);
   const at = (ms: number) => utcTime(ms, reading.readMs);
   const mark = `${at(caughtUpMs)}, five minutes after the freeze`;
@@ -379,25 +465,28 @@ export async function checkReplicaLag(
   switch (result.kind) {
     case 'not_read_only':
       throw new WavesExportUsageError(
-        `DB_HOST's server is not read-only (read_only and innodb_read_only ` +
+        `${host}'s server is not read-only (read_only and innodb_read_only ` +
           `are both off), so it is not a read replica, and the export reads ` +
-          `only from one. Point DB_HOST at the cluster's reader endpoint, ` +
-          `with DB_USER and DB_PASS for it: the export reads through DB_HOST, ` +
-          `not DB_HOST_READ.`,
+          `only from one. ${pointAt(host)}`,
         { showHelp: false }
       );
     case 'behind': {
-      const { worst } = result;
+      const { worst, staleBlocking } = result;
       const behindMs = behindOf(worst);
       throw new WavesExportUsageError(
         `The read replica may be up to ${seconds(behindMs)} behind: ` +
-          `${furthest(result.readers, result.staleLeftOut)} has a lag of ` +
+          `${furthest(result.readers, staleBlocking > 0)} has a lag of ` +
           `${seconds(worst.lagMs)}, ` +
           `in a reading ${seconds(worst.ageMs)} old, and ` +
           `${seconds(REPLICA_LAG_AGE_MARGIN_MS)} more covers clock and ` +
           `timestamp rounding. The export needs every reader caught up past ` +
           `${mark}. Try again after ` +
           `${at(Math.ceil((caughtUpMs + behindMs) / 1000) * 1000)}.` +
+          (staleBlocking
+            ? ` ${staleBlocking === 1 ? "Another reader's row" : `${staleBlocking} other readers' rows`} ` +
+              `stopped updating, so then it may say it can't tell instead: ` +
+              `follow what it says there.`
+            : '') +
           (checkedByPerson
             ? ` A person's check can't stand in for a lag the export can ` +
               `read: wait until then, and run it without ` +
@@ -414,7 +503,7 @@ export async function checkReplicaLag(
             `error or a late row update can clear. If it says the same ` +
             `again, check it another way: read the largest lag over all ` +
             `readers (on Aurora, the AuroraReplicaLagMaximum metric) and make ` +
-            `sure DB_HOST is the cluster's reader endpoint. Once that much ` +
+            `sure ${host} is ${readerEndpoint(host)}. Once that much ` +
             `lag has passed since ${at(caughtUpMs)}, run the export again ` +
             `with --replica-lag-checked-by <your name> ` +
             `--replica-lag-check-note <what you read, its value and when>.`,
@@ -445,7 +534,7 @@ export async function checkReplicaLag(
       }
       const record = seen(reading, null);
       options.log(
-        `read replica: DB_HOST's server is read-only; ` +
+        `read replica: ${host}'s server is read-only; ` +
           `${furthest(record.readers ?? 0)} has a lag of ` +
           `${record.worst_lag_ms} ms, in a reading ${record.worst_lag_age_ms} ` +
           `ms old; every reader has caught up past ${at(caughtUpMs)}`
@@ -464,22 +553,8 @@ export async function checkReplicaLag(
 async function rehearseReplicaLag(
   options: ReplicaLagReadOptions
 ): Promise<ReplicaLagRecord> {
-  let reading: ServerReading;
-  try {
-    reading = await readServer(options);
-  } catch (error) {
-    logError(options, 'replica lag', error);
-    reading = {
-      readMs: (options.now ?? Date.now)(),
-      readOnly: null,
-      readOnlyUnknown: null,
-      lag: {
-        known: false,
-        readers: null,
-        reason: failed('information_schema.replica_host_status', error)
-      }
-    };
-  }
+  const host = hostOf(options);
+  const reading = await readServer(options);
   const { lag } = reading;
   const reasons = [
     reading.readOnlyUnknown,
@@ -489,9 +564,8 @@ async function rehearseReplicaLag(
   const say = (message: string) => options.log(`rehearsal: ${message}`);
   if (reading.readOnly === false) {
     say(
-      "DB_HOST's server is not read-only, so it is not a read replica: a run " +
-        "after the freeze would refuse on this. Point DB_HOST at the cluster's " +
-        'reader endpoint.'
+      `${host}'s server is not read-only, so it is not a read replica: a run ` +
+        `after the freeze would refuse on this. ${pointAt(host)}`
     );
   }
   if (record.unknown_reason) {

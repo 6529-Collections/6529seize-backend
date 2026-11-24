@@ -16,6 +16,7 @@ import {
   Json,
   WavesExportSource
 } from './waves-export.types';
+import { WavesExportUsageError } from './waves-export.errors';
 import type { ReplicaLagRecord } from './waves-export.replica-lag';
 import { RawDirectory } from './waves-export.writer';
 
@@ -488,6 +489,8 @@ describe('WavesExport', () => {
       runs: [
         {
           run_started_at: T_W + 1,
+          freeze_ms: T_W,
+          exporter_revision: 'a'.repeat(40),
           stages: [...WAVES_EXPORT_STAGES],
           replica_lag: EXPORT_LAG
         }
@@ -609,6 +612,8 @@ describe('WavesExport', () => {
       expect(fs.existsSync(path.join(dir, 'raw', 'export.json'))).toBe(false);
       const first = {
         run_started_at: T_W + 1,
+        freeze_ms: T_W,
+        exporter_revision: 'a'.repeat(40),
         stages: [...WAVES_EXPORT_STAGES],
         replica_lag: PERSON_LAG
       };
@@ -620,7 +625,13 @@ describe('WavesExport', () => {
       ).run();
       const runs = [
         first,
-        { run_started_at: T_W + 2, stages: ['drops'], replica_lag: EXPORT_LAG }
+        {
+          run_started_at: T_W + 2,
+          freeze_ms: T_W,
+          exporter_revision: 'a'.repeat(40),
+          stages: ['drops'],
+          replica_lag: EXPORT_LAG
+        }
       ];
       expect(file('export_runs.json')).toEqual(runs);
       expect(file('export.json')).toMatchObject({
@@ -635,6 +646,88 @@ describe('WavesExport', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  describe('a DIR from another freeze', () => {
+    let dir: string;
+    beforeEach(() => {
+      dir = fs.mkdtempSync(path.join(os.tmpdir(), 'waves-export-freeze-'));
+    });
+    afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    const exportInto = (
+      freezeMs: number | null,
+      stages: (typeof WAVES_EXPORT_STAGES)[number][],
+      resumeDrops = false
+    ) =>
+      new WavesExport(new FakeSource(), {
+        raw: new RawDirectory(path.join(dir, 'raw')),
+        stages,
+        freezeMs,
+        exporterRevision: 'a'.repeat(40),
+        waveIds: null,
+        dropPageSize: 2,
+        concurrency: 1,
+        bothMetric: false,
+        resumeDrops,
+        retryDelayMs: 0,
+        replicaLag: null,
+        now: () => T_W,
+        log: () => undefined
+      }).run();
+    const runsFile = () =>
+      JSON.parse(
+        fs.readFileSync(path.join(dir, 'raw', 'export_runs.json'), 'utf8')
+      );
+
+    it("is refused after a rehearsal's run, whatever the stages", async () => {
+      await exportInto(null, ['waves']);
+      for (const [stages, resume] of [
+        [[...WAVES_EXPORT_STAGES], false],
+        [['drops'], true],
+        [['decisions'], false]
+      ] as const) {
+        const refusal = exportInto(T_W, [...stages], resume);
+        await expect(refusal).rejects.toThrow(WavesExportUsageError);
+        await expect(refusal).rejects.toThrow(
+          `holds an earlier run for a rehearsal, and this run is for the freeze at 2026-11-25T00:00:00.000Z. Their files would mix: its drops of waves gone since would stay, --resume would keep its drops, and a run without the waves stage would read its wave list. Run the export into a new, empty OUT.`
+        );
+      }
+      // A refused run adds no record.
+      expect(
+        runsFile().map((run: { freeze_ms: unknown }) => run.freeze_ms)
+      ).toEqual([null]);
+    });
+
+    it('is refused after a real run for a rehearsal or another freeze', async () => {
+      await exportInto(T_W, ['waves']);
+      await expect(exportInto(null, ['waves'])).rejects.toThrow(
+        'holds an earlier run for the freeze at 2026-11-25T00:00:00.000Z, and this run is for a rehearsal.'
+      );
+      await expect(exportInto(T_W + 86_400_000, ['waves'])).rejects.toThrow(
+        'and this run is for the freeze at 2026-11-26T00:00:00.000Z.'
+      );
+      // The same freeze goes on.
+      await expect(exportInto(T_W, ['decisions'])).resolves.toBeDefined();
+      expect(runsFile()).toHaveLength(2);
+    });
+
+    it("reads the freeze of a run from before the run records, or refuses when it can't", async () => {
+      const raw = new RawDirectory(path.join(dir, 'raw'));
+      await raw.save('export.json', { freeze_ms: null });
+      await expect(exportInto(T_W, ['drops'], true)).rejects.toThrow(
+        'holds an earlier run for a rehearsal'
+      );
+      fs.rmSync(path.join(dir, 'raw', 'export.json'));
+      await raw.save('waves_v3.json', {});
+      await expect(exportInto(T_W, ['drops'], true)).rejects.toThrow(
+        'holds an earlier run for a freeze it did not record'
+      );
+      await raw.save('export_runs.json', [{ run_started_at: 1, stages: [] }]);
+      await expect(exportInto(T_W, ['waves'])).rejects.toThrow(
+        'holds an earlier run for a freeze it did not record'
+      );
+    });
   });
 });
 

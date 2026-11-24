@@ -1,4 +1,7 @@
+import { WavesExportUsageError } from './waves-export.errors';
 import { WAVES_EXPORT_STAGES, WavesExportStage } from './waves-export.service';
+
+export { WavesExportUsageError };
 
 export const WAVES_EXPORT_HELP = `Usage: 6529 run waves:export -- --out DIR --revision HEX
          (--freeze-at TIME | --rehearsal) [--stages LIST]
@@ -15,23 +18,26 @@ the Waves v1 file and the drop archives from it. Members-only waves are
 included; direct messages are not. Read-only.
 
 It reads through DB_HOST, not DB_HOST_READ: point DB_HOST at the cluster's
-reader endpoint, with DB_USER and DB_PASS for it. It refuses a server that
-isn't read-only. Run it five minutes or more after the waves freeze: it
+reader endpoint, with DB_USER and DB_PASS for it. (With DB_IAM_AUTH=true and
+all four DB_IAM_HOST, DB_IAM_USER, DB_IAM_HOST_READ and DB_IAM_USER_READ set,
+it reads through DB_IAM_HOST instead.) It refuses a server that isn't
+read-only. Run it five minutes or more after the waves freeze: it
 refuses to start earlier, unless --rehearsal, because a write admitted just
 before the freeze can still commit after it, once a lock wait ends. It also
 refuses until every reader has caught up past that five-minute mark (its lag
 plus the age of its row in information_schema.replica_host_status, plus
 1.5 s), and names when to try again. A rehearsal reads and reports the same,
 but never refuses on it. Each run's reading is kept in DIR/raw/export_runs.json
-and export.json.
+and export.json. Use a new, empty DIR for each freeze: it refuses a DIR whose
+earlier runs were for another freeze, a rehearsal's included.
 
 Options:
   --out DIR           where to write (DIR/raw; required)
   --revision HEX      the exporter's 40-hex git commit, such as
                       $(git rev-parse HEAD) (or EXPORTER_REVISION; required)
-  --freeze-at TIME    the waves freeze T_w (2026-11-25T00:00:00Z), as ISO
-                      8601 UTC or 13-digit Unix milliseconds (or
-                      WAVES_FREEZE_AT)
+  --freeze-at TIME    the waves freeze T_w, as ISO 8601 UTC (such as
+                      2026-11-26T00:00:00Z) or 13-digit Unix milliseconds
+                      (or WAVES_FREEZE_AT)
   --rehearsal         a dry run at any time (freeze_ms null, no time check;
                       the replica lag is reported, never refused on)
   --stages LIST       comma separated, in order: ${WAVES_EXPORT_STAGES.join(',')}
@@ -94,18 +100,6 @@ export interface ReplicaLagCheckedBy {
 export type WavesExportCliCommand =
   | WavesExportCommand
   | { readonly command: 'help' };
-
-export class WavesExportUsageError extends Error {
-  /** Whether the command line was wrong, so the help is worth printing. */
-  readonly showHelp: boolean;
-
-  constructor(message: string, options: { showHelp?: boolean } = {}) {
-    super(message);
-    Object.setPrototypeOf(this, new.target.prototype);
-    this.name = 'WavesExportUsageError';
-    this.showHelp = options.showHelp ?? true;
-  }
-}
 
 const ISO_UTC =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]00:00)$/;
