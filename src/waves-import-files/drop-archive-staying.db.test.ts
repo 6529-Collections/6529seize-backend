@@ -23,6 +23,7 @@ import {
 } from '@/waves-import-files/drop-archive.format';
 import { importDropArchives } from '@/waves-import-files/drop-archive.reader';
 import { dbDropArchiveWriter } from '@/waves-import-files/drop-archive.sources';
+import { compareCodeUnits } from '@/waves-chain-index/waves-chain-index.order';
 
 /**
  * Waves that stay on 6529.io (members-only waves, and waves naming a hidden
@@ -174,7 +175,7 @@ describeWithSeed(
       expect(report).toMatchObject({ written: 1, drops: movedDrops.length });
       expect(await rowsOf(STAYING)).toEqual(before);
       expect((await rowsOf(MOVED)).drops.map((d) => d.id)).toEqual(
-        movedDrops.map((d) => d.id).sort()
+        movedDrops.map((d) => d.id).sort(compareCodeUnits)
       );
     });
 

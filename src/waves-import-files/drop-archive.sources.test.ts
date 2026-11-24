@@ -31,6 +31,7 @@ import {
   writeDropArchiveFiles
 } from '@/waves-import-files/drop-archive.sources';
 import { rawCidOf } from '@/waves-import-files/drop-archive.build';
+import { compareCodeUnits } from '@/waves-chain-index/waves-chain-index.order';
 
 /** Each wave's document: wave A's description is drop 1, wave B's drop 4. */
 const DOCUMENTS: Record<string, Buffer> = {
@@ -150,16 +151,18 @@ describe('the drop archive sources', () => {
     const { built, filesDir, report, written } = await readOverHttp(DOCUMENTS);
     const { files, problems } = checkFiles(filesDir);
     expect(problems).toEqual([]);
-    expect(Array.from(files.keys()).sort()).toEqual(
+    expect(Array.from(files.keys()).sort(compareCodeUnits)).toEqual(
       [
         DROP_ARCHIVE_FILE_IDS.wavesFile,
         DROP_ARCHIVE_FILE_IDS.index,
         ...built.archives.map((a) => DROP_ARCHIVE_FILE_IDS.archive(a.waveId)),
         ...Object.keys(documentFiles(DOCUMENTS))
-      ].sort()
+      ].sort(compareCodeUnits)
     );
     expect(report.refused).toEqual([]);
-    expect(written.sort()).toEqual(FIXTURE_DROPS.map((d) => d.id).sort());
+    expect(written.sort(compareCodeUnits)).toEqual(
+      FIXTURE_DROPS.map((d) => d.id).sort(compareCodeUnits)
+    );
     expect(Array.from(report.descriptionDropIds.entries())).toEqual([
       [FIXTURE_WAVES.a, FIXTURE_DROPS[0].id],
       [FIXTURE_WAVES.b, FIXTURE_DROPS[3].id]

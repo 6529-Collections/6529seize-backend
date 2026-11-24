@@ -24,6 +24,7 @@ import {
 import { keccak256Hex } from '@/waves-import-files/drop-archive.format';
 import { importDropArchives } from '@/waves-import-files/drop-archive.reader';
 import { dbDropArchiveWriter } from '@/waves-import-files/drop-archive.sources';
+import { compareCodeUnits } from '@/waves-chain-index/waves-chain-index.order';
 
 /**
  * The reader against MySQL and 6529.io's own drop reads: the rows it writes
@@ -193,9 +194,11 @@ describeWithSeed(
       );
       const members = FIXTURE_DROPS.filter((d) => d.wave_id === FIXTURE_WAVES.a)
         .map((d) => d.id)
-        .sort();
+        .sort(compareCodeUnits);
       const asMember = await feed(FIXTURE_WAVES.a, signedIn(MEMBER, 2));
-      expect(asMember.drops.map((d) => d.id).sort()).toEqual(members);
+      expect(asMember.drops.map((d) => d.id).sort(compareCodeUnits)).toEqual(
+        members
+      );
       expect(
         (
           await dropsService.findDropByIdOrThrow(
