@@ -4,8 +4,8 @@
  * address_consolidation_keys but not the narrowest legacy key column (567),
  * so the key-width guard queues its top-ups whole, and the queue's TOP_UP
  * rows are compared against a real one. Placeholder addresses, profile and
- * principal. The wallets, 0x…d0 to 0x…de, are no other fixture's: the
- * records service's wallet is 0x…a1 and the other seeds' are below 0xd0.
+ * principal. No other fixture uses the wallets 0x…d0 to 0x…de; the
+ * records service's wallet, for one, is 0x…a1.
  */
 export const WIDE_WALLETS: readonly string[] = Array.from(
   { length: 15 },
