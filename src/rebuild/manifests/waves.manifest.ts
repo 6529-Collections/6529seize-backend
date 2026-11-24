@@ -249,7 +249,7 @@ const DROP_METRICS_REBUILDERS: RebuildStep[] = [
           "Left behind when 6529.io deletes a wave: the wave's drops go with no record, so its authors' counts can't be rebuilt.",
         until: '2026-12-04',
         change:
-          "6529.io deletes a wave's author metrics with the wave, and the existing ones are removed."
+          'Deleting a wave also deletes its wave_dropper_metrics rows (beside deleteWaveMetrics in the wave service), and a one-off cleanup deletes the rows already left, those whose wave_id is not in waves.'
       },
       ...stayingMetricsPlans({ dropsRebuilt: MIRROR_WRITES.includes('drops') })
     ]
