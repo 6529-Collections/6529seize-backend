@@ -1,6 +1,6 @@
 import { Logger } from '@/logging';
 import { RebuildContext } from '@/rebuild/manifest.types';
-import { dbSupplier } from '@/sql-executor';
+import { dbSupplier, SqlExecutor } from '@/sql-executor';
 import {
   DropArchiveReport,
   importDropArchives
@@ -26,11 +26,44 @@ export function assertNoRefusals(report: DropArchiveReport): void {
 }
 
 /**
+ * Reads the drop archives the chain's waves import committed, from the
+ * files source at `files` (the Waves v1 file, the archives and the wave
+ * documents, under the ids in DROP_ARCHIVE_FILE_IDS; layoutSnapshotFiles
+ * makes that directory from the snapshot tooling's output), checked
+ * against the import at `height` (null: the gateway's finalized height),
+ * and writes drops and drops_parts. Fails on any refused archive. Returns
+ * the report, with each imported wave's description drop.
+ */
+export async function importDropArchivesFromSources(
+  sources: { readonly files: string; readonly gateway: string },
+  db: () => SqlExecutor,
+  height: number | null = null
+): Promise<DropArchiveReport> {
+  const report = await importDropArchives({
+    chain: gatewayDropArchiveChain(sources.gateway, height),
+    files: httpDropArchiveFiles(sources.files),
+    writer: dbDropArchiveWriter(db()),
+    log: (message) => logger.info(message)
+  });
+  logger.info(
+    `[DROP ARCHIVES] archives ${report.archives}, written ${report.written}, drops ${report.drops}, parts ${report.parts}, refused ${report.refused.length}, description drops ${report.descriptionDropIds.size}`
+  );
+  if (report.descriptionsUnresolved.length) {
+    logger.warn(
+      `[DROP ARCHIVES] ${report.descriptionsUnresolved.length} imported waves without a description drop, first: ${report.descriptionsUnresolved
+        .slice(0, 5)
+        .map((u) => `${u.legacyWave} (${u.reason})`)
+        .join(', ')}`
+    );
+  }
+  assertNoRefusals(report);
+  return report;
+}
+
+/**
  * Rebuilder: 6529.io's drops from before the waves switch (drops and
  * drops_parts) from the drop archives the chain's waves import committed,
- * read at the run's mark. The files source serves the Waves v1 file and the
- * archives under the ids in DROP_ARCHIVE_FILE_IDS (layoutSnapshotFiles
- * makes that directory from the snapshot tooling's output).
+ * read at the run's mark. See src/waves-import-files.
  */
 export async function rebuildWavesImportFiles(
   ctx: RebuildContext
@@ -41,14 +74,9 @@ export async function rebuildWavesImportFiles(
       `${ctx.stepId} reads the chain and the drop archives: the run needs a gateway and a files source`
     );
   }
-  const report = await importDropArchives({
-    chain: gatewayDropArchiveChain(gateway, ctx.mark.chainHeight),
-    files: httpDropArchiveFiles(files),
-    writer: dbDropArchiveWriter(dbSupplier()),
-    log: (message) => logger.info(message)
-  });
-  logger.info(
-    `[DROP ARCHIVES] archives ${report.archives}, written ${report.written}, drops ${report.drops}, parts ${report.parts}, refused ${report.refused.length}`
+  await importDropArchivesFromSources(
+    { gateway, files },
+    dbSupplier,
+    ctx.mark.chainHeight
   );
-  assertNoRefusals(report);
 }

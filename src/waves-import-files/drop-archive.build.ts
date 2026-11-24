@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { DropType } from '@/entities/IDrop';
 import {
   canonicalJson,
@@ -165,20 +166,54 @@ export function buildDropArchives(
   };
 }
 
+/** A document's raw sha2-256 CIDv1 (P40 5.2), 0x and hex. */
+export function rawCidOf(document: Uint8Array): string {
+  const digest = createHash('sha256').update(document).digest('hex');
+  return `0x01551220${digest}`;
+}
+
 /**
- * A Waves v1 file with no rows that commits `dropArchiveRoot`: its header
- * and ten empty lists. For tests of the reader's checks only; a chain's
- * import file holds the rows.
+ * A Waves v1 file that commits `dropArchiveRoot` and holds only wave rows,
+ * one for each of `waves` (its 6529.io id and its document's CID, the
+ * rest zero); every other list is empty. For tests of the reader only: a
+ * chain's import file holds every row.
  */
 export function wavesFileCommitting(
   root: string,
-  freezeMs = 1_764_000_000_000
+  freezeMs = 1_764_000_000_000,
+  waves: readonly { legacyWave: string; documentCid: string }[] = []
 ): Buffer {
   const header = Buffer.alloc(2 + 2 + 8 + 20 + 32 + 32 + 32 + 1 + 16 + 40);
   header.writeUInt16BE(WAVES_FILE_SCHEMA, 0);
   header.writeUInt16BE(WAVES_FILE_VERSION, 2);
   header.writeBigUInt64BE(BigInt(freezeMs), 4);
   Buffer.from(root.slice(2), 'hex').copy(header, 96);
-  // mainStage 0 and an empty decision; ten zero counts, then ten empty lists.
-  return Buffer.concat([header, Buffer.alloc(40)]);
+  // mainStage 0 and an empty decision, then the ten counts (waves third).
+  header.writeUInt32BE(waves.length, 2 + 2 + 8 + 20 + 32 * 3 + 1 + 16 + 8);
+  const rows = waves.map((wave) => {
+    const cid = Buffer.from(wave.documentCid.replace(/^0x/, ''), 'hex');
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(cid.length);
+    return Buffer.concat([
+      Buffer.from(wave.legacyWave.replace(/-/g, ''), 'hex'),
+      Buffer.alloc(16 * 4), // controller, read, post and admin groups
+      length,
+      cid,
+      Buffer.from([1]), // status
+      Buffer.alloc(8) // created
+    ]);
+  });
+  const count = (n: number) => {
+    const b = Buffer.alloc(4);
+    b.writeUInt32BE(n);
+    return b;
+  };
+  return Buffer.concat([
+    header,
+    count(0), // groups
+    count(0), // members
+    count(waves.length),
+    ...rows,
+    Buffer.alloc(4 * 7) // decisions to wave REP: empty
+  ]);
 }

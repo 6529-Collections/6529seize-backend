@@ -167,6 +167,90 @@ export function readWavesFileHeader(file: Uint8Array): WavesFileHeader {
   };
 }
 
+/** A wave row of the Waves v1 file: its 6529.io id and its document's CID. */
+export interface WavesFileWave {
+  /** 6529.io's wave id, a lowercase UUID. */
+  readonly legacyWave: string;
+  /** The wave document's CID, 0x and hex. */
+  readonly metadataCid: string;
+}
+
+/** A reader of the file's canonical encoding (P28 2.6): big-endian, no padding. */
+class CeReader {
+  private at = 0;
+  private readonly view: DataView;
+
+  constructor(private readonly bytes: Uint8Array) {
+    this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  }
+
+  private need(n: number): number {
+    const at = this.at;
+    if (at + n > this.bytes.length) {
+      throw new Error('The Waves v1 file ends inside a row');
+    }
+    this.at += n;
+    return at;
+  }
+
+  skip(n: number): void {
+    this.need(n);
+  }
+
+  u32(): number {
+    return this.view.getUint32(this.need(4));
+  }
+
+  take(n: number): Uint8Array {
+    const at = this.need(n);
+    return this.bytes.subarray(at, at + n);
+  }
+}
+
+function uuidOf(bytes: Uint8Array): string {
+  const hex = Buffer.from(bytes).toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/** Row sizes of the lists before the waves (crates/chain-tx waves_file.rs). */
+const CLAUSE_BYTES = 1 + 32 + 16 + 8 + 8;
+const MEMBER_BYTES = 1 + 32;
+const MEMBER_ROW_BYTES = 16 + 1 + MEMBER_BYTES;
+
+/**
+ * The Waves v1 file's wave rows: after the header come the group rows and
+ * the member rows, then the waves (each a legacy id, controller, three
+ * group ids, the document's CID, a status and a creation time).
+ */
+export function readWavesFileWaves(file: Uint8Array): WavesFileWave[] {
+  readWavesFileHeader(file);
+  const r = new CeReader(file);
+  r.skip(HEADER_BYTES);
+  const groups = r.u32();
+  for (let g = 0; g < groups; g++) {
+    // legacy id, controller, definition hash, predicate mode
+    r.skip(16 + 16 + 32 + 1);
+    r.skip(r.u32() * CLAUSE_BYTES);
+    r.skip(r.u32() * MEMBER_BYTES); // includes
+    r.skip(r.u32() * MEMBER_BYTES); // excludes
+    r.skip(4 + 4 + 8); // stored includes, stored excludes, created
+  }
+  r.skip(r.u32() * MEMBER_ROW_BYTES);
+  const count = r.u32();
+  const waves: WavesFileWave[] = [];
+  for (let w = 0; w < count; w++) {
+    const legacyWave = uuidOf(r.take(16));
+    r.skip(16 + 16 * 3); // controller, read, post and admin groups
+    const cid = r.take(r.u32());
+    r.skip(1 + 8); // status, created
+    waves.push({
+      legacyWave,
+      metadataCid: `0x${Buffer.from(cid).toString('hex')}`
+    });
+  }
+  return waves;
+}
+
 function compareCodePoints(a: string, b: string): number {
   const x = Array.from(a);
   const y = Array.from(b);

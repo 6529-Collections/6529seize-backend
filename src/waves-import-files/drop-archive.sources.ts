@@ -2,8 +2,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import {
+  bytesMatchCid,
   ChainGatewayClient,
-  chainGatewayConfigFromEnv
+  chainGatewayConfigFromEnv,
+  cidPath
 } from '@/chain-gateway/chain-gateway.client';
 import * as mysql from 'mysql';
 import { DROPS_PARTS_TABLE, DROPS_TABLE } from '@/constants';
@@ -27,12 +29,15 @@ import {
  * - `waves-v1`: the Waves v1 file the chain imported;
  * - `drop-archives`: the snapshot tooling's archives/index.json;
  * - `drop-archive-<wave id, 64 hex>`: each archive (the tooling's
- *   archives/<wave id>.jsonl).
+ *   archives/<wave id>.jsonl);
+ * - a document by its CID in base32 (`b...`), as the rebuild check's files
+ *   source names documents.
  */
 export const DROP_ARCHIVE_FILE_IDS = {
   wavesFile: 'waves-v1',
   index: 'drop-archives',
-  archive: (waveId: string) => `drop-archive-${waveId.replace(/^0x/, '')}`
+  archive: (waveId: string) => `drop-archive-${waveId.replace(/^0x/, '')}`,
+  document: (cid: string) => cidPath(cid)
 } as const;
 
 /** The largest file the reader takes: above the largest archive, 395 MB. */
@@ -58,7 +63,16 @@ export function httpDropArchiveFiles(baseUrl: string): DropArchiveFiles {
     wavesFile: () => fetchFile(`${base}/${DROP_ARCHIVE_FILE_IDS.wavesFile}`),
     archiveIndex: () => fetchFile(`${base}/${DROP_ARCHIVE_FILE_IDS.index}`),
     archive: (waveId) =>
-      fetchFile(`${base}/${DROP_ARCHIVE_FILE_IDS.archive(waveId)}`)
+      fetchFile(`${base}/${DROP_ARCHIVE_FILE_IDS.archive(waveId)}`),
+    document: async (cid) => {
+      const bytes = await fetchFile(
+        `${base}/${DROP_ARCHIVE_FILE_IDS.document(cid)}`
+      );
+      if (bytes && !bytesMatchCid(cid, bytes)) {
+        throw new Error(`The document ${cid} does not match its CID`);
+      }
+      return bytes;
+    }
   };
 }
 

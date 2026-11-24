@@ -1,9 +1,16 @@
 import {
+  descriptionParts,
+  resolveDescription,
+  WaveDescription,
+  waveDescriptionOf
+} from '@/waves-import-files/drop-archive.descriptions';
+import {
   DropArchiveLeaf,
   dropArchiveRoot,
   keccak256Hex,
   legacyDerivedId,
   readWavesFileHeader,
+  readWavesFileWaves,
   WAVE_KIND
 } from '@/waves-import-files/drop-archive.format';
 import {
@@ -31,6 +38,10 @@ import {
  * root that fails refuses everything. Ids, serials and times are the
  * archive's. Drops of members-only waves go into the same tables, whose
  * readers enforce 6529.io's member access; the reader logs no content.
+ *
+ * With a document source, it also finds each imported wave's description
+ * drop in the wave's archive (drop-archive.descriptions): the wave rows of
+ * the checked Waves v1 file name each wave's document by CID.
  */
 
 /** Where the chain's waves import is read. */
@@ -46,6 +57,11 @@ export interface DropArchiveFiles {
   archiveIndex(): Promise<Uint8Array | null>;
   /** The archive of a wave, by its chain wave id (0x and 64 hex). */
   archive(waveId: string): Promise<Uint8Array | null>;
+  /**
+   * A document by its CID (0x and hex), its bytes checked against the CID.
+   * Without it the reader finds no description drops.
+   */
+  document?(cid: string): Promise<Uint8Array | null>;
 }
 
 export interface DropArchiveWriter {
@@ -71,6 +87,17 @@ export interface DropArchiveReport {
   readonly drops: number;
   readonly parts: number;
   readonly refused: readonly DropArchiveRefusal[];
+  /**
+   * Each imported wave's description drop (6529.io's wave id to drop id,
+   * both lowercase), found as drop-archive.descriptions says; empty without
+   * a document source.
+   */
+  readonly descriptionDropIds: ReadonlyMap<string, string>;
+  /** Imported waves left without one, and why. */
+  readonly descriptionsUnresolved: readonly {
+    readonly legacyWave: string;
+    readonly reason: string;
+  }[];
 }
 
 /** One index entry, as the snapshot tooling's archives/index.json lists it. */
@@ -107,7 +134,12 @@ function parseIndex(bytes: Uint8Array): IndexEntry[] {
 
 const NEWLINE = 0x0a;
 
-type ArchiveRows = { drop: DropArchiveDropRow; parts: DropArchivePartRow[] };
+type ArchiveRows = {
+  drop: DropArchiveDropRow;
+  parts: DropArchivePartRow[];
+  /** The line's own parts, for matching a wave's description. */
+  lineParts: unknown;
+};
 
 /**
  * An archive read line by line over its bytes (the largest archives are
@@ -144,7 +176,10 @@ class ArchiveCursor {
     }
     this.start = end + 1;
     try {
-      return dropArchiveRows(value, this.legacyWave);
+      return {
+        ...dropArchiveRows(value, this.legacyWave),
+        lineParts: (value as { parts?: unknown }).parts
+      };
     } catch (error) {
       if (error instanceof DropArchiveLineError) {
         throw new DropArchiveLineError(`line ${this.line}: ${error.message}`);
@@ -160,40 +195,65 @@ interface Taken {
   readonly serials: Set<number>;
 }
 
+/** What checking an archive's lines found. */
+interface ArchiveCheck {
+  /** Why the archive can't be written, or null. */
+  readonly problem: string | null;
+  /** Drops whose parts match the wave's description. */
+  readonly matching: string[];
+  /** Whether the archive holds the drop the wave's document names. */
+  readonly holdsNamed: boolean;
+}
+
 /**
- * Why the archive can't be written, or null when every line is a drop of
- * its wave and no drop id or serial repeats, here or in an archive already
- * taken (`taken`, which gets this archive's when it is taken).
+ * Checks that every line is a drop of the archive's wave and that no drop
+ * id or serial repeats, here or in an archive already taken (`taken`,
+ * which gets this archive's when it passes), and finds the drops that
+ * match `description`.
  */
-function lineProblem(
+function checkArchive(
   bytes: Uint8Array,
   legacyWave: string,
-  taken: Taken
-): string | null {
+  taken: Taken,
+  description: WaveDescription | null
+): ArchiveCheck {
   const ids = new Set<string>();
   const serials = new Set<number>();
+  const matching: string[] = [];
+  let holdsNamed = false;
+  const failed = (problem: string): ArchiveCheck => ({
+    problem,
+    matching: [],
+    holdsNamed: false
+  });
   try {
     const cursor = new ArchiveCursor(bytes, legacyWave);
     let rows = cursor.next();
     while (rows) {
       const { id, serial_no } = rows.drop;
       if (ids.has(id) || taken.ids.has(id)) {
-        return 'a drop id appears twice';
+        return failed('a drop id appears twice');
       }
       if (serials.has(serial_no) || taken.serials.has(serial_no)) {
-        return 'a serial number appears twice';
+        return failed('a serial number appears twice');
       }
       ids.add(id);
       serials.add(serial_no);
+      if (description) {
+        if (id === description.dropId) holdsNamed = true;
+        if (descriptionParts(rows.lineParts) === description.parts) {
+          matching.push(id);
+        }
+      }
       rows = cursor.next();
     }
   } catch (error) {
-    if (error instanceof DropArchiveLineError) return error.message;
+    if (error instanceof DropArchiveLineError) return failed(error.message);
     throw error;
   }
   ids.forEach((id) => taken.ids.add(id));
   serials.forEach((serial) => taken.serials.add(serial));
-  return null;
+  return { problem: null, matching, holdsNamed };
 }
 
 async function writeArchive(
@@ -240,6 +300,8 @@ export async function importDropArchives({
   log?: (message: string) => void;
 }): Promise<DropArchiveReport> {
   const refused: DropArchiveRefusal[] = [];
+  const descriptionDropIds = new Map<string, string>();
+  const descriptionsUnresolved: { legacyWave: string; reason: string }[] = [];
   const report = (
     fields: Partial<DropArchiveReport> = {}
   ): DropArchiveReport => ({
@@ -250,6 +312,8 @@ export async function importDropArchives({
     drops: 0,
     parts: 0,
     refused,
+    descriptionDropIds,
+    descriptionsUnresolved,
     ...fields
   });
   const imported = await chain.importedFileHash();
@@ -274,8 +338,16 @@ export async function importDropArchives({
     return report({ wavesFileHash: fileHash });
   }
   let committed: string;
+  // Imported waves' document CIDs, by 6529.io wave id; only when documents
+  // can be read.
+  const documentOf = new Map<string, string>();
   try {
     committed = readWavesFileHeader(file).dropArchiveRoot;
+    if (files.document) {
+      readWavesFileWaves(file).forEach((wave) =>
+        documentOf.set(wave.legacyWave, wave.metadataCid)
+      );
+    }
   } catch (error) {
     refused.push({ waveId: null, reason: (error as Error).message });
     return report({ wavesFileHash: fileHash });
@@ -336,18 +408,51 @@ export async function importDropArchives({
       refuse(`it hashes to ${hash}, the root commits ${entry.hash}`);
       continue;
     }
-    const problem = lineProblem(bytes, entry.legacyWave, taken);
-    if (problem) {
-      refuse(problem);
+    const legacyWave = entry.legacyWave.toLowerCase();
+    const cid = documentOf.get(legacyWave);
+    let description: WaveDescription | null = null;
+    let documentProblem: string | null = null;
+    if (cid && files.document) {
+      try {
+        const document = await files.document(cid);
+        if (!document) throw new Error('its wave document is missing');
+        description = waveDescriptionOf(document);
+      } catch (error) {
+        documentProblem = (error as Error).message;
+      }
+    }
+    const check = checkArchive(bytes, entry.legacyWave, taken, description);
+    if (check.problem) {
+      refuse(check.problem);
       continue;
+    }
+    if (cid) {
+      const found = description
+        ? resolveDescription(description, check.matching, check.holdsNamed)
+        : { reason: documentProblem ?? 'its wave document was not read' };
+      if ('dropId' in found) {
+        descriptionDropIds.set(legacyWave, found.dropId.toLowerCase());
+      } else {
+        descriptionsUnresolved.push({ legacyWave, reason: found.reason });
+      }
     }
     const count = await writeArchive(bytes, entry.legacyWave, writer);
     written++;
     drops += count.drops;
     parts += count.parts;
   }
+  // Imported waves whose archive was refused or is not in the index.
+  const unresolved = new Set(descriptionsUnresolved.map((u) => u.legacyWave));
+  documentOf.forEach((_, legacyWave) => {
+    if (!descriptionDropIds.has(legacyWave) && !unresolved.has(legacyWave)) {
+      descriptionsUnresolved.push({
+        legacyWave,
+        reason: 'no archive of the wave was written'
+      });
+    }
+  });
   log(
-    `Wrote ${drops} drops and ${parts} parts from ${written} archives; refused ${refused.length}`
+    `Wrote ${drops} drops and ${parts} parts from ${written} archives; refused ${refused.length}; description drops ${descriptionDropIds.size}, unresolved ${descriptionsUnresolved.length}`
   );
   return report({
     wavesFileHash: fileHash,

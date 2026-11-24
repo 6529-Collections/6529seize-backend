@@ -35,7 +35,9 @@ describe('the waves import-files step', () => {
       written: 1,
       drops: 3,
       parts: 3,
-      refused: [{ waveId: '0xab', reason: 'it hashes to something else' }]
+      refused: [{ waveId: '0xab', reason: 'it hashes to something else' }],
+      descriptionDropIds: new Map<string, string>(),
+      descriptionsUnresolved: []
     };
     expect(() => assertNoRefusals(report)).toThrow(
       '[DROP ARCHIVES REFUSED] 1 refused'

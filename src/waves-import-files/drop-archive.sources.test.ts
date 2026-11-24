@@ -5,10 +5,12 @@ import { startFileServer, checkFiles } from '@/rebuild/sources/file-server';
 import { startHttpRecording } from '@/rebuild/sources/http-recording';
 import {
   FIXTURE_DROPS,
-  FIXTURE_PARTS
+  FIXTURE_PARTS,
+  FIXTURE_WAVES
 } from '@/tests/fixtures/drop-archive.fixture';
 import {
   buildDropArchives,
+  rawCidOf,
   wavesFileCommitting
 } from '@/waves-import-files/drop-archive.build';
 import { keccak256Hex } from '@/waves-import-files/drop-archive.format';
@@ -20,13 +22,31 @@ import {
   dbDropArchiveWriter,
   gatewayDropArchiveChain,
   httpDropArchiveFiles,
-  layoutSnapshotFiles
+  layoutSnapshotFiles,
+  writeDropArchiveFiles
 } from '@/waves-import-files/drop-archive.sources';
 
-/** The snapshot tooling's output for the fixture: waves-v1.bin and archives/. */
+/** Wave B's document: its description is drop 4's one part. */
+const WAVE_B_DOCUMENT = Buffer.from(
+  JSON.stringify({
+    v: 1,
+    kind: 'wave',
+    legacy_id: FIXTURE_WAVES.b,
+    description: [{ content: FIXTURE_PARTS[4].content, media: [] }]
+  }),
+  'utf8'
+);
+const WAVE_B_CID = rawCidOf(WAVE_B_DOCUMENT);
+
+/**
+ * The snapshot tooling's output for the fixture: waves-v1.bin (with wave
+ * B's row, naming its document) and archives/.
+ */
 function snapshotOut(dir: string) {
   const built = buildDropArchives(FIXTURE_DROPS, FIXTURE_PARTS);
-  const wavesFile = wavesFileCommitting(built.dropArchiveRoot);
+  const wavesFile = wavesFileCommitting(built.dropArchiveRoot, undefined, [
+    { legacyWave: FIXTURE_WAVES.b, documentCid: WAVE_B_CID }
+  ]);
   fs.mkdirSync(path.join(dir, 'archives'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'waves-v1.bin'), wavesFile);
   fs.writeFileSync(path.join(dir, 'archives', 'index.json'), built.index);
@@ -60,6 +80,10 @@ describe('the drop archive sources', () => {
         ...built.archives.map((a) => DROP_ARCHIVE_FILE_IDS.archive(a.waveId))
       ].sort()
     );
+    // Documents are served by CID, as the rebuild check's files are.
+    writeDropArchiveFiles(filesDir, {
+      [DROP_ARCHIVE_FILE_IDS.document(WAVE_B_CID)]: WAVE_B_DOCUMENT
+    });
     const server = await startFileServer(filesDir);
     try {
       const source = httpDropArchiveFiles(server.url);
@@ -76,6 +100,24 @@ describe('the drop archive sources', () => {
       });
       expect(report.refused).toEqual([]);
       expect(written.sort()).toEqual(FIXTURE_DROPS.map((d) => d.id).sort());
+      expect(Array.from(report.descriptionDropIds.entries())).toEqual([
+        [FIXTURE_WAVES.b, FIXTURE_DROPS[3].id]
+      ]);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('refuse a document that does not match its CID', async () => {
+    const filesDir = path.join(tmp, 'files');
+    writeDropArchiveFiles(filesDir, {
+      [DROP_ARCHIVE_FILE_IDS.document(WAVE_B_CID)]: Buffer.from('{}')
+    });
+    const server = await startFileServer(filesDir);
+    try {
+      await expect(
+        httpDropArchiveFiles(server.url).document!(WAVE_B_CID)
+      ).rejects.toThrow('does not match its CID');
     } finally {
       await server.stop();
     }
