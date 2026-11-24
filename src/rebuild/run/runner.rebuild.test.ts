@@ -861,8 +861,8 @@ describe('rebuild check, end to end', () => {
       expect(unknown.report.failures).toContain(
         "self-check.planned-nothing plans columns no_such_column of team, which the schema doesn't have"
       );
-      // At its start: no step ran.
-      expect(unknown.report.steps).toEqual([]);
+      // At its start: the schema was built, and no seed or rebuilder ran.
+      expect(unknown.report.steps.map((s) => s.kind)).toEqual(['schema']);
     });
 
     it('takes a NOT EXISTS against another table in a row plan and a column plan, beside another writer', async () => {
