@@ -151,12 +151,20 @@ every train recomputes what still differs, so merges never queue up trains.
      never displaces or cancels another developer's deploy;
    - checks the time budget, `main`, the holds and the quiet windows again
      before dispatching, because that wait can carry it into a window (the
-     holds and team windows as read when the Ship job started), then records
-     the service's new release-note groups and checks the time budget, the
-     holds and the quiet windows once more, immediately before dispatching;
+     holds and team windows as read when the Ship job started), and defers
+     the service if one of its release-note groups has reached its grace day
+     since planning;
+   - records the service's new release-note groups, stops (softly) if
+     another deploy has started since the idle check, and checks the time
+     budget, the holds and the quiet windows once more, immediately before
+     dispatching;
    - dispatches `Deploy a service` with `environment=prod`, the service,
      `expected_source_sha` set to the train's commit and `release_note_groups`;
-   - waits for the run and checks the new build's health.
+   - waits for the run and checks the new build's health. If its dispatch
+     replaced a deploy someone had queued in that last moment (the deploy
+     workflow keeps one run waiting per environment and cancels the older
+     one), it halts after its own deploy's first check and names that run, so
+     it can be dispatched again.
 
 Services the plan defers instead of shipping:
 
@@ -190,12 +198,22 @@ cannot be recorded (the ledger cannot be read or saved), that deploy is
 deferred to a later train; a deploy that completes its group still ships. If
 the last check before dispatch then stops the deploy, the train withdraws
 the group it just recorded, so its timer starts with the deploy that first
-sends it. After each deploy
-the train records which members shipped; if only that save fails, it warns,
-and the next plan works the progress out again from what is still behind.
+sends it. After each deploy the train records which members shipped and the
+deploy run of each; if only that save fails, it warns, and the next plan works
+the progress out again from what is still behind.
 `publish_release_note` is `true` only on the deploy that completes the group,
-after every member that was behind has shipped; a held member keeps the note
-unpublished until it ships. The train never uses the release-note opt-out.
+after every member that was behind has shipped; a held member, or a recorded
+member whose drift could not be assessed, keeps the note unpublished until it
+ships. A group stays in the ledger after its publishing deploy, until the
+receiver has certainly forgotten it (8 days), so a member that falls behind
+again, or whose event has to be sent again, uses the same set. At the end of
+each train, the train confirms that every recorded member's event reached the
+receiver: the release-notes loop logs `Generating release notes for <repo> run
+<deploy run id>` for each event it receives, and the train reads that log with
+its health role. A member not seen there is reported in the result with its
+deploy run; send its event again by deploying it by hand with its group from
+the ledger (`publish_release_note=true` if every other member has shipped).
+The train never uses the release-note opt-out.
 
 Deploying a group member by hand: dispatch `Deploy a service` with
 `environment=prod`, the service, `expected_source_sha` set to the `main`
@@ -381,17 +399,21 @@ After each deploy the train waits up to five minutes for a first healthy or
 unhealthy result, then **continues** with the next service. Every deployed
 service stays under watch for its whole 30-minute observation window, healthy
 or not yet verified. The train re-checks it after each later deploy and once a
-minute after the last deploy, until every window has closed. The checks count
-errors since the new build went live, so errors crossing the threshold, or a
-startup or login failure, anywhere inside the window still halt the train,
-even after a first clean invocation. A service the new build never served in
+minute after the last deploy, until every window has closed and 5 more
+minutes have passed, because CloudWatch can show a log line or metric some
+minutes after it happened; those last checks still count only what happened
+inside the window. The checks count errors since the new build went live, so
+errors crossing the threshold, or a startup or login failure, anywhere inside
+the window still halt the train, even after a first clean invocation. Errors
+that reach CloudWatch later than that are left to the existing CloudWatch
+alarms. A service the new build never served in
 its window is reported as not yet verified in the result and the CI wave post.
 Many loops run hourly or daily, so waiting for every one before the next
 deploy would stall the train for hours, and the deploy workflow has already
 verified the code digest. Dependents of a not-verified service still deploy;
 `dbMigrationsLoop` is verified by its synchronous invocation. A train starts no
-new deploy after 200 minutes, so its last deploy and watch window fit in the
-job's time limit.
+new deploy after 200 minutes, so its last deploy (up to 60), first check (5),
+watch window (30) and ingestion margin (5) fit in the job's 330-minute limit.
 
 Resources-only stacks and the Lambda@Edge interceptor rely on the deploy
 workflow's own checks.
@@ -408,16 +430,17 @@ a later halt, which needs a fresh dispatch. Closing the issue by hand does not
 resume the train. If the plan cannot read the halt
 issues or the deploy history from GitHub, it fails and ships nothing; the next
 trigger tries again. If the halt issue itself cannot be opened, later trains
-still find the stopped Ship job among the newest 500 train runs: one that
-failed or timed out, or one cancelled while a prod `Deploy a service` run was
-dispatched (any prod dispatch in that window counts, so a hand deploy during a
-cancelled Ship also keeps the train halted). Only a resume run dispatched
-after that stop whose Resume job completed successfully clears it; a
-cancelled, skipped or failed Resume job does not. Runs are checked one by one
-back to 14 hours before that resume, the longest a train can wait and then
-run, so a train that stopped after the resume was dispatched stays halted even
-when newer runs ended before it. If the deploy history is too long to read, a
-cancelled Ship in the unread stretch counts as a halt.
+still find the stopped Ship job among the newest 500 train runs, in any
+attempt of each run: one that failed or timed out, or one cancelled while a
+prod `Deploy a service` run was dispatched (any prod dispatch in that window
+counts, so a hand deploy during a cancelled Ship also keeps the train
+halted). A retry that ends cleanly never hides the failed attempt before it.
+Only a resume run dispatched after that stop whose Resume job completed
+successfully, in any attempt, clears it; a cancelled, skipped or failed
+Resume job does not. Every run in that window is checked, because a rerun
+keeps its run's original creation time, so an old train rerun after the
+resume and stopping after it stays halted. If the deploy history is too long
+to read, a cancelled Ship in the unread stretch counts as a halt.
 
 A `Deploy a service` run that fails or is cancelled halts the train unless the
 run shows it changed nothing in production: its source guard refused a commit
@@ -496,9 +519,10 @@ Enablement:
    dispatch the train. Expected: the train ships A only, the ledger issue
    records the pull request's group with both services, and no note
    publishes. Then deploy B by hand with that group copied from the ledger and
-   `publish_release_note=true`. Expected: exactly one release note publishes,
-   for the pull request, listing A and B. Set `report` again if anything else
-   happens.
+   `publish_release_note=true`. Expected: exactly one complete release note
+   publishes, for the pull request, listing A and B, and the next train
+   reports no unconfirmed release-note event. Set `report` again if anything
+   else happens.
 4. Clear the holds and leave `prod` on.
 
 No service is a permanent exception yet; report mode shows whether the

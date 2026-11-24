@@ -126,6 +126,13 @@ function behindServicesByPull(records) {
  */
 function releaseNoteGroups(shipping, behindRecords, ledgerGroups = {}) {
   const behindByPull = behindServicesByPull(behindRecords);
+  // A recorded member whose state could not be assessed may still be
+  // behind: it stays outstanding, so the group cannot publish without it.
+  const unassessed = new Set(
+    behindRecords
+      .filter((record) => record.status === 'error')
+      .map((record) => record.service)
+  );
   const members = (pull) =>
     ledgerGroups[pull]?.services ||
     (behindByPull.get(pull) || []).slice().sort(catalogLib.compareText);
@@ -135,8 +142,10 @@ function releaseNoteGroups(shipping, behindRecords, ledgerGroups = {}) {
     for (const pull of record.prs) lastShipping.set(pull, record.service);
   }
   const outstanding = (pull) =>
-    (behindByPull.get(pull) || []).filter((service) =>
-      members(pull).includes(service)
+    members(pull).filter(
+      (service) =>
+        (behindByPull.get(pull) || []).includes(service) ||
+        unassessed.has(service)
     );
   const groups = new Map();
   const outstandingByService = new Map();
@@ -338,8 +347,9 @@ function dropOversized(catalog, shipping, context, heldBack, deferred) {
   }
 }
 
-function shipItem(catalog, environment, record, shipping, release) {
+function shipItem(catalog, environment, record, shipping, release, ledger) {
   const service = catalogLib.getService(catalog, record.service);
+  const groups = release.groups.get(record.service);
   return {
     service: record.service,
     deployed_sha: record.deployed.sha,
@@ -359,10 +369,20 @@ function shipItem(catalog, environment, record, shipping, release) {
     catalog_dependencies: Array.from(
       catalogLib.transitiveDependencies(catalog).get(record.service)
     ).sort(catalogLib.compareText),
-    release_note_groups: release.groups.get(record.service),
+    release_note_groups: groups,
     // Group members still behind at planning time, by pull request, so the
     // train can tell at run time which deploy completes each group.
-    release_note_outstanding: release.outstanding.get(record.service)
+    release_note_outstanding: release.outstanding.get(record.service),
+    // When the ledger recorded each of its groups, if it had: the train
+    // rechecks their age right before dispatch.
+    release_note_opened_at: Object.fromEntries(
+      groups
+        .filter((group) => ledger[group.pull_request_number])
+        .map((group) => [
+          group.pull_request_number,
+          ledger[group.pull_request_number].opened_at
+        ])
+    )
   };
 }
 
@@ -437,7 +457,14 @@ function buildTrainPlan({
     notes,
     lookahead_minutes: lookaheadMinutes,
     ship: ordered.map((record) =>
-      shipItem(catalog, drift.environment, record, byName, release)
+      shipItem(
+        catalog,
+        drift.environment,
+        record,
+        byName,
+        release,
+        context.ledgerGroups
+      )
     ),
     deferred,
     never_deployed: servicesWithStatus(drift, 'never-deployed'),

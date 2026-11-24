@@ -23,6 +23,13 @@ function authLogPattern(mode) {
   return `"AUTH ${mode}"`;
 }
 const INVOCATION_LOG_PATTERN = '"REPORT RequestId"';
+// The line the release-notes loop logs for each event it receives:
+// `Generating release notes for <repo> run <deploy run id>`.
+const RELEASE_NOTE_EVENT_PREFIX = 'Generating release notes for';
+
+function releaseNoteEventPattern(runId) {
+  return `"${RELEASE_NOTE_EVENT_PREFIX}" "run ${runId}"`;
+}
 const TOKEN_REFRESH_MS = 4 * 60 * 1000;
 const UNCHECKED_PROFILES = new Set([
   'cloudformation-stack',
@@ -486,6 +493,33 @@ function createHealthChecker({
   }
 
   return {
+    /**
+     * Whether the release-notes loop (`functionName`) logged receiving the
+     * event of deploy run `runId` since `since`.
+     */
+    async releaseNoteSeen({ region, functionName, runId, since }) {
+      if (!/^\d+$/.test(String(runId))) {
+        throw new TypeError(`not a deploy run id: ${runId}`);
+      }
+      const result = await aws.json(
+        [
+          'logs',
+          'filter-log-events',
+          '--region',
+          region,
+          '--log-group-name',
+          `/aws/lambda/${functionName}`,
+          '--start-time',
+          String(since),
+          '--filter-pattern',
+          releaseNoteEventPattern(runId),
+          '--max-items',
+          '1'
+        ],
+        { allowMissing: true }
+      );
+      return (result?.events || []).length > 0;
+    },
     /** Checks `item`'s targets for the window `deployStartedAt`..`until`. */
     async check(item, deployStartedAt, until) {
       if (
@@ -514,6 +548,8 @@ module.exports = {
   BAD_LOG_PATTERN,
   authLogPattern,
   INVOCATION_LOG_PATTERN,
+  RELEASE_NOTE_EVENT_PREFIX,
+  releaseNoteEventPattern,
   DEFAULT_ERROR_THRESHOLDS,
   evaluateFunctionHealth,
   combineVerdicts,

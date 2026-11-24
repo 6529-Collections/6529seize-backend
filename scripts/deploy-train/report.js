@@ -269,7 +269,8 @@ const STOP_LABELS = {
   'deploy-failed': 'deploy failed',
   'deploy-unknown': 'deploy run not found',
   unhealthy: 'health check failed',
-  'train-cancelled': 'train cancelled after dispatching a deploy'
+  'train-cancelled': 'train cancelled after dispatching a deploy',
+  'displaced-deploy': "the train's deploy replaced a waiting deploy"
 };
 
 function stopLabel(stop) {

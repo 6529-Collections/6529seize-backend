@@ -71,10 +71,15 @@ function createGitHubClient({
     getRun(runId) {
       return request('GET', `/actions/runs/${runId}`);
     },
-    async listRunJobs(runId) {
+    /**
+     * The run's jobs: from its latest attempt, or with `allAttempts` from
+     * every attempt (each job then carries its `run_attempt`).
+     */
+    async listRunJobs(runId, { allAttempts = false } = {}) {
+      const filter = allAttempts ? '&filter=all' : '';
       const result = await request(
         'GET',
-        `/actions/runs/${runId}/jobs?per_page=100`
+        `/actions/runs/${runId}/jobs?per_page=100${filter}`
       );
       return result.jobs || [];
     },
@@ -217,10 +222,6 @@ async function activeDeployRuns(client, environment) {
 
 const HISTORY_FALLBACK_PAGES = 5;
 const DEPLOY_HISTORY_PAGES = 10;
-// How long after its creation a train run can still end its Ship job: it can
-// wait behind one whole run in the concurrency group, then run itself
-// (Resume 10, Plan 45 and Ship 330 minutes at most, each time), with margin.
-const MAX_RUN_SPAN_MS = 14 * 60 * 60 * 1000;
 const STOPPED_CONCLUSIONS = new Set(['failure', 'timed_out', 'cancelled']);
 
 function isFailed(conclusion) {
@@ -269,55 +270,67 @@ function prodDispatchLookup(client, since) {
 }
 
 /**
- * A halt recorded by `run`: its Ship job failed or timed out, or was
- * cancelled after a prod deploy was dispatched while it ran (the train
- * dispatches only from Ship, one train at a time). Null otherwise.
+ * The halts `run` recorded, one per attempt: each attempt's Ship job that
+ * failed or timed out, or was cancelled after a prod deploy was dispatched
+ * while it ran (the train dispatches only from Ship, one train at a time).
+ * Every attempt counts, so a retry that ends cleanly (a Ship-only retry
+ * skips its stale plan) never hides the failure of the attempt before it.
  */
-async function haltFromRun(client, run, shipJobName, dispatchedBetween) {
-  if (!STOPPED_CONCLUSIONS.has(run.conclusion)) return null;
-  const runEnd = Date.parse(run.updated_at || run.created_at);
+async function stopsFromRun(client, run, shipJobName, dispatchedBetween) {
+  const retried = Number(run.run_attempt) > 1;
+  if (!retried && !STOPPED_CONCLUSIONS.has(run.conclusion)) return [];
   // Most cancelled runs were replaced while waiting in the concurrency
   // group; one with no prod deploy during its lifetime dispatched nothing.
   if (
+    !retried &&
     run.conclusion === 'cancelled' &&
-    !(await dispatchedBetween(Date.parse(run.created_at), runEnd))
+    !(await dispatchedBetween(
+      Date.parse(run.created_at),
+      Date.parse(run.updated_at || run.created_at)
+    ))
   ) {
-    return null;
+    return [];
   }
-  const jobs = await client.listRunJobs(run.id);
-  const ship = jobs.find((job) => job.name === shipJobName);
-  if (!ship) return null;
-  // When the halt was opened: the Ship job's end.
-  const endedAt = ship.completed_at || run.updated_at || run.created_at;
-  const stopped =
-    isFailed(ship.conclusion) ||
-    (ship.conclusion === 'cancelled' &&
-      Boolean(ship.started_at) &&
-      (await dispatchedBetween(
-        Date.parse(ship.started_at),
-        Date.parse(endedAt)
-      )));
-  if (!stopped) return null;
-  return {
-    run_id: run.id,
-    run_url: run.html_url,
-    created_at: run.created_at,
-    failed_at: endedAt,
-    cause: isFailed(ship.conclusion)
-      ? ship.conclusion
-      : 'cancelled-after-dispatch'
-  };
+  const jobs = await client.listRunJobs(run.id, { allAttempts: true });
+  const stops = [];
+  for (const ship of jobs.filter((job) => job.name === shipJobName)) {
+    // When the halt was opened: that Ship job's end.
+    const endedAt = ship.completed_at || run.updated_at || run.created_at;
+    const stopped =
+      isFailed(ship.conclusion) ||
+      (ship.conclusion === 'cancelled' &&
+        Boolean(ship.started_at) &&
+        (await dispatchedBetween(
+          Date.parse(ship.started_at),
+          Date.parse(endedAt)
+        )));
+    if (!stopped) continue;
+    stops.push({
+      run_id: run.id,
+      run_url: run.html_url,
+      run_attempt: ship.run_attempt ?? run.run_attempt ?? 1,
+      created_at: run.created_at,
+      failed_at: endedAt,
+      cause: isFailed(ship.conclusion)
+        ? ship.conclusion
+        : 'cancelled-after-dispatch'
+    });
+  }
+  return stops;
 }
 
 /**
- * Whether `run` is a resume whose Resume job actually completed: a resume
- * dispatch cancelled or failed before clearing anything does not count.
+ * Whether `run` is a resume whose Resume job actually completed, in any
+ * attempt: a resume dispatch cancelled or failed before clearing anything
+ * does not count. It clears from its original dispatch time whichever
+ * attempt completed, as the Resume job itself does.
  */
 async function isCompletedResume(client, run, resumeJobName) {
   if (!(run.display_title || '').endsWith('(resume)')) return false;
-  const jobs = await client.listRunJobs(run.id);
-  const resume = jobs.find((job) => job.name === resumeJobName);
-  return Boolean(resume) && resume.conclusion === 'success';
+  const jobs = await client.listRunJobs(run.id, { allAttempts: true });
+  return jobs.some(
+    (job) => job.name === resumeJobName && job.conclusion === 'success'
+  );
 }
 
 /** Completed train runs other than `currentRunId`, newest created first. */
@@ -350,12 +363,12 @@ async function readTrainHistory(client, currentRunId) {
  * that was still running when the resume was dispatched and stopped later
  * stays halted, even when newer runs ended before the resume.
  *
- * Runs are read newest first. Only the newest completed resume matters (it
- * clears everything an older one would), and every older run is checked
- * until no run created that early could still have been shipping at the
- * resume's dispatch (MAX_RUN_SPAN_MS). It reads the newest
- * HISTORY_FALLBACK_PAGES pages of 100 runs (several days of trains); the
- * halt issue makes a halt persist beyond that.
+ * Runs are read newest created first. Only the newest completed resume
+ * matters (it clears everything an older one would). Every run in the
+ * window is checked, because a rerun keeps its run's original creation time:
+ * an old run rerun after the resume can still stop after it. It reads the
+ * newest HISTORY_FALLBACK_PAGES pages of 100 runs (several days of trains);
+ * the halt issue makes a halt persist beyond that.
  */
 async function findUnclearedHalt(
   client,
@@ -371,22 +384,24 @@ async function findUnclearedHalt(
   // time) covers the halts opened before it, like a later resume would.
   let clearedBefore = resumedAt;
   for (const run of runs) {
-    const created = Date.parse(run.created_at);
-    if (clearedBefore !== null && created < clearedBefore - MAX_RUN_SPAN_MS) {
-      return null;
-    }
-    const halt = await haltFromRun(client, run, shipJobName, dispatchedBetween);
-    if (
-      halt &&
-      (clearedBefore === null || Date.parse(halt.failed_at) >= clearedBefore)
-    ) {
-      return halt;
-    }
+    const stops = await stopsFromRun(
+      client,
+      run,
+      shipJobName,
+      dispatchedBetween
+    );
+    const kept = stops
+      .filter(
+        (stop) =>
+          clearedBefore === null || Date.parse(stop.failed_at) >= clearedBefore
+      )
+      .sort((left, right) => right.failed_at.localeCompare(left.failed_at));
+    if (kept.length > 0) return kept[0];
     if (
       clearedBefore === null &&
       (await isCompletedResume(client, run, resumeJobName))
     ) {
-      clearedBefore = created;
+      clearedBefore = Date.parse(run.created_at);
     }
   }
   return null;
@@ -587,7 +602,6 @@ async function currentHalt(
 module.exports = {
   HALT_LABEL,
   RESUMED_LABEL,
-  MAX_RUN_SPAN_MS,
   DEPLOY_WORKFLOW,
   TRAIN_WORKFLOW,
   DEPLOY_TITLE,

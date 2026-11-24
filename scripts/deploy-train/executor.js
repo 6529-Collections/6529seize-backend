@@ -3,17 +3,25 @@
 const catalogLib = require('./catalog');
 const { evaluateBlackout, holdFor } = require('./blackouts');
 const { DEPLOY_WORKFLOW, activeDeployRuns, deployBranch } = require('./github');
-const { LEDGER_KEEP_DAYS } = require('./plan');
+const { LEDGER_DAYS, LEDGER_KEEP_DAYS } = require('./plan');
+
+const DAY_MS = 86_400_000;
+// The service whose log shows a release-note event reached the receiver.
+const RELEASE_NOTES_SERVICE = 'releaseNotesGenerationLoop';
 
 // The ship job has 330 minutes: a new deploy starts only within the
-// budget, and a started deploy, its first health check and the trailing
-// watch window must still fit after it.
+// budget, and a started deploy, its first health check, the trailing watch
+// window and the log-ingestion margin after it must still fit.
 const DEFAULT_OPTIONS = {
   pollSeconds: 30,
   findRunSeconds: 300,
   deployTimeoutMinutes: 60,
   healthTimeoutSeconds: 300,
   watchMinutes: 30,
+  // CloudWatch can show a log line or metric some minutes after it
+  // happened: a window is judged this long after it closes, counting only
+  // what happened inside it.
+  ingestionLagMinutes: 5,
   watchPollSeconds: 60,
   busyWaitMinutes: 30,
   budgetMinutes: 200
@@ -211,21 +219,43 @@ class TrainRun {
   }
 
   /**
-   * Remembers, for each group a deploy carried, which members shipped. A
-   * completed group leaves the ledger, and so does one the receiver has
-   * forgotten. The service set was recorded before the deploy (see
-   * reserveGroups), so a failed save here loses only progress the next
+   * Why `item` must wait because one of its groups is in the receiver's
+   * grace day (see plan.js), or null. The plan checked this when it was
+   * made; the Ship job can start later, so it is checked again here, from
+   * the ledger as read now or, if that lacks the group, the plan's record.
+   */
+  graceReason(item, groups) {
+    for (const group of groups) {
+      const pull = group.pull_request_number;
+      const openedAt = Date.parse(
+        this.ledger[String(pull)]?.opened_at ??
+          item.release_note_opened_at?.[pull]
+      );
+      if (!Number.isFinite(openedAt)) continue;
+      const age = this.clock() - openedAt;
+      if (age >= LEDGER_DAYS * DAY_MS && age < LEDGER_KEEP_DAYS * DAY_MS) {
+        const until = new Date(openedAt + LEDGER_KEEP_DAYS * DAY_MS);
+        return `release-note group pr-${pull} may still be held by the receiver until ${until.toISOString()}; the train ships it after that`;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Remembers, for each group a deploy carried, which members shipped and
+   * the deploy run that sent each one's release-note event. A group stays
+   * in the ledger after its publishing deploy, until the receiver has
+   * certainly forgotten it, so a member whose event never reached the
+   * receiver can still be sent again with the same set (see
+   * confirmReleaseNotes). The service set was recorded before the deploy
+   * (see reserveGroups), so a failed save here loses only progress the next
    * plan reads again from what is still behind.
    */
-  async recordGroups(item, groups) {
+  async recordGroups(item, groups, runId) {
     if (!this.saveLedger || groups.length === 0) return;
     this.dropExpiredGroups();
     for (const group of groups) {
       const key = String(group.pull_request_number);
-      if (group.publish_release_note) {
-        delete this.ledger[key];
-        continue;
-      }
       const entry = this.ledger[key] || {
         services: group.release_group_services,
         shipped: [],
@@ -233,6 +263,13 @@ class TrainRun {
       };
       if (!entry.shipped.includes(item.service)) {
         entry.shipped.push(item.service);
+      }
+      entry.runs = { ...entry.runs, [item.service]: runId };
+      entry.unconfirmed = [
+        ...new Set([...(entry.unconfirmed || []), item.service])
+      ];
+      if (group.publish_release_note) {
+        entry.publish_requested_at = new Date(this.clock()).toISOString();
       }
       this.ledger[key] = entry;
     }
@@ -327,8 +364,12 @@ class TrainRun {
         `${entry.item.service}: ${verdict.findings.join('; ')}`,
         entry.item
       );
-    } else if (this.clock() >= entry.until) {
-      // The window is over: healthy if the new build was ever seen working.
+    } else if (
+      this.clock() >=
+      entry.until + this.options.ingestionLagMinutes * 60_000
+    ) {
+      // The window is over and its last minutes have had time to reach
+      // CloudWatch: healthy if the new build was ever seen working.
       entry.status = entry.seenHealthy ? 'healthy' : 'unverified';
     } else {
       entry.status = entry.seenHealthy ? 'watching' : 'pending';
@@ -457,14 +498,31 @@ class TrainRun {
     // Waiting for other deploys can take minutes: check the branch, holds
     // and quiet windows again before dispatching.
     if (!(await this.clearToDispatch(item))) return null;
+    const grace = this.graceReason(item, groups);
+    if (grace) {
+      this.defer(item, grace);
+      return null;
+    }
     const reserved = await this.reserveGroups(item, groups);
     if (reserved.error) {
       this.defer(item, reserved.error);
       return null;
     }
-    // The branch read and the ledger save can take a while too: check the
-    // time budget, holds and quiet windows once more, immediately before
-    // dispatching.
+    // A deploy someone started since the idle check would make this one
+    // wait behind it, and could be replaced by it if it is still waiting.
+    const active = await activeDeployRuns(this.client, this.plan.environment);
+    if (active.length > 0) {
+      await this.releaseGroups(item, reserved.opened);
+      this.stopBefore(
+        item,
+        'busy',
+        `another deploy started just before ${item.service} was dispatched: ${active.map((run) => run.html_url).join(' ')}; the next train continues`
+      );
+      return null;
+    }
+    // The branch read, the ledger save and that check can take a while
+    // too: check the time budget, holds and quiet windows once more,
+    // immediately before dispatching.
     if (!this.withinBudgetAndWindows(item)) {
       await this.releaseGroups(item, reserved.opened);
       return null;
@@ -482,7 +540,26 @@ class TrainRun {
     const runId =
       reportedId ||
       (await this.findDispatchedRun(item, priorIds, dispatchedAt));
-    return { runId, groups };
+    return { runId, groups, priorIds, dispatchedAt };
+  }
+
+  /**
+   * A deploy someone queued in the moment before this dispatch, which the
+   * deploy workflow's concurrency group then replaced (it keeps one run
+   * waiting per environment and cancels the older one): new since the
+   * train's last look, not the train's own run, and cancelled.
+   */
+  async findDisplacedRun(runId, priorIds, dispatchedAt) {
+    return (
+      (await this.listDispatchedRuns()).find(
+        (run) =>
+          !priorIds.has(run.id) &&
+          run.id !== runId &&
+          run.status === 'completed' &&
+          run.conclusion === 'cancelled' &&
+          Date.parse(run.created_at) >= dispatchedAt - 120_000
+      ) || null
+    );
   }
 
   /**
@@ -544,7 +621,7 @@ class TrainRun {
   async deployAndCheck(item) {
     const dispatched = await this.dispatch(item);
     if (!dispatched) return;
-    const { runId, groups } = dispatched;
+    const { runId, groups, priorIds, dispatchedAt } = dispatched;
     if (!runId) {
       this.stop(
         'deploy-unknown',
@@ -553,6 +630,28 @@ class TrainRun {
       );
       return;
     }
+    const displaced = await this.findDisplacedRun(
+      runId,
+      priorIds,
+      dispatchedAt
+    );
+    try {
+      await this.followDeploy(item, runId, groups);
+    } finally {
+      // The train's own deploy is checked first; then it halts, because
+      // someone's deploy was cancelled and must be dispatched again.
+      if (displaced && !this.result.stop?.halt) {
+        this.stop(
+          'displaced-deploy',
+          `dispatching ${item.service} replaced a deploy that was waiting to run: ${displaced.html_url || displaced.id}; dispatch it again, then resume`,
+          item
+        );
+      }
+    }
+  }
+
+  /** Waits for `item`'s deploy run, records it and starts its health watch. */
+  async followDeploy(item, runId, groups) {
     const run = await this.waitForRun(runId);
     const runSummary = {
       service: item.service,
@@ -565,7 +664,7 @@ class TrainRun {
       return;
     }
     this.shippedItems.push(item);
-    await this.recordGroups(item, groups);
+    await this.recordGroups(item, groups, runSummary.run_id);
     const entry = {
       item,
       deployStartedAt: Date.parse(run.run_started_at || run.created_at),
@@ -623,12 +722,81 @@ class TrainRun {
     return this.result;
   }
 
+  /**
+   * Confirms that each recorded member's release-note event reached the
+   * receiver: the release-notes loop logs every event it receives with its
+   * deploy run. Runs at the end of each train, after the watch windows, so
+   * this train's events have had time to arrive; members seen are
+   * confirmed, and members of groups still unconfirmed are reported with
+   * how to send their event again. Best effort: it never stops a train.
+   */
+  async confirmReleaseNotes() {
+    if (
+      !this.saveLedger ||
+      typeof this.health?.releaseNoteSeen !== 'function'
+    ) {
+      return;
+    }
+    const pending = Object.entries(this.ledger).flatMap(([pull, entry]) =>
+      (entry.unconfirmed || [])
+        .filter((service) => entry.runs?.[service])
+        .map((service) => ({ pull, entry, service }))
+    );
+    if (pending.length === 0) return;
+    let region;
+    try {
+      region = catalogLib.getService(this.catalog, RELEASE_NOTES_SERVICE)
+        .aws_region[this.plan.environment];
+    } catch (error) {
+      this.result.warnings.push(
+        `release-note events not confirmed: ${errorMessage(error)}`
+      );
+      return;
+    }
+    let changed = false;
+    for (const { pull, entry, service } of pending) {
+      let seen;
+      try {
+        seen = await this.health.releaseNoteSeen({
+          region,
+          functionName: RELEASE_NOTES_SERVICE,
+          runId: entry.runs[service],
+          since: Date.parse(entry.opened_at)
+        });
+      } catch (error) {
+        this.result.warnings.push(
+          `release-note events not confirmed: ${errorMessage(error)}`
+        );
+        return;
+      }
+      if (seen) {
+        entry.unconfirmed = entry.unconfirmed.filter(
+          (name) => name !== service
+        );
+        changed = true;
+      } else {
+        this.result.warnings.push(
+          `release-note event for ${service} (deploy run ${entry.runs[service]}, group pr-${pull}) has not reached the release-notes loop; send it again by deploying ${service} by hand with group pr-${pull} from the ledger issue`
+        );
+      }
+    }
+    if (!changed) return;
+    try {
+      await this.saveLedger(this.ledger);
+    } catch (error) {
+      this.result.warnings.push(
+        `release-note ledger not saved after confirming events: ${errorMessage(error)}`
+      );
+    }
+  }
+
   async run() {
     while (this.queue.length > 0 && !this.result.stop) {
       const item = this.queue.shift();
       if ((await this.gate(item)) === 'go') await this.deployAndCheck(item);
     }
     await this.finalWatch();
+    await this.confirmReleaseNotes();
     return this.finish();
   }
 }

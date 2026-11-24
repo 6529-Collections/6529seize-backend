@@ -439,6 +439,72 @@ describe('health checker', () => {
   });
 });
 
+describe('release-note event confirmation', () => {
+  it('looks for the line the release-notes loop logs for each event', () => {
+    // The loop's own log statement: if it changes, so must the pattern.
+    const loop = readFileSync(
+      `${__dirname}/../../src/releaseNotesGenerationLoop/index.ts`,
+      'utf8'
+    );
+    expect(loop).toContain(
+      '`Generating release notes for ${request.repo} run ${request.run_id}`'
+    );
+    expect(health.RELEASE_NOTE_EVENT_PREFIX).toBe(
+      'Generating release notes for'
+    );
+    expect(health.releaseNoteEventPattern(45238902874)).toBe(
+      '"Generating release notes for" "run 45238902874"'
+    );
+  });
+
+  it('asks CloudWatch for one matching line since the group opened', async () => {
+    const calls: string[][] = [];
+    const checker = health.createHealthChecker({
+      aws: {
+        json: async (args: string[]) => {
+          calls.push(args);
+          return {
+            events: [{ message: 'Generating release notes for x run 7' }]
+          };
+        }
+      },
+      environment: 'prod'
+    });
+    await expect(
+      checker.releaseNoteSeen({
+        region: 'us-east-1',
+        functionName: 'releaseNotesGenerationLoop',
+        runId: 7,
+        since: 1000
+      })
+    ).resolves.toBe(true);
+    expect(calls).toEqual([
+      [
+        'logs',
+        'filter-log-events',
+        '--region',
+        'us-east-1',
+        '--log-group-name',
+        '/aws/lambda/releaseNotesGenerationLoop',
+        '--start-time',
+        '1000',
+        '--filter-pattern',
+        '"Generating release notes for" "run 7"',
+        '--max-items',
+        '1'
+      ]
+    ]);
+    await expect(
+      checker.releaseNoteSeen({
+        region: 'us-east-1',
+        functionName: 'releaseNotesGenerationLoop',
+        runId: '7 OR x',
+        since: 1000
+      })
+    ).rejects.toThrow('not a deploy run id');
+  });
+});
+
 describe('AWS CLI through GitHub OIDC', () => {
   it('assumes the role from a refreshed web-identity token file', async () => {
     let time = 0;

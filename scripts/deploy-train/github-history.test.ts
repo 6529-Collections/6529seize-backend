@@ -394,25 +394,120 @@ describe('train halts', () => {
     });
   });
 
-  it('stops reading once no older run could have been shipping at the resume', async () => {
-    const c = client(
-      [
-        trainRun(9, '2026-11-23T10:00:00Z', 'success', 'Deploy train (resume)'),
+  it('keeps a failed attempt that a clean Ship-only retry followed', async () => {
+    // prxt's case: attempt 1's Ship failed and no halt issue was saved;
+    // attempt 2 re-ran only Ship, which skipped its stale plan and ended
+    // cleanly, so the run's own conclusion is success.
+    const halt = await github.findUnclearedHalt(
+      client(
+        [
+          {
+            ...trainRun(2, '2026-11-23T09:00:00Z', 'success'),
+            run_attempt: 2,
+            updated_at: '2026-11-23T10:00:00Z'
+          }
+        ],
         {
-          ...trainRun(2, '2026-11-22T18:00:00Z', 'failure'),
-          updated_at: '2026-11-22T18:30:00Z'
+          2: [
+            {
+              name: 'Ship',
+              run_attempt: 1,
+              conclusion: 'failure',
+              completed_at: '2026-11-23T09:30:00Z'
+            },
+            {
+              name: 'Ship',
+              run_attempt: 2,
+              conclusion: 'success',
+              completed_at: '2026-11-23T10:00:00Z'
+            }
+          ]
         }
-      ],
-      { 9: [{ name: 'Resume', conclusion: 'success' }] }
+      ),
+      { currentRunId: 3, shipJobName: 'Ship' }
     );
+    expect(halt).toMatchObject({
+      run_id: 2,
+      run_attempt: 1,
+      failed_at: '2026-11-23T09:30:00Z'
+    });
+  });
+
+  it('keeps a halt from an old run rerun and failing after the resume', async () => {
+    // prxt's second case: run 2 was created long before the resume, but a
+    // full rerun of it shipped and failed after the resume was dispatched.
+    const halt = await github.findUnclearedHalt(
+      client(
+        [
+          trainRun(
+            9,
+            '2026-11-23T10:00:00Z',
+            'success',
+            'Deploy train (resume)'
+          ),
+          {
+            ...trainRun(2, '2026-11-21T18:00:00Z', 'failure'),
+            run_attempt: 2,
+            updated_at: '2026-11-23T11:30:00Z'
+          }
+        ],
+        {
+          9: [{ name: 'Resume', conclusion: 'success' }],
+          2: [
+            {
+              name: 'Ship',
+              run_attempt: 1,
+              conclusion: 'success',
+              completed_at: '2026-11-21T19:00:00Z'
+            },
+            {
+              name: 'Ship',
+              run_attempt: 2,
+              conclusion: 'failure',
+              completed_at: '2026-11-23T11:30:00Z'
+            }
+          ]
+        }
+      ),
+      { currentRunId: 10, shipJobName: 'Ship' }
+    );
+    expect(halt).toMatchObject({
+      run_id: 2,
+      run_attempt: 2,
+      failed_at: '2026-11-23T11:30:00Z'
+    });
+  });
+
+  it('lets a resume completed in a retried attempt clear from its dispatch', async () => {
     expect(
-      await github.findUnclearedHalt(c, {
-        currentRunId: 10,
-        shipJobName: 'Ship'
-      })
+      await github.findUnclearedHalt(
+        client(
+          [
+            trainRun(
+              9,
+              '2026-11-23T10:00:00Z',
+              'success',
+              'Deploy train (resume)'
+            ),
+            trainRun(2, '2026-11-23T09:00:00Z', 'failure')
+          ],
+          {
+            9: [
+              { name: 'Resume', run_attempt: 1, conclusion: 'failure' },
+              { name: 'Resume', run_attempt: 2, conclusion: 'success' }
+            ],
+            2: [
+              {
+                name: 'Ship',
+                conclusion: 'failure',
+                completed_at: '2026-11-23T09:30:00Z'
+              }
+            ]
+          }
+        ),
+        { currentRunId: 10, shipJobName: 'Ship' }
+      )
     ).toBeNull();
-    // Run 2 was created 16 hours before the resume: never read.
-    expect(c.jobReads).toEqual([9]);
   });
 
   describe('a cancelled Ship job without a halt issue', () => {

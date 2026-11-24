@@ -273,6 +273,37 @@ describe('deploy train plan', () => {
       ).toEqual(['nftsLoop']);
     });
 
+    it('does not publish while a recorded member cannot be assessed', () => {
+      // prxt's case: teamLoop is in the recorded set but its drift could
+      // not be assessed, so it may still be behind: nftsLoop ships without
+      // asking to publish, and the plan records the outstanding member.
+      const result = plan(
+        [
+          record('nftsLoop', { prs: [20] }),
+          record('teamLoop', { status: 'error', prs: [], reasons: ['x'] })
+        ],
+        {
+          ledger: {
+            '20': {
+              services: ['nftsLoop', 'teamLoop'],
+              shipped: [],
+              opened_at: new Date(QUIET_TIME - 3_600_000).toISOString()
+            }
+          }
+        }
+      );
+      expect(result.ship[0].release_note_groups[0]).toMatchObject({
+        release_group_services: ['nftsLoop', 'teamLoop'],
+        publish_release_note: false
+      });
+      expect(result.ship[0].release_note_outstanding).toEqual({
+        '20': ['nftsLoop', 'teamLoop']
+      });
+      expect(result.ship[0].release_note_opened_at).toEqual({
+        '20': new Date(QUIET_TIME - 3_600_000).toISOString()
+      });
+    });
+
     it('holds a member back while the receiver may still hold its group', () => {
       // prxt's case: the receiver first processed the deploy late, so it
       // still holds the seven-day-old group; a smaller set would be

@@ -74,6 +74,10 @@ type FakeOptions = {
   failedStep?: string;
   steps?: { name: string; conclusion: string | null }[];
   headDelaysMs?: number[];
+  // The idle check passes, then the check just before dispatch sees a run.
+  lateBusy?: boolean;
+  // The first dispatch replaces a deploy that was waiting to run.
+  displaced?: boolean;
 };
 
 function harness(options: FakeOptions = {}) {
@@ -93,7 +97,9 @@ function harness(options: FakeOptions = {}) {
     async listWorkflowRuns(_workflow: string, params: Record<string, string>) {
       if (!params.event) {
         activeChecks += 1;
-        const busy = activeChecks <= (options.busyChecks ?? 0);
+        const busy =
+          activeChecks <= (options.busyChecks ?? 0) ||
+          (options.lateBusy === true && activeChecks === 2);
         return {
           workflow_runs: busy
             ? [
@@ -112,6 +118,17 @@ function harness(options: FakeOptions = {}) {
     async dispatchWorkflow(workflow: string, ref: string, inputs: any) {
       dispatched.push({ workflow, ref, inputs });
       const id = 100 + dispatched.length;
+      if (options.displaced && dispatched.length === 1) {
+        runs.unshift({
+          id: 555,
+          status: 'completed',
+          conclusion: 'cancelled',
+          display_title: 'Deploy api to prod',
+          head_sha: TARGET,
+          created_at: new Date(now).toISOString(),
+          html_url: 'https://example.test/runs/555'
+        });
+      }
       runs.unshift({
         id,
         status: 'completed',
@@ -420,9 +437,19 @@ describe('deploy train executor', () => {
     const result = await h.run(trainPlan([item('nftsLoop', [1])]));
     expect(result.stop).toBeNull();
     expect(result.shipped[0].health).toBe('healthy');
+    // 30 minutes of window and 5 of ingestion margin, once a minute.
     const checks = h.checks.filter((name) => name === 'nftsLoop').length;
-    expect(checks).toBeGreaterThanOrEqual(30);
-    expect(checks).toBeLessThanOrEqual(33);
+    expect(checks).toBeGreaterThanOrEqual(35);
+    expect(checks).toBeLessThanOrEqual(38);
+  });
+
+  it('still halts on errors from the window that reach CloudWatch late', async () => {
+    // prxt's case: the window has closed when the errors show up. The check
+    // counts only the window's own time, so this is the window's failure.
+    const h = harness();
+    h.verdicts.nftsLoop = Array(34).fill('healthy').concat(['unhealthy']);
+    const result = await h.run(trainPlan([item('nftsLoop', [1])]));
+    expect(result.stop).toMatchObject({ reason: 'unhealthy', halt: true });
   });
 
   it('reports services that never ran during the train as unverified', async () => {
@@ -689,7 +716,9 @@ describe('deploy train executor', () => {
           '5': {
             services: ['nftsLoop', 'teamLoop'],
             shipped: ['teamLoop'],
-            opened_at
+            opened_at,
+            runs: { teamLoop: 101 },
+            unconfirmed: ['teamLoop']
           }
         }
       }
@@ -697,7 +726,7 @@ describe('deploy train executor', () => {
     expect(result.warnings).toEqual([]);
   });
 
-  it('publishes on the deploy that completes a ledger group, then forgets it', async () => {
+  it('publishes on the deploy that completes a ledger group and keeps the group until the receiver has forgotten it', async () => {
     const h = harness();
     const ledger = {
       '4': {
@@ -726,8 +755,165 @@ describe('deploy train executor', () => {
         publish_release_note: true
       }
     ]);
-    // Group 5 completed and group 4 outlived the receiver's memory.
-    expect(saved).toEqual([{}]);
+    // Group 4 outlived the receiver's memory. Group 5 asked to publish and
+    // stays, so a member whose event is lost can be sent again with the
+    // same set.
+    expect(saved).toEqual([
+      {
+        '5': {
+          services: ['nftsLoop', 'teamLoop'],
+          shipped: ['teamLoop', 'nftsLoop'],
+          opened_at: new Date(START - 3_600_000).toISOString(),
+          runs: { nftsLoop: 101 },
+          unconfirmed: ['nftsLoop'],
+          publish_requested_at: expect.any(String)
+        }
+      }
+    ]);
+  });
+
+  describe('release-note event confirmation', () => {
+    const groupRun = (seen: Set<string>) => {
+      const h = harness();
+      const lookups: any[] = [];
+      const health = {
+        async check() {
+          return { status: 'healthy', findings: [], note: null };
+        },
+        async releaseNoteSeen(query: any) {
+          lookups.push(query);
+          return seen.has(String(query.runId));
+        }
+      };
+      return { h, lookups, health };
+    };
+
+    it('confirms each member whose event the release-notes loop logged', async () => {
+      const { h, lookups, health } = groupRun(new Set(['101']));
+      const saved: any[] = [];
+      const result = await h.run(
+        trainPlan(
+          withGroups(
+            [item('teamLoop', [5])],
+            [{ service: 'nftsLoop', prs: [5] }]
+          )
+        ),
+        {
+          health,
+          saveLedger: async (groups: any) => {
+            saved.push(structuredClone(groups));
+          }
+        }
+      );
+      expect(lookups).toEqual([
+        {
+          region: 'us-east-1',
+          functionName: 'releaseNotesGenerationLoop',
+          runId: 101,
+          since: START
+        }
+      ]);
+      expect(saved.at(-1)['5'].unconfirmed).toEqual([]);
+      expect(result.warnings).toEqual([]);
+    });
+
+    it('reports a member whose event never arrived, and keeps the group', async () => {
+      // prxt's third case: the deploy succeeded but its release-note event
+      // never reached the receiver.
+      const { h, health } = groupRun(new Set());
+      const saved: any[] = [];
+      const result = await h.run(
+        trainPlan(withGroups([item('teamLoop', [5]), item('nftsLoop', [5])])),
+        {
+          health,
+          saveLedger: async (groups: any) => {
+            saved.push(structuredClone(groups));
+          }
+        }
+      );
+      expect(saved.at(-1)['5']).toMatchObject({
+        publish_requested_at: expect.any(String),
+        unconfirmed: ['teamLoop', 'nftsLoop']
+      });
+      expect(result.warnings).toEqual([
+        'release-note event for teamLoop (deploy run 101, group pr-5) has not reached the release-notes loop; send it again by deploying teamLoop by hand with group pr-5 from the ledger issue',
+        'release-note event for nftsLoop (deploy run 102, group pr-5) has not reached the release-notes loop; send it again by deploying nftsLoop by hand with group pr-5 from the ledger issue'
+      ]);
+    });
+
+    it('never stops the train when the logs cannot be read', async () => {
+      const { h } = groupRun(new Set());
+      const result = await h.run(
+        trainPlan(withGroups([item('teamLoop', [5]), item('nftsLoop', [5])])),
+        {
+          health: {
+            async check() {
+              return { status: 'healthy', findings: [], note: null };
+            },
+            async releaseNoteSeen() {
+              throw new Error('AccessDenied');
+            }
+          },
+          saveLedger: async () => undefined
+        }
+      );
+      expect(result.stop).toBeNull();
+      expect(result.warnings).toEqual([
+        'release-note events not confirmed: AccessDenied'
+      ]);
+    });
+  });
+
+  it('defers a group that entered its grace day after the plan was made', async () => {
+    // prxt's case: the plan was made while the group was 7 days less a few
+    // minutes old; the Ship job reaches it after the seventh day.
+    const h = harness();
+    const opened = START - 7 * 86_400_000 + 60_000;
+    const ledger = {
+      '5': {
+        services: ['nftsLoop', 'teamLoop'],
+        shipped: ['teamLoop'],
+        opened_at: new Date(opened).toISOString()
+      }
+    };
+    const plan = trainPlan(withGroups([item('nftsLoop', [5])], [], ledger));
+    h.advance(120_000);
+    const result = await h.run(plan, {
+      ledger,
+      saveLedger: async () => undefined
+    });
+    expect(h.dispatched).toEqual([]);
+    expect(result.deferred).toEqual([
+      {
+        service: 'nftsLoop',
+        reason: `release-note group pr-5 may still be held by the receiver until ${new Date(opened + 8 * 86_400_000).toISOString()}; the train ships it after that`
+      }
+    ]);
+  });
+
+  it('stops before dispatch when another deploy started after the idle check', async () => {
+    // The idle check passes, then a deploy appears before dispatch.
+    const h = harness({ busyChecks: 0, lateBusy: true });
+    const result = await h.run(trainPlan([item('teamLoop', [1])]));
+    expect(result.stop).toMatchObject({ reason: 'busy', halt: false });
+    expect(h.dispatched).toEqual([]);
+  });
+
+  it('halts after its deploy when the dispatch replaced a waiting deploy', async () => {
+    const h = harness({ displaced: true });
+    const result = await h.run(
+      trainPlan([item('teamLoop', [1]), item('nftsLoop', [1])])
+    );
+    expect(result.shipped.map((entry: any) => entry.service)).toEqual([
+      'teamLoop'
+    ]);
+    expect(result.stop).toMatchObject({
+      reason: 'displaced-deploy',
+      halt: true,
+      service: 'teamLoop'
+    });
+    expect(result.stop.detail).toContain('https://example.test/runs/555');
+    expect(result.not_started).toEqual(['nftsLoop']);
   });
 
   it('does not publish when the group member planned to publish is deferred mid-train', async () => {
