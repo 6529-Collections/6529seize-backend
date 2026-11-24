@@ -12,8 +12,12 @@ export interface PlannedRowsPlan {
   readonly until: string;
   /** The later change that brings the rows' source. */
   readonly change: string;
-  /** Seeded rows the plan's condition matched. */
-  readonly seeded: number;
+  /**
+   * Seeded rows the plan's condition matched; null when the run didn't
+   * read them (its table isn't in the schema, its step didn't run, or the
+   * run stopped first).
+   */
+  readonly seeded: number | null;
   /**
    * Of those, rows missing from the rebuild; null when the run stopped
    * before the rows were compared.
@@ -195,7 +199,7 @@ export function judge(input: VerdictInput): Verdict {
   }
   if (input.orderLeftOut.length) {
     notes.push(
-      `${input.orderLeftOut.length} planned rebuilders' writes were left out of the order check while their module is not in this tree: ${input.orderLeftOut.join('; ')}`
+      `${input.orderLeftOut.length} planned rebuilders, of every area, had their writes left out of the order check while their module is not in this tree: ${input.orderLeftOut.join('; ')}`
     );
   }
   if (input.waitingSteps.length) {
@@ -221,7 +225,7 @@ export function judge(input: VerdictInput): Verdict {
       `${input.plannedRows.length} plans of planned rows, seeded rows only a later change rebuilds; a final run fails on every plan: ${input.plannedRows
         .map(
           (p) =>
-            `${p.table} by ${p.step}: seeded ${p.seeded}, missing ${p.missing ?? 'not compared'}, until ${p.until} (${p.change})`
+            `${p.table} by ${p.step}: seeded ${p.seeded ?? 'not read'}, missing ${p.missing ?? 'not compared'}, until ${p.until} (${p.change})`
         )
         .join('; ')}`
     );
@@ -231,7 +235,7 @@ export function judge(input: VerdictInput): Verdict {
       notes.push(
         `Planned rows of ${p.table} by ${p.step}: plan matched no seeded rows`
       );
-    } else if (p.missing === 0) {
+    } else if (p.seeded !== null && p.missing === 0) {
       notes.push(
         `Planned rows of ${p.table} by ${p.step}: the rebuild writes these rows now: drop the plan`
       );

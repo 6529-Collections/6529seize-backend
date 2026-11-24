@@ -807,6 +807,66 @@ describe('rebuild check, end to end', () => {
     });
   });
 
+  describe('a planned rebuilder whose module is not here yet', () => {
+    // It writes a table the team rebuilder reads, and the reader doesn't
+    // wait on it: the order check leaves its writes out until its module
+    // lands. Both registry checks of a run must know that, or the run
+    // stops at the first with BAD_ORDER.
+    const writer: RebuildStep = {
+      ...step('self-check.later-writer', 'rebuildTeam', ['distribution_photo']),
+      run: { module: 'src/rebuild/run/no-such-steps', exportName: 'run' },
+      origin: 'planned'
+    };
+    const reader = (id: string): RebuildStep =>
+      step(id, 'rebuildTeam', ['team'], ['distribution_photo']);
+    const leftOut =
+      '1 planned rebuilders, of every area, had their writes left out of the order check while their module is not in this tree: self-check.later-writer (distribution_photo)';
+
+    it('runs with a note, and a final run fails on the planned step', async () => {
+      const { report } = await run('mint', {
+        seed: teamSeed,
+        rebuilder: reader('self-check.reads-later'),
+        more: [writer]
+      });
+      expect(report.failures).toEqual([]);
+      expect(report.verdict).toBe('PASS');
+      expect(report.notes).toContain(leftOut);
+      expect(report.notes.join(' ')).toContain(
+        '1 planned steps were skipped because their code is not in this tree'
+      );
+      // With a plan that matches no seeded row, which a final run fails on
+      // too.
+      const final = await run('mint', {
+        seed: teamSeed,
+        rebuilder: {
+          ...reader('self-check.reads-later-final'),
+          plannedRows: [
+            {
+              table: 'team',
+              where: "collection = 'none'",
+              reason: 'no such rows',
+              until: '9999-12-31',
+              change: 'none'
+            }
+          ]
+        },
+        more: [writer],
+        final: true
+      });
+      expect(final.report.verdict).toBe('FAIL');
+      expect(final.report.notes).toContain(leftOut);
+      expect(final.report.failures.join(' ')).toContain(
+        '1 planned steps were skipped because their code is not in this tree'
+      );
+      expect(final.report.failures).toContain(
+        '1 plans of planned rows, seeded rows only a later change rebuilds; a final run fails on every plan: team by self-check.reads-later-final: seeded 0, missing 0, until 9999-12-31 (none)'
+      );
+      expect(final.report.notes).toContain(
+        'Planned rows of team by self-check.reads-later-final: plan matched no seeded rows'
+      );
+    });
+  });
+
   describe('EXEMPT tables exempt until a day', () => {
     const artdoc = AREA_MANIFESTS.find((m) => m.area === 'artdoc')!.tables;
     const tables = {

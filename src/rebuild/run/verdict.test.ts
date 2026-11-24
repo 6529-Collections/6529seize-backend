@@ -170,7 +170,9 @@ describe('the verdict', () => {
         plan({ table: 'b', seeded: 3, missing: 0 }),
         // The run stopped before the rows were compared.
         plan({ table: 'c', seeded: 3, missing: null }),
-        plan({ table: 'd', until: '2026-11-01', overdue: true })
+        plan({ table: 'd', until: '2026-11-01', overdue: true }),
+        // Not read: its table isn't in the schema, or its step didn't run.
+        plan({ table: 'e', seeded: null, missing: null })
       ]
     };
     const notes = [
@@ -178,7 +180,7 @@ describe('the verdict', () => {
       'Planned rows of b by identity.mirror: the rebuild writes these rows now: drop the plan'
     ];
     const listed =
-      /^4 plans of planned rows.*a by identity\.mirror: seeded 0, missing 0.*c by identity\.mirror: seeded 3, missing not compared.*d by identity\.mirror: seeded 2, missing 2, until 2026-11-01/;
+      /^5 plans of planned rows.*a by identity\.mirror: seeded 0, missing 0.*c by identity\.mirror: seeded 3, missing not compared.*d by identity\.mirror: seeded 2, missing 2, until 2026-11-01.*e by identity\.mirror: seeded not read, missing not compared/;
     const normal = judge({ ...clean, ...plans });
     expect(normal.failures).toEqual([]);
     expect(normal.notes).toEqual([
@@ -198,7 +200,7 @@ describe('the verdict', () => {
   it('notes the planned writes left out of the order check, in every run', () => {
     const finding = { orderLeftOut: ['waves.mirror (waves_mirror, drops)'] };
     const note =
-      "1 planned rebuilders' writes were left out of the order check while their module is not in this tree: waves.mirror (waves_mirror, drops)";
+      '1 planned rebuilders, of every area, had their writes left out of the order check while their module is not in this tree: waves.mirror (waves_mirror, drops)';
     expect(judge({ ...clean, ...finding })).toEqual({
       failures: [],
       notes: [note]

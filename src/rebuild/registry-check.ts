@@ -5,6 +5,7 @@ import {
   TableClass,
   validUntil
 } from '@/rebuild/manifest.types';
+import { modulePathProblem } from '@/rebuild/step-code';
 import { orderSteps, waitsOn } from '@/rebuild/step-order';
 import {
   partitionsOf,
@@ -430,6 +431,15 @@ function stepProblems(
         kind: 'BAD_STEP',
         area: manifest.area,
         detail: `${kind} ${step.id} has no time limit`
+      });
+    }
+    const pathProblem =
+      'module' in step.run ? modulePathProblem(step.run.module) : null;
+    if ('module' in step.run && pathProblem) {
+      problems.push({
+        kind: 'BAD_STEP',
+        area: manifest.area,
+        detail: `${kind} ${step.id}'s module ${step.run.module} ${pathProblem}: name a path in the repo without an extension`
       });
     }
   }

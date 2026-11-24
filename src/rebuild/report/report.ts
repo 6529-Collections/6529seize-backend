@@ -336,7 +336,7 @@ export function renderMarkdown(report: RunReport): string {
         `- ${p.table}: ${p.rows} planned rows missing from the rebuild${p.keys.length ? `, keys ${p.keys.join(' ')}` : ''}`,
         ...p.plans.map(
           (plan) =>
-            `  - planned by ${plan.step}: seeded ${plan.seeded}, missing ${plan.missing ?? 'not compared'}; until ${plan.until}${overdueNote(plan)}, ${plan.change}; ${plan.reason}; where ${plan.where}`
+            `  - planned by ${plan.step}: seeded ${plan.seeded ?? 'not read'}, missing ${plan.missing ?? 'not compared'}; until ${plan.until}${overdueNote(plan)}, ${plan.change}; ${plan.reason}; where ${plan.where}`
         )
       ])
     ),

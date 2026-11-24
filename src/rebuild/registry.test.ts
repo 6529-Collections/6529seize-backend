@@ -21,6 +21,42 @@ describe('rebuild registry', () => {
     expect(result.problems).toEqual([]);
   });
 
+  it('leaves out of the order checks only the planned rebuilders listed here', () => {
+    // A module that lands, moves or goes changes this list: the order
+    // checks then cover its writes.
+    expect(result.orderLeftOut).toEqual([
+      {
+        step: 'holdings.ethereum',
+        tables: [
+          'transactions',
+          'transfer_reconciliations',
+          'nft_owners',
+          'nft_owners_consolidation',
+          'nft_owners_sync_state',
+          'nfts',
+          'nfts_meme_lab',
+          'memes_extended_data',
+          'lab_extended_data',
+          'memes_seasons',
+          'artists',
+          'nfts_history',
+          'nfts_history_events',
+          'nfts_history_claims',
+          'nfts_history_blocks',
+          'aggregated_activity',
+          'aggregated_activity_memes',
+          'aggregated_activity_consolidation',
+          'aggregated_activity_memes_consolidation',
+          'owners_balances',
+          'owners_balances_memes',
+          'owners_balances_consolidation',
+          'owners_balances_memes_consolidation',
+          'meme_lab_royalties'
+        ]
+      }
+    ]);
+  });
+
   it('finds the entity, constant, retired and view names', () => {
     const origins = new Set(
       Array.from(codeTables.values()).flatMap((set) => Array.from(set))

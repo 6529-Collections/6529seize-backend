@@ -629,6 +629,34 @@ describe('checkRegistry', () => {
     ]);
   });
 
+  it('refuses a module path that leaves the repo or names its extension', () => {
+    const at = (module: string) =>
+      step('a.rows', { run: { module, exportName: 'run' }, writes: ['ids'] });
+    expect(
+      checkRegistry({
+        manifests: [
+          area(
+            'a',
+            { ids: index() },
+            {
+              seeds: [at('../outside/seed')],
+              rebuilders: [
+                at('src/ids/ids-rebuild.ts'),
+                at('/abs/ids'),
+                at('src/ids/ids-rebuild.seed')
+              ].map((s, i) => ({ ...s, id: `a.rows${i}`, writes: [] }))
+            }
+          )
+        ],
+        codeTables: code('ids')
+      }).problems.map((p) => p.detail)
+    ).toEqual([
+      "seed a.rows's module ../outside/seed leaves the repo or has an empty part: name a path in the repo without an extension",
+      "rebuilder a.rows0's module src/ids/ids-rebuild.ts carries an extension: name a path in the repo without an extension",
+      "rebuilder a.rows1's module /abs/ids is absolute: name a path in the repo without an extension"
+    ]);
+  });
+
   describe('a planned rebuilder whose module is not here yet', () => {
     // The mirror's module lands with a later change; the reader of its
     // table and the owner of a column of it don't wait on it yet.

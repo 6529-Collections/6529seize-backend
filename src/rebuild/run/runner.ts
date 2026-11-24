@@ -151,6 +151,8 @@ interface FoundPlans {
   /** Every planned row's key, one per row, as the snapshots key them. */
   keys: string[];
   plans: {
+    /** The manifest's plan. */
+    entry: PlannedRows;
     /** What the report shows; `missing` is filled in by the comparison. */
     plan: Omit<PlannedRowsPlan, 'missing'> & { missing: number | null };
     /** The keys of the rows its condition matched, one per row. */
@@ -277,8 +279,18 @@ class RebuildRun {
   private readonly day = this.o.today ?? runDay(this.startedAt);
   /** EXEMPT tables exempt only until a day, against the run's day. */
   private readonly exemptTablesUntil = exemptUntil(this.o.manifests, this.day);
-  /** Whether a step's code is in this tree. */
-  private readonly stepCodeHere = stepCodeIn(this.o.repoRoot);
+  /**
+   * Whether each step's code is in this tree, decided once at the start:
+   * a module that appears while the run goes doesn't make a step left out
+   * of the order check run.
+   */
+  private readonly codeHere: ReadonlyMap<string, boolean> = new Map(
+    this.o.manifests
+      .flatMap((m) => [...m.seeds, ...m.rebuilders])
+      .map((step) => [step.id, stepCodeIn(this.o.repoRoot)(step)])
+  );
+  private readonly stepCodeHere = (step: RebuildStep): boolean =>
+    this.codeHere.get(step.id) ?? stepCodeIn(this.o.repoRoot)(step);
   /**
    * Owned columns this run doesn't rebuild, because their owner is outside
    * the area or skipped: left out of the row comparison.
@@ -1300,6 +1312,11 @@ class RebuildRun {
         snapshotRows(table, rows, primaryKey, new Set(this.volatileOf(table)))
           .keys;
       for (const [step, plan] of plans) {
+        if (!rebuilt) {
+          this.notes.push(
+            `Planned rows of ${table} by ${step.id}: its table isn't in this schema`
+          );
+        }
         const rows = rebuilt ? await readWhere(step.id, table, plan.where) : [];
         if (!rows) return false;
         for (const other of rebuilt ? (writers.get(table) ?? []) : []) {
@@ -1320,15 +1337,10 @@ class RebuildRun {
         }
         const keys = keysOf(rows);
         found.plans.push({
+          entry: plan,
           plan: {
-            step: step.id,
-            where: plan.where,
-            reason: plan.reason,
-            until: plan.until,
-            change: plan.change,
-            seeded: keys.length,
-            missing: null,
-            overdue: this.day > plan.until
+            ...this.planOf(step.id, plan),
+            seeded: rebuilt ? keys.length : null
           },
           keys
         });
@@ -1808,20 +1820,48 @@ class RebuildRun {
     });
   }
 
+  /** A plan as the report shows it before its rows are read. */
+  private planOf(step: string, plan: PlannedRows): PlannedRowsPlan {
+    return {
+      step,
+      where: plan.where,
+      reason: plan.reason,
+      until: plan.until,
+      change: plan.change,
+      seeded: null,
+      missing: null,
+      overdue: this.day > plan.until
+    };
+  }
+
   /**
-   * Every plan of planned rows by table, with the planned rows missing
-   * from the rebuild (none before the comparison).
+   * Every plan of the run's rebuilders, from the manifests, by table: with
+   * the seeded rows it matched and the planned rows missing from the
+   * rebuild once the run has read them, and marked overdue from its day
+   * either way.
    */
   private plannedRowsFound(): RunReport['tables']['plannedRows'] {
-    return Array.from(this.plannedRows)
+    const byTable = new Map<string, PlannedRowsPlan[]>();
+    for (const step of this.scopeManifests.flatMap((m) => m.rebuilders)) {
+      for (const entry of step.plannedRows ?? []) {
+        const found = this.plannedRows
+          .get(entry.table)
+          ?.plans.find((p) => p.entry === entry)?.plan;
+        byTable.set(entry.table, [
+          ...(byTable.get(entry.table) ?? []),
+          found ?? this.planOf(step.id, entry)
+        ]);
+      }
+    }
+    return Array.from(byTable)
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([table, found]) => {
+      .map(([table, plans]) => {
         const diff = this.tableDiffs.find((d) => d.table === table);
         return {
           table,
           rows: diff?.plannedRows ?? 0,
           keys: diff?.planned ?? [],
-          plans: found.plans.map(({ plan }) => plan)
+          plans
         };
       });
   }

@@ -208,6 +208,10 @@ export const mintManifest: AreaManifest = {
     While its module isn't here, the order checks leave its writes out: a
     reader of a table it writes, and an owner of columns of it, needn't
     wait on it yet, and the report notes each such step with its tables.
+    Its own reads are still checked: it must wait on the writers of the
+    tables it reads. Whether its module is here is decided once, when the
+    run starts. A module path must be a path in the repo without an
+    extension, spelled as the tree spells it.
     Once the module is here, they are checked like any other step's. An
     unknown id in its `after` or `before` still fails. A final run also
     fails on a step still marked planned whose code is here: nothing
