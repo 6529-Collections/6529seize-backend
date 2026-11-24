@@ -89,9 +89,11 @@ const MANIFEST_SCHEMA = '6529.profile-site-export.manifest.v1';
 export const SNAPSHOT_GAP_LIMIT_MINUTES = 90;
 /**
  * A real run's snapshot must be at least this long after frozenAt on the
- * replica's clock, so writes made before the freeze have reached it.
+ * replica's clock, so writes made before the freeze have reached it, and a
+ * write let in before the freeze that waited on a lock (InnoDB waits up to
+ * 50 s) has committed or rolled back.
  */
-export const MIN_SNAPSHOT_GAP_SECONDS = 120;
+export const MIN_SNAPSHOT_GAP_SECONDS = 300;
 /** More late writes than this can't be acknowledged one by one. */
 const MAX_WRITES_AFTER_FREEZE = 100;
 /** Below this much time left, the run stops with its progress. */
@@ -470,7 +472,7 @@ function boundFor(
 
 /** What to do when the lag can't be trusted: the same in every refusal. */
 function unknownLagSteps(lagCase: ReplicaLagAccepted, only: string): string {
-  return `Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (${acceptanceExample(lagCase)}) only for a reading Monday's rehearsal also showed${only}, and only with the switch owner's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it.`;
+  return `Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (${acceptanceExample(lagCase)}) only for a reading Monday's rehearsal also showed${only}, and only with the switch owner's agreement: the run then relies on the 5-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it.`;
 }
 
 /**
