@@ -63,13 +63,33 @@ Examples from the repository root:
 `6529 run build` remains the comprehensive developer build: it generates the
 deploy configuration, runs the full Jest suite, compiles the backend, and
 copies runtime assets. The PR workflow runs those same tests separately with
-four parallel jobs with a controlled shard inventory. A separate job runs
+six parallel jobs balanced by recorded suite runtimes, with two Jest workers
+per job. A separate job runs
 lint, formatting, generated-file verification, and the backend/API builds;
 it uses the internal `6529 run build:ci` lifecycle to compile and copy assets
 without running Jest a second time. The final `Build backend and API` check
-requires every job to pass and verifies that the four shard inventories cover
-the complete test suite exactly once.
+requires every job to pass and verifies that the six Jest result inventories
+cover the complete discovered suite exactly once.
 Developers should normally use `6529 run build`, not `build:ci`.
+
+The PR workflow uploads a `timings-N.json` file with each shard's inventory.
+To refresh the committed timing snapshot when shard durations drift, download
+the artifacts from a successful full run with the same runner and worker
+configuration. Run the following from the repository root with that run's ID
+in `run_id` and an empty download directory in `timing_dir`:
+
+```bash
+gh run download "$run_id" --pattern 'pr-ci-jest-inventory-*' --dir "$timing_dir"
+jq -nS --arg run_id "$run_id" \
+  '{sourceRunId: $run_id, durationsMs: (reduce inputs as $shard ({}; . + $shard))}' \
+  "$timing_dir"/pr-ci-jest-inventory-*/timings-*.json > "$timing_dir/snapshot.json"
+cp "$timing_dir/snapshot.json" scripts/pr-ci-jest-timings.json
+```
+
+Jest discovers the test files on each run. The snapshot supplies runtime
+estimates for matching paths, and suites without a usable estimate are
+assigned using a default. Removed paths drop out with discovery. The initial
+snapshot uses durations printed in the four-shard baseline's Jest logs.
 
 The API has its own package and lockfile, so run API commands from its package
 directory:
