@@ -30,6 +30,7 @@ import { ApiIdentity } from '../generated/models/ApiIdentity';
 import { profileActivityLogsDb } from '../../../profileActivityLogs/profile-activity-logs.db';
 import {
   assertIdentityNotFrozen,
+  assertIdentityNotFrozenAtCommit,
   isIdentityFrozen
 } from '../../../identity-freeze/identity-freeze';
 
@@ -54,6 +55,16 @@ export function isFrozenProxyActionType(type: ProfileProxyActionType): boolean {
     type === ProfileProxyActionType.ALLOCATE_REP ||
     type === ProfileProxyActionType.ALLOCATE_CIC
   );
+}
+
+/** The freeze check again at commit, for a REP or NIC allocation's write. */
+function assertProxyActionNotFrozenAtCommit(
+  type: ProfileProxyActionType,
+  connection: ConnectionWrapper<any>
+): void {
+  if (isFrozenProxyActionType(type)) {
+    assertIdentityNotFrozenAtCommit(connection);
+  }
 }
 
 const ACTION_HAVE_CREDIT: Record<ProfileProxyActionType, boolean> = {
@@ -394,6 +405,10 @@ export class ProfileProxyApiService {
   ): Promise<ProfileProxyActionEntity> {
     return await this.profileProxiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        assertProxyActionNotFrozenAtCommit(
+          profileProxyAction.action_type,
+          connection
+        );
         const { actionId } =
           await this.profileProxiesDb.insertProfileProxyAction({
             profileProxyAction,
@@ -611,6 +626,7 @@ export class ProfileProxyApiService {
     const is_active = !action.revoked_at;
     return await this.profileProxiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        assertProxyActionNotFrozenAtCommit(action.action_type, connection);
         await this.profileProxiesDb.acceptProfileProxyAction({
           action_id,
           connection,
@@ -655,6 +671,7 @@ export class ProfileProxyApiService {
     });
     return await this.profileProxiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        assertProxyActionNotFrozenAtCommit(action.action_type, connection);
         await this.profileProxiesDb.rejectProfileProxyAction({
           action_id,
           connection
@@ -698,6 +715,7 @@ export class ProfileProxyApiService {
     });
     return await this.profileProxiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        assertProxyActionNotFrozenAtCommit(action.action_type, connection);
         await this.profileProxiesDb.revokeProfileProxyAction({
           action_id,
           connection
@@ -742,6 +760,7 @@ export class ProfileProxyApiService {
     const is_active = !!action.accepted_at && !action.rejected_at;
     return await this.profileProxiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        assertProxyActionNotFrozenAtCommit(action.action_type, connection);
         await this.profileProxiesDb.restoreProfileProxyAction({
           action_id,
           connection,
@@ -844,6 +863,10 @@ export class ProfileProxyApiService {
 
     return await this.profileProxiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        assertProxyActionNotFrozenAtCommit(
+          profileProxyAction.action_type,
+          connection
+        );
         await this.profileProxiesDb.updateProfileProxyAction({
           action_id,
           credit_amount,

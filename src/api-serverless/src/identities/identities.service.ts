@@ -38,7 +38,10 @@ import { wavesApiDb } from '@/api/waves/waves.api.db';
 import { ApiProfileClassification } from '@/api/generated/models/ApiProfileClassification';
 import { getLevelFromScore } from '@/profiles/profile-level';
 import { equalIgnoreCase } from '@/strings';
-import { assertIdentityNotFrozen } from '@/identity-freeze/identity-freeze';
+import {
+  assertIdentityNotFrozen,
+  assertIdentityNotFrozenAtCommit
+} from '@/identity-freeze/identity-freeze';
 import { enums } from '@/enums';
 import { IdentityEntity } from '@/entities/IIdentity';
 import { Time } from '@/time';
@@ -229,6 +232,7 @@ export class IdentitiesService {
     }
     return await this.identitiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        assertIdentityNotFrozenAtCommit(connection);
         const profile = await this.identityFetcher
           .getIdentityAndConsolidationsByIdentityKey(
             { identityKey: identity },
@@ -531,6 +535,7 @@ export class IdentitiesService {
         Object.values(allIdentitiesAndProfiles).some((it) => !it.profile)
       ) {
         assertIdentityNotFrozen('nomination');
+        assertIdentityNotFrozenAtCommit(ctx.connection, 'nomination');
       }
       const newIdentities = addressesMissingIdentities.map<IdentityEntity>(
         (address) => ({
