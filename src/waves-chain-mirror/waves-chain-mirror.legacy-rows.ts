@@ -57,10 +57,14 @@ export const PLANNED_UNTIL = '2026-12-04';
  *
  * Only tables the mirror writes are planned, and no primary key. Not
  * listed:
- * - competition_pauses: the mirror writes no pause rows (the chain's
- *   imported pauses aren't written yet), so 6529.io's stay as seeded;
- * - waves.serial_no: waves' primary key (auto-increment); the rebuild
- *   check matches rows whose key differs by their other columns.
+ * - competition_pauses: the mirror writes no pause rows for any decision,
+ *   imported or made on the chain (the chain index reads the chain's
+ *   pauses; nothing writes them to this table yet), so 6529.io's stay as
+ *   seeded;
+ * - waves.serial_no, waves' primary key (auto-increment): a rebuild leaves
+ *   it to MySQL, so it numbers the waves it writes anew. serial_no, and
+ *   the order of wave lists, which is by serial_no, differ in a rebuilt
+ *   database. The rebuild check doesn't excuse this yet.
  */
 export interface PlannedRows {
   readonly table: string;
