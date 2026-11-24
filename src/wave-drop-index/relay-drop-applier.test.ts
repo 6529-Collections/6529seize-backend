@@ -18,7 +18,10 @@ import {
   WAIT_RETRY_MS,
   RelayApplyStore,
   RelayDropApplier,
-  RelayDropWrites
+  RelayDropWrites,
+  recordsWaveIdOf,
+  STAYS_ON_SITE_REASON,
+  WaveOnChain
 } from './relay-drop-applier';
 
 let nextSeq = 1;
@@ -69,7 +72,15 @@ class FakeStore implements RelayApplyStore {
   // `${dropId} ${author}`
   tombstones = new Set<string>();
   reservations = new Set<string>();
+  // Whether the chain holds each wave; a wave not listed has moved.
+  onChain = new Map<string, WaveOnChain>();
+  readonly wavesAsked: string[] = [];
   constructor(private readonly events: IngestedEvent[]) {}
+
+  async waveOnChain(wave: string) {
+    this.wavesAsked.push(wave);
+    return this.onChain.get(wave) ?? 'moved';
+  }
 
   async hasTombstone(dropId: string, author: string) {
     return this.tombstones.has(`${dropId} ${author.toLowerCase()}`);
@@ -456,5 +467,125 @@ describe('RelayDropApplier', () => {
     const report = await new RelayDropApplier(store, writes).applyPending(RUN);
     expect(report.applied).toBe(1);
     expect(calls.filter((c) => c[0] === 'create')).toHaveLength(1);
+  });
+});
+
+describe('RelayDropApplier and waves that stay on 6529.io', () => {
+  const kinds = () => [
+    anEvent(DeviceEventKind.POST, POST),
+    anEvent(DeviceEventKind.EDIT, { parts: [] }, ['drop-1']),
+    anEvent(DeviceEventKind.TOMBSTONE, null, ['drop-2']),
+    anEvent(DeviceEventKind.REACT, { on: true, reaction: ':fire:' }, ['drop-3'])
+  ];
+
+  it('writes nothing of any kind into a wave the chain does not hold', async () => {
+    const events = kinds();
+    const store = new FakeStore(events);
+    store.onChain.set('wave-1', 'stays');
+    const { writes, calls } = aWrites();
+    const late = () => events[events.length - 1].received_at + POST_WAIT_MS;
+    const report = await new RelayDropApplier(
+      store,
+      writes,
+      late,
+      null
+    ).applyPending(RUN);
+    expect(report).toMatchObject({ applied: 0, refused: 4, retry: 0 });
+    expect(store.marks.map((m) => [m[1], m[2], m[3]])).toEqual(
+      events.map(() => ['refused', STAYS_ON_SITE_REASON, null])
+    );
+    // Not even the grant or a stale reservation is touched.
+    expect(calls).toEqual([]);
+    expect(store.released).toEqual([]);
+  });
+
+  it('waits, without counting a try, while the chain index has not finished a full read', async () => {
+    const events = kinds();
+    const store = new FakeStore(events);
+    store.onChain.set('wave-1', 'unknown');
+    const { writes, calls } = aWrites();
+    const late = () => events[events.length - 1].received_at + POST_WAIT_MS;
+    const report = await new RelayDropApplier(
+      store,
+      writes,
+      late,
+      null
+    ).applyPending(RUN);
+    expect(report).toMatchObject({ applied: 0, refused: 0, retry: 4 });
+    expect(store.marks.map((m) => [m[1], m[2]])).toEqual(
+      events.map(() => [
+        'waiting',
+        'the chain index has not finished reading the chain'
+      ])
+    );
+    expect(store.waits.map((w) => w[1])).toEqual(
+      events.map(() => late() + WAIT_RETRY_MS)
+    );
+    expect(calls).toEqual([]);
+  });
+
+  it('waits for a wave the index does not hold yet for an hour from when the event was first seen, then refuses it', async () => {
+    const post = anEvent(DeviceEventKind.POST, POST);
+    const { writes, calls } = aWrites();
+    const early = new FakeStore([post]);
+    early.onChain.set('wave-1', 'stays');
+    const soon = () => post.received_at + POST_WAIT_MS - 1;
+    await new RelayDropApplier(early, writes, soon, null).applyPending(RUN);
+    expect(early.marks[0].slice(1, 3)).toEqual([
+      'waiting',
+      'the chain index does not hold the wave yet'
+    ]);
+    const after = new FakeStore([post]);
+    after.onChain.set('wave-1', 'stays');
+    const later = () => post.received_at + POST_WAIT_MS;
+    await new RelayDropApplier(after, writes, later, null).applyPending(RUN);
+    expect(after.marks[0].slice(1, 3)).toEqual([
+      'refused',
+      STAYS_ON_SITE_REASON
+    ]);
+    expect(calls).toEqual([]);
+  });
+
+  it("refuses 6529.io's records wave even where the chain holds it", async () => {
+    const events = kinds();
+    const store = new FakeStore(events);
+    const { writes, calls } = aWrites();
+    const report = await new RelayDropApplier(
+      store,
+      writes,
+      () => Date.now(),
+      recordsWaveIdOf({ SIGNED_RECORDS_WAVE_ID: ' WAVE-1 ' })
+    ).applyPending(RUN);
+    expect(report).toMatchObject({ applied: 0, refused: 4 });
+    expect(new Set(store.marks.map((m) => m[2]))).toEqual(
+      new Set(["the wave stays on 6529.io: it is 6529.io's records wave"])
+    );
+    expect(store.wavesAsked).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it('asks about the wave the event names, in lowercase, and writes into a wave the chain holds', async () => {
+    const edit = anEvent(DeviceEventKind.EDIT, { parts: [] }, ['drop-1'], {
+      wave: 'Wave-1'
+    });
+    const store = new FakeStore([edit]);
+    const { writes, calls } = aWrites();
+    const report = await new RelayDropApplier(
+      store,
+      writes,
+      () => Date.now(),
+      'records-wave'
+    ).applyPending(RUN);
+    expect(report.applied).toBe(1);
+    expect(store.wavesAsked).toEqual(['wave-1']);
+    expect(calls.map((c) => c[0])).toEqual(['grant', 'update']);
+  });
+
+  it('reads the records wave from SIGNED_RECORDS_WAVE_ID', () => {
+    expect(recordsWaveIdOf({})).toBeNull();
+    expect(recordsWaveIdOf({ SIGNED_RECORDS_WAVE_ID: '  ' })).toBeNull();
+    expect(recordsWaveIdOf({ SIGNED_RECORDS_WAVE_ID: ' AB-Cd ' })).toBe(
+      'ab-cd'
+    );
   });
 });

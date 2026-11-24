@@ -31,6 +31,15 @@ import { IngestedEvent } from './drop-index.db';
  *
  * History (event_origin IMPORT: claimed before switch-on) is written with
  * no notifications or pushes; websocket updates go out as for any write.
+ *
+ * Only waves that moved to the 6529 chain take relay events: a wave the
+ * chain holds, by the chain index's mapping. A wave that stays on 6529.io
+ * (one the chain doesn't hold, and always 6529.io's records wave,
+ * SIGNED_RECORDS_WAVE_ID) keeps its drops as 6529.io writes them; its relay
+ * events are refused. Until the index has finished a full read, events
+ * wait; a wave the index doesn't hold yet waits up to POST_WAIT_MS from
+ * when the event was first seen (a wave just made on the chain), then the
+ * event is refused.
  */
 
 export const MAX_APPLY_ATTEMPTS = 5;
@@ -81,8 +90,17 @@ export interface RelayDropWrites {
   ): Promise<void>;
 }
 
+/**
+ * Whether the 6529 chain holds a wave: `moved` (the chain index maps it),
+ * `stays` (the index has finished a full read and doesn't), `unknown`
+ * (the index hasn't finished one).
+ */
+export type WaveOnChain = 'moved' | 'stays' | 'unknown';
+
 /** What the applier needs of the index's table. */
 export interface RelayApplyStore {
+  /** Whether the chain holds the wave (waves-chain-mapping.ts). */
+  waveOnChain(wave: string): Promise<WaveOnChain>;
   /**
    * Relay-only events to write, oldest first: those due at `now`, a share
    * per author, none behind a waiting event of the same drop.
@@ -164,11 +182,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
+/** 6529.io's records wave (SIGNED_RECORDS_WAVE_ID), or null when unset. */
+export function recordsWaveIdOf(
+  env: Readonly<Record<string, string | undefined>> = process.env
+): string | null {
+  return env.SIGNED_RECORDS_WAVE_ID?.trim().toLowerCase() || null;
+}
+
+export const STAYS_ON_SITE_REASON =
+  'the wave stays on 6529.io: the 6529 chain does not hold it';
+
 export class RelayDropApplier {
   constructor(
     private readonly store: RelayApplyStore,
     private readonly writes: RelayDropWrites,
-    private readonly now: () => number = () => Date.now()
+    private readonly now: () => number = () => Date.now(),
+    private readonly recordsWaveId: string | null = recordsWaveIdOf()
   ) {}
 
   async applyPending({
@@ -269,8 +298,33 @@ export class RelayDropApplier {
     return thrown;
   }
 
+  /**
+   * Refuses an event of a wave that stays on 6529.io, before anything is
+   * written. The event's wave is the one written: a post's body must name
+   * it, an edit's drop must be in it (relay-drop-writes.ts), and a delete's
+   * or reaction's signature is checked against its drop's stored wave.
+   */
+  private async assertWaveMoved(event: IngestedEvent): Promise<void> {
+    const wave = event.wave.trim().toLowerCase();
+    if (this.recordsWaveId !== null && wave === this.recordsWaveId) {
+      throw new Refused(
+        "the wave stays on 6529.io: it is 6529.io's records wave"
+      );
+    }
+    const onChain = await this.store.waveOnChain(wave);
+    if (onChain === 'moved') return;
+    if (onChain === 'unknown') {
+      throw new Wait('the chain index has not finished reading the chain');
+    }
+    if (this.now() - event.received_at < POST_WAIT_MS) {
+      throw new Wait('the chain index does not hold the wave yet');
+    }
+    throw new Refused(STAYS_ON_SITE_REASON);
+  }
+
   /** Writes one event; returns the drop it wrote or touched. */
   private async apply(event: IngestedEvent): Promise<string | null> {
+    await this.assertWaveMoved(event);
     if (event.grant_check !== 'known' && event.grant_check !== 'signature') {
       // A contract wallet's grant 6529.io never verified.
       throw new Refused("the event's grant could not be verified here");

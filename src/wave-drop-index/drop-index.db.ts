@@ -8,7 +8,12 @@ import {
 import { DeviceEventKind } from '@/api/device-signing/device-event';
 import { DeviceGrantEntity } from '@/entities/IDeviceGrant';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
+import {
+  chainIndexReady,
+  wavesOnChain
+} from '@/waves-chain-index/waves-chain-mapping';
 import { CrpCursor } from '@/wave-relay-publish/crp-client';
+import type { WaveOnChain } from './relay-drop-applier';
 
 export type EventOrigin = 'IMPORT' | 'OPERATION';
 
@@ -333,6 +338,17 @@ export class DropIndexDb extends LazyDbAccessCompatibleService {
       { eventId }
     );
     return row !== null;
+  }
+
+  /**
+   * Whether the 6529 chain holds the wave, by the chain index's mapping
+   * (waves-chain-mapping.ts): unknown until the index has finished a full
+   * read.
+   */
+  async waveOnChain(wave: string): Promise<WaveOnChain> {
+    if (!(await chainIndexReady(this.db))) return 'unknown';
+    const held = await wavesOnChain(this.db, [wave]);
+    return held.has(wave.trim().toLowerCase()) ? 'moved' : 'stays';
   }
 
   /** Copies that failed a check, after `id` (a fix checks them again). */
