@@ -46,10 +46,30 @@ const MAX_FILE_BYTES = 1_500_000_000;
 /** How long one file may take, the largest archive included. */
 export const FILE_READ_TIMEOUT_MS = 10 * 60_000;
 
+/** Tries of one read that fails before any answer. */
+const FILE_READ_TRIES = 3;
+
+/**
+ * The response to a GET, tried again when the connection fails before an
+ * answer: between two files the reader may hash and write for longer than
+ * a server keeps an idle connection, so the next GET can meet a socket the
+ * server has just closed (ECONNRESET). A timeout is not tried again.
+ */
+async function get(url: string): Promise<Response> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fetch(url, {
+        signal: AbortSignal.timeout(FILE_READ_TIMEOUT_MS)
+      });
+    } catch (error) {
+      const timedOut = (error as Error)?.name === 'TimeoutError';
+      if (timedOut || attempt >= FILE_READ_TRIES) throw error;
+    }
+  }
+}
+
 async function fetchFile(url: string): Promise<Uint8Array | null> {
-  const response = await fetch(url, {
-    signal: AbortSignal.timeout(FILE_READ_TIMEOUT_MS)
-  });
+  const response = await get(url);
   if (response.status === 404) return null;
   if (!response.ok) {
     throw new Error(`Reading ${url} answered ${response.status}`);

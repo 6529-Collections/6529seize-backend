@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { PoolConnection } from 'mysql';
@@ -263,6 +264,32 @@ describe('the drop archive sources', () => {
     expect(logged).toHaveBeenCalled();
     expect(JSON.stringify(logged.mock.calls)).not.toContain(secret);
     expect(JSON.stringify(logged.mock.calls)).not.toContain('insert into');
+  });
+
+  it('read a file again when the connection is reset before an answer', async () => {
+    let requests = 0;
+    const server = http.createServer((request, response) => {
+      requests++;
+      if (requests === 1) {
+        request.socket.destroy();
+        return;
+      }
+      response.writeHead(200);
+      response.end('the index');
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, '127.0.0.1', resolve)
+    );
+    try {
+      const { port } = server.address() as { port: number };
+      const bytes = await httpDropArchiveFiles(
+        `http://127.0.0.1:${port}`
+      ).archiveIndex();
+      expect(Buffer.from(bytes!).toString('utf8')).toBe('the index');
+      expect(requests).toBe(2);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
   });
 
   it('refuse a document that does not match its CID when laying out', () => {
