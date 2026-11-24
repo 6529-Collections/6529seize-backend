@@ -230,13 +230,15 @@ async function insertRow(
 }
 
 /**
- * The wide identity's rows (subs.wide-identity.ts), as the identity
- * mirror's tables hold them: its identity, under its consolidation key, and
- * each wallet's key. The top-up loop reads the sender's key from here.
+ * The wide identity's rows (subs.wide-identity.ts), as 6529.io holds them:
+ * its identity, under its consolidation key, its profile (an identity with
+ * a profile id has its profile) and each wallet's key. The top-up loop
+ * reads the sender's key from here. Plain inserts: a row another fixture
+ * already wrote fails the seed instead of being skipped.
  */
 async function seedWideIdentity(): Promise<void> {
   await sqlExecutor.execute(
-    `insert ignore into ${IDENTITIES_TABLE}
+    `insert into ${IDENTITIES_TABLE}
        (consolidation_key, profile_id, primary_address, handle,
         normalised_handle, tdh, rep, cic, level_raw, classification,
         xtdh, produced_xtdh, granted_xtdh, xtdh_rate, basetdh_rate)
@@ -249,9 +251,22 @@ async function seedWideIdentity(): Promise<void> {
       handle: WIDE_PROFILE_ID
     }
   );
+  await sqlExecutor.execute(
+    `insert into ${PROFILES_TABLE}
+       (external_id, handle, normalised_handle, primary_wallet, created_at,
+        created_by_wallet, classification)
+     values (:profileId, :handle, :handle, :wallet, :createdAt, :wallet,
+        'PSEUDONYM')`,
+    {
+      profileId: WIDE_PROFILE_ID,
+      handle: WIDE_PROFILE_ID,
+      wallet: WIDE_WALLETS[0],
+      createdAt: new Date(SEEDED_AT)
+    }
+  );
   for (const wallet of WIDE_WALLETS) {
     await sqlExecutor.execute(
-      `insert ignore into ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key)
+      `insert into ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key)
        values (:wallet, :key)`,
       { wallet, key: WIDE_KEY }
     );

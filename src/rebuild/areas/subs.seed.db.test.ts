@@ -35,7 +35,12 @@ import {
   SubscriptionsSeedDeps,
   seedSubscriptionsSwitch
 } from './subs.seed';
-import { WIDE_KEY, WIDE_PRINCIPAL, WIDE_TOP_UP } from './subs.wide-identity';
+import {
+  WIDE_KEY,
+  WIDE_PRINCIPAL,
+  WIDE_TOP_UP,
+  WIDE_WALLETS
+} from './subs.wide-identity';
 
 jest.mock('@/subscriptionsDaily/subscription-cache', () => ({
   invalidateUpcomingSubscriptionCaches: jest.fn()
@@ -443,6 +448,22 @@ describeWithSeed('the subscriptions rebuild check', [], () => {
       )
     ).toEqual([{ consolidation_key: WIDE_KEY }]);
     expect(await queuedTopUps()).toEqual([queued]);
+    // Every wide wallet is keyed to the wide identity, and the records
+    // service's wallet keeps its own key.
+    const keyOf = async (address: string) =>
+      (
+        await sqlExecutor.execute<{ consolidation_key: string }>(
+          `select consolidation_key from address_consolidation_keys
+            where address = :address`,
+          { address }
+        )
+      ).map((row) => row.consolidation_key);
+    for (const wallet of WIDE_WALLETS) {
+      expect(await keyOf(wallet)).toEqual([WIDE_KEY]);
+    }
+    expect(await keyOf(env.SIGNED_RECORDS_SERVICE_WALLET as string)).toEqual([
+      env.SIGNED_RECORDS_SERVICE_WALLET
+    ]);
     // With the identity tables there and the truth, the seed closed every
     // record log entry it wrote.
     expect(await openLanes()).toEqual([]);

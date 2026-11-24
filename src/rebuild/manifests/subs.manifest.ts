@@ -105,8 +105,10 @@ const SUBS_SEED: RebuildStep = {
     ...LEGACY_WRITES,
     'subscriptions_top_up_latest_block',
     'transactions_processed_subscriptions_blocks',
-    // The wide identity (subs.wide-identity.ts) and its wallets' key.
+    // The wide identity (subs.wide-identity.ts), its profile and its
+    // wallets' key.
     'identities',
+    'profiles',
     'address_consolidation_keys'
   ],
   // The probe wallets' keys.
