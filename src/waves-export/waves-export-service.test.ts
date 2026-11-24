@@ -305,6 +305,13 @@ describe('WavesExport', () => {
       dropPageSize: 2,
       concurrency: 2,
       bothMetric: false,
+      replicaLag: {
+        checked_by: 'export',
+        readers: 2,
+        worst_lag_ms: 40,
+        worst_lag_age_ms: 5,
+        read_at: '2026-11-25T00:06:00.000Z'
+      },
       now: () => T_W + 1,
       log: (message) => messages.push(message)
     }).run();
@@ -457,7 +464,14 @@ describe('WavesExport', () => {
       both_metric: false,
       failed_waves: [
         { id: 'w-broken', error: 'Error: Wave w-broken not found' }
-      ]
+      ],
+      replica_lag: {
+        checked_by: 'export',
+        readers: 2,
+        worst_lag_ms: 40,
+        worst_lag_age_ms: 5,
+        read_at: '2026-11-25T00:06:00.000Z'
+      }
     });
     expect(messages.some((message) => message.startsWith('== drops'))).toBe(
       true
@@ -488,6 +502,8 @@ describe('WavesExport', () => {
       }).run();
     const resumed = await run(true, new FakeSource());
     expect(resumed.counts).toMatchObject({ drops: 0, drop_waves_kept: 1 });
+    // Each run records its own replica lag check: none given, none recorded.
+    expect(raw('export.json').replica_lag).toBeNull();
     // The waves stage's failures carry over from export.json.
     expect(resumed.failed_waves.map((wave) => wave.id)).toEqual(['w-broken']);
     const again = await run(false, flaky);

@@ -1,6 +1,7 @@
 import { compactDrop } from './waves-export.compact';
 import { groupCriteriaReasons, groupRaterKeys } from './waves-export.groups';
 import { compareCodePoints } from './waves-export.json';
+import type { ReplicaLagRecord } from './waves-export.replica-lag';
 import {
   ExportActiveEntry,
   ExportSignedDrop,
@@ -48,6 +49,8 @@ export interface WavesExportOptions {
   readonly resumeDrops?: boolean;
   /** Wait before trying a failed read again (tests pass 0). */
   readonly retryDelayMs?: number;
+  /** The replica lag checked at the start (null for a rehearsal). */
+  readonly replicaLag?: ReplicaLagRecord | null;
   readonly now?: () => number;
   readonly log: (message: string) => void;
 }
@@ -249,6 +252,7 @@ export class WavesExport {
     await raw.save('export.json', {
       ...summary,
       source: "6529.io's database (a read replica at the waves freeze)",
+      replica_lag: this.options.replicaLag ?? null,
       wave_subset: this.options.waveIds,
       started_at: startedAt,
       finished_at: (this.options.now ?? Date.now)()

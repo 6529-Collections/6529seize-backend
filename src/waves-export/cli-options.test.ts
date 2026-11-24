@@ -45,8 +45,26 @@ describe('parseWavesExportCommand', () => {
       concurrency: 4,
       bothMetric: false,
       resume: false,
-      allowFailedWaves: false
+      allowFailedWaves: false,
+      replicaLagChecked: false
     });
+  });
+
+  it('reads --replica-lag-checked for a run after the freeze', () => {
+    expect(
+      parseWavesExportCommand(
+        [
+          '--out',
+          'OUT',
+          '--revision',
+          REVISION,
+          '--freeze-at',
+          '2026-11-25T00:00:00Z',
+          '--replica-lag-checked'
+        ],
+        {}
+      )
+    ).toMatchObject({ freezeMs: T_W, replicaLagChecked: true });
   });
 
   it('takes the revision and freeze time from the environment', () => {
@@ -137,6 +155,17 @@ describe('parseWavesExportCommand', () => {
     [
       ['--out', 'O', '--revision', REVISION, '--rehearsal', '--bogus'],
       'Unknown argument'
+    ],
+    [
+      [
+        '--out',
+        'O',
+        '--revision',
+        REVISION,
+        '--rehearsal',
+        '--replica-lag-checked'
+      ],
+      'a rehearsal checks no lag'
     ],
     [['--out'], 'needs a value']
   ])('refuses %j', (args, message) => {
