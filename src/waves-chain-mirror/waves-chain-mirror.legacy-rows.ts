@@ -54,6 +54,13 @@ export const PLANNED_UNTIL = '2026-12-04';
  * read the chain index's and the mirror's tables); `rows` says which they
  * are. `columns` null: the whole rows. `change` names the scheduled work
  * that brings the rows' source, or says that none is scheduled yet.
+ *
+ * Only tables the mirror writes are planned, and no primary key. Not
+ * listed:
+ * - competition_pauses: the mirror writes no pause rows (the chain's
+ *   imported pauses aren't written yet), so 6529.io's stay as seeded;
+ * - waves.serial_no: waves' primary key (auto-increment); the rebuild
+ *   check matches rows whose key differs by their other columns.
  */
 export interface PlannedRows {
   readonly table: string;
@@ -150,14 +157,6 @@ export function mirrorPlannedRows(input: {
       change: NOT_SCHEDULED
     },
     {
-      table: 'waves',
-      where: 'true',
-      rows: 'all',
-      columns: ['serial_no'],
-      reason: "auto-increment: 6529.io's numbering, not the chain's",
-      change: NOT_SCHEDULED
-    },
-    {
       table: 'drops',
       where: `id in (select description_drop_id from waves where id in (${IMPORTED_WAVES})) or id in (${IMPORTED_ENTRY_DROPS})`,
       rows: "imported waves' description drops and imported entries' drops",
@@ -230,15 +229,6 @@ export function mirrorPlannedRows(input: {
       columns: null,
       reason:
         "6529.io's history of an imported decision's lifecycle isn't on the chain (the moves the chain makes after it are written)",
-      change: NOT_SCHEDULED
-    },
-    {
-      table: 'competition_pauses',
-      where: `competition_id in (${IMPORTED_DECISIONS})`,
-      rows: 'imported decisions',
-      columns: null,
-      reason:
-        "the chain's imported pauses aren't written as 6529.io's pause rows",
       change: NOT_SCHEDULED
     },
     {

@@ -712,7 +712,6 @@ describe("a rebuild's rows of imported objects", () => {
     // The imported wave, competitions, result and winner, and the primary's
     // two entries; nothing of the chain's own.
     expect(count('waves', ['description_drop_id'])).toBe(1);
-    expect(count('waves', ['serial_no'])).toBe(2);
     expect(count('competitions', ['updated_at', 'cancelled_at'])).toBe(2);
     expect(
       count('competition_config_versions', [

@@ -235,6 +235,9 @@ describe('imported decisions', () => {
 
   it("lists every planned row with a reason, scheduled work or none, and the run's switch time", () => {
     const rows = mirrorPlannedRows({ switchAt: RESULT });
+    // Only tables the mirror writes, and no primary key.
+    expect(rows.map((r) => r.table)).not.toContain('competition_pauses');
+    expect(rows.flatMap((r) => r.columns ?? [])).not.toContain('serial_no');
     for (const row of rows) {
       expect(row.table).toMatch(/^[a-z_]+$/);
       expect(row.where.length).toBeGreaterThan(0);
