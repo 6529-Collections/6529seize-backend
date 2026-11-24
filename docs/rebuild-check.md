@@ -262,9 +262,9 @@ export const mintManifest: AreaManifest = {
     dot) is another known area than the step's own, for a step this tree
     doesn't have yet, is an unresolved cross-area edge rather than an
     unknown id: the run notes it, the headline and the status line count
-    it, and a final run fails on it. The step that writes the table
-    declares the edge; once the other area's step is in the tree, the
-    edge is checked like any other. An unknown id of the step's own area,
+    it, and a final run fails on it. By convention the step that writes
+    the table declares the edge; nothing enforces it. Once the other
+    area's step is in the tree, the edge is checked like any other. An unknown id of the step's own area,
     with a prefix that names no area, or with an empty part, still fails,
     and so does an id of the other kind of step (a rebuilder naming a seed,
     or a seed a rebuilder): order holds within one kind. When the other
