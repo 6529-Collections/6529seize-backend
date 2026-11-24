@@ -516,7 +516,8 @@ export class CreateOrUpdateDropUseCase {
       bypassChatLinkRestrictions,
       bypassChatSlowModeRestrictions,
       nativeEntryContent,
-      prePublication
+      prePublication,
+      recheckWavesFreeze
     }: {
       timer?: Timer;
       connection: ConnectionWrapper<any>;
@@ -525,6 +526,11 @@ export class CreateOrUpdateDropUseCase {
       bypassChatSlowModeRestrictions?: boolean;
       nativeEntryContent?: NativeEntryContentPermit;
       prePublication: PrePublicationPreparation;
+      /**
+       * The caller's waves freeze check, run again after this drop's last
+       * lock (wave creation passes it for the wave's description drop).
+       */
+      recheckWavesFreeze?: () => void;
     }
   ): Promise<{
     drop_id: string;
@@ -548,6 +554,9 @@ export class CreateOrUpdateDropUseCase {
     // while waves move to the 6529 chain it is held as it stood at the
     // freeze. Native entries were checked under their competition's lock.
     if (!ownerFree) assertDecisionNotFrozen({ wave_id: model.wave_id });
+    const freezeCheck = ownerFree
+      ? recheckWavesFreeze
+      : () => assertDecisionNotFrozen({ wave_id: model.wave_id });
     const withOwner: typeof withLegacyPrimaryMutation = ownerFree
       ? async (_waveId, _ctx, action) => action(null)
       : withLegacyPrimaryMutation;
@@ -555,6 +564,8 @@ export class CreateOrUpdateDropUseCase {
       model.wave_id,
       { timer, connection },
       async (nativeOwner) => {
+        // The owner lock can wait past the freeze: check again before writing.
+        if (!ownerFree) assertDecisionNotFrozen({ wave_id: model.wave_id });
         let resolvedModel = sanitizeDropStructuredFields(model);
         timer?.start(`${CreateOrUpdateDropUseCase.name}->execute`);
         let authorId = resolvedModel.author_id;
@@ -634,7 +645,8 @@ export class CreateOrUpdateDropUseCase {
               bypassChatSlowModeRestrictions || isNativeEntryContent,
             isNativeEntryContent,
             nativeCompetitionId: contentPermit?.competitionId,
-            prePublication
+            prePublication,
+            freezeCheck
           }
         );
         const collaborationNotificationIds =
@@ -965,7 +977,8 @@ export class CreateOrUpdateDropUseCase {
       bypassChatSlowModeRestrictions,
       isNativeEntryContent = false,
       nativeCompetitionId,
-      prePublication
+      prePublication,
+      freezeCheck
     }: {
       timer?: Timer;
       connection: ConnectionWrapper<any>;
@@ -975,6 +988,8 @@ export class CreateOrUpdateDropUseCase {
       isNativeEntryContent?: boolean;
       nativeCompetitionId?: string;
       prePublication: PrePublicationPreparation;
+      /** Throws while the freeze holds this write; run after the last lock. */
+      freezeCheck?: () => void;
     }
   ): Promise<{
     drop_id: string;
@@ -1129,6 +1144,9 @@ export class CreateOrUpdateDropUseCase {
           dm_unread_recipient_ids: []
         };
     }
+    // The profile, drop and review locks above can wait past the waves
+    // freeze: check again right before the first drop write.
+    freezeCheck?.();
     let pendingPushNotificationIds: number[] = [];
     let dmUnreadRecipientIds: string[] = [];
     if (preExistingDropId) {

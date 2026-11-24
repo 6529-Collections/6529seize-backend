@@ -1,6 +1,11 @@
 import { inSequence } from '@/db/in-sequence';
 import { memeCollaborationsService } from '@/meme-collaborations/meme-collaborations.service';
-import { assertDecisionNotFrozen } from '@/waves-freeze/waves-freeze';
+import {
+  assertDecisionNotFrozen,
+  isWavesFrozen,
+  WAVES_FROZEN_POLL_MESSAGE,
+  WavesFrozenException
+} from '@/waves-freeze/waves-freeze';
 import {
   withLegacyPrimaryMutation,
   readLegacyMutationSource
@@ -261,7 +266,8 @@ export class DeleteDropUseCase {
         const waveId = drop.wave_id;
         // Deleting an entry withdraws it: while waves move to the 6529 chain
         // entries are held as they stood at the freeze. Chat deletes stay
-        // open, and so do the backend's own deletes (moderation).
+        // open, and so do the backend's own deletes (SYSTEM_DELETE, today only
+        // the cleanup of duplicate identity nominations).
         if (
           isPermanentDelete &&
           !isBackendDelete &&
@@ -291,6 +297,22 @@ export class DeleteDropUseCase {
             isBackendDelete ? null : resolvedDeleterId,
             { timer, connection }
           );
+        // Deleting or editing a drop deletes its poll, the poll's options and
+        // their votes. Polls move to the 6529 chain with the waves, so while
+        // frozen that is refused, under the poll row's lock and right before
+        // the deletion, for a wave admin's delete too. Direct messages are not
+        // exported, and the backend's own deletes (SYSTEM_DELETE, today only
+        // the cleanup of duplicate identity nominations) stay open.
+        if (
+          !isBackendDelete &&
+          !wave?.is_direct_message &&
+          isWavesFrozen() &&
+          (await this.dropPollsDb.findPollByDropIdForUpdate(dropId, {
+            timer,
+            connection
+          }))
+        )
+          throw new WavesFrozenException(WAVES_FROZEN_POLL_MESSAGE);
         await inSequence([
           () =>
             memeCollaborationsService.closeDeleted(dropId, {

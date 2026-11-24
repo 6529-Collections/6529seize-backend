@@ -9,21 +9,34 @@ import { Time } from '@/time';
  * Waves, groups and decisions move to the 6529 chain. From the waves freeze
  * 6529.io stops changing them: the chain imports them as they stand at the
  * freeze, and from switch-on people change them on the chain through this
- * site. Frozen: wave create and edit, replacing a group a wave or decision
- * uses, decision create, edit and actions, decision pauses, entries, votes,
+ * site. Frozen: wave create and edit, a wave's pinned (description) drop,
+ * replacing, hiding or showing a group a wave, decision or curation uses,
+ * decision create, edit, clone and actions, decision pauses, entries, votes,
  * wave REP, polls and poll votes, and the decision loop's results. Chat
- * (posting, editing and deleting chat drops, reactions, DMs) stays open.
+ * (posting, editing and deleting chat drops, reactions, DMs) stays open,
+ * except that a chat drop with a poll can't be edited or deleted: that
+ * would delete the poll.
  *
  * The freeze is on when FEATURE_WAVES_FROZEN is `true`, or from the time in
  * WAVES_FREEZE_AT (ISO 8601 UTC such as `2026-11-25T00:00:00Z`, or Unix
  * milliseconds). The time lets a deployment made before the freeze start it
  * at the exact second, with no restart. To turn the freeze off, remove both:
- * any WAVES_FREEZE_AT that is not such a time (`0`, `false`, seconds, a
- * local time) freezes at once, and is logged.
+ * any WAVES_FREEZE_AT that is not such a time (`0`, `false`, seconds,
+ * microseconds, a local time, a day that doesn't exist, a time past 24:00,
+ * a time before 2020 or from 2100) freezes at once, and is logged. 24:00 is
+ * the next day's 00:00.
  *
  * FEATURE_WAVES_FREEZE_KEEP_MAIN_STAGE=true keeps the Main Stage decision
  * running here through the freeze: its entries, votes, pauses and results
  * go on as before, for one more cycle. Everything else stays frozen.
+ *
+ * The export starts no earlier than WAVES_FREEZE_AT + 5 minutes. Each write
+ * path checks the freeze early and again right before it writes (inside its
+ * transaction, after its last lock, where it has them), but a check and a
+ * commit are still two steps: a request let in before the freeze can commit
+ * just after it. Each lock wait is bounded (the server's default
+ * innodb_lock_wait_timeout is 50 s; API post and reaction transactions set
+ * 10 s, and the API Lambda stops at 30 s). The margin covers that.
  */
 export const WAVES_FROZEN_CODE = 'WAVES_FROZEN';
 
@@ -39,9 +52,17 @@ export const WAVES_FROZEN_MESSAGE =
   `wave REP and polls can't be changed here. Chat works as usual.`;
 
 export const WAVES_FROZEN_GROUP_MESSAGE =
-  `This group is used by a wave or a decision, and waves are moving to the ` +
-  `6529 Network, so it can't be replaced right now. ` +
+  `This group is used by a wave, a decision or a curation, and waves are ` +
+  `moving to the 6529 Network, so it can't be replaced right now. ` +
   `You can save it as a new group instead.`;
+
+export const WAVES_FROZEN_GROUP_VISIBILITY_MESSAGE =
+  `This group is used by a wave, a decision or a curation, and waves are ` +
+  `moving to the 6529 Network, so it can't be hidden or shown right now.`;
+
+export const WAVES_FROZEN_POLL_MESSAGE =
+  `This message has a poll, and polls can't be changed while waves move ` +
+  `to the 6529 Network.`;
 
 const logger = Logger.get('WAVES_FREEZE');
 
@@ -58,9 +79,29 @@ const ISO_UTC =
 const EARLIEST_FREEZE_AT_MS = Date.UTC(2020, 0, 1);
 
 /**
+ * Later than any freeze: a larger time (microseconds by mistake, year 9999)
+ * would mean the freeze never comes, so it is a mistake too.
+ */
+const LATEST_FREEZE_AT_MS = Date.UTC(2100, 0, 1);
+
+const isFreezeTime = (millis: number) =>
+  Number.isFinite(millis) &&
+  millis >= EARLIEST_FREEZE_AT_MS &&
+  millis < LATEST_FREEZE_AT_MS;
+
+/** 24:00, the end of the written day (ISO 8601), with no seconds past it. */
+const END_OF_DAY = /T24:00(?::00(?:\.0{1,3})?)?(?:Z|[+-]00:00)$/;
+
+/** The UTC midnight starting `day` (YYYY-MM-DD). */
+function utcMidnight(day: string): number {
+  const [year, month, date] = day.split('-').map(Number);
+  return Date.UTC(year, month - 1, date);
+}
+
+/**
  * The freeze start from WAVES_FREEZE_AT: `undefined` when unset, `null` when
- * set to something that is not a UTC time (which freezes: whoever set it
- * meant a freeze).
+ * set to something that is not a UTC time from 2020 to 2099 (which freezes:
+ * whoever set it meant a freeze).
  */
 export function parseWavesFreezeAt(
   raw: string | undefined
@@ -71,11 +112,22 @@ export function parseWavesFreezeAt(
   }
   if (/^\d{1,16}$/.test(value)) {
     const millis = Number(value);
-    return millis >= EARLIEST_FREEZE_AT_MS ? millis : null;
+    return isFreezeTime(millis) ? millis : null;
   }
   if (ISO_UTC.test(value)) {
     const millis = Date.parse(value);
-    return Number.isFinite(millis) ? millis : null;
+    const day = value.slice(0, 10);
+    // Date.parse moves a day that doesn't exist (2026-11-31) into the next
+    // month; such a value is not the time that was meant.
+    if (
+      !isFreezeTime(millis) ||
+      new Date(utcMidnight(day)).toISOString().slice(0, 10) !== day
+    )
+      return null;
+    // 24:00 is the next day's 00:00, as Date.parse reads it; any other time
+    // stays on its day.
+    if (END_OF_DAY.test(value)) return millis;
+    return new Date(millis).toISOString().slice(0, 10) === day ? millis : null;
   }
   return null;
 }

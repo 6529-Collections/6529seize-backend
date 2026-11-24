@@ -87,7 +87,23 @@ describe('waves freeze', () => {
     '2026-13-40T00:00:00Z',
     '0',
     'false',
-    String(Math.floor(T / 1000))
+    String(Math.floor(T / 1000)),
+    // Days that don't exist, which Date.parse moves into the next month.
+    '2026-11-31T00:00:00Z',
+    '2026-02-29T00:00:00Z',
+    '2026-11-31T24:00:00Z',
+    // Past the end of the day.
+    '2026-11-24T24:01:00Z',
+    '2026-11-24T24:00:01Z',
+    '2026-11-24T24:00:00.001Z',
+    // Before 2020.
+    '2019-12-31T23:59:59.999Z',
+    String(Date.UTC(2020, 0, 1) - 1),
+    // Times the freeze would never reach: microseconds, year 9999, 2100.
+    String(T * 1000),
+    '9999-12-31T00:00:00Z',
+    '2100-01-01T00:00:00Z',
+    String(Date.UTC(2100, 0, 1))
   ])('reads WAVES_FREEZE_AT=%s as no UTC time', (raw) => {
     expect(parseWavesFreezeAt(raw)).toBeNull();
   });
@@ -106,9 +122,48 @@ describe('waves freeze', () => {
     expect(isWavesFrozen(T + 60_000)).toBe(true);
   });
 
-  it('freezes on a malformed WAVES_FREEZE_AT', () => {
-    process.env[AT] = '25 Nov 2026';
+  it.each([
+    '25 Nov 2026',
+    '2026-11-31T00:00:00Z',
+    String(T * 1000),
+    '9999-12-31T00:00:00Z'
+  ])('freezes at once on a malformed WAVES_FREEZE_AT (%s)', (raw) => {
+    process.env[AT] = raw;
     expect(isWavesFrozen(0)).toBe(true);
+  });
+
+  it.each([
+    ['2026-11-24T24:00:00Z', T],
+    ['2026-11-24T24:00Z', T],
+    ['2026-11-24T24:00:00.000Z', T],
+    ['2026-11-24T24:00:00+00:00', T],
+    ['2026-12-31T24:00:00Z', Date.UTC(2027, 0, 1)]
+  ])(
+    'reads WAVES_FREEZE_AT=%s (24:00) as the next day 00:00',
+    (raw, expected) => {
+      expect(parseWavesFreezeAt(raw)).toBe(expected);
+    }
+  );
+
+  it('reads 2020-01-01 00:00 UTC as the earliest freeze time', () => {
+    expect(parseWavesFreezeAt('2020-01-01T00:00:00Z')).toBe(
+      Date.UTC(2020, 0, 1)
+    );
+    expect(parseWavesFreezeAt(String(Date.UTC(2020, 0, 1)))).toBe(
+      Date.UTC(2020, 0, 1)
+    );
+  });
+
+  it('reads the last day of each month and a leap day as UTC times', () => {
+    expect(parseWavesFreezeAt('2026-11-30T00:00:00Z')).toBe(
+      Date.UTC(2026, 10, 30)
+    );
+    expect(parseWavesFreezeAt('2028-02-29T00:00:00Z')).toBe(
+      Date.UTC(2028, 1, 29)
+    );
+    expect(parseWavesFreezeAt('2099-12-31T23:59:59Z')).toBe(
+      Date.UTC(2099, 11, 31, 23, 59, 59)
+    );
   });
 
   it('the flag freezes before WAVES_FREEZE_AT too', () => {

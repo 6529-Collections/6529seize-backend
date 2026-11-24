@@ -14,7 +14,7 @@ jest.mock('@/api/waves/wave-access.helpers', () => ({
 }));
 
 import { AuthenticationContext } from '@/auth-context';
-import { Timer } from '@/time';
+import { Time, Timer } from '@/time';
 import { WavesFrozenException } from '@/waves-freeze/waves-freeze';
 import { WaveApiService } from './wave.api.service';
 
@@ -86,6 +86,9 @@ describe('wave writes during the waves freeze', () => {
     for (const name of NAMES) delete process.env[name];
     process.env.FEATURE_WAVES_FROZEN = 'true';
   });
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
   afterAll(() => {
     for (const name of NAMES) {
       if (original[name] === undefined) delete process.env[name];
@@ -107,6 +110,116 @@ describe('wave writes during the waves freeze', () => {
     await expect(forDm.createWave(chatWaveRequest, true, ctx)).rejects.toBe(
       PAST_FREEZE
     );
+  });
+
+  it('checks again in the transaction, right before the wave is written', async () => {
+    delete process.env.FEATURE_WAVES_FROZEN;
+    const freeze = Date.UTC(2026, 10, 25);
+    process.env.WAVES_FREEZE_AT = new Date(freeze).toISOString();
+    const now = jest.spyOn(Time, 'currentMillis').mockReturnValue(freeze - 1);
+    const forWave = service(wave);
+    const db = (forWave as any).wavesApiDb;
+    db.insertWave = jest.fn();
+    // The last step before the wave row is written: the freeze starts then.
+    (forWave as any).waveMappers = {
+      createWaveToNewWaveEntity: jest.fn(async () => {
+        now.mockReturnValue(freeze + 1);
+        return { id: 'new' };
+      })
+    };
+    jest
+      .spyOn(forWave as any, 'validateWaveRelations')
+      .mockResolvedValue(undefined);
+    jest.spyOn(forWave as any, 'validateOutcomes').mockReturnValue(undefined);
+    jest
+      .spyOn(forWave as any, 'validateSubwaveCreationParent')
+      .mockResolvedValue(undefined);
+    const prepared = {
+      id: 'new',
+      descriptionDropModel: {},
+      descriptionPrePublication: {}
+    } as any;
+    await expect(
+      forWave.createWave(chatWaveRequest, false, ctx, undefined, prepared)
+    ).rejects.toBeInstanceOf(WavesFrozenException);
+    expect(db.executeNativeQueriesInTransaction).toHaveBeenCalledTimes(1);
+    expect(db.insertWave).not.toHaveBeenCalled();
+  });
+
+  it("checks again after the description drop's locks", async () => {
+    delete process.env.FEATURE_WAVES_FROZEN;
+    const freeze = Date.UTC(2026, 10, 25);
+    process.env.WAVES_FREEZE_AT = new Date(freeze).toISOString();
+    const now = jest.spyOn(Time, 'currentMillis').mockReturnValue(freeze - 1);
+    const forWave = service(wave);
+    const db = (forWave as any).wavesApiDb;
+    db.insertWave = jest.fn();
+    db.updateDescriptionDropId = jest.fn();
+    (forWave as any).waveMappers = {
+      createWaveToNewWaveEntity: jest.fn().mockResolvedValue({ id: 'new' })
+    };
+    // The description drop waits on the creator's profile lock, then runs
+    // the check it was given; the freeze starts during that wait.
+    (forWave as any).createOrUpdateDrop = {
+      execute: jest.fn(async (_model, _isDescription, options) => {
+        now.mockReturnValue(freeze + 1);
+        options.recheckWavesFreeze();
+        throw PAST_FREEZE;
+      })
+    };
+    jest
+      .spyOn(forWave as any, 'validateWaveRelations')
+      .mockResolvedValue(undefined);
+    jest.spyOn(forWave as any, 'validateOutcomes').mockReturnValue(undefined);
+    jest
+      .spyOn(forWave as any, 'validateSubwaveCreationParent')
+      .mockResolvedValue(undefined);
+    const prepared = {
+      id: 'new',
+      descriptionDropModel: {},
+      descriptionPrePublication: {}
+    } as any;
+    await expect(
+      forWave.createWave(chatWaveRequest, false, ctx, undefined, prepared)
+    ).rejects.toBeInstanceOf(WavesFrozenException);
+    expect(db.insertWave).toHaveBeenCalledTimes(1);
+    expect(db.updateDescriptionDropId).not.toHaveBeenCalled();
+  });
+
+  it('pins no drop in a wave while frozen, but a direct message still can', async () => {
+    const pin = (forWave: WaveApiService, waveId: string) =>
+      forWave.setPinnedDrop(waveId, { drop_id: 'drop' } as any, ctx);
+    for (const target of [wave, dm]) {
+      const forWave = service(target);
+      const db = (forWave as any).wavesApiDb;
+      db.updateDescriptionDropId = jest.fn().mockRejectedValue(PAST_FREEZE);
+      (forWave as any).dropsDb = {
+        findDropById: jest
+          .fn()
+          .mockResolvedValue({ id: 'drop', wave_id: target.id })
+      };
+      if (target === wave) {
+        await expect(pin(forWave, target.id)).rejects.toBeInstanceOf(
+          WavesFrozenException
+        );
+        expect(db.updateDescriptionDropId).not.toHaveBeenCalled();
+      } else {
+        await expect(pin(forWave, target.id)).rejects.toBe(PAST_FREEZE);
+      }
+    }
+  });
+
+  it('pins as before when waves are not frozen', async () => {
+    delete process.env.FEATURE_WAVES_FROZEN;
+    const forWave = service(wave);
+    const db = (forWave as any).wavesApiDb;
+    db.updateDescriptionDropId = jest.fn().mockRejectedValue(PAST_FREEZE);
+    (forWave as any).dropsDb = {
+      findDropById: jest.fn().mockResolvedValue({ id: 'drop', wave_id: 'wave' })
+    };
+    await expect(
+      forWave.setPinnedDrop('wave', { drop_id: 'drop' } as any, ctx)
+    ).rejects.toBe(PAST_FREEZE);
   });
 
   it('edits no wave, but a direct message still can be', async () => {

@@ -1022,6 +1022,45 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     return result;
   }
 
+  /**
+   * Whether a wave that is not a direct message, a decision or a curation
+   * uses any of these groups. For the waves freeze guard: it reads the
+   * primary when there is no transaction, so a wave committed a moment ago
+   * is seen, and asks only about the given groups.
+   */
+  async isUsedByWaves(
+    groupIds: string[],
+    ctx: RequestContext
+  ): Promise<boolean> {
+    if (!groupIds.length) return false;
+    const row = await this.db.oneOrNull<{ used: number | string }>(
+      `
+        select exists (
+          select 1 from ${WAVES_TABLE} w
+            left join ${legacyGetView(WAVES_TABLE)} lw on lw.id = w.id
+          where coalesce(w.is_direct_message, 0) = 0
+            and (w.visibility_group_id in (:groupIds)
+              or w.admin_group_id in (:groupIds)
+              or w.chat_group_id in (:groupIds)
+              or lw.participation_group_id in (:groupIds)
+              or lw.voting_group_id in (:groupIds))
+          union all
+          select 1 from ${COMPETITIONS_TABLE} c
+          where json_unquote(json_extract(c.participation_config,'$.group_id')) in (:groupIds)
+            or json_unquote(json_extract(c.voting_config,'$.group_id')) in (:groupIds)
+          union all
+          select 1 from ${WAVE_CURATIONS_TABLE} wcg
+          where wcg.community_group_id in (:groupIds)
+        ) as used
+        `,
+      { groupIds },
+      ctx.connection
+        ? { wrappedConnection: ctx.connection }
+        : { forcePool: DbPoolName.WRITE }
+    );
+    return Number(row?.used ?? 0) === 1;
+  }
+
   async getAllWaveRelatedGroups(ctx: RequestContext): Promise<string[]> {
     ctx.timer?.start('userGroupsDb->getAllWaveRelatedGroups');
     const result = await this.db.execute<{

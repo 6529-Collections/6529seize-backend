@@ -57,6 +57,7 @@ import { readWaveCatalogueWithDiagnostics } from './wave-catalogue-read-diagnost
 import {
   isWavesFrozen,
   WAVES_FROZEN_GROUP_MESSAGE,
+  WAVES_FROZEN_GROUP_VISIBILITY_MESSAGE,
   WavesFrozenException
 } from '@/waves-freeze/waves-freeze';
 import {
@@ -1716,27 +1717,51 @@ export class UserGroupsService {
   }
 
   /**
-   * Replacing a group gives the new version the old one's id, so every wave
-   * and decision that names it changes with it. While waves move to the
-   * 6529 chain, a group a wave, decision or curation uses can't be replaced.
-   *
-   * The check only reads, and runs before the request's receipt is written,
-   * so a refused request leaves no receipt. A retry of a save that finished
-   * before the freeze, under the same Idempotency-Key, is let through: the
-   * transaction finds its receipt and returns the stored result, or 409 if
-   * the key was used for a different save, and changes no group.
+   * Whether this change touches a group a wave, decision or curation uses,
+   * while waves are frozen. Replacing a group gives the new version the old
+   * one's id, so every wave and decision that names it changes with it, and
+   * eligibility reads only visible groups, so hiding or showing a group
+   * changes who may use those waves. While waves move to the 6529 chain,
+   * neither may happen to such a group. Direct messages are chat: their
+   * groups stay open. Read from the primary, or the transaction's connection
+   * when there is one.
    */
-  private async assertReplacementNotFrozen(
+  private async touchesFrozenWaveGroup(
+    { group_id, old_version_id }: GroupVisibilityChange,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    if (!isWavesFrozen()) return false;
+    return this.userGroupsDb.isUsedByWaves(
+      [group_id, old_version_id].filter((id): id is string => !!id),
+      ctx
+    );
+  }
+
+  /** A replacement is told to save a new group; hiding or showing is not. */
+  private frozenGroupChange(change: GroupVisibilityChange) {
+    return new WavesFrozenException(
+      change.old_version_id
+        ? WAVES_FROZEN_GROUP_MESSAGE
+        : WAVES_FROZEN_GROUP_VISIBILITY_MESSAGE
+    );
+  }
+
+  /**
+   * The early freeze check. It only reads, and runs before the request's
+   * receipt is written, so a refused request leaves no receipt. A retry of a
+   * save that finished before the freeze, under the same Idempotency-Key, is
+   * let through: the transaction finds its receipt and returns the stored
+   * result, or 409 if the key was used for a different save, and changes no
+   * group. Publishing a group nothing uses, or replacing one, stays open.
+   */
+  private async assertGroupChangeNotFrozen(
     change: GroupVisibilityChange,
     requestId: string | null,
     ctx: RequestContext
   ): Promise<void> {
-    const oldVersionId = change.old_version_id;
-    if (!oldVersionId || !isWavesFrozen()) return;
-    const waveGroupIds = await this.userGroupsDb.getAllWaveRelatedGroups(ctx);
-    if (!waveGroupIds.includes(oldVersionId)) return;
+    if (!(await this.touchesFrozenWaveGroup(change, ctx))) return;
     if (await this.hasFinishedVisibilityRequest(change, requestId, ctx)) return;
-    throw new WavesFrozenException(WAVES_FROZEN_GROUP_MESSAGE);
+    throw this.frozenGroupChange(change);
   }
 
   private async hasFinishedVisibilityRequest(
@@ -1764,7 +1789,7 @@ export class UserGroupsService {
     const requestId = idempotencyKey
       ? visibilityRequestHash([profile_id, idempotencyKey])
       : null;
-    await this.assertReplacementNotFrozen(change, requestId, ctx);
+    await this.assertGroupChangeNotFrozen(change, requestId, ctx);
     const { updatedGroup, replacedGroup, replayed } =
       await this.userGroupsDb.executeNativeQueriesInTransaction(
         async (connection) => {
@@ -1806,6 +1831,10 @@ export class UserGroupsService {
             change,
             tx
           );
+          // The request may have waited past the freeze for its locks: check
+          // again before writing. Throwing rolls back the reserved receipt.
+          if (!legacyReplay && (await this.touchesFrozenWaveGroup(change, tx)))
+            throw this.frozenGroupChange(change);
           const saved = legacyReplay
             ? { updatedGroup: legacyReplay, replacedGroup: null }
             : await this.applyVisibilityChange(change, tx, beforeReplace);

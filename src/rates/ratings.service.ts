@@ -233,7 +233,8 @@ export class RatingsService {
           changeReason: 'USER_EDIT',
           proxyContext: null,
           connection: ctx.connection!,
-          timer: ctx.timer
+          timer: ctx.timer,
+          refuseFrozenWaveRep: true
         });
         return {
           identityUpdates: identityUpdate ? [identityUpdate] : []
@@ -256,7 +257,8 @@ export class RatingsService {
           changeReason: 'USER_EDIT',
           proxyContext,
           connection: ctx.connection!,
-          timer: ctx.timer
+          timer: ctx.timer,
+          refuseFrozenWaveRep: true
         });
         return {
           identityUpdates: identityUpdate ? [identityUpdate] : []
@@ -291,7 +293,8 @@ export class RatingsService {
     connection,
     skipCreditCheck,
     skipLogCreation,
-    timer
+    timer,
+    refuseFrozenWaveRep
   }: {
     request: UpdateRatingRequest;
     changeReason: string;
@@ -300,6 +303,11 @@ export class RatingsService {
     skipCreditCheck?: boolean;
     skipLogCreation?: boolean;
     timer?: Timer;
+    /**
+     * A rater's own rating: wave REP is refused once waves are frozen. The
+     * profile archival transfers leave it unset (they move wave REP).
+     */
+    refuseFrozenWaveRep?: boolean;
   }): Promise<UpdateRatingUnsafeResult> {
     try {
       timer?.start(`${this.constructor.name}->updateRatingUnsafe`);
@@ -317,6 +325,11 @@ export class RatingsService {
           { rater_profile_id: profileId, matter: request.matter },
           connection
         );
+      }
+      // updateRating checked the freeze before its transaction; the lock
+      // wait can pass the freeze, so check again before writing.
+      if (refuseFrozenWaveRep && isWaveRepFrozen(request.matter)) {
+        throw new WavesFrozenException();
       }
       timer?.start(
         `${this.constructor.name}->updateRatingUnsafe->ratinsDb->getRating`
@@ -693,6 +706,11 @@ export class RatingsService {
               connection
             );
             const changedWaveRepTargetIds: string[] = [];
+            // The lock wait can pass the waves freeze: wave REP then stays
+            // as it stood, and nothing is written.
+            if (isWaveRepFrozen(overRatedMatter.matter)) {
+              return changedWaveRepTargetIds;
+            }
             const ratings = await this.ratingsDb.getRatingsOnMatter(
               {
                 rater_profile_id: raterProfileId,

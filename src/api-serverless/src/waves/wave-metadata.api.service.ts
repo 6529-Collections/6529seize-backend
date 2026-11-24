@@ -59,6 +59,8 @@ export class WaveMetadataApiService {
   ): Promise<ApiWaveMetadata> {
     assertWavesNotFrozen();
     await this.assertCanManageWaveMetadata(waveId, ctx);
+    // No transaction here: check again right before the write.
+    assertWavesNotFrozen();
     const metadata = await this.waveMetadataDb.create(
       { waveId, dataKey, dataValue },
       ctx
@@ -78,6 +80,8 @@ export class WaveMetadataApiService {
   ): Promise<ApiWaveMetadata> {
     assertWavesNotFrozen();
     await this.assertCanManageWaveMetadata(waveId, ctx);
+    // No transaction here: check again right before the write.
+    assertWavesNotFrozen();
     const metadata = await this.waveMetadataDb.deleteByIdAndWaveId(
       metadataId,
       waveId,

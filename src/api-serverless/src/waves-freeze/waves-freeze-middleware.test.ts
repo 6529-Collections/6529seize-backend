@@ -86,6 +86,7 @@ describe('classifyWavesWrite', () => {
     ['POST', '/waves/wave-1/subscriptions'],
     ['DELETE', '/waves/wave-1/subscriptions'],
     ['POST', '/waves/wave-1/pins'],
+    // The service refuses it for a wave and lets a direct message through.
     ['POST', '/waves/wave-1/pinned-drop'],
     ['POST', '/waves/wave-1/mute'],
     ['POST', '/waves/wave-1/curations'],

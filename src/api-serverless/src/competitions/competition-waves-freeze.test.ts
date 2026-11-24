@@ -10,7 +10,8 @@ jest.mock('@/competitions/competition-command.repository', () => ({
   competitionCommandRepository: {
     lockCompetition: (...args: unknown[]) => mockLockCompetition(...args),
     findSavedCommand: (...args: unknown[]) => mockFindSaved(...args),
-    command: jest.fn()
+    command: jest.fn(),
+    lockWave: jest.fn()
   }
 }));
 jest.mock('@/competitions/native-competition.reader', () => ({
@@ -34,8 +35,12 @@ jest.mock('@/api/waves/wave.api.service', () => ({
 jest.mock('@/api/identities/identity.fetcher', () => ({ identityFetcher: {} }));
 
 import { AuthenticationContext } from '@/auth-context';
+import { competitionCommandRepository } from '@/competitions/competition-command.repository';
+import { CompetitionLifecycle } from '@/entities/ICompetition';
 import { RequestContext } from '@/request.context';
+import { Time } from '@/time';
 import { WavesFrozenException } from '@/waves-freeze/waves-freeze';
+import * as commandAccess from './competition-command-access';
 import { lockNativeCompetition } from './competition-command-access';
 import { competitionLifecycleService } from './competition-lifecycle.service';
 import { WaveHubCreationService } from './wave-hub-creation.service';
@@ -135,5 +140,82 @@ describe('decision writes during the waves freeze', () => {
     mockFindSaved.mockResolvedValue({ id: 'hub' });
     mockGetHub.mockResolvedValue({ id: 'hub' });
     await expect(service.create(request, ctx)).resolves.toEqual({ id: 'hub' });
+  });
+
+  describe('inside the command transaction', () => {
+    const service = competitionLifecycleService as any;
+    beforeEach(() => {
+      jest
+        .spyOn(commandAccess, 'administerCompetitionWave')
+        .mockResolvedValue({ wave: {} } as any);
+      jest
+        .mocked(competitionCommandRepository.command)
+        .mockImplementation(async (_actor, _key, _command, work) =>
+          work({} as any)
+        );
+    });
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('clones no decision while frozen, not even the kept Main Stage', async () => {
+      process.env.FEATURE_WAVES_FROZEN = 'true';
+      process.env.FEATURE_WAVES_FREEZE_KEEP_MAIN_STAGE = 'true';
+      mockLockCompetition.mockResolvedValue({
+        id: 'comp',
+        wave_id: 'wave',
+        config_version: 3,
+        lifecycle: CompetitionLifecycle.ENDED
+      });
+      mockReadCompetition.mockResolvedValue(decision(['MAIN_STAGE']));
+      // Reading the rules is the clone's first step past the freeze check.
+      const pastFreeze = new Error('past the waves freeze check');
+      jest.spyOn(service, 'commandConfiguration').mockResolvedValue({
+        get rules(): never {
+          throw pastFreeze;
+        }
+      });
+      const persistNew = jest
+        .spyOn(service, 'persistNew')
+        .mockResolvedValue(undefined);
+      const clone = () =>
+        competitionLifecycleService.action(
+          'wave',
+          'comp',
+          'clone',
+          { idempotency_key: 'k', config_version: 3 } as any,
+          ctx
+        );
+      await expect(clone()).rejects.toBeInstanceOf(WavesFrozenException);
+      expect(persistNew).not.toHaveBeenCalled();
+      delete process.env.FEATURE_WAVES_FROZEN;
+      await expect(clone()).rejects.toBe(pastFreeze);
+    });
+
+    it('creates no decision when the wave lock wait passes the freeze', async () => {
+      const freeze = Date.UTC(2026, 10, 25);
+      process.env.WAVES_FREEZE_AT = new Date(freeze).toISOString();
+      const now = jest.spyOn(Time, 'currentMillis').mockReturnValue(freeze - 1);
+      jest
+        .mocked(competitionCommandRepository.lockWave)
+        .mockImplementation(async () => {
+          now.mockReturnValue(freeze + 1);
+        });
+      jest
+        .spyOn(service, 'normalizeConfiguration')
+        .mockResolvedValue({ rules: { type: 'RANK' } });
+      const persistNew = jest
+        .spyOn(service, 'persistNew')
+        .mockResolvedValue(undefined);
+      await expect(
+        competitionLifecycleService.create(
+          'wave',
+          { idempotency_key: 'k', config: {} } as any,
+          ctx
+        )
+      ).rejects.toBeInstanceOf(WavesFrozenException);
+      expect(competitionCommandRepository.lockWave).toHaveBeenCalledTimes(1);
+      expect(persistNew).not.toHaveBeenCalled();
+    });
   });
 });

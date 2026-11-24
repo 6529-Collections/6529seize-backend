@@ -132,6 +132,9 @@ export class DropPollsApiService {
         `Poll responses can only be restricted to droppers when chat is enabled`
       );
     }
+    // In the drop's transaction, after its writes and locks: the freeze may
+    // have started meanwhile, so check again right before the poll is made.
+    assertWavesNotFrozen();
     await this.dropPollsDb.createPoll(
       {
         id: randomUUID(),
@@ -276,6 +279,8 @@ export class DropPollsApiService {
           pollOptions,
           uniqueOptions
         );
+        // The poll row lock can wait past the freeze: check again here.
+        assertWavesNotFrozen();
         pollVoteChanged = await this.dropPollsDb.replaceVoterVotes(
           {
             pollId: poll.id,

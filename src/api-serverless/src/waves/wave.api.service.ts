@@ -599,6 +599,8 @@ export class WaveApiService {
             ),
             isDirectMessage
           });
+          // The request may have waited past the freeze: check again here.
+          if (!isDirectMessage) assertWavesNotFrozen();
           await this.wavesApiDb.insertWave(newEntity, ctxWithConnection);
           const {
             drop_id: descriptionDropId,
@@ -610,7 +612,12 @@ export class WaveApiService {
             {
               timer: ctxWithConnection.timer,
               connection: ctxWithConnection.connection,
-              prePublication: descriptionPrePublication
+              prePublication: descriptionPrePublication,
+              // The description drop takes the creator's profile lock, after
+              // the wave row is written: check again after that wait.
+              recheckWavesFreeze: isDirectMessage
+                ? undefined
+                : () => assertWavesNotFrozen()
             }
           );
           await this.wavesApiDb.updateDescriptionDropId(
@@ -2691,6 +2698,10 @@ export class WaveApiService {
             `Drop ${request.drop_id} not found in wave ${waveId}`
           );
         }
+        // The pinned drop is the wave's description drop, which the export
+        // reads with the wave: frozen with the waves, right before the write.
+        // Direct messages are chat and stay open.
+        if (!wave.is_direct_message) assertWavesNotFrozen();
         await this.wavesApiDb.updateDescriptionDropId(
           {
             waveId,

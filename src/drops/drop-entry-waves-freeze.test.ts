@@ -4,8 +4,15 @@ jest.mock('@/competitions/legacy-competition-mutation', () => ({
 }));
 
 import { withLegacyPrimaryMutation } from '@/competitions/legacy-competition-mutation';
+import { moderationReviewDb } from '@/content-moderation/moderation-review.db';
+import { getPrePublicationContentFingerprint } from '@/content-moderation/pre-publication-moderation.service';
 import { DropType } from '@/entities/IDrop';
-import { WavesFrozenException } from '@/waves-freeze/waves-freeze';
+import { memeCollaborationsService } from '@/meme-collaborations/meme-collaborations.service';
+import { Time } from '@/time';
+import {
+  WAVES_FROZEN_POLL_MESSAGE,
+  WavesFrozenException
+} from '@/waves-freeze/waves-freeze';
 import { CreateOrUpdateDropUseCase } from './create-or-update-drop.use-case';
 import { DeleteDropUseCase } from './delete-drop.use-case';
 
@@ -16,6 +23,7 @@ const NAMES = [
   'MAIN_STAGE_WAVE_ID'
 ];
 const PAST_FREEZE = new Error('past the waves freeze check');
+const FREEZE = Date.UTC(2026, 10, 25);
 const connection = {} as any;
 
 describe('legacy entries during the waves freeze', () => {
@@ -29,6 +37,9 @@ describe('legacy entries during the waves freeze', () => {
     process.env.FEATURE_WAVES_FROZEN = 'true';
     process.env.MAIN_STAGE_WAVE_ID = 'main';
     jest.mocked(withLegacyPrimaryMutation).mockRejectedValue(PAST_FREEZE);
+  });
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
   afterAll(() => {
     for (const name of NAMES) {
@@ -98,9 +109,118 @@ describe('legacy entries during the waves freeze', () => {
       ).rejects.toBeInstanceOf(WavesFrozenException);
     });
 
+    it('refuses an entry whose author profile lock wait passes the freeze', async () => {
+      delete process.env.FEATURE_WAVES_FROZEN;
+      process.env.WAVES_FREEZE_AT = new Date(FREEZE).toISOString();
+      const now = jest.spyOn(Time, 'currentMillis').mockReturnValue(FREEZE - 1);
+      jest
+        .mocked(withLegacyPrimaryMutation)
+        .mockImplementation(async (_wave, _ctx, action) => action(null));
+      // The last lock before the drop is written: the author's profile row.
+      jest
+        .spyOn(moderationReviewDb, 'lockProfile')
+        .mockImplementation(async () => {
+          now.mockReturnValue(FREEZE + 1);
+        });
+      jest.spyOn(moderationReviewDb, 'lockDrop').mockResolvedValue(undefined);
+      const dropsDb = {
+        findDropById: jest.fn().mockResolvedValue(null),
+        insertDrop: jest.fn().mockRejectedValue(PAST_FREEZE)
+      };
+      const wavesApiDb = {
+        findById: jest.fn().mockResolvedValue({ id: 'wave', type: 'RANK' })
+      };
+      const forEntry = new CreateOrUpdateDropUseCase(
+        dropsDb as any,
+        {} as any,
+        {} as any,
+        wavesApiDb as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        { assertPostingAllowed: jest.fn().mockResolvedValue(undefined) } as any
+      );
+      jest
+        .spyOn(forEntry as any, 'assertDropLimits')
+        .mockReturnValue(undefined);
+      jest
+        .spyOn(forEntry as any, 'validateReferences')
+        .mockImplementation(async (model) => ({
+          validatedModel: model,
+          groupIdsUserIsEligibleFor: []
+        }));
+      jest
+        .spyOn(forEntry as any, 'verifyChatLinksAreAllowed')
+        .mockReturnValue(undefined);
+      const model = {
+        drop_id: null,
+        drop_type: DropType.PARTICIPATORY,
+        wave_id: 'wave',
+        author_id: 'author',
+        title: null,
+        parts: [],
+        metadata: [],
+        mentioned_groups: [],
+        mentioned_users: [],
+        referenced_nfts: []
+      } as any;
+      const prePublication = {
+        operation: 'CREATE',
+        dropId: 'new-drop',
+        authorProfileId: 'author',
+        contentFingerprint: getPrePublicationContentFingerprint({
+          title: null,
+          parts: []
+        }),
+        requestId: 'request',
+        permitGeneration: 0,
+        authenticationContext: undefined
+      } as any;
+      await expect(
+        forEntry.execute(model, false, { connection, prePublication })
+      ).rejects.toBeInstanceOf(WavesFrozenException);
+      expect(moderationReviewDb.lockProfile).toHaveBeenCalledTimes(1);
+      expect(dropsDb.insertDrop).not.toHaveBeenCalled();
+    });
+
     it('posts chat as before, without the entry lock', async () => {
       await expect(execute(DropType.CHAT, 'wave')).rejects.toBe(PAST_FREEZE);
       expect(withLegacyPrimaryMutation).not.toHaveBeenCalled();
+    });
+
+    it('refuses an entry whose owner lock wait passes the freeze', async () => {
+      delete process.env.FEATURE_WAVES_FROZEN;
+      process.env.WAVES_FREEZE_AT = new Date(FREEZE).toISOString();
+      const now = jest.spyOn(Time, 'currentMillis').mockReturnValue(FREEZE - 1);
+      jest
+        .mocked(withLegacyPrimaryMutation)
+        .mockImplementation(async (_wave, _ctx, action) => {
+          now.mockReturnValue(FREEZE + 1);
+          return action(null);
+        });
+      const forEntry = useCase();
+      await expect(
+        forEntry.execute(
+          {
+            drop_type: DropType.PARTICIPATORY,
+            wave_id: 'wave',
+            author_id: 'author',
+            parts: [],
+            metadata: []
+          } as any,
+          false,
+          { connection, prePublication: {} as any }
+        )
+      ).rejects.toBeInstanceOf(WavesFrozenException);
+      expect(withLegacyPrimaryMutation).toHaveBeenCalledTimes(1);
+      expect((forEntry as any).createOrUpdateDrop).not.toHaveBeenCalled();
     });
   });
 
@@ -183,6 +303,145 @@ describe('legacy entries during the waves freeze', () => {
       await expect(deleteDrop(DropType.PARTICIPATORY, 'DELETE')).rejects.toBe(
         PAST_FREEZE
       );
+    });
+  });
+
+  describe('chat drops with a poll', () => {
+    beforeEach(() => {
+      jest
+        .mocked(withLegacyPrimaryMutation)
+        .mockImplementation((_wave, _ctx, action) => action(null));
+    });
+
+    /**
+     * A chat delete or edit that gets as far as the deletions: the first one
+     * (closing meme collaborations) stands for every write after the check.
+     */
+    function useCase({
+      poll,
+      directMessage = false
+    }: {
+      poll: boolean;
+      directMessage?: boolean;
+    }) {
+      const dropsDb = {
+        findDropById: jest.fn().mockResolvedValue({
+          id: 'drop',
+          wave_id: 'wave',
+          drop_type: DropType.CHAT,
+          author_id: 'author'
+        }),
+        findWaveByIdOrNull: jest.fn().mockResolvedValue({
+          id: 'wave',
+          is_direct_message: directMessage,
+          description_drop_id: 'description'
+        })
+      };
+      const dropPollsDb = {
+        findPollByDropIdForUpdate: jest
+          .fn()
+          .mockResolvedValue(poll ? { id: 'poll', drop_id: 'drop' } : null),
+        deleteByDropId: jest.fn()
+      };
+      const result = new DeleteDropUseCase(
+        {} as any,
+        {} as any,
+        dropsDb as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        dropPollsDb as any,
+        {} as any,
+        {} as any,
+        {
+          lockForDelete: jest.fn().mockResolvedValue([]),
+          beforeDelete: jest.fn().mockResolvedValue(undefined)
+        } as any
+      );
+      jest
+        .spyOn(result as any, 'assertDeleterIsAllowedToDeleteDrop')
+        .mockResolvedValue(undefined);
+      jest
+        .spyOn(memeCollaborationsService, 'closeDeleted')
+        .mockRejectedValue(PAST_FREEZE);
+      return { result, dropPollsDb };
+    }
+
+    function run(
+      forDrop: ReturnType<typeof useCase>,
+      purpose: 'DELETE' | 'UPDATE' | 'SYSTEM_DELETE'
+    ) {
+      return forDrop.result.execute(
+        {
+          drop_id: 'drop',
+          deleter_id: purpose === 'SYSTEM_DELETE' ? null : 'author',
+          deleter_identity: 'author',
+          deletion_purpose: purpose
+        } as any,
+        { connection }
+      );
+    }
+
+    it.each(['DELETE', 'UPDATE'] as const)(
+      'neither deletes nor edits away a poll while frozen (%s)',
+      async (purpose) => {
+        const forDrop = useCase({ poll: true });
+        await expect(run(forDrop, purpose)).rejects.toThrow(
+          WAVES_FROZEN_POLL_MESSAGE
+        );
+        await expect(run(forDrop, purpose)).rejects.toBeInstanceOf(
+          WavesFrozenException
+        );
+        expect(forDrop.dropPollsDb.deleteByDropId).not.toHaveBeenCalled();
+        expect(memeCollaborationsService.closeDeleted).not.toHaveBeenCalled();
+      }
+    );
+
+    it('checks right before the deletion, after the waits before it', async () => {
+      delete process.env.FEATURE_WAVES_FROZEN;
+      process.env.WAVES_FREEZE_AT = new Date(FREEZE).toISOString();
+      const now = jest.spyOn(Time, 'currentMillis').mockReturnValue(FREEZE - 1);
+      // The delete waits on the drop's ownership lock; the freeze starts.
+      jest
+        .mocked(withLegacyPrimaryMutation)
+        .mockImplementation(async (_wave, _ctx, action) => {
+          now.mockReturnValue(FREEZE + 1);
+          return action(null);
+        });
+      const forDrop = useCase({ poll: true });
+      await expect(run(forDrop, 'DELETE')).rejects.toThrow(
+        WAVES_FROZEN_POLL_MESSAGE
+      );
+      // The poll row is read for update on the delete's own connection.
+      expect(
+        forDrop.dropPollsDb.findPollByDropIdForUpdate
+      ).toHaveBeenCalledWith('drop', expect.objectContaining({ connection }));
+      expect(forDrop.dropPollsDb.deleteByDropId).not.toHaveBeenCalled();
+    });
+
+    it('deletes and edits chat with no poll, direct messages and moderation deletes as before', async () => {
+      await expect(run(useCase({ poll: false }), 'DELETE')).rejects.toBe(
+        PAST_FREEZE
+      );
+      await expect(run(useCase({ poll: false }), 'UPDATE')).rejects.toBe(
+        PAST_FREEZE
+      );
+      await expect(
+        run(useCase({ poll: true, directMessage: true }), 'DELETE')
+      ).rejects.toBe(PAST_FREEZE);
+      await expect(run(useCase({ poll: true }), 'SYSTEM_DELETE')).rejects.toBe(
+        PAST_FREEZE
+      );
+    });
+
+    it('removes polls as before when not frozen', async () => {
+      delete process.env.FEATURE_WAVES_FROZEN;
+      const forDrop = useCase({ poll: true });
+      await expect(run(forDrop, 'DELETE')).rejects.toBe(PAST_FREEZE);
+      expect(
+        forDrop.dropPollsDb.findPollByDropIdForUpdate
+      ).not.toHaveBeenCalled();
     });
   });
 });

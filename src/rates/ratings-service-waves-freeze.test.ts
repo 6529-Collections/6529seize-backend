@@ -4,10 +4,13 @@ jest.mock('../drops/participation-drops-over-vote-revocation', () => ({
 }));
 
 import { RateMatter } from '@/entities/IRating';
+import { Time } from '@/time';
 import { WavesFrozenException } from '@/waves-freeze/waves-freeze';
 import { isWaveRepFrozen, RatingsService } from './ratings.service';
 
 const FLAG = 'FEATURE_WAVES_FROZEN';
+const AT = 'WAVES_FREEZE_AT';
+const FREEZE = Date.UTC(2026, 10, 25);
 const PAST_FREEZE = 'reached the rating transaction after the freeze check';
 
 function createService(transaction?: (callback: any) => Promise<unknown>) {
@@ -19,7 +22,9 @@ function createService(transaction?: (callback: any) => Promise<unknown>) {
     getOverRateMatters: jest.fn(),
     lockRaterCreditOnMatter: jest.fn(),
     getRatingsOnMatter: jest.fn().mockResolvedValue([]),
-    applyBulkIdentityUpdates: jest.fn()
+    applyBulkIdentityUpdates: jest.fn(),
+    getRating: jest.fn().mockRejectedValue(new Error(PAST_FREEZE)),
+    updateRating: jest.fn()
   };
   const service = new RatingsService(
     ratingsDb as any,
@@ -48,11 +53,33 @@ function rateRequest(matter: RateMatter) {
   } as any;
 }
 
+/** The freeze starts while the request waits on the rater's credit lock. */
+function freezeStartsDuringTheLockWait(ratingsDb: {
+  lockRaterCreditOnMatter: jest.Mock;
+}) {
+  process.env[AT] = new Date(FREEZE).toISOString();
+  const now = jest.spyOn(Time, 'currentMillis').mockReturnValue(FREEZE - 1);
+  ratingsDb.lockRaterCreditOnMatter.mockImplementation(async () => {
+    now.mockReturnValue(FREEZE + 1);
+  });
+}
+
 describe('ratings during the waves freeze', () => {
-  const original = process.env[FLAG];
+  const original: Record<string, string | undefined> = {};
+  beforeAll(() => {
+    for (const name of [FLAG, AT]) original[name] = process.env[name];
+  });
+  beforeEach(() => {
+    for (const name of [FLAG, AT]) delete process.env[name];
+  });
   afterEach(() => {
-    if (original === undefined) delete process.env[FLAG];
-    else process.env[FLAG] = original;
+    jest.restoreAllMocks();
+  });
+  afterAll(() => {
+    for (const name of [FLAG, AT]) {
+      if (original[name] === undefined) delete process.env[name];
+      else process.env[name] = original[name];
+    }
   });
 
   it('freezes wave REP only, and only while waves are frozen', () => {
@@ -88,6 +115,46 @@ describe('ratings during the waves freeze', () => {
     await expect(
       service.updateRating(rateRequest(RateMatter.WAVE_REP), {})
     ).rejects.toThrow(PAST_FREEZE);
+  });
+
+  it('refuses a wave REP rating whose lock wait passes the freeze', async () => {
+    const { service, ratingsDb, connection } = createService((callback) =>
+      callback(connection)
+    );
+    freezeStartsDuringTheLockWait(ratingsDb);
+    const request = {
+      ...rateRequest(RateMatter.WAVE_REP),
+      rater_profile_id: 'rater',
+      authenticationContext: {
+        getActingAsId: () => 'rater',
+        isAuthenticatedAsProxy: () => false
+      }
+    };
+    await expect(service.updateRating(request, {})).rejects.toBeInstanceOf(
+      WavesFrozenException
+    );
+    expect(ratingsDb.lockRaterCreditOnMatter).toHaveBeenCalledTimes(1);
+    expect(ratingsDb.getRating).not.toHaveBeenCalled();
+    expect(ratingsDb.updateRating).not.toHaveBeenCalled();
+  });
+
+  it('leaves wave REP as it stood when the lock wait passes the freeze', async () => {
+    const { service, ratingsDb, connection } = createService((callback) =>
+      callback(connection)
+    );
+    freezeStartsDuringTheLockWait(ratingsDb);
+    ratingsDb.getOverRateMatters.mockResolvedValue([
+      {
+        rater_profile_id: 'rater',
+        matter: RateMatter.WAVE_REP,
+        tally: 10,
+        rater_credit: 1
+      }
+    ]);
+    await service.reduceOverRates();
+    expect(ratingsDb.lockRaterCreditOnMatter).toHaveBeenCalledTimes(1);
+    expect(ratingsDb.getRatingsOnMatter).not.toHaveBeenCalled();
+    expect(ratingsDb.applyBulkIdentityUpdates).not.toHaveBeenCalled();
   });
 
   it.each([

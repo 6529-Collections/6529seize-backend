@@ -7,9 +7,11 @@ import {
 } from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
+import { Time } from '@/time';
 import { UserGroupsDb } from '@/user-groups/user-groups.db';
 import {
   WAVES_FROZEN_GROUP_MESSAGE,
+  WAVES_FROZEN_GROUP_VISIBILITY_MESSAGE,
   WavesFrozenException
 } from '@/waves-freeze/waves-freeze';
 import {
@@ -21,6 +23,7 @@ import { aUserGroup, withUserGroups } from './fixtures/user-group.fixture';
 import { aWave, withWaves } from './fixtures/wave.fixture';
 
 const FLAG = 'FEATURE_WAVES_FROZEN';
+const AT = 'WAVES_FREEZE_AT';
 const creatorKey = aRandomIdentityKey();
 const creator = anIdentity({}, creatorKey);
 const group = (visible: boolean) =>
@@ -31,6 +34,7 @@ const group = (visible: boolean) =>
   });
 const waveGroup = group(true);
 const newVersion = group(false);
+const directMessageGroup = group(true);
 
 function replaceWaveGroup(idempotencyKey: string, visible = true) {
   return {
@@ -57,22 +61,46 @@ async function groupName(id: string): Promise<string | null> {
   return rows[0]?.name ?? null;
 }
 
+async function isVisible(id: string): Promise<boolean> {
+  const rows = await sqlExecutor.execute<{ visible: unknown }>(
+    `select visible from ${USER_GROUPS_TABLE} where id = :id`,
+    { id }
+  );
+  return Boolean(rows[0]?.visible);
+}
+
 describeWithSeed(
-  'POST /groups/:id/visible with old_version_id during the waves freeze',
+  'POST /groups/:id/visible during the waves freeze',
   [
     withIdentities([creator]),
-    withUserGroups([waveGroup, newVersion]),
-    withWaves([aWave({ visibility_group_id: waveGroup.id })])
+    withUserGroups([waveGroup, newVersion, directMessageGroup]),
+    withWaves([
+      aWave({ visibility_group_id: waveGroup.id }),
+      aWave({
+        is_direct_message: true,
+        visibility_group_id: directMessageGroup.id,
+        chat_group_id: directMessageGroup.id
+      })
+    ])
   ],
   () => {
-    const service = new UserGroupsService(
-      new UserGroupsDb(() => sqlExecutor),
-      mock()
-    );
-    const original = process.env[FLAG];
+    const groupsDb = new UserGroupsDb(() => sqlExecutor);
+    const service = new UserGroupsService(groupsDb, mock());
+    const original: Record<string, string | undefined> = {};
+    beforeAll(() => {
+      for (const name of [FLAG, AT]) original[name] = process.env[name];
+    });
+    beforeEach(() => {
+      for (const name of [FLAG, AT]) delete process.env[name];
+    });
     afterEach(() => {
-      if (original === undefined) delete process.env[FLAG];
-      else process.env[FLAG] = original;
+      jest.restoreAllMocks();
+    });
+    afterAll(() => {
+      for (const name of [FLAG, AT]) {
+        if (original[name] === undefined) delete process.env[name];
+        else process.env[name] = original[name];
+      }
     });
 
     it('refuses to replace a group a wave uses and writes no receipt', async () => {
@@ -115,6 +143,59 @@ describeWithSeed(
       ).rejects.toBeInstanceOf(WavesFrozenException);
       expect(await receipts()).toEqual([true]);
       expect(await groupName(waveGroup.id)).toBe(newVersion.name);
+    });
+
+    it('neither hides a group a wave uses nor writes a receipt', async () => {
+      process.env[FLAG] = 'true';
+      const hide = service.changeVisibility(
+        {
+          group_id: waveGroup.id,
+          old_version_id: null,
+          visible: false,
+          profile_id: creatorKey.profile_id,
+          idempotencyKey: 'hide'
+        },
+        {}
+      );
+      await expect(hide).rejects.toThrow(WAVES_FROZEN_GROUP_VISIBILITY_MESSAGE);
+      expect(await receipts()).toEqual([]);
+      expect(await isVisible(waveGroup.id)).toBe(true);
+    });
+
+    it('refuses the replacement when the freeze starts during its lock wait', async () => {
+      const freeze = Date.UTC(2026, 10, 25);
+      process.env[AT] = new Date(freeze).toISOString();
+      const now = jest.spyOn(Time, 'currentMillis').mockReturnValue(freeze - 1);
+      const lock = groupsDb.lockForVisibilityChange.bind(groupsDb);
+      jest
+        .spyOn(groupsDb, 'lockForVisibilityChange')
+        .mockImplementation(async (id, connection) => {
+          await lock(id, connection);
+          now.mockReturnValue(freeze + 1);
+        });
+      await expect(
+        service.changeVisibility(replaceWaveGroup('during-the-wait'), {})
+      ).rejects.toThrow(WAVES_FROZEN_GROUP_MESSAGE);
+      // The receipt reserved in the transaction was rolled back with it.
+      expect(await receipts()).toEqual([]);
+      expect(await groupName(waveGroup.id)).toBe(waveGroup.name);
+      expect(await groupName(newVersion.id)).toBe(newVersion.name);
+    });
+
+    it("still hides a direct message's group: direct messages are chat", async () => {
+      process.env[FLAG] = 'true';
+      await service.changeVisibility(
+        {
+          group_id: directMessageGroup.id,
+          old_version_id: null,
+          visible: false,
+          profile_id: creatorKey.profile_id,
+          idempotencyKey: 'hide-dm'
+        },
+        {}
+      );
+      expect(await isVisible(directMessageGroup.id)).toBe(false);
+      expect(await receipts()).toEqual([true]);
     });
   }
 );

@@ -169,6 +169,8 @@ export class CompetitionLifecycleService {
           competitionValidationWave(config, wave),
           tx
         );
+        // The wave lock can wait past the freeze: check again before writing.
+        assertWavesNotFrozen();
         const record = newRecord(waveId, config, Date.now());
         await this.persistNew(record, config, actor, tx);
         return competitionService.getCompetition(waveId, record.id, tx);
@@ -372,6 +374,9 @@ export class CompetitionLifecycleService {
             ].includes(record.lifecycle)
           )
             competitionConflict('Only terminal decisions can be cloned');
+          // A clone is a new decision: none while waves are frozen, even of
+          // the Main Stage when the freeze keeps it running.
+          assertWavesNotFrozen();
           const clone = newRecord(waveId, config, now);
           await this.persistNew(clone, config, actor, tx);
           return competitionService.getCompetition(waveId, clone.id, tx);

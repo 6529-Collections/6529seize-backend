@@ -47,7 +47,7 @@ import repCategorySearchRoutes from './profiles/rep-category-search.routes';
 import proxiesRoutes from './proxies/proxies.routes';
 import chainRoutes from './chain/chain.routes';
 import { identityFreezeMiddleware } from './identity-freeze/identity-freeze.middleware';
-import { wavesFreezeMiddleware } from './waves-freeze/waves-freeze.middleware';
+import { wavesFreezeMiddleware } from '@/api/waves-freeze/waves-freeze.middleware';
 import pushNotificationsRoutes from './push-notifications/push-notifications.routes';
 import bulkRepRoutes from './ratings/bulk-rep.routes';
 import ratingsRoutes from './ratings/ratings.routes';
