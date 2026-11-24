@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  DROPS_TABLE,
   IDENTITIES_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
   SIGNED_RECORD_LOG_ENTRIES_TABLE,
@@ -12,7 +13,9 @@ import {
   PROFILE_CMS_CHAIN_HEADS_TABLE,
   PROFILE_CMS_PACKAGES_TABLE,
   PROFILE_CMS_POINTER_EVENTS_TABLE,
-  PROFILE_CMS_PUBLISH_SIGNATURES_TABLE
+  PROFILE_CMS_PUBLISH_SIGNATURES_TABLE,
+  WAVE_DROPPER_METRICS_TABLE,
+  WAVE_METRICS_TABLE
 } from '@/constants';
 import { ProfileCmsPackageStatus } from '@/entities/IProfileCmsPackage';
 import { rebuildProfileCmsFromChainAndLog } from '@/profile-cms/personal-log/profile-cms-rebuild';
@@ -198,6 +201,61 @@ describeWithSeed('the publish area of the rebuild check', [], () => {
           row.target_type === 'DROP' && row.target_action === 'DROP_REPLIED'
       )
     ).toBe(true);
+  });
+
+  it("writes each head drop's wave and dropper metrics, as drop creation does", async () => {
+    await seedProfileSites(seedContext(dir), FLAGS);
+    // Plain SQL against the drops, not the metrics recount, so the check
+    // doesn't compare the recount with itself.
+    const waveId = FLAGS.SIGNED_RECORDS_WAVE_ID;
+    const [want] = await sqlExecutor.execute<{
+      drops: number;
+      chat: number;
+      participatory: number;
+      latest: number;
+    }>(
+      `select count(*) as drops,
+              sum(drop_type = 'CHAT') as chat,
+              sum(drop_type = 'PARTICIPATORY') as participatory,
+              max(created_at) as latest
+         from ${DROPS_TABLE} where wave_id = :waveId`,
+      { waveId }
+    );
+    expect(Number(want.drops)).toBeGreaterThan(0);
+    const [row] = await sqlExecutor.execute<{
+      drops_count: number;
+      participatory_drops_count: number;
+      latest_drop_timestamp: number;
+    }>(
+      `select drops_count, participatory_drops_count, latest_drop_timestamp
+         from ${WAVE_METRICS_TABLE} where wave_id = :waveId`,
+      { waveId }
+    );
+    expect(row).toBeDefined();
+    expect(Number(row.drops_count)).toBe(Number(want.chat));
+    expect(Number(row.participatory_drops_count)).toBe(
+      Number(want.participatory)
+    );
+    expect(Number(row.latest_drop_timestamp)).toBe(Number(want.latest));
+    // Each author's row, counts and time included.
+    const authorsOff = await sqlExecutor.execute(
+      `select d.wave_id, d.author_id
+         from (select wave_id, author_id,
+                      sum(drop_type = 'CHAT') as chat,
+                      sum(drop_type = 'PARTICIPATORY') as participatory,
+                      max(created_at) as latest
+                 from ${DROPS_TABLE}
+                where wave_id = :waveId
+                group by wave_id, author_id) d
+         left join ${WAVE_DROPPER_METRICS_TABLE} m
+           on m.wave_id = d.wave_id and m.dropper_id = d.author_id
+        where m.wave_id is null
+           or m.drops_count <> d.chat
+           or m.participatory_drops_count <> d.participatory
+           or m.latest_drop_timestamp <> d.latest`,
+      { waveId }
+    );
+    expect(authorsOff).toEqual([]);
   });
 
   it('with the chain flag on, also applies the Profile changes from the chain port', async () => {

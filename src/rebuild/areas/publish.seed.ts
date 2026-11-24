@@ -11,6 +11,7 @@ import {
   WAVES_TABLE
 } from '@/constants';
 import { identitySubscriptionsDb } from '@/api/identity-subscriptions/identity-subscriptions.db';
+import { dropsDb } from '@/drops/drops.db';
 import {
   ActivityEventAction,
   ActivityEventTargetType
@@ -351,6 +352,24 @@ async function assertOnlyPublishEntriesOpen(): Promise<void> {
 }
 
 /**
+ * The wave and dropper metrics of a drop the seed wrote, as 6529.io's drop
+ * creation applies them: its metrics delta alone, called with the clock
+ * held at the drop's created_at so latest_drop_timestamp is that time.
+ */
+async function applyCreatedDropMetrics(
+  drop: { wave_id: string; author_id: string; drop_type: DropType },
+  createdAt: number
+): Promise<void> {
+  const realNow = Date.now;
+  Date.now = () => createdAt;
+  try {
+    await dropsDb.applyInsertedDropMetricsDelta(drop, {});
+  } finally {
+    Date.now = realNow;
+  }
+}
+
+/**
  * Closes this seed's open entries into segments, their files in the seed
  * files and their heads posted to the records wave.
  */
@@ -378,11 +397,12 @@ async function closeOpenEntries(
     poster: {
       post: async (text) => {
         const id = randomUUID();
+        const createdAt = Date.now();
         await insertIgnore(DROPS_TABLE, {
           id,
           wave_id: service.waveId,
           author_id: service.profileId,
-          created_at: Date.now(),
+          created_at: createdAt,
           updated_at: null,
           title: null,
           parts_count: 1,
@@ -413,6 +433,14 @@ async function closeOpenEntries(
             },
             connection
           )
+        );
+        await applyCreatedDropMetrics(
+          {
+            wave_id: service.waveId,
+            author_id: service.profileId,
+            drop_type: DropType.CHAT
+          },
+          createdAt
         );
         return id;
       }
