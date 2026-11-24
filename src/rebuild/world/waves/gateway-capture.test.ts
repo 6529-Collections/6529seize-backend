@@ -1,13 +1,25 @@
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
+import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import {
+  ChainGatewayClient,
+  cidPath
+} from '@/chain-gateway/chain-gateway.client';
 import { startHttpRecording } from '@/rebuild/sources/http-recording';
+import { closeServer, listenLoopback } from '@/rebuild/sources/running-source';
 import {
   gatewayChainIndexSource,
   indexChainTo
 } from '@/rebuild/steps/waves-chain-index.steps';
 import { FakeIndexDb } from '@/tests/fixtures/waves-chain-index.fixture';
-import { captureWavesGateway } from './gateway-capture';
+import {
+  captureWavesGateway,
+  documentCids,
+  readDocuments,
+  startRecorder
+} from './gateway-capture';
 import {
   buildWavesGatewayWorld,
   startGatewayWorld,
@@ -153,6 +165,98 @@ describe('the waves gateway capture', () => {
       }
     } finally {
       await skippedNode.close();
+    }
+  });
+});
+
+describe('the capture of documents', () => {
+  const bytes = Buffer.from([0x7b, 0x00, 0xff, 0xfe, 0x80, 0x7d]);
+  const cid = `0x01551220${createHash('sha256').update(bytes).digest('hex')}`;
+  const absent = `0x01551220${'00'.repeat(32)}`;
+  let dir: string;
+  let store: http.Server;
+  let storeUrl: string;
+
+  beforeAll(async () => {
+    // A document store: one document, the store's own "none" for others.
+    store = http.createServer((request, response) => {
+      if (request.url === `/v1/docs/${cidPath(cid)}`) {
+        response.writeHead(200, { 'content-type': 'application/octet-stream' });
+        response.end(bytes);
+        return;
+      }
+      response.writeHead(404, { 'content-type': 'application/json' });
+      response.end(
+        JSON.stringify({
+          error: {
+            code: 'not_found',
+            message: 'this store holds no document with that CID'
+          }
+        })
+      );
+    });
+    storeUrl = (await listenLoopback(store)).url;
+  });
+
+  afterAll(async () => {
+    await closeServer(store);
+  });
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'waves-gateway-docs-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('finds sha2-256 CIDs in fields ending in Cid, once each', () => {
+    const base32 = cidPath(cid);
+    const json = (value: unknown) => ({
+      body: JSON.stringify(value),
+      encoding: 'utf8' as const
+    });
+    expect(
+      documentCids([
+        json({ data: [{ metadataCid: cid, policyHash: cid }] }),
+        json({ data: { entry: { data: { contentCid: base32 } } } }),
+        json({ data: { ballotCid: `0x${'c5'.repeat(32)}`, otherCid: 7 } }),
+        {
+          body: Buffer.from(cid).toString('base64'),
+          encoding: 'base64' as const
+        },
+        json({
+          data: { metadataCid: absent.toUpperCase().replace('0X', '0x') }
+        })
+      ])
+    ).toEqual([cid, absent]);
+  });
+
+  it('keeps a document byte for byte, and a replay serves it to the gateway client', async () => {
+    const recorder = await startRecorder(storeUrl, dir);
+    try {
+      expect(await readDocuments(recorder.url, [cid, absent])).toEqual({
+        read: 2,
+        missing: 1
+      });
+    } finally {
+      await recorder.stop();
+    }
+    const replay = await startHttpRecording({ name: 'gateway', dir });
+    try {
+      const client = new ChainGatewayClient(() => ({
+        baseUrl: replay.url,
+        serviceKey: null,
+        timeoutMs: 5_000,
+        retries: 0,
+        headTtlMs: 0,
+        cacheEntries: 10
+      }));
+      expect(await client.getDocument(cid)).toEqual(bytes);
+      expect(await client.getDocument(absent)).toBeNull();
+      expect(replay.problems()).toEqual([]);
+    } finally {
+      await replay.stop();
     }
   });
 });

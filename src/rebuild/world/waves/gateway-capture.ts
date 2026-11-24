@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as http from 'node:http';
 import * as path from 'node:path';
+import { cidHex, cidPath } from '@/chain-gateway/chain-gateway.client';
 import {
   exchangeKey,
   RecordedExchange
@@ -29,7 +30,11 @@ import { FakeIndexDb } from '@/tests/fixtures/waves-chain-index.fixture';
  * waits until the native writes are final (phase 2): the node's finalized
  * height then is the mark, read once and kept as the recording's
  * /v1/status. Phase 2 reads from empty, as a rebuild does: what phase 1
- * recorded is answered from the recording, the rest from the node.
+ * recorded is answered from the recording, the rest from the node. Then
+ * the documents: every sha2-256 CID the recorded answers name in a field
+ * ending in `Cid` (a wave's, a decision's, an entry's), read from the
+ * node's document store as the chain mirror reads them
+ * (GET /v1/docs/<base32 CID>), kept byte for byte.
  *
  * The index runs in memory: the capture needs the node, Node.js and this
  * repository's code, not MySQL.
@@ -52,13 +57,35 @@ export interface GatewayCaptureResult {
   readonly startHeight: number;
   readonly markHeight: number;
   readonly exchanges: number;
+  /** Documents read, and how many of them the store didn't have. */
+  readonly documents: { readonly read: number; readonly missing: number };
 }
 
 const RECORDING_FILE = 'recording.jsonl';
 const STATUS_PATH = '/v1/status';
+const DOCS_PATH = '/v1/docs/';
+
+/** A sha2-256 CIDv1 in hex: version 01, any codec, multihash 12 20. */
+const HEX_SHA256_CID = /^0x01[0-9a-f]{2}1220[0-9a-f]{64}$/i;
+/** The same in base32 text: `b` and the CID's bytes (CIDv1 raw: bafkrei). */
+const BASE32_CID = /^b[a-z2-7]{50,}$/;
+
+/** Document bytes, and any answer that isn't text, are kept as base64. */
+function bodyOf(
+  url: string,
+  bytes: Buffer,
+  contentType: string | null
+): Pick<RecordedExchange, 'body' | 'encoding'> {
+  const text =
+    !url.startsWith(DOCS_PATH) &&
+    (/json|text|xml/i.test(contentType ?? '') || !contentType);
+  return text
+    ? { body: bytes.toString('utf8'), encoding: 'utf8' }
+    : { body: bytes.toString('base64'), encoding: 'base64' };
+}
 
 /** Forwards to the node and keeps what it answered, by the harness's key. */
-async function startRecorder(upstream: string, dir: string) {
+export async function startRecorder(upstream: string, dir: string) {
   const file = path.join(dir, RECORDING_FILE);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(file, '');
@@ -75,17 +102,19 @@ async function startRecorder(upstream: string, dir: string) {
       if (!exchange) {
         const answer = await fetch(`${upstream.replace(/\/$/, '')}${url}`, {
           method,
-          headers: { accept: 'application/json' },
+          headers: {
+            accept: String(request.headers.accept ?? 'application/json')
+          },
           body: body.length ? body : undefined
         });
+        const contentType = answer.headers.get('content-type');
         exchange = {
           key,
           method,
           path: url,
           status: answer.status,
-          contentType: answer.headers.get('content-type'),
-          body: await answer.text(),
-          encoding: 'utf8'
+          contentType,
+          ...bodyOf(url, Buffer.from(await answer.arrayBuffer()), contentType)
         };
         // The status is kept once, at the mark: before it, the node's
         // finalized height is not the mark's.
@@ -97,7 +126,7 @@ async function startRecorder(upstream: string, dir: string) {
       response.writeHead(exchange.status, {
         'content-type': exchange.contentType ?? 'application/json'
       });
-      response.end(exchange.body);
+      response.end(Buffer.from(exchange.body, exchange.encoding));
     } catch (error) {
       response.writeHead(502, { 'content-type': 'application/json' });
       response.end(JSON.stringify({ error: String(error) }));
@@ -105,6 +134,59 @@ async function startRecorder(upstream: string, dir: string) {
   });
   const { url } = await listenLoopback(server);
   return { url, state, kept, stop: () => closeServer(server) };
+}
+
+/**
+ * Every sha2-256 CID in a field ending in `Cid` of the recorded JSON
+ * answers, as hex, each once, in order.
+ */
+export function documentCids(
+  exchanges: Iterable<Pick<RecordedExchange, 'body' | 'encoding'>>
+): string[] {
+  const found = new Set<string>();
+  const walk = (value: unknown, key: string | null): void => {
+    if (typeof value === 'string') {
+      if (!key?.endsWith('Cid')) return;
+      if (!HEX_SHA256_CID.test(value) && !BASE32_CID.test(value)) return;
+      try {
+        found.add(cidHex(value));
+      } catch {
+        // Not a CID after all.
+      }
+    } else if (Array.isArray(value)) {
+      value.forEach((item) => walk(item, key));
+    } else if (value && typeof value === 'object') {
+      Object.entries(value).forEach(([name, item]) => walk(item, name));
+    }
+  };
+  for (const exchange of Array.from(exchanges)) {
+    if (exchange.encoding !== 'utf8') continue;
+    try {
+      walk(JSON.parse(exchange.body), null);
+    } catch {
+      // Not JSON.
+    }
+  }
+  return Array.from(found).filter((cid) => HEX_SHA256_CID.test(cid));
+}
+
+/** Reads each document through the recorder, as the chain mirror does. */
+export async function readDocuments(
+  recorderUrl: string,
+  cids: readonly string[]
+): Promise<{ read: number; missing: number }> {
+  let missing = 0;
+  for (const cid of cids) {
+    const answer = await fetch(`${recorderUrl}${DOCS_PATH}${cidPath(cid)}`, {
+      headers: { accept: 'application/octet-stream' }
+    });
+    await answer.arrayBuffer();
+    if (answer.status === 404) missing++;
+    else if (answer.status !== 200) {
+      throw new Error(`GET ${DOCS_PATH}${cidPath(cid)}: HTTP ${answer.status}`);
+    }
+  }
+  return { read: cids.length, missing };
 }
 
 async function json(url: string): Promise<Record<string, unknown> | null> {
@@ -185,19 +267,26 @@ export async function captureWavesGateway(
         `The rebuild's heights ${heights.join(', ')} don't start at phase 1's ${start.finalizedHeight}`
       );
     }
+    // Phase 3: the documents the answers name. A document never changes,
+    // so when it is read doesn't matter.
+    const documents = await readDocuments(
+      recorder.url,
+      documentCids(recorder.kept.values())
+    );
     writeProvenance(options.dir, {
       made_by: options.madeBy,
-      note: `The waves import completed at height ${doneHeight}; the index starts at ${start.finalizedHeight}, the first finalized height from it; the mark is height ${markHeight}.`,
+      note: `The waves import completed at height ${doneHeight}; the index starts at ${start.finalizedHeight}, the first finalized height from it; the mark is height ${markHeight}; ${documents.read} documents read, ${documents.missing} of them not in the store.`,
       recorded_at: new Date().toISOString()
     });
     log(
-      `[GATEWAY CAPTURE] done: ${recorder.kept.size} answers, import ${doneHeight}, heights ${start.finalizedHeight} and ${markHeight}`
+      `[GATEWAY CAPTURE] done: ${recorder.kept.size} answers, import ${doneHeight}, heights ${start.finalizedHeight} and ${markHeight}, ${documents.read} documents (${documents.missing} missing)`
     );
     return {
       doneHeight,
       startHeight: start.finalizedHeight,
       markHeight,
-      exchanges: recorder.kept.size
+      exchanges: recorder.kept.size,
+      documents
     };
   } finally {
     await recorder.stop();
