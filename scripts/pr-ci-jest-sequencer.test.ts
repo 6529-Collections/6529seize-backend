@@ -7,7 +7,7 @@ const slowSuites = [
   'third.test.ts',
   'fourth.test.ts'
 ];
-const newDbSuite = 'new-db.test.ts';
+const newDbSuites = ['new-db-api.test.ts', 'new-db.test.ts'];
 const newUnitSuites = ['alpha.test.ts', 'beta.test.ts', 'gamma.test.ts'];
 
 function jestTests(rootDir: string, suites: string[]) {
@@ -34,7 +34,7 @@ describe('Jest CI sequencer', () => {
 
   it('spreads expensive suites across separate shards and accounts for every suite', () => {
     const root = path.resolve('runner-a');
-    const allSuites = [...newUnitSuites, ...slowSuites, newDbSuite];
+    const allSuites = [...newUnitSuites, ...slowSuites, ...newDbSuites];
     const tests = jestTests(root, allSuites);
     const shards = Array.from({ length: 6 }, (_, index) =>
       suitePaths(
@@ -58,7 +58,7 @@ describe('Jest CI sequencer', () => {
         )
       );
     };
-    const suites = [...newUnitSuites, newDbSuite, ...slowSuites];
+    const suites = [...newUnitSuites, ...newDbSuites, ...slowSuites];
     expect(assignShards(path.resolve('runner-a'), suites)).toEqual(
       assignShards(path.resolve('runner-b'), [...suites].reverse())
     );
@@ -66,7 +66,7 @@ describe('Jest CI sequencer', () => {
 
   it('starts expensive suites early and breaks ties by repo-relative path', () => {
     const root = path.resolve('runner');
-    const expected = [...slowSuites, newDbSuite, ...newUnitSuites];
+    const expected = [...slowSuites, ...newDbSuites, ...newUnitSuites];
     const tests = jestTests(root, [...expected].reverse());
 
     expect(suitePaths(root, sequencer.sort(tests))).toEqual(expected);

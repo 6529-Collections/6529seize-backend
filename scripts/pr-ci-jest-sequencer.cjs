@@ -27,9 +27,9 @@ function weighTests(tests, timings) {
         .split(path.sep)
         .join('/');
       const duration = timings[suite];
-      const integration = /[.-](?:db|integration)\.test\.[cm]?[jt]sx?$/.test(
-        suite
-      );
+      const nameParts = path.basename(suite).split(/[.-]/);
+      const integration =
+        nameParts.includes('db') || nameParts.includes('integration');
       const fallback = integration ? 10_000 : 2_000;
       return {
         test,
@@ -57,8 +57,9 @@ module.exports = class CiTestSequencer extends TestSequencer {
       tests: []
     }));
     for (const { test, weight } of weighTests(tests, this.timings)) {
-      const lightest = shards.reduce((best, shard) =>
-        shard.weight < best.weight ? shard : best
+      const lightest = shards.reduce(
+        (best, shard) => (shard.weight < best.weight ? shard : best),
+        shards[0]
       );
       lightest.tests.push(test);
       lightest.weight += weight;
