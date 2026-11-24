@@ -2,12 +2,12 @@ import { MODERATION_ACTIONS } from '@/content-moderation/moderation-review.types
 import {
   AreaManifest,
   Probe,
-  PlannedRows,
   ReasonedPath,
   RebuildStep,
   TableEntry
 } from '@/rebuild/manifest.types';
 import { PROBE_CALLER } from '@/rebuild/manifests/probe-fixture';
+import { stayingWavesPlans } from '@/rebuild/manifests/waves-staying';
 import {
   RELAY_WORLD_WALLET,
   WAVES_WORLD_IDS
@@ -235,8 +235,8 @@ const DROP_METRICS_REBUILDERS: RebuildStep[] = [
  * socket effects. It reads the chain through the gateway and each document
  * from the capture's files, by CID. Planned until its code is in this
  * tree. It also needs the identity mirror's principal map
- * (identity_chain_principals), which the identity rebuilder writes on its
- * branch; that step goes in `after` when it is in this tree.
+ * (identity_chain_principals), which the identity rebuilder writes; that
+ * step goes in `after` once both are in one tree.
  */
 const MIRROR_STEPS = 'src/waves-chain-mirror/waves-chain-mirror.rebuild';
 // The drop tables (drops, drops_parts, drop_medias, drops_metadatas) are
@@ -272,80 +272,6 @@ const MIRROR_WRITES = [
   'waves_chain_mirror_waves',
   'waves_chain_mirror_decisions'
 ];
-
-/**
- * The rows of waves that stay on 6529.io (members-only waves, waves with a
- * hidden or private group, direct messages, the records wave) in the
- * tables the mirror writes. After the switch-on a wave has moved when the
- * chain holds a LegacyId for it, so a staying wave is one that is neither
- * made on the chain (a 0x id) nor named by a LegacyId in the chain index.
- * The rebuild can't bring these rows back until private waves exist on
- * the chain.
- */
-function movedWave(column: string): string {
-  return `exists (select 1 from chain_waves cw where cw.legacy_id is not null and replace(lower(cw.legacy_id), '-', '') = replace(lower(${column}), '-', ''))`;
-}
-
-function stayingWave(column: string): string {
-  return `(${column} not like '0x%' and not ${movedWave(column)})`;
-}
-
-/**
- * A staying group, by the export's own rule (the snapshot tool's
- * site_scope and model), from 6529.io's rows: hidden, private or a direct
- * message's, or else named by no moved wave as its read, post or admin
- * group and by no decision of a moved wave as its submit or vote group,
- * so the Waves v1 file never held it. A group made on the chain is the
- * mirror's.
- */
-function stayingGroup(alias: string): string {
-  const id = `${alias}.id`;
-  const named = [
-    `exists (select 1 from waves mw where ${movedWave('mw.id')} and ${id} in (mw.visibility_group_id, mw.chat_group_id, mw.admin_group_id))`,
-    `exists (select 1 from competitions md where ${movedWave('md.wave_id')} and ${id} in (json_unquote(json_extract(md.participation_config, '$.group_id')), json_unquote(json_extract(md.voting_config, '$.group_id'))))`
-  ];
-  return `(${id} not like '0x%' and (${alias}.visible = 0 or ${alias}.is_private = 1 or coalesce(${alias}.is_direct_message, 0) = 1 or not (${named.join(' or ')})))`;
-}
-
-const STAYING_COMPETITION = `competition_id in (select d.id from competitions d where ${stayingWave('d.wave_id')})`;
-
-const STAYING_WHERE: Readonly<Record<string, string>> = {
-  waves: stayingWave('waves.id'),
-  waves_metadatas: stayingWave('waves_metadatas.wave_id'),
-  waves_archive: stayingWave('waves_archive.id'),
-  community_groups: stayingGroup('community_groups'),
-  profile_groups: `profile_groups.profile_group_id in (select g.profile_group_id from community_groups g where ${stayingGroup('g')} union select g.excluded_profile_group_id from community_groups g where ${stayingGroup('g')})`,
-  competitions: stayingWave('competitions.wave_id'),
-  competition_config_versions: STAYING_COMPETITION,
-  competition_capabilities: STAYING_COMPETITION,
-  competition_outcomes: STAYING_COMPETITION,
-  competition_outcome_distribution_items: STAYING_COMPETITION,
-  competition_lifecycle_events: STAYING_COMPETITION,
-  competition_entries: STAYING_COMPETITION,
-  competition_votes: STAYING_COMPETITION,
-  competition_entry_runtime: STAYING_COMPETITION,
-  competition_leaderboard_entries: STAYING_COMPETITION,
-  competition_decisions: STAYING_COMPETITION,
-  competition_decision_winners: STAYING_COMPETITION,
-  competition_winner_votes: STAYING_COMPETITION,
-  competition_outcome_awards: STAYING_COMPETITION,
-  competition_vote_history: STAYING_COMPETITION,
-  competition_score_history: STAYING_COMPETITION
-};
-
-/** One plan for each table the mirror writes that holds staying rows. */
-function stayingWavesPlans(writes: readonly string[]): PlannedRows[] {
-  return writes
-    .filter((table) => table in STAYING_WHERE)
-    .map((table) => ({
-      table,
-      where: STAYING_WHERE[table],
-      reason:
-        'Stays on 6529.io (members-only waves, hidden or private groups) until private waves exist on the chain',
-      until: '2026-12-15',
-      change: 'private groups and waves on the 6529 chain'
-    }));
-}
 
 /** The drop index's checked relay events, its rejects and its relay cursors. */
 export const WAVES_DROP_INDEX_TABLES = [
