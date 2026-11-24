@@ -94,6 +94,8 @@ class FakeBucket {
   dead = false;
   /** Kills the process when a put of this key is about to land. */
   dieOnPut: ((key: string) => boolean) | null = null;
+  /** Every put is refused. */
+  refusePuts = false;
 
   readonly send = jest.fn(async (command: any) => {
     if (this.dead) throw new Error('the invocation was cut off');
@@ -124,6 +126,7 @@ class FakeBucket {
       ) {
         throw new Error(`bad checksum for ${key}`);
       }
+      if (this.refusePuts) throw refused('AccessDenied', 403);
       if (this.dieOnPut?.(key)) {
         this.dead = true;
         throw new Error('the invocation was cut off');
@@ -1009,6 +1012,28 @@ describe('the waves export job', () => {
       in_flight: null,
       stages_done: []
     });
+  });
+
+  it("still reports the export's refusal when saving after it fails", async () => {
+    const run = setup();
+    const refusal = new WavesExportUsageError(
+      'The read replica may be up to 61.5 s behind',
+      { showHelp: false }
+    );
+    const deps: WavesExportJobDeps = {
+      ...run.deps,
+      runExport: async () => {
+        run.bucket.refusePuts = true;
+        throw refusal;
+      }
+    };
+    await expect(
+      runWavesExportJob(
+        parseWavesExportEvent({ job: 'wavesExport', ...AT_FREEZE })!,
+        run.context,
+        deps
+      )
+    ).rejects.toBe(refusal);
   });
 
   it("reports the replica's errors by their code, never their message", async () => {

@@ -855,7 +855,8 @@ describe('WavesExport stopped by its caller in the drops stage', () => {
     const stopped = exportOf(out, first, ['drops'], () => ++asked > 2);
     await expect(stopped).rejects.toThrow(WavesExportStoppedError);
     await expect(stopped).rejects.toMatchObject({ wavesLeft: 3, waves: 5 });
-    expect(first.dropsRead).toEqual(['w-1', 'w-2']);
+    // Two at once: the first two waves, in either order.
+    expect(first.dropsRead.sort()).toEqual(['w-1', 'w-2']);
     const raw = path.join(out, 'raw');
     // Each wave it read is whole: its drops and its signed file.
     for (const id of ['w-1', 'w-2']) {

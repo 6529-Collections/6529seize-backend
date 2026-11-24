@@ -1144,13 +1144,13 @@ async function runStages(
         await run.save();
         return { stage, wavesLeft: null, waves: null };
       }
+      const command = stageCommand(event, out, revision, stage);
       state.in_flight = {
         stage,
         files_at_start: files.listed,
         started_at: new Date(deps.now()).toISOString()
       };
       await run.save();
-      const command = stageCommand(event, out, revision, stage);
       // The export writes its run log once, as its run starts, before any
       // stage reads; it asks whether to stop before each wave's drops. Once
       // it asks, the log is written and stays as it is until the run ends.
@@ -1184,9 +1184,20 @@ async function runStages(
         );
       } catch (error) {
         // Whatever ended the run, the waves it finished are kept.
-        await files.flush(false);
-        state.in_flight = null;
-        await run.save();
+        const stopped = error instanceof WavesExportStoppedError;
+        try {
+          await files.flush(false);
+          state.in_flight = null;
+          await run.save();
+        } catch (saveError) {
+          // A stop that can't save its progress is a failure. A failed run
+          // reports its own error: the next invocation goes on from the
+          // last state saved.
+          if (stopped) throw saveError;
+          logger.warn(
+            `[FINISHED WAVES NOT SAVED] [${stage}] ${String((saveError as Error)?.message ?? saveError)}`
+          );
+        }
         if (error instanceof WavesExportStoppedError) {
           return {
             stage,
