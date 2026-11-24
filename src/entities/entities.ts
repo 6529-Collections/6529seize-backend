@@ -250,6 +250,15 @@ export {
   ChainWaveRoleEntity,
   WavesChainIndexStateEntity
 } from './IWavesChainIndex';
+export {
+  ChainDocEntity,
+  ChainEntryHoldEntity,
+  WavesChainMirrorDecisionEntity,
+  WavesChainMirrorEventEntity,
+  WavesChainMirrorGroupEntity,
+  WavesChainMirrorStateEntity,
+  WavesChainMirrorWaveEntity
+} from './IWavesChainMirror';
 export { WalletAuthSessionEntity } from './IWalletAuthSession';
 export type { WalletAuthClientType } from './IWalletAuthSession';
 export { WalletConnectionShareEntity } from './IWalletConnectionShare';

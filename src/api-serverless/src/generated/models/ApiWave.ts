@@ -32,6 +32,10 @@ export class ApiWave {
     */
     'id': string;
     /**
+    * The wave\'s id on the 6529 chain (lowercase), for an imported wave too; a wave made on the chain has it as its id. Null while 6529.io doesn\'t know it.
+    */
+    'chain_id'?: string | null;
+    /**
     * Sequence number of the wave in Seize
     */
     'serial_no': number;
@@ -74,6 +78,12 @@ export class ApiWave {
         {
             "name": "id",
             "baseName": "id",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "chain_id",
+            "baseName": "chain_id",
             "type": "string",
             "format": ""
         },

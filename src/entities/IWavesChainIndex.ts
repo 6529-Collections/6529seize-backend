@@ -214,6 +214,8 @@ export class ChainDecisionEntity {
   @Column({ type: 'varchar', length: 16, nullable: false })
   readonly origin!: string;
 
+  // The mirror reads the decisions written above a height.
+  @Index()
   @Column({ type: 'bigint', nullable: false })
   readonly height!: number;
 
@@ -307,6 +309,8 @@ export class ChainResultEntity {
   @Column({ type: 'varchar', length: 16, nullable: false })
   readonly origin!: string;
 
+  // The mirror reads the results written above a height.
+  @Index()
   @Column({ type: 'bigint', nullable: false })
   readonly height!: number;
 

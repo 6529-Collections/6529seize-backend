@@ -52,6 +52,16 @@ export class AppFeatures {
   public isWavesChainClaimBuildsEnabled(): boolean {
     return this.isFeatureEnabled('WAVES_CHAIN_CLAIM_BUILDS');
   }
+
+  /**
+   * After the chain index, the wave decision loop copies the chain's
+   * decisions into 6529.io's competition tables (src/waves-chain-mirror).
+   * It writes only with WAVES_CHAIN_MIRROR_WRITE=true; otherwise it reports
+   * what it would write.
+   */
+  public isWavesChainMirrorEnabled(): boolean {
+    return this.isFeatureEnabled('WAVES_CHAIN_MIRROR');
+  }
 }
 
 export const appFeatures = new AppFeatures();
