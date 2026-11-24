@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { performance } from 'node:perf_hooks';
-import type { PoolConnection } from 'mysql';
+import type { PoolConnection } from 'mysql2';
 import {
   afterCommit,
   beforeCommit,

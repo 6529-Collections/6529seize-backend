@@ -1,4 +1,4 @@
-import type { PoolConnection } from 'mysql';
+import type { PoolConnection } from 'mysql2';
 import { execNativeTransactionally } from '@/db/my-sql.helpers';
 import {
   IDENTITY_FREEZE_AT_ENV,
