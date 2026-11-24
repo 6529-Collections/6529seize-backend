@@ -4,9 +4,9 @@ import type { PrincipalBindingSource } from '@/signed-records/record-verify';
 
 /**
  * The chain's identities, as the shared gateway client reads them
- * (`ChainGatewayClient`: these are its method names and fields). Wire it
- * with `wireSignedRecordsChain(chainGatewayClient)`, which also gives the
- * anchor service its source.
+ * (`ChainGatewayClient`: these are its method names and fields).
+ * wireSignedRecordsChainAtStartup wires the client in, through
+ * signedRecordsChainOf (record-chain.ts), with the anchor service's source.
  */
 export interface ChainIdentityReader {
   /**

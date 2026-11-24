@@ -8,6 +8,10 @@ const mockCreateSegmenter = jest.fn(() => ({
 jest.mock('@/signed-records/record-log/record-log', () => ({
   createRecordLogSegmenter: () => mockCreateSegmenter()
 }));
+const mockWire = jest.fn(() => false);
+jest.mock('@/signed-records/record-chain', () => ({
+  wireSignedRecordsChainAtStartup: () => mockWire()
+}));
 jest.mock('../secrets', () => ({
   doInDbContext: async (fn: () => Promise<unknown>) => fn()
 }));
@@ -34,6 +38,18 @@ describe('signedRecordLogLoop', () => {
     delete process.env.FEATURE_SIGNED_RECORD_LOG;
     await run();
     expect(mockCreateSegmenter).not.toHaveBeenCalled();
+    // Not even the chain wiring: it comes after the feature check.
+    expect(mockWire).not.toHaveBeenCalled();
+  });
+
+  it('wires the chain gateway once the flag is on, before its task', async () => {
+    process.env.FEATURE_SIGNED_RECORD_LOG = 'true';
+    process.env.SIGNED_RECORD_LOG_TASK = 'close';
+    await run();
+    expect(mockWire).toHaveBeenCalledTimes(1);
+    expect(mockWire.mock.invocationCallOrder[0]).toBeLessThan(
+      mockCreateSegmenter.mock.invocationCallOrder[0]
+    );
   });
 
   it('closes segments, or archives when told to', async () => {

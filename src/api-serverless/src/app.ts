@@ -101,6 +101,7 @@ import { Upload } from '@/entities/IUpload';
 import { env, loadLocalConfig, loadSecrets } from '@/env';
 import { Logger } from '@/logging';
 import { getRedisClient, initRedis } from '@/redis';
+import { wireSignedRecordsChainAtStartup } from '@/signed-records/record-chain';
 import {
   processSentryAlertWebhook,
   sentryWebhookRedis
@@ -538,6 +539,10 @@ async function initializeApp() {
   );
 
   await loadApiSecrets();
+  // Signed records take anchors and wallet owners from the chain gateway.
+  // Unconfigured, one line says why, and the anchor and owners routes
+  // answer 503.
+  wireSignedRecordsChainAtStartup();
   // D172: the effective suite window. A malformed setting is reported
   // (ERROR log, EMF metric) and treated as not started; nothing else changes.
   logger.info(describeE2eeSuiteTransition());

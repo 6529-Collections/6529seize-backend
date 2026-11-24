@@ -5,7 +5,9 @@ import {
   GetSignedRecordsOwnersRequest
 } from '@/api/generated/routes/operations';
 import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
+import { Logger } from '@/logging';
 import {
+  ReadFailureLog,
   RecordAnchorService,
   recordAnchorService
 } from '@/signed-records/record-anchor';
@@ -27,6 +29,10 @@ export async function handleGetSignedRecordsAnchor(
 }
 
 const OWNERS_MAX_WALLETS = 50;
+const ownersFailures = new ReadFailureLog(
+  Logger.get('SIGNED_RECORDS_OWNERS'),
+  'OWNERS READ FAILED'
+);
 
 /** GET /signed-records/owners: the owner each wallet's records use. */
 export async function handleGetSignedRecordsOwners(
@@ -60,7 +66,9 @@ export async function handleGetSignedRecordsOwners(
   let owners: Map<string, string>;
   try {
     owners = await recordOwnerDirectory.ownersAt(wallets, anchor);
-  } catch {
+    ownersFailures.succeeded();
+  } catch (error) {
+    ownersFailures.failed(error);
     throw new CustomApiCompliantException(
       503,
       'The chain gateway did not answer, so wallets have no owners yet',
