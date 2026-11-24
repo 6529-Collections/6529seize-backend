@@ -14,6 +14,7 @@ import {
   ContentModerationDb,
   contentModerationDb
 } from '@/content-moderation/content-moderation.db';
+import { DbPoolName } from '@/db-query.options';
 import { DeviceGrantEntity } from '@/entities/IDeviceGrant';
 import { DeviceSignedEventEntity } from '@/entities/IDeviceSignedEvent';
 import {
@@ -21,6 +22,8 @@ import {
   LazyDbAccessCompatibleService,
   SqlExecutor
 } from '@/sql-executor';
+import { chainIndexReady } from '@/waves-chain-index/waves-chain-mapping';
+import { stayingWaveSql } from './wave-relay-scope';
 import {
   CandidateEvent,
   PublishableEvent,
@@ -53,13 +56,17 @@ export interface WaveRelayPublishDbOptions {
    * with one) too: only to relays that serve them to their members alone.
    */
   readonly includeMembersOnly: boolean;
+  /** 6529.io's records wave (SIGNED_RECORDS_WAVE_ID): never published. */
+  readonly recordsWaveId: string | null;
 }
 
 /**
  * The publisher's reads and its per-relay cursors. Reads run on the writer
  * in one transaction, so an event, its drop and the drop's signature are
  * read as they stand now. Events of direct-message waves are never read:
- * legacy plaintext DMs stay off the relays.
+ * legacy plaintext DMs stay off the relays. Nor are those of any wave that
+ * stays on 6529.io (wave-relay-scope.ts): only waves that move to the 6529
+ * chain are published.
  */
 export class WaveRelayPublishDb
   extends LazyDbAccessCompatibleService
@@ -87,8 +94,13 @@ export class WaveRelayPublishDb
     cursor: Pick<RelayCursor, 'createdAt' | 'eventId'>,
     before: number,
     limit: number,
-    { includeMembersOnly }: WaveRelayPublishDbOptions
+    { includeMembersOnly, recordsWaveId }: WaveRelayPublishDbOptions
   ): Promise<CandidateEvent[]> {
+    // Before the chain index has finished a full read the rule decides
+    // which waves stay; after, the chain's mapping does.
+    const ready = await chainIndexReady(this.db, {
+      forcePool: DbPoolName.WRITE
+    });
     return this.executeNativeQueriesInTransaction(async (connection) => {
       const rows = await this.db.execute<CandidateRow>(
         `select e.*, d.author_id as drop_author_id,
@@ -105,6 +117,7 @@ export class WaveRelayPublishDb
                 ? ''
                 : 'and w.visibility_group_id is null and pw.visibility_group_id is null'
             }
+            and not ${stayingWaveSql('w', ready)}
             and e.created_at < :before
             and (e.created_at > :createdAt
               or (e.created_at = :createdAt and e.id > :eventId))
@@ -114,7 +127,8 @@ export class WaveRelayPublishDb
           before,
           createdAt: cursor.createdAt,
           eventId: cursor.eventId,
-          limit
+          limit,
+          recordsWaveId
         },
         { wrappedConnection: connection }
       );

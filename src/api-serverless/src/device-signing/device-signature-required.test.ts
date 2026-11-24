@@ -12,14 +12,19 @@ const FLAG = 'FEATURE_WAVES_DEVICE_SIGNATURE_REQUIRED';
 
 function service(
   waves: Record<string, { is_direct_message: boolean }>,
-  drops: Record<string, { wave_id: string; drop_type: DropType }> = {}
+  drops: Record<string, { wave_id: string; drop_type: DropType }> = {},
+  // Waves that stay on 6529.io (wave-relay-scope.ts).
+  staying: string[] = []
 ) {
   const dropsDb = {
     findDropById: jest.fn(async (dropId: string) => drops[dropId] ?? null),
-    findWaveByIdOrNull: jest.fn(
-      async (waveId: string) => waves[waveId] ?? null
+    findWaveByIdOrNull: jest.fn(async (waveId: string) =>
+      waves[waveId] ? { id: waveId, ...waves[waveId] } : null
     ),
     findWaveIdByDropId: jest.fn()
+  };
+  const waveScope = {
+    staysOnSite: jest.fn(async (waveId: string) => staying.includes(waveId))
   };
   const db = {
     deleteDropAuthorSignature: jest.fn(),
@@ -31,10 +36,13 @@ function service(
     service: new DeviceSignedWritesService(
       db as any,
       {} as any,
-      dropsDb as any
+      dropsDb as any,
+      () => Date.now(),
+      waveScope
     ),
     dropsDb,
-    db
+    db,
+    waveScope
   };
 }
 
@@ -201,5 +209,84 @@ describe('device signatures required from switch-on', () => {
     await expect(
       s.assertUnsignedChatRatingAllowed('missing', ctx())
     ).resolves.toBeUndefined();
+  });
+
+  it('keeps every wave that stays on 6529.io open, as today: posts, edits, deletes, reactions and chat ratings', async () => {
+    process.env[FLAG] = 'true';
+    const { service: s, waveScope } = service(
+      {
+        w: { is_direct_message: false },
+        'site-wave': { is_direct_message: false }
+      },
+      {
+        d: { wave_id: 'w', drop_type: DropType.CHAT },
+        s: { wave_id: 'site-wave', drop_type: DropType.CHAT }
+      },
+      ['site-wave']
+    );
+    await expect(
+      s.createDrop(
+        {
+          envelope: undefined,
+          waveId: 'site-wave',
+          replyToDropId: null,
+          body: {}
+        },
+        write,
+        ctx(true)
+      )
+    ).resolves.toEqual({ id: 'drop-1' });
+    for (const kind of [
+      DeviceEventKind.EDIT,
+      DeviceEventKind.TOMBSTONE,
+      DeviceEventKind.REACT
+    ] as const) {
+      await expect(
+        s.mutateDrop(
+          { envelope: undefined, kind, dropId: 's', body: {} },
+          write,
+          ctx()
+        )
+      ).resolves.toEqual({ id: 'drop-1' });
+    }
+    await expect(
+      s.assertUnsignedChatRatingAllowed('s', ctx())
+    ).resolves.toBeUndefined();
+    expect(write).toHaveBeenCalledTimes(4);
+    // A wave that moves still needs the signature.
+    await expect(
+      s.createDrop(
+        { envelope: undefined, waveId: 'w', replyToDropId: null, body: {} },
+        write,
+        ctx()
+      )
+    ).rejects.toBeInstanceOf(DeviceSignatureRequiredException);
+    expect(waveScope.staysOnSite.mock.calls.map((c) => c[0])).toEqual([
+      'site-wave',
+      'site-wave',
+      'site-wave',
+      'site-wave',
+      'site-wave',
+      'w'
+    ]);
+  });
+
+  it('asks nothing about a direct message or a missing wave', async () => {
+    process.env[FLAG] = 'true';
+    const { service: s, waveScope } = service(
+      { 'dm-wave': { is_direct_message: true } },
+      {}
+    );
+    await s.createDrop(
+      { envelope: undefined, waveId: 'dm-wave', replyToDropId: null, body: {} },
+      write,
+      ctx()
+    );
+    await s.createDrop(
+      { envelope: undefined, waveId: 'nowhere', replyToDropId: null, body: {} },
+      write,
+      ctx()
+    );
+    expect(waveScope.staysOnSite).not.toHaveBeenCalled();
   });
 });

@@ -19,13 +19,20 @@ import {
  *   waves (a read group, or under a wave with one). Turn it on only when
  *   every listed relay runs with chain rights (`--api`), so it serves them
  *   to their members alone; a relay without rights serves every wave to
- *   anyone.
+ *   anyone. A wave that stays on 6529.io is never published, members-only
+ *   or not (wave-relay-scope.ts): before switch-on every members-only wave
+ *   stays; after, this flag matters for members-only waves the chain holds.
+ * - SIGNED_RECORDS_WAVE_ID: 6529.io's records wave, which stays on 6529.io.
+ *   Publishing refuses to run without it, so the records wave can't reach
+ *   the relays by a missing setting.
  */
 export interface WaveRelayPublishConfig {
   readonly relays: string[];
   readonly net: string;
   /** FEATURE_WAVES_RELAY_PUBLISH_MEMBERS_ONLY: members-only waves too. */
   readonly includeMembersOnly: boolean;
+  /** SIGNED_RECORDS_WAVE_ID: never published. */
+  readonly recordsWaveId: string;
 }
 
 export class WaveRelayPublishConfigError extends Error {
@@ -69,10 +76,17 @@ export function waveRelayPublishConfig(
       'FEATURE_WAVES_RELAY_PUBLISH is on but WAVES_RELAY_NET is not set'
     );
   }
+  const recordsWaveId = env.SIGNED_RECORDS_WAVE_ID?.trim();
+  if (!recordsWaveId) {
+    throw new WaveRelayPublishConfigError(
+      'FEATURE_WAVES_RELAY_PUBLISH is on but SIGNED_RECORDS_WAVE_ID is not set: the records wave stays on 6529.io'
+    );
+  }
   return {
     relays,
     net,
-    includeMembersOnly: env.FEATURE_WAVES_RELAY_PUBLISH_MEMBERS_ONLY === 'true'
+    includeMembersOnly: env.FEATURE_WAVES_RELAY_PUBLISH_MEMBERS_ONLY === 'true',
+    recordsWaveId
   };
 }
 
@@ -115,7 +129,8 @@ export async function runWaveRelayPublishing({
   }
   const publisher = new WaveRelayPublisher(
     waveRelayPublishDb.source({
-      includeMembersOnly: config.includeMembersOnly
+      includeMembersOnly: config.includeMembersOnly,
+      recordsWaveId: config.recordsWaveId
     }),
     waveRelayPublishDb,
     (relay) => CrpConnection.open(relay, config.net, { factory }),

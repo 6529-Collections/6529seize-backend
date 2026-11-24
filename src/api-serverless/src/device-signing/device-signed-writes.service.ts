@@ -23,6 +23,10 @@ import {
   DeviceEventKind,
   verifyEd25519EventSignature
 } from './device-event';
+import {
+  WaveRelayScope,
+  waveRelayScope
+} from '@/wave-relay-publish/wave-relay-scope';
 import { DeviceSigningDb, deviceSigningDb } from './device-signing.db';
 
 export const DEVICE_SIGNATURE_FIELD = 'device_signature';
@@ -34,7 +38,8 @@ export const INVALID_DEVICE_SIGNATURE_PREFIX = 'Invalid device signature:';
  * device-signed events, so a write without a device signature can't reach
  * the relays. FEATURE_WAVES_DEVICE_SIGNATURE_REQUIRED=true refuses drop
  * posts, edits, deletes and reactions without one, except in direct
- * messages (they stay off the relays).
+ * messages and every other wave that stays on 6529.io (they stay off the
+ * relays: wave-relay-scope.ts).
  */
 export const DEVICE_SIGNATURE_REQUIRED_CODE = 'DEVICE_SIGNATURE_REQUIRED';
 
@@ -229,7 +234,11 @@ export class DeviceSignedWritesService {
     private readonly db: DeviceSigningDb,
     private readonly identities: IdentitiesDb,
     private readonly drops: DropsDb,
-    private readonly now: () => number = () => Date.now()
+    private readonly now: () => number = () => Date.now(),
+    private readonly waveScope: Pick<
+      WaveRelayScope,
+      'staysOnSite'
+    > = waveRelayScope
   ) {}
 
   /** POST /drops: the wave and reply target come from the request. */
@@ -483,7 +492,7 @@ export class DeviceSignedWritesService {
 
   /**
    * Refuses a write without a device signature once they are required,
-   * except in a direct message.
+   * except in a direct message or another wave that stays on 6529.io.
    */
   private async assertUnsignedWriteAllowed(
     target: { readonly waveId?: string; readonly dropId?: string },
@@ -506,6 +515,11 @@ export class DeviceSignedWritesService {
     // A missing drop or wave answers as it does today (not found, or a
     // delete that does nothing); a direct message stays open.
     if (!wave || wave.is_direct_message) {
+      return;
+    }
+    // A wave that stays on 6529.io stays open as today: its drops never go
+    // to the relays.
+    if (await this.waveScope.staysOnSite(wave.id)) {
       return;
     }
     throw new DeviceSignatureRequiredException(
