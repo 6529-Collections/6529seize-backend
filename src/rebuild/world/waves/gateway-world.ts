@@ -204,13 +204,19 @@ function all(
       };
 }
 
+/**
+ * The origin a request's path and query are parsed against: loopback, as
+ * the world is only ever served there. Nothing is fetched from it.
+ */
+const REQUEST_ORIGIN = 'http://127.0.0.1';
+
 /** One GET of the gateway's read API, answered from the world. */
 export async function answerGatewayRequest(
   world: WavesGatewayWorld,
   rawUrl: string
 ): Promise<Answer> {
   const answer = await answerAtHeight(world, rawUrl);
-  const asked = new URL(rawUrl, 'http://world').searchParams.get('height');
+  const asked = new URL(rawUrl, REQUEST_ORIGIN).searchParams.get('height');
   const read = answer.json.read as Record<string, unknown> | undefined;
   if (asked !== null && read && world.headViews?.has(Number(asked))) {
     // As the node answers a height it holds only as a head view.
@@ -227,54 +233,11 @@ async function answerAtHeight(
   rawUrl: string
 ): Promise<Answer> {
   const { chain, doneHeight } = world;
-  const url = new URL(rawUrl, 'http://world');
+  const url = new URL(rawUrl, REQUEST_ORIGIN);
   const path = url.pathname;
   const query = url.searchParams;
-  const after = query.get('after');
-  const parts = path.split('/').filter(Boolean);
-  if (path === '/v1/status') {
-    const stamp = stampAt(chain, chain.height);
-    return {
-      status: 200,
-      json: {
-        read: stamp,
-        data: {
-          api: 'world',
-          node: 'world',
-          ready: true,
-          head: stamp,
-          finalized: stamp,
-          pinnable: { from: 0, to: chain.height },
-          ruleVersion: 7
-        }
-      }
-    };
-  }
-  if (path === '/v1/feed') {
-    // A cursor is a height, or `height:index` inside a block; the world's
-    // pages never cut a block, so an index only trims the first one.
-    const [fromHeight, fromIndex = 0] = String(query.get('from'))
-      .split(':')
-      .map(Number);
-    const feed = await chain.feed(fromHeight);
-    const blocks = feed.blocks.map((block) => {
-      const recordsFrom = block.height === fromHeight ? fromIndex : 0;
-      return {
-        ...block,
-        records: block.records.slice(recordsFrom),
-        complete: true,
-        recordsFrom
-      };
-    });
-    return {
-      status: 200,
-      json: {
-        read: stampAt(chain, chain.height),
-        data: { from: feed.from, through: feed.through, blocks },
-        next: Math.max(feed.through + 1, fromHeight)
-      }
-    };
-  }
+  if (path === '/v1/status') return statusAnswer(chain);
+  if (path === '/v1/feed') return feedAnswer(chain, query);
   const height = heightOf(chain, query);
   if (path === '/v1/waves/import') {
     const completed = height >= doneHeight;
@@ -284,58 +247,162 @@ async function answerAtHeight(
       doneHeight: completed ? doneHeight : null
     });
   }
+  const parts = path.split('/').filter(Boolean);
   if (parts[0] !== 'v1') return notFound(chain, path, height);
+  const at: ReadAt = { chain, path, height, after: query.get('after') };
   const [, kind, objectId, sub, subId] = parts;
-  if (parts.length === 2) {
-    if (kind === 'groups') {
-      return page(chain, height, await chain.listGroups(after, height));
+  if (parts.length === 2) return listAnswer(at, kind);
+  if (parts.length === 3) return objectAnswer(at, kind, objectId);
+  return subAnswer(at, kind, objectId, sub, subId);
+}
+
+/** A read's place: the world's chain, the path, the pinned height. */
+interface ReadAt {
+  readonly chain: FakeChain;
+  readonly path: string;
+  readonly height: number;
+  readonly after: string | null;
+}
+
+function statusAnswer(chain: FakeChain): Answer {
+  const stamp = stampAt(chain, chain.height);
+  return {
+    status: 200,
+    json: {
+      read: stamp,
+      data: {
+        api: 'world',
+        node: 'world',
+        ready: true,
+        head: stamp,
+        finalized: stamp,
+        pinnable: { from: 0, to: chain.height },
+        ruleVersion: 7
+      }
     }
-    if (kind === 'waves') {
-      return page(chain, height, await chain.listWaves(after, height));
+  };
+}
+
+async function feedAnswer(
+  chain: FakeChain,
+  query: URLSearchParams
+): Promise<Answer> {
+  // A cursor is a height, or `height:index` inside a block; the world's
+  // pages never cut a block, so an index only trims the first one.
+  const [fromHeight, fromIndex = 0] = String(query.get('from'))
+    .split(':')
+    .map(Number);
+  const feed = await chain.feed(fromHeight);
+  const blocks = feed.blocks.map((block) => {
+    const recordsFrom = block.height === fromHeight ? fromIndex : 0;
+    return {
+      ...block,
+      records: block.records.slice(recordsFrom),
+      complete: true,
+      recordsFrom
+    };
+  });
+  return {
+    status: 200,
+    json: {
+      read: stampAt(chain, chain.height),
+      data: { from: feed.from, through: feed.through, blocks },
+      next: Math.max(feed.through + 1, fromHeight)
     }
-    if (kind === 'decisions') {
-      return page(chain, height, await chain.listDecisions(after, height));
-    }
-    return notFound(chain, path, height);
+  };
+}
+
+async function listAnswer(at: ReadAt, kind: string): Promise<Answer> {
+  const { chain, path, height, after } = at;
+  if (kind === 'groups') {
+    return page(chain, height, await chain.listGroups(after, height));
   }
-  if (parts.length === 3 && kind === 'blocks') {
+  if (kind === 'waves') {
+    return page(chain, height, await chain.listWaves(after, height));
+  }
+  if (kind === 'decisions') {
+    return page(chain, height, await chain.listDecisions(after, height));
+  }
+  return notFound(chain, path, height);
+}
+
+async function objectAnswer(
+  at: ReadAt,
+  kind: string,
+  objectId: string
+): Promise<Answer> {
+  const { chain, path, height } = at;
+  if (kind === 'blocks') {
     // A finalized block's time, as the chain mirror reads it.
     const block = Number(objectId);
     return Number.isSafeInteger(block) && block > 0 && block <= height
       ? one(chain, path, height, { height: block, time: timeAt(chain, block) })
       : notFound(chain, path, height);
   }
-  if (parts.length === 3) {
-    const read: Record<string, (id: string, at: number) => Promise<unknown>> = {
-      groups: (x, at) => chain.group(x, at),
-      waves: (x, at) => chain.wave(x, at),
-      decisions: (x, at) => chain.decision(x, at),
-      entries: (x, at) => chain.entry(x, at),
-      polls: (x, at) => chain.poll(x, at)
-    };
-    const reader = read[kind];
-    if (!reader) return notFound(chain, path, height);
-    return one(
-      chain,
-      path,
-      height,
-      (await reader(objectId, height)) as ChainObject | null
-    );
+  const read: Record<string, (id: string, at: number) => Promise<unknown>> = {
+    groups: (x, h) => chain.group(x, h),
+    waves: (x, h) => chain.wave(x, h),
+    decisions: (x, h) => chain.decision(x, h),
+    entries: (x, h) => chain.entry(x, h),
+    polls: (x, h) => chain.poll(x, h)
+  };
+  const reader = read[kind];
+  if (!reader) return notFound(chain, path, height);
+  return one(
+    chain,
+    path,
+    height,
+    (await reader(objectId, height)) as ChainObject | null
+  );
+}
+
+async function subAnswer(
+  at: ReadAt,
+  kind: string,
+  objectId: string,
+  sub: string,
+  subId: string | undefined
+): Promise<Answer> {
+  if (kind === 'waves') return waveSubAnswer(at, objectId, sub, subId);
+  if (kind === 'decisions') return decisionSubAnswer(at, objectId, sub, subId);
+  const { chain, path, height } = at;
+  if (kind === 'entries' && sub === 'votes') {
+    return all(chain, path, height, await chain.entryVotes(objectId, height));
   }
-  if (kind === 'waves' && sub === 'roles') {
+  return notFound(chain, path, height);
+}
+
+async function waveSubAnswer(
+  at: ReadAt,
+  objectId: string,
+  sub: string,
+  subId: string | undefined
+): Promise<Answer> {
+  const { chain, path, height } = at;
+  if (sub === 'roles') {
     return all(chain, path, height, await chain.waveRoles(objectId, height));
   }
-  if (kind === 'waves' && sub === 'polls') {
+  if (sub === 'polls') {
     return all(chain, path, height, await chain.wavePolls(objectId, height));
   }
-  if (kind === 'waves' && sub === 'rep' && subId === 'ratings') {
+  if (sub === 'rep' && subId === 'ratings') {
     return all(chain, path, height, await chain.waveRep(objectId, height));
   }
-  if (kind === 'decisions' && sub === 'policies') {
+  return notFound(chain, path, height);
+}
+
+async function decisionSubAnswer(
+  at: ReadAt,
+  objectId: string,
+  sub: string,
+  subId: string | undefined
+): Promise<Answer> {
+  const { chain, path, height, after } = at;
+  if (sub === 'policies') {
     // One policy version, active from the height the decision appeared.
     let from = 0;
-    for (let at = 1; at <= height && !from; at++) {
-      if (await chain.decision(objectId, at)) from = at;
+    for (let h = 1; h <= height && !from; h++) {
+      if (await chain.decision(objectId, h)) from = h;
     }
     return from
       ? all(chain, path, height, [
@@ -343,14 +410,14 @@ async function answerAtHeight(
         ])
       : notFound(chain, path, height);
   }
-  if (kind === 'decisions' && sub === 'entries') {
+  if (sub === 'entries') {
     return page(
       chain,
       height,
       await chain.decisionEntries(objectId, after, height)
     );
   }
-  if (kind === 'decisions' && sub === 'results' && subId !== undefined) {
+  if (sub === 'results' && subId !== undefined) {
     return one(
       chain,
       path,
@@ -358,7 +425,7 @@ async function answerAtHeight(
       await chain.result(objectId, Number(subId), height)
     );
   }
-  if (kind === 'decisions' && sub === 'results') {
+  if (sub === 'results') {
     return all(
       chain,
       path,
@@ -366,16 +433,13 @@ async function answerAtHeight(
       await chain.decisionResults(objectId, height)
     );
   }
-  if (kind === 'decisions' && sub === 'leaderboard') {
+  if (sub === 'leaderboard') {
     return one(
       chain,
       path,
       height,
       await chain.decisionLeaderboard(objectId, height)
     );
-  }
-  if (kind === 'entries' && sub === 'votes') {
-    return all(chain, path, height, await chain.entryVotes(objectId, height));
   }
   return notFound(chain, path, height);
 }

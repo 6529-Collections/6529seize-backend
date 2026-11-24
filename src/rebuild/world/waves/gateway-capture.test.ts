@@ -16,9 +16,11 @@ import {
 import { FakeIndexDb } from '@/tests/fixtures/waves-chain-index.fixture';
 import {
   captureWavesGateway,
+  gatewayBase,
   mirrorReadTargets,
   readMirrorExtras,
-  startRecorder
+  startRecorder,
+  upstreamTarget
 } from './gateway-capture';
 import {
   buildWavesGatewayWorld,
@@ -347,5 +349,49 @@ describe('the capture recorder', () => {
     } finally {
       await replay.stop();
     }
+  });
+});
+
+describe('the recorder sends a request only to the gateway it was given', () => {
+  it('takes an http or https gateway with no credentials, query or fragment', () => {
+    expect(gatewayBase('http://192.0.2.10:8545').href).toBe(
+      'http://192.0.2.10:8545/'
+    );
+    expect(gatewayBase('https://192.0.2.10/api').pathname).toBe('/api');
+    for (const bad of [
+      'file:///etc/hosts',
+      'ftp://192.0.2.10/',
+      'http://user:pass@192.0.2.10/',
+      'http://192.0.2.10/?x=1',
+      'http://192.0.2.10/#x',
+      'not a url'
+    ]) {
+      expect(() => gatewayBase(bad)).toThrow();
+    }
+  });
+
+  it("puts a request's path and query on the gateway's own origin and path", () => {
+    const base = gatewayBase('http://192.0.2.10:8545');
+    expect(
+      upstreamTarget(base, '/v1/blocks/7?height=9&network=0x01')?.href
+    ).toBe('http://192.0.2.10:8545/v1/blocks/7?height=9&network=0x01');
+    expect(
+      upstreamTarget(gatewayBase('http://192.0.2.10/api/'), '/v1/status')?.href
+    ).toBe('http://192.0.2.10/api/v1/status');
+  });
+
+  it('refuses a request that would leave the gateway', () => {
+    const base = gatewayBase('http://192.0.2.10:8545');
+    for (const bad of [
+      'http://198.51.100.7/v1/status',
+      '//198.51.100.7/v1/status',
+      'v1/status',
+      ''
+    ]) {
+      expect(upstreamTarget(base, bad)).toBeNull();
+    }
+    expect(upstreamTarget(base, '/v1/../../x')?.origin).toBe(
+      'http://192.0.2.10:8545'
+    );
   });
 });

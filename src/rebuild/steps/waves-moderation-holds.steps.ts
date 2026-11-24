@@ -2,6 +2,7 @@ import { stableUuid } from '@/competitions/competition-id';
 import { Logger } from '@/logging';
 import { RebuildContext } from '@/rebuild/manifest.types';
 import { dbSupplier } from '@/sql-executor';
+import { compareCodeUnits } from '@/waves-chain-index/waves-chain-index.order';
 
 const logger = Logger.get('WAVES_REBUILD_MODERATION_HOLDS');
 
@@ -105,7 +106,7 @@ export async function dumpHolds(): Promise<string[]> {
   const rows = await dbSupplier().execute<Record<string, unknown>>(
     `select * from ${HOLDS_TABLE}`
   );
-  return rows.map((row) => canonicalRow(row)).sort();
+  return rows.map((row) => canonicalRow(row)).sort(compareCodeUnits);
 }
 
 export function canonicalRow(row: Readonly<Record<string, unknown>>): string {
@@ -234,7 +235,9 @@ export async function checkWavesModerationHolds(
     return;
   }
   const actual = await dumpHolds();
-  const expected = (await seededHolds()).map((row) => canonicalRow(row)).sort();
+  const expected = (await seededHolds())
+    .map((row) => canonicalRow(row))
+    .sort(compareCodeUnits);
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error(
       `${HOLDS_TABLE} changed in the rebuild: expected ${JSON.stringify(expected)}, found ${JSON.stringify(actual)}`

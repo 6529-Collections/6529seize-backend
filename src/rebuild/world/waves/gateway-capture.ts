@@ -95,8 +95,42 @@ function bodyOf(
     : { body: bytes.toString('base64'), encoding: 'base64' };
 }
 
+/**
+ * The upstream gateway the capture reads: an http or https address the
+ * caller names, with no credentials, query or fragment. The recorder sends
+ * nothing to any other origin.
+ */
+export function gatewayBase(upstream: string): URL {
+  const base = new URL(upstream);
+  if (base.protocol !== 'http:' && base.protocol !== 'https:') {
+    throw new Error(`The gateway ${upstream} is not an http or https address`);
+  }
+  if (base.username || base.password || base.search || base.hash) {
+    throw new Error(
+      `The gateway ${upstream} must be an origin and path, with no credentials, query or fragment`
+    );
+  }
+  return base;
+}
+
+/**
+ * A recorded request's address on the upstream: the gateway's path with
+ * the request's path and query after it, on the gateway's own origin.
+ * Null for anything that isn't an absolute path.
+ */
+export function upstreamTarget(base: URL, requestUrl: string): URL | null {
+  if (!requestUrl.startsWith('/') || requestUrl.startsWith('//')) return null;
+  const query = requestUrl.indexOf('?');
+  const requestPath = query === -1 ? requestUrl : requestUrl.slice(0, query);
+  const target = new URL(base.href);
+  target.pathname = `${base.pathname.replace(/\/$/, '')}${requestPath}`;
+  target.search = query === -1 ? '' : requestUrl.slice(query);
+  return target.origin === base.origin ? target : null;
+}
+
 /** Forwards to the node and keeps what it answered, by the harness's key. */
 export async function startRecorder(upstream: string, dir: string) {
+  const base = gatewayBase(upstream);
   const file = path.join(dir, RECORDING_FILE);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(file, '');
@@ -111,7 +145,10 @@ export async function startRecorder(upstream: string, dir: string) {
       const isStatus = url.split('?')[0] === STATUS_PATH;
       let exchange = kept.get(key);
       if (!exchange) {
-        const answer = await fetch(`${upstream.replace(/\/$/, '')}${url}`, {
+        const target = upstreamTarget(base, url);
+        if (!target)
+          throw new Error(`The request ${url} is not a gateway path`);
+        const answer = await fetch(target, {
           method,
           headers: {
             accept: String(request.headers.accept ?? 'application/json')
