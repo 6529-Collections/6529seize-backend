@@ -37,6 +37,49 @@ const LEGACY_STEPS = 'src/rebuild/steps/waves-legacy.steps';
 /** The drop index read from the relays. */
 const DROP_INDEX_STEPS = 'src/rebuild/steps/waves-drop-index.steps';
 
+/**
+ * The chain mirror's rebuild (src/waves-chain-mirror): it fills 6529.io's
+ * wave, group and competition rows from the chain index, frozen, at the
+ * chain's time, with no outbox, claim, follow, notification, activity or
+ * socket effects. Planned until its code is in this tree. It also needs
+ * the identity mirror's principal map (identity_chain_principals), which
+ * no rebuilder writes yet; its step goes in `after` when one does.
+ */
+const MIRROR_STEPS = 'src/waves-chain-mirror/waves-chain-mirror.rebuild';
+const MIRROR_WRITES = [
+  'waves',
+  'waves_metadatas',
+  'drops',
+  'drops_parts',
+  'drop_medias',
+  'drops_metadatas',
+  'community_groups',
+  'profile_groups',
+  'competitions',
+  'competition_config_versions',
+  'competition_capabilities',
+  'competition_outcomes',
+  'competition_outcome_distribution_items',
+  'competition_lifecycle_events',
+  'competition_entries',
+  'competition_votes',
+  'competition_entry_runtime',
+  'competition_leaderboard_entries',
+  'competition_decisions',
+  'competition_decision_winners',
+  'competition_winner_votes',
+  'competition_outcome_awards',
+  'competition_vote_history',
+  'competition_score_history',
+  'chain_docs',
+  'chain_entry_holds',
+  'waves_chain_mirror_state',
+  'waves_chain_mirror_events',
+  'waves_chain_mirror_groups',
+  'waves_chain_mirror_waves',
+  'waves_chain_mirror_decisions'
+];
+
 /** The drop index's checked relay events, its rejects and its relay cursors. */
 export const WAVES_DROP_INDEX_TABLES = [
   'wave_relay_events',
@@ -479,7 +522,8 @@ export const wavesManifest: AreaManifest = {
     chain_docs: { class: 'INDEX', origin: 'planned' },
     chain_entry_holds: { class: 'INDEX', origin: 'planned' },
     waves_chain_mirror_groups: { class: 'INDEX', origin: 'planned' },
-    waves_chain_mirror_waves: { class: 'INDEX', origin: 'planned' }
+    waves_chain_mirror_waves: { class: 'INDEX', origin: 'planned' },
+    waves_chain_mirror_decisions: { class: 'INDEX', origin: 'planned' }
   },
   seeds: [
     {
@@ -533,6 +577,22 @@ export const wavesManifest: AreaManifest = {
       reads: DROP_INDEX_READS,
       sources: ['relays'],
       timeoutMinutes: 15
+    },
+    {
+      id: 'waves.chain-mirror',
+      run: { module: MIRROR_STEPS, exportName: 'rebuildWavesChainMirror' },
+      writes: MIRROR_WRITES,
+      reads: [
+        ...WAVES_CHAIN_INDEX_TABLES,
+        'identity_chain_principals',
+        'identities',
+        'profiles',
+        'address_consolidation_keys'
+      ],
+      after: ['waves.chain-index'],
+      sources: ['gateway'],
+      timeoutMinutes: 30,
+      origin: 'planned'
     }
   ],
   probes: PROBES,
