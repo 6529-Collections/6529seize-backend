@@ -33,6 +33,27 @@ export class AppFeatures {
   }
 
   /**
+   * The delegations loop also mirrors the 6529 chain's identities into
+   * 6529.io's identity tables (src/identity-chain-mirror).
+   */
+  public isIdentityChainMirrorEnabled(): boolean {
+    return this.isFeatureEnabled('IDENTITY_CHAIN_MIRROR');
+  }
+
+  /**
+   * Identities move to the 6529 chain: profiles, handles, statements, REP
+   * and NIC are read-only here while this is on (src/identity-freeze).
+   */
+  public isIdentityFrozen(): boolean {
+    return this.isFeatureEnabled('IDENTITY_FROZEN');
+  }
+
+  /** From switch-on the 6529 chain holds identities (src/identity-freeze). */
+  public isIdentityOnChain(): boolean {
+    return this.isFeatureEnabled('IDENTITY_ON_CHAIN');
+  }
+
+  /**
    * Large viewer group lists are read from viewer_group_set_members by their
    * hash instead of travelling in each statement (waves/viewer-group-sets).
    */
@@ -41,20 +62,29 @@ export class AppFeatures {
   }
 
   /**
+   * Profile sites follow the person's ProfileDoc on the 6529 chain: the
+   * primary pointer moves by PROFILE_REPLACE, and 6529.io's tables become an
+   * index of it. Rollback: set FEATURE_PROFILE_CMS_CHAIN_POINTER=false.
+   */
+  public isProfileCmsChainPointerEnabled(): boolean {
+    return this.isFeatureEnabled('PROFILE_CMS_CHAIN_POINTER');
+  }
+
+  /**
+   * Profile site drafts and BYO agent grants, proposals and events are
+   * appended to the interim record log's private chain as they are written,
+   * so they can be rebuilt. Rollback: set FEATURE_PROFILE_CMS_PERSONAL_LOG=false.
+   */
+  public isProfileCmsPersonalLogEnabled(): boolean {
+    return this.isFeatureEnabled('PROFILE_CMS_PERSONAL_LOG');
+  }
+
+  /**
    * The interim record log: signed records batched into hash-chained
    * segment files whose heads are posted in the records wave.
    */
   public isSignedRecordLogEnabled(): boolean {
     return this.isFeatureEnabled('SIGNED_RECORD_LOG');
-  }
-
-  /**
-   * Help6529 Credits, the REP-backed question meter. Off unless
-   * FEATURE_HELP_BOT_CREDITS is exactly `true`. While off, help6529 answers
-   * without charging, and nothing grants, charges or refunds credits.
-   */
-  public isHelpBotCreditsEnabled(): boolean {
-    return this.isFeatureEnabled('HELP_BOT_CREDITS');
   }
 
   public isProfileCmsWalletGalleryEnabled(): boolean {

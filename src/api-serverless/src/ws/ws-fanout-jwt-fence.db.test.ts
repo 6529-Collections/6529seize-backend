@@ -30,11 +30,7 @@ describeWithSeed(
   () => {
     const repo = new WsConnectionRepository(
       () => sqlExecutor,
-      new UserGroupsService(
-        new UserGroupsDb(() => sqlExecutor),
-        mock(),
-        mock()
-      ),
+      new UserGroupsService(new UserGroupsDb(() => sqlExecutor), mock()),
       () => false
     );
 

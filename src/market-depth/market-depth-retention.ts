@@ -1,5 +1,6 @@
 import { Logger } from '@/logging';
 import { Time } from '@/time';
+import { MarketDepthArchivedThrough } from './market-depth-archive';
 
 const logger = Logger.get('MARKET_DEPTH_RETENTION');
 
@@ -98,10 +99,25 @@ async function purgeInBatches(
   return { deleted, complete: false };
 }
 
+// Without an archive (archivedThrough undefined) retention is not gated. With
+// one, nothing at or after the archive watermark is deleted, and nothing at all
+// before the first archive run.
+function gatedCutoff(
+  cutoff: Date,
+  archivedThrough: Date | null | undefined
+): Date | null {
+  if (archivedThrough === undefined) return cutoff;
+  if (archivedThrough === null) return null;
+  return archivedThrough < cutoff ? archivedThrough : cutoff;
+}
+
+const NOTHING_TO_PURGE = { deleted: 0, complete: true };
+
 export async function purgeMarketDepthHistory(input: {
   readonly contract: string;
   readonly deadlineMs: number;
   readonly db: MarketDepthRetentionDb;
+  readonly archivedThrough?: MarketDepthArchivedThrough;
   readonly now?: () => Date;
   readonly pause?: (ms: number) => Promise<void>;
 }): Promise<MarketDepthRetentionResult> {
@@ -114,25 +130,31 @@ export async function purgeMarketDepthHistory(input: {
   const contract = input.contract.toLowerCase();
   const startedAt = now();
 
-  const snapshotCutoff = new Date(
-    startedAt.getTime() -
-      Time.days(MARKET_DEPTH_SNAPSHOT_RETENTION_DAYS).toMillis()
+  const snapshotCutoff = gatedCutoff(
+    new Date(
+      startedAt.getTime() -
+        Time.days(MARKET_DEPTH_SNAPSHOT_RETENTION_DAYS).toMillis()
+    ),
+    input.archivedThrough?.snapshots
   );
-  const snapshots = await purgeInBatches(
-    async () => {
-      const deleted = await input.db.purgeSnapshotsCompletedBefore({
-        contract,
-        cutoff: snapshotCutoff,
-        limit: MARKET_DEPTH_SNAPSHOT_PURGE_BATCH_SIZE
-      });
-      return {
-        deleted,
-        exhausted: deleted < MARKET_DEPTH_SNAPSHOT_PURGE_BATCH_SIZE
-      };
-    },
-    options,
-    3
-  );
+  const snapshots =
+    snapshotCutoff === null
+      ? NOTHING_TO_PURGE
+      : await purgeInBatches(
+          async () => {
+            const deleted = await input.db.purgeSnapshotsCompletedBefore({
+              contract,
+              cutoff: snapshotCutoff,
+              limit: MARKET_DEPTH_SNAPSHOT_PURGE_BATCH_SIZE
+            });
+            return {
+              deleted,
+              exhausted: deleted < MARKET_DEPTH_SNAPSHOT_PURGE_BATCH_SIZE
+            };
+          },
+          options,
+          3
+        );
 
   const reconciliationCutoff = new Date(
     startedAt.getTime() -
@@ -154,25 +176,31 @@ export async function purgeMarketDepthHistory(input: {
     2
   );
 
-  const eventCutoff = marketDepthEventRetentionCutoff(startedAt);
-  let after: MarketDepthEventPurgeKey | null = null;
-  const events = await purgeInBatches(
-    async () => {
-      const batch = await input.db.purgeEventsObservedBefore({
-        contract,
-        cutoff: eventCutoff,
-        after,
-        limit: MARKET_DEPTH_EVENT_PURGE_BATCH_SIZE
-      });
-      after = batch.last;
-      return {
-        deleted: batch.deleted,
-        exhausted: batch.scanned < MARKET_DEPTH_EVENT_PURGE_BATCH_SIZE
-      };
-    },
-    options,
-    1
+  const eventCutoff = gatedCutoff(
+    marketDepthEventRetentionCutoff(startedAt),
+    input.archivedThrough?.events
   );
+  let after: MarketDepthEventPurgeKey | null = null;
+  const events =
+    eventCutoff === null
+      ? NOTHING_TO_PURGE
+      : await purgeInBatches(
+          async () => {
+            const batch = await input.db.purgeEventsObservedBefore({
+              contract,
+              cutoff: eventCutoff,
+              after,
+              limit: MARKET_DEPTH_EVENT_PURGE_BATCH_SIZE
+            });
+            after = batch.last;
+            return {
+              deleted: batch.deleted,
+              exhausted: batch.scanned < MARKET_DEPTH_EVENT_PURGE_BATCH_SIZE
+            };
+          },
+          options,
+          1
+        );
 
   const result: MarketDepthRetentionResult = {
     snapshots: snapshots.deleted,

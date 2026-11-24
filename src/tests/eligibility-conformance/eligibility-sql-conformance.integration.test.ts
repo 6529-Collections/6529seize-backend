@@ -117,7 +117,6 @@ describeWithSeed(
   () => {
     const userGroupsService = new UserGroupsService(
       new UserGroupsDb(() => sqlExecutor),
-      mock(),
       mock()
     );
     const membersDb = new CommunityMembersDb(
