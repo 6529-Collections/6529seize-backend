@@ -49,6 +49,37 @@ describe('rebuild registry', () => {
     // checks then cover its writes.
     expect(result.orderLeftOut).toEqual([
       {
+        step: 'waves.chain-mirror',
+        tables: [
+          'waves',
+          'waves_metadatas',
+          'community_groups',
+          'profile_groups',
+          'competitions',
+          'competition_config_versions',
+          'competition_capabilities',
+          'competition_outcomes',
+          'competition_outcome_distribution_items',
+          'competition_lifecycle_events',
+          'competition_entries',
+          'competition_votes',
+          'competition_entry_runtime',
+          'competition_leaderboard_entries',
+          'competition_decisions',
+          'competition_decision_winners',
+          'competition_winner_votes',
+          'competition_outcome_awards',
+          'competition_vote_history',
+          'competition_score_history',
+          'chain_docs',
+          'waves_chain_mirror_state',
+          'waves_chain_mirror_events',
+          'waves_chain_mirror_groups',
+          'waves_chain_mirror_waves',
+          'waves_chain_mirror_decisions'
+        ]
+      },
+      {
         step: 'holdings.ethereum',
         tables: [
           'transactions',
