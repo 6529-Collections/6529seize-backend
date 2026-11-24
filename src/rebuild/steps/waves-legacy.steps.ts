@@ -64,6 +64,16 @@ const CREATED_AT = 1_764_000_000_000;
 const DECISION_AT = CREATED_AT + 86_400_000;
 
 /**
+ * The rank wave's competition after its one decision: its series is used
+ * up, so it ended then (a published competition with no result left can't
+ * be imported to the chain).
+ */
+export const RANK_COMPETITION_END = {
+  lifecycle: 'ENDED',
+  endedAt: DECISION_AT
+} as const;
+
+/**
  * The rank wave, whose competition the native fixture writes. Its
  * strategy is one decision at DECISION_AT, so the chain world's import of
  * it carries that decision's result (an import takes only the results in
@@ -375,8 +385,18 @@ export function legacyDropMetricsRows(
 export async function seedWavesLegacy(_ctx: RebuildContext): Promise<void> {
   const rows = wavesLegacyRows();
   await insertRows(rows);
-  // The rank wave's competition, as the native competition code holds it.
+  // The rank wave's competition, as the native competition code holds it,
+  // ended by its one decision.
   await seedNativeOriginalPrimaryFixture(rankWave());
+  await dbSupplier().execute(
+    `update ${COMPETITIONS_TABLE}
+        set lifecycle = :lifecycle, ended_at = :endedAt, updated_at = :endedAt
+      where id = :id`,
+    {
+      id: legacyCompetitionId(WAVES_LEGACY_IDS.rankWave),
+      ...RANK_COMPETITION_END
+    }
+  );
   await insertRows(mainStageWinnerRows());
   await insertRows(
     legacyDropMetricsRows(
