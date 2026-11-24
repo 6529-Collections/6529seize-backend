@@ -33,7 +33,12 @@ import {
   legacyGetView,
   withLegacyCompetitionGetFacade
 } from '@/competitions/legacy-competition-get-facade';
-import { COMPETITIONS_TABLE, RATINGS_TABLE, WAVES_TABLE } from '@/constants';
+import {
+  COMPETITIONS_TABLE,
+  DROPS_TABLE,
+  RATINGS_TABLE,
+  WAVES_TABLE
+} from '@/constants';
 import { dropsDb } from '@/drops/drops.db';
 import { CompetitionEntryStatus } from '@/entities/ICompetition';
 import { DropType } from '@/entities/IDrop';
@@ -41,6 +46,11 @@ import { RateMatter } from '@/entities/IRating';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 import { stableGrant } from './waves-export.compact';
+import {
+  DropTableRow,
+  dropTableValues,
+  withTableValues
+} from './waves-export.table';
 import { compareCodePoints } from './waves-export.json';
 import {
   ExportActiveEntry,
@@ -93,6 +103,24 @@ function toMillis(value: unknown): number | null {
 /** A JSON round trip: what the API's response body holds. */
 function asJson<T>(value: T): Json {
   return JSON.parse(JSON.stringify(value)) as Json;
+}
+
+/**
+ * The table values of the drops `ids`, by id, read from the drops table
+ * itself: outside the legacy competition facade, whose view of drops
+ * shows a native entry's type as the API does.
+ */
+async function dropTableValuesByIds(
+  ids: readonly string[]
+): Promise<Map<string, Json>> {
+  if (!ids.length) return new Map();
+  const rows = await sqlExecutor.execute<DropTableRow>(
+    `select id, signature, is_additional_action_promised, hide_link_preview,
+       collapse_replies, drop_type, reply_to_part_id
+     from ${DROPS_TABLE} where id in (:ids)`,
+    { ids }
+  );
+  return new Map(rows.map((row) => [row.id, dropTableValues(row)]));
 }
 
 /**
@@ -446,7 +474,11 @@ export class BackendWavesExportSource implements WavesExportSource {
         return { entities, drops };
       });
       if (!read.entities.length) return;
-      yield read.drops.map(asJson);
+      // Each drop with its table's own values, which the API's drop lacks.
+      const tableOf = await dropTableValuesByIds(
+        read.entities.map((entity) => entity.id)
+      );
+      yield withTableValues(read.drops.map(asJson), tableOf);
       serialNoLimit = Math.min(
         ...read.entities.map((entity) => entity.serial_no)
       );

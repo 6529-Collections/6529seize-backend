@@ -5,6 +5,7 @@ import { DropType } from '@/entities/IDrop';
 import { RateMatter } from '@/entities/IRating';
 import { WaveType } from '@/entities/IWave';
 import { describeWithSeed } from '@/tests/_setup/seed';
+import { compactDrop } from './waves-export.compact';
 import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
 import { seedNativeOriginalPrimaryFixture } from '@/tests/fixtures/native-competition.fixture';
 import { withRatings } from '@/tests/fixtures/rating.fixture';
@@ -121,7 +122,18 @@ describeWithSeed(
       rows: [
         dropRow(PUBLIC_WAVE.id, descriptionDrop(PUBLIC_WAVE.id), 1),
         dropRow(MEMBERS_WAVE.id, descriptionDrop(MEMBERS_WAVE.id), 2),
-        dropRow(MEMBERS_WAVE.id, 'members-drop-3', 3),
+        // A native entry's drop with every table value the API shows
+        // differently or not at all.
+        {
+          ...dropRow(MEMBERS_WAVE.id, 'members-drop-3', 3),
+          drop_type: DropType.COMPETITION,
+          signature: 'made-up-signature',
+          is_additional_action_promised: true,
+          hide_link_preview: true,
+          collapse_replies: true,
+          reply_to_drop_id: 'members-drop-4',
+          reply_to_part_id: null
+        },
         dropRow(MEMBERS_WAVE.id, 'members-drop-4', 4),
         dropRow(DM_WAVE.id, 'dm-drop-5', 5)
       ]
@@ -238,6 +250,30 @@ describeWithSeed(
         ['members-drop-4', 'members-drop-3'],
         [descriptionDrop(MEMBERS_WAVE.id)]
       ]);
+      // Each drop carries the drops table's own values beside the API's.
+      const drops: Record<string, Record<string, unknown>> = {};
+      for await (const page of source.wavePagesOfDrops(MEMBERS_WAVE.id, 5)) {
+        page.forEach((drop) => {
+          drops[String(drop.id)] = drop;
+        });
+      }
+      expect(drops['members-drop-3'].drop_type).not.toBe('COMPETITION');
+      expect(compactDrop(drops['members-drop-3']).table).toEqual({
+        signature: 'made-up-signature',
+        is_additional_action_promised: true,
+        hide_link_preview: true,
+        collapse_replies: true,
+        drop_type: 'COMPETITION',
+        reply_to_part_id: null
+      });
+      expect(compactDrop(drops['members-drop-4']).table).toEqual({
+        signature: null,
+        is_additional_action_promised: null,
+        hide_link_preview: false,
+        collapse_replies: false,
+        drop_type: 'CHAT',
+        reply_to_part_id: null
+      });
       expect(
         await source.wavePolls(PUBLIC_WAVE.id, 'CLOSED', Date.now())
       ).toEqual([]);

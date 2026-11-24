@@ -49,48 +49,52 @@ async function runExport(command: WavesExportCommand) {
     const { WavesExport } = await import('./waves-export.service');
     const { RawDirectory } = await import('./waves-export.writer');
     const { replicaLagAtStart } = await import('./waves-export.replica-lag');
+    const { withApiSqlExecutor } = await import('./waves-export.db');
     const log = (message: string) =>
       process.stderr.write(
         `[waves-export] ${new Date().toISOString()} ${message}\n`
       );
     return await doInDbContext(
-      async () => {
-        // Before any stage reads, through the DB layer the reads go through:
-        // its write-side pool, on DB_HOST (DB_IAM_HOST in IAM mode). The
-        // check's queries share one connection, in a transaction that only
-        // reads, so they read one server.
-        const { sqlExecutor } = await import('@/sql-executor');
-        const { resolveDbConnectionTargets } = await import('@/db-iam-auth');
-        const replicaLag = await replicaLagAtStart({
-          caughtUpMs: earliestMs,
-          checkedByPerson: command.replicaLagCheckedBy,
-          onOneConnection: (work) =>
-            sqlExecutor.executeNativeQueriesInTransaction((connection) =>
-              work((sql) =>
-                sqlExecutor.execute(sql, undefined, {
-                  wrappedConnection: connection
-                })
-              )
-            ),
-          hostSetting: resolveDbConnectionTargets().write.iam
-            ? 'DB_IAM_HOST'
-            : 'DB_HOST',
-          log
-        });
-        return new WavesExport(new BackendWavesExportSource(), {
-          raw: new RawDirectory(path.join(command.out, 'raw')),
-          stages: command.stages,
-          freezeMs: command.freezeMs,
-          exporterRevision: command.revision,
-          waveIds,
-          dropPageSize: command.pageSize,
-          concurrency: command.concurrency,
-          bothMetric: command.bothMetric,
-          resumeDrops: command.resume,
-          replicaLag,
-          log
-        }).run();
-      },
+      // Every read through the API's own SQL executor: the legacy GET view
+      // and the API's number types, as the public API reads.
+      () =>
+        withApiSqlExecutor(async () => {
+          // Before any stage reads, through the DB layer the reads go through:
+          // its write-side pool, on DB_HOST (DB_IAM_HOST in IAM mode). The
+          // check's queries share one connection, in a transaction that only
+          // reads, so they read one server.
+          const { sqlExecutor } = await import('@/sql-executor');
+          const { resolveDbConnectionTargets } = await import('@/db-iam-auth');
+          const replicaLag = await replicaLagAtStart({
+            caughtUpMs: earliestMs,
+            checkedByPerson: command.replicaLagCheckedBy,
+            onOneConnection: (work) =>
+              sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+                work((sql) =>
+                  sqlExecutor.execute(sql, undefined, {
+                    wrappedConnection: connection
+                  })
+                )
+              ),
+            hostSetting: resolveDbConnectionTargets().write.iam
+              ? 'DB_IAM_HOST'
+              : 'DB_HOST',
+            log
+          });
+          return new WavesExport(new BackendWavesExportSource(), {
+            raw: new RawDirectory(path.join(command.out, 'raw')),
+            stages: command.stages,
+            freezeMs: command.freezeMs,
+            exporterRevision: command.revision,
+            waveIds,
+            dropPageSize: command.pageSize,
+            concurrency: command.concurrency,
+            bothMetric: command.bothMetric,
+            resumeDrops: command.resume,
+            replicaLag,
+            log
+          }).run();
+        }),
       { syncEntities: false, skipRedis: true }
     );
   } finally {
