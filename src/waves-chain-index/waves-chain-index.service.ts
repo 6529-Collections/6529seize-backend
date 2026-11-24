@@ -688,17 +688,26 @@ export class WavesChainIndex {
         decisionId: build.decisionId,
         occurrence: build.occurrence
       };
-      let messageId: string | null;
-      try {
-        await this.claims.freezeCollaboration?.(build.message.drop_id);
-        messageId = await this.claims.send(build.message);
-      } catch (error) {
+      const failed = async (what: string, error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         logger.error(
-          `[CLAIM BUILD SEND FAILED] decision ${build.decisionId} occurrence ${build.occurrence}, attempt ${build.attempts + 1}: ${message}`
+          `[${what}] decision ${build.decisionId} occurrence ${build.occurrence}, attempt ${build.attempts + 1}: ${message}`
         );
         await this.db.claimBuildFailed(key, message);
         report.claimBuilds.failed++;
+      };
+      try {
+        await this.claims.freezeCollaboration?.(build.message.drop_id);
+      } catch (error) {
+        // Logged as its own line: an alert on failed sends isn't one.
+        await failed('CLAIM BUILD COLLABORATION FREEZE FAILED', error);
+        continue;
+      }
+      let messageId: string | null;
+      try {
+        messageId = await this.claims.send(build.message);
+      } catch (error) {
+        await failed('CLAIM BUILD SEND FAILED', error);
         continue;
       }
       await this.db.claimBuildSent(key, messageId, this.now());

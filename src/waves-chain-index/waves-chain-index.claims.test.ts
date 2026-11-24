@@ -243,12 +243,25 @@ describe('Main Stage claim builds', () => {
     expect(queue.log).toHaveLength(2);
   });
 
-  it('sends nothing while the freeze fails, and freezes and sends on a later run', async () => {
+  it('sends nothing while the freeze fails, logged as its own line, and freezes and sends on a later run', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error');
     queue.freezeFailures = 1;
     chain.settle(D1, 3, [E(1)], 9);
     const first = await index.run({ budgetMs: BIG });
     expect(first.claimBuilds).toEqual({ queued: 1, sent: 0, failed: 1 });
     expect(queue.log).toEqual([]);
+    const lines = error.mock.calls.map(([message]) => String(message));
+    expect(
+      lines.filter((line) =>
+        line.startsWith('[CLAIM BUILD COLLABORATION FREEZE FAILED]')
+      )
+    ).toEqual([
+      `[CLAIM BUILD COLLABORATION FREEZE FAILED] decision ${D1} occurrence 9, attempt 1: collaboration row locked`
+    ]);
+    expect(
+      lines.filter((line) => line.startsWith('[CLAIM BUILD SEND FAILED]'))
+    ).toEqual([]);
+    error.mockRestore();
     expect(Array.from(db.claims.values())[0]).toMatchObject({
       status: 'pending',
       attempts: 1,
