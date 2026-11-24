@@ -167,6 +167,32 @@ const isNullableString = (value: unknown): value is string | null =>
   value === null || typeof value === 'string';
 const isDropType = (value: unknown): value is DropType =>
   typeof value === 'string' && DROP_TYPES.has(value);
+/** The table's keys, the same six the snapshot tooling writes. */
+const TABLE_KEYS = [
+  'signature',
+  'is_additional_action_promised',
+  'hide_link_preview',
+  'collapse_replies',
+  'drop_type',
+  'reply_to_part_id'
+];
+
+/**
+ * A native entry's types in the drops table, and the types the API shows
+ * for an entry's drop (its state, in the legacy view): the snapshot
+ * tooling's table-check rule (drop_type_agrees).
+ */
+const ENTRY_TYPES = new Set<string>([
+  DropType.COMPETITION,
+  DropType.PARTICIPATORY,
+  DropType.WINNER
+]);
+const ENTRY_VIEWS = new Set<string>([
+  DropType.PARTICIPATORY,
+  DropType.WINNER,
+  DropType.CHAT
+]);
+
 const isNullablePart = (value: unknown): value is number | null =>
   value === null ||
   (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0);
@@ -182,6 +208,9 @@ function tableOf(line: Json): {
 } | null {
   if (line.table === undefined || line.table === null) return null;
   const table = object(line.table, 'table');
+  if (Object.keys(table).some((key) => !TABLE_KEYS.includes(key))) {
+    fail('table has a key it should not');
+  }
   return {
     signature: tableValue(table, 'signature', isNullableString),
     is_additional_action_promised: tableValue(
@@ -254,7 +283,29 @@ export function dropArchiveRows(
   });
   const partIds = new Set(parts.map((part) => part.drop_part_id));
   if (partIds.size !== parts.length) fail('two parts share a part_id');
+  // The line's own reply part is checked whether or not table values
+  // override it.
+  const lineReplyPart = replyTo ? partRef(replyTo, 'reply_to part') : null;
   const table = tableOf(line);
+  if (table) {
+    // The table's values must agree with the API's view in the same line,
+    // as table-check's rules say: the same type, or an entry's type the
+    // API shows as the entry's state; a reply part only on a reply, equal
+    // to the API's, which shows none as 0.
+    if (
+      table.drop_type !== dropType &&
+      !(ENTRY_TYPES.has(table.drop_type) && ENTRY_VIEWS.has(dropType))
+    ) {
+      fail("table drop_type disagrees with the line's");
+    }
+    if (
+      replyTo
+        ? lineReplyPart !== (table.reply_to_part_id ?? 0)
+        : table.reply_to_part_id !== null
+    ) {
+      fail("table reply part disagrees with the line's");
+    }
+  }
   const drop: DropArchiveDropRow = {
     id: dropId,
     serial_no: serialOf(line.serial_no),
@@ -265,11 +316,7 @@ export function dropArchiveRows(
     title,
     parts_count: parts.length,
     reply_to_drop_id: replyTo ? id(replyTo.drop_id, 'reply_to drop') : null,
-    reply_to_part_id: table
-      ? table.reply_to_part_id
-      : replyTo
-        ? partRef(replyTo, 'reply_to part')
-        : null,
+    reply_to_part_id: table ? table.reply_to_part_id : lineReplyPart,
     drop_type: table ? table.drop_type : (dropType as DropType),
     signature: table ? table.signature : null,
     is_additional_action_promised: table

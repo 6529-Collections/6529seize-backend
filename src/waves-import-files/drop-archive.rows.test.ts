@@ -69,6 +69,90 @@ describe('dropArchiveRows', () => {
       reasonOf({ ...line, table: { ...table, reply_to_part_id: -1 } })
     ).toBe('table reply_to_part_id has the wrong type');
     expect(reasonOf({ ...line, table: 'x' })).toBe('table is not an object');
+    expect(reasonOf({ ...line, table: { ...table, note: 'x' } })).toBe(
+      'table has a key it should not'
+    );
+  });
+
+  it("refuses table values that disagree with the line's API view", () => {
+    const table = {
+      signature: null,
+      is_additional_action_promised: null,
+      hide_link_preview: false,
+      collapse_replies: false,
+      drop_type: 'CHAT',
+      reply_to_part_id: null
+    };
+    const reply = { drop_id: FIXTURE_DROPS[1].id, part_id: 3 };
+    const accepted = (line: Record<string, unknown>) =>
+      dropArchiveRows(line, FIXTURE_WAVES.a).drop;
+    // An entry's type shown as the entry's state: agrees.
+    for (const [tableType, apiType] of [
+      ['COMPETITION', 'CHAT'],
+      ['COMPETITION', 'WINNER'],
+      ['PARTICIPATORY', 'WINNER'],
+      ['WINNER', 'PARTICIPATORY']
+    ]) {
+      expect(
+        accepted({
+          ...firstLine(),
+          drop_type: apiType,
+          table: { ...table, drop_type: tableType }
+        }).drop_type
+      ).toBe(tableType);
+    }
+    // The facade never shows a chat drop as an entry's.
+    expect(
+      reasonOf({
+        ...firstLine(),
+        drop_type: 'WINNER',
+        table: { ...table, drop_type: 'CHAT' }
+      })
+    ).toBe("table drop_type disagrees with the line's");
+    expect(
+      reasonOf({
+        ...firstLine(),
+        drop_type: 'PARTICIPATORY',
+        table: { ...table, drop_type: 'CHAT' }
+      })
+    ).toBe("table drop_type disagrees with the line's");
+    // A reply part only on a reply, equal to the API's (none shows as 0).
+    expect(
+      reasonOf({
+        ...firstLine(),
+        reply_to: null,
+        table: { ...table, reply_to_part_id: 3 }
+      })
+    ).toBe("table reply part disagrees with the line's");
+    expect(
+      reasonOf({
+        ...firstLine(),
+        reply_to: reply,
+        table: { ...table, reply_to_part_id: 5 }
+      })
+    ).toBe("table reply part disagrees with the line's");
+    expect(
+      accepted({
+        ...firstLine(),
+        reply_to: reply,
+        table: { ...table, reply_to_part_id: 3 }
+      }).reply_to_part_id
+    ).toBe(3);
+    expect(
+      accepted({
+        ...firstLine(),
+        reply_to: { ...reply, part_id: 0 },
+        table
+      }).reply_to_part_id
+    ).toBeNull();
+    // The line's own reply part is checked with table values too.
+    expect(
+      reasonOf({
+        ...firstLine(),
+        reply_to: { ...reply, part_id: '3' },
+        table: { ...table, reply_to_part_id: 3 }
+      })
+    ).toBe('reply_to part is not an integer of at least 0');
   });
 
   it('takes any integer serial: 6529.io holds a few negative ones', () => {
