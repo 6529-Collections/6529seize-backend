@@ -2,6 +2,7 @@ import { Logger } from '@/logging';
 import { dbSupplier } from '@/sql-executor';
 import { CrpConnection, WebSocketFactory } from './crp-client';
 import { WaveRelayPublishDb } from './wave-relay-publish.db';
+import { recordsWaveId } from './wave-relay-scope';
 import {
   RelayRunResult,
   WaveRelayPublisher,
@@ -22,17 +23,18 @@ import {
  *   anyone. A wave that stays on 6529.io is never published, members-only
  *   or not (wave-relay-scope.ts): before switch-on every members-only wave
  *   stays; after, this flag matters for members-only waves the chain holds.
- * - SIGNED_RECORDS_WAVE_ID: 6529.io's records wave, which stays on 6529.io.
- *   Publishing refuses to run without it, so the records wave can't reach
- *   the relays by a missing setting.
+ * - SIGNED_RECORDS_WAVE_ID: 6529.io's records wave, which stays on 6529.io
+ *   and is never published. Unset, there is no records wave (logged once).
+ * - WAVES_SWITCH_ON_AT or FEATURE_WAVES_ON_CHAIN=true: the switch-on, and
+ *   WAVES_SETTLEMENT_NETWORK_ID: the chain's network (wave-relay-scope.ts).
  */
 export interface WaveRelayPublishConfig {
   readonly relays: string[];
   readonly net: string;
   /** FEATURE_WAVES_RELAY_PUBLISH_MEMBERS_ONLY: members-only waves too. */
   readonly includeMembersOnly: boolean;
-  /** SIGNED_RECORDS_WAVE_ID: never published. */
-  readonly recordsWaveId: string;
+  /** SIGNED_RECORDS_WAVE_ID: never published; null when unset. */
+  readonly recordsWaveId: string | null;
 }
 
 export class WaveRelayPublishConfigError extends Error {
@@ -76,17 +78,11 @@ export function waveRelayPublishConfig(
       'FEATURE_WAVES_RELAY_PUBLISH is on but WAVES_RELAY_NET is not set'
     );
   }
-  const recordsWaveId = env.SIGNED_RECORDS_WAVE_ID?.trim();
-  if (!recordsWaveId) {
-    throw new WaveRelayPublishConfigError(
-      'FEATURE_WAVES_RELAY_PUBLISH is on but SIGNED_RECORDS_WAVE_ID is not set: the records wave stays on 6529.io'
-    );
-  }
   return {
     relays,
     net,
     includeMembersOnly: env.FEATURE_WAVES_RELAY_PUBLISH_MEMBERS_ONLY === 'true',
-    recordsWaveId
+    recordsWaveId: recordsWaveId(env)
   };
 }
 

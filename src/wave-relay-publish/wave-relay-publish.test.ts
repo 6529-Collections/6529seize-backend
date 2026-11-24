@@ -40,13 +40,35 @@ describe('waveRelayPublishConfig', () => {
     [{ WAVES_RELAY_URLS: '' }, 'names no relay'],
     [{ WAVES_RELAY_URLS: 'https://a.example' }, 'not a ws:// or wss://'],
     [{ WAVES_RELAY_URLS: 'wss://a b' }, 'not a ws:// or wss://'],
-    [{ WAVES_RELAY_NET: ' ' }, 'WAVES_RELAY_NET'],
-    [{ SIGNED_RECORDS_WAVE_ID: '' }, 'SIGNED_RECORDS_WAVE_ID is not set'],
-    [{ SIGNED_RECORDS_WAVE_ID: undefined }, 'the records wave stays on 6529.io']
+    [{ WAVES_RELAY_NET: ' ' }, 'WAVES_RELAY_NET']
   ])('refuses %j', (change, message) => {
     expect(() => waveRelayPublishConfig({ ...on, ...change })).toThrow(
       WaveRelayPublishConfigError
     );
     expect(() => waveRelayPublishConfig({ ...on, ...change })).toThrow(message);
+  });
+
+  it('publishes with no records wave when SIGNED_RECORDS_WAVE_ID is unset, and logs that once', () => {
+    jest.isolateModules(() => {
+      const { Logger } = require('@/logging');
+      const warn = jest
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+      const fresh = require('./wave-relay-publish');
+      for (const records of [undefined, '', '  ']) {
+        expect(
+          fresh.waveRelayPublishConfig({
+            ...on,
+            SIGNED_RECORDS_WAVE_ID: records
+          })
+        ).toMatchObject({ relays: expect.any(Array), recordsWaveId: null });
+      }
+      expect(
+        warn.mock.calls.filter((c) =>
+          String(c[0]).includes('SIGNED_RECORDS_WAVE_ID IS NOT SET')
+        )
+      ).toHaveLength(1);
+      warn.mockRestore();
+    });
   });
 });
