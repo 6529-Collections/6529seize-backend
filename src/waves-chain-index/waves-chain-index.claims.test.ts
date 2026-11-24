@@ -51,17 +51,28 @@ class FakeQueue implements ClaimBuildPort {
   readonly sent: ClaimBuildMessage[] = [];
   failures = 0;
   afterSend: (() => void) | null = null;
+  // Freezes and sends in order, and freezes that fail first.
+  readonly log: string[] = [];
+  freezeFailures = 0;
   enabled() {
     return this.on;
   }
   mainStage() {
     return this.ids;
   }
+  async freezeCollaboration(dropId: string) {
+    if (this.freezeFailures > 0) {
+      this.freezeFailures--;
+      throw new Error('collaboration row locked');
+    }
+    this.log.push(`freeze ${dropId}`);
+  }
   async send(message: ClaimBuildMessage) {
     if (this.failures > 0) {
       this.failures--;
       throw new Error('queue down');
     }
+    this.log.push(`send ${message.drop_id}`);
     this.sent.push(JSON.parse(JSON.stringify(message)));
     this.afterSend?.();
     return `m-${this.sent.length}`;
@@ -224,6 +235,58 @@ describe('Main Stage claim builds', () => {
     expect(queue.sent).toEqual([]);
     expect(db.claims.size).toBe(0);
   });
+  it("freezes the winner's collaboration for the mint before its claim build is sent, once", async () => {
+    chain.settle(D1, 3, [E(2), E(1)], 3);
+    await index.run({ budgetMs: BIG });
+    expect(queue.log).toEqual([`freeze ${DROP(2)}`, `send ${DROP(2)}`]);
+    await index.run({ budgetMs: BIG });
+    expect(queue.log).toHaveLength(2);
+  });
+
+  it('sends nothing while the freeze fails, and freezes and sends on a later run', async () => {
+    queue.freezeFailures = 1;
+    chain.settle(D1, 3, [E(1)], 9);
+    const first = await index.run({ budgetMs: BIG });
+    expect(first.claimBuilds).toEqual({ queued: 1, sent: 0, failed: 1 });
+    expect(queue.log).toEqual([]);
+    expect(Array.from(db.claims.values())[0]).toMatchObject({
+      status: 'pending',
+      attempts: 1,
+      lastError: 'collaboration row locked'
+    });
+    const second = await index.run({ budgetMs: BIG });
+    expect(second.claimBuilds).toEqual({ queued: 0, sent: 1, failed: 0 });
+    expect(queue.log).toEqual([`freeze ${DROP(1)}`, `send ${DROP(1)}`]);
+  });
+
+  it('freezes nothing for a winner made on the chain (no 6529.io drop), nor with the setting off', async () => {
+    chain.settle(D1, 3, [E(3)], 10);
+    await index.run({ budgetMs: BIG });
+    queue.on = false;
+    chain.settle(D1, 3, [E(1)], 11);
+    await index.run({ budgetMs: BIG });
+    expect(queue.log).toEqual([]);
+  });
+
+  it('sends with a port that has no freeze', async () => {
+    const plain = new FakeQueue();
+    const bare: ClaimBuildPort = {
+      enabled: () => plain.enabled(),
+      mainStage: () => plain.mainStage(),
+      send: (message) => plain.send(message)
+    };
+    const other = new WavesChainIndex(
+      chain,
+      db.asDb(),
+      clock.now,
+      undefined,
+      bare
+    );
+    chain.settle(D1, 3, [E(1)], 12);
+    await other.run({ budgetMs: BIG });
+    expect(plain.log).toEqual([`send ${DROP(1)}`]);
+  });
+
   it('raises an alarm when a feed gap may hide a Main Stage result', async () => {
     const error = jest.spyOn(Logger.prototype, 'error');
     // Settled where the feed no longer reaches: the log gets a GAP, no event.

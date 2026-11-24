@@ -17,6 +17,12 @@ import { ChainEvent } from './waves-chain-index.events';
  * that commits, each run retrying what is still pending (an outbox). A
  * run that stops between a send and its row's update sends that one again
  * on the next run; the claim builder builds one claim a drop.
+ *
+ * Before a build is sent, the winner's artwork collaboration is frozen for
+ * the mint (ClaimBuildPort.freezeCollaboration), as 6529.io's runtime does
+ * when it decides a Main Stage winner: the claim builder needs its credit
+ * snapshot. The chain mirror's write of the result freezes it too and finds
+ * it frozen.
  */
 
 const logger = Logger.get('WAVES_CHAIN_CLAIM_BUILDS');
@@ -175,6 +181,17 @@ export function claimBuildsOf(
 export interface ClaimBuildPort {
   enabled(): boolean;
   mainStage(): ReadonlySet<string>;
+  /**
+   * Freezes the winner's artwork collaboration for the mint, before its
+   * claim build is sent: its credit snapshot taken and its pending
+   * invitations closed, as 6529.io's runtime does when it decides a Main
+   * Stage winner (freezeMemeCollaborationForNativeDecision). The claim
+   * builder refuses a collaboration without that snapshot. Idempotent: a
+   * frozen collaboration, or a drop with none, is left as it is. Throws
+   * when it fails (nothing is sent; tried again next run). Without it,
+   * nothing is frozen here.
+   */
+  freezeCollaboration?(dropId: string): Promise<void>;
   /** Sends a message; its id. Throws when the send fails. */
   send(message: ClaimBuildMessage): Promise<string | null>;
 }
@@ -183,6 +200,18 @@ export const claimBuildQueue: ClaimBuildPort = {
   enabled: () => appFeatures.isWavesChainClaimBuildsEnabled(),
   mainStage: () =>
     parseMainStageDecisionIds(process.env.MAIN_STAGE_DECISION_IDS),
+  async freezeCollaboration(dropId) {
+    // Loaded only when a claim is due: it brings 6529.io's collaboration
+    // service. MAIN_STAGE_DECISION_IDS is the Main Stage's designation
+    // here, as it is for the claim builder.
+    const [{ memeCollaborationsService }, { dbSupplier }] = await Promise.all([
+      import('@/meme-collaborations/meme-collaborations.service'),
+      import('@/sql-executor')
+    ]);
+    await dbSupplier().executeNativeQueriesInTransaction((connection) =>
+      memeCollaborationsService.freezeForMint(dropId, { connection })
+    );
+  },
   async send(message) {
     const queue = process.env.CLAIMS_BUILDER_SQS_URL;
     if (!queue) throw new Error('CLAIMS_BUILDER_SQS_URL is not configured');

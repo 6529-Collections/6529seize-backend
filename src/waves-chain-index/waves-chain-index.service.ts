@@ -676,6 +676,8 @@ export class WavesChainIndex {
   /**
    * Sends the claim builds the log has written and not sent, oldest first;
    * a failed send stays for the next run (waves-chain-index.claims.ts).
+   * Each winner's collaboration is frozen for the mint first, so the claim
+   * builder finds its credit snapshot.
    */
   private async sendClaimBuilds(report: WavesChainIndexReport) {
     if (!this.claims.enabled()) return;
@@ -688,6 +690,7 @@ export class WavesChainIndex {
       };
       let messageId: string | null;
       try {
+        await this.claims.freezeCollaboration?.(build.message.drop_id);
         messageId = await this.claims.send(build.message);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
