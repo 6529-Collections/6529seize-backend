@@ -223,32 +223,34 @@ export function mirrorReadTargets(
  * The chain mirror's reads beyond the index, through the recorder with the
  * same client the mirror uses, so each answer is kept under the key the
  * mirror's replayed read asks for: each chain-made decision's policies,
- * then the block of every height found. A read the node can't answer is
- * kept as it answered.
+ * then the block of every height found. The node's "not found" is kept as
+ * an answer; any other failure, after the client's own retries, fails the
+ * capture, so a recording never keeps a node error for good.
  */
 export async function readMirrorExtras(
   recorderUrl: string,
   exchanges: () => Iterable<Pick<RecordedExchange, 'body' | 'encoding'>>
 ): Promise<{ blocks: number; policies: number }> {
-  const client = new ChainGatewayClient(() => ({
-    ...chainGatewayConfigFromEnv({ CHAIN_GATEWAY_URL: recorderUrl }),
-    retries: 0
-  }));
-  const quietly = async (read: () => Promise<unknown>) => {
+  const client = new ChainGatewayClient(() =>
+    chainGatewayConfigFromEnv({ CHAIN_GATEWAY_URL: recorderUrl })
+  );
+  const read = async (path: string) => {
     try {
-      await read();
-    } catch {
-      // Kept as the node answered; the mirror falls back the same way.
+      await client.read(path);
+    } catch (error) {
+      throw new Error(
+        `The capture of the mirror's read ${path} failed: ${error}`
+      );
     }
   };
   const { decisions } = mirrorReadTargets(exchanges());
   for (const decisionId of decisions) {
-    await quietly(() => client.read(`/v1/decisions/${decisionId}/policies`));
+    await read(`/v1/decisions/${decisionId}/policies`);
   }
   // The policies' activation heights are among the heights now.
   const { heights } = mirrorReadTargets(exchanges());
   for (const height of heights) {
-    await quietly(() => client.read(`/v1/blocks/${height}`));
+    await read(`/v1/blocks/${height}`);
   }
   return { blocks: heights.length, policies: decisions.length };
 }

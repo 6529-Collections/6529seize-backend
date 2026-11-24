@@ -301,7 +301,7 @@ async function answerAtHeight(
   if (parts.length === 3 && kind === 'blocks') {
     // A finalized block's time, as the chain mirror reads it.
     const block = Number(objectId);
-    return Number.isSafeInteger(block) && block > 0 && block <= chain.height
+    return Number.isSafeInteger(block) && block > 0 && block <= height
       ? one(chain, path, height, { height: block, time: timeAt(chain, block) })
       : notFound(chain, path, height);
   }

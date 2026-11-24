@@ -17,6 +17,7 @@ import { FakeIndexDb } from '@/tests/fixtures/waves-chain-index.fixture';
 import {
   captureWavesGateway,
   mirrorReadTargets,
+  readMirrorExtras,
   startRecorder
 } from './gateway-capture';
 import {
@@ -137,6 +138,37 @@ describe('the waves gateway capture', () => {
       expect(replay.problems()).toEqual([]);
     } finally {
       await replay.stop();
+    }
+  });
+
+  it("fails the capture when the node can't answer one of the mirror's reads", async () => {
+    // The world, except that every block read fails on the node's side.
+    const broken = http.createServer((request, response) => {
+      if ((request.url ?? '').startsWith('/v1/blocks/')) {
+        response.writeHead(500, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ error: 'broken' }));
+        return;
+      }
+      fetch(`${node.url}${request.url}`).then(async (answer) => {
+        response.writeHead(answer.status, {
+          'content-type':
+            answer.headers.get('content-type') ?? 'application/json'
+        });
+        response.end(Buffer.from(await answer.arrayBuffer()));
+      });
+    });
+    const url = (await listenLoopback(broken)).url;
+    try {
+      await expect(
+        readMirrorExtras(url, () => [
+          {
+            body: JSON.stringify({ data: { updatedHeight: 5 } }),
+            encoding: 'utf8' as const
+          }
+        ])
+      ).rejects.toThrow("The capture of the mirror's read /v1/blocks/5 failed");
+    } finally {
+      await closeServer(broken);
     }
   });
 
