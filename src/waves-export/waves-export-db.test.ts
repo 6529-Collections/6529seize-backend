@@ -286,6 +286,38 @@ describe('withApiSqlExecutor', () => {
     expect(mockCreateApiDbPool).toHaveBeenCalledTimes(1);
   });
 
+  it('refuses a kept scope after the password changes: a new process opens the new login', async () => {
+    const { db } = load();
+    await db.withApiSqlExecutor(async () => undefined, { keepOpen: true });
+    process.env.DB_PASS = 'made-up-rotated';
+    const action = jest.fn();
+    await expect(
+      db.withApiSqlExecutor(action, { keepOpen: true })
+    ).rejects.toThrow('a new server or password needs a new process');
+    expect(action).not.toHaveBeenCalled();
+    expect(mockCreateApiDbPool).toHaveBeenCalledTimes(1);
+    // The same password again: the kept scope runs.
+    process.env.DB_PASS = 'made-up';
+    await db.withApiSqlExecutor(action);
+    expect(action).toHaveBeenCalledTimes(1);
+    expect(mockPoolEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps an IAM scope across runs: no password in its identity', async () => {
+    process.env.DB_IAM_AUTH = 'true';
+    process.env.DB_IAM_HOST = 'proxy.invalid';
+    process.env.DB_IAM_USER = 'iam-reader';
+    process.env.DB_IAM_HOST_READ = 'proxy-read.invalid';
+    process.env.DB_IAM_USER_READ = 'iam-reader';
+    const { db } = load();
+    await db.withApiSqlExecutor(async () => undefined, { keepOpen: true });
+    // DB_PASS isn't read in IAM mode: a change to it is no other login.
+    process.env.DB_PASS = 'made-up-rotated';
+    await db.withApiSqlExecutor(async () => undefined);
+    expect(mockCreateApiDbPool).toHaveBeenCalledTimes(1);
+    expect(mockPoolEnd).toHaveBeenCalledTimes(1);
+  });
+
   it.each(['DB_HOST', 'DB_USER', 'DB_PASS', 'DB_PORT'])(
     'refuses without %s, before opening a pool',
     async (setting) => {

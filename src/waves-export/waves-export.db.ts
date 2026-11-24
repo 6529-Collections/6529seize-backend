@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import * as mysql from 'mysql';
 import {
   apiDbConnection,
@@ -33,7 +34,7 @@ export interface ExportDbScopeOptions {
    * this process: the waves export job runs the export once per stage, and
    * a warm function's next invocation runs it again. The DB services keep
    * the executor they first read, so every run reuses this one, on the same
-   * server only. The last run that doesn't keep it ends it.
+   * server and login only. The last run that doesn't keep it ends it.
    */
   readonly keepOpen?: boolean;
 }
@@ -72,10 +73,10 @@ export async function withApiSqlExecutor<T>(
       'The export needs DB_HOST, DB_USER, DB_PASS and DB_PORT (or the DB_IAM_* settings)'
     );
   }
-  const server = JSON.stringify([target.iam, target.host, port, target.user]);
+  const server = serverIdentity(target, port);
   if (kept && kept.server !== server) {
     throw new Error(
-      "The export's DB scope is open on another server: DB services keep the executor they first read"
+      "The export's DB scope is open on another server or login: DB services keep the executor they first read, so a new server or password needs a new process"
     );
   }
   if (!kept && used) {
@@ -98,6 +99,23 @@ export async function withApiSqlExecutor<T>(
       await new Promise<void>((resolve) => scope.pool.end(() => resolve()));
     }
   }
+}
+
+/**
+ * What a kept scope must match: the mode, host, port and user, and in
+ * password mode a digest of the password (never the password itself). A
+ * password rotated in the process's settings is then a refusal here, not a
+ * kept pool whose new connections log in with the old one and fail.
+ */
+function serverIdentity(
+  target: ReturnType<typeof resolveDbConnectionTargets>['write'],
+  port: number
+): string {
+  const password =
+    target.password === undefined
+      ? null
+      : createHash('sha256').update(target.password).digest('hex');
+  return JSON.stringify([target.iam, target.host, port, target.user, password]);
 }
 
 function open(
