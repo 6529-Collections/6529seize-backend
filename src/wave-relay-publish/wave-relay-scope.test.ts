@@ -133,6 +133,17 @@ describe('the records wave setting', () => {
     for (const unset of [{}, { SIGNED_RECORDS_WAVE_ID: '  ' }]) {
       expect(recordsWaveSetting(unset)).toEqual({ kind: 'unset' });
     }
+    // Only `none` itself: `None` is an id (one that names no wave).
+    expect(recordsWaveSetting({ SIGNED_RECORDS_WAVE_ID: 'None' })).toEqual({
+      kind: 'id',
+      id: 'None'
+    });
+  });
+
+  it("fills exactly the module's SQL parameters", () => {
+    expect(Object.keys(scopeSqlParamValues(null, {})).sort()).toEqual(
+      Object.values(SCOPE_SQL_PARAMS).sort()
+    );
   });
 
   it('gives the SQL form its parameters: the records wave and the freeze time', () => {

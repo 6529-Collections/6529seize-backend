@@ -25,9 +25,10 @@ import {
  *   or not (wave-relay-scope.ts): before switch-on every members-only wave
  *   stays; after, this flag matters for members-only waves the chain holds.
  * - SIGNED_RECORDS_WAVE_ID: 6529.io's records wave, which stays on 6529.io
- *   and is never published; `none` when there is none. Unset, nothing is
- *   published before the switch-on, with an error each run: the records
- *   wave would go to the relays.
+ *   and is never published; `none` when there is none (exactly, in
+ *   lowercase: `None` or `NONE` is read as an id, which names no wave).
+ *   Unset, nothing is published before the switch-on, with an error each
+ *   run: the records wave would go to the relays.
  * - WAVES_SWITCH_ON_AT or FEATURE_WAVES_ON_CHAIN=true: the switch-on, and
  *   WAVES_SETTLEMENT_NETWORK_ID: the chain's network. After the switch-on,
  *   until the chain index has a full read on it, nothing is published,

@@ -42,11 +42,15 @@ export const NATIVE_ORIGIN = 'native';
 /** The chain's network id (0x and 64 hex digits), when set. */
 export const CHAIN_NETWORK_ID_ENV = 'WAVES_SETTLEMENT_NETWORK_ID';
 /**
- * How far the chain's block times and 6529.io's clock may be apart: an
- * event first seen by 6529.io at T names a wave the chain made by T plus
- * this, at most.
+ * How long after an event was first seen the chain may still make the wave
+ * it names: a post can be first seen before the block that makes its wave
+ * (the creation waiting in the pool, a client that posts early), and the
+ * chain's block times and 6529.io's clock differ a little. An event of a
+ * wave the chain doesn't hold is refused only once the index has read the
+ * chain this far past it; until then it waits, which costs a staying
+ * wave's event nothing.
  */
-export const READ_THROUGH_MARGIN_MS = 5 * 60_000;
+export const READ_THROUGH_MARGIN_MS = 60 * 60_000;
 /** Full-read phases before which a skipped feed may still lack a wave. */
 const PHASES_BEFORE_WAVES_DONE = new Set(['groups', 'waves']);
 

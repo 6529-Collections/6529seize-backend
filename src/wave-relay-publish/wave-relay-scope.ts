@@ -111,7 +111,8 @@ export function wavesSwitchedOn(
 
 /**
  * SIGNED_RECORDS_WAVE_ID: the records wave's id, `none` (there is none, on
- * purpose), or unset.
+ * purpose), or unset. Only `none` itself, in lowercase, says none: `None`
+ * or `NONE` is read as an id, which names no wave.
  */
 export type RecordsWaveSetting =
   | { readonly kind: 'id'; readonly id: string }
