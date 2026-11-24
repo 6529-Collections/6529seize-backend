@@ -42,7 +42,7 @@ describe('POST /wave-media/multipart-upload', () => {
 
   beforeEach(() => startUpload.mockReset());
 
-  it('accepts WebP and uses the authenticated profile and Wave upload policy', async () => {
+  it('accepts WebP and ignores a client-supplied decision-entry purpose', async () => {
     const upload = {
       key: 'waves/author_profile-1/media-1.webp',
       upload_id: 'upload-1',

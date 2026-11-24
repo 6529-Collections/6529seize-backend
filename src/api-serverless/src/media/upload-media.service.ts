@@ -478,6 +478,7 @@ export class UploadMediaService {
     content_type: string;
   }): ReservedMediaKey {
     const uploadId = randomUUID();
+    // Derive the WebP suffix from its MIME type to keep filename data private.
     const publicFileName =
       content_type === 'image/webp'
         ? `${uploadId}.webp`
