@@ -2,10 +2,15 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { dropArchiveRoot, keccakHex } from '@/rebuild/sources/drop-archives';
+import { exchangeKey } from '@/rebuild/sources/http-recording';
+import { startSources, stopSources } from '@/rebuild/sources/start-sources';
 import {
   checkFiles,
+  DROP_ARCHIVE_INDEX,
   FILE_INDEX,
   fileIdOf,
+  namedKeccak256,
   namedSha256,
   startFileServer
 } from '@/rebuild/sources/file-server';
@@ -238,6 +243,332 @@ describe('file server', () => {
         ]);
       } finally {
         await server.stop();
+      }
+    });
+  });
+
+  describe('files named by their Keccak-256', () => {
+    // Made-up archives and their index (no real data), as the snapshot
+    // tool lays them out: the reader asks for the Waves v1 file by the
+    // fileHash the chain's import answer gives, and for each archive by
+    // the hash its index lists.
+    const fixtures = path.join(__dirname, 'fixtures', 'drop-archives');
+    const index = JSON.parse(
+      fs.readFileSync(path.join(fixtures, 'index-3.json'), 'utf8')
+    ) as {
+      dropArchiveRoot: string;
+      archives: { waveId: string; file: string; hash: string; bytes: number }[];
+    };
+    const wavesFile = (root: string, fill = 7) => {
+      const bytes = Buffer.alloc(160, fill);
+      bytes.writeUInt16BE(0x411d, 0);
+      bytes.writeUInt16BE(1, 2);
+      Buffer.from(root, 'hex').copy(bytes, 96);
+      return bytes;
+    };
+    const waves = wavesFile(index.dropArchiveRoot);
+    const wavesHash = keccakHex(waves);
+    const chain = { wavesFileHashes: [wavesHash], gatewayVerified: true };
+    /** Writes the files and a files.json listing them all. */
+    const lay = (entries: Record<string, Buffer>) => {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.mkdirSync(dir);
+      const listed: Record<string, string> = {};
+      for (const [name, bytes] of Object.entries(entries)) {
+        fs.writeFileSync(path.join(dir, name), bytes);
+        listed[name] = createHash('sha256').update(bytes).digest('hex');
+      }
+      fs.writeFileSync(path.join(dir, FILE_INDEX), JSON.stringify(listed));
+    };
+    const archives = (list = index.archives) =>
+      Object.fromEntries(
+        list.map((a) => [
+          `keccak256-${a.hash}`,
+          fs.readFileSync(path.join(fixtures, a.file))
+        ])
+      );
+    const named = (bytes: Buffer) => ({
+      [`keccak256-${keccakHex(bytes)}`]: bytes
+    });
+    const indexBytes = (value: unknown = index) =>
+      Buffer.from(JSON.stringify(value));
+    const archiveNames = index.archives.map((a) => `keccak256-${a.hash}`);
+
+    it('reads only keccak256- and 64 lowercase hex digits as such a name', () => {
+      expect(namedKeccak256(`keccak256-${'a'.repeat(64)}`)).toBe(
+        'a'.repeat(64)
+      );
+      expect(namedKeccak256(`keccak256-${'A'.repeat(64)}`)).toBe('bad');
+      expect(namedKeccak256(`Keccak256-${'a'.repeat(64)}`)).toBe('bad');
+      expect(namedKeccak256(`keccak256-${'a'.repeat(64)}.jsonl`)).toBe('bad');
+      expect(namedKeccak256('keccak256-abc')).toBe('bad');
+      expect(namedKeccak256('waves-v1')).toBeNull();
+    });
+
+    it('verifies the Waves v1 file the chain names, a checked index, and each archive it names', async () => {
+      lay({
+        [`keccak256-${wavesHash}`]: waves,
+        [DROP_ARCHIVE_INDEX]: indexBytes(),
+        ...archives()
+      });
+      expect(checkFiles(dir, chain)).toMatchObject({
+        problems: [],
+        unverified: [],
+        waiting: null
+      });
+      const server = await startFileServer(dir, undefined, chain);
+      try {
+        expect(server.info.provisional).toBe(false);
+        const [first] = index.archives;
+        expect(
+          await (await fetch(`${server.url}/keccak256-${first.hash}`)).text()
+        ).toBe(fs.readFileSync(path.join(fixtures, first.file), 'utf8'));
+      } finally {
+        await server.stop();
+      }
+    });
+
+    it('keeps everything provisional, failing nothing, while no import answer names the Waves v1 file', async () => {
+      lay({
+        [`keccak256-${wavesHash}`]: waves,
+        [DROP_ARCHIVE_INDEX]: indexBytes(),
+        ...archives()
+      });
+      const checked = checkFiles(dir);
+      expect(checked.problems).toEqual([]);
+      expect(checked.unverified).toEqual(
+        [`keccak256-${wavesHash}`, DROP_ARCHIVE_INDEX, ...archiveNames].sort()
+      );
+      const server = await startFileServer(dir);
+      try {
+        expect(server.info.provisional).toBe(true);
+        expect(server.info.provisionalWhy).toMatch(
+          /; no Waves v1 file the chain names .* can't be checked against the chain; keccak256-[0-9a-f]{64} is shaped like a Waves v1 file, but no import answer names it$/
+        );
+        expect(server.problems()).toEqual([]);
+      } finally {
+        await server.stop();
+      }
+    });
+
+    it("keeps the named files unverified while the gateway's answer isn't verified", () => {
+      lay({
+        [`keccak256-${wavesHash}`]: waves,
+        [DROP_ARCHIVE_INDEX]: indexBytes(),
+        ...archives()
+      });
+      const checked = checkFiles(dir, { wavesFileHashes: [wavesHash] });
+      expect(checked.problems).toEqual([]);
+      expect(checked.unverified).toEqual(
+        [`keccak256-${wavesHash}`, DROP_ARCHIVE_INDEX, ...archiveNames].sort()
+      );
+      expect(checked.waiting).toBe(
+        "the Waves v1 file, the drop archive index and its archives are named by a gateway answer that isn't verified yet"
+      );
+    });
+
+    it('counts no Waves v1 file when the import answers name more than one', () => {
+      const other = 'ab'.repeat(32);
+      lay({
+        [`keccak256-${wavesHash}`]: waves,
+        [DROP_ARCHIVE_INDEX]: indexBytes(),
+        ...archives()
+      });
+      const checked = checkFiles(dir, {
+        wavesFileHashes: [other, wavesHash].sort(),
+        gatewayVerified: true
+      });
+      expect(checked.problems).toEqual([]);
+      expect(checked.unverified).toEqual(
+        [`keccak256-${wavesHash}`, DROP_ARCHIVE_INDEX, ...archiveNames].sort()
+      );
+      expect(checked.waiting).toContain(
+        `the gateway's import answers name more than one Waves v1 file (${[other, wavesHash].sort().join(', ')}), so none counts`
+      );
+      // The answers name it, so it isn't also called unnamed.
+      expect(checked.waiting).not.toContain(
+        `keccak256-${wavesHash} is shaped like a Waves v1 file`
+      );
+    });
+
+    it('lets only the Waves v1 file the chain names vouch for the index', () => {
+      // A second Waves-shaped file carries a forged index's root: with the
+      // forged index and a forged archive, nothing it vouches for counts.
+      const forgedArchive = Buffer.from('{"made":"up","forged":true}\n');
+      const forgedIndex = {
+        archives: [
+          {
+            ...index.archives[0],
+            hash: keccakHex(forgedArchive),
+            bytes: forgedArchive.length
+          }
+        ]
+      };
+      const forgedRoot = dropArchiveRoot(forgedIndex.archives);
+      const forgedWaves = wavesFile(forgedRoot, 9);
+      lay({
+        [`keccak256-${wavesHash}`]: waves,
+        ...named(forgedWaves),
+        [DROP_ARCHIVE_INDEX]: indexBytes(forgedIndex),
+        ...named(forgedArchive)
+      });
+      const checked = checkFiles(dir, chain);
+      expect(checked.problems).toEqual([
+        `the drop archive index's root ${forgedRoot} is not the dropArchiveRoot of the Waves v1 file the chain names`
+      ]);
+      expect(checked.waiting).toContain(
+        `keccak256-${keccakHex(forgedWaves)} is shaped like a Waves v1 file, but no import answer names it`
+      );
+      expect(checked.unverified).toEqual(
+        [
+          DROP_ARCHIVE_INDEX,
+          `keccak256-${keccakHex(forgedWaves)}`,
+          `keccak256-${keccakHex(forgedArchive)}`
+        ].sort()
+      );
+    });
+
+    it('takes an empty index against the empty root', () => {
+      const emptyWaves = wavesFile(dropArchiveRoot([]));
+      lay({
+        ...named(emptyWaves),
+        [DROP_ARCHIVE_INDEX]: indexBytes({ archives: [] })
+      });
+      expect(
+        checkFiles(dir, {
+          wavesFileHashes: [keccakHex(emptyWaves)],
+          gatewayVerified: true
+        })
+      ).toMatchObject({ problems: [], unverified: [], waiting: null });
+    });
+
+    it('keeps an archive the index does not name provisional', () => {
+      const extra = Buffer.from('{"made":"up","n":9}\n');
+      lay({
+        [`keccak256-${wavesHash}`]: waves,
+        [DROP_ARCHIVE_INDEX]: indexBytes(),
+        ...archives(),
+        ...named(extra)
+      });
+      expect(checkFiles(dir, chain)).toMatchObject({
+        problems: [],
+        unverified: [`keccak256-${keccakHex(extra)}`]
+      });
+    });
+
+    it('serves an index that names an archive the files lack, and reports the request for it', async () => {
+      const [missing, ...rest] = index.archives;
+      lay({
+        [`keccak256-${wavesHash}`]: waves,
+        [DROP_ARCHIVE_INDEX]: indexBytes(),
+        ...archives(rest)
+      });
+      expect(checkFiles(dir, chain)).toMatchObject({
+        problems: [],
+        unverified: []
+      });
+      const server = await startFileServer(dir, undefined, chain);
+      try {
+        expect(
+          (await fetch(`${server.url}/keccak256-${missing.hash}`)).status
+        ).toBe(404);
+        expect(server.problems().join(' ')).toContain(
+          `/keccak256-${missing.hash}`
+        );
+      } finally {
+        await server.stop();
+      }
+    });
+
+    it('fails on an archive of another size than the index lists, and a named file that is no Waves v1 file', () => {
+      const sized = {
+        ...index,
+        archives: index.archives.map((a, i) =>
+          i === 0 ? { ...a, bytes: a.bytes + 1 } : a
+        )
+      };
+      lay({
+        [`keccak256-${wavesHash}`]: waves,
+        [DROP_ARCHIVE_INDEX]: indexBytes(sized),
+        ...archives()
+      });
+      const [first] = index.archives;
+      expect(checkFiles(dir, chain).problems).toEqual([
+        `keccak256-${first.hash} is ${first.bytes} bytes, but the drop archive index lists ${first.bytes + 1}`
+      ]);
+      const notWaves = Buffer.from('not a waves file');
+      lay(named(notWaves));
+      expect(
+        checkFiles(dir, { wavesFileHashes: [keccakHex(notWaves)] }).problems
+      ).toEqual([
+        `keccak256-${keccakHex(notWaves)} is the file the chain's import answer names, but isn't a Waves v1 file (schema 0x411D, version 1)`
+      ]);
+    });
+
+    it('refuses other bytes under a Keccak-256 name, and other keccak256- forms', () => {
+      lay({
+        [`keccak256-${'0'.repeat(64)}`]: Buffer.from('other'),
+        'keccak256-ABC': Buffer.from('x'),
+        [`Keccak256-${'1'.repeat(64)}`]: Buffer.from('y'),
+        [`keccak256-${'2'.repeat(64)}.jsonl`]: Buffer.from('z')
+      });
+      expect(checkFiles(dir).problems.sort()).toEqual(
+        [
+          `keccak256-${'0'.repeat(64)} is named by a Keccak-256, but its bytes hash to ${keccakHex(Buffer.from('other'))}`,
+          "keccak256-ABC starts keccak256- but isn't keccak256- and 64 lowercase hex digits",
+          `Keccak256-${'1'.repeat(64)} starts keccak256- but isn't keccak256- and 64 lowercase hex digits`,
+          `keccak256-${'2'.repeat(64)}.jsonl starts keccak256- but isn't keccak256- and 64 lowercase hex digits`
+        ].sort()
+      );
+    });
+
+    it("reads the Waves v1 file hash from the gateway recording's import answer, and waits on that gateway", async () => {
+      lay({
+        [`keccak256-${wavesHash}`]: waves,
+        [DROP_ARCHIVE_INDEX]: indexBytes(),
+        ...archives()
+      });
+      const gatewayDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'rebuild-gateway-')
+      );
+      const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rebuild-run-'));
+      const importPath = '/v1/waves/import?height=9&network=0x01';
+      fs.writeFileSync(
+        path.join(gatewayDir, 'recording.jsonl'),
+        `${JSON.stringify({
+          key: exchangeKey('GET', importPath, Buffer.alloc(0)),
+          method: 'GET',
+          path: importPath,
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            data: { completed: true, fileHash: `0x${wavesHash}` }
+          }),
+          encoding: 'utf8'
+        })}\n`
+      );
+      const running = await startSources(
+        {
+          gateway: { kind: 'replay', dir: gatewayDir },
+          files: { kind: 'files', dir }
+        },
+        runDir
+      );
+      try {
+        // A replayed recording isn't verified on this base, so the names
+        // it gives wait for it.
+        const gateway = running.find((source) => source.name === 'gateway')!;
+        expect(gateway.info.provisional).toBe(true);
+        const files = running.find((source) => source.name === 'files')!;
+        expect(files.info.provisional).toBe(true);
+        expect(files.info.provisionalWhy).toMatch(
+          /named by a gateway answer that isn't verified yet$/
+        );
+        expect(files.problems()).toEqual([]);
+      } finally {
+        await stopSources(running);
+        fs.rmSync(gatewayDir, { recursive: true, force: true });
+        fs.rmSync(runDir, { recursive: true, force: true });
       }
     });
   });

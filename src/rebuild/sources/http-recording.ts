@@ -114,6 +114,11 @@ export function withRequestIds(
   return responseBody;
 }
 
+/** The exchanges a recording holds, in the order it holds them. */
+export function recordedExchanges(dir: string): RecordedExchange[] {
+  return Array.from(loadRecording(dir).values());
+}
+
 function loadRecording(dir: string): Map<string, RecordedExchange> {
   const file = path.join(dir, RECORDING_FILE);
   const exchanges = new Map<string, RecordedExchange>();

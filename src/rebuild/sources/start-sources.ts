@@ -2,8 +2,12 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { startAnvil } from '@/rebuild/sources/anvil';
 import { startCrpRelay } from '@/rebuild/sources/crp-relay';
+import { importAnswerFileHashes } from '@/rebuild/sources/drop-archives';
 import { startFileServer } from '@/rebuild/sources/file-server';
-import { startHttpRecording } from '@/rebuild/sources/http-recording';
+import {
+  recordedExchanges,
+  startHttpRecording
+} from '@/rebuild/sources/http-recording';
 import { redactUrl, RunningSource } from '@/rebuild/sources/running-source';
 import {
   SourceSpec,
@@ -31,10 +35,28 @@ function live(name: UrlSource, url: string): RunningSource {
   };
 }
 
+/**
+ * The Waves v1 file hashes the gateway's recording gives in its import
+ * answers: what the files source checks a Waves v1 file's name against.
+ * None for a live gateway, or none at all. In record mode a fresh
+ * recording holds no import answer yet, so the import files wait.
+ */
+function wavesFileHashes(specs: SourceSpecs): string[] {
+  const gateway = specs.gateway;
+  if (!gateway || (gateway.kind !== 'replay' && gateway.kind !== 'record')) {
+    return [];
+  }
+  return fs.existsSync(gateway.dir)
+    ? importAnswerFileHashes(recordedExchanges(gateway.dir))
+    : [];
+}
+
 async function startOne(
   name: UrlSource,
   spec: SourceSpec,
-  runDir: string
+  runDir: string,
+  specs: SourceSpecs,
+  running: readonly RunningSource[]
 ): Promise<RunningSource> {
   switch (spec.kind) {
     case 'live':
@@ -54,7 +76,13 @@ async function startOne(
       // Files the run's seeds write (ctx.seedFilesDir) are served too.
       const seedDir = seedFilesDir(runDir);
       fs.mkdirSync(seedDir, { recursive: true });
-      return startFileServer(spec.dir, seedDir);
+      // The gateway starts first: whether it is verified decides whether
+      // the names its answers give count yet.
+      const gateway = running.find((source) => source.name === 'gateway');
+      return startFileServer(spec.dir, seedDir, {
+        wavesFileHashes: wavesFileHashes(specs),
+        gatewayVerified: gateway ? !gateway.info.provisional : false
+      });
     }
     case 'anvil':
       return startAnvil({
@@ -85,7 +113,9 @@ export async function startSources(
   try {
     for (const name of URL_SOURCES) {
       const spec = specs[name];
-      if (spec) running.push(await startOne(name, spec, runDir));
+      if (spec) {
+        running.push(await startOne(name, spec, runDir, specs, running));
+      }
     }
   } catch (error) {
     await stopSources(running);

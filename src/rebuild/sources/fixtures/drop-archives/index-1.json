@@ -1,0 +1,14 @@
+{
+ "dropArchiveRoot": "5b831e00518ef1197092e6a54f1b7e2b4e6d3f019e384ab0c8fcdb361999eb42",
+ "archives": [
+  {
+   "waveId": "bcae0ad924b2565bc4c96405e2c3e66f9f1ff30e959f657ab419e0e0298a0cee",
+   "legacyWave": "22222222-2222-4222-8222-000000000001",
+   "file": "bcae0ad924b2565bc4c96405e2c3e66f9f1ff30e959f657ab419e0e0298a0cee.jsonl",
+   "drops": 2,
+   "bytes": 40,
+   "hash": "a1b75cb952cb0387544ab98d16779f9bc99c8ab0ec4c30ba1ea5e975e48ab874"
+  }
+ ],
+ "drops": 2
+}
