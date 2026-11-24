@@ -49,6 +49,7 @@ import {
 import { IdentitiesDb, identitiesDb } from '../identities/identities.db';
 import {
   assertIdentityNotFrozen,
+  assertIdentityNotFrozenAtCommit,
   isIdentityFrozen
 } from '../identity-freeze/identity-freeze';
 import { ids } from '../ids';
@@ -185,6 +186,9 @@ export class RatingsService {
       }
       return await this.ratingsDb.executeNativeQueriesInTransaction(
         async (connection) => {
+          if (isIdentityRatingMatter(request.matter)) {
+            assertIdentityNotFrozenAtCommit(connection);
+          }
           const { identityUpdates } = await this.updateRatingInternal(request, {
             ...ctx,
             connection
@@ -1176,6 +1180,9 @@ export class RatingsService {
     }
     const result = await this.ratingsDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        if (isIdentityRatingMatter(String(apiRequest.matter))) {
+          assertIdentityNotFrozenAtCommit(connection);
+        }
         const actingAsId = authContext.getActingAsId();
         if (!actingAsId) {
           throw new ForbiddenException(`Create a profile before you rate`);
@@ -1452,6 +1459,7 @@ export class RatingsService {
     );
     await this.identitiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        assertIdentityNotFrozenAtCommit(connection);
         const ctxWithConnection = { ...ctx, connection };
         // First lock of the transaction, before the rater's ratings are read.
         await this.ratingsDb.lockRaterCreditOnMatter(
