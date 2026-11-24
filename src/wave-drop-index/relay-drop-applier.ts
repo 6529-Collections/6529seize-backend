@@ -207,20 +207,24 @@ function warnOnce(message: string) {
   logger.warn(message);
 }
 
+/** The records wave setting that says, on purpose, there is none. */
+export const NO_RECORDS_WAVE = 'none';
+
 /**
- * 6529.io's records wave (SIGNED_RECORDS_WAVE_ID), or null when unset: then
- * no wave is refused as the records wave (the chain's mapping still keeps
- * it, as any wave the chain doesn't hold), which is told to `warn` (by
- * default, logged once).
+ * 6529.io's records wave (SIGNED_RECORDS_WAVE_ID), or null for none. `none`
+ * says there is none, on purpose. Unset, no wave is refused as the records
+ * wave either (the chain's mapping still keeps it, as any wave the chain
+ * doesn't hold), and that is told to `warn` (by default, logged once).
  */
 export function recordsWaveIdOf(
   env: Readonly<Record<string, string | undefined>> = process.env,
   warn: (message: string) => void = warnOnce
 ): string | null {
-  const id = env.SIGNED_RECORDS_WAVE_ID?.trim().toLowerCase();
-  if (id) return id;
+  const value = env.SIGNED_RECORDS_WAVE_ID?.trim();
+  if (value === NO_RECORDS_WAVE) return null;
+  if (value) return value.toLowerCase();
   warn(
-    '[SIGNED_RECORDS_WAVE_ID IS NOT SET] [NO WAVE REFUSED AS THE RECORDS WAVE]'
+    '[SIGNED_RECORDS_WAVE_ID IS NOT SET] [NO WAVE REFUSED AS THE RECORDS WAVE] [SET IT, OR TO none WHEN THERE IS NONE]'
   );
   return null;
 }
@@ -355,7 +359,8 @@ export class RelayDropApplier {
     if (this.recordsWaveId !== null && wave === this.recordsWaveId) {
       throw new Refused(RECORDS_WAVE_REASON);
     }
-    switch (await this.store.waveOnChain(wave, event.received_at)) {
+    const onChain = await this.store.waveOnChain(wave, event.received_at);
+    switch (onChain) {
       case 'moved':
         return;
       case 'direct_message':
@@ -368,6 +373,11 @@ export class RelayDropApplier {
         throw new Wait(INDEX_BEHIND_REASON);
       case 'not_on_site':
         throw new Wait(NOT_ON_SITE_REASON);
+      default: {
+        // An answer this guard doesn't know writes nothing: the event waits.
+        const unknown: never = onChain;
+        throw new Wait(`the chain index answered ${String(unknown)}`);
+      }
     }
   }
 

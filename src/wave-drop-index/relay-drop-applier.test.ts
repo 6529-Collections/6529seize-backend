@@ -534,6 +534,19 @@ describe('RelayDropApplier and waves that stay on 6529.io', () => {
     }
   );
 
+  it('waits, writing nothing, on an answer the guard does not know', async () => {
+    const events = kinds();
+    const store = new FakeStore(events);
+    store.onChain.set('wave-1', 'archived' as unknown as WaveOnChain);
+    const { writes, calls } = aWrites();
+    const report = await run(store, writes);
+    expect(report).toMatchObject({ applied: 0, refused: 0, retry: 4 });
+    expect(store.marks.map((m) => [m[1], m[2]])).toEqual(
+      events.map(() => ['waiting', 'the chain index answered archived'])
+    );
+    expect(calls).toEqual([]);
+  });
+
   it("refuses 6529.io's records wave even where the chain holds it", async () => {
     const events = kinds();
     const store = new FakeStore(events);
@@ -577,6 +590,11 @@ describe('RelayDropApplier and waves that stay on 6529.io', () => {
     expect(recordsWaveIdOf({}, warn)).toBeNull();
     expect(recordsWaveIdOf({ SIGNED_RECORDS_WAVE_ID: '  ' }, warn)).toBeNull();
     expect(warn).toHaveBeenCalledTimes(2);
+    // `none`, on purpose: no records wave, and nothing to warn about.
+    expect(
+      recordsWaveIdOf({ SIGNED_RECORDS_WAVE_ID: ' none ' }, warn)
+    ).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(2);
     expect(warn.mock.calls[0][0]).toContain(
       'SIGNED_RECORDS_WAVE_ID IS NOT SET'
     );
@@ -597,13 +615,17 @@ describe('RelayDropApplier and waves that stay on 6529.io', () => {
 });
 
 describe('an unset records wave', () => {
-  it('is logged once', () => {
+  it('is logged once; none is not logged', () => {
     jest.isolateModules(() => {
       const { Logger } = require('@/logging');
       const warn = jest
         .spyOn(Logger.prototype, 'warn')
         .mockImplementation(() => undefined);
       const fresh = require('./relay-drop-applier');
+      expect(
+        fresh.recordsWaveIdOf({ SIGNED_RECORDS_WAVE_ID: 'none' })
+      ).toBeNull();
+      expect(warn).not.toHaveBeenCalled();
       expect(fresh.recordsWaveIdOf({})).toBeNull();
       expect(fresh.recordsWaveIdOf({})).toBeNull();
       expect(

@@ -6,7 +6,6 @@ import {
   testGrantProof,
   testSignedEvent
 } from '@/tests/fixtures/relay-events.fixture';
-import { READ_THROUGH_MARGIN_MS } from '@/waves-chain-index/waves-chain-mapping';
 import { DropIndexDb, IngestedEvent } from './drop-index.db';
 import {
   INDEX_BEHIND_REASON,
@@ -73,17 +72,22 @@ class FakeTables {
   }
 }
 
-/** The state row of an index that caught up with its read at `savedAt`. */
-function caughtUp(savedAt: number, fields: Record<string, unknown> = {}) {
+/**
+ * The state row of an index caught up with its read of a height whose
+ * finalized block time is `readTime`, saved a minute later.
+ */
+function caughtUp(readTime: number, fields: Record<string, unknown> = {}) {
   return {
+    name: 'waves',
     last_full_at: String(T0 - 24 * 60 * MINUTE),
     network: NET,
     last_error: null,
     feed_next: '501',
     read_height: '500',
+    read_time: String(readTime),
     feed_part: 0,
     full_phase: null,
-    updated_at: String(savedAt),
+    updated_at: String(readTime + MINUTE),
     ...fields
   };
 }
@@ -159,9 +163,10 @@ describe('DropIndexDb.waveOnChain', () => {
       }
     ];
     const seenAt = T0;
-    tables.state = caughtUp(seenAt + READ_THROUGH_MARGIN_MS - 1);
+    // Read through the chain until five minutes past the event: not yet.
+    tables.state = caughtUp(seenAt + 5 * MINUTE - 1);
     expect(await db.waveOnChain('site-wave', seenAt)).toBe('behind');
-    tables.state = caughtUp(seenAt + READ_THROUGH_MARGIN_MS);
+    tables.state = caughtUp(seenAt + 5 * MINUTE);
     expect(await db.waveOnChain('site-wave', seenAt)).toBe('stays');
     // Saved late, but behind its own read, failing, or in a full read's waves.
     for (const fields of [
@@ -279,6 +284,38 @@ describe('an index stall of 90 minutes loses no event of a wave made on the chai
     expect(await at(92)).toEqual([['waiting', NOT_ON_SITE_REASON]]);
     tables.siteWaves.set(made, { is_direct_message: false });
     expect(await at(93)).toEqual([['applied', null]]);
+    expect(created).toHaveLength(1);
+  });
+
+  it("waits while the index's gateway is stuck, however often its runs succeed, then writes the post", async () => {
+    delete process.env.WAVES_SETTLEMENT_NETWORK_ID;
+    const tables = new FakeTables();
+    const db = new DropIndexDb(tables.executor());
+    const event = aPost();
+    const { writes, created } = aWrites();
+    const at = async (minutes: number) => {
+      const { store, marks } = aStore(db, event);
+      await new RelayDropApplier(
+        store,
+        writes,
+        () => T0 + minutes * MINUTE,
+        null
+      ).applyPending({ limit: 10, deadline: Number.MAX_SAFE_INTEGER });
+      return marks;
+    };
+    // The gateway's head stands at a block six minutes before the post was
+    // first seen; the index's runs go on succeeding and saving.
+    for (const minutes of [20, 60, 90]) {
+      tables.state = caughtUp(T0 - 6 * MINUTE, {
+        updated_at: String(T0 + (minutes - 1) * MINUTE)
+      });
+      expect(await at(minutes)).toEqual([['waiting', INDEX_BEHIND_REASON]]);
+    }
+    // The gateway moves on: the index holds the wave the chain made.
+    tables.state = caughtUp(T0 + 85 * MINUTE);
+    tables.chainWaves = [{ wave_id: made, legacy_id: null, origin: 'native' }];
+    tables.siteWaves.set(made, { is_direct_message: false });
+    expect(await at(91)).toEqual([['applied', null]]);
     expect(created).toHaveLength(1);
   });
 

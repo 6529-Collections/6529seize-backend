@@ -20,8 +20,11 @@ import { SqlExecutor } from '@/sql-executor';
  * schema is deployed its tables don't exist, which reads the same.
  *
  * A wave the chain doesn't hold may still be one made on the chain since
- * the index last read it. chainIndexProgress gives the time the index has
- * read through, so a reader can tell "not yet" from "not on the chain".
+ * the index last read it. chainIndexProgress gives the chain time the index
+ * has read through (the finalized block time it keeps beside the height it
+ * read at, read_time), so a reader can tell "not yet" from "not on the
+ * chain". The state row is read whole, so a column the index's schema
+ * doesn't have yet only makes the answer more careful.
  *
  * Self-contained (the chain index's module is not imported), so code that
  * runs where the index's code isn't can ask it.
@@ -39,10 +42,11 @@ export const NATIVE_ORIGIN = 'native';
 /** The chain's network id (0x and 64 hex digits), when set. */
 export const CHAIN_NETWORK_ID_ENV = 'WAVES_SETTLEMENT_NETWORK_ID';
 /**
- * How far before its last save the index may have read the chain: one run
- * (under a minute) and the chain's finality lag, with room to spare.
+ * How far the chain's block times and 6529.io's clock may be apart: an
+ * event first seen by 6529.io at T names a wave the chain made by T plus
+ * this, at most.
  */
-export const READ_THROUGH_MARGIN_MS = 15 * 60_000;
+export const READ_THROUGH_MARGIN_MS = 5 * 60_000;
 /** Full-read phases before which a skipped feed may still lack a wave. */
 const PHASES_BEFORE_WAVES_DONE = new Set(['groups', 'waves']);
 
@@ -70,32 +74,53 @@ export function expectedChainNetwork(
   return env[CHAIN_NETWORK_ID_ENV]?.trim().toLowerCase() || null;
 }
 
+/** Why the index's mapping doesn't count yet. */
+export type ChainIndexNotReady =
+  | 'no_tables'
+  | 'no_state'
+  | 'no_full_read'
+  | 'other_network';
+
 export interface ChainIndexProgress {
   /**
    * The index has finished a full read, on the expected network when one
    * is given: its mapping is the test of which waves moved.
    */
   readonly ready: boolean;
+  /** Why it isn't ready; null when it is. */
+  readonly notReady: ChainIndexNotReady | null;
+  /** The index's last error, as its state row keeps it. */
+  readonly lastError: string | null;
   /**
-   * A time (6529.io's clock, ms) by which every wave the chain had made is
-   * in chain_waves: the index's last save while it was caught up with its
-   * last read of the chain, without an error and past a full read's waves
-   * phase, less READ_THROUGH_MARGIN_MS. Null when it isn't caught up.
+   * A time (ms) by which every wave the chain had made is in chain_waves:
+   * the finalized block time of the height the index read at (read_time),
+   * once the feed has applied through that height, without an error and
+   * past a full read's waves phase, less READ_THROUGH_MARGIN_MS. Null when
+   * it isn't caught up, or keeps no such time.
    */
   readonly readThrough: number | null;
 }
 
-const NOT_READY: ChainIndexProgress = { ready: false, readThrough: null };
+const notReady = (
+  reason: ChainIndexNotReady,
+  lastError: string | null = null
+): ChainIndexProgress => ({
+  ready: false,
+  notReady: reason,
+  lastError,
+  readThrough: null
+});
 
+/** The state row's columns read here; any may be missing. */
 interface StateRow {
-  readonly last_full_at: number | string | null;
-  readonly network: string | null;
-  readonly last_error: string | null;
-  readonly feed_next: number | string | null;
-  readonly read_height: number | string | null;
-  readonly feed_part: number | string | null;
-  readonly full_phase: string | null;
-  readonly updated_at: number | string | null;
+  readonly last_full_at?: number | string | null;
+  readonly network?: string | null;
+  readonly last_error?: string | null;
+  readonly feed_next?: number | string | null;
+  readonly read_height?: number | string | null;
+  readonly read_time?: number | string | null;
+  readonly feed_part?: number | string | null;
+  readonly full_phase?: string | null;
 }
 
 const present = <T>(value: T | null | undefined): value is T =>
@@ -113,38 +138,39 @@ export async function chainIndexProgress(
   let rows: StateRow[];
   try {
     rows = await db.execute<StateRow>(
-      `select last_full_at, network, last_error, feed_next, read_height,
-              feed_part, full_phase, updated_at
-         from ${CHAIN_INDEX_STATE_TABLE_NAME}
-        where name = :name`,
+      `select * from ${CHAIN_INDEX_STATE_TABLE_NAME} where name = :name`,
       { name: CHAIN_INDEX_STATE_ROW },
       options
     );
   } catch (error) {
-    if (isMissingTableError(error)) return NOT_READY;
+    if (isMissingTableError(error)) return notReady('no_tables');
     throw error;
   }
   const row = rows[0];
-  if (!row || !present(row.last_full_at)) return NOT_READY;
+  if (!row) return notReady('no_state');
+  const lastError = row.last_error ?? null;
+  if (!present(row.last_full_at)) return notReady('no_full_read', lastError);
   const expected = expectedNetwork?.trim().toLowerCase() || null;
   if (
     expected !== null &&
     (row.network ?? '').trim().toLowerCase() !== expected
   ) {
-    return NOT_READY;
+    return notReady('other_network', lastError);
   }
   const caughtUp =
-    !present(row.last_error) &&
+    lastError === null &&
     present(row.feed_next) &&
     present(row.read_height) &&
     Number(row.feed_next) > Number(row.read_height) &&
     Number(row.feed_part ?? 0) === 0 &&
     !PHASES_BEFORE_WAVES_DONE.has(row.full_phase ?? '') &&
-    present(row.updated_at);
+    present(row.read_time);
   return {
     ready: true,
+    notReady: null,
+    lastError,
     readThrough: caughtUp
-      ? Number(row.updated_at) - READ_THROUGH_MARGIN_MS
+      ? Number(row.read_time) - READ_THROUGH_MARGIN_MS
       : null
   };
 }
