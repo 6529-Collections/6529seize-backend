@@ -105,7 +105,13 @@ export function gatewayBase(upstream: string): URL {
   if (base.protocol !== 'http:' && base.protocol !== 'https:') {
     throw new Error(`The gateway ${upstream} is not an http or https address`);
   }
-  if (base.username || base.password || base.search || base.hash) {
+  if (
+    base.username ||
+    base.password ||
+    base.search ||
+    base.hash ||
+    /[?#]/.test(upstream)
+  ) {
     throw new Error(
       `The gateway ${upstream} must be an origin and path, with no credentials, query or fragment`
     );
@@ -115,8 +121,9 @@ export function gatewayBase(upstream: string): URL {
 
 /**
  * A recorded request's address on the upstream: the gateway's path with
- * the request's path and query after it, on the gateway's own origin.
- * Null for anything that isn't an absolute path.
+ * the request's path and query after it, on the gateway's own origin and
+ * under its path. Null for anything that isn't an absolute path, or that
+ * resolves outside the gateway's path (dot segments, encoded or not).
  */
 export function upstreamTarget(base: URL, requestUrl: string): URL | null {
   if (!requestUrl.startsWith('/') || requestUrl.startsWith('//')) return null;
@@ -125,7 +132,10 @@ export function upstreamTarget(base: URL, requestUrl: string): URL | null {
   const target = new URL(base.href);
   target.pathname = `${base.pathname.replace(/\/$/, '')}${requestPath}`;
   target.search = query === -1 ? '' : requestUrl.slice(query);
-  return target.origin === base.origin ? target : null;
+  const prefix = base.pathname.replace(/\/$/, '');
+  const underBase =
+    target.pathname === prefix || target.pathname.startsWith(`${prefix}/`);
+  return target.origin === base.origin && underBase ? target : null;
 }
 
 /** Forwards to the node and keeps what it answered, by the harness's key. */

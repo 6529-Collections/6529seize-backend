@@ -394,4 +394,27 @@ describe('the recorder sends a request only to the gateway it was given', () => 
       'http://192.0.2.10:8545'
     );
   });
+
+  it("keeps a request under a gateway's path, whatever its dot segments", () => {
+    const base = gatewayBase('http://192.0.2.10/api');
+    for (const escape of [
+      '/../admin',
+      '/%2e%2e/admin',
+      '/.%2E/admin',
+      '/..\\admin'
+    ]) {
+      expect(upstreamTarget(base, escape)).toBeNull();
+    }
+    expect(upstreamTarget(base, '/v1/waves/../status')?.href).toBe(
+      'http://192.0.2.10/api/v1/status'
+    );
+    expect(upstreamTarget(base, '/v1/status?height=3')?.href).toBe(
+      'http://192.0.2.10/api/v1/status?height=3'
+    );
+  });
+
+  it('refuses a gateway given with an empty query or fragment', () => {
+    expect(() => gatewayBase('http://192.0.2.10/api?')).toThrow();
+    expect(() => gatewayBase('http://192.0.2.10/api#')).toThrow();
+  });
 });

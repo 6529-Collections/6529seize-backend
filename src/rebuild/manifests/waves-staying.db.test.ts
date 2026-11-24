@@ -8,6 +8,7 @@ import {
   stayingMetricsPlans,
   stayingWavesPlans
 } from './waves-staying';
+import { compareCodeUnits } from '@/waves-chain-index/waves-chain-index.order';
 
 /** A moved wave the chain index holds by LegacyId (stored without dashes). */
 const MOVED = '00000000-0000-4000-8000-00000000000a';
@@ -39,7 +40,7 @@ async function selected(table: string, column: string): Promise<string[]> {
   const rows = await sqlExecutor.execute<Record<string, unknown>>(
     `select ${column} as v from ${table} where (${where})`
   );
-  return rows.map((row) => String(row.v)).sort();
+  return rows.map((row) => String(row.v)).sort(compareCodeUnits);
 }
 
 const COMPETITION_TABLES = [
@@ -180,10 +181,10 @@ describeWithSeed('the staying waves plans', [], () => {
     // The private group a moved wave reads with is held by the chain: never
     // excused. A group the mirror matched is never excused either.
     expect(await selected('community_groups', 'id')).toEqual(
-      [GROUPS.privateOfStaying, GROUPS.unnamed].sort()
+      [GROUPS.privateOfStaying, GROUPS.unnamed].sort(compareCodeUnits)
     );
     expect(await selected('profile_groups', 'profile_group_id')).toEqual(
-      ['list-of-staying', 'list-unnamed-out'].sort()
+      ['list-of-staying', 'list-unnamed-out'].sort(compareCodeUnits)
     );
   });
 

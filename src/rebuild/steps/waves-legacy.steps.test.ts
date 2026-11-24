@@ -6,6 +6,7 @@ import {
   wavesLegacyRows,
   WAVES_LEGACY_TABLES
 } from './waves-legacy.steps';
+import { compareCodeUnits } from '@/waves-chain-index/waves-chain-index.order';
 
 describe('the waves legacy seed rows', () => {
   it('are the same on every call: fixed ids, times and authors', () => {
@@ -149,8 +150,14 @@ describe('the waves legacy seed drop metrics', () => {
         created_at: Number(d.created_at)
       }))
     );
-    expect(metrics.wave_metrics.map((row) => row.wave_id).sort()).toEqual(
-      Array.from(new Set(rows.drops.map((d) => String(d.wave_id)))).sort()
+    expect(
+      metrics.wave_metrics
+        .map((row) => String(row.wave_id))
+        .sort(compareCodeUnits)
+    ).toEqual(
+      Array.from(new Set(rows.drops.map((d) => String(d.wave_id)))).sort(
+        compareCodeUnits
+      )
     );
   });
 });
