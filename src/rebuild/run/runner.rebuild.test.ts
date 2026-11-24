@@ -673,7 +673,10 @@ describe('rebuild check, end to end', () => {
   describe('planned rows', () => {
     const PLAN = {
       table: 'team',
-      where: "collection = '6529'",
+      // A subquery naming a table without its database, as a manifest
+      // writes it: the condition runs with the main database as default.
+      where:
+        "wallet IN (SELECT t.wallet FROM team t WHERE t.collection = '6529')",
       reason: 'a later change writes the 6529 rows',
       until: '9999-12-31',
       change: 'the 6529 writer'

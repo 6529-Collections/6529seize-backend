@@ -177,6 +177,55 @@ describe('MysqlAdmin on the private mysqld', () => {
     ).toEqual([[0, 0]]);
   });
 
+  it("evaluates a plan's condition with the database as default, and leaves the admin connection without one", async () => {
+    await admin.query(
+      `CREATE TABLE ${FROM}.planned (id INT NOT NULL PRIMARY KEY, kind VARCHAR(10), at DATETIME(3))`
+    );
+    await admin.query(
+      `CREATE TABLE ${FROM}.kept (id INT NOT NULL PRIMARY KEY)`
+    );
+    await admin.query(
+      `INSERT INTO ${FROM}.planned VALUES (1, 'a', '2026-01-01 00:00:00.000'), (2, 'b', NULL), (3, 'a', NULL)`
+    );
+    await admin.query(`INSERT INTO ${FROM}.kept VALUES (1)`);
+    const noDefault = async () =>
+      (await admin.query<{ db: string | null }>('SELECT DATABASE() AS db'))[0]
+        .db;
+    expect(await noDefault()).toBeNull();
+    // A subquery names another table without its database.
+    const rows = await admin.rowsWhere(
+      FROM,
+      'planned',
+      'id NOT IN (SELECT id FROM kept)'
+    );
+    expect(rows).toEqual([
+      { id: 2, kind: 'b', at: null },
+      { id: 3, kind: 'a', at: null }
+    ]);
+    // Values read as the admin connection reads them (dates as strings).
+    expect(
+      await admin.rowsWhere(FROM, 'planned', 'id IN (SELECT id FROM kept)')
+    ).toEqual([{ id: 1, kind: 'a', at: '2026-01-01 00:00:00.000' }]);
+    expect(
+      await admin.rowsWhereInPartition(
+        FROM,
+        'planned',
+        'id NOT IN (SELECT id FROM kept)',
+        ['kind'],
+        [['a']]
+      )
+    ).toBe(1);
+    expect(await noDefault()).toBeNull();
+    // A condition MySQL refuses leaves no default behind either.
+    await expect(
+      admin.rowsWhere(FROM, 'planned', 'id IN (SELECT id FROM no_such_table)')
+    ).rejects.toThrow(/no_such_table/);
+    await expect(
+      admin.rowsWhereInPartition(FROM, 'planned', 'nope = 1', ['kind'], [['a']])
+    ).rejects.toThrow(/nope/);
+    expect(await noDefault()).toBeNull();
+  });
+
   it('leaves no pid file once the server stops', async () => {
     const pidFile = path.join(HOME, 'mysql', 'harness-mysqld.pid');
     expect(fs.readFileSync(pidFile, 'utf8').trim()).toBe(String(server.pid));

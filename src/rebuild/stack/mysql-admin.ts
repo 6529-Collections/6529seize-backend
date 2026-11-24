@@ -82,26 +82,67 @@ function partitionWhere(columns: readonly string[], inside: boolean): string {
     : [...ids.map((id) => `${id} IS NULL`), `NOT (${tuple})`].join(' OR ');
 }
 
-export class MysqlAdmin {
-  private constructor(private readonly connection: mysql.Connection) {}
-
-  static async connect(target: AdminTarget): Promise<MysqlAdmin> {
-    const connection = mysql.createConnection({
-      host: target.host,
-      port: target.port,
-      user: target.user,
-      password: target.password,
-      charset: 'utf8mb4',
-      timezone: 'Z',
-      supportBigNumbers: true,
-      bigNumberStrings: true,
-      dateStrings: true,
-      connectTimeout: 5000
-    });
+/**
+ * A connection to `target`, with `database` as its default when given.
+ * Every admin connection reads values the same way, so rows from one key
+ * and hash like rows from another.
+ */
+async function openConnection(
+  target: AdminTarget,
+  database?: string
+): Promise<mysql.Connection> {
+  const connection = mysql.createConnection({
+    host: target.host,
+    port: target.port,
+    user: target.user,
+    password: target.password,
+    ...(database ? { database } : {}),
+    charset: 'utf8mb4',
+    timezone: 'Z',
+    supportBigNumbers: true,
+    bigNumberStrings: true,
+    dateStrings: true,
+    connectTimeout: 5000
+  });
+  try {
     await new Promise<void>((resolve, reject) =>
       connection.connect((error) => (error ? reject(error) : resolve()))
     );
-    return new MysqlAdmin(connection);
+  } catch (error) {
+    connection.destroy();
+    throw error;
+  }
+  return connection;
+}
+
+export class MysqlAdmin {
+  private constructor(
+    private readonly connection: mysql.Connection,
+    private readonly target: AdminTarget
+  ) {}
+
+  static async connect(target: AdminTarget): Promise<MysqlAdmin> {
+    return new MysqlAdmin(await openConnection(target), target);
+  }
+
+  /**
+   * One query on a connection of its own whose default database is
+   * `database`, closed after, whether the query succeeds or not. A
+   * manifest's condition (a plan's `where`) can then name other tables in
+   * a subquery without their database, while the admin connection keeps
+   * no default database.
+   */
+  private async queryIn<T = Row>(database: string, sql: string): Promise<T[]> {
+    const connection = await openConnection(this.target, database);
+    try {
+      return await new Promise<T[]>((resolve, reject) =>
+        connection.query(sql, [], (error, rows) =>
+          error ? reject(error) : resolve(rows as T[])
+        )
+      );
+    } finally {
+      connection.destroy();
+    }
   }
 
   query<T = Row>(sql: string, params: unknown[] = []): Promise<T[]> {
@@ -299,13 +340,17 @@ export class MysqlAdmin {
     return io;
   }
 
-  /** A table's rows matching an SQL condition on its columns. */
+  /**
+   * A table's rows matching an SQL condition on its columns, evaluated
+   * with `database` as the default (see queryIn).
+   */
   async rowsWhere(
     database: string,
     table: string,
     where: string
   ): Promise<Row[]> {
-    return this.query(
+    return this.queryIn(
+      database,
       `SELECT * FROM ${mysql.escapeId(database)}.${mysql.escapeId(table)} WHERE (${where})`
     );
   }
@@ -313,6 +358,7 @@ export class MysqlAdmin {
   /**
    * How many of a table's rows match an SQL condition on its columns and
    * lie in a partition: their `columns` hold one of the tuples in `values`.
+   * The condition is evaluated with `database` as the default.
    */
   async rowsWhereInPartition(
     database: string,
@@ -326,7 +372,8 @@ export class MysqlAdmin {
     const inside = mysql.format(partitionWhere(columns, true), [
       values.map((v) => [...v])
     ]);
-    const [row] = await this.query<{ n: string }>(
+    const [row] = await this.queryIn<{ n: string }>(
+      database,
       `SELECT COUNT(*) AS n FROM ${mysql.escapeId(database)}.${mysql.escapeId(table)} WHERE (${where}) AND ${inside}`
     );
     return Number(row.n);
