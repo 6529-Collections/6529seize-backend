@@ -48,30 +48,49 @@ const LEDGER_DAYS = 7;
 const RECEIVER_GRACE_DAYS = 1;
 // After this the receiver has certainly forgotten the group.
 const LEDGER_KEEP_DAYS = LEDGER_DAYS + RECEIVER_GRACE_DAYS;
+// How long a deploy dispatched now can take to deliver its event: the
+// deploy itself (at most an hour) and the queue's retries, with margin. A
+// recorded set is sent only if it still reaches the receiver within the
+// seven days.
+const RELEASE_NOTE_DELIVERY_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * What a ledger group recorded at `openedAt` allows at `now`: `send` its
+ * recorded set (it reaches the receiver within seven days of `openedAt`),
+ * `wait` (the receiver may or may not hold it when the event arrives, so
+ * neither the recorded set nor a new one is safe; `until` says when that
+ * ends), or `forgotten` (plan it afresh).
+ */
+function ledgerStage(openedAt, now) {
+  const age = now - openedAt;
+  if (age < LEDGER_DAYS * DAY_MS - RELEASE_NOTE_DELIVERY_MS) {
+    return { stage: 'send' };
+  }
+  if (age < LEDGER_KEEP_DAYS * DAY_MS) {
+    return {
+      stage: 'wait',
+      until: new Date(openedAt + LEDGER_KEEP_DAYS * DAY_MS).toISOString()
+    };
+  }
+  return { stage: 'forgotten' };
+}
 
 /**
  * Ledger groups with a member still behind, by state: `active` ones the
- * train keeps sending with their recorded set (under seven days old), and
- * `cooling` ones the receiver may or may not still hold (the grace day
- * after), whose members wait because neither the recorded set nor a new
- * one is safe to send. Older groups are forgotten and planned afresh.
+ * train keeps sending with their recorded set, and `cooling` ones whose
+ * members wait (see ledgerStage). Older groups are planned afresh.
  */
 function ledgerState(ledgerGroups, behindByPull, now) {
   const active = {};
   const cooling = {};
   for (const [pull, entry] of Object.entries(ledgerGroups || {})) {
-    const opened = Date.parse(entry.opened_at);
     const open = (behindByPull.get(Number(pull)) || []).some((service) =>
       entry.services.includes(service)
     );
     if (!open) continue;
-    if (now - opened < LEDGER_DAYS * DAY_MS) {
-      active[pull] = entry;
-    } else if (now - opened < LEDGER_KEEP_DAYS * DAY_MS) {
-      cooling[pull] = new Date(
-        opened + LEDGER_KEEP_DAYS * DAY_MS
-      ).toISOString();
-    }
+    const { stage, until } = ledgerStage(Date.parse(entry.opened_at), now);
+    if (stage === 'send') active[pull] = entry;
+    if (stage === 'wait') cooling[pull] = until;
   }
   return { active, cooling };
 }
@@ -479,6 +498,8 @@ module.exports = {
   MAX_GROUP_INPUT_CHARS,
   LEDGER_DAYS,
   LEDGER_KEEP_DAYS,
+  RELEASE_NOTE_DELIVERY_MS,
+  ledgerStage,
   resolveMode,
   releaseNoteGroups,
   activeLedger,

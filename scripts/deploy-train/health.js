@@ -23,12 +23,13 @@ function authLogPattern(mode) {
   return `"AUTH ${mode}"`;
 }
 const INVOCATION_LOG_PATTERN = '"REPORT RequestId"';
-// The line the release-notes loop logs for each event it receives:
-// `Generating release notes for <repo> run <deploy run id>`.
-const RELEASE_NOTE_EVENT_PREFIX = 'Generating release notes for';
+// The line the release-notes loop logs when it records a service's event
+// for a group: `Recorded release group pr-<number> event for <service> run
+// <deploy run id>` (src/releaseNotesGenerationLoop/index.ts).
+const RELEASE_NOTE_EVENT_PREFIX = 'Recorded release group';
 
-function releaseNoteEventPattern(runId) {
-  return `"${RELEASE_NOTE_EVENT_PREFIX}" "run ${runId}"`;
+function releaseNoteEventPattern({ pull, service, runId }) {
+  return `"${RELEASE_NOTE_EVENT_PREFIX} pr-${pull} event for ${service} run ${runId}"`;
 }
 const TOKEN_REFRESH_MS = 4 * 60 * 1000;
 const UNCHECKED_PROFILES = new Set([
@@ -494,12 +495,26 @@ function createHealthChecker({
 
   return {
     /**
-     * Whether the release-notes loop (`functionName`) logged receiving the
-     * event of deploy run `runId` since `since`.
+     * Whether the release-notes loop (`functionName`) logged recording
+     * `service`'s event from deploy run `runId` for group `pull` since
+     * `since`.
      */
-    async releaseNoteSeen({ region, functionName, runId, since }) {
-      if (!/^\d+$/.test(String(runId))) {
-        throw new TypeError(`not a deploy run id: ${runId}`);
+    async releaseNoteSeen({
+      region,
+      functionName,
+      pull,
+      service,
+      runId,
+      since
+    }) {
+      if (
+        !/^\d+$/.test(String(runId)) ||
+        !/^[1-9]\d*$/.test(String(pull)) ||
+        !/^[\w-]+$/.test(String(service))
+      ) {
+        throw new TypeError(
+          `not a release-note event: pr-${pull} ${service} run ${runId}`
+        );
       }
       const result = await aws.json(
         [
@@ -512,7 +527,7 @@ function createHealthChecker({
           '--start-time',
           String(since),
           '--filter-pattern',
-          releaseNoteEventPattern(runId),
+          releaseNoteEventPattern({ pull, service, runId }),
           '--max-items',
           '1'
         ],

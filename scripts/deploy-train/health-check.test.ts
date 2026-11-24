@@ -440,20 +440,24 @@ describe('health checker', () => {
 });
 
 describe('release-note event confirmation', () => {
-  it('looks for the line the release-notes loop logs for each event', () => {
+  it('looks for the line the release-notes loop logs for each recorded event', () => {
     // The loop's own log statement: if it changes, so must the pattern.
     const loop = readFileSync(
       `${__dirname}/../../src/releaseNotesGenerationLoop/index.ts`,
       'utf8'
     );
     expect(loop).toContain(
-      '`Generating release notes for ${request.repo} run ${request.run_id}`'
+      '`Recorded release group pr-${request.pull_request_number} event for ${service} run ${request.run_id}`'
     );
-    expect(health.RELEASE_NOTE_EVENT_PREFIX).toBe(
-      'Generating release notes for'
-    );
-    expect(health.releaseNoteEventPattern(45238902874)).toBe(
-      '"Generating release notes for" "run 45238902874"'
+    expect(health.RELEASE_NOTE_EVENT_PREFIX).toBe('Recorded release group');
+    expect(
+      health.releaseNoteEventPattern({
+        pull: 2574,
+        service: 'teamLoop',
+        runId: 45238902874
+      })
+    ).toBe(
+      '"Recorded release group pr-2574 event for teamLoop run 45238902874"'
     );
   });
 
@@ -464,7 +468,11 @@ describe('release-note event confirmation', () => {
         json: async (args: string[]) => {
           calls.push(args);
           return {
-            events: [{ message: 'Generating release notes for x run 7' }]
+            events: [
+              {
+                message: 'Recorded release group pr-5 event for teamLoop run 7'
+              }
+            ]
           };
         }
       },
@@ -474,6 +482,8 @@ describe('release-note event confirmation', () => {
       checker.releaseNoteSeen({
         region: 'us-east-1',
         functionName: 'releaseNotesGenerationLoop',
+        pull: 5,
+        service: 'teamLoop',
         runId: 7,
         since: 1000
       })
@@ -489,7 +499,7 @@ describe('release-note event confirmation', () => {
         '--start-time',
         '1000',
         '--filter-pattern',
-        '"Generating release notes for" "run 7"',
+        '"Recorded release group pr-5 event for teamLoop run 7"',
         '--max-items',
         '1'
       ]
@@ -498,10 +508,12 @@ describe('release-note event confirmation', () => {
       checker.releaseNoteSeen({
         region: 'us-east-1',
         functionName: 'releaseNotesGenerationLoop',
+        pull: 5,
+        service: 'teamLoop',
         runId: '7 OR x',
         since: 1000
       })
-    ).rejects.toThrow('not a deploy run id');
+    ).rejects.toThrow('not a release-note event');
   });
 });
 

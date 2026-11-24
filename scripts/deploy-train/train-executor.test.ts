@@ -78,6 +78,8 @@ type FakeOptions = {
   lateBusy?: boolean;
   // The first dispatch replaces a deploy that was waiting to run.
   displaced?: boolean;
+  // How long each active-deploy lookup takes.
+  activeDelaysMs?: number[];
 };
 
 function harness(options: FakeOptions = {}) {
@@ -97,6 +99,7 @@ function harness(options: FakeOptions = {}) {
     async listWorkflowRuns(_workflow: string, params: Record<string, string>) {
       if (!params.event) {
         activeChecks += 1;
+        now += options.activeDelaysMs?.[activeChecks - 1] ?? 0;
         const busy =
           activeChecks <= (options.busyChecks ?? 0) ||
           (options.lateBusy === true && activeChecks === 2);
@@ -782,14 +785,14 @@ describe('deploy train executor', () => {
         },
         async releaseNoteSeen(query: any) {
           lookups.push(query);
-          return seen.has(String(query.runId));
+          return seen.has(`${query.runId}/${query.pull}`);
         }
       };
       return { h, lookups, health };
     };
 
     it('confirms each member whose event the release-notes loop logged', async () => {
-      const { h, lookups, health } = groupRun(new Set(['101']));
+      const { h, lookups, health } = groupRun(new Set(['101/5']));
       const saved: any[] = [];
       const result = await h.run(
         trainPlan(
@@ -809,6 +812,8 @@ describe('deploy train executor', () => {
         {
           region: 'us-east-1',
           functionName: 'releaseNotesGenerationLoop',
+          pull: '5',
+          service: 'teamLoop',
           runId: 101,
           since: START
         }
@@ -841,6 +846,31 @@ describe('deploy train executor', () => {
       ]);
     });
 
+    it('confirms a deploy that carried two groups group by group', async () => {
+      // prxt's case: one deploy carried pr-5 and pr-6, and only pr-5's
+      // event was recorded. pr-6's must still be reported.
+      const { h, lookups, health } = groupRun(new Set(['101/5']));
+      const result = await h.run(
+        trainPlan(
+          withGroups(
+            [item('teamLoop', [5, 6])],
+            [
+              { service: 'nftsLoop', prs: [5] },
+              { service: 'api', prs: [6] }
+            ]
+          )
+        ),
+        { health, saveLedger: async () => undefined }
+      );
+      expect(lookups.map((query) => [query.pull, query.runId])).toEqual([
+        ['5', 101],
+        ['6', 101]
+      ]);
+      expect(result.warnings).toEqual([
+        'release-note event for teamLoop (deploy run 101, group pr-6) has not reached the release-notes loop; send it again by deploying teamLoop by hand with group pr-6 from the ledger issue'
+      ]);
+    });
+
     it('never stops the train when the logs cannot be read', async () => {
       const { h } = groupRun(new Set());
       const result = await h.run(
@@ -864,11 +894,13 @@ describe('deploy train executor', () => {
     });
   });
 
-  it('defers a group that entered its grace day after the plan was made', async () => {
-    // prxt's case: the plan was made while the group was 7 days less a few
-    // minutes old; the Ship job reaches it after the seventh day.
-    const h = harness();
-    const opened = START - 7 * 86_400_000 + 60_000;
+  it('defers a group that reached its grace day during the last lookup before dispatch', async () => {
+    // prxt's case: when the Ship job starts, the recorded set can still
+    // reach the receiver in time; the last GitHub lookup before dispatch
+    // takes two minutes and crosses into the grace day (seven days less the
+    // two hours an event can take to arrive).
+    const h = harness({ activeDelaysMs: [0, 120_000] });
+    const opened = START - (7 * 86_400_000 - 2 * 3_600_000) + 60_000;
     const ledger = {
       '5': {
         services: ['nftsLoop', 'teamLoop'],
@@ -877,7 +909,6 @@ describe('deploy train executor', () => {
       }
     };
     const plan = trainPlan(withGroups([item('nftsLoop', [5])], [], ledger));
-    h.advance(120_000);
     const result = await h.run(plan, {
       ledger,
       saveLedger: async () => undefined

@@ -3,7 +3,7 @@
 const catalogLib = require('./catalog');
 const { evaluateBlackout, holdFor } = require('./blackouts');
 const { DEPLOY_WORKFLOW, activeDeployRuns, deployBranch } = require('./github');
-const { LEDGER_DAYS, LEDGER_KEEP_DAYS } = require('./plan');
+const { LEDGER_KEEP_DAYS, ledgerStage } = require('./plan');
 
 const DAY_MS = 86_400_000;
 // The service whose log shows a release-note event reached the receiver.
@@ -155,7 +155,7 @@ class TrainRun {
 
   /** Drops the groups the receiver has certainly forgotten (see plan.js). */
   dropExpiredGroups() {
-    const expiry = this.clock() - LEDGER_KEEP_DAYS * 86_400_000;
+    const expiry = this.clock() - LEDGER_KEEP_DAYS * DAY_MS;
     for (const [key, entry] of Object.entries(this.ledger)) {
       if (Date.parse(entry.opened_at) <= expiry) delete this.ledger[key];
     }
@@ -232,10 +232,12 @@ class TrainRun {
           item.release_note_opened_at?.[pull]
       );
       if (!Number.isFinite(openedAt)) continue;
-      const age = this.clock() - openedAt;
-      if (age >= LEDGER_DAYS * DAY_MS && age < LEDGER_KEEP_DAYS * DAY_MS) {
-        const until = new Date(openedAt + LEDGER_KEEP_DAYS * DAY_MS);
-        return `release-note group pr-${pull} may still be held by the receiver until ${until.toISOString()}; the train ships it after that`;
+      const { stage, until } = ledgerStage(openedAt, this.clock());
+      if (stage === 'wait') {
+        return `release-note group pr-${pull} may still be held by the receiver until ${until}; the train ships it after that`;
+      }
+      if (stage === 'forgotten') {
+        return `release-note group pr-${pull} expired after planning; the next train plans it afresh`;
       }
     }
     return null;
@@ -498,11 +500,6 @@ class TrainRun {
     // Waiting for other deploys can take minutes: check the branch, holds
     // and quiet windows again before dispatching.
     if (!(await this.clearToDispatch(item))) return null;
-    const grace = this.graceReason(item, groups);
-    if (grace) {
-      this.defer(item, grace);
-      return null;
-    }
     const reserved = await this.reserveGroups(item, groups);
     if (reserved.error) {
       this.defer(item, reserved.error);
@@ -521,8 +518,14 @@ class TrainRun {
       return null;
     }
     // The branch read, the ledger save and that check can take a while
-    // too: check the time budget, holds and quiet windows once more,
-    // immediately before dispatching.
+    // too: check the groups' age, the time budget, holds and quiet windows
+    // once more, immediately before dispatching.
+    const grace = this.graceReason(item, groups);
+    if (grace) {
+      await this.releaseGroups(item, reserved.opened);
+      this.defer(item, grace);
+      return null;
+    }
     if (!this.withinBudgetAndWindows(item)) {
       await this.releaseGroups(item, reserved.opened);
       return null;
@@ -723,9 +726,10 @@ class TrainRun {
   }
 
   /**
-   * Confirms that each recorded member's release-note event reached the
-   * receiver: the release-notes loop logs every event it receives with its
-   * deploy run. Runs at the end of each train, after the watch windows, so
+   * Confirms that the receiver recorded each member's release-note event
+   * for each group: the release-notes loop logs the group, service and
+   * deploy run of every event it records, so a deploy that carried several
+   * groups is confirmed group by group. Runs at the end of each train, after the watch windows, so
    * this train's events have had time to arrive; members seen are
    * confirmed, and members of groups still unconfirmed are reported with
    * how to send their event again. Best effort: it never stops a train.
@@ -760,6 +764,8 @@ class TrainRun {
         seen = await this.health.releaseNoteSeen({
           region,
           functionName: RELEASE_NOTES_SERVICE,
+          pull,
+          service,
           runId: entry.runs[service],
           since: Date.parse(entry.opened_at)
         });

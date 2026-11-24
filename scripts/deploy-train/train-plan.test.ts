@@ -273,6 +273,23 @@ describe('deploy train plan', () => {
       ).toEqual(['nftsLoop']);
     });
 
+    it('stops sending a recorded set once its event could arrive after the seventh day', () => {
+      // An hour short of seven days: a deploy dispatched now can take up to
+      // two hours to deliver its event, so the member waits instead.
+      const opened = QUIET_TIME - (planLib.LEDGER_DAYS * 24 - 1) * 3_600_000;
+      const result = plan(
+        [
+          record('nftsLoop', { prs: [20] }),
+          record('teamLoop', { status: 'current', prs: [] })
+        ],
+        { ledger: ledgerEntry(opened) }
+      );
+      expect(result.ship).toEqual([]);
+      expect(result.deferred).toEqual([
+        expect.objectContaining({ service: 'nftsLoop', kind: 'release-notes' })
+      ]);
+    });
+
     it('does not publish while a recorded member cannot be assessed', () => {
       // prxt's case: teamLoop is in the recorded set but its drift could
       // not be assessed, so it may still be behind: nftsLoop ships without

@@ -177,7 +177,7 @@ Services the plan defers instead of shipping:
 | A quiet window is active within 15 minutes | Nothing; a later train ships it. |
 | A dependency is held back, could not be assessed or was never deployed | Fix or ship the dependency first. |
 | Its PR's release-note group was fixed before the service fell behind | Nothing; the train ships it once that group has published or expired (8 days). For an urgent fix, see the hand-deploy inputs below. |
-| Its PR's release-note group is 7 to 8 days old, so the receiver may or may not still hold it | Nothing; the train ships it with a fresh group once the 8 days are up. |
+| Its PR's release-note group is between 7 days less 2 hours and 8 days old, so the receiver may or may not hold it when the event arrives | Nothing; the train ships it with a fresh group once the 8 days are up. |
 
 Release notes: each PR becomes one group (`pr-<number>`) that lists every
 service behind `main` because of that PR, including services the train holds
@@ -189,9 +189,13 @@ rejects a different one. Later trains send the same set while any member is
 still behind. The receiver remembers a group for 7 days from when it first
 processes a deploy that carries it, which is never before the ledger recorded
 it but can be later (the deploy itself, queue retries). So the ledger sends
-its set for 7 days; on the eighth day, when the receiver may or may not still
-hold it, the group's remaining members wait, because neither the recorded set
-nor a new one is safe to send; after that the group is planned afresh. A
+its set only while its event still reaches the receiver within those 7 days,
+allowing 2 hours for the deploy and the queue; from then until 8 days, when
+the receiver may or may not hold the group as the event arrives, the group's
+remaining members wait, because neither the recorded set nor a new one is
+safe to send; after that the group is planned afresh. The plan checks this,
+and Ship checks it again after its last GitHub lookup, immediately before
+dispatch. A
 manual redrive of failed release-note messages more than a day after their
 deploy can still meet a newer group for the same pull request. If the set
 cannot be recorded (the ledger cannot be read or saved), that deploy is
@@ -207,12 +211,16 @@ member whose drift could not be assessed, keeps the note unpublished until it
 ships. A group stays in the ledger after its publishing deploy, until the
 receiver has certainly forgotten it (8 days), so a member that falls behind
 again, or whose event has to be sent again, uses the same set. At the end of
-each train, the train confirms that every recorded member's event reached the
-receiver: the release-notes loop logs `Generating release notes for <repo> run
-<deploy run id>` for each event it receives, and the train reads that log with
-its health role. A member not seen there is reported in the result with its
-deploy run; send its event again by deploying it by hand with its group from
-the ledger (`publish_release_note=true` if every other member has shipped).
+each train, the train confirms that the receiver recorded every member's
+event for every group: the release-notes loop logs `Recorded release group
+pr-<number> event for <service> run <deploy run id>` when it records one, and
+the train reads that log with its health role, group by group, so a deploy
+that carried several groups is confirmed for each. A member not seen there is
+reported in the result with its deploy run; send its event again by
+deploying it by hand with its group from the ledger
+(`publish_release_note=true` if every other member has shipped). The
+release-notes loop logs that line from this change on, so until it is
+redeployed every member is reported as not seen.
 The train never uses the release-note opt-out.
 
 Deploying a group member by hand: dispatch `Deploy a service` with
