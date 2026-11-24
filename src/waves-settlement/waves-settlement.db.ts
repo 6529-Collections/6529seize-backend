@@ -8,6 +8,8 @@ export type SettlementSendStatus =
   | 'refused'
   | 'error'
   | 'given_up'
+  | 'not_yet'
+  | 'not_included'
   | 'pending'
   | 'in_block'
   | 'final'

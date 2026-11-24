@@ -48,17 +48,32 @@ import {
  * logs `[SETTLEMENT TRYING AGAIN]`. Refusals, lost submits and gateway
  * errors never end the tries.
  *
- * The Main Stage (MAIN_STAGE_DECISION_IDS) goes first in every run, ahead
- * of the gateway's order, and is never given up: past its eighth paid
- * failure each failure is an error, and it is tried again every 15 minutes
- * at most. Nothing is sent while the chain's waves import is not complete
- * (GET /v1/waves/import); the chain's WAVES_IMPORT_RUNNING (0x2507), on a
- * draft, at admission or in a block, is "not yet": no failure, no wait.
+ * A request the gateway took that no block holds by the time it expired
+ * ("accepted, never included": a node that can't reach the chain's peers,
+ * say) is logged as [SETTLEMENT NOT INCLUDED] and sent again. It pays no
+ * fee, so it doesn't count toward giving up.
  *
- * Settings: WAVES_SETTLEMENT_SENDER_KEY (required), and in
- * settlement-draft.ts WAVES_SETTLEMENT_NETWORK_ID (set it in production:
- * without it the network the requests are signed for is the one the
- * gateway's read names) and WAVES_SETTLEMENT_MAX_FEE.
+ * The Main Stage (MAIN_STAGE_DECISION_IDS) is drafted and sent first in
+ * every run, ahead of the gateway's order, and is never given up: from its
+ * eighth paid failure on, each failure is an error naming what the tries
+ * cost a day and how to stop them, and it is tried again 15 minutes after
+ * the last try at most. From its second request in a row that was never
+ * included, each is an error too. It can still wait for another decision's
+ * request on its nonce lane, up to SETTLEMENT_RESEND_AFTER_MS.
+ *
+ * Nothing is sent while the chain's waves import is not complete
+ * (GET /v1/waves/import); the chain's WAVES_IMPORT_RUNNING (0x2507), on a
+ * draft, at admission or in a block, is "not yet": no failure, and the step
+ * is tried again on the next run, whatever its earlier tries.
+ *
+ * Settings: WAVES_SETTLEMENT_SENDER_KEY (required);
+ * MAIN_STAGE_DECISION_IDS; WAVES_SETTLEMENT_HOLD_DECISION_IDS (decision
+ * ids, comma separated: nothing is sent for them, until taken out; claim
+ * builds are not affected); and in settlement-draft.ts
+ * WAVES_SETTLEMENT_NETWORK_ID (set it in production: without it the
+ * network the requests are signed for is the one the gateway's read names)
+ * and WAVES_SETTLEMENT_MAX_FEE. The id settings in force, and any id left
+ * out as malformed, are logged once.
  *
  * Run one sender key in one sending environment per chain. Each decision's
  * requests use a nonce lane derived from its id. When a second sender with
@@ -79,10 +94,16 @@ export const SETTLEMENT_RESEND_AFTER_MS = 10 * 60_000;
 export const SETTLEMENT_MAX_FAILURES = 8;
 /** How long a step is left after the sender gave up on it. */
 export const SETTLEMENT_GIVE_UP_PAUSE_MS = 6 * 60 * 60_000;
+/** The settings that hold decisions: nothing is sent for them. */
+export const HOLD_DECISION_IDS_ENV = 'WAVES_SETTLEMENT_HOLD_DECISION_IDS';
+export const MAIN_STAGE_DECISION_IDS_ENV = 'MAIN_STAGE_DECISION_IDS';
 /** The wait before the second try for one step; it doubles each time... */
 export const SETTLEMENT_BACKOFF_MS = 60_000;
 /** ...up to this. */
 export const SETTLEMENT_MAX_BACKOFF_MS = 15 * 60_000;
+/** Main Stage requests a day at most, once each waits the full backoff. */
+export const MAIN_STAGE_REQUESTS_A_DAY =
+  (24 * 60 * 60_000) / SETTLEMENT_MAX_BACKOFF_MS;
 /**
  * The chain's refusal of every waves operation while its waves import runs
  * (WAVES_IMPORT_RUNNING): not a failure, only "not yet".
@@ -99,24 +120,38 @@ export function isWavesImportRunning(...parts: unknown[]): boolean {
 }
 
 /**
- * MAIN_STAGE_DECISION_IDS: the Main Stage's chain decision ids, comma
- * separated, each `0x` and 64 hex digits, read in lowercase as every
- * reader of the setting reads them. Anything else is left out.
+ * A setting of chain decision ids (MAIN_STAGE_DECISION_IDS,
+ * WAVES_SETTLEMENT_HOLD_DECISION_IDS): comma separated, each `0x` and 64
+ * hex digits, read in lowercase as every reader of the setting reads them.
+ * Anything else is left out, and named in `dropped`.
  */
+export function decisionIdsSettingOf(value: string | null | undefined): {
+  ids: ReadonlySet<string>;
+  dropped: string[];
+} {
+  const ids = new Set<string>();
+  const dropped: string[] = [];
+  for (const part of (value ?? '').split(',')) {
+    const id = part.trim().toLowerCase();
+    if (!id) continue;
+    if (HEX32.test(id)) ids.add(id);
+    else dropped.push(id);
+  }
+  return { ids, dropped };
+}
+
+/** MAIN_STAGE_DECISION_IDS as decisionIdsSettingOf reads it. */
 export function mainStageDecisionIdsOf(
   value: string | null | undefined
 ): ReadonlySet<string> {
-  return new Set(
-    (value ?? '')
-      .split(',')
-      .map((part) => part.trim().toLowerCase())
-      .filter((id) => HEX32.test(id))
-  );
+  return decisionIdsSettingOf(value).ids;
 }
 
 /**
  * The due decisions with the Main Stage's first, each part in the order
- * the gateway listed it: a Main Stage result never waits behind others.
+ * the gateway listed it: in each run the Main Stage is drafted and sent
+ * before the others. (It can still wait for another decision's request on
+ * its nonce lane: see laneTaken.)
  */
 export function mainStageFirst(
   decisions: readonly ChainSettlement[],
@@ -210,6 +245,8 @@ interface RunContext {
   readonly timed: Timed;
   /** MAIN_STAGE_DECISION_IDS: sent first, and never given up. */
   readonly mainStage: ReadonlySet<string>;
+  /** WAVES_SETTLEMENT_HOLD_DECISION_IDS: nothing is sent for them. */
+  readonly held: ReadonlySet<string>;
 }
 
 export interface SettlementSenderDeps {
@@ -221,8 +258,13 @@ export interface SettlementSenderDeps {
   readonly signer: () => SettlementSignerResult;
   readonly settings: () => SettlementSettingsResult;
   readonly now: () => number;
-  /** The Main Stage's decisions; by default MAIN_STAGE_DECISION_IDS. */
-  readonly mainStage?: () => ReadonlySet<string>;
+  /**
+   * Where MAIN_STAGE_DECISION_IDS and WAVES_SETTLEMENT_HOLD_DECISION_IDS
+   * are read; by default the environment.
+   */
+  readonly idSettings?: () => Readonly<Record<string, string | undefined>>;
+  /** The gateway as logs name it; by default CHAIN_GATEWAY_URL's host. */
+  readonly gatewayName?: () => string;
 }
 
 class BudgetSpent extends Error {
@@ -268,9 +310,9 @@ export class WavesSettlementSender {
   constructor(private readonly deps: SettlementSenderDeps) {}
 
   /**
-   * One pass, within `budgetMs`. Throws only when the due list can't be
-   * read or the table can't be read or written; anything one decision's
-   * request meets is saved and logged.
+   * One pass, within `budgetMs`. Throws only when the waves import's state
+   * or the due list can't be read, or the table can't be read or written;
+   * anything one decision's request meets is saved and logged.
    */
   async run({ budgetMs }: { budgetMs: number }): Promise<SettlementReport> {
     const report: SettlementReport = {
@@ -302,12 +344,32 @@ export class WavesSettlementSender {
       }
     });
     if (!settings.ok) return { ...report, skipped: 'malformed_settings' };
+    const idSettings = this.deps.idSettings?.() ?? process.env;
+    const mainStage = this.idSetting(
+      MAIN_STAGE_DECISION_IDS_ENV,
+      idSettings,
+      'drafted and sent first, never given up'
+    );
+    const held = this.idSetting(
+      HOLD_DECISION_IDS_ENV,
+      idSettings,
+      'held: nothing is sent for them'
+    );
     const deadline = this.deps.now() + budgetMs;
     const timed: Timed = (work) => this.beforeDeadline(work, deadline);
     try {
+      const imported = await timed(() => this.importState());
+      const pinned = settings.settings.networkId;
+      if (pinned && imported.network && imported.network !== pinned) {
+        // Another chain's gateway: its import is no reason to wait.
+        return {
+          ...report,
+          skipped: this.wrongNetwork(imported.network, pinned)
+        };
+      }
       // The chain refuses every waves operation until its waves import is
       // complete: nothing is sent before, and that is no failure.
-      if (!(await timed(() => this.importComplete()))) {
+      if (!imported.completed) {
         this.noteOnce('import', 'running', () =>
           logger.info(
             '[SETTLEMENT SENDER WAITS] [THE WAVES IMPORT IS NOT COMPLETE] nothing is sent until it is'
@@ -319,31 +381,24 @@ export class WavesSettlementSender {
       const due = await timed(() => this.readDue());
       report.due = due.decisions.length;
       if (!due.decisions.length) return report;
-      const pinned = settings.settings.networkId;
       const networkId = pinned ?? due.network;
       if (!networkId || (due.network && due.network !== networkId)) {
-        this.noteOnce('network', `${due.network}`, () =>
-          logger.warn(
-            `[SETTLEMENT SENDER OFF] the gateway reads network ${due.network}; the sender signs for ${pinned ?? 'the gateway network'}`
-          )
-        );
+        this.wrongNetwork(due.network, pinned);
         return {
           ...report,
           skipped: networkId ? 'wrong_network' : 'no_network'
         };
       }
       this.noted.delete('network');
-      const mainStage =
-        this.deps.mainStage?.() ??
-        mainStageDecisionIdsOf(process.env.MAIN_STAGE_DECISION_IDS);
       const run: RunContext = {
         signer: key.signer,
         settings: settings.settings,
         networkId,
         timed,
-        mainStage
+        mainStage,
+        held
       };
-      const rows = await this.loadRows(due.decisions, timed, mainStage);
+      const rows = await this.loadRows(due.decisions, run);
       for (const settlement of mainStageFirst(due.decisions, mainStage)) {
         if (this.deps.now() >= deadline) throw new BudgetSpent();
         report[await this.settle(settlement, rows, run)]++;
@@ -361,14 +416,75 @@ export class WavesSettlementSender {
     log();
   }
 
-  /** Whether the chain's waves import is complete, read at the head. */
-  private async importComplete(): Promise<boolean> {
+  /** Logs a gateway on another network than the sender signs for, once. */
+  private wrongNetwork(
+    network: string | null,
+    pinned: string | null
+  ): 'wrong_network' {
+    this.noteOnce('network', `${network}`, () =>
+      logger.warn(
+        `[SETTLEMENT SENDER OFF] the gateway reads network ${network}; the sender signs for ${pinned ?? 'the gateway network'}`
+      )
+    );
+    return 'wrong_network';
+  }
+
+  /**
+   * A setting of decision ids, its ids in force and any id left out logged
+   * once (and again when the setting changes).
+   */
+  private idSetting(
+    name: string,
+    env: Readonly<Record<string, string | undefined>>,
+    what: string
+  ): ReadonlySet<string> {
+    const { ids, dropped } = decisionIdsSettingOf(env[name]);
+    const list = Array.from(ids).sort();
+    this.noteOnce(
+      `setting ${name}`,
+      `${list.join(',')}|${dropped.join(',')}`,
+      () => {
+        logger.info(
+          `[SETTLEMENT SENDER] [${name}] ${list.length ? `${what}: ${list.join(', ')}` : 'none'}`
+        );
+        for (const id of dropped) {
+          logger.warn(
+            `[SETTLEMENT SENDER] [${name}] "${id}" is not 0x and 64 hex digits: left out`
+          );
+        }
+      }
+    );
+    return ids;
+  }
+
+  /**
+   * The chain's waves import, read at the head: whether it is complete, and
+   * the network the read names.
+   */
+  private async importState(): Promise<{
+    completed: boolean;
+    network: string | null;
+  }> {
     const answer = await this.deps.gateway.read<{ completed?: unknown }>(
       '/v1/waves/import',
       {},
       { at: 'head' }
     );
-    return answer?.data?.completed === true;
+    const network = lower(answer?.read?.network);
+    return {
+      completed: answer?.data?.completed === true,
+      network: HEX32.test(network) ? network : null
+    };
+  }
+
+  /** The gateway as logs name it. */
+  private gatewayName(): string {
+    if (this.deps.gatewayName) return this.deps.gatewayName();
+    try {
+      return new URL(process.env.CHAIN_GATEWAY_URL ?? '').host || 'the gateway';
+    } catch {
+      return 'the gateway';
+    }
   }
 
   /**
@@ -410,9 +526,9 @@ export class WavesSettlementSender {
    */
   private async loadRows(
     due: ChainSettlement[],
-    timed: Timed,
-    mainStage: ReadonlySet<string>
+    run: RunContext
   ): Promise<Map<string, SettlementSend>> {
+    const { timed, mainStage } = run;
     const loaded = await this.deps.store.load(
       due.map((it) => lower(it.decisionId)),
       [...MAY_RUN, ...LANDED],
@@ -421,7 +537,11 @@ export class WavesSettlementSender {
     const rows = new Map(loaded.map((row) => [row.decision_id, row]));
     for (const row of loaded) {
       const open = MAY_RUN.includes(row.status) || LANDED.includes(row.status);
-      if (!row.tx_id || !open || this.expired(row)) continue;
+      if (!row.tx_id || !open) continue;
+      // A request that may still have run when it expired is asked about
+      // once more: no block holding it by now, it was never included.
+      const lapsed = this.expired(row) && MAY_RUN.includes(row.status);
+      if (this.expired(row) && !lapsed) continue;
       const txId = row.tx_id;
       let status: SettlementSendStatus;
       let lastError = row.last_error;
@@ -434,7 +554,8 @@ export class WavesSettlementSender {
           tx?.status === 'failed' &&
           isWavesImportRunning(tx.result?.code, tx.result?.name)
         ) {
-          // Not yet: no failure, and no longer wait before the next try.
+          // Not yet: no failure, and tried again at once.
+          status = 'not_yet';
           attempts = Math.max(0, attempts - 1);
           lastError = `not yet in block ${tx.height}: the waves import is running`;
           logger.info(
@@ -453,13 +574,17 @@ export class WavesSettlementSender {
           ) {
             // The Main Stage is never given up: someone has to look.
             logger.error(
-              `[MAIN STAGE SETTLEMENT FAILING] [decision ${row.decision_id}] [occurrence ${row.occurrence}] [next ${row.count_next}] ${failures} requests failed in their blocks, the last: ${lastError}. The sender keeps trying, every ${SETTLEMENT_MAX_BACKOFF_MS / 60_000} minutes at most`
+              `[MAIN STAGE SETTLEMENT FAILING] [decision ${row.decision_id}] [occurrence ${row.occurrence}] [next ${row.count_next}] ${failures} requests failed in their blocks, the last: ${lastError}. ${costAndStop(run.settings.maxFee)}`
             );
           }
         }
       } catch (error) {
         if (error instanceof BudgetSpent) throw error;
         logger.warn(`[SETTLEMENT TX UNREAD] [tx ${txId}] ${describe(error)}`);
+        continue;
+      }
+      if (lapsed && MAY_RUN.includes(status)) {
+        await this.notIncluded(row, rows, run);
         continue;
       }
       if (status !== row.status) {
@@ -486,6 +611,18 @@ export class WavesSettlementSender {
     }
     // A closed count has nothing left to send.
     if (settlement.count?.stage === 'final') return 'waiting';
+    if (run.held.has(step.decisionId)) {
+      this.noteOnce(
+        `held ${step.decisionId}`,
+        `${step.occurrence}:${step.next}`,
+        () =>
+          logger.warn(
+            `[SETTLEMENT HELD] [decision ${step.decisionId}] [occurrence ${step.occurrence}] [next ${step.next}] ${HOLD_DECISION_IDS_ENV} names it: nothing is sent for it until it is taken out`
+          )
+      );
+      return 'waiting';
+    }
+    this.noted.delete(`held ${step.decisionId}`);
     const row = rows.get(step.decisionId);
     const plan = this.plan(row, step, run.mainStage.has(step.decisionId));
     if (plan.action === 'wait') return 'waiting';
@@ -561,7 +698,12 @@ export class WavesSettlementSender {
       ...base,
       tx_id: checked.txId,
       status: 'submitting',
-      last_error: null
+      // After a request never included, its note stays until this one's
+      // fate is known: the next never included counts from it.
+      last_error:
+        row?.status === 'not_included' && sameStep(row, step)
+          ? row.last_error
+          : null
     };
     await this.save(sending, rows);
     const sent = `${where} [attempt ${attempts}] [tx ${checked.txId}]`;
@@ -609,7 +751,8 @@ export class WavesSettlementSender {
 
   /**
    * The chain refused the request while its waves import runs: no failure,
-   * and no wait added before the next try (the try is not counted).
+   * and the try is not counted. Saved as `not_yet`, which the next run
+   * tries again whatever the step's earlier tries.
    */
   private async notYet(
     base: Omit<SettlementSend, 'tx_id' | 'status' | 'last_error'>,
@@ -625,7 +768,7 @@ export class WavesSettlementSender {
         ...base,
         attempts: plan.attempts,
         tx_id: txId,
-        status: 'refused',
+        status: 'not_yet',
         last_error: `not yet: ${lastError}`
       },
       rows
@@ -658,6 +801,10 @@ export class WavesSettlementSender {
     if (!mainStage && row.failures >= SETTLEMENT_MAX_FAILURES) {
       return { action: 'give_up' };
     }
+    // ...or the chain said "not yet": tried again now, with no wait...
+    if (row.status === 'not_yet') {
+      return { action: 'send', attempts: row.attempts, failures: row.failures };
+    }
     // ...or it is tried again, later each time.
     return now >= row.sent_at + backoffMs(row.attempts)
       ? { action: 'send', attempts: row.attempts, failures: row.failures }
@@ -675,6 +822,37 @@ export class WavesSettlementSender {
       await this.save({ ...row, status: 'given_up' }, rows);
     }
     return 'givenUp';
+  }
+
+  /**
+   * A request that may have run and that no block held by the time it
+   * expired: the gateway took it, or may have, and it was never included.
+   * It paid no fee, so it isn't a failure; it is saved as `not_included`
+   * with how many of this step's requests in a row were, and logged. From
+   * the second in a row, a Main Stage one is an error: someone has to look
+   * at the gateway's nodes and their peers.
+   */
+  private async notIncluded(
+    row: SettlementSend,
+    rows: Map<string, SettlementSend>,
+    run: RunContext
+  ) {
+    const inRow = notIncludedInRow(row.last_error) + 1;
+    const taken = row.status === 'submitted' || row.status === 'pending';
+    const what = taken ? 'accepted, never included' : 'sent, never included';
+    const lastError = `${what} (${inRow} in a row): tx ${row.tx_id}, last seen ${row.status}, expired`;
+    const where = `[decision ${row.decision_id}] [occurrence ${row.occurrence}] [next ${row.count_next}] [tx ${row.tx_id}] [gateway ${this.gatewayName()}]`;
+    if (run.mainStage.has(row.decision_id) && inRow >= 2) {
+      logger.error(
+        `[MAIN STAGE SETTLEMENT NOT INCLUDED] ${where} ${what}: ${inRow} requests in a row expired without reaching a block. Check that the gateway's nodes reach the chain's peers. The sender keeps sending; nothing was paid. ${costAndStop(run.settings.maxFee)}`
+      );
+    } else {
+      logger.warn(`[SETTLEMENT NOT INCLUDED] ${where} ${lastError}`);
+    }
+    await this.save(
+      { ...row, status: 'not_included', last_error: lastError },
+      rows
+    );
   }
 
   /** Whether another decision's request that may still run holds the lane. */
@@ -776,6 +954,30 @@ function isRefusal(error: unknown): boolean {
     error.status < 500 &&
     error.status !== 429
   );
+}
+
+/** How many requests in a row were never included, as a note says. */
+function notIncludedInRow(note: string | null): number {
+  const found = /never included \((\d+) in a row\)/.exec(note ?? '');
+  return found ? Number(found[1]) : 0;
+}
+
+/** Base units of 18 decimals as coins, to four places. */
+function coinsOf(base: bigint): string {
+  const unit = BigInt('1000000000000000000');
+  const whole = base / unit;
+  // Four decimal places, without the zeros at the end.
+  const places = Number(((base % unit) * BigInt(10_000)) / unit);
+  const part = String(10_000 + places)
+    .slice(1)
+    .replace(/0+$/, '');
+  return part ? `${whole}.${part}` : `${whole}`;
+}
+
+/** What a Main Stage step's tries cost a day at most, and how to stop them. */
+function costAndStop(maxFee: bigint): string {
+  const perDay = BigInt(MAIN_STAGE_REQUESTS_A_DAY) * maxFee;
+  return `It is tried again ${SETTLEMENT_MAX_BACKOFF_MS / 60_000} minutes after each try: at most ${MAIN_STAGE_REQUESTS_A_DAY} requests a day, each paying at most WAVES_SETTLEMENT_MAX_FEE (${coinsOf(maxFee)} coins), so at most ${coinsOf(perDay)} coins a day. To stop this decision alone, add it to ${HOLD_DECISION_IDS_ENV} (claim builds go on); FEATURE_WAVES_SETTLEMENT_SENDER=false stops every settlement`;
 }
 
 function describe(error: unknown): string {

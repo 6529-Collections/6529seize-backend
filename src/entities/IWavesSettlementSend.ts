@@ -17,10 +17,11 @@ import { WAVES_SETTLEMENT_SENDS_TABLE } from '@/constants';
  *   end the tries. A new step starts both again at 0.
  * - `status`: `submitting` (saved before the submit, so a submit whose
  *   answer is lost is still checked), `submitted`, `refused`, `error`,
- *   `given_up` (no request for this step for a few hours), or the
- *   transaction's state
- *   as the gateway last gave it (`pending`, `in_block`, `final`, `failed`,
- *   `unknown`).
+ *   `given_up` (no request for this step for a few hours), `not_yet`
+ *   (the chain's waves import was running: tried again on the next run),
+ *   `not_included` (it expired and no block held it; `last_error` says
+ *   how many in a row), or the transaction's state as the gateway last gave
+ *   it (`pending`, `in_block`, `final`, `failed`, `unknown`).
  */
 @Entity(WAVES_SETTLEMENT_SENDS_TABLE)
 export class WavesSettlementSendEntity {

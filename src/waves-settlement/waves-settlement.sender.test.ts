@@ -317,12 +317,14 @@ function setup({
   signer = testSigner,
   env = {},
   realTime = false,
-  mainStage = []
+  mainStage = [],
+  held = []
 }: {
   signer?: () => SettlementSignerResult;
   env?: NodeJS.ProcessEnv;
   realTime?: boolean;
   mainStage?: string[];
+  held?: string[];
 } = {}) {
   // The fake gateway drafts at the clock's time.
   const clock = { now: realTime ? Date.now() : START };
@@ -334,8 +336,11 @@ function setup({
     signer,
     settings: () => settlementSettingsFromEnv(env),
     now: realTime ? () => Date.now() : () => clock.now,
-    // As MAIN_STAGE_DECISION_IDS is read.
-    mainStage: () => mainStageDecisionIdsOf(mainStage.join(','))
+    idSettings: () => ({
+      MAIN_STAGE_DECISION_IDS: mainStage.join(','),
+      WAVES_SETTLEMENT_HOLD_DECISION_IDS: held.join(',')
+    }),
+    gatewayName: () => 'gateway-1'
   });
   const run = (budgetMs = 20_000) => sender.run({ budgetMs });
   const later = (ms = MINUTE) => {
@@ -1162,7 +1167,7 @@ describe('WavesSettlementSender and the waves import', () => {
         expect.objectContaining({ waiting: 1, refused: 0 })
       );
       expect(store.rows.get(D1)).toEqual(
-        expect.objectContaining({ status: 'refused', attempts: 0, failures: 0 })
+        expect.objectContaining({ status: 'not_yet', attempts: 0, failures: 0 })
       );
     }
     // Each run asked again, with no backoff between.
@@ -1206,5 +1211,218 @@ describe('WavesSettlementSender and the waves import', () => {
       expect.objectContaining({ failures: 0, attempts: 1 })
     );
     expect(logged(warn, '[SETTLEMENT FAILED]')).toHaveLength(0);
+  });
+});
+
+describe('WavesSettlementSender: not yet, held, never included', () => {
+  const importRunning = (path: string) =>
+    new ChainGatewayError(
+      `${path}: inadmissible: 0x2507 WAVES_IMPORT_RUNNING, detail 0`,
+      422,
+      'inadmissible',
+      path
+    );
+
+  /** Five paid failures for D1's step, then 15 minutes: its next try is due. */
+  async function afterFiveFailures(context: ReturnType<typeof setup>) {
+    const { gateway, run, later } = context;
+    gateway.due(D1);
+    for (let n = 0; n < 5; n++) {
+      while (!(await run()).sent) later();
+      gateway.land(gateway.lastTx(), 'failed');
+    }
+    later(SETTLEMENT_MAX_BACKOFF_MS);
+  }
+
+  it.each(['draft', 'admission', 'block'] as const)(
+    'tries a step again on the next run after a "not yet" (%s), whatever its earlier failures',
+    async (where) => {
+      const context = setup();
+      const { gateway, store, run, later } = context;
+      await afterFiveFailures(context);
+      const getDraft = gateway.getDraft.bind(gateway);
+      if (where === 'draft') {
+        gateway.getDraft = async () => {
+          throw importRunning('/v1/draft');
+        };
+      }
+      if (where === 'admission') {
+        gateway.submitAnswer = () => importRunning('/v1/submit');
+      }
+      const first = await run();
+      if (where === 'block') {
+        expect(first.sent).toBe(1);
+        gateway.land(gateway.lastTx(), 'failed', {
+          code: WAVES_IMPORT_RUNNING_CODE,
+          name: 'WAVES_IMPORT_RUNNING',
+          feePaid: '900'
+        });
+      } else {
+        expect(first).toEqual(expect.objectContaining({ waiting: 1 }));
+        expect(store.rows.get(D1)).toEqual(
+          expect.objectContaining({ status: 'not_yet', failures: 5 })
+        );
+      }
+      gateway.getDraft = getDraft;
+      gateway.submitAnswer = () => ({ txId: '', accepted: true });
+      const before = gateway.submitted.length;
+      later();
+      expect(await run()).toEqual(expect.objectContaining({ sent: 1 }));
+      expect(gateway.submitted).toHaveLength(before + 1);
+      expect(store.rows.get(D1)).toEqual(
+        expect.objectContaining({ status: 'submitted', failures: 5 })
+      );
+    }
+  );
+
+  it('sends nothing for a held decision, logged once, and sends again once it is taken out', async () => {
+    const held = [D1];
+    const { gateway, store, run, later } = setup({ mainStage: [D1], held });
+    gateway.due(D1);
+    gateway.due(D2);
+    expect(await run()).toEqual(
+      expect.objectContaining({ due: 2, sent: 1, waiting: 1 })
+    );
+    later();
+    await run();
+    expect(
+      gateway.drafts.map((d) => (d.body as { decisionId: string }).decisionId)
+    ).toEqual([D2]);
+    expect(store.rows.has(D1)).toBe(false);
+    const holds = logged(warn, '[SETTLEMENT HELD]');
+    expect(holds).toHaveLength(1);
+    expect(holds[0]).toContain(`[decision ${D1}]`);
+    expect(holds[0]).toContain('WAVES_SETTLEMENT_HOLD_DECISION_IDS');
+    held.length = 0;
+    later();
+    expect(await run()).toEqual(expect.objectContaining({ sent: 1 }));
+    expect(gateway.submitted.map((it) => it.lane)).toContain(nonceLaneOf(D1));
+  });
+
+  it('names what a failing Main Stage step costs a day at most, and how to stop it alone', async () => {
+    const { gateway, run, later } = setup({ mainStage: [D1] });
+    gateway.due(D1);
+    for (let minute = 0; minute < 120; minute++) {
+      const before = gateway.submitted.length;
+      await run();
+      if (gateway.submitted.length > before) {
+        gateway.land(gateway.lastTx(), 'failed');
+      }
+      later();
+    }
+    const failing = logged(error, '[MAIN STAGE SETTLEMENT FAILING]');
+    expect(failing.length).toBeGreaterThan(0);
+    expect(failing[0]).toContain(
+      'at most 96 requests a day, each paying at most WAVES_SETTLEMENT_MAX_FEE (100 coins), so at most 9600 coins a day'
+    );
+    expect(failing[0]).toContain(
+      'To stop this decision alone, add it to WAVES_SETTLEMENT_HOLD_DECISION_IDS (claim builds go on)'
+    );
+  });
+
+  it('logs the id settings in force once at start, and an id it leaves out', async () => {
+    const { gateway, run, later } = setup({ mainStage: [D1, 'nope'] });
+    gateway.importCompleted = false;
+    await run();
+    later();
+    await run();
+    expect(
+      logged(info, '[SETTLEMENT SENDER] [MAIN_STAGE_DECISION_IDS]')
+    ).toEqual([
+      `[SETTLEMENT SENDER] [MAIN_STAGE_DECISION_IDS] drafted and sent first, never given up: ${D1}`
+    ]);
+    expect(
+      logged(info, '[SETTLEMENT SENDER] [WAVES_SETTLEMENT_HOLD_DECISION_IDS]')
+    ).toEqual([
+      '[SETTLEMENT SENDER] [WAVES_SETTLEMENT_HOLD_DECISION_IDS] none'
+    ]);
+    expect(logged(warn, '"nope"')).toEqual([
+      '[SETTLEMENT SENDER] [MAIN_STAGE_DECISION_IDS] "nope" is not 0x and 64 hex digits: left out'
+    ]);
+  });
+
+  it('names a gateway on another network before its import', async () => {
+    const pinned = '0x' + 'ef'.repeat(32);
+    const { gateway, run } = setup({
+      env: { WAVES_SETTLEMENT_NETWORK_ID: pinned }
+    });
+    gateway.due(D1);
+    gateway.importCompleted = false;
+    expect(await run()).toEqual(
+      expect.objectContaining({ skipped: 'wrong_network' })
+    );
+    expect(logged(warn, `the gateway reads network ${NETWORK}`)).toHaveLength(
+      1
+    );
+    expect(logged(info, '[SETTLEMENT SENDER WAITS]')).toHaveLength(0);
+    expect(gateway.reads).toEqual([]);
+  });
+
+  it('raises an error from the second Main Stage request in a row the gateway took and no block included', async () => {
+    const { gateway, store, run, later } = setup({ mainStage: [D1] });
+    const alarms = () => logged(error, '[MAIN STAGE SETTLEMENT NOT INCLUDED]');
+    gateway.due(D1);
+    await run();
+    const first = gateway.lastTx();
+    // Taken by the gateway, never in a block: it stays pending, and expires.
+    later(SETTLEMENT_RESEND_AFTER_MS);
+    expect(await run()).toEqual(expect.objectContaining({ sent: 1 }));
+    expect(alarms()).toHaveLength(0);
+    const one = logged(warn, '[SETTLEMENT NOT INCLUDED]');
+    expect(one).toHaveLength(1);
+    expect(one[0]).toContain(`[tx ${first}]`);
+    expect(one[0]).toContain('accepted, never included (1 in a row)');
+    const second = gateway.lastTx();
+    later(SETTLEMENT_RESEND_AFTER_MS);
+    // About 20 minutes after the first was sent.
+    expect(await run()).toEqual(expect.objectContaining({ sent: 1 }));
+    expect(alarms()).toHaveLength(1);
+    expect(alarms()[0]).toContain(`[decision ${D1}]`);
+    expect(alarms()[0]).toContain(`[tx ${second}]`);
+    expect(alarms()[0]).toContain('[gateway gateway-1]');
+    expect(alarms()[0]).toContain(
+      'accepted, never included: 2 requests in a row'
+    );
+    expect(alarms()[0]).toContain('WAVES_SETTLEMENT_HOLD_DECISION_IDS');
+    // No fee was paid: not a failure, and never given up.
+    expect(store.rows.get(D1)).toEqual(
+      expect.objectContaining({ failures: 0, status: 'submitted' })
+    );
+    expect(store.rows.get(D1)?.last_error).toContain('(2 in a row)');
+    later(SETTLEMENT_RESEND_AFTER_MS);
+    await run();
+    expect(alarms()).toHaveLength(2);
+    expect(alarms()[1]).toContain('3 requests in a row');
+
+    // One that reaches a block ends the run of them.
+    gateway.land(gateway.lastTx(), 'failed');
+    const sent = gateway.submitted.length;
+    while (gateway.submitted.length === sent) {
+      later();
+      await run();
+    }
+    // The next one is never included: the first of a new run, a warning.
+    later(SETTLEMENT_RESEND_AFTER_MS);
+    await run();
+    expect(alarms()).toHaveLength(2);
+    const warned = logged(warn, '[SETTLEMENT NOT INCLUDED]');
+    expect(warned).toHaveLength(2);
+    expect(warned[1]).toContain(`[tx ${gateway.submitted[sent].txId}]`);
+    expect(warned[1]).toContain('(1 in a row)');
+  });
+
+  it('only warns for another decision, and never gives it up for requests never included', async () => {
+    const { gateway, store, run, later } = setup();
+    gateway.due(D1);
+    for (let n = 0; n < 12; n++) {
+      await run();
+      later(SETTLEMENT_MAX_BACKOFF_MS);
+    }
+    expect(logged(error, 'NOT INCLUDED')).toHaveLength(0);
+    expect(logged(warn, '[SETTLEMENT NOT INCLUDED]').length).toBeGreaterThan(9);
+    expect(store.rows.get(D1)).toEqual(
+      expect.objectContaining({ failures: 0 })
+    );
+    expect(store.rows.get(D1)?.status).not.toBe('given_up');
   });
 });
