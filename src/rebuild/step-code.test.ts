@@ -70,7 +70,7 @@ describe('step code in the tree', () => {
       'leaves the repo or has an empty part'
     );
     expect(modulePathProblem('/abs/x')).toBe('is absolute');
-    expect(modulePathProblem('C:/abs/x')).toBe('is absolute');
+    expect(modulePathProblem('C:x')).toBe('is absolute');
     expect(modulePathProblem('src\\x')).toBe(
       'has a backslash; parts are split by /'
     );
