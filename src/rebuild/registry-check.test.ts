@@ -752,6 +752,35 @@ describe('checkRegistry', () => {
       expect(seeded.crossAreaEdges).toEqual([]);
     });
 
+    it('names a near step of the same kind only', () => {
+      const result = checkRegistry({
+        manifests: [
+          area(
+            'waves',
+            { waves: index() },
+            {
+              rebuilders: [
+                step('waves.mirror', {
+                  writes: ['waves'],
+                  before: ['subs.sed']
+                })
+              ]
+            }
+          ),
+          area(
+            'subs',
+            { subs: index() },
+            { seeds: [step('subs.seed', { writes: ['subs'] })] }
+          )
+        ],
+        codeTables: code('waves', 'subs')
+      });
+      // subs.seed is a seed: no rebuilder can wait on it, so it's no hint.
+      expect(result.crossAreaEdges).toEqual([
+        { step: 'waves.mirror', field: 'before', id: 'subs.sed' }
+      ]);
+    });
+
     it('refuses an id with an empty part, and names a near step of the target area', () => {
       const result = check({ before: ['subs.', 'subs.identty'] }, [
         step('subs.identity', { writes: ['subs'] })

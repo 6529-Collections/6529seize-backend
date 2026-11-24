@@ -239,7 +239,14 @@ describe('MysqlAdmin on the private mysqld', () => {
     await expect(
       admin.rowsWhere('rebuild_no_such_db', 'planned', '1 = 1')
     ).rejects.toThrow(/rebuild_no_such_db/);
-    expect(await connections()).toBe(open);
+    // The server may list a closing connection for a moment: wait up to
+    // a second for the count to come back.
+    let after = await connections();
+    for (let i = 0; i < 10 && after !== open; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      after = await connections();
+    }
+    expect(after).toBe(open);
     expect(await noDefault()).toBeNull();
   });
 

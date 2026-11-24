@@ -686,7 +686,8 @@ function orderProblems(
             target &&
             target.area !== manifest.area
           ) {
-            const near = [...target.seeds, ...target.rebuilders]
+            // Steps of the same kind only: order holds within one kind.
+            const near = stepsOf(target)
               .map((s) => s.id)
               .filter((s) => editDistance(s, id) <= NEAR)
               .sort((a, b) => editDistance(a, id) - editDistance(b, id));

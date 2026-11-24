@@ -109,9 +109,11 @@ export function rowAndColumnPlanOverlap(
     readonly keys: readonly string[];
   }[]
 ): string | null {
-  for (const rowPlan of plans.filter((p) => !p.columns)) {
-    for (const columnPlan of plans.filter((p) => p.columns)) {
-      const both = rowPlan.keys.find((key) => columnPlan.keys.includes(key));
+  for (const columnPlan of plans.filter((p) => p.columns)) {
+    // A set: a plan can match tens of thousands of rows.
+    const columnKeys = new Set(columnPlan.keys);
+    for (const rowPlan of plans.filter((p) => !p.columns)) {
+      const both = rowPlan.keys.find((key) => columnKeys.has(key));
       if (both !== undefined) {
         return `planned rows of ${table}: ${rowPlan.step}'s plan of whole rows and ${columnPlan.step}'s column plan both match the row ${both}; a row is either missing or back with planned columns, not both`;
       }

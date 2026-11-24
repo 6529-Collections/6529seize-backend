@@ -196,6 +196,22 @@ describe('column plans', () => {
     ).toBe(
       "planned rows of waves: waves.a's plan of whole rows and waves.b's column plan both match the row [2]; a row is either missing or back with planned columns, not both"
     );
+    // Large plans, as on an audit table: found at once, without comparing
+    // every key with every other.
+    const many = (from: number) =>
+      Array.from({ length: 50_000 }, (_, i) => `[${from + i}]`);
+    expect(
+      rowAndColumnPlanOverlap('audit', [
+        { step: 'audit.rows', keys: many(0) },
+        { step: 'audit.columns', columns: ['action'], keys: many(50_000) }
+      ])
+    ).toBeNull();
+    expect(
+      rowAndColumnPlanOverlap('audit', [
+        { step: 'audit.rows', keys: many(0) },
+        { step: 'audit.columns', columns: ['action'], keys: many(49_999) }
+      ])
+    ).toMatch(/both match the row \[49999\]/);
     expect(
       rowAndColumnPlanOverlap('waves', [
         { step: 'waves.a', keys: ['[1]'] },
