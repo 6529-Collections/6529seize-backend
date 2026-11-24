@@ -7,6 +7,7 @@ import {
 import {
   closeAfterCommitScope,
   openAfterCommitScope,
+  runBeforeCommitChecks,
   runAfterCommitCallbacks
 } from '@/db/after-commit';
 import { enqueueTransfersWithManager } from './transactions/transfer-reconciliation.db';
@@ -359,10 +360,12 @@ async function execNativeTransactionally<T>(
           }
         },
         budget,
-        (handle) => {
+        async (handle) => {
           scoped = handle;
           openAfterCommitScope(handle);
-          return executable({ connection: handle as QueryRunner });
+          const work = await executable({ connection: handle as QueryRunner });
+          runBeforeCommitChecks(handle);
+          return work;
         }
       );
     } catch (error) {
@@ -381,6 +384,7 @@ async function execNativeTransactionally<T>(
   let committed: { result: T; afterCommit: (() => unknown)[] };
   try {
     const result = await executable({ connection: queryRunner });
+    runBeforeCommitChecks(queryRunner);
     await queryRunner.commitTransaction();
     committed = { result, afterCommit: closeAfterCommitScope(queryRunner) };
   } catch (err: any) {

@@ -279,7 +279,7 @@ The job refuses, and writes nothing, when:
 - the profile site values can't be tied to the freeze (above);
 - a run for the freeze already wrote its pointer and `replacePointer` isn't
   set;
-- the snapshot was taken before the freeze, less than 2 minutes after it,
+- the snapshot was taken before the freeze, less than 5 minutes after it,
   or more than 90 minutes after it (unless `acceptSnapshotGapMinutes`
   covers the gap);
 - the replica may be as far behind its writer as the snapshot is after the
@@ -464,7 +464,7 @@ above about 600, Tuesday's run may not fit one invocation. Check in `out.json`:
 - `replicaLagCase` is `null`: the lag and its row's age could be trusted.
   Otherwise it names the case a real run would refuse on: `unreadable`,
   `dated_ahead` or `older_than_gap`. A rehearsal has no freeze, so it
-  holds the row's age to the 2-minute minimum gap alone, the shortest gap
+  holds the row's age to the 5-minute minimum gap alone, the shortest gap
   Tuesday's run can have. Write that name down; it is the only one Tuesday
   may accept.
 - `evidence.replicaLagMs` and `evidence.replicaLagAgeMs` are numbers, the
@@ -502,7 +502,7 @@ Run it after:
 - the freeze day's TDH run and its identities sync have finished;
 - the profile site export for the freeze has finished and written its
   pointer;
-- at least 2 minutes after the freeze;
+- at least 5 minutes after the freeze;
 
 and at a time "When to call it" allows.
 
@@ -610,7 +610,7 @@ replaced.
 - `bucketPrivacy.owner` is the function's own account.
 - `identityFreezeAtSecret` is `prod/lambdas`, `identityFreezeAtReading` is
   `time`, and `identityFreezeAt` equals `frozenAt`.
-- `snapshotAt` and `snapshotGapMs`: at least 120000. The run compares the
+- `snapshotAt` and `snapshotGapMs`: at least 300000. The run compares the
   gap in milliseconds; `snapshotGapSeconds` is the same gap, rounded.
 - `acceptUnknownReplicaLag` is empty, and `replacePointer` false, unless
   you gave them.
