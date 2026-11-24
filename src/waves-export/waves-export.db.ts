@@ -1,3 +1,4 @@
+import * as mysql from 'mysql';
 import {
   apiDbConnection,
   apiSqlExecutor,
@@ -14,6 +15,11 @@ import { setSqlExecutor, sqlExecutor } from '@/sql-executor';
 /** The export's pool: its stages' concurrency and the lag check, with room. */
 const EXPORT_POOL_CONNECTIONS = 10;
 
+/** Every export connection reads only: MySQL refuses a write (1792). */
+export const EXPORT_SESSION_SQL = 'SET SESSION TRANSACTION READ ONLY';
+
+let used = false;
+
 /**
  * Runs `action` with every SQL statement going through the API's own
  * executor (apiSqlExecutor): the legacy GET view's rewrite inside its scope
@@ -24,24 +30,48 @@ const EXPORT_POOL_CONNECTIONS = 10;
  * One pool, on the write-side target (DB_HOST, or DB_IAM_HOST in IAM
  * mode), the server db.ts reads: the export's runbook points it at a
  * reader, and the replica lag check and every stage read that one server.
- * The executor in place before is put back afterwards.
+ * Each of its connections is read-only (EXPORT_SESSION_SQL), so nothing
+ * the export runs can write, even on a writer.
+ *
+ * Once per process. The DB services (LazyDbAccessCompatibleService, such as
+ * dropsDb) keep the executor they first read: one first used inside this
+ * scope keeps this executor, and its pool, which ends with the scope; one
+ * used before it would keep the executor before, without the rewrite or the
+ * casting. So nothing may touch a DB service before this runs, and a second
+ * call in the same process is refused. Only the global executor is put back
+ * afterwards.
  */
 export async function withApiSqlExecutor<T>(
   action: () => Promise<T>
 ): Promise<T> {
+  if (used) {
+    throw new Error(
+      "The export's DB scope runs once per process: DB services keep the executor they first read"
+    );
+  }
   const target = resolveDbConnectionTargets().write;
   const port = Number(process.env.DB_PORT);
   if (!isDbConnectionTargetComplete(target) || !port) {
     throw new Error(
-      'The export needs DB_HOST, its user and DB_PORT (or the DB_IAM_* settings)'
+      'The export needs DB_HOST, DB_USER, DB_PASS and DB_PORT (or the DB_IAM_* settings)'
     );
   }
+  used = true;
   if (target.iam) installMysqlIamAuthSupport();
   const pool = createApiDbPool(target, port, EXPORT_POOL_CONNECTIONS);
+  // Runs before anything else on the connection (a connection runs its
+  // queries in order). A connection that can't be made read-only is
+  // destroyed, so the statement queued after it fails: fail closed.
+  pool.on('connection', (connection: mysql.PoolConnection) => {
+    connection.query(EXPORT_SESSION_SQL, (error: mysql.MysqlError | null) => {
+      if (error) connection.destroy();
+    });
+  });
   const previous = sqlExecutor;
   setSqlExecutor(
     apiSqlExecutor({
-      poolFor: () => DbPoolName.WRITE,
+      // One pool, a reader's: logged as READ.
+      poolFor: () => DbPoolName.READ,
       connection: (name) => apiDbConnection(pool, name)
     })
   );

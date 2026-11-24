@@ -31,7 +31,8 @@ import { CompetitionEntry } from '@/competitions/competition.types';
 import { NativeCompetitionReader } from '@/competitions/native-competition.reader';
 import {
   legacyGetView,
-  withLegacyCompetitionGetFacade
+  withLegacyCompetitionGetFacade,
+  withoutLegacyCompetitionGetFacade
 } from '@/competitions/legacy-competition-get-facade';
 import {
   COMPETITIONS_TABLE,
@@ -121,11 +122,14 @@ async function dropTableValuesByIds(
   ids: readonly string[]
 ): Promise<Map<string, Json>> {
   if (!ids.length) return new Map();
-  const rows = await sqlExecutor.execute<DropTableRow>(
-    `select id, signature, is_additional_action_promised, hide_link_preview,
-       collapse_replies, drop_type, reply_to_part_id
-     from ${DROPS_TABLE} where id in (:ids)`,
-    { ids }
+  // Outside the facade by construction, wherever the caller runs.
+  const rows = await withoutLegacyCompetitionGetFacade(() =>
+    sqlExecutor.execute<DropTableRow>(
+      `select id, signature, is_additional_action_promised, hide_link_preview,
+         collapse_replies, drop_type, reply_to_part_id
+       from ${DROPS_TABLE} where id in (:ids)`,
+      { ids }
+    )
   );
   return new Map(rows.map((row) => [row.id, dropTableValues(row)]));
 }
