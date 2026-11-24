@@ -405,7 +405,11 @@ export function addLaunchEvent(
   error = false,
   details?: Pick<
     LaunchEvent,
-    'fee_wei' | 'airdrop_counts' | 'planned_airdrop' | 'next_wallet_retry'
+    | 'fee_wei'
+    | 'airdrop_counts'
+    | 'planned_airdrop'
+    | 'next_wallet_retry'
+    | 'attempt_id'
   >
 ): void {
   record.data.events.push({

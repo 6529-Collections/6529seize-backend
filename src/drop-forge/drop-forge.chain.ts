@@ -12,6 +12,7 @@ import {
   Result
 } from 'ethers';
 import { DropForgeConfig } from '@/drop-forge/drop-forge.config';
+import type { LaunchAttempt } from '@/drop-forge/drop-forge.attempt';
 import {
   LaunchAction,
   LaunchData,
@@ -93,7 +94,8 @@ export interface LaunchChain {
   prepare(
     data: LaunchData,
     action: LaunchAction,
-    artistPaymentCap?: bigint
+    artistPaymentCap?: bigint,
+    attempt?: LaunchAttempt
   ): Promise<string>;
   receipt(hash: string): Promise<ChainReceipt | null>;
   broadcast(raw: string): Promise<void>;
@@ -1043,7 +1045,8 @@ export class EthereumLaunchChain implements LaunchChain {
   async prepare(
     data: LaunchData,
     action: LaunchAction,
-    artistPaymentCap?: bigint
+    artistPaymentCap?: bigint,
+    attempt?: LaunchAttempt
   ): Promise<string> {
     if (action.kind === 'METADATA') {
       const current = await this.readClaim(data);
@@ -1064,6 +1067,7 @@ export class EthereumLaunchChain implements LaunchChain {
       action.phase = phase;
     }
     await this.verify(data, action, true, artistPaymentCap);
+    attempt?.enter('verify_fees_and_nonce');
     const [latest, pending, fee] = await Promise.all([
       this.nonce(data.signer, false),
       this.nonce(data.signer, true),
@@ -1094,6 +1098,7 @@ export class EthereumLaunchChain implements LaunchChain {
       maxFeePerGas: fee.maxFeePerGas,
       maxPriorityFeePerGas: fee.maxPriorityFeePerGas
     };
+    attempt?.enter('estimate_gas');
     const estimate = await rpcWithDeadline(
       this.provider.estimateGas(request).catch((error: unknown) => {
         if (isError(error, 'INSUFFICIENT_FUNDS'))
@@ -1107,6 +1112,7 @@ export class EthereumLaunchChain implements LaunchChain {
       gasLimit * fee.maxFeePerGas > this.config.maxCost
     )
       throw new LaunchSafetyError('Transaction exceeds configured gas budget');
+    attempt?.enter('verify_wallet_balance');
     if (
       (await rpcWithDeadline(this.provider.getBalance(data.signer))) <
       request.value + gasLimit * fee.maxFeePerGas
