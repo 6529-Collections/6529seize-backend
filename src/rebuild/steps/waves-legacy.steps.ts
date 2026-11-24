@@ -17,6 +17,7 @@ import {
   WAVE_METRICS_TABLE,
   WAVES_TABLE
 } from '@/constants';
+import { nativeCompetitionRuntimeRepository } from '@/competitions/native-competition-runtime.repository';
 import { DropType } from '@/entities/IDrop';
 import { WaveEntity, WaveType } from '@/entities/IWave';
 import { RebuildContext } from '@/rebuild/manifest.types';
@@ -386,17 +387,18 @@ export async function seedWavesLegacy(_ctx: RebuildContext): Promise<void> {
   const rows = wavesLegacyRows();
   await insertRows(rows);
   // The rank wave's competition, as the native competition code holds it,
-  // ended by its one decision.
+  // ended by its one decision as the runtime ends a used-up series (its
+  // lifecycle event, the end and no next decision).
   await seedNativeOriginalPrimaryFixture(rankWave());
-  await dbSupplier().execute(
-    `update ${COMPETITIONS_TABLE}
-        set lifecycle = :lifecycle, ended_at = :endedAt, updated_at = :endedAt
-      where id = :id`,
-    {
-      id: legacyCompetitionId(WAVES_LEGACY_IDS.rankWave),
-      ...RANK_COMPETITION_END
-    }
-  );
+  await dbSupplier().executeNativeQueriesInTransaction(async (connection) => {
+    await nativeCompetitionRuntimeRepository.updateSchedule(
+      legacyCompetitionId(WAVES_LEGACY_IDS.rankWave),
+      null,
+      RANK_COMPETITION_END.endedAt,
+      true,
+      { connection }
+    );
+  });
   await insertRows(mainStageWinnerRows());
   await insertRows(
     legacyDropMetricsRows(

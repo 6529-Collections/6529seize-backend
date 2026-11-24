@@ -837,6 +837,7 @@ export const wavesManifest: AreaManifest = {
         'competition_decisions',
         'competition_entries',
         'competition_decision_winners',
+        'competition_lifecycle_events',
         'wave_metrics',
         'wave_dropper_metrics'
       ],
