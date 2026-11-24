@@ -7,7 +7,11 @@ import {
   TableEntry
 } from '@/rebuild/manifest.types';
 import { PROBE_CALLER } from '@/rebuild/manifests/probe-fixture';
-import { stayingWavesPlans } from '@/rebuild/manifests/waves-staying';
+import {
+  STAYING_METRICS_WHERE,
+  stayingMetricsPlans,
+  stayingWavesPlans
+} from '@/rebuild/manifests/waves-staying';
 import {
   RELAY_WORLD_WALLET,
   WAVES_WORLD_IDS
@@ -185,8 +189,8 @@ const DROP_METRICS_REBUILDERS: RebuildStep[] = [
     plannedRows: [
       {
         table: 'wave_metrics',
-        where:
-          'wave_id not in (select wave_id from drops where wave_id is not null union select wave_id from deleted_drops where wave_id is not null)',
+        // A staying wave's row is the staying plan's.
+        where: `wave_id not in (select wave_id from drops where wave_id is not null union select wave_id from deleted_drops where wave_id is not null) and not ${STAYING_METRICS_WHERE.wave_metrics}`,
         reason:
           'A wave that never had a drop has a metrics row only through its subscribers or its scores, whose owners are planned.',
         until: '2026-12-04',
@@ -201,7 +205,8 @@ const DROP_METRICS_REBUILDERS: RebuildStep[] = [
         until: '2026-12-04',
         change:
           "6529.io deletes a wave's author metrics with the wave, and the existing ones are removed."
-      }
+      },
+      ...stayingMetricsPlans()
     ]
   },
   {

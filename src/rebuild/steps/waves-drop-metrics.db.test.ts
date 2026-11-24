@@ -10,6 +10,8 @@ const W2 = 'wave-with-only-a-deleted-drop';
 const W3 = 'wave-never-dropped-in';
 /** A wave 6529.io deleted: gone from waves, a deleted drop still on record. */
 const W4 = 'wave-deleted';
+/** A wave that stays on 6529.io: no row after the mirror, its drops live. */
+const W5 = 'wave-staying-without-row';
 
 async function rows(table: string, key: string) {
   return sqlExecutor.execute<Record<string, unknown>>(
@@ -52,6 +54,14 @@ describeWithSeed('the waves drop metrics rebuild', [], () => {
       deleted_at: 8
     });
     for (const wave of [W1, W2, W3]) await insertRow('waves', { id: wave });
+    await drop('d7', W5, 'author-f', 'CHAT', 50);
+    await insertRow('deleted_drops', {
+      id: 'd8',
+      wave_id: W5,
+      author_id: 'author-g',
+      created_at: 40,
+      deleted_at: 41
+    });
     await insertRow('deleted_drops', {
       id: 'd6',
       wave_id: W4,
@@ -63,7 +73,16 @@ describeWithSeed('the waves drop metrics rebuild', [], () => {
 
   it('recounts every wave and author that has or had a drop, from the drops alone', async () => {
     await rebuildWavesDropMetrics({} as RebuildContext);
+    // The staying wave has no row after the mirror, but its live drop
+    // proves it exists: its rows are recounted, its deleted drop's author
+    // included. The deleted wave W4 gets none.
     expect(await rows('wave_metrics', 'wave_id')).toEqual([
+      {
+        wave_id: W5,
+        drops_count: 1,
+        participatory_drops_count: 0,
+        latest_drop_timestamp: 50
+      },
       {
         wave_id: W1,
         drops_count: 1,
@@ -84,6 +103,20 @@ describeWithSeed('the waves drop metrics rebuild', [], () => {
          from wave_dropper_metrics order by wave_id, dropper_id`
     );
     expect(droppers).toEqual([
+      {
+        wave_id: W5,
+        dropper_id: 'author-f',
+        drops_count: 1,
+        participatory_drops_count: 0,
+        latest_drop_timestamp: 50
+      },
+      {
+        wave_id: W5,
+        dropper_id: 'author-g',
+        drops_count: 0,
+        participatory_drops_count: 0,
+        latest_drop_timestamp: 0
+      },
       {
         wave_id: W1,
         dropper_id: 'author-a',

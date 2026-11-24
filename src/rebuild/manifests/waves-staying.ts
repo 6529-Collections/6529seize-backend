@@ -78,6 +78,28 @@ export const STAYING_WHERE: Readonly<Record<string, string>> = {
   competition_score_history: STAYING_COMPETITION
 };
 
+/**
+ * The drop metrics' rows of staying waves that still exist (a wave that
+ * no longer exists is the drop metrics' own deleted-wave plan): the
+ * rebuild recounts them only from the drops it has, and a staying wave's
+ * drops aren't the mirror's to write.
+ */
+export const STAYING_METRICS_WHERE: Readonly<Record<string, string>> = {
+  wave_metrics: `(${stayingWave('wave_metrics.wave_id')} and wave_metrics.wave_id in (select id from waves))`,
+  wave_dropper_metrics: `(${stayingWave('wave_dropper_metrics.wave_id')} and wave_dropper_metrics.wave_id in (select id from waves))`
+};
+
+/** The drop metrics step's plans for the rows of staying waves. */
+export function stayingMetricsPlans(): PlannedRows[] {
+  return Object.entries(STAYING_METRICS_WHERE).map(([table, where]) => ({
+    table,
+    where,
+    reason: STAYING_REASON,
+    until: STAYING_UNTIL,
+    change: STAYING_CHANGE
+  }));
+}
+
 /** One plan for each table in `writes` that can hold staying rows. */
 export function stayingWavesPlans(writes: readonly string[]): PlannedRows[] {
   return writes

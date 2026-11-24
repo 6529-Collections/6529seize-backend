@@ -17,19 +17,22 @@ export const DROP_METRIC_COLUMNS = [
 const WAVES_PER_STATEMENT = 500;
 
 /**
- * Every (wave, author) of a wave that still exists and has or had a drop:
- * 6529.io makes a metrics row with a drop's insert and keeps it, at zero,
- * when the drop is deleted (deleted_drops keeps the deleted drop's wave
- * and author). Deleting a wave deletes its drops with no record and its
- * wave_metrics row, and leaves its authors' rows as they were: nothing
- * can rebuild those (the step's plan names them).
+ * Every (wave, author) that has a drop, or had one in a wave that still
+ * exists: 6529.io makes a metrics row with a drop's insert and keeps it,
+ * at zero, when the drop is deleted (deleted_drops keeps the deleted
+ * drop's wave and author). A live drop proves its wave exists, whether or
+ * not the rebuild has written the wave's row (a wave that stays on 6529.io
+ * has none from the mirror). A deleted drop counts only when its wave
+ * still has a live drop or a row: deleting a wave deletes its drops with
+ * no record and its wave_metrics row, and leaves its authors' rows as they
+ * were, which nothing can rebuild (the step's plan names them).
  */
-const DROPPERS = `select wave_id, author_id from drops
-   where wave_id in (select id from waves)
-  union select wave_id, author_id from deleted_drops
-   where wave_id in (select id from waves)`;
+const DROPPERS = `select wave_id, author_id from drops where wave_id is not null
+  union select dd.wave_id, dd.author_id from deleted_drops dd
+   where dd.wave_id in (select id from waves)
+      or dd.wave_id in (select wave_id from drops)`;
 
-/** Every wave that still exists and has or had a drop, in id order. */
+/** Every wave with a drop, or with a deleted drop and a row, in id order. */
 async function wavesWithDrops(): Promise<string[]> {
   const rows = await dbSupplier().execute<{ wave_id: string }>(
     `select distinct wave_id from (${DROPPERS}) droppers order by wave_id`
@@ -38,7 +41,7 @@ async function wavesWithDrops(): Promise<string[]> {
 }
 
 /**
- * The drop metrics of every wave that still exists and has or had drops,
+ * The drop metrics of every wave that has drops, or had them and exists,
  * from the drops alone, as 6529.io keeps them: a wave's row, and a row per
  * wave and author, appear with their first drop (drop inserts upsert them)
  * and stay when the drops are deleted, and their counts and latest drop are what

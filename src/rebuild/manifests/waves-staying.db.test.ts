@@ -2,7 +2,11 @@ import 'reflect-metadata';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { insertRow as insert } from '@/tests/fixtures/rebuild-rows.fixture';
-import { STAYING_WHERE, stayingWavesPlans } from './waves-staying';
+import {
+  STAYING_METRICS_WHERE,
+  STAYING_WHERE,
+  stayingWavesPlans
+} from './waves-staying';
 
 /** A moved wave the chain index holds by LegacyId (stored without dashes). */
 const MOVED = '00000000-0000-4000-8000-00000000000a';
@@ -30,8 +34,9 @@ const GROUPS = {
 };
 
 async function selected(table: string, column: string): Promise<string[]> {
+  const where = STAYING_WHERE[table] ?? STAYING_METRICS_WHERE[table];
   const rows = await sqlExecutor.execute<Record<string, unknown>>(
-    `select ${column} as v from ${table} where (${STAYING_WHERE[table]})`
+    `select ${column} as v from ${table} where (${where})`
   );
   return rows.map((row) => String(row.v)).sort();
 }
@@ -133,6 +138,12 @@ describeWithSeed('the staying waves plans', [], () => {
         await insert(table, { competition_id: competition });
       }
     }
+    // Drop metrics: also a wave 6529.io deleted (no row, not on the chain),
+    // which is the drop metrics' deleted-wave plan, not a staying one.
+    for (const wave of [MOVED, STAYING, CHAIN_MADE, 'wave-deleted']) {
+      await insert('wave_metrics', { wave_id: wave });
+      await insert('wave_dropper_metrics', { wave_id: wave, dropper_id: 'p1' });
+    }
     for (const wave of [MOVED, STAYING, CHAIN_MADE]) {
       await insert('waves_metadatas', { wave_id: wave });
       await insert('waves_archive', { id: wave });
@@ -151,6 +162,10 @@ describeWithSeed('the staying waves plans', [], () => {
     ]);
     expect(await selected('competitions', 'id')).toEqual([
       'competition-staying'
+    ]);
+    expect(await selected('wave_metrics', 'wave_id')).toEqual([STAYING]);
+    expect(await selected('wave_dropper_metrics', 'wave_id')).toEqual([
+      STAYING
     ]);
     for (const table of COMPETITION_TABLES) {
       expect([table, await selected(table, 'competition_id')]).toEqual([
