@@ -73,6 +73,7 @@ type FakeOptions = {
   reportRunId?: boolean;
   failedStep?: string;
   steps?: { name: string; conclusion: string | null }[];
+  headDelaysMs?: number[];
 };
 
 function harness(options: FakeOptions = {}) {
@@ -86,6 +87,7 @@ function harness(options: FakeOptions = {}) {
       const heads = options.heads ?? [];
       const head = heads[Math.min(headCalls, heads.length - 1)] ?? TARGET;
       headCalls += 1;
+      now += options.headDelaysMs?.[headCalls - 1] ?? 0;
       return head;
     },
     async listWorkflowRuns(_workflow: string, params: Record<string, string>) {
@@ -500,6 +502,39 @@ describe('deploy train executor', () => {
     expect(h.dispatched).toHaveLength(0);
   });
 
+  it('rechecks the time budget after a slow branch read', async () => {
+    // prxt's case: GitHub takes a minute to return the branch head, which
+    // carries the train past its budget.
+    const h = harness({ headDelaysMs: [0, 61_000] });
+    const result = await h.run(trainPlan([item('teamLoop', [1])]), {
+      options: { budgetMinutes: 1 }
+    });
+    expect(result.stop).toMatchObject({ reason: 'time-budget', halt: false });
+    expect(h.dispatched).toHaveLength(0);
+  });
+
+  it('rechecks the time budget after a slow ledger save, and withdraws the group it recorded', async () => {
+    const h = harness();
+    const saved: any[] = [];
+    const result = await h.run(
+      trainPlan(
+        withGroups([item('teamLoop', [5])], [{ service: 'nftsLoop', prs: [5] }])
+      ),
+      {
+        options: { budgetMinutes: 1 },
+        saveLedger: async (groups: any) => {
+          h.advance(61_000);
+          saved.push(structuredClone(groups));
+        }
+      }
+    );
+    expect(result.stop).toMatchObject({ reason: 'time-budget', halt: false });
+    expect(h.dispatched).toHaveLength(0);
+    // Recorded before the check, withdrawn after it: the group's timer
+    // starts with the deploy that first sends it.
+    expect(saved.map((groups) => Object.keys(groups))).toEqual([['5'], []]);
+  });
+
   it('reports each service just before dispatching it', async () => {
     const h = harness();
     const seen: string[] = [];
@@ -668,7 +703,7 @@ describe('deploy train executor', () => {
       '4': {
         services: ['api', 'teamLoop'],
         shipped: ['teamLoop'],
-        opened_at: new Date(START - 8 * 86_400_000).toISOString()
+        opened_at: new Date(START - 9 * 86_400_000).toISOString()
       },
       '5': {
         services: ['nftsLoop', 'teamLoop'],
@@ -785,7 +820,7 @@ describe('deploy train executor', () => {
       '5': {
         services: ['teamLoop'],
         shipped: [],
-        opened_at: new Date(START - 8 * 86_400_000).toISOString()
+        opened_at: new Date(START - 9 * 86_400_000).toISOString()
       }
     };
     const saved: any[] = [];

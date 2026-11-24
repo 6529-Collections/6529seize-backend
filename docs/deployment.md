@@ -150,8 +150,10 @@ every train recomputes what still differs, so merges never queue up trains.
    - waits, up to 30 minutes, while any other `deploy.yml` run is active, so it
      never displaces or cancels another developer's deploy;
    - checks the time budget, `main`, the holds and the quiet windows again
-     immediately before dispatching, because that wait can carry it into a
-     window (the holds and team windows as read when the Ship job started);
+     before dispatching, because that wait can carry it into a window (the
+     holds and team windows as read when the Ship job started), then records
+     the service's new release-note groups and checks the time budget, the
+     holds and the quiet windows once more, immediately before dispatching;
    - dispatches `Deploy a service` with `environment=prod`, the service,
      `expected_source_sha` set to the train's commit and `release_note_groups`;
    - waits for the run and checks the new build's health.
@@ -166,7 +168,8 @@ Services the plan defers instead of shipping:
 | A temporary hold names it | Finish the hand-run step, then clear the hold. |
 | A quiet window is active within 15 minutes | Nothing; a later train ships it. |
 | A dependency is held back, could not be assessed or was never deployed | Fix or ship the dependency first. |
-| Its PR's release-note group was fixed before the service fell behind | Nothing; the train ships it once that group has published or expired (7 days). For an urgent fix, see the hand-deploy inputs below. |
+| Its PR's release-note group was fixed before the service fell behind | Nothing; the train ships it once that group has published or expired (8 days). For an urgent fix, see the hand-deploy inputs below. |
+| Its PR's release-note group is 7 to 8 days old, so the receiver may or may not still hold it | Nothing; the train ships it with a fresh group once the 8 days are up. |
 
 Release notes: each PR becomes one group (`pr-<number>`) that lists every
 service behind `main` because of that PR, including services the train holds
@@ -175,9 +178,19 @@ first deploy that carries an incomplete group, the train records the set in an
 open issue labelled `deploy-train-ledger` (only the train edits it), because
 the release-note receiver keeps the first set it sees for a pull request and
 rejects a different one. Later trains send the same set while any member is
-still behind, for up to 7 days, the receiver's memory. If the set cannot be
-recorded (the ledger cannot be read or saved), that deploy is deferred to a
-later train; a deploy that completes its group still ships. After each deploy
+still behind. The receiver remembers a group for 7 days from when it first
+processes a deploy that carries it, which is never before the ledger recorded
+it but can be later (the deploy itself, queue retries). So the ledger sends
+its set for 7 days; on the eighth day, when the receiver may or may not still
+hold it, the group's remaining members wait, because neither the recorded set
+nor a new one is safe to send; after that the group is planned afresh. A
+manual redrive of failed release-note messages more than a day after their
+deploy can still meet a newer group for the same pull request. If the set
+cannot be recorded (the ledger cannot be read or saved), that deploy is
+deferred to a later train; a deploy that completes its group still ships. If
+the last check before dispatch then stops the deploy, the train withdraws
+the group it just recorded, so its timer starts with the deploy that first
+sends it. After each deploy
 the train records which members shipped; if only that save fails, it warns,
 and the next plan works the progress out again from what is still behind.
 `publish_release_note` is `true` only on the deploy that completes the group,
@@ -217,7 +230,8 @@ expires. For an urgent fix:
   own set. The train does the same on its own, so it ships such a service
   without waiting.
 - If no newer pull request lists the service, either wait for the older group
-  to publish or expire (7 days), or deploy with `release_note_opt_out=true`
+  to publish or expire (8 days after the ledger recorded it, when the train
+  ships it on its own), or deploy with `release_note_opt_out=true`
   and no other release-note inputs. The opt-out is the deployer's explicit
   choice to publish no note for that deploy; the train never makes it.
 

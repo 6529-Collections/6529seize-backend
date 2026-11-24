@@ -35,20 +35,67 @@ function resolveMode({ variable, requested, eventName }) {
   return { mode: configured, configured, notes };
 }
 
-// The release-note receiver remembers a group's services for seven days.
+const DAY_MS = 86_400_000;
+// The release-note receiver remembers a group's services for seven days
+// from when it first processes a deploy that carries the group. The ledger
+// records the group just before that deploy is dispatched, so the receiver
+// holds it at least until seven days after `opened_at`.
 const LEDGER_DAYS = 7;
+// How much later the receiver may first process that deploy: the deploy
+// itself (at most an hour) and its queue's retries (five, five minutes
+// apart), with a wide margin. A manual redrive of failed release-note
+// messages later than this can still meet a newer group.
+const RECEIVER_GRACE_DAYS = 1;
+// After this the receiver has certainly forgotten the group.
+const LEDGER_KEEP_DAYS = LEDGER_DAYS + RECEIVER_GRACE_DAYS;
 
-/** Ledger groups still worth reusing: recent and with a member still behind. */
-function activeLedger(ledgerGroups, behindByPull, now) {
+/**
+ * Ledger groups with a member still behind, by state: `active` ones the
+ * train keeps sending with their recorded set (under seven days old), and
+ * `cooling` ones the receiver may or may not still hold (the grace day
+ * after), whose members wait because neither the recorded set nor a new
+ * one is safe to send. Older groups are forgotten and planned afresh.
+ */
+function ledgerState(ledgerGroups, behindByPull, now) {
   const active = {};
+  const cooling = {};
   for (const [pull, entry] of Object.entries(ledgerGroups || {})) {
-    const fresh = now - Date.parse(entry.opened_at) < LEDGER_DAYS * 86_400_000;
+    const opened = Date.parse(entry.opened_at);
     const open = (behindByPull.get(Number(pull)) || []).some((service) =>
       entry.services.includes(service)
     );
-    if (fresh && open) active[pull] = entry;
+    if (!open) continue;
+    if (now - opened < LEDGER_DAYS * DAY_MS) {
+      active[pull] = entry;
+    } else if (now - opened < LEDGER_KEEP_DAYS * DAY_MS) {
+      cooling[pull] = new Date(
+        opened + LEDGER_KEEP_DAYS * DAY_MS
+      ).toISOString();
+    }
   }
-  return active;
+  return { active, cooling };
+}
+
+/** Ledger groups still worth reusing: recent and with a member still behind. */
+function activeLedger(ledgerGroups, behindByPull, now) {
+  return ledgerState(ledgerGroups, behindByPull, now).active;
+}
+
+/** Holds back candidates behind because of a cooling group's pull request. */
+function deferCooling(candidates, cooling, heldBack, deferred) {
+  return candidates.filter((record) => {
+    const pull = record.prs.find((number) => cooling[number]);
+    if (pull === undefined) return true;
+    deferred.push(
+      deferral(
+        record,
+        `release-note group pr-${pull} may still be held by the receiver until ${cooling[pull]}; the train ships it after that`,
+        'release-notes'
+      )
+    );
+    heldBack.add(record.service);
+    return false;
+  });
 }
 
 /** Behind services by the pull request numbers they list. */
@@ -341,13 +388,14 @@ function buildTrainPlan({
   notes = [],
   ledger = {}
 }) {
+  const ledgerGroups = ledgerState(
+    ledger,
+    behindServicesByPull(drift.services),
+    now
+  );
   const context = {
     behindRecords: drift.services,
-    ledgerGroups: activeLedger(
-      ledger,
-      behindServicesByPull(drift.services),
-      now
-    )
+    ledgerGroups: ledgerGroups.active
   };
   const { deferred, heldBack, candidates } = triage(catalog, drift, {
     now,
@@ -357,7 +405,12 @@ function buildTrainPlan({
   });
   const shipping = dropOversized(
     catalog,
-    deferDependents(catalog, candidates, heldBack, deferred),
+    deferDependents(
+      catalog,
+      deferCooling(candidates, ledgerGroups.cooling, heldBack, deferred),
+      heldBack,
+      deferred
+    ),
     context,
     heldBack,
     deferred
@@ -398,8 +451,10 @@ module.exports = {
   MAX_GROUPS_PER_DEPLOY,
   MAX_GROUP_INPUT_CHARS,
   LEDGER_DAYS,
+  LEDGER_KEEP_DAYS,
   resolveMode,
   releaseNoteGroups,
   activeLedger,
+  ledgerState,
   buildTrainPlan
 };

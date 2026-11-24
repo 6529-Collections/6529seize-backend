@@ -256,7 +256,7 @@ describe('deploy train plan', () => {
       ]);
     });
 
-    it('forgets a ledger group after the receiver has', () => {
+    it('forgets a ledger group once the receiver certainly has', () => {
       const result = plan(
         [
           record('nftsLoop', { prs: [20] }),
@@ -264,13 +264,42 @@ describe('deploy train plan', () => {
         ],
         {
           ledger: ledgerEntry(
-            QUIET_TIME - (planLib.LEDGER_DAYS * 24 + 1) * 3_600_000
+            QUIET_TIME - (planLib.LEDGER_KEEP_DAYS * 24 + 1) * 3_600_000
           )
         }
       );
       expect(
         result.ship[0].release_note_groups[0].release_group_services
       ).toEqual(['nftsLoop']);
+    });
+
+    it('holds a member back while the receiver may still hold its group', () => {
+      // prxt's case: the receiver first processed the deploy late, so it
+      // still holds the seven-day-old group; a smaller set would be
+      // rejected, and the recorded set may already be forgotten.
+      const opened = QUIET_TIME - (planLib.LEDGER_DAYS * 24 + 2) * 3_600_000;
+      const result = plan(
+        [
+          record('nftsLoop', { prs: [20] }),
+          record('teamLoop', { status: 'current', prs: [] }),
+          record('ethPriceLoop', { prs: [21] })
+        ],
+        { ledger: ledgerEntry(opened) }
+      );
+      const until = new Date(
+        opened + planLib.LEDGER_KEEP_DAYS * 86_400_000
+      ).toISOString();
+      // Only the cooling group's member waits.
+      expect(
+        result.ship.map((item: { service: string }) => item.service)
+      ).toEqual(['ethPriceLoop']);
+      expect(result.deferred).toEqual([
+        expect.objectContaining({
+          service: 'nftsLoop',
+          kind: 'release-notes',
+          reason: `release-note group pr-20 may still be held by the receiver until ${until}; the train ships it after that`
+        })
+      ]);
     });
 
     it('defers a service whose pull request has a group fixed without it', () => {

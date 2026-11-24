@@ -3,7 +3,7 @@
 const catalogLib = require('./catalog');
 const { evaluateBlackout, holdFor } = require('./blackouts');
 const { DEPLOY_WORKFLOW, activeDeployRuns, deployBranch } = require('./github');
-const { LEDGER_DAYS } = require('./plan');
+const { LEDGER_KEEP_DAYS } = require('./plan');
 
 // The ship job has 330 minutes: a new deploy starts only within the
 // budget, and a started deploy, its first health check and the trailing
@@ -145,8 +145,9 @@ class TrainRun {
     });
   }
 
+  /** Drops the groups the receiver has certainly forgotten (see plan.js). */
   dropExpiredGroups() {
-    const expiry = this.clock() - LEDGER_DAYS * 86_400_000;
+    const expiry = this.clock() - LEDGER_KEEP_DAYS * 86_400_000;
     for (const [key, entry] of Object.entries(this.ledger)) {
       if (Date.parse(entry.opened_at) <= expiry) delete this.ledger[key];
     }
@@ -156,19 +157,19 @@ class TrainRun {
    * Saves, before `item` deploys, the service set of every group it is
    * about to send without completing, unless the ledger already holds that
    * group: the receiver keeps the first set it sees, so the set must be on
-   * record before any deploy sends it. Returns the reason to defer `item`
-   * when it cannot be saved, else null.
+   * record before any deploy sends it. Returns the keys it recorded, or the
+   * reason to defer `item` when it cannot save them.
    */
   async reserveGroups(item, groups) {
-    if (!this.saveLedger) return null;
-    // An entry the receiver has forgotten does not count as recorded.
+    if (!this.saveLedger) return { opened: [] };
     this.dropExpiredGroups();
     const opening = groups.filter(
       (group) =>
         !group.publish_release_note &&
         !this.ledger[String(group.pull_request_number)]
     );
-    if (opening.length === 0) return null;
+    if (opening.length === 0) return { opened: [] };
+    const opened = opening.map((group) => String(group.pull_request_number));
     const opened_at = new Date(this.clock()).toISOString();
     for (const group of opening) {
       this.ledger[String(group.pull_request_number)] = {
@@ -179,13 +180,33 @@ class TrainRun {
     }
     try {
       await this.saveLedger(this.ledger);
-      return null;
+      return { opened };
     } catch (error) {
-      for (const group of opening) {
-        delete this.ledger[String(group.pull_request_number)];
-      }
+      for (const key of opened) delete this.ledger[key];
       const ids = opening.map((group) => group.release_group_id).join(', ');
-      return `release-note group ${ids} could not be recorded before its first deploy: ${errorMessage(error)}`;
+      return {
+        opened: [],
+        error: `release-note group ${ids} could not be recorded before its first deploy: ${errorMessage(error)}`
+      };
+    }
+  }
+
+  /**
+   * Withdraws groups recorded for a deploy that was then not dispatched, so
+   * their timer starts with the deploy that first sends them. If that save
+   * also fails, the entry keeps the earlier start and the train warns: a
+   * group first sent more than a day later could then leave the ledger
+   * while the receiver still holds it.
+   */
+  async releaseGroups(item, opened) {
+    if (opened.length === 0) return;
+    for (const key of opened) delete this.ledger[key];
+    try {
+      await this.saveLedger(this.ledger);
+    } catch (error) {
+      this.result.warnings.push(
+        `release-note ledger not saved after ${item.service} was not deployed: ${errorMessage(error)}`
+      );
     }
   }
 
@@ -384,11 +405,11 @@ class TrainRun {
   }
 
   /**
-   * Confirms the time budget is not used up, the branch still points at the
-   * train's commit and the service is outside holds and quiet windows.
-   * Records a stop or deferral and returns false otherwise.
+   * Confirms the time budget is not used up and the service is outside
+   * holds and quiet windows, from the clock alone. Records a stop or
+   * deferral and returns false otherwise.
    */
-  async clearToDispatch(item) {
+  withinBudgetAndWindows(item) {
     if (this.clock() - this.startedAt > this.options.budgetMinutes * 60_000) {
       this.stopBefore(
         item,
@@ -397,6 +418,21 @@ class TrainRun {
       );
       return false;
     }
+    const reason = this.quietReason(item);
+    if (reason) {
+      this.defer(item, reason);
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Confirms the time budget is not used up, the branch still points at the
+   * train's commit and the service is outside holds and quiet windows.
+   * Records a stop or deferral and returns false otherwise.
+   */
+  async clearToDispatch(item) {
+    if (!this.withinBudgetAndWindows(item)) return false;
     const head = await this.client.getBranchSha(this.branch);
     if (head !== this.plan.target_sha) {
       this.stopBefore(
@@ -404,11 +440,6 @@ class TrainRun {
         'main-moved',
         `${this.branch} moved to ${head.slice(0, 10)}; the next train ships what still differs`
       );
-      return false;
-    }
-    const reason = this.quietReason(item);
-    if (reason) {
-      this.defer(item, reason);
       return false;
     }
     return true;
@@ -424,11 +455,18 @@ class TrainRun {
       (await this.listDispatchedRuns()).map((run) => run.id)
     );
     // Waiting for other deploys can take minutes: check the branch, holds
-    // and quiet windows again immediately before dispatching.
+    // and quiet windows again before dispatching.
     if (!(await this.clearToDispatch(item))) return null;
-    const unrecorded = await this.reserveGroups(item, groups);
-    if (unrecorded) {
-      this.defer(item, unrecorded);
+    const reserved = await this.reserveGroups(item, groups);
+    if (reserved.error) {
+      this.defer(item, reserved.error);
+      return null;
+    }
+    // The branch read and the ledger save can take a while too: check the
+    // time budget, holds and quiet windows once more, immediately before
+    // dispatching.
+    if (!this.withinBudgetAndWindows(item)) {
+      await this.releaseGroups(item, reserved.opened);
       return null;
     }
     const dispatchedAt = this.clock();
