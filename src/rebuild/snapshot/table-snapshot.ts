@@ -1,14 +1,50 @@
 import { createHash } from 'node:crypto';
-import { MysqlAdmin, Row } from '@/rebuild/stack/mysql-admin';
+import { MysqlAdmin, Row, scopeFlag } from '@/rebuild/stack/mysql-admin';
 
 export interface TableSnapshot {
   readonly table: string;
   readonly rows: number;
   /** Over every row hash in order. */
   readonly digest: string;
-  /** Per row: its primary key as JSON (or its hash when there is none). */
+  /**
+   * Per row: its row key as JSON (the declared rowKey, else the primary
+   * key), or its hash when there is none.
+   */
   readonly keys: string[];
   readonly hashes: string[];
+  /**
+   * Per volatile column scoped by a condition, in the entry's order: the
+   * keys of the rows the condition matched, which leave the column out.
+   */
+  readonly scoped: { readonly column: string; readonly keys: string[] }[];
+}
+
+/**
+ * A volatile column left out only of the rows its condition matches (an
+ * SQL condition on the table's columns, as a plan's `where`).
+ */
+export interface ScopedVolatile {
+  readonly column: string;
+  readonly where: string;
+}
+
+/**
+ * A row read with scope flags (see scopeFlag): the row without them, and
+ * the scoped columns its flags leave out.
+ */
+export function unscoped(
+  row: Row,
+  scoped: readonly ScopedVolatile[]
+): { row: Row; left: string[] } {
+  if (!scoped.length) return { row, left: [] };
+  const plain: Row = { ...row };
+  const left: string[] = [];
+  scoped.forEach(({ column }, i) => {
+    const flag = plain[scopeFlag(i)];
+    delete plain[scopeFlag(i)];
+    if (Number(flag) === 1) left.push(column);
+  });
+  return { row: plain, left };
 }
 
 export interface TableDiff {
@@ -63,30 +99,43 @@ function sha256(text: string): string {
 }
 
 /**
- * Hashes rows; rows without a primary key are ordered by their hash. A
- * primary key with a volatile column (an auto-increment id the API never
- * shows, which a rebuild numbers anew) is no key: those rows match by
- * their other columns, like rows without one.
+ * Hashes rows, keyed by `key`: the table's row key (its declared rowKey,
+ * else its primary key). Rows without one are ordered by their hash. A key
+ * with a volatile column (an auto-increment id the API never shows, which
+ * a rebuild numbers anew) is no key: those rows match by their other
+ * columns, like rows without one. A scoped volatile column (`scoped`, read
+ * with its flags, see scopeFlag) is left out only of the rows its
+ * condition matched.
  */
 export function snapshotRows(
   table: string,
   rows: readonly Row[],
-  primaryKey: readonly string[],
-  volatile: ReadonlySet<string> = new Set()
+  key: readonly string[],
+  volatile: ReadonlySet<string> = new Set(),
+  scoped: readonly ScopedVolatile[] = []
 ): TableSnapshot {
-  const key = primaryKey.some((column) => volatile.has(column))
+  const keyed = key.some(
+    (column) => volatile.has(column) || scoped.some((s) => s.column === column)
+  )
     ? []
-    : primaryKey;
+    : key;
   let entries = rows.map((row) => {
-    const hash = sha256(canonicalRow(row, volatile));
+    const { row: plain, left } = unscoped(row, scoped);
+    const hash = sha256(
+      canonicalRow(
+        plain,
+        left.length ? new Set([...Array.from(volatile), ...left]) : volatile
+      )
+    );
     return {
-      key: key.length
-        ? JSON.stringify(key.map((column) => canonicalValue(row[column])))
+      key: keyed.length
+        ? JSON.stringify(keyed.map((column) => canonicalValue(plain[column])))
         : hash,
-      hash
+      hash,
+      left
     };
   });
-  if (!key.length) {
+  if (!keyed.length) {
     entries = entries.sort((a, b) => a.hash.localeCompare(b.hash));
   }
   return {
@@ -94,25 +143,71 @@ export function snapshotRows(
     rows: entries.length,
     digest: sha256(entries.map((entry) => entry.hash).join('\n')),
     keys: entries.map((entry) => entry.key),
-    hashes: entries.map((entry) => entry.hash)
+    hashes: entries.map((entry) => entry.hash),
+    scoped: scoped.map(({ column }) => ({
+      column,
+      keys: entries
+        .filter((entry) => entry.left.includes(column))
+        .map((entry) => entry.key)
+    }))
   };
 }
 
 /**
- * Snapshots a table's rows. With `checkpoint`, only the rows holding the
- * column's newest value, as MySQL orders it (MAX), the row its readers
- * take.
+ * Snapshots a table's rows, keyed by `key` (see snapshotRows) and read in
+ * its order. With `checkpoint`, only the rows holding the column's newest
+ * value, as MySQL orders it (MAX), the row its readers take.
  */
 export async function snapshotTable(
   admin: MysqlAdmin,
   database: string,
   table: string,
   volatileColumns: readonly string[] = [],
-  checkpoint?: string
+  checkpoint?: string,
+  options: {
+    readonly key?: readonly string[];
+    readonly scoped?: readonly ScopedVolatile[];
+  } = {}
 ): Promise<TableSnapshot> {
-  const primaryKey = await admin.primaryKey(database, table);
-  const rows = await admin.orderedRows(database, table, primaryKey, checkpoint);
-  return snapshotRows(table, rows, primaryKey, new Set(volatileColumns));
+  const key = options.key ?? (await admin.primaryKey(database, table));
+  const scoped = options.scoped ?? [];
+  const rows = await admin.orderedRows(
+    database,
+    table,
+    key,
+    checkpoint,
+    scoped.map((s) => s.where)
+  );
+  return snapshotRows(table, rows, key, new Set(volatileColumns), scoped);
+}
+
+/**
+ * Per scoped volatile column: how many rows the condition matched before
+ * and after, and how many rows on both sides it matched on one side only
+ * (compared there, so they show as changed).
+ */
+export function scopeCounts(
+  before: TableSnapshot,
+  after: TableSnapshot
+): { column: string; before: number; after: number; oneSide: number }[] {
+  const keysBefore = new Set(before.keys);
+  const keysAfter = new Set(after.keys);
+  return before.scoped.map(({ column, keys }, i) => {
+    const scopedBefore = new Set(keys);
+    const scopedAfter = new Set(after.scoped[i]?.keys ?? []);
+    const onlyBefore = Array.from(scopedBefore).filter(
+      (key) => keysAfter.has(key) && !scopedAfter.has(key)
+    ).length;
+    const onlyAfter = Array.from(scopedAfter).filter(
+      (key) => keysBefore.has(key) && !scopedBefore.has(key)
+    ).length;
+    return {
+      column,
+      before: keys.length,
+      after: after.scoped[i]?.keys.length ?? 0,
+      oneSide: onlyBefore + onlyAfter
+    };
+  });
 }
 
 /** How many times each key occurs. */

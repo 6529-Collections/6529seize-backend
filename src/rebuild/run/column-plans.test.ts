@@ -5,7 +5,7 @@ import {
   rowAndColumnPlanOverlap
 } from '@/rebuild/run/column-plans';
 import { differingColumns } from '@/rebuild/snapshot/table-snapshot';
-import { Row } from '@/rebuild/stack/mysql-admin';
+import { Row, scopeFlag } from '@/rebuild/stack/mysql-admin';
 
 const row = (id: number, name: string, at: string, rank = 0): Row => ({
   id,
@@ -46,6 +46,38 @@ describe('column plans', () => {
     expect(Array.from(result.excused)).toEqual([key(1)]);
     expect(result.counts).toEqual([
       { differing: 1, excused: 1, byColumn: { name: 1 } }
+    ]);
+  });
+
+  it('leaves a scoped volatile column out of a row only where both sides matched its condition', () => {
+    const flagged = (r: Row, on: boolean): Row => ({
+      ...r,
+      [scopeFlag(0)]: on ? '1' : '0'
+    });
+    const plans = [
+      {
+        columns: ['name'],
+        rows: new Map([
+          [key(1), flagged(row(1, 'a', 't1'), true)],
+          [key(2), flagged(row(2, 'b', 't1'), true)]
+        ])
+      }
+    ];
+    const result = columnPlanDecision({
+      plans,
+      changed: [key(1), key(2)],
+      rebuilt: new Map([
+        // Renamed and renumbered: at is left out, both sides matched.
+        [key(1), flagged(row(1, 'A', 't9'), true)],
+        // Matched before only: at is compared there, so it still differs.
+        [key(2), flagged(row(2, 'B', 't9'), false)]
+      ]),
+      volatile: new Set(),
+      scoped: [{ column: 'at', where: "name <> ''" }]
+    });
+    expect(Array.from(result.excused)).toEqual([key(1)]);
+    expect(result.counts).toEqual([
+      { differing: 2, excused: 1, byColumn: { name: 2 } }
     ]);
   });
 
@@ -169,7 +201,7 @@ describe('column plans', () => {
       table: 'waves',
       columns: ['updated_at'],
       names: ['id', 'name', 'updated_at'],
-      primaryKey: ['id'],
+      key: ['id'],
       volatile: new Set<string>()
     };
     expect(columnPlanProblem(base)).toBeNull();
@@ -180,10 +212,30 @@ describe('column plans', () => {
       'waves.mirror plans id of waves, in its primary key; a column plan finds its rows by key'
     );
     const noKey =
-      'waves.mirror plans columns of waves, which has no primary key without a volatile column to find its rows by after the rebuild';
-    expect(columnPlanProblem({ ...base, primaryKey: [] })).toBe(noKey);
+      'waves.mirror plans columns of waves, which has no primary key without a volatile column to find its rows by after the rebuild; a declared rowKey can name a unique key without one';
+    expect(columnPlanProblem({ ...base, key: [] })).toBe(noKey);
     expect(columnPlanProblem({ ...base, volatile: new Set(['id']) })).toBe(
       noKey
+    );
+  });
+
+  it('finds rows by a declared row key, whatever the primary key holds', () => {
+    // waves: serial_no, the primary key, is volatile; id is its rowKey.
+    const declared = {
+      step: 'waves.mirror',
+      table: 'waves',
+      columns: ['updated_at', 'serial_no'],
+      names: ['serial_no', 'id', 'updated_at'],
+      key: ['id'],
+      declared: true,
+      volatile: new Set(['serial_no'])
+    };
+    expect(columnPlanProblem(declared)).toBeNull();
+    expect(columnPlanProblem({ ...declared, columns: ['id'] })).toBe(
+      'waves.mirror plans id of waves, in its declared row key; a column plan finds its rows by key'
+    );
+    expect(columnPlanProblem({ ...declared, volatile: new Set(['id']) })).toBe(
+      'waves.mirror plans columns of waves, which has no declared row key without a volatile column to find its rows by after the rebuild'
     );
   });
 

@@ -109,12 +109,27 @@ export interface RunReport {
     readonly notEmptyAfterDrop: string[];
     /** Rows in each INDEX table after the seeds, before the first pass. */
     readonly seededRows: Record<string, number>;
-    /** Columns of the rebuilt tables the row comparison leaves out. */
+    /**
+     * Columns of the rebuilt tables the row comparison leaves out. A
+     * column scoped by `where` is left out only of the rows it matches;
+     * `scope` counts them on each side once the run has compared (null
+     * before), and the rows it matched on one side only.
+     */
     readonly volatileColumns: {
       table: string;
       column: string;
       reason: string;
+      where?: string;
+      scope?: {
+        before: number;
+        rowsBefore: number;
+        after: number;
+        rowsAfter: number;
+        oneSide: number;
+      } | null;
     }[];
+    /** Rebuilt tables whose rows a declared rowKey keys, not the primary key. */
+    readonly rowKeys: { table: string; columns: string[] }[];
     /**
      * Owned columns of the rebuilt tables left out of the comparison
      * because their owner doesn't run here, with why.
@@ -327,8 +342,19 @@ export function renderMarkdown(report: RunReport): string {
     ),
     ...section(
       'Columns the row comparison leaves out',
-      report.tables.volatileColumns.map(
-        (v) => `- ${v.table}.${v.column}: ${v.reason}`
+      report.tables.volatileColumns.map((v) => {
+        if (v.where === undefined)
+          return `- ${v.table}.${v.column}: ${v.reason}`;
+        const scope = v.scope
+          ? `: ${v.scope.before} of ${v.scope.rowsBefore} rows before, ${v.scope.after} of ${v.scope.rowsAfter} after${v.scope.oneSide ? `; ${v.scope.oneSide} matched on one side only, so compared there` : ''}`
+          : '';
+        return `- ${v.table}.${v.column}, only where ${v.where}${scope}: ${v.reason}`;
+      })
+    ),
+    ...section(
+      'Rows keyed by a declared row key',
+      report.tables.rowKeys.map(
+        (k) => `- ${k.table} by ${k.columns.join(', ')}`
       )
     ),
     ...section(

@@ -69,6 +69,27 @@ export function writtenByMysql(column: ColumnInfo): boolean {
   );
 }
 
+/**
+ * The column a row read carries for condition `i` of its flags: 1 when the
+ * condition matched the row (a scoped volatile column's, see
+ * TableEntry.volatileColumns).
+ */
+export function scopeFlag(i: number): string {
+  return `__rebuild_scope_${i}`;
+}
+
+/**
+ * The select list's flag columns for `conditions`, after `*`: 1 where a
+ * condition holds as a WHERE would take it (any true value), else 0.
+ */
+function flagColumns(conditions: readonly string[]): string {
+  return conditions
+    .map(
+      (where, i) => `, ((${where}) IS TRUE) AS ${mysql.escapeId(scopeFlag(i))}`
+    )
+    .join('');
+}
+
 /** A root connection to the run's private server. Values come back as strings. */
 /**
  * Rows whose `columns` hold one of the tuples bound to its `?`
@@ -347,12 +368,53 @@ export class MysqlAdmin {
   async rowsWhere(
     database: string,
     table: string,
-    where: string
+    where: string,
+    /** Conditions read as flags beside each row (see scopeFlag). */
+    flags: readonly string[] = []
   ): Promise<Row[]> {
     return this.queryIn(
       database,
-      `SELECT * FROM ${mysql.escapeId(database)}.${mysql.escapeId(table)} WHERE (${where})`
+      `SELECT *${flagColumns(flags)} FROM ${mysql.escapeId(database)}.${mysql.escapeId(table)} WHERE (${where})`
     );
+  }
+
+  /**
+   * How many of a table's rows match an SQL condition on its columns,
+   * evaluated with `database` as the default: a condition MySQL can't
+   * read throws.
+   */
+  async countWhere(
+    database: string,
+    table: string,
+    where: string
+  ): Promise<number> {
+    const [row] = await this.queryIn<{ n: string }>(
+      database,
+      `SELECT COUNT(*) AS n FROM ${mysql.escapeId(database)}.${mysql.escapeId(table)} WHERE (${where})`
+    );
+    return Number(row.n);
+  }
+
+  /**
+   * A table's unique indexes (the primary key among them), each as its
+   * columns in index order. An index on an expression has no column and
+   * is left out.
+   */
+  async uniqueKeys(database: string, table: string): Promise<string[][]> {
+    const rows = await this.query<{ name: string; column: string | null }>(
+      `SELECT INDEX_NAME AS name, COLUMN_NAME AS \`column\`
+         FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND NON_UNIQUE = 0
+        ORDER BY INDEX_NAME, SEQ_IN_INDEX`,
+      [database, table]
+    );
+    const byIndex = new Map<string, (string | null)[]>();
+    for (const row of rows) {
+      byIndex.set(row.name, [...(byIndex.get(row.name) ?? []), row.column]);
+    }
+    return Array.from(byIndex.values())
+      .filter((columns) => columns.every((c) => c !== null))
+      .map((columns) => columns as string[]);
   }
 
   /**
@@ -382,12 +444,15 @@ export class MysqlAdmin {
   /**
    * A table's rows in `orderBy` order. With `newestBy`, only the rows
    * whose column holds its largest value, as MySQL compares it (MAX).
+   * With `flags`, each row also carries each condition's value (see
+   * scopeFlag), evaluated with `database` as the default.
    */
   async orderedRows(
     database: string,
     table: string,
     orderBy: readonly string[],
-    newestBy?: string
+    newestBy?: string,
+    flags: readonly string[] = []
   ): Promise<Row[]> {
     const from = `${mysql.escapeId(database)}.${mysql.escapeId(table)}`;
     const where = newestBy
@@ -396,7 +461,8 @@ export class MysqlAdmin {
     const order = orderBy.length
       ? ` ORDER BY ${orderBy.map((column) => mysql.escapeId(column)).join(', ')}`
       : '';
-    return this.query(`SELECT * FROM ${from}${where}${order}`);
+    const sql = `SELECT *${flagColumns(flags)} FROM ${from}${where}${order}`;
+    return flags.length ? this.queryIn(database, sql) : this.query(sql);
   }
 
   /**

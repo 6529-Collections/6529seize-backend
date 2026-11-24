@@ -25,32 +25,37 @@ function generated(column: ColumnInfo): boolean {
 
 /**
  * Why a table's column owners can't run, at run start. The run carries
- * owned columns across a rebuild by the primary key, so the table needs
- * one, and none of its columns may be volatile or exempt (unstableColumns):
- * a key that changes on a rebuild matches no saved row. Each owned column must be in the schema,
- * outside the key (only the row writer writes keys), not generated (MySQL
- * writes it, so no step owns it), and one the run can reset for its owner
- * (see resetValue).
+ * owned columns across a rebuild by the row key (the declared rowKey,
+ * else the primary key), so the table needs one, and none of its columns
+ * may be volatile or exempt (unstableColumns): a key that changes on a
+ * rebuild matches no saved row. Each owned column must be in the schema,
+ * outside the primary key and the row key (only the row writer writes
+ * keys), not generated (MySQL writes it, so no step owns it), and one the
+ * run can reset for its owner (see resetValue).
  */
 export function ownedColumnProblems(input: {
   readonly table: string;
   readonly owners: readonly ColumnOwner[];
   readonly columns: readonly ColumnInfo[];
   readonly primaryKey: readonly string[];
+  /** The table's declared rowKey, when it has one. */
+  readonly rowKey?: readonly string[];
   /** The columns the comparison leaves out (unstableColumns). */
   readonly volatile: readonly string[];
 }): string[] {
   const { table, owners, primaryKey } = input;
+  const key = input.rowKey ?? primaryKey;
+  const keyName = input.rowKey ? 'declared row key' : 'primary key';
   const problems: string[] = [];
-  if (!primaryKey.length) {
+  if (!key.length) {
     problems.push(
       `${table} has column owners but no primary key: the run carries owned columns across a rebuild by the key`
     );
   }
-  const volatileKey = primaryKey.filter((c) => input.volatile.includes(c));
+  const volatileKey = key.filter((c) => input.volatile.includes(c));
   if (volatileKey.length) {
     problems.push(
-      `${table} has column owners, but its primary key has volatile or exempt ${volatileKey.join(', ')}: the run carries owned columns across a rebuild by the key`
+      `${table} has column owners, but its ${keyName} has volatile or exempt ${volatileKey.join(', ')}: the run carries owned columns across a rebuild by the key`
     );
   }
   const info = new Map(input.columns.map((c) => [c.name, c]));
@@ -61,9 +66,9 @@ export function ownedColumnProblems(input: {
         problems.push(
           `column owner ${owner.step} owns ${table}.${column}, which the schema doesn't have`
         );
-      } else if (primaryKey.includes(column)) {
+      } else if (primaryKey.includes(column) || key.includes(column)) {
         problems.push(
-          `column owner ${owner.step} owns ${table}.${column}, part of the primary key: only the row writer writes keys`
+          `column owner ${owner.step} owns ${table}.${column}, part of the ${primaryKey.includes(column) ? 'primary key' : keyName}: only the row writer writes keys`
         );
       } else if (generated(found)) {
         problems.push(

@@ -1,6 +1,12 @@
 // Steps for the harness's own end-to-end check (runner.rebuild.test.ts).
-// They write the team table, and the memes seasons table for the probe check.
-import { MEMES_SEASONS_TABLE, NFTS_TABLE, TEAM_TABLE } from '@/constants';
+// They write the team table, the memes seasons table for the probe check,
+// and waves_metadatas for a table keyed by a declared row key.
+import {
+  MEMES_SEASONS_TABLE,
+  NFTS_TABLE,
+  TEAM_TABLE,
+  WAVES_METADATA_TABLE
+} from '@/constants';
 import { dbSupplier } from '@/sql-executor';
 
 const CREATED_AT = '2026-01-01 00:00:00';
@@ -290,4 +296,78 @@ export async function rebuildSeasons(): Promise<void> {
 /** Restores the seasons with other end indexes, so the API answers differ. */
 export async function rebuildSeasonsDifferently(): Promise<void> {
   await insertSeasons(1);
+}
+
+/**
+ * waves_metadatas: id is an auto-increment primary key, (wave_id,
+ * data_key) a UNIQUE key. The chain-made waves' rows (0x ids) get whatever
+ * number MySQL gives; the imported wave's row keeps 6529.io's.
+ */
+const METADATA = [
+  {
+    id: 101,
+    wave_id: '0x00000000000000000000000000000000000000aa',
+    data_value: 'one'
+  },
+  {
+    id: 102,
+    wave_id: '0x00000000000000000000000000000000000000bb',
+    data_value: 'two'
+  },
+  {
+    id: 7,
+    wave_id: '00000000-0000-4000-8000-0000000000a1',
+    data_value: 'three'
+  }
+];
+
+async function insertMetadata(options: {
+  numbered: boolean;
+  importedId?: number;
+  revalue?: boolean;
+}): Promise<void> {
+  for (const row of METADATA) {
+    const chainMade = row.wave_id.startsWith('0x');
+    const value =
+      options.revalue && row === METADATA[0]
+        ? `${row.data_value} again`
+        : row.data_value;
+    if (chainMade && !options.numbered) {
+      await dbSupplier().execute(
+        `INSERT INTO ${WAVES_METADATA_TABLE} (wave_id, data_key, data_value)
+         VALUES (:wave_id, 'title', :value)`,
+        { wave_id: row.wave_id, value }
+      );
+    } else {
+      await dbSupplier().execute(
+        `INSERT INTO ${WAVES_METADATA_TABLE} (id, wave_id, data_key, data_value)
+         VALUES (:id, :wave_id, 'title', :value)`,
+        {
+          id: chainMade ? row.id : (options.importedId ?? row.id),
+          wave_id: row.wave_id,
+          value
+        }
+      );
+    }
+  }
+}
+
+/** The "before" state: every row with its number. */
+export async function seedWaveMetadata(): Promise<void> {
+  await insertMetadata({ numbered: true });
+}
+
+/** The rows back, the chain-made ones numbered anew by MySQL. */
+export async function rebuildWaveMetadata(): Promise<void> {
+  await insertMetadata({ numbered: false });
+}
+
+/** As rebuildWaveMetadata, but the imported wave's row moves to id 8. */
+export async function rebuildWaveMetadataImportedMoved(): Promise<void> {
+  await insertMetadata({ numbered: false, importedId: 8 });
+}
+
+/** As rebuildWaveMetadata, with the first chain-made row's value changed. */
+export async function rebuildWaveMetadataRevalued(): Promise<void> {
+  await insertMetadata({ numbered: false, revalue: true });
 }

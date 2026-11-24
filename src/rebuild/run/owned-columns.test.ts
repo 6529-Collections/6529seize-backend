@@ -27,13 +27,14 @@ const COLUMNS = [
 
 function check(
   owned: string[],
-  over: { primaryKey?: string[]; volatile?: string[] } = {}
+  over: { primaryKey?: string[]; rowKey?: string[]; volatile?: string[] } = {}
 ): string[] {
   return ownedColumnProblems({
     table: 'ident',
     owners: [{ step: 'a.owner', columns: owned }],
     columns: COLUMNS,
     primaryKey: over.primaryKey ?? ['id'],
+    rowKey: over.rowKey,
     volatile: over.volatile ?? []
   });
 }
@@ -57,6 +58,21 @@ describe('ownedColumnProblems', () => {
       })
     ).toEqual([
       'ident has column owners, but its primary key has volatile or exempt created_at: the run carries owned columns across a rebuild by the key'
+    ]);
+  });
+
+  it('carries owned columns by a declared row key when the primary key is volatile', () => {
+    // id is an auto-increment the rebuild numbers anew; name is UNIQUE.
+    expect(check(['tdh'], { rowKey: ['name'], volatile: ['id'] })).toEqual([]);
+    expect(check(['tdh'], { rowKey: ['name'], volatile: ['name'] })).toEqual([
+      'ident has column owners, but its declared row key has volatile or exempt name: the run carries owned columns across a rebuild by the key'
+    ]);
+    // Keys stay the row writer's, the primary key's and the row key's.
+    expect(
+      check(['name', 'id'], { rowKey: ['name'], volatile: ['id'] })
+    ).toEqual([
+      'column owner a.owner owns ident.name, part of the declared row key: only the row writer writes keys',
+      'column owner a.owner owns ident.id, part of the primary key: only the row writer writes keys'
     ]);
   });
 
