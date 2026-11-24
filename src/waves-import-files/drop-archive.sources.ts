@@ -5,8 +5,10 @@ import {
   ChainGatewayClient,
   chainGatewayConfigFromEnv
 } from '@/chain-gateway/chain-gateway.client';
+import * as mysql from 'mysql';
 import { DROPS_PARTS_TABLE, DROPS_TABLE } from '@/constants';
-import { SqlExecutor } from '@/sql-executor';
+import { PROXY_PIN_STATEMENT_BYTES } from '@/db/proxy-session-pinning';
+import { ConnectionWrapper, SqlExecutor } from '@/sql-executor';
 import {
   DropArchiveChain,
   DropArchiveFiles,
@@ -147,24 +149,57 @@ export function gatewayDropArchiveChain(
   };
 }
 
+/**
+ * The rows as plain inserts, each statement kept under the database proxy's
+ * pinning size (PROXY_PIN_STATEMENT_BYTES) unless one row alone is larger.
+ */
+async function insertRows(
+  db: SqlExecutor,
+  table: string,
+  columns: readonly string[],
+  rows: readonly object[],
+  connection: ConnectionWrapper<unknown>
+): Promise<void> {
+  const head = `insert into ${table} (${columns
+    .map((column) => mysql.escapeId(column))
+    .join(', ')}) values `;
+  let values: string[] = [];
+  let bytes = Buffer.byteLength(head, 'utf8');
+  const flush = async () => {
+    if (!values.length) return;
+    await db.execute(head + values.join(', '), undefined, {
+      wrappedConnection: connection
+    });
+    values = [];
+    bytes = Buffer.byteLength(head, 'utf8');
+  };
+  for (const row of rows) {
+    const record = row as Record<string, unknown>;
+    const tuple = `(${columns
+      .map((column) => mysql.escape(record[column] ?? null))
+      .join(', ')})`;
+    const size = Buffer.byteLength(tuple, 'utf8') + 2;
+    if (values.length && bytes + size > PROXY_PIN_STATEMENT_BYTES) {
+      await flush();
+    }
+    values.push(tuple);
+    bytes += size;
+  }
+  await flush();
+}
+
 /** Plain inserts into drops and drops_parts, one transaction a batch. */
 export function dbDropArchiveWriter(db: SqlExecutor): DropArchiveWriter {
   return {
     write: async (drops, parts) => {
       await db.executeNativeQueriesInTransaction(async (connection) => {
-        await db.bulkInsert(
-          DROPS_TABLE,
-          drops,
-          [...DROP_ROW_COLUMNS],
-          undefined,
-          { connection }
-        );
-        await db.bulkInsert(
+        await insertRows(db, DROPS_TABLE, DROP_ROW_COLUMNS, drops, connection);
+        await insertRows(
+          db,
           DROPS_PARTS_TABLE,
+          PART_ROW_COLUMNS,
           parts,
-          [...PART_ROW_COLUMNS],
-          undefined,
-          { connection }
+          connection
         );
       });
     }

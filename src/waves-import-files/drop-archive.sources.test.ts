@@ -13,8 +13,11 @@ import {
 } from '@/waves-import-files/drop-archive.build';
 import { keccak256Hex } from '@/waves-import-files/drop-archive.format';
 import { importDropArchives } from '@/waves-import-files/drop-archive.reader';
+import { PROXY_PIN_STATEMENT_BYTES } from '@/db/proxy-session-pinning';
+import { SqlExecutor } from '@/sql-executor';
 import {
   DROP_ARCHIVE_FILE_IDS,
+  dbDropArchiveWriter,
   gatewayDropArchiveChain,
   httpDropArchiveFiles,
   layoutSnapshotFiles
@@ -76,6 +79,60 @@ describe('the drop archive sources', () => {
     } finally {
       await server.stop();
     }
+  });
+
+  it('write inserts under the proxy pinning size, one transaction a batch', async () => {
+    const statements: string[] = [];
+    let transactions = 0;
+    const db = {
+      execute: async (sql: string) => {
+        statements.push(sql);
+        return [];
+      },
+      executeNativeQueriesInTransaction: async (
+        run: (connection: { connection: unknown }) => Promise<unknown>
+      ) => {
+        transactions++;
+        return run({ connection: {} });
+      }
+    } as unknown as SqlExecutor;
+    const drops = Array.from({ length: 300 }, (_, i) => ({
+      ...FIXTURE_DROPS[0],
+      id: `44444444-4444-4444-8444-${String(i).padStart(12, '0')}`,
+      serial_no: i + 1,
+      parts_count: 1,
+      drop_type: FIXTURE_DROPS[0].drop_type as never,
+      signature: null,
+      is_additional_action_promised: null,
+      hide_link_preview: false,
+      collapse_replies: false
+    }));
+    const big = 'x'.repeat(PROXY_PIN_STATEMENT_BYTES + 10);
+    const parts = drops.map((d, i) => ({
+      drop_id: d.id,
+      drop_part_id: 1,
+      content: i === 7 ? big : 'a part \u{1F30A}',
+      quoted_drop_id: null,
+      quoted_drop_part_id: null,
+      wave_id: d.wave_id
+    }));
+    await dbDropArchiveWriter(db).write(drops, parts);
+    expect(transactions).toBe(1);
+    const tuples = (sql: string) => sql.split('), (').length;
+    // Only the statement of the one oversized part, alone, is above.
+    const over = statements.filter(
+      (sql) => Buffer.byteLength(sql, 'utf8') > PROXY_PIN_STATEMENT_BYTES
+    );
+    expect(over).toHaveLength(1);
+    expect(over[0]).toContain(big);
+    expect(tuples(over[0])).toBe(1);
+    const rowsInto = (table: string) =>
+      statements
+        .filter((sql) => sql.startsWith(`insert into ${table} `))
+        .reduce((n, sql) => n + tuples(sql), 0);
+    expect(rowsInto('drops')).toBe(300);
+    expect(rowsInto('drops_parts')).toBe(300);
+    expect(statements.length).toBeGreaterThan(4);
   });
 
   it('refuse an index that names a file outside archives/', () => {
