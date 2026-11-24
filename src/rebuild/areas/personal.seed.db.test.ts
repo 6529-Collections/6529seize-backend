@@ -12,7 +12,7 @@ import { startAnvil } from '@/rebuild/sources/anvil';
 import type { RunningSource } from '@/rebuild/sources/running-source';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
-import { seedPersonalSettings } from './personal.seed';
+import { PERSONAL_PROBE_WAVE, seedPersonalSettings } from './personal.seed';
 
 /** The personal tables the probes read, and what may differ in a rebuild. */
 const TABLES: readonly [string, string][] = [
@@ -107,6 +107,51 @@ function contextOf(
   } as RebuildContext;
 }
 
+/**
+ * Each wave's drop metrics are what 6529.io's drop creation leaves: counted
+ * from the drops in plain SQL (not 6529.io's own recount, which the rebuild
+ * uses), with the latest drop's own time, and a row for each author.
+ */
+async function expectDropMetricsOf(waveIds: readonly string[]) {
+  for (const waveId of waveIds) {
+    const [row] = await sqlExecutor.execute<{
+      drops_count: number;
+      participatory_drops_count: number;
+      latest_drop_timestamp: number;
+    }>(
+      `select drops_count, participatory_drops_count, latest_drop_timestamp
+         from wave_metrics where wave_id = :waveId`,
+      { waveId }
+    );
+    const [want] = await sqlExecutor.execute<{
+      chat: number;
+      participatory: number;
+      latest: number;
+    }>(
+      `select sum(drop_type = 'CHAT') as chat,
+              sum(drop_type = 'PARTICIPATORY') as participatory,
+              max(created_at) as latest
+         from drops where wave_id = :waveId`,
+      { waveId }
+    );
+    expect(row).toBeDefined();
+    expect(Number(row.drops_count)).toBe(Number(want.chat));
+    expect(Number(row.participatory_drops_count)).toBe(
+      Number(want.participatory)
+    );
+    expect(Number(row.latest_drop_timestamp)).toBe(Number(want.latest));
+  }
+  expect(
+    await sqlExecutor.execute(
+      `select distinct d.wave_id, d.author_id from drops d
+         left join wave_dropper_metrics m
+           on m.wave_id = d.wave_id and m.dropper_id = d.author_id
+        where d.wave_id in (:waveIds) and m.wave_id is null`,
+      { waveIds }
+    )
+  ).toEqual([]);
+}
+
 describeWithSeed('the personal seed and its rebuild', [], () => {
   it('seeds the probe rows through the switch, and the rebuild brings them back', async () => {
     const env = { ...process.env, ...personalManifest.flags };
@@ -132,6 +177,13 @@ describeWithSeed('the personal seed and its rebuild', [], () => {
       );
       expect(seeded.identity_subscriptions.length).toBeGreaterThan(0);
       expect(seeded.eula_consent).toHaveLength(1);
+      // The seed's drops have their metrics, as drop creation writes them:
+      // the probe wave's and the records wave's (its description drop and
+      // the segment heads the seed posts).
+      await expectDropMetricsOf([
+        PERSONAL_PROBE_WAVE,
+        String(env.SIGNED_RECORDS_WAVE_ID)
+      ]);
       // The live follow after the import: its own head and its owner's
       // order mark. The import keeps none.
       expect(

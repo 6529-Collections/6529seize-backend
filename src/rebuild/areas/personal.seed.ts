@@ -57,6 +57,7 @@ import {
 import { LocalRecordsWaveReader } from '@/signed-records/record-log/records-wave-local-reader';
 import { loadProviderKeys, ProviderKey } from '@/signed-records/sealed-crypto';
 import { signedRecordHeadsDb } from '@/signed-records/signed-record-heads.db';
+import { dropsDb } from '@/drops/drops.db';
 import { dbSupplier } from '@/sql-executor';
 import { aWave } from '@/tests/fixtures/wave.fixture';
 import {
@@ -210,6 +211,31 @@ async function insertDrop(drop: {
     quoted_drop_part_id: null,
     wave_id: drop.waveId
   });
+  await applyDropMetricsAt(drop.createdAt, {
+    wave_id: drop.waveId,
+    author_id: drop.authorId,
+    drop_type: DropType.CHAT
+  });
+}
+
+/**
+ * The wave's and the author's drop metrics for a drop just written, as
+ * 6529.io's drop creation applies them (dropsDb.applyInsertedDropMetricsDelta,
+ * the delta alone). The delta stamps latest_drop_timestamp with the clock,
+ * so the clock is held at the drop's own created_at while it runs; drops are
+ * written one at a time, in created_at order within each wave.
+ */
+async function applyDropMetricsAt(
+  createdAt: number,
+  drop: { wave_id: string; author_id: string; drop_type: DropType }
+): Promise<void> {
+  const realNow = Date.now;
+  Date.now = () => createdAt;
+  try {
+    await dropsDb.applyInsertedDropMetricsDelta(drop, {});
+  } finally {
+    Date.now = realNow;
+  }
 }
 
 /** An identity of one wallet, as the identity seed writes its own. */

@@ -280,6 +280,9 @@ const PERSONAL_SETTINGS_SEED: RebuildStep = {
     'waves',
     'drops',
     'drops_parts',
+    // Each drop's metrics, as drop creation writes them.
+    'wave_metrics',
+    'wave_dropper_metrics',
     'identities',
     'address_consolidation_keys',
     'profiles'
