@@ -19,22 +19,47 @@ import {
  */
 export const EXPORT_AFTER_FREEZE_MS = 5 * 60 * 1000;
 
-async function runExport(command: WavesExportCommand) {
+/**
+ * Refuses an export before five minutes after the freeze, naming when it
+ * may start. Returns that time; null for a rehearsal (freezeMs null), which
+ * has no time check.
+ */
+export function refuseBeforeExportStart(
+  freezeMs: number | null,
+  nowMs: number
+): number | null {
+  if (freezeMs === null) return null;
+  const earliestMs = freezeMs + EXPORT_AFTER_FREEZE_MS;
+  if (nowMs < earliestMs) {
+    throw new WavesExportUsageError(
+      `The waves freeze is at ${new Date(freezeMs).toISOString()}. ` +
+        `The export starts from ${new Date(earliestMs).toISOString()}, ` +
+        `five minutes after it: run it again then.`,
+      { showHelp: false }
+    );
+  }
+  return earliestMs;
+}
+
+/** What a caller other than the command line adds to a run. */
+export interface WavesExportRunHooks {
+  /** WavesExportOptions.stopBeforeWave: a job's time limit. */
+  readonly stopBeforeWave?: () => boolean;
+}
+
+/**
+ * One run of the export, as the command line runs it: the time check, the
+ * replica checks and the stages, through the shared DB layer. The
+ * dbDumpsDaily waves export job runs it too.
+ */
+export async function runExport(
+  command: WavesExportCommand,
+  hooks: WavesExportRunHooks = {}
+) {
   // Dates read from MySQL in UTC, whatever the host.
   process.env.TZ = 'UTC';
   // Stays null for a rehearsal: no time check, and the lag only reported.
-  let earliestMs: number | null = null;
-  if (command.freezeMs !== null) {
-    earliestMs = command.freezeMs + EXPORT_AFTER_FREEZE_MS;
-    if (Date.now() < earliestMs) {
-      throw new WavesExportUsageError(
-        `The waves freeze is at ${new Date(command.freezeMs).toISOString()}. ` +
-          `The export starts from ${new Date(earliestMs).toISOString()}, ` +
-          `five minutes after it: run it again then.`,
-        { showHelp: false }
-      );
-    }
-  }
+  const earliestMs = refuseBeforeExportStart(command.freezeMs, Date.now());
   const waveIds = command.wavesFile
     ? parseWaveIds(fs.readFileSync(command.wavesFile, 'utf8'))
     : command.waveIds;
@@ -91,6 +116,7 @@ async function runExport(command: WavesExportCommand) {
             concurrency: command.concurrency,
             bothMetric: command.bothMetric,
             resumeDrops: command.resume,
+            stopBeforeWave: hooks.stopBeforeWave,
             replicaLag,
             log
           }).run();

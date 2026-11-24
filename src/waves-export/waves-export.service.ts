@@ -1,5 +1,8 @@
 import { compactDrop } from './waves-export.compact';
-import { WavesExportUsageError } from './waves-export.errors';
+import {
+  WavesExportStoppedError,
+  WavesExportUsageError
+} from './waves-export.errors';
 import { groupCriteriaReasons, groupRaterKeys } from './waves-export.groups';
 import { compareCodePoints } from './waves-export.json';
 import type { ReplicaLagRecord } from './waves-export.replica-lag';
@@ -65,6 +68,14 @@ export interface WavesExportOptions {
   readonly bothMetric: boolean;
   /** Keep a wave's drops already written by an earlier run of this export. */
   readonly resumeDrops?: boolean;
+  /**
+   * Asked before each wave's drops are read: true leaves that wave, and
+   * every wave not started yet, for a later run with resumeDrops. The waves
+   * already being read finish first; then the stage throws
+   * WavesExportStoppedError. For a job with a time limit; the CLI never
+   * stops.
+   */
+  readonly stopBeforeWave?: () => boolean;
   /** Wait before trying a failed read again (tests pass 0). */
   readonly retryDelayMs?: number;
   /**
@@ -596,6 +607,7 @@ export class WavesExport {
     let signed = 0;
     let done = 0;
     let kept = 0;
+    let left = 0;
     await forEachLimited(waveIds, this.options.concurrency, async (waveId) => {
       if (
         this.options.resumeDrops &&
@@ -603,6 +615,10 @@ export class WavesExport {
       ) {
         kept++;
         done++;
+        return;
+      }
+      if (this.options.stopBeforeWave?.()) {
+        left++;
         return;
       }
       const written = await this.attempt(`drops of ${waveId}`, () =>
@@ -618,6 +634,12 @@ export class WavesExport {
       }
     });
     await raw.ensure('drops');
+    if (left) {
+      this.log(
+        `drops: stopped as asked, ${left} of ${waveIds.length} waves left for a later run (${drops} drops in ${done - kept} waves read)`
+      );
+      throw new WavesExportStoppedError(left, waveIds.length);
+    }
     this.count('drops', drops);
     this.count('signed_drops', signed);
     this.count('drop_waves_kept', kept);

@@ -33,8 +33,17 @@ jest.mock('./waves-export.service', () => ({
   WavesExport: jest.fn((...args: unknown[]) => mockWavesExport(...args))
 }));
 
-import { EXPORT_AFTER_FREEZE_MS, main } from './cli';
-import { WavesExportUsageError } from './cli-options';
+import {
+  EXPORT_AFTER_FREEZE_MS,
+  main,
+  refuseBeforeExportStart,
+  runExport
+} from './cli';
+import {
+  parseWavesExportCommand,
+  WavesExportCommand,
+  WavesExportUsageError
+} from './cli-options';
 import {
   ALL_READERS_LAG_SQL,
   INNODB_READ_ONLY_SQL,
@@ -100,6 +109,17 @@ describe('waves:export and the freeze time', () => {
     jest.spyOn(Date, 'now').mockReturnValue(T_W - 1);
     await main(['--out', 'OUT', '--revision', REVISION, '--rehearsal']);
     expect(mockDoInDbContext).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives the same time check to any caller, on its own clock', () => {
+    expect(() =>
+      refuseBeforeExportStart(T_W, T_W + EXPORT_AFTER_FREEZE_MS - 1)
+    ).toThrow('The export starts from 2026-11-25T00:05:00.000Z');
+    expect(refuseBeforeExportStart(T_W, T_W + EXPORT_AFTER_FREEZE_MS)).toBe(
+      T_W + EXPORT_AFTER_FREEZE_MS
+    );
+    // A rehearsal has no time check.
+    expect(refuseBeforeExportStart(null, 0)).toBeNull();
   });
 });
 
@@ -217,6 +237,25 @@ describe('waves:export and the read replica lag', () => {
       resumeDrops: true,
       replicaLag: { checked_by: 'export' }
     });
+  });
+
+  it("passes a caller's stopBeforeWave to the export, and the command line passes none", async () => {
+    dbHost([reader(40)]);
+    const command = parseWavesExportCommand([
+      ...EXPORT,
+      '--stages',
+      'drops',
+      '--resume'
+    ]) as WavesExportCommand;
+    const stopBeforeWave = () => true;
+    await runExport(command, { stopBeforeWave });
+    expect(mockWavesExport.mock.calls[0][1]).toMatchObject({
+      stages: ['drops'],
+      resumeDrops: true,
+      stopBeforeWave
+    });
+    await main(EXPORT);
+    expect(mockWavesExport.mock.calls[1][1].stopBeforeWave).toBeUndefined();
   });
 
   it('refuses before any stage reads when a reader is too far behind', async () => {

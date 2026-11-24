@@ -47,6 +47,12 @@ export const handler = sentryContext.wrapLambdaHandler(
     if (profileSiteExport) {
       return await runProfileSiteExportJob(profileSiteExport, context);
     }
+    const { parseWavesExportEvent, runWavesExportJob } =
+      await import('./waves-export.handler');
+    const wavesExport = parseWavesExportEvent(event);
+    if (wavesExport) {
+      return await runWavesExportJob(wavesExport, context);
+    }
     const job =
       event && typeof event === 'object' && 'job' in event
         ? String((event as { job: unknown }).job)
