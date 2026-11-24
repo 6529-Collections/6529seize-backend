@@ -55,6 +55,13 @@ export class WavesChainIndexStateEntity {
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly feed_next!: number | null;
 
+  // The finalized block time (ms) of read_height, saved with it by each run
+  // that reads the chain: once the feed has applied through read_height,
+  // the chain has been read through this time. Null before the first such
+  // run; nullable, so the schema sync only adds it.
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly read_time!: number | null;
+
   // The highest height a run has read at: a run never reads below it.
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly read_height!: number | null;

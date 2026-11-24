@@ -247,6 +247,7 @@ export class WavesChainIndex {
       readHeight: height,
       network: head.network ?? state.network
     });
+    await this.db.saveReadTime(head.finalizedTime);
     try {
       const fullDue =
         state.lastFullAt !== null &&

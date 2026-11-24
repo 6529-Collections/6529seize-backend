@@ -404,6 +404,30 @@ describe('WavesChainIndex', () => {
     expect(rowsOf(db)).toEqual(before);
   });
 
+  it('keeps the finalized block time of the height it read at, and keeps it while no time can be read', async () => {
+    const { db, index } = indexOf(chain, clock);
+    expect(db.readTime).toBeNull();
+    const first = await chain.head();
+    await index.run({ budgetMs: BIG });
+    expect(db.state.readHeight).toBe(first.finalizedHeight);
+    expect(db.readTime).toBe(first.finalizedTime);
+    chain.vote(E(1), V(1), 10);
+    chain.tick(60_000);
+    chain.tick(60_000);
+    // Finalized one block behind the newest: its time is not the clock's.
+    chain.lag = 1;
+    const second = await chain.head();
+    expect(second.finalizedTime).toBeGreaterThan(first.finalizedTime!);
+    expect(second.finalizedTime).toBeLessThan(clock.now());
+    await index.run({ budgetMs: BIG });
+    expect(db.state.readHeight).toBe(second.finalizedHeight);
+    expect(db.readTime).toBe(second.finalizedTime);
+    chain.vote(E(1), V(1), 11);
+    chain.timeUnknown = true;
+    await index.run({ budgetMs: BIG });
+    expect(db.readTime).toBe(second.finalizedTime);
+  });
+
   it('waits when no block time can be read for the head', async () => {
     const { db, index } = indexOf(chain, clock);
     await index.run({ budgetMs: BIG });

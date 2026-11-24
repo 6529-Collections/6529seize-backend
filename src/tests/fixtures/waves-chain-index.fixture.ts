@@ -646,6 +646,13 @@ export class FakeIndexDb {
     this.state = { ...state };
   }
 
+  /** waves_chain_index_state.read_time, beside the state. */
+  readTime: number | null = null;
+
+  async saveReadTime(readTime: number) {
+    this.readTime = readTime;
+  }
+
   async upsert(
     name: IndexTableName,
     rows: readonly IndexRow[],
