@@ -28,6 +28,13 @@ import { dropsDb } from '@/drops/drops.db';
 import { DropType } from '@/entities/IDrop';
 import type { RebuildContext } from '@/rebuild/manifest.types';
 import { PROBE_CONSOLIDATION_KEYS } from '@/rebuild/manifests/probe-fixture';
+import {
+  WIDE_KEY,
+  WIDE_PRINCIPAL,
+  WIDE_PROFILE_ID,
+  WIDE_TOP_UP,
+  WIDE_WALLETS
+} from '@/rebuild/areas/subs.wide-identity';
 import { encodeSignedRecordsHeader } from '@/signed-records/record-event';
 import { familyWave } from '@/signed-records/record-families';
 import { RecordKind } from '@/signed-records/record-kinds';
@@ -220,6 +227,48 @@ async function insertRow(
      values (${columns.map((c) => `:${c}`).join(', ')})`,
     params
   );
+}
+
+/**
+ * The wide identity's rows (subs.wide-identity.ts), as the identity
+ * mirror's tables hold them: its identity, under its consolidation key, and
+ * each wallet's key. The top-up loop reads the sender's key from here.
+ */
+async function seedWideIdentity(): Promise<void> {
+  await sqlExecutor.execute(
+    `insert ignore into ${IDENTITIES_TABLE}
+       (consolidation_key, profile_id, primary_address, handle,
+        normalised_handle, tdh, rep, cic, level_raw, classification,
+        xtdh, produced_xtdh, granted_xtdh, xtdh_rate, basetdh_rate)
+     values (:key, :profileId, :wallet, :handle, :handle,
+        0, 0, 0, 0, 'PSEUDONYM', 0, 0, 0, 0, 0)`,
+    {
+      key: WIDE_KEY,
+      profileId: WIDE_PROFILE_ID,
+      wallet: WIDE_WALLETS[0],
+      handle: WIDE_PROFILE_ID
+    }
+  );
+  for (const wallet of WIDE_WALLETS) {
+    await sqlExecutor.execute(
+      `insert ignore into ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key)
+       values (:wallet, :key)`,
+      { wallet, key: WIDE_KEY }
+    );
+  }
+}
+
+/**
+ * The wide identity's principal, in the identity mirror's table, which the
+ * cut reads to key the identity's wallets to it.
+ */
+async function bindWideIdentity(): Promise<void> {
+  await insertRow('identity_chain_principals', {
+    principal_id: WIDE_PRINCIPAL,
+    profile_id: WIDE_PROFILE_ID,
+    origin: 'LEGACY',
+    created_at: SEEDED_AT
+  });
 }
 
 /** The records service's identity, profile and wave, if they are missing. */
@@ -530,7 +579,8 @@ async function signedChoiceAfterSwitch(): Promise<void> {
 /**
  * Before the switch and before any card is minted: today's subscriptions
  * of the probe wallets, through the legacy write paths (a top-up each, all
- * editions for the first), and the transactions loop's processed block.
+ * editions for the first), the wide identity's top-up, which the key-width
+ * guard queues whole, and the transactions loop's processed block.
  */
 export async function seedSubscriptions(
   ctx: RebuildContext,
@@ -539,6 +589,8 @@ export async function seedSubscriptions(
   for (const top of BEFORE_TOP_UPS) {
     await deps.topUp(top.wallet, top.amount);
   }
+  await seedWideIdentity();
+  await deps.topUp(WIDE_TOP_UP.wallet, WIDE_TOP_UP.amount);
   await markRedemptionLoopRun(await deps.head());
   await updateSubscribeAllEditions(PROBE_CONSOLIDATION_KEYS[0], true);
 }
@@ -568,6 +620,10 @@ export async function seedSubscriptionsSwitch(
     records.serviceProfileId,
     records.serviceWallet
   );
+
+  // The cut credits the wide identity's queued top-up to its principal and
+  // keys the identity by the queue entry's key.
+  await bindWideIdentity();
 
   // The record log's closer does not run in a seed, so go-live's posting
   // probe is answered here: the seed closes the segment itself below.

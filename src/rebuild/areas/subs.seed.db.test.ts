@@ -35,6 +35,7 @@ import {
   SubscriptionsSeedDeps,
   seedSubscriptionsSwitch
 } from './subs.seed';
+import { WIDE_KEY, WIDE_PRINCIPAL, WIDE_TOP_UP } from './subs.wide-identity';
 
 jest.mock('@/subscriptionsDaily/subscription-cache', () => ({
   invalidateUpcomingSubscriptionCaches: jest.fn()
@@ -387,12 +388,61 @@ describeWithSeed('the subscriptions rebuild check', [], () => {
     const deps = creditedTopUps();
     await seedProbeIdentities();
     await seedSubscriptions(contextOf('subs.seed', files, null), deps);
+    // The wide identity's top-up is queued whole: a real TOP_UP row, and no
+    // legacy top-up row.
+    const queuedTopUps = () =>
+      sqlExecutor.execute<{
+        consolidation_key: string;
+        hash: string;
+        replayed_at: unknown;
+      }>(
+        `select consolidation_key,
+                json_unquote(json_extract(payload, '$.topUp.hash')) as hash,
+                replayed_at
+           from subscription_deferred_writes where kind = 'TOP_UP'`
+      );
+    const [queued] = await queuedTopUps();
+    expect(queued).toEqual({
+      consolidation_key: WIDE_KEY,
+      hash: expect.any(String),
+      replayed_at: null
+    });
+    expect(
+      await sqlExecutor.execute(
+        `select hash from subscriptions_top_up where from_wallet = :wallet`,
+        { wallet: WIDE_TOP_UP.wallet }
+      )
+    ).toEqual([]);
+
     await seedSubscriptionsSwitch(
       contextOf('subs.switch', files, dir),
       env,
       deps
     );
     expect(await subscriptionsIdentitySwitch.writeModeOrFail()).toBe('TRUTH');
+    // The cut credited it once to the wide identity's principal, and keyed
+    // the identity by the queue entry's key; the entry stays pending.
+    expect(
+      await sqlExecutor.execute(
+        `select hash, identity_key, amount from subscriptions_id_top_up
+          where from_wallet = :wallet`,
+        { wallet: WIDE_TOP_UP.wallet }
+      )
+    ).toEqual([
+      {
+        hash: queued.hash,
+        identity_key: WIDE_PRINCIPAL,
+        amount: Number(WIDE_TOP_UP.amount)
+      }
+    ]);
+    expect(
+      await sqlExecutor.execute(
+        `select consolidation_key from subscriptions_id_key_map
+          where identity_key = :principal`,
+        { principal: WIDE_PRINCIPAL }
+      )
+    ).toEqual([{ consolidation_key: WIDE_KEY }]);
+    expect(await queuedTopUps()).toEqual([queued]);
     // With the identity tables there and the truth, the seed closed every
     // record log entry it wrote.
     expect(await openLanes()).toEqual([]);
@@ -484,8 +534,9 @@ describeWithSeed('the subscriptions rebuild check', [], () => {
         (row) => JSON.parse(row as string).phase
       )
     ).toEqual(['Phase 0']);
-    expect(before.subscriptions_id_balances).toHaveLength(2);
-    expect(before.subscriptions_id_top_up).toHaveLength(3);
+    // The probe wallets' and the wide identity's.
+    expect(before.subscriptions_id_balances).toHaveLength(3);
+    expect(before.subscriptions_id_top_up).toHaveLength(4);
     // The signed choice after the switch: its head, in the subscriptions'
     // family and type.
     expect(
@@ -495,6 +546,7 @@ describeWithSeed('the subscriptions rebuild check', [], () => {
       })
     ).toEqual([['ps', 'subs.all-editions']]);
     const legacyBefore = await snapshot(LEGACY_TABLES);
+    // The wide identity's key is too long for the legacy columns: no row.
     expect(legacyBefore.subscriptions_balances).toHaveLength(2);
     expect(legacyBefore.subscriptions_nfts_final).toHaveLength(1);
     expect(legacyBefore.subscriptions_nfts_final_upload).toHaveLength(1);

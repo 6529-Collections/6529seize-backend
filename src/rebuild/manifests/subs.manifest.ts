@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { AreaManifest, Probe, RebuildStep } from '@/rebuild/manifest.types';
+import { WIDE_TOP_UP } from '@/rebuild/areas/subs.wide-identity';
 import {
   PROBE_CONSOLIDATION_KEYS,
   PROBE_MEME_IDS,
@@ -103,7 +104,10 @@ const SUBS_SEED: RebuildStep = {
   writes: [
     ...LEGACY_WRITES,
     'subscriptions_top_up_latest_block',
-    'transactions_processed_subscriptions_blocks'
+    'transactions_processed_subscriptions_blocks',
+    // The wide identity (subs.wide-identity.ts) and its wallets' key.
+    'identities',
+    'address_consolidation_keys'
   ],
   // The probe wallets' keys.
   after: ['identity.probe-profiles'],
@@ -147,6 +151,8 @@ const SUBS_SWITCH_SEED: RebuildStep = {
     'signed_record_heads',
     'identities',
     'address_consolidation_keys',
+    // The wide identity's principal, which the cut keys it by.
+    'identity_chain_principals',
     'profiles',
     'waves',
     'drops',
@@ -327,6 +333,12 @@ const PROBES: Probe[] = [
     id: 'subs.details',
     path: '/api/subscriptions/consolidation/details/{key}',
     each: { key: PROBE_CONSOLIDATION_KEYS }
+  },
+  {
+    // The wide identity, by one of its wallets: the balance its queued
+    // top-up got at the cut, which the rebuild must give back.
+    id: 'subs.details-wide',
+    path: `/api/subscriptions/consolidation/details/${WIDE_TOP_UP.wallet}`
   },
   {
     id: 'subs.top-up',
