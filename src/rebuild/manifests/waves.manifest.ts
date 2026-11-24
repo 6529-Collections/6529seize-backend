@@ -174,12 +174,19 @@ const DROP_METRICS_REBUILDERS: RebuildStep[] = [
     reads: ['drops', 'competition_entries', 'competitions'],
     after: ['waves.chain-mirror'],
     sources: ['repo'],
-    timeoutMinutes: 15
-    // A wave without drops has a metrics row only through its subscribers
-    // or its scores, whose owners are planned: such a seeded row shows as a
-    // difference. Its plan (until 2026-12-04, until those owners land)
-    // waits for the harness to read a plan's condition with the run's
-    // database as the default one, so it can name drops.
+    timeoutMinutes: 15,
+    plannedRows: [
+      {
+        table: 'wave_metrics',
+        where:
+          'wave_id not in (select wave_id from drops where wave_id is not null)',
+        reason:
+          'A wave without drops has a metrics row only through its subscribers or its scores, whose owners are planned.',
+        until: '2026-12-04',
+        change:
+          "The owners of wave_metrics' subscriber and score columns land and write those rows."
+      }
+    ]
   },
   {
     id: 'waves.wave-subscriber-count',
