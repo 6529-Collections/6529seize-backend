@@ -19,6 +19,11 @@ import {
   RelayApplyStore,
   RelayDropApplier,
   RelayDropWrites,
+  DIRECT_MESSAGE_REASON,
+  INDEX_BEHIND_REASON,
+  INDEX_NOT_READY_REASON,
+  NOT_ON_SITE_REASON,
+  RECORDS_WAVE_REASON,
   recordsWaveIdOf,
   STAYS_ON_SITE_REASON,
   WaveOnChain
@@ -74,11 +79,11 @@ class FakeStore implements RelayApplyStore {
   reservations = new Set<string>();
   // Whether the chain holds each wave; a wave not listed has moved.
   onChain = new Map<string, WaveOnChain>();
-  readonly wavesAsked: string[] = [];
+  readonly wavesAsked: [string, number][] = [];
   constructor(private readonly events: IngestedEvent[]) {}
 
-  async waveOnChain(wave: string) {
-    this.wavesAsked.push(wave);
+  async waveOnChain(wave: string, seenAt: number) {
+    this.wavesAsked.push([wave, seenAt]);
     return this.onChain.get(wave) ?? 'moved';
   }
 
@@ -478,73 +483,56 @@ describe('RelayDropApplier and waves that stay on 6529.io', () => {
     anEvent(DeviceEventKind.REACT, { on: true, reaction: ':fire:' }, ['drop-3'])
   ];
 
-  it('writes nothing of any kind into a wave the chain does not hold', async () => {
-    const events = kinds();
-    const store = new FakeStore(events);
-    store.onChain.set('wave-1', 'stays');
-    const { writes, calls } = aWrites();
-    const late = () => events[events.length - 1].received_at + POST_WAIT_MS;
-    const report = await new RelayDropApplier(
-      store,
-      writes,
-      late,
-      null
-    ).applyPending(RUN);
-    expect(report).toMatchObject({ applied: 0, refused: 4, retry: 0 });
-    expect(store.marks.map((m) => [m[1], m[2], m[3]])).toEqual(
-      events.map(() => ['refused', STAYS_ON_SITE_REASON, null])
-    );
-    // Not even the grant or a stale reservation is touched.
-    expect(calls).toEqual([]);
-    expect(store.released).toEqual([]);
-  });
+  const run = (store: FakeStore, writes: RelayDropWrites, now = Date.now()) =>
+    new RelayDropApplier(store, writes, () => now, null).applyPending(RUN);
 
-  it('waits, without counting a try, while the chain index has not finished a full read', async () => {
-    const events = kinds();
-    const store = new FakeStore(events);
-    store.onChain.set('wave-1', 'unknown');
-    const { writes, calls } = aWrites();
-    const late = () => events[events.length - 1].received_at + POST_WAIT_MS;
-    const report = await new RelayDropApplier(
-      store,
-      writes,
-      late,
-      null
-    ).applyPending(RUN);
-    expect(report).toMatchObject({ applied: 0, refused: 0, retry: 4 });
-    expect(store.marks.map((m) => [m[1], m[2]])).toEqual(
-      events.map(() => [
-        'waiting',
-        'the chain index has not finished reading the chain'
-      ])
-    );
-    expect(store.waits.map((w) => w[1])).toEqual(
-      events.map(() => late() + WAIT_RETRY_MS)
-    );
-    expect(calls).toEqual([]);
-  });
+  it.each([
+    ['stays', STAYS_ON_SITE_REASON],
+    ['direct_message', DIRECT_MESSAGE_REASON]
+  ] as const)(
+    'writes nothing of any kind into a wave that is %s',
+    async (onChain, reason) => {
+      const events = kinds();
+      const store = new FakeStore(events);
+      store.onChain.set('wave-1', onChain);
+      const { writes, calls } = aWrites();
+      const report = await run(store, writes);
+      expect(report).toMatchObject({ applied: 0, refused: 4, retry: 0 });
+      expect(store.marks.map((m) => [m[1], m[2], m[3]])).toEqual(
+        events.map(() => ['refused', reason, null])
+      );
+      // Not even the grant or a stale reservation is touched.
+      expect(calls).toEqual([]);
+      expect(store.released).toEqual([]);
+    }
+  );
 
-  it('waits for a wave the index does not hold yet for an hour from when the event was first seen, then refuses it', async () => {
-    const post = anEvent(DeviceEventKind.POST, POST);
-    const { writes, calls } = aWrites();
-    const early = new FakeStore([post]);
-    early.onChain.set('wave-1', 'stays');
-    const soon = () => post.received_at + POST_WAIT_MS - 1;
-    await new RelayDropApplier(early, writes, soon, null).applyPending(RUN);
-    expect(early.marks[0].slice(1, 3)).toEqual([
-      'waiting',
-      'the chain index does not hold the wave yet'
-    ]);
-    const after = new FakeStore([post]);
-    after.onChain.set('wave-1', 'stays');
-    const later = () => post.received_at + POST_WAIT_MS;
-    await new RelayDropApplier(after, writes, later, null).applyPending(RUN);
-    expect(after.marks[0].slice(1, 3)).toEqual([
-      'refused',
-      STAYS_ON_SITE_REASON
-    ]);
-    expect(calls).toEqual([]);
-  });
+  it.each([
+    ['unknown', INDEX_NOT_READY_REASON],
+    ['behind', INDEX_BEHIND_REASON],
+    ['not_on_site', NOT_ON_SITE_REASON]
+  ] as const)(
+    'waits, however long since the event was first seen, without counting a try, while the wave is %s',
+    async (onChain, reason) => {
+      const events = kinds();
+      const store = new FakeStore(
+        events.map((e) => ({ ...e, apply_attempts: MAX_APPLY_ATTEMPTS - 1 }))
+      );
+      store.onChain.set('wave-1', onChain);
+      const { writes, calls } = aWrites();
+      // A day and a half after it was first seen.
+      const now = events[3].received_at + 36 * 60 * 60 * 1000;
+      const report = await run(store, writes, now);
+      expect(report).toMatchObject({ applied: 0, refused: 0, retry: 4 });
+      expect(store.marks.map((m) => [m[1], m[2]])).toEqual(
+        events.map(() => ['waiting', reason])
+      );
+      expect(store.waits.map((w) => w[1])).toEqual(
+        events.map(() => now + WAIT_RETRY_MS)
+      );
+      expect(calls).toEqual([]);
+    }
+  );
 
   it("refuses 6529.io's records wave even where the chain holds it", async () => {
     const events = kinds();
@@ -558,13 +546,13 @@ describe('RelayDropApplier and waves that stay on 6529.io', () => {
     ).applyPending(RUN);
     expect(report).toMatchObject({ applied: 0, refused: 4 });
     expect(new Set(store.marks.map((m) => m[2]))).toEqual(
-      new Set(["the wave stays on 6529.io: it is 6529.io's records wave"])
+      new Set([RECORDS_WAVE_REASON])
     );
     expect(store.wavesAsked).toEqual([]);
     expect(calls).toEqual([]);
   });
 
-  it('asks about the wave the event names, in lowercase, and writes into a wave the chain holds', async () => {
+  it('asks about the wave the event names, in lowercase, with when it was first seen, and writes into a wave the chain holds', async () => {
     const edit = anEvent(DeviceEventKind.EDIT, { parts: [] }, ['drop-1'], {
       wave: 'Wave-1'
     });
@@ -577,15 +565,53 @@ describe('RelayDropApplier and waves that stay on 6529.io', () => {
       'records-wave'
     ).applyPending(RUN);
     expect(report.applied).toBe(1);
-    expect(store.wavesAsked).toEqual(['wave-1']);
+    expect(store.wavesAsked).toEqual([['wave-1', edit.received_at]]);
     expect(calls.map((c) => c[0])).toEqual(['grant', 'update']);
   });
 
-  it('reads the records wave from SIGNED_RECORDS_WAVE_ID', () => {
-    expect(recordsWaveIdOf({})).toBeNull();
-    expect(recordsWaveIdOf({ SIGNED_RECORDS_WAVE_ID: '  ' })).toBeNull();
-    expect(recordsWaveIdOf({ SIGNED_RECORDS_WAVE_ID: ' AB-Cd ' })).toBe(
+  it('reads the records wave from SIGNED_RECORDS_WAVE_ID; unset, none is refused as it, logged once', async () => {
+    const warn = jest.fn();
+    expect(recordsWaveIdOf({ SIGNED_RECORDS_WAVE_ID: ' AB-Cd ' }, warn)).toBe(
       'ab-cd'
     );
+    expect(recordsWaveIdOf({}, warn)).toBeNull();
+    expect(recordsWaveIdOf({ SIGNED_RECORDS_WAVE_ID: '  ' }, warn)).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn.mock.calls[0][0]).toContain(
+      'SIGNED_RECORDS_WAVE_ID IS NOT SET'
+    );
+    // Unset: the applier runs, and the chain's mapping decides.
+    const original = process.env.SIGNED_RECORDS_WAVE_ID;
+    delete process.env.SIGNED_RECORDS_WAVE_ID;
+    try {
+      const store = new FakeStore([anEvent(DeviceEventKind.POST, POST)]);
+      const { writes } = aWrites();
+      const report = await new RelayDropApplier(store, writes).applyPending(
+        RUN
+      );
+      expect(report.applied).toBe(1);
+    } finally {
+      if (original !== undefined) process.env.SIGNED_RECORDS_WAVE_ID = original;
+    }
+  });
+});
+
+describe('an unset records wave', () => {
+  it('is logged once', () => {
+    jest.isolateModules(() => {
+      const { Logger } = require('@/logging');
+      const warn = jest
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+      const fresh = require('./relay-drop-applier');
+      expect(fresh.recordsWaveIdOf({})).toBeNull();
+      expect(fresh.recordsWaveIdOf({})).toBeNull();
+      expect(
+        warn.mock.calls.filter((c) =>
+          String(c[0]).includes('SIGNED_RECORDS_WAVE_ID IS NOT SET')
+        )
+      ).toHaveLength(1);
+      warn.mockRestore();
+    });
   });
 });

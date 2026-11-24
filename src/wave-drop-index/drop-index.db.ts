@@ -3,13 +3,16 @@ import {
   DEVICE_SIGNED_EVENTS_TABLE,
   WAVE_RELAY_EVENTS_TABLE,
   WAVE_RELAY_REJECTS_TABLE,
-  WAVE_RELAY_SUBSCRIPTIONS_TABLE
+  WAVE_RELAY_SUBSCRIPTIONS_TABLE,
+  WAVES_TABLE
 } from '@/constants';
 import { DeviceEventKind } from '@/api/device-signing/device-event';
+import { DbPoolName } from '@/db-query.options';
 import { DeviceGrantEntity } from '@/entities/IDeviceGrant';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import {
-  chainIndexReady,
+  chainIndexProgress,
+  expectedChainNetwork,
   wavesOnChain
 } from '@/waves-chain-index/waves-chain-mapping';
 import { CrpCursor } from '@/wave-relay-publish/crp-client';
@@ -341,14 +344,42 @@ export class DropIndexDb extends LazyDbAccessCompatibleService {
   }
 
   /**
-   * Whether the 6529 chain holds the wave, by the chain index's mapping
-   * (waves-chain-mapping.ts): unknown until the index has finished a full
-   * read.
+   * Whether the 6529 chain holds the wave of an event first seen at
+   * `seenAt`, by the chain index's mapping (waves-chain-mapping.ts), read on
+   * the writer:
+   * - `direct_message`: a direct message on 6529.io, which stays always;
+   * - `unknown`: the index hasn't finished a full read of the chain (on its
+   *   network, WAVES_SETTLEMENT_NETWORK_ID, when that is set);
+   * - `moved`: the chain holds it, and 6529.io has its row;
+   * - `not_on_site`: the chain holds it, and the chain mirror hasn't
+   *   written its row on 6529.io yet;
+   * - `behind`: it doesn't, but the index hasn't read the chain through
+   *   `seenAt` yet, so the wave may be one made on the chain since;
+   * - `stays`: the index has read past `seenAt` and the chain doesn't hold
+   *   it.
    */
-  async waveOnChain(wave: string): Promise<WaveOnChain> {
-    if (!(await chainIndexReady(this.db))) return 'unknown';
-    const held = await wavesOnChain(this.db, [wave]);
-    return held.has(wave.trim().toLowerCase()) ? 'moved' : 'stays';
+  async waveOnChain(wave: string, seenAt: number): Promise<WaveOnChain> {
+    const id = wave.trim().toLowerCase();
+    const options = { forcePool: DbPoolName.WRITE };
+    const site = await this.db.oneOrNull<{ dm: number | string | null }>(
+      `select coalesce(is_direct_message, 0) as dm from ${WAVES_TABLE}
+        where id = :id`,
+      { id },
+      options
+    );
+    if (Number(site?.dm ?? 0) === 1) return 'direct_message';
+    const progress = await chainIndexProgress(
+      this.db,
+      options,
+      expectedChainNetwork()
+    );
+    if (!progress.ready) return 'unknown';
+    if ((await wavesOnChain(this.db, [id], options)).has(id)) {
+      return site ? 'moved' : 'not_on_site';
+    }
+    return progress.readThrough !== null && progress.readThrough >= seenAt
+      ? 'stays'
+      : 'behind';
   }
 
   /** Copies that failed a check, after `id` (a fix checks them again). */

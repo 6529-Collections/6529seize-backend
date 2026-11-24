@@ -7,6 +7,7 @@ import { ApiCreateDropRequest } from '@/api/generated/models/ApiCreateDropReques
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
 import { ApiUpdateDropRequest } from '@/api/generated/models/ApiUpdateDropRequest';
 import { BadRequestException } from '@/exceptions';
+import { Logger } from '@/logging';
 import { IngestedEvent } from './drop-index.db';
 
 /**
@@ -34,12 +35,13 @@ import { IngestedEvent } from './drop-index.db';
  *
  * Only waves that moved to the 6529 chain take relay events: a wave the
  * chain holds, by the chain index's mapping. A wave that stays on 6529.io
- * (one the chain doesn't hold, and always 6529.io's records wave,
- * SIGNED_RECORDS_WAVE_ID) keeps its drops as 6529.io writes them; its relay
- * events are refused. Until the index has finished a full read, events
- * wait; a wave the index doesn't hold yet waits up to POST_WAIT_MS from
- * when the event was first seen (a wave just made on the chain), then the
- * event is refused.
+ * keeps its drops as 6529.io writes them, and its relay events are refused:
+ * a direct message and 6529.io's records wave (SIGNED_RECORDS_WAVE_ID)
+ * always, and any wave the chain doesn't hold. Nothing is refused on a
+ * clock: an event waits while the index hasn't finished a full read, or
+ * hasn't read the chain through the time the event was first seen (the
+ * wave may be one made on the chain since), or while the chain mirror
+ * hasn't written a wave the chain holds. Waiting counts no try.
  */
 
 export const MAX_APPLY_ATTEMPTS = 5;
@@ -91,16 +93,29 @@ export interface RelayDropWrites {
 }
 
 /**
- * Whether the 6529 chain holds a wave: `moved` (the chain index maps it),
- * `stays` (the index has finished a full read and doesn't), `unknown`
- * (the index hasn't finished one).
+ * Where a wave stands for an event first seen at a time
+ * (DropIndexDb.waveOnChain): `moved` (the chain holds it and 6529.io has
+ * its row), `not_on_site` (the chain holds it; 6529.io's row is not written
+ * yet), `behind` (not held, and the index hasn't read the chain through
+ * that time), `stays` (not held, and the index has), `unknown` (the index
+ * hasn't finished a full read), `direct_message` (a direct message, which
+ * stays always).
  */
-export type WaveOnChain = 'moved' | 'stays' | 'unknown';
+export type WaveOnChain =
+  | 'moved'
+  | 'not_on_site'
+  | 'behind'
+  | 'stays'
+  | 'unknown'
+  | 'direct_message';
 
 /** What the applier needs of the index's table. */
 export interface RelayApplyStore {
-  /** Whether the chain holds the wave (waves-chain-mapping.ts). */
-  waveOnChain(wave: string): Promise<WaveOnChain>;
+  /**
+   * Where the wave stands for an event first seen at `seenAt`
+   * (waves-chain-mapping.ts).
+   */
+  waveOnChain(wave: string, seenAt: number): Promise<WaveOnChain>;
   /**
    * Relay-only events to write, oldest first: those due at `now`, a share
    * per author, none behind a waiting event of the same drop.
@@ -182,15 +197,46 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
-/** 6529.io's records wave (SIGNED_RECORDS_WAVE_ID), or null when unset. */
+const logger = Logger.get('WAVE_DROP_INDEX_APPLY');
+
+let warnedAboutRecordsWave = false;
+
+function warnOnce(message: string) {
+  if (warnedAboutRecordsWave) return;
+  warnedAboutRecordsWave = true;
+  logger.warn(message);
+}
+
+/**
+ * 6529.io's records wave (SIGNED_RECORDS_WAVE_ID), or null when unset: then
+ * no wave is refused as the records wave (the chain's mapping still keeps
+ * it, as any wave the chain doesn't hold), which is told to `warn` (by
+ * default, logged once).
+ */
 export function recordsWaveIdOf(
-  env: Readonly<Record<string, string | undefined>> = process.env
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  warn: (message: string) => void = warnOnce
 ): string | null {
-  return env.SIGNED_RECORDS_WAVE_ID?.trim().toLowerCase() || null;
+  const id = env.SIGNED_RECORDS_WAVE_ID?.trim().toLowerCase();
+  if (id) return id;
+  warn(
+    '[SIGNED_RECORDS_WAVE_ID IS NOT SET] [NO WAVE REFUSED AS THE RECORDS WAVE]'
+  );
+  return null;
 }
 
 export const STAYS_ON_SITE_REASON =
   'the wave stays on 6529.io: the 6529 chain does not hold it';
+export const DIRECT_MESSAGE_REASON =
+  'the wave stays on 6529.io: it is a direct message';
+export const RECORDS_WAVE_REASON =
+  "the wave stays on 6529.io: it is 6529.io's records wave";
+export const INDEX_NOT_READY_REASON =
+  'the chain index has not finished reading the chain';
+export const INDEX_BEHIND_REASON =
+  'the chain index has not read the chain through this event yet';
+export const NOT_ON_SITE_REASON =
+  'the 6529 chain holds the wave; 6529.io has not written it yet';
 
 export class RelayDropApplier {
   constructor(
@@ -307,19 +353,22 @@ export class RelayDropApplier {
   private async assertWaveMoved(event: IngestedEvent): Promise<void> {
     const wave = event.wave.trim().toLowerCase();
     if (this.recordsWaveId !== null && wave === this.recordsWaveId) {
-      throw new Refused(
-        "the wave stays on 6529.io: it is 6529.io's records wave"
-      );
+      throw new Refused(RECORDS_WAVE_REASON);
     }
-    const onChain = await this.store.waveOnChain(wave);
-    if (onChain === 'moved') return;
-    if (onChain === 'unknown') {
-      throw new Wait('the chain index has not finished reading the chain');
+    switch (await this.store.waveOnChain(wave, event.received_at)) {
+      case 'moved':
+        return;
+      case 'direct_message':
+        throw new Refused(DIRECT_MESSAGE_REASON);
+      case 'stays':
+        throw new Refused(STAYS_ON_SITE_REASON);
+      case 'unknown':
+        throw new Wait(INDEX_NOT_READY_REASON);
+      case 'behind':
+        throw new Wait(INDEX_BEHIND_REASON);
+      case 'not_on_site':
+        throw new Wait(NOT_ON_SITE_REASON);
     }
-    if (this.now() - event.received_at < POST_WAIT_MS) {
-      throw new Wait('the chain index does not hold the wave yet');
-    }
-    throw new Refused(STAYS_ON_SITE_REASON);
   }
 
   /** Writes one event; returns the drop it wrote or touched. */
