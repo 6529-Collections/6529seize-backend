@@ -22,8 +22,10 @@ let recordLogSource: (() => MintRecordLogSource) | null = null;
 
 /**
  * Binds how a rebuild reads the record log: the signed-records module's
- * RecordLogReader over the records wave (read through the relays) and the
- * files source. Until it is bound the rebuild step says so and stops.
+ * RecordLogReader over the records wave's head drops in 6529.io's drops
+ * table (LocalRecordsWaveReader; the records wave stays on 6529.io after
+ * the waves switch) and the files source. Until it is bound the rebuild
+ * step says so and stops.
  */
 export function setMintRecordLogSource(
   source: (() => MintRecordLogSource) | null
