@@ -1719,15 +1719,38 @@ export class UserGroupsService {
    * Replacing a group gives the new version the old one's id, so every wave
    * and decision that names it changes with it. While waves move to the
    * 6529 chain, a group a wave, decision or curation uses can't be replaced.
+   *
+   * The check only reads, and runs before the request's receipt is written,
+   * so a refused request leaves no receipt. A retry of a save that finished
+   * before the freeze, under the same Idempotency-Key, is let through: the
+   * transaction finds its receipt and returns the stored result, or 409 if
+   * the key was used for a different save, and changes no group.
    */
   private async assertReplacementNotFrozen(
-    oldVersionId: string | null | undefined,
+    change: GroupVisibilityChange,
+    requestId: string | null,
     ctx: RequestContext
   ): Promise<void> {
+    const oldVersionId = change.old_version_id;
     if (!oldVersionId || !isWavesFrozen()) return;
     const waveGroupIds = await this.userGroupsDb.getAllWaveRelatedGroups(ctx);
-    if (waveGroupIds.includes(oldVersionId))
-      throw new WavesFrozenException(WAVES_FROZEN_GROUP_MESSAGE);
+    if (!waveGroupIds.includes(oldVersionId)) return;
+    if (await this.hasFinishedVisibilityRequest(change, requestId, ctx)) return;
+    throw new WavesFrozenException(WAVES_FROZEN_GROUP_MESSAGE);
+  }
+
+  private async hasFinishedVisibilityRequest(
+    change: GroupVisibilityChange,
+    requestId: string | null,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    if (!requestId) return false;
+    const receipt = await this.userGroupsDb.findVisibilityRequest(
+      requestId,
+      ctx
+    );
+    if (receipt) return Boolean(receipt.completed);
+    return (await this.findLegacyVisibilityRequest(change, ctx)) !== null;
   }
 
   async changeVisibility(
@@ -1741,7 +1764,7 @@ export class UserGroupsService {
     const requestId = idempotencyKey
       ? visibilityRequestHash([profile_id, idempotencyKey])
       : null;
-    await this.assertReplacementNotFrozen(old_version_id, ctx);
+    await this.assertReplacementNotFrozen(change, requestId, ctx);
     const { updatedGroup, replacedGroup, replayed } =
       await this.userGroupsDb.executeNativeQueriesInTransaction(
         async (connection) => {
