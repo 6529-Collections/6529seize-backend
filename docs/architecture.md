@@ -862,6 +862,30 @@ this API support while new clients are deployed; roll back the frontend first.
 
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
 
+### 6529 chain gateway boundary
+
+Identities (profiles, handles, consolidations, delegations, REP, NIC and
+levels) move to the 6529 chain. `src/chain-gateway/chain-gateway.client.ts`
+(`chainGatewayClient`) is the backend's one client for it: reads through the
+chain gateway's service access (`CHAIN_GATEWAY_URL`, bearer
+`CHAIN_GATEWAY_SERVICE_KEY`), relays signed operations (`POST /v1/draft`,
+`POST /v1/submit`), and fetches profile documents from the gateway's document
+store by CID, checking each against its CID. Reads are pinned to the latest
+finalized height it knows (refreshed every two seconds, never going back)
+and cached in memory by network and height, except answers of the node's
+own data (wallet histories, saved days, TDH lists, the feed), which can
+change at one height and are never cached. Reads retry network errors, 429
+and 5xx. A submit is sent again only after a 503, a 429 or a connection that
+never opened; after anything else it throws `outcome_unknown` with its txId,
+and callers ask `getTx` rather than wrapping it in a retry of their own.
+Uploads to the document store go through the gateway's public name, not
+service access. Every answer must name the chain the gateway's status names
+(`wrong_network` otherwise), and answers that can't be read, such as feed
+pages that don't hold together, throw `bad_answer` rather than reading as
+empty. Settings are read at first
+use, so loops that never call it need none. Loops and API code that read
+identity data from the chain add calls to this client, not their own.
+
 ### Ordinary Ethereum RPC boundary
 
 The shared provider in `src/ethereum-rpc/` reads the server-only

@@ -53,6 +53,14 @@ export class AppFeatures {
       (process.env.FEATURE_PROFILE_CMS_WALLET_GALLERY ?? 'true') === 'true'
     );
   }
+
+  /**
+   * The wave decision loop also keeps 6529.io's index of the 6529 chain's
+   * waves, decisions and votes (src/waves-chain-index).
+   */
+  public isWavesChainIndexEnabled(): boolean {
+    return this.isFeatureEnabled('WAVES_CHAIN_INDEX');
+  }
 }
 
 export const appFeatures = new AppFeatures();

@@ -236,6 +236,20 @@ export {
 export { ConsolidatedTDHUpload, UploadEntity } from './IUpload';
 export { UserGroupEntity } from './IUserGroup';
 export { WaveArchiveEntity, WaveEntity } from './IWave';
+export {
+  ChainDecisionEntity,
+  ChainDecisionLeaderboardEntity,
+  ChainLeaderboardRowEntity,
+  ChainEntryEntity,
+  ChainGroupEntity,
+  ChainPollEntity,
+  ChainResultEntity,
+  ChainVoteEntity,
+  ChainWaveEntity,
+  ChainWaveRepEntity,
+  ChainWaveRoleEntity,
+  WavesChainIndexStateEntity
+} from './IWavesChainIndex';
 export { WalletAuthSessionEntity } from './IWalletAuthSession';
 export type { WalletAuthClientType } from './IWalletAuthSession';
 export { WalletConnectionShareEntity } from './IWalletConnectionShare';
