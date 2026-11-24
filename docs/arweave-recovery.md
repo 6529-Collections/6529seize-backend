@@ -21,7 +21,8 @@ failover. Unknown HTTP origins retain their existing fetch policy; IPFS handling
 is unchanged. Every alternate content request still passes through the caller's
 public-network/redirect validation, byte caps and content validation.
 `createArweaveClient` provides SDK network reads through the same registry and
-bounded recovery policy. Local signing and conversion do not contact gateways.
+bounded recovery policy. Local signing and conversion do not contact gateways. SDK responses must be
+buffered; `webstream` is rejected before making a request.
 
 ## Upload identity and recovery
 
@@ -44,8 +45,10 @@ The SDK's potentially hour-long internal upload retry loop is not used.
 TDH retains eight concurrent chunk workers and its 120-second total budget. The
 shared file-uploader facade uses a bounded ten-minute budget for larger media;
 this is separate from NFT preview timing. Network requests have a ten-second
-attempt bound and a 64 KiB response cap, including gateway error bodies. Parent upload cancellation stops in-flight network requests and
-backoff. No private signing keys are included in checkpoints or diagnostics.
+attempt bound and a 64 KiB response cap, including resumed status probes and
+gateway error bodies. Parent upload cancellation stops in-flight network requests and
+backoff. No private signing keys are included in checkpoints or diagnostics. Provider
+response diagnostics use only recognized codes or generated numeric peer summaries.
 
 ## NFT preview behavior
 
@@ -99,8 +102,10 @@ upload consumers, then API. No schema deployment is required for this change.
 
 Run `./bin/6529 exec jest --config scripts/arweave-jest.config.cjs` for the
 DB-independent recovery, native upload integrity, caller and loopback transport
-checks. The boundary test prevents SDK creation and upload/chunk handling outside
-the shared subsystem. Caller tests cover JSON validation, policy failures,
+checks. The boundary test checks selected SDK creation/upload method names and
+recognized SDK receivers calling `api.post` on `tx` or `chunk` outside the shared
+subsystem. It is an AST guard, not an exhaustive detector of arbitrary direct
+HTTP submissions. Caller tests cover JSON validation, policy failures,
 content hashes, redirects, body-idle recovery, partial progress, lost responses,
 terminal errors and bounded cancellation. These tests never submit live uploads.
 

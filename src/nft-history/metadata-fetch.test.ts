@@ -122,3 +122,28 @@ it('keeps IPFS metadata on approved gateways', async () => {
     'https://ipfs.io/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi/metadata.json'
   );
 });
+
+it('cancels a stalled IPFS metadata request at the shared 15-second deadline', async () => {
+  jest.useFakeTimers();
+  try {
+    const fetch = jest.spyOn(globalThis, 'fetch').mockImplementation(
+      async (_input, options) =>
+        new Promise((_resolve, reject) => {
+          options?.signal?.addEventListener(
+            'abort',
+            () => reject(new Error('IPFS deadline expired')),
+            { once: true }
+          );
+        })
+    );
+    const result = fetchHistoryMetadata(
+      'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi/metadata.json'
+    ).catch((error) => error);
+    await jest.advanceTimersByTimeAsync(15001);
+    expect(await result).toMatchObject({ message: 'IPFS deadline expired' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][1]?.signal?.aborted).toBe(true);
+  } finally {
+    jest.useRealTimers();
+  }
+});

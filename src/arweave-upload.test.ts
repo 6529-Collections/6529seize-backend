@@ -1,3 +1,5 @@
+import { ArweaveUploadSession } from '@/arweave/upload';
+import type { JWKInterface } from 'arweave/node/lib/wallet';
 import Arweave from 'arweave';
 import Transaction from 'arweave/node/lib/transaction';
 import { ArweaveFileUploader, ArweaveUploadState } from '@/arweave';
@@ -26,14 +28,27 @@ function setup() {
       });
     });
   const post = jest.fn().mockImplementation(async () => new Response(''));
+  const status = jest.fn().mockResolvedValue({ status: 404, confirmed: null });
   jest.spyOn(global, 'fetch').mockImplementation(async (input, init) => {
     const path = new URL(String(input)).pathname.slice(1);
     if (init?.method === 'POST') return post(path, init?.body);
+    if (path.endsWith('/status')) {
+      const result = await status(path.split('/')[1]);
+      return new Response(
+        result.status === 200
+          ? JSON.stringify(
+              result.confirmed ?? {
+                block_indep_hash: 'b'.repeat(64),
+                block_height: 1,
+                number_of_confirmations: 1
+              }
+            )
+          : '',
+        { status: result.status }
+      );
+    }
     return new Response(path === 'tx_anchor' ? 'a'.repeat(43) : '100');
   });
-  const status = jest
-    .spyOn(arweave.transactions, 'getStatus')
-    .mockResolvedValue({ status: 404, confirmed: null });
   const uploader = new ArweaveFileUploader(() => ({
     arweave,
     key: { privateMarker: 'must-not-persist' }
@@ -320,3 +335,118 @@ it('waits for a durable chunk checkpoint before starting the next chunk', async 
     jest.restoreAllMocks();
   }
 });
+
+it.each(['header', 'stream'] as const)(
+  'caps the resumed status probe by %s and recovers through another gateway',
+  async (mode) => {
+    const { uploader, sign, create, post } = setup();
+    let savedState: ArweaveUploadState | undefined;
+    const canceled = jest.fn();
+    try {
+      await expect(
+        uploader.uploadFileWithTransactionId(bytes, 'text/plain', {
+          onState: async (state) => {
+            savedState = state;
+            throw new Error('stop before submission');
+          }
+        })
+      ).rejects.toThrow('stop before submission');
+      expect(post).not.toHaveBeenCalled();
+      const original = jest.mocked(global.fetch).getMockImplementation()!;
+      jest.mocked(global.fetch).mockImplementation(async (input, init) => {
+        const url = new URL(String(input));
+        if (!url.pathname.endsWith('/status')) return original(input, init);
+        if (url.hostname !== 'ardrive.net')
+          return new Response('', { status: 202 });
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new Uint8Array(131072));
+          },
+          cancel: canceled
+        });
+        return new Response(
+          body,
+          mode === 'header'
+            ? { headers: { 'content-length': '131072' } }
+            : undefined
+        );
+      });
+      await uploader.uploadFileWithTransactionId(bytes, 'text/plain', {
+        savedState,
+        onState: async () => undefined
+      });
+      expect(canceled).toHaveBeenCalledTimes(1);
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(sign).toHaveBeenCalledTimes(1);
+      expect(post.mock.calls.map(([path]) => path)).toEqual(['tx', 'chunk']);
+    } finally {
+      jest.restoreAllMocks();
+    }
+  }
+);
+
+it.each(['default', 'supplied'] as const)(
+  'cancels a resumed status probe for a %s client without changing its saved checkpoint',
+  async (kind) => {
+    const { uploader, arweave, create, sign, post } = setup();
+    let savedState: ArweaveUploadState | undefined;
+    const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
+    try {
+      await expect(
+        uploader.uploadFileWithTransactionId(bytes, 'text/plain', {
+          onState: async (state) => {
+            savedState = state;
+            throw new Error('checkpoint only');
+          }
+        })
+      ).rejects.toThrow('checkpoint only');
+      const unchanged = JSON.stringify(savedState);
+      const original = jest.mocked(global.fetch).getMockImplementation()!;
+      let probeSignal: AbortSignal | undefined;
+      jest.mocked(global.fetch).mockImplementation(async (input, init) => {
+        if (!new URL(String(input)).pathname.endsWith('/status'))
+          return original(input, init);
+        probeSignal = init?.signal ?? undefined;
+        return new Promise((_resolve, reject) => {
+          probeSignal?.addEventListener(
+            'abort',
+            () => reject(new Error('probe aborted')),
+            { once: true }
+          );
+        });
+      });
+      const onState = jest.fn();
+      await expect(
+        new ArweaveUploadSession(
+          logger,
+          kind === 'supplied' ? arweave : undefined,
+          30
+        ).upload(bytes, {} as JWKInterface, 'text/plain', {
+          savedState,
+          onState
+        })
+      ).rejects.toThrow('deadline');
+      expect(probeSignal?.aborted).toBe(true);
+      expect(onState).not.toHaveBeenCalled();
+      expect(JSON.stringify(savedState)).toBe(unchanged);
+      expect(post).not.toHaveBeenCalled();
+      jest
+        .mocked(global.fetch)
+        .mockImplementation(async (input, init) =>
+          new URL(String(input)).pathname.endsWith('/status')
+            ? new Response('', { status: 202 })
+            : original(input, init)
+        );
+      await expect(
+        uploader.uploadFileWithTransactionId(bytes, 'text/plain', {
+          savedState,
+          onState: async () => undefined
+        })
+      ).resolves.toMatchObject({ transaction_id: transactionId });
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(sign).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.restoreAllMocks();
+    }
+  }
+);

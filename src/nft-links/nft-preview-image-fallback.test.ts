@@ -235,3 +235,46 @@ it('preserves unsupported HTML when no fallback image exists', async () => {
     .mockResolvedValueOnce(html as never);
   await expect(service['downloadRemoteImage'](video)).resolves.toBe(html);
 });
+
+it.each([404, 410])(
+  'keeps metadata-image fallback after primary %s and exhausted alternate 503s',
+  async (status) => {
+    const source = `https://media.6529.io/arweave/${'A'.repeat(43)}`;
+    const service = makeService();
+    const download = jest
+      .spyOn(service as never, 'downloadOneGateway')
+      .mockImplementation((async (candidate: string) => {
+        if (candidate === image)
+          return { bytes, finalUrl: image, contentType: 'image/png' };
+        throw new HttpError(
+          candidate === source ? status : 503,
+          candidate,
+          'unavailable'
+        );
+      }) as never);
+    await expect(
+      service['downloadRemoteImage'](source, image)
+    ).resolves.toMatchObject({ bytes, finalUrl: image });
+    expect(download.mock.calls[0][0]).toBe(source);
+    expect(download.mock.calls.at(-1)?.[0]).toBe(image);
+    expect(download.mock.calls.length).toBeGreaterThan(2);
+  }
+);
+
+it('prefers a successful alternate animation gateway over the metadata image', async () => {
+  const source = `https://media.6529.io/arweave/${'A'.repeat(43)}`;
+  const service = makeService();
+  const recovered = {
+    bytes,
+    finalUrl: 'https://ardrive.net/recovered',
+    contentType: 'image/png'
+  };
+  const download = jest
+    .spyOn(service as never, 'downloadOneGateway')
+    .mockRejectedValueOnce(new HttpError(404, source, 'unavailable') as never)
+    .mockResolvedValueOnce(recovered as never);
+  await expect(service['downloadRemoteImage'](source, image)).resolves.toEqual(
+    recovered
+  );
+  expect(download).toHaveBeenCalledTimes(2);
+});

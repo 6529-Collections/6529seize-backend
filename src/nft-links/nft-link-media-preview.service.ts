@@ -1,5 +1,8 @@
 import { withArweaveFallback } from '@/arweave-gateway-fallback';
-import { ArweaveTimeoutError } from '@/arweave/recovery';
+import {
+  ArweaveTimeoutError,
+  isArweavePolicyRejection
+} from '@/arweave/recovery';
 import { createHash } from 'node:crypto';
 import { HttpError } from './lib/http';
 import type { Readable } from 'node:stream';
@@ -1118,16 +1121,36 @@ export class NftLinkMediaPreviewService {
     signal: AbortSignal,
     imageOnly = false
   ): Promise<DownloadedRemoteImage> {
-    return withArweaveFallback(
-      url,
-      (candidate, attemptSignal) =>
-        this.downloadOneGateway(candidate, attemptSignal, imageOnly),
-      {
-        signal,
-        timeoutMs: 90_000,
-        attemptTimeoutMs: 30_000
-      }
-    );
+    let primaryMissing: HttpError | undefined;
+    try {
+      return await withArweaveFallback(
+        url,
+        async (candidate, attemptSignal) => {
+          try {
+            return await this.downloadOneGateway(
+              candidate,
+              attemptSignal,
+              imageOnly
+            );
+          } catch (error) {
+            if (
+              candidate === url &&
+              error instanceof HttpError &&
+              [404, 410].includes(error.status)
+            )
+              primaryMissing = error;
+            throw error;
+          }
+        },
+        { signal, timeoutMs: 90_000, attemptTimeoutMs: 30_000 }
+      );
+    } catch (error) {
+      // Successful gateway recovery wins. Once recovery is exhausted, retain
+      // the primary absence for the existing metadata-image fallback decision.
+      if (primaryMissing && !signal.aborted && !isArweavePolicyRejection(error))
+        throw primaryMissing;
+      throw error;
+    }
   }
 
   private async downloadOneGateway(

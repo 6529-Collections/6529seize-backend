@@ -1,3 +1,4 @@
+import { isTransactionConfirmation } from '@/arweave/transaction-status';
 import Arweave from 'arweave';
 import Api, {
   RequestInitWithAxios,
@@ -29,6 +30,8 @@ export function createArweaveClient(
     path: string,
     init: RequestInitWithAxios = {}
   ): Promise<ResponseWithData<T>> => {
+    if (init.responseType === 'webstream')
+      throw new Error('Arweave recovery requires a buffered response');
     // SDK endpoints are relative paths, never arbitrary caller-controlled origins.
     if (/^[a-z]+:|^\/\//i.test(path))
       throw new Error('Invalid Arweave API path');
@@ -47,6 +50,12 @@ export function createArweaveClient(
           });
           if (!response.ok && response.status !== 202)
             throw new ArweaveApiResponseError(response);
+          if (
+            response.status === 200 &&
+            /^tx\/[\w-]+\/status$/.test(path) &&
+            !isTransactionConfirmation(response.data)
+          )
+            throw new Error('Invalid Arweave transaction status');
           const text = String(response.data);
           if (
             (path === 'tx_anchor' && !/^[\w-]{43,64}$/.test(text)) ||

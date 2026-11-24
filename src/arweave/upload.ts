@@ -1,3 +1,4 @@
+import { isTransactionConfirmationText } from '@/arweave/transaction-status';
 import Arweave from 'arweave';
 import { createArweaveClient } from '@/arweave/client';
 import { ARWEAVE_WRITE_GATEWAYS as GATEWAYS } from '@/arweave/gateways';
@@ -29,7 +30,7 @@ type Operation = {
   method: 'GET' | 'POST';
   body?: string;
   chunk?: number;
-  validate?: (body: string) => boolean;
+  validate?: (body: string, status: number) => boolean;
 };
 
 class GatewayError extends Error {
@@ -100,23 +101,47 @@ function peerFailureCode(details: object): string | undefined {
   return `peer_upload_failed:success_${details.successCount}:failure_${details.failureCount}:statuses_${statuses.join('_') || 'unknown'}`;
 }
 
-function providerCode(body: string): string {
-  let value: unknown;
-  try {
-    const details: unknown = JSON.parse(body);
-    if (typeof details === 'string') value = details;
-    else if (details && typeof details === 'object') {
-      if ('error' in details) value = details.error;
-      else if ('details' in details) value = details.details;
-      else value = peerFailureCode(details);
-    }
-  } catch {
-    value = body;
-  }
-  // Record short provider codes, never reflected request bodies or stacks.
-  return typeof value === 'string' && /^[\w .:-]{1,160}$/.test(value.trim())
+const PROVIDER_CODES = new Set([
+  ...Array.from(FATAL_CHUNK_ERRORS),
+  'not_joined',
+  'timeout',
+  'data_root_not_found',
+  'exceeds_disk_pool_size_limit',
+  'tx_not_found',
+  'invalid_tx',
+  'invalid_signature',
+  'insufficient_funds',
+  'tx_already_exists'
+]);
+
+function knownProviderCode(value: unknown): string {
+  return typeof value === 'string' && PROVIDER_CODES.has(value.trim())
     ? value.trim()
     : 'gateway_error';
+}
+
+function providerCode(body: string): string {
+  let details: unknown;
+  try {
+    details = JSON.parse(body);
+  } catch {
+    return knownProviderCode(body);
+  }
+  if (typeof details === 'string') return knownProviderCode(details);
+  if (!details || typeof details !== 'object') return 'gateway_error';
+  if ('error' in details) return knownProviderCode(details.error);
+  if ('details' in details) return knownProviderCode(details.details);
+  return peerFailureCode(details) ?? 'gateway_error';
+}
+
+class UploadRequestError extends Error {
+  constructor(
+    context: string,
+    readonly status: number
+  ) {
+    super(`Arweave request failed ${context}`);
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
 }
 
 function providerError(status: number, body: string): GatewayError {
@@ -201,16 +226,12 @@ export class ArweaveUploadSession {
       // The SDK rebuilds and validates chunk proofs against the signed data root.
       const restored = await this.client.transactions.getUploader(saved, data);
       const transaction = restored.toJSON().transaction;
+      this.transactionId = transaction.id;
       this.state = structuredClone(saved);
-      if (!this.state.txPosted) {
-        const status = await this.client.transactions.getStatus(transaction.id);
-        if (status.status === 200 || status.status === 202)
-          this.state.txPosted = true;
-        else if (status.status !== 404)
-          throw new Error(
-            `Unable to verify persisted Arweave transaction: ${status.status}`
-          );
-      }
+      if (!this.state.txPosted)
+        this.state.txPosted = await this.isPersistedTransactionKnown(
+          transaction.id
+        );
       return { transaction, data };
     }
     const [anchor, reward] = await Promise.all([
@@ -246,6 +267,22 @@ export class ArweaveUploadSession {
       lastResponseError: ''
     };
     return { transaction, data };
+  }
+
+  private async isPersistedTransactionKnown(id: string): Promise<boolean> {
+    try {
+      await this.request({
+        path: `tx/${id}/status`,
+        method: 'GET',
+        validate: (body, status) =>
+          status === 202 || isTransactionConfirmationText(body)
+      });
+      return true;
+    } catch (error) {
+      if (error instanceof UploadRequestError && error.status === 404)
+        return false;
+      throw error;
+    }
   }
 
   private async publish(
@@ -368,7 +405,7 @@ export class ArweaveUploadSession {
       const context = `[TX ${this.transactionId}] [GATEWAY ${gateway}] [OP ${requestedOperation.method} ${requestedOperation.path}] [CHUNK ${operation.chunk ?? '-'}] [ATTEMPT ${attempt + 1}/${attempts}] [STATUS ${failure.status}] [ERROR ${failure.code}]`;
       this.logger.warn(`[ARWEAVE REQUEST FAILED] ${context}`);
       if (!failure.retryable || attempt + 1 === attempts)
-        throw new Error(`Arweave request failed ${context}`);
+        throw new UploadRequestError(context, failure.status);
       // Gateway attempts depend on the preceding result; a second chunk round
       // allows fresh headers to propagate, within the overall upload deadline.
       await this.pause(retryDelay(operation, attempt));
@@ -426,7 +463,7 @@ export class ArweaveUploadSession {
       });
       const body = await boundedResponseText(response);
       if (!response.ok) throw providerError(response.status, body);
-      if (operation.validate && !operation.validate(body)) {
+      if (operation.validate && !operation.validate(body, response.status)) {
         throw new GatewayError(response.status, 'invalid_response', true);
       }
       return body;

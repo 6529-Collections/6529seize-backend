@@ -127,7 +127,7 @@ describe('TDH Arweave gateway uploads', () => {
     expect(Arweave.crypto.sign).toHaveBeenCalledTimes(1);
     expect(logger.warn).toHaveBeenCalledWith(
       expect.stringMatching(
-        /GATEWAY ardrive.net.*CHUNK 0.*STATUS 500.*function_clause/
+        /GATEWAY ardrive.net.*CHUNK 0.*STATUS 500.*gateway_error/
       )
     );
     expect(JSON.stringify(logger.warn.mock.calls)).not.toMatch(
@@ -522,3 +522,30 @@ it.each(['header', 'stream'] as const)(
     }
   }
 );
+
+it.each([
+  'private_marker_sensitive',
+  '{"error":"private_marker_sensitive"}',
+  '{"details":"private_marker_sensitive"}'
+])('redacts arbitrary short gateway response text %s', async (body) => {
+  const fetch = setup();
+  logger.warn.mockClear();
+  try {
+    fetch.mockImplementation(async (input, init) => {
+      if (init?.method === 'GET') return metadata(input);
+      return path(input) === '/chunk' &&
+        new URL(String(input)).hostname === 'ardrive.net'
+        ? new Response(body, { status: 500 })
+        : new Response('');
+    });
+    await uploadTdhCsvToArweave('CSV', key, logger);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('[ERROR gateway_error]')
+    );
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(
+      'private_marker_sensitive'
+    );
+  } finally {
+    jest.restoreAllMocks();
+  }
+});

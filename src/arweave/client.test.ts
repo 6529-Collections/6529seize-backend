@@ -39,3 +39,46 @@ it('checks alternative nodes before returning transaction absence', async () => 
   ).resolves.toEqual({ status: 404, confirmed: null });
   expect(fetch).toHaveBeenCalledTimes(2);
 });
+
+it.each(['get', 'request'] as const)(
+  'rejects SDK %s webstream before starting a request',
+  async (method) => {
+    const fetch = jest.spyOn(global, 'fetch');
+    await expect(
+      createArweaveClient().api[method]('info', { responseType: 'webstream' })
+    ).rejects.toThrow('buffered response');
+    expect(fetch).not.toHaveBeenCalled();
+  }
+);
+
+it.each([
+  '<html>unavailable</html>',
+  'null',
+  '{}',
+  '{"block_height":-1}',
+  '{"block_height":"1"}'
+])('recovers malformed transaction confirmation %s', async (body) => {
+  const confirmed = {
+    block_height: 1,
+    block_indep_hash: 'b'.repeat(64),
+    number_of_confirmations: 2
+  };
+  const fetch = jest
+    .spyOn(global, 'fetch')
+    .mockResolvedValueOnce(new Response(body))
+    .mockResolvedValueOnce(new Response(JSON.stringify(confirmed)));
+  await expect(
+    createArweaveClient().transactions.getStatus('a'.repeat(43))
+  ).resolves.toEqual({ status: 200, confirmed });
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it('preserves pending transaction status', async () => {
+  const fetch = jest
+    .spyOn(global, 'fetch')
+    .mockResolvedValue(new Response('', { status: 202 }));
+  await expect(
+    createArweaveClient().transactions.getStatus('a'.repeat(43))
+  ).resolves.toEqual({ status: 202, confirmed: null });
+  expect(fetch).toHaveBeenCalledTimes(1);
+});

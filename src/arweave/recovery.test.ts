@@ -13,7 +13,7 @@ const id = 'A'.repeat(43);
 const url = `https://media.6529.io/arweave/${id}/metadata.json`;
 afterEach(() => jest.useRealTimers());
 
-it('recovers the identical transaction/path from an alternative after a primary 404 or bad JSON', async () => {
+it('recovers the identical transaction/path from an alternative after a primary 404', async () => {
   const fetch = jest
     .fn()
     .mockRejectedValueOnce(new Error('HTTP 404'))
@@ -51,39 +51,47 @@ it.each([
 
 it('aborts a stalled gateway then recovers within one total budget', async () => {
   jest.useFakeTimers();
-  let first: AbortSignal | undefined;
-  const fetch = jest.fn(async (_url: string, signal: AbortSignal) => {
-    if (!first) {
-      first = signal;
-      return new Promise<string>(() => undefined);
-    }
-    return 'ready';
-  });
-  const result = recoverArweave(
-    ['https://one.example', 'https://two.example'],
-    fetch,
-    { timeoutMs: 90, attemptTimeoutMs: 30 }
-  );
-  await jest.advanceTimersByTimeAsync(31);
-  await expect(result).resolves.toBe('ready');
-  expect(first!.aborted).toBe(true);
+  try {
+    let first: AbortSignal | undefined;
+    const fetch = jest.fn(async (_url: string, signal: AbortSignal) => {
+      if (!first) {
+        first = signal;
+        return new Promise<string>(() => undefined);
+      }
+      return 'ready';
+    });
+    const result = recoverArweave(
+      ['https://one.example', 'https://two.example'],
+      fetch,
+      { timeoutMs: 90, attemptTimeoutMs: 30 }
+    );
+    await jest.advanceTimersByTimeAsync(31);
+    await expect(result).resolves.toBe('ready');
+    expect(first!.aborted).toBe(true);
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 it('bounds all attempts together and cancels in-flight work', async () => {
   jest.useFakeTimers();
-  const signals: AbortSignal[] = [];
-  const outcome = recoverArweave(
-    ['https://one.example', 'https://two.example', 'https://three.example'],
-    async (_url, signal) => {
-      signals.push(signal);
-      return new Promise(() => undefined);
-    },
-    { timeoutMs: 50, attemptTimeoutMs: 30 }
-  ).catch((error) => error);
-  await jest.advanceTimersByTimeAsync(51);
-  expect(await outcome).toBeInstanceOf(ArweaveTimeoutError);
-  expect(signals).toHaveLength(2);
-  expect(signals.every((signal) => signal.aborted)).toBe(true);
+  try {
+    const signals: AbortSignal[] = [];
+    const outcome = recoverArweave(
+      ['https://one.example', 'https://two.example', 'https://three.example'],
+      async (_url, signal) => {
+        signals.push(signal);
+        return new Promise(() => undefined);
+      },
+      { timeoutMs: 50, attemptTimeoutMs: 30 }
+    ).catch((error) => error);
+    await jest.advanceTimersByTimeAsync(51);
+    expect(await outcome).toBeInstanceOf(ArweaveTimeoutError);
+    expect(signals).toHaveLength(2);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 it('recognizes retired inputs without offering broken hosts as active alternatives', () => {
@@ -116,3 +124,19 @@ it('cancels immediately with its parent and never starts a fallback afterwards',
   expect(attemptSignal?.aborted).toBe(true);
   expect(fetch).toHaveBeenCalledTimes(1);
 });
+
+it.each(['?download=1', '#preview', '/asset.json?download=1'])(
+  'recovers raw transaction URLs with suffix %s',
+  async (suffix) => {
+    const input = `https://arweave.net/raw/${id}${suffix}`;
+    const fetch = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('HTTP 404'))
+      .mockResolvedValue('ready');
+    await expect(withArweaveFallback(input, fetch)).resolves.toBe('ready');
+    expect(fetch.mock.calls[0][0]).toBe(input);
+    expect(fetch.mock.calls[1][0]).toBe(
+      `https://ardrive.net/${id}${suffix.startsWith('/') ? '/asset.json' : ''}`
+    );
+  }
+);

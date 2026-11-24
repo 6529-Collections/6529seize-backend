@@ -10,6 +10,7 @@ module.exports = {
   testMatch: [
     '<rootDir>/src/arweave/**/*.test.ts',
     '<rootDir>/src/arweave-upload.test.ts',
+    '<rootDir>/src/minting-claims/claims-media-arweave-upload.test.ts',
     '<rootDir>/src/tdhLoop/tdh-arweave-upload.test.ts',
     '<rootDir>/src/decentralized-media/*.test.ts',
     '<rootDir>/src/nft-links/lib/*http*.test.ts',

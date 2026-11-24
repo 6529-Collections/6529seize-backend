@@ -9,7 +9,10 @@ import {
  */
 export function getArweaveFallbackUrls(url: string): string[] {
   const ref = parseDecentralizedMediaRef(
-    url.replace(/^(https:\/\/[^/]+)\/raw\/([A-Za-z0-9_-]{43})(?=\/|$)/, '$1/$2')
+    url.replace(
+      /^(https:\/\/[^/]+)\/raw\/([A-Za-z0-9_-]{43})(?=[/?#]|$)/,
+      '$1/$2'
+    )
   );
   if (ref?.protocol !== 'arweave') return [];
 
