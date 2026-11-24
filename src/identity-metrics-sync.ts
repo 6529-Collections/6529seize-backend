@@ -4,6 +4,7 @@ import {
   RATINGS_TABLE
 } from '@/constants';
 import { DbPoolName } from '@/db-query.options';
+import { isIdentityOnChain } from '@/identity-freeze/identity-freeze';
 import {
   querySqlInListChunks,
   SQL_IN_LIST_CHUNK_BYTES,
@@ -235,14 +236,26 @@ function partitionScopedRows(
  * sources (REP and CIC ratings, consolidated TDH), the same values the old
  * all-rows reset and recompute produced, without a long transaction.
  *
+ * From switch-on (isIdentityOnChain) the identity mirror is the one writer of
+ * rep, cic and level_raw, all from the chain (the ratings table keeps the help
+ * bot's credits, which are not REP), and keeps levels current after each TDH
+ * day. A chunk then writes tdh and basetdh_rate only, reads no ratings and
+ * takes no ratings locks: it locks the TDH rows, then its identities rows in
+ * key order. No transaction may lock identities rows and then TDH rows (the
+ * mirror reads no TDH rows; the chain TDH writer writes no identities). A
+ * deadlock between a chunk and the mirror's writes, which lock identities
+ * in their own order, is retried by the chunk and by the mirror's retry
+ * list.
+ *
  * `syncAll` walks every identity in primary-key order; `syncScoped` covers
  * only the listed identities. Each chunk is one short transaction that writes
  * every row's final values at once, so no reader ever sees a reset or
  * partial value: an interrupted run leaves each row at its old or its final
  * values, and re-running converges. Rows already correct are not written.
  *
- * Lock order (the rule for every transaction writing ratings and identities):
- * ratings row locks before identities row locks, identities in key order.
+ * Lock order (the rule for every transaction writing ratings and identities
+ * before switch-on): ratings row locks before identities row locks,
+ * identities in key order.
  * A rating write that checks the rater's credit (and the over-rate
  * revocation) takes its rater's rating_credit_locks row before both; nothing
  * here locks that table. The rating path updates ratings, then applies its
@@ -411,20 +424,36 @@ export class IdentityMetricsSync extends LazyDbAccessCompatibleService {
     // only ratings index records this chunk already holds: a rating write
     // that has changed another index and waits on this one can't block it.
     const profileIds = chunk.profileIds.length ? chunk.profileIds : [null];
-    await this.db.execute(
-      `select count(*) as n from ${RATINGS_TABLE} force index (${RATINGS_SUM_INDEX})
+    const onChain = isIdentityOnChain();
+    if (!onChain) {
+      await this.db.execute(
+        `select count(*) as n from ${RATINGS_TABLE} force index (${RATINGS_SUM_INDEX})
        where matter in ('REP', 'CIC') and matter_target_id in (:profileIds)
        for share`,
-      { profileIds },
-      { wrappedConnection: connection }
-    );
+        { profileIds },
+        { wrappedConnection: connection }
+      );
+    }
     await settings.afterSourcesLocked?.(chunkNumber);
     // 2. Final values for every row of the chunk, written only where they
     // differ. level_raw is written from the new values explicitly: a
     // multi-table UPDATE does not promise left-to-right assignment.
     const identityRows = keyCondition('i.consolidation_key');
-    const update = await this.db.execute(
-      `update ${IDENTITIES_TABLE} i
+    const update = onChain
+      ? await this.db.execute(
+          `update ${IDENTITIES_TABLE} i
+       left join ${CONSOLIDATED_WALLETS_TDH_TABLE} c
+         on c.consolidation_key = i.consolidation_key
+       set i.tdh = coalesce(c.boosted_tdh, 0),
+           i.basetdh_rate = coalesce(c.boosted_tdh_rate, 0)
+       where ${identityRows.sql}
+         and (i.tdh <> coalesce(c.boosted_tdh, 0)
+           or i.basetdh_rate <> coalesce(c.boosted_tdh_rate, 0))`,
+          identityRows.params,
+          { wrappedConnection: connection }
+        )
+      : await this.db.execute(
+          `update ${IDENTITIES_TABLE} i
        left join (
          select matter_target_id as profile_id,
                 sum(case when matter = 'REP' then rating else 0 end) as rep,
@@ -446,9 +475,9 @@ export class IdentityMetricsSync extends LazyDbAccessCompatibleService {
            or i.tdh <> coalesce(c.boosted_tdh, 0)
            or i.basetdh_rate <> coalesce(c.boosted_tdh_rate, 0)
            or i.level_raw <> coalesce(r.rep, 0) + coalesce(c.boosted_tdh, 0) + i.xtdh)`,
-      { ...identityRows.params, profileIds },
-      { wrappedConnection: connection }
-    );
+          { ...identityRows.params, profileIds },
+          { wrappedConnection: connection }
+        );
     // 3. The UPDATE locked the chunk's rows (a whole key range for the walk).
     // If its rows are not the ones read in step 0 (a row was added or
     // removed, or a profile id changed), some row may have been summed

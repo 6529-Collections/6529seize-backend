@@ -11,11 +11,15 @@ function createService() {
   const userGroupsDb = {
     getAllWaveRelatedGroups: jest
       .fn()
-      .mockResolvedValue(['wave-admin-group', 'decision-vote-group'])
+      .mockResolvedValue(['wave-admin-group', 'decision-vote-group']),
+    executeNativeQueriesInTransaction: jest.fn(
+      (work: (connection: unknown) => Promise<unknown>) => work({})
+    ),
+    reserveVisibilityRequest: jest.fn().mockResolvedValue(false),
+    lockForVisibilityChange: jest.fn().mockResolvedValue(undefined)
   };
   const service = new UserGroupsService(
     userGroupsDb as any,
-    {} as any,
     {} as any,
     {} as any,
     {} as any
@@ -44,10 +48,13 @@ describe('group replacement during the waves freeze', () => {
     'replaces no group a wave or decision uses (%s) while frozen',
     async (oldVersion) => {
       process.env[FLAG] = 'true';
-      const { service } = createService();
+      const { service, userGroupsDb } = createService();
       const result = service.changeVisibility(change(oldVersion), {});
       await expect(result).rejects.toBeInstanceOf(WavesFrozenException);
       await expect(result).rejects.toThrow(WAVES_FROZEN_GROUP_MESSAGE);
+      expect(
+        userGroupsDb.executeNativeQueriesInTransaction
+      ).not.toHaveBeenCalled();
     }
   );
 

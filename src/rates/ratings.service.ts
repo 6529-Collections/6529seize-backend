@@ -47,6 +47,10 @@ import {
   NotFoundException
 } from '../exceptions';
 import { IdentitiesDb, identitiesDb } from '../identities/identities.db';
+import {
+  assertIdentityNotFrozen,
+  isIdentityFrozen
+} from '../identity-freeze/identity-freeze';
 import { ids } from '../ids';
 import { Logger } from '../logging';
 import {
@@ -55,10 +59,6 @@ import {
 } from '../waves-freeze/waves-freeze';
 import { metricsRecorder, MetricsRecorder } from '../metrics/MetricsRecorder';
 import { userNotifier } from '../notifications/user.notifier';
-import {
-  HELP_BOT_RESERVED_CREDIT_CATEGORY_MESSAGE,
-  isHelpBotCreditCategory
-} from '../help-bot/help-bot.config';
 import {
   profileProxiesDb,
   ProfileProxiesDb
@@ -73,6 +73,7 @@ import {
   AbusivenessCheckService
 } from '../profiles/abusiveness-check.service';
 import { calculateLevel } from '../profiles/profile-level';
+import { creditTdh } from './rating-credit';
 import { profilesService } from '../profiles/profiles.service';
 import { RequestContext } from '../request.context';
 import { ConnectionWrapper } from '../sql-executor';
@@ -101,6 +102,27 @@ export function isWaveRepFrozen(
   frozen: boolean = isWavesFrozen()
 ): boolean {
   return frozen && matter === RateMatter.WAVE_REP;
+}
+
+/**
+ * REP and NIC (CIC) ratings move to the 6529 chain with the identities, so
+ * they freeze with them. WAVE_REP stays with the waves.
+ */
+export function isIdentityRatingMatter(matter: string): boolean {
+  return matter === RateMatter.REP || matter === RateMatter.CIC;
+}
+
+/**
+ * The over-rates loop leaves REP and NIC ratings as they are during the
+ * identity freeze: the chain imports them as they stand at the freeze.
+ */
+export function overRateMattersOutsideFreeze(
+  matters: OverRateMatter[],
+  frozen: boolean
+): OverRateMatter[] {
+  return frozen
+    ? matters.filter((it) => !isIdentityRatingMatter(it.matter))
+    : matters;
 }
 
 interface UpdateRatingInternalResult {
@@ -158,6 +180,9 @@ export class RatingsService {
     }
     try {
       ctx.timer?.start(`${this.constructor.name}->updateRating`);
+      if (isIdentityRatingMatter(request.matter)) {
+        assertIdentityNotFrozen();
+      }
       return await this.ratingsDb.executeNativeQueriesInTransaction(
         async (connection) => {
           const { identityUpdates } = await this.updateRatingInternal(request, {
@@ -202,7 +227,6 @@ export class RatingsService {
       if (!authenticatedProfileId) {
         throw new ForbiddenException(`Create a profile before you rate`);
       }
-      this.assertUserCanRateCategory(request.matter, request.matter_category);
       if (!request.authenticationContext.isAuthenticatedAsProxy()) {
         const { identityUpdate } = await this.updateRatingUnsafe({
           request,
@@ -613,7 +637,10 @@ export class RatingsService {
   public async reduceOverRates() {
     const start = Time.now();
     this.logger.info('Revoking rates for profiles which have lost credit');
-    const overRateMatters = await this.ratingsDb.getOverRateMatters();
+    const overRateMatters = overRateMattersOutsideFreeze(
+      await this.ratingsDb.getOverRateMatters(),
+      isIdentityFrozen()
+    );
     const overRateMattersByProfileIds = overRateMatters.reduce(
       (acc, overRateMatter) => {
         if (!acc[overRateMatter.rater_profile_id]) {
@@ -1004,7 +1031,7 @@ export class RatingsService {
     return result.map((it) => ({
       ...it,
       level: calculateLevel({
-        tdh: it.tdh + it.xtdh,
+        tdh: creditTdh(it.tdh, it.xtdh),
         rep: profileReps[it.profile_id] ?? 0
       })
     }));
@@ -1049,7 +1076,7 @@ export class RatingsService {
           data: page.data.map<ApiRatingWithProfileInfoAndLevel>((result) => ({
             ...result,
             level: calculateLevel({
-              tdh: result.tdh + result.xtdh,
+              tdh: creditTdh(result.tdh, result.xtdh),
               rep: profileReps[result.profile_id] ?? 0
             })
           }))
@@ -1126,6 +1153,9 @@ export class RatingsService {
     authContext: AuthenticationContext,
     apiRequest: ApiBulkRateRequest
   ): Promise<{ skipped: { identity: string; reason: string }[] }> {
+    if (isIdentityRatingMatter(String(apiRequest.matter))) {
+      assertIdentityNotFrozen();
+    }
     const result = await this.ratingsDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const actingAsId = authContext.getActingAsId();
@@ -1133,7 +1163,6 @@ export class RatingsService {
           throw new ForbiddenException(`Create a profile before you rate`);
         }
         const matter = enums.resolve(RateMatter, apiRequest.matter)!;
-        this.assertUserCanRateCategory(matter, apiRequest.category);
         // First lock of the transaction, before the rater's ratings are read.
         await this.ratingsDb.lockRaterCreditOnMatter(
           { rater_profile_id: actingAsId, matter },
@@ -1384,6 +1413,7 @@ export class RatingsService {
   }
 
   async bulkRep({ targets }: ApiBulkRepRequest, ctx: RequestContext) {
+    assertIdentityNotFrozen();
     const authenticationContext = ctx.authenticationContext!;
     // Everything that needs no target profile is checked before any target
     // profile is created.
@@ -1394,9 +1424,6 @@ export class RatingsService {
     const repAction = this.getBulkRepProxyAction(authenticationContext);
     const proposedCategories = collections.distinct(
       targets.map((target) => target.category)
-    );
-    proposedCategories.forEach((category) =>
-      this.assertUserCanRateCategory(RateMatter.REP, category)
     );
     await this.abusivenessCheckService.bulkCheckRepPhrases(
       proposedCategories,
@@ -1688,15 +1715,6 @@ export class RatingsService {
       targetAddresses.some((address) => raterWallets.has(address.toLowerCase()))
     ) {
       throw new BadRequestException(`User can't rate themselves`);
-    }
-  }
-
-  private assertUserCanRateCategory(
-    matter: RateMatter,
-    category: string | null | undefined
-  ): void {
-    if (matter === RateMatter.REP && isHelpBotCreditCategory(category)) {
-      throw new BadRequestException(HELP_BOT_RESERVED_CREDIT_CATEGORY_MESSAGE);
     }
   }
 }

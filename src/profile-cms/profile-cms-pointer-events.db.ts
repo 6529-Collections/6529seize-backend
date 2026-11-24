@@ -4,13 +4,44 @@ import { RequestContext } from '@/request.context';
 import {
   ConnectionWrapper,
   dbSupplier,
-  LazyDbAccessCompatibleService
+  LazyDbAccessCompatibleService,
+  SqlExecutor
 } from '@/sql-executor';
+import {
+  ProfileCmsPrivateLog,
+  profileCmsPrivateLog
+} from '@/profile-cms/personal-log/profile-cms-private-log';
 
 export type NewProfileCmsPointerEventEntity = ProfileCmsPointerEventEntity;
 
 export class ProfileCmsPointerEventsDb extends LazyDbAccessCompatibleService {
+  constructor(
+    supplier: () => SqlExecutor = dbSupplier,
+    private readonly privateLog: Pick<
+      ProfileCmsPrivateLog,
+      'logged'
+    > = profileCmsPrivateLog
+  ) {
+    super(supplier);
+  }
+
+  /**
+   * The events 6529.io's own path writes (the chain follower writes its own
+   * through the chain index). With the private log on, each is logged in the
+   * write's transaction, since the chain doesn't carry them.
+   */
   async insert(
+    entity: NewProfileCmsPointerEventEntity,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.privateLog.logged(
+      ctx,
+      [['cms.pointer-event', entity.id]],
+      (txCtx) => this.insertRow(entity, txCtx)
+    );
+  }
+
+  private async insertRow(
     entity: NewProfileCmsPointerEventEntity,
     ctx: RequestContext
   ): Promise<void> {
@@ -155,6 +186,4 @@ function parseJsonColumn(value: unknown): unknown {
   }
 }
 
-export const profileCmsPointerEventsDb = new ProfileCmsPointerEventsDb(
-  dbSupplier
-);
+export const profileCmsPointerEventsDb = new ProfileCmsPointerEventsDb();

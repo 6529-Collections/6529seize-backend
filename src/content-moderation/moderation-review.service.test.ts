@@ -249,51 +249,59 @@ describe('Developer review guards and evidence', () => {
     expect(result.allowed_actions).not.toContain('ALLOW');
     expect(result.allowed_actions).not.toContain('REEVALUATE');
   });
-  it.each(['PROFILE_BIO', 'GROUP_NAME'] as const)(
-    'restores a current suppressed %s after evidence deletion without recreating it',
-    async (subject) => {
-      record.subject_type = subject;
-      record.published_subject_id = 'published';
-      record.scope.published_revision = revision;
-      record.suppressed = true;
-      record.evidence = null;
-      record.evidence_expires_at = 1;
-      const detail = await service.detail('item', ctx());
-      expect(detail.allowed_actions).toEqual(['MARK_REVIEWED', 'RESTORE']);
-      expect(detail.evidence).toBeNull();
-      await service.action('item', { ...action, action: 'RESTORE' }, ctx());
-      expect(db.decide).toHaveBeenCalledWith(
-        record,
-        'RESTORE',
-        expect.anything()
-      );
-      expect(db.audit).toHaveBeenCalledWith(
-        record,
-        expect.objectContaining({ actor: 'dev', action: 'RESTORE' }),
-        expect.anything()
-      );
-      expect(record.evidence).toBeNull();
-      expect(db.start).not.toHaveBeenCalled();
-    }
-  );
-  it.each(['PROFILE_BIO', 'GROUP_NAME'] as const)(
-    'rejects expired %s restoration after its published revision changes',
-    async (subject) => {
-      record.subject_type = subject;
-      record.published_subject_id = 'published';
-      record.scope.published_revision = revision;
-      record.suppressed = true;
-      record.evidence = null;
-      record.evidence_expires_at = 1;
-      jest.mocked(db.currentRevision).mockResolvedValue('later-revision');
-      const detail = await service.detail('item', ctx());
-      expect(detail.allowed_actions).toEqual(['MARK_REVIEWED']);
+  it('restores a current suppressed bio after evidence deletion without recreating it', async () => {
+    record.subject_type = 'PROFILE_BIO';
+    record.published_subject_id = 'published';
+    record.scope.published_revision = revision;
+    record.suppressed = true;
+    record.evidence = null;
+    record.evidence_expires_at = 1;
+    const detail = await service.detail('item', ctx());
+    expect(detail.allowed_actions).toEqual(['MARK_REVIEWED', 'RESTORE']);
+    expect(detail.evidence).toBeNull();
+    await service.action('item', { ...action, action: 'RESTORE' }, ctx());
+    expect(db.decide).toHaveBeenCalledWith(
+      record,
+      'RESTORE',
+      expect.anything()
+    );
+    expect(db.audit).toHaveBeenCalledWith(
+      record,
+      expect.objectContaining({ actor: 'dev', action: 'RESTORE' }),
+      expect.anything()
+    );
+    expect(record.evidence).toBeNull();
+    expect(db.start).not.toHaveBeenCalled();
+  });
+  it('rejects expired bio restoration after its published revision changes', async () => {
+    record.subject_type = 'PROFILE_BIO';
+    record.published_subject_id = 'published';
+    record.scope.published_revision = revision;
+    record.suppressed = true;
+    record.evidence = null;
+    record.evidence_expires_at = 1;
+    jest.mocked(db.currentRevision).mockResolvedValue('later-revision');
+    const detail = await service.detail('item', ctx());
+    expect(detail.allowed_actions).toEqual(['MARK_REVIEWED']);
+    await expect(
+      service.action('item', { ...action, action: 'RESTORE' }, ctx())
+    ).rejects.toThrow('unavailable');
+    expect(db.decide).not.toHaveBeenCalled();
+  });
+  it('hides retired group-name checks from details and review actions', async () => {
+    record.subject_type = 'GROUP_NAME';
+    await expect(service.detail('item', ctx())).rejects.toThrow(
+      'Moderation check not found'
+    );
+    for (const retiredAction of ['RESTORE', 'REEVALUATE'] as const) {
       await expect(
-        service.action('item', { ...action, action: 'RESTORE' }, ctx())
-      ).rejects.toThrow('unavailable');
-      expect(db.decide).not.toHaveBeenCalled();
+        service.action('item', { ...action, action: retiredAction }, ctx())
+      ).rejects.toThrow('Moderation check not found');
     }
-  );
+    expect(db.history).not.toHaveBeenCalled();
+    expect(db.decide).not.toHaveBeenCalled();
+    expect(db.start).not.toHaveBeenCalled();
+  });
   it('requires an explicit published revision and current suppression for expired restoration', async () => {
     record.published_subject_id = 'published';
     record.suppressed = true;

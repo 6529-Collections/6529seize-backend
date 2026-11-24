@@ -45,6 +45,8 @@ import profileSubClassificationsRoutes from './profiles/profiles-sub-classificat
 import profilesRoutes from './profiles/profiles.routes';
 import repCategorySearchRoutes from './profiles/rep-category-search.routes';
 import proxiesRoutes from './proxies/proxies.routes';
+import chainRoutes from './chain/chain.routes';
+import { identityFreezeMiddleware } from './identity-freeze/identity-freeze.middleware';
 import { wavesFreezeMiddleware } from './waves-freeze/waves-freeze.middleware';
 import pushNotificationsRoutes from './push-notifications/push-notifications.routes';
 import bulkRepRoutes from './ratings/bulk-rep.routes';
@@ -1364,6 +1366,9 @@ function wireApp() {
     });
   });
 
+  // Identities move to the 6529 chain: while FEATURE_IDENTITY_FROZEN is on,
+  // profile, statement, REP, NIC, rating and REP/NIC proxy writes are refused.
+  apiRouter.use(identityFreezeMiddleware());
   // Waves, groups and decisions move to the 6529 chain: while the waves
   // freeze is on, wave, decision, entry, vote, wave REP and poll writes are
   // refused. Chat stays open.
@@ -1405,6 +1410,7 @@ function wireApp() {
   apiRouter.use(`/ratings`, ratingsRoutes);
   apiRouter.use(`/bulk-rep`, bulkRepRoutes);
   apiRouter.use(`/proxies`, proxiesRoutes);
+  apiRouter.use(`/chain`, chainRoutes);
   apiRouter.use(`/subscriptions`, subscriptionsRoutes);
   apiRouter.use(`/drops`, dropsRoutes);
   apiRouter.use(`/light-drops`, lightDropsRoutes);
