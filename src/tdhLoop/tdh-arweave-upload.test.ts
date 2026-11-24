@@ -119,7 +119,7 @@ describe('TDH Arweave gateway uploads', () => {
     );
     expect(
       chunkCalls.map(([input]) => new URL(String(input)).hostname)
-    ).toEqual(['ardrive.net', 'turbo-gateway.com']);
+    ).toEqual(['ardrive.net', 'arweave.net']);
     expect(chunkCalls[0][1]!.body).toBe(chunkCalls[1][1]!.body);
     const headers = fetch.mock.calls.filter(([input]) => path(input) === '/tx');
     expect(headers).toHaveLength(2);
@@ -157,7 +157,7 @@ describe('TDH Arweave gateway uploads', () => {
     const headers = fetch.mock.calls.filter(([input]) => path(input) === '/tx');
     expect(headers.map(([input]) => new URL(String(input)).hostname)).toEqual([
       'ardrive.net',
-      'turbo-gateway.com'
+      'arweave.net'
     ]);
     expect(headers[0][1]!.body).toBe(headers[1][1]!.body);
     expect(accepted.size).toBe(9);
@@ -165,9 +165,14 @@ describe('TDH Arweave gateway uploads', () => {
   });
 
   it.each([false, true])(
-    'coordinates all three gateways before concurrent chunks when the fallback header fails: %s',
+    'coordinates both active gateways before concurrent chunks when the fallback header fails: %s',
     async (failHeader) => {
+      jest.useFakeTimers();
       const fetch = setup();
+      let reached!: () => void;
+      const fallbackReady = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
       const registered = new Set<string>();
       const offsets = new Map<string, number>();
       const accepted = new Set<string>();
@@ -175,39 +180,46 @@ describe('TDH Arweave gateway uploads', () => {
         if (init?.method === 'GET') return metadata(input);
         const gateway = new URL(String(input)).hostname;
         if (path(input) === '/tx') {
+          reached();
           // Keep registration pending while multiple workers await the same promise.
           await new Promise((resolve) => setTimeout(resolve, 20));
-          if (gateway === 'turbo-gateway.com' && failHeader)
+          if (
+            gateway === 'arweave.net' &&
+            failHeader &&
+            !registered.has('failed-once')
+          ) {
+            registered.add('failed-once');
             return new Response('{}', { status: 503 });
+          }
           registered.add(gateway);
           return new Response('');
         }
         expect(registered.has(gateway)).toBe(true);
         const offset: string = JSON.parse(init!.body as string).offset;
         if (!offsets.has(offset)) offsets.set(offset, offsets.size);
-        if (
-          gateway === 'ardrive.net' ||
-          (gateway === 'turbo-gateway.com' && offsets.get(offset)! % 2 === 0)
-        )
+        if (gateway === 'ardrive.net')
           return new Response('{}', { status: 500 });
         accepted.add(offset);
         return new Response('');
       });
-      await uploadTdhCsvToArweave('x'.repeat(2_300_000), key, logger);
+      const upload = uploadTdhCsvToArweave('x'.repeat(2_300_000), key, logger);
+      await fallbackReady;
+      await jest.advanceTimersByTimeAsync(40000);
+      await upload;
       const headers = fetch.mock.calls.filter(
         ([input]) => path(input) === '/tx'
       );
       expect(headers.map(([input]) => new URL(String(input)).hostname)).toEqual(
-        ['ardrive.net', 'turbo-gateway.com', 'arweave.net']
+        failHeader
+          ? ['ardrive.net', 'arweave.net', 'arweave.net']
+          : ['ardrive.net', 'arweave.net']
       );
       expect(new Set(headers.map(([, init]) => init!.body)).size).toBe(1);
       expect(accepted.size).toBe(9);
       expect(Arweave.crypto.sign).toHaveBeenCalledTimes(1);
       if (failHeader)
         expect(logger.warn).toHaveBeenCalledWith(
-          expect.stringMatching(
-            /GATEWAY turbo-gateway.com.*OP POST tx.*STATUS 503/
-          )
+          expect.stringMatching(/GATEWAY arweave.net.*OP POST tx.*STATUS 503/)
         );
     }
   );
@@ -261,7 +273,7 @@ describe('TDH Arweave gateway uploads', () => {
       );
       expect(chunks.map(([input]) => new URL(String(input)).hostname)).toEqual([
         'ardrive.net',
-        'turbo-gateway.com'
+        'arweave.net'
       ]);
       expect(chunks[0][1]!.body).toBe(chunks[1][1]!.body);
       expect(Arweave.crypto.sign).toHaveBeenCalledTimes(1);
@@ -306,7 +318,7 @@ describe('TDH Arweave gateway uploads', () => {
     await jest.advanceTimersByTimeAsync(30_001);
     expect(await outcome).toEqual(
       expect.objectContaining({
-        message: 'TDH Arweave upload exceeded 120000ms deadline'
+        message: 'Arweave upload exceeded 120000ms deadline'
       })
     );
     const calls = fetch.mock.calls.length;
@@ -345,10 +357,8 @@ describe('TDH Arweave gateway uploads', () => {
         .map(([input]) => new URL(String(input)).hostname);
       expect(gateways).toEqual([
         'ardrive.net',
-        'turbo-gateway.com',
         'arweave.net',
         'ardrive.net',
-        'turbo-gateway.com',
         'arweave.net'
       ]);
       expect(logger.error).toHaveBeenCalledTimes(1);
@@ -394,9 +404,7 @@ describe('TDH Arweave gateway uploads', () => {
     expect(
       fetch.mock.calls
         .filter(([input]) => path(input) === '/tx')
-        .every(
-          ([input]) => new URL(String(input)).hostname === 'turbo-gateway.com'
-        )
+        .every(([input]) => new URL(String(input)).hostname === 'arweave.net')
     ).toBe(true);
   });
 
@@ -468,7 +476,7 @@ describe('TDH Arweave gateway uploads', () => {
     await jest.advanceTimersByTimeAsync(120001);
     expect(await outcome).toEqual(
       expect.objectContaining({
-        message: 'TDH Arweave upload exceeded 120000ms deadline'
+        message: 'Arweave upload exceeded 120000ms deadline'
       })
     );
     expect(peak).toBe(8);

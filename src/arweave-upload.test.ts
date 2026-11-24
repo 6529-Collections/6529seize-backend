@@ -25,11 +25,12 @@ function setup() {
         signature: 'public-signature'
       });
     });
-  const post = jest
-    .spyOn(arweave.api, 'post')
-    .mockResolvedValue({ status: 200, data: '' } as Awaited<
-      ReturnType<typeof arweave.api.post>
-    >);
+  const post = jest.fn().mockImplementation(async () => new Response(''));
+  jest.spyOn(global, 'fetch').mockImplementation(async (input, init) => {
+    const path = new URL(String(input)).pathname.slice(1);
+    if (init?.method === 'POST') return post(path, init?.body);
+    return new Response(path === 'tx_anchor' ? 'a'.repeat(43) : '100');
+  });
   const status = jest
     .spyOn(arweave.transactions, 'getStatus')
     .mockResolvedValue({ status: 404, confirmed: null });
@@ -53,7 +54,7 @@ describe('durable Arweave uploads', () => {
       file
     );
     expect(sign).toHaveBeenCalledTimes(1);
-    expect(post).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledTimes(2);
     expect(status).not.toHaveBeenCalled();
   });
 
@@ -85,7 +86,8 @@ describe('durable Arweave uploads', () => {
       })
     );
     expect(states[1].txPosted).toBe(true);
-    expect(states[1].chunkIndex).toBe(1);
+    expect(states[1].chunkIndex).toBe(0);
+    expect(states[2].chunkIndex).toBe(1);
     expect(JSON.stringify(states)).not.toContain('must-not-persist');
     expect(states[0].txPosted).toBe(false);
   });
@@ -144,7 +146,7 @@ describe('durable Arweave uploads', () => {
   it('reposts the saved signed transaction when no previous submission is known', async () => {
     const { uploader, create, sign, post } = setup();
     let savedState: ArweaveUploadState | undefined;
-    post.mockRejectedValueOnce(new Error('network unavailable'));
+    post.mockRejectedValue(new Error('network unavailable'));
     // The library logs provider errors; keep the synthetic failure out of test output.
     jest.spyOn(console, 'error').mockImplementation(() => undefined);
     await expect(
@@ -153,14 +155,16 @@ describe('durable Arweave uploads', () => {
           savedState = state;
         }
       })
-    ).rejects.toThrow('Unable to upload transaction');
+    ).rejects.toThrow('Arweave request failed');
+    post.mockImplementation(async () => new Response(''));
     await uploader.uploadFileWithTransactionId(bytes, 'application/json', {
       savedState,
       onState: async () => undefined
     });
     expect(create).toHaveBeenCalledTimes(1);
     expect(sign).toHaveBeenCalledTimes(1);
-    expect(post.mock.calls.map(([url]) => url)).toEqual(['tx', 'tx']);
+    expect(post.mock.calls.filter(([url]) => url === 'tx')).toHaveLength(5);
+    expect(post.mock.calls.at(-1)?.[0]).toBe('chunk');
   });
 
   it('returns the same completed transaction without another provider submission after receipt persistence fails', async () => {
@@ -177,7 +181,7 @@ describe('durable Arweave uploads', () => {
     });
     expect(create).toHaveBeenCalledTimes(1);
     expect(sign).toHaveBeenCalledTimes(1);
-    expect(post).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledTimes(2);
     expect(status).not.toHaveBeenCalled();
   });
 
@@ -225,6 +229,6 @@ describe('durable Arweave uploads', () => {
         onState: async () => undefined
       })
     ).rejects.toThrow('Data mismatch');
-    expect(post).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledTimes(2);
   });
 });
