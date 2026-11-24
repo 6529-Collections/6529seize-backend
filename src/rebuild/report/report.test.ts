@@ -97,6 +97,8 @@ function report(parts: Partial<RunReport> = {}): RunReport {
           missing: [],
           planned: [],
           plannedRows: 0,
+          plannedColumns: [],
+          plannedColumnRows: 0,
           extra: [],
           changed: []
         }
@@ -199,6 +201,8 @@ describe('rebuild report', () => {
             table: 'identities',
             rows: 2,
             keys: ['["k1"]', '["k2"]'],
+            columnRows: 0,
+            columnKeys: [],
             plans: [plan]
           },
           // A plan whose rows the rebuild writes now: none missing.
@@ -206,10 +210,15 @@ describe('rebuild report', () => {
             table: 'waves',
             rows: 0,
             keys: [],
+            columnRows: 1,
+            columnKeys: ['[7]'],
             plans: [
               {
                 ...plan,
                 step: 'waves.mirror',
+                columns: ['updated_at', 'cancelled_at'],
+                differing: 1,
+                differingByColumn: { updated_at: 1 },
                 where: 'id > 9',
                 missing: 0,
                 until: '2026-11-20',
@@ -220,7 +229,9 @@ describe('rebuild report', () => {
         ]
       }
     });
-    expect(headline(planned)[1]).toMatch(/; planned rows missing 2$/);
+    expect(headline(planned)[1]).toMatch(
+      /; planned rows missing 2; rows changed only in planned columns 1$/
+    );
     expect(headline(base)[1]).not.toContain('planned rows');
     expect(renderMarkdown(planned)).toContain(
       [
@@ -228,8 +239,8 @@ describe('rebuild report', () => {
         '',
         '- identities: 2 planned rows missing from the rebuild, keys ["k1"] ["k2"]',
         '  - planned by identity.mirror: seeded 2, missing 2; until 2026-12-04, the derived ids; TDH-only identities; where profile_id IS NULL',
-        '- waves: 0 planned rows missing from the rebuild',
-        '  - planned by waves.mirror: seeded 2, missing 0; until 2026-11-20 (overdue: its last day has passed), the derived ids; TDH-only identities; where id > 9'
+        '- waves: 0 planned rows missing from the rebuild; 1 rows changed only in planned columns, keys [7]',
+        '  - planned by waves.mirror, columns updated_at, cancelled_at: seeded 2, differing 1 (updated_at 1), missing 0; until 2026-11-20 (overdue: its last day has passed), the derived ids; TDH-only identities; where id > 9'
       ].join('\n')
     );
     // An overdue plan goes on the headline and the status line.

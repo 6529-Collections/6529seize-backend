@@ -180,6 +180,12 @@ export async function rebuildTeamDifferently(): Promise<void> {
   await insertTeam(true);
 }
 
+/** Restores the MEMES rows, and the 6529 row with another name. */
+export async function rebuildTeamRenaming6529(): Promise<void> {
+  await insertTeam(false, 'MEMES');
+  await insertTeam(true, '6529');
+}
+
 /** Reads a table its manifest entry doesn't declare. */
 export async function readUndeclaredTable(): Promise<void> {
   await dbSupplier().execute(`SELECT COUNT(*) AS n FROM ${NFTS_TABLE}`);

@@ -66,7 +66,9 @@ import {
 } from '@/rebuild/probes/probe-runner';
 import {
   canonicalRow,
+  changedKeys,
   diffSnapshots,
+  differingColumns,
   goneRows,
   snapshotRows,
   snapshotTable,
@@ -148,15 +150,20 @@ export interface RunOptions {
 
 /** A table's plans of planned rows, with each plan's keys and all of them. */
 interface FoundPlans {
-  /** Every planned row's key, one per row, as the snapshots key them. */
+  /**
+   * The key of every row a plan of whole rows matched, one per row, as
+   * the snapshots key them: the rows that may be missing.
+   */
   keys: string[];
   plans: {
     /** The manifest's plan. */
     entry: PlannedRows;
-    /** What the report shows; `missing` is filled in by the comparison. */
-    plan: Omit<PlannedRowsPlan, 'missing'> & { missing: number | null };
+    /** What the report shows; the comparison fills in its counts. */
+    plan: { -readonly [K in keyof PlannedRowsPlan]: PlannedRowsPlan[K] };
     /** The keys of the rows its condition matched, one per row. */
     keys: string[];
+    /** A column plan's matched rows as seeded, by key. */
+    rows: Map<string, Row> | null;
   }[];
 }
 
@@ -1344,30 +1351,124 @@ class RebuildRun {
           }
         }
         const keys = keysOf(rows);
+        if (plan.columns && rebuilt) {
+          const problem = await this.plannedColumnsProblem(
+            step.id,
+            table,
+            plan.columns,
+            primaryKey
+          );
+          if (problem) {
+            this.failures.push(problem);
+            return false;
+          }
+        }
         found.plans.push({
           entry: plan,
           plan: {
             ...this.planOf(step.id, plan),
             seeded: rebuilt ? keys.length : null
           },
-          keys
+          keys,
+          rows: plan.columns
+            ? new Map(keys.map((key, i) => [key, rows[i]]))
+            : null
         });
       }
       if (!rebuilt) continue;
-      if (plans.length === 1) {
-        found.keys = found.plans[0].keys;
+      // Only plans of whole rows let rows be missing.
+      const rowPlans = plans.filter(([, plan]) => !plan.columns);
+      if (rowPlans.length === 1) {
+        found.keys = found.plans.find((p) => !p.entry.columns)!.keys;
         continue;
       }
+      if (!rowPlans.length) continue;
       // Every plan's rows at once, so a row two plans match counts once.
       const all = await readWhere(
-        plans.map(([step]) => step.id).join(', '),
+        rowPlans.map(([step]) => step.id).join(', '),
         table,
-        plans.map(([, plan]) => `(${plan.where})`).join(' OR ')
+        rowPlans.map(([, plan]) => `(${plan.where})`).join(' OR ')
       );
       if (!all) return false;
       found.keys = keysOf(all);
     }
     return true;
+  }
+
+  /**
+   * Why a plan's columns can't be checked, or null: they must be in the
+   * schema, and the table needs a primary key without a volatile column,
+   * to find each matched row again after the rebuild.
+   */
+  private async plannedColumnsProblem(
+    step: string,
+    table: string,
+    columns: readonly string[],
+    primaryKey: readonly string[]
+  ): Promise<string | null> {
+    const names = new Set(await this.admin!.columnNames(MAIN_DB, table));
+    const unknown = columns.filter((column) => !names.has(column));
+    if (unknown.length) {
+      return `${step} plans columns ${unknown.join(', ')} of ${table}, which the schema doesn't have`;
+    }
+    const volatile = new Set(this.volatileOf(table));
+    if (!primaryKey.length || primaryKey.some((c) => volatile.has(c))) {
+      return `${step} plans columns of ${table}, which has no primary key without a volatile column to find its rows by after the rebuild`;
+    }
+    return null;
+  }
+
+  /**
+   * The rows of a table that changed only in the columns of the column
+   * plans that matched them, after the rebuild: each plan's differing
+   * rows and columns are counted on it.
+   */
+  private async plannedColumnRows(
+    table: string,
+    before: TableSnapshot,
+    after: TableSnapshot
+  ): Promise<Set<string>> {
+    const found = this.plannedRows.get(table);
+    const columnPlans = (found?.plans ?? []).filter((p) => p.rows);
+    const excused = new Set<string>();
+    if (!columnPlans.length) return excused;
+    const changed = changedKeys(before, after).filter((key) =>
+      columnPlans.some((p) => p.rows!.has(key))
+    );
+    for (const { plan } of columnPlans) {
+      plan.differing = 0;
+      plan.differingByColumn = {};
+    }
+    if (!changed.length) return excused;
+    const primaryKey = await this.admin!.primaryKey(MAIN_DB, table);
+    const volatile = new Set(this.volatileOf(table));
+    const rows = await this.admin!.orderedRows(MAIN_DB, table, primaryKey);
+    const { keys } = snapshotRows(table, rows, primaryKey, volatile);
+    const rebuilt = new Map(keys.map((key, i) => [key, rows[i]]));
+    for (const key of changed) {
+      const seeded = columnPlans.find((p) => p.rows!.has(key))!.rows!.get(key)!;
+      const now = rebuilt.get(key);
+      if (!now) continue;
+      const differ = differingColumns(seeded, now, volatile);
+      const covering = columnPlans.filter((p) => p.rows!.has(key));
+      const allowed = new Set(covering.flatMap((p) => p.entry.columns ?? []));
+      if (!differ.length || !differ.every((column) => allowed.has(column))) {
+        continue;
+      }
+      excused.add(key);
+      for (const { plan, entry } of covering) {
+        const its = differ.filter((c) => entry.columns!.includes(c));
+        if (!its.length) continue;
+        plan.differing = (plan.differing ?? 0) + 1;
+        for (const column of its) {
+          plan.differingByColumn = {
+            ...plan.differingByColumn,
+            [column]: (plan.differingByColumn?.[column] ?? 0) + 1
+          };
+        }
+      }
+    }
+    return excused;
   }
 
   /**
@@ -1621,14 +1722,21 @@ class RebuildRun {
     this.unproven = outcomes.filter((d) => d.kind === 'unproven');
     this.compared = true;
     const snapshotsAfter = await this.snapshots(this.rebuiltTables);
-    this.tableDiffs = this.rebuiltTables.map((t) =>
-      diffSnapshots(
-        snapshotsBefore.get(t)!,
-        snapshotsAfter.get(t)!,
-        20,
-        this.plannedRows.get(t)?.keys
-      )
-    );
+    const diffs: TableDiff[] = [];
+    for (const t of this.rebuiltTables) {
+      const before = snapshotsBefore.get(t)!;
+      const after = snapshotsAfter.get(t)!;
+      diffs.push(
+        diffSnapshots(
+          before,
+          after,
+          20,
+          this.plannedRows.get(t)?.keys,
+          await this.plannedColumnRows(t, before, after)
+        )
+      );
+    }
+    this.tableDiffs = diffs;
     this.plannedRows.forEach((found, table) => {
       const before = snapshotsBefore.get(table);
       const after = snapshotsAfter.get(table);
@@ -1838,7 +1946,8 @@ class RebuildRun {
       change: plan.change,
       seeded: null,
       missing: null,
-      overdue: this.day > plan.until
+      overdue: this.day > plan.until,
+      ...(plan.columns ? { columns: [...plan.columns], differing: null } : {})
     };
   }
 
@@ -1869,6 +1978,8 @@ class RebuildRun {
           table,
           rows: diff?.plannedRows ?? 0,
           keys: diff?.planned ?? [],
+          columnRows: diff?.plannedColumnRows ?? 0,
+          columnKeys: diff?.plannedColumns ?? [],
           plans
         };
       });

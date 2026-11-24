@@ -25,6 +25,18 @@ export interface PlannedRowsPlan {
   readonly missing: number | null;
   /** The run's day is past `until`. */
   readonly overdue: boolean;
+  /**
+   * A column plan's columns: its matched rows must come back, and may
+   * differ only in these. Absent on a plan of whole rows.
+   */
+  readonly columns?: readonly string[];
+  /**
+   * A column plan's matched rows that came back changed only in planned
+   * columns, and how many differ in each of its columns; null before the
+   * rows were compared.
+   */
+  readonly differing?: number | null;
+  readonly differingByColumn?: Readonly<Record<string, number>>;
 }
 
 /** A step skipped as planned: a table it needs isn't in the schema. */
@@ -225,7 +237,7 @@ export function judge(input: VerdictInput): Verdict {
       `${input.plannedRows.length} plans of planned rows, seeded rows only a later change rebuilds; a final run fails on every plan: ${input.plannedRows
         .map(
           (p) =>
-            `${p.table} by ${p.step}: seeded ${p.seeded ?? 'not read'}, missing ${p.missing ?? 'not compared'}, until ${p.until} (${p.change})`
+            `${p.table}${p.columns ? ` columns ${p.columns.join(', ')}` : ''} by ${p.step}: seeded ${p.seeded ?? 'not read'}, ${p.columns ? `differing ${p.differing ?? 'not compared'}, ` : ''}missing ${p.missing ?? 'not compared'}, until ${p.until} (${p.change})`
         )
         .join('; ')}`
     );
@@ -235,6 +247,12 @@ export function judge(input: VerdictInput): Verdict {
       notes.push(
         `Planned rows of ${p.table} by ${p.step}: plan matched no seeded rows`
       );
+    } else if (p.columns) {
+      if (p.differing === 0) {
+        notes.push(
+          `Planned columns of ${p.table} by ${p.step}: the rebuild writes these columns now: drop the plan`
+        );
+      }
     } else if (p.seeded !== null && p.missing === 0) {
       notes.push(
         `Planned rows of ${p.table} by ${p.step}: the rebuild writes these rows now: drop the plan`

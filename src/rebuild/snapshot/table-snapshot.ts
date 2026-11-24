@@ -25,6 +25,13 @@ export interface TableDiff {
   readonly planned: string[];
   /** How many rows only before are planned. */
   readonly plannedRows: number;
+  /**
+   * Up to `limit` keys of rows that changed only in a plan's columns
+   * (`columns` on a plan), left out of `changed` and of `same`.
+   */
+  readonly plannedColumns: string[];
+  /** How many rows changed only in a plan's columns. */
+  readonly plannedColumnRows: number;
   readonly extra: string[];
   readonly changed: string[];
 }
@@ -130,6 +137,37 @@ function goneCounts(
 }
 
 /**
+ * The columns whose values differ between two versions of one row, in
+ * name order, leaving out `volatile` ones.
+ */
+export function differingColumns(
+  a: Row,
+  b: Row,
+  volatile: ReadonlySet<string> = new Set()
+): string[] {
+  const value = (row: Row, column: string) =>
+    JSON.stringify(canonicalValue(row[column]) ?? null);
+  return Array.from(new Set([...Object.keys(a), ...Object.keys(b)]))
+    .filter((column) => !volatile.has(column))
+    .filter((column) => value(a, column) !== value(b, column))
+    .sort((x, y) => (x < y ? -1 : Number(x > y)));
+}
+
+/** Keys on both sides whose rows' hashes differ, in `before`'s order. */
+export function changedKeys(
+  before: TableSnapshot,
+  after: TableSnapshot
+): string[] {
+  const index = (snapshot: TableSnapshot) =>
+    new Map(snapshot.keys.map((key, i) => [key, snapshot.hashes[i]]));
+  const a = index(before);
+  const b = index(after);
+  return Array.from(counts(before.keys).keys()).filter(
+    (key) => b.has(key) && b.get(key) !== a.get(key)
+  );
+}
+
+/**
  * How many of the rows `keys` names (one key per row, as `planned` takes
  * them) are gone from `before` to `after`.
  */
@@ -158,12 +196,10 @@ export function diffSnapshots(
   before: TableSnapshot,
   after: TableSnapshot,
   limit = 20,
-  planned: readonly string[] = []
+  planned: readonly string[] = [],
+  /** Keys of rows on both sides that differ only in a plan's columns. */
+  plannedColumns: ReadonlySet<string> = new Set()
 ): TableDiff {
-  const index = (snapshot: TableSnapshot) =>
-    new Map(snapshot.keys.map((key, i) => [key, snapshot.hashes[i]]));
-  const a = index(before);
-  const b = index(after);
   const plannedCount = counts(planned);
   const missing: string[] = [];
   const plannedGone: string[] = [];
@@ -177,9 +213,9 @@ export function diffSnapshots(
   goneCounts(after, before).forEach((more, key) => {
     for (let i = 0; i < more; i += 1) extra.push(key);
   });
-  const changed = Array.from(counts(before.keys).keys()).filter(
-    (key) => b.has(key) && b.get(key) !== a.get(key)
-  );
+  const changedAtAll = changedKeys(before, after);
+  const changed = changedAtAll.filter((key) => !plannedColumns.has(key));
+  const columnsOnly = changedAtAll.filter((key) => plannedColumns.has(key));
   return {
     table: before.table,
     rowsBefore: before.rows,
@@ -192,6 +228,8 @@ export function diffSnapshots(
     missing: missing.slice(0, limit),
     planned: plannedGone.slice(0, limit),
     plannedRows: plannedGone.length,
+    plannedColumns: columnsOnly.slice(0, limit),
+    plannedColumnRows: columnsOnly.length,
     extra: extra.slice(0, limit),
     changed: changed.slice(0, limit)
   };

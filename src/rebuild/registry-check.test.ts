@@ -629,6 +629,47 @@ describe('checkRegistry', () => {
     ]);
   });
 
+  it("keeps a plan's columns to plain names, each once, that no other rebuilder owns", () => {
+    const plan = (columns: string[]): PlannedRows => ({
+      table: 'ids',
+      where: 'id > 2',
+      reason: 'columns a later change rebuilds',
+      until: '2026-12-04',
+      change: 'the derived ids',
+      columns
+    });
+    const check = (plans: PlannedRows[]) =>
+      checkRegistry({
+        manifests: [
+          area(
+            'a',
+            { ids: index() },
+            {
+              rebuilders: [
+                step('a.rows', { writes: ['ids'], plannedRows: plans }),
+                step('a.ranks', {
+                  writes: [
+                    { table: 'ids', columns: ['rank'], reason: 'ranks' }
+                  ],
+                  after: ['a.rows']
+                })
+              ]
+            }
+          )
+        ],
+        codeTables: code('ids')
+      }).problems.map((p) => p.detail);
+    expect(check([plan(['name', 'updated_at'])])).toEqual([]);
+    expect(
+      check([plan([]), plan(['a b', 'name', 'name']), plan(['rank', 'name'])])
+    ).toEqual([
+      "rebuilder a.rows's planned columns of ids name none",
+      "rebuilder a.rows's planned columns of ids name 'a b', not a plain column name",
+      "rebuilder a.rows's planned columns of ids name a column twice",
+      "rebuilder a.rows's planned columns of ids include rank, which a.ranks owns"
+    ]);
+  });
+
   it('refuses an id a seed and a rebuilder share', () => {
     expect(
       checkRegistry({

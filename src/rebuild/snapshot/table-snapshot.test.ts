@@ -1,7 +1,9 @@
 import * as fc from 'fast-check';
 import {
   canonicalRow,
+  changedKeys,
   diffSnapshots,
+  differingColumns,
   goneRows,
   snapshotRows
 } from '@/rebuild/snapshot/table-snapshot';
@@ -105,6 +107,8 @@ describe('table snapshots', () => {
       missing: ['[1]'],
       planned: [],
       plannedRows: 0,
+      plannedColumns: [],
+      plannedColumnRows: 0,
       extra: ['[4]'],
       changed: ['[3]']
     });
@@ -132,6 +136,8 @@ describe('table snapshots', () => {
         missing: [],
         planned: ['[3]'],
         plannedRows: 1,
+        plannedColumns: [],
+        plannedColumnRows: 0,
         extra: [],
         changed: []
       });
@@ -158,6 +164,53 @@ describe('table snapshots', () => {
         missing: ['[1]'],
         planned: ['[3]']
       });
+    });
+
+    it("leaves out rows that changed only in a plan's columns, and nothing else", () => {
+      const after = rows([1, 'a'], [2, 'B'], [3, 'C']);
+      expect(changedKeys(seeded, after)).toEqual(['[2]', '[3]']);
+      // The runner decides which changed rows a column plan covers.
+      expect(
+        diffSnapshots(seeded, after, 20, [], new Set(['[3]']))
+      ).toMatchObject({
+        same: false,
+        changed: ['[2]'],
+        plannedColumns: ['[3]'],
+        plannedColumnRows: 1
+      });
+      expect(
+        diffSnapshots(seeded, after, 20, [], new Set(['[2]', '[3]']))
+      ).toMatchObject({ same: true, changed: [], plannedColumnRows: 2 });
+      // A row a column plan covers must still come back.
+      expect(
+        diffSnapshots(
+          seeded,
+          rows([1, 'a'], [2, 'b']),
+          20,
+          [],
+          new Set(['[3]'])
+        )
+      ).toMatchObject({ same: false, missing: ['[3]'], plannedColumnRows: 0 });
+    });
+
+    it('names the columns two versions of a row differ in, leaving out volatile ones', () => {
+      const at = new Date('2026-11-24T00:00:00Z');
+      expect(
+        differingColumns(
+          { id: 1, name: 'a', at, blob: Buffer.from('x'), gone: 1 },
+          {
+            id: 1,
+            name: 'b',
+            at: new Date(at.getTime()),
+            blob: Buffer.from('y'),
+            added: 2
+          },
+          new Set(['added'])
+        )
+      ).toEqual(['blob', 'gone', 'name']);
+      expect(differingColumns({ id: 1, v: null }, { id: 1, v: null })).toEqual(
+        []
+      );
     });
 
     describe('rows without a key, which match by hash', () => {

@@ -1,6 +1,7 @@
 import {
   AreaManifest,
   Probe,
+  PlannedRows,
   RebuildStep,
   TableClass,
   validUntil
@@ -8,6 +9,7 @@ import {
 import { modulePathProblem } from '@/rebuild/step-code';
 import { orderSteps, waitsOn } from '@/rebuild/step-order';
 import {
+  columnWritesOf,
   partitionsOf,
   rowWrittenTables,
   writersOf,
@@ -425,6 +427,18 @@ function stepProblems(
           `${kind} ${step.id}'s planned rows of ${plan.table} name no change that brings their source`
         );
       }
+      if (plan.columns !== undefined) {
+        problems.push(
+          ...plannedColumnProblems(step, plan, input.manifests).map(
+            (detail): RegistryProblem => ({
+              kind: 'BAD_STEP',
+              area: manifest.area,
+              table: plan.table,
+              detail
+            })
+          )
+        );
+      }
     }
     if (step.timeoutMinutes <= 0) {
       problems.push({
@@ -441,6 +455,43 @@ function stepProblems(
         area: manifest.area,
         detail: `${kind} ${step.id}'s module ${step.run.module} ${pathProblem}: name a path in the repo without an extension`
       });
+    }
+  }
+  return problems;
+}
+
+/**
+ * A plan's columns: plain names, each once, and none another rebuilder
+ * owns (its owner rebuilds that column, so its differences are the
+ * owner's). Whether the table has them is checked when a run starts.
+ */
+function plannedColumnProblems(
+  step: RebuildStep,
+  plan: PlannedRows,
+  manifests: readonly AreaManifest[]
+): string[] {
+  const columns = plan.columns ?? [];
+  const at = `rebuilder ${step.id}'s planned columns of ${plan.table}`;
+  const problems: string[] = [];
+  if (!columns.length) problems.push(`${at} name none`);
+  for (const column of columns) {
+    if (!/^[A-Za-z0-9_]+$/.test(column)) {
+      problems.push(`${at} name '${column}', not a plain column name`);
+    }
+  }
+  if (new Set(columns).size !== columns.length) {
+    problems.push(`${at} name a column twice`);
+  }
+  for (const other of manifests.flatMap((m) => m.rebuilders)) {
+    if (other.id === step.id) continue;
+    for (const write of columnWritesOf(other)) {
+      if (write.table !== plan.table) continue;
+      const owned = columns.filter((column) => write.columns.includes(column));
+      if (owned.length) {
+        problems.push(
+          `${at} include ${owned.join(', ')}, which ${other.id} owns`
+        );
+      }
     }
   }
   return problems;

@@ -197,6 +197,29 @@ describe('the verdict', () => {
     ]);
   });
 
+  it('lists a column plan with its columns and differing rows, and notes one the rebuild writes now', () => {
+    const columns = {
+      columns: ['updated_at', 'cancelled_at'],
+      differingByColumn: { updated_at: 3 }
+    };
+    const plans = {
+      plannedRows: [
+        plan({ table: 'competitions', ...columns, differing: 3, missing: 0 }),
+        plan({ table: 'waves', ...columns, differing: 0, missing: 0 })
+      ]
+    };
+    const normal = judge({ ...clean, ...plans });
+    expect(normal.notes).toEqual([
+      expect.stringMatching(
+        /^2 plans of planned rows.*competitions columns updated_at, cancelled_at by identity\.mirror: seeded 2, differing 3, missing 0, until 2026-12-04 \(the derived ids\); waves columns updated_at, cancelled_at by identity\.mirror: seeded 2, differing 0, missing 0/
+      ),
+      'Planned columns of waves by identity.mirror: the rebuild writes these columns now: drop the plan'
+    ]);
+    expect(judge({ ...clean, ...plans, final: true }).failures).toEqual([
+      expect.stringMatching(/^2 plans of planned rows/)
+    ]);
+  });
+
   it('notes the planned writes left out of the order check, in every run', () => {
     const finding = { orderLeftOut: ['waves.mirror (waves_mirror, drops)'] };
     const note =

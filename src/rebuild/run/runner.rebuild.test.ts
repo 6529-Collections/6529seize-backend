@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import {
   AreaManifest,
+  PlannedRows,
   Probe,
   RebuildStep,
   TableEntry
@@ -680,7 +681,7 @@ describe('rebuild check, end to end', () => {
     const planning = (
       id: string,
       exportName: string,
-      plans = [PLAN]
+      plans: PlannedRows[] = [PLAN]
     ): RebuildStep => ({
       ...step(id, exportName, ['team']),
       plannedRows: plans
@@ -713,6 +714,8 @@ describe('rebuild check, end to end', () => {
           keys: [
             JSON.stringify(['0x0000000000000000000000000000000000000002'])
           ],
+          columnRows: 0,
+          columnKeys: [],
           plans: [listed('self-check.planned', 1, 1)]
         }
       ]);
@@ -742,6 +745,8 @@ describe('rebuild check, end to end', () => {
           table: 'team',
           rows: 0,
           keys: [],
+          columnRows: 0,
+          columnKeys: [],
           plans: [listed('self-check.planned-changed', 1, 0)]
         }
       ]);
@@ -765,6 +770,65 @@ describe('rebuild check, end to end', () => {
           'Planned rows of team by self-check.planned-stale: the rebuild writes these rows now: drop the plan',
           'Planned rows of team by self-check.planned-stale: plan matched no seeded rows'
         ])
+      );
+    });
+
+    it('excuses a planned column only on the rows its plan matched', async () => {
+      const names = { ...PLAN, columns: ['name'] };
+      // Only the 6529 row comes back renamed, and its plan covers the name.
+      const { report } = await teamRun(
+        planning('self-check.planned-name', 'rebuildTeamRenaming6529', [names])
+      );
+      expect(report.failures).toEqual([]);
+      expect(report.verdict).toBe('PASS');
+      expect(
+        report.tables.diffs.map((d) => [
+          d.same,
+          d.changed.length,
+          d.plannedColumnRows,
+          d.plannedRows
+        ])
+      ).toEqual([[true, 0, 1, 0]]);
+      expect(report.tables.plannedRows).toEqual([
+        {
+          table: 'team',
+          rows: 0,
+          keys: [],
+          columnRows: 1,
+          columnKeys: [
+            JSON.stringify(['0x0000000000000000000000000000000000000002'])
+          ],
+          plans: [
+            {
+              ...listed('self-check.planned-name', 1, 0),
+              columns: ['name'],
+              differing: 1,
+              differingByColumn: { name: 1 }
+            }
+          ]
+        }
+      ]);
+      // Every row renamed: the MEMES rows, which no plan matched, differ.
+      const all = await teamRun(
+        planning('self-check.planned-name-all', 'rebuildTeamDifferently', [
+          names
+        ])
+      );
+      const [diff] = all.report.tables.diffs;
+      expect([diff.same, diff.changed.length, diff.plannedColumnRows]).toEqual([
+        false,
+        2,
+        1
+      ]);
+      // A column the schema doesn't have stops the run at its start.
+      const unknown = await teamRun(
+        planning('self-check.planned-nothing', 'rebuildTeam', [
+          { ...PLAN, columns: ['no_such_column'] }
+        ])
+      );
+      expect(unknown.report.verdict).toBe('FAIL');
+      expect(unknown.report.failures).toContain(
+        "self-check.planned-nothing plans columns no_such_column of team, which the schema doesn't have"
       );
     });
 
