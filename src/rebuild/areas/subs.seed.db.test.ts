@@ -139,7 +139,8 @@ function contextOf(
       repo: null
     },
     seedFilesDir,
-    mark: { name: 'head', chainHeight: null, ethBlock: null }
+    mark: { name: 'head', chainHeight: null, ethBlock: null },
+    final: false
   };
 }
 

@@ -27,9 +27,9 @@ test shards and fails when:
 - a rebuilder writes a table that isn't one of its area's INDEX tables, two
   rebuilders write one table (unless each writes a disjoint partition of
   it), or steps wait on each other;
-- a step reads a table no manifest has, or needs one that no later branch
-  adds or without a reason; a rebuilder is marked `last`, or a seed that
-  isn't last waits on one that is;
+- a step reads a table no manifest has, or needs an unknown table, a
+  VIEW, RETIRED or SCHEMA table, or one without a reason; a rebuilder is
+  marked `last`, or a seed that isn't last waits on one that is;
 - a probe repeats an id, has a path without a leading `/`, or a placeholder
   with no values.
 
@@ -101,9 +101,12 @@ export const mintManifest: AreaManifest = {
 - `rebuilders`: steps that fill your INDEX tables from empty. A module step
   exports `async (ctx: RebuildContext) => void`; the run calls it inside
   `doInDbContext`, so the usual DB services work. `ctx.sources` holds the base
-  URLs of the run's sources and `ctx.mark` the chain height and Ethereum block
-  to rebuild to. A command step gets the same values in `REBUILD_*`
-  environment variables.
+  URLs of the run's sources, `ctx.mark` the chain height and Ethereum block
+  to rebuild to, `ctx.final` whether the run is a final one (`--final`), and
+  `ctx.seedFilesDir`, for a seed in a run that serves files, the directory
+  its own files go in (see the files server below). A command step gets the
+  sources and the mark in `REBUILD_*` environment variables, and the whole
+  context, `final` included, only as JSON in `REBUILD_CONTEXT`.
   - Each rebuilder connects as its own MySQL user. It can write its `writes`
     and read its `reads`, and lock rows it reads (`SELECT ... FOR UPDATE`,
     as production writers do); anything else is refused.
@@ -132,10 +135,11 @@ export const mintManifest: AreaManifest = {
     when every table it needs is in the run's schema. While one is missing
     (a table another branch creates), runs skip it the same way, and the
     report names the step, the table and the reason; a final run fails.
-    A step waits only for a table a later branch adds: one marked planned,
-    or one no entity in this tree creates yet. The registry refuses any
-    other (an entity's table, a view, a retired or a schema table) and a
-    needed table without a reason.
+    A step waits for a table a later branch adds. The registry refuses a
+    view, a retired or a schema table, and a needed table without a reason.
+    A need on a table the schema already has (its branch landed first)
+    holds nothing back: the step runs, the run notes the need as one to
+    drop, and a final run fails on it.
     A step that waits on a skipped one and touches the same tables should
     declare the same needs.
   - A seed with `last: true` runs after every seed without it, in the
@@ -253,9 +257,10 @@ Each `--source <name>=<spec>`:
   devnet scenario, an anvil state, or `hand`), as a label for the report.
   Provisional, so `--final` fails on them: a live URL, a `record` run (it
   reaches a live URL), the harness relay, every gateway or ethereum
-  recording, and a files directory that holds any file. Nothing verifies
-  a recording's answers yet, and a label is never a basis, so the report
-  says "answers not verified" whatever `PROVENANCE.json` says; checking
+  recording, and a files directory that holds a file whose id nothing
+  checks (see the files server below). Nothing verifies a recording's
+  answers yet, and a label is never a basis, so the report says "answers
+  not verified" whatever `PROVENANCE.json` says; checking
   the node's proofs (for ethereum, the blocks' hash chain and receipt
   proofs) is what will let one count. `anvil` from a state file records
   nothing and counts.
@@ -271,15 +276,19 @@ Each `--source <name>=<spec>`:
   its other `alchemy_*` methods are not served; a call to them fails the run.
 - The files server answers `/ipfs/<id>`, `/ar/<id>`, `/docs/<id>` and
   `/<id>` from the directory, and checks every file against
-  `<dir>/files.json` (id to SHA-256). It doesn't derive an id from the
-  content: an Arweave id is a transaction's, not a hash of the file, so
-  `files.json` is what ties each id to its bytes. A seed can add files: it
-  writes them into `ctx.seedFilesDir` and lists them in that directory's own
-  `files.json`; the server checks each one's hash when it is asked for.
+  `<dir>/files.json` (id to SHA-256). It derives an id from the content
+  only for a SHA-256 name (below): an Arweave id is a transaction's, not a
+  hash of the file, so for other names `files.json` is what ties each id
+  to its bytes. A seed can add files: it writes them into
+  `ctx.seedFilesDir` and lists them in that directory's own `files.json`;
+  the server checks each one's hash when it is asked for.
   The seeds' files are the run's own world. Files in `<dir>` come from
-  outside the run, and nothing checks their ids against their bytes yet,
-  so a directory that holds any is provisional ("ids not verified"),
-  whatever its `PROVENANCE.json` says.
+  outside the run. A file named by the SHA-256 of its bytes, as lowercase
+  hex or as a raw CIDv1 with a sha2-256 multihash (`bafkrei...`, the
+  document store's naming), has its id checked against its bytes, and one
+  with other bytes fails the run. For any other file nothing checks its id
+  yet, so a directory that holds one is provisional ("ids not verified",
+  naming the files), whatever its `PROVENANCE.json` says.
 - A flag value may name a source: `{gateway}`, `{relays}`, `{ethereum}`
   or `{files}` become its URL in the run.
 
