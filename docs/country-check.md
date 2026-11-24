@@ -6,22 +6,22 @@ Sanctions enforcement remains in AWS WAF and is independent of this endpoint.
 
 ## Country source
 
-The API can prefer the `x-amzn-waf-country` header on REST API Gateway
-requests. This requires `TRUST_WAF_COUNTRY_HEADER=true`; the default is to
-ignore the header. Only a single uppercase ISO 3166-1 alpha-2 country code is
-accepted. Missing, unknown (`XX`), malformed or duplicate values fall back to
+The API prefers the `x-amzn-waf-country` header on REST API Gateway
+requests without a feature flag. Only a single uppercase ISO 3166-1 alpha-2
+country code is accepted. Missing, unknown (`XX`), malformed or duplicate values fall back to
 FindIP. Local HTTP servers and other request contexts ignore the header.
 
 The FindIP fallback retains its three-second timeout and per-process 24-hour
-cache. It is permanent, including for environments that do not enable WAF
-header trust. Localhost retains its existing EU/unknown-country response.
+cache. It is permanent whenever the WAF country is unavailable or unusable.
+Localhost retains its existing EU/unknown-country response.
 Missing source IPs and failed FindIP lookups retain their existing error
 responses. This change does not alter stored cookie preferences or public
 request/response schemas.
 
-## Enabling header trust
+## Deployment prerequisite
 
-Before setting `TRUST_WAF_COUNTRY_HEADER=true` in an environment:
+Configure and verify WAF **before deploying this code** in each environment,
+including production:
 
 1. Ensure the REST API stage is protected by the intended WAF web ACL.
 2. Ensure a client-IP GeoMatch statement evaluates before every Allow path.
@@ -36,15 +36,16 @@ Before setting `TRUST_WAF_COUNTRY_HEADER=true` in an environment:
    validating the deployed application.
 
 An API Gateway request context does not by itself authenticate the header.
-Do not enable trust on a local server, an unprotected stage, or an environment
-whose WAF has an Allow path that leaves the caller's header intact. For SSR,
-WAF's country describes its caller's IP, not a visitor named in a forwarding
+Do not deploy this code to an unprotected REST API stage or an environment
+whose WAF has an Allow path that leaves the caller's header intact. Local HTTP
+servers ignore the header. For SSR, WAF's country describes its caller's IP,
+not a visitor named in a forwarding
 header; browser/native country checks must originate from the visitor.
 
 AWS references: [geographic match statements](https://docs.aws.amazon.com/waf/latest/developerguide/waf-rule-statement-type-geo-match.html),
 [dynamic label interpolation](https://docs.aws.amazon.com/waf/latest/developerguide/waf-dynamic-label-interpolation.html),
 and [header insertion and overwrite](https://docs.aws.amazon.com/waf/latest/developerguide/customizing-the-incoming-request.html).
 
-Only the `api` service (`seizeAPI`) requires deployment. Enable header trust
-only after the environment's WAF prerequisites are verified; disabling it
-returns all country lookups to FindIP without changing access restrictions.
+Only the `api` service (`seizeAPI`) requires deployment, after the WAF
+prerequisites above. To roll back country-source selection, revert this code
+and redeploy the API; the WAF's access restrictions remain independent.

@@ -174,20 +174,7 @@ describe('getIp', () => {
 });
 
 describe('getWafCountry', () => {
-  const originalTrust = process.env.TRUST_WAF_COUNTRY_HEADER;
   const gatewayContext = { identity: { sourceIp: '203.0.113.10' } };
-
-  beforeEach(() => {
-    process.env.TRUST_WAF_COUNTRY_HEADER = 'true';
-  });
-
-  afterEach(() => {
-    if (originalTrust === undefined) {
-      delete process.env.TRUST_WAF_COUNTRY_HEADER;
-    } else {
-      process.env.TRUST_WAF_COUNTRY_HEADER = originalTrust;
-    }
-  });
 
   function withCountry(
     country: unknown,
@@ -200,7 +187,7 @@ describe('getWafCountry', () => {
   }
 
   it.each(['CY', 'US', 'GB', 'AX', 'BQ', 'AQ'])(
-    'accepts the assigned country code %s on an opted-in REST API',
+    'accepts the assigned country code %s on a REST API',
     (country) => {
       expect(getWafCountry(withCountry(country))).toBe(country);
     }
@@ -223,18 +210,6 @@ describe('getWafCountry', () => {
   ])('rejects missing, unknown or ambiguous country %p', (country) => {
     expect(getWafCountry(withCountry(country))).toBeNull();
   });
-
-  it.each([undefined, '', 'false', 'TRUE', '1'])(
-    'ignores the header unless trust is explicitly enabled (%p)',
-    (enabled) => {
-      if (enabled === undefined) {
-        delete process.env.TRUST_WAF_COUNTRY_HEADER;
-      } else {
-        process.env.TRUST_WAF_COUNTRY_HEADER = enabled;
-      }
-      expect(getWafCountry(withCountry('US'))).toBeNull();
-    }
-  );
 
   it.each([
     null,

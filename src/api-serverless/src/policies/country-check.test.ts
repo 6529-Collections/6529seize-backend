@@ -12,7 +12,6 @@ jest.mock('@/logging', () => ({
 const serverlessHttp = require('serverless-http');
 
 describe('GET /policies/country-check through serverless-http', () => {
-  const originalTrust = process.env.TRUST_WAF_COUNTRY_HEADER;
   const mockedGet = jest.mocked(axios.get);
   const app = express();
   app.use('/api/policies', policiesRouter);
@@ -38,7 +37,6 @@ describe('GET /policies/country-check through serverless-http', () => {
   }
 
   beforeEach(() => {
-    process.env.TRUST_WAF_COUNTRY_HEADER = 'true';
     mockedGet.mockReset();
     mockedGet.mockResolvedValue({
       data: { country: { iso_code: 'US' } }
@@ -47,11 +45,6 @@ describe('GET /policies/country-check through serverless-http', () => {
 
   afterEach(() => {
     mcache.clear();
-    if (originalTrust === undefined) {
-      delete process.env.TRUST_WAF_COUNTRY_HEADER;
-    } else {
-      process.env.TRUST_WAF_COUNTRY_HEADER = originalTrust;
-    }
   });
 
   it.each([
@@ -120,17 +113,6 @@ describe('GET /policies/country-check through serverless-http', () => {
         ...gatewayEvent({ 'x-amzn-waf-country': 'CY' }),
         multiValueHeaders: { 'x-amzn-waf-country': ['US'] }
       },
-      {}
-    );
-
-    expect(JSON.parse(response.body)).toEqual({ is_eu: false, country: 'US' });
-    expect(mockedGet).toHaveBeenCalledTimes(1);
-  });
-
-  it('ignores a spoofable country header before the environment opts in', async () => {
-    delete process.env.TRUST_WAF_COUNTRY_HEADER;
-    const response = await handler(
-      gatewayEvent({ 'x-amzn-waf-country': 'CY' }),
       {}
     );
 

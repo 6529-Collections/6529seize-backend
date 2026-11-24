@@ -75,14 +75,11 @@ type ApiGatewaySourceIpContext = {
 };
 
 /**
- * Enable only behind a WAF that overwrites this header on every Allow path.
+ * Deploy only behind a WAF that overwrites this header on every Allow path.
  * An API Gateway context alone does not authenticate a caller-supplied header.
- * Local HTTP requests and environments without that opt-in keep using FindIP.
+ * Local HTTP requests and missing or invalid values keep using FindIP.
  */
 export function getWafCountry(req: Request): string | null {
-  if (process.env.TRUST_WAF_COUNTRY_HEADER !== 'true') {
-    return null;
-  }
   const gatewayRequest = req as Request & {
     readonly requestContext?: ApiGatewaySourceIpContext | null;
     readonly apiGateway?: {
