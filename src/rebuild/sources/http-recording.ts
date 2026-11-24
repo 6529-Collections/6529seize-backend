@@ -5,7 +5,6 @@ import * as path from 'node:path';
 import { canonicalStringify } from '@/rebuild/probes/canonical';
 import {
   closeServer,
-  isProvisional,
   listenLoopback,
   readBody,
   readProvenance,
@@ -160,7 +159,13 @@ async function forward(
  * Serves a recording (replay) or proxies to `upstream` and saves each new
  * answer (record). In replay an unrecorded request answers 599 and is
  * reported, so a run never silently reaches past its recording.
+ *
+ * Nothing verifies a recording's answers yet, a gateway's or an Ethereum
+ * node's, and a label is never a basis: a recording is provisional
+ * whatever its PROVENANCE.json says. It can count once the run checks the
+ * node's proofs (for Ethereum, the blocks' hash chain and receipt proofs).
  */
+
 export async function startHttpRecording(options: {
   readonly name: UrlSource;
   readonly dir: string;
@@ -229,8 +234,8 @@ export async function startHttpRecording(options: {
       url,
       mode: options.upstream ? 'record' : 'replay',
       provenance: provenance?.made_by ?? null,
-      // Recording reaches a live URL this run; a later replay can count.
-      provisional: !!options.upstream || isProvisional(provenance)
+      provisional: true,
+      provisionalWhy: 'answers not verified'
     },
     problems: () =>
       unrecorded.length

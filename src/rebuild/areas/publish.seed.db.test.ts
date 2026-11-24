@@ -70,7 +70,8 @@ function seedContext(dir: string): RebuildContext {
       repo: null
     },
     seedFilesDir: dir,
-    mark: { name: 'head', chainHeight: null, ethBlock: null }
+    mark: { name: 'head', chainHeight: null, ethBlock: null },
+    final: false
   };
 }
 
