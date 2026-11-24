@@ -1,13 +1,96 @@
+import { MODERATION_ACTIONS } from '@/content-moderation/moderation-review.types';
 import {
   AreaManifest,
   Probe,
   ReasonedPath,
+  RebuildStep,
   TableEntry
 } from '@/rebuild/manifest.types';
 import {
   RELAY_WORLD_WALLET,
   WAVES_WORLD_IDS
 } from '@/rebuild/world/waves/world-ids';
+
+/** 6529.io's moderation audit log, split by writer on its action column. */
+const MODERATION_AUDIT_TABLE = 'content_moderation_audit_log';
+
+/** The audit rows of a person's own blocks and hides (their records). */
+const PERSONAL_AUDIT_ACTIONS = [
+  'PROFILE_BLOCKED',
+  'PROFILE_UNBLOCKED',
+  'DROP_HIDDEN',
+  'DROP_UNHIDDEN'
+];
+
+/**
+ * The audit rows of moderators, the AI evaluator and reports: the drop and
+ * profile moderation service's own actions, and the review queue's
+ * (MODERATION_ACTIONS).
+ */
+const SERVICE_AUDIT_ACTIONS = [
+  'AI_QUARANTINED',
+  'AI_QUARANTINE_WITHDRAWN',
+  'CONTENT_REPORTED',
+  'CONTENT_REPORT_WITHDRAWN',
+  'CONTENT_SAVED',
+  'MODERATOR_ALLOWED_OR_RESTORED',
+  'MODERATOR_QUARANTINED',
+  'MODERATOR_REMOVED',
+  'PROFILE_SUSPENDED',
+  'PROFILE_REINSTATED',
+  ...MODERATION_ACTIONS
+];
+
+function auditPartition(actions: readonly string[], reason: string) {
+  return {
+    table: MODERATION_AUDIT_TABLE,
+    partition: {
+      columns: ['action'],
+      values: actions.map((action) => [action]),
+      reason
+    }
+  };
+}
+
+/**
+ * The audit log's two writers, both planned: their modules come with later
+ * changes, and until then a run keeps each one's rows as seeded and lists
+ * them, and a final run fails on them.
+ */
+const MODERATION_AUDIT_REBUILDERS: RebuildStep[] = [
+  {
+    id: 'waves.moderation-audit.personal',
+    run: {
+      module: 'src/rebuild/steps/waves-moderation-audit.steps',
+      exportName: 'rebuildPersonalModerationAudit'
+    },
+    writes: [
+      auditPartition(
+        PERSONAL_AUDIT_ACTIONS,
+        "A person's blocks and hides, rebuilt from their personal records once the personal records' rebuild lands."
+      )
+    ],
+    sources: ['repo'],
+    timeoutMinutes: 10,
+    origin: 'planned'
+  },
+  {
+    id: 'waves.moderation-audit.service',
+    run: {
+      module: 'src/content-moderation/moderation-audit.rebuild',
+      exportName: 'rebuildModerationAudit'
+    },
+    writes: [
+      auditPartition(
+        SERVICE_AUDIT_ACTIONS,
+        "Moderators', the AI evaluator's and reports' rows; kept as they are until 2026-12-04, when the moderation service records each decision as a signed record. An AI row's id, time, evaluation and rationale can only come back from such a record."
+      )
+    ],
+    sources: ['repo'],
+    timeoutMinutes: 10,
+    origin: 'planned'
+  }
+];
 
 /** The chain index's tables and its state, and its event log. */
 export const WAVES_CHAIN_INDEX_TABLES = [
@@ -476,15 +559,7 @@ export const wavesManifest: AreaManifest = {
       class: 'EPHEMERAL',
       why: 'Refresh queue.'
     },
-    // Split by writer on its action column (ruled; the harness has no
-    // partitioned writes or planned rows yet, so it stays pending whole):
-    // - PROFILE_BLOCKED, PROFILE_UNBLOCKED, DROP_HIDDEN, DROP_UNHIDDEN: the
-    //   personal records' rows, from the waves rebuilder that inserts
-    //   personalModerationAuditRows() after the personal rebuild;
-    // - moderator decisions: from the moderation service's signed records
-    //   once they land;
-    // - moderator, AI (AI_QUARANTINED, AI_QUARANTINE_WITHDRAWN) and report
-    //   rows: planned rows until 2026-12-04.
+    // Split by writer on its action column (MODERATION_AUDIT_REBUILDERS).
     content_moderation_audit_log: { class: 'INDEX' },
     content_moderation_drop_states: { class: 'INDEX' },
     content_moderation_profile_states: { class: 'INDEX' },
@@ -659,7 +734,8 @@ export const wavesManifest: AreaManifest = {
       after: ['waves.chain-index', 'waves.drop-index', 'waves.chain-mirror'],
       sources: ['repo'],
       timeoutMinutes: 5
-    }
+    },
+    ...MODERATION_AUDIT_REBUILDERS
   ],
   probes: PROBES,
   // A replayed relay recording of the world's drops counts per event: the

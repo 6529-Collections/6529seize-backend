@@ -80,6 +80,14 @@ describe('rebuild registry', () => {
         ]
       },
       {
+        step: 'waves.moderation-audit.personal',
+        tables: ['content_moderation_audit_log']
+      },
+      {
+        step: 'waves.moderation-audit.service',
+        tables: ['content_moderation_audit_log']
+      },
+      {
         step: 'holdings.ethereum',
         tables: [
           'transactions',
