@@ -317,6 +317,17 @@ describe('waves:export and the read replica lag', () => {
     expect(mockWavesExport).not.toHaveBeenCalled();
   });
 
+  it('names the setting a caller says the run reads through', async () => {
+    dbHost([reader(40)], { ro: 0, iro: 0 });
+    const command = parseWavesExportCommand(EXPORT) as WavesExportCommand;
+    await expect(
+      runExport(command, { keepDbScope: true, hostSetting: 'DB_HOST_READ' })
+    ).rejects.toThrow(
+      "DB_HOST_READ's server is not read-only (read_only and innodb_read_only are both off), so it is not a read replica, and the export reads only from one. Point the function's DB_HOST_READ"
+    );
+    expect(mockWavesExport).not.toHaveBeenCalled();
+  });
+
   it('names DB_IAM_HOST in IAM mode, with all four IAM settings', async () => {
     const iam = {
       DB_IAM_AUTH: 'true',

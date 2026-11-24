@@ -1009,6 +1009,8 @@ describe('the waves export job', () => {
         DB_USER: 'reader-user',
         DB_PASS: 'reader-pass'
       });
+      // The export's messages name the setting the job really reads.
+      expect(call.hooks.hostSetting).toBe('DB_HOST_READ');
     }
     expect(run.env).toMatchObject({
       DB_HOST: 'the-writer',
@@ -1029,6 +1031,7 @@ describe('the waves export job', () => {
       DB_IAM_HOST: 'the-iam-reader',
       DB_IAM_USER: 'iam-reader'
     });
+    expect(iam.calls[0].hooks.hostSetting).toBe('DB_IAM_HOST_READ');
     expect(iam.env.DB_IAM_HOST).toBe('the-iam-writer');
   });
 

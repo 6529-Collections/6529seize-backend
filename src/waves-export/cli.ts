@@ -7,6 +7,7 @@ import {
   WavesExportCommand,
   WavesExportUsageError
 } from './cli-options';
+import type { HostSetting } from './waves-export.replica-lag';
 import {
   readRecordsWaveSetting,
   RECORDS_WAVE_ID_ENV,
@@ -99,6 +100,13 @@ export interface WavesExportRunHooks {
    * job runs the export once per stage. The command line runs it once.
    */
   readonly keepDbScope?: boolean;
+  /**
+   * The setting the run really reads through, for the replica check's
+   * messages: the job's DB_HOST_READ (or DB_IAM_HOST_READ), which it
+   * copies into DB_HOST (or DB_IAM_HOST) for the run. The command line
+   * reads through DB_HOST, or DB_IAM_HOST in IAM mode.
+   */
+  readonly hostSetting?: HostSetting;
 }
 
 /**
@@ -167,9 +175,11 @@ export async function runExport(
                     })
                   )
                 ),
-              hostSetting: resolveDbConnectionTargets().write.iam
-                ? 'DB_IAM_HOST'
-                : 'DB_HOST',
+              hostSetting:
+                hooks.hostSetting ??
+                (resolveDbConnectionTargets().write.iam
+                  ? 'DB_IAM_HOST'
+                  : 'DB_HOST'),
               log
             });
             return new WavesExport(new BackendWavesExportSource(), {

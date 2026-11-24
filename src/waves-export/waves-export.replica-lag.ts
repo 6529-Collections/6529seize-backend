@@ -71,8 +71,17 @@ export type ReplicaLagRecord =
 /** Runs a SELECT and gives its rows. */
 export type ReadRows = (sql: string) => Promise<unknown[]>;
 
-/** The setting that names the server the export reads. */
-export type HostSetting = 'DB_HOST' | 'DB_IAM_HOST';
+/**
+ * The setting that names the server the export reads: DB_HOST, or
+ * DB_IAM_HOST in IAM mode, from the command line; DB_HOST_READ or
+ * DB_IAM_HOST_READ in the waves export job, which copies the reader's
+ * settings into DB_HOST (or DB_IAM_HOST) for its runs.
+ */
+export type HostSetting =
+  | 'DB_HOST'
+  | 'DB_IAM_HOST'
+  | 'DB_HOST_READ'
+  | 'DB_IAM_HOST_READ';
 
 export interface ReplicaLagReadOptions {
   /**
@@ -82,7 +91,7 @@ export interface ReplicaLagReadOptions {
   readonly onOneConnection: <T>(
     work: (readRows: ReadRows) => Promise<T>
   ) => Promise<T>;
-  /** DB_HOST, or DB_IAM_HOST in IAM mode (DB_IAM_AUTH=true). */
+  /** The setting the run reads through, as the messages name it. */
   readonly hostSetting?: HostSetting;
   readonly now?: () => number;
   readonly log: (message: string) => void;
@@ -208,18 +217,37 @@ const hostOf = (options: { hostSetting?: HostSetting }) =>
   options.hostSetting ?? 'DB_HOST';
 
 const readerEndpoint = (host: HostSetting) =>
-  host === 'DB_IAM_HOST'
+  host === 'DB_IAM_HOST' || host === 'DB_IAM_HOST_READ'
     ? 'a read-only endpoint'
     : "the cluster's reader endpoint";
 
 /** Where to point the export, by the setting it reads through. */
 function pointAt(host: HostSetting): string {
-  return host === 'DB_IAM_HOST'
-    ? `Point DB_IAM_HOST at a read-only endpoint, with DB_IAM_USER for it: ` +
+  switch (host) {
+    case 'DB_IAM_HOST':
+      return (
+        `Point DB_IAM_HOST at a read-only endpoint, with DB_IAM_USER for it: ` +
         `with DB_IAM_AUTH=true the export reads through DB_IAM_HOST, not ` +
         `DB_HOST or DB_IAM_HOST_READ.`
-    : `Point DB_HOST at the cluster's reader endpoint, with DB_USER and ` +
-        `DB_PASS for it: the export reads through DB_HOST, not DB_HOST_READ.`;
+      );
+    case 'DB_HOST':
+      return (
+        `Point DB_HOST at the cluster's reader endpoint, with DB_USER and ` +
+        `DB_PASS for it: the export reads through DB_HOST, not DB_HOST_READ.`
+      );
+    case 'DB_IAM_HOST_READ':
+      return (
+        `Point the function's DB_IAM_HOST_READ at a read-only endpoint, with ` +
+        `DB_IAM_USER_READ for it: the waves export job reads through ` +
+        `DB_IAM_HOST_READ, and never changes DB_IAM_HOST.`
+      );
+    case 'DB_HOST_READ':
+      return (
+        `Point the function's DB_HOST_READ at the cluster's reader endpoint, ` +
+        `with DB_USER_READ and DB_PASS_READ for it: the waves export job ` +
+        `reads through DB_HOST_READ, and never changes DB_HOST.`
+      );
+  }
 }
 
 /** A UTC time, with its date when that isn't the reading's day. */

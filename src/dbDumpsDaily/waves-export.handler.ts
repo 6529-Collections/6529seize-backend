@@ -24,6 +24,7 @@ import {
   WavesExportCommand
 } from '@/waves-export/cli-options';
 import { WavesExportStoppedError } from '@/waves-export/waves-export.errors';
+import type { HostSetting } from '@/waves-export/waves-export.replica-lag';
 import {
   EXPORT_RUNS_FILE,
   forEachLimited,
@@ -1368,6 +1369,11 @@ async function runStages(
   const root = path.join(base, randomUUID());
   const out = path.join(root, 'out');
   const files = new RunFiles(writer, path.join(out, 'raw'), state);
+  // The setting the runs really read through, for the export's messages.
+  const hostSetting: HostSetting = resolveDbConnectionTargets(deps.env()).write
+    .iam
+    ? 'DB_IAM_HOST_READ'
+    : 'DB_HOST_READ';
   const restoreEnv = pointDbAtReader(deps.env());
   try {
     await files.download();
@@ -1401,7 +1407,11 @@ async function runStages(
           // One DB scope for every run in this process: DB services keep
           // the executor they first read.
           deps
-            .runExport(command, { stopBeforeWave, keepDbScope: true })
+            .runExport(command, {
+              stopBeforeWave,
+              keepDbScope: true,
+              hostSetting
+            })
             .finally(() => {
               ended = true;
             }),
