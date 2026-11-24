@@ -290,14 +290,11 @@ export function wavesScopeSql(
   const own = ownReasonsSql(alias, recordsParam);
   const p = `${alias}_p`;
   const parent = ownReasonsSql(p, recordsParam);
-  const reasons = Object.fromEntries(
-    STAY_REASONS.map((reason) => [
-      reason,
-      subwaveStaysWithParent
-        ? `(${own[reason]} or exists (select 1 from ${SCOPE_TABLES.waves} ${p} where ${p}.id = ${alias}.parent_wave_id and ${parent[reason]}))`
-        : own[reason]
-    ])
-  ) as Record<StayReason, string>;
+  const reasons = {} as Record<StayReason, string>;
+  for (const reason of STAY_REASONS)
+    reasons[reason] = subwaveStaysWithParent
+      ? `(${own[reason]} or exists (select 1 from ${SCOPE_TABLES.waves} ${p} where ${p}.id = ${alias}.parent_wave_id and ${parent[reason]}))`
+      : own[reason];
   const stays = `(${STAY_REASONS.map((reason) => reasons[reason]).join(' or ')})`;
   const select = `select ${alias}.id as id, ${STAY_REASONS.map((reason) => `${reasons[reason]} as ${reason}`).join(', ')}, ${stays} as stays_on_site from ${SCOPE_TABLES.waves} ${alias}`;
   return { reasons, stays, select };
