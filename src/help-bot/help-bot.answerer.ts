@@ -17,7 +17,6 @@ import {
   wantsDetailedDesktopAnswer
 } from './help-bot-desktop-knowledge';
 import { Logger } from '@/logging';
-import { appFeatures } from '@/app-features';
 import {
   frontendHelpBotKnowledgeSource,
   HelpBotKnowledgeSource,
@@ -44,14 +43,7 @@ import {
   isHelpBotContextVerificationQuestion,
   parseHelpBotQuestionContext
 } from './help-bot-question-context';
-import {
-  HELP_BOT_CREDIT_CATEGORY,
-  HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT,
-  HELP_BOT_HANDLE,
-  HELP_BOT_PROFILE_SETUP_CREDIT_GRANT,
-  HELP_BOT_QUESTION_CREDIT_COST,
-  HELP_BOT_SIGNUP_CREDIT_GRANT
-} from './help-bot.config';
+import { HELP_BOT_CREDIT_CATEGORY, HELP_BOT_HANDLE } from './help-bot.config';
 import {
   defaultHelpBotAllowedOrigins,
   filterHelpBotReplyText
@@ -112,9 +104,6 @@ function toCanonicalUrl(baseUrl: string, path: string): string {
   return `${baseUrl}${normalizedPath}`;
 }
 
-const HELP_BOT_CREDIT_CATEGORY_PATH = `/rep/categories/${encodeURIComponent(
-  HELP_BOT_CREDIT_CATEGORY
-)}`;
 const MAX_KNOWLEDGE_SOURCE_LINKS = 3;
 const MAX_STREAM_KNOWLEDGE_SOURCE_LINKS = 2;
 const MAX_RENDERED_ANSWER_CHARACTERS = 1200;
@@ -136,16 +125,6 @@ const PATH_LINK_LABEL_OVERRIDES: Readonly<Record<string, string>> = {
 interface HelpBotSourceLink {
   readonly label: string;
   readonly url: string;
-}
-
-function getHelpBotCreditGrantText(): string {
-  if (
-    HELP_BOT_SIGNUP_CREDIT_GRANT === HELP_BOT_PROFILE_SETUP_CREDIT_GRANT &&
-    HELP_BOT_PROFILE_SETUP_CREDIT_GRANT === HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT
-  ) {
-    return `Signup, profile setup, and daily activity each currently grant ${HELP_BOT_SIGNUP_CREDIT_GRANT} Help6529 Credit REP.`;
-  }
-  return `Signup currently grants ${HELP_BOT_SIGNUP_CREDIT_GRANT} Help6529 Credit REP, profile setup grants ${HELP_BOT_PROFILE_SETUP_CREDIT_GRANT}, and daily activity grants ${HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT}.`;
 }
 
 function hasRoutePlaceholder(path: string): boolean {
@@ -764,9 +743,7 @@ function buildBoundaryRecord(): HelpBotKnowledgeRecord {
   };
 }
 
-function buildCapabilitiesRecord(
-  creditsEnabled: boolean
-): HelpBotKnowledgeRecord {
+function buildCapabilitiesRecord(): HelpBotKnowledgeRecord {
   return {
     id: 'help-bot.capabilities',
     kind: 'guardrail',
@@ -774,13 +751,9 @@ function buildCapabilitiesRecord(
     linkLabel: 'Waves',
     canonicalPath: '/waves',
     aliases: ['help bot capabilities'],
-    keywords: creditsEnabled
-      ? ['help', 'capabilities', 'credits']
-      : ['help', 'capabilities'],
+    keywords: ['help', 'capabilities'],
     facts: [
-      creditsEnabled
-        ? 'The help bot can answer public 6529 product questions, explain its Help6529 Credits system briefly, and ask for a topic when the user only asks for help.'
-        : 'The help bot can answer public 6529 product questions and ask for a topic when the user only asks for help.'
+      'The help bot can answer public 6529 product questions and ask for a topic when the user only asks for help.'
     ],
     relatedPaths: [],
     tags: ['help-bot', 'guardrail'],
@@ -788,48 +761,25 @@ function buildCapabilitiesRecord(
   };
 }
 
-/** What the bot says about credits while the meter is off. */
+/** What the bot says when asked about the removed Help6529 Credits. */
 const HELP_BOT_FREE_QUESTIONS_FACTS: readonly string[] = [
   'Asking help6529 is free.',
   `It no longer uses ${HELP_BOT_CREDIT_CATEGORY}.`
 ];
 
-function buildCreditSystemRecord(
-  creditsEnabled: boolean
-): HelpBotKnowledgeRecord {
-  const record: Pick<
-    HelpBotKnowledgeRecord,
-    'id' | 'kind' | 'title' | 'aliases' | 'relatedPaths' | 'sourceRefs'
-  > = {
+function buildCreditSystemRecord(): HelpBotKnowledgeRecord {
+  return {
     id: 'help-bot.credits',
     kind: 'business_rule',
     title: 'Help6529 Credits',
+    linkLabel: 'Waves',
+    canonicalPath: '/waves',
     aliases: ['help6529 credits', 'help bot credits', 'helpbot credits'],
+    keywords: ['help6529', 'credits', 'credit', 'free'],
+    facts: [...HELP_BOT_FREE_QUESTIONS_FACTS],
     relatedPaths: ['/waves'],
+    tags: ['help-bot', 'credits'],
     sourceRefs: ['backend help bot credit classifier']
-  };
-  if (!creditsEnabled) {
-    return {
-      ...record,
-      linkLabel: 'Waves',
-      canonicalPath: '/waves',
-      keywords: ['help6529', 'credits', 'credit', 'free'],
-      facts: [...HELP_BOT_FREE_QUESTIONS_FACTS],
-      tags: ['help-bot', 'credits']
-    };
-  }
-  return {
-    ...record,
-    linkLabel: HELP_BOT_CREDIT_CATEGORY,
-    canonicalPath: HELP_BOT_CREDIT_CATEGORY_PATH,
-    keywords: ['help6529', 'credits', 'credit', 'rep'],
-    facts: [
-      `Help6529 uses ${HELP_BOT_CREDIT_CATEGORY} REP to meter bot questions.`,
-      `Each Help6529 question costs ${HELP_BOT_QUESTION_CREDIT_COST} Help6529 Credit REP.`,
-      `${HELP_BOT_CREDIT_CATEGORY} is a reserved REP category managed by ${HELP_BOT_HANDLE}; normal users cannot grant REP in this category.`,
-      getHelpBotCreditGrantText()
-    ],
-    tags: ['help-bot', 'credits', 'rep']
   };
 }
 
@@ -1501,29 +1451,12 @@ function isHelpBotCreditQuestion(normalizedQuestion: string): boolean {
   ].some((pattern) => pattern.test(question));
 }
 
-function buildCreditSystemAnswer(
-  question: string,
-  baseUrl: string,
-  creditsEnabled: boolean
-): string | null {
+function buildCreditSystemAnswer(question: string): string | null {
   const normalizedQuestion = normalizeBoundaryText(question);
   if (!isHelpBotCreditQuestion(normalizedQuestion)) {
     return null;
   }
-  if (!creditsEnabled) {
-    return HELP_BOT_FREE_QUESTIONS_FACTS.join(' ');
-  }
-
-  return ensureCanonicalMarkdownLink({
-    text: [
-      `Help6529 uses ${HELP_BOT_CREDIT_CATEGORY} REP as a lightweight question meter.`,
-      `Each question costs ${HELP_BOT_QUESTION_CREDIT_COST} credit.`,
-      `${HELP_BOT_CREDIT_CATEGORY} is a reserved REP category managed by ${HELP_BOT_HANDLE}, so normal users cannot grant it to each other.`,
-      getHelpBotCreditGrantText()
-    ].join(' '),
-    canonicalUrl: toCanonicalUrl(baseUrl, HELP_BOT_CREDIT_CATEGORY_PATH),
-    label: HELP_BOT_CREDIT_CATEGORY
-  });
+  return HELP_BOT_FREE_QUESTIONS_FACTS.join(' ');
 }
 
 function isSafePromptDesignQuestion(normalizedQuestion: string): boolean {
@@ -1556,18 +1489,12 @@ function buildSafePromptDesignAnswer(
   });
 }
 
-function buildGenericHelpAnswer(
-  question: string,
-  creditsEnabled: boolean
-): string | null {
+function buildGenericHelpAnswer(question: string): string | null {
   const normalizedQuestion = normalizeBoundaryText(question);
   if (!isGenericHelpRequest(normalizedQuestion)) {
     return null;
   }
-  const credits = creditsEnabled
-    ? ` I use ${HELP_BOT_CREDIT_CATEGORY} REP too: each question costs ${HELP_BOT_QUESTION_CREDIT_COST} credit, with grants from signup, profile setup, and daily activity.`
-    : '';
-  return `What do you need help with? I can answer public 6529 product questions about TDH, REP/CIC/NIC, Waves, drops, delegation, consolidations, subscriptions, profiles, The Memes, Meme Lab, Gradients, NextGen, the Stream review, public data, the API, and where to find things on 6529.io.${credits} Reply with a topic or question.`;
+  return 'What do you need help with? I can answer public 6529 product questions about TDH, REP/CIC/NIC, Waves, drops, delegation, consolidations, subscriptions, profiles, The Memes, Meme Lab, Gradients, NextGen, the Stream review, public data, the API, and where to find things on 6529.io. Reply with a topic or question.';
 }
 
 function buildSocialAnswer(question: string): string | null {
@@ -1640,29 +1567,21 @@ export class HelpBotAnswerer {
       };
     }
 
-    const creditsEnabled = appFeatures.isHelpBotCreditsEnabled();
-    const creditSystemAnswer = buildCreditSystemAnswer(
-      request.question,
-      request.baseUrl,
-      creditsEnabled
-    );
+    const creditSystemAnswer = buildCreditSystemAnswer(request.question);
     if (creditSystemAnswer) {
       return {
         type: 'ANSWER',
         answer: creditSystemAnswer,
-        record: buildCreditSystemRecord(creditsEnabled)
+        record: buildCreditSystemRecord()
       };
     }
 
-    const genericHelpAnswer = buildGenericHelpAnswer(
-      request.question,
-      creditsEnabled
-    );
+    const genericHelpAnswer = buildGenericHelpAnswer(request.question);
     if (genericHelpAnswer) {
       return {
         type: 'ANSWER',
         answer: genericHelpAnswer,
-        record: buildCapabilitiesRecord(creditsEnabled)
+        record: buildCapabilitiesRecord()
       };
     }
 
@@ -1769,7 +1688,7 @@ export class HelpBotAnswerer {
     if (!desktopQuestion && !needsContext) {
       return null;
     }
-    // A thrown load error reaches the processor's technical-failure/refund path.
+    // A thrown load error reaches the processor's technical-failure path.
     const match = await this.findKnowledgeMatches(
       desktopQuestion ?? context.primaryQuestion,
       {
