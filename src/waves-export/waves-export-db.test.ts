@@ -1,6 +1,7 @@
 const mockPoolEnd = jest.fn((done: () => void) => done());
-const mockGetConnection = jest.fn((done: (error: Error) => void) =>
-  done(new Error('no server'))
+const mockGetConnection = jest.fn(
+  (done: (error: Error | null, c?: object) => void) =>
+    done(new Error('no server'))
 );
 const mockPoolOn = jest.fn();
 const mockCreateApiDbPool = jest.fn((..._args: unknown[]) => ({
@@ -95,21 +96,76 @@ describe('withApiSqlExecutor', () => {
     expect(mockPoolEnd).toHaveBeenCalledTimes(1);
   });
 
-  it('makes each new connection read-only before anything else runs on it', async () => {
-    const { db } = load();
-    await db.withApiSqlExecutor(async () => undefined);
-    expect(mockPoolOn).toHaveBeenCalledWith('connection', expect.any(Function));
-    const onConnection = mockPoolOn.mock.calls[0][1];
-    const connection = { query: jest.fn(), destroy: jest.fn() };
-    onConnection(connection);
-    expect(connection.query).toHaveBeenCalledWith(
-      'SET SESSION TRANSACTION READ ONLY',
-      expect.any(Function)
+  /**
+   * A pool that hands out `connection` as mysql's does: 'connection' first
+   * (the hook), then the caller's callback.
+   */
+  function handsOut(connection: object) {
+    mockGetConnection.mockImplementationOnce(
+      (done: (error: Error | null, c?: object) => void) => {
+        const [, onConnection] = mockPoolOn.mock.calls.find(
+          ([event]) => event === 'connection'
+        )!;
+        onConnection(connection);
+        done(null, connection);
+      }
     );
-    // A connection that can't be made read-only is destroyed: fail closed.
-    connection.query.mock.calls[0][1](null);
+  }
+
+  it('runs no statement on a connection until its read-only SET has succeeded', async () => {
+    const { executor, db } = load();
+    let finishSet: (error: Error | null) => void = () => undefined;
+    const connection = {
+      query: jest.fn((sql: string, ...rest: unknown[]) => {
+        const done = rest[rest.length - 1] as (
+          error: Error | null,
+          rows?: unknown
+        ) => void;
+        if (sql === 'SET SESSION TRANSACTION READ ONLY') finishSet = done;
+        else done(null, [{ n: 1 }]);
+      }),
+      release: jest.fn(),
+      config: {},
+      destroy: jest.fn()
+    };
+    handsOut(connection);
+    await db.withApiSqlExecutor(async () => {
+      const read = executor.sqlExecutor.execute('SELECT 1 AS n');
+      await new Promise((resolve) => setImmediate(resolve));
+      // Only the SET so far: the read waits for it.
+      expect(connection.query.mock.calls.map(([sql]) => sql)).toEqual([
+        'SET SESSION TRANSACTION READ ONLY'
+      ]);
+      finishSet(null);
+      await expect(read).resolves.toEqual([{ n: 1 }]);
+    });
     expect(connection.destroy).not.toHaveBeenCalled();
-    connection.query.mock.calls[0][1](new Error('refused'));
+  });
+
+  it('refuses the statement and destroys a connection whose SET failed: fail closed, no wait', async () => {
+    const { executor, db } = load();
+    const connection = {
+      query: jest.fn((sql: string, ...rest: unknown[]) => {
+        const done = rest[rest.length - 1] as (error: Error | null) => void;
+        done(
+          sql === 'SET SESSION TRANSACTION READ ONLY'
+            ? Object.assign(new Error('refused'), { code: 'ER_PARSE_ERROR' })
+            : null
+        );
+      }),
+      release: jest.fn(),
+      config: {},
+      destroy: jest.fn()
+    };
+    handsOut(connection);
+    await db.withApiSqlExecutor(async () => {
+      await expect(executor.sqlExecutor.execute('SELECT 1')).rejects.toThrow(
+        'An export connection could not be made read-only: ER_PARSE_ERROR'
+      );
+    });
+    expect(connection.query.mock.calls.map(([sql]) => sql)).toEqual([
+      'SET SESSION TRANSACTION READ ONLY'
+    ]);
     expect(connection.destroy).toHaveBeenCalledTimes(1);
   });
 
