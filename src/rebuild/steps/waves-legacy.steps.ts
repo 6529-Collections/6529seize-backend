@@ -56,7 +56,15 @@ export const WAVES_LEGACY_TABLES = [
 
 const CREATED_AT = 1_764_000_000_000;
 
-/** The rank wave, whose competition the native fixture writes. */
+/** When the rank wave's one decision ran (made up, a day after the waves). */
+const DECISION_AT = CREATED_AT + 86_400_000;
+
+/**
+ * The rank wave, whose competition the native fixture writes. Its
+ * strategy is one decision at DECISION_AT, so the chain world's import of
+ * it carries that decision's result (an import takes only the results in
+ * a decision's series).
+ */
 export function rankWave(): WaveEntity {
   return aWave(
     {
@@ -64,7 +72,12 @@ export function rankWave(): WaveEntity {
       created_by: probeProfileId(1),
       created_at: CREATED_AT,
       updated_at: CREATED_AT,
-      description_drop_id: WAVES_LEGACY_IDS.rankDescription
+      description_drop_id: WAVES_LEGACY_IDS.rankDescription,
+      decisions_strategy: {
+        first_decision_time: DECISION_AT,
+        subsequent_decisions: [],
+        is_rolling: false
+      }
     },
     {
       id: WAVES_LEGACY_IDS.rankWave,
@@ -201,9 +214,6 @@ export function wavesLegacyRows(): Record<string, Record<string, unknown>[]> {
     [DROPS_PARTS_TABLE]: drops.map((d) => d.part)
   };
 }
-
-/** When the rank wave's one decision ran (made up, a day after the waves). */
-const DECISION_AT = CREATED_AT + 86_400_000;
 
 /**
  * The rank wave as a Main Stage with one decided winner, as the native
