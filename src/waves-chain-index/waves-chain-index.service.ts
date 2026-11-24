@@ -102,6 +102,8 @@ const BATCH_READS = 100;
 const READ_CONCURRENCY = 8;
 /** Claim builds a run sends at most. */
 const CLAIM_SENDS_PER_RUN = 20;
+/** Logged Main Stage results a run catches up claim builds for, at most. */
+export const CLAIM_CATCH_UP_PER_RUN = 50;
 /** A feed read answered `gone` is asked again this many times first. */
 const GONE_RETRIES = 2;
 /**
@@ -324,6 +326,7 @@ export class WavesChainIndex {
       network: head.network ?? state.network
     });
     try {
+      await this.catchUpClaimBuilds(state, report);
       const fullDue =
         state.lastFullAt !== null &&
         this.now() - state.lastFullAt > this.fullEveryMs;
@@ -671,6 +674,38 @@ export class WavesChainIndex {
       (build) => build.status === 'pending'
     ).length;
     return { ...state, eventsNext: end, scanState: derived.carry.scan };
+  }
+
+  /**
+   * The claim builds the log should have called for and didn't: a Main
+   * Stage RESULT_FINAL logged while claim builds were off, or while
+   * MAIN_STAGE_DECISION_IDS named other decisions. Each run reads them from
+   * the log (one read, at most CLAIM_CATCH_UP_PER_RUN) and writes them as
+   * the log would have, with the same key, so none is written twice; the
+   * run then sends them as any other, the collaboration frozen first.
+   */
+  private async catchUpClaimBuilds(
+    state: WavesChainIndexState,
+    report: WavesChainIndexReport
+  ) {
+    if (!this.claims.enabled()) return;
+    const mainStage = this.claims.mainStage();
+    if (!mainStage.size) return;
+    const results = await this.db.resultsWithoutClaimBuild(
+      Array.from(mainStage),
+      state.network ?? '',
+      CLAIM_CATCH_UP_PER_RUN
+    );
+    if (!results.length) return;
+    const builds = claimBuildsOf(results, mainStage, state.network);
+    await this.db.writeClaimBuilds(builds);
+    const queued = builds.filter((build) => build.status === 'pending');
+    report.claimBuilds.queued += queued.length;
+    logger.info(
+      `[CLAIM BUILDS CAUGHT UP] ${builds.length} for logged results (${queued.length} to send): ${builds
+        .map((build) => `${build.decisionId} occurrence ${build.occurrence}`)
+        .join(', ')}`
+    );
   }
 
   /**

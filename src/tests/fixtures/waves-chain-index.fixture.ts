@@ -1736,6 +1736,42 @@ export class FakeIndexDb {
   /** chain_claim_builds, by `network|decision|occurrence`. */
   readonly claims = new Map<string, FakeClaimBuild>();
 
+  /** As the SQL: decided RESULT_FINAL events of these with no build. */
+  async resultsWithoutClaimBuild(
+    decisionIds: readonly string[],
+    network: string,
+    limit: number
+  ) {
+    return this.events
+      .filter(
+        (e) =>
+          e.kind === 'RESULT_FINAL' &&
+          e.decisionId !== null &&
+          decisionIds.includes(e.decisionId) &&
+          e.data.status === 'decided' &&
+          e.data.occurrence !== null &&
+          e.data.occurrence !== undefined &&
+          !this.claims.has(`${network}|${e.decisionId}|${e.data.occurrence}`)
+      )
+      .slice(0, limit)
+      .map((e) => JSON.parse(JSON.stringify(e)) as ChainEvent);
+  }
+
+  /** As the SQL: a build already there is kept as it is. */
+  async writeClaimBuilds(builds: readonly ClaimBuild[]) {
+    for (const build of builds) {
+      const key = `${build.network}|${build.decisionId}|${build.occurrence}`;
+      if (this.claims.has(key)) continue;
+      this.claims.set(key, {
+        ...JSON.parse(JSON.stringify(build)),
+        attempts: 0,
+        lastError: null,
+        sentAt: null,
+        messageId: null
+      });
+    }
+  }
+
   async pendingClaimBuilds(limit: number) {
     return Array.from(this.claims.values())
       .filter((c) => c.status === 'pending')

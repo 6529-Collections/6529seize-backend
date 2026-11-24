@@ -11,9 +11,12 @@ import {
   claimBuildsOf,
   parseMainStageDecisionIds
 } from './waves-chain-index.claims';
-import { EMPTY_INDEX_STATE } from './waves-chain-index.db';
+import { EMPTY_INDEX_STATE, WavesChainIndexDb } from './waves-chain-index.db';
 import { ChainEvent } from './waves-chain-index.events';
-import { WavesChainIndex } from './waves-chain-index.service';
+import {
+  CLAIM_CATCH_UP_PER_RUN,
+  WavesChainIndex
+} from './waves-chain-index.service';
 
 const BIG = 1_000_000;
 const W1 = id('a1');
@@ -225,15 +228,64 @@ describe('Main Stage claim builds', () => {
     expect(db.claims.size).toBe(1);
   });
 
-  it('does nothing with the setting off, nor for results from before it was on', async () => {
+  it('does nothing with the setting off, and catches a result logged then up once it is on', async () => {
     queue.on = false;
     chain.settle(D1, 3, [E(1)], 8);
+    const settled = chain.height;
     const off = await index.run({ budgetMs: BIG });
     expect(off.claimBuilds).toEqual({ queued: 0, sent: 0, failed: 0 });
-    queue.on = true;
+    expect(db.claims.size).toBe(0);
     await index.run({ budgetMs: BIG });
     expect(queue.sent).toEqual([]);
+    queue.on = true;
+    const on = await index.run({ budgetMs: BIG });
+    expect(on.claimBuilds).toEqual({ queued: 1, sent: 1, failed: 0 });
+    // As the log would have queued it: the same message, frozen first.
+    expect(queue.sent).toEqual([
+      {
+        drop_id: DROP(1),
+        chain: {
+          decision_id: D1,
+          occurrence: 8,
+          entry_id: E(1),
+          height: settled,
+          manifest_hash: manifest(E(1))
+        }
+      }
+    ]);
+    expect(queue.log).toEqual([`freeze ${DROP(1)}`, `send ${DROP(1)}`]);
+    // Never twice.
+    await index.run({ budgetMs: BIG });
+    await index.run({ budgetMs: BIG });
+    expect(queue.sent).toHaveLength(1);
+    expect(db.claims.size).toBe(1);
+  });
+
+  it('catches up a result logged while MAIN_STAGE_DECISION_IDS named another decision, once corrected', async () => {
+    queue.ids = new Set([D4]);
+    chain.settle(D1, 3, [E(2)], 12);
+    await index.run({ budgetMs: BIG });
     expect(db.claims.size).toBe(0);
+    queue.ids = new Set([D1]);
+    const corrected = await index.run({ budgetMs: BIG });
+    expect(corrected.claimBuilds).toEqual({ queued: 1, sent: 1, failed: 0 });
+    expect(queue.sent.map((m) => [m.drop_id, m.chain.occurrence])).toEqual([
+      [DROP(2), 12]
+    ]);
+    await index.run({ budgetMs: BIG });
+    expect(queue.sent).toHaveLength(1);
+  });
+
+  it('catches up nothing for a decision not listed, nor a result already built', async () => {
+    chain.settle(D4, 1, [E(4)], 13); // not the Main Stage
+    chain.settle(D1, 3, [E(1)], 14);
+    await index.run({ budgetMs: BIG });
+    expect(queue.sent.map((m) => m.chain.decision_id)).toEqual([D1]);
+    for (let run = 0; run < 3; run++) await index.run({ budgetMs: BIG });
+    expect(queue.sent).toHaveLength(1);
+    expect(Array.from(db.claims.keys())).toEqual([
+      `${db.state.network ?? ''}|${D1}|14`
+    ]);
   });
   it("freezes the winner's collaboration for the mint before its claim build is sent, once", async () => {
     chain.settle(D1, 3, [E(2), E(1)], 3);
@@ -440,5 +492,61 @@ describe('parseMainStageDecisionIds', () => {
     warn.mockRestore();
     expect(parseMainStageDecisionIds('').size).toBe(0);
     expect(parseMainStageDecisionIds(undefined).size).toBe(0);
+  });
+});
+
+describe('the claim build catch-up', () => {
+  it('reads the log once a run, for the listed decisions, at most 50', async () => {
+    const clock = new FakeClock();
+    const chain = aWorld(clock);
+    const queue = new FakeQueue();
+    const db = new FakeIndexDb();
+    const index = new WavesChainIndex(
+      chain,
+      db.asDb(),
+      clock.now,
+      undefined,
+      queue
+    );
+    await index.run({ budgetMs: BIG });
+    const read = jest.spyOn(db, 'resultsWithoutClaimBuild');
+    await index.run({ budgetMs: BIG });
+    expect(CLAIM_CATCH_UP_PER_RUN).toBe(50);
+    expect(read.mock.calls).toEqual([[[D1], db.state.network ?? '', 50]]);
+    queue.on = false;
+    await index.run({ budgetMs: BIG });
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks the database for decided results with no build on the index's network", async () => {
+    const calls: { sql: string; params: Record<string, unknown> }[] = [];
+    const executor = {
+      execute: async (sql: string, params: Record<string, unknown>) => {
+        calls.push({ sql, params });
+        return [];
+      },
+      executeNativeQueriesInTransaction: async (work: any) =>
+        work({ connection: {} })
+    };
+    const sqlDb = new WavesChainIndexDb(() => executor as any);
+    expect(await sqlDb.resultsWithoutClaimBuild([], 'net', 50)).toEqual([]);
+    expect(calls).toEqual([]);
+    await sqlDb.resultsWithoutClaimBuild([D1], 'net', 50);
+    const sql = calls[0].sql.replace(/\s+/g, ' ');
+    expect(sql).toContain("e.kind = 'RESULT_FINAL'");
+    expect(sql).toContain('e.decision_id in (:decisionIds)');
+    expect(sql).toContain(
+      "json_unquote(json_extract(e.data, '$.status')) = 'decided'"
+    );
+    expect(sql).toContain('b.network = :network');
+    expect(sql).toContain('order by e.height, e.seq limit :limit');
+    expect(calls[0].params).toEqual({
+      decisionIds: [D1],
+      network: 'net',
+      limit: 50
+    });
+    calls.length = 0;
+    await sqlDb.writeClaimBuilds([]);
+    expect(calls).toEqual([]);
   });
 });

@@ -1202,6 +1202,44 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  /**
+   * The log's decided RESULT_FINAL events of these decisions that have no
+   * claim build on `network`, oldest first, at most `limit`: the builds the
+   * log should have called for and didn't (claim builds were off when the
+   * result was logged, or MAIN_STAGE_DECISION_IDS named other decisions).
+   */
+  async resultsWithoutClaimBuild(
+    decisionIds: readonly string[],
+    network: string,
+    limit: number
+  ): Promise<ChainEvent[]> {
+    if (!decisionIds.length) return [];
+    const rows = await this.db.execute<EventRowRead>(
+      `select e.* from ${CHAIN_EVENTS_TABLE} e
+        where e.kind = 'RESULT_FINAL'
+          and e.decision_id in (:decisionIds)
+          and json_unquote(json_extract(e.data, '$.status')) = 'decided'
+          and json_extract(e.data, '$.occurrence') is not null
+          and not exists (
+            select 1 from ${CHAIN_CLAIM_BUILDS_TABLE} b
+             where b.network = :network
+               and b.decision_id = e.decision_id
+               and b.occurrence = cast(json_unquote(json_extract(e.data, '$.occurrence')) as signed))
+        order by e.height, e.seq
+        limit :limit`,
+      { decisionIds: [...decisionIds], network, limit }
+    );
+    return rows.map(eventOf);
+  }
+
+  /** Writes claim builds on their own; one already there is kept as it is. */
+  async writeClaimBuilds(builds: readonly ClaimBuild[]): Promise<void> {
+    if (!builds.length) return;
+    await this.executeNativeQueriesInTransaction((connection) =>
+      this.insertClaimBuilds(builds, connection)
+    );
+  }
+
   /** Claim builds still to send, oldest first. */
   async pendingClaimBuilds(limit: number): Promise<
     {
