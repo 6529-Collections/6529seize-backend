@@ -42,6 +42,11 @@ servers ignore the header. For SSR, WAF's country describes its caller's IP,
 not a visitor named in a forwarding
 header; browser/native country checks must originate from the visitor.
 
+This is an infrastructure trust boundary, not proof derived from the API
+Gateway source-IP field. An unprotected or incompletely configured REST stage
+can pass through a forged, valid country code; FindIP fallback cannot detect
+that case. Apply the same prerequisite to new stages before deploying the API.
+
 AWS references: [geographic match statements](https://docs.aws.amazon.com/waf/latest/developerguide/waf-rule-statement-type-geo-match.html),
 [dynamic label interpolation](https://docs.aws.amazon.com/waf/latest/developerguide/waf-dynamic-label-interpolation.html),
 and [header insertion and overwrite](https://docs.aws.amazon.com/waf/latest/developerguide/customizing-the-incoming-request.html).

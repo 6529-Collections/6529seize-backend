@@ -136,11 +136,11 @@ describe('getIp', () => {
     }
   );
 
-  it('ignores a spoofed X-Forwarded-For on the local server even when Express trusts proxies', async () => {
+  it('ignores spoofed forwarding and country headers on the local server even when Express trusts proxies', async () => {
     const app = express();
     app.enable('trust proxy');
     app.get('/ip', (req, res) => {
-      res.json({ ip: getIp(req) });
+      res.json({ ip: getIp(req), waf_country: getWafCountry(req) });
     });
     const server = app.listen(0, '127.0.0.1');
     await new Promise((resolve) => server.once('listening', resolve));
@@ -154,7 +154,10 @@ describe('getIp', () => {
               port,
               path: '/ip',
               agent: false,
-              headers: { 'X-Forwarded-For': SPOOFED_IP }
+              headers: {
+                'X-Forwarded-For': SPOOFED_IP,
+                'X-Amzn-Waf-Country': 'US'
+              }
             },
             (res) => {
               let data = '';
@@ -165,7 +168,10 @@ describe('getIp', () => {
           .on('error', reject);
       });
 
-      expect(JSON.parse(body)).toEqual({ ip: '127.0.0.1' });
+      expect(JSON.parse(body)).toEqual({
+        ip: '127.0.0.1',
+        waf_country: null
+      });
     } finally {
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));
