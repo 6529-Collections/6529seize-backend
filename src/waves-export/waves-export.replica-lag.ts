@@ -8,11 +8,13 @@ import { ReplicaLagCheckedBy, WavesExportUsageError } from './cli-options';
 
 /**
  * The read replica's lag, checked before any stage reads. The export reads
- * through the shared DB layer's pool, several connections at once, and the
- * reader endpoint can put each on a different Aurora reader with its own
- * lag. One reader's own row, which the chain exports read (REPLICA_LAG_SQL in
- * dbDumpsDaily/chain-exports/replica-snapshot.ts), says nothing for the
- * others, so this reads every reader's row and holds the worst to the bound.
+ * through the shared DB layer's pool on DB_HOST, several connections at once,
+ * and the reader endpoint can put each on a different Aurora reader with its
+ * own lag. One reader's own row, which the chain exports read
+ * (REPLICA_LAG_SQL in dbDumpsDaily/chain-exports/replica-snapshot.ts), says
+ * nothing for the others, so this reads every reader's row and holds the
+ * worst to the bound. It also reads whether DB_HOST's server is read-only,
+ * as the chain exports do: a server that isn't is the writer, not a reader.
  */
 
 /**
@@ -23,56 +25,46 @@ import { ReplicaLagCheckedBy, WavesExportUsageError } from './cli-options';
 export const ALL_READERS_LAG_SQL =
   'SELECT SERVER_ID AS server_id, SESSION_ID AS session_id, REPLICA_LAG_IN_MILLISECONDS AS lag_ms, TIMESTAMPDIFF(MICROSECOND, LAST_UPDATE_TIMESTAMP, UTC_TIMESTAMP(6)) / 1000 AS age_ms, ROUND(UNIX_TIMESTAMP(NOW(6)) * 1000) AS now_ms FROM information_schema.replica_host_status';
 
+/** The server's read_only, as openReadOnlySnapshot reads it. */
+export const READ_ONLY_SQL = 'SELECT @@GLOBAL.read_only AS ro';
+/** Aurora readers report innodb_read_only; read on its own, as it may fail. */
+export const INNODB_READ_ONLY_SQL = 'SELECT @@GLOBAL.innodb_read_only AS iro';
+
 const WRITER_SESSION_ID = 'MASTER_SESSION_ID';
 
 /**
- * A reader's row this old is no fresh reading: a refusal says the reader
- * may have stopped updating it, so trying again won't pass.
+ * A reader's row this old is no fresh reading: the reader may have stopped
+ * updating it, so its lag can't be known and waiting won't help.
  */
-const STALE_READING_MS = 60_000;
+export const STALE_READING_MS = 60_000;
 
-/** export.json's `replica_lag` when the export read the lag itself. */
-export interface ReplicaLagCheckedByExport {
-  readonly checked_by: 'export';
-  /** Readers in replica_host_status, the writer left out. */
-  readonly readers: number;
-  /** The lag of the reader furthest behind (by lag plus age), whole ms up. */
-  readonly worst_lag_ms: number;
-  /** How old that reader's row was when read, whole ms up. */
-  readonly worst_lag_age_ms: number;
-  /** When it was read: this machine's clock or the server's, the earlier. */
+/** What one reading saw, as export.json records it. Lag figures in ms. */
+export interface ReplicaLagSeen {
+  /** This machine's clock or the server's, the earlier. */
   readonly read_at: string;
-}
-
-/**
- * export.json's `replica_lag` with --replica-lag-checked-by and
- * --replica-lag-check-note: who checked the lag instead of the export, and
- * how.
- */
-export interface ReplicaLagCheckedByPerson {
-  readonly checked_by: 'person';
-  readonly person: string;
-  readonly note: string;
-}
-
-/**
- * export.json's `replica_lag` for a rehearsal: the lag as read, held to no
- * bound. Figures in ms; null when they couldn't be read, and then
- * `unknown_reason` says why, as a run after the freeze would refuse.
- */
-export interface ReplicaLagRehearsal {
-  readonly checked_by: 'rehearsal';
+  /** Whether DB_HOST's server is read-only (a reader); null when unknown. */
+  readonly server_read_only: boolean | null;
+  /** Readers in replica_host_status, the writer's server left out. */
   readonly readers: number | null;
+  /** The reader furthest behind, by lag plus its row's age: its lag, up. */
   readonly worst_lag_ms: number | null;
+  /** That reader's row's age when read, rounded up. */
   readonly worst_lag_age_ms: number | null;
-  readonly read_at: string;
+  /** Readers whose row is STALE_READING_MS old or more. */
+  readonly stale_readers: number | null;
+  /** Why the export couldn't tell; null when it could. */
   readonly unknown_reason: string | null;
 }
 
+/** export.json's `replica_lag` for one run. */
 export type ReplicaLagRecord =
-  | ReplicaLagCheckedByExport
-  | ReplicaLagCheckedByPerson
-  | ReplicaLagRehearsal;
+  | ({ readonly checked_by: 'export' } & ReplicaLagSeen)
+  | ({
+      readonly checked_by: 'person';
+      readonly person: string;
+      readonly note: string;
+    } & ReplicaLagSeen)
+  | ({ readonly checked_by: 'rehearsal' } & ReplicaLagSeen);
 
 export interface ReplicaLagReadOptions {
   /** Runs a SELECT through the export's own DB context, as its reads do. */
@@ -84,15 +76,17 @@ export interface ReplicaLagReadOptions {
 export interface ReplicaLagCheckOptions extends ReplicaLagReadOptions {
   /** Five minutes after the freeze: every reader must have caught up past it. */
   readonly caughtUpMs: number;
+  /**
+   * --replica-lag-checked-by and --replica-lag-check-note: taken only when
+   * the export can't tell (an unknown lag or read-only state, or a reader's
+   * row that stopped updating), never over a lag it can read.
+   */
+  readonly checkedByPerson?: ReplicaLagCheckedBy | null;
 }
 
 export interface ReplicaLagStartOptions extends ReplicaLagReadOptions {
-  /**
-   * Five minutes after the freeze; null for a rehearsal, which reads and
-   * reports the lag but holds it to no bound.
-   */
+  /** Null for a rehearsal, which reads and reports but never refuses. */
   readonly caughtUpMs: number | null;
-  /** Who checked the lag instead of the export, and how; null when no one. */
   readonly checkedByPerson: ReplicaLagCheckedBy | null;
 }
 
@@ -104,22 +98,25 @@ interface LagRow {
   readonly now_ms?: unknown;
 }
 
-/** Every reader's lag as read, or why it can't be known. */
-type AllReadersLag =
-  | {
-      readonly known: true;
-      readonly readers: number;
-      /** The reader furthest behind, by lag plus age. */
-      readonly lagMs: number;
-      readonly ageMs: number;
-      readonly readMs: number;
-    }
-  | {
-      readonly known: false;
-      readonly readers: number | null;
-      readonly reason: string;
-      readonly readMs: number;
-    };
+interface ReaderLag {
+  readonly lagMs: number;
+  readonly ageMs: number;
+}
+
+/** Everything one reading saw. */
+interface ServerReading {
+  readonly readMs: number;
+  readonly readOnly: boolean | null;
+  readonly readOnlyUnknown: string | null;
+  /** Every reader's lag, or why it can't be known. */
+  readonly lag:
+    | { readonly known: true; readonly readers: readonly ReaderLag[] }
+    | {
+        readonly known: false;
+        readonly readers: number | null;
+        readonly reason: string;
+      };
+}
 
 function numberOrNull(value: unknown): number | null {
   if (value === null || value === undefined) return null;
@@ -127,16 +124,28 @@ function numberOrNull(value: unknown): number | null {
   return Number.isFinite(number) ? number : null;
 }
 
+function flag(value: unknown): boolean | null {
+  const number = numberOrNull(value);
+  return number === null ? null : number === 1;
+}
+
 /**
  * Each reader's newest row, as REPLICA_LAG_SQL picks one for its own reader
  * (LAST_UPDATE_TIMESTAMP DESC: the youngest age first, no timestamp last).
+ * Every row of a server with a writer's row is left out, so a row the
+ * writer kept from a reader session before a failover can't block a run.
  */
 function newestRowPerReader(rows: readonly unknown[]): LagRow[] {
+  const all = rows.map((value) => (value ?? {}) as LagRow);
+  const writers = new Set(
+    all
+      .filter((row) => row.session_id === WRITER_SESSION_ID)
+      .map((row) => String(row.server_id))
+  );
   const newest = new Map<string, LagRow>();
-  for (const value of rows) {
-    const row = (value ?? {}) as LagRow;
-    if (row.session_id === WRITER_SESSION_ID) continue;
+  for (const row of all) {
     const reader = String(row.server_id);
+    if (writers.has(reader)) continue;
     const kept = newest.get(reader);
     const age = numberOrNull(row.age_ms);
     const keptAge = kept ? numberOrNull(kept.age_ms) : null;
@@ -160,208 +169,367 @@ function readRow(row: LagRow): Promise<ReplicaLagReading> {
 }
 
 const seconds = (ms: number) => `${(ms / 1000).toFixed(1)} s`;
-const utcTime = (ms: number) =>
-  `${new Date(ms).toISOString().slice(11, 19)} UTC`;
-const ofReaders = (count: number) =>
-  count === 1 ? 'its one reader' : `its ${count} readers`;
-const tableFailed = (error: unknown) =>
-  `reading information_schema.replica_host_status failed (${errorCode(error)})`;
+const oneOf = (count: number) =>
+  count === 1 ? 'its one reader' : `one of its ${count} readers`;
+const furthest = (count: number, onFreshRows = false) =>
+  count === 1
+    ? 'its one reader'
+    : `of its ${count} readers, the one furthest behind` +
+      (onFreshRows ? ' on an up-to-date row' : '');
+const failed = (what: string, error: unknown) =>
+  `reading ${what} failed (${errorCode(error)})`;
 
-/** Reads every reader's row once; never throws for a lag it can't read. */
-async function readAllReadersLag(
+/** A UTC time, with its date when that isn't the reading's day. */
+function utcTime(ms: number, todayMs: number): string {
+  const iso = new Date(ms).toISOString();
+  const day = iso.slice(0, 10);
+  return day === new Date(todayMs).toISOString().slice(0, 10)
+    ? `${iso.slice(11, 19)} UTC`
+    : `${day} ${iso.slice(11, 19)} UTC`;
+}
+
+function logError(
+  options: ReplicaLagReadOptions,
+  what: string,
+  error: unknown
+) {
+  // The message can name the user and host: the log only, never export.json.
+  options.log(
+    `${what} not read: ${String((error as Error)?.message ?? error)}`
+  );
+}
+
+async function readReadOnly(
   options: ReplicaLagReadOptions
-): Promise<AllReadersLag> {
+): Promise<{ readOnly: boolean | null; unknown: string | null }> {
+  let ro: boolean | null;
+  try {
+    const [row] = await options.readRows(READ_ONLY_SQL);
+    ro = flag((row as { ro?: unknown } | undefined)?.ro);
+  } catch (error) {
+    logError(options, 'read_only', error);
+    return { readOnly: null, unknown: failed('@@GLOBAL.read_only', error) };
+  }
+  let iro: boolean | null = null;
+  try {
+    const [row] = await options.readRows(INNODB_READ_ONLY_SQL);
+    iro = flag((row as { iro?: unknown } | undefined)?.iro);
+  } catch {
+    iro = null;
+  }
+  if (ro === true || iro === true) return { readOnly: true, unknown: null };
+  if (ro === false && iro === false) return { readOnly: false, unknown: null };
+  return {
+    readOnly: null,
+    unknown: "DB_HOST's server did not say whether it is read-only"
+  };
+}
+
+/** Reads the server's state and every reader's lag; never throws for either. */
+async function readServer(
+  options: ReplicaLagReadOptions
+): Promise<ServerReading> {
+  const { readOnly, unknown: readOnlyUnknown } = await readReadOnly(options);
   const localMs = (options.now ?? Date.now)();
+  const reading = (lag: ServerReading['lag'], readMs = localMs) => ({
+    readMs,
+    readOnly,
+    readOnlyUnknown,
+    lag
+  });
   let rows: unknown[];
   try {
     rows = await options.readRows(ALL_READERS_LAG_SQL);
   } catch (error) {
-    // The message can name the user and host: the log only, never export.json.
-    options.log(
-      `replica lag not read: ${String((error as Error)?.message ?? error)}`
-    );
-    return {
+    logError(options, 'replica lag', error);
+    return reading({
       known: false,
       readers: null,
-      reason: tableFailed(error),
-      readMs: localMs
-    };
+      reason: failed('information_schema.replica_host_status', error)
+    });
   }
   const readers = newestRowPerReader(rows);
-  const unknown = (reason: string): AllReadersLag => ({
-    known: false,
-    readers: readers.length,
-    reason,
-    readMs: localMs
-  });
   if (!readers.length) {
-    return unknown(
-      'information_schema.replica_host_status has no row for any reader'
-    );
+    return reading({
+      known: false,
+      readers: 0,
+      reason: 'information_schema.replica_host_status has no row for any reader'
+    });
   }
-  const readings: { lagMs: number; ageMs: number }[] = [];
+  const lags: ReaderLag[] = [];
   for (const row of readers) {
-    const { lagMs, ageMs, unknown: why, error } = await readRow(row);
-    if (why || lagMs === null || ageMs === null) {
-      return unknown(
-        `the row of one of ${ofReaders(readers.length)} says ${error}`
-      );
+    const { lagMs, ageMs, unknown, error } = await readRow(row);
+    if (unknown || lagMs === null || ageMs === null) {
+      return reading({
+        known: false,
+        readers: readers.length,
+        reason: `the row of ${oneOf(readers.length)} says ${error}`
+      });
     }
-    readings.push({ lagMs, ageMs });
+    lags.push({ lagMs, ageMs });
   }
-  const worst = readings.reduce((a, b) =>
-    b.lagMs + b.ageMs > a.lagMs + a.ageMs ? b : a
-  );
   const serverMs = numberOrNull(readers[0].now_ms);
   if (serverMs === null || serverMs <= 0) {
-    return unknown("the server's clock could not be read");
+    return reading({
+      known: false,
+      readers: readers.length,
+      reason: "the server's clock could not be read"
+    });
   }
+  return reading({ known: true, readers: lags }, Math.min(localMs, serverMs));
+}
+
+const behindOf = (reader: ReaderLag) =>
+  reader.lagMs + reader.ageMs + REPLICA_LAG_AGE_MARGIN_MS;
+
+function worstOf(readers: readonly ReaderLag[]): ReaderLag {
+  return readers.reduce((a, b) =>
+    b.lagMs + b.ageMs > a.lagMs + a.ageMs ? b : a
+  );
+}
+
+/** What export.json records of a reading. */
+function seen(
+  reading: ServerReading,
+  unknownReason: string | null
+): ReplicaLagSeen {
+  const { lag } = reading;
+  const worst = lag.known ? worstOf(lag.readers) : null;
   return {
-    known: true,
-    readers: readers.length,
-    lagMs: worst.lagMs,
-    ageMs: worst.ageMs,
-    readMs: Math.min(localMs, serverMs)
+    read_at: new Date(reading.readMs).toISOString(),
+    server_read_only: reading.readOnly,
+    readers: lag.known ? lag.readers.length : lag.readers,
+    worst_lag_ms: worst ? Math.ceil(worst.lagMs) : null,
+    worst_lag_age_ms: worst ? Math.ceil(worst.ageMs) : null,
+    stale_readers: lag.known
+      ? lag.readers.filter((it) => it.ageMs >= STALE_READING_MS).length
+      : null,
+    unknown_reason: unknownReason
   };
 }
 
-/** How a person who checked the lag another way runs the export. */
-function personCheck(caughtUpMs: number): string {
-  return (
-    `read the largest lag over all readers another way (on Aurora, the ` +
-    `AuroraReplicaLagMaximum metric) and, once that much time has passed ` +
-    `since ${utcTime(caughtUpMs)}, run the export again with ` +
-    `--replica-lag-checked-by <your name> --replica-lag-check-note <how you checked it>`
-  );
+/** How the reading stands against the bound. */
+type Verdict =
+  | { readonly kind: 'not_read_only' }
+  | {
+      readonly kind: 'behind';
+      readonly worst: ReaderLag;
+      readonly readers: number;
+      /** Readers whose row stopped updating also block, and are left out. */
+      readonly staleLeftOut: boolean;
+    }
+  | { readonly kind: 'cannot_tell'; readonly reasons: string }
+  | { readonly kind: 'caught_up' };
+
+/**
+ * A reader at most lag plus age plus the chain exports' margin
+ * (REPLICA_LAG_AGE_MARGIN_MS) behind, less than the time since `caughtUpMs`,
+ * has every write that committed before it. A reader past that on a fresh
+ * row is behind: only waiting helps. One past it on a row that stopped
+ * updating, an unknown lag or an unknown read-only state can't be told.
+ */
+function verdict(reading: ServerReading, caughtUpMs: number): Verdict {
+  if (reading.readOnly === false) return { kind: 'not_read_only' };
+  const reasons: string[] = [];
+  if (reading.readOnlyUnknown) reasons.push(reading.readOnlyUnknown);
+  const { lag } = reading;
+  if (lag.known) {
+    const gapMs = reading.readMs - caughtUpMs;
+    const blocking = lag.readers.filter((it) => behindOf(it) >= gapMs);
+    const fresh = blocking.filter((it) => it.ageMs < STALE_READING_MS);
+    if (fresh.length) {
+      return {
+        kind: 'behind',
+        worst: worstOf(fresh),
+        readers: lag.readers.length,
+        staleLeftOut: fresh.length < blocking.length
+      };
+    }
+    if (blocking.length) {
+      const oldest = blocking.reduce((a, b) => (b.ageMs > a.ageMs ? b : a));
+      reasons.push(
+        `the row of ${oneOf(lag.readers.length)} stopped updating ` +
+          `${seconds(oldest.ageMs)} ago, so its lag can't be known`
+      );
+    }
+  } else {
+    reasons.push(lag.reason);
+  }
+  return reasons.length
+    ? { kind: 'cannot_tell', reasons: reasons.join('; ') }
+    : { kind: 'caught_up' };
 }
 
 /**
- * The largest lag over every reader, plus the age of its row and the chain
- * exports' margin for a row's timestamp (REPLICA_LAG_AGE_MARGIN_MS), must be
- * less than the time since `caughtUpMs`: a reader at most that far behind
- * has every write that committed before it. Throws a refusal that says why
- * and when to try again; never passes an unknown lag.
+ * The check for a run after the freeze. Refuses a server that isn't
+ * read-only, and a reader behind on a fresh row (naming when to try again),
+ * whatever a person says. When the export can't tell, it refuses unless a
+ * person checked another way (--replica-lag-checked-by and
+ * --replica-lag-check-note), and then records them with what it read. When
+ * it can tell and every reader has caught up, it refuses those two options.
  */
 export async function checkReplicaLag(
   options: ReplicaLagCheckOptions
-): Promise<ReplicaLagCheckedByExport> {
-  const { caughtUpMs } = options;
-  const lag = await readAllReadersLag(options);
-  if (!lag.known) {
-    throw new WavesExportUsageError(
-      `The export can't tell how far the read replica is behind: ${lag.reason}. ` +
-        `It needs every reader caught up past ${utcTime(caughtUpMs)}, five ` +
-        `minutes after the freeze. If you can, ${personCheck(caughtUpMs)}.`,
-      { showHelp: false }
-    );
+): Promise<ReplicaLagRecord> {
+  const { caughtUpMs, checkedByPerson } = options;
+  const reading = await readServer(options);
+  const at = (ms: number) => utcTime(ms, reading.readMs);
+  const mark = `${at(caughtUpMs)}, five minutes after the freeze`;
+  const result = verdict(reading, caughtUpMs);
+  switch (result.kind) {
+    case 'not_read_only':
+      throw new WavesExportUsageError(
+        `DB_HOST's server is not read-only (read_only and innodb_read_only ` +
+          `are both off), so it is not a read replica, and the export reads ` +
+          `only from one. Point DB_HOST at the cluster's reader endpoint, ` +
+          `with DB_USER and DB_PASS for it: the export reads through DB_HOST, ` +
+          `not DB_HOST_READ.`,
+        { showHelp: false }
+      );
+    case 'behind': {
+      const { worst } = result;
+      const behindMs = behindOf(worst);
+      throw new WavesExportUsageError(
+        `The read replica may be up to ${seconds(behindMs)} behind: ` +
+          `${furthest(result.readers, result.staleLeftOut)} has a lag of ` +
+          `${seconds(worst.lagMs)}, ` +
+          `in a reading ${seconds(worst.ageMs)} old, and ` +
+          `${seconds(REPLICA_LAG_AGE_MARGIN_MS)} more covers clock and ` +
+          `timestamp rounding. The export needs every reader caught up past ` +
+          `${mark}. Try again after ` +
+          `${at(Math.ceil((caughtUpMs + behindMs) / 1000) * 1000)}.` +
+          (checkedByPerson
+            ? ` A person's check can't stand in for a lag the export can ` +
+              `read: wait until then, and run it without ` +
+              `--replica-lag-checked-by and --replica-lag-check-note.`
+            : ''),
+        { showHelp: false }
+      );
+    }
+    case 'cannot_tell':
+      if (!checkedByPerson) {
+        throw new WavesExportUsageError(
+          `The export can't tell whether every reader has caught up past ` +
+            `${mark}: ${result.reasons}. Run it once more first: a passing ` +
+            `error or a late row update can clear. If it says the same ` +
+            `again, check it another way: read the largest lag over all ` +
+            `readers (on Aurora, the AuroraReplicaLagMaximum metric) and make ` +
+            `sure DB_HOST is the cluster's reader endpoint. Once that much ` +
+            `lag has passed since ${at(caughtUpMs)}, run the export again ` +
+            `with --replica-lag-checked-by <your name> ` +
+            `--replica-lag-check-note <what you read, its value and when>.`,
+          { showHelp: false }
+        );
+      }
+      options.log(
+        `WARNING: the export can't tell whether every reader has caught up ` +
+          `past ${mark}: ${result.reasons}. It goes ahead on the word of ` +
+          `${JSON.stringify(checkedByPerson.person)}, who checked it this ` +
+          `way: ${JSON.stringify(checkedByPerson.note)}. export.json records ` +
+          `both, with what the export read.`
+      );
+      return {
+        checked_by: 'person',
+        person: checkedByPerson.person,
+        note: checkedByPerson.note,
+        ...seen(reading, result.reasons)
+      };
+    case 'caught_up': {
+      if (checkedByPerson) {
+        throw new WavesExportUsageError(
+          `The export can read the lag, and every reader has caught up past ` +
+            `${mark}: run it without --replica-lag-checked-by and ` +
+            `--replica-lag-check-note, which are only for when it can't tell.`,
+          { showHelp: false }
+        );
+      }
+      const record = seen(reading, null);
+      options.log(
+        `read replica: DB_HOST's server is read-only; ` +
+          `${furthest(record.readers ?? 0)} has a lag of ` +
+          `${record.worst_lag_ms} ms, in a reading ${record.worst_lag_age_ms} ` +
+          `ms old; every reader has caught up past ${at(caughtUpMs)}`
+      );
+      return { checked_by: 'export', ...record };
+    }
   }
-  const behindMs = lag.lagMs + lag.ageMs + REPLICA_LAG_AGE_MARGIN_MS;
-  if (behindMs >= lag.readMs - caughtUpMs) {
-    const retryMs = Math.ceil((caughtUpMs + behindMs) / 1000) * 1000;
-    throw new WavesExportUsageError(
-      `The read replica may be up to ${seconds(behindMs)} behind: the largest ` +
-        `lag over ${ofReaders(lag.readers)} is ${seconds(lag.lagMs)}, ` +
-        `in a reading ${seconds(lag.ageMs)} old, plus ` +
-        `${seconds(REPLICA_LAG_AGE_MARGIN_MS)} for clock and timestamp ` +
-        `rounding. The export needs every reader caught up past ` +
-        `${utcTime(caughtUpMs)}, five minutes after the freeze. ` +
-        `Try again after ${utcTime(retryMs)}.` +
-        (lag.ageMs >= STALE_READING_MS
-          ? ` If that reading is older still then, the reader has stopped ` +
-            `updating it: ${personCheck(caughtUpMs)}.`
-          : ''),
-      { showHelp: false }
-    );
-  }
-  return {
-    checked_by: 'export',
-    readers: lag.readers,
-    worst_lag_ms: Math.ceil(lag.lagMs),
-    worst_lag_age_ms: Math.ceil(lag.ageMs),
-    read_at: new Date(lag.readMs).toISOString()
-  };
 }
 
 /**
- * A rehearsal's reading: the same query and rules, logged and recorded,
+ * A rehearsal's reading: the same queries and rules, logged and recorded,
  * never a refusal. Nothing it meets is fatal, so the rehearsal before the
- * freeze shows whether the query works on the live readers.
+ * freeze shows whether the queries work on the live readers, and what a run
+ * after the freeze would refuse on.
  */
 async function rehearseReplicaLag(
   options: ReplicaLagReadOptions
-): Promise<ReplicaLagRehearsal> {
-  let lag: AllReadersLag;
+): Promise<ReplicaLagRecord> {
+  let reading: ServerReading;
   try {
-    lag = await readAllReadersLag(options);
+    reading = await readServer(options);
   } catch (error) {
-    options.log(
-      `replica lag not read: ${String((error as Error)?.message ?? error)}`
-    );
-    lag = {
-      known: false,
-      readers: null,
-      reason: tableFailed(error),
-      readMs: (options.now ?? Date.now)()
+    logError(options, 'replica lag', error);
+    reading = {
+      readMs: (options.now ?? Date.now)(),
+      readOnly: null,
+      readOnlyUnknown: null,
+      lag: {
+        known: false,
+        readers: null,
+        reason: failed('information_schema.replica_host_status', error)
+      }
     };
   }
-  if (!lag.known) {
-    options.log(
-      `rehearsal: the read replica's lag can't be read: ${lag.reason}. A run ` +
-        `after the freeze would refuse on this.`
+  const { lag } = reading;
+  const reasons = [
+    reading.readOnlyUnknown,
+    lag.known ? null : lag.reason
+  ].filter((it): it is string => !!it);
+  const record = seen(reading, reasons.length ? reasons.join('; ') : null);
+  const say = (message: string) => options.log(`rehearsal: ${message}`);
+  if (reading.readOnly === false) {
+    say(
+      "DB_HOST's server is not read-only, so it is not a read replica: a run " +
+        "after the freeze would refuse on this. Point DB_HOST at the cluster's " +
+        'reader endpoint.'
     );
-    return {
-      checked_by: 'rehearsal',
-      readers: lag.readers,
-      worst_lag_ms: null,
-      worst_lag_age_ms: null,
-      read_at: new Date(lag.readMs).toISOString(),
-      unknown_reason: lag.reason
-    };
   }
-  const record: ReplicaLagRehearsal = {
-    checked_by: 'rehearsal',
-    readers: lag.readers,
-    worst_lag_ms: Math.ceil(lag.lagMs),
-    worst_lag_age_ms: Math.ceil(lag.ageMs),
-    read_at: new Date(lag.readMs).toISOString(),
-    unknown_reason: null
-  };
-  options.log(
-    `rehearsal: the largest lag over ${ofReaders(lag.readers)} is ` +
-      `${record.worst_lag_ms} ms, in a reading ${record.worst_lag_age_ms} ms ` +
-      `old (a rehearsal holds it to no bound)`
-  );
-  return record;
+  if (record.unknown_reason) {
+    say(
+      `the export can't tell: ${record.unknown_reason}. A run after the ` +
+        `freeze would refuse on this unless a person checks it another way.`
+    );
+  }
+  if (lag.known) {
+    say(
+      `${furthest(lag.readers.length)} has a lag of ${record.worst_lag_ms} ` +
+        `ms, in a reading ${record.worst_lag_age_ms} ms old (a rehearsal ` +
+        `holds it to no bound)`
+    );
+    const stale = lag.readers.filter((it) => it.ageMs >= STALE_READING_MS);
+    if (stale.length) {
+      const oldest = stale.reduce((a, b) => (b.ageMs > a.ageMs ? b : a));
+      say(
+        `${stale.length} of its ${lag.readers.length} readers' rows are a ` +
+          `minute old or more (the oldest ${Math.ceil(oldest.ageMs)} ms): ` +
+          `such a reader may have stopped updating its row, and a run after ` +
+          `the freeze may refuse on it unless a person checks it another way.`
+      );
+    }
+  }
+  return { checked_by: 'rehearsal', ...record };
 }
 
 /**
- * export.json's `replica_lag`, settled before any stage reads: a rehearsal's
- * reading, which never refuses; who checked it and how with
- * --replica-lag-checked-by, said loudly; otherwise the export's own reading,
- * or a refusal (checkReplicaLag).
+ * export.json's `replica_lag` for this run, settled before any stage reads:
+ * a rehearsal's reading, which never refuses, or the check for a run after
+ * the freeze (checkReplicaLag).
  */
 export async function replicaLagAtStart(
   options: ReplicaLagStartOptions
 ): Promise<ReplicaLagRecord> {
-  const { caughtUpMs, checkedByPerson, ...read } = options;
-  if (caughtUpMs === null) {
-    return rehearseReplicaLag(read);
-  }
-  if (checkedByPerson) {
-    const { person, note } = checkedByPerson;
-    options.log(
-      `WARNING: the export does not check the read replica's lag. It takes ` +
-        `the word of ${JSON.stringify(person)} that every reader has caught ` +
-        `up past ${utcTime(caughtUpMs)}, checked this way: ` +
-        `${JSON.stringify(note)}. export.json records both.`
-    );
-    return { checked_by: 'person', person, note };
-  }
-  const checked = await checkReplicaLag({ ...read, caughtUpMs });
-  options.log(
-    `read replica: the largest lag over ${ofReaders(checked.readers)} is ` +
-      `${checked.worst_lag_ms} ms, in a reading ${checked.worst_lag_age_ms} ms ` +
-      `old; every reader has caught up past ${utcTime(caughtUpMs)}`
-  );
-  return checked;
+  const { caughtUpMs, ...rest } = options;
+  return caughtUpMs === null
+    ? rehearseReplicaLag(rest)
+    : checkReplicaLag({ ...rest, caughtUpMs });
 }

@@ -16,9 +16,35 @@ import {
   Json,
   WavesExportSource
 } from './waves-export.types';
+import type { ReplicaLagRecord } from './waves-export.replica-lag';
 import { RawDirectory } from './waves-export.writer';
 
 const T_W = Date.UTC(2026, 10, 25, 0, 0, 0);
+
+const EXPORT_LAG: ReplicaLagRecord = {
+  checked_by: 'export',
+  read_at: '2026-11-25T00:06:00.000Z',
+  server_read_only: true,
+  readers: 2,
+  worst_lag_ms: 40,
+  worst_lag_age_ms: 5,
+  stale_readers: 0,
+  unknown_reason: null
+};
+
+const PERSON_LAG: ReplicaLagRecord = {
+  checked_by: 'person',
+  person: 'the operator',
+  note: 'AuroraReplicaLagMaximum read at 00:06 UTC: 20 ms',
+  read_at: '2026-11-25T00:06:00.000Z',
+  server_read_only: true,
+  readers: 0,
+  worst_lag_ms: null,
+  worst_lag_age_ms: null,
+  stale_readers: null,
+  unknown_reason:
+    'information_schema.replica_host_status has no row for any reader'
+};
 
 function wave(
   id: string,
@@ -305,13 +331,7 @@ describe('WavesExport', () => {
       dropPageSize: 2,
       concurrency: 2,
       bothMetric: false,
-      replicaLag: {
-        checked_by: 'export',
-        readers: 2,
-        worst_lag_ms: 40,
-        worst_lag_age_ms: 5,
-        read_at: '2026-11-25T00:06:00.000Z'
-      },
+      replicaLag: EXPORT_LAG,
       now: () => T_W + 1,
       log: (message) => messages.push(message)
     }).run();
@@ -465,14 +485,15 @@ describe('WavesExport', () => {
       failed_waves: [
         { id: 'w-broken', error: 'Error: Wave w-broken not found' }
       ],
-      replica_lag: {
-        checked_by: 'export',
-        readers: 2,
-        worst_lag_ms: 40,
-        worst_lag_age_ms: 5,
-        read_at: '2026-11-25T00:06:00.000Z'
-      }
+      runs: [
+        {
+          run_started_at: T_W + 1,
+          stages: [...WAVES_EXPORT_STAGES],
+          replica_lag: EXPORT_LAG
+        }
+      ]
     });
+    expect(raw('export_runs.json')).toEqual(summary.runs);
     expect(messages.some((message) => message.startsWith('== drops'))).toBe(
       true
     );
@@ -502,9 +523,19 @@ describe('WavesExport', () => {
       }).run();
     const resumed = await run(true, new FakeSource());
     expect(resumed.counts).toMatchObject({ drops: 0, drop_waves_kept: 1 });
-    // Each run records its own replica lag check: none given, none recorded.
-    expect(raw('export.json').replica_lag).toBeNull();
-    // The waves stage's failures carry over from export.json.
+    // Every run is kept in order, each with its own lag record (none here).
+    expect(
+      raw('export.json').runs.map(
+        (it: {
+          stages: string[];
+          replica_lag: { checked_by: string } | null;
+        }) => [it.stages.join(','), it.replica_lag?.checked_by ?? null]
+      )
+    ).toEqual([
+      [WAVES_EXPORT_STAGES.join(','), 'export'],
+      ['drops', null]
+    ]);
+    // The waves stage's failures carry over from its waves file.
     expect(resumed.failed_waves.map((wave) => wave.id)).toEqual(['w-broken']);
     const again = await run(false, flaky);
     expect(again.counts).toMatchObject({ drops: 3, drop_waves_kept: 0 });
@@ -537,6 +568,73 @@ describe('WavesExport', () => {
     ).rejects.toThrow('replica gone');
     expect(fs.existsSync(target)).toBe(false);
     expect(fs.existsSync(`${target}.tmp`)).toBe(false);
+  });
+
+  it("keeps a stopped run's lag record, a person's check too, and its failed waves on --resume", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'waves-export-stop-'));
+    try {
+      const file = (name: string) =>
+        JSON.parse(fs.readFileSync(path.join(dir, 'raw', name), 'utf8'));
+      const options = (
+        stages: (typeof WAVES_EXPORT_STAGES)[number][],
+        replicaLag: ReplicaLagRecord,
+        startedAt: number
+      ) => ({
+        raw: new RawDirectory(path.join(dir, 'raw')),
+        stages,
+        freezeMs: T_W,
+        exporterRevision: 'a'.repeat(40),
+        waveIds: null,
+        dropPageSize: 2,
+        concurrency: 1,
+        bothMetric: false,
+        resumeDrops: true,
+        retryDelayMs: 0,
+        replicaLag,
+        now: () => startedAt,
+        log: () => undefined
+      });
+      // A run on a person's word stops in its drops stage.
+      const stopping = new FakeSource();
+      stopping.wavePagesOfDrops = async function* () {
+        yield* [];
+        throw new Error('connection lost');
+      };
+      await expect(
+        new WavesExport(
+          stopping,
+          options([...WAVES_EXPORT_STAGES], PERSON_LAG, T_W + 1)
+        ).run()
+      ).rejects.toThrow('connection lost');
+      expect(fs.existsSync(path.join(dir, 'raw', 'export.json'))).toBe(false);
+      const first = {
+        run_started_at: T_W + 1,
+        stages: [...WAVES_EXPORT_STAGES],
+        replica_lag: PERSON_LAG
+      };
+      expect(file('export_runs.json')).toEqual([first]);
+      // The resumed run adds its own record and keeps the person's.
+      const resumed = await new WavesExport(
+        new FakeSource(),
+        options(['drops'], EXPORT_LAG, T_W + 2)
+      ).run();
+      const runs = [
+        first,
+        { run_started_at: T_W + 2, stages: ['drops'], replica_lag: EXPORT_LAG }
+      ];
+      expect(file('export_runs.json')).toEqual(runs);
+      expect(file('export.json')).toMatchObject({
+        runs,
+        failed_waves: [
+          { id: 'w-broken', error: 'Error: Wave w-broken not found' }
+        ]
+      });
+      expect(resumed.failed_waves).toEqual([
+        { id: 'w-broken', error: 'Error: Wave w-broken not found' }
+      ]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

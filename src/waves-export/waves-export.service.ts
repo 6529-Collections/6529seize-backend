@@ -26,6 +26,20 @@ export type WavesExportStage = (typeof WAVES_EXPORT_STAGES)[number];
 
 export const WAVES_EXPORT_FORMAT = '6529io-waves-export-raw-v1';
 
+/**
+ * Every run of the export into one OUT/raw, in order: what it ran and the
+ * replica lag record it started on. A run adds its own before its first
+ * stage reads, so a run that stops still leaves it, and none is dropped.
+ */
+export const EXPORT_RUNS_FILE = 'export_runs.json';
+
+export interface WavesExportRun {
+  readonly run_started_at: number;
+  readonly stages: readonly WavesExportStage[];
+  /** The replica lag check this run started on (null when none was given). */
+  readonly replica_lag: ReplicaLagRecord | null;
+}
+
 /** Drops a batch read of signed events takes (the public batch's size). */
 const SIGNED_BATCH = 50;
 
@@ -49,7 +63,10 @@ export interface WavesExportOptions {
   readonly resumeDrops?: boolean;
   /** Wait before trying a failed read again (tests pass 0). */
   readonly retryDelayMs?: number;
-  /** The replica lag read at the start (a rehearsal's is only reported). */
+  /**
+   * The replica lag check this run started on (a rehearsal's only reports
+   * it), kept in EXPORT_RUNS_FILE with every earlier run's.
+   */
   readonly replicaLag?: ReplicaLagRecord | null;
   readonly now?: () => number;
   readonly log: (message: string) => void;
@@ -220,6 +237,13 @@ export class WavesExport {
     const raw = this.options.raw;
     await raw.ensure();
     const startedAt = (this.options.now ?? Date.now)();
+    const runs = await raw.load<WavesExportRun[]>(EXPORT_RUNS_FILE, []);
+    runs.push({
+      run_started_at: startedAt,
+      stages: this.options.stages,
+      replica_lag: this.options.replicaLag ?? null
+    });
+    await raw.save(EXPORT_RUNS_FILE, runs);
     for (const stage of this.options.stages) {
       const stageStart = Date.now();
       this.log(`== ${stage}`);
@@ -229,14 +253,12 @@ export class WavesExport {
       );
     }
     if (!this.options.stages.includes('waves')) {
-      // Waves read by an earlier run of the export.
-      this.failedWaves =
-        (
-          await raw.load<{ failed_waves?: { id: string; error: string }[] }>(
-            'export.json',
-            {}
-          )
-        ).failed_waves ?? [];
+      // Waves an earlier run could not read, from its waves file, which it
+      // wrote whole even when it stopped in a later stage.
+      const waves = await raw.load<Record<string, WaveV3>>('waves_v3.json', {});
+      this.failedWaves = Object.values(waves)
+        .filter((wave) => wave._error)
+        .map((wave) => ({ id: wave.id, error: String(wave._error) }));
     }
     const summary: WavesExportSummary = {
       format: WAVES_EXPORT_FORMAT,
@@ -252,7 +274,7 @@ export class WavesExport {
     await raw.save('export.json', {
       ...summary,
       source: "6529.io's database (a read replica at the waves freeze)",
-      replica_lag: this.options.replicaLag ?? null,
+      runs,
       wave_subset: this.options.waveIds,
       started_at: startedAt,
       finished_at: (this.options.now ?? Date.now)()

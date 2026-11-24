@@ -12,13 +12,18 @@ vote logs, results, wave REP, polls and every wave's drops into DIR/raw,
 in the layout of the waves snapshot tooling's fetch stage (validator
 repository, tools/legacy-snapshot). Its normalize and build stages then make
 the Waves v1 file and the drop archives from it. Members-only waves are
-included; direct messages are not. Read-only. Run it against a read replica,
-five minutes or more after the waves freeze: it refuses to start earlier,
-unless --rehearsal, because a write admitted just before the freeze can
-still commit after it, once a lock wait ends. It also refuses until every
-reader has caught up past that five-minute mark, by the largest lag over all
-readers in information_schema.replica_host_status, and names when to try
-again. A rehearsal reads and reports that lag but never refuses on it.
+included; direct messages are not. Read-only.
+
+It reads through DB_HOST, not DB_HOST_READ: point DB_HOST at the cluster's
+reader endpoint, with DB_USER and DB_PASS for it. It refuses a server that
+isn't read-only. Run it five minutes or more after the waves freeze: it
+refuses to start earlier, unless --rehearsal, because a write admitted just
+before the freeze can still commit after it, once a lock wait ends. It also
+refuses until every reader has caught up past that five-minute mark (its lag
+plus the age of its row in information_schema.replica_host_status, plus
+1.5 s), and names when to try again. A rehearsal reads and reports the same,
+but never refuses on it. Each run's reading is kept in DIR/raw/export_runs.json
+and export.json.
 
 Options:
   --out DIR           where to write (DIR/raw; required)
@@ -46,11 +51,15 @@ Options:
                       the export exits 3
   --replica-lag-checked-by WHO
   --replica-lag-check-note HOW
-                      for a person only, never a script: when the export
-                      can't read the readers' lag, who checked the largest
-                      lag over all readers another way, and how. Both
-                      together, once that much time has passed since five
-                      minutes after the freeze; export.json records both
+                      for a person only, never a script, and only when the
+                      export says it can't tell (an unknown lag or read-only
+                      state, or a reader's row that stopped updating) and
+                      says so again on a second try: who checked the largest
+                      lag over all readers another way, and what they read,
+                      its value and when. Both together, once that much lag
+                      has passed since five minutes after the freeze. Never
+                      over a lag the export can read; export.json records
+                      both with what the export read
   --help              this text
 `;
 

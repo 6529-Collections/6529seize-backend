@@ -18,7 +18,11 @@ jest.mock('./waves-export.service', () => ({
 
 import { EXPORT_AFTER_FREEZE_MS, main } from './cli';
 import { WavesExportUsageError } from './cli-options';
-import { ALL_READERS_LAG_SQL } from './waves-export.replica-lag';
+import {
+  ALL_READERS_LAG_SQL,
+  INNODB_READ_ONLY_SQL,
+  READ_ONLY_SQL
+} from './waves-export.replica-lag';
 
 const REVISION = 'ab'.repeat(20);
 const T_W = Date.UTC(2026, 10, 25, 0, 0, 0);
@@ -91,6 +95,20 @@ describe('waves:export and the read replica lag', () => {
     age_ms: 5,
     now_ms: NOW
   });
+  /** DB_HOST answers the check's queries: an Aurora reader by default. */
+  const dbHost = (lag: unknown[] | Error, { ro = 0, iro = 1 } = {}) =>
+    mockExecute.mockImplementation(async (sql: string) => {
+      if (sql === READ_ONLY_SQL) return [{ ro }];
+      if (sql === INNODB_READ_ONLY_SQL) return [{ iro }];
+      if (lag instanceof Error) throw lag;
+      return lag;
+    });
+  const PERSON_FLAGS = [
+    '--replica-lag-checked-by',
+    'the operator',
+    '--replica-lag-check-note',
+    'AuroraReplicaLagMaximum read at 00:06 UTC: 20 ms'
+  ];
   const replicaLagGiven = () => mockWavesExport.mock.calls[0][1].replicaLag;
   let tz: string | undefined;
   let stderr: string[];
@@ -117,24 +135,41 @@ describe('waves:export and the read replica lag', () => {
     else process.env.TZ = tz;
   });
 
-  it("reads every reader's lag before any stage and records it", async () => {
-    mockExecute.mockResolvedValue([reader(40)]);
+  it("reads DB_HOST's state and every reader's lag before any stage, and records it", async () => {
+    dbHost([reader(40)]);
     await main(EXPORT);
     expect(mockExecute).toHaveBeenCalledWith(ALL_READERS_LAG_SQL);
-    expect(mockExecute.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(Math.max(...mockExecute.mock.invocationCallOrder)).toBeLessThan(
       mockWavesExport.mock.invocationCallOrder[0]
     );
     expect(replicaLagGiven()).toEqual({
       checked_by: 'export',
+      read_at: new Date(NOW).toISOString(),
+      server_read_only: true,
       readers: 1,
       worst_lag_ms: 40,
       worst_lag_age_ms: 5,
-      read_at: new Date(NOW).toISOString()
+      stale_readers: 0,
+      unknown_reason: null
+    });
+  });
+
+  it('reads the lag first on a resumed run of later stages too', async () => {
+    dbHost([reader(40)]);
+    await main([...EXPORT, '--stages', 'drops', '--resume']);
+    expect(mockExecute).toHaveBeenCalledWith(ALL_READERS_LAG_SQL);
+    expect(Math.max(...mockExecute.mock.invocationCallOrder)).toBeLessThan(
+      mockWavesExport.mock.invocationCallOrder[0]
+    );
+    expect(mockWavesExport.mock.calls[0][1]).toMatchObject({
+      stages: ['drops'],
+      resumeDrops: true,
+      replicaLag: { checked_by: 'export' }
     });
   });
 
   it('refuses before any stage reads when a reader is too far behind', async () => {
-    mockExecute.mockResolvedValue([reader(60_000)]);
+    dbHost([reader(60_000)]);
     const refusal = main(EXPORT);
     await expect(refusal).rejects.toThrow(WavesExportUsageError);
     await expect(refusal).rejects.toThrow(
@@ -143,28 +178,43 @@ describe('waves:export and the read replica lag', () => {
     expect(mockWavesExport).not.toHaveBeenCalled();
   });
 
-  it("runs on a person's word without reading the lag, loudly, and records who and how", async () => {
-    await main([
-      ...EXPORT,
-      '--replica-lag-checked-by',
-      'the operator',
-      '--replica-lag-check-note',
-      'AuroraReplicaLagMaximum read at 00:06 UTC: 20 ms'
-    ]);
-    expect(mockExecute).not.toHaveBeenCalled();
-    expect(replicaLagGiven()).toEqual({
+  it("refuses a DB_HOST that isn't read-only before any stage reads", async () => {
+    dbHost([reader(40)], { ro: 0, iro: 0 });
+    await expect(main(EXPORT)).rejects.toThrow(
+      "DB_HOST's server is not read-only"
+    );
+    expect(mockWavesExport).not.toHaveBeenCalled();
+  });
+
+  it("goes ahead on a person's word when it can't tell, loudly, with what it read", async () => {
+    dbHost([]);
+    await main([...EXPORT, ...PERSON_FLAGS]);
+    expect(mockExecute).toHaveBeenCalledWith(ALL_READERS_LAG_SQL);
+    expect(replicaLagGiven()).toMatchObject({
       checked_by: 'person',
       person: 'the operator',
-      note: 'AuroraReplicaLagMaximum read at 00:06 UTC: 20 ms'
+      note: 'AuroraReplicaLagMaximum read at 00:06 UTC: 20 ms',
+      server_read_only: true,
+      readers: 0,
+      unknown_reason:
+        'information_schema.replica_host_status has no row for any reader'
     });
     expect(stderr.join('')).toContain(
-      `WARNING: the export does not check the read replica's lag. It takes the word of "the operator"`
+      'It goes ahead on the word of "the operator", who checked it this way: "AuroraReplicaLagMaximum read at 00:06 UTC: 20 ms"'
     );
+  });
+
+  it("refuses a person's word when it can read the lag", async () => {
+    dbHost([reader(40)]);
+    await expect(main([...EXPORT, ...PERSON_FLAGS])).rejects.toThrow(
+      "which are only for when it can't tell"
+    );
+    expect(mockWavesExport).not.toHaveBeenCalled();
   });
 
   it('reports the lag in a rehearsal and never refuses on it', async () => {
     jest.spyOn(Date, 'now').mockReturnValue(T_W - 1);
-    mockExecute.mockResolvedValue([reader(600_000)]);
+    dbHost([reader(600_000)]);
     await main(['--out', 'OUT', '--revision', REVISION, '--rehearsal']);
     expect(mockExecute).toHaveBeenCalledWith(ALL_READERS_LAG_SQL);
     expect(replicaLagGiven()).toMatchObject({
@@ -174,11 +224,11 @@ describe('waves:export and the read replica lag', () => {
       unknown_reason: null
     });
     expect(stderr.join('')).toContain(
-      'rehearsal: the largest lag over its one reader is 600000 ms'
+      'rehearsal: its one reader has a lag of 600000 ms'
     );
   });
 
-  it('runs a rehearsal when the lag query fails, and records why', async () => {
+  it('runs a rehearsal when the queries fail, and records why', async () => {
     jest.spyOn(Date, 'now').mockReturnValue(T_W - 1);
     mockExecute.mockRejectedValue(
       Object.assign(new Error('no such table'), { code: 'ER_NO_SUCH_TABLE' })
@@ -187,9 +237,10 @@ describe('waves:export and the read replica lag', () => {
     expect(mockWavesExport).toHaveBeenCalledTimes(1);
     expect(replicaLagGiven()).toMatchObject({
       checked_by: 'rehearsal',
+      server_read_only: null,
       readers: null,
       unknown_reason:
-        'reading information_schema.replica_host_status failed (ER_NO_SUCH_TABLE)'
+        'reading @@GLOBAL.read_only failed (ER_NO_SUCH_TABLE); reading information_schema.replica_host_status failed (ER_NO_SUCH_TABLE)'
     });
   });
 });
