@@ -13,6 +13,8 @@ import {
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
   USER_GROUPS_TABLE,
+  WAVE_DROPPER_METRICS_TABLE,
+  WAVE_METRICS_TABLE,
   WAVES_TABLE
 } from '@/constants';
 import { DropType } from '@/entities/IDrop';
@@ -51,7 +53,9 @@ export const WAVES_LEGACY_TABLES = [
   COMPETITION_CAPABILITIES_TABLE,
   COMPETITION_DECISIONS_TABLE,
   COMPETITION_ENTRIES_TABLE,
-  COMPETITION_DECISION_WINNERS_TABLE
+  COMPETITION_DECISION_WINNERS_TABLE,
+  WAVE_METRICS_TABLE,
+  WAVE_DROPPER_METRICS_TABLE
 ] as const;
 
 const CREATED_AT = 1_764_000_000_000;
@@ -305,14 +309,83 @@ function cell(value: unknown): unknown {
   return typeof value === 'object' ? JSON.stringify(value) : value;
 }
 
+/** A drop's part in its wave's and its author's drop metrics. */
+interface MetricDrop {
+  readonly wave_id: string;
+  readonly author_id: string;
+  readonly drop_type: string;
+  readonly created_at: number;
+}
+
+/**
+ * The drop metrics 6529.io's drop inserts leave for these drops: each
+ * insert upserts its wave's row and its author's row in the wave, adding
+ * one to drops_count for a chat drop and to participatory_drops_count for
+ * a participatory one, and setting latest_drop_timestamp to the insert's
+ * time, which for these made-up drops is their created_at.
+ */
+export function legacyDropMetricsRows(
+  drops: readonly MetricDrop[]
+): Record<string, Record<string, unknown>[]> {
+  const waves = new Map<string, Record<string, number | string>>();
+  const droppers = new Map<string, Record<string, number | string>>();
+  const add = (
+    rows: Map<string, Record<string, number | string>>,
+    key: string,
+    base: Record<string, string>,
+    drop: MetricDrop
+  ) => {
+    const row = rows.get(key) ?? {
+      ...base,
+      drops_count: 0,
+      participatory_drops_count: 0,
+      latest_drop_timestamp: 0
+    };
+    if (drop.drop_type === DropType.CHAT)
+      row.drops_count = +row.drops_count + 1;
+    if (drop.drop_type === DropType.PARTICIPATORY) {
+      row.participatory_drops_count = +row.participatory_drops_count + 1;
+    }
+    row.latest_drop_timestamp = Math.max(
+      +row.latest_drop_timestamp,
+      drop.created_at
+    );
+    rows.set(key, row);
+  };
+  for (const drop of drops) {
+    add(waves, drop.wave_id, { wave_id: drop.wave_id }, drop);
+    add(
+      droppers,
+      `${drop.wave_id} ${drop.author_id}`,
+      { wave_id: drop.wave_id, dropper_id: drop.author_id },
+      drop
+    );
+  }
+  return {
+    [WAVE_METRICS_TABLE]: Array.from(waves.values()),
+    [WAVE_DROPPER_METRICS_TABLE]: Array.from(droppers.values())
+  };
+}
+
 /**
  * Seed: the legacy rows, through plain inserts with fixed values; the rank
  * wave's competition through the native competition fixture; then its Main
- * Stage winner.
+ * Stage winner; then the drop metrics the drops' inserts would have left.
  */
 export async function seedWavesLegacy(_ctx: RebuildContext): Promise<void> {
-  await insertRows(wavesLegacyRows());
+  const rows = wavesLegacyRows();
+  await insertRows(rows);
   // The rank wave's competition, as the native competition code holds it.
   await seedNativeOriginalPrimaryFixture(rankWave());
   await insertRows(mainStageWinnerRows());
+  await insertRows(
+    legacyDropMetricsRows(
+      (rows[DROPS_TABLE] ?? []).map((drop) => ({
+        wave_id: String(drop.wave_id),
+        author_id: String(drop.author_id),
+        drop_type: String(drop.drop_type),
+        created_at: Number(drop.created_at)
+      }))
+    )
+  );
 }

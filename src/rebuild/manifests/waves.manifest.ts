@@ -6,6 +6,7 @@ import {
   RebuildStep,
   TableEntry
 } from '@/rebuild/manifest.types';
+import { PROBE_CALLER } from '@/rebuild/manifests/probe-fixture';
 import {
   RELAY_WORLD_WALLET,
   WAVES_WORLD_IDS
@@ -121,6 +122,103 @@ const LEGACY_STEPS = 'src/rebuild/steps/waves-legacy.steps';
 const DROP_INDEX_STEPS = 'src/rebuild/steps/waves-drop-index.steps';
 /** The exempt moderation holds: seeded, then checked untouched. */
 const HOLDS_STEPS = 'src/rebuild/steps/waves-moderation-holds.steps';
+/** The waves' drop metrics, recounted from drops. */
+const DROP_METRICS_STEPS = 'src/rebuild/steps/waves-drop-metrics.steps';
+
+/**
+ * wave_metrics' columns other than the drop counts: its subscribers' and
+ * its scores' (the wave score refresh). Their owners are planned; until
+ * they land, a run keeps these columns by key across the rebuild.
+ */
+const WAVE_SUBSCRIBER_COLUMNS = ['subscribers_count'];
+const WAVE_SCORE_COLUMNS = [
+  'wave_rep_total',
+  'wave_rep_positive',
+  'wave_rep_negative',
+  'wave_rep_contributor_count',
+  'wave_rep_positive_contributor_count',
+  'wave_rep_negative_contributor_count',
+  'wave_score_version',
+  'wave_visibility_tier',
+  'wave_visibility_rank',
+  'wave_quality_score',
+  'wave_hotness_score',
+  'wave_rep_sort_score',
+  'wave_visibility_score',
+  'wave_creator_score',
+  'wave_level_weighted_participation_score',
+  'wave_trusted_diversity_score',
+  'wave_rep_component_score',
+  'wave_trusted_subscription_score',
+  'wave_recent_trusted_activity_score',
+  'wave_single_actor_penalty',
+  'wave_low_trust_flood_penalty',
+  'wave_cross_post_pressure',
+  'wave_cross_post_penalty',
+  'wave_negative_rep_penalty',
+  'wave_safety_multiplier',
+  'wave_score_calculated_at'
+];
+
+/**
+ * The drop metrics' rebuilder and the planned owners of wave_metrics'
+ * other columns. The recount writes wave_metrics' rows (a wave's row
+ * appears with its first drop, as in 6529.io) and wave_dropper_metrics
+ * whole, after every rebuilder that writes drops.
+ */
+const DROP_METRICS_REBUILDERS: RebuildStep[] = [
+  {
+    id: 'waves.drop-metrics',
+    run: { module: DROP_METRICS_STEPS, exportName: 'rebuildWavesDropMetrics' },
+    writes: ['wave_metrics', 'wave_dropper_metrics'],
+    reads: ['drops', 'competition_entries', 'competitions'],
+    after: ['waves.chain-mirror'],
+    sources: ['repo'],
+    timeoutMinutes: 15
+    // A wave without drops has a metrics row only through its subscribers
+    // or its scores, whose owners are planned: such a seeded row shows as a
+    // difference. Its plan (until 2026-12-04, until those owners land)
+    // waits for the harness to read a plan's condition with the run's
+    // database as the default one, so it can name drops.
+  },
+  {
+    id: 'waves.wave-subscriber-count',
+    run: {
+      module: 'src/rebuild/steps/waves-wave-subscribers.steps',
+      exportName: 'rebuildWaveSubscriberCounts'
+    },
+    writes: [
+      {
+        table: 'wave_metrics',
+        columns: WAVE_SUBSCRIBER_COLUMNS,
+        reason: "A wave's subscriber count, from its subscriptions."
+      }
+    ],
+    after: ['waves.drop-metrics'],
+    sources: ['repo'],
+    timeoutMinutes: 10,
+    origin: 'planned'
+  },
+  {
+    id: 'waves.wave-scores',
+    run: {
+      module: 'src/rebuild/steps/waves-wave-scores.steps',
+      exportName: 'rebuildWaveScores'
+    },
+    writes: [
+      {
+        table: 'wave_metrics',
+        columns: WAVE_SCORE_COLUMNS,
+        reason:
+          "A wave's REP, score and visibility, from the wave score refresh."
+      }
+    ],
+    after: ['waves.drop-metrics'],
+    sources: ['repo'],
+    timeoutMinutes: 10,
+    origin: 'planned'
+  }
+];
 
 /**
  * The chain mirror's rebuild (src/waves-chain-mirror): it fills 6529.io's
@@ -223,6 +321,15 @@ const PROBES: Probe[] = [
     id: 'waves.wave',
     path: '/api/waves/{wave}',
     each: { wave: [PUBLIC_WAVE, MEMBERS_WAVE, RANK_WAVE] },
+    unordered: waveActions('$')
+  },
+  {
+    // Signed in as the waves' author: the wave's metrics then carry the
+    // caller's own drop counts (wave_dropper_metrics).
+    id: 'waves.wave-as-author',
+    path: '/api/waves/{wave}',
+    each: { wave: [PUBLIC_WAVE, RANK_WAVE] },
+    as: PROBE_CALLER,
     unordered: waveActions('$')
   },
   {
@@ -647,7 +754,9 @@ export const wavesManifest: AreaManifest = {
         'competition_capabilities',
         'competition_decisions',
         'competition_entries',
-        'competition_decision_winners'
+        'competition_decision_winners',
+        'wave_metrics',
+        'wave_dropper_metrics'
       ],
       // The fixture profiles the waves and drops name.
       after: ['identity.probe-profiles'],
@@ -735,7 +844,8 @@ export const wavesManifest: AreaManifest = {
       sources: ['repo'],
       timeoutMinutes: 5
     },
-    ...MODERATION_AUDIT_REBUILDERS
+    ...MODERATION_AUDIT_REBUILDERS,
+    ...DROP_METRICS_REBUILDERS
   ],
   probes: PROBES,
   // A replayed relay recording of the world's drops counts per event: the
