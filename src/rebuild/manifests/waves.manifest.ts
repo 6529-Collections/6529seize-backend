@@ -36,6 +36,8 @@ const LEGACY_STEPS = 'src/rebuild/steps/waves-legacy.steps';
 
 /** The drop index read from the relays. */
 const DROP_INDEX_STEPS = 'src/rebuild/steps/waves-drop-index.steps';
+/** The exempt moderation holds: seeded, then checked untouched. */
+const HOLDS_STEPS = 'src/rebuild/steps/waves-moderation-holds.steps';
 
 /**
  * The chain mirror's rebuild (src/waves-chain-mirror): it fills 6529.io's
@@ -72,7 +74,6 @@ const MIRROR_WRITES = [
   'competition_vote_history',
   'competition_score_history',
   'chain_docs',
-  'chain_entry_holds',
   'waves_chain_mirror_state',
   'waves_chain_mirror_events',
   'waves_chain_mirror_groups',
@@ -462,6 +463,15 @@ export const wavesManifest: AreaManifest = {
       class: 'EPHEMERAL',
       why: 'Refresh queue.'
     },
+    // Split by writer on its action column (ruled; the harness has no
+    // partitioned writes or planned rows yet, so it stays pending whole):
+    // - PROFILE_BLOCKED, PROFILE_UNBLOCKED, DROP_HIDDEN, DROP_UNHIDDEN: the
+    //   personal records' rows, from the waves rebuilder that inserts
+    //   personalModerationAuditRows() after the personal rebuild;
+    // - moderator decisions: from the moderation service's signed records
+    //   once they land;
+    // - moderator, AI (AI_QUARANTINED, AI_QUARANTINE_WITHDRAWN) and report
+    //   rows: planned rows until 2026-12-04.
     content_moderation_audit_log: { class: 'INDEX' },
     content_moderation_drop_states: { class: 'INDEX' },
     content_moderation_profile_states: { class: 'INDEX' },
@@ -520,7 +530,16 @@ export const wavesManifest: AreaManifest = {
     waves_chain_mirror_state: { class: 'INDEX', origin: 'planned' },
     waves_chain_mirror_events: { class: 'INDEX', origin: 'planned' },
     chain_docs: { class: 'INDEX', origin: 'planned' },
-    chain_entry_holds: { class: 'INDEX', origin: 'planned' },
+    // EXEMPT until 2026-12-04 (no `until` field in the harness yet): a
+    // rebuild must never release a hold, and a final run must not pass while
+    // these holds have no source outside MySQL. When each hold and release
+    // is a signed record keyed by chain entry id (newest wins), the table
+    // becomes INDEX with a rebuilder.
+    chain_entry_holds: {
+      class: 'EXEMPT',
+      why: "6529.io's moderation holds on chain entries; kept as they are until the moderation service records each hold and release as a signed record, as content_moderation_items' decisions already are.",
+      origin: 'planned'
+    },
     waves_chain_mirror_groups: { class: 'INDEX', origin: 'planned' },
     waves_chain_mirror_waves: { class: 'INDEX', origin: 'planned' },
     waves_chain_mirror_decisions: { class: 'INDEX', origin: 'planned' }
@@ -554,6 +573,13 @@ export const wavesManifest: AreaManifest = {
       timeoutMinutes: 15
     },
     {
+      id: 'waves.moderation-holds.seed',
+      run: { module: HOLDS_STEPS, exportName: 'seedWavesModerationHolds' },
+      writes: ['chain_entry_holds'],
+      sources: ['repo'],
+      timeoutMinutes: 5
+    },
+    {
       id: 'waves.drop-index.seed',
       run: { module: DROP_INDEX_STEPS, exportName: 'seedWavesDropIndex' },
       writes: [...WAVES_DROP_INDEX_TABLES],
@@ -584,6 +610,8 @@ export const wavesManifest: AreaManifest = {
       writes: MIRROR_WRITES,
       reads: [
         ...WAVES_CHAIN_INDEX_TABLES,
+        // Its moderation holds, which it reads and never writes in a rebuild.
+        'chain_entry_holds',
         'identity_chain_principals',
         'identities',
         'profiles',
@@ -593,6 +621,17 @@ export const wavesManifest: AreaManifest = {
       sources: ['gateway'],
       timeoutMinutes: 30,
       origin: 'planned'
+    },
+    {
+      // Writes nothing: proves the exempt holds come through every waves
+      // rebuilder that could touch them exactly as the seed left them.
+      id: 'waves.moderation-holds.check',
+      run: { module: HOLDS_STEPS, exportName: 'checkWavesModerationHolds' },
+      writes: [],
+      reads: ['chain_entry_holds'],
+      after: ['waves.chain-index', 'waves.drop-index', 'waves.chain-mirror'],
+      sources: ['repo'],
+      timeoutMinutes: 5
     }
   ],
   probes: PROBES,
