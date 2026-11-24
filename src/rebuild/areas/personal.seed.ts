@@ -110,7 +110,8 @@ export const PERSONAL_PROBE_COLLECT_RULE =
   '00000000-0000-4000-8000-0000000000c1';
 // Each wave's description drop, as wave creation makes one.
 const PROBE_WAVE_DESCRIPTION = '00000000-0000-4000-8000-000000000003';
-const RECORDS_WAVE_DESCRIPTION = '00000000-0000-4000-8000-0000000000a2';
+// Another area's seed may write the records wave and this drop first.
+export const RECORDS_WAVE_DESCRIPTION = '00000000-0000-4000-8000-0000000000a2';
 
 // Fixed, so a second pass minutes later answers the same.
 const SEEDED_AT = 1_767_225_600_000;
@@ -126,10 +127,11 @@ const ED25519_PKCS8_PREFIX = Buffer.from(
   'hex'
 );
 
+/** Inserts the row unless its key is taken; whether it inserted. */
 async function insertRow(
   table: string,
   row: Record<string, unknown>
-): Promise<void> {
+): Promise<boolean> {
   const known = new Set(
     (
       await dbSupplier().execute<{ name: string }>(
@@ -151,11 +153,12 @@ async function insertRow(
       ];
     })
   );
-  await dbSupplier().execute(
+  const result = await dbSupplier().execute(
     `insert ignore into ${table} (${columns.map((c) => `\`${c}\``).join(', ')})
      values (${columns.map((c) => `:${c}`).join(', ')})`,
     params
   );
+  return dbSupplier().getAffectedRows(result) === 1;
 }
 
 async function insertWave(
@@ -189,7 +192,7 @@ async function insertDrop(drop: {
   readonly createdAt: number;
   readonly content: string;
 }): Promise<void> {
-  await insertRow(DROPS_TABLE, {
+  const inserted = await insertRow(DROPS_TABLE, {
     id: drop.id,
     wave_id: drop.waveId,
     author_id: drop.authorId,
@@ -211,11 +214,15 @@ async function insertDrop(drop: {
     quoted_drop_part_id: null,
     wave_id: drop.waveId
   });
-  await applyDropMetricsAt(drop.createdAt, {
-    wave_id: drop.waveId,
-    author_id: drop.authorId,
-    drop_type: DropType.CHAT
-  });
+  // A drop another seed already wrote has its metrics already: as on 6529.io,
+  // a drop moves them once, when it is created.
+  if (inserted) {
+    await applyDropMetricsAt(drop.createdAt, {
+      wave_id: drop.waveId,
+      author_id: drop.authorId,
+      drop_type: DropType.CHAT
+    });
+  }
 }
 
 /**

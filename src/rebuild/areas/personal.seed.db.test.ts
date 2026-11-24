@@ -12,7 +12,15 @@ import { startAnvil } from '@/rebuild/sources/anvil';
 import type { RunningSource } from '@/rebuild/sources/running-source';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
-import { PERSONAL_PROBE_WAVE, seedPersonalSettings } from './personal.seed';
+import { DROPS_PARTS_TABLE, DROPS_TABLE, WAVES_TABLE } from '@/constants';
+import { dropsDb } from '@/drops/drops.db';
+import { DropType } from '@/entities/IDrop';
+import { aWave } from '@/tests/fixtures/wave.fixture';
+import {
+  PERSONAL_PROBE_WAVE,
+  RECORDS_WAVE_DESCRIPTION,
+  seedPersonalSettings
+} from './personal.seed';
 
 /** The personal tables the probes read, and what may differ in a rebuild. */
 const TABLES: readonly [string, string][] = [
@@ -168,6 +176,89 @@ async function expectDropMetricsOf(
   ).toEqual([]);
 }
 
+/** A row as a plain insert writes it: only the columns the table has. */
+async function insertKnownColumns(
+  table: string,
+  row: Record<string, unknown>
+): Promise<void> {
+  const known = new Set(
+    (
+      await sqlExecutor.execute<{ name: string }>(
+        `select column_name as name from information_schema.columns
+          where table_schema = database() and table_name = :table`,
+        { table }
+      )
+    ).map((column) => column.name)
+  );
+  const columns = Object.keys(row).filter((column) => known.has(column));
+  await sqlExecutor.execute(
+    `insert into ${table} (${columns.map((c) => `\`${c}\``).join(', ')})
+     values (${columns.map((c) => `:${c}`).join(', ')})`,
+    Object.fromEntries(
+      columns.map((column) => {
+        const value = row[column];
+        return [
+          column,
+          value !== null && typeof value === 'object'
+            ? JSON.stringify(value)
+            : value
+        ];
+      })
+    )
+  );
+}
+
+/**
+ * The records wave and its description drop as another area's seed writes
+ * them before this one runs: the rows, and the drop's metrics through
+ * 6529.io's own delta at the drop's time.
+ */
+async function writeRecordsWaveAsAnotherSeed(
+  waveId: string,
+  serviceProfileId: string,
+  at: number
+): Promise<void> {
+  const { serial_no: _serial, ...wave } = aWave(
+    {
+      is_direct_message: false,
+      created_by: serviceProfileId,
+      created_at: at,
+      description_drop_id: RECORDS_WAVE_DESCRIPTION
+    },
+    { id: waveId, name: waveId }
+  );
+  await insertKnownColumns(WAVES_TABLE, wave);
+  await insertKnownColumns(DROPS_TABLE, {
+    id: RECORDS_WAVE_DESCRIPTION,
+    wave_id: waveId,
+    author_id: serviceProfileId,
+    created_at: at,
+    parts_count: 1,
+    drop_type: DropType.CHAT,
+    hide_link_preview: true
+  });
+  await insertKnownColumns(DROPS_PARTS_TABLE, {
+    drop_id: RECORDS_WAVE_DESCRIPTION,
+    drop_part_id: 1,
+    content: 'A wave for the rebuild check.',
+    wave_id: waveId
+  });
+  const realNow = Date.now;
+  Date.now = () => at;
+  try {
+    await dropsDb.applyInsertedDropMetricsDelta(
+      {
+        wave_id: waveId,
+        author_id: serviceProfileId,
+        drop_type: DropType.CHAT
+      },
+      {}
+    );
+  } finally {
+    Date.now = realNow;
+  }
+}
+
 describeWithSeed('the personal seed and its rebuild', [], () => {
   it('seeds the probe rows through the switch, and the rebuild brings them back', async () => {
     const env = { ...process.env, ...personalManifest.flags };
@@ -262,6 +353,44 @@ describeWithSeed('the personal seed and its rebuild', [], () => {
     } finally {
       await ethereum?.stop();
       server.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('counts a drop another seed already wrote, with its metrics, once', async () => {
+    const env = { ...process.env, ...personalManifest.flags };
+    const waveId = String(env.SIGNED_RECORDS_WAVE_ID);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'personal-seed-'));
+    let ethereum: RunningSource | null = null;
+    try {
+      ethereum = await startAnvil({
+        state: null,
+        logFile: path.join(dir, 'anvil.log')
+      });
+      await seedProbeIdentities();
+      // Another area's seed ran first: the records wave and its
+      // description drop exist, with that drop's metrics.
+      await writeRecordsWaveAsAnotherSeed(
+        waveId,
+        String(env.SIGNED_RECORDS_SERVICE_PROFILE_ID),
+        1_767_225_600_000
+      );
+      await seedPersonalSettings(
+        contextOf('personal.seed', null, dir, ethereum.url),
+        env
+      );
+      // The description drop counts once, not again when this seed writes
+      // the wave: its description, then one head per closed segment.
+      const [segments] = await sqlExecutor.execute<{ n: number }>(
+        `select count(*) as n from signed_record_log_segments`
+      );
+      expect(Number(segments.n)).toBeGreaterThan(0);
+      await expectDropMetricsOf([
+        { waveId: PERSONAL_PROBE_WAVE, drops: 2 },
+        { waveId, drops: 1 + Number(segments.n) }
+      ]);
+    } finally {
+      await ethereum?.stop();
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
