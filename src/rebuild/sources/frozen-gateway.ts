@@ -244,6 +244,8 @@ function text(value: unknown): string {
  * run serves by key and the replay asks by path, so a key that names
  * another request would let one answer stand for another). No key twice.
  */
+const PLAIN_NAME = /^[A-Za-z0-9_.-]+$/;
+
 function lineProblems(
   lines: readonly FrozenExchange[],
   phases: ReadonlySet<string>
@@ -279,18 +281,19 @@ function lineProblems(
     const names = (query ?? '')
       .split('&')
       .filter(Boolean)
-      .map((param) => param.split('=')[0])
-      // The application reads names decoded: wh%6F is who.
-      .map((name) => {
-        try {
-          return decodeURIComponent(name);
-        } catch {
-          return name;
-        }
-      });
+      .map((param) => param.split('=')[0]);
     if (more.length) {
       problems.push(
         `${at} (${line.method} ${line.path}): its path has more than one ?`
+      );
+      return;
+    }
+    // Names are plain, so each reads as written: the application decodes
+    // a name (wh%6F is who, a+b is "a b"), and two names written apart
+    // could be one.
+    if (names.some((name) => !PLAIN_NAME.test(name))) {
+      problems.push(
+        `${at} (${line.method} ${line.path}): its query has a name other than letters, digits, _, . and -`
       );
       return;
     }
@@ -728,16 +731,18 @@ export async function startFrozenNode(options: {
   };
   node.stdout?.on('data', note);
   node.stderr?.on('data', note);
-  // 'close': the process has exited and its output is all read.
+  // 'close' alone: the process has exited and its output is all read.
+  // It follows a failed start too. An 'error' can come while the node
+  // runs (a kill that failed), so it ends nothing, and the lock stays.
   const done = new Promise<void>((resolve) => {
     node.once('close', () => {
       closed = true;
       resolve();
     });
-    node.once('error', () => {
-      closed = true;
-      resolve();
-    });
+  });
+  node.on('error', (error: NodeJS.ErrnoException) => {
+    // Its code only (ENOENT, EPERM): the message can quote local paths.
+    output += `\n${error.code ?? 'error'}\n`;
   });
   let stopped = false;
   const stop = async () => {

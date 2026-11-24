@@ -1,3 +1,4 @@
+import type { ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
@@ -30,6 +31,11 @@ import {
   startHttpRecording
 } from '@/rebuild/sources/http-recording';
 import { extractTar, readTar } from '@/rebuild/sources/tar-reader';
+
+// The module itself, not a copy of its exports, so a spy reaches the code
+// under test.
+const childProcess: typeof import('node:child_process') =
+  jest.requireActual('node:child_process');
 
 const sha256 = (bytes: Buffer | string) =>
   createHash('sha256').update(bytes).digest('hex');
@@ -428,11 +434,16 @@ describe('frozen gateway recordings', () => {
     ).toEqual(["recorded line 2 (GET v1/x): its path doesn't start with /"]);
     // The key sorts the query: a second ? or a repeated name would let two
     // requests share one key.
+    const plain = 'its query has a name other than letters, digits, _, . and -';
     for (const [p, why] of [
       ['/v1/balance?who=1?x=2', 'its path has more than one ?'],
       ['/v1/balance?who=1&who=2', 'its query repeats a name'],
-      // Names are compared decoded, as the application reads them.
-      ['/v1/balance?wh%6F=2&who=1', 'its query repeats a name']
+      // The application decodes names: each of these pairs is one name
+      // to it (who; "a b"; and a hex escape its reader takes with a +).
+      ['/v1/balance?wh%6F=2&who=1', plain],
+      ['/v1/balance?a+b=1&a%20b=2', plain],
+      ['/v1/balance?%+F=1&%0F=2', plain],
+      ['/v1/balance?=1', plain]
     ]) {
       expect(
         frozenHeaderProblems(header, [
@@ -445,6 +456,19 @@ describe('frozen gateway recordings', () => {
         ])
       ).toEqual([`recorded line 2 (GET ${p}): ${why}`]);
     }
+    // The names v1 to v4 record are plain.
+    const plainPath =
+      '/v1/blocks?from=1&limit=20&network=devnet&status=final&height=9&families=a.b_c-d';
+    expect(
+      frozenHeaderProblems(header, [
+        line('/v1/status'),
+        {
+          ...line('/v1/status'),
+          key: exchangeKey('GET', plainPath, Buffer.alloc(0)),
+          path: plainPath
+        }
+      ])
+    ).toEqual([]);
   });
 
   it('refuses a phase that is no plain name, and removes nothing outside the work folder', async () => {
@@ -898,6 +922,45 @@ describe('frozen gateway recordings', () => {
     );
     expect((error as Error).message).not.toContain('w'.repeat(10));
     expect(fs.existsSync(lockDir)).toBe(false);
+  });
+
+  it("keeps the node and its lock through an 'error' event: only its close ends it", async () => {
+    // An 'error' can come while the node runs, from a kill that failed.
+    const real = childProcess.spawn;
+    let child: ChildProcess | undefined;
+    const spy = jest.spyOn(childProcess, 'spawn').mockImplementation(((
+      ...args: Parameters<typeof real>
+    ) => {
+      child = real(...args);
+      return child;
+    }) as typeof real);
+    const folder = path.join(root, 'copy');
+    unpackSnapshot(dir, header.frozen[0], folder);
+    try {
+      const node = await startFrozenNode({
+        validator,
+        folder,
+        port: await freePort(),
+        tmpDir: path.join(root, 'tmp'),
+        logFile: path.join(root, 'node.log'),
+        lockDir,
+        readyTimeoutMs: 20_000
+      });
+      child!.emit(
+        'error',
+        Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+      );
+      expect(child!.exitCode).toBeNull();
+      expect(fs.existsSync(lockDir)).toBe(true);
+      expect((await fetch(`${node.url}/v1/status`)).ok).toBe(true);
+      // Stopping still kills it, and gives the lock back once it closed.
+      await node.stop();
+      expect(child!.exitCode !== null || child!.signalCode !== null).toBe(true);
+      expect(fs.existsSync(lockDir)).toBe(false);
+      await expect(fetch(`${node.url}/v1/status`)).rejects.toThrow();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('refuses a node that names a peer, binds elsewhere, or would run beside another', async () => {
