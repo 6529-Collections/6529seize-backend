@@ -33,71 +33,122 @@ function missingTable(): Error {
 }
 
 const NET = `0x${'ab'.repeat(32)}`;
-const SAVED = 1_764_201_600_000;
+/** The finalized block time of the height the index read at. */
+const READ_TIME = 1_764_201_600_000;
+const MINUTE = 60_000;
 
 /** The index's state row after a run that caught up with its read. */
 function aState(fields: Record<string, unknown> = {}) {
   return {
+    name: 'waves',
     last_full_at: '1764201000000',
     network: NET,
     last_error: null,
     feed_next: '101',
     read_height: '100',
+    read_time: String(READ_TIME),
     feed_part: 0,
     full_phase: null,
-    updated_at: String(SAVED),
+    updated_at: String(READ_TIME + 60 * MINUTE),
     ...fields
   };
 }
+
+const ready = (readThrough: number | null) => ({
+  ready: true,
+  notReady: null,
+  lastError: null,
+  readThrough
+});
 
 describe('chainIndexProgress and chainIndexReady', () => {
   const progress = (state: unknown, network: string | null = null) =>
     chainIndexProgress(aReader(() => [state]).db, undefined, network);
 
-  it("reads the index's state row: ready once a full read has finished, read through its last caught-up save", async () => {
+  it("reads the index's whole state row: ready once a full read has finished, read through its read's block time less five minutes", async () => {
     const reader = aReader(() => [aState()]);
-    expect(await chainIndexProgress(reader.db)).toEqual({
-      ready: true,
-      readThrough: SAVED - READ_THROUGH_MARGIN_MS
-    });
-    expect(reader.calls[0].sql).toMatch(/from waves_chain_index_state/);
+    expect(await chainIndexProgress(reader.db)).toEqual(
+      ready(READ_TIME - 5 * MINUTE)
+    );
+    expect(READ_THROUGH_MARGIN_MS).toBe(5 * MINUTE);
+    expect(reader.calls[0].sql).toBe(
+      'select * from waves_chain_index_state where name = :name'
+    );
     expect(reader.calls[0].params).toEqual({ name: 'waves' });
     expect(await chainIndexReady(aReader(() => [aState()]).db)).toBe(true);
-    for (const state of [aState({ last_full_at: null }), undefined]) {
-      expect(
-        await chainIndexProgress(aReader(() => (state ? [state] : [])).db)
-      ).toEqual({ ready: false, readThrough: null });
-    }
+  });
+
+  it('says why it is not ready', async () => {
+    expect(await chainIndexProgress(aReader(() => missingTable()).db)).toEqual({
+      ready: false,
+      notReady: 'no_tables',
+      lastError: null,
+      readThrough: null
+    });
+    expect(await chainIndexProgress(aReader(() => []).db)).toEqual({
+      ready: false,
+      notReady: 'no_state',
+      lastError: null,
+      readThrough: null
+    });
+    expect(
+      await progress(aState({ last_full_at: null, last_error: 'gateway down' }))
+    ).toEqual({
+      ready: false,
+      notReady: 'no_full_read',
+      lastError: 'gateway down',
+      readThrough: null
+    });
+    expect(await progress(aState(), `0x${'cd'.repeat(32)}`)).toEqual({
+      ready: false,
+      notReady: 'other_network',
+      lastError: null,
+      readThrough: null
+    });
   });
 
   it('is ready only on the expected network, in any case', async () => {
     expect(
       (await progress(aState(), NET.toUpperCase().replace('0X', '0x'))).ready
     ).toBe(true);
-    expect((await progress(aState(), `0x${'cd'.repeat(32)}`)).ready).toBe(
-      false
-    );
     expect((await progress(aState({ network: null }), NET)).ready).toBe(false);
+    // Without the column (an index schema before it), only with no network.
+    const { network: _network, ...older } = aState();
+    expect((await progress(older, NET)).ready).toBe(false);
+    expect((await progress(older)).ready).toBe(true);
   });
 
-  it('has read through nothing while it is behind its read, failing, mid-block, or before a full read has its waves', async () => {
-    for (const fields of [
-      { feed_next: '100' },
-      { feed_next: null },
-      { last_error: 'gateway down' },
-      { feed_part: 2 },
-      { full_phase: 'groups' },
-      { full_phase: 'waves' }
-    ]) {
-      expect(await progress(aState(fields))).toEqual({
-        ready: true,
-        readThrough: null
-      });
+  it('follows the chain, not the clock: a head that stands still reads through the same time however often the index saves', async () => {
+    for (const savedMinutesLater of [1, 60, 24 * 60]) {
+      expect(
+        await progress(
+          aState({ updated_at: String(READ_TIME + savedMinutesLater * MINUTE) })
+        )
+      ).toEqual(ready(READ_TIME - 5 * MINUTE));
     }
+  });
+
+  it('has read through nothing while it is behind its read, failing, mid-block, before a full read has its waves, or keeps no read time', async () => {
+    const { read_time: _readTime, ...noColumn } = aState();
+    for (const state of [
+      aState({ feed_next: '100' }),
+      aState({ feed_next: null }),
+      aState({ feed_part: 2 }),
+      aState({ full_phase: 'groups' }),
+      aState({ full_phase: 'waves' }),
+      aState({ read_time: null }),
+      noColumn
+    ]) {
+      expect(await progress(state)).toEqual(ready(null));
+    }
+    expect(await progress(aState({ last_error: 'gateway down' }))).toEqual({
+      ...ready(null),
+      lastError: 'gateway down'
+    });
     // A full read past its waves (its decisions, or the sweep) reads on.
     expect(
       (await progress(aState({ full_phase: 'decisions' }))).readThrough
-    ).toBe(SAVED - READ_THROUGH_MARGIN_MS);
+    ).toBe(READ_TIME - 5 * MINUTE);
   });
 
   it("is not ready while the index's tables aren't there; other errors throw", async () => {

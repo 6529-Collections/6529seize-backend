@@ -1,8 +1,9 @@
 import { Logger } from '@/logging';
-import { dbSupplier } from '@/sql-executor';
+import { DbPoolName } from '@/db-query.options';
+import { dbSupplier, SqlExecutor } from '@/sql-executor';
 import { CrpConnection, WebSocketFactory } from './crp-client';
 import { WaveRelayPublishDb } from './wave-relay-publish.db';
-import { recordsWaveId } from './wave-relay-scope';
+import { relayRunScope, scopeSqlParamValues } from './wave-relay-scope';
 import {
   RelayRunResult,
   WaveRelayPublisher,
@@ -24,17 +25,19 @@ import {
  *   or not (wave-relay-scope.ts): before switch-on every members-only wave
  *   stays; after, this flag matters for members-only waves the chain holds.
  * - SIGNED_RECORDS_WAVE_ID: 6529.io's records wave, which stays on 6529.io
- *   and is never published. Unset, there is no records wave (logged once).
+ *   and is never published; `none` when there is none. Unset, nothing is
+ *   published before the switch-on, with an error each run: the records
+ *   wave would go to the relays.
  * - WAVES_SWITCH_ON_AT or FEATURE_WAVES_ON_CHAIN=true: the switch-on, and
- *   WAVES_SETTLEMENT_NETWORK_ID: the chain's network (wave-relay-scope.ts).
+ *   WAVES_SETTLEMENT_NETWORK_ID: the chain's network. After the switch-on,
+ *   until the chain index has a full read on it, nothing is published,
+ *   with a warning each run (wave-relay-scope.ts).
  */
 export interface WaveRelayPublishConfig {
   readonly relays: string[];
   readonly net: string;
   /** FEATURE_WAVES_RELAY_PUBLISH_MEMBERS_ONLY: members-only waves too. */
   readonly includeMembersOnly: boolean;
-  /** SIGNED_RECORDS_WAVE_ID: never published; null when unset. */
-  readonly recordsWaveId: string | null;
 }
 
 export class WaveRelayPublishConfigError extends Error {
@@ -81,8 +84,7 @@ export function waveRelayPublishConfig(
   return {
     relays,
     net,
-    includeMembersOnly: env.FEATURE_WAVES_RELAY_PUBLISH_MEMBERS_ONLY === 'true',
-    recordsWaveId: recordsWaveId(env)
+    includeMembersOnly: env.FEATURE_WAVES_RELAY_PUBLISH_MEMBERS_ONLY === 'true'
   };
 }
 
@@ -113,20 +115,38 @@ export const waveRelayPublishDb = new WaveRelayPublishDb(dbSupplier);
 export async function runWaveRelayPublishing({
   env = process.env,
   factory,
-  run = DEFAULT_PUBLISH_RUN
+  run = DEFAULT_PUBLISH_RUN,
+  scopeDb = () => dbSupplier(),
+  now = () => Date.now()
 }: {
   env?: Record<string, string | undefined>;
   factory?: WebSocketFactory;
   run?: Omit<WaveRelayPublisherOptions, 'relays'>;
+  /** Where the chain index's state is read (tests give their own). */
+  scopeDb?: () => Pick<SqlExecutor, 'execute'>;
+  now?: () => number;
 } = {}): Promise<RelayRunResult[] | null> {
   const config = waveRelayPublishConfig(env);
   if (!config) {
     return null;
   }
+  // Which waves stay, decided once a run; or nothing published, and why.
+  const scope = await relayRunScope(
+    scopeDb(),
+    { forcePool: DbPoolName.WRITE },
+    env,
+    now()
+  );
+  if (!scope.publish) {
+    if (scope.level === 'error') logger.error(scope.reason);
+    else logger.warn(scope.reason);
+    return [];
+  }
   const publisher = new WaveRelayPublisher(
     waveRelayPublishDb.source({
       includeMembersOnly: config.includeMembersOnly,
-      recordsWaveId: config.recordsWaveId
+      mode: scope.mode,
+      scopeParams: scopeSqlParamValues(scope.recordsWaveId, env)
     }),
     waveRelayPublishDb,
     (relay) => CrpConnection.open(relay, config.net, { factory }),

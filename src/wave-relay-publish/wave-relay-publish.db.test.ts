@@ -13,6 +13,7 @@ import { describeWithSeed } from '@/tests/_setup/seed';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import { WaveRelayPublishDb } from './wave-relay-publish.db';
 import { START_CURSOR } from './wave-relay-publisher';
+import { scopeSqlParamValues } from './wave-relay-scope';
 
 const WALLET = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const GRANT_ID = `0x${'1'.repeat(64)}`;
@@ -142,7 +143,13 @@ describeWithSeed(
   ],
   () => {
     const db = new WaveRelayPublishDb(() => sqlExecutor);
-    const publicOnly = { includeMembersOnly: false, recordsWaveId: null };
+    // Before the switch-on: the rule decides, with no records wave.
+    const scopeParams = scopeSqlParamValues(null, {});
+    const publicOnly = {
+      includeMembersOnly: false,
+      mode: 'rule' as const,
+      scopeParams
+    };
 
     it('reads events after the cursor with what decides their sending', async () => {
       const read = await db.candidatesAfter(
@@ -182,7 +189,7 @@ describeWithSeed(
         { createdAt: 450, eventId: eventId(8) },
         5_000,
         20,
-        { includeMembersOnly: true, recordsWaveId: null }
+        { includeMembersOnly: true, mode: 'rule', scopeParams }
       );
       expect(withMembers.map((c) => c.event.id)).toEqual([]);
 

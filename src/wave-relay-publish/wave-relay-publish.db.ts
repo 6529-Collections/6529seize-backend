@@ -14,7 +14,6 @@ import {
   ContentModerationDb,
   contentModerationDb
 } from '@/content-moderation/content-moderation.db';
-import { DbPoolName } from '@/db-query.options';
 import { DeviceGrantEntity } from '@/entities/IDeviceGrant';
 import { DeviceSignedEventEntity } from '@/entities/IDeviceSignedEvent';
 import {
@@ -22,7 +21,7 @@ import {
   LazyDbAccessCompatibleService,
   SqlExecutor
 } from '@/sql-executor';
-import { relayScopeMode, stayingWaveSql } from './wave-relay-scope';
+import { stayingWaveSql } from './wave-relay-scope';
 import {
   CandidateEvent,
   PublishableEvent,
@@ -56,10 +55,12 @@ export interface WaveRelayPublishDbOptions {
    */
   readonly includeMembersOnly: boolean;
   /**
-   * 6529.io's records wave (SIGNED_RECORDS_WAVE_ID), never published; null
-   * when unset (no records wave).
+   * Which waves stay, this run (wave-relay-scope.ts relayRunScope): the
+   * rule before the switch-on, the chain's mapping after it.
    */
-  readonly recordsWaveId: string | null;
+  readonly mode: 'rule' | 'chain';
+  /** The staying SQL's parameters (scopeSqlParamValues). */
+  readonly scopeParams: Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -69,8 +70,8 @@ export interface WaveRelayPublishDbOptions {
  * legacy plaintext DMs stay off the relays. Nor are those of any wave that
  * stays on 6529.io (wave-relay-scope.ts): only waves that move to the 6529
  * chain are published. After the switch-on, until the chain index has
- * finished a full read, nothing is read: the cursors wait, so no event is
- * passed over.
+ * finished a full read, a run reads nothing (wave-relay-publish.ts): the
+ * cursors wait, so no event is passed over.
  */
 export class WaveRelayPublishDb
   extends LazyDbAccessCompatibleService
@@ -81,11 +82,7 @@ export class WaveRelayPublishDb
     private readonly moderation: Pick<
       ContentModerationDb,
       'getPresentations'
-    > = contentModerationDb,
-    private readonly env: Readonly<
-      Record<string, string | undefined>
-    > = process.env,
-    private readonly now: () => number = () => Date.now()
+    > = contentModerationDb
   ) {
     super(supplier);
   }
@@ -102,18 +99,8 @@ export class WaveRelayPublishDb
     cursor: Pick<RelayCursor, 'createdAt' | 'eventId'>,
     before: number,
     limit: number,
-    { includeMembersOnly, recordsWaveId }: WaveRelayPublishDbOptions
+    { includeMembersOnly, mode, scopeParams }: WaveRelayPublishDbOptions
   ): Promise<CandidateEvent[]> {
-    // Before the switch-on the rule decides which waves stay; after it, the
-    // chain's mapping, once the index has finished a full read. Until then
-    // nothing is read, so the cursor holds every event.
-    const mode = await relayScopeMode(
-      this.db,
-      { forcePool: DbPoolName.WRITE },
-      this.env,
-      this.now()
-    );
-    if (mode === 'hold') return [];
     return this.executeNativeQueriesInTransaction(async (connection) => {
       const rows = await this.db.execute<CandidateRow>(
         `select e.*, d.author_id as drop_author_id,
@@ -141,7 +128,7 @@ export class WaveRelayPublishDb
           createdAt: cursor.createdAt,
           eventId: cursor.eventId,
           limit,
-          recordsWaveId
+          ...scopeParams
         },
         { wrappedConnection: connection }
       );
