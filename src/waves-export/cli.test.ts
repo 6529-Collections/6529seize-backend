@@ -15,6 +15,18 @@ jest.mock('@/sql-executor', () => ({
       mockTransaction(...args)
   }
 }));
+// True while the export's reads go through the API's SQL executor.
+let mockInApiSqlExecutor = false;
+jest.mock('./waves-export.db', () => ({
+  withApiSqlExecutor: async (action: () => Promise<unknown>) => {
+    mockInApiSqlExecutor = true;
+    try {
+      return await action();
+    } finally {
+      mockInApiSqlExecutor = false;
+    }
+  }
+}));
 const mockWavesExport = jest.fn();
 jest.mock('./waves-export.service', () => ({
   ...jest.requireActual('./waves-export.service'),
@@ -172,6 +184,25 @@ describe('waves:export and the read replica lag', () => {
       stale_readers: 0,
       unknown_reason: null
     });
+  });
+
+  it("reads the lag and runs every stage through the API's SQL executor", async () => {
+    dbHost([reader(40)]);
+    const answer = mockExecute.getMockImplementation()!;
+    const inside: boolean[] = [];
+    mockExecute.mockImplementation(async (...args: unknown[]) => {
+      inside.push(mockInApiSqlExecutor);
+      return answer(...args);
+    });
+    mockWavesExport.mockReturnValue({
+      run: async () => {
+        inside.push(mockInApiSqlExecutor);
+        return { failed_waves: [] };
+      }
+    });
+    await main(EXPORT);
+    expect(inside).toEqual([true, true, true, true]);
+    expect(mockInApiSqlExecutor).toBe(false);
   });
 
   it('reads the lag first on a resumed run of later stages too', async () => {
