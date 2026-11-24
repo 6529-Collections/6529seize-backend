@@ -595,10 +595,13 @@ describe('RelayDropApplier and waves that stay on 6529.io', () => {
       recordsWaveIdOf({ SIGNED_RECORDS_WAVE_ID: ' none ' }, warn)
     ).toBeNull();
     expect(warn).toHaveBeenCalledTimes(2);
-    // Only `none` itself: `None` is read as an id (it names no wave).
-    expect(recordsWaveIdOf({ SIGNED_RECORDS_WAVE_ID: 'None' }, warn)).toBe(
-      'none'
-    );
+    // `none` in any case, as the shared rule reads it; still no warning.
+    for (const none of ['None', 'NONE']) {
+      expect(
+        recordsWaveIdOf({ SIGNED_RECORDS_WAVE_ID: none }, warn)
+      ).toBeNull();
+    }
+    expect(warn).toHaveBeenCalledTimes(2);
     expect(warn.mock.calls[0][0]).toContain(
       'SIGNED_RECORDS_WAVE_ID IS NOT SET'
     );

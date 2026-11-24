@@ -212,18 +212,18 @@ export const NO_RECORDS_WAVE = 'none';
 
 /**
  * 6529.io's records wave (SIGNED_RECORDS_WAVE_ID), or null for none.
- * `none` (exactly, in lowercase) says there is none, on purpose; `None` or
- * `NONE` is read as an id, which names no wave. Unset, no wave is refused
- * as the records wave either (the chain's mapping still keeps it, as any
- * wave the chain doesn't hold), and that is told to `warn` (by default,
- * logged once).
+ * `none`, in any case, says there is none, on purpose: the shared rule's
+ * reading (readRecordsWaveSetting in src/waves-scope/waves-scope.ts).
+ * Unset, no wave is refused as the records wave either (the chain's mapping
+ * still keeps it, as any wave the chain doesn't hold), and that is told to
+ * `warn` (by default, logged once).
  */
 export function recordsWaveIdOf(
   env: Readonly<Record<string, string | undefined>> = process.env,
   warn: (message: string) => void = warnOnce
 ): string | null {
   const value = env.SIGNED_RECORDS_WAVE_ID?.trim();
-  if (value === NO_RECORDS_WAVE) return null;
+  if (value?.toLowerCase() === NO_RECORDS_WAVE) return null;
   if (value) return value.toLowerCase();
   warn(
     '[SIGNED_RECORDS_WAVE_ID IS NOT SET] [NO WAVE REFUSED AS THE RECORDS WAVE] [SET IT, OR TO none WHEN THERE IS NONE]'
