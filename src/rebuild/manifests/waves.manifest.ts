@@ -543,14 +543,15 @@ export const wavesManifest: AreaManifest = {
     waves_chain_mirror_state: { class: 'INDEX', origin: 'planned' },
     waves_chain_mirror_events: { class: 'INDEX', origin: 'planned' },
     chain_docs: { class: 'INDEX', origin: 'planned' },
-    // EXEMPT until 2026-12-04 (no `until` field in the harness yet): a
-    // rebuild must never release a hold, and a final run must not pass while
-    // these holds have no source outside MySQL. When each hold and release
-    // is a signed record keyed by chain entry id (newest wins), the table
-    // becomes INDEX with a rebuilder.
+    // A rebuild must never release a hold (entries', and a chain-made wave's
+    // description's, keyed by its description drop id), and a final run
+    // fails while these holds have no source outside MySQL. When each hold
+    // and release is a signed record keyed by its id (newest wins), the
+    // table becomes INDEX with a rebuilder.
     chain_entry_holds: {
       class: 'EXEMPT',
       why: "6529.io's moderation holds on chain entries; kept as they are until the moderation service records each hold and release as a signed record, as content_moderation_items' decisions already are.",
+      until: '2026-12-04',
       origin: 'planned'
     },
     waves_chain_mirror_groups: { class: 'INDEX', origin: 'planned' },
