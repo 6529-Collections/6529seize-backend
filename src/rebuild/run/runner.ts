@@ -52,13 +52,7 @@ import {
   portOpen,
   startLocalMysqld
 } from '@/rebuild/stack/local-mysqld';
-import {
-  ColumnInfo,
-  MysqlAdmin,
-  resetValue,
-  Row,
-  writtenByMysql
-} from '@/rebuild/stack/mysql-admin';
+import { MysqlAdmin, Row, writtenByMysql } from '@/rebuild/stack/mysql-admin';
 import { acquireHomeLock } from '@/rebuild/stack/home-lock';
 import { bundleApi } from '@/rebuild/stack/api-bundle';
 import { STEP_SPEC_ENV, StepSpec } from '@/rebuild/run/step-spec';
@@ -106,6 +100,10 @@ import { judge, PlannedRowsPlan, WaitingStep } from '@/rebuild/run/verdict';
 import { stepCodeIn } from '@/rebuild/step-code';
 import { exemptUntil, runDay } from '@/rebuild/run/exempt-until';
 import { refusalsIn } from '@/rebuild/run/refusals';
+import {
+  ownedColumnProblems,
+  unstableColumns
+} from '@/rebuild/run/owned-columns';
 import { waitForApi } from '@/rebuild/stack/api-ready';
 
 /** A table's partition columns and every tuple its writers own. */
@@ -912,10 +910,8 @@ class RebuildRun {
   }
 
   /**
-   * At run start, for each table with column owners: a primary key (the
-   * run carries owned columns across a rebuild by it), and every owned
-   * column present, outside that key, and one the run can reset (a default,
-   * NULL, or a numeric or text type's zero). Exempt columns must be there.
+   * At run start: exempt columns must be there, and each table's column
+   * owners must be able to run (see ownedColumnProblems).
    */
   private async ownedColumnsExist(): Promise<boolean> {
     const problems: string[] = [];
@@ -930,35 +926,18 @@ class RebuildRun {
         }
       }
     }
+    const entries = this.entries();
     for (const [table, owners] of Array.from(this.columnOwners())) {
       if (!this.baseTables.has(table)) continue;
-      const info = new Map<string, ColumnInfo>(
-        (await this.admin!.columnInfo(MAIN_DB, table)).map((c) => [c.name, c])
+      problems.push(
+        ...ownedColumnProblems({
+          table,
+          owners,
+          columns: await this.admin!.columnInfo(MAIN_DB, table),
+          primaryKey: await this.admin!.primaryKey(MAIN_DB, table),
+          volatile: unstableColumns(entries.get(table)?.entry)
+        })
       );
-      const key = await this.admin!.primaryKey(MAIN_DB, table);
-      if (!key.length) {
-        problems.push(
-          `${table} has column owners but no primary key: the run carries owned columns across a rebuild by the key`
-        );
-      }
-      for (const owner of owners) {
-        for (const column of owner.columns) {
-          const found = info.get(column);
-          if (!found) {
-            problems.push(
-              `column owner ${owner.step} owns ${table}.${column}, which the schema doesn't have`
-            );
-          } else if (key.includes(column)) {
-            problems.push(
-              `column owner ${owner.step} owns ${table}.${column}, part of the primary key: only the row writer writes keys`
-            );
-          } else if (resetValue(found) === null) {
-            problems.push(
-              `column owner ${owner.step} owns ${table}.${column}, a NOT NULL ${found.dataType} with no default: the run can't reset it for its owner`
-            );
-          }
-        }
-      }
     }
     this.failures.push(...problems);
     return problems.length === 0;

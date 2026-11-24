@@ -166,13 +166,15 @@ export const mintManifest: AreaManifest = {
     row set and every other column, leaving out what MySQL writes itself:
     ON UPDATE and generated columns) before and after it runs, and fails on
     any change. At its start the run fails on an owned column the schema
-    lacks, one in the primary key, one it can't reset (NOT NULL, with no
-    default, of a type with no zero), and on a table with owners but no
-    primary key. A writer of the table that reads it doesn't wait on its
-    owners; owners run in their `after` order, so one that reads another's
-    columns names it there. When a table's row writer doesn't run (it is
-    another area's, or skipped), the table keeps its rows. When an owner
-    doesn't run, the run saves its columns with each row's key before the
+    lacks, one in the primary key, a generated one (MySQL writes it), one
+    it can't reset (NOT NULL, with no default, of a type with no zero), and
+    on a table with owners but no primary key or with a volatile or exempt
+    column in it (a key that changes on a rebuild matches no saved row). A
+    writer of the table that reads it doesn't wait on its owners; owners
+    run in their `after` order, so one that reads another's columns names
+    it there. When a table's row writer doesn't run (it is another
+    area's, or skipped), the table keeps its rows. When an owner doesn't
+    run, the run saves its columns with each row's key before the
     drop and puts them back after the last running row writer, so the
     API's answers keep them; they are still left out of the comparison and
     listed with why (another area's, planned, or waiting for a table), as
