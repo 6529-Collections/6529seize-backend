@@ -63,6 +63,8 @@ export interface ExportActiveEntry {
 
 export interface ExportVoteLogRow {
   readonly id: string;
+  /** The voter's profile id, as entry_votes.json's rows name it. */
+  readonly voter_profile_id: string;
   readonly old_vote: number;
   readonly new_vote: number;
   readonly created_at: number;

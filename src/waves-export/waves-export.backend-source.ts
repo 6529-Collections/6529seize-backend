@@ -370,6 +370,7 @@ export class BackendWavesExportSource implements WavesExportSource {
         rows.push(
           ...page.map((row) => ({
             id: row.id,
+            voter_profile_id: row.voter_profile_id,
             old_vote: toNumber(row.old_vote),
             new_vote: toNumber(row.new_vote),
             created_at: toNumber(row.created_at)
@@ -397,6 +398,8 @@ export class BackendWavesExportSource implements WavesExportSource {
           const contents = parseVoteLogContents(log.contents);
           return {
             id: log.id,
+            // The vote edit's actor: the voter (its proxy is proxy_id).
+            voter_profile_id: log.profile_id,
             old_vote: toNumber(contents.oldVote),
             new_vote: toNumber(contents.newVote),
             created_at: toMillis(log.created_at) ?? 0

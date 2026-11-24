@@ -231,6 +231,36 @@ export function namedGroups(
   return uses;
 }
 
+/**
+ * Every group the export writes to groups.json, with its roles: the fetch
+ * stage's (namedGroups), a wave's own submit and vote groups as its
+ * configuration shows them, and every curation's group. The snapshot
+ * builder walks them all to check that every wave moves.
+ */
+export function exportedGroups(
+  waves: Record<string, WaveV3>,
+  competitions: Record<string, Json>,
+  curations: Record<string, ExportCuration>
+): Map<string, Set<string>> {
+  const uses = namedGroups(waves, competitions);
+  const add = (id: string | null, role: string) => {
+    if (!id) return;
+    const roles = uses.get(id) ?? new Set<string>();
+    roles.add(role);
+    uses.set(id, roles);
+  };
+  for (const wave of Object.values(waves)) {
+    const c = wave.configuration;
+    if (!c) continue;
+    add(idOf(asObject(asObject(c.participation).scope).group), 'submit');
+    add(idOf(asObject(asObject(c.voting).scope).group), 'vote');
+  }
+  for (const curation of Object.values(curations)) {
+    add(curation.group_id || null, 'curation');
+  }
+  return uses;
+}
+
 /** ACTIVE entries of PUBLISHED decisions, in decision then entry order. */
 export function activeEntries(
   competitions: Record<string, Json>,
@@ -641,6 +671,7 @@ export class WavesExport {
       );
       logs[entry.drop_id] = log.map((row) => ({
         id: row.id,
+        voter_profile_id: row.voter_profile_id,
         old_vote: row.old_vote,
         new_vote: row.new_vote,
         created_at: row.created_at
@@ -659,9 +690,13 @@ export class WavesExport {
       'competitions.json',
       {}
     );
-    // The groups the waves that move and their decisions name: a group only
-    // staying waves name is never read.
-    const uses = namedGroups(waves, competitions);
+    // The groups the waves that move, their decisions and their curations
+    // name: a group only staying waves name is never read.
+    const uses = exportedGroups(
+      waves,
+      competitions,
+      await raw.load<Record<string, ExportCuration>>(CURATIONS_FILE, {})
+    );
     const ids = Array.from(uses.keys()).sort(compareCodePoints);
     const found = await this.source.groups(ids);
     const groups: Record<string, Json> = {};
@@ -718,13 +753,13 @@ export class WavesExport {
       const group = groups[id];
       if (group._error) continue;
       const definition = asObject(group.group);
-      const unresolvedRater = groupRaterKeys(definition).some(
-        (rater) => !users[rater]
-      );
       const reasons = groupCriteriaReasons(definition, {
         bothMetric: this.options.bothMetric
       });
-      if (!reasons.length && !unresolvedRater) continue;
+      // Every group with a REP or NIC rater too, resolved or not: the
+      // snapshot builder checks a rater clause against its members.
+      const rated = groupRaterKeys(definition).length > 0;
+      if (!reasons.length && !rated) continue;
       members[id] = (await this.source.groupMembers(group)).map((member) => ({
         wallet: (member.wallet ?? '').toLowerCase(),
         key: member.key

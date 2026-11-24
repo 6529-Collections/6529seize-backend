@@ -5,6 +5,7 @@ import { gunzipSync } from 'node:zlib';
 import {
   activeEntries,
   eligibleGroupsForWave,
+  exportedGroups,
   forEachLimited,
   namedGroups,
   WAVES_EXPORT_STAGES,
@@ -184,12 +185,20 @@ class FakeSource implements WavesExportSource {
   async waveConfiguration(row: ExportWaveRow, eligible: string[]) {
     this.configurationCalls.push([row.id, eligible]);
     if (row.id === 'w-broken') throw new Error('Wave w-broken not found');
-    return configuration(
+    const wave = configuration(
       row.id,
       row.visibility_group_id,
       row.chat_group_id,
       row.admin_group_id
     );
+    // A wave's own submit and vote groups, as its configuration shows them.
+    return row.id === 'w-pub'
+      ? {
+          ...wave,
+          participation: { scope: { group: { id: 'g-submit' } } },
+          voting: { scope: { group: { id: 'g-wave-vote' } } }
+        }
+      : wave;
   }
 
   async listCompetitionIds(waveIds: string[]) {
@@ -271,8 +280,20 @@ class FakeSource implements WavesExportSource {
 
   async entryVoteLog(entry: ExportActiveEntry) {
     return [
-      { id: `${entry.entry_id}-2`, old_vote: 2, new_vote: 5, created_at: 20 },
-      { id: `${entry.entry_id}-1`, old_vote: 0, new_vote: 2, created_at: 10 }
+      {
+        id: `${entry.entry_id}-2`,
+        voter_profile_id: 'p9',
+        old_vote: 2,
+        new_vote: 5,
+        created_at: 20
+      },
+      {
+        id: `${entry.entry_id}-1`,
+        voter_profile_id: 'p8',
+        old_vote: 0,
+        new_vote: 2,
+        created_at: 10
+      }
     ];
   }
 
@@ -300,7 +321,22 @@ class FakeSource implements WavesExportSource {
                 identity_group_id: 'ig-vote',
                 excluded_identity_group_id: 'ig-vote-out'
               }
-            : { tdh: {}, rep: {}, cic: {}, level: {}, owns_nfts: [] }
+            : id === 'g-curators'
+              ? {
+                  // A REP rater the chain evaluates: no reason to take the
+                  // group as its members, but it has a rater.
+                  tdh: {},
+                  rep: {
+                    user_identity: 'rater-handle',
+                    category: 'Good',
+                    direction: 'RECEIVED',
+                    min: 1
+                  },
+                  cic: {},
+                  level: {},
+                  owns_nfts: []
+                }
+              : { tdh: {}, rep: {}, cic: {}, level: {}, owns_nfts: [] }
       };
     }
     return out;
@@ -316,10 +352,20 @@ class FakeSource implements WavesExportSource {
   }
 
   async groupMembers(group: Json) {
-    expect(group.id).toBe('g-vote');
-    return [
-      { wallet: '0xDD00000000000000000000000000000000000004', key: 'member' }
-    ];
+    expect(['g-vote', 'g-curators']).toContain(group.id);
+    return group.id === 'g-vote'
+      ? [
+          {
+            wallet: '0xDD00000000000000000000000000000000000004',
+            key: 'member'
+          }
+        ]
+      : [
+          {
+            wallet: '0xEE00000000000000000000000000000000000005',
+            key: 'curator'
+          }
+        ];
   }
 
   async profileIdOf(key: string) {
@@ -500,25 +546,45 @@ describe('WavesExport', () => {
   it('writes votes and vote logs of ACTIVE entries of PUBLISHED decisions', () => {
     expect(Object.keys(raw('entry_votes.json'))).toEqual(['e-1']);
     expect(raw('entry_logs.json')).toEqual({
+      // Each row names its voter, as entry_votes.json's rows do.
       'd-1': [
-        { id: 'e-1-2', old_vote: 2, new_vote: 5, created_at: 20 },
-        { id: 'e-1-1', old_vote: 0, new_vote: 2, created_at: 10 }
+        {
+          id: 'e-1-2',
+          voter_profile_id: 'p9',
+          old_vote: 2,
+          new_vote: 5,
+          created_at: 20
+        },
+        {
+          id: 'e-1-1',
+          voter_profile_id: 'p8',
+          old_vote: 0,
+          new_vote: 2,
+          created_at: 10
+        }
       ]
     });
   });
 
   it('writes the named groups, their lists, raters and static members', () => {
     const groups = raw('groups.json');
-    // The groups waves that move and their decisions name; none a staying
-    // wave alone names (g-read, g-records-post).
+    // Every group a moving wave, its decisions or its curations name: a
+    // wave's own vote group (g-wave-vote) and a curation's (g-curators)
+    // included; none a staying wave alone names (g-read, g-records-post).
     expect(Object.keys(groups)).toEqual([
       'g-admin',
+      'g-curators',
       'g-missing',
       'g-post',
       'g-submit',
-      'g-vote'
+      'g-vote',
+      'g-wave-vote'
     ]);
     expect(groups['g-missing']).toEqual({ _error: 404 });
+    // Each with its visibility, for the snapshot builder.
+    for (const id of Object.keys(groups).filter((id) => id !== 'g-missing')) {
+      expect(groups[id]).toMatchObject({ visible: true, is_private: false });
+    }
     expect(raw('groups_staying.json')).toEqual({});
     expect(raw('group_lists.json')).toEqual({
       'g-vote': {
@@ -531,7 +597,11 @@ describe('WavesExport', () => {
     });
     expect(raw('group_users.json')).toEqual({ 'rater-handle': 'p-rater' });
     // TDH plus xTDH is not a clause yet: that group is its members.
+    // A group with a rater is its members too, whatever its criteria.
     expect(raw('group_members.json')).toEqual({
+      'g-curators': [
+        { wallet: '0xee00000000000000000000000000000000000005', key: 'curator' }
+      ],
       'g-vote': [
         { wallet: '0xdd00000000000000000000000000000000000004', key: 'member' }
       ]
@@ -593,8 +663,8 @@ describe('WavesExport', () => {
         drops: 3,
         entries: 3,
         curations: 2,
-        groups: 4,
-        groups_as_members: 1,
+        groups: 6,
+        groups_as_members: 2,
         groups_missing: 1,
         groups_staying: 0,
         polls: 1,
@@ -978,6 +1048,32 @@ describe('export helpers', () => {
       p: ['post'],
       r: ['read', 'vote'],
       s: ['submit']
+    });
+  });
+
+  it("names a wave's own submit and vote groups and every curation's group too", () => {
+    const wave = {
+      ...configuration('w', 'r', 'p', 'a'),
+      participation: { scope: { group: { id: 's2' } } },
+      voting: { scope: { group: { id: 'v2' } } }
+    };
+    const uses = exportedGroups(
+      { w: { id: 'w', configuration: wave } },
+      { c: { participation: { group_id: 's' }, voting: { group_id: 'r' } } },
+      { cu: { id: 'cu', wave_id: 'w', group_id: 'g-cu' } }
+    );
+    expect(
+      Object.fromEntries(
+        Array.from(uses.entries()).map(([k, v]) => [k, Array.from(v).sort()])
+      )
+    ).toEqual({
+      a: ['admin'],
+      'g-cu': ['curation'],
+      p: ['post'],
+      r: ['read', 'vote'],
+      s: ['submit'],
+      s2: ['submit'],
+      v2: ['vote']
     });
   });
 
