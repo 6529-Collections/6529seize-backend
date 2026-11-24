@@ -29,7 +29,10 @@ import {
 } from '../notifications/identity-notifications.db';
 import { RequestContext } from '../request.context';
 import { assertProfilePictureUrlChangeAllowed } from '@/api/profiles/profile-picture-url';
-import { assertIdentityNotFrozen } from '@/identity-freeze/identity-freeze';
+import {
+  assertIdentityNotFrozen,
+  assertIdentityNotFrozenAtCommit
+} from '@/identity-freeze/identity-freeze';
 import {
   reactionsDb,
   ReactionsDb
@@ -218,6 +221,7 @@ export class ProfilesService {
     // Every profile create or update passes here: the profile route and the
     // implicit profiles made when rating a wallet that has none.
     assertIdentityNotFrozen();
+    assertIdentityNotFrozenAtCommit(ctx.connection);
     const identityResponse =
       await identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
         [creator_or_updater_wallet],
