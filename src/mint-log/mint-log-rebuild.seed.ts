@@ -46,10 +46,14 @@ import { distributionCursorBlock } from './mint-log-inputs';
 import { mintCard } from './mint-log-parts';
 import { logPublicationReceipt } from './mint-log-receipts';
 import { getMintLogPorts } from './mint-log-ports';
-import { PROBE_PHASE_WALLETS } from './mint-log-rebuild.ids';
+import {
+  PROBE_MAIN_STAGE_WAVE,
+  PROBE_PHASE_WALLETS
+} from './mint-log-rebuild.ids';
 import { chainHeadTime } from './mint-log-rebuild.chain-clock';
 import { seedCollaboration } from './mint-log-rebuild.seed-collab';
 import {
+  assertLatestDropTimes,
   insertDrop,
   insertWave,
   SEEDED_AT
@@ -532,6 +536,16 @@ export async function closeRecordLog(
   if (!heads.length) {
     throw new Error('The mint seed closed no segment of the record log');
   }
+  // Posting a head logs its failure and goes on, as the loop does; the seed
+  // stops instead, so a head drop missing or without its metrics shows here.
+  const unposted = await recordLogDb.findSegmentsWithoutHead({});
+  if (unposted.length) {
+    throw new Error(
+      `Record log segments without a head drop after the mint seed posted them: ${unposted
+        .map((segment) => `${segment.chain} ${segment.seq}`)
+        .join(', ')}`
+    );
+  }
 }
 
 /** What the seed step receives from the rebuild check's runner. */
@@ -579,6 +593,11 @@ export async function seedMintProbes(
   await seedCollaboration();
 
   await closeRecordLog(dir, env, startId);
+  await assertLatestDropTimes(
+    [PROBE_MAIN_STAGE_WAVE, env.SIGNED_RECORDS_WAVE_ID].filter(
+      (id): id is string => !!id
+    )
+  );
 
   // Mints close on the chain's clock (see mint-log-rebuild.chain-clock.ts).
   if (ctx.sources.ethereum) {

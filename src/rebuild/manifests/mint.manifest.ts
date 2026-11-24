@@ -98,14 +98,17 @@ const MINT_PROBES_SEED: RebuildStep = {
     // The records service (identity, profile, records wave) when it is
     // missing, as personal's seed writes it; the Main Stage wave, the
     // collaboration's artwork and the records wave's head drops, with what
-    // creating them writes (follows, the creator's group); and the
-    // collaboration's notifications.
+    // creating them writes (follows, the creator's group, the drop metrics;
+    // not the subscriber count a follow adds); and the collaboration's
+    // notifications.
     'identities',
     'address_consolidation_keys',
     'profiles',
     'waves',
     'drops',
     'drops_parts',
+    'wave_metrics',
+    'wave_dropper_metrics',
     'identity_subscriptions',
     'wave_group_notification_subscriptions',
     'identity_notifications'
