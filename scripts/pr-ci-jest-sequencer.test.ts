@@ -10,10 +10,10 @@ const slowSuites = [
 const newDbSuites = ['new-db-api.test.ts', 'new-db.test.ts'];
 const newUnitSuites = ['alpha.test.ts', 'beta.test.ts', 'gamma.test.ts'];
 
-function jestTests(rootDir: string, suites: string[]) {
+function jestTests(cwd: string, suites: string[], rootDir = cwd) {
   return suites.map((suite) => ({
-    path: path.join(rootDir, suite),
-    context: { config: { rootDir } }
+    path: path.join(cwd, suite),
+    context: { config: { cwd, rootDir } }
   }));
 }
 
@@ -70,5 +70,24 @@ describe('Jest CI sequencer', () => {
     const tests = jestTests(root, [...expected].reverse());
 
     expect(suitePaths(root, sequencer.sort(tests))).toEqual(expected);
+  });
+
+  it('uses checkout-relative timing keys with a nested Jest rootDir', () => {
+    const checkout = path.resolve('runner');
+    const fastSuite = 'scripts/alpha.test.ts';
+    const slowSuite = 'scripts/zeta.test.ts';
+    const nestedRootSequencer = new CiTestSequencer(undefined, {
+      [slowSuite]: 120_000
+    });
+    const tests = jestTests(
+      checkout,
+      [fastSuite, slowSuite],
+      path.join(checkout, 'scripts')
+    );
+
+    expect(suitePaths(checkout, nestedRootSequencer.sort(tests))).toEqual([
+      slowSuite,
+      fastSuite
+    ]);
   });
 });

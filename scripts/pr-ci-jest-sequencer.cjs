@@ -23,13 +23,14 @@ function weighTests(tests, timings) {
   return tests
     .map((test) => {
       const suite = path
-        .relative(test.context.config.rootDir, test.path)
+        .relative(test.context.config.cwd, test.path)
         .split(path.sep)
         .join('/');
       const duration = timings[suite];
-      const nameParts = path.basename(suite).split(/[.-]/);
-      const integration =
-        nameParts.includes('db') || nameParts.includes('integration');
+      const integration = path
+        .basename(suite)
+        .split(/[.-]/)
+        .some((part) => part === 'db' || part === 'integration');
       const fallback = integration ? 10_000 : 2_000;
       return {
         test,
