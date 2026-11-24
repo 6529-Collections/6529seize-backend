@@ -7,6 +7,7 @@ import {
 } from '@/drop-forge/drop-forge.types';
 import { isResearchAirdrop } from '@/drop-forge/drop-forge.research';
 import { addLaunchEvent } from '@/drop-forge/drop-forge.repository';
+import type { LaunchAttempt } from '@/drop-forge/drop-forge.attempt';
 
 export function launchGroup(action: LaunchAction): string {
   if (action.kind === 'PAY_ARTIST') return 'post-mint';
@@ -35,7 +36,11 @@ export function reportActionFailure(
   message: string,
   error?: unknown,
   feeWei?: string,
-  options?: { attempted?: LaunchAction; walletRetry?: number | null }
+  options?: {
+    attempted?: LaunchAction;
+    walletRetry?: number | null;
+    attempt?: LaunchAttempt;
+  }
 ): void {
   action.attempt_count = (action.attempt_count ?? 0) + 1;
   action.attempt_error = message;
@@ -60,6 +65,7 @@ export function reportActionFailure(
     {
       fee_wei: feeWei,
       next_wallet_retry: options?.walletRetry,
+      attempt_id: options?.attempt?.logFailure(record, action, message, error),
       planned_airdrop:
         wallets.size > 0
           ? {

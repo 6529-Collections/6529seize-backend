@@ -123,6 +123,7 @@ export interface RankedSubscription {
 
 export interface LaunchEvent {
   formatted?: boolean;
+  attempt_id?: string;
   fee_wei?: string;
   airdrop_counts?: { wallets: number; tokens: number };
   planned_airdrop?: { wallets: number; tokens: number; recipient?: string };
