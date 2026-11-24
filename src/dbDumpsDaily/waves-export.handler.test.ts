@@ -377,7 +377,7 @@ function setup(
     s3: { send: bucket.send } as never,
     presign: async (target, key, seconds) => {
       bucket.presigned.push({ key, seconds });
-      return `https://signed.example/${target.name}/${key}?expires=${seconds}`;
+      return `presigned:${target.name}/${key}?expires=${seconds}`;
     },
     now: () => clock.t,
     tmpDir: () => tmp,
