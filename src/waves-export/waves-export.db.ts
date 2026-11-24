@@ -48,8 +48,9 @@ export interface ExportDbScopeOptions {
  * One pool, on the write-side target (DB_HOST, or DB_IAM_HOST in IAM
  * mode), the server db.ts reads: the export's runbook points it at a
  * reader, and the replica lag check and every stage read that one server.
- * Each of its connections is read-only (EXPORT_SESSION_SQL), so nothing
- * the export runs can write, even on a writer.
+ * Each of its connections is read-only (EXPORT_SESSION_SQL) before any
+ * statement runs on it, so nothing the export runs can write, even on a
+ * writer; a connection that can't be made so fails its statement.
  *
  * Once per process. The DB services (LazyDbAccessCompatibleService, such as
  * dropsDb) keep the executor they first read: one first used inside this
@@ -106,18 +107,40 @@ function open(
 ) {
   if (target.iam) installMysqlIamAuthSupport();
   const pool = createApiDbPool(target, port, EXPORT_POOL_CONNECTIONS);
-  // Runs before anything else on the connection (a connection runs its
-  // queries in order). A connection that can't be made read-only is
-  // destroyed, so the statement queued after it fails: fail closed.
+  // The pool emits 'connection' for each new connection (and again after a
+  // change of user, as an IAM token refresh does) before handing it out.
+  // Each gets the SET first; no statement runs on a connection until its
+  // SET has succeeded, and one whose SET failed is destroyed and its
+  // statement refused: fail closed, never a wait.
+  const readOnly = new WeakMap<mysql.PoolConnection, Promise<void>>();
   pool.on('connection', (connection: mysql.PoolConnection) => {
-    connection.query(EXPORT_SESSION_SQL, (error: mysql.MysqlError | null) => {
-      if (error) connection.destroy();
-    });
+    const set = new Promise<void>((resolve, reject) =>
+      connection.query(EXPORT_SESSION_SQL, (error: mysql.MysqlError | null) =>
+        error ? reject(error) : resolve()
+      )
+    );
+    // Awaited when the connection is handed out; never unhandled meanwhile.
+    set.catch(() => undefined);
+    readOnly.set(connection, set);
   });
+  const readOnlyConnection = async (name: DbPoolName) => {
+    const connection = await apiDbConnection(pool, name);
+    try {
+      const set = readOnly.get(connection);
+      if (!set) throw new Error('no read-only session');
+      await set;
+    } catch (error) {
+      connection.destroy();
+      throw new Error(
+        `An export connection could not be made read-only: ${(error as { code?: string }).code ?? 'unknown'}`
+      );
+    }
+    return connection;
+  };
   const executor = apiSqlExecutor({
     // One pool, a reader's: logged as READ.
     poolFor: () => DbPoolName.READ,
-    connection: (name) => apiDbConnection(pool, name)
+    connection: readOnlyConnection
   });
   return { server, executor, pool };
 }
