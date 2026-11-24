@@ -2,8 +2,10 @@ import { ChainFeedBlock } from '@/chain-gateway/chain-gateway.types';
 import {
   emptyFeedEffects,
   feedEffects,
+  splitFeedEffects,
   WAVES_FEED_FAMILIES
 } from './waves-chain-index.feed';
+import { compareCodeUnits } from './waves-chain-index.order';
 
 const id = (n: number | string) => `0x${String(n).padStart(64, '0')}`;
 
@@ -220,5 +222,34 @@ describe('feedEffects', () => {
     for (const family of WAVES_FEED_FAMILIES) {
       expect(family).toMatch(/^0x0[4-7][0-9a-f]{2}$/);
     }
+  });
+});
+
+describe('the order of ids in feed batches', () => {
+  // Ids that differ in case and in digits: code-unit order puts every
+  // capital before every small letter and compares digits one by one.
+  const ids = ['b', 'a10', 'B', '0x0A', 'a9', 'A', '0x09', '0x0a'];
+  const codeUnitOrder = ['0x09', '0x0A', '0x0a', 'A', 'B', 'a10', 'a9', 'b'];
+
+  it('is UTF-16 code-unit order (what sort() with no compare function gives)', () => {
+    expect([...ids].sort(compareCodeUnits)).toEqual(codeUnitOrder);
+    expect([...ids].reverse().sort(compareCodeUnits)).toEqual(codeUnitOrder);
+  });
+
+  it('splits a batch in that order, whatever order the ids came in', () => {
+    const effects = emptyFeedEffects();
+    for (const it of [...ids].reverse()) effects.groups.add(it);
+    for (const it of ['r2', 'R1', 'r10']) {
+      effects.results.set(it, { id: it, resultTime: 1 });
+    }
+    const parts = splitFeedEffects(effects, 1);
+    expect(parts.flatMap((part) => Array.from(part.groups))).toEqual(
+      codeUnitOrder
+    );
+    expect(parts.flatMap((part) => Array.from(part.results.keys()))).toEqual([
+      'R1',
+      'r10',
+      'r2'
+    ]);
   });
 });

@@ -182,6 +182,24 @@ describe('GatewayWavesChainApi', () => {
     expect(reads.length).toBe(before);
   });
 
+  it('throws bad_answer for a list page whose next repeats its cursor, never ending the list', async () => {
+    const { client } = aClient({
+      '/v1/entries/0xe/votes': [
+        answer([{ voter: '0x01' }], 'k1'),
+        answer([{ voter: '0x02' }], 'k1')
+      ],
+      '/v1/waves': [answer([{ waveId: '0x2' }], '0x1')]
+    });
+    const api = new GatewayWavesChainApi(client);
+    await expect(api.entryVotes('0xe', 10)).rejects.toMatchObject({
+      code: 'bad_answer',
+      message: expect.stringContaining('repeats the cursor')
+    });
+    await expect(api.listWaves('0x1', 10)).rejects.toMatchObject({
+      code: 'bad_answer'
+    });
+  });
+
   it('throws when a later page of a list is not found, and reads a missing list as empty', async () => {
     const { client } = aClient({
       '/v1/decisions/0xd/entries': [answer([{ entryId: '0x1' }], '0x1')]
@@ -320,10 +338,31 @@ describe('GatewayWavesChainApi', () => {
       });
     });
 
+    it('throws bad_answer when a page inside a block repeats the cursor it was asked from', async () => {
+      const { client } = aClient({});
+      client.getChanges
+        .mockResolvedValueOnce(
+          page(5, 4, [block(5, [1], { complete: false })], '5:1')
+        )
+        .mockResolvedValueOnce(
+          page(
+            '5:1',
+            4,
+            [block(5, [2], { complete: false, recordsFrom: 1 })],
+            '5:1'
+          )
+        );
+      await expect(
+        new GatewayWavesChainApi(client).feed(5, [])
+      ).rejects.toMatchObject({ code: 'bad_answer' });
+    });
+
     it('throws for a block past the limits, or a page that goes on with another block', async () => {
+      // A block that never completes, its cursor moving on each page.
+      let index = 0;
       const endless = (from: string | number) =>
         Promise.resolve(
-          page(from, 4, [block(5, [1], { complete: false })], '5:1')
+          page(from, 4, [block(5, [1], { complete: false })], `5:${++index}`)
         );
       const pages = aClient({}).client;
       pages.getChanges.mockImplementation(endless);
