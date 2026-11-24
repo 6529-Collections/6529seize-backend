@@ -176,6 +176,54 @@
           "iam:PassedToService": "scheduler.amazonaws.com"
         }
       }
+    },
+    {
+      "Effect": "Allow",
+      "Action": "lambda:TagResource",
+      "Resource": "arn:aws:lambda:eu-west-1:296096934726:event-source-mapping:*",
+      "Sid": "TagDropForgeMappingsOnCreate",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1",
+          "aws:RequestTag/aws:cloudformation:stack-name": [
+            "dropForgeLaunchHandler-staging",
+            "memesDistributionHandler-staging"
+          ]
+        },
+        "ForAnyValue:StringEquals": {
+          "aws:CalledVia": "cloudformation.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "lambda:ListTags",
+        "lambda:TagResource",
+        "lambda:UntagResource"
+      ],
+      "Resource": "arn:aws:lambda:eu-west-1:296096934726:event-source-mapping:*",
+      "Sid": "ManageDropForgeMappingTags",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1",
+          "aws:ResourceTag/aws:cloudformation:stack-name": [
+            "dropForgeLaunchHandler-staging",
+            "memesDistributionHandler-staging"
+          ]
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": "scheduler:DeleteSchedule",
+      "Resource": "arn:aws:scheduler:eu-west-1:296096934726:schedule/drop-forge-staging/*",
+      "Sid": "DeleteSchedulesInDropForgeGroup",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
     }
   ]
 }
