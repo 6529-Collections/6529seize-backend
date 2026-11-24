@@ -9,6 +9,7 @@ import {
   settle
 } from '@/tests/fixtures/freeze-at-commit.fixture';
 import { SqlExecutor } from '@/sql-executor';
+import { Time } from '@/time';
 
 function packageRow(): CmsPublishedPackageRow {
   return {
@@ -29,9 +30,15 @@ function packageRow(): CmsPublishedPackageRow {
   } as unknown as CmsPublishedPackageRow;
 }
 
-function cmsDbOnFakeTransaction() {
+function cmsDbOnFakeTransaction(onWrite: () => void = () => undefined) {
   const fake = fakeTransactionalDb();
-  const execute = jest.fn().mockResolvedValue([]);
+  // Records each write in the transaction's statements, then lets the test
+  // move the clock: a write that waited past the freeze.
+  const execute = jest.fn(async (sql: string) => {
+    fake.statements.push(/^\s*INSERT/i.test(sql) ? 'INSERT' : 'UPDATE');
+    onWrite();
+    return [];
+  });
   const db = {
     execute,
     executeNativeQueriesInTransaction: fake.executeNativeQueriesInTransaction
@@ -45,21 +52,30 @@ describe('legacy CMS publish: the freeze checked again at commit', () => {
   it('rolls a publish back with 423 IDENTITY_FROZEN when its commit comes after the freeze', async () => {
     const clock = freezeClock();
     try {
-      const { cmsDb, statements } = cmsDbOnFakeTransaction();
+      // The clock passes the freeze during the writes, so only a check made
+      // after them, at COMMIT, sees it.
+      const { cmsDb, statements } = cmsDbOnFakeTransaction(() => clock.pass());
       const check = jest.fn(() => {
-        throw new CustomApiCompliantException(
-          423,
-          "Legacy CMS sites can't change while profiles move to the 6529 Network.",
-          PROFILE_CMS_FROZEN_CODE
-        );
+        if (Time.currentMillis() >= clock.T) {
+          throw new CustomApiCompliantException(
+            423,
+            "Legacy CMS sites can't change while profiles move to the 6529 Network.",
+            PROFILE_CMS_FROZEN_CODE
+          );
+        }
       });
       const { error } = await settle(
         cmsDb.publishPackage(packageRow(), true, check)
       );
       expect(check).toHaveBeenCalledTimes(1);
       expect((error as CustomApiCompliantException).getStatusCode()).toBe(423);
+      expect(statements[0]).toBe('BEGIN');
+      expect(statements).toContain('INSERT');
       expect(statements).not.toContain('COMMIT');
       expect(statements.slice(-2)).toEqual(['ROLLBACK', 'RELEASE']);
+      expect(statements.indexOf('ROLLBACK')).toBeGreaterThan(
+        statements.lastIndexOf('INSERT')
+      );
     } finally {
       clock.restore();
     }

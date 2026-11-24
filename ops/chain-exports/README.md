@@ -431,7 +431,7 @@ with `seconds`.
 
 The staging rehearsal is the same with `--region eu-west-1`.
 
-### Tuesday: the real run, from 00:05 UTC
+### Tuesday: the real run, from 00:07 UTC
 
 ```text
 $env:AWS_MAX_ATTEMPTS='1'
