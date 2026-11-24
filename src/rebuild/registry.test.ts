@@ -88,14 +88,6 @@ describe('rebuild registry', () => {
         tables: ['content_moderation_audit_log']
       },
       {
-        step: 'waves.wave-subscriber-count',
-        tables: ['wave_metrics']
-      },
-      {
-        step: 'waves.wave-scores',
-        tables: ['wave_metrics']
-      },
-      {
         step: 'holdings.ethereum',
         tables: [
           'transactions',

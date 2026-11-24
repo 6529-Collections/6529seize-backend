@@ -215,8 +215,13 @@ const MIRROR_WRITES = [
  * other columns. The recount writes wave_metrics' rows (a wave's row
  * appears with its first drop, as in 6529.io) and wave_dropper_metrics
  * whole, after every rebuilder that writes drops.
+ *
+ * Not among the waves rebuilders yet: other areas' seeds write drops
+ * without the metrics rows 6529.io's drop creation writes with them, so
+ * the recount would differ from the seeded rows. Both tables stay pending
+ * until those seeds write their drops' metrics.
  */
-const DROP_METRICS_REBUILDERS: RebuildStep[] = [
+export const DROP_METRICS_REBUILDERS: RebuildStep[] = [
   {
     id: 'waves.drop-metrics',
     run: { module: DROP_METRICS_STEPS, exportName: 'rebuildWavesDropMetrics' },
@@ -874,8 +879,7 @@ export const wavesManifest: AreaManifest = {
       sources: ['repo'],
       timeoutMinutes: 5
     },
-    ...MODERATION_AUDIT_REBUILDERS,
-    ...DROP_METRICS_REBUILDERS
+    ...MODERATION_AUDIT_REBUILDERS
   ],
   probes: PROBES,
   // A replayed relay recording of the world's drops counts per event: the
