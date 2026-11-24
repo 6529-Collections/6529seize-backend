@@ -584,9 +584,13 @@ export const wavesManifest: AreaManifest = {
       timeoutMinutes: 15
     },
     {
+      // The holds, and a refused description on one of the chain index's
+      // chain-made waves.
       id: 'waves.moderation-holds.seed',
       run: { module: HOLDS_STEPS, exportName: 'seedWavesModerationHolds' },
       writes: ['chain_entry_holds'],
+      reads: ['chain_waves'],
+      after: ['waves.chain-index.seed'],
       sources: ['repo'],
       timeoutMinutes: 5
     },
@@ -635,11 +639,19 @@ export const wavesManifest: AreaManifest = {
     },
     {
       // Writes nothing: proves the exempt holds come through every waves
-      // rebuilder that could touch them exactly as the seed left them.
+      // rebuilder that could touch them exactly as the seed left them, and,
+      // once the mirror runs, that the refused description stays out while
+      // a control wave's comes in.
       id: 'waves.moderation-holds.check',
       run: { module: HOLDS_STEPS, exportName: 'checkWavesModerationHolds' },
       writes: [],
-      reads: ['chain_entry_holds'],
+      reads: [
+        'chain_entry_holds',
+        'chain_waves',
+        'waves',
+        'drops_parts',
+        'waves_chain_mirror_state'
+      ],
       after: ['waves.chain-index', 'waves.drop-index', 'waves.chain-mirror'],
       sources: ['repo'],
       timeoutMinutes: 5
