@@ -89,11 +89,22 @@ export const STAYING_METRICS_WHERE: Readonly<Record<string, string>> = {
   wave_dropper_metrics: `(${stayingWave('wave_dropper_metrics.wave_id')} and wave_dropper_metrics.wave_id in (select id from waves))`
 };
 
-/** The drop metrics step's plans for the rows of staying waves. */
-export function stayingMetricsPlans(): PlannedRows[] {
+/**
+ * The drop metrics step's plans for the rows of staying waves. While the
+ * mirror doesn't write the drop tables, a staying wave's live drops stay
+ * through the rebuild and the recount brings its rows back, so the plans
+ * cover only staying waves with no live drop (a lost recount row then
+ * shows as a difference). Once the mirror writes drops, a staying wave's
+ * drops are gone from the rebuild and the plans cover all of its rows.
+ */
+export function stayingMetricsPlans(options: {
+  readonly dropsRebuilt: boolean;
+}): PlannedRows[] {
   return Object.entries(STAYING_METRICS_WHERE).map(([table, where]) => ({
     table,
-    where,
+    where: options.dropsRebuilt
+      ? where
+      : `(${where} and ${table}.wave_id not in (select wave_id from drops where wave_id is not null))`,
     reason: STAYING_REASON,
     until: STAYING_UNTIL,
     change: STAYING_CHANGE

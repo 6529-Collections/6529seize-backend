@@ -166,89 +166,6 @@ const WAVE_SCORE_COLUMNS = [
 ];
 
 /**
- * The drop metrics' rebuilder and the planned owners of wave_metrics'
- * other columns. The recount writes wave_metrics' rows (a wave's row
- * appears with its first drop, as in 6529.io) and wave_dropper_metrics
- * whole, after every rebuilder that writes drops.
- */
-const DROP_METRICS_REBUILDERS: RebuildStep[] = [
-  {
-    id: 'waves.drop-metrics',
-    run: { module: DROP_METRICS_STEPS, exportName: 'rebuildWavesDropMetrics' },
-    writes: ['wave_metrics', 'wave_dropper_metrics'],
-    reads: [
-      'drops',
-      'deleted_drops',
-      'waves',
-      'competition_entries',
-      'competitions'
-    ],
-    after: ['waves.chain-mirror'],
-    sources: ['repo'],
-    timeoutMinutes: 15,
-    plannedRows: [
-      {
-        table: 'wave_metrics',
-        // A staying wave's row is the staying plan's.
-        where: `wave_id not in (select wave_id from drops where wave_id is not null union select wave_id from deleted_drops where wave_id is not null) and not ${STAYING_METRICS_WHERE.wave_metrics}`,
-        reason:
-          'A wave that never had a drop has a metrics row only through its subscribers or its scores, whose owners are planned.',
-        until: '2026-12-04',
-        change:
-          "The owners of wave_metrics' subscriber and score columns land and write those rows."
-      },
-      {
-        table: 'wave_dropper_metrics',
-        where: 'wave_id not in (select id from waves)',
-        reason:
-          "Left behind when 6529.io deletes a wave: the wave's drops go with no record, so its authors' counts can't be rebuilt.",
-        until: '2026-12-04',
-        change:
-          "6529.io deletes a wave's author metrics with the wave, and the existing ones are removed."
-      },
-      ...stayingMetricsPlans()
-    ]
-  },
-  {
-    id: 'waves.wave-subscriber-count',
-    run: {
-      module: 'src/rebuild/steps/waves-wave-subscribers.steps',
-      exportName: 'rebuildWaveSubscriberCounts'
-    },
-    writes: [
-      {
-        table: 'wave_metrics',
-        columns: WAVE_SUBSCRIBER_COLUMNS,
-        reason: "A wave's subscriber count, from its subscriptions."
-      }
-    ],
-    after: ['waves.drop-metrics'],
-    sources: ['repo'],
-    timeoutMinutes: 10,
-    origin: 'planned'
-  },
-  {
-    id: 'waves.wave-scores',
-    run: {
-      module: 'src/rebuild/steps/waves-wave-scores.steps',
-      exportName: 'rebuildWaveScores'
-    },
-    writes: [
-      {
-        table: 'wave_metrics',
-        columns: WAVE_SCORE_COLUMNS,
-        reason:
-          "A wave's REP, score and visibility, from the wave score refresh."
-      }
-    ],
-    after: ['waves.drop-metrics'],
-    sources: ['repo'],
-    timeoutMinutes: 10,
-    origin: 'planned'
-  }
-];
-
-/**
  * The chain mirror's rebuild (src/waves-chain-mirror): it fills 6529.io's
  * wave, group and competition rows from the chain index, frozen, at the
  * chain's time, with no outbox, claim, follow, notification, activity or
@@ -291,6 +208,89 @@ const MIRROR_WRITES = [
   'waves_chain_mirror_groups',
   'waves_chain_mirror_waves',
   'waves_chain_mirror_decisions'
+];
+
+/**
+ * The drop metrics' rebuilder and the planned owners of wave_metrics'
+ * other columns. The recount writes wave_metrics' rows (a wave's row
+ * appears with its first drop, as in 6529.io) and wave_dropper_metrics
+ * whole, after every rebuilder that writes drops.
+ */
+const DROP_METRICS_REBUILDERS: RebuildStep[] = [
+  {
+    id: 'waves.drop-metrics',
+    run: { module: DROP_METRICS_STEPS, exportName: 'rebuildWavesDropMetrics' },
+    writes: ['wave_metrics', 'wave_dropper_metrics'],
+    reads: [
+      'drops',
+      'deleted_drops',
+      'waves',
+      'competition_entries',
+      'competitions'
+    ],
+    after: ['waves.chain-mirror'],
+    sources: ['repo'],
+    timeoutMinutes: 15,
+    plannedRows: [
+      {
+        table: 'wave_metrics',
+        // A staying wave's row is the staying plan's.
+        where: `wave_id not in (select wave_id from drops where wave_id is not null union select wave_id from deleted_drops where wave_id is not null) and not ${STAYING_METRICS_WHERE.wave_metrics}`,
+        reason:
+          'A wave that never had a drop has a metrics row only through its subscribers or its scores, whose owners are planned.',
+        until: '2026-12-04',
+        change:
+          "The owners of wave_metrics' subscriber and score columns land and write those rows."
+      },
+      {
+        table: 'wave_dropper_metrics',
+        where: 'wave_id not in (select id from waves)',
+        reason:
+          "Left behind when 6529.io deletes a wave: the wave's drops go with no record, so its authors' counts can't be rebuilt.",
+        until: '2026-12-04',
+        change:
+          "6529.io deletes a wave's author metrics with the wave, and the existing ones are removed."
+      },
+      ...stayingMetricsPlans({ dropsRebuilt: MIRROR_WRITES.includes('drops') })
+    ]
+  },
+  {
+    id: 'waves.wave-subscriber-count',
+    run: {
+      module: 'src/rebuild/steps/waves-wave-subscribers.steps',
+      exportName: 'rebuildWaveSubscriberCounts'
+    },
+    writes: [
+      {
+        table: 'wave_metrics',
+        columns: WAVE_SUBSCRIBER_COLUMNS,
+        reason: "A wave's subscriber count, from its subscriptions."
+      }
+    ],
+    after: ['waves.drop-metrics'],
+    sources: ['repo'],
+    timeoutMinutes: 10,
+    origin: 'planned'
+  },
+  {
+    id: 'waves.wave-scores',
+    run: {
+      module: 'src/rebuild/steps/waves-wave-scores.steps',
+      exportName: 'rebuildWaveScores'
+    },
+    writes: [
+      {
+        table: 'wave_metrics',
+        columns: WAVE_SCORE_COLUMNS,
+        reason:
+          "A wave's REP, score and visibility, from the wave score refresh."
+      }
+    ],
+    after: ['waves.drop-metrics'],
+    sources: ['repo'],
+    timeoutMinutes: 10,
+    origin: 'planned'
+  }
 ];
 
 /** The drop index's checked relay events, its rejects and its relay cursors. */

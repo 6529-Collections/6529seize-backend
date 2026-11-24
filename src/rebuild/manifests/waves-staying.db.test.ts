@@ -5,6 +5,7 @@ import { insertRow as insert } from '@/tests/fixtures/rebuild-rows.fixture';
 import {
   STAYING_METRICS_WHERE,
   STAYING_WHERE,
+  stayingMetricsPlans,
   stayingWavesPlans
 } from './waves-staying';
 
@@ -184,6 +185,29 @@ describeWithSeed('the staying waves plans', [], () => {
     expect(await selected('profile_groups', 'profile_group_id')).toEqual(
       ['list-of-staying', 'list-unnamed-out'].sort()
     );
+  });
+
+  it("cover a staying wave's metrics only when the recount can't bring them back", async () => {
+    // While the mirror doesn't write drops, the staying wave's live drop
+    // stays through the rebuild, so its metrics are the recount's: no plan.
+    for (const plan of stayingMetricsPlans({ dropsRebuilt: false })) {
+      const rows = await sqlExecutor.execute(
+        `select wave_id from ${plan.table} where (${plan.where})`
+      );
+      expect([plan.table, rows]).toEqual([plan.table, []]);
+    }
+    await sqlExecutor.execute(`delete from drops where wave_id = :id`, {
+      id: STAYING
+    });
+    for (const plan of stayingMetricsPlans({ dropsRebuilt: false })) {
+      const rows = await sqlExecutor.execute<{ wave_id: string }>(
+        `select wave_id from ${plan.table} where (${plan.where})`
+      );
+      expect([plan.table, rows.map((r) => r.wave_id)]).toEqual([
+        plan.table,
+        [STAYING]
+      ]);
+    }
   });
 
   it('give every table the mirror writes that can hold staying rows a plan', () => {
