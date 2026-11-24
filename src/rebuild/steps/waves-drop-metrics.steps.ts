@@ -16,40 +16,47 @@ export const DROP_METRIC_COLUMNS = [
 /** How many waves one recount statement takes. */
 const WAVES_PER_STATEMENT = 500;
 
-/** Every wave that has a drop, in id order. */
+/**
+ * Every (wave, author) that has or had a drop: 6529.io makes a metrics row
+ * with a drop's insert and keeps it, at zero, when the drop is deleted
+ * (deleted_drops keeps the deleted drop's wave and author).
+ */
+const DROPPERS = `select wave_id, author_id from drops where wave_id is not null
+  union select wave_id, author_id from deleted_drops where wave_id is not null`;
+
+/** Every wave that has or had a drop, in id order. */
 async function wavesWithDrops(): Promise<string[]> {
   const rows = await dbSupplier().execute<{ wave_id: string }>(
-    `select distinct wave_id from drops
-      where wave_id is not null
-      order by wave_id`
+    `select distinct wave_id from (${DROPPERS}) droppers order by wave_id`
   );
   return rows.map((row) => String(row.wave_id));
 }
 
 /**
- * The drop metrics of every wave with drops, from the drops alone, as
- * 6529.io keeps them: a wave's row, and a row per wave and author, appear
- * with their first drop (drop inserts upsert them), and their counts and
- * latest drop are what 6529.io's own recount (resyncDropCountsForWaves)
- * makes them, from each drop's created_at rather than a clock. A wave
- * without drops gets no row here; its subscribers' and scores' owners
- * make those.
+ * The drop metrics of every wave that has or had drops, from the drops
+ * alone, as 6529.io keeps them: a wave's row, and a row per wave and
+ * author, appear with their first drop (drop inserts upsert them) and stay
+ * when the drops are deleted, and their counts and latest drop are what
+ * 6529.io's own recount (resyncDropCountsForWaves) makes them, from each
+ * drop's created_at rather than a clock (zero when none is left). A wave
+ * that never had a drop gets no row here; its subscribers' and scores'
+ * owners make those.
  */
 export async function rebuildWavesDropMetrics(
   _ctx: RebuildContext
 ): Promise<void> {
   const waveIds = await wavesWithDrops();
   if (!waveIds.length) {
-    logger.info(`[NO DROPS] no wave has drops`);
+    logger.info(`[NO DROPS] no wave has or had drops`);
     return;
   }
   await dbSupplier().execute(
     `insert ignore into ${WAVE_METRICS_TABLE} (wave_id)
-     select distinct wave_id from drops where wave_id is not null`
+     select distinct wave_id from (${DROPPERS}) droppers`
   );
   await dbSupplier().execute(
     `insert ignore into ${WAVE_DROPPER_METRICS_TABLE} (wave_id, dropper_id)
-     select distinct wave_id, author_id from drops where wave_id is not null`
+     select distinct wave_id, author_id from (${DROPPERS}) droppers`
   );
   for (let at = 0; at < waveIds.length; at += WAVES_PER_STATEMENT) {
     await dropsDb.resyncDropCountsForWaves(

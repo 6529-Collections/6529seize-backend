@@ -172,7 +172,7 @@ const DROP_METRICS_REBUILDERS: RebuildStep[] = [
     id: 'waves.drop-metrics',
     run: { module: DROP_METRICS_STEPS, exportName: 'rebuildWavesDropMetrics' },
     writes: ['wave_metrics', 'wave_dropper_metrics'],
-    reads: ['drops', 'competition_entries', 'competitions'],
+    reads: ['drops', 'deleted_drops', 'competition_entries', 'competitions'],
     after: ['waves.chain-mirror'],
     sources: ['repo'],
     timeoutMinutes: 15,
@@ -180,9 +180,9 @@ const DROP_METRICS_REBUILDERS: RebuildStep[] = [
       {
         table: 'wave_metrics',
         where:
-          'wave_id not in (select wave_id from drops where wave_id is not null)',
+          'wave_id not in (select wave_id from drops where wave_id is not null union select wave_id from deleted_drops where wave_id is not null)',
         reason:
-          'A wave without drops has a metrics row only through its subscribers or its scores, whose owners are planned.',
+          'A wave that never had a drop has a metrics row only through its subscribers or its scores, whose owners are planned.',
         until: '2026-12-04',
         change:
           "The owners of wave_metrics' subscriber and score columns land and write those rows."
