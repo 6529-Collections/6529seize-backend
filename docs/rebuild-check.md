@@ -25,7 +25,11 @@ test shards and fails when:
   `origin: 'runtime'`);
 - a table other than INDEX has no `why`;
 - a rebuilder writes a table that isn't one of its area's INDEX tables, two
-  rebuilders write one table, or steps wait on each other;
+  rebuilders write one table (unless each writes a disjoint partition of
+  it), or steps wait on each other;
+- a step reads a table no manifest has, or needs an unknown table, a
+  VIEW, RETIRED or SCHEMA table, or one without a reason; a rebuilder is
+  marked `last`, or a seed that isn't last waits on one that is;
 - a probe repeats an id, has a path without a leading `/`, or a placeholder
   with no values.
 
@@ -82,23 +86,74 @@ export const mintManifest: AreaManifest = {
   its rows are compared after the rebuild. A volatile primary-key column,
   such as an auto-increment id the API never shows, also stops keying the
   rows: they match by their other columns.
+- An INDEX table whose readers take only its one newest row, such as a
+  checkpoint each indexing run writes, can set
+  `checkpoint: { column, reason }`. The comparison then takes only the
+  rows holding the column's largest value, as MySQL compares it
+  (`MAX`), which must match in every non-volatile column, and leaves
+  older rows out, since a seed that indexed twice has more of them than a
+  rebuild that indexed once. It is one newest row for the whole table: a
+  table whose readers take the newest row per key must not use it. The
+  registry refuses it on other classes and without a column or a reason,
+  and a run fails when the column may hold NULL.
 - `seeds`: steps that put the stack in its "before" state: legacy rows, kept
   rows, and the live loops run forward.
 - `rebuilders`: steps that fill your INDEX tables from empty. A module step
   exports `async (ctx: RebuildContext) => void`; the run calls it inside
   `doInDbContext`, so the usual DB services work. `ctx.sources` holds the base
-  URLs of the run's sources and `ctx.mark` the chain height and Ethereum block
-  to rebuild to. A command step gets the same values in `REBUILD_*`
-  environment variables.
+  URLs of the run's sources, `ctx.mark` the chain height and Ethereum block
+  to rebuild to, `ctx.final` whether the run is a final one (`--final`), and
+  `ctx.seedFilesDir`, for a seed in a run that serves files, the directory
+  its own files go in (see the files server below). A command step gets the
+  sources and the mark in `REBUILD_*` environment variables, and the whole
+  context, `final` included, only as JSON in `REBUILD_CONTEXT`.
   - Each rebuilder connects as its own MySQL user. It can write its `writes`
     and read its `reads`, and lock rows it reads (`SELECT ... FOR UPDATE`,
     as production writers do); anything else is refused.
   - A preload refuses every socket except MySQL and the run's sources.
   - Any id the API shows must come from the source, never from
     auto-increment or a random UUID, or the answers change.
+  - Rebuilders of different areas can share an INDEX table by partition:
+    each lists it in `writes` as
+    `{ table, partition: { columns, values, reason } }`, its rows being
+    those whose `columns` hold one of the tuples in `values` (for example
+    columns `['family', 'type']`, values `[['pv', 'follow']]`). The
+    registry allows several writers on one table only when every one
+    declares a partition on the same columns and no two share a tuple (an
+    early warning, folding case and accents as the default collation does,
+    with trailing spaces significant); a writer of the whole table excludes
+    all others. Before the seeds, the run compares every pair of tuples
+    from different writers in MySQL, under each column's own collation,
+    and fails on any pair MySQL takes as one value. After the seeds, rows in no writer's partition are noted, and
+    a final run fails on them. A rebuilder that changes any row outside
+    its partition fails the run. The rows are compared as one table; an
+    area run empties and rebuilds only the area's own partitions.
   - A step with `origin: 'planned'` names a module a branch adds later.
     Until it is in the tree, runs skip the step and note it, and keep a
     skipped rebuilder's tables like pending ones; a final run fails.
+  - A step (seed or rebuilder) with `needs: [{ table, reason }]` runs only
+    when every table it needs is in the run's schema. While one is missing
+    (a table another branch creates), runs skip it the same way, and the
+    report names the step, the table and the reason; a final run fails.
+    A step waits for a table a later branch adds. The registry refuses a
+    view, a retired or a schema table, and a needed table without a reason.
+    A need on a table the schema already has (its branch landed first)
+    holds nothing back: the step runs, the run notes the need as one to
+    drop, and a final run fails on it.
+    A step that waits on a skipped one and touches the same tables should
+    declare the same needs.
+  - A seed with `last: true` runs after every seed without it, in the
+    usual order among the last ones. A chain indexer uses it to catch up
+    on blocks other seeds mined after it first ran, so the tables it seeds
+    reach the chain's head before the first pass. The registry refuses
+    `last` on a rebuilder, and an `after` from a seed that isn't last onto
+    one that is.
+  - `before: [step ids]` is the mirror of `after`: the named steps wait for
+    this one, so an area can order its step ahead of another area's
+    without editing that area's manifest. The registry refuses an unknown
+    id (a planned step counts as known), a cycle across `before` and
+    `after`, and a last seed's `before` onto a seed that isn't last; a
+    seed may run before a last one.
 - `probes`: API requests whose answers must match before and after. `ignore`
   and `unordered` paths each need a reason, which the registry checks. A
   probe with `origin: 'planned'` and `needs: [tables]` reads tables a later
@@ -174,7 +229,10 @@ proves nothing whatever its probes answered.
 - tables a manifest keeps or rebuilds that the schema build doesn't make;
 - provisional sources, and command steps that don't run Node (the source
   guard watches only Node processes);
-- documented GET routes with no probe and no waiver.
+- documented GET routes with no probe and no waiver;
+- steps skipped while a table they need isn't in the schema, and needs on
+  a table the schema already has;
+- rows of a shared table in no writer's partition.
 
 Without `--final` each of these is a note in the report.
 
@@ -199,10 +257,16 @@ Each `--source <name>=<spec>`:
   answers 599 and fails the run. `record` proxies to the URL and adds every
   new answer to the recording. Keys leave out JSON-RPC ids and key order.
 - `<dir>/PROVENANCE.json` says what made a recording (`made_by`: a
-  devnet scenario, an anvil state, or `hand`). Provisional, so `--final`
-  fails on them: a live URL, a `record` run (it reaches a live URL), a
-  recording written by hand, and the harness relay. Recording into a
-  directory marked `hand` keeps that mark.
+  devnet scenario, an anvil state, or `hand`), as a label for the report.
+  Provisional, so `--final` fails on them: a live URL, a `record` run (it
+  reaches a live URL), the harness relay, every gateway or ethereum
+  recording, and a files directory that holds a file whose id nothing
+  checks (see the files server below). Nothing verifies a recording's
+  answers yet, and a label is never a basis, so the report says "answers
+  not verified" whatever `PROVENANCE.json` says; checking
+  the node's proofs (for ethereum, the blocks' hash chain and receipt
+  proofs) is what will let one count. `anvil` from a state file records
+  nothing and counts.
 - The report shows source URLs without credentials, query values or
   key-like path segments.
 - The harness relay speaks CRP v1 over WebSocket (HELLO, AUTH, PUB, payloads,
@@ -213,13 +277,24 @@ Each `--source <name>=<spec>`:
   `alchemy_getAssetTransfers` from its logs and blocks. Children get the
   shim as `ETHEREUM_RPC_URL` and `ALCHEMY_BASE_URL`. The Alchemy NFT API and
   its other `alchemy_*` methods are not served; a call to them fails the run.
+  `ALCHEMY_BASE_URL` is honoured only on a loopback host (127.0.0.1, ::1 or
+  localhost), since the Alchemy key travels in its path: an `ethereum` URL
+  on another host fails a step as soon as it makes its Alchemy client.
 - The files server answers `/ipfs/<id>`, `/ar/<id>`, `/docs/<id>` and
   `/<id>` from the directory, and checks every file against
-  `<dir>/files.json` (id to SHA-256). It doesn't derive an id from the
-  content: an Arweave id is a transaction's, not a hash of the file, so
-  `files.json` is what ties each id to its bytes. A seed can add files: it
-  writes them into `ctx.seedFilesDir` and lists them in that directory's own
-  `files.json`; the server checks each one's hash when it is asked for.
+  `<dir>/files.json` (id to SHA-256). It derives an id from the content
+  only for a SHA-256 name (below): an Arweave id is a transaction's, not a
+  hash of the file, so for other names `files.json` is what ties each id
+  to its bytes. A seed can add files: it writes them into
+  `ctx.seedFilesDir` and lists them in that directory's own `files.json`;
+  the server checks each one's hash when it is asked for.
+  The seeds' files are the run's own world. Files in `<dir>` come from
+  outside the run. A file named by the SHA-256 of its bytes, as lowercase
+  hex or as a raw CIDv1 with a sha2-256 multihash (`bafkrei...`, the
+  document store's naming), has its id checked against its bytes, and one
+  with other bytes fails the run. For any other file nothing checks its id
+  yet, so a directory that holds one is provisional ("ids not verified",
+  naming the files), whatever its `PROVENANCE.json` says.
 - A flag value may name a source: `{gateway}`, `{relays}`, `{ethereum}`
   or `{files}` become its URL in the run.
 

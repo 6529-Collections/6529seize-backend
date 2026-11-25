@@ -10,9 +10,21 @@ const CONDITIONS = [
   'PUSH_SENDER_MISMATCH',
   'PUSH_PROVIDER_TRANSIENT',
   'PUSH_DELIVERY_FAILED',
-  'PUSH_RETRY_EXHAUSTED'
+  'PUSH_RETRY_EXHAUSTED',
+  'PROFILE_SITE_CHANGE_STALLED'
 ] as const;
 export type OperationalCondition = (typeof CONDITIONS)[number];
+/**
+ * The conditions the monitoring contract names in alerts
+ * (ops/monitoring/src/contract.ts); the others only separate fingerprints.
+ */
+const NAMED_CONDITIONS: readonly OperationalCondition[] = [
+  'PUSH_SENDER_MISMATCH',
+  'PUSH_PROVIDER_TRANSIENT',
+  'PUSH_DELIVERY_FAILED',
+  'PUSH_RETRY_EXHAUSTED',
+  'PROFILE_SITE_CHANGE_STALLED'
+];
 
 export type FailureCategory =
   | 'HTTP_ERROR'
@@ -304,7 +316,7 @@ export function operationalError(
       code,
       fingerprint,
       diagnostic: detail,
-      ...(discriminator.startsWith('PUSH_')
+      ...(NAMED_CONDITIONS.some((named) => named === discriminator)
         ? { condition: discriminator }
         : {}),
       ...(correlationId ? { correlationId } : {}),

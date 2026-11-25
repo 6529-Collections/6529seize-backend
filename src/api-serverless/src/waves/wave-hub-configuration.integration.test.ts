@@ -215,6 +215,7 @@ function serviceHarness() {
     ),
     pinnedWaveIds: new Set(),
     identityWaveIds: new Set(),
+    staysOnSiteByWaveId: new Map(),
     parentWaveOverviewsByChildWaveId: {},
     waveIdsWithVisibleSubwaves: new Set(),
     authenticatedUserId: 'creator'

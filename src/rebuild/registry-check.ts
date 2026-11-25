@@ -4,7 +4,8 @@ import {
   RebuildStep,
   TableClass
 } from '@/rebuild/manifest.types';
-import { orderSteps } from '@/rebuild/step-order';
+import { orderSteps, waitsOn } from '@/rebuild/step-order';
+import { partitionsOf, writersOf, writtenTables } from '@/rebuild/step-writes';
 import { CodeTables, LiveTable } from '@/rebuild/table-discovery';
 import { protectedFlagNames } from '@/rebuild/stack/child-env';
 
@@ -19,16 +20,21 @@ export type RegistryProblemKind =
   | 'NO_REASON'
   /** The live schema disagrees with the class (a retired name as a table, a view classed as a table). */
   | 'WRONG_CLASS'
-  /** A step that writes outside its area's INDEX tables, reads an unknown table, or repeats an id. */
+  /** A step that writes outside its area's INDEX tables, reads or needs an unknown table, or repeats an id. */
   | 'BAD_STEP'
-  /** Two rebuilders write one table. */
+  /**
+   * Two rebuilders write one table, unless each writes its own partition
+   * of it on one column.
+   */
   | 'DOUBLE_WRITER'
-  /** `after` names an unknown step, or steps wait on each other. */
+  /** `after` or `before` names an unknown step, or steps wait on each other. */
   | 'BAD_ORDER'
   /** A probe with a repeated id, a bad path or a placeholder without values. */
   | 'BAD_PROBE'
   /** A flag that would set one of the run's own variables. */
-  | 'BAD_FLAG';
+  | 'BAD_FLAG'
+  /** A checkpoint on a table that isn't INDEX, or without a column or reason. */
+  | 'BAD_CHECKPOINT';
 
 export interface RegistryProblem {
   readonly kind: RegistryProblemKind;
@@ -115,6 +121,26 @@ function tableProblems(input: RegistryInput): RegistryProblem[] {
           detail: `${table} is ${entry.class} without a reason`
         });
       }
+      if (entry.checkpoint) {
+        const bad = (detail: string) =>
+          problems.push({
+            kind: 'BAD_CHECKPOINT',
+            area: manifest.area,
+            table,
+            detail
+          });
+        if (entry.class !== 'INDEX') {
+          bad(
+            `${table} is ${entry.class}; only an INDEX table has a checkpoint`
+          );
+        }
+        if (!entry.checkpoint.column.trim()) {
+          bad(`${table}'s checkpoint names no column`);
+        }
+        if (!entry.checkpoint.reason.trim()) {
+          bad(`${table}'s checkpoint has no reason`);
+        }
+      }
     }
   }
   return problems;
@@ -149,24 +175,88 @@ function liveProblems(input: RegistryInput): RegistryProblem[] {
   return problems;
 }
 
+/** Classes a step never waits for: never a base table a branch adds. */
+const NEVER_NEEDED: ReadonlySet<TableClass> = new Set<TableClass>([
+  'VIEW',
+  'RETIRED',
+  'SCHEMA'
+]);
+
+/**
+ * Why a step can't wait for `table`, or null when it can: a step may wait
+ * for any INDEX, EPHEMERAL, PROVIDER or EXEMPT table a manifest declares.
+ * One the schema already has is noted by the run as a need to drop, not
+ * refused here, since the branch that adds it may land first.
+ */
+function needRefusal(
+  table: string,
+  input: RegistryInput
+): 'unknown' | string | null {
+  const entry = input.manifests
+    .map((manifest) => manifest.tables[table])
+    .find(Boolean);
+  if (!entry) return 'unknown';
+  if (NEVER_NEEDED.has(entry.class)) {
+    return `a ${entry.class} table, never one a branch adds`;
+  }
+  // A table an entity in this tree creates is no refusal: the branch
+  // that adds it may land first, and the run notes the need as one to drop.
+  return null;
+}
+
 function stepProblems(
   manifest: AreaManifest,
   steps: readonly RebuildStep[],
   kind: 'seed' | 'rebuilder',
-  allTables: ReadonlySet<string>
+  allTables: ReadonlySet<string>,
+  input: RegistryInput
 ): RegistryProblem[] {
   const problems: RegistryProblem[] = [];
+  const classOf = (table: string) =>
+    input.manifests.map((m) => m.tables[table]).find(Boolean)?.class;
   for (const step of steps) {
-    for (const table of step.writes) {
+    for (const write of step.writes) {
+      const table = typeof write === 'string' ? write : write.table;
+      const partition = typeof write === 'string' ? null : write.partition;
+      const bad = (detail: string) =>
+        problems.push({ kind: 'BAD_STEP', area: manifest.area, table, detail });
+      if (partition) {
+        // A partition may be of any area's INDEX table: its writers share it.
+        if (kind === 'seed') {
+          bad(
+            `seed ${step.id} declares a partition of ${table}; only a rebuilder's write has one`
+          );
+        } else if (classOf(table) !== 'INDEX') {
+          bad(
+            `rebuilder ${step.id} writes a partition of ${table}, not an INDEX table`
+          );
+        }
+        const { columns, values } = partition;
+        if (
+          !columns.length ||
+          !columns.every((column) => /^[A-Za-z0-9_]+$/.test(column))
+        ) {
+          bad(`rebuilder ${step.id}'s partition of ${table} names no columns`);
+        }
+        if (!values.length) {
+          bad(`rebuilder ${step.id}'s partition of ${table} has no values`);
+        }
+        if (values.some((tuple) => tuple.length !== columns.length)) {
+          bad(
+            `rebuilder ${step.id}'s partition of ${table} has a value that doesn't match its ${columns.length} columns`
+          );
+        }
+        if (!partition.reason.trim()) {
+          bad(`rebuilder ${step.id}'s partition of ${table} has no reason`);
+        }
+        continue;
+      }
       const entry = manifest.tables[table];
       const ownIndex = entry?.class === 'INDEX';
       if (kind === 'rebuilder' && !ownIndex) {
-        problems.push({
-          kind: 'BAD_STEP',
-          area: manifest.area,
-          table,
-          detail: `rebuilder ${step.id} writes ${table}, not an INDEX table of ${manifest.area}`
-        });
+        bad(
+          `rebuilder ${step.id} writes ${table}, not an INDEX table of ${manifest.area}`
+        );
       } else if (!allTables.has(table)) {
         problems.push({
           kind: 'BAD_STEP',
@@ -184,6 +274,24 @@ function stepProblems(
           table,
           detail: `${kind} ${step.id} reads unknown table ${table}`
         });
+      }
+    }
+    for (const need of step.needs ?? []) {
+      const refusal = needRefusal(need.table, input);
+      const problem = (detail: string) =>
+        problems.push({
+          kind: 'BAD_STEP',
+          area: manifest.area,
+          table: need.table,
+          detail
+        });
+      if (refusal === 'unknown') {
+        problem(`${kind} ${step.id} needs unknown table ${need.table}`);
+      } else if (refusal) {
+        problem(`${kind} ${step.id} needs ${need.table}, ${refusal}`);
+      }
+      if (!need.reason?.trim()) {
+        problem(`${kind} ${step.id} needs ${need.table} without a reason`);
       }
     }
     if (step.timeoutMinutes <= 0) {
@@ -205,27 +313,72 @@ function stepProblems(
 function readOrderProblems(
   rebuilders: readonly RebuildStep[]
 ): RegistryProblem[] {
-  const writerOf = new Map<string, string>();
-  for (const step of rebuilders) {
-    for (const table of step.writes) writerOf.set(table, step.id);
-  }
+  const writers = writersOf(rebuilders);
+  const waits = waitsOn(rebuilders);
   const problems: RegistryProblem[] = [];
   for (const step of rebuilders) {
     for (const table of step.reads ?? []) {
-      const writer = writerOf.get(table);
-      if (
-        writer &&
-        writer !== step.id &&
-        !(step.after ?? []).includes(writer)
-      ) {
-        problems.push({
-          kind: 'BAD_ORDER',
-          detail: `rebuilder ${step.id} reads ${table}, which ${writer} rebuilds; add after: ['${writer}']`
-        });
+      for (const { step: writer } of writers.get(table) ?? []) {
+        if (
+          writer !== step.id &&
+          !(waits.get(step.id) ?? []).includes(writer)
+        ) {
+          problems.push({
+            kind: 'BAD_ORDER',
+            detail: `rebuilder ${step.id} reads ${table}, which ${writer} rebuilds; add after: ['${writer}']`
+          });
+        }
       }
     }
   }
   return problems;
+}
+
+/**
+ * `last` is for seeds, and a seed that waits on a last one (its `after`,
+ * or the last seed's `before`) must be last too, or it would have to run
+ * before the seed it waits on.
+ */
+function lastProblems(manifests: readonly AreaManifest[]): RegistryProblem[] {
+  const seeds = manifests.flatMap((manifest) => manifest.seeds);
+  const last = new Set(seeds.filter((s) => s.last).map((s) => s.id));
+  return [
+    ...manifests.flatMap((manifest) =>
+      manifest.rebuilders
+        .filter((step) => step.last)
+        .map(
+          (step): RegistryProblem => ({
+            kind: 'BAD_STEP',
+            area: manifest.area,
+            detail: `rebuilder ${step.id} is marked last; only seeds run last`
+          })
+        )
+    ),
+    ...seeds
+      .filter((seed) => !seed.last)
+      .flatMap((seed) =>
+        (seed.after ?? [])
+          .filter((id) => last.has(id))
+          .map(
+            (id): RegistryProblem => ({
+              kind: 'BAD_ORDER',
+              detail: `seed ${seed.id} waits on last seed ${id}; mark it last too`
+            })
+          )
+      ),
+    ...seeds
+      .filter((seed) => seed.last)
+      .flatMap((seed) =>
+        (seed.before ?? [])
+          .filter((id) => !last.has(id) && seeds.some((s) => s.id === id))
+          .map(
+            (id): RegistryProblem => ({
+              kind: 'BAD_ORDER',
+              detail: `last seed ${seed.id} runs before seed ${id}, which isn't last; mark it last too`
+            })
+          )
+      )
+  ];
 }
 
 function orderProblems(
@@ -244,11 +397,13 @@ function orderProblems(
     seen.add(step.id);
   }
   const { unknown, cyclic } = orderSteps(steps);
-  for (const id of unknown) {
-    problems.push({
-      kind: 'BAD_ORDER',
-      detail: `a ${label} waits on unknown step ${id}`
-    });
+  const details = unknown.map(({ step, field, id }) =>
+    field === 'after'
+      ? `a ${label} waits on unknown step ${id}`
+      : `${label} ${step} lists unknown step ${id} in \`before\``
+  );
+  for (const detail of Array.from(new Set(details))) {
+    problems.push({ kind: 'BAD_ORDER', detail });
   }
   if (cyclic.length) {
     problems.push({
@@ -304,30 +459,81 @@ function probeProblems(
   return problems;
 }
 
+/** A value as an accent- and case-insensitive collation sees it. */
+function foldLikeCollation(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+/**
+ * One rebuilder per table, unless every writer of the table declares a
+ * partition on the same columns and no two partitions share a tuple.
+ */
 function writerProblems(manifests: readonly AreaManifest[]): RegistryProblem[] {
-  const writers = new Map<string, string[]>();
-  for (const manifest of manifests) {
-    for (const step of manifest.rebuilders) {
-      for (const table of step.writes) {
-        writers.set(table, [...(writers.get(table) ?? []), step.id]);
+  const writers = writersOf(manifests.flatMap((m) => m.rebuilders));
+  const problems: RegistryProblem[] = [];
+  const double = (table: string, detail: string) =>
+    problems.push({ kind: 'DOUBLE_WRITER', table, detail });
+  for (const [table, list] of Array.from(writers)) {
+    if (list.length < 2) continue;
+    const ids = list.map((w) => w.step).join(', ');
+    if (list.some((w) => !w.partition)) {
+      double(
+        table,
+        `${table} is written by ${ids}; with more than one writer, each writes a partition`
+      );
+      continue;
+    }
+    const columnsOf = (w: (typeof list)[number]) =>
+      w.partition!.columns.join(', ');
+    if (new Set(list.map(columnsOf)).size > 1) {
+      double(
+        table,
+        `${table}'s writers partition it on different columns: ${list
+          .map((w) => `(${columnsOf(w)}) by ${w.step}`)
+          .join(', ')}`
+      );
+      continue;
+    }
+    // An early warning, folded as the default collation (utf8mb4_0900_ai_ci)
+    // folds: case and accents, with trailing spaces significant (NO PAD).
+    // The run is the authority: before the seeds it compares every pair
+    // in MySQL, under each column's own collation.
+    const owner = new Map<string, string>();
+    for (const writer of list) {
+      for (const tuple of writer.partition!.values) {
+        const key = JSON.stringify(tuple.map(foldLikeCollation));
+        const other = owner.get(key);
+        if (other && other !== writer.step) {
+          double(
+            table,
+            `${table}'s partitions overlap: ${other} and ${writer.step} both write (${columnsOf(writer)}) (${tuple.map((v) => `'${v}'`).join(', ')})`
+          );
+        }
+        owner.set(key, writer.step);
       }
     }
   }
-  return Array.from(writers)
-    .filter(([, ids]) => ids.length > 1)
-    .map(([table, ids]) => ({
-      kind: 'DOUBLE_WRITER' as const,
-      table,
-      detail: `${table} is written by ${ids.join(', ')}`
-    }));
+  return problems;
 }
 
 function pendingTables(
   manifests: readonly AreaManifest[]
 ): { area: string; table: string }[] {
   const pending: { area: string; table: string }[] = [];
+  // Any area's rebuilder may write a partition of another's table.
+  const partitioned = new Set(
+    manifests.flatMap((m) =>
+      m.rebuilders.flatMap((step) => partitionsOf(step).map((w) => w.table))
+    )
+  );
   for (const manifest of manifests) {
-    const written = new Set(manifest.rebuilders.flatMap((step) => step.writes));
+    const written = new Set([
+      ...manifest.rebuilders.flatMap(writtenTables),
+      ...Array.from(partitioned)
+    ]);
     for (const [table, entry] of Object.entries(manifest.tables)) {
       if (entry.class === 'INDEX' && !written.has(table)) {
         pending.push({ area: manifest.area, table });
@@ -373,8 +579,14 @@ export function checkRegistry(input: RegistryInput): RegistryResult {
     ...tableProblems(input),
     ...liveProblems(input),
     ...input.manifests.flatMap((manifest) => [
-      ...stepProblems(manifest, manifest.seeds, 'seed', allTables),
-      ...stepProblems(manifest, manifest.rebuilders, 'rebuilder', allTables),
+      ...stepProblems(manifest, manifest.seeds, 'seed', allTables, input),
+      ...stepProblems(
+        manifest,
+        manifest.rebuilders,
+        'rebuilder',
+        allTables,
+        input
+      ),
       ...probeProblems(manifest, manifest.probes, seenProbes, allTables),
       ...protectedFlagNames(manifest.flags).map(
         (name): RegistryProblem => ({
@@ -388,6 +600,7 @@ export function checkRegistry(input: RegistryInput): RegistryResult {
       'seed',
       input.manifests.flatMap((manifest) => manifest.seeds)
     ),
+    ...lastProblems(input.manifests),
     ...readOrderProblems(
       input.manifests.flatMap((manifest) => manifest.rebuilders)
     ),

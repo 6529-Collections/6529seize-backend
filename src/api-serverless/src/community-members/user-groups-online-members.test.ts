@@ -41,7 +41,7 @@ function levelZeroGroup(): ApiGroupDescription {
 
 /** Stubs group loading with a fresh copy so query normalization cannot leak between calls. */
 function serviceFor(group: ApiGroupDescription) {
-  const service = new UserGroupsService(mock(), mock(), mock());
+  const service = new UserGroupsService(mock(), mock());
   const load = jest
     .spyOn(service, 'getByIdOrThrow')
     .mockImplementation(async () =>

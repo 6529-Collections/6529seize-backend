@@ -1,3 +1,4 @@
+import { withoutHelpBotCreditsSql } from '@/rates/rating-credit';
 import { RATINGS_TABLE } from '@/constants';
 import { CountlessPage } from '@/api/page-request';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
@@ -75,6 +76,7 @@ export class ProfileRepOverviewDb extends LazyDbAccessCompatibleService {
           where r.matter = :matter
             and r.rater_profile_id = :contextProfileId
             and r.rating <> 0
+            ${withoutHelpBotCreditsSql('r')}
           `,
           params
         ),
@@ -85,6 +87,7 @@ export class ProfileRepOverviewDb extends LazyDbAccessCompatibleService {
           where r.rater_profile_id = :contextProfileId
             and r.matter = :matter
             and r.rating <> 0
+            ${withoutHelpBotCreditsSql('r')}
           `,
           params
         )
@@ -119,6 +122,7 @@ export class ProfileRepOverviewDb extends LazyDbAccessCompatibleService {
       where r.matter = :matter
         and r.${contextColumn} = :contextProfileId
         and r.rating <> 0
+        ${withoutHelpBotCreditsSql('r')}
       `,
       params
     );
@@ -189,6 +193,7 @@ export class ProfileRepOverviewDb extends LazyDbAccessCompatibleService {
         where r.matter = :matter
           and r.${contextColumn} = :contextProfileId
           and r.rating <> 0
+          ${withoutHelpBotCreditsSql('r')}
         group by 1
       )
       select profile_id, contribution
@@ -245,6 +250,7 @@ export class ProfileRepOverviewDb extends LazyDbAccessCompatibleService {
       where r.matter = :matter
         and r.${contextColumn} = :contextProfileId
         and r.rating <> 0
+        ${withoutHelpBotCreditsSql('r')}
       group by 1
       order by abs(total_rep) desc, category asc
       limit :limitPlusOne offset :offset

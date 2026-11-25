@@ -31,6 +31,13 @@ describe('loadServiceIdentity', () => {
     });
   });
 
+  it('is null when the records wave is none, so nothing posts to a wave called none', () => {
+    for (const none of ['none', 'NONE', ' none '])
+      expect(
+        loadServiceIdentity({ ...ENV, SIGNED_RECORDS_WAVE_ID: none })
+      ).toBeNull();
+  });
+
   it('is null when unset and refuses malformed values', () => {
     expect(loadServiceIdentity({})).toBeNull();
     expect(() =>

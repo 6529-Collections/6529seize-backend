@@ -28,10 +28,12 @@ export interface SourceInfo {
   /** What made the recording: a devnet, anvil, or written by hand. */
   readonly provenance: string | null;
   /**
-   * Not a devnet's recording (written by hand, or a stand-in such as the
-   * harness relay): doesn't count for the final proof.
+   * Doesn't count for the final proof: written by hand, a stand-in such as
+   * the harness relay, or answers nothing verifies (a gateway recording).
    */
   readonly provisional: boolean;
+  /** Why it is provisional, when the report should say more. */
+  readonly provisionalWhy?: string;
 }
 
 export interface AreaSummary {
@@ -176,7 +178,7 @@ function sourceLines(sources: RunReport['sources']): string[] {
     const where = info.url ? ` at ${redactUrl(info.url)}` : '';
     const from = info.provenance ? `, from ${info.provenance}` : '';
     const flag = info.provisional
-      ? ' (provisional: a final run fails on it)'
+      ? ` (provisional: ${info.provisionalWhy ? `${info.provisionalWhy}; ` : ''}a final run fails on it)`
       : '';
     return `- ${name}: ${info.mode}${where}${from}${flag}`;
   });

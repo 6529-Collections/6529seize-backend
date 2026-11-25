@@ -149,6 +149,25 @@ describe('rebuild report', () => {
     expect(statusLine(report(), 'runs/x')).toContain('probe differences 0');
   });
 
+  it('says why a source is provisional when it knows', () => {
+    const markdown = renderMarkdown(
+      report({
+        sources: {
+          gateway: {
+            url: 'http://127.0.0.1:8',
+            mode: 'replay',
+            provenance: 'devnet example',
+            provisional: true,
+            provisionalWhy: 'answers not verified'
+          }
+        }
+      })
+    );
+    expect(markdown).toContain(
+      '- gateway: replay at http://127.0.0.1:8, from devnet example (provisional: answers not verified; a final run fails on it)'
+    );
+  });
+
   it('lists failures, differences, unproven probes, violations and pending tables by area', () => {
     const markdown = renderMarkdown(
       report({

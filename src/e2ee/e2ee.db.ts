@@ -605,6 +605,27 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /**
+   * The device's own unclaimed one-time KeyPackages of these suites, when it
+   * replaces its pool. Claimed ones are already gone from the table; the
+   * last-resort KeyPackage is kept.
+   */
+  async deleteOneTimeKeyPackages(
+    deviceKey: string,
+    ciphersuites: readonly number[],
+    connection: Conn
+  ): Promise<void> {
+    const suites = Array.from(new Set(ciphersuites));
+    if (!suites.length) return;
+    await this.write(
+      `delete from ${E2EE_KEY_PACKAGES_TABLE}
+       where device_key = :deviceKey and last_resort = false
+         and ciphersuite in (:suites)`,
+      { deviceKey, suites },
+      connection
+    );
+  }
+
   async deleteKeyPackagesOfDevice(
     deviceKey: string,
     connection: Conn

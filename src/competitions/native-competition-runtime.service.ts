@@ -358,7 +358,7 @@ export class NativeCompetitionRuntimeService {
     if (
       !competition ||
       competition.lifecycle !== CompetitionLifecycle.PUBLISHED ||
-      !this.executionRouter.isNativeExecutionAllowed(competition)
+      !(await this.executionRouter.isNativeExecutionAllowed(competition, ctx))
     )
       return;
     await this.emitScheduledTransitions(competition, now, ctx);
@@ -406,7 +406,7 @@ export class NativeCompetitionRuntimeService {
       return false;
     if (
       competition.lifecycle !== CompetitionLifecycle.PUBLISHED ||
-      !this.executionRouter.isNativeExecutionAllowed(competition)
+      !(await this.executionRouter.isNativeExecutionAllowed(competition, ctx))
     )
       return false;
     const state = await this.loadState(competitionId, ctx);
@@ -478,7 +478,10 @@ export class NativeCompetitionRuntimeService {
         if (
           !competition ||
           competition.lifecycle !== CompetitionLifecycle.PUBLISHED ||
-          !this.executionRouter.isNativeExecutionAllowed(competition)
+          !(await this.executionRouter.isNativeExecutionAllowed(
+            competition,
+            lockedCtx
+          ))
         )
           return 'skipped';
         await this.emitScheduledTransitions(competition, now, lockedCtx);
@@ -612,7 +615,10 @@ export class NativeCompetitionRuntimeService {
         if (
           !competition ||
           competition.lifecycle !== CompetitionLifecycle.PUBLISHED ||
-          !this.executionRouter.isNativeExecutionAllowed(competition)
+          !(await this.executionRouter.isNativeExecutionAllowed(
+            competition,
+            snapshotCtx
+          ))
         )
           return null;
         const mark = await this.repository.leaderboardInputsMark(
@@ -667,7 +673,10 @@ export class NativeCompetitionRuntimeService {
         if (
           !competition ||
           competition.lifecycle !== CompetitionLifecycle.PUBLISHED ||
-          !this.executionRouter.isNativeExecutionAllowed(competition)
+          !(await this.executionRouter.isNativeExecutionAllowed(
+            competition,
+            lockedCtx
+          ))
         )
           return 'inapplicable';
         const mark = await this.repository.leaderboardInputsMark(
@@ -983,7 +992,7 @@ export class NativeCompetitionRuntimeService {
     if (
       !competition ||
       competition.lifecycle !== CompetitionLifecycle.PUBLISHED ||
-      !this.executionRouter.isNativeExecutionAllowed(competition)
+      !(await this.executionRouter.isNativeExecutionAllowed(competition, ctx))
     )
       return 'skipped';
     await this.emitScheduledTransitions(competition, now, ctx);
@@ -1059,7 +1068,7 @@ export class NativeCompetitionRuntimeService {
   ): Promise<void> {
     if (
       competition.lifecycle !== CompetitionLifecycle.PUBLISHED ||
-      !this.executionRouter.isNativeExecutionAllowed(competition)
+      !(await this.executionRouter.isNativeExecutionAllowed(competition, ctx))
     )
       return;
     await this.emitScheduledTransitions(competition, now, ctx);

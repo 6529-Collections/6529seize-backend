@@ -72,7 +72,8 @@ async function untilWaitingForALock(threadId: number): Promise<void> {
         )}, connection ${JSON.stringify(thread)}`
       );
     }
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    // MySQL refreshes INNODB_TRX after the snapshot has been idle for 100 ms.
+    await new Promise((resolve) => setTimeout(resolve, 150));
   }
 }
 

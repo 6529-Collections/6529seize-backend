@@ -401,8 +401,50 @@ export const mintManifest: AreaManifest = {
     },
     meme_card_drop_mappings: { class: 'INDEX' },
     memes_mint_stats: { class: 'INDEX' },
+    // Drop Forge's worker also writes these: claim actions when it completes
+    // a launch's work (drop-forge.completion.ts), and the distribution
+    // tables in background preparation (drop-forge.preparation.ts). Its
+    // automatic artist payment reads the PAY_ARTIST action as its guard
+    // against paying twice (drop-forge.payment.ts), so a rebuilder must
+    // bring back actions set by hand too.
     minting_claim_actions: { class: 'INDEX' },
     minting_claims: { class: 'INDEX' },
+    // Drop Forge (src/drop-forge): the automated launch of a claim's mint.
+    // Its tables hold its operators' settings and records, its launches'
+    // state, and markers that keep a report, a payment or an action from
+    // happening twice. None is derived from a public source.
+    drop_forge_settings: {
+      class: 'EXEMPT',
+      why: "Operator switches per chain and contract (automation, artist payment and its cap), set through the API by a claims admin or the creator contract's owner; no public source holds it; kept by the database's backups, not by the rebuild"
+    },
+    drop_forge_launches: {
+      class: 'EXEMPT',
+      why: "Each launch's state machine: the frozen calendar and phase times, its actions and their transactions, and the reports still to post; the worker's own record, no public source holds it; kept by the database's backups, not by the rebuild"
+    },
+    drop_forge_signers: {
+      class: 'EXEMPT',
+      why: "The operational wallet's coordination row: which launch and action hold it while a transaction is outstanding; losing it could let a second transaction go out; no public source holds it; kept by the database's backups, not by the rebuild"
+    },
+    drop_forge_preparations: {
+      class: 'EXEMPT',
+      why: "Each claim's preparation results, and whether its operator ran the preparation by hand or in the background; no public source holds it; kept by the database's backups, not by the rebuild"
+    },
+    drop_forge_jobs: {
+      class: 'EXEMPT',
+      why: "Distribution jobs: their checkpoints, results, the encrypted credential until the input snapshot commits, and report acknowledgements, kept to prevent duplicate processing; no public source holds it; kept by the database's backups, not by the rebuild"
+    },
+    drop_forge_evidence: {
+      class: 'EXEMPT',
+      why: "Transactions an operator sent by hand for a claim's actions, registered so a launch counts them and never repeats them; no public source holds it; kept by the database's backups, not by the rebuild"
+    },
+    drop_forge_funding: {
+      class: 'EXEMPT',
+      why: "Gas top-ups an admin sent to the operational wallet and registered, with their replacement attempts and report acknowledgements, so each is reported once and a replacement is matched to its top-up; no public source holds it; kept by the database's backups, not by the rebuild"
+    },
+    drop_forge_readiness_checks: {
+      class: 'EXEMPT',
+      why: "Once-only markers, per claim and phase, that a readiness report was posted to the operations wave, kept so it is never posted twice; no public source holds it; kept by the database's backups, not by the rebuild"
+    },
     nextgen_allowlist: { class: 'INDEX' },
     nextgen_allowlist_burn: { class: 'INDEX' },
     nextgen_allowlist_collection: { class: 'INDEX' },
