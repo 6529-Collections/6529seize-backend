@@ -31,6 +31,11 @@ import { WaveEntity } from '@/entities/IWave';
 import { assertWaveWritable } from '@/waves-freeze/waves-freeze-scope';
 import { assertPollCreationOpen } from '@/waves-freeze/waves-chain-polls';
 import {
+  assertBallotNotClosedAtMove,
+  movedPollsCloseAt,
+  wavePollsCloseAt
+} from '@/waves-freeze/waves-moved-polls';
+import {
   BadRequestException,
   ForbiddenException,
   NotFoundException
@@ -225,6 +230,9 @@ export class DropPollsApiService {
       ...ctx,
       authenticationContext: AuthenticationContext.fromProfileId(voterId)
     });
+    // From the switch-on, a poll still open at the freeze in a moved wave
+    // closed at the freeze: said before the freeze's own refusal.
+    await this.assertNotClosedAtMove(drop, ctx);
     // Poll votes in a moving wave are held while waves are frozen.
     await assertWaveWritable(drop.wave_id, ctx);
     const uniqueOptions = Array.from(new Set(options));
@@ -401,19 +409,25 @@ export class DropPollsApiService {
     });
     const now = Time.currentMillis();
     const offset = (request.page - 1) * request.page_size;
+    // In a moved wave from the switch-on, polls still open at the freeze
+    // count and sort as closed at it; otherwise the reads are as before.
+    const closesAt = await wavePollsCloseAt(request.wave_id, ctx);
+    const closing = closesAt === null ? {} : { closesAt };
     const [count, openUnanswered, polls] = await Promise.all([
       this.dropPollsDb.countWavePolls(
         {
           waveId: request.wave_id,
           state: request.state,
-          now
+          now,
+          ...closing
         },
         ctx
       ),
       this.dropPollsDb.countOpenUnansweredWavePolls(
         {
           waveId: request.wave_id,
-          now
+          now,
+          ...closing
         },
         ctx
       ),
@@ -425,7 +439,8 @@ export class DropPollsApiService {
           order: request.sort_direction,
           orderBy: request.sort,
           state: request.state,
-          now
+          now,
+          ...closing
         },
         ctx
       )
@@ -443,6 +458,33 @@ export class DropPollsApiService {
         .map((dropId) => dropsById[dropId])
         .filter((drop): drop is ApiDropV2 => drop !== undefined)
     };
+  }
+
+  /**
+   * Throws WavesPollClosedAtMoveException, from the switch-on, for a ballot
+   * on a poll still open at the freeze in a moved wave. The poll is read
+   * only for a drop made by the freeze. Once switched on the freeze holds
+   * a moved wave too, so its check inside the vote's transaction covers a
+   * request that started before.
+   */
+  private async assertNotClosedAtMove(
+    drop: { readonly id: string; readonly wave_id: string; created_at: number },
+    ctx: RequestContext
+  ): Promise<void> {
+    const closesAt = movedPollsCloseAt();
+    if (closesAt === null || Number(drop.created_at) > closesAt) return;
+    const closingTime = (
+      await this.dropPollsDb.findPollsByDropIds([drop.id], ctx)
+    )[drop.id]?.closing_time;
+    if (closingTime === undefined) return;
+    await assertBallotNotClosedAtMove(
+      {
+        wave_id: drop.wave_id,
+        closing_time: Number(closingTime),
+        created_at: Number(drop.created_at)
+      },
+      ctx
+    );
   }
 
   private async findVisibleDropOrThrow(dropId: string, ctx: RequestContext) {
