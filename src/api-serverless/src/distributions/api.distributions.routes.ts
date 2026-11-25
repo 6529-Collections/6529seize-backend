@@ -1,4 +1,3 @@
-import { finalizeDistribution } from '@/drop-forge/drop-forge.preparation';
 import { ethers } from 'ethers';
 import { Request, Response } from 'express';
 import * as Joi from 'joi';
@@ -31,7 +30,10 @@ import {
   fetchDistributionPhases,
   fetchDistributions
 } from '@/api/distributions/api.distributions.db';
-import { insertAutomaticAirdropsForPhase } from '@/api/distributions/api.distributions.service';
+import {
+  insertAutomaticAirdropsForPhase,
+  populateDistributionNormalized
+} from '@/api/distributions/api.distributions.service';
 import { githubDistributionService } from '@/api/distributions/github-distribution.service';
 import {
   adminWriteSpec,
@@ -40,6 +42,7 @@ import {
   mintCard
 } from '@/mint-log/mint-log-http';
 import { distributionCursorBlock } from '@/mint-log/mint-log-inputs';
+import { loggedPreparationWrite } from '@/mint-log/mint-log-preparation';
 import { mintLogRecorder } from '@/mint-log/mint-log-recorder';
 
 interface AirdropEntry {
@@ -384,8 +387,9 @@ router.post(
     }
     const { contract, cardId } = params;
 
-    await mintLogRecorder.write(
-      adminWriteSpec({
+    // Drop Forge's finalize, by hand, with the log inside its preparation.
+    await loggedPreparationWrite({
+      spec: adminWriteSpec({
         req,
         kind: 'dist.normalize',
         route: MINT_ADMIN_ROUTES.distNormalize,
@@ -397,8 +401,11 @@ router.post(
           distribution_cursor_block: await distributionCursorBlock(connection)
         })
       }),
-      () => finalizeDistribution(contract, cardId, {}, true)
-    );
+      contract,
+      claim: cardId,
+      write: (ctx) => populateDistributionNormalized(contract, cardId, ctx),
+      start: 'MANUAL'
+    });
 
     await invalidateDistributionOverviewCache(contract, cardId);
 
