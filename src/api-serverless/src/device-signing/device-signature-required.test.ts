@@ -5,10 +5,17 @@ import {
   DEVICE_SIGNATURE_REQUIRED_CODE,
   DEVICE_SIGNATURE_REQUIRED_PROXY_MESSAGE,
   DeviceSignatureRequiredException,
-  DeviceSignedWritesService
+  DeviceSignedWritesService,
+  isDeviceSignatureRequired
 } from './device-signed-writes.service';
 
 const FLAG = 'FEATURE_WAVES_DEVICE_SIGNATURE_REQUIRED';
+const SWITCH_ON_AT = 'WAVES_SWITCH_ON_AT';
+const ON_CHAIN = 'FEATURE_WAVES_ON_CHAIN';
+const SWITCH_ON = '2026-11-28T00:00:00Z';
+const SWITCH_ON_MS = Date.UTC(2026, 10, 28);
+/** The services' clock: a minute after the switch-on unless a test moves it. */
+const clock = { now: SWITCH_ON_MS + 60_000 };
 
 function service(
   waves: Record<string, { is_direct_message: boolean }>,
@@ -37,7 +44,7 @@ function service(
       db as any,
       {} as any,
       dropsDb as any,
-      () => Date.now(),
+      () => clock.now,
       waveScope
     ),
     dropsDb,
@@ -58,10 +65,20 @@ function ctx(proxy = false) {
 }
 
 describe('device signatures required from switch-on', () => {
-  const original = process.env[FLAG];
+  const original = Object.fromEntries(
+    [FLAG, SWITCH_ON_AT, ON_CHAIN].map((name) => [name, process.env[name]])
+  );
+  beforeEach(() => {
+    // Switched on a minute ago, by the time; tests move either.
+    process.env[SWITCH_ON_AT] = SWITCH_ON;
+    delete process.env[ON_CHAIN];
+    clock.now = SWITCH_ON_MS + 60_000;
+  });
   afterEach(() => {
-    if (original === undefined) delete process.env[FLAG];
-    else process.env[FLAG] = original;
+    for (const [name, value] of Object.entries(original)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
   });
 
   const write = jest.fn(async () => ({ id: 'drop-1' }));
@@ -288,5 +305,135 @@ describe('device signatures required from switch-on', () => {
       ctx()
     );
     expect(waveScope.staysOnSite).not.toHaveBeenCalled();
+  });
+});
+
+describe('device signatures required: only from the switch-on', () => {
+  const original = Object.fromEntries(
+    [FLAG, SWITCH_ON_AT, ON_CHAIN].map((name) => [name, process.env[name]])
+  );
+  beforeEach(() => {
+    process.env[FLAG] = 'true';
+    process.env[SWITCH_ON_AT] = SWITCH_ON;
+    delete process.env[ON_CHAIN];
+  });
+  afterEach(() => {
+    for (const [name, value] of Object.entries(original)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+
+  const write = jest.fn(async () => ({ id: 'drop-1' }));
+  const waves = {
+    w: { is_direct_message: false },
+    'site-wave': { is_direct_message: false },
+    'dm-wave': { is_direct_message: true }
+  };
+  const drops = {
+    d: { wave_id: 'w', drop_type: DropType.CHAT },
+    s: { wave_id: 'site-wave', drop_type: DropType.CHAT },
+    dm: { wave_id: 'dm-wave', drop_type: DropType.CHAT }
+  };
+  const post = (s: DeviceSignedWritesService, waveId: string) =>
+    s.createDrop(
+      { envelope: undefined, waveId, replyToDropId: null, body: {} },
+      write,
+      ctx()
+    );
+  const mutate = (
+    s: DeviceSignedWritesService,
+    kind:
+      | DeviceEventKind.EDIT
+      | DeviceEventKind.TOMBSTONE
+      | DeviceEventKind.REACT,
+    dropId: string
+  ) =>
+    s.mutateDrop({ envelope: undefined, kind, dropId, body: {} }, write, ctx());
+  const KINDS = [
+    DeviceEventKind.EDIT,
+    DeviceEventKind.TOMBSTONE,
+    DeviceEventKind.REACT
+  ] as const;
+
+  it('takes unsigned posts, edits, deletes, reactions and chat ratings with the flag on before the switch-on', async () => {
+    clock.now = SWITCH_ON_MS - 1;
+    const {
+      service: s,
+      waveScope,
+      dropsDb
+    } = service(waves, drops, ['site-wave']);
+    await expect(post(s, 'w')).resolves.toEqual({ id: 'drop-1' });
+    for (const kind of KINDS) {
+      await expect(mutate(s, kind, 'd')).resolves.toEqual({ id: 'drop-1' });
+    }
+    await expect(
+      s.assertUnsignedChatRatingAllowed('d', ctx())
+    ).resolves.toBeUndefined();
+    // Nothing is even looked up before the switch-on.
+    expect(waveScope.staysOnSite).not.toHaveBeenCalled();
+    expect(dropsDb.findWaveByIdOrNull).not.toHaveBeenCalled();
+  });
+
+  it('starts refusing at the switch-on time in a process that started before it', async () => {
+    clock.now = SWITCH_ON_MS - 60_000;
+    const { service: s } = service(waves, drops, ['site-wave']);
+    await expect(post(s, 'w')).resolves.toEqual({ id: 'drop-1' });
+    clock.now = SWITCH_ON_MS;
+    await expect(post(s, 'w')).rejects.toMatchObject({
+      code: DEVICE_SIGNATURE_REQUIRED_CODE
+    });
+    for (const kind of KINDS) {
+      await expect(mutate(s, kind, 'd')).rejects.toBeInstanceOf(
+        DeviceSignatureRequiredException
+      );
+    }
+    await expect(
+      s.assertUnsignedChatRatingAllowed('d', ctx())
+    ).rejects.toBeInstanceOf(DeviceSignatureRequiredException);
+    // A staying wave and a direct message stay open.
+    await expect(post(s, 'site-wave')).resolves.toEqual({ id: 'drop-1' });
+    await expect(post(s, 'dm-wave')).resolves.toEqual({ id: 'drop-1' });
+    for (const kind of KINDS) {
+      await expect(mutate(s, kind, 's')).resolves.toEqual({ id: 'drop-1' });
+      await expect(mutate(s, kind, 'dm')).resolves.toEqual({ id: 'drop-1' });
+    }
+    await expect(
+      s.assertUnsignedChatRatingAllowed('s', ctx())
+    ).resolves.toBeUndefined();
+    await expect(
+      s.assertUnsignedChatRatingAllowed('dm', ctx())
+    ).resolves.toBeUndefined();
+  });
+
+  it('switches on with FEATURE_WAVES_ON_CHAIN, and never on a missing or malformed time', async () => {
+    const { service: s } = service(waves, drops, ['site-wave']);
+    clock.now = SWITCH_ON_MS + 60_000;
+    delete process.env[SWITCH_ON_AT];
+    await expect(post(s, 'w')).resolves.toEqual({ id: 'drop-1' });
+    process.env[SWITCH_ON_AT] = 'Saturday';
+    await expect(post(s, 'w')).resolves.toEqual({ id: 'drop-1' });
+    process.env[ON_CHAIN] = 'true';
+    await expect(post(s, 'w')).rejects.toBeInstanceOf(
+      DeviceSignatureRequiredException
+    );
+    // Switched on, but the flag off: nothing is refused.
+    delete process.env[FLAG];
+    await expect(post(s, 'w')).resolves.toEqual({ id: 'drop-1' });
+  });
+
+  it('isDeviceSignatureRequired: the flag and the switch-on, at the time given', () => {
+    const env = { [FLAG]: 'true', [SWITCH_ON_AT]: SWITCH_ON };
+    expect(isDeviceSignatureRequired(env, SWITCH_ON_MS - 1)).toBe(false);
+    expect(isDeviceSignatureRequired(env, SWITCH_ON_MS)).toBe(true);
+    expect(
+      isDeviceSignatureRequired({ ...env, [FLAG]: 'false' }, SWITCH_ON_MS)
+    ).toBe(false);
+    expect(
+      isDeviceSignatureRequired({ [FLAG]: 'true', [ON_CHAIN]: 'true' }, 0)
+    ).toBe(true);
+    expect(isDeviceSignatureRequired({ [FLAG]: 'true' }, SWITCH_ON_MS)).toBe(
+      false
+    );
   });
 });
