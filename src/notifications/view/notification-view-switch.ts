@@ -15,10 +15,21 @@ import {
   notifyViewMode
 } from '@/notifications/view/notify-view-flags';
 
-/** The cursor of the copy of old rows: the last identity_notifications id copied. */
+/**
+ * The cursor of the copy of old rows: the identity_notifications id the next
+ * pass reads after. A run leaves it up to `OLD_ROWS_TAIL_IDS` below the
+ * newest row.
+ */
 export const OLD_ROWS_CURSOR = 'switch:identity-notifications';
 
 const DEFAULT_BATCH_SIZE = 2000;
+
+/**
+ * How far below the newest row the copy leaves its cursor at the end of a
+ * run. An insert takes its id before it commits, so a pass can read past a
+ * row that commits a moment later; the next run reads these ids again.
+ */
+export const OLD_ROWS_TAIL_IDS = 10_000;
 
 export interface SwitchStepResult {
   readonly rows: number;
@@ -36,7 +47,12 @@ export interface SwitchStepResult {
  * 2. `copyOldRows`: copies every identity_notifications row the view has no
  *    row for into it as CARRIED, keeping its id and read state. Rows the
  *    deriver wrote (their view row holds the id) are skipped. Run it before
- *    setting `on` and once more after, for rows written in between.
+ *    setting `on` and once more after, for rows written in between. A run
+ *    ends with its cursor within `OLD_ROWS_TAIL_IDS` of the newest row, so
+ *    the next run also copies a row that committed after this one read past
+ *    it. A transaction open longer than that can still be passed over, so
+ *    the last run, once no service writes in `shadow`, reads every row
+ *    (`copyOldRowsRun({ full: true })`).
  */
 export class NotificationViewSwitch {
   constructor(
@@ -65,6 +81,24 @@ export class NotificationViewSwitch {
           return `(cause = :cause_${key} and created_at >= :start_${key} and created_at < :end_${key})`;
         })
     );
+    if (!owned.length && notifyViewMode() === 'on') {
+      // People read the view in `on`. With no windows in this process's
+      // NOTIFY_DERIVED_CAUSES (a run without the services' configuration),
+      // every derived row would go.
+      const derived = await this.db().oneOrNull<{ n: number }>(
+        `select count(*) as n from (
+           select 1 from ${NOTIFICATION_VIEW_TABLE}
+           where origin = :origin limit 1
+         ) derived`,
+        params
+      );
+      if (Number(derived?.n ?? 0) > 0) {
+        throw new Error(
+          "NOTIFY_DERIVED_CAUSES is empty here, so the prune would delete every derived row people read in `on`. Run with the services' NOTIFY_DERIVED_CAUSES."
+        );
+      }
+      return { rows: 0, done: true };
+    }
     const keep = owned.length ? ` and not (${owned.join(' or ')})` : '';
     const result = await this.db().execute(
       `delete from ${NOTIFICATION_VIEW_TABLE}
@@ -76,7 +110,47 @@ export class NotificationViewSwitch {
     return { rows, done: rows < batchSize };
   }
 
-  async copyOldRows(batchSize = DEFAULT_BATCH_SIZE): Promise<SwitchStepResult> {
+  /**
+   * One run of the operator step `copy-old-rows`: prunes the rows the
+   * deriver does not own (it may have written more since the last run),
+   * then copies until done. `full` reads from the first row.
+   */
+  async copyOldRowsRun({
+    full = false,
+    batchSize = DEFAULT_BATCH_SIZE,
+    tailIds = OLD_ROWS_TAIL_IDS
+  }: {
+    full?: boolean;
+    batchSize?: number;
+    tailIds?: number;
+  } = {}): Promise<{ pruned: number; copied: number }> {
+    this.requireViewMode();
+    let pruned = 0;
+    for (;;) {
+      const step = await this.pruneUnownedDerivedRows(batchSize);
+      pruned += step.rows;
+      if (step.done) break;
+    }
+    if (full || (await this.cursors.get(OLD_ROWS_CURSOR)) === null) {
+      // From the first row. The prune above has run, so the first pass
+      // doesn't prune again.
+      await this.db().executeNativeQueriesInTransaction((connection) =>
+        this.cursors.set(OLD_ROWS_CURSOR, '0', connection)
+      );
+    }
+    let copied = 0;
+    for (;;) {
+      const step = await this.copyOldRows(batchSize, tailIds);
+      copied += step.rows;
+      if (step.done) break;
+    }
+    return { pruned, copied };
+  }
+
+  async copyOldRows(
+    batchSize = DEFAULT_BATCH_SIZE,
+    tailIds = OLD_ROWS_TAIL_IDS
+  ): Promise<SwitchStepResult> {
     this.requireViewMode();
     // The first pass prunes first: a row the deriver does not own still
     // names its old copy, which the copy would otherwise skip for good.
@@ -101,8 +175,32 @@ export class NotificationViewSwitch {
         { after },
         options
       );
-      if (!last?.id) return { rows: 0, done: true };
+      // Read after the batch (in the same snapshot under REPEATABLE READ,
+      // so never below the batch's last id).
+      const newest = Number(
+        (
+          await this.db().oneOrNull<{ id: number | null }>(
+            `select max(id) as id from ${IDENTITY_NOTIFICATIONS_TABLE}`,
+            undefined,
+            options
+          )
+        )?.id ?? 0
+      );
+      const tail = Math.max(0, newest - tailIds);
+      if (!last?.id) {
+        // Nothing above the cursor. A cursor still above the tail (left there
+        // by an older run, or the rows above it were deleted) moves back to
+        // it, and the run goes on from there.
+        if (after > tail) {
+          await this.cursors.set(OLD_ROWS_CURSOR, String(tail), connection);
+          return { rows: 0, done: false };
+        }
+        return { rows: 0, done: true };
+      }
       const upTo = Number(last.id);
+      // A batch that reaches the newest row is the run's last, even when it
+      // is full: that saves an empty pass.
+      const done = Number(last.rows) < batchSize || upTo >= newest;
       // source_key is notificationSourceKey(CARRIED_FAMILY, id, identity_id),
       // computed in SQL so a batch is one statement.
       const result = await this.db().execute(
@@ -133,11 +231,14 @@ export class NotificationViewSwitch {
         },
         options
       );
-      await this.cursors.set(OLD_ROWS_CURSOR, String(upTo), connection);
-      return {
-        rows: this.db().getAffectedRows(result),
-        done: Number(last.rows) < batchSize
-      };
+      // The run's last pass leaves the cursor at the tail, so the next run
+      // reads the newest ids again; rows the view has are skipped.
+      await this.cursors.set(
+        OLD_ROWS_CURSOR,
+        String(done ? Math.min(upTo, tail) : upTo),
+        connection
+      );
+      return { rows: this.db().getAffectedRows(result), done };
     });
   }
 

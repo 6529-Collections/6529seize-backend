@@ -1049,7 +1049,12 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
    * recipient, as the rules key them, so the next application of a group
    * finds its row (and its read state) and a rebuild writes the same keys
    * and ids. Where the target already has the row, the moved duplicate
-   * goes. Copies made at the switch keep their old ids.
+   * goes. Copies made at the switch keep their old ids. A duplicate that
+   * goes leaves its identity_notifications copy, now under the target, and
+   * a later `copy-old-rows` carries it (a `--full` run always does). No
+   * cause with a feed today notifies more than one person per event, so
+   * none arises yet; such a cause must delete that copy here before it
+   * joins.
    */
   async moveViewRows(
     source: string,

@@ -32,7 +32,10 @@ import {
 import { notificationArchive } from './notification-archive';
 import { notificationSourceKey } from './notification-view-ids';
 import { notificationViewRebuild } from './notification-view-rebuild';
-import { notificationViewSwitch } from './notification-view-switch';
+import {
+  notificationViewSwitch,
+  OLD_ROWS_CURSOR
+} from './notification-view-switch';
 import { deriveVote } from './rules/chain-rules';
 import { deriveDropCreation } from './rules/relay-rules';
 import type { VoteChangedEvent } from './notification-sources';
@@ -442,6 +445,132 @@ describe('notification view lifecycle', () => {
     ).toHaveLength(1);
     expect(announced).toHaveBeenCalledTimes(1);
     announced.mockRestore();
+  });
+
+  describe('the copy of old rows', () => {
+    // Old rows by id, as a run would find them; a row written later with a
+    // lower id is one whose insert committed after a run read past it.
+    const oldRow = (id: number) => ({
+      id,
+      identity_id: authorId,
+      additional_identity_id: fanId,
+      cause: 'IDENTITY_SUBSCRIBED',
+      additional_data: '{}',
+      created_at: T + id
+    });
+    const writeOld = (ids: number[]) =>
+      sqlExecutor.bulkInsert(
+        IDENTITY_NOTIFICATIONS_TABLE,
+        ids.map(oldRow),
+        Object.keys(oldRow(0))
+      );
+    const copied = async () =>
+      (
+        await sqlExecutor.execute<{ legacy_id: number }>(
+          `select legacy_id from ${NOTIFICATION_VIEW_TABLE}
+           where origin = 'CARRIED' order by legacy_id`
+        )
+      ).map((row) => Number(row.legacy_id));
+    const cursor = () => notificationViewCursorsDb.get(OLD_ROWS_CURSOR);
+    // A DROP_VOTED row the deriver wrote, as the view holds it.
+    const writeDerived = () =>
+      sqlExecutor.execute(
+        `insert into ${NOTIFICATION_VIEW_TABLE}
+           (identity_id, source_key, id, source_family, source_ref, origin,
+            cause, additional_data, created_at, sealed)
+         values (:identity, :key, 999999, 'fixture', 'vote', 'DERIVED',
+            'DROP_VOTED', '{}', :at, false)`,
+        { identity: authorId, key: 'a'.repeat(64), at: T }
+      );
+    const derivedRows = async () =>
+      (
+        await sqlExecutor.execute(
+          `select id from ${NOTIFICATION_VIEW_TABLE} where origin = 'DERIVED'`
+        )
+      ).length;
+
+    // Batches of 2 end on a full batch at the newest row; batches of 3 end
+    // on a short one.
+    it.each([2, 3])(
+      'copies a row that commits after a run read past its id, on the next run (batches of %i)',
+      async (batchSize) => {
+        setFlags({ NOTIFY_VIEW_MODE: 'shadow' });
+        const run = async () =>
+          (await notificationViewSwitch.copyOldRowsRun({ batchSize })).copied;
+
+        await writeOld([1, 2, 4, 5]);
+        expect(await run()).toBe(4);
+        expect(await copied()).toEqual([1, 2, 4, 5]);
+        await writeOld([3]);
+        expect(await run()).toBe(1);
+        expect(await copied()).toEqual([1, 2, 3, 4, 5]);
+        // The tail is read again, and nothing is copied twice.
+        expect(await run()).toBe(0);
+      }
+    );
+
+    it('reads the tail again on each run and every row on a full run, and prunes on each run', async () => {
+      setFlags({ NOTIFY_VIEW_MODE: 'shadow' });
+      const run = async (full = false) =>
+        notificationViewSwitch.copyOldRowsRun({
+          full,
+          batchSize: 3,
+          tailIds: 2
+        });
+
+      // Rows 4 and 8 commit late.
+      await writeOld([1, 2, 3, 5, 6, 7, 9]);
+      expect((await run()).copied).toBe(7);
+      // The newest row is 9, so the next run reads after 7.
+      expect(await cursor()).toBe('7');
+
+      // Row 8 lies in the tail and arrives on the next run. Row 4 lies
+      // below it and waits for the full run.
+      await writeOld([4, 8]);
+      expect((await run()).copied).toBe(1);
+      expect(await copied()).toEqual([1, 2, 3, 5, 6, 7, 8, 9]);
+      expect(await cursor()).toBe('7');
+
+      // An older run left its cursor at the newest row, 9, before row 8
+      // arrived. The cursor moves back to the tail, and the same run goes on
+      // from there.
+      await sqlExecutor.execute(
+        `delete from ${NOTIFICATION_VIEW_TABLE} where legacy_id = 8`
+      );
+      await sqlExecutor.execute(
+        `update ${NOTIFICATION_VIEW_CURSORS_TABLE} set cursor_value = '9'
+         where source = :source`,
+        { source: OLD_ROWS_CURSOR }
+      );
+      expect((await run()).copied).toBe(1);
+      expect(await cursor()).toBe('7');
+
+      // A row the deriver wrote after the first run, for a cause it does
+      // not own, goes on the next run.
+      await writeDerived();
+      expect((await run()).pruned).toBe(1);
+
+      // The full run reads from the first row and brings row 4.
+      expect((await run(true)).copied).toBe(1);
+      expect(await copied()).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+      expect((await run()).copied).toBe(0);
+    });
+
+    it('refuses to prune in on without derived-cause windows while derived rows exist', async () => {
+      setFlags({ NOTIFY_VIEW_MODE: 'on' });
+      await writeDerived();
+      await expect(notificationViewSwitch.copyOldRowsRun()).rejects.toThrow(
+        'NOTIFY_DERIVED_CAUSES is empty'
+      );
+      expect(await derivedRows()).toBe(1);
+      // With the services' windows, the row is owned and stays.
+      setFlags({
+        NOTIFY_VIEW_MODE: 'on',
+        NOTIFY_DERIVED_CAUSES: 'DROP_VOTED@0'
+      });
+      expect((await notificationViewSwitch.copyOldRowsRun()).pruned).toBe(0);
+      expect(await derivedRows()).toBe(1);
+    });
   });
 
   it('a mark-all reads the rows it lists: a row derived later for an earlier time stays unread, live and rebuilt', async () => {
