@@ -55,6 +55,14 @@ import * as mcache from 'memory-cache';
 import { RequestContext } from '@/request.context';
 import { readWaveCatalogueWithDiagnostics } from './wave-catalogue-read-diagnostics';
 import {
+  wavesFreezeAtMs,
+  WAVES_FROZEN_GROUP_MESSAGE,
+  WAVES_FROZEN_GROUP_VISIBILITY_MESSAGE,
+  WavesFrozenException
+} from '@/waves-freeze/waves-freeze';
+import { groupStays } from '@/waves-scope/waves-scope';
+import { isAnyGroupFrozen } from '@/waves-freeze/waves-freeze-scope';
+import {
   CatalogueRead,
   RedisWaveGroupsCatalogueStore,
   WaveGroupsCatalogue
@@ -1710,6 +1718,67 @@ export class UserGroupsService {
     );
   }
 
+  /**
+   * Whether this change touches a group that a wave moving to the 6529
+   * chain uses (as a wave, decision or curation group), while waves are
+   * frozen. Replacing a group gives the new version the old one's id, so
+   * every wave and decision that names it changes with it, and eligibility
+   * reads only visible groups, so hiding or showing a group changes who may
+   * use those waves. While waves move, neither may happen to a group a
+   * moving wave uses. Groups only staying waves use (direct messages,
+   * members-only waves, waves with a hidden or private group) stay open.
+   * Read from the primary, or the transaction's connection when there is
+   * one: run again after the write, it also refuses a change that makes a
+   * staying wave that uses the group move.
+   */
+  private async touchesFrozenWaveGroup(
+    { group_id, old_version_id }: GroupVisibilityChange,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    return isAnyGroupFrozen([group_id, old_version_id], ctx);
+  }
+
+  /** A replacement is told to save a new group; hiding or showing is not. */
+  private frozenGroupChange(change: GroupVisibilityChange) {
+    return new WavesFrozenException(
+      change.old_version_id
+        ? WAVES_FROZEN_GROUP_MESSAGE
+        : WAVES_FROZEN_GROUP_VISIBILITY_MESSAGE
+    );
+  }
+
+  /**
+   * The early freeze check. It only reads, and runs before the request's
+   * receipt is written, so a refused request leaves no receipt. A retry of a
+   * save that finished before the freeze, under the same Idempotency-Key, is
+   * let through: the transaction finds its receipt and returns the stored
+   * result, or 409 if the key was used for a different save, and changes no
+   * group. Publishing a group nothing uses, or replacing one, stays open.
+   */
+  private async assertGroupChangeNotFrozen(
+    change: GroupVisibilityChange,
+    requestId: string | null,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (!(await this.touchesFrozenWaveGroup(change, ctx))) return;
+    if (await this.hasFinishedVisibilityRequest(change, requestId, ctx)) return;
+    throw this.frozenGroupChange(change);
+  }
+
+  private async hasFinishedVisibilityRequest(
+    change: GroupVisibilityChange,
+    requestId: string | null,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    if (!requestId) return false;
+    const receipt = await this.userGroupsDb.findVisibilityRequest(
+      requestId,
+      ctx
+    );
+    if (receipt) return Boolean(receipt.completed);
+    return (await this.findLegacyVisibilityRequest(change, ctx)) !== null;
+  }
+
   async changeVisibility(
     change: GroupVisibilityChange,
     ctx: RequestContext,
@@ -1721,6 +1790,7 @@ export class UserGroupsService {
     const requestId = idempotencyKey
       ? visibilityRequestHash([profile_id, idempotencyKey])
       : null;
+    await this.assertGroupChangeNotFrozen(change, requestId, ctx);
     const { updatedGroup, replacedGroup, replayed } =
       await this.userGroupsDb.executeNativeQueriesInTransaction(
         async (connection) => {
@@ -1762,9 +1832,17 @@ export class UserGroupsService {
             change,
             tx
           );
+          // The request may have waited past the freeze for its locks: check
+          // again before writing. Throwing rolls back the reserved receipt.
+          if (!legacyReplay && (await this.touchesFrozenWaveGroup(change, tx)))
+            throw this.frozenGroupChange(change);
           const saved = legacyReplay
             ? { updatedGroup: legacyReplay, replacedGroup: null }
             : await this.applyVisibilityChange(change, tx, beforeReplace);
+          // After the write: a wave that stayed on 6529.io because of this
+          // group must not move while waves are frozen.
+          if (!legacyReplay && (await this.touchesFrozenWaveGroup(change, tx)))
+            throw this.frozenGroupChange(change);
           if (requestId)
             await this.userGroupsDb.completeVisibilityRequest(
               requestId,
@@ -2005,6 +2083,44 @@ export class UserGroupsService {
     }
     ctx.timer?.stop(`${this.constructor.name}->getByIdOrThrow`);
     return (await this.mapForApi([group], ctx)).at(0)!;
+  }
+
+  /**
+   * Groups by id as `/groups/{id}` shows them, whatever their visibility to a
+   * reader: the waves export reads the groups of members-only waves too, so
+   * the 6529 chain imports every wave's rights (src/waves-export). Ids with
+   * no group are left out.
+   */
+  public async findByIdsForExport(
+    ids: readonly string[],
+    ctx: RequestContext
+  ): Promise<ApiGroupFull[]> {
+    const entities: UserGroupEntity[] = [];
+    for (const id of ids) {
+      const entity = await this.userGroupsDb.getByIdWithoutVisibilityCheck(
+        id,
+        ctx.connection
+      );
+      if (entity) entities.push(entity);
+    }
+    return entities.length ? this.mapForApi(entities, ctx) : [];
+  }
+
+  /**
+   * A group's membership SQL as getSqlAndParamsByGroupId builds it, without
+   * the reader's access check, for the waves export (src/waves-export).
+   */
+  public async getSqlAndParamsForExport(
+    group: ApiGroupFull,
+    ctx: RequestContext
+  ): Promise<{
+    sql: string;
+    params: Record<string, any>;
+  } | null> {
+    if (!group.visible) {
+      return this.getEmptyMemberSetSql();
+    }
+    return await this.getSqlAndParams(group.group, group.id, ctx);
   }
 
   /**
@@ -3067,6 +3183,15 @@ export class UserGroupsService {
       name: displayNames[it.id],
       visible: it.visible,
       is_private: !!it.is_private,
+      stays_on_site: groupStays(
+        {
+          visible: !!it.visible,
+          is_private: !!it.is_private,
+          is_direct_message: !!it.is_direct_message,
+          created_at: new Date(it.created_at).getTime()
+        },
+        wavesFreezeAtMs()
+      ),
       created_at: new Date(it.created_at).getTime(),
       group: {
         cic: {

@@ -130,6 +130,7 @@ function anApiGroupFull(
     name: 'Group 1',
     visible: true,
     is_private: false,
+    stays_on_site: false,
     created_at: 1_000,
     created_by: { id: CREATOR_ID } as unknown as ApiGroupFull['created_by'],
     group: {
