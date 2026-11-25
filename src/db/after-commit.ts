@@ -111,6 +111,10 @@ export async function afterCommit(
  * must finish, or record its own failure, before the request or the Lambda
  * invocation ends. Without a tracked transaction it runs now, and is waited
  * for. Its failures are logged, never thrown.
+ *
+ * A connection given with no tracked transaction is logged: the callback
+ * then runs while that connection's own transaction, if any, is still open,
+ * and would wait on any lock it holds.
  */
 export async function afterCommitAwaited(
   connection: ConnectionWrapper<any> | undefined,
@@ -124,6 +128,11 @@ export async function afterCommitAwaited(
       ? pendingByConnection.get(connection.connection)
       : undefined;
   if (!pending) {
+    if (connection?.connection) {
+      logger.warn(
+        'afterCommitAwaited got a connection with no tracked transaction; running the callback now'
+      );
+    }
     await runAfterCommitCallbacks([awaited]);
     return;
   }

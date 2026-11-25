@@ -3,6 +3,7 @@ import {
   ADDRESS_CONSOLIDATION_KEY,
   DISTRIBUTION_NORMALIZED_TABLE,
   DROP_FORGE_JOBS_TABLE,
+  DROP_FORGE_PREPARATIONS_TABLE,
   IDENTITIES_TABLE,
   SUBSCRIPTIONS_ID_KEY_MAP_TABLE,
   SUBSCRIPTION_DEFERRED_WRITES_TABLE,
@@ -3167,6 +3168,81 @@ describeWithSeed(
         }
       }
       expect(await phaseReports()).toEqual([]);
+    });
+
+    it("in shadow, the identity split waits for the card's preparation row, and reads the rows after it", async () => {
+      await seedLegacy();
+      await cutAndLoad(false);
+      process.env[SHADOW_ENV] = 'true';
+      subscriptionsIdentitySwitch.invalidate();
+      await updateSubscriptions();
+      const id = `${MEMES_CONTRACT.toLowerCase()}:${CARD}`;
+      await sqlExecutor.execute(
+        `INSERT INTO ${DROP_FORGE_PREPARATIONS_TABLE} (id, results)
+          VALUES (:id, '{}') ON DUPLICATE KEY UPDATE id = :id`,
+        { id }
+      );
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let lockHeld!: () => void;
+      const held = new Promise<void>((resolve) => {
+        lockHeld = resolve;
+      });
+      // Another transaction holds the card's preparation, as a pull or a
+      // reset does.
+      const holder = sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          await sqlExecutor.execute(
+            `SELECT id FROM ${DROP_FORGE_PREPARATIONS_TABLE} WHERE id = :id FOR UPDATE`,
+            { id },
+            { wrappedConnection: connection }
+          );
+          lockHeld();
+          await released;
+        }
+      );
+      let pull: Promise<unknown> = Promise.resolve();
+      try {
+        await held;
+        // Outside a transaction the legacy pull commits at once, and its
+        // identity split then waits on the preparation row: its locking
+        // read stays in the processlist until the holder lets go.
+        pull = getPublicSubscriptions(MEMES_CONTRACT, CARD);
+        let waiting = 0;
+        for (let i = 0; i < 200 && !waiting; i++) {
+          const [row] = await sqlExecutor.execute<{ waiting: number }>(
+            `SELECT COUNT(*) AS waiting FROM information_schema.processlist
+              WHERE info LIKE '%${DROP_FORGE_PREPARATIONS_TABLE}%FOR UPDATE%'
+                AND info NOT LIKE '%processlist%'`
+          );
+          waiting = Number(row.waiting);
+          if (!waiting) {
+            await new Promise((resolve) => setTimeout(resolve, 25));
+          }
+        }
+        expect(waiting).toBe(1);
+        for (const [, phase] of await phases(
+          SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+          'identity_key'
+        )) {
+          expect(phase).toBeNull();
+        }
+        expect(await phaseReports()).toEqual([]);
+      } finally {
+        release();
+        await holder;
+        await pull;
+      }
+      expect(
+        await phases(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key')
+      ).toEqual(
+        await phases(SUBSCRIPTIONS_NFTS_FINAL_TABLE, 'consolidation_key')
+      );
+      expect(await phaseReports()).toEqual([
+        { verdict: 'MATCH', mode: 'SHADOW' }
+      ]);
     });
 
     it('in shadow, a failing identity split leaves the preparation committed, logs the failure, and the gate refuses', async () => {
