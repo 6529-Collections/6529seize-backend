@@ -117,10 +117,9 @@ const API_STAYS_ON_SITE = 'stays_on_site';
  * A JSON round trip: what the API's response body holds, without the API's
  * stays_on_site. The export writes only waves that move, and says so once,
  * on each wave's configuration (the waves stage). The API also puts the
- * field on objects nested anywhere in what the export reads (a wave's
- * description drop's wave, a drop's mentioned waves, a poll drop's wave), so
- * the strip goes to every depth, and the documents read as they did before
- * the field.
+ * field on objects nested in what the export reads (a wave's description
+ * drop's wave, a drop's mentioned waves), so the strip goes to every depth,
+ * and the documents read as they did before the field.
  */
 function asJson<T>(value: T): Json {
   return JSON.parse(

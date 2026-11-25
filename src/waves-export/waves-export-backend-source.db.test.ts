@@ -231,8 +231,8 @@ describeWithSeed(
         dropRow(DM_WAVE.id, 'dm-drop-5', 5)
       ]
     },
-    // A drop that mentions a moving wave, and a closed poll on one: the
-    // API nests a wave in both (mentioned_waves[].wave, a poll drop's wave).
+    // A drop that mentions a moving wave (the API nests that wave in it,
+    // mentioned_waves[].wave), and a closed poll on one.
     {
       table: DROP_MENTIONED_WAVES_TABLE,
       rows: [
@@ -491,7 +491,7 @@ describeWithSeed(
         drop_type: 'CHAT',
         reply_to_part_id: null
       });
-      // A closed poll's drop, read with its wave, without stays_on_site.
+      // A closed poll's drop, with its poll, without stays_on_site.
       const polls = await source.wavePolls(
         PUBLIC_WAVE.id,
         'CLOSED',
@@ -500,7 +500,7 @@ describeWithSeed(
       expect(polls.map((drop) => drop.id)).toEqual([
         descriptionDrop(PUBLIC_ID)
       ]);
-      expect(polls[0]).toHaveProperty('wave.id', PUBLIC_ID);
+      expect(polls[0]).toHaveProperty('poll.id', 'made-up-poll');
       expect(JSON.stringify(polls)).not.toContain('stays_on_site');
       expect(
         await source.wavePolls(PUBLIC_WAVE.id, 'OPEN', Date.now())
