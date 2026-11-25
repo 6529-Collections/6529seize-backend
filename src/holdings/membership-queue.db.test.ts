@@ -20,8 +20,8 @@ import {
 } from '@/nftOwnersLoop/nft_owners';
 import { updateOwnerBalances } from '@/ownersBalancesLoop/owners_balances';
 import { sqlExecutor } from '@/sql-executor';
+import { transferReconciliationDb } from '@/transactions/transfer-reconciliation.db';
 import { sweepHoldingsKeys } from './holdings-key-sweep';
-import { holdingsMembershipChanged } from './membership-change';
 
 // Writing consolidated balances also syncs subscription quantities, caches
 // and coverage (the subscriptions code's own tests cover those). The
@@ -112,8 +112,11 @@ async function resetLoops() {
   await updateOwnerBalances(true);
 }
 
-/** Writes the keys and calls the hook in one transaction, as the mirror does. */
-async function changeMembership(height: number, groups: string[][]) {
+/**
+ * Writes the keys as the identity mirror does and, in the same transaction,
+ * queues the wallets as the mirror's own membership handler does.
+ */
+async function changeMembership(groups: string[][]) {
   const wallets = groups.flat();
   await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
     await sqlExecutor.execute(
@@ -131,7 +134,9 @@ async function changeMembership(height: number, groups: string[][]) {
         );
       }
     }
-    await holdingsMembershipChanged({ height, wallets }, { connection });
+    await transferReconciliationDb.enqueue(wallets, ['owners', 'activity'], {
+      connection
+    });
   });
 }
 
@@ -159,7 +164,10 @@ describe('holdings re-keyed through the membership queue', () => {
   });
 
   beforeEach(async () => {
-    process.env = { ...env, FEATURE_HOLDINGS_MEMBERSHIP_QUEUE: 'true' };
+    // The mirror's handler queues whatever FEATURE_HOLDINGS_MEMBERSHIP_QUEUE
+    // says, so the flag stays off here.
+    process.env = { ...env };
+    delete process.env.FEATURE_HOLDINGS_MEMBERSHIP_QUEUE;
     await emptyTouchedTables();
     // Three cards: with two, the card-set count takes the minimum of an
     // empty list (Infinity) for some wallets.
@@ -190,7 +198,7 @@ describe('holdings re-keyed through the membership queue', () => {
       }
     }
     // Before: W1-W4 are one identity; the rest stand alone.
-    await changeMembership(1, [W.slice(0, 4)]);
+    await changeMembership([W.slice(0, 4)]);
     await getDataSource().query(
       `DELETE FROM ${TRANSFER_RECONCILIATIONS_TABLE}`
     );
@@ -201,10 +209,10 @@ describe('holdings re-keyed through the membership queue', () => {
     const [w1, w2, w3, w4, w5, w6, w7] = W;
     // W5 joins W1-W4 (a 5-wallet key), W2 then leaves, W6 and W7 form an
     // identity.
-    await changeMembership(10, [[w1, w2, w3, w4, w5]]);
+    await changeMembership([[w1, w2, w3, w4, w5]]);
     await runLoops();
-    await changeMembership(11, [[w1, w3, w4, w5], [w2]]);
-    await changeMembership(12, [[w6, w7]]);
+    await changeMembership([[w1, w3, w4, w5], [w2]]);
+    await changeMembership([[w6, w7]]);
     await runLoops();
 
     expect(await queued()).toBe(0);
@@ -239,7 +247,7 @@ describe('holdings re-keyed through the membership queue', () => {
 
   it('gives the same rows when a group is regrouped across two queue batches', async () => {
     const group = W.slice(0, 5);
-    await changeMembership(10, [group]);
+    await changeMembership([group]);
     await getDataSource().query(
       `DELETE FROM ${TRANSFER_RECONCILIATIONS_TABLE}`
     );
@@ -254,9 +262,9 @@ describe('holdings re-keyed through the membership queue', () => {
     );
   });
 
-  it('finds and repairs a group the hook missed', async () => {
+  it('finds and repairs a group the queueing missed', async () => {
     const group = W.slice(0, 5);
-    // The keys change with no hook call, as if the mirror's call were lost.
+    // The keys change with nothing queued, as if the mirror's queueing were lost.
     await getDataSource().query(
       `UPDATE ${ADDRESS_CONSOLIDATION_KEY} SET consolidation_key = ? WHERE address IN (?)`,
       [key(...group), group.slice(0, 4)]

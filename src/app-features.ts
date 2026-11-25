@@ -49,10 +49,12 @@ export class AppFeatures {
   }
 
   /**
-   * Holdings re-key through the reconciliation queue: the identity mirror's
-   * membership hook queues the regrouped wallets, an hourly key sweep
-   * queues any it missed, and the delegations loop queues instead of
-   * consolidating holdings itself.
+   * Holdings re-key through the reconciliation queue: the delegations loop
+   * queues the wallets it regroups instead of consolidating holdings itself,
+   * and an hourly key sweep queues the wallets whose holdings don't match
+   * their keys (a stale key, a missing one, or a wallet under two keys). An
+   * operator's repair run of the sweep queues whatever this says, and so
+   * does the identity mirror's own handler for the wallets it regroups.
    */
   public isHoldingsMembershipQueueEnabled(): boolean {
     return this.isFeatureEnabled('HOLDINGS_MEMBERSHIP_QUEUE');
