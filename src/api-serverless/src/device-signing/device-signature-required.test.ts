@@ -470,11 +470,12 @@ describe('device signatures required: the flag with no switch-on set', () => {
   });
 
   it('says nothing with a switch-on time, with FEATURE_WAVES_ON_CHAIN, or with the flag off', async () => {
-    for (const env of [
+    const envs: Record<string, string>[] = [
       { [FLAG]: 'true', [SWITCH_ON_AT]: SWITCH_ON },
       { [FLAG]: 'true', [ON_CHAIN]: 'true' },
       {}
-    ]) {
+    ];
+    for (const env of envs) {
       const { required, warnings, restore } = await freshRequirement();
       required(env, SWITCH_ON_MS - 1);
       expect(warnings()).toEqual([]);
