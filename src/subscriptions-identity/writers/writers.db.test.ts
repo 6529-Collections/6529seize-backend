@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import {
   ADDRESS_CONSOLIDATION_KEY,
+  DISTRIBUTION_NORMALIZED_TABLE,
   DROP_FORGE_JOBS_TABLE,
   IDENTITIES_TABLE,
   SUBSCRIPTIONS_ID_KEY_MAP_TABLE,
@@ -105,6 +106,8 @@ import {
   hasUnassignedFinalSubscriptions
 } from '@/api/subscriptions/api.subscriptions.db';
 import { readinessAllocations } from '@/drop-forge/drop-forge.readiness.repository';
+import { walletDistributionAllocationsDb } from '@/api/distributions/wallet-distribution-allocations.db';
+import { fetchMintingAirdrops } from '@/api/minting-claims/api.minting-claims.db';
 import {
   runIdentityRedemptionWriters,
   runIdentityTopUpWriters
@@ -2910,7 +2913,12 @@ describeWithSeed(
       ).toBe('UNSTARTED');
     });
 
-    it("after the switch, Drop Forge reads the final rows the switch names: a wide identity's row is there", async () => {
+    /**
+     * After the switch, with a wide identity (P9) on the next card's list:
+     * its final row is on the identity side only, since the key-width guard
+     * holds its legacy copy back.
+     */
+    const switchWithWideIdentity = async () => {
       await seedLegacy();
       const { W, P9, wideKey } = await seedWideIdentity();
       // A top-up for the wide key, queued whole and credited at the cut: it
@@ -2940,8 +2948,6 @@ describeWithSeed(
       expect((await goLiveForTest()).switched).toBe(true);
       await updateSubscriptions();
 
-      // The wide identity's final row is on the identity side only: the
-      // key-width guard holds its legacy copy back.
       const identityRows = await finalIds(
         SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
         'identity_key'
@@ -2952,6 +2958,11 @@ describeWithSeed(
           await finalIds(SUBSCRIPTIONS_NFTS_FINAL_TABLE, 'consolidation_key')
         ).map((r) => r.key)
       ).not.toContain(wideKey);
+      return { P9, identityRows };
+    };
+
+    it("after the switch, Drop Forge reads the final rows the switch names: a wide identity's row is there", async () => {
+      const { P9, identityRows } = await switchWithWideIdentity();
       const setPhase = (table: string, where: string, phase: string | null) =>
         sqlExecutor.execute(
           `UPDATE ${table} SET phase = :phase
@@ -3000,6 +3011,57 @@ describeWithSeed(
       expect(
         await hasUnassignedFinalSubscriptions(MEMES_CONTRACT, CARD, {})
       ).toBe(true);
+    });
+
+    it("after the switch, the API's Public airdrop answers read the final rows the switch names: a wide identity's row is there", async () => {
+      const { P9, identityRows } = await switchWithWideIdentity();
+      // Every row of the card is a Public airdrop, on both sides.
+      for (const table of [
+        SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+        SUBSCRIPTIONS_NFTS_FINAL_TABLE
+      ]) {
+        await sqlExecutor.execute(
+          `UPDATE ${table} SET phase = 'Public'
+            WHERE contract = :c AND token_id = :card`,
+          { c: MEMES_CONTRACT, card: CARD }
+        );
+      }
+
+      // The minting claim's Public Phase counts every subscriber.
+      const publicPhase = (
+        await fetchMintingAirdrops(CARD, MEMES_CONTRACT)
+      ).find((row) => row.phase === 'Public Phase');
+      expect(Number(publicPhase?.total)).toBe(identityRows.length);
+
+      // The wide identity's wallet sees its Public airdrop.
+      const [wide] = await sqlExecutor.execute<{
+        airdrop_address: string;
+        subscribed_count: number;
+      }>(
+        `SELECT airdrop_address, subscribed_count
+          FROM ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE}
+          WHERE contract = :c AND token_id = :card AND identity_key = :p`,
+        { c: MEMES_CONTRACT, card: CARD, p: P9 }
+      );
+      expect(Number(wide.subscribed_count)).toBeGreaterThan(0);
+      await sqlExecutor.execute(
+        `INSERT INTO ${DISTRIBUTION_NORMALIZED_TABLE}
+          (card_id, contract, wallet, wallet_display, airdrops, total_spots,
+           total_count, minted, allowlist)
+          VALUES (:card, :c, :w, :w, 0, 0, 0, 0, '[]')`,
+        {
+          card: CARD,
+          c: MEMES_CONTRACT.toLowerCase(),
+          w: wide.airdrop_address.toLowerCase()
+        }
+      );
+      const allocation = await walletDistributionAllocationsDb.findByWallet(
+        MEMES_CONTRACT,
+        CARD,
+        wide.airdrop_address,
+        {}
+      );
+      expect(allocation.publicAirdropCount).toBe(Number(wide.subscribed_count));
     });
 
     it('in shadow, the identity split runs after the preparation commits, never after it rolls back', async () => {
