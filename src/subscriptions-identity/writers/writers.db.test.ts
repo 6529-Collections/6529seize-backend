@@ -96,10 +96,13 @@ import {
   fetchDetailsForConsolidationKey,
   fetchFinalSubscription,
   fetchLogsForConsolidationKey,
+  fetchRankedFinalSubscriptions,
   fetchRedeemedSubscriptionsForConsolidationKey,
   fetchSubscriptionUploads,
-  fetchTopUpsForConsolidationKey
+  fetchTopUpsForConsolidationKey,
+  hasUnassignedFinalSubscriptions
 } from '@/api/subscriptions/api.subscriptions.db';
+import { readinessAllocations } from '@/drop-forge/drop-forge.readiness.repository';
 import {
   runIdentityRedemptionWriters,
   runIdentityTopUpWriters
@@ -2903,6 +2906,98 @@ describeWithSeed(
       expect(
         await dropForgePreparationRepository.readMode(MEMES_CONTRACT, CARD)
       ).toBe('UNSTARTED');
+    });
+
+    it("after the switch, Drop Forge reads the final rows the switch names: a wide identity's row is there", async () => {
+      await seedLegacy();
+      const { W, P9, wideKey } = await seedWideIdentity();
+      // A top-up for the wide key, queued whole and credited at the cut: it
+      // covers a card, so automatic mode is on and the next list has P9.
+      const queuedTopUp = {
+        hash: `0x${'e4'.repeat(32)}`,
+        block: 40,
+        transaction_date: new Date('2026-11-25T10:00:00Z'),
+        from_wallet: W,
+        amount: 0.3
+      };
+      await deferSubscriptionWrites(
+        [
+          {
+            kind: 'TOP_UP',
+            consolidationKey: wideKey,
+            dedupe: queuedTopUp.hash,
+            payload: { topUp: queuedTopUp },
+            reason: {
+              narrow: [{ table: 'subscriptions_redeemed', width: 567 }],
+              pendingEarlier: false
+            }
+          }
+        ],
+        executorSink()
+      );
+      expect((await goLiveForTest()).switched).toBe(true);
+      await updateSubscriptions();
+
+      // The wide identity's final row is on the identity side only: the
+      // key-width guard holds its legacy copy back.
+      const identityRows = await finalIds(
+        SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+        'identity_key'
+      );
+      expect(identityRows.map((r) => r.key)).toContain(P9);
+      expect(
+        (
+          await finalIds(SUBSCRIPTIONS_NFTS_FINAL_TABLE, 'consolidation_key')
+        ).map((r) => r.key)
+      ).not.toContain(wideKey);
+      const setPhase = (table: string, where: string, phase: string | null) =>
+        sqlExecutor.execute(
+          `UPDATE ${table} SET phase = :phase
+          WHERE contract = :c AND token_id = :card AND ${where}`,
+          { phase, c: MEMES_CONTRACT, card: CARD, p: P9 }
+        );
+
+      // Readiness counts every subscriber as Public, the wide one included.
+      const [, publicAllocations] = await readinessAllocations(
+        MEMES_CONTRACT,
+        CARD
+      );
+      expect(
+        publicAllocations.reduce((sum, a) => sum + Number(a.total), 0)
+      ).toBe(identityRows.length);
+
+      // Only the wide identity's row has a phase: the ranked read and the
+      // preparation's mode see it.
+      await setPhase(
+        SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+        'identity_key = :p',
+        'Phase 0'
+      );
+      const ranked = await fetchRankedFinalSubscriptions(
+        MEMES_CONTRACT,
+        CARD,
+        {}
+      );
+      expect(ranked).toHaveLength(1);
+      expect(
+        await dropForgePreparationRepository.readMode(MEMES_CONTRACT, CARD)
+      ).toBe('MANUAL');
+
+      // Every row but the wide identity's has a phase: it is still unassigned.
+      await setPhase(
+        SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+        'identity_key <> :p',
+        'Phase 0'
+      );
+      await setPhase(
+        SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+        'identity_key = :p',
+        null
+      );
+      await setPhase(SUBSCRIPTIONS_NFTS_FINAL_TABLE, '1 = 1', 'Phase 0');
+      expect(
+        await hasUnassignedFinalSubscriptions(MEMES_CONTRACT, CARD, {})
+      ).toBe(true);
     });
 
     it('in shadow, the identity split runs after the preparation commits, never after it rolls back', async () => {

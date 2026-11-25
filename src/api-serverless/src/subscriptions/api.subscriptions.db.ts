@@ -794,7 +794,7 @@ export async function fetchFinalSubscriptionsByPhase(
   );
 }
 
-export function fetchRankedFinalSubscriptions(
+export async function fetchRankedFinalSubscriptions(
   contract: string,
   tokenId: number,
   ctx: RequestContext,
@@ -802,7 +802,7 @@ export function fetchRankedFinalSubscriptions(
 ): Promise<Array<PhaseAirdrop & { phase: string }>> {
   return sqlExecutor.execute<PhaseAirdrop & { phase: string }>(
     `SELECT phase, airdrop_address as wallet, subscribed_count as amount
-     FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
+     FROM ${(await subscriptionTables()).final}
      WHERE contract = :contract
        AND token_id = :tokenId
        AND ${phaseName === undefined ? 'phase IS NOT NULL' : 'phase = :phaseName'}
@@ -820,7 +820,7 @@ export async function hasUnassignedFinalSubscriptions(
   ctx: RequestContext
 ): Promise<boolean> {
   const row = await sqlExecutor.oneOrNull<{ id: number }>(
-    `SELECT id FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
+    `SELECT id FROM ${(await subscriptionTables()).final}
      WHERE contract = :contract AND token_id = :tokenId AND phase IS NULL
      LIMIT 1`,
     { contract, tokenId },
