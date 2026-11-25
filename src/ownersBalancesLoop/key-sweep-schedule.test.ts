@@ -57,6 +57,16 @@ describe('ownersBalancesLoop key sweep', () => {
     expect(sweepHoldingsKeys).not.toHaveBeenCalled();
   });
 
+  it('sweeps when the run started at minute 0, even if the balances end after it', async () => {
+    at(0);
+    // The balances pass ends at minute 2.
+    jest.mocked(updateOwnerBalances).mockImplementationOnce(async () => {
+      at(2);
+    });
+    await invoke({ source: 'aws.events' });
+    expect(sweepHoldingsKeys).toHaveBeenCalledWith({ repair: true });
+  });
+
   it('keeps the balances run when the sweep fails', async () => {
     at(0);
     jest.mocked(sweepHoldingsKeys).mockRejectedValueOnce(new Error('timeout'));

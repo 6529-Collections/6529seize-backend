@@ -34,11 +34,14 @@ export const handler = sentryContext.wrapLambdaHandler(
             ...(await sweepHoldingsKeys({ repair: sweepAction.repair }))
           };
         }
+        // The minute the scheduled run started, so a balances pass that ends
+        // after it still sweeps.
+        const startedAtMinute = new Date(Time.currentMillis()).getUTCMinutes();
         await retryPendingSubscriptionCacheInvalidations();
         await updateOwnerBalances(process.env.OWNER_BALANCES_RESET == 'true');
         if (
           appFeatures.isHoldingsMembershipQueueEnabled() &&
-          new Date(Time.currentMillis()).getUTCMinutes() === KEY_SWEEP_MINUTE
+          startedAtMinute === KEY_SWEEP_MINUTE
         ) {
           try {
             await sweepHoldingsKeys({ repair: true });
