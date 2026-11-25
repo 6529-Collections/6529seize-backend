@@ -56,6 +56,10 @@ a job the function knows, or it fails. Each export:
 
 Each job's own section adds its own rules.
 
+The waves export (`6529 run waves:export`, src/waves-export) runs there too,
+as the `wavesExport` job, with the export's own reading rules rather than
+the list above. See "Waves export" at the end.
+
 The switch owner is the person in charge of the identity switch. Where this
 file leaves something to a decision, such as accepting a refused reading or
 choosing between two runs, the switch owner decides.
@@ -174,18 +178,19 @@ name made first in another account would be refused: every call names this
 account as the expected owner.
 
 The bucket policy allows the function role (`lambda-vpc-role`) to read the
-bucket's public access block and policy status, and to put and get objects
-under `profile-site-export/` and `identity-export/`. It denies CloudFront's
-service principal and plain HTTP. Objects expire after 30 days.
+bucket's public access block and policy status, to put and get objects
+under `profile-site-export/`, `identity-export/` and `waves-export/`, and to
+list `waves-export/` only. It denies CloudFront's service principal and
+plain HTTP. Objects expire after 30 days.
 
 In one account, a bucket policy's Allow adds to what an identity's own
 policies grant; it does not narrow them. Identities in the account whose
 own policies allow S3 on every bucket can reach this one too, as with any
 bucket in the account.
 
-The function may not list the bucket, so S3 answers a read of a key that
-doesn't exist with 403 rather than 404. The export reports such a read as
-"no manifest".
+Outside `waves-export/` the function may not list the bucket, so S3
+answers a read of a key that doesn't exist with 403 rather than 404. The
+export reports such a read as "no manifest".
 
 ## The freeze setting, before Monday
 
@@ -706,3 +711,65 @@ again.
   gateways) and an Ethereum RPC for Safe signatures, as the CLI does. So the
   function's VPC subnets need outbound internet access, as the other loops
   that fetch from the network have.
+
+## Waves export
+
+The `wavesExport` job runs the waves export's stages
+(src/dbDumpsDaily/waves-export.handler.ts) through the command line's own
+run, one stage at a time with `--resume`, into the function's /tmp. Each
+invocation works for 12 minutes at most (`workSeconds`), then uploads what
+it finished and answers `{"done": false, "next": ...}`. Invoke it again
+with the same event until it answers `{"done": true, ...}` with its links.
+
+- **Event:** `freezeAt` (the waves freeze) or `rehearsal: true` with `run`
+  (a name of its own); optional `revision`, `waves` (a list of wave ids),
+  `run`, `concurrency`, `pageSize`, `bothMetric`, `allowFailedWaves` and
+  `workSeconds` (60 to 840, default 720). `replicaLagCheckedBy` and
+  `replicaLagCheckNote` are for a person only, as the CLI's options are:
+  the job takes them from the event that gives them and never keeps them.
+- **What it leaves out:** every wave that stays on 6529.io (src/waves-scope:
+  members-only, a direct message, the signed records wave, made after the
+  waves freeze, its chat off with no admin group, a wave that uses a group
+  that stays (hidden, private, a direct message's, made after the freeze,
+  or gone), or a wave under one that stays), whole, with its decisions,
+  entries, votes, wave REP, polls, drops and curations; `export.json` counts
+  them by reason. A rehearsal has no freeze, so nothing counts as made after
+  it. The records wave is `SIGNED_RECORDS_WAVE_ID` from the function's
+  settings, or the event's optional `recordsWaveId`; `"none"` says there is
+  no records wave, and export.json records that. With neither, the export
+  refuses.
+- **Checks, every invocation:** the bucket's privacy, as above; the
+  export's own start time (five minutes after the freeze); and, in every
+  run of a stage, the export's replica lag and read-only checks. The job
+  points the export's DB settings (`DB_HOST`, or `DB_IAM_HOST` in IAM mode)
+  at the read replica's for its runs and puts them back after.
+- **Where:** `waves-export/<stage>/freeze-<freeze>[-<run>]/` or
+  `waves-export/<stage>/rehearsal-<run>/`. `job.json` is the run's state:
+  its inputs, the stages done, and every file uploaded with its size and
+  sha256. `raw/` is the export's OUT/raw, the run log
+  (`raw/export_runs.json`) included, so one freeze per OUT holds across
+  invocations. A file is uploaded whole once the export has put it in
+  place, and is part of the export once `job.json` lists it. A wave's drops
+  file listed there is kept by the next invocation's `--resume`.
+- **When done:** `manifest.json` lists every file with its size and sha256.
+  Each invocation of a finished run writes a new `links-<time>.json`, with
+  a presigned link for every file, and answers with links to the manifest,
+  that links file, `export.json` and the run log, each valid for 6 hours at
+  most. Only the files the manifest lists are the export.
+- **Cut off:** an invocation the function's time limit ends leaves its last
+  saved state; the next invocation goes on from it. After two in a row in
+  one stage with no file finished, the job refuses: the stage, or one
+  wave's drops, takes longer than an invocation, and the command line has
+  to run the export instead.
+- **Upload link:** an event with `"action": "upload-link"`, a `name` and
+  optionally `seconds` (beside `"job": "wavesExport"`) runs no export and
+  reads no database. After the bucket's privacy check, refusing on any
+  doubt, it answers
+  `{"putUrl", "key", "expiresAt"}`: a presigned PUT of
+  `waves-export/<stage>/uploads/<run>-<name>`, where `<run>` is the call's
+  own UTC time and request id, so a second link never names an earlier
+  upload. The upload needs only the link: `curl -T <file> "<putUrl>"`.
+  `name` is a plain file name (letters, digits, `.`, `_` and `-`, 1 to 100,
+  no `..`); `seconds` is 60 to 21600, 7200 when not given, and the link can
+  stop sooner when the function's credentials do. The log names the key and
+  the expiry, never the link.
