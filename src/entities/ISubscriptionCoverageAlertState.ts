@@ -1,10 +1,17 @@
-import { SUBSCRIPTION_COVERAGE_ALERT_STATES_TABLE } from '@/constants';
+import {
+  CONSOLIDATION_KEY_LENGTH,
+  SUBSCRIPTION_COVERAGE_ALERT_STATES_TABLE
+} from '@/constants';
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 
 @Entity(SUBSCRIPTION_COVERAGE_ALERT_STATES_TABLE)
 @Index('idx_sc_alert_status_updated', ['current_status', 'updated_at'])
 export class SubscriptionCoverageAlertStateEntity {
-  @PrimaryColumn({ type: 'varchar', length: 200, nullable: false })
+  @PrimaryColumn({
+    type: 'varchar',
+    length: CONSOLIDATION_KEY_LENGTH,
+    nullable: false
+  })
   readonly consolidation_key!: string;
 
   @Column({ type: 'varchar', length: 32, nullable: false })

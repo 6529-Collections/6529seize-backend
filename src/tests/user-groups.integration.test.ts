@@ -373,11 +373,36 @@ describeWithSeed(
     ])
   ],
   () => {
-    const userGroupsService = new UserGroupsService(
-      new UserGroupsDb(() => sqlExecutor),
-      mock(),
-      mock()
-    );
+    const groupsDb = new UserGroupsDb(() => sqlExecutor);
+    const userGroupsService = new UserGroupsService(groupsDb, mock());
+
+    it('commits a group save receipt once and rejects reuse for another change', async () => {
+      const requestId = 'a'.repeat(64);
+      const payloadHash = 'b'.repeat(64);
+      const save = () =>
+        groupsDb.executeNativeQueriesInTransaction(async (connection) => {
+          const replayed = await groupsDb.reserveVisibilityRequest(
+            requestId,
+            payloadHash,
+            connection
+          );
+          if (!replayed)
+            await groupsDb.completeVisibilityRequest(requestId, connection);
+          return replayed;
+        });
+
+      const results = await Promise.all([save(), save()]);
+      expect(results.filter((replayed) => replayed)).toHaveLength(1);
+      await expect(
+        groupsDb.executeNativeQueriesInTransaction(async (connection) =>
+          groupsDb.reserveVisibilityRequest(
+            requestId,
+            'c'.repeat(64),
+            connection
+          )
+        )
+      ).rejects.toThrow('Idempotency key was used for a different group save');
+    });
 
     describe('identity is in groups', () => {
       async function expectIdentityToBeInExactGroups(

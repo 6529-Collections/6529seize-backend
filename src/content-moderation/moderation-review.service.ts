@@ -1,4 +1,4 @@
-import { BadRequestException } from '@/exceptions';
+import { BadRequestException, NotFoundException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
 import { contentModerationDb } from './content-moderation.db';
 import {
@@ -78,7 +78,7 @@ function publishedActions(
   suppressed: boolean
 ): ModerationAction[] {
   if (item.subject_type === 'DROP') return ['QUARANTINE', 'REMOVE', 'RESTORE'];
-  if (['PROFILE_BIO', 'GROUP_NAME'].includes(item.subject_type))
+  if (item.subject_type === 'PROFILE_BIO')
     return [suppressed ? 'RESTORE' : 'SUPPRESS'];
   return [];
 }
@@ -123,7 +123,7 @@ function canRestoreSuppressedField(
     !!moderationText(item.scope.published_revision) &&
     matches &&
     suppressed &&
-    ['PROFILE_BIO', 'GROUP_NAME'].includes(item.subject_type)
+    item.subject_type === 'PROFILE_BIO'
   );
 }
 function currentPolicy(item: ModerationItem) {
@@ -255,9 +255,20 @@ export class ModerationReviewService {
     return this.detail(item.id, ctx);
   }
 
+  private async getReviewableCheck(
+    id: string,
+    ctx: RequestContext,
+    lock = false
+  ): Promise<ModerationItem> {
+    const item = await this.db.get(id, ctx, lock);
+    if (item.subject_type === 'GROUP_NAME')
+      throw new NotFoundException('Moderation check not found');
+    return item;
+  }
+
   async detail(id: string, ctx: RequestContext) {
     await assertModerationDeveloper(ctx);
-    const item = await this.db.get(id, ctx);
+    const item = await this.getReviewableCheck(id, ctx);
     const history = await this.db.history(id, ctx);
     const current = await this.db.currentRevision(item, ctx);
     const publishedRevision = moderationText(item.scope.published_revision);
@@ -322,7 +333,7 @@ export class ModerationReviewService {
     if (
       !item.published_subject_id ||
       !revision ||
-      !['PROFILE_BIO', 'GROUP_NAME'].includes(item.subject_type)
+      item.subject_type !== 'PROFILE_BIO'
     )
       return false;
     return this.db.isSuppressed(
@@ -366,8 +377,8 @@ export class ModerationReviewService {
     }
     await this.db.executeNativeQueriesInTransaction(async (connection) => {
       const tx = { ...ctx, connection };
-      await this.db.lockSubject(await this.db.get(id, tx), tx);
-      const item = await this.db.get(id, tx, true);
+      await this.db.lockSubject(await this.getReviewableCheck(id, tx), tx);
+      const item = await this.getReviewableCheck(id, tx, true);
       if (await this.checkIdempotency(item, input, actor, actionId, tx)) return;
       await this.checkAction(item, input, tx);
       await this.applyContentAction(
@@ -430,8 +441,8 @@ export class ModerationReviewService {
   ) {
     return this.db.executeNativeQueriesInTransaction(async (connection) => {
       const tx = { ...ctx, connection };
-      await this.db.lockSubject(await this.db.get(id, tx), tx);
-      const item = await this.db.get(id, tx, true);
+      await this.db.lockSubject(await this.getReviewableCheck(id, tx), tx);
+      const item = await this.getReviewableCheck(id, tx, true);
       if (await this.checkIdempotency(item, input, actor, actionId, tx))
         return null;
       await this.checkAction(item, input, tx);
@@ -594,7 +605,7 @@ export class ModerationReviewService {
         handle,
         profile_type: moderationText(item.scope.profile_type)
       });
-    return aiBasedAbusivenessDetector.checkUserGroupName({ text, handle });
+    throw new BadRequestException('Unsupported public-field subject');
   }
 }
 export const moderationReviewService = new ModerationReviewService(

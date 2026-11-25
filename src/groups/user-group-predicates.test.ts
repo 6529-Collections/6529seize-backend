@@ -1905,6 +1905,36 @@ describe('UserGroupPredicates', () => {
         false
       );
     });
+    it("leaves the help bot's credits out of a user's total REP from switch-on", () => {
+      const group = aGroup({
+        rep_user: 'help-bot',
+        rep_direction: FilterDirection.Received,
+        rep_min: 1
+      });
+      const credits = [
+        {
+          other_side_id: 'help-bot',
+          matter: RateMatter.REP,
+          matter_category: 'Help6529 Credits',
+          rating: 5
+        }
+      ];
+      const original = process.env.FEATURE_IDENTITY_ON_CHAIN;
+      try {
+        delete process.env.FEATURE_IDENTITY_ON_CHAIN;
+        expect(isGroupViolatingAnySpecificRepCriteria(group, credits, [])).toBe(
+          false
+        );
+        process.env.FEATURE_IDENTITY_ON_CHAIN = 'true';
+        expect(isGroupViolatingAnySpecificRepCriteria(group, credits, [])).toBe(
+          true
+        );
+      } finally {
+        if (original === undefined)
+          delete process.env.FEATURE_IDENTITY_ON_CHAIN;
+        else process.env.FEATURE_IDENTITY_ON_CHAIN = original;
+      }
+    });
     it('should check outgoing user rep criteria', () => {
       expect(
         isGroupViolatingAnySpecificRepCriteria(

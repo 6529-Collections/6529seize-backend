@@ -23,10 +23,16 @@ import { WaveType } from '@/entities/IWave';
 import { DropType } from '@/entities/IDrop';
 import { competitionAnonymityService } from '@/competitions/competition-anonymity';
 import { ApiLightDrop } from '@/api/generated/models/ApiLightDrop';
+import { stubWavesScope } from '@/tests/fixtures/waves-scope.fixture';
 
 afterEach(() => {
   jest.clearAllMocks();
   jest.restoreAllMocks();
+});
+
+// Waves scope lookups read the database; here every wave moves.
+beforeEach(() => {
+  stubWavesScope();
 });
 
 describe('DropsApiService', () => {
