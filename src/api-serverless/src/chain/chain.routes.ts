@@ -8,6 +8,7 @@ import {
   RelaySubmitRequest
 } from '@/chain-relay/chain-relay.service';
 import { PendingOperation } from '@/chain-relay/chain-pending-operations.db';
+import { assertRelayedPollCreationOpen } from '@/waves-freeze/waves-chain-polls';
 
 /**
  * Operations people sign with their wallets for the 6529 chain: relayed to
@@ -175,6 +176,8 @@ router.post(
   async (req: Request<any, any, SubmitBody>, res: Response) => {
     getWalletOrThrow(req);
     const body = getValidatedByJoiOrThrow(req.body, SubmitSchema);
+    // No POLL_CREATE from the switch-on until 6529.io shows the chain's polls.
+    assertRelayedPollCreationOpen(body.signed ?? body.unsigned!);
     const request: RelaySubmitRequest = body.signed
       ? { signed: body.signed, txId: body.tx_id }
       : {

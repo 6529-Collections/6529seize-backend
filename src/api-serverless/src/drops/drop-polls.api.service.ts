@@ -29,6 +29,7 @@ import { DropType } from '@/entities/IDrop';
 import { DropPollEntity, DropPollOptionEntity } from '@/entities/IDropPoll';
 import { WaveEntity } from '@/entities/IWave';
 import { assertWaveWritable } from '@/waves-freeze/waves-freeze-scope';
+import { assertPollCreationOpen } from '@/waves-freeze/waves-chain-polls';
 import {
   BadRequestException,
   ForbiddenException,
@@ -101,8 +102,9 @@ export class DropPollsApiService {
       return;
     }
     // Polls move to the 6529 chain with their wave: none are made in a
-    // moving wave once waves are frozen. A staying wave takes them.
-    await assertWaveWritable(waveId, ctx);
+    // moving wave once waves are frozen, nor from the switch-on until
+    // 6529.io shows the chain's polls. A staying wave takes them.
+    await assertPollCreationOpen(waveId, ctx);
     if (dropType !== DropType.CHAT) {
       throw new BadRequestException(`Polls can only be created on chat drops`);
     }
@@ -132,9 +134,10 @@ export class DropPollsApiService {
         `Poll responses can only be restricted to droppers when chat is enabled`
       );
     }
-    // In the drop's transaction, after its writes and locks: the freeze may
-    // have started meanwhile, so check again right before the poll is made.
-    await assertWaveWritable(waveId, ctx);
+    // In the drop's transaction, after its writes and locks: the freeze or
+    // the switch-on may have come meanwhile, so check again right before the
+    // poll is made.
+    await assertPollCreationOpen(waveId, ctx);
     await this.dropPollsDb.createPoll(
       {
         id: randomUUID(),
