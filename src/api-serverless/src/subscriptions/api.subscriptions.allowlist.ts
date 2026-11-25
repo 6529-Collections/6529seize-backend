@@ -7,6 +7,7 @@ import { DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES } from '@/airdrop-phases';
 import {
   DISTRIBUTION_NORMALIZED_TABLE,
   DISTRIBUTION_TABLE,
+  DROP_FORGE_PREPARATIONS_TABLE,
   MEMES_CONTRACT,
   MINTING_MERKLE_PROOFS_TABLE,
   MINTING_MERKLE_ROOTS_TABLE,
@@ -423,31 +424,33 @@ async function reportPhase(
 /**
  * In shadow, splits the identity rows on their own and compares them with
  * the legacy pull, and reports.
- * The callers run it in its own transaction once the caller's transaction
- * has committed (afterCommitAwaited), never when it rolls back, so the
- * shadow can't fail or roll back the legacy pull; it still finishes, or
- * records its failure, before the caller returns.
+ * The callers run it once the caller's transaction has committed
+ * (afterCommitAwaited), never when it rolls back, so the shadow can't fail
+ * or roll back the legacy pull; it still finishes, or records its failure,
+ * before the caller returns. The split runs in a transaction of its own on
+ * the primary, holding the card's Drop Forge preparation row as the pulls
+ * and the reset do, so it reads the identity rows as the last pull or reset
+ * left them, and the next one waits for it.
  */
 async function shadowSplit(
-  mode: IdentityWriteMode,
   contract: string,
   tokenId: number,
   phaseName: string,
   legacy: ResultsResponse[],
-  split: () => Promise<ResultsResponse[]>
+  split: (ctx: RequestContext) => Promise<ResultsResponse[]>
 ): Promise<void> {
-  if (mode !== 'SHADOW') {
-    return;
-  }
   try {
-    await reportPhase(
-      mode,
-      contract,
-      tokenId,
-      phaseName,
-      legacy,
-      await split()
+    const identity = await sqlExecutor.executeNativeQueriesInTransaction(
+      async (connection) => {
+        await sqlExecutor.execute(
+          `SELECT id FROM ${DROP_FORGE_PREPARATIONS_TABLE} WHERE id = :id FOR UPDATE`,
+          { id: `${contract.toLowerCase()}:${tokenId}` },
+          { wrappedConnection: connection }
+        );
+        return split({ connection });
+      }
     );
+    await reportPhase('SHADOW', contract, tokenId, phaseName, legacy, identity);
   } catch (error) {
     // The shadow never stops the legacy pull; the gate sees the failure.
     shadowLogger.error(`[SHADOW PHASE SPLIT FAILED] [${phaseName}]`, error);
@@ -478,12 +481,11 @@ export async function splitAllowlistResults(
   if (mode === 'SHADOW') {
     await afterCommitAwaited(ctx.connection, () =>
       shadowSplit(
-        mode,
         contract,
         tokenId,
         phaseName,
         result.airdrops,
-        async () =>
+        async (splitCtx) =>
           (
             await splitAllowlistResultsOn(
               contract,
@@ -491,7 +493,8 @@ export async function splitAllowlistResults(
               phaseName,
               results,
               IDENTITY_SUBSCRIPTION_TABLES,
-              [IDENTITY_SUBSCRIPTION_TABLES.final]
+              [IDENTITY_SUBSCRIPTION_TABLES.final],
+              splitCtx
             )
           ).airdrops
       )
@@ -577,18 +580,18 @@ export async function getPublicSubscriptions(
   if (mode === 'SHADOW') {
     await afterCommitAwaited(ctx.connection, () =>
       shadowSplit(
-        mode,
         contract,
         tokenId,
         'Public',
         result.airdrops,
-        async () =>
+        async (splitCtx) =>
           (
             await getPublicSubscriptionsOn(
               contract,
               tokenId,
               IDENTITY_SUBSCRIPTION_TABLES,
-              [IDENTITY_SUBSCRIPTION_TABLES.final]
+              [IDENTITY_SUBSCRIPTION_TABLES.final],
+              splitCtx
             )
           ).airdrops
       )
@@ -768,6 +771,13 @@ export async function resetAllowlist(contract: string, tokenId: number) {
     try {
       await sqlExecutor.executeNativeQueriesInTransaction(
         async (wrappedConnection) => {
+          // Held as the pulls and their shadow splits hold it, so a pull
+          // can't land between this reset's read and its write.
+          await sqlExecutor.execute(
+            `SELECT id FROM ${DROP_FORGE_PREPARATIONS_TABLE} WHERE id = :id FOR UPDATE`,
+            { id: `${contractLower}:${tokenId}` },
+            { wrappedConnection }
+          );
           const resetBefore = await phaseResetBefore(contract, tokenId, {
             wrappedConnection
           });
