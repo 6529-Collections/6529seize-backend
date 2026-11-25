@@ -15,6 +15,8 @@ import {
   administerCompetitionWave,
   lockNativeCompetition
 } from './competition-command-access';
+import { WavesFrozenException } from '@/waves-freeze/waves-freeze';
+import { wavesScopeService } from '@/waves-scope/waves-scope.service';
 
 jest.mock('@/api/identities/identity.fetcher', () => ({ identityFetcher: {} }));
 jest.mock('@/api/waves/wave.api.service', () => ({
@@ -281,4 +283,73 @@ it('allows approval threshold and hold edits after voting while preserving pendi
     jest.mocked(competitionCommandRepository.saveCompetition).mock
       .invocationCallOrder[0]
   );
+});
+
+describe('while waves are frozen', () => {
+  const names = [
+    'FEATURE_WAVES_FROZEN',
+    'FEATURE_WAVES_FREEZE_KEEP_MAIN_STAGE'
+  ];
+  const saved: Record<string, string | undefined> = {};
+  let stays = false;
+  beforeEach(() => {
+    for (const name of names) saved[name] = process.env[name];
+    process.env.FEATURE_WAVES_FROZEN = 'true';
+    process.env.FEATURE_WAVES_FREEZE_KEEP_MAIN_STAGE = 'true';
+    stays = false;
+    jest
+      .spyOn(wavesScopeService, 'waveStays')
+      .mockImplementation(async () => stays);
+    // The Main Stage the freeze keeps running, on a wave that moves.
+    jest.mocked(lockNativeCompetition).mockResolvedValue({
+      record,
+      competition: {
+        id: 'competition',
+        wave_id: 'wave',
+        capabilities: ['MAIN_STAGE']
+      }
+    } as never);
+  });
+  afterEach(() => {
+    jest.restoreAllMocks();
+    for (const name of names) {
+      if (saved[name] === undefined) delete process.env[name];
+      else process.env[name] = saved[name];
+    }
+  });
+
+  it('refuses an edit that would make the wave stay on 6529.io', async () => {
+    jest
+      .mocked(competitionCommandRepository.saveCompetition)
+      .mockImplementation(async () => {
+        stays = true;
+      });
+    await expect(
+      update({
+        ...original,
+        participation: {
+          ...original.participation,
+          scope: { group_id: 'hidden-group' }
+        }
+      })
+    ).rejects.toBeInstanceOf(WavesFrozenException);
+    expect(
+      nativeCompetitionRuntimeRepository.enqueueEvent
+    ).not.toHaveBeenCalled();
+  });
+
+  it('lets through an edit that leaves the wave on its side', async () => {
+    jest
+      .mocked(competitionCommandRepository.saveCompetition)
+      .mockResolvedValue(undefined as never);
+    await update({
+      ...original,
+      participation: {
+        ...original.participation,
+        scope: { group_id: 'new-participants' }
+      }
+    });
+    expect(competitionCommandRepository.saveCompetition).toHaveBeenCalled();
+    expect(wavesScopeService.waveStays).toHaveBeenCalledWith('wave', {});
+  });
 });

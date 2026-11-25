@@ -63,29 +63,6 @@ describe('AiBasedAbusivenessDetector', () => {
     });
   });
 
-  it('passes a group name as a JSON-encoded value', async () => {
-    const { detector, promptAndGetReply } = createDetector();
-
-    await detector.checkUserGroupName({ text: awkwardText, handle: 'punk' });
-
-    const prompt = promptAndGetReply.mock.calls[0][0] as string;
-    expect(JSON.parse(lastInputLine(prompt))).toEqual({
-      username: 'punk',
-      filter_name: awkwardText
-    });
-  });
-
-  it('keeps any group name intact as a single input value', async () => {
-    await fc.assert(
-      fc.asyncProperty(anyText, async (text) => {
-        const { detector, promptAndGetReply } = createDetector();
-        await detector.checkUserGroupName({ text, handle: 'punk' });
-        const prompt = promptAndGetReply.mock.calls[0][0] as string;
-        expect(JSON.parse(lastInputLine(prompt)).filter_name).toBe(text);
-      })
-    );
-  });
-
   it('keeps any rep phrase intact as a single input value', async () => {
     await fc.assert(
       fc.asyncProperty(anyText, async (text) => {

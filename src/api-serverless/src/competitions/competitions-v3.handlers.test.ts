@@ -24,6 +24,7 @@ import { ApiCompetitionComputedPhase } from '@/api/generated/models/ApiCompetiti
 import { ApiCompetitionCapability } from '@/api/generated/models/ApiCompetitionCapability';
 import { ApiCompetitionParticipationConfigRequiredMediaEnum } from '@/api/generated/models/ApiCompetitionParticipationConfig';
 import { BadRequestException } from '@/exceptions';
+import { stubWavesScope } from '@/tests/fixtures/waves-scope.fixture';
 
 jest.mock('./competition-entry-context.reader', () => ({
   readCompetitionEntryContexts: jest.fn()
@@ -125,6 +126,11 @@ const publicCompetition: PublicCompetition = {
   cancelled_at: null,
   archived_at: null
 };
+
+// Waves scope lookups read the database; here every wave moves.
+beforeEach(() => {
+  stubWavesScope();
+});
 
 describe('competition v3 handlers', () => {
   const authenticationContext = { id: 'auth-context' };

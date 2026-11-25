@@ -10,7 +10,15 @@ import { ProfileCmsAgentGrantEntity } from '@/entities/IProfileCmsAgentGrant';
 import { ProfileCmsAgentProposalEntity } from '@/entities/IProfileCmsAgentProposal';
 import { ProfileCmsAgentEventEntity } from '@/entities/IProfileCmsAgentEvent';
 import { RequestContext } from '@/request.context';
-import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
+import {
+  dbSupplier,
+  LazyDbAccessCompatibleService,
+  SqlExecutor
+} from '@/sql-executor';
+import {
+  ProfileCmsPrivateLog,
+  profileCmsPrivateLog
+} from '@/profile-cms/personal-log/profile-cms-private-log';
 
 export type CmsAgentProposalSummary = Omit<
   ProfileCmsAgentProposalEntity,
@@ -18,6 +26,16 @@ export type CmsAgentProposalSummary = Omit<
 >;
 
 export class ProfileCmsAgentGrantsDb extends LazyDbAccessCompatibleService {
+  constructor(
+    supplier: () => SqlExecutor = dbSupplier,
+    private readonly privateLog: Pick<
+      ProfileCmsPrivateLog,
+      'logged'
+    > = profileCmsPrivateLog
+  ) {
+    super(supplier);
+  }
+
   async walletOwnsProfile(
     wallet: string,
     profileId: string,
@@ -52,15 +70,21 @@ export class ProfileCmsAgentGrantsDb extends LazyDbAccessCompatibleService {
     grant: ProfileCmsAgentGrantEntity,
     ctx: RequestContext
   ): Promise<void> {
-    await this.query(
-      'insertGrant',
-      `insert into ${PROFILE_CMS_AGENT_GRANTS_TABLE}
-      (id, profile_id, draft_id, package_id, base_version, base_package_hash, issued_by_wallet,
-       token_hash, label, created_at, expires_at, revoked_at, request_count, proposal_count)
-      values (:id, :profile_id, :draft_id, :package_id, :base_version, :base_package_hash,
-       :issued_by_wallet, :token_hash, :label, :created_at, :expires_at, :revoked_at, :request_count, :proposal_count)`,
-      { ...grant },
-      ctx
+    await this.privateLog.logged(
+      ctx,
+      [['cms.agent-grant', grant.id]],
+      async (txCtx) => {
+        await this.query(
+          'insertGrant',
+          `insert into ${PROFILE_CMS_AGENT_GRANTS_TABLE}
+        (id, profile_id, draft_id, package_id, base_version, base_package_hash, issued_by_wallet,
+         token_hash, label, created_at, expires_at, revoked_at, request_count, proposal_count)
+        values (:id, :profile_id, :draft_id, :package_id, :base_version, :base_package_hash,
+         :issued_by_wallet, :token_hash, :label, :created_at, :expires_at, :revoked_at, :request_count, :proposal_count)`,
+          { ...grant },
+          txCtx
+        );
+      }
     );
   }
 
@@ -81,12 +105,18 @@ export class ProfileCmsAgentGrantsDb extends LazyDbAccessCompatibleService {
   }
 
   async revoke(id: string, now: number, ctx: RequestContext): Promise<void> {
-    await this.query(
-      'revoke',
-      `update ${PROFILE_CMS_AGENT_GRANTS_TABLE}
-      set revoked_at = :now where id = :id and revoked_at is null`,
-      { id, now },
-      ctx
+    await this.privateLog.logged(
+      ctx,
+      [['cms.agent-grant', id]],
+      async (txCtx) => {
+        await this.query(
+          'revoke',
+          `update ${PROFILE_CMS_AGENT_GRANTS_TABLE}
+        set revoked_at = :now where id = :id and revoked_at is null`,
+          { id, now },
+          txCtx
+        );
+      }
     );
   }
 
@@ -162,27 +192,36 @@ export class ProfileCmsAgentGrantsDb extends LazyDbAccessCompatibleService {
     proposal: ProfileCmsAgentProposalEntity,
     ctx: RequestContext
   ): Promise<void> {
-    await this.query(
-      'insertProposal',
-      `insert into ${PROFILE_CMS_AGENT_PROPOSALS_TABLE}
-      (id, grant_id, profile_id, draft_id, base_version, base_package_hash, candidate_package_hash,
-       idempotency_key, request_hash, summary, created_at, candidate_package,
-       status, reviewed_at, result_draft_id, result_package_hash)
-      values (:id, :grant_id, :profile_id, :draft_id, :base_version, :base_package_hash,
-       :candidate_package_hash, :idempotency_key, :request_hash, :summary, :created_at, :candidate_package,
-       :status, :reviewed_at, :result_draft_id, :result_package_hash)`,
-      {
-        ...proposal,
-        candidate_package: JSON.stringify(proposal.candidate_package)
-      },
-      ctx
-    );
-    await this.query(
-      'consumeProposal',
-      `update ${PROFILE_CMS_AGENT_GRANTS_TABLE}
-      set proposal_count = proposal_count + 1 where id = :id`,
-      { id: proposal.grant_id },
-      ctx
+    await this.privateLog.logged(
+      ctx,
+      [
+        ['cms.agent-proposal', proposal.id],
+        ['cms.agent-grant', proposal.grant_id]
+      ],
+      async (txCtx) => {
+        await this.query(
+          'insertProposal',
+          `insert into ${PROFILE_CMS_AGENT_PROPOSALS_TABLE}
+        (id, grant_id, profile_id, draft_id, base_version, base_package_hash, candidate_package_hash,
+         idempotency_key, request_hash, summary, created_at, candidate_package,
+         status, reviewed_at, result_draft_id, result_package_hash)
+        values (:id, :grant_id, :profile_id, :draft_id, :base_version, :base_package_hash,
+         :candidate_package_hash, :idempotency_key, :request_hash, :summary, :created_at, :candidate_package,
+         :status, :reviewed_at, :result_draft_id, :result_package_hash)`,
+          {
+            ...proposal,
+            candidate_package: JSON.stringify(proposal.candidate_package)
+          },
+          txCtx
+        );
+        await this.query(
+          'consumeProposal',
+          `update ${PROFILE_CMS_AGENT_GRANTS_TABLE}
+        set proposal_count = proposal_count + 1 where id = :id`,
+          { id: proposal.grant_id },
+          txCtx
+        );
+      }
     );
   }
 
@@ -207,13 +246,19 @@ export class ProfileCmsAgentGrantsDb extends LazyDbAccessCompatibleService {
     event: ProfileCmsAgentEventEntity,
     ctx: RequestContext
   ): Promise<void> {
-    await this.query(
-      'insertEvent',
-      `insert into ${PROFILE_CMS_AGENT_EVENTS_TABLE}
-      (id, profile_id, grant_id, proposal_id, event_type, actor_wallet, created_at)
-      values (:id, :profile_id, :grant_id, :proposal_id, :event_type, :actor_wallet, :created_at)`,
-      { ...event },
-      ctx
+    await this.privateLog.logged(
+      ctx,
+      [['cms.agent-event', event.id]],
+      async (txCtx) => {
+        await this.query(
+          'insertEvent',
+          `insert into ${PROFILE_CMS_AGENT_EVENTS_TABLE}
+        (id, profile_id, grant_id, proposal_id, event_type, actor_wallet, created_at)
+        values (:id, :profile_id, :grant_id, :proposal_id, :event_type, :actor_wallet, :created_at)`,
+          { ...event },
+          txCtx
+        );
+      }
     );
   }
 
@@ -221,19 +266,25 @@ export class ProfileCmsAgentGrantsDb extends LazyDbAccessCompatibleService {
     proposal: ProfileCmsAgentProposalEntity,
     ctx: RequestContext
   ): Promise<void> {
-    await this.query(
-      'recordReview',
-      `update ${PROFILE_CMS_AGENT_PROPOSALS_TABLE}
-      set status = :status, reviewed_at = :reviewed_at, result_draft_id = :result_draft_id,
-      result_package_hash = :result_package_hash where id = :id and status = 'pending'`,
-      {
-        id: proposal.id,
-        status: proposal.status,
-        reviewed_at: proposal.reviewed_at,
-        result_draft_id: proposal.result_draft_id,
-        result_package_hash: proposal.result_package_hash
-      },
-      ctx
+    await this.privateLog.logged(
+      ctx,
+      [['cms.agent-proposal', proposal.id]],
+      async (txCtx) => {
+        await this.query(
+          'recordReview',
+          `update ${PROFILE_CMS_AGENT_PROPOSALS_TABLE}
+        set status = :status, reviewed_at = :reviewed_at, result_draft_id = :result_draft_id,
+        result_package_hash = :result_package_hash where id = :id and status = 'pending'`,
+          {
+            id: proposal.id,
+            status: proposal.status,
+            reviewed_at: proposal.reviewed_at,
+            result_draft_id: proposal.result_draft_id,
+            result_package_hash: proposal.result_package_hash
+          },
+          txCtx
+        );
+      }
     );
   }
 
