@@ -1,5 +1,6 @@
 import {
   afterCommit,
+  afterCommitAwaited,
   closeAfterCommitScope,
   openAfterCommitScope,
   runAfterCommitCallbacks
@@ -55,6 +56,54 @@ describe('afterCommit', () => {
     await jest.advanceTimersByTimeAsync(1);
     await run;
     expect(settled).toBe(true);
+  });
+
+  it('waits in full for an awaited callback, past the budget, and the others only up to it', async () => {
+    jest.useFakeTimers();
+    const connection = {};
+    let awaitedDone = false;
+    openAfterCommitScope(connection);
+    await afterCommitAwaited({ connection }, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+      awaitedDone = true;
+    });
+    await afterCommit({ connection }, () => new Promise<void>(() => undefined));
+    let settled = false;
+    const run = runAfterCommitCallbacks(closeAfterCommitScope(connection)).then(
+      () => {
+        settled = true;
+      }
+    );
+
+    await jest.advanceTimersByTimeAsync(1_000);
+    expect(settled).toBe(false);
+    await jest.advanceTimersByTimeAsync(4_000);
+    await run;
+    expect(awaitedDone).toBe(true);
+    expect(settled).toBe(true);
+  });
+
+  it('runs an awaited callback at once without a tracked transaction, waits for it, and drops it on rollback', async () => {
+    const order: string[] = [];
+    await afterCommitAwaited(undefined, async () => {
+      await Promise.resolve();
+      order.push('ran');
+    });
+    order.push('returned');
+    expect(order).toEqual(['ran', 'returned']);
+
+    const connection = {};
+    const dropped = jest.fn();
+    openAfterCommitScope(connection);
+    await afterCommitAwaited({ connection }, dropped);
+    closeAfterCommitScope(connection);
+    expect(dropped).not.toHaveBeenCalled();
+  });
+
+  it('logs and swallows an awaited callback failure', async () => {
+    await expect(
+      afterCommitAwaited(undefined, () => Promise.reject(new Error('shadow')))
+    ).resolves.toBeUndefined();
   });
 
   it('swallows callback failures', async () => {

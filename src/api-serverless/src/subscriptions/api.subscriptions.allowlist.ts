@@ -20,6 +20,7 @@ import {
   CustomApiCompliantException
 } from '../../../exceptions';
 import { ConnectionWrapper, sqlExecutor } from '../../../sql-executor';
+import { afterCommitAwaited } from '@/db/after-commit';
 import { equalIgnoreCase } from '../../../strings';
 import { mergeDuplicateWallets } from '@/api/api-wallet-helpers';
 import { getAuthenticatedWalletOrNull } from '../auth/auth';
@@ -419,7 +420,14 @@ async function reportPhase(
   });
 }
 
-/** In shadow, splits the identity rows on their own and compares. */
+/**
+ * In shadow, splits the identity rows on their own and compares them with
+ * the legacy pull, and reports.
+ * The callers run it in its own transaction once the caller's transaction
+ * has committed (afterCommitAwaited), never when it rolls back, so the
+ * shadow can't fail or roll back the legacy pull; it still finishes, or
+ * records its failure, before the caller returns.
+ */
 async function shadowSplit(
   mode: IdentityWriteMode,
   contract: string,
@@ -467,25 +475,28 @@ export async function splitAllowlistResults(
     targets,
     ctx
   );
-  await shadowSplit(
-    mode,
-    contract,
-    tokenId,
-    phaseName,
-    result.airdrops,
-    async () =>
-      (
-        await splitAllowlistResultsOn(
-          contract,
-          tokenId,
-          phaseName,
-          results,
-          IDENTITY_SUBSCRIPTION_TABLES,
-          [IDENTITY_SUBSCRIPTION_TABLES.final],
-          ctx
-        )
-      ).airdrops
-  );
+  if (mode === 'SHADOW') {
+    await afterCommitAwaited(ctx.connection, () =>
+      shadowSplit(
+        mode,
+        contract,
+        tokenId,
+        phaseName,
+        result.airdrops,
+        async () =>
+          (
+            await splitAllowlistResultsOn(
+              contract,
+              tokenId,
+              phaseName,
+              results,
+              IDENTITY_SUBSCRIPTION_TABLES,
+              [IDENTITY_SUBSCRIPTION_TABLES.final]
+            )
+          ).airdrops
+      )
+    );
+  }
   return result;
 }
 
@@ -563,23 +574,26 @@ export async function getPublicSubscriptions(
     targets,
     ctx
   );
-  await shadowSplit(
-    mode,
-    contract,
-    tokenId,
-    'Public',
-    result.airdrops,
-    async () =>
-      (
-        await getPublicSubscriptionsOn(
-          contract,
-          tokenId,
-          IDENTITY_SUBSCRIPTION_TABLES,
-          [IDENTITY_SUBSCRIPTION_TABLES.final],
-          ctx
-        )
-      ).airdrops
-  );
+  if (mode === 'SHADOW') {
+    await afterCommitAwaited(ctx.connection, () =>
+      shadowSplit(
+        mode,
+        contract,
+        tokenId,
+        'Public',
+        result.airdrops,
+        async () =>
+          (
+            await getPublicSubscriptionsOn(
+              contract,
+              tokenId,
+              IDENTITY_SUBSCRIPTION_TABLES,
+              [IDENTITY_SUBSCRIPTION_TABLES.final]
+            )
+          ).airdrops
+      )
+    );
+  }
   return result;
 }
 

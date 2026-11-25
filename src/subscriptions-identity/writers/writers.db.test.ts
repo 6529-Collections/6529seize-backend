@@ -35,7 +35,12 @@ import {
   deferSubscriptionWrites,
   executorSink
 } from '@/subscription-key-width/subscription-deferred-writes';
-import { getPublicSubscriptions } from '@/api/subscriptions/api.subscriptions.allowlist';
+import {
+  getPublicSubscriptions,
+  resetAllowlist
+} from '@/api/subscriptions/api.subscriptions.allowlist';
+import { dropForgePreparationRepository } from '@/drop-forge/drop-forge.preparation.repository';
+import * as journalModule from '../timeline/journal';
 import { updateSubscriptions } from '@/subscriptionsDaily/subscriptions';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { redeemSubscriptions } from '@/transactionsProcessingLoop/subscriptions';
@@ -2780,3 +2785,221 @@ describeWithSeed('identity writers after the switch', [], () => {
     ).toBe(0.75);
   });
 });
+
+describeWithSeed(
+  'phase pulls on the distribution preparation transaction',
+  [],
+  () => {
+    beforeEach(() => {
+      published.clear();
+      uploadFile.mockReset().mockImplementation(async (bytes: Buffer) => {
+        const url = `https://example.test/file-${published.size}`;
+        published.set(url, bytes.toString('utf8'));
+        return { url };
+      });
+      closerPosts = true;
+    });
+    afterEach(() => {
+      delete process.env[SHADOW_ENV];
+      subscriptionsIdentitySwitch.invalidate();
+    });
+
+    /** A phase pull as the routes and Drop Forge's worker run it. */
+    const pullInPreparation = <T>(
+      pull: (ctx: { connection?: any }) => Promise<T>
+    ) =>
+      dropForgePreparationRepository.run(
+        MEMES_CONTRACT,
+        CARD,
+        (_, ctx) => pull(ctx),
+        {},
+        false,
+        false,
+        'MANUAL'
+      );
+    const journalPhases = async () =>
+      (
+        await sqlExecutor.execute<{ entry: string }>(
+          `SELECT entry FROM ${SIGNED_RECORD_LOG_ENTRIES_TABLE} WHERE lane = 'subs' ORDER BY id`
+        )
+      )
+        .map((r) => JSON.parse(r.entry).body)
+        .filter((b: any) => b?.kind === 'phase');
+    const counter = async () => {
+      const rows = await sqlExecutor.execute<{ block: number }>(
+        `SELECT block FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id = 'journal'`
+      );
+      return rows.length ? Number(rows[0].block) : 0;
+    };
+    const phases = async (table: string, key: string) =>
+      (await finalIds(table, key)).map((r) => [Number(r.id), r.phase]);
+    const phaseReports = () =>
+      sqlExecutor.execute<{ verdict: string; mode: string }>(
+        `SELECT verdict, mode FROM ${SUBSCRIPTIONS_ID_REPORTS_TABLE} WHERE kind = 'PHASE' ORDER BY id`
+      );
+
+    it('after the switch, a phase pull commits and rolls back with the preparation, and its reset journals inside it', async () => {
+      await seed();
+      await updateSubscriptions();
+      expect(await subscriptionsIdentitySwitch.writeModeOrFail()).toBe('TRUTH');
+      const phasesBefore = (await journalPhases()).length;
+      const counterBefore = await counter();
+
+      await expect(
+        pullInPreparation(async (ctx) => {
+          await getPublicSubscriptions(MEMES_CONTRACT, CARD, ctx);
+          throw new Error('after the pull');
+        })
+      ).rejects.toThrow('after the pull');
+      expect((await journalPhases()).length).toBe(phasesBefore);
+      expect(await counter()).toBe(counterBefore);
+      for (const [, phase] of await phases(
+        SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+        'identity_key'
+      )) {
+        expect(phase).toBeNull();
+      }
+      for (const [, phase] of await phases(
+        SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+        'consolidation_key'
+      )) {
+        expect(phase).toBeNull();
+      }
+
+      const { airdrops } = await pullInPreparation((ctx) =>
+        getPublicSubscriptions(MEMES_CONTRACT, CARD, ctx)
+      );
+      expect(airdrops.length).toBeGreaterThan(0);
+      const identity = await phases(
+        SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+        'identity_key'
+      );
+      expect(identity.length).toBeGreaterThan(0);
+      expect(identity.every(([, p]) => p === 'Public')).toBe(true);
+      expect(
+        await phases(SUBSCRIPTIONS_NFTS_FINAL_TABLE, 'consolidation_key')
+      ).toEqual(identity);
+      const pulled = await journalPhases();
+      expect(pulled.length).toBe(phasesBefore + 1);
+      expect(pulled[pulled.length - 1].inputs.phase).toBe('Public');
+      expect(await counter()).toBe(counterBefore + 1);
+
+      await resetAllowlist(MEMES_CONTRACT, CARD);
+      for (const [, phase] of await phases(
+        SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+        'identity_key'
+      )) {
+        expect(phase).toBeNull();
+      }
+      for (const [, phase] of await phases(
+        SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+        'consolidation_key'
+      )) {
+        expect(phase).toBeNull();
+      }
+      const reset = await journalPhases();
+      expect(reset.length).toBe(phasesBefore + 2);
+      expect(reset[reset.length - 1].inputs.reset).toBe(true);
+      expect(
+        await dropForgePreparationRepository.readMode(MEMES_CONTRACT, CARD)
+      ).toBe('UNSTARTED');
+    });
+
+    it('in shadow, the identity split runs after the preparation commits, never after it rolls back', async () => {
+      await seedLegacy();
+      await cutAndLoad(false);
+      process.env[SHADOW_ENV] = 'true';
+      subscriptionsIdentitySwitch.invalidate();
+      await updateSubscriptions();
+
+      await expect(
+        pullInPreparation(async (ctx) => {
+          await getPublicSubscriptions(MEMES_CONTRACT, CARD, ctx);
+          throw new Error('after the pull');
+        })
+      ).rejects.toThrow('after the pull');
+      // Rolled back: neither side has the phase, and the shadow never ran.
+      for (const [table, key] of [
+        [SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key'],
+        [SUBSCRIPTIONS_NFTS_FINAL_TABLE, 'consolidation_key']
+      ]) {
+        for (const [, phase] of await phases(table, key)) {
+          expect(phase).toBeNull();
+        }
+      }
+      expect(await phaseReports()).toEqual([]);
+
+      await pullInPreparation((ctx) =>
+        getPublicSubscriptions(MEMES_CONTRACT, CARD, ctx)
+      );
+      // Committed: the legacy pull, then the identity split in its own
+      // transaction, done and compared before the preparation returned.
+      const legacy = await phases(
+        SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+        'consolidation_key'
+      );
+      expect(legacy.length).toBeGreaterThan(0);
+      expect(legacy.every(([, p]) => p === 'Public')).toBe(true);
+      expect(
+        await phases(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key')
+      ).toEqual(legacy);
+      expect(await phaseReports()).toEqual([
+        { verdict: 'MATCH', mode: 'SHADOW' }
+      ]);
+    });
+
+    it('in shadow, a failing identity split leaves the preparation committed, logs the failure, and the gate refuses', async () => {
+      await seedLegacy();
+      await cutAndLoad(false);
+      process.env[SHADOW_ENV] = 'true';
+      subscriptionsIdentitySwitch.invalidate();
+      await updateSubscriptions();
+      // Only the identity split journals in shadow, so this fails it alone.
+      const journalBefore = jest
+        .spyOn(journalModule, 'journalBefore')
+        .mockRejectedValueOnce(new Error('identity write failed'));
+      const errors = jest.spyOn(Logger.prototype, 'error');
+      try {
+        const { airdrops } = await pullInPreparation((ctx) =>
+          getPublicSubscriptions(MEMES_CONTRACT, CARD, ctx)
+        );
+        expect(airdrops.length).toBeGreaterThan(0);
+      } finally {
+        journalBefore.mockRestore();
+      }
+      try {
+        // The legacy pull committed; the identity rows have no phase.
+        const legacy = await phases(
+          SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+          'consolidation_key'
+        );
+        expect(legacy.every(([, p]) => p === 'Public')).toBe(true);
+        for (const [, phase] of await phases(
+          SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+          'identity_key'
+        )) {
+          expect(phase).toBeNull();
+        }
+        expect(errors).toHaveBeenCalledWith(
+          '[SHADOW PHASE SPLIT FAILED] [Public]',
+          expect.any(Error)
+        );
+        expect(await phaseReports()).toEqual([
+          { verdict: 'FAILED', mode: 'SHADOW' }
+        ]);
+        // The failed comparison holds the switch back.
+        const gate = await shadowReportsMatch(CARD);
+        expect(gate.ok).toBe(false);
+        expect(gate.problems).toEqual(
+          expect.arrayContaining([
+            expect.stringMatching(
+              new RegExp(`^PHASE comparison \\d+ \\(card ${CARD}\\) is a DIFF$`)
+            )
+          ])
+        );
+      } finally {
+        errors.mockRestore();
+      }
+    });
+  }
+);

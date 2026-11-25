@@ -34,9 +34,17 @@ export function closeAfterCommitScope(
   return pending.map(({ callback }) => callback);
 }
 
+/** Marks a callback registered with afterCommitAwaited. */
+const AWAITED = Symbol('afterCommitAwaited');
+
+function isAwaited(callback: AfterCommitCallback): boolean {
+  return (callback as { [AWAITED]?: true })[AWAITED] === true;
+}
+
 /**
- * Runs the callbacks together and waits for them up to a short budget.
- * Failures are logged, never thrown: the transaction is already committed.
+ * Runs the callbacks together and waits for them up to a short budget, and
+ * for those registered with afterCommitAwaited in full. Failures are
+ * logged, never thrown: the transaction is already committed.
  */
 export async function runAfterCommitCallbacks(
   callbacks: AfterCommitCallback[]
@@ -44,23 +52,28 @@ export async function runAfterCommitCallbacks(
   if (!callbacks.length) {
     return;
   }
-  const settled = Promise.allSettled(
-    callbacks.map((callback) => Promise.resolve().then(callback))
-  ).then((results) => {
-    for (const result of results) {
-      if (result.status === 'rejected') {
-        logger.warn('After-commit callback failed', result.reason);
-      }
-    }
-  });
+  const runs = callbacks.map((callback) => ({
+    awaited: isAwaited(callback),
+    done: Promise.resolve()
+      .then(callback)
+      .then(
+        () => undefined,
+        (error) => {
+          logger.warn('After-commit callback failed', error);
+        }
+      )
+  }));
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await Promise.race([
-      settled,
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, AFTER_COMMIT_WAIT_MS);
-        timer.unref?.();
-      })
+    await Promise.all([
+      Promise.all(runs.filter((run) => run.awaited).map((run) => run.done)),
+      Promise.race([
+        Promise.all(runs.filter((run) => !run.awaited).map((run) => run.done)),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, AFTER_COMMIT_WAIT_MS);
+          timer.unref?.();
+        })
+      ])
     ]);
   } finally {
     clearTimeout(timer);
@@ -90,6 +103,31 @@ export async function afterCommit(
     return;
   }
   pending.push({ key, callback });
+}
+
+/**
+ * As afterCommit, but the transaction helper waits for `callback` in full,
+ * past the usual budget, before it returns to its caller: for work that
+ * must finish, or record its own failure, before the request or the Lambda
+ * invocation ends. Without a tracked transaction it runs now, and is waited
+ * for. Its failures are logged, never thrown.
+ */
+export async function afterCommitAwaited(
+  connection: ConnectionWrapper<any> | undefined,
+  callback: AfterCommitCallback
+): Promise<void> {
+  const awaited = Object.assign(() => callback(), {
+    [AWAITED]: true as const
+  });
+  const pending =
+    connection?.connection && typeof connection.connection === 'object'
+      ? pendingByConnection.get(connection.connection)
+      : undefined;
+  if (!pending) {
+    await runAfterCommitCallbacks([awaited]);
+    return;
+  }
+  pending.push({ key: null, callback: awaited });
 }
 
 /**
