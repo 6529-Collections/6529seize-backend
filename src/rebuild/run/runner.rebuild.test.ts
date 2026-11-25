@@ -607,6 +607,9 @@ describe('rebuild check, end to end', () => {
         absent: true
       });
       expect(kept.report.failures).toEqual([]);
+      expect(kept.report.steps.map((s) => s.id)).not.toContain(
+        'self-check.other-rows'
+      );
       expect(kept.report.tables.diffs.map((d) => [d.table, d.changed])).toEqual(
         [sixFiveTwoNine]
       );
