@@ -11,6 +11,19 @@ jest.mock('@/drop-forge/drop-forge.preparation.repository', () => ({
   }
 }));
 
+// The route runs its write inside the preparation's transaction with the
+// mint log; here only the write itself, as the preparation mock above does.
+jest.mock('@/mint-log/mint-log-preparation', () => ({
+  loggedPreparationWrite: (args: {
+    write: (ctx: RequestContext) => unknown;
+    ctx?: RequestContext;
+  }) => args.write(args.ctx ?? {}),
+  loggedPreparationReset: (args: {
+    reset: (ctx: RequestContext) => unknown;
+    ctx?: RequestContext;
+  }) => args.reset(args.ctx ?? {})
+}));
+
 const mockCacheStore = new Map<string, string>();
 const mockGetPublicSubscriptions = jest.fn();
 const mockValidateDistribution = jest.fn();

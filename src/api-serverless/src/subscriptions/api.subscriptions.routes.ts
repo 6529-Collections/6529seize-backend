@@ -1,4 +1,3 @@
-import { dropForgePreparationRepository } from '@/drop-forge/drop-forge.preparation.repository';
 import { Request, Response } from 'express';
 import * as Joi from 'joi';
 import { fetchEns } from '@/db-api';
@@ -42,7 +41,7 @@ import {
   fetchPhaseName,
   fetchPhaseResults,
   getPublicSubscriptions,
-  resetAllowlist,
+  resetAllowlistRows,
   splitAllowlistResults,
   validateDistribution
 } from '@/api/subscriptions/api.subscriptions.allowlist';
@@ -53,7 +52,10 @@ import {
   mintCard
 } from '@/mint-log/mint-log-http';
 import { latestTdhBlock } from '@/mint-log/mint-log-inputs';
-import { mintLogRecorder } from '@/mint-log/mint-log-recorder';
+import {
+  loggedPreparationReset,
+  loggedPreparationWrite
+} from '@/mint-log/mint-log-preparation';
 import {
   fetchConsolidationAddresses,
   fetchDetailsForConsolidationKey,
@@ -843,8 +845,8 @@ router.get(
 
     if (phaseId === 'public') {
       allowlistTimer.start('getPublicSubscriptions');
-      const results = await mintLogRecorder.write(
-        adminWriteSpec({
+      const results = await loggedPreparationWrite({
+        spec: adminWriteSpec({
           req,
           kind: 'dist.public',
           route: MINT_ADMIN_ROUTES.distPhase,
@@ -852,17 +854,12 @@ router.get(
           authority: MINT_AUTHORITY.distributionAdmins,
           body: null
         }),
-        () =>
-          dropForgePreparationRepository.run(
-            contract,
-            tokenId,
-            (_, ctx) => getPublicSubscriptions(contract, tokenId, ctx),
-            { timer: allowlistTimer },
-            false,
-            false,
-            'MANUAL'
-          )
-      );
+        contract,
+        claim: tokenId,
+        write: (ctx) => getPublicSubscriptions(contract, tokenId, ctx),
+        ctx: { timer: allowlistTimer },
+        start: 'MANUAL'
+      });
       allowlistTimer.stop('getPublicSubscriptions');
       allowlistLogger.info(
         `[GET_PUBLIC_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [${allowlistTimer.getReport()}]`
@@ -883,8 +880,8 @@ router.get(
 
       // One logged write: the split sets the subscriptions' phase columns
       // and the distribution rows and merkle tree follow from it.
-      const results = await mintLogRecorder.write(
-        adminWriteSpec({
+      const results = await loggedPreparationWrite({
+        spec: adminWriteSpec({
           req,
           kind: 'dist.phase',
           route: MINT_ADMIN_ROUTES.distPhase,
@@ -902,33 +899,28 @@ router.get(
             ])
           })
         }),
-        () =>
-          dropForgePreparationRepository.run(
+        contract,
+        claim: tokenId,
+        write: async (ctx) => {
+          const allocations = await splitAllowlistResults(
             contract,
             tokenId,
-            async (_, ctx) => {
-              const allocations = await splitAllowlistResults(
-                contract,
-                tokenId,
-                phaseName,
-                phaseResults,
-                ctx
-              );
-              await populateDistribution(
-                contract,
-                tokenId,
-                phaseName,
-                allocations,
-                ctx
-              );
-              return allocations;
-            },
-            { timer: allowlistTimer },
-            false,
-            false,
-            'MANUAL'
-          )
-      );
+            phaseName,
+            phaseResults,
+            ctx
+          );
+          await populateDistribution(
+            contract,
+            tokenId,
+            phaseName,
+            allocations,
+            ctx
+          );
+          return allocations;
+        },
+        ctx: { timer: allowlistTimer },
+        start: 'MANUAL'
+      });
 
       allowlistTimer.start('invalidateMintingClaimsPhaseCache');
       await invalidateMintingClaimsPhaseCache(contract, tokenId);
@@ -995,8 +987,8 @@ router.post(
     }
 
     resetTimer.start('resetAllowlist');
-    await mintLogRecorder.write(
-      adminWriteSpec({
+    await loggedPreparationReset({
+      spec: adminWriteSpec({
         req,
         kind: 'dist.reset',
         route: MINT_ADMIN_ROUTES.distReset,
@@ -1004,8 +996,10 @@ router.post(
         authority: MINT_AUTHORITY.distributionAdmins,
         body: req.body
       }),
-      () => resetAllowlist(contract, tokenId)
-    );
+      contract,
+      claim: tokenId,
+      reset: (ctx) => resetAllowlistRows(contract, tokenId, ctx)
+    });
     await evictCacheWithContextLogging(
       `[contract ${contract}] [token_id ${tokenId}]`,
       {
