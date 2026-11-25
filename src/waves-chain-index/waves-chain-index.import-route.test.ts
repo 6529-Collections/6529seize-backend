@@ -33,6 +33,7 @@ describe('the chain index on a gateway without /v1/waves/import', () => {
   let chain: FakeChain;
   let index: WavesChainIndex;
   let db: FakeIndexDb;
+  let importState: jest.SpyInstance;
 
   /** The switch-on a minute from the fake clock's now, or a minute ago. */
   const switchOn = (fromNowMs: number) => {
@@ -57,7 +58,10 @@ describe('the chain index on a gateway without /v1/waves/import', () => {
     chain = new FakeChain(clock);
     db = new FakeIndexDb();
     index = new WavesChainIndex(chain, db.asDb(), clock.now);
-    chain.importError = routeMissing();
+    // The gateway's answer to GET /v1/waves/import: a failure.
+    importState = jest
+      .spyOn(chain, 'importState')
+      .mockRejectedValue(routeMissing());
   });
 
   afterEach(() => {
@@ -79,7 +83,8 @@ describe('the chain index on a gateway without /v1/waves/import', () => {
     expect(waits()).toHaveLength(1);
     expect(error).not.toHaveBeenCalled();
     // Each run reads the head and the import, and nothing more.
-    expect(chain.calls).toBe(6);
+    expect(importState).toHaveBeenCalledTimes(3);
+    expect(chain.calls).toBe(3);
     expect(db.state.generation).toBe(0);
   });
 
@@ -111,18 +116,22 @@ describe('the chain index on a gateway without /v1/waves/import', () => {
 
   it('still fails on any other gateway failure before the switch-on', async () => {
     switchOn(60_000);
-    chain.importError = new ChainGatewayError(
-      '/v1/waves/import: unavailable',
-      503,
-      'unavailable',
-      '/v1/waves/import'
+    importState.mockRejectedValue(
+      new ChainGatewayError(
+        '/v1/waves/import: unavailable',
+        503,
+        'unavailable',
+        '/v1/waves/import'
+      )
     );
     await expect(index.run({ budgetMs: BIG })).rejects.toThrow('unavailable');
-    chain.importError = new ChainGatewayError(
-      "/v1/waves/import: not_held: this node didn't save day 5",
-      404,
-      'not_held',
-      '/v1/waves/import'
+    importState.mockRejectedValue(
+      new ChainGatewayError(
+        "/v1/waves/import: not_held: this node didn't save day 5",
+        404,
+        'not_held',
+        '/v1/waves/import'
+      )
     );
     await expect(index.run({ budgetMs: BIG })).rejects.toThrow('day 5');
     expect(waits()).toEqual([]);
