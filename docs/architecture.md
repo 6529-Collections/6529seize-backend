@@ -788,6 +788,8 @@ Driver results: the backend moved from `mysql` (mysqljs 2.18) to `mysql2`, and `
 
 Background Lambdas that read or write application state use a shared `doInDbContext` wrapper. That wrapper prepares environment/secrets, initializes TypeORM-backed DB access, initializes Redis, runs the job, then disconnects. The `dropVideoConversionInvokerLoop` is intentionally environment-only: it reads only its function environment (no shared secret, no VPC), filters the S3 object key, and invokes MediaConvert without opening MySQL or Redis connections. Its production stack runs in `eu-west-1`, next to the media bucket it watches, while other production services run in `us-east-1`.
 
+The API's SQL executor lives in `src/db/api-sql-executor.ts`: the legacy competition GET facade's rewrite, the API's type casting (`CustomTypeCaster`) and its pool factory. `db-api.ts` builds the API's executor from it. A CLI that must read exactly what the public API's mappers read, such as the waves export, runs inside `doInDbContext` and then swaps in the same executor over its own pool (`src/waves-export/waves-export.db.ts`): TypeORM's default executor applies neither the rewrite nor the casting. The DB services keep the executor they first read, so such a swap runs once per process, before any service is used. The export's pool is one read-only pool on `DB_HOST` (`SET SESSION TRANSACTION READ ONLY` on each connection).
+
 MySQL is the integration contract between nearly all modules. API routes, scheduled pollers, queue workers, and derived-data loops all read and write shared tables. Redis is secondary and mostly disposable: API request cache, rate limiting, webhook dedupe, locks, and selected feature caches can fail open or be repopulated from MySQL.
 
 ### API request budgets

@@ -38,29 +38,17 @@ import {
 import { RememeSource } from './entities/IRememe';
 import { poolForUnboundQuery } from '@/db/primary-read-scope';
 import { canonicalRememeMemeId } from './rememe-meme-id';
-import {
-  ConnectionWrapper,
-  setSqlExecutor,
-  SqlExecutor,
-  sqlExecutor,
-  SqlTransactionOptions,
-  budgetOf
-} from './sql-executor';
+import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 import { getConsolidationsSql } from './sql_helpers';
 
 import { Nft } from '@/alchemy-sdk';
 import { createHash, randomUUID } from 'node:crypto';
 import * as mysql from 'mysql2';
 import {
-  createDbAuthTokenSource,
-  dbAuthPlugins,
-  DbConnectionTarget,
   isDbConnectionTargetComplete,
   isDbIamAuthRequested,
-  resolveDbConnectionTargets,
-  sslOptionsFor
+  resolveDbConnectionTargets
 } from './db-iam-auth';
-import { createMysqlPool } from './db/mysql-pool';
 import {
   DEFAULT_PAGE_SIZE,
   NFTSearchResult,
@@ -81,15 +69,9 @@ import {
   NEXTGEN_CORE
 } from './api-serverless/src/nextgen/abis';
 import { consolidationTools } from './consolidation-tools';
-import { DbPoolName, DbQueryOptions } from './db-query.options';
+import { DbPoolName } from './db-query.options';
 import { numbers } from './numbers';
 import { redisCompareAndSetJson, redisGet } from './redis';
-import {
-  CustomTypeCaster,
-  execBudgetedNativeTransactionally,
-  execNativeTransactionally,
-  execSQLWithConnection
-} from './db/my-sql.helpers';
 import { NFT } from './entities/INFT';
 import { TDHBlock } from './entities/ITDH';
 import type { GlobalTDHHistory, TDHHistory } from './entities/ITDHHistory';
@@ -98,7 +80,11 @@ import { Logger } from './logging';
 import { NEXTGEN_TOKENS_TABLE } from './nextgen/nextgen_constants';
 import { equalIgnoreCase } from './strings';
 import { Time } from './time';
-import { legacyCompetitionGetSql } from '@/competitions/legacy-competition-get-facade';
+import {
+  apiDbConnection,
+  apiSqlExecutor,
+  createApiDbPool
+} from '@/db/api-sql-executor';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -180,92 +166,17 @@ export async function connect() {
     process.exit();
   }
   const port = +process.env.DB_PORT;
-  const createPool = (
-    target: DbConnectionTarget,
-    connectionLimit: number
-  ): mysql.Pool => {
-    // The 30 s acquire bound is the former mysqljs acquireTimeout. mysqljs
-    // never read the pool-level `timeout` option, so it has no replacement.
-    return createMysqlPool(
-      {
-        connectionLimit,
-        connectTimeout: Time.seconds(30).toMillis(),
-        host: target.host,
-        port: port,
-        user: target.user,
-        password: target.password,
-        charset: 'utf8mb4',
-        database: process.env.DB_NAME,
-        typeCast: CustomTypeCaster,
-        authPlugins: dbAuthPlugins(
-          target.iam
-            ? createDbAuthTokenSource({
-                host: target.host,
-                port,
-                user: target.user
-              })
-            : null,
-          (error) =>
-            logger.error(
-              `[DB IAM TOKEN SIGNING FAILED] [${target.host}] ${error}`
-            )
-        ),
-        ...sslOptionsFor(target)
-      },
-      { acquireTimeoutMs: Time.seconds(30).toMillis() }
-    );
-  };
-  write_pool = createPool(targets.write, 5);
-  read_pool = createPool(targets.read, 10);
+  write_pool = createApiDbPool(targets.write, port, 5);
+  read_pool = createApiDbPool(targets.read, port, 10);
   logger.info(
     `[DB POOLS CREATED] [AUTH ${targets.write.iam ? 'IAM' : 'PASSWORD'}]`
   );
-  class DbImpl extends SqlExecutor {
-    async execute<T>(
-      sql: string,
-      params?: Record<string, any>,
-      options?: DbQueryOptions
-    ) {
-      if (
-        (options?.executionBudgetToken || options?.statementLimits) &&
-        !options.wrappedConnection?.connection
-      ) {
-        throw new Error(
-          'SQL budget options require their bound transaction connection'
-        );
-      }
-      const suppliedConnection = options?.wrappedConnection?.connection;
-      const pool =
-        options?.forcePool ?? poolForUnboundQuery(getPoolNameBySql(sql));
-      return await execSQLWithConnection<T>(
-        legacyCompetitionGetSql(sql),
-        suppliedConnection
-          ? { connection: suppliedConnection }
-          : { pool, acquire: () => getDbConnectionByPoolName(pool) },
-        params,
-        options
-      );
-    }
-
-    async executeNativeQueriesInTransaction<T>(
-      executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>,
-      options?: SqlTransactionOptions
-    ) {
-      const budget = budgetOf(options);
-      if (budget) {
-        return execBudgetedNativeTransactionally(
-          executable,
-          () => getDbConnectionByPoolName(DbPoolName.WRITE),
-          budget
-        );
-      }
-      return getDbConnectionByPoolName(DbPoolName.WRITE).then((con) =>
-        execNativeTransactionally(executable, con, options)
-      );
-    }
-  }
-
-  setSqlExecutor(new DbImpl());
+  setSqlExecutor(
+    apiSqlExecutor({
+      poolFor: (sql) => poolForUnboundQuery(getPoolNameBySql(sql)),
+      connection: getDbConnectionByPoolName
+    })
+  );
   logger.info(`[CONNECTION POOLS CREATED]`);
 }
 
@@ -336,23 +247,7 @@ function getPoolByName(poolName: DbPoolName): mysql.Pool {
 function getDbConnectionByPoolName(
   poolName: DbPoolName
 ): Promise<mysql.PoolConnection> {
-  const pool = getPoolByName(poolName);
-  return new Promise((resolve, reject) => {
-    pool.getConnection(function (
-      err: NodeJS.ErrnoException | null,
-      dbcon: mysql.PoolConnection
-    ) {
-      if (err) {
-        logger.error(
-          `Failed to establish connection to ${poolName} [${JSON.stringify(
-            err
-          )}]`
-        );
-        reject(err);
-      }
-      resolve(dbcon);
-    });
-  });
+  return apiDbConnection(getPoolByName(poolName), poolName);
 }
 
 /**

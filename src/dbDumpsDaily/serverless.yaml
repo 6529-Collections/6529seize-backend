@@ -21,6 +21,10 @@ functions:
     description: ${env:VERSION_DESCRIPTION}
     role: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
     reservedConcurrency: 1
+    # /tmp in MB. The waves export job keeps its run there: the export's JSON
+    # files and every drops file until it is uploaded, the largest wave's
+    # whole. Its size isn't known before the run, so the most Lambda allows.
+    ephemeralStorageSize: 10240
     events:
       - schedule: cron(0 1 * * ? *)
     vpc:
