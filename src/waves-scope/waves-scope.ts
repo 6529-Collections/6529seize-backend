@@ -276,7 +276,8 @@ function ownReasons(
     group !== undefined && afterFreeze(group.created_at, freezeAtMs);
   return {
     [StayReason.DIRECT_MESSAGE]: wave.is_direct_message === true,
-    [StayReason.RECORDS_WAVE]: !!recordsWaveId && wave.id === recordsWaveId,
+    [StayReason.RECORDS_WAVE]:
+      !!recordsWaveId && wave.id.toLowerCase() === recordsWaveId.toLowerCase(),
     [StayReason.MEMBERS_ONLY]: isGroupId(wave.visibility_group_id),
     [StayReason.HIDDEN_OR_PRIVATE_GROUP]: used.some(
       (group) => group === undefined || (groupMarked(group) && !late(group))
@@ -352,7 +353,8 @@ export const NO_RECORDS_WAVE = 'none';
  * SIGNED_RECORDS_WAVE_ID, read: a wave id; `none` (6529.io has no records
  * wave, set on purpose); or unset (a mistake: ops sets the id or none).
  * When it is not an id, no wave stays as records_wave. Callers log `none`
- * once and unset as an error once, per cold start.
+ * and unset once per cold start. The id is read in lower case, and matched
+ * without regard to case, as the SQL form's collation matches it.
  */
 export type RecordsWaveSetting =
   | { readonly kind: 'id'; readonly id: string }
@@ -365,7 +367,7 @@ export function readRecordsWaveSetting(
   const value = env[RECORDS_WAVE_ID_ENV]?.trim();
   if (!value) return { kind: 'unset' };
   if (value.toLowerCase() === NO_RECORDS_WAVE) return { kind: 'none' };
-  return { kind: 'id', id: value };
+  return { kind: 'id', id: value.toLowerCase() };
 }
 
 /** The SQL table names the SQL form reads. */
@@ -417,7 +419,7 @@ export function groupStaysSql(alias: string, params?: ScopeSqlParams): string {
     : groupMarkedSql(alias);
 }
 
-/** The $.group_id of JSON column `config` of row `alias`; null unless a string. */
+/** $.group_id of JSON column `config` (JSON_VALUE: a number reads as text). */
 function configGroupIdSql(alias: string, config: string): string {
   return `json_value(${alias}.${config}, '$.group_id')`;
 }
@@ -507,7 +509,7 @@ function parentStaysSql(alias: string, params: ScopeSqlParams): string {
     ...OWN_REASONS.map((reason) => own[reason]),
     parentMissingSql(above)
   ].join(' or ');
-  return `(coalesce(${alias}.parent_wave_id, '') <> '' and (${parentMissingSql(alias)} or exists (with recursive ${anc} (id, parent_wave_id, depth) as (select ${step}.id, ${step}.parent_wave_id, 1 from ${SCOPE_TABLES.waves} ${step} where ${step}.id = ${alias}.parent_wave_id union all select ${step}.id, ${step}.parent_wave_id, ${anc}.depth + 1 from ${SCOPE_TABLES.waves} ${step} join ${anc} on ${step}.id = ${anc}.parent_wave_id where ${anc}.depth < ${MAX_WAVE_DEPTH} and ${step}.id <> ${alias}.id) select 1 from ${anc} join ${SCOPE_TABLES.waves} ${above} on ${above}.id = ${anc}.id where ${aboveStays})))`;
+  return `(coalesce(${alias}.parent_wave_id, '') <> '' and (${parentMissingSql(alias)} or exists (with recursive ${anc} (id, parent_wave_id, depth) as (select ${step}.id, ${step}.parent_wave_id, 1 from ${SCOPE_TABLES.waves} ${step} where ${step}.id = ${alias}.parent_wave_id and ${step}.id <> ${alias}.id union all select ${step}.id, ${step}.parent_wave_id, ${anc}.depth + 1 from ${SCOPE_TABLES.waves} ${step} join ${anc} on ${step}.id = ${anc}.parent_wave_id where ${anc}.depth < ${MAX_WAVE_DEPTH} and ${step}.id <> ${alias}.id) select 1 from ${anc} join ${SCOPE_TABLES.waves} ${above} on ${above}.id = ${anc}.id where ${aboveStays})))`;
 }
 
 /**

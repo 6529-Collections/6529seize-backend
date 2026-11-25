@@ -428,6 +428,16 @@ describe('the records wave the export keeps on 6529.io', () => {
     );
   });
 
+  it('reads the id in lower case, as 6529.io reads the setting, so the two agree across case', () => {
+    expect(recordsWaveIdFor('WAVE-ABC', {})).toBe('wave-abc');
+    expect(
+      recordsWaveIdFor('WAVE-ABC', { SIGNED_RECORDS_WAVE_ID: ' wave-abc ' })
+    ).toBe('wave-abc');
+    expect(() =>
+      recordsWaveIdFor('WAVE-ABC', { SIGNED_RECORDS_WAVE_ID: 'wave-abd' })
+    ).toThrow('--records-wave-id WAVE-ABC and SIGNED_RECORDS_WAVE_ID wave-abd');
+  });
+
   it('takes none, given on purpose, as no records wave', () => {
     expect(recordsWaveIdFor('none', {})).toBeNull();
     // In any case, as 6529.io reads the setting.
