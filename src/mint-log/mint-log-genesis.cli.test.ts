@@ -1,11 +1,17 @@
 jest.mock('@/secrets', () => ({
   doInDbContext: (run: () => Promise<unknown>) => run()
 }));
+const mockTransactions: unknown[] = [];
 jest.mock('@/sql-executor', () => ({
   ...jest.requireActual('@/sql-executor'),
   dbSupplier: () => ({
-    executeNativeQueriesInTransaction: (run: (connection: object) => unknown) =>
-      run({})
+    executeNativeQueriesInTransaction: (
+      run: (connection: object) => unknown,
+      options: unknown
+    ) => {
+      mockTransactions.push(options);
+      return run({});
+    }
   })
 }));
 
@@ -57,6 +63,7 @@ describe('mint-log:genesis dry run', () => {
 
   beforeEach(() => {
     printed = '';
+    mockTransactions.length = 0;
     process.env.IPFS_API_ENDPOINT = 'https://ipfs-api.example.test';
     global.fetch = fetchMock as unknown as typeof fetch;
     fetchMock.mockReset();
@@ -96,6 +103,12 @@ describe('mint-log:genesis dry run', () => {
     });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(ipfsFileUploader.uploadFile).not.toHaveBeenCalled();
+    // One snapshot per chain, as the live run reads them.
+    expect(mockTransactions).toEqual([
+      { isolationLevel: 'REPEATABLE READ' },
+      { isolationLevel: 'REPEATABLE READ' },
+      { isolationLevel: 'REPEATABLE READ' }
+    ]);
   });
 
   it('builds only the files of the chain it was given', async () => {

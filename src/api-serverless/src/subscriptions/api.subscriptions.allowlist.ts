@@ -404,13 +404,21 @@ function filterSubscriptions(
  * Clears a card's distribution: the subscriptions' phase columns, its
  * distribution rows (automatic airdrops stay), merkle roots and proofs, and
  * normalized rows, on the caller's connection. Run it inside Drop Forge's
- * reset (resetAllowlist), so its checks come first.
+ * reset, as resetAllowlist and the logged reset route do, so its checks
+ * come first.
  */
 export async function resetAllowlistRows(
   contract: string,
   tokenId: number,
-  { connection: wrappedConnection }: RequestContext
+  ctx: RequestContext
 ): Promise<void> {
+  const wrappedConnection = ctx.connection;
+  if (!wrappedConnection) {
+    // The rows go together or not at all.
+    return sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+      resetAllowlistRows(contract, tokenId, { ...ctx, connection })
+    );
+  }
   const contractLower = contract.toLowerCase();
   const updateQuery = `
       UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
