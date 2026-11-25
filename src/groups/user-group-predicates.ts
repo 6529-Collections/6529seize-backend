@@ -10,6 +10,7 @@ import {
   MEMES_CONTRACT
 } from '@/constants';
 import { RateMatter } from '../entities/IRating';
+import { countsTowardAllCategoryRep } from '@/rates/rating-credit';
 import { NEXTGEN_CORE_CONTRACT } from '../nextgen/nextgen_constants';
 import { Network } from '@/ethereum-rpc/ethereum-rpc-network';
 import { numbers } from '../numbers';
@@ -350,7 +351,10 @@ export const isGroupViolatingAnySpecificRepCriteria = (
     isGroupTotalRepByUserIncoming(group) &&
     isRealRatingOutOfBounds(
       incomingRatings,
-      (r, g) => r.matter === RateMatter.REP && r.other_side_id === g.rep_user,
+      (r, g) =>
+        r.matter === RateMatter.REP &&
+        r.other_side_id === g.rep_user &&
+        countsTowardAllCategoryRep(r.matter, r.matter_category),
       group,
       group.rep_min,
       group.rep_max
@@ -359,7 +363,10 @@ export const isGroupViolatingAnySpecificRepCriteria = (
     isGroupTotalRepByUserOutgoing(group) &&
     isRealRatingOutOfBounds(
       outgoingRatings,
-      (r, g) => r.matter === RateMatter.REP && r.other_side_id === g.rep_user,
+      (r, g) =>
+        r.matter === RateMatter.REP &&
+        r.other_side_id === g.rep_user &&
+        countsTowardAllCategoryRep(r.matter, r.matter_category),
       group,
       group.rep_min,
       group.rep_max

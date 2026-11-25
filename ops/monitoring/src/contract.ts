@@ -131,7 +131,8 @@ const CONDITIONS = [
   'PUSH_SENDER_MISMATCH',
   'PUSH_PROVIDER_TRANSIENT',
   'PUSH_DELIVERY_FAILED',
-  'PUSH_RETRY_EXHAUSTED'
+  'PUSH_RETRY_EXHAUSTED',
+  'PROFILE_SITE_CHANGE_STALLED'
 ] as const;
 type Condition = (typeof CONDITIONS)[number];
 
@@ -281,7 +282,9 @@ const CONDITION_TEXT: Record<Condition, string> = {
   PUSH_SENDER_MISMATCH: 'push sender credentials mismatch',
   PUSH_PROVIDER_TRANSIENT: 'push provider reported a transient failure',
   PUSH_DELIVERY_FAILED: 'push delivery failed',
-  PUSH_RETRY_EXHAUSTED: 'push delivery retries exhausted'
+  PUSH_RETRY_EXHAUSTED: 'push delivery retries exhausted',
+  PROFILE_SITE_CHANGE_STALLED:
+    'a profile site change has waited more than 30 minutes to be applied'
 };
 function isAmber(alert: Alert): boolean {
   const d = alert.diagnostic;
