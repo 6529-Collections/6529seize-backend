@@ -128,7 +128,7 @@ describe('runPersonalRebuild', () => {
 });
 
 describe('rebuildPersonalTables', () => {
-  it("takes the records wave 'none' as no records wave, and reads nothing", async () => {
+  it("takes the records wave 'none' or unset as no records wave, and reads nothing", async () => {
     const ctx = {
       sources: { files: 'https://192.0.2.1' }
     } as unknown as RebuildContext;

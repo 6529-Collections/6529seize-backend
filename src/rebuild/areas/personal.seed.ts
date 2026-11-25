@@ -46,6 +46,7 @@ import {
 import { LocalRecordsWaveReader } from '@/signed-records/record-log/records-wave-local-reader';
 import { loadProviderKeys, ProviderKey } from '@/signed-records/sealed-crypto';
 import { signedRecordHeadsDb } from '@/signed-records/signed-record-heads.db';
+import { readRecordsWaveSetting } from '@/waves-scope/waves-scope';
 import { dbSupplier } from '@/sql-executor';
 import { aWave } from '@/tests/fixtures/wave.fixture';
 import {
@@ -573,11 +574,16 @@ export async function seedPersonalSettings(
       'The personal seed writes a segment file: the run has no files source'
     );
   }
-  const waveId = env.SIGNED_RECORDS_WAVE_ID;
+  // The records wave as the record log and the rebuild read it.
+  const records = readRecordsWaveSetting(env);
+  if (records.kind !== 'id') {
+    throw new Error("The personal seed's records wave: no records wave set");
+  }
+  const waveId = records.id;
   const serviceProfileId = env.SIGNED_RECORDS_SERVICE_PROFILE_ID;
   const serviceWallet = env.SIGNED_RECORDS_SERVICE_WALLET?.toLowerCase();
   const providers = loadProviderKeys(env.SIGNED_RECORDS_PROVIDER_KEYS);
-  if (!waveId || !serviceProfileId || !serviceWallet || !providers.length) {
+  if (!serviceProfileId || !serviceWallet || !providers.length) {
     throw new Error("The personal seed needs the area's records flags");
   }
   const me = probeProfileId(1);
