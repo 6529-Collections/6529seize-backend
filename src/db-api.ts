@@ -351,6 +351,66 @@ function getDbConnectionByPoolName(
   });
 }
 
+/**
+ * Runs work on one read-pool connection inside a read-only transaction with
+ * a consistent snapshot, then rolls it back: every query made through the
+ * given connection sees the same state, and none can write. For exports.
+ */
+export async function withReadOnlySnapshot<T>(
+  work: (connection: ConnectionWrapper<mysql.PoolConnection>) => Promise<T>
+): Promise<T> {
+  const connection = await getDbConnectionByPoolName(DbPoolName.READ);
+  let cleanupFailed = false;
+  try {
+    return await inReadOnlySnapshot(connection, work, () => {
+      cleanupFailed = true;
+    });
+  } finally {
+    // A connection whose rollback or zone reset failed may still hold the
+    // transaction or the UTC zone: it never goes back to the pool.
+    if (cleanupFailed) connection.destroy();
+    else connection.release();
+  }
+}
+
+/**
+ * withReadOnlySnapshot on a given connection. The session reads in UTC
+ * (timestamp columns come back as UTC whatever the server's zone) and gets
+ * the server's zone back after the rollback, as a pooled connection must.
+ */
+export async function inReadOnlySnapshot<T>(
+  connection: Pick<mysql.PoolConnection, 'query'>,
+  work: (connection: ConnectionWrapper<mysql.PoolConnection>) => Promise<T>,
+  onCleanupFailed: () => void = () => undefined
+): Promise<T> {
+  const run = (sql: string) =>
+    new Promise<void>((resolve, reject) =>
+      connection.query(sql, (err: unknown) => (err ? reject(err) : resolve()))
+    );
+  // A failing cleanup is logged: it never takes the place of the work's
+  // own result or error.
+  const cleanup = async (sql: string) => {
+    try {
+      await run(sql);
+    } catch (error) {
+      logger.error(`[READ-ONLY SNAPSHOT CLEANUP FAILED] [${sql}] ${error}`);
+      onCleanupFailed();
+    }
+  };
+  await run("SET time_zone = '+00:00'");
+  try {
+    await run('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+    await run('START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY');
+    try {
+      return await work({ connection: connection as mysql.PoolConnection });
+    } finally {
+      await cleanup('ROLLBACK');
+    }
+  } finally {
+    await cleanup('SET time_zone = DEFAULT');
+  }
+}
+
 export async function fetchLatestTDHBlockNumber() {
   const sql = `SELECT block_number FROM ${TDH_BLOCKS_TABLE} order by block_number desc limit 1;`;
   const r = await sqlExecutor.execute(sql);

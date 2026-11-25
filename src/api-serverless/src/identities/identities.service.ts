@@ -38,6 +38,10 @@ import { wavesApiDb } from '@/api/waves/waves.api.db';
 import { ApiProfileClassification } from '@/api/generated/models/ApiProfileClassification';
 import { getLevelFromScore } from '@/profiles/profile-level';
 import { equalIgnoreCase } from '@/strings';
+import {
+  assertIdentityNotFrozen,
+  assertIdentityNotFrozenAtCommit
+} from '@/identity-freeze/identity-freeze';
 import { enums } from '@/enums';
 import { IdentityEntity } from '@/entities/IIdentity';
 import { Time } from '@/time';
@@ -221,12 +225,14 @@ export class IdentitiesService {
     identity: string;
     memeOrFile: { file?: Express.Multer.File; meme?: number };
   }): Promise<{ pfp_url: string }> {
+    assertIdentityNotFrozen();
     const { meme, file } = memeOrFile;
     if (!meme && !file) {
       throw new BadRequestException('No PFP provided');
     }
     return await this.identitiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        assertIdentityNotFrozenAtCommit(connection);
         const profile = await this.identityFetcher
           .getIdentityAndConsolidationsByIdentityKey(
             { identityKey: identity },
@@ -522,6 +528,15 @@ export class IdentitiesService {
       const addressesMissingIdentities = addresses.filter(
         (it) => !allIdentitiesAndProfiles[it]
       );
+      // Wallets that already have a profile pass during the freeze; making a
+      // new identity or profile (a nominated wallet, bulk REP) does not.
+      if (
+        addressesMissingIdentities.length ||
+        Object.values(allIdentitiesAndProfiles).some((it) => !it.profile)
+      ) {
+        assertIdentityNotFrozen('nomination');
+        assertIdentityNotFrozenAtCommit(ctx.connection, 'nomination');
+      }
       const newIdentities = addressesMissingIdentities.map<IdentityEntity>(
         (address) => ({
           primary_address: address,
