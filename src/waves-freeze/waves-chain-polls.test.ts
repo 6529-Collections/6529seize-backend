@@ -130,6 +130,10 @@ describe('new polls in moved waves from the switch-on', () => {
       expect(error.getStatusCode()).toBe(423);
       expect(error.code).toBe(WAVES_POLLS_PAUSED_CODE);
       expect(error.message).toBe(WAVES_POLLS_PAUSED_MESSAGE);
+      // The wording the frontend shows for this refusal, word for word.
+      expect(WAVES_POLLS_PAUSED_MESSAGE).toBe(
+        "New polls in this wave aren't open yet."
+      );
     });
 
     it('allows a moved wave with the setting on (the freeze decides alone)', async () => {

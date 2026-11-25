@@ -27,9 +27,7 @@ import { wavesScopeService } from '@/waves-scope/waves-scope.service';
  */
 export const WAVES_POLLS_PAUSED_CODE = 'WAVES_POLLS_PAUSED';
 
-export const WAVES_POLLS_PAUSED_MESSAGE =
-  `New polls are paused in waves on the 6529 Network until 6529.io can ` +
-  `show them. Waves that stay on 6529.io still take polls.`;
+export const WAVES_POLLS_PAUSED_MESSAGE = `New polls in this wave aren't open yet.`;
 
 /** POLL_CREATE's operation code at rule version 7. */
 export const POLL_CREATE_OP_TYPE = 0x0607;
