@@ -33,7 +33,13 @@ describe('the garbage collection after a reconsolidation', () => {
 
   it('only logs when gc is not exposed', () => {
     (globalThis as GcHolder).gc = undefined;
-    expect(() => collectGarbageAfter('RECONSOLIDATION')).not.toThrow();
+    const memory = jest.spyOn(process, 'memoryUsage');
+    try {
+      expect(() => collectGarbageAfter('RECONSOLIDATION')).not.toThrow();
+      expect(memory).not.toHaveBeenCalled();
+    } finally {
+      memory.mockRestore();
+    }
   });
 
   it('never throws, whatever fails inside', () => {
