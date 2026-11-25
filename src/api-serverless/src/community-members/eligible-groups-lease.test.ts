@@ -3,7 +3,6 @@ import { createClient, RedisClientType } from 'redis';
 import { getRedisClient, WAVE_GROUPS_VERSION_CACHE_KEY } from '@/redis';
 import { UserGroupsService } from './user-groups.service';
 import { UserGroupsDb } from '@/user-groups/user-groups.db';
-import { AbusivenessCheckService } from '@/profiles/abusiveness-check.service';
 import { MetricsRecorder } from '@/metrics/MetricsRecorder';
 import * as mcache from 'memory-cache';
 import {
@@ -54,7 +53,6 @@ function serviceForTest() {
   };
   const service = new UserGroupsService(
     db as unknown as UserGroupsDb,
-    {} as AbusivenessCheckService,
     {} as MetricsRecorder
   );
   return { service, db };

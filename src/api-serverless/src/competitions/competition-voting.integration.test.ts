@@ -12,6 +12,9 @@ import { describeWithSeed } from '@/tests/_setup/seed';
 import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import { competitionVotingService as service } from './competition-voting.service';
+import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
+import { Time } from '@/time';
+import { WavesFrozenException } from '@/waves-freeze/waves-freeze';
 
 const author = 'competition-author';
 const voter = 'competition-voter';
@@ -170,6 +173,45 @@ describeWithSeed(
       if (originalPush === undefined)
         delete process.env.PUSH_NOTIFICATIONS_ACTIVATED;
       else process.env.PUSH_NOTIFICATIONS_ACTIVATED = originalPush;
+    });
+
+    it('refuses a vote when the waves freeze starts during the credit reconciliation', async () => {
+      const freeze = Date.UTC(2026, 10, 25);
+      const saved = {
+        flag: process.env.FEATURE_WAVES_FROZEN,
+        at: process.env.WAVES_FREEZE_AT
+      };
+      delete process.env.FEATURE_WAVES_FROZEN;
+      process.env.WAVES_FREEZE_AT = new Date(freeze).toISOString();
+      try {
+        const now = jest
+          .spyOn(Time, 'currentMillis')
+          .mockReturnValue(freeze - 1);
+        const reconcile =
+          nativeCompetitionRuntimeService.reconcileVoterCredit.bind(
+            nativeCompetitionRuntimeService
+          );
+        // The reconciliation takes the voter's credit rows after the
+        // decision lock; the freeze starts while it waits.
+        jest
+          .spyOn(nativeCompetitionRuntimeService, 'reconcileVoterCredit')
+          .mockImplementation(async (...args) => {
+            const result = await reconcile(...args);
+            now.mockReturnValue(freeze + 1);
+            return result;
+          });
+        await expect(vote(10)).rejects.toBeInstanceOf(WavesFrozenException);
+        expect(
+          await sqlExecutor.execute(
+            `select sequence from ${tables.COMPETITION_VOTE_HISTORY_TABLE}`
+          )
+        ).toEqual([]);
+      } finally {
+        if (saved.flag === undefined) delete process.env.FEATURE_WAVES_FROZEN;
+        else process.env.FEATURE_WAVES_FROZEN = saved.flag;
+        if (saved.at === undefined) delete process.env.WAVES_FREEZE_AT;
+        else process.env.WAVES_FREEZE_AT = saved.at;
+      }
     });
 
     it.each([null, visibilityGroup])(

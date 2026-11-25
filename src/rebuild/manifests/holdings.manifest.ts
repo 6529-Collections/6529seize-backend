@@ -224,6 +224,10 @@ export const holdingsManifest: AreaManifest = {
       why: 'USD price from the price provider.'
     },
     transactions: { class: 'INDEX' },
+    transaction_scan_checkpoints: {
+      class: 'EPHEMERAL',
+      why: "Loop cursor: the last finalized block (and its hash) the transactions scan covered per chain and contract, written only while Drop Forge needs the coverage. Without it the scan starts again after the newest stored transaction, and Drop Forge's supply check, which reads it as proof of coverage, fails closed until the next scan."
+    },
     transfer_reconciliations: { class: 'INDEX' },
     wallet_transfer_analysis_states: {
       class: 'EPHEMERAL',

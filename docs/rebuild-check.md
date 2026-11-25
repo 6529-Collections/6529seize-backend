@@ -115,9 +115,12 @@ export const mintManifest: AreaManifest = {
 - `rebuilders`: steps that fill your INDEX tables from empty. A module step
   exports `async (ctx: RebuildContext) => void`; the run calls it inside
   `doInDbContext`, so the usual DB services work. `ctx.sources` holds the base
-  URLs of the run's sources and `ctx.mark` the chain height and Ethereum block
-  to rebuild to. A command step gets the same values in `REBUILD_*`
-  environment variables.
+  URLs of the run's sources, `ctx.mark` the chain height and Ethereum block
+  to rebuild to, `ctx.final` whether the run is a final one (`--final`), and
+  `ctx.seedFilesDir`, for a seed in a run that serves files, the directory
+  its own files go in (see the files server below). A command step gets the
+  sources and the mark in `REBUILD_*` environment variables, and the whole
+  context, `final` included, only as JSON in `REBUILD_CONTEXT`.
   - Each rebuilder connects as its own MySQL user. It can write its `writes`
     and read its `reads`, and lock rows it reads (`SELECT ... FOR UPDATE`,
     as production writers do); anything else is refused.
@@ -270,7 +273,10 @@ proves nothing whatever its probes answered.
 - tables a manifest keeps or rebuilds that the schema build doesn't make;
 - provisional sources, and command steps that don't run Node (the source
   guard watches only Node processes);
-- documented GET routes with no probe and no waiver.
+- documented GET routes with no probe and no waiver;
+- steps skipped while a table they need isn't in the schema, and needs on
+  a table the schema already has;
+- rows of a shared table in no writer's partition.
 
 Without `--final` each of these is a note in the report.
 
@@ -298,9 +304,10 @@ Each `--source <name>=<spec>`:
   devnet scenario, an anvil state, or `hand`), as a label for the report.
   Provisional, so `--final` fails on them: a live URL, a `record` run (it
   reaches a live URL), the harness relay, every gateway or ethereum
-  recording, and a files directory that holds any file. Nothing verifies
-  a recording's answers yet, and a label is never a basis, so the report
-  says "answers not verified" whatever `PROVENANCE.json` says; checking
+  recording, and a files directory that holds a file whose id nothing
+  checks (see the files server below). Nothing verifies a recording's
+  answers yet, and a label is never a basis, so the report says "answers
+  not verified" whatever `PROVENANCE.json` says; checking
   the node's proofs (for ethereum, the blocks' hash chain and receipt
   proofs) is what will let one count. `anvil` from a state file records
   nothing and counts.
@@ -314,17 +321,24 @@ Each `--source <name>=<spec>`:
   `alchemy_getAssetTransfers` from its logs and blocks. Children get the
   shim as `ETHEREUM_RPC_URL` and `ALCHEMY_BASE_URL`. The Alchemy NFT API and
   its other `alchemy_*` methods are not served; a call to them fails the run.
+  `ALCHEMY_BASE_URL` is honoured only on a loopback host (127.0.0.1, ::1 or
+  localhost), since the Alchemy key travels in its path: an `ethereum` URL
+  on another host fails a step as soon as it makes its Alchemy client.
 - The files server answers `/ipfs/<id>`, `/ar/<id>`, `/docs/<id>` and
   `/<id>` from the directory, and checks every file against
-  `<dir>/files.json` (id to SHA-256). It doesn't derive an id from the
-  content: an Arweave id is a transaction's, not a hash of the file, so
-  `files.json` is what ties each id to its bytes. A seed can add files: it
-  writes them into `ctx.seedFilesDir` and lists them in that directory's own
-  `files.json`; the server checks each one's hash when it is asked for.
+  `<dir>/files.json` (id to SHA-256). It derives an id from the content
+  only for a SHA-256 name (below): an Arweave id is a transaction's, not a
+  hash of the file, so for other names `files.json` is what ties each id
+  to its bytes. A seed can add files: it writes them into
+  `ctx.seedFilesDir` and lists them in that directory's own `files.json`;
+  the server checks each one's hash when it is asked for.
   The seeds' files are the run's own world. Files in `<dir>` come from
-  outside the run, and nothing checks their ids against their bytes yet,
-  so a directory that holds any is provisional ("ids not verified"),
-  whatever its `PROVENANCE.json` says.
+  outside the run. A file named by the SHA-256 of its bytes, as lowercase
+  hex or as a raw CIDv1 with a sha2-256 multihash (`bafkrei...`, the
+  document store's naming), has its id checked against its bytes, and one
+  with other bytes fails the run. For any other file nothing checks its id
+  yet, so a directory that holds one is provisional ("ids not verified",
+  naming the files), whatever its `PROVENANCE.json` says.
 - A flag value may name a source: `{gateway}`, `{relays}`, `{ethereum}`
   or `{files}` become its URL in the run.
 

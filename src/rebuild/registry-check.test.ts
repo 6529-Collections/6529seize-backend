@@ -243,7 +243,36 @@ describe('checkRegistry', () => {
       codeTables: code('t1', 't2')
     });
     expect(result.problems.map((p) => p.detail)).toEqual([
-      'a rebuilder waits on unknown step nowhere'
+      'rebuilder a.ghost lists unknown step nowhere in `before`'
+    ]);
+  });
+
+  it('names the field an unknown step comes from', () => {
+    const result = checkRegistry({
+      manifests: [
+        area(
+          'a',
+          { t1: index() },
+          {
+            seeds: [
+              step('a.seed', { after: ['a.gone'] }),
+              step('a.seed-too', { after: ['a.gone'] }),
+              step('a.early', { before: ['a.gone'] })
+            ],
+            rebuilders: [
+              step('a.rebuild', { writes: ['t1'], after: ['a.missing'] })
+            ]
+          }
+        )
+      ],
+      codeTables: code('t1')
+    });
+    expect(
+      result.problems.filter((p) => p.kind === 'BAD_ORDER').map((p) => p.detail)
+    ).toEqual([
+      'a seed waits on unknown step a.gone',
+      'seed a.early lists unknown step a.gone in `before`',
+      'a rebuilder waits on unknown step a.missing'
     ]);
   });
 

@@ -51,6 +51,8 @@ function run(
     full?: boolean;
     /** Table entries that replace the manifests' own. */
     tables?: Readonly<Record<string, TableEntry>>;
+    /** The area declares ABSENT, a planned table no code creates. */
+    absent?: boolean;
   }
 ) {
   const tables = (manifest: AreaManifest) =>
@@ -67,7 +69,15 @@ function run(
     manifest.area === area
       ? {
           ...manifest,
-          tables: tables(manifest),
+          tables: parts.absent
+            ? {
+                ...tables(manifest),
+                [ABSENT]: {
+                  class: 'INDEX' as const,
+                  origin: 'planned' as const
+                }
+              }
+            : tables(manifest),
           seeds: [parts.seed],
           rebuilders: [parts.rebuilder, ...(parts.more ?? [])],
           probes: parts.probes ?? []
@@ -98,8 +108,14 @@ function run(
 
 const teamSeed = step('self-check.seed', 'seedTeam', ['team']);
 
-function teamRun(rebuilder: RebuildStep, final = false) {
-  return run('mint', { seed: teamSeed, rebuilder, final });
+/**
+ * A table the run's area plans and no code creates, whatever the schema
+ * holds: a step that needs it waits.
+ */
+const ABSENT = 'rebuild_self_check_absent';
+
+function teamRun(rebuilder: RebuildStep, final = false, absent = false) {
+  return run('mint', { seed: teamSeed, rebuilder, final, absent });
 }
 
 describe('rebuild check, end to end', () => {
@@ -169,29 +185,37 @@ describe('rebuild check, end to end', () => {
   });
 
   it('skips a step as planned while a table it needs is not in the schema', async () => {
-    // A manifest table (identity's planned mirror table) no code creates yet.
+    // A planned table no code creates.
     const waiting = (id: string): RebuildStep => ({
       ...step(id, 'rebuildTeam', ['team']),
       needs: [
         {
-          table: 'identity_chain_principals',
-          reason: 'the identity mirror creates it'
+          table: ABSENT,
+          reason: 'a later branch creates it'
         }
       ]
     });
-    const { report } = await teamRun(waiting('self-check.waiting'));
+    const { report } = await teamRun(
+      waiting('self-check.waiting'),
+      false,
+      true
+    );
     expect(report.failures).toEqual([]);
     expect(report.verdict).toBe('PASS');
     expect(report.steps.map((s) => s.id)).not.toContain('self-check.waiting');
     // Its table was kept, like a planned rebuilder's.
     expect(report.tables.rebuilt).toEqual([]);
     expect(report.notes.join(' ')).toContain(
-      'self-check.waiting needs identity_chain_principals (the identity mirror creates it)'
+      `self-check.waiting needs ${ABSENT} (a later branch creates it)`
     );
-    const final = await teamRun(waiting('self-check.waiting-final'), true);
+    const final = await teamRun(
+      waiting('self-check.waiting-final'),
+      true,
+      true
+    );
     expect(final.report.verdict).toBe('FAIL');
     expect(final.report.failures.join(' ')).toContain(
-      'self-check.waiting-final needs identity_chain_principals'
+      `self-check.waiting-final needs ${ABSENT}`
     );
   });
 
@@ -284,7 +308,7 @@ describe('rebuild check, end to end', () => {
   });
 
   it("empties a running writer's partition of a table kept for a skipped writer", async () => {
-    // The 6529 rows' writer waits for a table no code creates yet, so it is
+    // The 6529 rows' writer waits for a planned table no code creates, so it is
     // skipped and team is kept for it. The MEMES writer inserts its rows:
     // a duplicate key, unless the kept copy's MEMES rows were deleted
     // first. In an area run and in a full one.
@@ -293,8 +317,8 @@ describe('rebuild check, end to end', () => {
       writes: [partition('6529')],
       needs: [
         {
-          table: 'identity_chain_principals',
-          reason: 'the identity mirror creates it'
+          table: ABSENT,
+          reason: 'a later branch creates it'
         }
       ]
     };
@@ -303,7 +327,8 @@ describe('rebuild check, end to end', () => {
         seed: teamSeed,
         rebuilder: memes,
         more: [skipped],
-        full
+        full,
+        absent: true
       });
       expect([full, report.failures]).toEqual([full, []]);
       expect(report.verdict).toBe('PASS');
@@ -430,7 +455,7 @@ describe('rebuild check, end to end', () => {
     });
 
     it('refills the owned column of a table kept for a skipped row writer', async () => {
-      // The row writer waits for a table no code creates yet, so team is
+      // The row writer waits for a planned table no code creates, so team is
       // kept for it, and the kept copy brings back the seeded dates. The
       // owner's column still goes back to its default after the copy:
       // dating only the MEMES rows leaves the other row at the default.
@@ -440,13 +465,14 @@ describe('rebuild check, end to end', () => {
           ...undated,
           needs: [
             {
-              table: 'identity_chain_principals',
-              reason: 'the identity mirror creates it'
+              table: ABSENT,
+              reason: 'a later branch creates it'
             }
           ]
         },
         more: [dated('self-check.memes-dated', 'dateMemesTeam')],
-        tables
+        tables,
+        absent: true
       });
       expect(report.failures).toEqual([]);
       expect(report.steps.map((s) => s.id)).not.toContain('self-check.undated');
@@ -570,14 +596,15 @@ describe('rebuild check, end to end', () => {
             ...otherRows,
             needs: [
               {
-                table: 'identity_chain_principals',
-                reason: 'the identity mirror creates it'
+                table: ABSENT,
+                reason: 'a later branch creates it'
               }
             ]
           },
           owner(['self-check.memes-rows', 'self-check.other-rows'])
         ],
-        tables
+        tables,
+        absent: true
       });
       expect(kept.report.failures).toEqual([]);
       expect(kept.report.tables.diffs.map((d) => [d.table, d.changed])).toEqual(
