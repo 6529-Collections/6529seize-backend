@@ -1,6 +1,12 @@
 import 'reflect-metadata';
 import { legacyCompetitionId } from '@/competitions/competition-id';
-import { DROPS_TABLE, WAVE_CURATIONS_TABLE } from '@/constants';
+import {
+  DROP_MENTIONED_WAVES_TABLE,
+  DROP_POLL_OPTIONS_TABLE,
+  DROP_POLLS_TABLE,
+  DROPS_TABLE,
+  WAVE_CURATIONS_TABLE
+} from '@/constants';
 import { DropType } from '@/entities/IDrop';
 import { RateMatter } from '@/entities/IRating';
 import { WaveType } from '@/entities/IWave';
@@ -225,6 +231,42 @@ describeWithSeed(
         dropRow(DM_WAVE.id, 'dm-drop-5', 5)
       ]
     },
+    // A drop that mentions a moving wave, and a closed poll on one: the
+    // API nests a wave in both (mentioned_waves[].wave, a poll drop's wave).
+    {
+      table: DROP_MENTIONED_WAVES_TABLE,
+      rows: [
+        {
+          drop_id: 'members-drop-4',
+          wave_name_in_content: 'Public',
+          wave_id: PUBLIC_ID
+        }
+      ]
+    },
+    {
+      table: DROP_POLLS_TABLE,
+      rows: [
+        {
+          id: 'made-up-poll',
+          wave_id: PUBLIC_ID,
+          drop_id: descriptionDrop(PUBLIC_ID),
+          closing_time: 1_500,
+          multichoice: false,
+          anonymous: false,
+          only_droppers_can_respond: false
+        }
+      ]
+    },
+    {
+      table: DROP_POLL_OPTIONS_TABLE,
+      rows: [1, 2].map((option) => ({
+        poll_id: 'made-up-poll',
+        option_no: option,
+        wave_id: PUBLIC_ID,
+        drop_id: descriptionDrop(PUBLIC_ID),
+        option_string: `Option ${option}`
+      }))
+    },
     withUserGroups([
       PRIVATE_GROUP,
       HIDDEN_GROUP,
@@ -356,10 +398,9 @@ describeWithSeed(
       // The rule's fields: a direct message's group says so, and created_at
       // is in ms.
       expect(groups[DM_GROUP.id]).toMatchObject({ is_direct_message: true });
-      // The API's stays_on_site is left out of every object the export reads.
-      for (const group of Object.values(groups)) {
-        expect(group).not.toHaveProperty('stays_on_site');
-      }
+      // The API's stays_on_site is left out of every object the export
+      // reads, at any depth.
+      expect(JSON.stringify(groups)).not.toContain('stays_on_site');
       expect(groups[PRIVATE_GROUP.id].is_direct_message).toBeUndefined();
       expect(groups[LATE_GROUP.id].created_at).toBe(FREEZE_MS + 60_000);
       expect(groups[PRIVATE_GROUP.id]).toMatchObject({
@@ -382,7 +423,7 @@ describeWithSeed(
         lifecycle: 'PUBLISHED',
         permissions: { view: true, vote: false, submit: false }
       });
-      expect(competition?.competition).not.toHaveProperty('stays_on_site');
+      expect(JSON.stringify(competition)).not.toContain('stays_on_site');
       expect(competition?.details).toEqual({
         entries: [],
         decisions: [],
@@ -404,7 +445,9 @@ describeWithSeed(
       const configuration = await source.waveConfiguration(members, [
         PRIVATE_GROUP.id
       ]);
-      expect(configuration).not.toHaveProperty('stays_on_site');
+      // Its description drop carries its wave: nested, and left out too.
+      expect(configuration).toHaveProperty('description_drop.wave.id');
+      expect(JSON.stringify(configuration)).not.toContain('stays_on_site');
       expect(configuration).toMatchObject({
         id: MEMBERS_WAVE.id,
         visibility: { scope: { group: { id: PRIVATE_GROUP.id } } },
@@ -427,6 +470,11 @@ describeWithSeed(
         });
       }
       expect(drops['members-drop-3'].drop_type).not.toBe('COMPETITION');
+      // A mentioned wave is nested in its drop, without stays_on_site.
+      expect(drops['members-drop-4'].mentioned_waves).toMatchObject([
+        { wave_id: PUBLIC_ID, wave: { id: PUBLIC_ID } }
+      ]);
+      expect(JSON.stringify(drops)).not.toContain('stays_on_site');
       expect(compactDrop(drops['members-drop-3']).table).toEqual({
         signature: 'made-up-signature',
         is_additional_action_promised: true,
@@ -443,8 +491,19 @@ describeWithSeed(
         drop_type: 'CHAT',
         reply_to_part_id: null
       });
+      // A closed poll's drop, read with its wave, without stays_on_site.
+      const polls = await source.wavePolls(
+        PUBLIC_WAVE.id,
+        'CLOSED',
+        Date.now()
+      );
+      expect(polls.map((drop) => drop.id)).toEqual([
+        descriptionDrop(PUBLIC_ID)
+      ]);
+      expect(polls[0]).toHaveProperty('wave.id', PUBLIC_ID);
+      expect(JSON.stringify(polls)).not.toContain('stays_on_site');
       expect(
-        await source.wavePolls(PUBLIC_WAVE.id, 'CLOSED', Date.now())
+        await source.wavePolls(PUBLIC_WAVE.id, 'OPEN', Date.now())
       ).toEqual([]);
     });
   }

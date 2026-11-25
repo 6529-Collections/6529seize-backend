@@ -12,6 +12,7 @@ import {
   COMPETITION_ENTRIES_TABLE,
   COMPETITION_VOTE_HISTORY_TABLE,
   COMPETITION_VOTES_TABLE,
+  DROP_MENTIONED_WAVES_TABLE,
   DROPS_PARTS_TABLE,
   DROPS_TABLE
 } from '@/constants';
@@ -166,7 +167,9 @@ const DROPS = [
   // The decision's entry, stored as a native entry's drop, and the
   // decision wave's description.
   { ...dropRow(DECISION_ID, DROP(7), 7), drop_type: DropType.COMPETITION },
-  dropRow(DECISION_ID, DROP(8), 8)
+  dropRow(DECISION_ID, DROP(8), 8),
+  // A drop that mentions a moving wave: the API nests that wave in it.
+  dropRow(FIRST_ID, DROP(9), 9)
 ];
 
 function readLines(file: string): Record<string, unknown>[] {
@@ -202,6 +205,16 @@ describeWithSeed(
     {
       table: DROPS_PARTS_TABLE,
       rows: DROPS.map((drop) => partRow(drop.wave_id, drop.id))
+    },
+    {
+      table: DROP_MENTIONED_WAVES_TABLE,
+      rows: [
+        {
+          drop_id: DROP(9),
+          wave_name_in_content: 'Second',
+          wave_id: SECOND_ID
+        }
+      ]
     },
     {
       table: COMPETITION_ENTRIES_TABLE,
@@ -358,6 +371,37 @@ describeWithSeed(
         log.reduce((sum, row) => sum + row.new_vote - row.old_vote, 0)
       ).toBe(total);
       expect(Object.keys(raw('entry_votes.json'))).toEqual([ENTRY_ID]);
+      // stays_on_site appears once per exported wave, on its configuration
+      // in waves_v3.json, and nowhere else: none of the API's copies, nested
+      // or not, reaches a file.
+      const mentioning = readLines(
+        path.join(out, 'raw', 'drops', `${FIRST_ID}.jsonl.gz`)
+      ).find((line) => line.id === DROP(9));
+      // The compact drop row keeps the mention's wave id; the nested wave
+      // the API gives with it is in waves_v3.json's description drops.
+      expect(mentioning?.mentioned_waves).toMatchObject([
+        { wave_id: SECOND_ID }
+      ]);
+      const counts: Record<string, number> = {};
+      const walk = (dir: string) => {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          const file = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            walk(file);
+            continue;
+          }
+          const text = file.endsWith('.gz')
+            ? zlib.gunzipSync(fs.readFileSync(file)).toString('utf8')
+            : fs.readFileSync(file, 'utf8');
+          const found = text.split('"stays_on_site"').length - 1;
+          if (found)
+            counts[path.relative(out, file).split(path.sep).join('/')] = found;
+        }
+      };
+      walk(path.join(out, 'raw'));
+      expect(counts).toEqual({
+        'raw/waves_v3.json': Object.keys(raw('waves_v3.json')).length
+      });
       expect(raw('export.json')).toMatchObject({
         records_wave_id: RECORDS_ID,
         left_out: {
