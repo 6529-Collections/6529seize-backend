@@ -35,11 +35,17 @@ import { sqlExecutor } from '../sql-executor';
 import { equalIgnoreCase } from '../strings';
 import { Time } from '../time';
 import {
+  claimDeferredWrite,
+  deferralReason,
+  deferSubscriptionWrites
+} from '@/subscription-key-width/subscription-deferred-writes';
+import {
   fetchAllAutoSubscriptions,
   fetchAllNftSubscriptionBalances,
   fetchAllNftSubscriptions,
   fetchSubscriptionEligibilityForKeys,
   persistNFTFinalSubscriptions,
+  splitFinalList,
   persistSubscriptions
 } from './db.subscriptions';
 import { MINIMUM_SUBSCRIPTION_ELIGIBILITY } from './subscription-eligibility';
@@ -171,19 +177,17 @@ async function buildFinalSubscription(
   const { finalSubscriptions, newSubscriptionLogs } =
     await createFinalSubscriptions(newMeme, dateStr, autoSubscriptions);
 
+  // Split before publishing, so the published list and the final rows hold
+  // the same subscribers; a key that must wait is on neither.
+  const split = await splitFinalList(finalSubscriptions, newSubscriptionLogs);
+
   const upload: NFTFinalSubscriptionUpload = await uploadFinalSubscriptions(
     MEMES_CONTRACT,
     newMeme,
-    finalSubscriptions
+    split.rows
   );
 
-  await persistNFTFinalSubscriptions(
-    MEMES_CONTRACT,
-    newMeme,
-    upload,
-    finalSubscriptions,
-    newSubscriptionLogs
-  );
+  await persistNFTFinalSubscriptions(MEMES_CONTRACT, newMeme, upload, split);
 
   return {
     uploadLink: upload.upload_url,
@@ -667,7 +671,22 @@ async function moveFinalSubscriptions(
   );
 }
 
-export async function consolidateSubscriptions(addresses: Set<string>) {
+function compareKeys(a: string, b: string): number {
+  if (a === b) {
+    return 0;
+  }
+  return a < b ? -1 : 1;
+}
+
+/**
+ * Re-keys subscriptions after consolidation changes. With `replaySequence`
+ * it replays a queued consolidation: the queue entry is claimed in the same
+ * transaction, and false is returned when another run had claimed it.
+ */
+export async function consolidateSubscriptions(
+  addresses: Set<string>,
+  options: { readonly replaySequence?: number } = {}
+): Promise<boolean> {
   const affectedSubscriptions = await fetchAffectedSubscriptions(
     Array.from(addresses)
   );
@@ -731,7 +750,18 @@ export async function consolidateSubscriptions(addresses: Set<string>) {
   // rows or stop the delegations loop. A deadlock or lock-wait timeout rolls
   // back the whole transaction, savepoints included; then the run aborts with
   // the original error rather than continue outside a transaction.
+  let claimed = true;
   await getDataSource().transaction(async (manager) => {
+    if (options.replaySequence !== undefined) {
+      claimed = await claimDeferredWrite(
+        options.replaySequence,
+        'DONE',
+        manager
+      );
+      if (!claimed) {
+        return;
+      }
+    }
     const uniqueValuesWithKeys = collections.getMapWithKeysAndValuesSwitched(
       replaceConsolidations
     );
@@ -741,6 +771,29 @@ export async function consolidateSubscriptions(addresses: Set<string>) {
       const oldKeys = uniqueValuesWithKeys.get(newKey);
       if (!oldKeys) {
         logger.error(`No keys found for value: ${newKey}`);
+        continue;
+      }
+      // A new key the subscription tables can't hold yet is queued, not
+      // merged; the old keys keep their rows until it is replayed.
+      const reason = await deferralReason(
+        newKey,
+        manager,
+        options.replaySequence,
+        { locking: true }
+      );
+      if (reason) {
+        await deferSubscriptionWrites(
+          [
+            {
+              kind: 'CONSOLIDATION',
+              consolidationKey: newKey,
+              dedupe: `${newKey}|${oldKeys.slice().sort(compareKeys).join(',')}`,
+              payload: { newKey, oldKeys },
+              reason
+            }
+          ],
+          manager
+        );
         continue;
       }
       const savepoint = `consolidate_subscriptions_${index}`;
@@ -768,6 +821,7 @@ export async function consolidateSubscriptions(addresses: Set<string>) {
       }
     }
   });
+  return claimed;
 }
 
 async function mergeSubscriptionsIntoKey(
@@ -792,13 +846,19 @@ async function mergeSubscriptionsIntoKey(
   }
 
   // newKey may already hold balance and mode rows of its own (both keyed by
-  // consolidation_key), so they are folded in and replaced too.
+  // consolidation_key), so they are folded in and replaced too. Both sums
+  // are read FOR UPDATE. A plain read returns the snapshot taken at the
+  // transaction's first plain read, which can be several merges earlier, so
+  // a top-up, charge or mode change committed since then was left out and
+  // lost when the rows below were deleted. The locking read sees it, and a
+  // later write to these rows waits until this transaction ends.
   const balanceAndModeKeys = Array.from(new Set([...oldKeys, newKey]));
   const placeholders = balanceAndModeKeys.map(() => '?').join(',');
   const balanceResult = await manager.query(
     `SELECT SUM(balance) as total_balance
       FROM ${SUBSCRIPTIONS_BALANCES_TABLE}
-      WHERE consolidation_key IN (${placeholders})`,
+      WHERE consolidation_key IN (${placeholders})
+      FOR UPDATE`,
     balanceAndModeKeys
   );
   const totalBalance = balanceResult[0]?.total_balance;
@@ -807,7 +867,8 @@ async function mergeSubscriptionsIntoKey(
     `SELECT SUM(automatic = true) AS automatic_count,
       SUM(subscribe_all_editions = true) AS all_editions_count
       FROM ${SUBSCRIPTIONS_MODE_TABLE}
-      WHERE consolidation_key IN (${placeholders})`,
+      WHERE consolidation_key IN (${placeholders})
+      FOR UPDATE`,
     balanceAndModeKeys
   );
   // SUM over no rows is NULL, and MySQL returns DECIMAL sums as strings.

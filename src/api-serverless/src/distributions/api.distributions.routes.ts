@@ -1,3 +1,4 @@
+import { finalizeDistribution } from '@/drop-forge/drop-forge.preparation';
 import { ethers } from 'ethers';
 import { Request, Response } from 'express';
 import * as Joi from 'joi';
@@ -30,10 +31,7 @@ import {
   fetchDistributionPhases,
   fetchDistributions
 } from '@/api/distributions/api.distributions.db';
-import {
-  insertAutomaticAirdropsForPhase,
-  populateDistributionNormalized
-} from '@/api/distributions/api.distributions.service';
+import { insertAutomaticAirdropsForPhase } from '@/api/distributions/api.distributions.service';
 import { githubDistributionService } from '@/api/distributions/github-distribution.service';
 import {
   adminWriteSpec,
@@ -399,7 +397,7 @@ router.post(
           distribution_cursor_block: await distributionCursorBlock(connection)
         })
       }),
-      () => populateDistributionNormalized(contract, cardId)
+      () => finalizeDistribution(contract, cardId, {}, true)
     );
 
     await invalidateDistributionOverviewCache(contract, cardId);

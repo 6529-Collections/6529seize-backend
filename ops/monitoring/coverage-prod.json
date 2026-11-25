@@ -587,6 +587,19 @@
       ]
     },
     {
+      "service": "signedRecordLogLoop",
+      "region": "us-east-1",
+      "functions": [
+        "signedRecordLogCloser",
+        "signedRecordLogArchiver"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
       "service": "teamLoop",
       "region": "us-east-1",
       "functions": [
@@ -709,6 +722,30 @@
       "region": "us-east-1",
       "functions": [
         "artworkDocumentationProcessor"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "dropForgeLaunchHandler",
+      "region": "us-east-1",
+      "functions": [
+        "dropForgeLaunchHandler"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "memesDistributionHandler",
+      "region": "us-east-1",
+      "functions": [
+        "memesDistributionHandler"
       ],
       "coverage": [
         "structured-error-logs",

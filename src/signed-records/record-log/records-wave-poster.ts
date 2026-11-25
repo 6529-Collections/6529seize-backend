@@ -1,10 +1,4 @@
-import {
-  createHash,
-  createPrivateKey,
-  createPublicKey,
-  KeyObject,
-  sign as signBytes
-} from 'node:crypto';
+import { createHash, KeyObject, sign as signBytes } from 'node:crypto';
 import { ethers } from 'ethers';
 import { AuthenticationContext } from '@/auth-context';
 import {
@@ -23,7 +17,9 @@ import { ApiCreateDropRequest } from '@/api/generated/models/ApiCreateDropReques
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
 import { canonicalizeJson } from '@/profile-cms/protocol/v1/canonical-json';
 import { RequestContext } from '@/request.context';
+import { readRecordsWaveSetting } from '@/waves-scope/waves-scope';
 import type { RecordsWavePoster } from './record-log.service';
+import { deviceKeyOfSeed } from './service-device-key';
 
 /** The 6529.io service identity that signs the records wave's drops. */
 export interface ServiceIdentity {
@@ -35,10 +31,6 @@ export interface ServiceIdentity {
   readonly privateKey: KeyObject;
 }
 
-const ED25519_PKCS8_PREFIX = Buffer.from(
-  '302e020100300506032b657004220420',
-  'hex'
-);
 const HEX32 = /^0x[0-9a-f]{64}$/;
 const ADDRESS = /^0x[0-9a-f]{40}$/;
 
@@ -46,12 +38,15 @@ const ADDRESS = /^0x[0-9a-f]{40}$/;
  * Reads the service identity from config: SIGNED_RECORDS_WAVE_ID,
  * SIGNED_RECORDS_SERVICE_PROFILE_ID, SIGNED_RECORDS_SERVICE_WALLET,
  * SIGNED_RECORDS_SERVICE_GRANT_ID and SIGNED_RECORDS_SERVICE_DEVICE_SEED
- * (the Ed25519 seed, 0x + 64 hex, a secret). Null when any is missing.
+ * (the Ed25519 seed, 0x + 64 hex, a secret). Null when any is missing, and
+ * when SIGNED_RECORDS_WAVE_ID is `none` (6529.io has no records wave), so
+ * nothing is ever posted to a wave called "none".
  */
 export function loadServiceIdentity(
   env: Readonly<Record<string, string | undefined>>
 ): ServiceIdentity | null {
-  const waveId = env.SIGNED_RECORDS_WAVE_ID;
+  const records = readRecordsWaveSetting(env);
+  const waveId = records.kind === 'id' ? records.id : null;
   const profileId = env.SIGNED_RECORDS_SERVICE_PROFILE_ID;
   const wallet = env.SIGNED_RECORDS_SERVICE_WALLET?.toLowerCase();
   const grantId = env.SIGNED_RECORDS_SERVICE_GRANT_ID?.toLowerCase();
@@ -62,18 +57,7 @@ export function loadServiceIdentity(
   if (!ADDRESS.test(wallet) || !HEX32.test(grantId) || !HEX32.test(seed)) {
     throw new Error('Malformed signed records service identity');
   }
-  const privateKey = createPrivateKey({
-    key: Buffer.concat([
-      ED25519_PKCS8_PREFIX,
-      Buffer.from(seed.slice(2), 'hex')
-    ]),
-    format: 'der',
-    type: 'pkcs8'
-  });
-  const deviceKey = `0x${createPublicKey(privateKey)
-    .export({ format: 'der', type: 'spki' })
-    .subarray(12)
-    .toString('hex')}`;
+  const { deviceKey, privateKey } = deviceKeyOfSeed(seed);
   return { waveId, profileId, wallet, grantId, deviceKey, privateKey };
 }
 

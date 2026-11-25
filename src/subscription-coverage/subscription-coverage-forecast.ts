@@ -11,6 +11,7 @@ import {
   SubscriptionCoverageForecast,
   SubscriptionCoverageForecastHorizon,
   SubscriptionCoverageForecastInput,
+  SubscriptionCoverageFundedDropsAtCurrentSettings,
   SubscriptionCoverageIntentSource,
   SubscriptionCoverageMemeReference,
   SubscriptionCoverageMinimumTopUp,
@@ -25,6 +26,11 @@ import {
 } from './subscription-coverage.types';
 
 export const MEMES_MINT_PRICE_WEI = exactEthToWei('0.06529');
+/**
+ * Upper bound for the funded-drop count past the forecast horizon: two years
+ * of the three-drops-a-week Memes calendar. It bounds the per-request loop.
+ */
+export const MAX_FUNDED_DROPS_AT_CURRENT_SETTINGS = 312;
 const ZERO_WEI = BigInt(0);
 
 interface IntendedDrop {
@@ -44,6 +50,7 @@ interface AllocationResult {
   readonly fundedThrough: SubscriptionCoverageMemeReference | null;
   readonly nextUnfunded: SubscriptionCoverageUnfundedDrop | null;
   readonly evaluatedIntendedDrops: number;
+  readonly remainingWei: bigint;
 }
 
 interface ForecastFields {
@@ -321,7 +328,8 @@ function allocate(
         topUpDeadline: null,
         source: drop.source
       },
-      evaluatedIntendedDrops
+      evaluatedIntendedDrops,
+      remainingWei
     };
   }
 
@@ -330,8 +338,75 @@ function allocate(
     fullyFundedDrops,
     fundedThrough,
     nextUnfunded: null,
-    evaluatedIntendedDrops
+    evaluatedIntendedDrops,
+    remainingWei
   };
+}
+
+/**
+ * Counts consecutive fully funded intended drops at current settings. Inside
+ * the forecast horizon this equals `fullyFundedDrops`. When every intended
+ * drop in the horizon is funded, automatic mode keeps spending the remaining
+ * balance on the calendar drops after the horizon (consecutive token ids),
+ * honoring any stored selection for them and the default request otherwise.
+ * Manual mode intends no drop the user has not selected, so it stops at the
+ * horizon. Bounded by MAX_FUNDED_DROPS_AT_CURRENT_SETTINGS iterations.
+ */
+function fundedDropsAtCurrentSettings(
+  input: SubscriptionCoverageForecastInput,
+  allocation: AllocationResult,
+  eligibilityCount: number
+): SubscriptionCoverageFundedDropsAtCurrentSettings {
+  const max = MAX_FUNDED_DROPS_AT_CURRENT_SETTINGS;
+  const withinHorizon = allocation.fullyFundedDrops;
+  if (
+    allocation.nextUnfunded !== null ||
+    input.mode !== SubscriptionCoverageMode.Automatic ||
+    !input.scheduleTruncated
+  ) {
+    return {
+      count: Math.min(withinHorizon, max),
+      capped: withinHorizon > max
+    };
+  }
+  const orderedSchedule = sortedSchedule(input);
+  const lastTokenId = orderedSchedule[orderedSchedule.length - 1]?.tokenId;
+  const selectionsByTokenId = selectionsByTokenIdOrNull(input.selections);
+  if (lastTokenId === undefined || !selectionsByTokenId) {
+    return { count: Math.min(withinHorizon, max), capped: false };
+  }
+  let remainingWei = allocation.remainingWei;
+  let count = withinHorizon;
+  // Opted-out drops cost nothing; the gap guard keeps the loop bounded.
+  let stepsLeft = max * 2;
+  for (
+    let tokenId = lastTokenId + 1;
+    count < max && stepsLeft > 0;
+    tokenId++, stepsLeft--
+  ) {
+    const selection = selectionsByTokenId.get(tokenId);
+    if (selection && !selection.subscribed) {
+      continue;
+    }
+    const requestedMints = selection
+      ? requestedMintsForSelection(
+          selection,
+          input.mode,
+          input.subscribeAllEditions,
+          eligibilityCount
+        ).requestedMints
+      : implicitAutomaticRequestedMints(
+          input.subscribeAllEditions,
+          eligibilityCount
+        );
+    const requestedWei = BigInt(requestedMints) * input.mintPriceWei;
+    if (requestedMints <= 0 || remainingWei < requestedWei) {
+      return { count, capped: false };
+    }
+    remainingWei -= requestedWei;
+    count++;
+  }
+  return { count, capped: count >= max };
 }
 
 function minimumTopUpFor(
@@ -743,7 +818,7 @@ export function forecastSubscriptionCoverage(
   const status = statusForConsecutiveFullyFundedDrops(
     allocation.fullyFundedDrops
   );
-  return assembleForecast(input, calculatedAt, {
+  const forecast = assembleForecast(input, calculatedAt, {
     status,
     unknownReason: null,
     mintCapacity,
@@ -759,4 +834,12 @@ export function forecastSubscriptionCoverage(
       allocation.evaluatedIntendedDrops
     )
   });
+  return {
+    ...forecast,
+    fundedDropsAtCurrentSettings: fundedDropsAtCurrentSettings(
+      input,
+      allocation,
+      eligibilityCount
+    )
+  };
 }

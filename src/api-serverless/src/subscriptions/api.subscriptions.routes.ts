@@ -1,3 +1,4 @@
+import { dropForgePreparationRepository } from '@/drop-forge/drop-forge.preparation.repository';
 import { Request, Response } from 'express';
 import * as Joi from 'joi';
 import { fetchEns } from '@/db-api';
@@ -851,7 +852,16 @@ router.get(
           authority: MINT_AUTHORITY.distributionAdmins,
           body: null
         }),
-        () => getPublicSubscriptions(contract, tokenId)
+        () =>
+          dropForgePreparationRepository.run(
+            contract,
+            tokenId,
+            (_, ctx) => getPublicSubscriptions(contract, tokenId, ctx),
+            { timer: allowlistTimer },
+            false,
+            false,
+            'MANUAL'
+          )
       );
       allowlistTimer.stop('getPublicSubscriptions');
       allowlistLogger.info(
@@ -892,29 +902,32 @@ router.get(
             ])
           })
         }),
-        async () => {
-          allowlistTimer.start('splitAllowlistResults');
-          const split = await splitAllowlistResults(
+        () =>
+          dropForgePreparationRepository.run(
             contract,
             tokenId,
-            phaseName,
-            phaseResults
-          );
-          allowlistTimer.stop('splitAllowlistResults');
-          allowlistLogger.info(
-            `[GET_SPLIT_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [phase_name ${phaseName}] [airdrops ${
-              split.airdrops.length
-            }] [allowlists ${split.allowlists.length}] [${allowlistTimer.getReport()}]`
-          );
-
-          allowlistTimer.start('populateDistribution');
-          await populateDistribution(contract, tokenId, phaseName, split);
-          allowlistTimer.stop('populateDistribution');
-          allowlistLogger.info(
-            `[GET_POPULATE_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [phase_name ${phaseName}] [${allowlistTimer.getReport()}]`
-          );
-          return split;
-        }
+            async (_, ctx) => {
+              const allocations = await splitAllowlistResults(
+                contract,
+                tokenId,
+                phaseName,
+                phaseResults,
+                ctx
+              );
+              await populateDistribution(
+                contract,
+                tokenId,
+                phaseName,
+                allocations,
+                ctx
+              );
+              return allocations;
+            },
+            { timer: allowlistTimer },
+            false,
+            false,
+            'MANUAL'
+          )
       );
 
       allowlistTimer.start('invalidateMintingClaimsPhaseCache');
@@ -992,6 +1005,13 @@ router.post(
         body: req.body
       }),
       () => resetAllowlist(contract, tokenId)
+    );
+    await evictCacheWithContextLogging(
+      `[contract ${contract}] [token_id ${tokenId}]`,
+      {
+        label: 'subscription-lists',
+        path: `/api/subscriptions/allowlists/${contract}/${tokenId}/`
+      }
     );
     resetTimer.stop('resetAllowlist');
     allowlistLogger.info(

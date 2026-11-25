@@ -231,8 +231,10 @@ Within the existing five-minute fingerprint window, the first occurrence is sent
 promptly;
 repeats update a durable count. The scheduled summary edits the first confirmed
 message when its receipt identifies the same group and webhook destination.
-Safe allowlisted push condition labels distinguish
-sender mismatch, provider transients, delivery failure and retry exhaustion.
+Safe allowlisted condition labels distinguish push
+sender mismatch, provider transients, delivery failure and retry exhaustion,
+and a profile site change that has waited more than 30 minutes
+(`PROFILE_SITE_CHANGE_STALLED`).
 Critical/recovery events bypass grouping and continue sending immediately.
 The push queue has independent source alarms for any visible dead letter and
 oldest-message age of at least 30 minutes in three out of five minutes. These

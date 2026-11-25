@@ -13,6 +13,7 @@ import {
 import { DEFAULT_MESSAGE_GROUP_ID, sqs } from '../sqs';
 import { env } from '../env';
 import { appFeatures } from '../app-features';
+import { isIdentityFrozen } from '../identity-freeze/identity-freeze';
 import {
   XTDH_LOOP_PHASE,
   XTdhLoopMessage,
@@ -115,7 +116,13 @@ export class RecalculateXTdhUseCase {
       this.logger.info(
         `Got ${walletsWithoutIdentities.length} wallets without identities`
       );
-      if (walletsWithoutIdentities.length) {
+      if (walletsWithoutIdentities.length && isIdentityFrozen()) {
+        // New identities and profiles are not made during the identity
+        // freeze; these wallets get no xTDH row until they have an identity.
+        this.logger.warn(
+          `Identities are frozen: not creating identities for ${walletsWithoutIdentities.length} wallets`
+        );
+      } else if (walletsWithoutIdentities.length) {
         this.logger.info(`Creating the missing identities`);
         await identitiesService.bulkCreateIdentities(
           walletsWithoutIdentities,

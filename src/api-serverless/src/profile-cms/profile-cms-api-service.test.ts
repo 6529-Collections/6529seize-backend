@@ -38,6 +38,7 @@ import {
 } from '@/profile-cms/protocol/v1';
 import { createHash } from 'node:crypto';
 import { ArweaveFileUploader } from '@/arweave';
+import { withComputedCmsHashes } from '@/profile-cms/protocol/v1/hash';
 import { RequestContext } from '@/request.context';
 import { ConnectionWrapper } from '@/sql-executor';
 import {
@@ -49,6 +50,14 @@ import {
   PROFILE_CMS_FIXTURE_ZERO_HASH
 } from '@/tests/fixtures/profile-cms-package.fixture';
 import type { IdentityFetcher } from '@/api/identities/identity.fetcher';
+import {
+  cmsCidFromBytes,
+  cmsCidFromHash
+} from '@/profile-cms/chain/profile-cms-cid';
+import {
+  aSignedProfileSite,
+  InMemoryProfileCmsChain
+} from '@/tests/fixtures/profile-cms-chain.fixture';
 
 type PackagesDbMock = Pick<
   ProfileCmsPackagesDb,
@@ -74,6 +83,7 @@ type PackagesDbMock = Pick<
   | 'supersedePrimaryForProfile'
   | 'executeNativeQueriesInTransaction'
   | 'updateStorageReceipt'
+  | 'recordPublication'
 >;
 
 type ArweaveUploaderMock = Pick<
@@ -134,7 +144,8 @@ describe('ProfileCmsApiService', () => {
       markValidating: jest.fn(),
       supersedePrimaryForProfile: jest.fn(),
       executeNativeQueriesInTransaction: jest.fn(),
-      updateStorageReceipt: jest.fn()
+      updateStorageReceipt: jest.fn(),
+      recordPublication: jest.fn()
     };
     pointerEventsDb = {
       insert: jest.fn(),
@@ -1995,6 +2006,560 @@ describe('ProfileCmsApiService', () => {
     });
     expect(result.pointer_events[0]).toHaveProperty('signature', '0xsignature');
     expect(result.pointer_events[0]).not.toHaveProperty('typed_data');
+  });
+
+  it('signs a publication for the chain without moving the pointer when profile sites follow the chain', async () => {
+    const chain = new InMemoryProfileCmsChain();
+    const chainService = new ProfileCmsApiService(
+      packagesDb as unknown as ProfileCmsPackagesDb,
+      identityFetcher as unknown as IdentityFetcher,
+      pointerEventsDb as unknown as ProfileCmsPointerEventsDb,
+      publishSignaturesDb as unknown as ProfileCmsPublishSignaturesDb,
+      new ProfileCmsStorageReceiptVerifier(),
+      publishSignatureVerifier,
+      arweaveUploader as unknown as ArweaveFileUploader,
+      publicationStorage,
+      {
+        isIdentityFreezeOn: () => false,
+        isProfileCmsChainPointerEnabled: () => true
+      },
+      () => chain
+    );
+    const publicationCid = cmsCidFromBytes(Buffer.from('{}'));
+    const draft = createEntity();
+    const signed = createEntity({
+      id: draft.id,
+      publication_cid: publicationCid
+    });
+    packagesDb.findById
+      .mockResolvedValueOnce(draft)
+      .mockResolvedValueOnce(signed);
+    packagesDb.findByIdForUpdate.mockResolvedValue(draft);
+    packagesDb.findPrimaryPublishedByProfileId.mockResolvedValue(null);
+
+    const result = await chainService.publish(
+      draft.id,
+      {
+        expected_package_hash: draft.package_hash,
+        expected_payload_hash: draft.payload_hash,
+        ...publishSignatureRequest()
+      },
+      ownerContext()
+    );
+
+    expect(packagesDb.recordPublication).toHaveBeenCalledWith(
+      draft.id,
+      publicationCid,
+      expect.objectContaining({ provider: 'arweave' }),
+      expect.any(Number),
+      expect.objectContaining({ connection: expect.any(Object) })
+    );
+    // Nothing reaches the gateway's document store from the server: the
+    // answer carries both files for the person's browser to upload.
+    expect(
+      await chain.getDocBytes(cmsCidFromHash(draft.package_hash))
+    ).toBeNull();
+    expect(await chain.getDocBytes(publicationCid)).toBeNull();
+    const documents = result.chain_documents!;
+    expect(documents.content_core.cid).toBe(cmsCidFromHash(draft.package_hash));
+    expect(
+      cmsCidFromBytes(
+        Buffer.from(documents.content_core.bytes_base64, 'base64')
+      )
+    ).toBe(documents.content_core.cid);
+    expect(documents.publication).toEqual({
+      cid: publicationCid,
+      bytes_base64: Buffer.from('{}').toString('base64')
+    });
+    expect(packagesDb.markPublished).not.toHaveBeenCalled();
+    expect(packagesDb.supersedePrimaryForProfile).not.toHaveBeenCalled();
+    expect(publishSignaturesDb.insertConsumed).not.toHaveBeenCalled();
+    expect(pointerEventsDb.insert).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      id: draft.id,
+      status: 'draft',
+      publication_cid: publicationCid
+    });
+  });
+
+  it("refuses, before recording anything, a site the chain's document store can't take", async () => {
+    const chainService = new ProfileCmsApiService(
+      packagesDb as unknown as ProfileCmsPackagesDb,
+      identityFetcher as unknown as IdentityFetcher,
+      pointerEventsDb as unknown as ProfileCmsPointerEventsDb,
+      publishSignaturesDb as unknown as ProfileCmsPublishSignaturesDb,
+      new ProfileCmsStorageReceiptVerifier(),
+      publishSignatureVerifier,
+      arweaveUploader as unknown as ArweaveFileUploader,
+      publicationStorage,
+      {
+        isIdentityFreezeOn: () => false,
+        isProfileCmsChainPointerEnabled: () => true
+      },
+      () => new InMemoryProfileCmsChain()
+    );
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+    packagesDb.findByIdForUpdate.mockResolvedValue(draft);
+    packagesDb.findPrimaryPublishedByProfileId.mockResolvedValue(null);
+    // The gateway takes 2 MiB a file; this content core is a byte more.
+    jest
+      .spyOn(
+        chainService as unknown as { contentCore: () => unknown },
+        'contentCore'
+      )
+      .mockReturnValue({
+        cid: cmsCidFromHash(draft.package_hash),
+        bytes: Buffer.alloc(2 * 1024 * 1024 + 1, 0x20)
+      });
+    const upload = jest.spyOn(publicationStorage, 'upload');
+
+    await expect(
+      chainService.publish(
+        draft.id,
+        {
+          expected_package_hash: draft.package_hash,
+          expected_payload_hash: draft.payload_hash,
+          ...publishSignatureRequest()
+        },
+        ownerContext()
+      )
+    ).rejects.toMatchObject({ code: 'cms_chain_document_too_large' });
+    // Nothing went to storage, and nothing was recorded.
+    expect(upload).not.toHaveBeenCalled();
+    expect(packagesDb.recordPublication).not.toHaveBeenCalled();
+  });
+
+  describe('a rollback with profile sites on the chain', () => {
+    const site = aSignedProfileSite({
+      draftId: 'draft-old',
+      profileId: PROFILE_CMS_FIXTURE_PROFILE_ID,
+      handle: PROFILE_CMS_FIXTURE_HANDLE
+    });
+    const other = aSignedProfileSite({
+      draftId: 'draft-other',
+      title: 'Other',
+      profileId: PROFILE_CMS_FIXTURE_PROFILE_ID,
+      handle: PROFILE_CMS_FIXTURE_HANDLE
+    });
+
+    function rollbackService(chain: InMemoryProfileCmsChain) {
+      return new ProfileCmsApiService(
+        packagesDb as unknown as ProfileCmsPackagesDb,
+        identityFetcher as unknown as IdentityFetcher,
+        pointerEventsDb as unknown as ProfileCmsPointerEventsDb,
+        publishSignaturesDb as unknown as ProfileCmsPublishSignaturesDb,
+        new ProfileCmsStorageReceiptVerifier(),
+        publishSignatureVerifier,
+        arweaveUploader as unknown as ArweaveFileUploader,
+        publicationStorage,
+        {
+          isIdentityFreezeOn: () => false,
+          isProfileCmsChainPointerEnabled: () => true
+        },
+        () => chain,
+        () => ({
+          hasContractCode: async () => false,
+          isValidSignature: async () => false
+        })
+      );
+    }
+
+    function earlierVersion(publicationCid: string | null) {
+      return createEntity({
+        id: 'draft-old',
+        status: ProfileCmsPackageStatus.SUPERSEDED,
+        is_primary: false,
+        published_at: 5,
+        production_valid: true,
+        cms_package: site.cmsPackage,
+        payload_hash: site.cmsPackage.integrity.payload_hash,
+        package_hash: site.packageHash,
+        publication_cid: publicationCid
+      });
+    }
+
+    async function refusal(promise: Promise<unknown>) {
+      const error = await promise.then(
+        () => null,
+        (caught: unknown) => caught
+      );
+      expect(error).toBeInstanceOf(CustomApiCompliantException);
+      return error as CustomApiCompliantException;
+    }
+
+    it('sends a version the index would accept to the chain', async () => {
+      const chain = new InMemoryProfileCmsChain();
+      chain.addSite(site);
+      packagesDb.findById.mockResolvedValue(
+        earlierVersion(site.publicationCid)
+      );
+      const error = await refusal(
+        rollbackService(chain).rollbackPrimary(
+          'draft-old',
+          { expected_current_package_id: null },
+          ownerContext()
+        )
+      );
+      expect(error.getStatusCode()).toBe(409);
+      expect(error.code).toBe('cms_pointer_on_chain');
+      expect(packagesDb.markPrimary).not.toHaveBeenCalled();
+    });
+
+    it('refuses, before any signature, a version the index would refuse', async () => {
+      const chain = new InMemoryProfileCmsChain();
+      chain.addSite(site);
+      chain.addSite(other);
+      for (const publicationCid of [null, other.publicationCid]) {
+        packagesDb.findById.mockResolvedValue(earlierVersion(publicationCid));
+        const error = await refusal(
+          rollbackService(chain).rollbackPrimary(
+            'draft-old',
+            { expected_current_package_id: null },
+            ownerContext()
+          )
+        );
+        expect(error.getStatusCode()).toBe(422);
+        expect(error.code).toBe('cms_rollback_target_refused');
+      }
+    });
+
+    it('refuses a version published under a former handle, before the file check', async () => {
+      const chain = new InMemoryProfileCmsChain();
+      chain.addSite(site);
+      const getDocBytes = jest.spyOn(chain, 'getDocBytes');
+      packagesDb.findById.mockResolvedValue(
+        earlierVersion(site.publicationCid)
+      );
+      identityFetcher.getIdentityAndConsolidationsByIdentityKey.mockResolvedValue(
+        {
+          id: PROFILE_CMS_FIXTURE_PROFILE_ID,
+          handle: 'renamedprofile',
+          primary_wallet: publishSignatureRequest().signer_address
+        } as never
+      );
+      const error = await refusal(
+        rollbackService(chain).rollbackPrimary(
+          'draft-old',
+          { expected_current_package_id: null },
+          ownerContext()
+        )
+      );
+      expect(error.getStatusCode()).toBe(409);
+      expect(error.code).toBe('cms_profile_changed');
+      expect(getDocBytes).not.toHaveBeenCalled();
+    });
+
+    it('asks to try again when the files can not be read now', async () => {
+      const chain = new InMemoryProfileCmsChain();
+      packagesDb.findById.mockResolvedValue(
+        earlierVersion(site.publicationCid)
+      );
+      const error = await refusal(
+        rollbackService(chain).rollbackPrimary(
+          'draft-old',
+          { expected_current_package_id: null },
+          ownerContext()
+        )
+      );
+      expect(error.getStatusCode()).toBe(503);
+      expect(error.code).toBe('cms_check_unavailable');
+    });
+  });
+
+  describe('a second publish of a draft already signed for the chain', () => {
+    function chainService(chain = new InMemoryProfileCmsChain()) {
+      return new ProfileCmsApiService(
+        packagesDb as unknown as ProfileCmsPackagesDb,
+        identityFetcher as unknown as IdentityFetcher,
+        pointerEventsDb as unknown as ProfileCmsPointerEventsDb,
+        publishSignaturesDb as unknown as ProfileCmsPublishSignaturesDb,
+        new ProfileCmsStorageReceiptVerifier(),
+        publishSignatureVerifier,
+        arweaveUploader as unknown as ArweaveFileUploader,
+        publicationStorage,
+        {
+          // Freeze settings left on after the switch don't block it.
+          isIdentityFreezeOn: () => true,
+          isProfileCmsChainPointerEnabled: () => true
+        },
+        () => chain
+      );
+    }
+
+    it('returns the stored record and its files without signing again', async () => {
+      const publicationCid = cmsCidFromBytes(Buffer.from('{}'));
+      const signed = createEntity({
+        publication_cid: publicationCid,
+        recovery_receipt: {
+          provider: 'arweave',
+          uri: `ar://${'b'.repeat(43)}`,
+          content_hash: `sha256:${'b'.repeat(64)}`,
+          canonical: false,
+          recorded_at: '2026-11-20T00:00:00.000Z'
+        }
+      });
+      packagesDb.findById.mockResolvedValue(signed);
+      const chain = new InMemoryProfileCmsChain();
+
+      const result = await chainService(chain).publish(
+        signed.id,
+        {
+          expected_package_hash: signed.package_hash,
+          expected_payload_hash: signed.payload_hash,
+          ...publishSignatureRequest()
+        },
+        ownerContext()
+      );
+
+      expect(result).toMatchObject({
+        id: signed.id,
+        status: 'draft',
+        publication_cid: publicationCid
+      });
+      expect(result.chain_documents).toMatchObject({
+        content_core: { cid: cmsCidFromHash(signed.package_hash) },
+        publication: {
+          cid: publicationCid,
+          bytes_base64: Buffer.from('{}').toString('base64')
+        }
+      });
+      // The record comes back from the storage its receipt names.
+      expect(publicationStorage.verify).toHaveBeenCalledWith(
+        signed.recovery_receipt
+      );
+      expect(publishSignatureVerifier).not.toHaveBeenCalled();
+      expect(packagesDb.recordPublication).not.toHaveBeenCalled();
+    });
+
+    it("asks to publish again shortly when the stored record can't be read", async () => {
+      const signed = createEntity({
+        publication_cid: cmsCidFromBytes(Buffer.from('{}')),
+        recovery_receipt: {
+          provider: 'arweave',
+          uri: `ar://${'b'.repeat(43)}`,
+          content_hash: `sha256:${'b'.repeat(64)}`,
+          canonical: false,
+          recorded_at: '2026-11-20T00:00:00.000Z'
+        }
+      });
+      packagesDb.findById.mockResolvedValue(signed);
+      jest
+        .spyOn(publicationStorage, 'verify')
+        .mockRejectedValueOnce(new Error('gateway timeout'));
+
+      await expect(
+        chainService().publish(
+          signed.id,
+          {
+            expected_package_hash: signed.package_hash,
+            expected_payload_hash: signed.payload_hash,
+            ...publishSignatureRequest()
+          },
+          ownerContext()
+        )
+      ).rejects.toMatchObject({ code: 'cms_check_unavailable' });
+    });
+
+    it("refuses a stored record storage says doesn't match its receipt", async () => {
+      const signed = createEntity({
+        publication_cid: cmsCidFromBytes(Buffer.from('{}')),
+        recovery_receipt: {
+          provider: 'arweave',
+          uri: `ar://${'b'.repeat(43)}`,
+          content_hash: `sha256:${'b'.repeat(64)}`,
+          canonical: false,
+          recorded_at: '2026-11-20T00:00:00.000Z'
+        }
+      });
+      packagesDb.findById.mockResolvedValue(signed);
+      jest
+        .spyOn(publicationStorage, 'verify')
+        .mockRejectedValueOnce(
+          new CustomApiCompliantException(
+            400,
+            'CMS storage bytes do not match the signed content hash',
+            'cms_storage_hash_mismatch'
+          )
+        );
+
+      await expect(
+        chainService().publish(
+          signed.id,
+          {
+            expected_package_hash: signed.package_hash,
+            expected_payload_hash: signed.payload_hash,
+            ...publishSignatureRequest()
+          },
+          ownerContext()
+        )
+      ).rejects.toMatchObject({ code: 'cms_publication_mismatch' });
+    });
+
+    it('refuses a stored record whose bytes are not its CID', async () => {
+      const signed = createEntity({
+        publication_cid: cmsCidFromBytes(Buffer.from('{"other":true}')),
+        recovery_receipt: {
+          provider: 'arweave',
+          uri: `ar://${'b'.repeat(43)}`,
+          content_hash: `sha256:${'b'.repeat(64)}`,
+          canonical: false,
+          recorded_at: '2026-11-20T00:00:00.000Z'
+        }
+      });
+      packagesDb.findById.mockResolvedValue(signed);
+
+      await expect(
+        chainService().publish(
+          signed.id,
+          {
+            expected_package_hash: signed.package_hash,
+            expected_payload_hash: signed.payload_hash,
+            ...publishSignatureRequest()
+          },
+          ownerContext()
+        )
+      ).rejects.toMatchObject({ code: 'cms_publication_mismatch' });
+    });
+
+    it('refuses a published or superseded package whose publication_cid the import filled', async () => {
+      for (const status of [
+        ProfileCmsPackageStatus.SUPERSEDED,
+        ProfileCmsPackageStatus.PUBLISHED
+      ]) {
+        const imported = createEntity({
+          status,
+          is_primary: false,
+          published_at: 5,
+          publication_cid: cmsCidFromBytes(Buffer.from('{}'))
+        });
+        packagesDb.findById.mockResolvedValue(imported);
+
+        await expect(
+          chainService().publish(
+            imported.id,
+            {
+              expected_package_hash: imported.package_hash,
+              expected_payload_hash: imported.payload_hash,
+              ...publishSignatureRequest()
+            },
+            ownerContext()
+          )
+        ).rejects.toThrow('Only draft CMS packages can be published');
+        expect(packagesDb.recordPublication).not.toHaveBeenCalled();
+      }
+    });
+
+    it("stays under Lambda's 6 MB answer with a package near the 2 MiB storage cap", async () => {
+      const base = createValidProfileCmsPackage();
+      const large = withComputedCmsHashes({
+        ...base,
+        payload: {
+          ...base.payload,
+          navigation: [
+            {
+              id: 'main-nav',
+              items: [{ label: 'x'.repeat(1_900_000), page_id: 'home-page' }]
+            }
+          ]
+        }
+      });
+      const signed = createEntity({
+        cms_package: large,
+        publication_cid: cmsCidFromBytes(Buffer.from('{}')),
+        recovery_receipt: {
+          provider: 'arweave',
+          uri: `ar://${'b'.repeat(43)}`,
+          content_hash: `sha256:${'b'.repeat(64)}`,
+          canonical: false,
+          recorded_at: '2026-11-20T00:00:00.000Z'
+        }
+      });
+      packagesDb.findById.mockResolvedValue(signed);
+
+      const result = await chainService().publish(
+        signed.id,
+        {
+          expected_package_hash: signed.package_hash,
+          expected_payload_hash: signed.payload_hash,
+          ...publishSignatureRequest()
+        },
+        ownerContext()
+      );
+
+      // The package and its core in base64: under 5 MB for a 2 MiB package.
+      expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(
+        5 * 1000 * 1000
+      );
+    });
+
+    it('still checks the hashes the request expects', async () => {
+      const signed = createEntity({
+        publication_cid: cmsCidFromBytes(Buffer.from('{}'))
+      });
+      packagesDb.findById.mockResolvedValue(signed);
+
+      await expect(
+        chainService().publish(
+          signed.id,
+          {
+            expected_package_hash: `sha256:${'e'.repeat(64)}`,
+            expected_payload_hash: signed.payload_hash,
+            ...publishSignatureRequest()
+          },
+          ownerContext()
+        )
+      ).rejects.toThrow();
+      expect(packagesDb.recordPublication).not.toHaveBeenCalled();
+    });
+
+    it('keeps the record a concurrent click stored first', async () => {
+      const draft = createEntity();
+      const stored = createEntity({
+        id: draft.id,
+        publication_cid: cmsCidFromBytes(Buffer.from('{"first":true}')),
+        recovery_receipt: {
+          provider: 'arweave',
+          uri: `ar://${'b'.repeat(43)}`,
+          content_hash: `sha256:${'b'.repeat(64)}`,
+          canonical: false,
+          recorded_at: '2026-11-20T00:00:00.000Z'
+        }
+      });
+      // This click signed '{}'; the files returned are the first click's,
+      // read from the storage its receipt names.
+      jest
+        .spyOn(publicationStorage, 'verify')
+        .mockImplementation(async (receipt) =>
+          Buffer.from(
+            receipt.uri === (stored.recovery_receipt as { uri: string }).uri
+              ? '{"first":true}'
+              : '{}'
+          )
+        );
+      packagesDb.findById
+        .mockResolvedValueOnce(draft)
+        .mockResolvedValueOnce(stored);
+      packagesDb.findByIdForUpdate.mockResolvedValue(stored);
+      packagesDb.findPrimaryPublishedByProfileId.mockResolvedValue(null);
+
+      const result = await chainService().publish(
+        draft.id,
+        {
+          expected_package_hash: draft.package_hash,
+          expected_payload_hash: draft.payload_hash,
+          ...publishSignatureRequest()
+        },
+        ownerContext()
+      );
+
+      expect(packagesDb.recordPublication).not.toHaveBeenCalled();
+      expect(result.publication_cid).toBe(stored.publication_cid);
+      expect(result.chain_documents?.publication).toEqual({
+        cid: stored.publication_cid,
+        bytes_base64: Buffer.from('{"first":true}').toString('base64')
+      });
+    });
   });
 });
 
