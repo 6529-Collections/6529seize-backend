@@ -1,6 +1,5 @@
 import 'reflect-metadata';
 import * as fs from 'node:fs';
-import * as http from 'node:http';
 import { AddressInfo } from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -11,6 +10,7 @@ import { seedProbeIdentities } from '@/rebuild/run/probe-fixture.steps';
 import { byCodeUnit } from '@/signed-records/record-order';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
+import { serveSeedFiles } from '@/tests/fixtures/seed-files-server.fixture';
 import { seedPersonalSettings } from './personal.seed';
 
 /** The personal tables the probes read, and what may differ in a rebuild. */
@@ -64,22 +64,6 @@ async function snapshot(): Promise<Record<string, unknown[]>> {
   return rows;
 }
 
-/** The run's files source: the seed files directory over loopback. */
-async function serveFiles(dir: string): Promise<http.Server> {
-  const server = http.createServer((req, res) => {
-    const id = decodeURIComponent((req.url ?? '').split('/').pop() ?? '');
-    const file = path.join(dir, id);
-    if (!/^[A-Za-z0-9]+$/.test(id) || !fs.existsSync(file)) {
-      res.statusCode = 404;
-      res.end();
-      return;
-    }
-    res.end(fs.readFileSync(file));
-  });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  return server;
-}
-
 function contextOf(
   stepId: string,
   files: string | null,
@@ -104,7 +88,7 @@ describeWithSeed('the personal seed and its rebuild', [], () => {
   it('seeds the probe rows through the switch, and the rebuild brings them back', async () => {
     const env = { ...process.env, ...personalManifest.flags };
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'personal-seed-'));
-    const server = await serveFiles(dir);
+    const server = await serveSeedFiles(dir);
     try {
       await seedProbeIdentities();
       await seedPersonalSettings(contextOf('personal.seed', null, dir), env);
