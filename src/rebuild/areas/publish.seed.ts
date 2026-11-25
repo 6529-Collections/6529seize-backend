@@ -37,9 +37,10 @@ import { loadProviderKeys } from '@/signed-records/sealed-crypto';
 import { dbSupplier } from '@/sql-executor';
 import {
   PUBLISH_SEED_IDS,
-  PUBLISH_SEED_PROFILE,
+  PublishSeedProfile,
   publishSeedSites
 } from '@/rebuild/areas/publish.fixture';
+import { probeProfileId } from '@/rebuild/run/probe-fixture.steps';
 import { SignedSiteFixture } from '@/tests/fixtures/profile-cms-chain.fixture';
 import { aWave } from '@/tests/fixtures/wave.fixture';
 
@@ -59,6 +60,9 @@ import { aWave } from '@/tests/fixtures/wave.fixture';
  * wave, as the records service. The rebuild gets every row back from the
  * log, not from these tables.
  *
+ * The first probe profile is the identity seed's: this seed reads it by
+ * its wallet and writes no profile, identity or wallet row for it.
+ *
  * The records service (its identity, profile and wave) is the fixture the
  * personal area's seed uses, with the same SIGNED_RECORDS_* values; it is
  * written only where missing, so either seed may run first, or alone.
@@ -71,24 +75,25 @@ const ctx: RequestContext = {};
 
 function draftRow(
   site: SignedSiteFixture,
+  profile: PublishSeedProfile,
   version: number,
   createdAt: number
 ): NewProfileCmsPackageEntity {
   const receipt = site.cmsPackage.storage[0];
   return {
     id: site.draftId,
-    profile_id: PUBLISH_SEED_PROFILE,
-    profile_handle: PUBLISH_SEED_PROFILE,
+    profile_id: profile.id,
+    profile_handle: profile.handle,
     package_id: site.cmsPackage.package_id,
     version,
     status: ProfileCmsPackageStatus.DRAFT,
     cms_package: site.cmsPackage,
     payload_hash: site.cmsPackage.integrity.payload_hash,
     package_hash: site.packageHash,
-    primary_path: `/${PUBLISH_SEED_PROFILE}/index.html`,
+    primary_path: `/${profile.handle}/index.html`,
     is_primary: false,
     production_valid: false,
-    created_by_profile_id: PUBLISH_SEED_PROFILE,
+    created_by_profile_id: profile.id,
     published_by_profile_id: null,
     created_at: createdAt,
     updated_at: createdAt,
@@ -109,6 +114,7 @@ function draftRow(
 /** The old publish path's writes for `site`, at `at`. */
 async function publishOnTheOldPath(
   site: SignedSiteFixture,
+  profile: PublishSeedProfile,
   at: number
 ): Promise<void> {
   const signature = site.cmsPackage.signatures[0];
@@ -117,7 +123,7 @@ async function publishOnTheOldPath(
     {
       id: `${site.draftId}-signature`,
       typed_data_hash: site.typedDataHash,
-      profile_id: PUBLISH_SEED_PROFILE,
+      profile_id: profile.id,
       package_db_id: site.draftId,
       package_id: site.cmsPackage.package_id,
       package_version: 1,
@@ -130,14 +136,14 @@ async function publishOnTheOldPath(
   );
   await profileCmsPackagesDb.markValidating(site.draftId, at, ctx);
   await profileCmsPackagesDb.supersedePrimaryForProfile(
-    PUBLISH_SEED_PROFILE,
+    profile.id,
     site.draftId,
     at,
     ctx
   );
   await profileCmsPackagesDb.markPublished(
     site.draftId,
-    PUBLISH_SEED_PROFILE,
+    profile.id,
     { valid: true },
     at,
     ctx
@@ -145,15 +151,15 @@ async function publishOnTheOldPath(
   const event = (type: ProfileCmsPointerEventType, sequence: number) => ({
     id: `${site.draftId}-${type.toLowerCase()}`,
     event_type: type,
-    profile_id: PUBLISH_SEED_PROFILE,
-    profile_handle: PUBLISH_SEED_PROFILE,
+    profile_id: profile.id,
+    profile_handle: profile.handle,
     package_db_id: site.draftId,
     package_id: site.cmsPackage.package_id,
     package_version: 1,
     package_hash: site.packageHash,
     payload_hash: site.cmsPackage.integrity.payload_hash,
     previous_package_db_id: null,
-    actor_profile_id: PUBLISH_SEED_PROFILE,
+    actor_profile_id: profile.id,
     signer_address: signer,
     signature: signature.signature,
     typed_data: signature.domain,
@@ -175,12 +181,13 @@ async function publishOnTheOldPath(
 async function issueAgentGrant(
   site: SignedSiteFixture,
   candidate: SignedSiteFixture,
+  profile: PublishSeedProfile,
   at: number
 ): Promise<void> {
   await profileCmsAgentGrantsDb.insertGrant(
     {
       id: PUBLISH_SEED_IDS.grant,
-      profile_id: PUBLISH_SEED_PROFILE,
+      profile_id: profile.id,
       draft_id: site.draftId,
       package_id: site.cmsPackage.package_id,
       base_version: 2,
@@ -201,7 +208,7 @@ async function issueAgentGrant(
   await profileCmsAgentGrantsDb.insertEvent(
     {
       id: `${PUBLISH_SEED_IDS.grant}-issued`,
-      profile_id: PUBLISH_SEED_PROFILE,
+      profile_id: profile.id,
       grant_id: PUBLISH_SEED_IDS.grant,
       proposal_id: null,
       event_type: 'issued',
@@ -214,7 +221,7 @@ async function issueAgentGrant(
     {
       id: PUBLISH_SEED_IDS.proposal,
       grant_id: PUBLISH_SEED_IDS.grant,
-      profile_id: PUBLISH_SEED_PROFILE,
+      profile_id: profile.id,
       draft_id: site.draftId,
       base_version: 2,
       base_package_hash: site.packageHash,
@@ -316,6 +323,22 @@ async function ensureRecordsService(service: {
     { id: service.waveId, name: service.waveId }
   );
   await insertIgnore(WAVES_TABLE, wave);
+}
+
+/**
+ * The site's profile: the first probe profile, which the identity seed
+ * writes, read by its wallet, with the handle of its profiles row.
+ */
+async function firstProbeProfile(): Promise<PublishSeedProfile> {
+  const id = await probeProfileId(1);
+  const row = await dbSupplier().oneOrNull<{ handle: string | null }>(
+    `select handle from ${PROFILES_TABLE} where external_id = :id`,
+    { id }
+  );
+  if (!row?.handle) {
+    throw new Error(`The first probe profile, ${id}, has no handle`);
+  }
+  return { id, handle: row.handle };
 }
 
 /** Writes a file into the run's seed files and lists it in files.json. */
@@ -479,26 +502,19 @@ export async function seedProfileSites(
   }
   const service = { profileId, wallet, waveId };
   await ensureRecordsService(service);
-  // The site's profile, as the personal seed writes it: the profile CMS
-  // routes lock its profiles row.
-  await insertIgnore(PROFILES_TABLE, {
-    external_id: PUBLISH_SEED_PROFILE,
-    handle: PUBLISH_SEED_PROFILE,
-    normalised_handle: PUBLISH_SEED_PROFILE,
-    primary_wallet: PROBE_WALLETS[0],
-    created_at: new Date(SEEDED_AT),
-    created_by_wallet: PROBE_WALLETS[0],
-    classification: 'PSEUDONYM'
-  });
+  const profile = await firstProbeProfile();
 
-  const { published, draft, candidate } = publishSeedSites();
-  await profileCmsPackagesDb.insert(draftRow(published, 1, SEEDED_AT), ctx);
-  await publishOnTheOldPath(published, SEEDED_AT + 60_000);
+  const { published, draft, candidate } = publishSeedSites(profile);
   await profileCmsPackagesDb.insert(
-    draftRow(draft, 2, SEEDED_AT + 120_000),
+    draftRow(published, profile, 1, SEEDED_AT),
     ctx
   );
-  await issueAgentGrant(draft, candidate, SEEDED_AT + 180_000);
+  await publishOnTheOldPath(published, profile, SEEDED_AT + 60_000);
+  await profileCmsPackagesDb.insert(
+    draftRow(draft, profile, 2, SEEDED_AT + 120_000),
+    ctx
+  );
+  await issueAgentGrant(draft, candidate, profile, SEEDED_AT + 180_000);
 
   if ((await closeOpenEntries(dir, service, providers)) === 0) {
     throw new Error('The publish seed closed no segment');

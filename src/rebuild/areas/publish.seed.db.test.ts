@@ -14,6 +14,7 @@ import {
   PROFILE_CMS_PACKAGES_TABLE,
   PROFILE_CMS_POINTER_EVENTS_TABLE,
   PROFILE_CMS_PUBLISH_SIGNATURES_TABLE,
+  PROFILES_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_METRICS_TABLE
 } from '@/constants';
@@ -21,6 +22,10 @@ import { ProfileCmsPackageStatus } from '@/entities/IProfileCmsPackage';
 import { rebuildProfileCmsFromChainAndLog } from '@/profile-cms/personal-log/profile-cms-rebuild';
 import { seedProfileSites } from '@/rebuild/areas/publish.seed';
 import { publishManifest } from '@/rebuild/manifests/publish.manifest';
+import {
+  worldActorIdentity,
+  worldActorProfileId
+} from '@/rebuild/manifests/probe-fixture';
 import { RebuildContext } from '@/rebuild/manifest.types';
 import { LocalRecordsWaveReader } from '@/signed-records/record-log/records-wave-local-reader';
 import { loadProviderKeys } from '@/signed-records/sealed-crypto';
@@ -32,6 +37,7 @@ import {
   aSignedProfileSite,
   InMemoryProfileCmsChain
 } from '@/tests/fixtures/profile-cms-chain.fixture';
+import { writeWorldActorsForTests } from '@/tests/fixtures/world-actors.fixture';
 
 const FLAGS = publishManifest.flags;
 
@@ -101,9 +107,11 @@ describeWithSeed('the publish area of the rebuild check', [], () => {
   const saved = { ...process.env };
   let dir: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     Object.assign(process.env, FLAGS);
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'publish-seed-'));
+    // The site's profile, as the identity world holds it.
+    await writeWorldActorsForTests(['probe-1']);
   });
 
   afterEach(() => {
@@ -128,6 +136,25 @@ describeWithSeed('the publish area of the rebuild check', [], () => {
       ['rebuild-publish-draft-1', ProfileCmsPackageStatus.PUBLISHED, true],
       ['rebuild-publish-draft-2', ProfileCmsPackageStatus.DRAFT, false]
     ]);
+    // The first probe profile, read by wallet; the seed writes no profile.
+    const probe = worldActorIdentity('probe-1');
+    expect(
+      (seeded.packages as { profile_id: string; profile_handle: string }[]).map(
+        (row) => [row.profile_id, row.profile_handle]
+      )
+    ).toEqual([
+      [worldActorProfileId('probe-1'), probe.handle],
+      [worldActorProfileId('probe-1'), probe.handle]
+    ]);
+    expect(
+      await sqlExecutor.execute(
+        `select external_id from ${PROFILES_TABLE} order by external_id`
+      )
+    ).toEqual(
+      [probe.profileId, FLAGS.SIGNED_RECORDS_SERVICE_PROFILE_ID]
+        .sort((a, b) => (a < b ? -1 : Number(a > b)))
+        .map((id) => ({ external_id: id }))
+    );
     expect(
       (seeded.events as { event_type: string }[]).map((row) => row.event_type)
     ).toEqual(['PUBLISH', 'SET_PRIMARY']);
