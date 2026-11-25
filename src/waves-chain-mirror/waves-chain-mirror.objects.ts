@@ -353,9 +353,10 @@ export class WavesChainObjectsMirror {
     /** Objects left out for a legacy id that isn't an RFC 4122 UUID. */
     readonly legacyIds?: InvalidLegacyIds;
     /**
-     * The chain index's read height (the feed height it has applied): the
-     * chain's answers the pass asks for are read there, so they see what
-     * the index saw. Null or absent: at the gateway client's pin.
+     * The chain index's read height (the highest height an index run read
+     * at, so at or above every row it holds): the chain's answers the pass
+     * asks for are read there, so they see what the index saw. Null or
+     * absent: at the gateway client's pin.
      */
     readonly height?: number | null;
   }): Promise<ObjectsReport> {
@@ -1385,9 +1386,11 @@ export class WavesChainObjectsMirror {
    * allows it: a top-level wave, not a DM, that its creator manages. Who
    * manages the parent is the chain's answer
    * (/v1/waves/{parent}/rights/{creator}, isManager), read at the chain
-   * index's read height: the height whose state the run mirrors, live a
-   * minute or so behind the head, in a rebuild the recording's mark. The
-   * answer then sees the parent and the creator the index saw. 6529.io's
+   * index's read height: the highest height an index run read at, so at or
+   * above every row it holds (a full read can hold rows read above the
+   * feed's height); live, a minute or so behind the head; in a rebuild, the
+   * recording's mark. The answer then sees the parent and the creator the
+   * index saw. 6529.io's
    * own eligibility, computed from its identities' TDH and level, isn't
    * asked, so the answer doesn't depend on 6529.io's current TDH or on
    * when a rebuild writes it.
