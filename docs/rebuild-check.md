@@ -305,7 +305,10 @@ Each `--source <name>=<spec>`:
   answers 599 and fails the run. `record` proxies to the URL and adds every
   new answer to the recording. Keys leave out JSON-RPC ids and key order. A
   request the server fails on answers 502 `replay failed` and fails the run;
-  the error is in the report.
+  the error is in the report. `record` sends each request only to a path
+  under the URL, with the URL's own query first: a target that isn't a
+  path (an absolute URL, `//host`) or whose dot segments climb out of the
+  URL's path answers 400 and fails the run, and nothing is fetched.
 - `<dir>/PROVENANCE.json` says what made a recording (`made_by`: a
   devnet scenario, an anvil state, or `hand`), as a label for the report.
   Provisional, so `--final` fails on them: a live URL, a `record` run (it
