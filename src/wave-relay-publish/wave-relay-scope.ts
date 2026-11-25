@@ -29,6 +29,8 @@ import {
  *   rule decides (src/waves-scope): a direct message, the records wave, a
  *   members-only wave, a wave that uses a hidden or private group, one made
  *   after the freeze, and a subwave of any of these stay. Mode `rule`.
+ *   Publishing (wave-relay-publish.ts) and the device signature requirement
+ *   don't start before the switch-on, so neither acts on this mode.
  * - After the switch-on, once the chain index has finished a full read (on
  *   the chain's network, WAVES_SETTLEMENT_NETWORK_ID, when set), the chain
  *   decides: a wave stays unless the chain holds it, and a direct message

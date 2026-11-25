@@ -3,7 +3,12 @@ import { DbPoolName } from '@/db-query.options';
 import { dbSupplier, SqlExecutor } from '@/sql-executor';
 import { CrpConnection, WebSocketFactory } from './crp-client';
 import { WaveRelayPublishDb } from './wave-relay-publish.db';
-import { relayRunScope, scopeSqlParamValues } from './wave-relay-scope';
+import {
+  relayRunScope,
+  scopeSqlParamValues,
+  WAVES_SWITCH_ON_AT_ENV,
+  wavesSwitchedOn
+} from './wave-relay-scope';
 import {
   RelayRunResult,
   WaveRelayPublisher,
@@ -12,7 +17,12 @@ import {
 
 /**
  * Settings (env or the lambdas secret, as every backend setting):
- * - FEATURE_WAVES_RELAY_PUBLISH=true turns publishing on.
+ * - FEATURE_WAVES_RELAY_PUBLISH=true turns publishing on, from the
+ *   switch-on (WAVES_SWITCH_ON_AT, or FEATURE_WAVES_ON_CHAIN=true), read
+ *   each run: it can be set ahead. Before the switch-on a run publishes,
+ *   reads and passes over nothing, and says once that it waits; from the
+ *   switch-on it starts at each relay's cursor, so the device-signed events
+ *   written before then go first.
  * - WAVES_RELAY_URLS: the relays' CRP addresses, comma separated
  *   (`wss://...`). Each relay gets every event, from its own cursor.
  * - WAVES_RELAY_NET: the network the relays serve, the chain's id (such as
@@ -33,6 +43,12 @@ import {
  *   WAVES_SETTLEMENT_NETWORK_ID: the chain's network. After the switch-on,
  *   until the chain index has a full read on it, nothing is published,
  *   with a warning each run (wave-relay-scope.ts).
+ *
+ * Pacing (DEFAULT_PUBLISH_RUN): a run each minute, 30 seconds of it, the
+ * relays one after another with an equal share of the time left; on one
+ * connection at least 25 ms between two publishes (40 a second, under a
+ * relay's 50) and 4.5 a second for one grant (under its 5); and at most
+ * 600 events a relay a run.
  */
 export interface WaveRelayPublishConfig {
   readonly relays: string[];
@@ -93,6 +109,12 @@ export function waveRelayPublishConfig(
 export const DEFAULT_PUBLISH_RUN: Omit<WaveRelayPublisherOptions, 'relays'> = {
   budgetMs: 30_000,
   batchSize: 500,
+  // 600 a minute: 10 a second on average, a fifth of what a relay takes
+  // from one connection, so the backlog at the switch-on (every
+  // device-signed event since signing began) goes to every relay in step,
+  // 36,000 an hour, without crowding the relays while the chain's waves
+  // import runs. Live posting is far below it and never waits on it.
+  maxPerRelayRun: 600,
   graceMs: 60_000,
   // A write still unfinished after 15 minutes failed to record its drop.
   abandonAfterMs: 15 * 60_000,
@@ -108,6 +130,9 @@ export const DEFAULT_PUBLISH_RUN: Omit<WaveRelayPublisherOptions, 'relays'> = {
 const logger = Logger.get('WAVE_RELAY_PUBLISH');
 
 export const waveRelayPublishDb = new WaveRelayPublishDb(dbSupplier);
+
+/** The switch-on time last logged as waited for, so it is logged once. */
+let waitingNoted: string | null = null;
 
 /**
  * Publishes the device-signed drop events written since the last run to
@@ -131,6 +156,19 @@ export async function runWaveRelayPublishing({
   if (!config) {
     return null;
   }
+  // Nothing goes to the relays before the switch-on, however early the flag
+  // was set: no cursor moves, nothing is passed over or counted.
+  if (!wavesSwitchedOn(env, now())) {
+    const at = env[WAVES_SWITCH_ON_AT_ENV]?.trim() || 'unset';
+    if (waitingNoted !== at) {
+      waitingNoted = at;
+      logger.info(
+        `[WAVE RELAY PUBLISHING WAITS FOR THE SWITCH-ON] [${WAVES_SWITCH_ON_AT_ENV} ${at}] [NOTHING IS PUBLISHED OR PASSED OVER UNTIL THEN]`
+      );
+    }
+    return [];
+  }
+  waitingNoted = null;
   // Which waves stay, decided once a run; or nothing published, and why.
   const scope = await relayRunScope(
     scopeDb(),
