@@ -32,8 +32,9 @@ afterAll(() => {
 });
 
 /**
- * P40 §13's E3: a VOTE_SET signed by an Ed25519 session key (keyType 2,
- * authRef = its grant), on the devnet network of P28's appendix A.
+ * The chain specification's worked example of a VOTE_SET signed by an
+ * Ed25519 session key (keyType 2, authRef = its grant), on its example
+ * devnet network.
  */
 const E3_UNSIGNED = [
   '0x4001000153929f81f84ac199d1155e0cff0ae25cc43ca45d7434abdabf675c58',
@@ -88,7 +89,7 @@ interface EnvelopeOptions {
   readonly body?: string;
 }
 
-/** A transaction's unsigned bytes (P40 §2.1), made-up values. */
+/** A transaction's unsigned bytes, made-up values. */
 function envelope(o: EnvelopeOptions): string {
   const keyType = o.keyType ?? 2;
   const authRef = o.authRef === undefined ? GRANT : o.authRef;
@@ -129,7 +130,7 @@ interface Entry {
   readonly proof?: string;
 }
 
-/** CE of a signature list (P28 §7.1). */
+/** The canonical encoding of a signature list. */
 function signatureList(entries: Entry[]): string {
   return (
     hexOf(entries.length, 4) +
@@ -268,7 +269,7 @@ const caught = (promise: Promise<unknown>) =>
   );
 
 describe('readEnvelopeHead', () => {
-  it("reads P40's VOTE_SET by a session key", () => {
+  it("reads the specification's VOTE_SET by a session key", () => {
     expect((E3_UNSIGNED.length - 2) / 2).toBe(298);
     expect(readEnvelopeHead(E3_UNSIGNED)).toEqual({
       networkId:

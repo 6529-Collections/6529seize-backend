@@ -1,7 +1,8 @@
 /**
- * The start of a 6529 chain transaction's wire bytes (P40 §2.1, P28 §7.1):
- * schemaId 0x4001 and version 1, NETWORK_ID, the header's fields 1-15, then
- * opType and opVersion. The relay reads who signs and which operation it is
+ * The start of a 6529 chain transaction's wire bytes, as the chain's
+ * transaction format and its canonical encoding lay them out: schemaId
+ * 0x4001 and version 1, NETWORK_ID, the header's fields 1-15, then opType
+ * and opVersion. The relay reads who signs and which operation it is
  * from here. The chain decodes and checks the whole transaction again.
  */
 export interface EnvelopeHead {
@@ -103,7 +104,7 @@ export function readEnvelopeHead(hex: string): EnvelopeHead | null {
   }
 }
 
-/** One entry of a signature list (P28 §7.1), its proof empty. */
+/** One entry of a transaction's signature list, its proof empty. */
 export interface EnvelopeSignature {
   readonly role: number;
   readonly keyType: number;

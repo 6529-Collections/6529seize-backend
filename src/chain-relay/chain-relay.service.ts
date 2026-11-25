@@ -89,8 +89,9 @@ const GRANT_SIG_BYTES: Readonly<Record<number, number>> = { 1: 65, 2: 64 };
 /**
  * The operations a session key may sign at rule version 7, which this relay
  * forwards: its grant's (grant_ops: PROFILE_REPLACE, VOTE_SET,
- * POLL_BALLOT_SET, RATING_SET) and the two every key has (P40 §2.4: a
- * NONCE_SKIP of its own lanes, a CAPABILITY_REVOKE of its own grant). Every
+ * POLL_BALLOT_SET, RATING_SET) and the two every key has by the chain's
+ * rules (a NONCE_SKIP of its own lanes, a CAPABILITY_REVOKE of its own
+ * grant). Every
  * other operation needs a wallet at the chain (0x020D).
  */
 export const SESSION_KEY_OPS: ReadonlySet<number> = new Set([
