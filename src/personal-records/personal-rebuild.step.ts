@@ -39,6 +39,7 @@ import { LocalRecordsWaveReader } from '@/signed-records/record-log/records-wave
 import type { VerifiedRecord } from '@/signed-records/record-verify';
 import { loadProviderKeys, ProviderKey } from '@/signed-records/sealed-crypto';
 import { signedRecordHeadsDb } from '@/signed-records/signed-record-heads.db';
+import { readRecordsWaveSetting } from '@/waves-scope/waves-scope';
 import {
   PERSONAL_IMPORT_LANE,
   PersonalImportBody,
@@ -182,16 +183,22 @@ function recordsWaveOf(env: Readonly<Record<string, string | undefined>>): {
   wave: RecordsWaveReader;
   serviceWallet: string;
 } {
-  const waveId = env.SIGNED_RECORDS_WAVE_ID;
+  // 'none' is no records wave, as the record log loop reads it.
+  const records = readRecordsWaveSetting(env);
+  if (records.kind !== 'id') {
+    throw new Error(
+      'The personal rebuild reads its log from the records wave: no records wave set'
+    );
+  }
   const profileId = env.SIGNED_RECORDS_SERVICE_PROFILE_ID;
   const wallet = env.SIGNED_RECORDS_SERVICE_WALLET?.toLowerCase();
-  if (!waveId || !profileId || !wallet) {
+  if (!profileId || !wallet) {
     throw new Error(
-      'SIGNED_RECORDS_WAVE_ID, SIGNED_RECORDS_SERVICE_PROFILE_ID and SIGNED_RECORDS_SERVICE_WALLET are needed to read the records wave'
+      'SIGNED_RECORDS_SERVICE_PROFILE_ID and SIGNED_RECORDS_SERVICE_WALLET are needed to read the records wave'
     );
   }
   return {
-    wave: new LocalRecordsWaveReader({ waveId, profileId, wallet }),
+    wave: new LocalRecordsWaveReader({ waveId: records.id, profileId, wallet }),
     serviceWallet: wallet
   };
 }

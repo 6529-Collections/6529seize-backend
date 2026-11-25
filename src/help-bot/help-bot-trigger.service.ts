@@ -14,8 +14,6 @@ import { sqs, SQS } from '@/sqs';
 import { Time } from '@/time';
 import {
   HELP_BOT_FAILURE_REACTION,
-  HELP_BOT_INSUFFICIENT_CREDITS_REACTION,
-  HELP_BOT_INSUFFICIENT_CREDITS_REPLY,
   HELP_BOT_INTERACTION_QUESTION_MAX_UTF8_BYTES,
   HELP_BOT_REPLY_QUEUE_NAME,
   HELP_BOT_SEEN_REACTION,
@@ -27,10 +25,6 @@ import {
   getHelpBotGlobalDailyAnswerLimit,
   getHelpBotWaveDailyAnswerLimit
 } from './help-bot.config';
-import {
-  helpBotCreditsService,
-  HelpBotCreditsService
-} from './help-bot-credits.service';
 import { detectHelpBotTrigger } from './help-bot.detector';
 import {
   helpBotDropWriterService,
@@ -61,7 +55,6 @@ export class HelpBotTriggerService {
     private readonly sqs: SQS,
     private readonly profileResolver: HelpBotProfileResolver,
     private readonly wavesDb: WavesApiDb,
-    private readonly creditsService: HelpBotCreditsService,
     private readonly userGroups: Pick<
       UserGroupsService,
       'getGroupsUserIsEligibleForByIds'
@@ -192,24 +185,6 @@ export class HelpBotTriggerService {
         return;
       }
 
-      // With the credit meter off (the default) every question that passed
-      // the spam and daily limits above is answered.
-      if (this.creditsService.isEnabled()) {
-        const charged = await this.tryChargeQuestionCredit(
-          {
-            botProfileId,
-            interaction,
-            authorProfileId: trigger.authorProfileId,
-            triggerDropId: trigger.triggerDropId,
-            waveId: trigger.waveId
-          },
-          ctx
-        );
-        if (!charged) {
-          return;
-        }
-      }
-
       await this.trySetReaction(
         {
           botProfileId,
@@ -234,7 +209,6 @@ export class HelpBotTriggerService {
           interactionId: interaction.id,
           targetDropId: trigger.targetDropId,
           waveId: trigger.waveId,
-          authorProfileId: trigger.authorProfileId,
           error,
           ctx
         });
@@ -292,8 +266,7 @@ export class HelpBotTriggerService {
   /**
    * Applies the same chat reply rule as drop creation (chat enabled, plus
    * chat group membership unless replies are open), so a question in a wave
-   * the bot cannot answer is declined before any credit is charged or model
-   * call is made.
+   * the bot cannot answer is declined before any model call is made.
    */
   private async canBotReplyInWave(
     botProfileId: string,
@@ -382,115 +355,11 @@ export class HelpBotTriggerService {
     }
   }
 
-  private async tryChargeQuestionCredit(
-    {
-      botProfileId,
-      interaction,
-      authorProfileId,
-      triggerDropId,
-      waveId
-    }: {
-      readonly botProfileId: string;
-      readonly interaction: { readonly id: string };
-      readonly authorProfileId: string;
-      readonly triggerDropId: string;
-      readonly waveId: string;
-    },
-    ctx: RequestContext
-  ): Promise<boolean> {
-    try {
-      const chargeResult = await this.creditsService.chargeQuestionCredit(
-        {
-          profileId: authorProfileId,
-          interactionId: interaction.id
-        },
-        ctx
-      );
-      if (chargeResult.charged) {
-        return true;
-      }
-      await this.handleInsufficientCredits({
-        botProfileId,
-        interactionId: interaction.id,
-        triggerDropId,
-        waveId,
-        balance: chargeResult.balance,
-        ctx
-      });
-      return false;
-    } catch (error) {
-      await this.handleEnqueueFailure({
-        botProfileId,
-        interactionId: interaction.id,
-        targetDropId: triggerDropId,
-        waveId,
-        authorProfileId,
-        error,
-        ctx
-      });
-      return false;
-    }
-  }
-
-  private async handleInsufficientCredits({
-    botProfileId,
-    interactionId,
-    triggerDropId,
-    waveId,
-    balance,
-    ctx
-  }: {
-    readonly botProfileId: string;
-    readonly interactionId: string;
-    readonly triggerDropId: string;
-    readonly waveId: string;
-    readonly balance: number | null;
-    readonly ctx: RequestContext;
-  }): Promise<void> {
-    await this.trySetReaction(
-      {
-        botProfileId,
-        dropId: triggerDropId,
-        waveId,
-        reaction: HELP_BOT_INSUFFICIENT_CREDITS_REACTION
-      },
-      ctx
-    );
-    let replyDropId: string | null = null;
-    try {
-      const reply = await this.dropWriter.reply(
-        {
-          botProfileId,
-          waveId,
-          replyToDropId: triggerDropId,
-          interactionId,
-          message: HELP_BOT_INSUFFICIENT_CREDITS_REPLY
-        },
-        ctx
-      );
-      replyDropId = reply.id;
-    } catch (error) {
-      this.logger.error(
-        `Failed to post help bot insufficient-credits reply for interaction ${interactionId}`,
-        error
-      );
-    }
-    await this.interactionsDb.markInsufficientCredits(
-      {
-        id: interactionId,
-        replyDropId,
-        failureReason: `Help bot credit balance ${balance ?? 'unknown'} is below the question cost`
-      },
-      ctx
-    );
-  }
-
   private async handleEnqueueFailure({
     botProfileId,
     interactionId,
     targetDropId,
     waveId,
-    authorProfileId,
     error,
     ctx
   }: {
@@ -498,7 +367,6 @@ export class HelpBotTriggerService {
     readonly interactionId: string;
     readonly targetDropId: string;
     readonly waveId: string;
-    readonly authorProfileId: string;
     readonly error: unknown;
     readonly ctx: RequestContext;
   }): Promise<void> {
@@ -515,20 +383,6 @@ export class HelpBotTriggerService {
       },
       ctx
     );
-    try {
-      await this.creditsService.refundQuestionCredit(
-        {
-          profileId: authorProfileId,
-          interactionId
-        },
-        ctx
-      );
-    } catch (refundError) {
-      this.logger.error(
-        `Failed to refund help bot credit for enqueue failure ${interactionId}`,
-        refundError
-      );
-    }
     let replyDropId: string | null = null;
     try {
       const reply = await this.dropWriter.reply(
@@ -568,6 +422,5 @@ export const helpBotTriggerService = new HelpBotTriggerService(
   dropsService,
   sqs,
   helpBotProfileResolver,
-  wavesApiDb,
-  helpBotCreditsService
+  wavesApiDb
 );

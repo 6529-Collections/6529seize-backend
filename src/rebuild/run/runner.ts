@@ -86,6 +86,7 @@ import {
   stopSources
 } from '@/rebuild/sources/start-sources';
 import { judge, WaitingStep } from '@/rebuild/run/verdict';
+import { stepContext } from '@/rebuild/run/step-context';
 import { waitForApi } from '@/rebuild/stack/api-ready';
 
 /** A table's partition columns and every tuple its writers own. */
@@ -217,6 +218,8 @@ class RebuildRun {
   private plannedSteps: string[] = [];
   /** Steps skipped as planned because a table they need isn't in the schema. */
   private waitingSteps: WaitingStep[] = [];
+  /** Needs on tables the schema has: the step runs, and the need can go. */
+  private staleNeeds: string[] = [];
   /** The fresh schema's base tables. */
   private baseTables: ReadonlySet<string> = new Set();
   /** Planned probes held because a table they need isn't in the schema. */
@@ -454,20 +457,19 @@ class RebuildRun {
       kind === 'rebuilder'
         ? await this.outsideDigests(step, baseNames)
         : new Map<string, string>();
-    const context: RebuildContext = {
+    const context: RebuildContext = stepContext({
       area: area.area,
       stepId: step.id,
+      kind,
       sources: this.sourceUrls(),
-      seedFilesDir:
-        kind === 'seed' && this.sourceUrl('files')
-          ? seedFilesDir(this.runDir)
-          : null,
+      seedFilesDir: seedFilesDir(this.runDir),
       mark: {
         name: this.o.mark,
         chainHeight: this.o.chainHeight,
         ethBlock: this.o.ethBlock
-      }
-    };
+      },
+      final: this.o.final
+    });
     const own: Record<string, string> = {
       REBUILD_AREA: area.area,
       REBUILD_STEP_ID: step.id
@@ -574,6 +576,24 @@ class RebuildRun {
       if (!(await this.runStep(kind, areaOf.get(step.id)!, step))) return false;
     }
     return true;
+  }
+
+  /**
+   * For each kept table that rebuilders running here write by partition,
+   * those writers' partitions. A table with a writer of the whole table
+   * running here is never kept beside a partition writer: the registry
+   * refuses the pair.
+   */
+  private runningPartitionsOf(
+    kept: readonly string[]
+  ): Map<string, Partitions> {
+    const keptSet = new Set(kept);
+    const running = this.partitionedTables(
+      this.scopeManifests
+        .flatMap((m) => m.rebuilders)
+        .filter((step) => this.stepRunsHere(step))
+    );
+    return new Map(Array.from(running).filter(([table]) => keptSet.has(table)));
   }
 
   /**
@@ -734,6 +754,25 @@ class RebuildRun {
     }
     this.failures.push(...problems);
     return problems.length === 0;
+  }
+
+  /**
+   * Needs, of the steps this run runs (every area's seeds, and the
+   * scope's rebuilders), on tables the schema already has: they no longer
+   * hold anything back and should be dropped.
+   */
+  private findStaleNeeds(base: ReadonlySet<string>): string[] {
+    return [
+      ...this.o.manifests.flatMap((m) => m.seeds),
+      ...this.scopeManifests.flatMap((m) => m.rebuilders)
+    ].flatMap((step) =>
+      (step.needs ?? [])
+        .filter((need) => base.has(need.table))
+        .map(
+          (need) =>
+            `${step.id} needs ${need.table}, which the schema now has: drop the need`
+        )
+    );
   }
 
   /** The tables a step needs that the fresh schema doesn't have. */
@@ -943,20 +982,31 @@ class RebuildRun {
       await admin.truncate(MAIN_DB, kept);
       for (const table of kept) await admin.copyRows(KEPT_DB, MAIN_DB, table);
     }
+    // A table kept because a skipped rebuilder writes part of it keeps
+    // only the parts no rebuilder running here writes: the copy put every
+    // row back, so the running writers' partitions are emptied for them to
+    // rebuild.
+    const running = this.runningPartitionsOf(kept);
+    for (const [table, { columns, values }] of Array.from(running)) {
+      await admin.deletePartition(MAIN_DB, table, columns, values);
+    }
     const keptSet = new Set(kept);
     const entries = this.entries();
     const mustBeEmpty = this.o.area
       ? this.rebuiltTables
-      : this.live
-          .filter(
-            (t) =>
-              t.type === 'BASE TABLE' &&
-              !keptSet.has(t.name) &&
-              entries.get(t.name)?.entry.class === 'INDEX'
-          )
-          .map((t) => t.name);
+      : [
+          ...this.live
+            .filter(
+              (t) =>
+                t.type === 'BASE TABLE' &&
+                !keptSet.has(t.name) &&
+                entries.get(t.name)?.entry.class === 'INDEX'
+            )
+            .map((t) => t.name),
+          ...Array.from(running.keys())
+        ];
     for (const table of mustBeEmpty) {
-      const own = ownPartitions.get(table);
+      const own = running.get(table) ?? ownPartitions.get(table);
       const rows = own
         ? await admin.partitionRowCount(
             MAIN_DB,
@@ -1027,6 +1077,7 @@ class RebuildRun {
       this.live.filter((t) => t.type === 'BASE TABLE').map((t) => t.name)
     );
     this.baseTables = base;
+    this.staleNeeds = this.findStaleNeeds(base);
     if (!(await this.checkpointColumnsHold())) return;
     if (!(await this.partitionsDisjointInMysql())) return;
     const all = expandAll(this.o.manifests);
@@ -1107,6 +1158,7 @@ class RebuildRun {
       plannedTables: (this.registry?.plannedAbsent ?? []).length,
       plannedSteps: this.plannedSteps,
       waitingSteps: this.waitingSteps,
+      staleNeeds: this.staleNeeds,
       unownedRows: this.unownedRows,
       heldProbes: this.heldProbes,
       notInSchema: this.notInSchema().map((a) => a.table),

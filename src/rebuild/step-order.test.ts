@@ -38,7 +38,9 @@ describe('orderSteps', () => {
       step('c', ['ghost'])
     ]);
     expect(result.order.map((s) => s.id)).toEqual(['c']);
-    expect(result.unknown).toEqual(['ghost']);
+    expect(result.unknown).toEqual([
+      { step: 'c', field: 'after', id: 'ghost' }
+    ]);
     expect(result.cyclic).toEqual(['a', 'b']);
   });
 
@@ -65,7 +67,9 @@ describe('orderSteps', () => {
       step('b'),
       { ...step('c'), before: ['ghost'] }
     ]);
-    expect(result.unknown).toEqual(['ghost']);
+    expect(result.unknown).toEqual([
+      { step: 'c', field: 'before', id: 'ghost' }
+    ]);
     expect(result.cyclic).toEqual(['a', 'b']);
   });
 

@@ -25,23 +25,3 @@ describe('profile CMS wallet gallery feature flag', () => {
     }
   );
 });
-
-describe('help bot credits feature flag', () => {
-  const original = process.env.FEATURE_HELP_BOT_CREDITS;
-  afterEach(() => {
-    if (original === undefined) delete process.env.FEATURE_HELP_BOT_CREDITS;
-    else process.env.FEATURE_HELP_BOT_CREDITS = original;
-  });
-
-  it.each([
-    [undefined, false],
-    ['', false],
-    ['false', false],
-    ['TRUE', false],
-    ['true', true]
-  ])('evaluates %s as %s: off unless exactly true', (value, enabled) => {
-    if (value === undefined) delete process.env.FEATURE_HELP_BOT_CREDITS;
-    else process.env.FEATURE_HELP_BOT_CREDITS = String(value);
-    expect(appFeatures.isHelpBotCreditsEnabled()).toBe(enabled);
-  });
-});
