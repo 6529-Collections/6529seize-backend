@@ -34,6 +34,20 @@ describe('explicit trace provider policy', () => {
       'ALCHEMY_API_KEY'
     );
   });
+  it('uses ALCHEMY_BASE_URL in place of Alchemy only when it is set', () => {
+    process.env.ALCHEMY_BASE_URL = 'http://127.0.0.1:8545/';
+    const provider = getAlchemyTraceProvider(Network.ETH_MAINNET);
+    providers.add(provider);
+    expect(provider._getConnection().url).toBe(
+      'http://127.0.0.1:8545/v2/trace-test-key'
+    );
+  });
+  it('refuses ALCHEMY_BASE_URL on another host, so the key never leaves', () => {
+    process.env.ALCHEMY_BASE_URL = 'https://trace.example';
+    expect(() => getAlchemyTraceProvider(Network.ETH_MAINNET)).toThrow(
+      'ALCHEMY_BASE_URL must be'
+    );
+  });
   it('never routes testnet tracing to the mainnet 6529 endpoint', () => {
     const provider = get6529TraceProvider(Network.ETH_MAINNET);
     providers.add(provider);

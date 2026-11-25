@@ -38,28 +38,17 @@ import {
 } from '@/constants';
 import { RememeSource } from './entities/IRememe';
 import { canonicalRememeMemeId } from './rememe-meme-id';
-import {
-  ConnectionWrapper,
-  setSqlExecutor,
-  SqlExecutor,
-  sqlExecutor,
-  SqlTransactionOptions,
-  budgetOf
-} from './sql-executor';
+import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 import { getConsolidationsSql } from './sql_helpers';
 
 import { Nft } from '@/alchemy-sdk';
 import { createHash, randomUUID } from 'node:crypto';
 import * as mysql from 'mysql';
 import {
-  attachDbAuthTokenSource,
-  createDbAuthTokenSource,
-  DbConnectionTarget,
   installMysqlIamAuthSupport,
   isDbConnectionTargetComplete,
   isDbIamAuthRequested,
-  resolveDbConnectionTargets,
-  sslOptionsFor
+  resolveDbConnectionTargets
 } from './db-iam-auth';
 import {
   DEFAULT_PAGE_SIZE,
@@ -81,15 +70,9 @@ import {
   NEXTGEN_CORE
 } from './api-serverless/src/nextgen/abis';
 import { consolidationTools } from './consolidation-tools';
-import { DbPoolName, DbQueryOptions } from './db-query.options';
+import { DbPoolName } from './db-query.options';
 import { numbers } from './numbers';
 import { redisCompareAndSetJson, redisGet } from './redis';
-import {
-  CustomTypeCaster,
-  execBudgetedNativeTransactionally,
-  execNativeTransactionally,
-  execSQLWithConnection
-} from './db/my-sql.helpers';
 import { NFT } from './entities/INFT';
 import { TDHBlock } from './entities/ITDH';
 import type { GlobalTDHHistory, TDHHistory } from './entities/ITDHHistory';
@@ -98,7 +81,11 @@ import { Logger } from './logging';
 import { NEXTGEN_TOKENS_TABLE } from './nextgen/nextgen_constants';
 import { equalIgnoreCase } from './strings';
 import { Time } from './time';
-import { legacyCompetitionGetSql } from '@/competitions/legacy-competition-get-facade';
+import {
+  apiDbConnection,
+  apiSqlExecutor,
+  createApiDbPool
+} from '@/db/api-sql-executor';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -183,86 +170,17 @@ export async function connect() {
   if (targets.write.iam || targets.read.iam) {
     installMysqlIamAuthSupport();
   }
-  const createPool = (
-    target: DbConnectionTarget,
-    connectionLimit: number
-  ): mysql.Pool => {
-    const pool = mysql.createPool({
-      connectionLimit,
-      connectTimeout: Time.seconds(30).toMillis(),
-      acquireTimeout: Time.seconds(30).toMillis(),
-      timeout: Time.seconds(30).toMillis(),
-      host: target.host,
-      port: port,
-      user: target.user,
-      password: target.password,
-      charset: 'utf8mb4',
-      database: process.env.DB_NAME,
-      typeCast: CustomTypeCaster,
-      ...sslOptionsFor(target)
-    });
-    if (target.iam) {
-      attachDbAuthTokenSource(
-        pool,
-        createDbAuthTokenSource({ host: target.host, port, user: target.user }),
-        (error) =>
-          logger.error(
-            `[DB IAM TOKEN SIGNING FAILED] [${target.host}] ${error}`
-          )
-      );
-    }
-    return pool;
-  };
-  write_pool = createPool(targets.write, 5);
-  read_pool = createPool(targets.read, 10);
+  write_pool = createApiDbPool(targets.write, port, 5);
+  read_pool = createApiDbPool(targets.read, port, 10);
   logger.info(
     `[DB POOLS CREATED] [AUTH ${targets.write.iam ? 'IAM' : 'PASSWORD'}]`
   );
-  class DbImpl extends SqlExecutor {
-    async execute<T>(
-      sql: string,
-      params?: Record<string, any>,
-      options?: DbQueryOptions
-    ) {
-      if (
-        (options?.executionBudgetToken || options?.statementLimits) &&
-        !options.wrappedConnection?.connection
-      ) {
-        throw new Error(
-          'SQL budget options require their bound transaction connection'
-        );
-      }
-      const suppliedConnection = options?.wrappedConnection?.connection;
-      const pool = options?.forcePool ?? getPoolNameBySql(sql);
-      return await execSQLWithConnection<T>(
-        legacyCompetitionGetSql(sql),
-        suppliedConnection
-          ? { connection: suppliedConnection }
-          : { pool, acquire: () => getDbConnectionByPoolName(pool) },
-        params,
-        options
-      );
-    }
-
-    async executeNativeQueriesInTransaction<T>(
-      executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>,
-      options?: SqlTransactionOptions
-    ) {
-      const budget = budgetOf(options);
-      if (budget) {
-        return execBudgetedNativeTransactionally(
-          executable,
-          () => getDbConnectionByPoolName(DbPoolName.WRITE),
-          budget
-        );
-      }
-      return getDbConnectionByPoolName(DbPoolName.WRITE).then((con) =>
-        execNativeTransactionally(executable, con, options)
-      );
-    }
-  }
-
-  setSqlExecutor(new DbImpl());
+  setSqlExecutor(
+    apiSqlExecutor({
+      poolFor: getPoolNameBySql,
+      connection: getDbConnectionByPoolName
+    })
+  );
   logger.info(`[CONNECTION POOLS CREATED]`);
 }
 
@@ -333,23 +251,67 @@ function getPoolByName(poolName: DbPoolName): mysql.Pool {
 function getDbConnectionByPoolName(
   poolName: DbPoolName
 ): Promise<mysql.PoolConnection> {
-  const pool = getPoolByName(poolName);
-  return new Promise((resolve, reject) => {
-    pool.getConnection(function (
-      err: mysql.MysqlError,
-      dbcon: mysql.PoolConnection
-    ) {
-      if (err) {
-        logger.error(
-          `Failed to establish connection to ${poolName} [${JSON.stringify(
-            err
-          )}]`
-        );
-        reject(err);
-      }
-      resolve(dbcon);
+  return apiDbConnection(getPoolByName(poolName), poolName);
+}
+
+/**
+ * Runs work on one read-pool connection inside a read-only transaction with
+ * a consistent snapshot, then rolls it back: every query made through the
+ * given connection sees the same state, and none can write. For exports.
+ */
+export async function withReadOnlySnapshot<T>(
+  work: (connection: ConnectionWrapper<mysql.PoolConnection>) => Promise<T>
+): Promise<T> {
+  const connection = await getDbConnectionByPoolName(DbPoolName.READ);
+  let cleanupFailed = false;
+  try {
+    return await inReadOnlySnapshot(connection, work, () => {
+      cleanupFailed = true;
     });
-  });
+  } finally {
+    // A connection whose rollback or zone reset failed may still hold the
+    // transaction or the UTC zone: it never goes back to the pool.
+    if (cleanupFailed) connection.destroy();
+    else connection.release();
+  }
+}
+
+/**
+ * withReadOnlySnapshot on a given connection. The session reads in UTC
+ * (timestamp columns come back as UTC whatever the server's zone) and gets
+ * the server's zone back after the rollback, as a pooled connection must.
+ */
+export async function inReadOnlySnapshot<T>(
+  connection: Pick<mysql.PoolConnection, 'query'>,
+  work: (connection: ConnectionWrapper<mysql.PoolConnection>) => Promise<T>,
+  onCleanupFailed: () => void = () => undefined
+): Promise<T> {
+  const run = (sql: string) =>
+    new Promise<void>((resolve, reject) =>
+      connection.query(sql, (err: unknown) => (err ? reject(err) : resolve()))
+    );
+  // A failing cleanup is logged: it never takes the place of the work's
+  // own result or error.
+  const cleanup = async (sql: string) => {
+    try {
+      await run(sql);
+    } catch (error) {
+      logger.error(`[READ-ONLY SNAPSHOT CLEANUP FAILED] [${sql}] ${error}`);
+      onCleanupFailed();
+    }
+  };
+  await run("SET time_zone = '+00:00'");
+  try {
+    await run('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+    await run('START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY');
+    try {
+      return await work({ connection: connection as mysql.PoolConnection });
+    } finally {
+      await cleanup('ROLLBACK');
+    }
+  } finally {
+    await cleanup('SET time_zone = DEFAULT');
+  }
 }
 
 export async function fetchLatestTDHBlockNumber() {

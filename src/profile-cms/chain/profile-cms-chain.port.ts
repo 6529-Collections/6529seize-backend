@@ -107,7 +107,4 @@ export interface ProfileCmsChainPort {
 
   /** Raw bytes of a file in the gateway's document store; null when absent. */
   getDocBytes(cid: string): Promise<Buffer | null>;
-
-  /** Stores a file in the gateway's document store; returns its CID. */
-  putDocBytes(bytes: Buffer): Promise<string>;
 }

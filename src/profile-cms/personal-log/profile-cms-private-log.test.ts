@@ -314,14 +314,63 @@ describe('reading private entries', () => {
 });
 
 describe('rebuildProfileCmsFromChainAndLog', () => {
-  it('refuses to run until the private record log can be walked', async () => {
+  const emptyRecordLog = {
+    wave: { drops: async function* () {} },
+    fetcher: {
+      fetchCid: async () => Buffer.alloc(0),
+      fetchArweave: async () => Buffer.alloc(0)
+    },
+    serviceWallets: ['0x00000000000000000000000000000000000000a1'],
+    providers: []
+  };
+
+  it('reads no chain with the chain flag off, as the live index applied none', async () => {
     const { rebuildProfileCmsFromChainAndLog } =
       await import('@/profile-cms/personal-log/profile-cms-rebuild');
+    const createPort = jest.fn();
     await expect(
       rebuildProfileCmsFromChainAndLog(
-        { sources: { gateway: null } },
-        { createPort: () => ({}) as never }
+        { sources: { gateway: 'https://gateway.example.test', files: null } },
+        {
+          features: { isProfileCmsChainPointerEnabled: () => false },
+          createPort,
+          recordLog: emptyRecordLog
+        }
       )
-    ).rejects.toThrow('No records wave reader yet');
+    ).resolves.toEqual({ changes: 0, entries: 0 });
+    expect(createPort).not.toHaveBeenCalled();
+  });
+
+  it("reads the chain at the run's gateway with the chain flag on", async () => {
+    const { rebuildProfileCmsFromChainAndLog } =
+      await import('@/profile-cms/personal-log/profile-cms-rebuild');
+    const getChanges = jest
+      .fn()
+      .mockResolvedValue({ changes: [], next_height: null });
+    const createPort = jest.fn().mockReturnValue({ getChanges });
+    await rebuildProfileCmsFromChainAndLog(
+      { sources: { gateway: 'https://gateway.example.test', files: null } },
+      {
+        features: { isProfileCmsChainPointerEnabled: () => true },
+        createPort,
+        recordLog: emptyRecordLog,
+        env: { PROFILE_CMS_CHAIN_FROM_HEIGHT: '7' }
+      }
+    );
+    expect(createPort).toHaveBeenCalledWith('https://gateway.example.test');
+    expect(getChanges).toHaveBeenCalledWith(7);
+  });
+
+  it('refuses without a files source or the records settings', async () => {
+    const { profileCmsRecordLogSources } =
+      await import('@/profile-cms/personal-log/profile-cms-rebuild');
+    expect(() => profileCmsRecordLogSources(null, {})).toThrow(
+      'no files source'
+    );
+    expect(() =>
+      profileCmsRecordLogSources('http://127.0.0.1:1', {
+        SIGNED_RECORDS_WAVE_ID: 'wave'
+      })
+    ).toThrow('SIGNED_RECORDS_WAVE_ID');
   });
 });

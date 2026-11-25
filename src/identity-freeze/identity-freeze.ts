@@ -1,6 +1,8 @@
 import { appFeatures } from '@/app-features';
+import { beforeCommit } from '@/db/after-commit';
 import { CustomApiCompliantException } from '@/exceptions';
 import { Logger } from '@/logging';
+import type { ConnectionWrapper } from '@/sql-executor';
 import { Time } from '@/time';
 
 /**
@@ -204,4 +206,40 @@ export function assertIdentityNotFrozen(kind: IdentityRefusal = 'write'): void {
   if (isIdentityFrozen(now)) {
     throw new IdentityFrozenException(identityRefusalMessage(kind, now));
   }
+}
+
+/**
+ * Whether any freeze or switch-on setting is present at all. With none of
+ * them, nothing here can refuse a write, so the check at commit isn't even
+ * registered: a deploy without the settings behaves exactly as before.
+ */
+export function isIdentityFreezeConfigured(): boolean {
+  return (
+    appFeatures.isIdentityFrozen() ||
+    appFeatures.isIdentityOnChain() ||
+    parseIdentityFreezeAt(process.env[IDENTITY_FREEZE_AT_ENV]) !== undefined ||
+    parseIdentityFreezeAt(process.env[IDENTITY_SWITCH_ON_AT_ENV]) !== undefined
+  );
+}
+
+/**
+ * The same check, made again as the last step of the transaction that owns
+ * `connection`, right before its COMMIT. A write let in just before the
+ * freeze can wait on a row lock (InnoDB waits up to 50 s) and commit after
+ * it, where the export, which counts writes by their own timestamps, can't
+ * see it. With this check such a write rolls back with the same 423.
+ * Called inside a transaction, including one another write opened (a drop
+ * that nominates a wallet, a rating that makes a profile): the check runs
+ * once, at that transaction's own commit. Outside one, it runs now.
+ */
+export function assertIdentityNotFrozenAtCommit(
+  connection: ConnectionWrapper<any> | undefined,
+  kind: IdentityRefusal = 'write'
+): void {
+  if (!isIdentityFreezeConfigured()) {
+    return;
+  }
+  beforeCommit(connection, `identity-freeze:${kind}`, () =>
+    assertIdentityNotFrozen(kind)
+  );
 }

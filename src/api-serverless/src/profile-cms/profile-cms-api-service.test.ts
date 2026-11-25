@@ -38,6 +38,7 @@ import {
 } from '@/profile-cms/protocol/v1';
 import { createHash } from 'node:crypto';
 import { ArweaveFileUploader } from '@/arweave';
+import { withComputedCmsHashes } from '@/profile-cms/protocol/v1/hash';
 import { RequestContext } from '@/request.context';
 import { ConnectionWrapper } from '@/sql-executor';
 import {
@@ -2053,10 +2054,23 @@ describe('ProfileCmsApiService', () => {
       expect.any(Number),
       expect.objectContaining({ connection: expect.any(Object) })
     );
+    // Nothing reaches the gateway's document store from the server: the
+    // answer carries both files for the person's browser to upload.
     expect(
       await chain.getDocBytes(cmsCidFromHash(draft.package_hash))
-    ).not.toBeNull();
-    expect(await chain.getDocBytes(publicationCid)).toEqual(Buffer.from('{}'));
+    ).toBeNull();
+    expect(await chain.getDocBytes(publicationCid)).toBeNull();
+    const documents = result.chain_documents!;
+    expect(documents.content_core.cid).toBe(cmsCidFromHash(draft.package_hash));
+    expect(
+      cmsCidFromBytes(
+        Buffer.from(documents.content_core.bytes_base64, 'base64')
+      )
+    ).toBe(documents.content_core.cid);
+    expect(documents.publication).toEqual({
+      cid: publicationCid,
+      bytes_base64: Buffer.from('{}').toString('base64')
+    });
     expect(packagesDb.markPublished).not.toHaveBeenCalled();
     expect(packagesDb.supersedePrimaryForProfile).not.toHaveBeenCalled();
     expect(publishSignaturesDb.insertConsumed).not.toHaveBeenCalled();
@@ -2066,6 +2080,54 @@ describe('ProfileCmsApiService', () => {
       status: 'draft',
       publication_cid: publicationCid
     });
+  });
+
+  it("refuses, before recording anything, a site the chain's document store can't take", async () => {
+    const chainService = new ProfileCmsApiService(
+      packagesDb as unknown as ProfileCmsPackagesDb,
+      identityFetcher as unknown as IdentityFetcher,
+      pointerEventsDb as unknown as ProfileCmsPointerEventsDb,
+      publishSignaturesDb as unknown as ProfileCmsPublishSignaturesDb,
+      new ProfileCmsStorageReceiptVerifier(),
+      publishSignatureVerifier,
+      arweaveUploader as unknown as ArweaveFileUploader,
+      publicationStorage,
+      {
+        isIdentityFreezeOn: () => false,
+        isProfileCmsChainPointerEnabled: () => true
+      },
+      () => new InMemoryProfileCmsChain()
+    );
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+    packagesDb.findByIdForUpdate.mockResolvedValue(draft);
+    packagesDb.findPrimaryPublishedByProfileId.mockResolvedValue(null);
+    // The gateway takes 2 MiB a file; this content core is a byte more.
+    jest
+      .spyOn(
+        chainService as unknown as { contentCore: () => unknown },
+        'contentCore'
+      )
+      .mockReturnValue({
+        cid: cmsCidFromHash(draft.package_hash),
+        bytes: Buffer.alloc(2 * 1024 * 1024 + 1, 0x20)
+      });
+    const upload = jest.spyOn(publicationStorage, 'upload');
+
+    await expect(
+      chainService.publish(
+        draft.id,
+        {
+          expected_package_hash: draft.package_hash,
+          expected_payload_hash: draft.payload_hash,
+          ...publishSignatureRequest()
+        },
+        ownerContext()
+      )
+    ).rejects.toMatchObject({ code: 'cms_chain_document_too_large' });
+    // Nothing went to storage, and nothing was recorded.
+    expect(upload).not.toHaveBeenCalled();
+    expect(packagesDb.recordPublication).not.toHaveBeenCalled();
   });
 
   describe('a rollback with profile sites on the chain', () => {
@@ -2225,13 +2287,20 @@ describe('ProfileCmsApiService', () => {
       );
     }
 
-    it('returns the stored record without signing or uploading again', async () => {
+    it('returns the stored record and its files without signing again', async () => {
       const publicationCid = cmsCidFromBytes(Buffer.from('{}'));
-      const signed = createEntity({ publication_cid: publicationCid });
+      const signed = createEntity({
+        publication_cid: publicationCid,
+        recovery_receipt: {
+          provider: 'arweave',
+          uri: `ar://${'b'.repeat(43)}`,
+          content_hash: `sha256:${'b'.repeat(64)}`,
+          canonical: false,
+          recorded_at: '2026-11-20T00:00:00.000Z'
+        }
+      });
       packagesDb.findById.mockResolvedValue(signed);
-      const putDocBytes = jest.fn();
       const chain = new InMemoryProfileCmsChain();
-      chain.putDocBytes = putDocBytes;
 
       const result = await chainService(chain).publish(
         signed.id,
@@ -2248,9 +2317,109 @@ describe('ProfileCmsApiService', () => {
         status: 'draft',
         publication_cid: publicationCid
       });
+      expect(result.chain_documents).toMatchObject({
+        content_core: { cid: cmsCidFromHash(signed.package_hash) },
+        publication: {
+          cid: publicationCid,
+          bytes_base64: Buffer.from('{}').toString('base64')
+        }
+      });
+      // The record comes back from the storage its receipt names.
+      expect(publicationStorage.verify).toHaveBeenCalledWith(
+        signed.recovery_receipt
+      );
       expect(publishSignatureVerifier).not.toHaveBeenCalled();
-      expect(putDocBytes).not.toHaveBeenCalled();
       expect(packagesDb.recordPublication).not.toHaveBeenCalled();
+    });
+
+    it("asks to publish again shortly when the stored record can't be read", async () => {
+      const signed = createEntity({
+        publication_cid: cmsCidFromBytes(Buffer.from('{}')),
+        recovery_receipt: {
+          provider: 'arweave',
+          uri: `ar://${'b'.repeat(43)}`,
+          content_hash: `sha256:${'b'.repeat(64)}`,
+          canonical: false,
+          recorded_at: '2026-11-20T00:00:00.000Z'
+        }
+      });
+      packagesDb.findById.mockResolvedValue(signed);
+      jest
+        .spyOn(publicationStorage, 'verify')
+        .mockRejectedValueOnce(new Error('gateway timeout'));
+
+      await expect(
+        chainService().publish(
+          signed.id,
+          {
+            expected_package_hash: signed.package_hash,
+            expected_payload_hash: signed.payload_hash,
+            ...publishSignatureRequest()
+          },
+          ownerContext()
+        )
+      ).rejects.toMatchObject({ code: 'cms_check_unavailable' });
+    });
+
+    it("refuses a stored record storage says doesn't match its receipt", async () => {
+      const signed = createEntity({
+        publication_cid: cmsCidFromBytes(Buffer.from('{}')),
+        recovery_receipt: {
+          provider: 'arweave',
+          uri: `ar://${'b'.repeat(43)}`,
+          content_hash: `sha256:${'b'.repeat(64)}`,
+          canonical: false,
+          recorded_at: '2026-11-20T00:00:00.000Z'
+        }
+      });
+      packagesDb.findById.mockResolvedValue(signed);
+      jest
+        .spyOn(publicationStorage, 'verify')
+        .mockRejectedValueOnce(
+          new CustomApiCompliantException(
+            400,
+            'CMS storage bytes do not match the signed content hash',
+            'cms_storage_hash_mismatch'
+          )
+        );
+
+      await expect(
+        chainService().publish(
+          signed.id,
+          {
+            expected_package_hash: signed.package_hash,
+            expected_payload_hash: signed.payload_hash,
+            ...publishSignatureRequest()
+          },
+          ownerContext()
+        )
+      ).rejects.toMatchObject({ code: 'cms_publication_mismatch' });
+    });
+
+    it('refuses a stored record whose bytes are not its CID', async () => {
+      const signed = createEntity({
+        publication_cid: cmsCidFromBytes(Buffer.from('{"other":true}')),
+        recovery_receipt: {
+          provider: 'arweave',
+          uri: `ar://${'b'.repeat(43)}`,
+          content_hash: `sha256:${'b'.repeat(64)}`,
+          canonical: false,
+          recorded_at: '2026-11-20T00:00:00.000Z'
+        }
+      });
+      packagesDb.findById.mockResolvedValue(signed);
+
+      await expect(
+        chainService().publish(
+          signed.id,
+          {
+            expected_package_hash: signed.package_hash,
+            expected_payload_hash: signed.payload_hash,
+            ...publishSignatureRequest()
+          },
+          ownerContext()
+        )
+      ).rejects.toMatchObject({ code: 'cms_publication_mismatch' });
     });
 
     it('refuses a published or superseded package whose publication_cid the import filled', async () => {
@@ -2265,12 +2434,9 @@ describe('ProfileCmsApiService', () => {
           publication_cid: cmsCidFromBytes(Buffer.from('{}'))
         });
         packagesDb.findById.mockResolvedValue(imported);
-        const putDocBytes = jest.fn();
-        const chain = new InMemoryProfileCmsChain();
-        chain.putDocBytes = putDocBytes;
 
         await expect(
-          chainService(chain).publish(
+          chainService().publish(
             imported.id,
             {
               expected_package_hash: imported.package_hash,
@@ -2280,9 +2446,51 @@ describe('ProfileCmsApiService', () => {
             ownerContext()
           )
         ).rejects.toThrow('Only draft CMS packages can be published');
-        expect(putDocBytes).not.toHaveBeenCalled();
         expect(packagesDb.recordPublication).not.toHaveBeenCalled();
       }
+    });
+
+    it("stays under Lambda's 6 MB answer with a package near the 2 MiB storage cap", async () => {
+      const base = createValidProfileCmsPackage();
+      const large = withComputedCmsHashes({
+        ...base,
+        payload: {
+          ...base.payload,
+          navigation: [
+            {
+              id: 'main-nav',
+              items: [{ label: 'x'.repeat(1_900_000), page_id: 'home-page' }]
+            }
+          ]
+        }
+      });
+      const signed = createEntity({
+        cms_package: large,
+        publication_cid: cmsCidFromBytes(Buffer.from('{}')),
+        recovery_receipt: {
+          provider: 'arweave',
+          uri: `ar://${'b'.repeat(43)}`,
+          content_hash: `sha256:${'b'.repeat(64)}`,
+          canonical: false,
+          recorded_at: '2026-11-20T00:00:00.000Z'
+        }
+      });
+      packagesDb.findById.mockResolvedValue(signed);
+
+      const result = await chainService().publish(
+        signed.id,
+        {
+          expected_package_hash: signed.package_hash,
+          expected_payload_hash: signed.payload_hash,
+          ...publishSignatureRequest()
+        },
+        ownerContext()
+      );
+
+      // The package and its core in base64: under 5 MB for a 2 MiB package.
+      expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(
+        5 * 1000 * 1000
+      );
     });
 
     it('still checks the hashes the request expects', async () => {
@@ -2309,8 +2517,26 @@ describe('ProfileCmsApiService', () => {
       const draft = createEntity();
       const stored = createEntity({
         id: draft.id,
-        publication_cid: cmsCidFromBytes(Buffer.from('{"first":true}'))
+        publication_cid: cmsCidFromBytes(Buffer.from('{"first":true}')),
+        recovery_receipt: {
+          provider: 'arweave',
+          uri: `ar://${'b'.repeat(43)}`,
+          content_hash: `sha256:${'b'.repeat(64)}`,
+          canonical: false,
+          recorded_at: '2026-11-20T00:00:00.000Z'
+        }
       });
+      // This click signed '{}'; the files returned are the first click's,
+      // read from the storage its receipt names.
+      jest
+        .spyOn(publicationStorage, 'verify')
+        .mockImplementation(async (receipt) =>
+          Buffer.from(
+            receipt.uri === (stored.recovery_receipt as { uri: string }).uri
+              ? '{"first":true}'
+              : '{}'
+          )
+        );
       packagesDb.findById
         .mockResolvedValueOnce(draft)
         .mockResolvedValueOnce(stored);
@@ -2329,6 +2555,10 @@ describe('ProfileCmsApiService', () => {
 
       expect(packagesDb.recordPublication).not.toHaveBeenCalled();
       expect(result.publication_cid).toBe(stored.publication_cid);
+      expect(result.chain_documents?.publication).toEqual({
+        cid: stored.publication_cid,
+        bytes_base64: Buffer.from('{"first":true}').toString('base64')
+      });
     });
   });
 });

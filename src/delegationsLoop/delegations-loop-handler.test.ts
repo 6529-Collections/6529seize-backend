@@ -311,12 +311,22 @@ describe('delegations loop on-demand reconsolidation', () => {
       revocation: []
     };
 
+    // A test file that ran earlier in the same Jest worker may have turned
+    // on --expose-gc, which leaves a gc that can be overwritten but not
+    // deleted: put back the gc this file started with, or remove the one
+    // the test added.
+    const startingGc = Object.getOwnPropertyDescriptor(globalThis, 'gc');
+
     beforeEach(() => {
       (globalThis as { gc?: () => void }).gc = gc;
     });
 
     afterEach(() => {
-      delete (globalThis as { gc?: () => void }).gc;
+      if (startingGc) {
+        Object.defineProperty(globalThis, 'gc', startingGc);
+      } else {
+        delete (globalThis as { gc?: () => void }).gc;
+      }
     });
 
     it('runs once, last, after a requested reconsolidation', async () => {

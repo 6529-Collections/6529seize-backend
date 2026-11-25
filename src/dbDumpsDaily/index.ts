@@ -35,11 +35,31 @@ export const handler = sentryContext.wrapLambdaHandler(
       return;
     }
     // Loaded only for a job, so the export's modules never touch the dump.
+    const { parseIdentityExportEvent, runIdentityExportJob } =
+      await import('./identity-export.handler');
+    const identityExport = parseIdentityExportEvent(event);
+    if (identityExport) {
+      return await runIdentityExportJob(identityExport, context);
+    }
     const { parseProfileSiteExportEvent, runProfileSiteExportJob } =
       await import('./profile-site-export.handler');
     const profileSiteExport = parseProfileSiteExportEvent(event);
     if (profileSiteExport) {
       return await runProfileSiteExportJob(profileSiteExport, context);
+    }
+    const {
+      parseWavesExportEvent,
+      parseWavesExportUploadLinkEvent,
+      runWavesExportJob,
+      runWavesExportUploadLink
+    } = await import('./waves-export.handler');
+    const uploadLink = parseWavesExportUploadLinkEvent(event);
+    if (uploadLink) {
+      return await runWavesExportUploadLink(uploadLink, context);
+    }
+    const wavesExport = parseWavesExportEvent(event);
+    if (wavesExport) {
+      return await runWavesExportJob(wavesExport, context);
     }
     const job =
       event && typeof event === 'object' && 'job' in event

@@ -7,6 +7,7 @@ import {
 import {
   closeAfterCommitScope,
   openAfterCommitScope,
+  runBeforeCommitChecks,
   runAfterCommitCallbacks
 } from '@/db/after-commit';
 import { enqueueTransfersWithManager } from './transactions/transfer-reconciliation.db';
@@ -155,6 +156,7 @@ import {
 } from '@/db/sql-execution-budget';
 import type { PoolConnection } from 'mysql';
 import { formatNamedParameters } from '@/db/sql-named-parameters';
+import { logTransactionFailure } from '@/db/transaction-failure-log';
 
 const logger = Logger.get('DB');
 
@@ -359,10 +361,12 @@ async function execNativeTransactionally<T>(
           }
         },
         budget,
-        (handle) => {
+        async (handle) => {
           scoped = handle;
           openAfterCommitScope(handle);
-          return executable({ connection: handle as QueryRunner });
+          const work = await executable({ connection: handle as QueryRunner });
+          runBeforeCommitChecks(handle);
+          return work;
         }
       );
     } catch (error) {
@@ -381,11 +385,12 @@ async function execNativeTransactionally<T>(
   let committed: { result: T; afterCommit: (() => unknown)[] };
   try {
     const result = await executable({ connection: queryRunner });
+    runBeforeCommitChecks(queryRunner);
     await queryRunner.commitTransaction();
     committed = { result, afterCommit: closeAfterCommitScope(queryRunner) };
   } catch (err: any) {
     closeAfterCommitScope(queryRunner);
-    logger.error(`Database transaction failed [${err}]`);
+    logTransactionFailure(err, logger);
     if (queryRunner.isTransactionActive) {
       await queryRunner.rollbackTransaction();
     }

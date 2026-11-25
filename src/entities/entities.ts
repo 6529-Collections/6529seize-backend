@@ -242,6 +242,7 @@ export {
 } from './ITransactionsProcessing';
 export { ConsolidatedTDHUpload, UploadEntity } from './IUpload';
 export { UserGroupEntity } from './IUserGroup';
+export { UserGroupVisibilityRequestEntity } from './IUserGroupVisibilityRequest';
 export { WaveArchiveEntity, WaveEntity } from './IWave';
 export { WalletAuthSessionEntity } from './IWalletAuthSession';
 export type { WalletAuthClientType } from './IWalletAuthSession';
@@ -301,6 +302,11 @@ export * from './ICompetitionEntryContentVersion';
 export * from './ICompetitionCapabilityAudit';
 export { PushNotificationOutboxEntity } from './IPushNotificationOutbox';
 export { SubscriptionCacheInvalidationEntity } from './ISubscriptionCacheInvalidation';
+
+export * from './IDropForgeLaunch';
+export * from './IDropForgeEvidence';
+export * from './IDropForgeSettings';
+export * from './IDropForgeReadinessCheck';
 export { DeviceGrantEntity } from './IDeviceGrant';
 export { DeviceSignedEventEntity } from './IDeviceSignedEvent';
 export { DropAuthorSignatureEntity } from './IDropAuthorSignature';
@@ -319,6 +325,7 @@ export { TransferReconciliationEntity } from './ITransferReconciliation';
 export { MarketDepthPublicationLockEntity } from './IMarketDepthPublicationLock';
 
 export * from './IVotingCreditRelease';
+export * from './ITransactionScanCheckpoint';
 export { ReleaseNoteRecoveryJobEntity } from './IReleaseNoteRecoveryJob';
 
 export { ArtistArtworkAlertEntity } from './IArtistArtworkAlert';

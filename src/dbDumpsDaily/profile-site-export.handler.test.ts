@@ -14,6 +14,7 @@ import {
   ProfileSiteExportServiceError,
   checkSnapshotTime,
   checkWritesAfterFreeze,
+  MIN_SNAPSHOT_GAP_SECONDS,
   jobRecordFetcher,
   latestSiteWrites,
   parseProfileSiteExportEvent,
@@ -259,7 +260,7 @@ function setup(
         transactionReadOnly: true,
         serverReadOnly: true,
         innodbReadOnly: null,
-        snapshotAt: new Date(options.snapshotAt ?? T + 150_000).toISOString(),
+        snapshotAt: new Date(options.snapshotAt ?? T + 330_000).toISOString(),
         replicaLagMs:
           options.replicaLagMs === undefined ? 40 : options.replicaLagMs,
         // A row dated ahead keeps its lag; only its age is unknown.
@@ -289,7 +290,7 @@ function setup(
     },
     getJson: jest.fn(),
     now: (() => {
-      let tick = T + 180_000;
+      let tick = T + 360_000;
       return () => new Date((tick += 1_000));
     })()
   };
@@ -354,7 +355,7 @@ describe('parseProfileSiteExportEvent', () => {
           'packages:pkg-1@2026-11-24T00:00:00.005Z',
           'legacy_packages:sha256:abc@2026-11-24T00:00:01.000Z'
         ],
-        acceptUnknownReplicaLag: { older_than_gap: 160_000 }
+        acceptUnknownReplicaLag: { older_than_gap: 360_000 }
       })
     ).toEqual({
       ...event,
@@ -366,7 +367,7 @@ describe('parseProfileSiteExportEvent', () => {
         'packages:pkg-1@2026-11-24T00:00:00.005Z',
         'legacy_packages:sha256:abc@2026-11-24T00:00:01.000Z'
       ],
-      acceptUnknownReplicaLag: [{ older_than_gap: 160_000 }]
+      acceptUnknownReplicaLag: [{ older_than_gap: 360_000 }]
     });
     expect(
       parseProfileSiteExportEvent({
@@ -385,13 +386,13 @@ describe('parseProfileSiteExportEvent', () => {
         job: 'profileSiteExport',
         frozenAt: T,
         acceptUnknownReplicaLag: [
-          { older_than_gap: 120_000 },
+          { older_than_gap: 300_000 },
           { dated_ahead: 51_000_000 }
         ]
       })
     ).toMatchObject({
       acceptUnknownReplicaLag: [
-        { older_than_gap: 120_000 },
+        { older_than_gap: 300_000 },
         { dated_ahead: 51_000_000 }
       ]
     });
@@ -406,8 +407,8 @@ describe('parseProfileSiteExportEvent', () => {
     ['older_than_gap'],
     [{ older_than_gap: 0 }],
     [{ older_than_gap: '60000' }],
-    [{ older_than_gap: 60_000, unreadable: true }],
-    [[{ older_than_gap: 60_000 }, { older_than_gap: 90_000 }]],
+    [{ older_than_gap: 360_000, unreadable: true }],
+    [[{ older_than_gap: 360_000 }, { older_than_gap: 420_000 }]],
     [{ older_than_gap: 8 * 24 * 60 * 60 * 1000 }],
     // dated_ahead needs its smallest lead; both bounds stay within the zones.
     ['dated_ahead'],
@@ -415,7 +416,7 @@ describe('parseProfileSiteExportEvent', () => {
     // No time zone is less than 30 minutes from UTC.
     [{ dated_ahead: 1_739_999 }],
     [{ dated_ahead: 51_000_001 }],
-    [{ older_than_gap: 119_999 }],
+    [{ older_than_gap: 299_999 }],
     [{ older_than_gap: 51_000_001 }],
     [[{ dated_ahead: 7_140_000 }, { dated_ahead: 7_000_000 }]]
   ])('refuses acceptUnknownReplicaLag %j, naming the cases', (value) => {
@@ -426,7 +427,7 @@ describe('parseProfileSiteExportEvent', () => {
         acceptUnknownReplicaLag: value
       })
     ).toThrow(
-      /acceptUnknownReplicaLag must name each case to accept, as the refusals do: "unreadable", \{"dated_ahead": <smallest lead in ms: Monday's replicaLagAheadMs minus 60000>\}, or \{"older_than_gap": <largest row age in ms: Monday's replicaLagAgeMs plus 60000>\}; one or a list, each once\. A bound on a row's age is 120000 to 51000000 ms, on its lead 1740000 to 51000000 ms\. true and a bare "dated_ahead" or "older_than_gap" are not accepted/
+      /acceptUnknownReplicaLag must name each case to accept, as the refusals do: "unreadable", \{"dated_ahead": <smallest lead in ms: Monday's replicaLagAheadMs minus 60000>\}, or \{"older_than_gap": <largest row age in ms: Monday's replicaLagAgeMs plus 60000>\}; one or a list, each once\. A bound on a row's age is 300000 to 51000000 ms, on its lead 1740000 to 51000000 ms\. true and a bare "dated_ahead" or "older_than_gap" are not accepted/
     );
   });
 
@@ -577,17 +578,46 @@ describe('the freeze checks', () => {
   });
 
   it('holds a snapshot to a minimum gap after the freeze', () => {
-    expect(checkSnapshotTime(T, T + 120_000, null, 120)).toEqual({
-      gapMs: 120_000,
-      gapSeconds: 120
+    expect(
+      checkSnapshotTime(T, T + 300_000, null, MIN_SNAPSHOT_GAP_SECONDS)
+    ).toEqual({
+      gapMs: 300_000,
+      gapSeconds: 300
     });
-    expect(() => checkSnapshotTime(T, T + 119_000, null, 120)).toThrow(
-      /119 s after the freeze: wait until at least 120 s/
+    expect(() =>
+      checkSnapshotTime(T, T + 299_000, null, MIN_SNAPSHOT_GAP_SECONDS)
+    ).toThrow(/299 s after the freeze: wait until at least 300 s/);
+    // 299.6 s would round to 300.
+    expect(() =>
+      checkSnapshotTime(T, T + 299_600, null, MIN_SNAPSHOT_GAP_SECONDS)
+    ).toThrow(/299.6 s after the freeze/);
+  });
+
+  it('holds a real run to the 5-minute minimum gap, to the millisecond', () => {
+    expect(MIN_SNAPSHOT_GAP_SECONDS).toBe(300);
+    expect(() =>
+      checkSnapshotTime(T, T + 299_999, null, MIN_SNAPSHOT_GAP_SECONDS)
+    ).toThrow(
+      /^The snapshot is 299\.999 s after the freeze: wait until at least 300 s after it/
     );
-    // 119.6 s would round to 120.
-    expect(() => checkSnapshotTime(T, T + 119_600, null, 120)).toThrow(
-      /119.6 s after the freeze/
-    );
+    expect(
+      checkSnapshotTime(T, T + 300_000, null, MIN_SNAPSHOT_GAP_SECONDS)
+    ).toEqual({ gapMs: 300_000, gapSeconds: 300 });
+    // A row-age bound starts at the same minimum gap.
+    expect(() =>
+      parseProfileSiteExportEvent({
+        job: 'profileSiteExport',
+        frozenAt: T,
+        acceptUnknownReplicaLag: { older_than_gap: 299_999 }
+      })
+    ).toThrow(/A bound on a row's age is 300000 to 51000000 ms/);
+    expect(
+      parseProfileSiteExportEvent({
+        job: 'profileSiteExport',
+        frozenAt: T,
+        acceptUnknownReplicaLag: { older_than_gap: 300_000 }
+      })
+    ).toMatchObject({ acceptUnknownReplicaLag: [{ older_than_gap: 300_000 }] });
   });
 
   const lag = (
@@ -644,7 +674,7 @@ describe('the freeze checks', () => {
     // At 00:05 the reader is 6 minutes behind, but its row, last written
     // at 23:59, still says 20 ms: the age alone passes the gap.
     expect(() => checkReplicaLag(300_000, lag(20, 360_000))).toThrow(
-      /lag row is 360000 ms old \(a 20 ms lag\), older than the 300000 ms since the freeze: LAST_UPDATE_TIMESTAMP may not be in UTC, or the reader stopped updating its row\. If the same refusal returns with the row's age grown by the time you waited, the reader stopped updating: report it\. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader\. Accept it \(acceptUnknownReplicaLag: \{"older_than_gap": <Monday's replicaLagAgeMs plus 60000>\}\) only for a reading Monday's rehearsal also showed, and only with the switch owner's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one\. Otherwise report it\./
+      /lag row is 360000 ms old \(a 20 ms lag\), older than the 300000 ms since the freeze: LAST_UPDATE_TIMESTAMP may not be in UTC, or the reader stopped updating its row\. If the same refusal returns with the row's age grown by the time you waited, the reader stopped updating: report it\. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader\. Accept it \(acceptUnknownReplicaLag: \{"older_than_gap": <Monday's replicaLagAgeMs plus 60000>\}\) only for a reading Monday's rehearsal also showed, and only with the switch owner's agreement: the run then relies on the 5-minute minimum gap, and still on the lag the row reports when it has one\. Otherwise report it\./
     );
     expect(() => checkReplicaLag(150_000, lag(20, 150_000))).toThrow(
       /older than the 150000 ms since the freeze/
@@ -724,13 +754,13 @@ describe('the freeze checks', () => {
     expect(() => checkReplicaLag(300_000, lag(20, 7_260_001), bound)).toThrow(
       /The replica's lag row is 7260001 ms old, over the 7260000 ms accepted for older_than_gap: it has aged past Monday's reading, so the reader may have stopped updating its row\. Report it; don't raise the bound\./
     );
-    // Monday's 150 s age, accepted with a margin: a reader that stopped at
+    // Monday's 330 s age, accepted with a margin: a reader that stopped at
     // 23:50 shows a 40-minute-old row on Tuesday, and is refused.
     expect(() =>
       checkReplicaLag(300_000, lag(20, 2_400_000), [
-        { older_than_gap: 210_000 }
+        { older_than_gap: 390_000 }
       ])
-    ).toThrow(/over the 210000 ms accepted/);
+    ).toThrow(/over the 390000 ms accepted/);
   });
 
   it('accepts dated_ahead only down to the lead named: an offset passes, a stall is refused', () => {
@@ -867,7 +897,7 @@ describe('the freeze checks', () => {
 
   it('refuses a row dated ahead of UTC, with the steps, unless that case is accepted', () => {
     expect(() => checkReplicaLag(150_000, ahead(20))).toThrow(
-      /lag row is dated ahead of UTC \(LAST_UPDATE_TIMESTAMP is 7200000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown\): LAST_UPDATE_TIMESTAMP may not be in UTC, so the row's age is unknown\. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader\. Accept it \(acceptUnknownReplicaLag: \{"dated_ahead": <Monday's replicaLagAheadMs minus 60000>\}\) only for a reading Monday's rehearsal also showed, and only with the switch owner's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one\. Otherwise report it\./
+      /lag row is dated ahead of UTC \(LAST_UPDATE_TIMESTAMP is 7200000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown\): LAST_UPDATE_TIMESTAMP may not be in UTC, so the row's age is unknown\. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader\. Accept it \(acceptUnknownReplicaLag: \{"dated_ahead": <Monday's replicaLagAheadMs minus 60000>\}\) only for a reading Monday's rehearsal also showed, and only with the switch owner's agreement: the run then relies on the 5-minute minimum gap, and still on the lag the row reports when it has one\. Otherwise report it\./
     );
     expect(() =>
       checkReplicaLag(150_000, ahead(20), [{ older_than_gap: 10_000_000 }])
@@ -876,7 +906,7 @@ describe('the freeze checks', () => {
 
   it('refuses an unreadable lag, with the steps and the only errors to accept, unless that case is accepted', () => {
     expect(() => checkReplicaLag(150_000, lag(null))).toThrow(
-      /lag can't be read from information_schema.replica_host_status \(no reason given\)\. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader\. Accept it \(acceptUnknownReplicaLag: "unreadable"\) only for a reading Monday's rehearsal also showed: for an error, only ER_UNKNOWN_TABLE 1109 or ER_UNKNOWN_SYSTEM_VARIABLE 1193 \(the reader isn't Aurora\), and only with the switch owner's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one\. Otherwise report it\./
+      /lag can't be read from information_schema.replica_host_status \(no reason given\)\. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader\. Accept it \(acceptUnknownReplicaLag: "unreadable"\) only for a reading Monday's rehearsal also showed: for an error, only ER_UNKNOWN_TABLE 1109 or ER_UNKNOWN_SYSTEM_VARIABLE 1193 \(the reader isn't Aurora\), and only with the switch owner's agreement: the run then relies on the 5-minute minimum gap, and still on the lag the row reports when it has one\. Otherwise report it\./
     );
     expect(() =>
       checkReplicaLag(150_000, lag(null, null, 'ER_PARSE_ERROR 1064'))
@@ -1064,9 +1094,9 @@ describe('runProfileSiteExportJob', () => {
       identityFreezeAtSecret: 'prod/lambdas',
       identityFreezeAtReading: 'time',
       identityFreezeAt: '2026-11-24T00:00:00.000Z',
-      snapshotAt: new Date(T + 150_000).toISOString(),
-      snapshotGapSeconds: 150,
-      snapshotGapMs: 150_000,
+      snapshotAt: new Date(T + 330_000).toISOString(),
+      snapshotGapSeconds: 330,
+      snapshotGapMs: 330_000,
       evidence: {
         endpoint: 'reader',
         replicaLagMs: 40,
@@ -1087,7 +1117,7 @@ describe('runProfileSiteExportJob', () => {
       pointerError: null
     });
     expect(result.prefix).toMatch(
-      /^profile-site-export\/staging\/2026-11-24T00-03-01-000Z-abcdef12\/$/
+      /^profile-site-export\/staging\/2026-11-24T00-06-01-000Z-abcdef12\/$/
     );
     const names = order.map((key) =>
       key.startsWith(result.prefix) ? key.slice(result.prefix.length) : key
@@ -1144,9 +1174,9 @@ describe('runProfileSiteExportJob', () => {
         at: '2026-11-24T00:00:00.000Z'
       },
       replace_pointer: false,
-      snapshot_at: new Date(T + 150_000).toISOString(),
-      snapshot_gap_seconds: 150,
-      snapshot_gap_ms: 150_000,
+      snapshot_at: new Date(T + 330_000).toISOString(),
+      snapshot_gap_seconds: 330,
+      snapshot_gap_ms: 330_000,
       read: {
         endpoint: 'reader',
         replicaLagMs: 40,
@@ -1394,12 +1424,18 @@ describe('runProfileSiteExportJob', () => {
   });
 
   it.each([
-    ['60 s after the freeze', T + 60_000, 40, /wait until at least 120 s/],
-    ['with the replica 200 s behind', T + 150_000, 200_000, /200000 ms behind/],
+    ['60 s after the freeze', T + 60_000, 40, /wait until at least 300 s/],
+    [
+      'a millisecond short of the 5-minute minimum gap',
+      T + 299_999,
+      40,
+      /^The snapshot is 299\.999 s after the freeze: wait until at least 300 s after it/
+    ],
+    ['with the replica 400 s behind', T + 330_000, 400_000, /400000 ms behind/],
     [
       'with the replica as far behind as the gap',
-      T + 150_000,
-      150_000,
+      T + 330_000,
+      330_000,
       /behind/
     ]
   ])(
@@ -1413,6 +1449,19 @@ describe('runProfileSiteExportJob', () => {
       expect(close).toHaveBeenCalledTimes(1);
     }
   );
+
+  it('takes a real run exactly 5 minutes after the freeze', async () => {
+    const { deps } = setup({ snapshotAt: T + 300_000 });
+    const result = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.usable).toBe(true);
+    expect([result.snapshotGapMs, result.snapshotGapSeconds]).toEqual([
+      300_000, 300
+    ]);
+  });
 
   it('refuses an unknown replica lag unless told to rely on the gap alone', async () => {
     const { deps, bodies, order } = setup({ replicaLagMs: null });
@@ -1504,7 +1553,7 @@ describe('runProfileSiteExportJob', () => {
   );
 
   it('measures the lag against the gap in milliseconds', async () => {
-    const ok = setup({ snapshotAt: T + 150_400, replicaLagMs: 148_899 });
+    const ok = setup({ snapshotAt: T + 330_400, replicaLagMs: 328_899 });
     const stale = setup({
       snapshotAt: T + 300_000,
       replicaLagMs: 20,
@@ -1519,14 +1568,14 @@ describe('runProfileSiteExportJob', () => {
       context,
       ok.deps
     )) as ProfileSiteExportResult;
-    expect(result.snapshotGapSeconds).toBe(150);
-    expect(result.snapshotGapMs).toBe(150_400);
+    expect(result.snapshotGapSeconds).toBe(330);
+    expect(result.snapshotGapMs).toBe(330_400);
     expect(result.acceptUnknownReplicaLag).toEqual([]);
     expect(result.replacePointer).toBe(false);
-    const behind = setup({ snapshotAt: T + 150_400, replicaLagMs: 148_900 });
+    const behind = setup({ snapshotAt: T + 330_400, replicaLagMs: 328_900 });
     await expect(
       runProfileSiteExportJob(event, context, behind.deps)
-    ).rejects.toThrow(/148900 ms behind/);
+    ).rejects.toThrow(/328900 ms behind/);
   });
 
   it('lets a rehearsal run with an unknown replica lag, and reports it', async () => {
@@ -1722,7 +1771,7 @@ describe('runProfileSiteExportJob', () => {
     const old = setup({
       snapshotAt: T + 30_000,
       replicaLagMs: 20,
-      replicaLagAgeMs: 120_000
+      replicaLagAgeMs: 300_000
     });
     const named = (await runProfileSiteExportJob(
       { ...event, rehearsal: true, frozenAt: T + 20_000 },
@@ -1970,7 +2019,7 @@ describe('runProfileSiteExportJob', () => {
       POINTER,
       JSON.stringify({
         prefix:
-          'profile-site-export/staging/2026-11-24T00-03-01-000Z-abcdef12/',
+          'profile-site-export/staging/2026-11-24T00-06-01-000Z-abcdef12/',
         manifest_sha256: '0'.repeat(64)
       })
     );
@@ -1980,7 +2029,7 @@ describe('runProfileSiteExportJob', () => {
       deps
     )) as ProfileSiteExportResult;
     expect(result.prefix).toBe(
-      'profile-site-export/staging/2026-11-24T00-03-01-000Z-abcdef12/'
+      'profile-site-export/staging/2026-11-24T00-06-01-000Z-abcdef12/'
     );
     expect(result.pointerKey).toBeNull();
     expect(result.pointerError).toMatch(/already names an earlier run/);
@@ -2244,7 +2293,7 @@ describe('runProfileSiteExportJob', () => {
     expect(Object.keys(links.links)).toContain('manifest.json');
     // Beside the run's folder: the folder keeps only what its manifest lists.
     expect(again.linksKey).toMatch(
-      /^profile-site-export\/staging\/renewed-links\/2026-11-24T00-03-01-000Z-abcdef12\/links-.+\.json$/
+      /^profile-site-export\/staging\/renewed-links\/2026-11-24T00-06-01-000Z-abcdef12\/links-.+\.json$/
     );
     expect(again.linksBytes).toBe(
       Buffer.byteLength(bodies.get(again.linksKey)!)

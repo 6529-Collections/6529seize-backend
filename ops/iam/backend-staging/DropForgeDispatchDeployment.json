@@ -1,0 +1,229 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "sqs:CreateQueue",
+        "sqs:DeleteQueue",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl",
+        "sqs:ListQueueTags",
+        "sqs:SetQueueAttributes",
+        "sqs:TagQueue",
+        "sqs:UntagQueue"
+      ],
+      "Resource": [
+        "arn:aws:sqs:eu-west-1:296096934726:drop-forge-launch",
+        "arn:aws:sqs:eu-west-1:296096934726:drop-forge-launch-dlq",
+        "arn:aws:sqs:eu-west-1:296096934726:memes-distribution",
+        "arn:aws:sqs:eu-west-1:296096934726:memes-distribution-dlq"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "scheduler:CreateScheduleGroup",
+        "scheduler:DeleteScheduleGroup",
+        "scheduler:GetScheduleGroup",
+        "scheduler:ListTagsForResource",
+        "scheduler:TagResource",
+        "scheduler:UntagResource"
+      ],
+      "Resource": [
+        "arn:aws:scheduler:eu-west-1:296096934726:schedule-group/drop-forge-staging"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:PassRole"
+      ],
+      "Resource": [
+        "arn:aws:iam::296096934726:role/drop-forge-staging-launch"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "lambda.amazonaws.com"
+        },
+        "ArnEquals": {
+          "iam:AssociatedResourceArn": "arn:aws:lambda:eu-west-1:296096934726:function:dropForgeLaunchHandler"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:PassRole"
+      ],
+      "Resource": [
+        "arn:aws:iam::296096934726:role/drop-forge-staging-distribution"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "lambda.amazonaws.com"
+        },
+        "ArnEquals": {
+          "iam:AssociatedResourceArn": "arn:aws:lambda:eu-west-1:296096934726:function:memesDistributionHandler"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole"
+      ],
+      "Resource": [
+        "arn:aws:iam::296096934726:role/drop-forge-staging-launch",
+        "arn:aws:iam::296096934726:role/drop-forge-staging-distribution"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "lambda:CreateEventSourceMapping"
+      ],
+      "Resource": [
+        "*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        },
+        "ArnEquals": {
+          "lambda:FunctionArn": [
+            "arn:aws:lambda:eu-west-1:296096934726:function:dropForgeLaunchHandler",
+            "arn:aws:lambda:eu-west-1:296096934726:function:memesDistributionHandler"
+          ]
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "lambda:UpdateEventSourceMapping",
+        "lambda:DeleteEventSourceMapping"
+      ],
+      "Resource": [
+        "arn:aws:lambda:eu-west-1:296096934726:event-source-mapping:*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        },
+        "ArnEquals": {
+          "lambda:FunctionArn": [
+            "arn:aws:lambda:eu-west-1:296096934726:function:dropForgeLaunchHandler",
+            "arn:aws:lambda:eu-west-1:296096934726:function:memesDistributionHandler"
+          ]
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "lambda:GetEventSourceMapping"
+      ],
+      "Resource": [
+        "arn:aws:lambda:eu-west-1:296096934726:event-source-mapping:*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "scheduler:CreateSchedule",
+        "scheduler:DeleteSchedule",
+        "scheduler:GetSchedule",
+        "scheduler:UpdateSchedule"
+      ],
+      "Resource": [
+        "arn:aws:scheduler:eu-west-1:296096934726:schedule/drop-forge-staging/readiness-phase-0",
+        "arn:aws:scheduler:eu-west-1:296096934726:schedule/drop-forge-staging/readiness-phase-1",
+        "arn:aws:scheduler:eu-west-1:296096934726:schedule/drop-forge-staging/readiness-phase-2",
+        "arn:aws:scheduler:eu-west-1:296096934726:schedule/drop-forge-staging/readiness-phase-3"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:PassRole"
+      ],
+      "Resource": [
+        "arn:aws:iam::296096934726:role/drop-forge-staging-scheduler"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "scheduler.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": "lambda:TagResource",
+      "Resource": "arn:aws:lambda:eu-west-1:296096934726:event-source-mapping:*",
+      "Sid": "TagDropForgeMappingsOnCreate",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1",
+          "aws:RequestTag/aws:cloudformation:stack-name": [
+            "dropForgeLaunchHandler-staging",
+            "memesDistributionHandler-staging"
+          ]
+        },
+        "ForAnyValue:StringEquals": {
+          "aws:CalledVia": "cloudformation.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "lambda:ListTags",
+        "lambda:TagResource",
+        "lambda:UntagResource"
+      ],
+      "Resource": "arn:aws:lambda:eu-west-1:296096934726:event-source-mapping:*",
+      "Sid": "ManageDropForgeMappingTags",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1",
+          "aws:ResourceTag/aws:cloudformation:stack-name": [
+            "dropForgeLaunchHandler-staging",
+            "memesDistributionHandler-staging"
+          ]
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": "scheduler:DeleteSchedule",
+      "Resource": "arn:aws:scheduler:eu-west-1:296096934726:schedule/drop-forge-staging/*",
+      "Sid": "DeleteSchedulesInDropForgeGroup",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    }
+  ]
+}
