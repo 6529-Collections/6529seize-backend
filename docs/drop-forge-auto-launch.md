@@ -310,6 +310,10 @@ worker/config failures when wave delivery cannot report an error. Arming checks
 the reporting bot's chat/visibility access and recipient visibility; actual
 posting still passes the ordinary drop creation checks. Action reports
 include chain-specific transaction links, batch counts and UTC phase windows.
+For failed automated attempts, search the `/aws/lambda/dropForgeLaunchHandler`
+CloudWatch log group in the reporting environment for the **Attempt ID** from
+the Ops post. The matching record includes the last completed step, the failed
+step, timing, and a short error reason with the provider code when recognized.
 No live KMS key, funded wallet, live EMMA authorization, or production wave was
 exercised in local validation.
 

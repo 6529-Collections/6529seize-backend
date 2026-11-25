@@ -1,10 +1,17 @@
 import { Interface, JsonRpcProvider, Transaction, ZeroAddress } from 'ethers';
+import { LaunchAttempt } from '@/drop-forge/drop-forge.attempt';
 import { claimAbi, EthereumLaunchChain } from '@/drop-forge/drop-forge.chain';
-import { LaunchRpcUnavailableError } from '@/drop-forge/drop-forge.types';
+import { reportActionFailure } from '@/drop-forge/drop-forge.groups';
+import { formatLaunchReport } from '@/drop-forge/drop-forge.reports';
+import {
+  LaunchRecord,
+  LaunchRpcUnavailableError
+} from '@/drop-forge/drop-forge.types';
 import {
   testConfig,
   testLaunchData
 } from '@/drop-forge/drop-forge.test-fixtures';
+import { Logger } from '@/logging';
 
 describe('Drop Forge transaction boundary', () => {
   function setup() {
@@ -101,6 +108,63 @@ describe('Drop Forge transaction boundary', () => {
     await expect(chain.prepare(data, data.actions[0])).rejects.toThrow(
       'fee exceeds'
     );
+  });
+  it('correlates a gas estimation failure without logging the provider message', async () => {
+    const { chain, provider } = setup();
+    const data = testLaunchData();
+    const action = data.actions[0];
+    const record: LaunchRecord = {
+      id: 'launch',
+      data,
+      revision: 1,
+      state: 'ARMED',
+      error: null,
+      updated_at: 0
+    };
+    const attempt = new LaunchAttempt('verify_readiness');
+    const providerError = Object.assign(new Error('provider-secret'), {
+      code: 'ETIMEDOUT'
+    });
+    provider.estimateGas.mockRejectedValueOnce(providerError);
+    const failure: unknown = await chain
+      .prepare(data, action, undefined, attempt)
+      .catch((error: unknown) => error);
+    expect(failure).toBe(providerError);
+    const log = jest
+      .spyOn(Logger.get('DROP_FORGE_LAUNCH'), 'warn')
+      .mockImplementation(() => {});
+    try {
+      reportActionFailure(
+        record,
+        action,
+        1000,
+        'RPC or readiness check failed',
+        failure,
+        undefined,
+        { attempt }
+      );
+      const [event] = data.events;
+      expect(event.attempt_id).toMatch(/^[a-f0-9]{12}$/);
+      expect(log).toHaveBeenCalledTimes(1);
+      const logLine = log.mock.calls[0][0];
+      expect(JSON.parse(logLine)).toMatchObject({
+        event: 'drop_forge_attempt_failed',
+        attempt_id: event.attempt_id,
+        claim_id: data.claim_id,
+        failed_step: 'estimate_gas',
+        last_completed_step: 'verify_fees_and_nonce',
+        error_code: 'ETIMEDOUT',
+        reason: 'Network request timed out'
+      });
+      expect(logLine).not.toContain('provider-secret');
+      const { attempt_id: attemptId, ...legacyEvent } = event;
+      expect(formatLaunchReport(data, event)).toBe(
+        formatLaunchReport(data, legacyEvent) +
+          `\n**Attempt ID** \`${attemptId}\``
+      );
+    } finally {
+      log.mockRestore();
+    }
   });
   it('checks runtime binding and creator permission before inspecting the claim', async () => {
     const { chain, provider } = setup();

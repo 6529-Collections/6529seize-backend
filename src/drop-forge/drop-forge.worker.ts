@@ -13,6 +13,7 @@ import {
 import { Transaction } from 'ethers';
 import { DropForgeConfig } from '@/drop-forge/drop-forge.config';
 import { LaunchChain, ChainReceipt } from '@/drop-forge/drop-forge.chain';
+import { LaunchAttempt } from '@/drop-forge/drop-forge.attempt';
 import { mirrorCompletion } from '@/drop-forge/drop-forge.completion';
 import { reconcileManual } from '@/drop-forge/drop-forge.manual';
 import { recordWalletBlock } from '@/drop-forge/drop-forge.wallet-retry';
@@ -326,7 +327,15 @@ export class DropForgeWorker {
           record,
           action,
           await this.chain.now(),
-          'Unsigned reservation expired; no transaction was submitted'
+          'Unsigned reservation expired; no transaction was submitted',
+          undefined,
+          undefined,
+          {
+            attempt: new LaunchAttempt(
+              'check_signing_window',
+              'prepare_transaction'
+            )
+          }
         );
         action.window_reported = true;
       }
@@ -450,11 +459,13 @@ export class DropForgeWorker {
     delete action.disabled_reason;
     const waitingForWallet = waitingForWalletRetry(record, action, now);
     if (!waitingForWallet && (action.retry_at ?? 0) > now) return null;
+    const attempt = new LaunchAttempt('check_existing_configuration');
     let prepared = action;
     try {
       if ((await this.observe(record, action)) || waitingForWallet) return null;
+      attempt.enter('check_supply');
       const remaining = await this.eligibleAirdropCapacity(record, action, now);
-      if (remaining === null || this.deferAction(record, action, now))
+      if (remaining === null || this.deferAction(record, action, now, attempt))
         return null;
       prepared =
         action.ranked_subscription && remaining !== undefined
@@ -465,7 +476,8 @@ export class DropForgeWorker {
         prepared,
         pending,
         ctx,
-        artistPaymentLimit(settings)
+        artistPaymentLimit(settings),
+        attempt
       );
       if (record.data.wallet_blocks)
         delete record.data.wallet_blocks[launchGroup(action)];
@@ -476,7 +488,14 @@ export class DropForgeWorker {
       return work;
     } catch (error) {
       if (!waitingForWallet)
-        this.reportPreparationFailure(record, action, now, error, prepared);
+        this.reportPreparationFailure(
+          record,
+          action,
+          now,
+          error,
+          prepared,
+          attempt
+        );
       return null;
     }
   }
@@ -508,7 +527,8 @@ export class DropForgeWorker {
     action: LaunchAction,
     now: number,
     error: unknown,
-    attempted: LaunchAction
+    attempted: LaunchAction,
+    attempt: LaunchAttempt
   ): void {
     const outsideWindow = now >= action.deadline - SUBMISSION_CUTOFF_SECONDS;
     if (outsideWindow && action.window_reported) return;
@@ -525,7 +545,7 @@ export class DropForgeWorker {
         : 'RPC or readiness check failed',
       error,
       undefined,
-      { attempted, walletRetry }
+      { attempted, walletRetry, attempt }
     );
     if (outsideWindow) action.window_reported = true;
   }
@@ -593,8 +613,10 @@ export class DropForgeWorker {
   private deferAction(
     record: LaunchRecord,
     action: LaunchAction,
-    now: number
+    now: number,
+    attempt: LaunchAttempt
   ): boolean {
+    attempt.enter('check_execution_window');
     if (
       now >= action.deadline - SUBMISSION_CUTOFF_SECONDS &&
       !action.late_delivery
@@ -604,7 +626,10 @@ export class DropForgeWorker {
           record,
           action,
           now,
-          'Safe execution window closed; outstanding work requires operator reconciliation'
+          'Safe execution window closed; outstanding work requires operator reconciliation',
+          undefined,
+          undefined,
+          { attempt }
         );
         action.window_reported = true;
       }
@@ -616,7 +641,10 @@ export class DropForgeWorker {
           record,
           action,
           now,
-          'Finalized unsuccessful transaction; outstanding work requires authorized recovery'
+          'Finalized unsuccessful transaction; outstanding work requires authorized recovery',
+          undefined,
+          undefined,
+          { attempt }
         );
       return true;
     }
@@ -628,8 +656,10 @@ export class DropForgeWorker {
     action: LaunchAction,
     pending: PendingSigner,
     ctx: RequestContext,
-    artistPaymentCap: bigint
+    artistPaymentCap: bigint,
+    attempt: LaunchAttempt
   ): Promise<Work> {
+    attempt.enter('verify_frozen_source');
     if (action.state !== 'PENDING')
       throw new LaunchSafetyError('Action state differs from signer ledger');
     const source = await this.repository.source(
@@ -652,10 +682,12 @@ export class DropForgeWorker {
       delete action.expected_supply;
       delete action.airdrop_baseline;
     }
+    attempt.enter('verify_readiness');
     action.unsigned_tx = await this.chain.prepare(
       record.data,
       action,
-      artistPaymentCap
+      artistPaymentCap,
+      attempt
     );
     action.state = 'RESERVED';
     delete action.supply_retry_count;
@@ -670,6 +702,10 @@ export class DropForgeWorker {
   }
 
   private async sign(walletId: string, work: Work): Promise<void> {
+    const attempt = new LaunchAttempt(
+      'check_signing_window',
+      'prepare_transaction'
+    );
     let signed: Transaction;
     let raw: string;
     try {
@@ -678,17 +714,20 @@ export class DropForgeWorker {
         work.action.deadline - SUBMISSION_CUTOFF_SECONDS
       )
         throw new LaunchSafetyError('Signing deadline passed');
+      attempt.enter('read_launch_settings');
       const settings = await readForgeSettings(this.config);
       if (disabledActionReason(settings, work.action)) {
         // The next tick releases the unsigned reservation under the wallet lock.
         return;
       }
+      attempt.enter('verify_signing_readiness');
       await this.chain.verify(
         work.record.data,
         work.action,
         false,
         artistPaymentLimit(settings)
       );
+      attempt.enter('verify_frozen_source');
       const source = await this.repository.source(
         work.record.data.contract,
         work.record.data.claim_id,
@@ -705,6 +744,7 @@ export class DropForgeWorker {
         throw new LaunchSafetyError(
           'Craft publication changed before metadata signing'
         );
+      attempt.enter('verify_signer_nonce');
       const nonce = Transaction.from(work.action.unsigned_tx!).nonce;
       const [latest, pending] = await Promise.all([
         this.chain.nonce(work.record.data.signer, false),
@@ -712,7 +752,9 @@ export class DropForgeWorker {
       ]);
       if (latest !== nonce || pending !== nonce)
         throw new LaunchSafetyError('Signer nonce changed before signing');
+      attempt.enter('kms_signing');
       raw = await this.signer.sign(work.action.unsigned_tx!);
+      attempt.enter('verify_signature');
       signed = Transaction.from(raw);
       if (
         signed.unsignedSerialized !== work.action.unsigned_tx ||
@@ -726,10 +768,12 @@ export class DropForgeWorker {
         walletId,
         work,
         error,
-        await this.chain.now().catch(() => Math.floor(Date.now() / 1000))
+        await this.chain.now().catch(() => Math.floor(Date.now() / 1000)),
+        attempt
       );
       return;
     }
+    attempt.enter('commit_signature');
     await this.repository.wallet(
       walletId,
       async (pending, ctx) => {
@@ -774,7 +818,10 @@ export class DropForgeWorker {
             record,
             action,
             await this.chain.now(),
-            'Signing deadline passed; no signed intent committed'
+            'Signing deadline passed; no signed intent committed',
+            undefined,
+            undefined,
+            { attempt }
           );
           await this.repository.save(record, ctx);
           return;
@@ -794,7 +841,8 @@ export class DropForgeWorker {
     walletId: string,
     work: Work,
     error: unknown,
-    now: number
+    now: number,
+    attempt: LaunchAttempt
   ): Promise<void> {
     await this.repository.wallet(
       walletId,
@@ -812,7 +860,14 @@ export class DropForgeWorker {
         const attempted = { ...action };
         if (error instanceof LaunchWalletBlockError) {
           clearUnsubmittedAction(action, pending);
-          this.reportPreparationFailure(record, action, now, error, attempted);
+          this.reportPreparationFailure(
+            record,
+            action,
+            now,
+            error,
+            attempted,
+            attempt
+          );
           await this.repository.save(record, ctx);
           return;
         }
@@ -828,7 +883,9 @@ export class DropForgeWorker {
           error instanceof LaunchSafetyError
             ? error.message
             : 'KMS signing failed',
-          error
+          error,
+          undefined,
+          { attempt }
         );
         await this.repository.save(record, ctx);
       },
@@ -964,13 +1021,18 @@ export class DropForgeWorker {
       (action.retry_at ?? 0) > now
     )
       return;
+    const attempt = new LaunchAttempt(
+      'verify_broadcast_readiness',
+      'commit_signature'
+    );
     if (
       !(await this.verifyBeforeBroadcast(
         record,
         { action, pending },
         ctx,
         artistPaymentCap,
-        now
+        now,
+        attempt
       ))
     )
       return;
@@ -983,18 +1045,34 @@ export class DropForgeWorker {
     action.retry_at = now + 60;
     // Keep the settings lock until submission returns so Off and cap reductions
     // take effect before any later broadcast. Always retain the original hash.
+    attempt.enter('broadcast_transaction');
     try {
       await this.chain.broadcast(action.signed_tx!);
       if (record.data.wallet_blocks)
         delete record.data.wallet_blocks[launchGroup(action)];
     } catch (error) {
       if (error instanceof LaunchWalletBlockError) {
-        this.reportPreparationFailure(record, action, now, error, action);
+        this.reportPreparationFailure(
+          record,
+          action,
+          now,
+          error,
+          action,
+          attempt
+        );
       } else {
         addLaunchEvent(
           record,
           `Claim #${record.data.claim_id}: Broadcast attempt failed for ${action.id}: ${action.hash}; exact signed transaction retained pending receipt reconciliation.`,
-          true
+          true,
+          {
+            attempt_id: attempt.logFailure(
+              record,
+              action,
+              'Broadcast failed',
+              error
+            )
+          }
         );
       }
     }
@@ -1006,7 +1084,8 @@ export class DropForgeWorker {
     { action, pending }: { action: LaunchAction; pending: PendingSigner },
     ctx: RequestContext,
     artistPaymentCap: bigint,
-    now: number
+    now: number,
+    attempt: LaunchAttempt
   ): Promise<boolean> {
     try {
       await this.chain.verify(record.data, action, false, artistPaymentCap);
@@ -1016,7 +1095,14 @@ export class DropForgeWorker {
         const attempted = { ...action };
         if (action.broadcast_possible === false)
           clearUnsubmittedAction(action, pending);
-        this.reportPreparationFailure(record, action, now, error, attempted);
+        this.reportPreparationFailure(
+          record,
+          action,
+          now,
+          error,
+          attempted,
+          attempt
+        );
       } else {
         reportActionFailure(
           record,
@@ -1025,7 +1111,9 @@ export class DropForgeWorker {
           error instanceof Error
             ? error.message
             : 'Readiness changed before broadcast',
-          error
+          error,
+          undefined,
+          { attempt }
         );
       }
       await this.repository.save(record, ctx);
@@ -1043,6 +1131,7 @@ export class DropForgeWorker {
     if (action.settlement_error) return;
     if (receipt.status === 1 && this.chain.verifySettlement) {
       if ((action.settlement_retry_at ?? 0) > now) return;
+      const attempt = new LaunchAttempt('verify_settlement', 'read_receipt');
       try {
         await this.chain.verifySettlement(
           record.data,
@@ -1059,7 +1148,8 @@ export class DropForgeWorker {
             ? error.message
             : 'Settlement verification failed',
           error,
-          receipt.fee_wei
+          receipt.fee_wei,
+          { attempt }
         );
         action.settlement_retry_at = action.retry_at;
         if (!(error instanceof SupplyEvidenceError)) {
@@ -1121,7 +1211,8 @@ export class DropForgeWorker {
         confirmedAt,
         `Transaction reverted: ${action.hash}; manual recovery required`,
         undefined,
-        receipt.fee_wei
+        receipt.fee_wei,
+        { attempt: new LaunchAttempt('check_receipt_status', 'read_receipt') }
       );
     }
   }

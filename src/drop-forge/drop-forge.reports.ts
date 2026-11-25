@@ -210,6 +210,8 @@ export function formatLaunchReport(
   if (details.length) lines.push(details.join(' · '));
   const retry = walletRetryDetail(event, action);
   if (retry) lines.push(retry);
+  if (event.error && event.attempt_id)
+    lines.push(`**Attempt ID** \`${event.attempt_id}\``);
   return lines.join('\n');
 }
 
