@@ -205,7 +205,7 @@ export function chainNativeDecisionOf(
 }
 
 /**
- * P40 5.3's REP category id: `H("6529.RepCategory.v1",
+ * A REP category's id, as the chain derives it: `H("6529.RepCategory.v1",
  * keccak256(lowercase name))`, H being keccak256 of the tag's keccak256
  * and the fields, each a 32-byte word.
  */

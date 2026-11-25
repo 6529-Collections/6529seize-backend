@@ -41,7 +41,7 @@ const subject = (doc: ReturnType<typeof manifest>) => ({
 });
 
 describe('waves chain mirror documents', () => {
-  it('computes the CID and P40 5.2 commitment as the frontend does', () => {
+  it("computes the CID and the chain's document commitment as the frontend does", () => {
     const bytes = canonicalDocBytes({ b: 1, a: 'x' });
     expect(Buffer.from(bytes).toString('utf8')).toBe('{"a":"x","b":1}\n');
     expect(docCid(bytes)).toBe(
