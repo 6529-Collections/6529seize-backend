@@ -195,7 +195,10 @@ describe('durable Arweave uploads', () => {
     expect(create).toHaveBeenCalledTimes(1);
     expect(sign).toHaveBeenCalledTimes(1);
     expect(post.mock.calls.filter(([url]) => url === 'tx')).toHaveLength(5);
-    expect(post.mock.calls.at(-1)?.[0]).toBe('chunk');
+    expect(post.mock.calls.at(-1)?.[0]).toBe('tx');
+    expect(JSON.parse(post.mock.calls.at(-1)![1]).data).toBe(
+      bytes.toString('base64url')
+    );
   });
 
   it('returns the same completed transaction without another provider submission after receipt persistence fails', async () => {
@@ -541,6 +544,12 @@ it('replays the identical inline transaction across gateways after a lost acknow
     await uploader.uploadFile(bytes, 'text/plain');
     expect(post.mock.calls.map(([path]) => path)).toEqual(['tx', 'tx']);
     expect(post.mock.calls[0][1]).toBe(post.mock.calls[1][1]);
+    expect(
+      jest
+        .mocked(global.fetch)
+        .mock.calls.filter(([, init]) => init?.method === 'POST')
+        .map(([input]) => new URL(String(input)).hostname)
+    ).toEqual(['ardrive.net', 'arweave.net']);
     expect(JSON.parse(post.mock.calls[1][1]).data).toBe(
       bytes.toString('base64url')
     );
@@ -549,6 +558,67 @@ it('replays the identical inline transaction across gateways after a lost acknow
     jest.restoreAllMocks();
   }
 });
+
+it.each([200, 208])(
+  'resumes an unposted one-chunk checkpoint using its original inline bytes (HTTP %s)',
+  async (statusCode) => {
+    const { uploader, post, status, sign, create } = setup();
+    let savedState: ArweaveUploadState | undefined;
+    const states: ArweaveUploadState[] = [];
+    try {
+      await expect(
+        uploader.uploadFileWithTransactionId(bytes, 'text/plain', {
+          onState: async (state) => {
+            savedState = state;
+            throw new Error('process stopped after persistence');
+          }
+        })
+      ).rejects.toThrow('process stopped');
+      expect(post).not.toHaveBeenCalled();
+      const saved = JSON.stringify(savedState);
+      status.mockResolvedValue({ status: 404, confirmed: null });
+      post.mockImplementation(
+        async (path) =>
+          new Response('', {
+            status: path === 'tx' ? statusCode : statusCode === 200 ? 503 : 200
+          })
+      );
+      await uploader.uploadFileWithTransactionId(
+        Buffer.from('regenerated caller bytes'),
+        'text/plain',
+        {
+          savedState,
+          onState: async (state) => {
+            states.push(state);
+          }
+        }
+      );
+      const inline = JSON.parse(post.mock.calls[0][1]);
+      expect(inline.data).toBe(bytes.toString('base64url'));
+      expect(inline.id).toBe(savedState!.transaction.id);
+      expect(post.mock.calls.filter(([path]) => path === 'chunk')).toHaveLength(
+        statusCode === 200 ? 0 : 1
+      );
+      expect(states.map((state) => [state.txPosted, state.chunkIndex])).toEqual(
+        statusCode === 200
+          ? [
+              [false, 0],
+              [true, 1]
+            ]
+          : [
+              [false, 0],
+              [true, 0],
+              [true, 1]
+            ]
+      );
+      expect(JSON.stringify(savedState)).toBe(saved);
+      expect(sign).toHaveBeenCalledTimes(1);
+      expect(create).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.restoreAllMocks();
+    }
+  }
+);
 
 it('does not treat a duplicate-header HTTP 208 as proof of inline data acceptance', async () => {
   jest.useFakeTimers();

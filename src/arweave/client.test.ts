@@ -1,6 +1,62 @@
 import { createArweaveClient } from './client';
 
 afterEach(() => jest.restoreAllMocks());
+
+it.each([undefined, 'text', 'arraybuffer'] as const)(
+  'validates query-bearing status requests in %s mode',
+  async (responseType) => {
+    const confirmed = {
+      block_height: 1,
+      block_indep_hash: 'block',
+      number_of_confirmations: 2
+    };
+    const text = JSON.stringify(confirmed);
+    const fetch = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValueOnce(new Response('<html>error</html>'))
+      .mockResolvedValueOnce(new Response(text));
+    const response = await createArweaveClient().api.get(
+      `/tx/${'a'.repeat(43)}/status?probe=1#ignored`,
+      { responseType }
+    );
+    const body =
+      responseType === 'arraybuffer'
+        ? new TextDecoder().decode(response.data as ArrayBuffer)
+        : response.data;
+    expect(body).toEqual(responseType ? text : confirmed);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(
+      fetch.mock.calls.every(
+        ([input]) => new URL(String(input)).search === '?probe=1'
+      )
+    ).toBe(true);
+  }
+);
+
+it('preserves final absence for query-bearing status requests', async () => {
+  const fetch = jest
+    .spyOn(global, 'fetch')
+    .mockImplementation(async () => new Response('', { status: 404 }));
+  await expect(
+    createArweaveClient().api.get(`/tx/${'a'.repeat(43)}/status?probe=1`)
+  ).resolves.toMatchObject({ status: 404 });
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it.each(['tx_anchor', 'price/10', `wallet/${'a'.repeat(43)}/balance`])(
+  'validates query-bearing %s reads',
+  async (path) => {
+    const body = path === 'tx_anchor' ? 'a'.repeat(43) : '100';
+    const fetch = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValueOnce(new Response('<html>error</html>'))
+      .mockResolvedValueOnce(new Response(body));
+    await expect(
+      createArweaveClient().api.get(`/${path}?probe=1`)
+    ).resolves.toMatchObject({ data: body });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  }
+);
 it('fails over SDK balance, price and anchor reads, including invalid successful responses', async () => {
   const fetch = jest
     .spyOn(global, 'fetch')

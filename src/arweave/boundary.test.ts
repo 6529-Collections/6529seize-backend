@@ -17,11 +17,19 @@ function sources(directory: string): string[] {
 
 type SdkKind =
   | 'sdk'
+  | 'api'
   | 'container'
   | 'class'
   | 'clientFactory'
   | 'containerFactory'
   | undefined;
+
+function propertyKind(receiver: SdkKind, name: string): SdkKind {
+  if (name === 'arweave' && receiver === 'container') return 'sdk';
+  if (receiver !== 'sdk') return undefined;
+  if (name === 'api') return 'api';
+  return name === 'transactions' ? 'sdk' : undefined;
+}
 
 function importKind(declaration: ts.Declaration): SdkKind {
   if (
@@ -77,15 +85,12 @@ function sdkClassifier(
     if (imported) return imported;
     if (ts.isBindingElement(node)) {
       const variable = node.parent.parent;
-      if (
-        (node.propertyName?.getText(source) ?? node.name.getText(source)) ===
-          'arweave' &&
-        ts.isVariableDeclaration(variable) &&
-        variable.initializer &&
-        classify(variable.initializer) === 'container'
-      )
-        return 'sdk';
-      return undefined;
+      return ts.isVariableDeclaration(variable) && variable.initializer
+        ? propertyKind(
+            classify(variable.initializer),
+            node.propertyName?.getText(source) ?? node.name.getText(source)
+          )
+        : undefined;
     }
     if (
       !(
@@ -125,13 +130,7 @@ function sdkClassifier(
     if (!ts.isPropertyAccessExpression(expression)) return undefined;
     if (expression.expression.kind === ts.SyntaxKind.ThisKeyword)
       return symbolKind(expression.name);
-    const receiver = classify(expression.expression);
-    if (expression.name.text === 'arweave' && receiver === 'container')
-      return 'sdk';
-    return ['transactions', 'api'].includes(expression.name.text) &&
-      receiver === 'sdk'
-      ? 'sdk'
-      : undefined;
+    return propertyKind(classify(expression.expression), expression.name.text);
   };
   return classify;
 }
@@ -143,15 +142,12 @@ function directSdkPost(
   const method = call.expression;
   if (!ts.isPropertyAccessExpression(method) || method.name.text !== 'post')
     return false;
-  const api = method.expression;
-  if (!ts.isPropertyAccessExpression(api) || api.name.text !== 'api')
-    return false;
   const endpoint = call.arguments[0];
   return (
-    classify(api.expression) === 'sdk' &&
+    classify(method.expression) === 'api' &&
     endpoint !== undefined &&
     ts.isStringLiteralLike(endpoint) &&
-    /^\/?(?:tx|chunk)$/.test(endpoint.text)
+    /^\/?(?:tx|chunk)(?:[?#]|$)/.test(endpoint.text)
   );
 }
 
@@ -202,6 +198,21 @@ it('keeps selected SDK creation and submission calls inside the shared Arweave b
       : violationsIn(name, readFileSync(path, 'utf8'));
   });
   expect(violations).toEqual([]);
+});
+
+it('recognizes SDK API aliases without flagging unrelated API aliases or shadows', () => {
+  const text = `import { createArweaveClient } from '@/arweave/client';
+    const client = createArweaveClient(); const api = client.api;
+    api.post('chunk', data); api.post('/tx', data); api.post('graphql', query);
+    const { api: alias } = client; alias.post('chunk?probe=1', data);
+    const otherApi = httpClient.api; otherApi.post('chunk', data);
+    const { api: unrelated } = httpClient; unrelated.post('chunk', data);
+    function shadow(api: HttpApi) { api.post('chunk', data); }`;
+  expect(violationsIn('outside.ts', text)).toEqual([
+    'outside.ts:post',
+    'outside.ts:post',
+    'outside.ts:post'
+  ]);
 });
 
 it.each(['chunk', '/chunk', 'tx'])(

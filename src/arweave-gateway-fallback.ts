@@ -33,9 +33,7 @@ export function getArweaveFallbackUrls(url: string): string[] {
   // Raw retrieval must bypass manifest resolution. Only offer the documented
   // path-style raw endpoint; transaction subdomains have different path semantics.
   if (raw)
-    return ARWEAVE_READ_GATEWAYS.map(
-      (host) => `https://${host}/raw/${ref.id}${ref.path ? `/${ref.path}` : ''}`
-    );
+    return ARWEAVE_READ_GATEWAYS.map((host) => `https://${host}/raw/${ref.id}`);
   return toExternalFallbackUrls(ref);
 }
 

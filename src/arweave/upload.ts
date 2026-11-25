@@ -242,6 +242,9 @@ export class ArweaveUploadSession {
       // The SDK rebuilds and validates chunk proofs against the signed data root.
       const restored = await this.client.transactions.getUploader(saved, data);
       const transaction = restored.toJSON().transaction;
+      // SDK serialization omits data. Reattach the verified saved bytes before
+      // an unposted one-chunk transaction is submitted inline.
+      transaction.data = data;
       this.transactionId = transaction.id;
       this.state = structuredClone(saved);
       if (!this.state.txPosted)
@@ -318,12 +321,10 @@ export class ArweaveUploadSession {
     // acknowledged, durably checkpointed chunks, not a zero-based chunk ID.
     await this.checkpoint();
     if (!this.state!.txPosted) {
-      // Preserve the file uploader's inline-data contract for new, one-chunk
+      // Preserve the file uploader's inline-data contract for unposted one-chunk
       // transactions. A saved header/status alone never proves data acceptance.
       const inline =
-        this.inlineSmallUploads &&
-        !this.hooks?.savedState &&
-        transaction.chunks!.chunks.length === 1;
+        this.inlineSmallUploads && transaction.chunks!.chunks.length === 1;
       const dataAcknowledged = await this.submitTransaction(
         transaction,
         inline

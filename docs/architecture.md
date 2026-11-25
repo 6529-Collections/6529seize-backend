@@ -3637,7 +3637,7 @@ error. Exhausted genuine failures remain observable. No API/DB/queue contract
 changes are introduced. See [Arweave recovery](arweave-recovery.md) for endpoint
 ownership, per-operation budgets, deployment inventory and verification.
 
-New one-chunk file uploads retain inline signed data submission; an ambiguous
+Unposted one-chunk file uploads, including saved resumes, retain inline signed data submission; an ambiguous
 header acknowledgement requires chunk confirmation. Durable checkpoint waits
 share the upload deadline, and CMS's existing row-lock/token fence protects
 replacement attempts from late persistence. Raw gateway recovery preserves raw

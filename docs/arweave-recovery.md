@@ -29,6 +29,9 @@ Raw URL inputs retain `/raw/<id>` on each path-style alternate, bypassing
 manifest index resolution as specified by the [gateway raw-data contract](https://docs.ar.io/build/access/fetch-data/).
 Raw-mode recovery does not invent a transaction-subdomain endpoint; manifest
 paths on ordinary transaction-subdomain inputs retain their existing meaning.
+An explicit path-style raw input always derives `/raw/<id>` alternates, even
+when the input includes a path suffix. That suffix is not treated as a manifest
+path and is not appended to the raw endpoint. The original input is tried first.
 
 ## Upload identity and recovery
 
@@ -45,13 +48,14 @@ retry the identical bytes without advancing persisted progress. Header submissio
 still accepts HTTP 208, and resumed status probes accept HTTP 202 or an HTTP 200
 confirmation with the expected shape.
 
-The file-uploader facade preserves the SDK's inline-data path for a new
-one-chunk transaction: `POST /tx` includes the signed transaction and data, and
+The file-uploader facade preserves the SDK's inline-data path for an unposted
+one-chunk transaction, including a restored checkpoint: `POST /tx` includes the
+original signed transaction and data, and
 HTTP 200 records complete progress. An ambiguous successful status, including
 duplicate-header HTTP 208, requires separate chunk acknowledgement if alternate
 inline submissions cannot establish acceptance. Saved checkpoints retain their
-existing format and resume through the header/chunk path unless their data
-progress was already durably acknowledged. A known transaction status alone
+existing format. Known posted transactions resume through the header/chunk path
+unless their data progress was already durably acknowledged. A known transaction status alone
 never completes a saved chunk. TDH retains its existing header/chunk path.
 
 Durable consumers checkpoint the signed transaction and original bytes before

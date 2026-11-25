@@ -140,9 +140,7 @@ it.each(['?download=1', '#preview', '/asset.json?download=1'])(
       .mockResolvedValue('ready');
     await expect(withArweaveFallback(input, fetch)).resolves.toBe('ready');
     expect(fetch.mock.calls[0][0]).toBe(input);
-    expect(fetch.mock.calls[1][0]).toBe(
-      `https://ardrive.net/raw/${id}${suffix.startsWith('/') ? '/asset.json' : ''}`
-    );
+    expect(fetch.mock.calls[1][0]).toBe(`https://ardrive.net/raw/${id}`);
   }
 );
 
@@ -161,28 +159,33 @@ it('preserves a manifest raw path on transaction subdomains during fallback', as
   );
 });
 
-it('retrieves stored manifest bytes without resolving its index on every raw fallback', async () => {
-  const manifest = {
-    manifest: 'arweave/paths',
-    version: '0.1.0',
-    index: { path: 'index.html' },
-    paths: { 'index.html': { id: 'B'.repeat(43) } }
-  };
-  const input = `https://arweave.net/raw/${id}`;
-  const candidates = getArweaveFallbackUrls(input);
-  expect(candidates).toHaveLength(4);
-  expect(
-    candidates.every(
-      (candidate) => new URL(candidate).pathname === `/raw/${id}`
-    )
-  ).toBe(true);
-  const fetch = jest.fn(async (candidate: string) => {
-    if (candidate === input) throw new Error('primary down');
-    return new URL(candidate).pathname.startsWith('/raw/')
-      ? JSON.stringify(manifest)
-      : '<html>manifest index</html>';
-  });
-  await expect(withArweaveFallback(input, fetch)).resolves.toBe(
-    JSON.stringify(manifest)
-  );
-});
+it.each(['', '/asset.json'])(
+  'retrieves stored manifest bytes without resolving its index for raw suffix %s',
+  async (suffix) => {
+    const manifest = {
+      manifest: 'arweave/paths',
+      version: '0.1.0',
+      index: { path: 'index.html' },
+      paths: { 'index.html': { id: 'B'.repeat(43) } }
+    };
+    const input = `https://arweave.net/raw/${id}${suffix}`;
+    const candidates = getArweaveFallbackUrls(input);
+    expect(candidates).toHaveLength(4);
+    expect(
+      candidates.every(
+        (candidate) => new URL(candidate).pathname === `/raw/${id}`
+      )
+    ).toBe(true);
+    const fetch = jest.fn(async (candidate: string) => {
+      if (candidate === input) throw new Error('primary down');
+      const path = new URL(candidate).pathname;
+      if (path === `/raw/${id}`) return JSON.stringify(manifest);
+      if (path === `/${id}/asset.json`)
+        return '{"asset":"different stored item"}';
+      throw new Error('HTTP 404: unsupported gateway route');
+    });
+    await expect(withArweaveFallback(input, fetch)).resolves.toBe(
+      JSON.stringify(manifest)
+    );
+  }
+);

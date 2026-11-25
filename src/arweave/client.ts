@@ -84,6 +84,10 @@ export function createArweaveClient(
     if (/^[a-z]+:|^\/\//i.test(path))
       throw new Error('Invalid Arweave API path');
     const endpoint = path.startsWith('/') ? path.slice(1) : path;
+    const pathname = new URL(
+      endpoint,
+      'https://arweave.invalid/'
+    ).pathname.slice(1);
     try {
       return await recoverArweave(
         ARWEAVE_WRITE_GATEWAYS.map((host) => `https://${host}`),
@@ -99,7 +103,7 @@ export function createArweaveClient(
           });
           if (!response.ok && response.status !== 202)
             throw new ArweaveApiResponseError(response);
-          validateApiData(endpoint, response, init.responseType);
+          validateApiData(pathname, response, init.responseType);
           return response;
         },
         {
@@ -118,7 +122,7 @@ export function createArweaveClient(
       if (
         error instanceof ArweaveApiResponseError &&
         error.response.status === 404 &&
-        /^tx\/[\w-]+\/status$/.test(endpoint)
+        /^tx\/[\w-]+\/status$/.test(pathname)
       ) {
         return error.response as ResponseWithData<T>;
       }
