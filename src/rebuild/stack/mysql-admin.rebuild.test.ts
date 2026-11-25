@@ -4,6 +4,7 @@ import { acquireHomeLock } from '@/rebuild/stack/home-lock';
 import { LocalMysqld, startLocalMysqld } from '@/rebuild/stack/local-mysqld';
 import { stepGrantStatements } from '@/rebuild/guard/db-grants';
 import { MysqlAdmin, scopeFlag } from '@/rebuild/stack/mysql-admin';
+import { compareCodeUnits } from '@/rebuild/code-units';
 
 // MysqlAdmin against the private mysqld: copying a table keeps the values of
 // columns with a default expression and leaves generated columns to the
@@ -299,7 +300,7 @@ describe('MysqlAdmin on the private mysqld', () => {
     expect(
       (await admin.uniqueKeys(FROM, 'keyed'))
         .map((k) => k.join(','))
-        .sort((a, b) => a.localeCompare(b))
+        .sort(compareCodeUnits)
     ).toEqual(['id', 'note', 'wave_id,data_key']);
     await admin.query(
       `INSERT INTO ${FROM}.keyed (id, wave_id, data_key, data_value)
