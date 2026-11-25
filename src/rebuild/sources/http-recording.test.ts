@@ -9,6 +9,7 @@ import {
 } from '@/rebuild/sources/http-recording';
 import {
   closeServer,
+  errorText,
   listenLoopback,
   readProvenance,
   redactUrl,
@@ -117,6 +118,32 @@ describe('HTTP recording', () => {
     }
   });
 
+  it('answers a failed request with a fixed message and reports the error', async () => {
+    // fetch refuses a URL with credentials before connecting.
+    const recorder = await startHttpRecording({
+      name: 'gateway',
+      dir,
+      upstream: 'http://user:secret@127.0.0.1:9'
+    });
+    try {
+      const answer = await fetch(`${recorder.url}/v1/head`, {
+        method: 'POST',
+        body: rpc(1, 'head')
+      });
+      expect(answer.status).toBe(502);
+      expect(await answer.text()).toBe('{"error":"replay failed"}');
+      const problems = recorder.problems();
+      expect(problems).toEqual([
+        expect.stringMatching(
+          /^gateway: 1 requests failed in the recording's server, first POST \/v1\/head: TypeError: .*http:\/\/127\.0\.0\.1:9\/v1\/head/
+        )
+      ]);
+      expect(problems.join('\n')).not.toContain('secret');
+    } finally {
+      await recorder.stop();
+    }
+  });
+
   it('never counts a gateway or ethereum recording on its label', async () => {
     fs.writeFileSync(path.join(dir, 'recording.jsonl'), '');
     writeProvenance(dir, { made_by: 'devnet example' });
@@ -152,6 +179,25 @@ describe('HTTP recording', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('errorText', () => {
+  it("adds a failed fetch's cause", () => {
+    const failed = (cause: unknown) =>
+      Object.assign(new TypeError('fetch failed'), { cause });
+    expect(
+      errorText(failed(new Error('connect ECONNREFUSED 127.0.0.1:9')))
+    ).toBe('TypeError: fetch failed (connect ECONNREFUSED 127.0.0.1:9)');
+    // Every address refused: no message, only a code.
+    expect(
+      errorText(failed(Object.assign(new Error(''), { code: 'ECONNREFUSED' })))
+    ).toBe('TypeError: fetch failed (ECONNREFUSED)');
+    expect(errorText(failed({ message: 'from another realm' }))).toBe(
+      'TypeError: fetch failed (from another realm)'
+    );
+    expect(errorText(new Error('plain'))).toBe('Error: plain');
+    expect(errorText('text')).toBe('text');
   });
 });
 

@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { canonicalStringify } from '@/rebuild/probes/canonical';
 import {
   closeServer,
+  errorText,
   listenLoopback,
   readBody,
   readProvenance,
@@ -133,12 +134,13 @@ function textBody(buffer: Buffer, contentType: string | null) {
     : { body: buffer.toString('base64'), encoding: 'base64' as const };
 }
 
+/** `upstream` comes without a trailing slash. */
 async function forward(
   upstream: string,
   request: http.IncomingMessage,
   body: Buffer
 ): Promise<{ status: number; contentType: string | null; body: Buffer }> {
-  const response = await fetch(`${upstream.replace(/\/$/, '')}${request.url}`, {
+  const response = await fetch(`${upstream}${request.url}`, {
     method: request.method,
     headers: {
       'content-type': String(
@@ -158,7 +160,9 @@ async function forward(
 /**
  * Serves a recording (replay) or proxies to `upstream` and saves each new
  * answer (record). In replay an unrecorded request answers 599 and is
- * reported, so a run never silently reaches past its recording.
+ * reported, so a run never silently reaches past its recording. A request
+ * the server fails on answers 502 with a fixed message; the error itself
+ * goes to the source's problems, so it reaches the run's report and log.
  *
  * Nothing verifies a recording's answers yet, a gateway's or an Ethereum
  * node's, and a label is never a basis: a recording is provisional
@@ -173,6 +177,8 @@ export async function startHttpRecording(options: {
 }): Promise<RunningSource> {
   const recording = loadRecording(options.dir);
   const unrecorded: string[] = [];
+  const failed: string[] = [];
+  const upstream = options.upstream?.replace(/\/$/, '');
   // Recording adds to the files; a recording someone marked as written by
   // hand stays marked so, whatever this run adds to it.
   if (options.upstream && readProvenance(options.dir)?.made_by !== 'hand') {
@@ -191,8 +197,8 @@ export async function startHttpRecording(options: {
         body
       );
       let exchange = recording.get(key);
-      if (!exchange && options.upstream) {
-        const answer = await forward(options.upstream, request, body);
+      if (!exchange && upstream) {
+        const answer = await forward(upstream, request, body);
         exchange = {
           key,
           method: request.method ?? 'GET',
@@ -222,8 +228,13 @@ export async function startHttpRecording(options: {
       });
       response.end(payload);
     } catch (error) {
+      // The error may quote the URL forward() fetched, key and all.
+      const text = upstream
+        ? errorText(error).split(upstream).join(redactUrl(upstream))
+        : errorText(error);
+      failed.push(`${request.method} ${request.url}: ${text}`);
       response.writeHead(502, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ error: String(error) }));
+      response.end(JSON.stringify({ error: 'replay failed' }));
     }
   });
   const { url } = await listenLoopback(server);
@@ -237,12 +248,18 @@ export async function startHttpRecording(options: {
       provisional: true,
       provisionalWhy: 'answers not verified'
     },
-    problems: () =>
-      unrecorded.length
+    problems: () => [
+      ...(unrecorded.length
         ? [
             `${options.name}: ${unrecorded.length} requests not in the recording, first ${unrecorded.slice(0, 5).join(', ')}`
           ]
-        : [],
+        : []),
+      ...(failed.length
+        ? [
+            `${options.name}: ${failed.length} requests failed in the recording's server, first ${failed.slice(0, 3).join('; ')}`
+          ]
+        : [])
+    ],
     stop: () => closeServer(server)
   };
 }

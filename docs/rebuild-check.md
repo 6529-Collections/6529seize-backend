@@ -251,7 +251,8 @@ answers against the rebuilt ones.
 
 A run passes when the registry is clean, every step exits 0 in its time, no
 step connects outside the sources, no source reports a problem (a request a
-recording lacks, a file that doesn't match its hash), the rebuilt tables were
+recording lacks or its server failed on, a call the Alchemy stand-in failed
+on, a file that doesn't match its hash), the rebuilt tables were
 empty after the drop, and every probe answers the same in both passes. A
 probe whose first pass gets no answer, a 5xx, or not the `expectStatus` it
 names fails every run, and so does one whose two answers differ.
@@ -302,7 +303,9 @@ Each `--source <name>=<spec>`:
 
 - `replay` serves `<dir>/recording.jsonl`. A request it doesn't have
   answers 599 and fails the run. `record` proxies to the URL and adds every
-  new answer to the recording. Keys leave out JSON-RPC ids and key order.
+  new answer to the recording. Keys leave out JSON-RPC ids and key order. A
+  request the server fails on answers 502 `replay failed` and fails the run;
+  the error is in the report.
 - `<dir>/PROVENANCE.json` says what made a recording (`made_by`: a
   devnet scenario, an anvil state, or `hand`), as a label for the report.
   Provisional, so `--final` fails on them: a live URL, a `record` run (it
@@ -324,9 +327,11 @@ Each `--source <name>=<spec>`:
   `alchemy_getAssetTransfers` from its logs and blocks. Children get the
   shim as `ETHEREUM_RPC_URL` and `ALCHEMY_BASE_URL`. The Alchemy NFT API and
   its other `alchemy_*` methods are not served; a call to them fails the run.
-  `ALCHEMY_BASE_URL` is honoured only on a loopback host (127.0.0.1, ::1 or
-  localhost), since the Alchemy key travels in its path: an `ethereum` URL
-  on another host fails a step as soon as it makes its Alchemy client.
+  A call the shim fails on answers the JSON-RPC error `shim error` and fails
+  the run; the error is in the report. `ALCHEMY_BASE_URL` is honoured only
+  on a loopback host (127.0.0.1, ::1 or localhost), since the Alchemy key
+  travels in its path: an `ethereum` URL on another host fails a step as
+  soon as it makes its Alchemy client.
 - The files server answers `/ipfs/<id>`, `/ar/<id>`, `/docs/<id>` and
   `/<id>` from the directory, and checks every file against
   `<dir>/files.json` (id to SHA-256). It derives an id from the content
