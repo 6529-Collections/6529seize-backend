@@ -275,6 +275,8 @@ export interface RebuildContext {
     readonly chainHeight: number | null;
     readonly ethBlock: number | null;
   };
+  /** Whether this is a final run (`--final`), the full proof. */
+  readonly final: boolean;
 }
 
 export type RebuildStepFunction = (ctx: RebuildContext) => Promise<void>;
