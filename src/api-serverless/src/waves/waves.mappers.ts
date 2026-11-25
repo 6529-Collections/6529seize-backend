@@ -109,6 +109,8 @@ type WaveMappingRelatedData = {
   identityWaveIds: Set<string>;
   parentWaveOverviewsByChildWaveId: Record<string, ApiWaveOverview>;
   waveIdsWithVisibleSubwaves: Set<string>;
+  /** Imported waves' chain ids, by wave id. */
+  chainIdsByWaveId?: Record<string, string>;
   authenticatedUserId: string | null;
 };
 
@@ -360,7 +362,8 @@ export class WavesMappers {
       pinnedWaveIds,
       identityWaveIds,
       parentWaveOverviewsByChildWaveId,
-      waveIdsWithVisibleSubwaves
+      waveIdsWithVisibleSubwaves,
+      chainIdsByWaveId = {}
     } = relatedData;
     const decisionsDone = decisionsDoneByWaveId[waveEntity.id] ?? 0;
     const waveIsClosed = isApproveWaveClosed({
@@ -562,7 +565,12 @@ export class WavesMappers {
         start_time: +entity.start_time,
         end_time: +entity.end_time
       }));
+    // A wave made on the chain is stored under its chain id.
+    const chainId = /^0x[0-9a-fA-F]{64}$/.test(waveEntity.id)
+      ? waveEntity.id.toLowerCase()
+      : (chainIdsByWaveId[waveEntity.id] ?? null);
     const apiWave: ApiWave = {
+      chain_id: chainId,
       id: waveEntity.id,
       name: displayByWaveId[waveEntity.id]?.name ?? waveEntity.name,
       picture: resolveWavePictureOverride(
@@ -853,6 +861,10 @@ export class WavesMappers {
       identityWaveIds,
       parentWaveOverviewsByChildWaveId,
       waveIdsWithVisibleSubwaves,
+      chainIdsByWaveId: await this.wavesApiDb.findChainIdsOfImportedWaves(
+        waveIds,
+        ctx
+      ),
       authenticatedUserId
     };
   }

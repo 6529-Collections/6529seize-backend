@@ -38,6 +38,32 @@ export class AppFeatures {
   }
 
   /**
+   * The wave decision loop also keeps 6529.io's index of the 6529 chain's
+   * waves, decisions and votes (src/waves-chain-index).
+   */
+  public isWavesChainIndexEnabled(): boolean {
+    return this.isFeatureEnabled('WAVES_CHAIN_INDEX');
+  }
+
+  /**
+   * The chain index queues a claim build for the rank-1 entry of a final
+   * result of a Main Stage decision (MAIN_STAGE_DECISION_IDS).
+   */
+  public isWavesChainClaimBuildsEnabled(): boolean {
+    return this.isFeatureEnabled('WAVES_CHAIN_CLAIM_BUILDS');
+  }
+
+  /**
+   * After the chain index, the wave decision loop copies the chain's
+   * decisions into 6529.io's competition tables (src/waves-chain-mirror).
+   * It writes only with WAVES_CHAIN_MIRROR_WRITE=true; otherwise it reports
+   * what it would write.
+   */
+  public isWavesChainMirrorEnabled(): boolean {
+    return this.isFeatureEnabled('WAVES_CHAIN_MIRROR');
+  }
+
+  /**
    * The wave decision loop also sends a SETTLEMENT_REQUEST for each decision
    * result due on the 6529 chain (src/waves-settlement).
    */
