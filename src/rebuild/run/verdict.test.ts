@@ -16,6 +16,9 @@ const clean: VerdictInput = {
   provisionalSources: [],
   plannedTables: 0,
   plannedSteps: [],
+  waitingSteps: [],
+  staleNeeds: [],
+  unownedRows: [],
   heldProbes: [],
   notInSchema: [],
   openRoutes: 0
@@ -54,6 +57,29 @@ const findings: [string, Partial<VerdictInput>, RegExp][] = [
     'skipped planned steps',
     { plannedSteps: ['a.seed'] },
     /planned steps were skipped/
+  ],
+  [
+    'steps waiting for a table',
+    {
+      waitingSteps: [
+        { step: 'a.seed', table: 't', reason: 'a later branch creates it' }
+      ]
+    },
+    /1 steps were skipped as planned because a table they need is not in the schema yet.*a\.seed needs t \(a later branch creates it\)/
+  ],
+  [
+    'rows no partition owns',
+    { unownedRows: ["heads (1 rows whose type is in no writer's partition)"] },
+    /1 partitioned tables hold rows no rebuilder owns after the seeds: heads/
+  ],
+  [
+    'needs on tables the schema has',
+    {
+      staleNeeds: [
+        'subs.switch needs identity_chain_principals, which the schema now has: drop the need'
+      ]
+    },
+    /1 needs name tables the schema already has, so they hold nothing back: subs\.switch needs identity_chain_principals/
   ],
   ['held probes', { heldProbes: ['a.p'] }, /planned probes were held/],
   [
@@ -105,5 +131,19 @@ describe('the verdict', () => {
       '1 rebuilt tables were read by no probe',
       '5 documented GET routes have no probe and no waiver'
     ]);
+  });
+
+  it("says a skipped step's tables were kept only when the run kept them", () => {
+    const finding = {
+      plannedSteps: ['a.seed'],
+      waitingSteps: [{ step: 'b.rebuild', table: 't', reason: 'later' }]
+    };
+    const notes = judge({ ...clean, ...finding }).notes.join(' ');
+    expect(notes).toContain("their rebuilders' tables were kept");
+    const failures = judge({ ...clean, ...finding, final: true }).failures;
+    expect(failures.join(' ')).toContain(
+      "their rebuilders' tables were not rebuilt"
+    );
+    expect(failures.join(' ')).not.toContain('were kept');
   });
 });
