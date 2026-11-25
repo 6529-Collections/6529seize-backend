@@ -8,8 +8,8 @@ import {
 
 /**
  * Documents the chain names, and the checks the mirror makes before it uses
- * one (P40 5.2; the frontend's lib/chain-waves/docs.ts and entryManifest.ts
- * write them):
+ * one, as the chain's off-chain document rules define them (the frontend's
+ * lib/chain-waves/docs.ts and entryManifest.ts write them):
  *
  *   bytes       canonical JSON and a newline
  *   CID         0x01 0x55 0x12 0x20 || sha256(bytes) (raw, sha2-256)
@@ -56,7 +56,7 @@ export function docCid(bytes: Uint8Array): string {
   return rawCidHexOf(bytes);
 }
 
-/** P40 5.2's commitment of a document of `docClass` under `nonceWord`. */
+/** The chain's commitment of a document of `docClass` under `nonceWord`. */
 export function docCommitment(
   docClass: number,
   nonceWord: string,
