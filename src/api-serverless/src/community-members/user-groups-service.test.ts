@@ -22,7 +22,6 @@ import {
 import { SqlExecutor } from '@/sql-executor';
 import { Time } from '@/time';
 import * as mcache from 'memory-cache';
-import { AbusivenessCheckService } from '@/profiles/abusiveness-check.service';
 import { MetricsRecorder } from '@/metrics/MetricsRecorder';
 import fc from 'fast-check';
 import { xTdhRepository } from '@/xtdh/xtdh.repository';
@@ -236,7 +235,6 @@ function buildUserGroupsDbMock() {
 function buildService(userGroupsDb: unknown = buildUserGroupsDbMock()) {
   return new UserGroupsService(
     userGroupsDb as unknown as UserGroupsDb,
-    {} as unknown as AbusivenessCheckService,
     {} as unknown as MetricsRecorder
   );
 }

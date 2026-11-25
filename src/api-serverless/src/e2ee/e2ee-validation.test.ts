@@ -9,6 +9,7 @@ import {
   e2eeReportSchema,
   e2eeSendMessageSchema,
   e2eeSubmitEntrySchema,
+  e2eeUploadKeyPackagesSchema,
   validateE2ee
 } from '@/api/e2ee/e2ee.validation';
 import { E2EE_CIPHERSUITE } from '@/e2ee/e2ee.constants';
@@ -197,5 +198,28 @@ describe('E2EE request validation', () => {
       rejects({ profile_ids: ['a'], ciphersuite }, e2eeEligibilitySchema);
       rejects({ ciphersuite }, e2eeProfileDevicesQuerySchema);
     }
+  });
+});
+
+describe('e2eeUploadKeyPackagesSchema', () => {
+  const keyPackage = { data: 'AAAA', last_resort: false, expires_at: 1 };
+
+  it('accepts an optional replace_one_time flag', () => {
+    expect(
+      validateE2ee({ key_packages: [keyPackage] }, e2eeUploadKeyPackagesSchema)
+    ).toEqual({ key_packages: [keyPackage] });
+    expect(
+      validateE2ee(
+        { key_packages: [keyPackage], replace_one_time: true },
+        e2eeUploadKeyPackagesSchema
+      )
+    ).toEqual({ key_packages: [keyPackage], replace_one_time: true });
+  });
+
+  it('refuses a replace_one_time that is not a boolean', () => {
+    rejects(
+      { key_packages: [keyPackage], replace_one_time: 'yes' },
+      e2eeUploadKeyPackagesSchema
+    );
   });
 });

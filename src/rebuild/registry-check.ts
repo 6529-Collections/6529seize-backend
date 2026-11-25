@@ -282,9 +282,10 @@ const NEVER_NEEDED: ReadonlySet<TableClass> = new Set<TableClass>([
 ]);
 
 /**
- * Why a step can't wait for `table`, or null when it can: a step waits
- * only for a table a later branch adds, one marked planned or one no
- * entity in this tree creates yet.
+ * Why a step can't wait for `table`, or null when it can: a step may wait
+ * for any INDEX, EPHEMERAL, PROVIDER or EXEMPT table a manifest declares.
+ * One the schema already has is noted by the run as a need to drop, not
+ * refused here, since the branch that adds it may land first.
  */
 function needRefusal(
   table: string,

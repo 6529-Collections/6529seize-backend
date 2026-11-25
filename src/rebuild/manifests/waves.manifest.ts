@@ -14,6 +14,16 @@ export const wavesManifest: AreaManifest = {
     waves_archive: { class: 'INDEX' },
     waves_metadatas: { class: 'INDEX' },
     community_groups: { class: 'INDEX' },
+    // Not in this tree's schema yet (main adds it with the group visibility
+    // route); planned until this branch takes main. A retry after a fresh
+    // start can't apply twice: a replacement's retry finds its group id
+    // gone (renamed to the old version's) and fails, and a plain change
+    // sets the same visibility again.
+    community_group_visibility_requests: {
+      class: 'EPHEMERAL',
+      why: 'Retry keys for group visibility changes; a fresh start has none in flight.',
+      origin: 'planned'
+    },
     membership_generation_members: {
       class: 'RETIRED',
       why: 'Retired membership storage: no table in a fresh schema.'

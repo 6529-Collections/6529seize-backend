@@ -1,13 +1,13 @@
-import { Interface, isAddress } from 'ethers';
-import { getClaimsAdminWallets } from '@/api/seize-settings';
+import { getAddress, Interface, isAddress } from 'ethers';
 import { MEMES_CONTRACT } from '@/constants';
+import { getClaimsAdminWallets } from '@/api/seize-settings';
 import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
 import {
   BadRequestException,
   CustomApiCompliantException,
   ForbiddenException
 } from '@/exceptions';
-import { isMemesContract } from '@/minting-claims/external-url';
+import { mintingClaimActionsChainId } from '@/minting-claims/minting-claim-actions';
 import { equalIgnoreCase } from '@/strings';
 
 const creatorAdminAbi = new Interface([
@@ -20,7 +20,8 @@ export async function assertMintingClaimActionAccess(
   contract: string
 ): Promise<void> {
   // Never authorize through an arbitrary contract supplied in the URL.
-  if (!isMemesContract(contract)) {
+  const chainId = mintingClaimActionsChainId(contract);
+  if (!chainId) {
     throw new BadRequestException(
       'Minting claim actions are not supported for this contract'
     );
@@ -39,8 +40,8 @@ export async function assertMintingClaimActionAccess(
   try {
     // isAdmin includes the creator owner. Do not cache grants across requests.
     const result = await Promise.race([
-      getEthereumRpcProvider(1).call({
-        to: MEMES_CONTRACT,
+      getEthereumRpcProvider(chainId).call({
+        to: chainId === 1 ? MEMES_CONTRACT : getAddress(contract),
         data: creatorAdminAbi.encodeFunctionData('isAdmin', [wallet])
       }),
       new Promise<never>((_, reject) => {

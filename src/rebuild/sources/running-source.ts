@@ -83,6 +83,25 @@ export function closeServer(server: http.Server): Promise<void> {
   });
 }
 
+/**
+ * An error for a source's problems, with its cause: a failed fetch says
+ * only "fetch failed", and why (a refused connection, an unknown host) is
+ * in the cause.
+ */
+export function errorText(error: unknown): string {
+  const cause = (error as { cause?: unknown } | null | undefined)?.cause;
+  if (cause === undefined || cause === null) return String(error);
+  // Not `instanceof Error`: Node's fetch errors come from another realm
+  // under Jest. An AggregateError (every address refused) may have no
+  // message, only a code.
+  const { message, code } = cause as { message?: unknown; code?: unknown };
+  const why =
+    (typeof message === 'string' && message) ||
+    (typeof code === 'string' && code) ||
+    String(cause);
+  return `${String(error)} (${why})`;
+}
+
 export function readBody(request: http.IncomingMessage): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];

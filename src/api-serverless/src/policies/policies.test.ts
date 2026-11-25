@@ -4,7 +4,7 @@ import * as fc from 'fast-check';
 import * as mcache from 'memory-cache';
 import * as http from 'node:http';
 import { AddressInfo, isIP } from 'node:net';
-import { getIp, getIpInfo, normalizeIp } from './policies';
+import { getIp, getIpInfo, getWafCountry, normalizeIp } from './policies';
 
 jest.mock('axios');
 
@@ -136,11 +136,11 @@ describe('getIp', () => {
     }
   );
 
-  it('ignores a spoofed X-Forwarded-For on the local server even when Express trusts proxies', async () => {
+  it('ignores spoofed forwarding and country headers on the local server even when Express trusts proxies', async () => {
     const app = express();
     app.enable('trust proxy');
     app.get('/ip', (req, res) => {
-      res.json({ ip: getIp(req) });
+      res.json({ ip: getIp(req), waf_country: getWafCountry(req) });
     });
     const server = app.listen(0, '127.0.0.1');
     await new Promise((resolve) => server.once('listening', resolve));
@@ -154,7 +154,10 @@ describe('getIp', () => {
               port,
               path: '/ip',
               agent: false,
-              headers: { 'X-Forwarded-For': SPOOFED_IP }
+              headers: {
+                'X-Forwarded-For': SPOOFED_IP,
+                'X-Amzn-Waf-Country': 'US'
+              }
             },
             (res) => {
               let data = '';
@@ -165,11 +168,77 @@ describe('getIp', () => {
           .on('error', reject);
       });
 
-      expect(JSON.parse(body)).toEqual({ ip: '127.0.0.1' });
+      expect(JSON.parse(body)).toEqual({
+        ip: '127.0.0.1',
+        waf_country: null
+      });
     } finally {
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));
     }
+  });
+});
+
+describe('getWafCountry', () => {
+  const gatewayContext = { identity: { sourceIp: '203.0.113.10' } };
+
+  function withCountry(
+    country: unknown,
+    requestContext: unknown = gatewayContext
+  ) {
+    return requestWith({
+      headers: { 'x-amzn-waf-country': country },
+      requestContext
+    });
+  }
+
+  it.each(['CY', 'US', 'GB', 'AX', 'BQ', 'AQ'])(
+    'accepts the assigned country code %s on a REST API',
+    (country) => {
+      expect(getWafCountry(withCountry(country))).toBe(country);
+    }
+  );
+
+  it.each([
+    undefined,
+    null,
+    '',
+    'XX',
+    'ZZ',
+    'AA',
+    'EU',
+    'cy',
+    ' CY ',
+    'CY, US',
+    '${awswaf:clientip:geo:country:}',
+    ['CY'],
+    ['CY', 'US']
+  ])('rejects missing, unknown or ambiguous country %p', (country) => {
+    expect(getWafCountry(withCountry(country))).toBeNull();
+  });
+
+  it.each([
+    null,
+    {},
+    { identity: { sourceIp: 'not-an-ip' } },
+    { http: { sourceIp: '203.0.113.10' } }
+  ])(
+    'ignores the header outside a REST API Gateway request (%p)',
+    (context) => {
+      expect(getWafCountry(withCountry('US', context))).toBeNull();
+    }
+  );
+
+  it.each([
+    { 'x-amzn-waf-country': [] },
+    { 'x-amzn-waf-country': 'CY' },
+    { 'x-amzn-waf-country': ['CY', 'CY'] },
+    { 'X-Amzn-Waf-Country': ['CY'], 'x-amzn-waf-country': ['US'] }
+  ])('rejects ambiguous original gateway headers (%p)', (multiValueHeaders) => {
+    const req = withCountry('CY');
+    Object.assign(req, { apiGateway: { event: { multiValueHeaders } } });
+
+    expect(getWafCountry(req)).toBeNull();
   });
 });
 
