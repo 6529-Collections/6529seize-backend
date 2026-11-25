@@ -2086,44 +2086,6 @@ export class UserGroupsService {
   }
 
   /**
-   * Groups by id as `/groups/{id}` shows them, whatever their visibility to a
-   * reader: the waves export reads the groups of members-only waves too, so
-   * the 6529 chain imports every wave's rights (src/waves-export). Ids with
-   * no group are left out.
-   */
-  public async findByIdsForExport(
-    ids: readonly string[],
-    ctx: RequestContext
-  ): Promise<ApiGroupFull[]> {
-    const entities: UserGroupEntity[] = [];
-    for (const id of ids) {
-      const entity = await this.userGroupsDb.getByIdWithoutVisibilityCheck(
-        id,
-        ctx.connection
-      );
-      if (entity) entities.push(entity);
-    }
-    return entities.length ? this.mapForApi(entities, ctx) : [];
-  }
-
-  /**
-   * A group's membership SQL as getSqlAndParamsByGroupId builds it, without
-   * the reader's access check, for the waves export (src/waves-export).
-   */
-  public async getSqlAndParamsForExport(
-    group: ApiGroupFull,
-    ctx: RequestContext
-  ): Promise<{
-    sql: string;
-    params: Record<string, any>;
-  } | null> {
-    if (!group.visible) {
-      return this.getEmptyMemberSetSql();
-    }
-    return await this.getSqlAndParams(group.group, group.id, ctx);
-  }
-
-  /**
    * Builds membership SQL after checking access to the requested group.
    * Online-recipient optimization is opt-in; a null group keeps the general query.
    */
