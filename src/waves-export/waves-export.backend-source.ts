@@ -355,7 +355,13 @@ export class BackendWavesExportSource implements WavesExportSource {
    * history (a native entry drop) and the legacy vote edit log.
    */
   async entryVoteLog(entry: ExportActiveEntry): Promise<ExportVoteLogRow[]> {
-    const drop = await asLegacyGet(() => dropsDb.findDropById(entry.drop_id));
+    // The drop as stored, outside the legacy facade, as the API's own vote
+    // log (/v2/drops/{id}/votes/logs) reads it: the facade shows a native
+    // entry of a primary decision as PARTICIPATORY, WINNER or CHAT, which
+    // would send it to the legacy edit log, where its votes aren't.
+    const drop = await withoutLegacyCompetitionGetFacade(() =>
+      dropsDb.findDropById(entry.drop_id)
+    );
     if (!drop) {
       throw new Error(`Entry drop ${entry.drop_id} not found`);
     }
