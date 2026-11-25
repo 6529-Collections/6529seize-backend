@@ -76,7 +76,8 @@ export function mapWaveToApiWaveMin({
   noRightToParticipate,
   pinned,
   identityWave,
-  authenticatedProfileId
+  authenticatedProfileId,
+  staysOnSite
 }: {
   wave: WaveMinSource;
   displayByWaveId: Record<string, WaveDisplayOverride>;
@@ -86,12 +87,15 @@ export function mapWaveToApiWaveMin({
   pinned: boolean;
   identityWave: boolean;
   authenticatedProfileId: string | null | undefined;
+  /** Whether the wave stays on 6529.io (wavesScopeService.staysForDisplay). */
+  staysOnSite: boolean;
 }): ApiWaveMin {
   const authenticatedUserCanView =
     wave.visibility_group_id === null ||
     groupIdsUserIsEligibleFor.includes(wave.visibility_group_id);
   return {
     id: wave.id,
+    stays_on_site: staysOnSite,
     is_direct_message: wave.is_direct_message === true,
     name: displayByWaveId[wave.id]?.name ?? wave.name,
     picture: resolveWavePictureOverride(wave.picture, displayByWaveId[wave.id]),

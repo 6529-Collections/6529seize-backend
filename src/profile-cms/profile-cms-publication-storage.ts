@@ -1,3 +1,10 @@
+import { isArweavePolicyRejection } from '@/arweave/recovery';
+import { withArweaveFallback } from '@/arweave-gateway-fallback';
+import {
+  openPublicResponse,
+  createPinnedAgent,
+  readPublicResponseBody
+} from '@/http/public-fetch';
 import { createHash } from 'node:crypto';
 import fetch from 'node-fetch';
 import { ArweaveFileUploader, arweaveFileUploader } from '@/arweave';
@@ -40,37 +47,77 @@ export class ProfileCmsPublicationStorage {
 
   async verify(receipt: Receipt): Promise<Buffer> {
     const url = receiptGateway(receipt.uri);
-    let bytes: Buffer;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
+    const timer = setTimeout(() => controller.abort(), 8000);
     try {
-      const response = await this.download(url, {
-        redirect: 'error',
-        signal: controller.signal,
-        timeout: 8000,
-        size: CMS_MAX_STORAGE_BYTES
-      });
-      // Arweave returns HTTP 202 with a pending marker before data propagates.
-      // Only a complete HTTP 200 response contains bytes suitable for hashing.
-      if (response.status !== 200) throw new Error('unavailable');
-      bytes = await response.buffer();
-    } catch {
+      return await withArweaveFallback(
+        url,
+        async (candidate, signal) => {
+          let bytes: Buffer;
+          let opened:
+            | Awaited<ReturnType<typeof openPublicResponse>>
+            | undefined;
+          try {
+            opened = await openPublicResponse(candidate, {
+              maxRedirects: 5,
+              httpsOnly: true,
+              signal,
+              sendRequest: async (target, pinned, requestSignal) => {
+                const response = await this.download(target, {
+                  redirect: 'manual',
+                  signal: requestSignal,
+                  agent: createPinnedAgent(target, pinned),
+                  timeout: 8000,
+                  size: CMS_MAX_STORAGE_BYTES
+                });
+                return {
+                  response,
+                  cancel: () => {
+                    const body = response.body as unknown as {
+                      destroy?: () => void;
+                    } | null;
+                    if (typeof body?.destroy === 'function') body.destroy();
+                  }
+                };
+              }
+            });
+            if (opened.response.status !== 200) throw new Error('unavailable');
+            bytes = await readPublicResponseBody(opened.response, {
+              maxBytes: CMS_MAX_STORAGE_BYTES,
+              signal
+            });
+          } catch (error) {
+            if (isArweavePolicyRejection(error)) throw error;
+            throw new CustomApiCompliantException(
+              503,
+              'CMS storage is not yet retrievable; retry after the upload propagates',
+              'cms_storage_pending'
+            );
+          } finally {
+            opened?.cancel();
+          }
+          if (cmsBytesHash(bytes) !== receipt.content_hash) {
+            throw new CustomApiCompliantException(
+              400,
+              'CMS storage bytes do not match the signed content hash',
+              'cms_storage_hash_mismatch'
+            );
+          }
+          return bytes;
+        },
+        { signal: controller.signal, timeoutMs: 8000, attemptTimeoutMs: 2000 }
+      );
+    } catch (error) {
+      if (error instanceof CustomApiCompliantException) throw error;
       throw new CustomApiCompliantException(
         503,
         'CMS storage is not yet retrievable; retry after the upload propagates',
         'cms_storage_pending'
       );
     } finally {
-      clearTimeout(timeout);
+      clearTimeout(timer);
+      controller.abort();
     }
-    if (cmsBytesHash(bytes) !== receipt.content_hash) {
-      throw new CustomApiCompliantException(
-        400,
-        'CMS storage bytes do not match the signed content hash',
-        'cms_storage_hash_mismatch'
-      );
-    }
-    return bytes;
   }
 
   async upload(
@@ -103,15 +150,23 @@ export class ProfileCmsPublicationStorage {
     );
     if (reservation.receipt) return reservation.receipt;
     let uploadState = reservation.uploadState;
+    let checkpointInFlight = false;
     try {
       const result = await this.uploader.uploadFileWithTransactionId(
         params.bytes,
         'application/json',
         {
           savedState: uploadState,
-          onState: async (state) => {
-            await this.uploads.saveState(reservation, state, ctx);
-            uploadState = state;
+          onState: async (state, { signal }) => {
+            signal.throwIfAborted();
+            checkpointInFlight = true;
+            try {
+              await this.uploads.saveState(reservation, state, ctx);
+              signal.throwIfAborted();
+              uploadState = state;
+            } finally {
+              checkpointInFlight = false;
+            }
           }
         }
       );
@@ -135,7 +190,8 @@ export class ProfileCmsPublicationStorage {
       // Once a signed transaction is durable, retain the lease until expiry.
       // A retry resumes that transaction even if submission or receipt commit
       // succeeded remotely but its acknowledgement was lost.
-      if (!uploadState) await this.uploads.release(reservation, ctx);
+      if (!uploadState && !checkpointInFlight)
+        await this.uploads.release(reservation, ctx);
       if (error instanceof CustomApiCompliantException) throw error;
       throw new CustomApiCompliantException(
         502,

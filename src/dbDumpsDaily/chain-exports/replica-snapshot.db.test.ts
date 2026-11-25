@@ -1,4 +1,4 @@
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 import {
   openReadOnlySnapshot,
   readReplicaLag,
@@ -47,7 +47,7 @@ describe('the replica lag query on MySQL', () => {
     // The same statement, run directly: the server's own error number.
     const error = await run(REPLICA_LAG_SQL).then(
       () => null,
-      (e: mysql.MysqlError) => e
+      (e: mysql.QueryError) => e
     );
     expect([1109, 1193]).toContain(error?.errno);
   });
@@ -131,7 +131,7 @@ describe('the replica lag query on MySQL', () => {
   it('would not parse with the alias lag: LAG is a reserved word', async () => {
     const error = await run('SELECT 1 AS lag').then(
       () => null,
-      (e: mysql.MysqlError) => e
+      (e: mysql.QueryError) => e
     );
     expect(error?.errno).toBe(1064);
     const [row] = await run('SELECT 1 AS lag_ms');

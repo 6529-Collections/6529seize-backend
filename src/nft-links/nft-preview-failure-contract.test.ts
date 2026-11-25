@@ -44,7 +44,7 @@ function fixture(error: Error) {
 }
 
 it.each(['content-length', 'stream'] as const)(
-  'persists and reports the first typed %s failure with the acquired fence',
+  'persists without alerting the first typed %s failure with the acquired fence',
   async (mode) => {
     const error = new NftPreviewOversizeError(200, 271, mode);
     const f = fixture(error);
@@ -59,14 +59,14 @@ it.each(['content-length', 'stream'] as const)(
       },
       {}
     );
-    expect(f.logged).toHaveBeenCalledTimes(1);
-    expect(f.logged.mock.calls[0][1]).toBe(error);
+    expect(f.logged).not.toHaveBeenCalled();
   }
 );
 
 it.each([
   'HTTP 429',
   'HTTP 503',
+  'Arweave body_idle deadline exceeded',
   'Input buffer contains unsupported image format'
 ])('keeps generic failure behavior for %s', async (message) => {
   const f = fixture(new Error(message));

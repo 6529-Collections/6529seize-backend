@@ -1,4 +1,4 @@
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 import { mysqlSslConnectionOptions } from '@/db-ssl';
 import { DbQueryOptions } from '@/db-query.options';
 import { CustomTypeCaster, execSQLWithConnection } from '@/db/my-sql.helpers';
@@ -335,12 +335,11 @@ function flag(value: unknown): boolean | null {
  */
 export async function openReadOnlySnapshot(
   target: ReplicaTarget,
-  createPool: (config: mysql.PoolConfig) => mysql.Pool = mysql.createPool
+  createPool: (config: mysql.PoolOptions) => mysql.Pool = mysql.createPool
 ): Promise<ReadOnlySnapshot> {
   const pool = createPool({
     connectionLimit: 1,
     connectTimeout: Time.seconds(30).toMillis(),
-    acquireTimeout: Time.seconds(30).toMillis(),
     host: target.host,
     port: target.port,
     user: target.user,

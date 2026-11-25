@@ -29,6 +29,7 @@ import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
 import { DropType } from '@/entities/IDrop';
 import { DropPollEntity, DropPollOptionEntity } from '@/entities/IDropPoll';
 import { WaveEntity } from '@/entities/IWave';
+import { assertWaveWritable } from '@/waves-freeze/waves-freeze-scope';
 import {
   BadRequestException,
   ForbiddenException,
@@ -100,6 +101,9 @@ export class DropPollsApiService {
     if (!poll) {
       return;
     }
+    // Polls move to the 6529 chain with their wave: none are made in a
+    // moving wave once waves are frozen. A staying wave takes them.
+    await assertWaveWritable(waveId, ctx);
     if (dropType !== DropType.CHAT) {
       throw new BadRequestException(`Polls can only be created on chat drops`);
     }
@@ -129,6 +133,9 @@ export class DropPollsApiService {
         `Poll responses can only be restricted to droppers when chat is enabled`
       );
     }
+    // In the drop's transaction, after its writes and locks: the freeze may
+    // have started meanwhile, so check again right before the poll is made.
+    await assertWaveWritable(waveId, ctx);
     await this.dropPollsDb.createPoll(
       {
         id: randomUUID(),
@@ -216,6 +223,8 @@ export class DropPollsApiService {
       ...ctx,
       authenticationContext: AuthenticationContext.fromProfileId(voterId)
     });
+    // Poll votes in a moving wave are held while waves are frozen.
+    await assertWaveWritable(drop.wave_id, ctx);
     const uniqueOptions = Array.from(new Set(options));
     if (uniqueOptions.length !== options.length) {
       throw new BadRequestException(`Poll options must be unique`);
@@ -272,6 +281,8 @@ export class DropPollsApiService {
           pollOptions,
           uniqueOptions
         );
+        // The poll row lock can wait past the freeze: check again here.
+        await assertWaveWritable(drop.wave_id, txCtx);
         pollVoteChanged = await this.dropPollsDb.replaceVoterVotes(
           {
             pollId: poll.id,

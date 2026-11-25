@@ -1,3 +1,7 @@
+import {
+  ARWEAVE_READ_GATEWAYS,
+  ARWEAVE_INPUT_GATEWAYS
+} from '@/arweave/gateways';
 import { Logger } from '@/logging';
 
 export const DEFAULT_MEDIA_RESOLVER_ORIGIN = 'https://media.6529.io';
@@ -70,18 +74,10 @@ const IPFS_SUBDOMAIN_GATEWAY_SUFFIXES = [
   '.ipfs.cf-ipfs.com'
 ] as const;
 
-const ARWEAVE_GATEWAYS = [
-  'arweave.net',
-  'gateway.arweave.net',
-  'gateway.ar.io',
-  'ar-io.net',
-  'ardrive.net'
-] as const;
-
 const ARWEAVE_TX_SUBDOMAIN_SUFFIXES = ['.arweave.net', '.ar.io'] as const;
 
 const IPFS_PATH_GATEWAY_SET = new Set<string>(IPFS_PATH_GATEWAYS);
-const ARWEAVE_GATEWAY_SET = new Set<string>(ARWEAVE_GATEWAYS);
+const ARWEAVE_GATEWAY_SET = new Set<string>(ARWEAVE_INPUT_GATEWAYS);
 const ARWEAVE_TX_ID_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const DNS_SAFE_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
@@ -160,7 +156,7 @@ export function toExternalFallbackUrls(
 ): string[] {
   if (ref.protocol === 'arweave') {
     return [
-      ...ARWEAVE_GATEWAYS.map(
+      ...ARWEAVE_READ_GATEWAYS.map(
         (host) => `https://${host}/${buildPath(ref.id, ref.path)}`
       ),
       ...(isDnsSafeSubdomainId(ref.id)

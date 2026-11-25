@@ -1,3 +1,4 @@
+import { arweaveContentUrl } from '@/arweave/gateways';
 import { assertValidGlb } from '@/minting-claims/glb-validation';
 import {
   IMAGE_DETAILS_KEYS,
@@ -186,7 +187,7 @@ function buildMintingClaimLocationUrl(
   const ref = parseDecentralizedMediaRef(trimmed);
   if (ref) {
     if (ref.protocol === 'arweave') {
-      return toExternalFallbackUrls(ref)[0] ?? trimmed;
+      return arweaveContentUrl(toNativeUri(ref).slice('ar://'.length));
     }
     if (allowProtocolPassthrough) {
       return isFirstPartyMediaGatewayUrl(trimmed) ? toNativeUri(ref) : trimmed;

@@ -1,3 +1,4 @@
+import { arweaveFileUploader } from '@/arweave';
 import { withMediaDependencySmoke } from '@/media/media-dependency-smoke';
 import { createReadStream } from 'fs';
 import { doInDbContext } from '../secrets';
@@ -18,7 +19,6 @@ import * as sentryContext from '../sentry.context';
 import { equalIgnoreCase } from '../strings';
 import { isRememeFetchSourceUnchanged } from '../rememe-media-source';
 
-const Arweave = require('arweave');
 const csvParser = require('csv-parser');
 
 const logger = Logger.get('REMEMES_LOOP');
@@ -42,12 +42,6 @@ type RememeS3RefreshFields = Pick<
   | 's3_image_last_attempt_at'
   | 's3_image_processing_attempts'
 >;
-
-const myarweave = Arweave.init({
-  host: 'arweave.net',
-  port: 443,
-  protocol: 'https'
-});
 
 let alchemy: Alchemy;
 
@@ -307,38 +301,11 @@ export function rememeS3FieldsForRefresh(
 }
 
 async function upload(rememes: Rememe[]) {
-  const arweaveKey = process.env.ARWEAVE_KEY
-    ? JSON.parse(process.env.ARWEAVE_KEY)
-    : {};
-
-  logger.info(`[UPLOADING TO ARWEAVE]`);
-
-  const csv = json2csv(rememes);
-
-  const transaction = await myarweave.createTransaction(
-    { data: Buffer.from(csv) },
-    arweaveKey
+  const { url } = await arweaveFileUploader.uploadFile(
+    Buffer.from(json2csv(rememes)),
+    'text/csv'
   );
-
-  transaction.addTag('Content-Type', 'text/csv');
-
-  logger.info(`[SIGNING ARWEAVE TRANSACTION]`);
-
-  await myarweave.transactions.sign(transaction, arweaveKey);
-
-  const uploader = await myarweave.transactions.getUploader(transaction);
-
-  while (!uploader.isComplete) {
-    await uploader.uploadChunk();
-    logger.info(
-      `${uploader.pctComplete}% complete, ${uploader.uploadedChunks}/${uploader.totalChunks}`
-    );
-  }
-
-  const url = `https://arweave.net/${transaction.id}`;
-  logger.info(`[ARWEAVE LINK ${url}]`);
-
-  await persistRememesUpload(`https://arweave.net/${transaction.id}`);
+  await persistRememesUpload(url);
 }
 
 async function readCsvFile(filePath: string): Promise<any[]> {

@@ -102,7 +102,8 @@ describe('NFT metadata HTTP timeout diagnostics', () => {
     const remove = jest.spyOn(controller.signal, 'removeEventListener');
     budgetMock.mockReturnValue({
       check: jest.fn(),
-      signal: controller.signal
+      signal: controller.signal,
+      remainingMs: () => 90000
     } as unknown as NonNullable<ReturnType<typeof getNftLinkResolutionBudget>>);
     waitForAbort();
     const result = fetchTextWithTimeout(url, options).catch((error) => error);

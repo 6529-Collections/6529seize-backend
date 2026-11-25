@@ -22,6 +22,7 @@ import {
   withLegacyPrimaryMutation,
   readLegacyMutationSource
 } from '@/competitions/legacy-competition-mutation';
+import { assertDecisionWritable } from '@/waves-freeze/waves-freeze-scope';
 import { dbSupplier } from '@/sql-executor';
 import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
 import { getPublishedDropMediaMimeType } from '@/drops/drop-media-upload.config';
@@ -534,7 +535,8 @@ export class CreateOrUpdateDropUseCase {
       bypassChatSlowModeRestrictions,
       nativeEntryContent,
       prePublication,
-      useOutbox = false
+      useOutbox = false,
+      recheckWavesFreeze
     }: {
       timer?: Timer;
       connection: ConnectionWrapper<any>;
@@ -548,6 +550,11 @@ export class CreateOrUpdateDropUseCase {
        * score dirty mark to the post outbox instead of doing them here.
        */
       useOutbox?: boolean;
+      /**
+       * The caller's waves freeze check, run again after this drop's last
+       * lock (wave creation passes it for the wave's description drop).
+       */
+      recheckWavesFreeze?: () => void | Promise<void>;
     }
   ): Promise<DropWriteResult> {
     this.assertDropLimits(model);
@@ -559,15 +566,32 @@ export class CreateOrUpdateDropUseCase {
     // Chat persistence skips legacy voting rows as well as the owner fence.
     // Edits use the stored source type and lock entry memberships before cleanup.
     // Native entry commands already hold their own competition lock.
-    const withOwner: typeof withLegacyPrimaryMutation =
-      nativeEntryContent ||
-      (await this.isOrdinaryChatMutation(model, connection))
-        ? async (_waveId, _ctx, action) => action(null)
-        : withLegacyPrimaryMutation;
+    const ownerFree =
+      !!nativeEntryContent ||
+      (await this.isOrdinaryChatMutation(model, connection));
+    // A legacy entry (a participatory or winner drop) is a decision write:
+    // while waves move to the 6529 chain, one in a moving wave is held as it
+    // stood at the freeze. Native entries were checked under their
+    // competition's lock.
+    if (!ownerFree)
+      await assertDecisionWritable({ wave_id: model.wave_id }, { connection });
+    const freezeCheck = ownerFree
+      ? recheckWavesFreeze
+      : () =>
+          assertDecisionWritable({ wave_id: model.wave_id }, { connection });
+    const withOwner: typeof withLegacyPrimaryMutation = ownerFree
+      ? async (_waveId, _ctx, action) => action(null)
+      : withLegacyPrimaryMutation;
     return withOwner(
       model.wave_id,
       { timer, connection },
       async (nativeOwner) => {
+        // The owner lock can wait past the freeze: check again before writing.
+        if (!ownerFree)
+          await assertDecisionWritable(
+            { wave_id: model.wave_id },
+            { connection }
+          );
         let resolvedModel = sanitizeDropStructuredFields(model);
         timer?.start(`${CreateOrUpdateDropUseCase.name}->execute`);
         let authorId = resolvedModel.author_id;
@@ -648,7 +672,8 @@ export class CreateOrUpdateDropUseCase {
             isNativeEntryContent,
             nativeCompetitionId: contentPermit?.competitionId,
             prePublication,
-            useOutbox
+            useOutbox,
+            freezeCheck
           }
         );
         const collaborationNotificationIds =
@@ -985,7 +1010,8 @@ export class CreateOrUpdateDropUseCase {
       isNativeEntryContent = false,
       nativeCompetitionId,
       prePublication,
-      useOutbox = false
+      useOutbox = false,
+      freezeCheck
     }: {
       timer?: Timer;
       connection: ConnectionWrapper<any>;
@@ -996,6 +1022,8 @@ export class CreateOrUpdateDropUseCase {
       nativeCompetitionId?: string;
       prePublication: PrePublicationPreparation;
       useOutbox?: boolean;
+      /** Throws while the freeze holds this write; run after the last lock. */
+      freezeCheck?: () => void | Promise<void>;
     }
   ): Promise<DropWriteResult> {
     this.assertDropLimits(model);
@@ -1145,6 +1173,9 @@ export class CreateOrUpdateDropUseCase {
           dm_unread_recipient_ids: []
         };
     }
+    // The profile, drop and review locks above can wait past the waves
+    // freeze: check again right before the first drop write.
+    await freezeCheck?.();
     let pendingPushNotificationIds: number[] = [];
     let dmUnreadRecipientIds: string[] = [];
     // Waves 1.8: filled by insertAllDropComponents when the outbox is used.

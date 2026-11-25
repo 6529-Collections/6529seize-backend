@@ -1,3 +1,5 @@
+import type { JWKInterface } from 'arweave/node/lib/wallet';
+import { createArweaveClient } from '@/arweave/client';
 import fetch from 'node-fetch';
 import { Logger } from '../../../logging';
 import { getRedisClient } from '../../../redis';
@@ -5,7 +7,7 @@ import { sqlExecutor } from '../../../sql-executor';
 import { getRateLimitConfig } from '../rate-limiting/rate-limiting.utils';
 
 const logger = Logger.get('HEALTH');
-let arweaveHealthClient: { arweave: any; key: any } | null = null;
+let arweaveHealthKey: JWKInterface | null = null;
 const ARWEAVE_HEALTH_TIMEOUT_MS = 5_000;
 const ARWEAVE_HEALTH_CACHE_TTL_MS = 60_000;
 const IPFS_HEALTH_TIMEOUT_MS = 5_000;
@@ -37,22 +39,10 @@ function withTimeout<T>(
   });
 }
 
-function getArweaveHealthClient(): { arweave: any; key: any } {
-  if (!process.env.ARWEAVE_KEY) {
-    throw new Error('ARWEAVE_KEY not set');
-  }
-  if (!arweaveHealthClient) {
-    const ArweaveImport = require('arweave');
-    const Arweave = ArweaveImport.default ?? ArweaveImport;
-    const arweaveKey = JSON.parse(process.env.ARWEAVE_KEY);
-    const arweave = Arweave.init({
-      host: 'arweave.net',
-      port: 443,
-      protocol: 'https'
-    });
-    arweaveHealthClient = { arweave, key: arweaveKey };
-  }
-  return arweaveHealthClient;
+function getArweaveHealthKey(): JWKInterface {
+  if (!process.env.ARWEAVE_KEY) throw new Error('ARWEAVE_KEY not set');
+  arweaveHealthKey ??= JSON.parse(process.env.ARWEAVE_KEY) as JWKInterface;
+  return arweaveHealthKey;
 }
 
 function resolveArweaveBalanceLevel(
@@ -68,65 +58,77 @@ function resolveArweaveBalanceLevel(
 }
 
 async function fetchArweaveHealthUncached(): Promise<HealthData['arweave']> {
-  const { arweave, key } = getArweaveHealthClient();
-  const walletAddress = await arweave.wallets.jwkToAddress(key);
-  const balanceWinston = await arweave.wallets.getBalance(walletAddress);
-  const balanceAr = arweave.ar.winstonToAr(balanceWinston);
-  const balanceArNumber = Number.parseFloat(balanceAr);
-
-  const balanceLevel = resolveArweaveBalanceLevel(balanceArNumber);
-
-  let estimated50MbUploads: string | undefined;
-  let estimated3500MbUploads: string | undefined;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ARWEAVE_HEALTH_TIMEOUT_MS);
   try {
-    const fiftyMbInBytes = 50 * 1024 * 1024;
-    const fiftyMbPriceWinston = await arweave.transactions.getPrice(
-      fiftyMbInBytes,
-      walletAddress
-    );
-    const fiftyMbPriceNumber = Number.parseFloat(fiftyMbPriceWinston);
-    const balanceWinstonNumber = Number.parseFloat(balanceWinston);
-    if (
-      Number.isFinite(fiftyMbPriceNumber) &&
-      Number.isFinite(balanceWinstonNumber) &&
-      fiftyMbPriceNumber > 0
-    ) {
-      estimated50MbUploads = Math.floor(
-        balanceWinstonNumber / fiftyMbPriceNumber
-      ).toString();
+    const key = getArweaveHealthKey();
+    const arweave = createArweaveClient({
+      signal: controller.signal,
+      timeoutMs: ARWEAVE_HEALTH_TIMEOUT_MS,
+      attemptTimeoutMs: 1500
+    });
+    const walletAddress = await arweave.wallets.jwkToAddress(key);
+    const balanceWinston = await arweave.wallets.getBalance(walletAddress);
+    const balanceAr = arweave.ar.winstonToAr(balanceWinston);
+    const balanceArNumber = Number.parseFloat(balanceAr);
+
+    const balanceLevel = resolveArweaveBalanceLevel(balanceArNumber);
+
+    let estimated50MbUploads: string | undefined;
+    let estimated3500MbUploads: string | undefined;
+    try {
+      const fiftyMbInBytes = 50 * 1024 * 1024;
+      const fiftyMbPriceWinston = await arweave.transactions.getPrice(
+        fiftyMbInBytes,
+        walletAddress
+      );
+      const fiftyMbPriceNumber = Number.parseFloat(fiftyMbPriceWinston);
+      const balanceWinstonNumber = Number.parseFloat(balanceWinston);
+      if (
+        Number.isFinite(fiftyMbPriceNumber) &&
+        Number.isFinite(balanceWinstonNumber) &&
+        fiftyMbPriceNumber > 0
+      ) {
+        estimated50MbUploads = Math.floor(
+          balanceWinstonNumber / fiftyMbPriceNumber
+        ).toString();
+      }
+
+      const threePointFiveGbInBytes = 3500 * 1024 * 1024;
+      const threePointFiveGbPriceWinston = await arweave.transactions.getPrice(
+        threePointFiveGbInBytes,
+        walletAddress
+      );
+      const threePointFiveGbPriceNumber = Number.parseFloat(
+        threePointFiveGbPriceWinston
+      );
+      if (
+        Number.isFinite(threePointFiveGbPriceNumber) &&
+        Number.isFinite(balanceWinstonNumber) &&
+        threePointFiveGbPriceNumber > 0
+      ) {
+        estimated3500MbUploads = Math.floor(
+          balanceWinstonNumber / threePointFiveGbPriceNumber
+        ).toString();
+      }
+    } catch (err) {
+      logger.warn('Arweave price check failed', err);
     }
 
-    const threePointFiveGbInBytes = 3500 * 1024 * 1024;
-    const threePointFiveGbPriceWinston = await arweave.transactions.getPrice(
-      threePointFiveGbInBytes,
-      walletAddress
-    );
-    const threePointFiveGbPriceNumber = Number.parseFloat(
-      threePointFiveGbPriceWinston
-    );
-    if (
-      Number.isFinite(threePointFiveGbPriceNumber) &&
-      Number.isFinite(balanceWinstonNumber) &&
-      threePointFiveGbPriceNumber > 0
-    ) {
-      estimated3500MbUploads = Math.floor(
-        balanceWinstonNumber / threePointFiveGbPriceNumber
-      ).toString();
-    }
-  } catch (err) {
-    logger.warn('Arweave price check failed', err);
+    return {
+      healthy: true,
+      wallet_address: walletAddress,
+      balance: {
+        ar: balanceAr,
+        level: balanceLevel,
+        estimated_50mb_uploads: estimated50MbUploads,
+        estimated_3500mb_uploads: estimated3500MbUploads
+      }
+    };
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
   }
-
-  return {
-    healthy: true,
-    wallet_address: walletAddress,
-    balance: {
-      ar: balanceAr,
-      level: balanceLevel,
-      estimated_50mb_uploads: estimated50MbUploads,
-      estimated_3500mb_uploads: estimated3500MbUploads
-    }
-  };
 }
 
 async function getArweaveHealthCached(): Promise<HealthData['arweave']> {

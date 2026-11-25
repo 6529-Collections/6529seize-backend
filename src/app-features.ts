@@ -33,6 +33,32 @@ export class AppFeatures {
   }
 
   /**
+   * Waves, groups and decisions move to the 6529 chain: wave, group and
+   * decision writes, entries, votes, wave REP and polls are refused here
+   * while this is on (src/waves-freeze). Chat stays open.
+   */
+  public isWavesFrozen(): boolean {
+    return this.isFeatureEnabled('WAVES_FROZEN');
+  }
+
+  /**
+   * The Main Stage decision keeps running here through the waves freeze,
+   * one more cycle: its entries, votes, pauses and results go on.
+   */
+  public isWavesFreezeKeepingMainStage(): boolean {
+    return this.isFeatureEnabled('WAVES_FREEZE_KEEP_MAIN_STAGE');
+  }
+
+  /**
+   * Waves have switched on on the 6529 chain: from then a wave stays on
+   * 6529.io unless the chain holds it. WAVES_SWITCH_ON_AT sets the same at
+   * a time (src/waves-freeze/waves-freeze.ts).
+   */
+  public isWavesOnChain(): boolean {
+    return this.isFeatureEnabled('WAVES_ON_CHAIN');
+  }
+
+  /**
    * The delegations loop also mirrors the 6529 chain's identities into
    * 6529.io's identity tables (src/identity-chain-mirror).
    */

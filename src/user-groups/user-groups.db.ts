@@ -441,6 +441,24 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /**
+   * Reads a request's receipt from the primary, without reserving or
+   * locking it, so a receipt committed a moment ago is seen.
+   */
+  async findVisibilityRequest(
+    id: string,
+    ctx: RequestContext
+  ): Promise<Pick<
+    UserGroupVisibilityRequestEntity,
+    'payload_hash' | 'completed'
+  > | null> {
+    return this.db.oneOrNull(
+      `select payload_hash, completed from ${USER_GROUP_VISIBILITY_REQUESTS_TABLE} where id=:id`,
+      { id },
+      { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
+    );
+  }
+
   async changeVisibilityAndSetId(
     {
       currentId,

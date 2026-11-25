@@ -1,3 +1,4 @@
+import { isArweaveSandboxHost } from '@/arweave/gateways';
 import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-media';
 
 export const MAX_HISTORY_METADATA_BYTES = 2_000_000;
@@ -9,7 +10,7 @@ function verifiedGateway(input: string): URL {
   // an explicit policy review before history ingestion can fetch them.
   const recognized = parseDecentralizedMediaRef(url.href);
   // Arweave also redirects to base32 transaction sandbox subdomains.
-  const sandbox = /^[a-z2-7]{52}\.arweave\.net$/.test(url.hostname);
+  const sandbox = isArweaveSandboxHost(url.hostname);
   if (
     url.protocol !== 'https:' ||
     url.username ||
