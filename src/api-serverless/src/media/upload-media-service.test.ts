@@ -1207,7 +1207,7 @@ describe('mandatory image validation gate', () => {
   });
 
   it.each(['true', 'false', undefined])(
-    'captures privacy choice %s on the private multipart object',
+    'always strips wave pictures and captures the chat privacy setting %s',
     async (enabled) => {
       process.env.S3_BUCKET = 'public-bucket';
       process.env.DROP_MEDIA_INGEST_S3_BUCKET = 'ingest-bucket';
@@ -1222,19 +1222,21 @@ describe('mandatory image validation gate', () => {
         { createUpload } as any,
         jest.fn()
       );
-      for (const source of ['drop', 'wave'] as const) {
-        const input = {
-          file_name: 'image.png',
-          content_type: 'image/png',
-          author_id: 'author'
-        };
-        const response =
-          source === 'drop'
-            ? await service.getDropMediaMultipartUploadKeyAndUploadId(input)
-            : await service.getWaveMediaMultipartUploadKeyAndUploadId(input);
+      const drop = await service.getDropMediaMultipartUploadKeyAndUploadId({
+        file_name: 'image.png',
+        content_type: 'image/png',
+        author_id: 'author'
+      });
+      const wave = await service.getWaveMediaMultipartUploadKeyAndUploadId({
+        file_name: 'wave-picture',
+        content_type: 'image/webp',
+        author_id: 'author'
+      });
+      for (const response of [drop, wave]) {
         expect(response.media_status).toBe(ApiDropMediaStatus.Uploading);
         expect(response.media_upload_id).toBeDefined();
       }
+      expect(wave.key).toBe(`waves/author_author/${wave.media_upload_id}.webp`);
       expect(publicSend).not.toHaveBeenCalled();
       expect(ingestSend.mock.calls.map(([c]) => c.input)).toEqual([
         expect.objectContaining({
@@ -1243,7 +1245,8 @@ describe('mandatory image validation gate', () => {
         }),
         expect.objectContaining({
           Bucket: 'ingest-bucket',
-          Metadata: { 'sanitize-image-metadata': String(enabled === 'true') }
+          ContentType: 'image/webp',
+          Metadata: { 'sanitize-image-metadata': 'true' }
         })
       ]);
       expect(createUpload.mock.calls.map(([u]) => u.source)).toEqual([
@@ -1315,17 +1318,25 @@ describe('mandatory image validation gate', () => {
     ]);
   });
 
-  it('does not issue a single-PUT wave image URL with sanitization disabled', async () => {
-    process.env.DROP_MEDIA_SANITIZE_IMAGES = 'false';
-    const service = new UploadMediaService(() => ({ send: jest.fn() }) as any);
-    await expect(
-      service.createSingedWaveMediaUploadUrl({
-        file_name: 'image.png',
-        content_type: 'image/png',
-        author_id: 'author'
-      })
-    ).rejects.toThrow('file format can be validated');
-  });
+  it.each([
+    ['image/png', 'image.png'],
+    ['image/webp', 'image.webp']
+  ])(
+    'requires multipart upload for a wave image declared as %s',
+    async (content_type, file_name) => {
+      process.env.DROP_MEDIA_SANITIZE_IMAGES = 'false';
+      const service = new UploadMediaService(
+        () => ({ send: jest.fn() }) as any
+      );
+      await expect(
+        service.createSingedWaveMediaUploadUrl({
+          file_name,
+          content_type,
+          author_id: 'author'
+        })
+      ).rejects.toThrow('file format can be validated');
+    }
+  );
 });
 
 describe('directly published multipart media size', () => {

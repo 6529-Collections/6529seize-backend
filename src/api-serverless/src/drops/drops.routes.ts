@@ -294,7 +294,6 @@ router.post(
               ? authenticationContext.roleProfileId!
               : authorProfileId,
             hideLinkPreview: newDrop.hide_link_preview,
-            requestDailyActivityCredit: true,
             // A signed post's id is its event's, as a relay-only post's is,
             // so a rebuild from the relays gives it. Unsigned: random.
             newDropId: eventId ? dropIdOfEvent(eventId) : undefined

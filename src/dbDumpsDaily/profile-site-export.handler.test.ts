@@ -1,0 +1,2370 @@
+import {
+  GetBucketPolicyStatusCommand,
+  GetObjectCommand,
+  GetPublicAccessBlockCommand,
+  PutObjectCommand
+} from '@aws-sdk/client-s3';
+import { ProfileCmsExportReport } from '@/profile-cms/chain/profile-cms-export';
+import { createHash } from 'node:crypto';
+import {
+  checkFreezeSetting,
+  checkReplicaLag,
+  ReplicaLagAcceptance,
+  ProfileSiteExportNetworkError,
+  ProfileSiteExportServiceError,
+  checkSnapshotTime,
+  checkWritesAfterFreeze,
+  MIN_SNAPSHOT_GAP_SECONDS,
+  jobRecordFetcher,
+  latestSiteWrites,
+  parseProfileSiteExportEvent,
+  ProfileSiteExportDatabaseError,
+  ProfileSiteExportDeadlineError,
+  ProfileSiteExportDeps,
+  ProfileSiteExportEventError,
+  ProfileSiteExportLinksResult,
+  ProfileSiteExportResult,
+  ProfileSiteExportSnapshotError,
+  readFreezeSetting,
+  runProfileSiteExportJob,
+  WriteAfterFreeze,
+  writesAfterFreeze
+} from './profile-site-export.handler';
+
+const OWNER = '000000000000';
+const ARN = `arn:aws:lambda:eu-west-1:${OWNER}:function:dbDumpsDaily`;
+const BUCKET = `6529-chain-exports-${OWNER}-eu-west-1`;
+const T = Date.UTC(2026, 10, 24);
+const FREEZE = '2026-11-24T00:00:00Z';
+const POINTER =
+  'profile-site-export/staging/by-freeze/2026-11-24T00-00-00-000Z.json';
+
+function report(
+  over: Partial<ProfileCmsExportReport> = {}
+): ProfileCmsExportReport {
+  return {
+    packages: 1,
+    rebuilt_publications: [],
+    rebuilt_refused: [],
+    publication_unavailable: [],
+    without_publication: [],
+    bad_core: [],
+    primary: null,
+    primary_package_hash: null,
+    primary_handle: null,
+    primary_carried: false,
+    primary_refused: null,
+    primary_refused_at_publish: null,
+    legacy_packages: 0,
+    legacy_unverified: [],
+    legacy_unverified_primaries: [],
+    ...over
+  };
+}
+
+function sha256(text: string): string {
+  return createHash('sha256').update(Buffer.from(text)).digest('hex');
+}
+
+function setup(
+  options: {
+    env?: Record<string, string | undefined>;
+    failPutOf?: string;
+    publicBlock?: boolean;
+    unavailable?: boolean;
+    snapshotAt?: number;
+    replicaLagMs?: number | null;
+    /** The age of the lag's row; 0 when not given. */
+    replicaLagAgeMs?: number;
+    /** The lag's row is dated ahead of UTC: an unknown lag of that kind. */
+    lagRowAhead?: boolean;
+    /** How far ahead it is dated; 7 200 000 ms when not given. */
+    replicaLagAheadMs?: number;
+    /** The bucket's privacy check fails with this error. */
+    privacyFailsWith?: Error;
+    closeFails?: boolean;
+    latestWrites?: {
+      packages?: number;
+      archived?: number;
+      legacy?: number;
+      events?: number;
+    };
+    late?: { source: string; package_id: string; at: number }[];
+    getDenied?: boolean;
+    /** Every read of an object fails outright. */
+    getFails?: boolean;
+    /** The upload of failPutOf fails with this error, not 'upload failed'. */
+    failPutWith?: Error;
+    /** The snapshot's first SELECT fails with this error. */
+    selectFails?: Error;
+    verifyFails?: number;
+    /** The pointer write lands, but its answer is lost and the retry refused. */
+    pointerAnswerLost?: boolean;
+    /** IDENTITY_FREEZE_AT in the secret; FREEZE when not given. */
+    freezeSecret?: string;
+  } = {}
+) {
+  const order: string[] = [];
+  const bodies = new Map<string, string>();
+  const commands: any[] = [];
+  const send = jest.fn(async (command: any) => {
+    commands.push(command);
+    if (command instanceof GetPublicAccessBlockCommand) {
+      if (options.privacyFailsWith) throw options.privacyFailsWith;
+      const on = options.publicBlock ?? true;
+      return {
+        PublicAccessBlockConfiguration: {
+          BlockPublicAcls: true,
+          IgnorePublicAcls: true,
+          BlockPublicPolicy: on,
+          RestrictPublicBuckets: true
+        }
+      };
+    }
+    if (command instanceof GetBucketPolicyStatusCommand) {
+      return { PolicyStatus: { IsPublic: false } };
+    }
+    if (command instanceof PutObjectCommand) {
+      const key = command.input.Key!;
+      if (options.failPutOf && key.endsWith(options.failPutOf)) {
+        throw options.failPutWith ?? new Error('upload failed');
+      }
+      if (
+        options.pointerAnswerLost &&
+        key.includes('/by-freeze/') &&
+        !bodies.has(key)
+      ) {
+        // The first attempt lands; the SDK's retry finds it there.
+        order.push(key);
+        bodies.set(key, Buffer.from(command.input.Body as Buffer).toString());
+      }
+      if (command.input.IfNoneMatch === '*' && bodies.has(key)) {
+        throw Object.assign(new Error('At least one of the pre-conditions'), {
+          name: 'PreconditionFailed',
+          $metadata: { httpStatusCode: 412 }
+        });
+      }
+      order.push(key);
+      bodies.set(key, Buffer.from(command.input.Body as Buffer).toString());
+      return {};
+    }
+    if (command instanceof GetObjectCommand) {
+      if (options.getFails) throw new Error('socket hang up');
+      const body = bodies.get(command.input.Key!);
+      if (body === undefined) {
+        throw Object.assign(new Error('denied or missing'), {
+          name: options.getDenied ? 'AccessDenied' : 'NoSuchKey'
+        });
+      }
+      return { Body: { transformToString: async () => body } };
+    }
+    throw new Error(`unexpected ${command.constructor.name}`);
+  });
+  const executor = {
+    execute: jest.fn(async (sql: string, _params?: Record<string, any>) => {
+      if (options.selectFails) throw options.selectFails;
+      if (/max\(published_at\)/i.test(sql)) {
+        return [
+          {
+            packages: options.latestWrites?.packages ?? T - 60_000,
+            archived: options.latestWrites?.archived ?? null,
+            legacy: options.latestWrites?.legacy ?? null,
+            events: options.latestWrites?.events ?? T - 120_000
+          }
+        ];
+      }
+      if (/select distinct profile_id/i.test(sql)) {
+        return [{ profile_id: 'profile-a' }, { profile_id: 'profile-b' }];
+      }
+      if (/union all/i.test(sql)) {
+        return options.late ?? [];
+      }
+      if (/select handle, consolidation_key/i.test(sql)) {
+        return [{ handle: 'alice', consolidation_key: '0xaaa' }];
+      }
+      return [];
+    }),
+    oneOrNull: async (sql: string) => (await executor.execute(sql))[0] ?? null
+  };
+  const close = jest.fn(async () => {
+    if (options.closeFails) throw new Error('rollback failed');
+  });
+  // The job's own fetcher, retry and all; only the store behind it is fake.
+  let fails = options.verifyFails ?? 0;
+  const verify = jest.fn(async () => {
+    if (fails-- > 0) throw new Error('gateway timeout');
+    return Buffer.from('record');
+  });
+  const sleep = jest.fn(async () => undefined);
+  let fetchRecord: ReturnType<typeof jobRecordFetcher> = async () => null;
+  const exportProfile = jest.fn(async (profileId: string) => {
+    // As the exporter does for a package with a stored record.
+    await fetchRecord({
+      uri: `ipfs://bafyrecord${profileId}`,
+      content_hash: 'h'
+    });
+    return {
+      profile_id: profileId,
+      handle: profileId === 'profile-a' ? 'alice' : null,
+      cms:
+        profileId === 'profile-a'
+          ? {
+              primary: { publication: 'bafypub', package: 'bafypkg' },
+              archive: null
+            }
+          : null,
+      // Both profiles name the shared file: it is written once.
+      files: [
+        { cid: `bafy${profileId.slice(-1)}`, bytes: Buffer.from(profileId) },
+        { cid: 'bafyshared', bytes: Buffer.from('shared') }
+      ],
+      report: report({
+        publication_unavailable:
+          options.unavailable && profileId === 'profile-b' ? ['package'] : []
+      })
+    };
+  });
+  const presigned: { owner: string; key: string }[] = [];
+  // The lambdas secret as it is now; a test may change it between runs.
+  const secret: { IDENTITY_FREEZE_AT: string | undefined } = {
+    IDENTITY_FREEZE_AT:
+      'freezeSecret' in options ? options.freezeSecret : FREEZE
+  };
+  const deps: ProfileSiteExportDeps = {
+    prepareEnvironment: jest.fn(async () => undefined),
+    identityFreezeAt: jest.fn(async () => ({
+      secretId: 'prod/lambdas',
+      key: 'IDENTITY_FREEZE_AT',
+      value: secret.IDENTITY_FREEZE_AT
+    })),
+    env: () => ({
+      DB_HOST: 'primary-host',
+      DB_HOST_READ: 'replica-host',
+      DB_PORT: '3306',
+      DB_USER_READ: 'reader',
+      DB_PASS_READ: 'secret',
+      DB_NAME: 'app',
+      AWS_REGION: 'eu-west-1',
+      NODE_ENV: 'development',
+      ...options.env
+    }),
+    s3: { send } as never,
+    presign: async (bucket, key, seconds) => {
+      presigned.push({ owner: bucket.owner, key });
+      return `https://signed/${bucket.name}/${key}?s=${seconds}`;
+    },
+    openSnapshot: jest.fn(async (target) => ({
+      executor: executor as never,
+      evidence: {
+        endpoint: 'reader' as const,
+        transactionReadOnly: true,
+        serverReadOnly: true,
+        innodbReadOnly: null,
+        snapshotAt: new Date(options.snapshotAt ?? T + 330_000).toISOString(),
+        replicaLagMs:
+          options.replicaLagMs === undefined ? 40 : options.replicaLagMs,
+        // A row dated ahead keeps its lag; only its age is unknown.
+        replicaLagAgeMs:
+          options.replicaLagMs === null || options.lagRowAhead
+            ? null
+            : (options.replicaLagAgeMs ?? 0),
+        replicaLagError: options.lagRowAhead
+          ? "LAST_UPDATE_TIMESTAMP is 7200000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown"
+          : options.replicaLagMs === null
+            ? 'ER_UNKNOWN_TABLE 1109'
+            : null,
+        replicaLagUnknown: options.lagRowAhead
+          ? ('dated_ahead' as const)
+          : options.replicaLagMs === null
+            ? ('unreadable' as const)
+            : null,
+        replicaLagAheadMs: options.lagRowAhead
+          ? (options.replicaLagAheadMs ?? 7_200_000)
+          : null
+      },
+      close
+    })),
+    exporter: async (frozenAt, guard) => {
+      fetchRecord = jobRecordFetcher(frozenAt, guard, verify, sleep);
+      return { exportProfile } as never;
+    },
+    getJson: jest.fn(),
+    now: (() => {
+      let tick = T + 360_000;
+      return () => new Date((tick += 1_000));
+    })()
+  };
+  return {
+    deps,
+    send,
+    commands,
+    order,
+    bodies,
+    close,
+    exportProfile,
+    executor,
+    verify,
+    sleep,
+    secret,
+    presigned
+  };
+}
+
+const event = {
+  job: 'profileSiteExport',
+  frozenAt: T,
+  profile: null,
+  publicApi: null,
+  acceptSnapshotGapMinutes: null,
+  rehearsal: false,
+  concurrency: 1,
+  acceptWritesAfterFreeze: [],
+  acceptUnknownReplicaLag: [],
+  replacePointer: false
+} as const;
+const context = { invokedFunctionArn: ARN, awsRequestId: 'abcdef12-3456' };
+
+describe('parseProfileSiteExportEvent', () => {
+  it('leaves the schedule and other events to the daily dump', () => {
+    expect(parseProfileSiteExportEvent(undefined)).toBeNull();
+    expect(
+      parseProfileSiteExportEvent({
+        source: 'aws.events',
+        'detail-type': 'Scheduled Event'
+      })
+    ).toBeNull();
+    expect(parseProfileSiteExportEvent({ job: 'identityExport' })).toBeNull();
+  });
+
+  it('reads the CLI arguments, the freeze as ISO UTC or milliseconds', () => {
+    expect(
+      parseProfileSiteExportEvent({
+        job: 'profileSiteExport',
+        frozenAt: FREEZE
+      })
+    ).toEqual(event);
+    expect(
+      parseProfileSiteExportEvent({
+        job: 'profileSiteExport',
+        frozenAt: T,
+        profile: 'profile-a',
+        publicApi: 'https://api.example',
+        rehearsal: true,
+        concurrency: 4,
+        acceptWritesAfterFreeze: [
+          'packages:pkg-1@2026-11-24T00:00:00.005Z',
+          'legacy_packages:sha256:abc@2026-11-24T00:00:01.000Z'
+        ],
+        acceptUnknownReplicaLag: { older_than_gap: 360_000 }
+      })
+    ).toEqual({
+      ...event,
+      profile: 'profile-a',
+      publicApi: 'https://api.example',
+      rehearsal: true,
+      concurrency: 4,
+      acceptWritesAfterFreeze: [
+        'packages:pkg-1@2026-11-24T00:00:00.005Z',
+        'legacy_packages:sha256:abc@2026-11-24T00:00:01.000Z'
+      ],
+      acceptUnknownReplicaLag: [{ older_than_gap: 360_000 }]
+    });
+    expect(
+      parseProfileSiteExportEvent({
+        job: 'profileSiteExport',
+        frozenAt: T,
+        acceptUnknownReplicaLag: ['unreadable', { dated_ahead: 7_140_000 }]
+      })
+    ).toMatchObject({
+      acceptUnknownReplicaLag: ['unreadable', { dated_ahead: 7_140_000 }]
+    });
+  });
+
+  it('takes bounds at the edges of the zones', () => {
+    expect(
+      parseProfileSiteExportEvent({
+        job: 'profileSiteExport',
+        frozenAt: T,
+        acceptUnknownReplicaLag: [
+          { older_than_gap: 300_000 },
+          { dated_ahead: 51_000_000 }
+        ]
+      })
+    ).toMatchObject({
+      acceptUnknownReplicaLag: [
+        { older_than_gap: 300_000 },
+        { dated_ahead: 51_000_000 }
+      ]
+    });
+  });
+
+  it.each([
+    [true],
+    ['yes'],
+    [['unreadable', 'unreadable']],
+    [['older_than_gap', 'stale']],
+    // older_than_gap needs its largest row age.
+    ['older_than_gap'],
+    [{ older_than_gap: 0 }],
+    [{ older_than_gap: '60000' }],
+    [{ older_than_gap: 360_000, unreadable: true }],
+    [[{ older_than_gap: 360_000 }, { older_than_gap: 420_000 }]],
+    [{ older_than_gap: 8 * 24 * 60 * 60 * 1000 }],
+    // dated_ahead needs its smallest lead; both bounds stay within the zones.
+    ['dated_ahead'],
+    [{ dated_ahead: 59_999 }],
+    // No time zone is less than 30 minutes from UTC.
+    [{ dated_ahead: 1_739_999 }],
+    [{ dated_ahead: 51_000_001 }],
+    [{ older_than_gap: 299_999 }],
+    [{ older_than_gap: 51_000_001 }],
+    [[{ dated_ahead: 7_140_000 }, { dated_ahead: 7_000_000 }]]
+  ])('refuses acceptUnknownReplicaLag %j, naming the cases', (value) => {
+    expect(() =>
+      parseProfileSiteExportEvent({
+        job: 'profileSiteExport',
+        frozenAt: T,
+        acceptUnknownReplicaLag: value
+      })
+    ).toThrow(
+      /acceptUnknownReplicaLag must name each case to accept, as the refusals do: "unreadable", \{"dated_ahead": <smallest lead in ms: Monday's replicaLagAheadMs minus 60000>\}, or \{"older_than_gap": <largest row age in ms: Monday's replicaLagAgeMs plus 60000>\}; one or a list, each once\. A bound on a row's age is 300000 to 51000000 ms, on its lead 1740000 to 51000000 ms\. true and a bare "dated_ahead" or "older_than_gap" are not accepted/
+    );
+  });
+
+  it('reads replacePointer for a real run of every profile only', () => {
+    expect(
+      parseProfileSiteExportEvent({
+        job: 'profileSiteExport',
+        frozenAt: T,
+        replacePointer: true
+      })
+    ).toEqual({ ...event, replacePointer: true });
+    for (const bad of [
+      { replacePointer: 'yes' },
+      { replacePointer: true, rehearsal: true },
+      { replacePointer: true, profile: 'profile-a' }
+    ]) {
+      expect(() =>
+        parseProfileSiteExportEvent({
+          job: 'profileSiteExport',
+          frozenAt: T,
+          ...bad
+        })
+      ).toThrow(ProfileSiteExportEventError);
+    }
+  });
+
+  it('finds a run for fresh links by its prefix or by its freeze', () => {
+    expect(
+      parseProfileSiteExportEvent({
+        job: 'profileSiteExportLinks',
+        prefix: 'profile-site-export/prod/run/'
+      })
+    ).toEqual({
+      job: 'profileSiteExportLinks',
+      prefix: 'profile-site-export/prod/run/',
+      frozenAt: null
+    });
+    expect(
+      parseProfileSiteExportEvent({
+        job: 'profileSiteExportLinks',
+        frozenAt: FREEZE
+      })
+    ).toEqual({ job: 'profileSiteExportLinks', prefix: null, frozenAt: T });
+  });
+
+  it.each([
+    [{ job: 'profileSiteExport' }],
+    [{ job: 'profileSiteExport', frozenAt: '2026-11-24' }],
+    [{ job: 'profileSiteExport', frozenAt: '2026-11-31T00:00:00Z' }],
+    [{ job: 'profileSiteExport', frozenAt: 1795996800 }],
+    [{ job: 'profileSiteExport', frozenAt: T, frozen_at: T }],
+    [
+      { job: 'profileSiteExport', frozenAt: T, publicApi: 'http://api.example' }
+    ],
+    [{ job: 'profileSiteExport', frozenAt: T, profile: 'a b' }],
+    [{ job: 'profileSiteExport', frozenAt: T, acceptSnapshotGapMinutes: -1 }],
+    [{ job: 'profileSiteExport', frozenAt: T, acceptSnapshotGapMinutes: '90' }],
+    [{ job: 'profileSiteExport', frozenAt: T, rehearsal: 'yes' }],
+    [{ job: 'profileSiteExport', frozenAt: T, concurrency: 5 }],
+    [{ job: 'profileSiteExport', frozenAt: T, concurrency: 0 }],
+    [{ job: 'profileSiteExport', frozenAt: T, acceptWritesAfterFreeze: 'p' }],
+    [
+      {
+        job: 'profileSiteExport',
+        frozenAt: T,
+        acceptWritesAfterFreeze: ['a b']
+      }
+    ],
+    // A package id alone, or a time not as the refusal writes it.
+    [
+      {
+        job: 'profileSiteExport',
+        frozenAt: T,
+        acceptWritesAfterFreeze: ['pkg-1']
+      }
+    ],
+    [
+      {
+        job: 'profileSiteExport',
+        frozenAt: T,
+        acceptWritesAfterFreeze: ['packages:pkg-1@2026-11-24T00:00:00Z']
+      }
+    ],
+    [
+      {
+        job: 'profileSiteExport',
+        frozenAt: T,
+        acceptWritesAfterFreeze: ['drops:pkg-1@2026-11-24T00:00:00.005Z']
+      }
+    ],
+    [{ job: 'profileSiteExport', frozenAt: T, acceptUnknownReplicaLag: 'yes' }],
+    [
+      {
+        job: 'profileSiteExport',
+        frozenAt: T,
+        acceptWritesAfterFreeze: Array.from({ length: 101 }, (_, i) => `p${i}`)
+      }
+    ],
+    [{ job: 'profileSiteExportLinks' }],
+    [
+      {
+        job: 'profileSiteExportLinks',
+        prefix: 'profile-site-export/prod/run/',
+        frozenAt: T
+      }
+    ],
+    [{ job: 'profileSiteExportLinks', frozenAt: 'Tuesday' }],
+    [{ job: 'profileSiteExportLinks', prefix: 'identity-export/x/' }],
+    [{ job: 'profileSiteExportLinks', prefix: 'profile-site-export/../x/' }],
+    [
+      {
+        job: 'profileSiteExportLinks',
+        prefix: 'profile-site-export/prod/by-freeze/'
+      }
+    ],
+    [
+      {
+        job: 'profileSiteExportLinks',
+        prefix: 'profile-site-export/prod/renewed-links/'
+      }
+    ],
+    [
+      { job: 'profileSiteExportLinks', prefix: 'profile-site-export/prod/a/b/' }
+    ],
+    [{ job: 'profileSiteExportLinks', prefix: 'profile-site-export/prod/' }]
+  ])('refuses %j', (bad) => {
+    expect(() => parseProfileSiteExportEvent(bad)).toThrow(
+      ProfileSiteExportEventError
+    );
+  });
+});
+
+describe('the freeze checks', () => {
+  it('measures the gap from the freeze to the snapshot', () => {
+    expect(checkSnapshotTime(T, T, null)).toEqual({ gapMs: 0, gapSeconds: 0 });
+    expect(checkSnapshotTime(T, T + 90 * 60_000, null)).toEqual({
+      gapMs: 5_400_000,
+      gapSeconds: 5400
+    });
+    expect(() => checkSnapshotTime(T, Number.NaN, null)).toThrow(/unknown/);
+    // In milliseconds: a snapshot 400 ms before the freeze is before it.
+    expect(() => checkSnapshotTime(T, T - 400, null)).toThrow(
+      /^The snapshot \(2026-11-23T23:59:59.600Z\) is before the freeze/
+    );
+    expect(() => checkSnapshotTime(T, T + 90 * 60_000 + 400, null)).toThrow(
+      /over the 90-minute limit/
+    );
+  });
+
+  it('holds a snapshot to a minimum gap after the freeze', () => {
+    expect(
+      checkSnapshotTime(T, T + 300_000, null, MIN_SNAPSHOT_GAP_SECONDS)
+    ).toEqual({
+      gapMs: 300_000,
+      gapSeconds: 300
+    });
+    expect(() =>
+      checkSnapshotTime(T, T + 299_000, null, MIN_SNAPSHOT_GAP_SECONDS)
+    ).toThrow(/299 s after the freeze: wait until at least 300 s/);
+    // 299.6 s would round to 300.
+    expect(() =>
+      checkSnapshotTime(T, T + 299_600, null, MIN_SNAPSHOT_GAP_SECONDS)
+    ).toThrow(/299.6 s after the freeze/);
+  });
+
+  it('holds a real run to the 5-minute minimum gap, to the millisecond', () => {
+    expect(MIN_SNAPSHOT_GAP_SECONDS).toBe(300);
+    expect(() =>
+      checkSnapshotTime(T, T + 299_999, null, MIN_SNAPSHOT_GAP_SECONDS)
+    ).toThrow(
+      /^The snapshot is 299\.999 s after the freeze: wait until at least 300 s after it/
+    );
+    expect(
+      checkSnapshotTime(T, T + 300_000, null, MIN_SNAPSHOT_GAP_SECONDS)
+    ).toEqual({ gapMs: 300_000, gapSeconds: 300 });
+    // A row-age bound starts at the same minimum gap.
+    expect(() =>
+      parseProfileSiteExportEvent({
+        job: 'profileSiteExport',
+        frozenAt: T,
+        acceptUnknownReplicaLag: { older_than_gap: 299_999 }
+      })
+    ).toThrow(/A bound on a row's age is 300000 to 51000000 ms/);
+    expect(
+      parseProfileSiteExportEvent({
+        job: 'profileSiteExport',
+        frozenAt: T,
+        acceptUnknownReplicaLag: { older_than_gap: 300_000 }
+      })
+    ).toMatchObject({ acceptUnknownReplicaLag: [{ older_than_gap: 300_000 }] });
+  });
+
+  const lag = (
+    replicaLagMs: number | null,
+    replicaLagAgeMs: number | null = replicaLagMs === null ? null : 0,
+    replicaLagError: string | null = null,
+    replicaLagUnknown: 'unreadable' | 'dated_ahead' | null = replicaLagMs ===
+    null
+      ? 'unreadable'
+      : null
+  ) => ({
+    replicaLagMs,
+    replicaLagAgeMs,
+    replicaLagError,
+    replicaLagUnknown,
+    replicaLagAheadMs: null as number | null
+  });
+  const ALL: ReplicaLagAcceptance[] = [
+    'unreadable',
+    { older_than_gap: 10_000_000 }
+  ];
+  const ahead = (replicaLagMs: number, aheadMs = 7_200_000) => ({
+    ...lag(
+      replicaLagMs,
+      null,
+      `LAST_UPDATE_TIMESTAMP is ${aheadMs} ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown`,
+      'dated_ahead'
+    ),
+    replicaLagAheadMs: aheadMs
+  });
+  const LEAD = [{ dated_ahead: 7_140_000 }];
+
+  it('refuses a replica as far behind its writer as the gap, less 1.5 s, or further', () => {
+    expect(checkReplicaLag(150_000, lag(148_499))).toBeNull();
+    expect(() => checkReplicaLag(150_000, lag(148_500))).toThrow(
+      /148500 ms behind its writer \(a 148500 ms lag in a row 0 ms old\), which with 1500 ms for the row's timestamp is not less than the 150000 ms since the freeze.*Wait a few minutes and run again\./
+    );
+    expect(() => checkReplicaLag(150_000, lag(3_600_000))).toThrow(
+      /behind its writer/
+    );
+    // The gap isn't rounded: 150.4 s holds a lag up to 148.899 s.
+    expect(() => checkReplicaLag(150_400, lag(148_899))).not.toThrow();
+    expect(() => checkReplicaLag(150_400, lag(148_900))).toThrow(/behind/);
+  });
+
+  it('counts a stale row: its lag plus its age, plus 1.5 s for its timestamp', () => {
+    expect(() => checkReplicaLag(150_000, lag(20, 148_479))).not.toThrow();
+    expect(() => checkReplicaLag(150_000, lag(20, 148_480))).toThrow(
+      /148500 ms behind its writer \(a 20 ms lag in a row 148480 ms old\).*run again/
+    );
+  });
+
+  it('refuses a row older than the whole gap, with the steps, unless that case is accepted', () => {
+    // At 00:05 the reader is 6 minutes behind, but its row, last written
+    // at 23:59, still says 20 ms: the age alone passes the gap.
+    expect(() => checkReplicaLag(300_000, lag(20, 360_000))).toThrow(
+      /lag row is 360000 ms old \(a 20 ms lag\), older than the 300000 ms since the freeze: LAST_UPDATE_TIMESTAMP may not be in UTC, or the reader stopped updating its row\. If the same refusal returns with the row's age grown by the time you waited, the reader stopped updating: report it\. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader\. Accept it \(acceptUnknownReplicaLag: \{"older_than_gap": <Monday's replicaLagAgeMs plus 60000>\}\) only for a reading Monday's rehearsal also showed, and only with the switch owner's agreement: the run then relies on the 5-minute minimum gap, and still on the lag the row reports when it has one\. Otherwise report it\./
+    );
+    expect(() => checkReplicaLag(150_000, lag(20, 150_000))).toThrow(
+      /older than the 150000 ms since the freeze/
+    );
+    expect(
+      checkReplicaLag(300_000, lag(20, 360_000), [{ older_than_gap: 420_000 }])
+    ).toBe('older_than_gap');
+    // Only the case named is accepted.
+    expect(() =>
+      checkReplicaLag(300_000, lag(20, 360_000), ['unreadable'])
+    ).toThrow(/older than the 300000 ms/);
+    // A real lag, its row younger than the gap, is never accepted.
+    expect(() => checkReplicaLag(150_000, lag(149_000, 10), ALL)).toThrow(
+      /Wait a few minutes and run again/
+    );
+    expect(checkReplicaLag(150_000, lag(40), ALL)).toBeNull();
+  });
+
+  it('still holds the lag a row reports to the gap when its age is accepted as untrusted', () => {
+    // time_zone behind UTC: every row reads hours old, and this fresh one
+    // says the reader is 400 s behind. Accepting the age passes nothing,
+    // and as the row can't be trusted, waiting isn't the advice.
+    const twoHours = [{ older_than_gap: 7_300_000 }];
+    expect(() =>
+      checkReplicaLag(300_000, lag(400_000, 7_200_000), twoHours)
+    ).toThrow(
+      /The replica reports a 400000 ms lag \(its row's age not counted: older_than_gap; 60000 ms more for a stall within the bound's margin\), which with 1500 ms for the row's timestamp is not less than the 300000 ms since the freeze: it may not hold every write made before the freeze\. The row can't be trusted, and a stale row's lag never changes: run once more, and if this refusal comes back unchanged, report it\.$/
+    );
+    // A stall up to the bound's 60 s margin counts as lag.
+    expect(() =>
+      checkReplicaLag(300_000, lag(238_500, 7_200_000), twoHours)
+    ).toThrow(/reports a 238500 ms lag/);
+    expect(checkReplicaLag(300_000, lag(238_499, 7_200_000), twoHours)).toBe(
+      'older_than_gap'
+    );
+    expect(() => checkReplicaLag(300_000, ahead(238_500), LEAD)).toThrow(
+      /reports a 238500 ms lag \(its row's age not counted: dated_ahead; 60000 ms more/
+    );
+    expect(checkReplicaLag(300_000, ahead(238_499), LEAD)).toBe('dated_ahead');
+    // Dated ahead: the lag is kept and held to the gap the same way.
+    expect(() => checkReplicaLag(300_000, ahead(400_000), LEAD)).toThrow(
+      /reports a 400000 ms lag \(its row's age not counted: dated_ahead; 60000 ms more for a stall within the bound's margin\).*a stale row's lag never changes/
+    );
+    expect(checkReplicaLag(300_000, ahead(20), LEAD)).toBe('dated_ahead');
+    // No timestamp: the lag is kept too.
+    expect(() =>
+      checkReplicaLag(
+        300_000,
+        lag(
+          400_000,
+          null,
+          "LAST_UPDATE_TIMESTAMP is null: the row's age is unknown",
+          'unreadable'
+        ),
+        ['unreadable']
+      )
+    ).toThrow(
+      /reports a 400000 ms lag \(its row's age not counted: unreadable\)/
+    );
+    // A trusted row's lag, too large: waiting can help.
+    expect(() => checkReplicaLag(300_000, lag(300_000, 10))).toThrow(
+      /Wait a few minutes and run again\.$/
+    );
+  });
+
+  it('accepts older_than_gap only up to the row age named: an offset passes, a stall is refused', () => {
+    // Monday: the row read 7 200 150 ms old (a two-hour offset); Tuesday
+    // accepts up to 7 260 000 ms.
+    const bound = [{ older_than_gap: 7_260_000 }];
+    expect(checkReplicaLag(300_000, lag(20, 7_200_400), bound)).toBe(
+      'older_than_gap'
+    );
+    expect(checkReplicaLag(300_000, lag(20, 7_260_000), bound)).toBe(
+      'older_than_gap'
+    );
+    // The reader stopped: its row keeps aging past the bound.
+    expect(() => checkReplicaLag(300_000, lag(20, 7_260_001), bound)).toThrow(
+      /The replica's lag row is 7260001 ms old, over the 7260000 ms accepted for older_than_gap: it has aged past Monday's reading, so the reader may have stopped updating its row\. Report it; don't raise the bound\./
+    );
+    // Monday's 330 s age, accepted with a margin: a reader that stopped at
+    // 23:50 shows a 40-minute-old row on Tuesday, and is refused.
+    expect(() =>
+      checkReplicaLag(300_000, lag(20, 2_400_000), [
+        { older_than_gap: 390_000 }
+      ])
+    ).toThrow(/over the 390000 ms accepted/);
+  });
+
+  it('accepts dated_ahead only down to the lead named: an offset passes, a stall is refused', () => {
+    // Monday: the row read 7 200 000 ms ahead (a +2 h offset); Tuesday
+    // accepts a lead down to 7 140 000 ms.
+    expect(checkReplicaLag(300_000, ahead(20, 7_199_800), LEAD)).toBe(
+      'dated_ahead'
+    );
+    expect(checkReplicaLag(300_000, ahead(20, 7_140_000), LEAD)).toBe(
+      'dated_ahead'
+    );
+    // The reader stopped at 23:50: by 00:05 its row's lead has shrunk by
+    // 15 minutes, still ahead, and is refused.
+    expect(() => checkReplicaLag(300_000, ahead(20, 6_300_000), LEAD)).toThrow(
+      /The replica's lag row is dated 6300000 ms ahead of UTC, less than the 7140000 ms accepted for dated_ahead: its lead has shrunk since Monday's reading, so the reader may have stopped updating its row\. Report it; don't lower the bound\./
+    );
+    // A dated_ahead row without its lead can't pass a bound.
+    expect(() =>
+      checkReplicaLag(300_000, { ...ahead(20), replicaLagAheadMs: null }, LEAD)
+    ).toThrow(/less than the 7140000 ms accepted/);
+  });
+
+  it('refuses any other reading once a dated_ahead bound is accepted: a lead run out reads as fresh', () => {
+    // A +2 h reader stalled for about 2 h: its lead has run out, and its
+    // row reads as a fresh one.
+    expect(() =>
+      checkReplicaLag(300_000, lag(20, 500), [{ dated_ahead: 7_139_000 }])
+    ).toThrow(
+      /^dated_ahead was accepted down to a 7139000 ms lead, but this reader's row reads as fresh: a reader dated ahead that stopped updating reads that way once its lead has run out\. Run once more without changing anything; if it reads the same, report it\.$/
+    );
+    expect(() =>
+      checkReplicaLag(300_000, lag(20, 360_000), [
+        { dated_ahead: 7_139_000 },
+        { older_than_gap: 420_000 }
+      ])
+    ).toThrow(/reads older_than_gap/);
+    // Without that bound, a fresh row passes.
+    expect(checkReplicaLag(300_000, lag(20, 500), ['unreadable'])).toBeNull();
+  });
+
+  it("works the README's bound examples as the README says", () => {
+    // UTC+2, Monday 7 200 340 and 7 200 310: the bound is 7 140 310.
+    const lead = [{ dated_ahead: 7_140_310 }];
+    expect(checkReplicaLag(300_000, ahead(20, 7_200_300), lead)).toBe(
+      'dated_ahead'
+    );
+    expect(() => checkReplicaLag(300_000, ahead(20, 6_300_300), lead)).toThrow(
+      /dated 6300300 ms ahead of UTC, less than the 7140310 ms accepted/
+    );
+    // UTC-1, Monday 3 600 410 and 3 600 380: the bound is 3 660 410.
+    const age = [{ older_than_gap: 3_660_410 }];
+    expect(checkReplicaLag(300_000, lag(20, 3_600_400), age)).toBe(
+      'older_than_gap'
+    );
+    expect(() => checkReplicaLag(300_000, lag(20, 4_500_400), age)).toThrow(
+      /4500400 ms old, over the 3660410 ms accepted/
+    );
+    // The loose bound the README warns against lets the stall through.
+    expect(
+      checkReplicaLag(300_000, ahead(20, 7_200_000 - 5_400_000), [
+        { dated_ahead: 1_740_000 }
+      ])
+    ).toBe('dated_ahead');
+  });
+
+  it('takes the README example ["unreadable", {"dated_ahead": 7140000}] case by case', () => {
+    const example: ReplicaLagAcceptance[] = [
+      'unreadable',
+      { dated_ahead: 7_140_000 }
+    ];
+    // A reader that isn't Aurora: unreadable, on its own terms.
+    expect(
+      checkReplicaLag(
+        300_000,
+        lag(null, null, 'ER_UNKNOWN_TABLE 1109'),
+        example
+      )
+    ).toBe('unreadable');
+    // The +2 h reader Monday showed: dated_ahead, held to its bound.
+    expect(checkReplicaLag(300_000, ahead(20), example)).toBe('dated_ahead');
+    // Its lead run out: refused as such, not as an unreadable lag.
+    expect(() => checkReplicaLag(300_000, lag(20, 500), example)).toThrow(
+      /^dated_ahead was accepted down to a 7140000 ms lead, but this reader's row reads as fresh/
+    );
+    // A timeout is no unreadable lag it accepts.
+    expect(() =>
+      checkReplicaLag(
+        300_000,
+        lag(null, null, 'PROTOCOL_SEQUENCE_TIMEOUT'),
+        example
+      )
+    ).toThrow(
+      /^unreadable was accepted, but this reading's reason \(PROTOCOL_SEQUENCE_TIMEOUT\)/
+    );
+  });
+
+  it('accepts unreadable only for the server\'s "can\'t read the lag" cases', () => {
+    for (const reason of [
+      'ER_UNKNOWN_TABLE 1109',
+      'ER_UNKNOWN_SYSTEM_VARIABLE 1193',
+      'information_schema.replica_host_status has no row for this server',
+      'REPLICA_LAG_IN_MILLISECONDS is null'
+    ]) {
+      expect(
+        checkReplicaLag(150_000, lag(null, null, reason), ['unreadable'])
+      ).toBe('unreadable');
+    }
+    // A null timestamp keeps its lag, still held to the gap.
+    expect(
+      checkReplicaLag(
+        150_000,
+        lag(
+          20,
+          null,
+          "LAST_UPDATE_TIMESTAMP is null: the row's age is unknown",
+          'unreadable'
+        ),
+        ['unreadable']
+      )
+    ).toBe('unreadable');
+    for (const reason of [
+      'PROTOCOL_SEQUENCE_TIMEOUT',
+      'ER_TABLEACCESS_DENIED_ERROR 1142',
+      'REPLICA_LAG_IN_MILLISECONDS is -1: not a lag',
+      null
+    ]) {
+      expect(() =>
+        checkReplicaLag(150_000, lag(null, null, reason), ['unreadable'])
+      ).toThrow(
+        /^unreadable was accepted, but this reading's reason \(.+\) isn't one it covers: only ER_UNKNOWN_TABLE 1109 or ER_UNKNOWN_SYSTEM_VARIABLE 1193 \(the reader isn't Aurora\), no row for this server, a null lag or a null timestamp\. A timeout or a refusal can come from a reader falling behind: run once more, and if it returns, report it\.$/
+      );
+    }
+  });
+
+  it('refuses a row dated ahead of UTC, with the steps, unless that case is accepted', () => {
+    expect(() => checkReplicaLag(150_000, ahead(20))).toThrow(
+      /lag row is dated ahead of UTC \(LAST_UPDATE_TIMESTAMP is 7200000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown\): LAST_UPDATE_TIMESTAMP may not be in UTC, so the row's age is unknown\. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader\. Accept it \(acceptUnknownReplicaLag: \{"dated_ahead": <Monday's replicaLagAheadMs minus 60000>\}\) only for a reading Monday's rehearsal also showed, and only with the switch owner's agreement: the run then relies on the 5-minute minimum gap, and still on the lag the row reports when it has one\. Otherwise report it\./
+    );
+    expect(() =>
+      checkReplicaLag(150_000, ahead(20), [{ older_than_gap: 10_000_000 }])
+    ).toThrow(/dated ahead of UTC/);
+  });
+
+  it('refuses an unreadable lag, with the steps and the only errors to accept, unless that case is accepted', () => {
+    expect(() => checkReplicaLag(150_000, lag(null))).toThrow(
+      /lag can't be read from information_schema.replica_host_status \(no reason given\)\. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader\. Accept it \(acceptUnknownReplicaLag: "unreadable"\) only for a reading Monday's rehearsal also showed: for an error, only ER_UNKNOWN_TABLE 1109 or ER_UNKNOWN_SYSTEM_VARIABLE 1193 \(the reader isn't Aurora\), and only with the switch owner's agreement: the run then relies on the 5-minute minimum gap, and still on the lag the row reports when it has one\. Otherwise report it\./
+    );
+    expect(() =>
+      checkReplicaLag(150_000, lag(null, null, 'ER_PARSE_ERROR 1064'))
+    ).toThrow(/\(ER_PARSE_ERROR 1064\)/);
+    // With no lag at all, the minimum gap alone decides.
+    expect(
+      checkReplicaLag(150_000, lag(null, null, 'ER_UNKNOWN_TABLE 1109'), [
+        'unreadable'
+      ])
+    ).toBe('unreadable');
+    expect(() => checkReplicaLag(150_000, lag(null), LEAD)).toThrow(
+      /can't be read/
+    );
+    // A lag without its row's age is an unreadable lag too.
+    expect(() => checkReplicaLag(150_000, lag(20, null, null, null))).toThrow(
+      /can't be read/
+    );
+  });
+
+  it('reads IDENTITY_FREEZE_AT as the site does', () => {
+    expect(readFreezeSetting(undefined)).toEqual({
+      reading: 'unset',
+      at: null
+    });
+    expect(readFreezeSetting(' ')).toEqual({ reading: 'unset', at: null });
+    expect(readFreezeSetting('Tuesday')).toEqual({
+      reading: 'not_a_time',
+      at: null
+    });
+    for (const raw of [
+      FREEZE,
+      '2026-11-24T00:00:00+00:00',
+      '2026-11-24T00:00:00.000Z',
+      '2026-11-24T00:00:00.000+00:00',
+      String(T)
+    ]) {
+      expect(readFreezeSetting(raw)).toEqual({ reading: 'time', at: T });
+    }
+  });
+
+  it('holds a real run to IDENTITY_FREEZE_AT, which must be set', () => {
+    expect(() =>
+      checkFreezeSetting(T, readFreezeSetting(FREEZE))
+    ).not.toThrow();
+    expect(() => checkFreezeSetting(T, readFreezeSetting(undefined))).toThrow(
+      /IDENTITY_FREEZE_AT is not set/
+    );
+    expect(() => checkFreezeSetting(T, readFreezeSetting(''))).toThrow(
+      /not set/
+    );
+    expect(() => checkFreezeSetting(T + 1, readFreezeSetting(FREEZE))).toThrow(
+      /not IDENTITY_FREEZE_AT/
+    );
+    expect(() => checkFreezeSetting(T, readFreezeSetting('Tuesday'))).toThrow(
+      /not a time/
+    );
+  });
+
+  const late = (packageId: string, offset = 5): WriteAfterFreeze => {
+    const at = new Date(T + offset).toISOString();
+    return {
+      source: 'packages',
+      packageId,
+      at,
+      token: `packages:${packageId}@${at}`
+    };
+  };
+
+  it('refuses site writes after the freeze unless each one was accepted', () => {
+    expect(() => checkWritesAfterFreeze([], [])).not.toThrow();
+    expect(() =>
+      checkWritesAfterFreeze(
+        [late('pkg-1'), late('pkg-1')],
+        ['packages:pkg-1@2026-11-24T00:00:00.005Z']
+      )
+    ).not.toThrow();
+    expect(() => checkWritesAfterFreeze([late('pkg-1')], [])).toThrow(
+      /accepted: packages:pkg-1@2026-11-24T00:00:00.005Z\. Send this to the on-call engineer and the switch owner.*exactly as written here/
+    );
+    expect(() =>
+      checkWritesAfterFreeze(
+        [late('pkg-1'), late('pkg-2')],
+        ['packages:pkg-1@2026-11-24T00:00:00.005Z']
+      )
+    ).toThrow(/no one has accepted: packages:pkg-2@/);
+    // The same package written again later is a new write.
+    expect(() =>
+      checkWritesAfterFreeze(
+        [late('pkg-1'), late('pkg-1', 9)],
+        ['packages:pkg-1@2026-11-24T00:00:00.005Z']
+      )
+    ).toThrow(/accepted: packages:pkg-1@2026-11-24T00:00:00.009Z\./);
+    // A bare package id accepts nothing.
+    expect(() => checkWritesAfterFreeze([late('pkg-1')], ['pkg-1'])).toThrow(
+      /no one has accepted/
+    );
+    const many = Array.from({ length: 101 }, (_, i) => late(`p${i}`));
+    expect(() =>
+      checkWritesAfterFreeze(
+        many,
+        many.map((it) => it.token)
+      )
+    ).toThrow(/more than 100/);
+  });
+
+  it('reads the latest publication, archive and pointer change', async () => {
+    const { executor } = setup({ latestWrites: { archived: T + 7 } });
+    await expect(latestSiteWrites(executor as never)).resolves.toEqual({
+      packages: T - 60_000,
+      archivedPackages: T + 7,
+      legacyPackages: null,
+      pointerEvents: T - 120_000
+    });
+    expect(executor.execute.mock.calls[0][0]).toMatch(/max\(archived_at\)/);
+  });
+
+  it('reads site writes after the freeze by package, from all three tables', async () => {
+    const { executor } = setup({
+      late: [
+        { source: 'packages', package_id: 'pkg-1', at: T + 5 },
+        { source: 'pointer_events', package_id: 'pkg-2', at: T + 6 }
+      ]
+    });
+    await expect(writesAfterFreeze(executor as never, T)).resolves.toEqual([
+      {
+        source: 'packages',
+        packageId: 'pkg-1',
+        at: '2026-11-24T00:00:00.005Z',
+        token: 'packages:pkg-1@2026-11-24T00:00:00.005Z'
+      },
+      {
+        source: 'pointer_events',
+        packageId: 'pkg-2',
+        at: '2026-11-24T00:00:00.006Z',
+        token: 'pointer_events:pkg-2@2026-11-24T00:00:00.006Z'
+      }
+    ]);
+    const [sql, params] = executor.execute.mock.calls[0];
+    expect(params).toEqual({ frozenAt: T });
+    expect(sql).toMatch(/archived_at > :frozenAt/);
+    expect(sql).toMatch(/profile_cms_pointer_events/);
+    expect(sql).toMatch(/cms_published_packages/);
+    expect(sql).toMatch(/limit 101/);
+  });
+});
+
+describe('runProfileSiteExportJob', () => {
+  it('reads the replica read-only, writes each file once, the manifest and then the pointer', async () => {
+    const { deps, order, bodies, close, exportProfile, commands, presigned } =
+      setup();
+    const result = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+
+    expect(deps.openSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({ host: 'replica-host' })
+    );
+    // The reader's hostname is in neither the response nor the manifest.
+    for (const text of [
+      JSON.stringify(result),
+      bodies.get(result.manifestKey)!,
+      bodies.get(POINTER)!
+    ]) {
+      expect(text).not.toContain('replica-host');
+    }
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(exportProfile).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({
+      bucket: BUCKET,
+      stage: 'staging',
+      endpoint: 'reader',
+      readOnly: true,
+      usable: true,
+      rehearsal: false,
+      profiles: 2,
+      profilesWithCms: 1,
+      bucketPrivacy: {
+        owner: OWNER,
+        publicAccessBlocked: true,
+        policyPublic: false
+      },
+      scope: { profile: null, publicApi: null },
+      identityFreezeAtSecret: 'prod/lambdas',
+      identityFreezeAtReading: 'time',
+      identityFreezeAt: '2026-11-24T00:00:00.000Z',
+      snapshotAt: new Date(T + 330_000).toISOString(),
+      snapshotGapSeconds: 330,
+      snapshotGapMs: 330_000,
+      evidence: {
+        endpoint: 'reader',
+        replicaLagMs: 40,
+        replicaLagAgeMs: 0,
+        replicaLagError: null,
+        replicaLagUnknown: null
+      },
+      replicaLagAccepted: null,
+      replicaLagCase: null,
+      latestSiteWrites: {
+        packages: new Date(T - 60_000).toISOString(),
+        archived_packages: null,
+        legacy_packages: null,
+        pointer_events: new Date(T - 120_000).toISOString()
+      },
+      writesAfterFreeze: [],
+      acceptedWritesAfterFreeze: [],
+      pointerError: null
+    });
+    expect(result.prefix).toMatch(
+      /^profile-site-export\/staging\/2026-11-24T00-06-01-000Z-abcdef12\/$/
+    );
+    const names = order.map((key) =>
+      key.startsWith(result.prefix) ? key.slice(result.prefix.length) : key
+    );
+    expect(names).toEqual([
+      'files/bafya',
+      'files/bafyshared',
+      'files/bafyb',
+      'cms-fields.json',
+      'report.json',
+      'links.json',
+      'manifest.json',
+      POINTER
+    ]);
+    expect(result.manifestKey).toBe(`${result.prefix}manifest.json`);
+    expect(result.manifestSha256).toBe(sha256(bodies.get(result.manifestKey)!));
+    expect(result.pointerKey).toBe(POINTER);
+    expect(result.presignedPointerUrl).toBe(
+      `https://signed/${BUCKET}/${POINTER}?s=21600`
+    );
+    // The pointer is written only where none is.
+    const pointerPut = commands.find(
+      (c) => c instanceof PutObjectCommand && c.input.Key === POINTER
+    );
+    expect(pointerPut.input.IfNoneMatch).toBe('*');
+    expect(JSON.parse(bodies.get(POINTER)!)).toMatchObject({
+      prefix: result.prefix,
+      manifest: result.manifestKey,
+      manifest_sha256: result.manifestSha256
+    });
+    const manifest = JSON.parse(bodies.get(result.manifestKey)!);
+    expect(manifest.files.map((file: { name: string }) => file.name)).toEqual([
+      'files/bafya',
+      'files/bafyb',
+      'files/bafyshared',
+      'cms-fields.json',
+      'report.json',
+      'links.json'
+    ]);
+    // Every entry carries the digest of exactly what was stored.
+    for (const file of manifest.files) {
+      const body = bodies.get(result.prefix + file.name)!;
+      expect(file.sha256).toBe(sha256(body));
+      expect(file.bytes).toBe(Buffer.byteLength(body));
+    }
+    expect(manifest).toMatchObject({
+      usable: true,
+      rehearsal: false,
+      stage: 'staging',
+      scope: { profile: null, publicApi: null },
+      identity_freeze_at: {
+        secret: 'prod/lambdas',
+        reading: 'time',
+        at: '2026-11-24T00:00:00.000Z'
+      },
+      replace_pointer: false,
+      snapshot_at: new Date(T + 330_000).toISOString(),
+      snapshot_gap_seconds: 330,
+      snapshot_gap_ms: 330_000,
+      read: {
+        endpoint: 'reader',
+        replicaLagMs: 40,
+        replicaLagAgeMs: 0,
+        read_only: true
+      },
+      replica_lag_accepted: null,
+      replica_lag_case: null,
+      latest_site_writes: { archived_packages: null },
+      writes_after_freeze: [],
+      accepted_writes_after_freeze: []
+    });
+    // Every S3 call and every link names the function's own account.
+    expect(commands.length).toBeGreaterThan(0);
+    for (const command of commands) {
+      expect(command.input.ExpectedBucketOwner).toBe(OWNER);
+    }
+    for (const put of commands.filter((c) => c instanceof PutObjectCommand)) {
+      expect(put.input.ChecksumSHA256).toBe(
+        createHash('sha256')
+          .update(Buffer.from(put.input.Body as Buffer))
+          .digest('base64')
+      );
+    }
+    expect(presigned.every((it) => it.owner === OWNER)).toBe(true);
+    const linksBody = bodies.get(`${result.prefix}links.json`)!;
+    const links = JSON.parse(linksBody);
+    expect(Object.keys(links.links)).toContain('manifest.json');
+    expect(result.linksBytes).toBe(Buffer.byteLength(linksBody));
+    expect(
+      manifest.files.find((f: { name: string }) => f.name === 'links.json')
+        .bytes
+    ).toBe(result.linksBytes);
+  });
+
+  it('names the stage from NODE_ENV: production is prod', async () => {
+    const { deps, order } = setup({ env: { NODE_ENV: 'production' } });
+    const result = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.stage).toBe('prod');
+    expect(result.prefix).toMatch(/^profile-site-export\/prod\//);
+    expect(result.pointerKey).toBe(
+      'profile-site-export/prod/by-freeze/2026-11-24T00-00-00-000Z.json'
+    );
+    expect(order).toContain(result.pointerKey);
+  });
+
+  it('gives the same files and manifest order when exporting four at once', async () => {
+    const one = setup();
+    const four = setup();
+    const a = (await runProfileSiteExportJob(
+      event,
+      context,
+      one.deps
+    )) as ProfileSiteExportResult;
+    const b = (await runProfileSiteExportJob(
+      { ...event, concurrency: 4 },
+      context,
+      four.deps
+    )) as ProfileSiteExportResult;
+    const files = (s: ReturnType<typeof setup>, r: ProfileSiteExportResult) =>
+      JSON.parse(s.bodies.get(r.manifestKey)!).files.map(
+        (f: { name: string; sha256: string }) => [f.name, f.sha256]
+      );
+    expect(files(four, b)).toEqual(files(one, a));
+    expect(b.concurrency).toBe(4);
+  });
+
+  it('runs a rehearsal under a -rehearsal prefix, unusable and without a pointer', async () => {
+    const lateWrite = {
+      source: 'packages',
+      package_id: 'pkg-9',
+      at: T + 50_000
+    };
+    const { deps, order, bodies } = setup({
+      // Sites are still published before the freeze: recorded, not refused.
+      latestWrites: { packages: T + 50_000 },
+      late: [lateWrite],
+      // Neither the minimum gap nor the lag holds a rehearsal.
+      snapshotAt: T + 30_000,
+      replicaLagMs: 60_000
+    });
+    const result = (await runProfileSiteExportJob(
+      { ...event, rehearsal: true, frozenAt: T + 20_000 },
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.prefix).toMatch(/-abcdef12-rehearsal\/$/);
+    expect(result.manifestKey).toBe(`${result.prefix}manifest.unusable.json`);
+    // Every record was there, but a rehearsal is never the export.
+    expect(result.unavailableProfiles).toBe(0);
+    expect(result.usable).toBe(false);
+    expect(result.pointerKey).toBeNull();
+    expect(result.presignedPointerUrl).toBeNull();
+    expect(result.snapshotGapSeconds).toBe(10);
+    expect(result.writesAfterFreeze).toEqual([
+      {
+        source: 'packages',
+        packageId: 'pkg-9',
+        at: '2026-11-24T00:00:50.000Z',
+        token: 'packages:pkg-9@2026-11-24T00:00:50.000Z'
+      }
+    ]);
+    expect(order.some((key) => key.includes('by-freeze'))).toBe(false);
+    expect(JSON.parse(bodies.get(result.manifestKey)!)).toMatchObject({
+      usable: false,
+      rehearsal: true,
+      writes_after_freeze: result.writesAfterFreeze
+    });
+    expect(typeof result.seconds).toBe('number');
+  });
+
+  it.each([
+    [undefined, 'unset', null],
+    ['Tuesday', 'not_a_time', null],
+    ['2026-11-24T00:00:00.000+00:00', 'time', '2026-11-24T00:00:00.000Z']
+  ])(
+    'has a rehearsal report IDENTITY_FREEZE_AT %j as the site reads it',
+    async (raw, reading, at) => {
+      const { deps, bodies } = setup({ freezeSecret: raw });
+      const result = (await runProfileSiteExportJob(
+        { ...event, rehearsal: true },
+        context,
+        deps
+      )) as ProfileSiteExportResult;
+      expect(result).toMatchObject({
+        identityFreezeAtReading: reading,
+        identityFreezeAt: at
+      });
+      expect(
+        JSON.parse(bodies.get(result.manifestKey)!).identity_freeze_at
+      ).toEqual({ secret: 'prod/lambdas', reading, at });
+    }
+  );
+
+  it.each([
+    [undefined, /IDENTITY_FREEZE_AT is not set in the prod\/lambdas secret/],
+    ['', /IDENTITY_FREEZE_AT is not set/],
+    ['Tuesday', /prod\/lambdas secret is not a time/],
+    ['2026-11-24T00:01:00Z', /not IDENTITY_FREEZE_AT/]
+  ])(
+    'refuses a real run with IDENTITY_FREEZE_AT %j, before reading anything',
+    async (raw, message) => {
+      const { deps, order } = setup({ freezeSecret: raw });
+      await expect(
+        runProfileSiteExportJob(event, context, deps)
+      ).rejects.toThrow(message);
+      expect(deps.openSnapshot).not.toHaveBeenCalled();
+      expect(order).toEqual([]);
+    }
+  );
+
+  it.each([['2026-11-24T00:00:00+00:00'], ['2026-11-24T00:00:00.000Z']])(
+    'takes IDENTITY_FREEZE_AT %j for a real run, as the site does',
+    async (raw) => {
+      const { deps } = setup({ freezeSecret: raw });
+      const result = (await runProfileSiteExportJob(
+        event,
+        context,
+        deps
+      )) as ProfileSiteExportResult;
+      expect(result.identityFreezeAt).toBe('2026-11-24T00:00:00.000Z');
+    }
+  );
+
+  it('reads IDENTITY_FREEZE_AT from the secret at each run, not the warm environment', async () => {
+    // The container loaded the secret before the fix: its copy is stale.
+    const { deps, secret, order } = setup({
+      freezeSecret: undefined,
+      env: { IDENTITY_FREEZE_AT: FREEZE }
+    });
+    await expect(runProfileSiteExportJob(event, context, deps)).rejects.toThrow(
+      /not set in the prod\/lambdas secret/
+    );
+    expect(order).toEqual([]);
+    // 6529.io fixes the secret; the rerun, in the same container, sees it.
+    secret.IDENTITY_FREEZE_AT = '2026-11-24T00:00:00.000+00:00';
+    const result = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.identityFreezeAt).toBe('2026-11-24T00:00:00.000Z');
+    expect(deps.identityFreezeAt).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses a real run whose snapshot holds an unaccepted site write after the freeze', async () => {
+    const { deps, order, close } = setup({
+      late: [{ source: 'pointer_events', package_id: 'pkg-1', at: T + 5 }]
+    });
+    await expect(runProfileSiteExportJob(event, context, deps)).rejects.toThrow(
+      /no one has accepted: pointer_events:pkg-1@2026-11-24T00:00:00.005Z\. Send this to the on-call engineer and the switch owner/
+    );
+    expect(order).toEqual([]);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('exports past site writes the switch owner accepted, and records them', async () => {
+    const late = [
+      { source: 'packages', package_id: 'pkg-1', at: T + 5 },
+      { source: 'pointer_events', package_id: 'pkg-1', at: T + 6 }
+    ];
+    const { deps, bodies } = setup({ late });
+    const accepted = [
+      'packages:pkg-1@2026-11-24T00:00:00.005Z',
+      'pointer_events:pkg-1@2026-11-24T00:00:00.006Z'
+    ];
+    const result = (await runProfileSiteExportJob(
+      { ...event, acceptWritesAfterFreeze: accepted },
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.usable).toBe(true);
+    expect(result.acceptedWritesAfterFreeze).toEqual(accepted);
+    expect(result.writesAfterFreeze.map((it) => it.token)).toEqual(accepted);
+    expect(JSON.parse(bodies.get(result.manifestKey)!)).toMatchObject({
+      writes_after_freeze: result.writesAfterFreeze,
+      accepted_writes_after_freeze: accepted
+    });
+  });
+
+  it('refuses when only some late packages were accepted', async () => {
+    const { deps, order } = setup({
+      late: [
+        { source: 'packages', package_id: 'pkg-1', at: T + 5 },
+        { source: 'legacy_packages', package_id: 'sha256:abc', at: T + 6 }
+      ]
+    });
+    await expect(
+      runProfileSiteExportJob(
+        {
+          ...event,
+          acceptWritesAfterFreeze: ['packages:pkg-1@2026-11-24T00:00:00.005Z']
+        },
+        context,
+        deps
+      )
+    ).rejects.toThrow(
+      /accepted: legacy_packages:sha256:abc@2026-11-24T00:00:00.006Z\./
+    );
+    expect(order).toEqual([]);
+  });
+
+  it.each([
+    ['60 s after the freeze', T + 60_000, 40, /wait until at least 300 s/],
+    [
+      'a millisecond short of the 5-minute minimum gap',
+      T + 299_999,
+      40,
+      /^The snapshot is 299\.999 s after the freeze: wait until at least 300 s after it/
+    ],
+    ['with the replica 400 s behind', T + 330_000, 400_000, /400000 ms behind/],
+    [
+      'with the replica as far behind as the gap',
+      T + 330_000,
+      330_000,
+      /behind/
+    ]
+  ])(
+    'refuses a real run %s, and writes nothing',
+    async (_name, snapshotAt, replicaLagMs, message) => {
+      const { deps, order, close } = setup({ snapshotAt, replicaLagMs });
+      await expect(
+        runProfileSiteExportJob(event, context, deps)
+      ).rejects.toThrow(message);
+      expect(order).toEqual([]);
+      expect(close).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('takes a real run exactly 5 minutes after the freeze', async () => {
+    const { deps } = setup({ snapshotAt: T + 300_000 });
+    const result = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.usable).toBe(true);
+    expect([result.snapshotGapMs, result.snapshotGapSeconds]).toEqual([
+      300_000, 300
+    ]);
+  });
+
+  it('refuses an unknown replica lag unless told to rely on the gap alone', async () => {
+    const { deps, bodies, order } = setup({ replicaLagMs: null });
+    // The refusal carries the server's own reason.
+    await expect(runProfileSiteExportJob(event, context, deps)).rejects.toThrow(
+      /lag can't be read from information_schema.replica_host_status \(ER_UNKNOWN_TABLE 1109\)\..*acceptUnknownReplicaLag: "unreadable"/
+    );
+    expect(order).toEqual([]);
+    const result = (await runProfileSiteExportJob(
+      { ...event, acceptUnknownReplicaLag: ['unreadable'] },
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.evidence.replicaLagMs).toBeNull();
+    expect(result.acceptUnknownReplicaLag).toEqual(['unreadable']);
+    expect(result.replicaLagAccepted).toBe('unreadable');
+    expect(JSON.parse(bodies.get(result.manifestKey)!)).toMatchObject({
+      read: {
+        endpoint: 'reader',
+        replicaLagMs: null,
+        replicaLagAgeMs: null,
+        replicaLagError: 'ER_UNKNOWN_TABLE 1109',
+        replicaLagUnknown: 'unreadable'
+      },
+      accept_unknown_replica_lag: ['unreadable'],
+      replica_lag_accepted: 'unreadable'
+    });
+  });
+
+  it.each<
+    [
+      string,
+      Record<string, unknown>,
+      ReplicaLagAcceptance,
+      ReplicaLagAcceptance[],
+      string,
+      string
+    ]
+  >([
+    [
+      'a row older than the gap',
+      { replicaLagMs: 20, replicaLagAgeMs: 360_000 },
+      { older_than_gap: 420_000 },
+      ['unreadable'],
+      'older_than_gap',
+      'acceptUnknownReplicaLag: {"older_than_gap"'
+    ],
+    [
+      'a row dated ahead of UTC',
+      { replicaLagMs: 20, lagRowAhead: true },
+      { dated_ahead: 7_140_000 },
+      ['unreadable', { older_than_gap: 10_000_000 }],
+      'dated_ahead',
+      'acceptUnknownReplicaLag: {"dated_ahead"'
+    ]
+  ])(
+    'refuses %s, and records it when accepted',
+    async (_name, lagOptions, acceptance, others, accepted, how) => {
+      const { deps, bodies, order } = setup({
+        snapshotAt: T + 300_000,
+        ...lagOptions
+      });
+      await expect(
+        runProfileSiteExportJob(event, context, deps)
+      ).rejects.toThrow(/Run once more first/);
+      expect(order).toEqual([]);
+      // Another case named is no acceptance of this one.
+      await expect(
+        runProfileSiteExportJob(
+          { ...event, acceptUnknownReplicaLag: others },
+          context,
+          deps
+        )
+      ).rejects.toThrow(how);
+      expect(order).toEqual([]);
+      const result = (await runProfileSiteExportJob(
+        { ...event, acceptUnknownReplicaLag: [acceptance] },
+        context,
+        deps
+      )) as ProfileSiteExportResult;
+      expect(result.usable).toBe(true);
+      expect(result.replicaLagAccepted).toBe(accepted);
+      expect(JSON.parse(bodies.get(result.manifestKey)!)).toMatchObject({
+        replica_lag_accepted: accepted,
+        // The bound, if any, is in the manifest.
+        accept_unknown_replica_lag: [acceptance]
+      });
+    }
+  );
+
+  it('measures the lag against the gap in milliseconds', async () => {
+    const ok = setup({ snapshotAt: T + 330_400, replicaLagMs: 328_899 });
+    const stale = setup({
+      snapshotAt: T + 300_000,
+      replicaLagMs: 20,
+      replicaLagAgeMs: 360_000
+    });
+    await expect(
+      runProfileSiteExportJob(event, context, stale.deps)
+    ).rejects.toThrow(/lag row is 360000 ms old \(a 20 ms lag\)/);
+    expect(stale.order).toEqual([]);
+    const result = (await runProfileSiteExportJob(
+      event,
+      context,
+      ok.deps
+    )) as ProfileSiteExportResult;
+    expect(result.snapshotGapSeconds).toBe(330);
+    expect(result.snapshotGapMs).toBe(330_400);
+    expect(result.acceptUnknownReplicaLag).toEqual([]);
+    expect(result.replacePointer).toBe(false);
+    const behind = setup({ snapshotAt: T + 330_400, replicaLagMs: 328_900 });
+    await expect(
+      runProfileSiteExportJob(event, context, behind.deps)
+    ).rejects.toThrow(/328900 ms behind/);
+  });
+
+  it('lets a rehearsal run with an unknown replica lag, and reports it', async () => {
+    const { deps } = setup({ replicaLagMs: null });
+    const result = (await runProfileSiteExportJob(
+      { ...event, rehearsal: true },
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.evidence.replicaLagMs).toBeNull();
+  });
+
+  it.each([
+    ['a trusted lag', {}, null],
+    ['an unreadable lag', { replicaLagMs: null }, 'unreadable'],
+    [
+      'a row dated ahead',
+      { replicaLagMs: 20, lagRowAhead: true },
+      'dated_ahead'
+    ],
+    [
+      'a row older than the gap',
+      { replicaLagMs: 20, replicaLagAgeMs: 360_000 },
+      'older_than_gap'
+    ]
+  ])(
+    'has a rehearsal name the lag case a real run would refuse on: %s',
+    async (_name, lagOptions, lagCase) => {
+      const { deps, bodies } = setup({
+        snapshotAt: T + 300_000,
+        ...lagOptions
+      });
+      const result = (await runProfileSiteExportJob(
+        { ...event, rehearsal: true },
+        context,
+        deps
+      )) as ProfileSiteExportResult;
+      expect(result.replicaLagCase).toBe(lagCase);
+      expect(result.replicaLagAccepted).toBeNull();
+      expect(JSON.parse(bodies.get(result.manifestKey)!).replica_lag_case).toBe(
+        lagCase
+      );
+    }
+  );
+
+  it('gives the code of a failed connection, never its message', async () => {
+    const { deps, order } = setup();
+    const lookup = Object.assign(
+      new Error('getaddrinfo ENOTFOUND reader.example.invalid'),
+      {
+        code: 'ENOTFOUND',
+        errno: -3008,
+        syscall: 'getaddrinfo',
+        hostname: 'reader.example.invalid'
+      }
+    );
+    (deps as { openSnapshot: unknown }).openSnapshot = jest.fn(async () => {
+      throw lookup;
+    });
+    const error = await runProfileSiteExportJob(event, context, deps).catch(
+      (e) => e
+    );
+    expect(error).toBeInstanceOf(ProfileSiteExportDatabaseError);
+    expect(error.message).toBe(
+      "DNS lookup failed, retry: ENOTFOUND -3008 (The read replica, while opening the read-only snapshot). The host it looked up is in the function's log."
+    );
+    expect(error.message).not.toMatch(/reader\.example/);
+    expect(order).toEqual([]);
+  });
+
+  it('gives the code of a failed SELECT, never its message', async () => {
+    const denied = Object.assign(
+      new Error(
+        "ER_TABLEACCESS_DENIED_ERROR: SELECT command denied to user 'reader'@'192.0.2.10'"
+      ),
+      {
+        code: 'ER_TABLEACCESS_DENIED_ERROR',
+        errno: 1142,
+        sqlMessage: "SELECT command denied to user 'reader'@'192.0.2.10'"
+      }
+    );
+    const { deps, close, order } = setup({ selectFails: denied });
+    const error = await runProfileSiteExportJob(event, context, deps).catch(
+      (e) => e
+    );
+    expect(error).toBeInstanceOf(ProfileSiteExportDatabaseError);
+    expect(error.message).toMatch(
+      /^The read replica failed while reading the snapshot: ER_TABLEACCESS_DENIED_ERROR 1142\./
+    );
+    expect(error.message).not.toMatch(/192\.0\.2\.10|'reader'/);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(order).toEqual([]);
+  });
+
+  it.each([
+    [
+      'a DNS hiccup',
+      {
+        code: 'EAI_AGAIN',
+        errno: -3001,
+        syscall: 'getaddrinfo',
+        hostname: 'reader.example.invalid'
+      },
+      'getaddrinfo EAI_AGAIN reader.example.invalid',
+      'EAI_AGAIN -3001'
+    ],
+    [
+      'a DNS code alone',
+      { code: 'EAI_AGAIN', errno: -3001 },
+      'getaddrinfo EAI_AGAIN reader.example.invalid',
+      'EAI_AGAIN -3001'
+    ],
+    [
+      'an error naming only its host',
+      { hostname: 'reader.example.invalid' },
+      'lookup failed for reader.example.invalid',
+      'Error'
+    ]
+  ])(
+    'gives the code of %s on the connection, never its message',
+    async (_name, fields, message, code) => {
+      const { deps } = setup();
+      (deps as { openSnapshot: unknown }).openSnapshot = jest.fn(async () => {
+        throw Object.assign(new Error(message), fields);
+      });
+      const error = await runProfileSiteExportJob(event, context, deps).catch(
+        (e) => e
+      );
+      expect(error).toBeInstanceOf(ProfileSiteExportDatabaseError);
+      expect(error.message).toBe(
+        code.startsWith('EAI_')
+          ? `DNS lookup failed, retry: ${code} (The read replica, while opening the read-only snapshot). The host it looked up is in the function's log.`
+          : `The read replica failed while opening the read-only snapshot: ${code}. Its message, which can name the host or user, is in the function's log.`
+      );
+      expect(error.message).not.toMatch(/example\.invalid/);
+    }
+  );
+
+  it.each([
+    [
+      'a reset connection',
+      { code: 'ECONNRESET', errno: -104, syscall: 'read' },
+      'read ECONNRESET',
+      'ECONNRESET -104'
+    ],
+    [
+      'a lookup naming the bucket host',
+      {
+        code: 'ENOTFOUND',
+        errno: -3008,
+        syscall: 'getaddrinfo',
+        hostname: 'bucket.s3.example.invalid'
+      },
+      'getaddrinfo ENOTFOUND bucket.s3.example.invalid',
+      'ENOTFOUND -3008'
+    ]
+  ])(
+    'reports an S3 upload failure (%s) as a network call, not the replica, without the host',
+    async (_name, fields, message, code) => {
+      const { deps } = setup({
+        failPutOf: 'files/bafyb',
+        failPutWith: Object.assign(new Error(message), fields)
+      });
+      const error = await runProfileSiteExportJob(event, context, deps).catch(
+        (e) => e
+      );
+      expect(error).toBeInstanceOf(ProfileSiteExportNetworkError);
+      expect(error.message).toBe(
+        code.startsWith('ENOTFOUND')
+          ? `DNS lookup failed, retry: ${code} (A network call, while running the export). The host it looked up is in the function's log.`
+          : `A network call failed while running the export: ${code}. Its message, which can name the host or user, is in the function's log.`
+      );
+      expect(error.message).not.toMatch(/read replica|example\.invalid/);
+    }
+  );
+
+  it("works out a rehearsal's lag case against at least the minimum gap", async () => {
+    // A rehearsal 10 s after its own frozenAt, on a healthy reader whose
+    // row is 30 s old: against 10 s it would read older_than_gap.
+    const { deps } = setup({
+      snapshotAt: T + 30_000,
+      replicaLagMs: 20,
+      replicaLagAgeMs: 30_000
+    });
+    const result = (await runProfileSiteExportJob(
+      { ...event, rehearsal: true, frozenAt: T + 20_000 },
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.snapshotGapSeconds).toBe(10);
+    expect(result.replicaLagCase).toBeNull();
+    // A row older than the minimum gap is still named.
+    const old = setup({
+      snapshotAt: T + 30_000,
+      replicaLagMs: 20,
+      replicaLagAgeMs: 300_000
+    });
+    const named = (await runProfileSiteExportJob(
+      { ...event, rehearsal: true, frozenAt: T + 20_000 },
+      context,
+      old.deps
+    )) as ProfileSiteExportResult;
+    expect(named.replicaLagCase).toBe('older_than_gap');
+    // An hour after its own frozenAt, a rehearsal still names a 10-minute-old
+    // row: a long gap doesn't hide the offset Tuesday will see.
+    const long = setup({
+      snapshotAt: T + 3_600_000,
+      replicaLagMs: 20,
+      replicaLagAgeMs: 600_000
+    });
+    const hour = (await runProfileSiteExportJob(
+      { ...event, rehearsal: true },
+      context,
+      long.deps
+    )) as ProfileSiteExportResult;
+    expect(hour.snapshotGapSeconds).toBe(3600);
+    expect(hour.replicaLagCase).toBe('older_than_gap');
+  });
+
+  it('reports a DNS failure in the bucket check by its code, never the host', async () => {
+    const { deps, order } = setup({
+      privacyFailsWith: Object.assign(
+        new Error('getaddrinfo EAI_AGAIN bucket.s3.example.invalid'),
+        {
+          code: 'EAI_AGAIN',
+          errno: -3001,
+          syscall: 'getaddrinfo',
+          hostname: 'bucket.s3.example.invalid'
+        }
+      )
+    });
+    const error = await runProfileSiteExportJob(event, context, deps).catch(
+      (e) => e
+    );
+    expect(error).toBeInstanceOf(ProfileSiteExportNetworkError);
+    expect(error.message).toBe(
+      "DNS lookup failed, retry: EAI_AGAIN -3001 (A network call, while running the export). The host it looked up is in the function's log."
+    );
+    expect(order).toEqual([]);
+    // The links job's check too.
+    const links = await runProfileSiteExportJob(
+      { job: 'profileSiteExportLinks', prefix: null, frozenAt: T },
+      context,
+      deps
+    ).catch((e) => e);
+    expect(links.message).toMatch(
+      /^DNS lookup failed, retry: EAI_AGAIN -3001 \(A network call, while renewing the links\)/
+    );
+    expect(links.message).not.toMatch(/example\.invalid/);
+  });
+
+  it("leaves a programming error's ERR_ code alone: it is no network call", async () => {
+    const bug = Object.assign(
+      new TypeError('The "chunk" argument must be of type string'),
+      { code: 'ERR_INVALID_ARG_TYPE' }
+    );
+    const { deps } = setup({ failPutOf: 'files/bafyb', failPutWith: bug });
+    await expect(runProfileSiteExportJob(event, context, deps)).rejects.toBe(
+      bug
+    );
+  });
+
+  it('gives a failed pointer write by its code, never its message', async () => {
+    const { deps } = setup({
+      failPutOf: POINTER,
+      failPutWith: Object.assign(new Error('connect ETIMEDOUT 192.0.2.7:443'), {
+        code: 'ETIMEDOUT',
+        errno: -110,
+        syscall: 'connect',
+        address: '192.0.2.7',
+        port: 443
+      })
+    });
+    const result = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.pointerKey).toBeNull();
+    expect(result.pointerError).toBe(
+      "The pointer write failed: ETIMEDOUT -110. Its message is in the function's log."
+    );
+    expect(JSON.stringify(result)).not.toMatch(/192\.0\.2\.7/);
+  });
+
+  it('gives an AWS refusal by its name and status, never its message', async () => {
+    const refusal = Object.assign(
+      new Error('Access Denied on bucket.s3.example.invalid'),
+      { name: 'AccessDenied', $metadata: { httpStatusCode: 403 } }
+    );
+    const { deps } = setup({ failPutOf: 'files/bafyb', failPutWith: refusal });
+    const error = await runProfileSiteExportJob(event, context, deps).catch(
+      (e) => e
+    );
+    expect(error).toBeInstanceOf(ProfileSiteExportServiceError);
+    expect(error.message).toBe(
+      "An AWS call was refused while running the export: AccessDenied (403). Its message is in the function's log."
+    );
+  });
+
+  it('writes a failed public API request into report.json by its code, never its host', async () => {
+    const { deps, bodies } = setup();
+    (deps as { getJson: unknown }).getJson = jest.fn(async () => {
+      throw Object.assign(
+        new Error(
+          'request to https://api.example.invalid/x failed, reason: getaddrinfo ENOTFOUND api.example.invalid'
+        ),
+        { code: 'ENOTFOUND', errno: 'ENOTFOUND', type: 'system' }
+      );
+    });
+    const result = (await runProfileSiteExportJob(
+      { ...event, publicApi: 'https://api.example.invalid' },
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    const report = bodies.get(`${result.prefix}report.json`)!;
+    expect(report).toContain('request_failed: ENOTFOUND');
+    expect(report).not.toMatch(/getaddrinfo|reason:/);
+  });
+
+  it.each([
+    [
+      'an SDK timeout',
+      Object.assign(new Error('Connection timed out after 30000 ms'), {
+        name: 'TimeoutError',
+        $metadata: { attempts: 3 }
+      }),
+      'TimeoutError'
+    ],
+    [
+      'a certificate the SDK could not check',
+      Object.assign(
+        new Error('certificate has expired for bucket.s3.example.invalid'),
+        {
+          code: 'CERT_HAS_EXPIRED',
+          $metadata: {}
+        }
+      ),
+      'CERT_HAS_EXPIRED'
+    ],
+    [
+      'an unanswered call of another kind',
+      Object.assign(new Error('no answer from bucket.s3.example.invalid'), {
+        name: 'UnknownError',
+        $metadata: {}
+      }),
+      'UnknownError'
+    ]
+  ])(
+    'reports %s as a network failure, not an AWS refusal',
+    async (_name, failure, code) => {
+      const { deps } = setup({
+        failPutOf: 'files/bafyb',
+        failPutWith: failure
+      });
+      const error = await runProfileSiteExportJob(event, context, deps).catch(
+        (e) => e
+      );
+      expect(error).toBeInstanceOf(ProfileSiteExportNetworkError);
+      expect(error.message).toMatch(
+        new RegExp(
+          `^A network call failed while running the export: ${code}\\.`
+        )
+      );
+      expect(error.message).not.toMatch(/refused|example\.invalid/);
+    }
+  );
+
+  it("passes the export's own refusals through as they are", async () => {
+    const { deps } = setup({ snapshotAt: T - 1_000 });
+    const error = await runProfileSiteExportJob(event, context, deps).catch(
+      (e) => e
+    );
+    expect(error).toBeInstanceOf(ProfileSiteExportSnapshotError);
+    expect(error.message).toMatch(/before the freeze/);
+  });
+
+  it('writes no manifest when an upload fails, and still closes the snapshot', async () => {
+    const { deps, order, close } = setup({ failPutOf: 'files/bafyb' });
+    await expect(runProfileSiteExportJob(event, context, deps)).rejects.toThrow(
+      'upload failed'
+    );
+    expect(order.some((key) => key.includes('manifest'))).toBe(false);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps an earlier run’s pointer unless told to replace it', async () => {
+    const { deps, bodies } = setup();
+    const first = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    const second = (await runProfileSiteExportJob(
+      event,
+      { ...context, awsRequestId: 'bcdef123-4567' },
+      deps
+    )) as ProfileSiteExportResult;
+    expect(second.usable).toBe(true);
+    expect(second.pointerKey).toBeNull();
+    expect(second.presignedPointerUrl).toBeNull();
+    expect(second.pointerError).toMatch(
+      /already names an earlier run for this freeze, and was kept.*replacePointer: true/
+    );
+    expect(JSON.parse(bodies.get(POINTER)!).prefix).toBe(first.prefix);
+    const third = (await runProfileSiteExportJob(
+      { ...event, replacePointer: true },
+      { ...context, awsRequestId: 'cdef1234-5678' },
+      deps
+    )) as ProfileSiteExportResult;
+    expect(third.pointerKey).toBe(POINTER);
+    expect(third.pointerError).toBeNull();
+    expect(JSON.parse(bodies.get(POINTER)!)).toMatchObject({
+      prefix: third.prefix,
+      manifest_sha256: third.manifestSha256
+    });
+    expect(JSON.parse(bodies.get(third.manifestKey)!).replace_pointer).toBe(
+      true
+    );
+  });
+
+  it('reports the pointer as written when only its answer was lost', async () => {
+    const { deps, bodies } = setup({ pointerAnswerLost: true });
+    const result = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.pointerKey).toBe(POINTER);
+    expect(result.pointerError).toBeNull();
+    expect(result.presignedPointerUrl).not.toBeNull();
+    expect(JSON.parse(bodies.get(POINTER)!)).toMatchObject({
+      prefix: result.prefix,
+      manifest_sha256: result.manifestSha256
+    });
+  });
+
+  it('reports a conflict when the pointer names this prefix with another manifest', async () => {
+    const { deps, bodies } = setup();
+    bodies.set(
+      POINTER,
+      JSON.stringify({
+        prefix:
+          'profile-site-export/staging/2026-11-24T00-06-01-000Z-abcdef12/',
+        manifest_sha256: '0'.repeat(64)
+      })
+    );
+    const result = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.prefix).toBe(
+      'profile-site-export/staging/2026-11-24T00-06-01-000Z-abcdef12/'
+    );
+    expect(result.pointerKey).toBeNull();
+    expect(result.pointerError).toMatch(/already names an earlier run/);
+  });
+
+  it('says so when a refused pointer write cannot be read back', async () => {
+    const { deps, bodies } = setup({ getFails: true });
+    bodies.set(POINTER, '{"prefix":"profile-site-export/staging/other/"}');
+    const result = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.usable).toBe(true);
+    expect(result.pointerKey).toBeNull();
+    expect(result.pointerError).toMatch(
+      /reading it back failed \(Error\): whether it names this run is unknown\. Ask for links by frozenAt: if their prefix is this run's/
+    );
+    expect(result.pointerError).not.toMatch(/already names an earlier run/);
+  });
+
+  it('says so when a refused pointer is then not there to read', async () => {
+    const { deps, bodies, send } = setup();
+    bodies.set(POINTER, '{}');
+    const get = send.getMockImplementation()!;
+    send.mockImplementation(async (command: any) => {
+      // Gone again by the time it is read back.
+      if (command instanceof GetObjectCommand) bodies.delete(POINTER);
+      return get(command);
+    });
+    const result = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.pointerError).toMatch(
+      /reading it back failed \(it is missing\)/
+    );
+  });
+
+  it('keeps a whole run when only the pointer fails, and says so', async () => {
+    const { deps, order } = setup({ failPutOf: POINTER });
+    const result = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.manifestKey).toBe(`${result.prefix}manifest.json`);
+    expect(order).toContain(result.manifestKey);
+    expect(result.pointerKey).toBeNull();
+    // Its name only: the message stays in the log.
+    expect(result.pointerError).toBe(
+      "The pointer write failed: Error. Its message is in the function's log."
+    );
+    expect(order.some((key) => key.includes('by-freeze'))).toBe(false);
+    // Without the pointer, the run is found by its prefix.
+    const again = (await runProfileSiteExportJob(
+      { job: 'profileSiteExportLinks', prefix: result.prefix, frozenAt: null },
+      context,
+      deps
+    )) as ProfileSiteExportLinksResult;
+    expect(again.manifestSha256).toBe(result.manifestSha256);
+    await expect(
+      runProfileSiteExportJob(
+        { job: 'profileSiteExportLinks', prefix: null, frozenAt: T },
+        context,
+        deps
+      )
+    ).rejects.toThrow(/No run for that freeze/);
+  });
+
+  it.each([
+    [{ DB_HOST_READ: undefined }],
+    [{ DB_HOST_READ: 'primary-host' }],
+    [{ DB_HOST_READ: ' PRIMARY-HOST ' }]
+  ])('refuses without the read replica (%j)', async (env) => {
+    const { deps, order } = setup({ env });
+    await expect(runProfileSiteExportJob(event, context, deps)).rejects.toThrow(
+      /read replica/
+    );
+    expect(deps.openSnapshot).not.toHaveBeenCalled();
+    expect(order).toEqual([]);
+  });
+
+  it('refuses a bucket that does not block all public access', async () => {
+    const { deps, order } = setup({ publicBlock: false });
+    await expect(runProfileSiteExportJob(event, context, deps)).rejects.toThrow(
+      /public access/
+    );
+    expect(deps.openSnapshot).not.toHaveBeenCalled();
+    expect(order).toEqual([]);
+  });
+
+  it('names an unusable run manifest.unusable.json, never manifest.json', async () => {
+    const { deps, bodies, order } = setup({ unavailable: true });
+    const result = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.usable).toBe(false);
+    expect(result.unavailableProfiles).toBe(1);
+    expect(result.manifestKey).toBe(`${result.prefix}manifest.unusable.json`);
+    expect(order.some((key) => key.endsWith('/manifest.json'))).toBe(false);
+    expect(result.pointerKey).toBeNull();
+    expect(JSON.parse(bodies.get(result.manifestKey)!).usable).toBe(false);
+    const again = (await runProfileSiteExportJob(
+      { job: 'profileSiteExportLinks', prefix: result.prefix, frozenAt: null },
+      context,
+      deps
+    )) as ProfileSiteExportLinksResult;
+    expect(again.manifestKey).toBe(result.manifestKey);
+  });
+
+  it('puts a one-profile run in its own prefix with manifest.partial.json', async () => {
+    const { deps, bodies } = setup();
+    const result = (await runProfileSiteExportJob(
+      { ...event, profile: 'profile-a' },
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.prefix).toMatch(/-abcdef12-profile-profile-a\/$/);
+    expect(result.manifestKey).toBe(`${result.prefix}manifest.partial.json`);
+    expect(result.usable).toBe(false);
+    expect(result.pointerKey).toBeNull();
+    expect(result.scope).toEqual({ profile: 'profile-a', publicApi: null });
+    expect(JSON.parse(bodies.get(result.manifestKey)!).scope).toEqual({
+      profile: 'profile-a',
+      publicApi: null
+    });
+  });
+
+  it.each([
+    ['before the freeze', T - 1_000, null, /before the freeze/],
+    ['91 minutes after it', T + 91 * 60_000, null, /over the 90-minute limit/],
+    ['3 hours after, allowed 120', T + 180 * 60_000, 120, /120-minute/]
+  ])(
+    'refuses a snapshot %s, and writes nothing',
+    async (_name, snapshotAt, accept, message) => {
+      const { deps, order, close } = setup({ snapshotAt });
+      await expect(
+        runProfileSiteExportJob(
+          { ...event, acceptSnapshotGapMinutes: accept },
+          context,
+          deps
+        )
+      ).rejects.toThrow(message);
+      expect(order).toEqual([]);
+      expect(close).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('accepts a later snapshot when the gap is allowed', async () => {
+    const { deps } = setup({ snapshotAt: T + 180 * 60_000 });
+    const result = (await runProfileSiteExportJob(
+      { ...event, acceptSnapshotGapMinutes: 200 },
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.snapshotGapSeconds).toBe(180 * 60);
+  });
+
+  it('stops with its progress between profiles when time runs short', async () => {
+    const { deps, order, close } = setup();
+    // Plenty before the fetches; short after the first profile.
+    const left = [120_000, 120_000, 30_000];
+    const error = await runProfileSiteExportJob(
+      event,
+      { ...context, getRemainingTimeInMillis: () => left.shift() ?? 0 },
+      deps
+    ).catch((e) => e);
+    expect(error).toBeInstanceOf(ProfileSiteExportDeadlineError);
+    expect(error).toMatchObject({ done: 1, total: 2 });
+    expect(error.message).toMatch(/1\/2 profiles/);
+    expect(order.some((key) => key.includes('manifest'))).toBe(false);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops before fetching a stored record when time runs short', async () => {
+    const { deps, exportProfile, verify, sleep } = setup();
+    const left = [120_000, 10_000];
+    const error = await runProfileSiteExportJob(
+      event,
+      { ...context, getRemainingTimeInMillis: () => left.shift() ?? 0 },
+      deps
+    ).catch((e) => e);
+    expect(error).toBeInstanceOf(ProfileSiteExportDeadlineError);
+    expect(error.message).toMatch(/before fetching a stored record/);
+    expect(exportProfile).toHaveBeenCalledTimes(1);
+    expect(verify).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('stops at a fetch retry when time runs short: the deadline is never retried', async () => {
+    const { deps, verify, order } = setup({ verifyFails: 1 });
+    // The first attempt fails; time runs short before the second.
+    const left = [120_000, 120_000, 10_000];
+    const error = await runProfileSiteExportJob(
+      event,
+      { ...context, getRemainingTimeInMillis: () => left.shift() ?? 0 },
+      deps
+    ).catch((e) => e);
+    expect(error).toBeInstanceOf(ProfileSiteExportDeadlineError);
+    expect(error.message).toMatch(/before fetching a stored record/);
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(order.some((key) => key.includes('manifest'))).toBe(false);
+  });
+
+  it('stops before the public API check when time runs short', async () => {
+    const { deps } = setup();
+    const left = [120_000, 120_000, 120_000, 120_000, 10_000];
+    const error = await runProfileSiteExportJob(
+      { ...event, publicApi: 'https://api.example' },
+      { ...context, getRemainingTimeInMillis: () => left.shift() ?? 0 },
+      deps
+    ).catch((e) => e);
+    expect(error).toBeInstanceOf(ProfileSiteExportDeadlineError);
+    expect(error.message).toMatch(/before the public API check/);
+    expect(deps.getJson).not.toHaveBeenCalled();
+  });
+
+  it('keeps the run error when closing the snapshot also fails', async () => {
+    const { deps } = setup({ failPutOf: 'files/bafyb', closeFails: true });
+    await expect(runProfileSiteExportJob(event, context, deps)).rejects.toThrow(
+      'upload failed'
+    );
+  });
+
+  it('finishes when only the closing rollback fails after a full read', async () => {
+    const { deps } = setup({ closeFails: true });
+    const result = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.usable).toBe(true);
+  });
+
+  it('gives fresh links for an earlier run from its manifest', async () => {
+    const { deps, bodies } = setup();
+    const first = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    const again = (await runProfileSiteExportJob(
+      { job: 'profileSiteExportLinks', prefix: first.prefix, frozenAt: null },
+      context,
+      deps
+    )) as ProfileSiteExportLinksResult;
+    expect(again).toMatchObject({
+      job: 'profileSiteExportLinks',
+      bucket: BUCKET,
+      manifestKey: first.manifestKey,
+      manifestSha256: first.manifestSha256,
+      pointerKey: null,
+      presignedPointerUrl: null
+    });
+    const links = JSON.parse(bodies.get(again.linksKey)!);
+    expect(Object.keys(links.links)).toContain('files/bafyshared');
+    expect(Object.keys(links.links)).toContain('manifest.json');
+    // Beside the run's folder: the folder keeps only what its manifest lists.
+    expect(again.linksKey).toMatch(
+      /^profile-site-export\/staging\/renewed-links\/2026-11-24T00-06-01-000Z-abcdef12\/links-.+\.json$/
+    );
+    expect(again.linksBytes).toBe(
+      Buffer.byteLength(bodies.get(again.linksKey)!)
+    );
+    const listed = JSON.parse(bodies.get(first.manifestKey)!).files.map(
+      (f: { name: string }) => first.prefix + f.name
+    );
+    const inRun = Array.from(bodies.keys()).filter((key) =>
+      key.startsWith(first.prefix)
+    );
+    expect(inRun.sort()).toEqual([...listed, first.manifestKey].sort());
+  });
+
+  it('finds the run for fresh links through its freeze', async () => {
+    const { deps } = setup();
+    const first = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    const again = (await runProfileSiteExportJob(
+      { job: 'profileSiteExportLinks', prefix: null, frozenAt: T },
+      context,
+      deps
+    )) as ProfileSiteExportLinksResult;
+    expect(again).toMatchObject({
+      prefix: first.prefix,
+      manifestKey: first.manifestKey,
+      manifestSha256: first.manifestSha256,
+      pointerKey: POINTER,
+      presignedPointerUrl: `https://signed/${BUCKET}/${POINTER}?s=21600`
+    });
+    expect(again.linksKey.startsWith(first.prefix)).toBe(false);
+    expect(again.linksKey).toMatch(/\/renewed-links\//);
+  });
+
+  it('refuses fresh links when the manifest no longer matches its pointer', async () => {
+    const { deps, bodies } = setup();
+    const first = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    bodies.set(first.manifestKey, `${bodies.get(first.manifestKey)!}\n`);
+    await expect(
+      runProfileSiteExportJob(
+        { job: 'profileSiteExportLinks', prefix: null, frozenAt: T },
+        context,
+        deps
+      )
+    ).rejects.toThrow(/pointer for that freeze names/);
+  });
+
+  it.each([
+    [false, /that run didn't finish/],
+    [true, /S3 refused the read/]
+  ])(
+    'says plainly when an earlier run has no manifest (read denied: %s)',
+    async (getDenied, message) => {
+      const { deps } = setup({ getDenied });
+      await expect(
+        runProfileSiteExportJob(
+          {
+            job: 'profileSiteExportLinks',
+            prefix: 'profile-site-export/staging/missing/',
+            frozenAt: null
+          },
+          context,
+          deps
+        )
+      ).rejects.toThrow(message);
+    }
+  );
+});

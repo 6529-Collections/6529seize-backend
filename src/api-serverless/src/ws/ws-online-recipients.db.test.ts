@@ -151,7 +151,6 @@ describeWithSeed(
   () => {
     const service = new UserGroupsService(
       new UserGroupsDb(() => sqlExecutor),
-      mock(),
       mock()
     );
     const repo = new WsConnectionRepository(

@@ -31,6 +31,23 @@ describe('mapWaveToApiWaveMin', () => {
     };
   }
 
+  it('says whether the wave stays on 6529.io', () => {
+    const map = (staysOnSite: boolean) =>
+      mapWaveToApiWaveMin({
+        wave: wave(),
+        displayByWaveId: {},
+        groupIdsUserIsEligibleFor: [],
+        noRightToVote: false,
+        noRightToParticipate: false,
+        pinned: false,
+        identityWave: false,
+        authenticatedProfileId: null,
+        staysOnSite
+      }).stays_on_site;
+    expect(map(true)).toBe(true);
+    expect(map(false)).toBe(false);
+  });
+
   it('sets authenticated_user_admin when the authenticated user created the wave', () => {
     const mapped = mapWaveToApiWaveMin({
       wave: wave(),
@@ -40,7 +57,8 @@ describe('mapWaveToApiWaveMin', () => {
       noRightToParticipate: false,
       pinned: false,
       identityWave: false,
-      authenticatedProfileId: 'creator'
+      authenticatedProfileId: 'creator',
+      staysOnSite: false
     });
 
     expect(mapped.authenticated_user_admin).toBe(true);
@@ -59,7 +77,8 @@ describe('mapWaveToApiWaveMin', () => {
         noRightToParticipate: false,
         pinned: false,
         identityWave: false,
-        authenticatedProfileId: 'viewer'
+        authenticatedProfileId: 'viewer',
+        staysOnSite: false
       });
 
     expect(map(true)).toMatchObject({
@@ -94,7 +113,8 @@ describe('mapWaveToApiWaveMin', () => {
       noRightToParticipate: false,
       pinned: false,
       identityWave: false,
-      authenticatedProfileId: 'creator'
+      authenticatedProfileId: 'creator',
+      staysOnSite: false
     });
 
     expect(mapped.voting_credit_nfts).toEqual([

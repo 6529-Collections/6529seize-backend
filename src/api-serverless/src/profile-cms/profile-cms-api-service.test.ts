@@ -49,6 +49,14 @@ import {
   PROFILE_CMS_FIXTURE_ZERO_HASH
 } from '@/tests/fixtures/profile-cms-package.fixture';
 import type { IdentityFetcher } from '@/api/identities/identity.fetcher';
+import {
+  cmsCidFromBytes,
+  cmsCidFromHash
+} from '@/profile-cms/chain/profile-cms-cid';
+import {
+  aSignedProfileSite,
+  InMemoryProfileCmsChain
+} from '@/tests/fixtures/profile-cms-chain.fixture';
 
 type PackagesDbMock = Pick<
   ProfileCmsPackagesDb,
@@ -74,6 +82,7 @@ type PackagesDbMock = Pick<
   | 'supersedePrimaryForProfile'
   | 'executeNativeQueriesInTransaction'
   | 'updateStorageReceipt'
+  | 'recordPublication'
 >;
 
 type ArweaveUploaderMock = Pick<
@@ -134,7 +143,8 @@ describe('ProfileCmsApiService', () => {
       markValidating: jest.fn(),
       supersedePrimaryForProfile: jest.fn(),
       executeNativeQueriesInTransaction: jest.fn(),
-      updateStorageReceipt: jest.fn()
+      updateStorageReceipt: jest.fn(),
+      recordPublication: jest.fn()
     };
     pointerEventsDb = {
       insert: jest.fn(),
@@ -1995,6 +2005,331 @@ describe('ProfileCmsApiService', () => {
     });
     expect(result.pointer_events[0]).toHaveProperty('signature', '0xsignature');
     expect(result.pointer_events[0]).not.toHaveProperty('typed_data');
+  });
+
+  it('signs a publication for the chain without moving the pointer when profile sites follow the chain', async () => {
+    const chain = new InMemoryProfileCmsChain();
+    const chainService = new ProfileCmsApiService(
+      packagesDb as unknown as ProfileCmsPackagesDb,
+      identityFetcher as unknown as IdentityFetcher,
+      pointerEventsDb as unknown as ProfileCmsPointerEventsDb,
+      publishSignaturesDb as unknown as ProfileCmsPublishSignaturesDb,
+      new ProfileCmsStorageReceiptVerifier(),
+      publishSignatureVerifier,
+      arweaveUploader as unknown as ArweaveFileUploader,
+      publicationStorage,
+      {
+        isIdentityFreezeOn: () => false,
+        isProfileCmsChainPointerEnabled: () => true
+      },
+      () => chain
+    );
+    const publicationCid = cmsCidFromBytes(Buffer.from('{}'));
+    const draft = createEntity();
+    const signed = createEntity({
+      id: draft.id,
+      publication_cid: publicationCid
+    });
+    packagesDb.findById
+      .mockResolvedValueOnce(draft)
+      .mockResolvedValueOnce(signed);
+    packagesDb.findByIdForUpdate.mockResolvedValue(draft);
+    packagesDb.findPrimaryPublishedByProfileId.mockResolvedValue(null);
+
+    const result = await chainService.publish(
+      draft.id,
+      {
+        expected_package_hash: draft.package_hash,
+        expected_payload_hash: draft.payload_hash,
+        ...publishSignatureRequest()
+      },
+      ownerContext()
+    );
+
+    expect(packagesDb.recordPublication).toHaveBeenCalledWith(
+      draft.id,
+      publicationCid,
+      expect.objectContaining({ provider: 'arweave' }),
+      expect.any(Number),
+      expect.objectContaining({ connection: expect.any(Object) })
+    );
+    expect(
+      await chain.getDocBytes(cmsCidFromHash(draft.package_hash))
+    ).not.toBeNull();
+    expect(await chain.getDocBytes(publicationCid)).toEqual(Buffer.from('{}'));
+    expect(packagesDb.markPublished).not.toHaveBeenCalled();
+    expect(packagesDb.supersedePrimaryForProfile).not.toHaveBeenCalled();
+    expect(publishSignaturesDb.insertConsumed).not.toHaveBeenCalled();
+    expect(pointerEventsDb.insert).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      id: draft.id,
+      status: 'draft',
+      publication_cid: publicationCid
+    });
+  });
+
+  describe('a rollback with profile sites on the chain', () => {
+    const site = aSignedProfileSite({
+      draftId: 'draft-old',
+      profileId: PROFILE_CMS_FIXTURE_PROFILE_ID,
+      handle: PROFILE_CMS_FIXTURE_HANDLE
+    });
+    const other = aSignedProfileSite({
+      draftId: 'draft-other',
+      title: 'Other',
+      profileId: PROFILE_CMS_FIXTURE_PROFILE_ID,
+      handle: PROFILE_CMS_FIXTURE_HANDLE
+    });
+
+    function rollbackService(chain: InMemoryProfileCmsChain) {
+      return new ProfileCmsApiService(
+        packagesDb as unknown as ProfileCmsPackagesDb,
+        identityFetcher as unknown as IdentityFetcher,
+        pointerEventsDb as unknown as ProfileCmsPointerEventsDb,
+        publishSignaturesDb as unknown as ProfileCmsPublishSignaturesDb,
+        new ProfileCmsStorageReceiptVerifier(),
+        publishSignatureVerifier,
+        arweaveUploader as unknown as ArweaveFileUploader,
+        publicationStorage,
+        {
+          isIdentityFreezeOn: () => false,
+          isProfileCmsChainPointerEnabled: () => true
+        },
+        () => chain,
+        () => ({
+          hasContractCode: async () => false,
+          isValidSignature: async () => false
+        })
+      );
+    }
+
+    function earlierVersion(publicationCid: string | null) {
+      return createEntity({
+        id: 'draft-old',
+        status: ProfileCmsPackageStatus.SUPERSEDED,
+        is_primary: false,
+        published_at: 5,
+        production_valid: true,
+        cms_package: site.cmsPackage,
+        payload_hash: site.cmsPackage.integrity.payload_hash,
+        package_hash: site.packageHash,
+        publication_cid: publicationCid
+      });
+    }
+
+    async function refusal(promise: Promise<unknown>) {
+      const error = await promise.then(
+        () => null,
+        (caught: unknown) => caught
+      );
+      expect(error).toBeInstanceOf(CustomApiCompliantException);
+      return error as CustomApiCompliantException;
+    }
+
+    it('sends a version the index would accept to the chain', async () => {
+      const chain = new InMemoryProfileCmsChain();
+      chain.addSite(site);
+      packagesDb.findById.mockResolvedValue(
+        earlierVersion(site.publicationCid)
+      );
+      const error = await refusal(
+        rollbackService(chain).rollbackPrimary(
+          'draft-old',
+          { expected_current_package_id: null },
+          ownerContext()
+        )
+      );
+      expect(error.getStatusCode()).toBe(409);
+      expect(error.code).toBe('cms_pointer_on_chain');
+      expect(packagesDb.markPrimary).not.toHaveBeenCalled();
+    });
+
+    it('refuses, before any signature, a version the index would refuse', async () => {
+      const chain = new InMemoryProfileCmsChain();
+      chain.addSite(site);
+      chain.addSite(other);
+      for (const publicationCid of [null, other.publicationCid]) {
+        packagesDb.findById.mockResolvedValue(earlierVersion(publicationCid));
+        const error = await refusal(
+          rollbackService(chain).rollbackPrimary(
+            'draft-old',
+            { expected_current_package_id: null },
+            ownerContext()
+          )
+        );
+        expect(error.getStatusCode()).toBe(422);
+        expect(error.code).toBe('cms_rollback_target_refused');
+      }
+    });
+
+    it('refuses a version published under a former handle, before the file check', async () => {
+      const chain = new InMemoryProfileCmsChain();
+      chain.addSite(site);
+      const getDocBytes = jest.spyOn(chain, 'getDocBytes');
+      packagesDb.findById.mockResolvedValue(
+        earlierVersion(site.publicationCid)
+      );
+      identityFetcher.getIdentityAndConsolidationsByIdentityKey.mockResolvedValue(
+        {
+          id: PROFILE_CMS_FIXTURE_PROFILE_ID,
+          handle: 'renamedprofile',
+          primary_wallet: publishSignatureRequest().signer_address
+        } as never
+      );
+      const error = await refusal(
+        rollbackService(chain).rollbackPrimary(
+          'draft-old',
+          { expected_current_package_id: null },
+          ownerContext()
+        )
+      );
+      expect(error.getStatusCode()).toBe(409);
+      expect(error.code).toBe('cms_profile_changed');
+      expect(getDocBytes).not.toHaveBeenCalled();
+    });
+
+    it('asks to try again when the files can not be read now', async () => {
+      const chain = new InMemoryProfileCmsChain();
+      packagesDb.findById.mockResolvedValue(
+        earlierVersion(site.publicationCid)
+      );
+      const error = await refusal(
+        rollbackService(chain).rollbackPrimary(
+          'draft-old',
+          { expected_current_package_id: null },
+          ownerContext()
+        )
+      );
+      expect(error.getStatusCode()).toBe(503);
+      expect(error.code).toBe('cms_check_unavailable');
+    });
+  });
+
+  describe('a second publish of a draft already signed for the chain', () => {
+    function chainService(chain = new InMemoryProfileCmsChain()) {
+      return new ProfileCmsApiService(
+        packagesDb as unknown as ProfileCmsPackagesDb,
+        identityFetcher as unknown as IdentityFetcher,
+        pointerEventsDb as unknown as ProfileCmsPointerEventsDb,
+        publishSignaturesDb as unknown as ProfileCmsPublishSignaturesDb,
+        new ProfileCmsStorageReceiptVerifier(),
+        publishSignatureVerifier,
+        arweaveUploader as unknown as ArweaveFileUploader,
+        publicationStorage,
+        {
+          // Freeze settings left on after the switch don't block it.
+          isIdentityFreezeOn: () => true,
+          isProfileCmsChainPointerEnabled: () => true
+        },
+        () => chain
+      );
+    }
+
+    it('returns the stored record without signing or uploading again', async () => {
+      const publicationCid = cmsCidFromBytes(Buffer.from('{}'));
+      const signed = createEntity({ publication_cid: publicationCid });
+      packagesDb.findById.mockResolvedValue(signed);
+      const putDocBytes = jest.fn();
+      const chain = new InMemoryProfileCmsChain();
+      chain.putDocBytes = putDocBytes;
+
+      const result = await chainService(chain).publish(
+        signed.id,
+        {
+          expected_package_hash: signed.package_hash,
+          expected_payload_hash: signed.payload_hash,
+          ...publishSignatureRequest()
+        },
+        ownerContext()
+      );
+
+      expect(result).toMatchObject({
+        id: signed.id,
+        status: 'draft',
+        publication_cid: publicationCid
+      });
+      expect(publishSignatureVerifier).not.toHaveBeenCalled();
+      expect(putDocBytes).not.toHaveBeenCalled();
+      expect(packagesDb.recordPublication).not.toHaveBeenCalled();
+    });
+
+    it('refuses a published or superseded package whose publication_cid the import filled', async () => {
+      for (const status of [
+        ProfileCmsPackageStatus.SUPERSEDED,
+        ProfileCmsPackageStatus.PUBLISHED
+      ]) {
+        const imported = createEntity({
+          status,
+          is_primary: false,
+          published_at: 5,
+          publication_cid: cmsCidFromBytes(Buffer.from('{}'))
+        });
+        packagesDb.findById.mockResolvedValue(imported);
+        const putDocBytes = jest.fn();
+        const chain = new InMemoryProfileCmsChain();
+        chain.putDocBytes = putDocBytes;
+
+        await expect(
+          chainService(chain).publish(
+            imported.id,
+            {
+              expected_package_hash: imported.package_hash,
+              expected_payload_hash: imported.payload_hash,
+              ...publishSignatureRequest()
+            },
+            ownerContext()
+          )
+        ).rejects.toThrow('Only draft CMS packages can be published');
+        expect(putDocBytes).not.toHaveBeenCalled();
+        expect(packagesDb.recordPublication).not.toHaveBeenCalled();
+      }
+    });
+
+    it('still checks the hashes the request expects', async () => {
+      const signed = createEntity({
+        publication_cid: cmsCidFromBytes(Buffer.from('{}'))
+      });
+      packagesDb.findById.mockResolvedValue(signed);
+
+      await expect(
+        chainService().publish(
+          signed.id,
+          {
+            expected_package_hash: `sha256:${'e'.repeat(64)}`,
+            expected_payload_hash: signed.payload_hash,
+            ...publishSignatureRequest()
+          },
+          ownerContext()
+        )
+      ).rejects.toThrow();
+      expect(packagesDb.recordPublication).not.toHaveBeenCalled();
+    });
+
+    it('keeps the record a concurrent click stored first', async () => {
+      const draft = createEntity();
+      const stored = createEntity({
+        id: draft.id,
+        publication_cid: cmsCidFromBytes(Buffer.from('{"first":true}'))
+      });
+      packagesDb.findById
+        .mockResolvedValueOnce(draft)
+        .mockResolvedValueOnce(stored);
+      packagesDb.findByIdForUpdate.mockResolvedValue(stored);
+      packagesDb.findPrimaryPublishedByProfileId.mockResolvedValue(null);
+
+      const result = await chainService().publish(
+        draft.id,
+        {
+          expected_package_hash: draft.package_hash,
+          expected_payload_hash: draft.payload_hash,
+          ...publishSignatureRequest()
+        },
+        ownerContext()
+      );
+
+      expect(packagesDb.recordPublication).not.toHaveBeenCalled();
+      expect(result.publication_cid).toBe(stored.publication_cid);
+    });
   });
 });
 

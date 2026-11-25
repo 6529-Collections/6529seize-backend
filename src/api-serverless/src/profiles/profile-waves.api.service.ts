@@ -1,5 +1,6 @@
 import { ForbiddenException, NotFoundException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
+import { assertIdentityNotFrozenAtCommit } from '@/identity-freeze/identity-freeze';
 import { ApiIdentity } from '@/api/generated/models/ApiIdentity';
 import { ApiProfileWave } from '@/api/generated/models/ApiProfileWave';
 import { ApiSetProfileWaveRequest } from '@/api/generated/models/ApiSetProfileWaveRequest';
@@ -32,6 +33,7 @@ export class ProfileWavesApiService {
   ): Promise<ApiIdentity> {
     return await profileWavesDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        assertIdentityNotFrozenAtCommit(connection);
         const txCtx = { ...ctx, connection };
         const profileId = await this.assertCanManageProfileWave(
           identityKey,
@@ -85,6 +87,7 @@ export class ProfileWavesApiService {
   ): Promise<ApiIdentity> {
     return await profileWavesDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        assertIdentityNotFrozenAtCommit(connection);
         const txCtx = { ...ctx, connection };
         const profileId = await this.assertCanManageProfileWave(
           identityKey,
