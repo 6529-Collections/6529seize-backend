@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
   Private bucket for the 6529 chain exports (dbDumpsDaily jobs): the profile
-  site export and the identity export. No public access, no CDN origin, objects
-  expire after 30 days. Created once per account and region with
+  site export, the identity export and the waves export. No public access, no
+  CDN origin, objects expire after 30 days. Created once per account and region with
   administrative credentials; the deployment roles can't create buckets.
 
 Resources:
@@ -78,6 +78,18 @@ Resources:
             Resource:
               - !Sub '${ChainExportsBucket.Arn}/profile-site-export/*'
               - !Sub '${ChainExportsBucket.Arn}/identity-export/*'
+              - !Sub '${ChainExportsBucket.Arn}/waves-export/*'
+          # The waves export job lists its own prefix only: it checks every
+          # file of a run is there before it hands out links.
+          - Sid: WavesExportList
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:role/lambda-vpc-role'
+            Action: s3:ListBucket
+            Resource: !GetAtt ChainExportsBucket.Arn
+            Condition:
+              StringLike:
+                s3:prefix: 'waves-export/*'
 
 Outputs:
   ChainExportsBucketName:
