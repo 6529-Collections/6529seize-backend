@@ -13,7 +13,10 @@ import { competitionEntrySummaryDb } from '@/competitions/competition-entry-summ
 import { contentModerationDb } from '@/content-moderation/content-moderation.db';
 import { dropsDb } from '@/drops/drops.db';
 import { RequestContext } from '@/request.context';
-import { toApiCompetition, toApiEntryPage } from './competition-api.mapper';
+import {
+  toApiCompetitionInScope,
+  toApiEntryPage
+} from './competition-api.mapper';
 
 type BatchSummary = Awaited<ReturnType<typeof competitionEntrySummaryDb.read>>;
 type Profiles = Awaited<ReturnType<typeof identityFetcher.getOverviewsByIds>>;
@@ -144,7 +147,7 @@ export async function readCompetitionEntryContexts(
       .map((drop) => drop.id)
   );
   const visible = entries.filter((entry) => visibleDrops.has(entry.drop_id));
-  const apiCompetition = toApiCompetition(competition);
+  const apiCompetition = await toApiCompetitionInScope(competition, ctx);
   if (!visible.length) return { competition: apiCompetition, data: [] };
   const visibleDropEntities = drops.filter((drop) => visibleDrops.has(drop.id));
   const additionalActionByDrop = new Map(

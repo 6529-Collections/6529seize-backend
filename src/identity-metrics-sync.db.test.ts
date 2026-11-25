@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import {
+  CONSOLIDATED_WALLETS_TDH_TABLE,
   IDENTITIES_TABLE,
   IDENTITY_TDH_SYNC_STATE_TABLE,
   RATINGS_TABLE
@@ -221,6 +222,64 @@ describeWithSeed(
         expect(await readWaveSubscriberCounts()).toEqual(reference.waves);
       }
     );
+
+    it('from switch-on merges no identities and writes only tdh and basetdh_rate', async () => {
+      const original = process.env.FEATURE_IDENTITY_ON_CHAIN;
+      process.env.FEATURE_IDENTITY_ON_CHAIN = 'true';
+      try {
+        const seeded = await readIdentities();
+        await markPending();
+
+        await expect(syncIdentitiesAfterTdh({ chunkRows: 3 })).resolves.toBe(
+          'SYNCED'
+        );
+
+        const after = await readIdentities();
+        const kept = (rows: IdentityRow[]) =>
+          rows.map((row) => [
+            row.consolidation_key,
+            row.profile_id,
+            Number(row.rep),
+            Number(row.cic),
+            Number(row.level_raw)
+          ]);
+        // No merge or split, and the mirror's columns stay as they were.
+        expect(kept(after)).toEqual(kept(seeded));
+        const tdh = await sqlExecutor.execute<{
+          consolidation_key: string;
+          tdh: number;
+          basetdh_rate: number;
+        }>(
+          `select i.consolidation_key,
+                  coalesce(c.boosted_tdh, 0) as tdh,
+                  coalesce(c.boosted_tdh_rate, 0) as basetdh_rate
+           from ${IDENTITIES_TABLE} i
+           left join ${CONSOLIDATED_WALLETS_TDH_TABLE} c
+             on c.consolidation_key = i.consolidation_key
+           order by i.consolidation_key asc`
+        );
+        expect(
+          after.map((row) => [
+            row.consolidation_key,
+            Number(row.tdh),
+            Number(row.basetdh_rate)
+          ])
+        ).toEqual(
+          tdh.map((row) => [
+            row.consolidation_key,
+            Number(row.tdh),
+            Number(row.basetdh_rate)
+          ])
+        );
+        expect(
+          after.some((row, i) => Number(row.tdh) !== Number(seeded[i].tdh))
+        ).toBe(true);
+      } finally {
+        if (original === undefined)
+          delete process.env.FEATURE_IDENTITY_ON_CHAIN;
+        else process.env.FEATURE_IDENTITY_ON_CHAIN = original;
+      }
+    });
 
     it('splits chunks by the inlined profile id budget', async () => {
       const result = await identityMetricsSync.syncAll({

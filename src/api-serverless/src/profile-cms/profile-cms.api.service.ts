@@ -1,4 +1,7 @@
 import { DbPoolName } from '@/db-query.options';
+import { beforeCommit } from '@/db/after-commit';
+import { isIdentityFreezeConfigured } from '@/identity-freeze/identity-freeze';
+import type { ConnectionWrapper } from '@/sql-executor';
 import { ProfileCmsChainPort } from '@/profile-cms/chain/profile-cms-chain.port';
 import { createProfileCmsChainPort } from '@/profile-cms/chain/profile-cms-chain-port.factory';
 import { pinnedEip1271Verifier } from '@/profile-cms/chain/profile-cms-eip1271-pinned';
@@ -261,6 +264,21 @@ export class ProfileCmsApiService {
         "Profile sites can't change while profiles move to the 6529 Network."
       );
     }
+  }
+
+  /**
+   * The same check as the last step of the write's transaction, right before
+   * its COMMIT: a publish, rollback, unpublish or archive let in just before
+   * the freeze can wait on a lock and commit after it otherwise. With no
+   * freeze setting at all it isn't registered.
+   */
+  private assertNotFrozenAtCommit(connection: ConnectionWrapper<any>): void {
+    if (!isIdentityFreezeConfigured()) {
+      return;
+    }
+    beforeCommit(connection, 'profile-cms-freeze', () =>
+      this.assertNotFrozen()
+    );
   }
 
   /**
@@ -584,6 +602,7 @@ export class ProfileCmsApiService {
     );
     await this.packagesDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        this.assertNotFrozenAtCommit(connection);
         const txCtx: RequestContext = { ...ctx, connection };
         const lockedHandle = await this.packagesDb.lockProfilePackagesForUpdate(
           entity.profile_id,
@@ -970,6 +989,7 @@ export class ProfileCmsApiService {
 
     await this.packagesDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        this.assertNotFrozenAtCommit(connection);
         const txCtx: RequestContext = { ...ctx, connection };
         const lockedHandle = await this.packagesDb.lockProfilePackagesForUpdate(
           target.profile_id,
@@ -1061,6 +1081,7 @@ export class ProfileCmsApiService {
     }
     await this.packagesDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        this.assertNotFrozenAtCommit(connection);
         const txCtx = { ...ctx, connection };
         await this.packagesDb.lockProfilePackagesForUpdate(
           entity.profile_id,
@@ -1129,6 +1150,7 @@ export class ProfileCmsApiService {
     const actorProfileId = this.getLoggedInProfileId(ctx.authenticationContext);
     await this.packagesDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        this.assertNotFrozenAtCommit(connection);
         const txCtx: RequestContext = { ...ctx, connection };
         const lockedEntity = await this.packagesDb.findByIdForUpdate(
           entity.id,

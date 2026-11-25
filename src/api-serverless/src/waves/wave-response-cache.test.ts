@@ -166,7 +166,10 @@ describe('viewer-state schema drift', () => {
         'parent_wave',
         'has_subwaves',
         'wave_rep',
-        'wave_score'
+        'wave_score',
+        // Per wave, not per viewer: the mapper reads it by wave id
+        // (wavesScopeService.staysForDisplay), the same for every viewer.
+        'stays_on_site'
       ].sort((a, b) => a.localeCompare(b))
     );
   });

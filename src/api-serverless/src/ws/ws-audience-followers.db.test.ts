@@ -161,11 +161,7 @@ describeWithSeed(
   () => {
     const repo = new WsConnectionRepository(
       () => sqlExecutor,
-      new UserGroupsService(
-        new UserGroupsDb(() => sqlExecutor),
-        mock(),
-        mock()
-      ),
+      new UserGroupsService(new UserGroupsDb(() => sqlExecutor), mock()),
       () => false
     );
     const env = process.env.WS_AUDIENCE_FOLLOWERS;

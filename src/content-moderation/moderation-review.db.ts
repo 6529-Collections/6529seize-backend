@@ -1,7 +1,7 @@
 import {
   moderationCaseIdSql,
   moderationCaseWorkSql,
-  moderationNonAdministrativeSql,
+  moderationReviewableChecksSql,
   ModerationReviewCase
 } from './moderation-review-cases';
 import { randomUUID } from 'node:crypto';
@@ -582,7 +582,7 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
   }
   async list(filter: ModerationFilter, ctx: RequestContext = {}) {
     return this.timed('list', ctx, async () => {
-      const clauses = [moderationNonAdministrativeSql()];
+      const clauses = [moderationReviewableChecksSql()];
       const params: Record<string, unknown> = { limit: filter.limit + 1 };
       for (const key of [
         'subject_type',
@@ -734,8 +734,9 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
       (select count(distinct case_id) from (${moderationCaseWorkSql()}) pending_work) needs_review,
       (select count(*) from ${CONTENT_MODERATION_DROP_STATES_TABLE} where status='AI_QUARANTINED') quarantined,
       coalesce(sum(outcome='REJECT' and updated_at>=:today),0) rejected_today,
-      (select count(*) from ${EVALUATIONS} where fallback is not null and started_at>=:today) evaluator_failures_today
-      from ${ITEMS}`,
+      (select count(*) from ${EVALUATIONS} e where e.fallback is not null and e.started_at>=:today
+        and not exists (select 1 from ${ITEMS} i where i.id=e.item_id and i.subject_type='GROUP_NAME')) evaluator_failures_today
+      from ${ITEMS} where subject_type<>'GROUP_NAME'`,
         { today: Math.floor(Date.now() / 86400000) * 86400000 },
         this.options(ctx)
       );

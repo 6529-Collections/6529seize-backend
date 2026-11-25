@@ -44,7 +44,12 @@ export {
   CompetitionPauseEntity,
   CompetitionVoteEntity
 } from './ICompetition';
-export { Consolidation, Delegation, NFTDelegationBlock } from './IDelegation';
+export {
+  Consolidation,
+  Delegation,
+  NFTDelegationBlock,
+  NFTDelegationLogAfterFreeze
+} from './IDelegation';
 export { DeletedDropEntity } from './IDeletedDrop';
 export { Distribution, DistributionNormalized } from './IDistribution';
 export { DistributionPhoto } from './IDistributionPhoto';
@@ -237,6 +242,7 @@ export {
 } from './ITransactionsProcessing';
 export { ConsolidatedTDHUpload, UploadEntity } from './IUpload';
 export { UserGroupEntity } from './IUserGroup';
+export { UserGroupVisibilityRequestEntity } from './IUserGroupVisibilityRequest';
 export { WaveArchiveEntity, WaveEntity } from './IWave';
 export { WalletAuthSessionEntity } from './IWalletAuthSession';
 export type { WalletAuthClientType } from './IWalletAuthSession';
@@ -326,3 +332,19 @@ export { IdentityTdhSyncStateEntity } from './IIdentityTdhSyncState';
 export { IdentityTdhSyncScopeEntity } from './IIdentityTdhSyncScope';
 
 export * from './ICompetitionScoreReset';
+export {
+  ChainPendingOperationEntity,
+  ChainPendingOperationSignerEntity
+} from './IChainPendingOperation';
+export {
+  IdentityChainFirstBindingEntity,
+  IdentityChainFounderWaitEntity,
+  IdentityChainMirrorStateEntity,
+  IdentityChainPrincipalEntity,
+  IdentityChainPlaceholderEntity,
+  IdentityChainRatingCategoryEntity,
+  IdentityChainRatingEventEntity,
+  IdentityChainRatingLedgerEntity,
+  IdentityChainRegroupEntity,
+  IdentityChainWalletEntity
+} from './IIdentityChainMirror';

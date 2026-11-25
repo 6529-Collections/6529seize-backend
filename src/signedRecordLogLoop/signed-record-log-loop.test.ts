@@ -15,6 +15,7 @@ jest.mock('../sentry.context', () => ({
   wrapLambdaHandler: (fn: unknown) => fn
 }));
 
+import { Logger } from '../logging';
 import { handler } from './index';
 
 const run = () => (handler as unknown as () => Promise<void>)();
@@ -34,6 +35,23 @@ describe('signedRecordLogLoop', () => {
     delete process.env.FEATURE_SIGNED_RECORD_LOG;
     await run();
     expect(mockCreateSegmenter).not.toHaveBeenCalled();
+  });
+
+  it('posts and closes nothing when the records wave is none, and says so once', async () => {
+    const info = jest.spyOn(Logger.get('SIGNED_RECORD_LOG_LOOP'), 'info');
+    process.env.FEATURE_SIGNED_RECORD_LOG = 'true';
+    process.env.SIGNED_RECORDS_WAVE_ID = 'none';
+    for (const task of ['close', 'archive']) {
+      process.env.SIGNED_RECORD_LOG_TASK = task;
+      await run();
+    }
+    expect(mockCreateSegmenter).not.toHaveBeenCalled();
+    expect(
+      info.mock.calls.filter(([message]) =>
+        String(message).includes('[RECORDS WAVE: none]')
+      )
+    ).toHaveLength(1);
+    info.mockRestore();
   });
 
   it('closes segments, or archives when told to', async () => {

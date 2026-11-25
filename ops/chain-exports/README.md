@@ -24,8 +24,9 @@ a job the function knows, or it fails. Each export:
     container's environment keeps the secret as it was when the container
     started, so the run doesn't use it: a fix to the secret is seen on the
     next run;
-  - a snapshot less than 2 minutes after the freeze, so the replica has the
-    writes made before it;
+  - a snapshot less than 5 minutes after the freeze, so the replica has the
+    writes made before it, and a write let in before the freeze that waited
+    on a lock (InnoDB waits up to 50 s) has committed or rolled back;
   - a replica as far behind its writer as the gap less 1.5 s, or further.
     The lag comes from this reader's newest row in
     `information_schema.replica_host_status` (`evidence.replicaLagMs`). A
@@ -54,6 +55,10 @@ a job the function knows, or it fails. Each export:
 - returns presigned download links, valid for at most 6 hours.
 
 Each job's own section adds its own rules.
+
+The waves export (`6529 run waves:export`, src/waves-export) runs there too,
+as the `wavesExport` job, with the export's own reading rules rather than
+the list above. See "Waves export" at the end.
 
 The switch owner is the person in charge of the identity switch. Where this
 file leaves something to a decision, such as accepting a refused reading or
@@ -111,7 +116,7 @@ What the run enforces, accepted or not:
   the gap, is refused: a reader dated ahead that stops updating reads that
   way once its lead has run out. An `unreadable` reading is taken on its
   own terms.
-- An age bound is 120000 to 51000000 ms, a lead bound 1740000 to 51000000
+- An age bound is 300000 to 51000000 ms, a lead bound 1740000 to 51000000
   ms: time zones reach 14 hours from UTC, and none is less than 30 minutes
   from it.
 - A rerun that lands on a reader showing another case is refused, as
@@ -122,7 +127,7 @@ What the run enforces, accepted or not:
   whose age can't be trusted but which says the reader is behind by the
   gap less 1.5 s or more is refused. As a stale row's lag never changes,
   run once more, and if that refusal comes back unchanged, report it. Only
-  when the row reports no lag at all does the 2-minute minimum gap alone
+  when the row reports no lag at all does the 5-minute minimum gap alone
   decide. A trusted lag that is simply too large is never accepted: wait a
   few minutes and run again.
 
@@ -173,18 +178,19 @@ name made first in another account would be refused: every call names this
 account as the expected owner.
 
 The bucket policy allows the function role (`lambda-vpc-role`) to read the
-bucket's public access block and policy status, and to put and get objects
-under `profile-site-export/` and `identity-export/`. It denies CloudFront's
-service principal and plain HTTP. Objects expire after 30 days.
+bucket's public access block and policy status, to put and get objects
+under `profile-site-export/`, `identity-export/` and `waves-export/`, and to
+list `waves-export/` only. It denies CloudFront's service principal and
+plain HTTP. Objects expire after 30 days.
 
 In one account, a bucket policy's Allow adds to what an identity's own
 policies grant; it does not narrow them. Identities in the account whose
 own policies allow S3 on every bucket can reach this one too, as with any
 bucket in the account.
 
-The function may not list the bucket, so S3 answers a read of a key that
-doesn't exist with 403 rather than 404. The export reports such a read as
-"no manifest".
+Outside `waves-export/` the function may not list the bucket, so S3
+answers a read of a key that doesn't exist with 403 rather than 404. The
+export reports such a read as "no manifest".
 
 ## The freeze setting, before Monday
 
@@ -283,7 +289,7 @@ Event fields:
 - `rehearsal` (optional, `true`): a timed rehearsal that is never imported.
   Its prefix ends in `-rehearsal`, and its manifest is
   `manifest.unusable.json`. It doesn't require `IDENTITY_FREEZE_AT`, the
-  2-minute gap or the lag check. It reports how it read
+  5-minute gap or the lag check. It reports how it read
   `IDENTITY_FREEZE_AT` (`identityFreezeAtReading`: `unset`, `not_a_time` or
   `time`), and it records site writes after `frozenAt` instead of refusing
   them.
@@ -368,7 +374,7 @@ Check in `out.json`:
 - `replicaLagCase` is `null`: the lag and its row's age could be trusted.
   Otherwise it names the case a real run would refuse on: `unreadable`,
   `dated_ahead` or `older_than_gap`. The rehearsal works it out against the
-  2-minute minimum gap alone, whatever its own `frozenAt`: a gap of
+  5-minute minimum gap alone, whatever its own `frozenAt`: a gap of
   moments would name `older_than_gap` on a healthy reader, and a gap of an
   hour would hide an offset Tuesday will see. Write the name down; it is
   the only one Tuesday may accept.
@@ -430,7 +436,7 @@ with `seconds`.
 
 The staging rehearsal is the same with `--region eu-west-1`.
 
-### Tuesday: the real run, from 00:05 UTC
+### Tuesday: the real run, from 00:07 UTC
 
 ```text
 $env:AWS_MAX_ATTEMPTS='1'
@@ -445,8 +451,8 @@ back to it. `IDENTITY_FREEZE_AT` must be set to the freeze in the
 If the CLI fails without a `FunctionError`, don't run it again: see "If the
 CLI fails".
 
-Start at least 2 minutes after the freeze; 00:05 UTC leaves room. A run
-before 00:02 is refused. Start before 01:30 UTC, or add
+Start at least 5 minutes after the freeze: 00:07 UTC leaves room. A run
+before 00:05 is refused. Start before 01:30 UTC, or add
 `"acceptSnapshotGapMinutes":N`. If the run is refused because the replica
 may be behind, wait a few minutes and run it again. If the refusal says
 the lag can't be read, or its row is dated ahead of UTC or older than the
@@ -513,7 +519,7 @@ time. The manifest and the response record the writes
   neither the response nor the manifest (whose `read.endpoint` is the same
   label); it is only in the function's log, as `[READ REPLICA ...]`.
 - `bucketPrivacy.owner` is the function's own account.
-- `snapshotAt` and `snapshotGapMs`: the snapshot came at least 120 000 ms
+- `snapshotAt` and `snapshotGapMs`: the snapshot came at least 300 000 ms
   after the freeze (`snapshotGapSeconds` is the same, rounded).
 - `evidence.replicaLagMs` plus `evidence.replicaLagAgeMs`, plus 1 500 ms,
   is below `snapshotGapMs`, and `replicaLagCase` and `replicaLagAccepted`
@@ -592,10 +598,12 @@ Anyone with read access to the bucket can also use
 `aws s3 cp --recursive s3://<bucket>/<prefix> ./profile-site-export-<run>/`.
 
 Every `files/<cid>` is at most 2 MiB, the chain's document limit, since each
-becomes a chain document. `cms-fields.json`, `report.json`, `links.json` and
-the manifest are read by the import's builder and by people, never stored on
-the chain, so they have no such limit. `links.json` grows with every file
-and can pass 2 MiB; that is expected.
+becomes a chain document. `cms-fields.json` is read by the import's builder,
+with the `files/`. `report.json` is read by people, and by the identity
+export when its values are made by hand. `links.json` and the manifest are
+read by people and download scripts. None of them is stored on the chain,
+so they have no such limit. `links.json` grows with every file and can pass
+2 MiB; that is expected.
 
 ### Fresh links for an earlier run
 
@@ -703,3 +711,65 @@ again.
   gateways) and an Ethereum RPC for Safe signatures, as the CLI does. So the
   function's VPC subnets need outbound internet access, as the other loops
   that fetch from the network have.
+
+## Waves export
+
+The `wavesExport` job runs the waves export's stages
+(src/dbDumpsDaily/waves-export.handler.ts) through the command line's own
+run, one stage at a time with `--resume`, into the function's /tmp. Each
+invocation works for 12 minutes at most (`workSeconds`), then uploads what
+it finished and answers `{"done": false, "next": ...}`. Invoke it again
+with the same event until it answers `{"done": true, ...}` with its links.
+
+- **Event:** `freezeAt` (the waves freeze) or `rehearsal: true` with `run`
+  (a name of its own); optional `revision`, `waves` (a list of wave ids),
+  `run`, `concurrency`, `pageSize`, `bothMetric`, `allowFailedWaves` and
+  `workSeconds` (60 to 840, default 720). `replicaLagCheckedBy` and
+  `replicaLagCheckNote` are for a person only, as the CLI's options are:
+  the job takes them from the event that gives them and never keeps them.
+- **What it leaves out:** every wave that stays on 6529.io (src/waves-scope:
+  members-only, a direct message, the signed records wave, made after the
+  waves freeze, its chat off with no admin group, a wave that uses a group
+  that stays (hidden, private, a direct message's, made after the freeze,
+  or gone), or a wave under one that stays), whole, with its decisions,
+  entries, votes, wave REP, polls, drops and curations; `export.json` counts
+  them by reason. A rehearsal has no freeze, so nothing counts as made after
+  it. The records wave is `SIGNED_RECORDS_WAVE_ID` from the function's
+  settings, or the event's optional `recordsWaveId`; `"none"` says there is
+  no records wave, and export.json records that. With neither, the export
+  refuses.
+- **Checks, every invocation:** the bucket's privacy, as above; the
+  export's own start time (five minutes after the freeze); and, in every
+  run of a stage, the export's replica lag and read-only checks. The job
+  points the export's DB settings (`DB_HOST`, or `DB_IAM_HOST` in IAM mode)
+  at the read replica's for its runs and puts them back after.
+- **Where:** `waves-export/<stage>/freeze-<freeze>[-<run>]/` or
+  `waves-export/<stage>/rehearsal-<run>/`. `job.json` is the run's state:
+  its inputs, the stages done, and every file uploaded with its size and
+  sha256. `raw/` is the export's OUT/raw, the run log
+  (`raw/export_runs.json`) included, so one freeze per OUT holds across
+  invocations. A file is uploaded whole once the export has put it in
+  place, and is part of the export once `job.json` lists it. A wave's drops
+  file listed there is kept by the next invocation's `--resume`.
+- **When done:** `manifest.json` lists every file with its size and sha256.
+  Each invocation of a finished run writes a new `links-<time>.json`, with
+  a presigned link for every file, and answers with links to the manifest,
+  that links file, `export.json` and the run log, each valid for 6 hours at
+  most. Only the files the manifest lists are the export.
+- **Cut off:** an invocation the function's time limit ends leaves its last
+  saved state; the next invocation goes on from it. After two in a row in
+  one stage with no file finished, the job refuses: the stage, or one
+  wave's drops, takes longer than an invocation, and the command line has
+  to run the export instead.
+- **Upload link:** an event with `"action": "upload-link"`, a `name` and
+  optionally `seconds` (beside `"job": "wavesExport"`) runs no export and
+  reads no database. After the bucket's privacy check, refusing on any
+  doubt, it answers
+  `{"putUrl", "key", "expiresAt"}`: a presigned PUT of
+  `waves-export/<stage>/uploads/<run>-<name>`, where `<run>` is the call's
+  own UTC time and request id, so a second link never names an earlier
+  upload. The upload needs only the link: `curl -T <file> "<putUrl>"`.
+  `name` is a plain file name (letters, digits, `.`, `_` and `-`, 1 to 100,
+  no `..`); `seconds` is 60 to 21600, 7200 when not given, and the link can
+  stop sooner when the function's credentials do. The log names the key and
+  the expiry, never the link.

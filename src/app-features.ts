@@ -33,6 +33,53 @@ export class AppFeatures {
   }
 
   /**
+   * Waves, groups and decisions move to the 6529 chain: wave, group and
+   * decision writes, entries, votes, wave REP and polls are refused here
+   * while this is on (src/waves-freeze). Chat stays open.
+   */
+  public isWavesFrozen(): boolean {
+    return this.isFeatureEnabled('WAVES_FROZEN');
+  }
+
+  /**
+   * The Main Stage decision keeps running here through the waves freeze,
+   * one more cycle: its entries, votes, pauses and results go on.
+   */
+  public isWavesFreezeKeepingMainStage(): boolean {
+    return this.isFeatureEnabled('WAVES_FREEZE_KEEP_MAIN_STAGE');
+  }
+
+  /**
+   * Waves have switched on on the 6529 chain: from then a wave stays on
+   * 6529.io unless the chain holds it. WAVES_SWITCH_ON_AT sets the same at
+   * a time (src/waves-freeze/waves-freeze.ts).
+   */
+  public isWavesOnChain(): boolean {
+    return this.isFeatureEnabled('WAVES_ON_CHAIN');
+  }
+
+  /**
+   * The delegations loop also mirrors the 6529 chain's identities into
+   * 6529.io's identity tables (src/identity-chain-mirror).
+   */
+  public isIdentityChainMirrorEnabled(): boolean {
+    return this.isFeatureEnabled('IDENTITY_CHAIN_MIRROR');
+  }
+
+  /**
+   * Identities move to the 6529 chain: profiles, handles, statements, REP
+   * and NIC are read-only here while this is on (src/identity-freeze).
+   */
+  public isIdentityFrozen(): boolean {
+    return this.isFeatureEnabled('IDENTITY_FROZEN');
+  }
+
+  /** From switch-on the 6529 chain holds identities (src/identity-freeze). */
+  public isIdentityOnChain(): boolean {
+    return this.isFeatureEnabled('IDENTITY_ON_CHAIN');
+  }
+
+  /**
    * Large viewer group lists are read from viewer_group_set_members by their
    * hash instead of travelling in each statement (waves/viewer-group-sets).
    */
