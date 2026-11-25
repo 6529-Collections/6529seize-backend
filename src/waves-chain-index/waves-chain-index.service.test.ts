@@ -634,6 +634,40 @@ describe('WavesChainIndex', () => {
     expect(db.state).toMatchObject({ network: 'net-2', readHeight: 51 });
   });
 
+  it('counts no full read while a relaunched chain empties the index, and empties it again after a stop', async () => {
+    const { db, index } = indexOf(chain, clock);
+    await index.run({ budgetMs: BIG });
+    expect(db.state.lastFullAt).not.toBeNull();
+    const fresh = new FakeChain(clock);
+    fresh.network = 'net-2';
+    fresh.height = 50;
+    fresh.putWave(id('aa'));
+    const clearAll = db.clearAll.bind(db);
+    const seen: (number | null)[] = [];
+    let failures = 1;
+    db.clearAll = async () => {
+      seen.push(db.state.lastFullAt);
+      if (failures > 0) {
+        failures--;
+        throw new Error('lost the connection');
+      }
+      await clearAll();
+    };
+    const relaunched = new WavesChainIndex(fresh, db.asDb(), clock.now);
+    await expect(relaunched.run({ budgetMs: BIG })).rejects.toThrow(
+      'lost the connection'
+    );
+    // Stopped half way: no full read counts, and the old network is kept,
+    // so the next run empties the index again.
+    expect(db.state).toMatchObject({ lastFullAt: null, network: 'net-1' });
+    expect(db.rows('waves').length).toBeGreaterThan(0);
+    const report = await relaunched.run({ budgetMs: BIG });
+    expect(report.restartedFull).toBe('network_changed');
+    expect(seen).toEqual([null, null]);
+    expect(db.rows('waves').map((w) => w.wave_id)).toEqual([id('aa')]);
+    expect(db.state).toMatchObject({ network: 'net-2' });
+  });
+
   it('starts again at a full-read phase it does not know, without emptying anything', async () => {
     const { db, index } = indexOf(chain, clock);
     await index.run({ budgetMs: BIG });
