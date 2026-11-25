@@ -7,6 +7,10 @@ import {
 import { ChainDraft } from '@/chain-gateway/chain-gateway.types';
 import { Logger } from '@/logging';
 import {
+  isWavesImportRouteMissing,
+  WavesImportRouteWait
+} from '@/chain-gateway/waves-import-route';
+import {
   checkSettlementDraft,
   CLOCK_SLACK_MS,
   SettlementSettings,
@@ -262,7 +266,8 @@ export interface SettlementReport {
     | 'malformed_settings'
     | 'no_network'
     | 'wrong_network'
-    | 'waves_import_running';
+    | 'waves_import_running'
+    | 'waves_import_route_missing';
 }
 
 type Outcome = 'sent' | 'waiting' | 'refused' | 'errors' | 'givenUp';
@@ -345,6 +350,11 @@ const FRESH: Plan = { action: 'send', attempts: 0, failures: 0 };
 export class WavesSettlementSender {
   /** The last state logged per subject, so each change is logged once. */
   private readonly noted = new Map<string, string>();
+  /** A gateway without /v1/waves/import: waits before the switch-on. */
+  private readonly importRouteWait = new WavesImportRouteWait(
+    logger,
+    'SETTLEMENT SENDER'
+  );
 
   constructor(private readonly deps: SettlementSenderDeps) {}
 
@@ -398,6 +408,11 @@ export class WavesSettlementSender {
     const timed: Timed = (work) => this.beforeDeadline(work, deadline);
     try {
       const imported = await timed(() => this.importState());
+      if (imported.routeMissing) {
+        // A gateway without the waves routes, before the switch-on: no
+        // due list is read, nothing is sent, and that is no failure.
+        return { ...report, skipped: 'waves_import_route_missing' };
+      }
       const pinned = settings.settings.networkId;
       if (pinned && imported.network && imported.network !== pinned) {
         // Another chain's gateway: its import is no reason to wait.
@@ -503,12 +518,27 @@ export class WavesSettlementSender {
   private async importState(): Promise<{
     completed: boolean;
     network: string | null;
+    /** A gateway without /v1/waves/import, before the switch-on. */
+    routeMissing?: boolean;
   }> {
-    const answer = await this.deps.gateway.read<{ completed?: unknown }>(
-      '/v1/waves/import',
-      {},
-      { at: 'head' }
-    );
+    let answer;
+    try {
+      answer = await this.deps.gateway.read<{ completed?: unknown }>(
+        '/v1/waves/import',
+        {},
+        { at: 'head' }
+      );
+    } catch (error) {
+      // Before the switch-on, "no such route" is not yet (one warning);
+      // from it, and for every other failure, the run fails as before.
+      if (
+        isWavesImportRouteMissing(error) &&
+        this.importRouteWait.waits(this.deps.now())
+      ) {
+        return { completed: false, network: null, routeMissing: true };
+      }
+      throw error;
+    }
     const network = lower(answer?.read?.network);
     return {
       completed: answer?.data?.completed === true,

@@ -157,6 +157,8 @@ class FakeGateway {
   /** Whether the chain's waves import is complete; null: no answer. */
   importCompleted: boolean | null = true;
   importReads = 0;
+  /** Thrown by the import read instead of answering (a gateway error). */
+  importError: Error | null = null;
   /**
    * As a node: a request still in the pool at its expiresAt is dropped,
    * and then held nowhere (not_held). Off: the pool keeps it (slots that
@@ -203,6 +205,7 @@ class FakeGateway {
     if (path === '/v1/waves/import') {
       expect(opts).toEqual({ at: 'head' });
       this.importReads++;
+      if (this.importError) throw this.importError;
       return this.importCompleted === null
         ? null
         : {
@@ -1808,5 +1811,118 @@ describe('WavesSettlementSender: NOT_YET_VALID is "not yet"', () => {
     expect(logged(error, '[MAIN STAGE SETTLEMENT NOT INCLUDED]')[0]).toContain(
       '2 requests in a row'
     );
+  });
+});
+
+describe('WavesSettlementSender on a gateway without /v1/waves/import', () => {
+  const ENV = ['WAVES_SWITCH_ON_AT', 'FEATURE_WAVES_ON_CHAIN'];
+  const original = Object.fromEntries(
+    ENV.map((name) => [name, process.env[name]])
+  );
+  afterEach(() => {
+    for (const [name, value] of Object.entries(original)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+  const routeMissing = () =>
+    new ChainGatewayError(
+      '/v1/waves/import: not_held: no such route',
+      404,
+      'not_held',
+      '/v1/waves/import'
+    );
+  /** The switch-on this far from the fake clock's start. */
+  const switchOn = (fromStartMs: number) => {
+    delete process.env.FEATURE_WAVES_ON_CHAIN;
+    process.env.WAVES_SWITCH_ON_AT = new Date(
+      START + fromStartMs
+    ).toISOString();
+  };
+  const waits = () => logged(warn, '[SETTLEMENT SENDER WAITS]');
+
+  it('waits before the switch-on: no due list read, nothing sent, one warning, no error', async () => {
+    switchOn(60 * MINUTE);
+    const { gateway, store, run, later } = setup({ mainStage: [D1] });
+    gateway.due(D1);
+    gateway.importError = routeMissing();
+    for (let n = 0; n < 3; n++) {
+      expect(await run()).toEqual(
+        expect.objectContaining({
+          skipped: 'waves_import_route_missing',
+          due: 0,
+          sent: 0
+        })
+      );
+      later();
+    }
+    expect(gateway.importReads).toBe(3);
+    // No GET /v1/decisions/due, no draft, no row.
+    expect(gateway.reads).toEqual([]);
+    expect(gateway.drafts).toEqual([]);
+    expect(store.rows.size).toBe(0);
+    expect(waits()).toHaveLength(1);
+    expect(waits()[0]).toContain('[THE CHAIN GATEWAY HAS NO /v1/waves/import]');
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('reads no due list and logs no error while the import is not complete', async () => {
+    switchOn(60 * MINUTE);
+    const { gateway, run, later } = setup({ mainStage: [D1] });
+    gateway.due(D1);
+    gateway.importCompleted = false;
+    for (let n = 0; n < 3; n++) {
+      await run();
+      later();
+    }
+    expect(gateway.reads).toEqual([]);
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('fails from the switch-on, in the same process, every run', async () => {
+    switchOn(2 * MINUTE);
+    const { gateway, run, later } = setup({ mainStage: [D1] });
+    gateway.due(D1);
+    gateway.importError = routeMissing();
+    expect(await run()).toEqual(
+      expect.objectContaining({ skipped: 'waves_import_route_missing' })
+    );
+    later(2 * MINUTE);
+    await expect(run()).rejects.toThrow('no such route');
+    later();
+    await expect(run()).rejects.toThrow('no such route');
+    expect(gateway.reads).toEqual([]);
+    expect(waits()).toHaveLength(1);
+  });
+
+  it('fails with FEATURE_WAVES_ON_CHAIN, and waits with no switch-on set', async () => {
+    delete process.env.WAVES_SWITCH_ON_AT;
+    const { gateway, run } = setup();
+    gateway.importError = routeMissing();
+    expect(await run()).toEqual(
+      expect.objectContaining({ skipped: 'waves_import_route_missing' })
+    );
+    process.env.FEATURE_WAVES_ON_CHAIN = 'true';
+    await expect(run()).rejects.toThrow('no such route');
+  });
+
+  it('still fails on any other gateway failure before the switch-on', async () => {
+    switchOn(60 * MINUTE);
+    const { gateway, run } = setup();
+    gateway.importError = new ChainGatewayError(
+      '/v1/waves/import: unavailable',
+      503,
+      'unavailable',
+      '/v1/waves/import'
+    );
+    await expect(run()).rejects.toThrow('unavailable');
+    gateway.importError = new ChainGatewayError(
+      "/v1/waves/import: not_held: this node didn't save day 5",
+      404,
+      'not_held',
+      '/v1/waves/import'
+    );
+    await expect(run()).rejects.toThrow('day 5');
+    expect(waits()).toEqual([]);
   });
 });
