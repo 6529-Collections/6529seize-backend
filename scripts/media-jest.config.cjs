@@ -1,7 +1,14 @@
 // Codec/multipart checks have no database dependency and also run on native OS CI.
 module.exports = {
   rootDir: '..',
-  preset: 'ts-jest',
+  // Load test dependencies on demand instead of preloading the whole backend.
+  // Type diagnostics stay enabled; build:ci checks the complete source tree.
+  transform: {
+    '^.+\\.tsx?$': [
+      'ts-jest',
+      { tsconfig: '<rootDir>/scripts/tsconfig.media-tests.json' }
+    ]
+  },
   testEnvironment: 'node',
   moduleNameMapper: {
     '^@/api/(.*)$': '<rootDir>/src/api-serverless/src/$1',
