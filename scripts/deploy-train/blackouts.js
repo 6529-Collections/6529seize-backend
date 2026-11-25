@@ -1,0 +1,349 @@
+'use strict';
+
+const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+const SHORT_WEEKDAYS = {
+  Sun: 'sun',
+  Mon: 'mon',
+  Tue: 'tue',
+  Wed: 'wed',
+  Thu: 'thu',
+  Fri: 'fri',
+  Sat: 'sat'
+};
+const MINUTE_MS = 60_000;
+const MAX_TEAM_WINDOW_DAYS = 31;
+const DEFAULT_LOOKAHEAD_MINUTES = 15;
+const formatters = new Map();
+
+function parseClock(value) {
+  if (value === '24:00') return 24 * 60;
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(value);
+  if (!match) throw new Error(`Invalid HH:MM time ${value}`);
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+function zonedParts(date, timeZone) {
+  let formatter = formatters.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      weekday: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23'
+    });
+    formatters.set(timeZone, formatter);
+  }
+  const parts = {};
+  for (const part of formatter.formatToParts(date)) {
+    parts[part.type] = part.value;
+  }
+  return {
+    weekday: SHORT_WEEKDAYS[parts.weekday],
+    minutes: Number(parts.hour) * 60 + Number(parts.minute)
+  };
+}
+
+function previousWeekday(weekday) {
+  return WEEKDAYS[(WEEKDAYS.indexOf(weekday) + 6) % 7];
+}
+
+/**
+ * Whether a catalog `window` rule covers `date`. `days` names the day on
+ * which a window starts, so an overnight window that starts on Monday also
+ * covers the early hours of Tuesday.
+ */
+function isWindowRuleActive(rule, date) {
+  const { weekday, minutes } = zonedParts(date, rule.timezone || 'UTC');
+  const start = parseClock(rule.start);
+  const end = parseClock(rule.end);
+  const startsOn = (day) => !rule.days || rule.days.includes(day);
+  if (start < end) {
+    return minutes >= start && minutes < end && startsOn(weekday);
+  }
+  if (minutes >= start) return startsOn(weekday);
+  if (minutes < end) return startsOn(previousWeekday(weekday));
+  return false;
+}
+
+function describeRule(rule) {
+  const days = rule.days ? ` ${rule.days.join('/')}` : '';
+  return `${rule.reason} (${rule.start}-${rule.end}${days} ${rule.timezone || 'UTC'})`;
+}
+
+function parseInstant(value, label) {
+  const time =
+    typeof value === 'string' &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?Z$/.test(value)
+      ? Date.parse(value)
+      : Number.NaN;
+  if (Number.isNaN(time)) {
+    throw new TypeError(
+      `${label} must be a UTC timestamp like 2026-11-25T14:00Z`
+    );
+  }
+  return time;
+}
+
+function validateTeamWindow(window, label) {
+  if (!window || typeof window !== 'object' || Array.isArray(window)) {
+    throw new Error(`${label} must be an object`);
+  }
+  for (const key of Object.keys(window)) {
+    if (!['start', 'end', 'services', 'reason', 'owner'].includes(key)) {
+      throw new Error(`${label} has unsupported field ${key}`);
+    }
+  }
+  const start = parseInstant(window.start, `${label}.start`);
+  const end = parseInstant(window.end, `${label}.end`);
+  if (end <= start) throw new Error(`${label}.end must be after start`);
+  if (end - start > MAX_TEAM_WINDOW_DAYS * 24 * 60 * MINUTE_MS) {
+    throw new Error(
+      `${label} is longer than ${MAX_TEAM_WINDOW_DAYS} days; set DEPLOY_TRAIN_MODE=off instead`
+    );
+  }
+  if (
+    !Array.isArray(window.services) ||
+    window.services.length === 0 ||
+    window.services.some(
+      (service) => typeof service !== 'string' || service.trim() === ''
+    )
+  ) {
+    throw new Error(`${label}.services must list services or "*"`);
+  }
+  if (typeof window.reason !== 'string' || window.reason.trim() === '') {
+    throw new Error(`${label}.reason is required`);
+  }
+  return {
+    start,
+    end,
+    services: window.services.map((service) => service.trim()),
+    reason: window.reason.trim(),
+    owner: typeof window.owner === 'string' ? window.owner.trim() : null
+  };
+}
+
+/**
+ * The entries under `key` in one JSON source: either a bare list or an
+ * object holding the list. `keys` lists the fields the object may carry
+ * (the committed controls file holds both windows and holds); any other
+ * field throws, so a misspelt freeze is never ignored.
+ */
+function readList({ name, text, keys }, key) {
+  if (typeof text !== 'string' || text.trim() === '') return [];
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error(`${name} is not valid JSON`);
+  }
+  if (Array.isArray(parsed)) return parsed;
+  const allowed = keys || [key];
+  if (parsed && typeof parsed === 'object') {
+    const unknown = Object.keys(parsed).find(
+      (field) => !allowed.includes(field)
+    );
+    if (unknown) throw new Error(`${name} has unsupported field ${unknown}`);
+    if (!(key in parsed)) return [];
+  }
+  const list = parsed?.[key];
+  if (!Array.isArray(list)) {
+    throw new TypeError(`${name} must be a list or an object with "${key}"`);
+  }
+  return list;
+}
+
+function checkServices(services, knownServices, label) {
+  for (const service of services) {
+    if (service !== '*' && knownServices && !knownServices.has(service)) {
+      throw new Error(`${label} names unknown service ${service}`);
+    }
+  }
+}
+
+/**
+ * Parses announced team windows from the committed file and the repository
+ * variable. Any malformed source throws: the train must not ignore a freeze
+ * that someone tried to announce.
+ */
+function parseTeamWindows(sources, knownServices) {
+  const windows = [];
+  for (const source of sources) {
+    readList(source, 'windows').forEach((entry, index) => {
+      const label = `${source.name}[${index}]`;
+      const window = validateTeamWindow(entry, label);
+      checkServices(window.services, knownServices, label);
+      windows.push({ ...window, source: source.name });
+    });
+  }
+  return windows;
+}
+
+function validateHold(hold, label) {
+  if (!hold || typeof hold !== 'object' || Array.isArray(hold)) {
+    throw new Error(`${label} must be an object`);
+  }
+  for (const key of Object.keys(hold)) {
+    if (!['services', 'reason', 'owner', 'since'].includes(key)) {
+      throw new Error(`${label} has unsupported field ${key}`);
+    }
+  }
+  if (
+    !Array.isArray(hold.services) ||
+    hold.services.length === 0 ||
+    hold.services.some(
+      (service) => typeof service !== 'string' || service.trim() === ''
+    )
+  ) {
+    throw new Error(`${label}.services must list services or "*"`);
+  }
+  if (typeof hold.reason !== 'string' || hold.reason.trim() === '') {
+    throw new Error(`${label}.reason is required`);
+  }
+  return {
+    services: hold.services.map((service) => service.trim()),
+    reason: hold.reason.trim(),
+    owner: typeof hold.owner === 'string' ? hold.owner.trim() : null
+  };
+}
+
+/**
+ * Parses temporary holds: services the train must leave alone, with no end
+ * time, until someone removes the hold. Used for releases that need a
+ * non-catalog order or an operator step. Malformed holds throw.
+ */
+function parseHolds(sources, knownServices) {
+  const holds = [];
+  for (const source of sources) {
+    readList(source, 'holds').forEach((entry, index) => {
+      const label = `${source.name}[${index}]`;
+      const hold = validateHold(entry, label);
+      checkServices(hold.services, knownServices, label);
+      holds.push({ ...hold, source: source.name });
+    });
+  }
+  return holds;
+}
+
+/** The reason a hold covers `service`, or null. */
+function holdFor(service, holds) {
+  const hold = holds.find(
+    (entry) =>
+      entry.services.includes('*') || entry.services.includes(service.name)
+  );
+  if (!hold) return null;
+  return `held: ${hold.reason}${provenance(hold)}`;
+}
+
+/** " (set by <owner>, <source>)": who announced an entry and where. */
+function provenance(entry) {
+  const tags = [];
+  if (entry.owner) tags.push(`set by ${entry.owner}`);
+  if (entry.source) tags.push(entry.source);
+  return tags.length > 0 ? ` (${tags.join(', ')})` : '';
+}
+
+/**
+ * Parse sources for every variable whose name starts with `prefix`: the
+ * shared `DEPLOY_TRAIN_HOLDS` and per-person ones such as
+ * `DEPLOY_TRAIN_HOLDS_GELATOGENESIS`, so people never edit one shared
+ * value. `variables` maps names to values (the workflow's `toJSON(vars)`).
+ */
+function variableSources(variables, prefix) {
+  return Object.keys(variables || {})
+    .filter((name) => name.startsWith(prefix))
+    .sort((left, right) => left.localeCompare(right))
+    .map((name) => ({ name, text: String(variables[name] ?? '') }));
+}
+
+function isoMinute(time) {
+  return `${new Date(time).toISOString().slice(0, 16)}Z`;
+}
+
+/** Catalog `window` rules covering `service` at `time`. */
+function catalogReasonsAt(service, time) {
+  const date = new Date(time);
+  return (service.deploy_blackouts || [])
+    .filter((rule) => rule.type === 'window' && isWindowRuleActive(rule, date))
+    .map(describeRule);
+}
+
+/**
+ * Team windows that overlap [from, until], compared as intervals so a
+ * window shorter than a minute between two checks is never missed.
+ */
+function overlappingTeamWindows(teamWindows, from, until) {
+  return teamWindows.filter(
+    (window) => window.start <= until && window.end > from
+  );
+}
+
+/** Reasons team windows block `service` between `from` and `until`. */
+function teamWindowReasons(service, teamWindows, from, until) {
+  const overlapping = overlappingTeamWindows(teamWindows, from, until);
+  if (overlapping.length === 0) return { reasons: [], start: null };
+  const reasons = [];
+  const freeze = (service.deploy_blackouts || []).find(
+    (rule) => rule.type === 'team-freeze'
+  );
+  if (freeze) {
+    reasons.push(`${freeze.reason} (team window: ${overlapping[0].reason})`);
+  }
+  const covering = overlapping.filter(
+    (window) =>
+      window.services.includes('*') || window.services.includes(service.name)
+  );
+  for (const window of covering) {
+    reasons.push(
+      `team window until ${isoMinute(window.end)}: ${window.reason}${provenance(window)}`
+    );
+  }
+  const relevant = freeze ? overlapping : covering;
+  const start = relevant.length
+    ? Math.max(from, Math.min(...relevant.map((window) => window.start)))
+    : null;
+  return { reasons, start };
+}
+
+/**
+ * A service is blocked when a team window that covers it (or any team
+ * window, for team-freeze services) overlaps `now` to `now +
+ * lookaheadMinutes`, or a catalog quiet window is active at any minute in
+ * that span. The look-ahead keeps a deploy from starting just before a
+ * quiet window.
+ */
+function evaluateBlackout(
+  service,
+  { now, teamWindows = [], lookaheadMinutes = DEFAULT_LOOKAHEAD_MINUTES }
+) {
+  const until = now + lookaheadMinutes * MINUTE_MS;
+  const team = teamWindowReasons(service, teamWindows, now, until);
+  if (team.reasons.length > 0) {
+    return {
+      blocked: true,
+      reasons: team.reasons,
+      from: isoMinute(team.start)
+    };
+  }
+  for (let minute = 0; minute <= lookaheadMinutes; minute++) {
+    const time = now + minute * MINUTE_MS;
+    const reasons = catalogReasonsAt(service, time);
+    if (reasons.length > 0) {
+      return { blocked: true, reasons, from: isoMinute(time) };
+    }
+  }
+  return { blocked: false, reasons: [], from: null };
+}
+
+module.exports = {
+  DEFAULT_LOOKAHEAD_MINUTES,
+  MAX_TEAM_WINDOW_DAYS,
+  parseClock,
+  zonedParts,
+  isWindowRuleActive,
+  parseTeamWindows,
+  parseHolds,
+  holdFor,
+  variableSources,
+  evaluateBlackout
+};

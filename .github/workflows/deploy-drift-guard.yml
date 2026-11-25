@@ -1,0 +1,112 @@
+name: Deploy drift guard
+
+# Daily report of backend services whose deployed artifact differs from the
+# deploy branch. Read-only: it needs no AWS credentials and deploys nothing.
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        description: 'Environment to compare with its deploy branch'
+        required: true
+        default: prod
+        options:
+          - prod
+          - staging
+      notify:
+        type: boolean
+        description: 'Post the report to the CI wave'
+        required: false
+        default: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: deploy-drift-guard-${{ inputs.environment || 'prod' }}
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    name: Report ${{ inputs.environment || 'prod' }} drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DRIFT_ENVIRONMENT: ${{ inputs.environment || 'prod' }}
+    steps:
+      - name: Checkout the deploy branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ (inputs.environment || 'prod') == 'prod' && 'main' || '1a-staging' }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22.17.1'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            src/api-serverless/package-lock.json
+      - name: Install root and API dependencies
+        run: ./bin/6529 ci && pushd src/api-serverless && ../../bin/6529 ci && popd
+      - name: Restore bundle fingerprint cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/deploy-drift-cache
+          key: deploy-drift-v1-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: deploy-drift-v1-${{ runner.os }}-
+      - name: Compare deployed artifacts with the branch
+        id: drift
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node scripts/deploy-train/cli.js drift \
+            --environment "$DRIFT_ENVIRONMENT" --target HEAD \
+            --cache-dir "$RUNNER_TEMP/deploy-drift-cache" \
+            --json drift.json --markdown drift.md --github-output
+          cat drift.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Save bundle fingerprint cache
+        if: steps.drift.outcome == 'success' && steps.drift.outputs.builds != '0'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/deploy-drift-cache
+          key: deploy-drift-v1-${{ runner.os }}-${{ github.run_id }}
+      - name: Upload the drift report
+        if: always() && hashFiles('drift.json') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: deploy-drift-${{ env.DRIFT_ENVIRONMENT }}
+          path: drift.json
+          retention-days: 30
+      - name: Post the drift report to the CI wave
+        if: steps.drift.outcome == 'success' && (github.event_name == 'schedule' || inputs.notify)
+        continue-on-error: true
+        env:
+          CI_PIPELINES_ALERT_URL: ${{ vars.CI_PIPELINES_ALERT_URL }}
+          CI_PIPELINES_ALERT_SECRET: ${{ secrets.CI_PIPELINES_ALERT_SECRET }}
+          CI_PIPELINES_ALERT_API_AUTH: ${{ secrets.CI_PIPELINES_ALERT_API_AUTH }}
+          CI_PIPELINES_ALERT_TYPE: workflow
+          CI_PIPELINES_TARGET_ENV: ${{ env.DRIFT_ENVIRONMENT }}
+          CI_PIPELINES_STATUS: ${{ steps.drift.outputs.alert_status }}
+          CI_PIPELINES_TITLE: ${{ steps.drift.outputs.alert_title }}
+          CI_PIPELINES_DESCRIPTION: ${{ steps.drift.outputs.alert_description }}
+          CI_PIPELINES_WORKFLOW: Deploy drift guard
+        run: node scripts/notify-ci-wave.mjs
+      - name: Post a guard failure to the CI wave
+        if: failure()
+        continue-on-error: true
+        env:
+          CI_PIPELINES_ALERT_URL: ${{ vars.CI_PIPELINES_ALERT_URL }}
+          CI_PIPELINES_ALERT_SECRET: ${{ secrets.CI_PIPELINES_ALERT_SECRET }}
+          CI_PIPELINES_ALERT_API_AUTH: ${{ secrets.CI_PIPELINES_ALERT_API_AUTH }}
+          CI_PIPELINES_ALERT_TYPE: workflow
+          CI_PIPELINES_TARGET_ENV: ${{ env.DRIFT_ENVIRONMENT }}
+          CI_PIPELINES_STATUS: failure
+          CI_PIPELINES_TITLE: Backend drift check could not run
+          CI_PIPELINES_WORKFLOW: Deploy drift guard
+        run: node scripts/notify-ci-wave.mjs

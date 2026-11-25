@@ -20,6 +20,14 @@ for 24 hours. Posting is deliberately best effort: the endpoint acknowledges a
 valid request even when drop creation fails, so notification availability does
 not change the workflow result.
 
+The backend `Deploy drift guard` and `Deploy train` workflows send `workflow`
+alerts to the production wave; no receiver change was needed. The drift guard
+posts a daily all-clear (success) or the list of services behind `main`
+(failure, which pings the developers). The train posts a report-only plan once
+per merge, a summary after a production train, and a failure when it halts.
+Each service deploy the train starts still posts its own `deploy` alert and
+release-note metadata through `Deploy a service`.
+
 ## Message Format
 
 Every heading starts with its environment and ends with its outcome marker:

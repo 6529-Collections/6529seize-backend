@@ -397,6 +397,11 @@ export async function isReleaseGroupComplete(
     const completedKey = `${groupKey}:completed`;
     await redis.sAdd(completedKey, service);
     await redis.expire(completedKey, RELEASE_GROUP_TTL_SECONDS);
+    // The deploy train confirms each member's event from this line
+    // (scripts/deploy-train/health.js, releaseNoteEventPattern).
+    logger.info(
+      `Recorded release group pr-${request.pull_request_number} event for ${service} run ${request.run_id}`
+    );
     const publishRequestedKey = `${groupKey}:publish-requested`;
     if (request.publish_release_note === true) {
       await redis.set(publishRequestedKey, '1', {
