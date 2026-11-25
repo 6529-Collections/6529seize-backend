@@ -24,8 +24,9 @@ a job the function knows, or it fails. Each export:
     container's environment keeps the secret as it was when the container
     started, so the run doesn't use it: a fix to the secret is seen on the
     next run;
-  - a snapshot less than 2 minutes after the freeze, so the replica has the
-    writes made before it;
+  - a snapshot less than 5 minutes after the freeze, so the replica has the
+    writes made before it, and a write let in before the freeze that waited
+    on a lock (InnoDB waits up to 50 s) has committed or rolled back;
   - a replica as far behind its writer as the gap less 1.5 s, or further.
     The lag comes from this reader's newest row in
     `information_schema.replica_host_status` (`evidence.replicaLagMs`). A
@@ -115,7 +116,7 @@ What the run enforces, accepted or not:
   the gap, is refused: a reader dated ahead that stops updating reads that
   way once its lead has run out. An `unreadable` reading is taken on its
   own terms.
-- An age bound is 120000 to 51000000 ms, a lead bound 1740000 to 51000000
+- An age bound is 300000 to 51000000 ms, a lead bound 1740000 to 51000000
   ms: time zones reach 14 hours from UTC, and none is less than 30 minutes
   from it.
 - A rerun that lands on a reader showing another case is refused, as
@@ -126,7 +127,7 @@ What the run enforces, accepted or not:
   whose age can't be trusted but which says the reader is behind by the
   gap less 1.5 s or more is refused. As a stale row's lag never changes,
   run once more, and if that refusal comes back unchanged, report it. Only
-  when the row reports no lag at all does the 2-minute minimum gap alone
+  when the row reports no lag at all does the 5-minute minimum gap alone
   decide. A trusted lag that is simply too large is never accepted: wait a
   few minutes and run again.
 
@@ -288,7 +289,7 @@ Event fields:
 - `rehearsal` (optional, `true`): a timed rehearsal that is never imported.
   Its prefix ends in `-rehearsal`, and its manifest is
   `manifest.unusable.json`. It doesn't require `IDENTITY_FREEZE_AT`, the
-  2-minute gap or the lag check. It reports how it read
+  5-minute gap or the lag check. It reports how it read
   `IDENTITY_FREEZE_AT` (`identityFreezeAtReading`: `unset`, `not_a_time` or
   `time`), and it records site writes after `frozenAt` instead of refusing
   them.
@@ -373,7 +374,7 @@ Check in `out.json`:
 - `replicaLagCase` is `null`: the lag and its row's age could be trusted.
   Otherwise it names the case a real run would refuse on: `unreadable`,
   `dated_ahead` or `older_than_gap`. The rehearsal works it out against the
-  2-minute minimum gap alone, whatever its own `frozenAt`: a gap of
+  5-minute minimum gap alone, whatever its own `frozenAt`: a gap of
   moments would name `older_than_gap` on a healthy reader, and a gap of an
   hour would hide an offset Tuesday will see. Write the name down; it is
   the only one Tuesday may accept.
@@ -435,7 +436,7 @@ with `seconds`.
 
 The staging rehearsal is the same with `--region eu-west-1`.
 
-### Tuesday: the real run, from 00:05 UTC
+### Tuesday: the real run, from 00:07 UTC
 
 ```text
 $env:AWS_MAX_ATTEMPTS='1'
@@ -450,8 +451,8 @@ back to it. `IDENTITY_FREEZE_AT` must be set to the freeze in the
 If the CLI fails without a `FunctionError`, don't run it again: see "If the
 CLI fails".
 
-Start at least 2 minutes after the freeze; 00:05 UTC leaves room. A run
-before 00:02 is refused. Start before 01:30 UTC, or add
+Start at least 5 minutes after the freeze: 00:07 UTC leaves room. A run
+before 00:05 is refused. Start before 01:30 UTC, or add
 `"acceptSnapshotGapMinutes":N`. If the run is refused because the replica
 may be behind, wait a few minutes and run it again. If the refusal says
 the lag can't be read, or its row is dated ahead of UTC or older than the
@@ -518,7 +519,7 @@ time. The manifest and the response record the writes
   neither the response nor the manifest (whose `read.endpoint` is the same
   label); it is only in the function's log, as `[READ REPLICA ...]`.
 - `bucketPrivacy.owner` is the function's own account.
-- `snapshotAt` and `snapshotGapMs`: the snapshot came at least 120 000 ms
+- `snapshotAt` and `snapshotGapMs`: the snapshot came at least 300 000 ms
   after the freeze (`snapshotGapSeconds` is the same, rounded).
 - `evidence.replicaLagMs` plus `evidence.replicaLagAgeMs`, plus 1 500 ms,
   is below `snapshotGapMs`, and `replicaLagCase` and `replicaLagAccepted`

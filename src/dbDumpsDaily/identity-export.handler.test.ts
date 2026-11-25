@@ -10,6 +10,7 @@ import { Logger } from '@/logging';
 import {
   checkReplicaLag,
   checkSnapshotTime,
+  MIN_SNAPSHOT_GAP_SECONDS,
   ReplicaLagAcceptance,
   IdentityExportDeps,
   IdentityExportEventError,
@@ -380,14 +381,14 @@ describe('parseIdentityExportEvent', () => {
         ...atFreeze,
         acceptUnknownReplicaLag: [
           { dated_ahead: 7_140_000 },
-          { older_than_gap: 180_000 }
+          { older_than_gap: 360_000 }
         ]
       })
     ).toEqual(
       expect.objectContaining({
         acceptUnknownReplicaLag: [
           { dated_ahead: 7_140_000 },
-          { older_than_gap: 180_000 }
+          { older_than_gap: 360_000 }
         ]
       })
     );
@@ -405,7 +406,7 @@ describe('parseIdentityExportEvent', () => {
 
   it('takes bounds at the edges of the time zones', () => {
     for (const bounds of [
-      [{ older_than_gap: 120_000 }, { dated_ahead: 51_000_000 }],
+      [{ older_than_gap: 300_000 }, { dated_ahead: 51_000_000 }],
       [{ older_than_gap: 51_000_000 }, { dated_ahead: 1_740_000 }]
     ]) {
       expect(
@@ -562,7 +563,7 @@ describe('parseIdentityExportEvent', () => {
     [{ ...rehearsal, replacePointer: true }, 'a rehearsal writes no pointer'],
     [
       { ...atFreeze, acceptUnknownReplicaLag: true },
-      'acceptUnknownReplicaLag must name each case to accept, as the refusals do: "unreadable", {"dated_ahead": <smallest lead in ms: Monday\'s replicaLagAheadMs minus 60000>}, or {"older_than_gap": <largest row age in ms: Monday\'s replicaLagAgeMs plus 60000>}; one or a list, each once. A bound on a row\'s age is 120000 to 51000000 ms, on its lead 1740000 to 51000000 ms. true and a bare "dated_ahead" or "older_than_gap" are not accepted: a rerun that lands on another reader showing another case, or a reader that stopped, must be refused.'
+      'acceptUnknownReplicaLag must name each case to accept, as the refusals do: "unreadable", {"dated_ahead": <smallest lead in ms: Monday\'s replicaLagAheadMs minus 60000>}, or {"older_than_gap": <largest row age in ms: Monday\'s replicaLagAgeMs plus 60000>}; one or a list, each once. A bound on a row\'s age is 300000 to 51000000 ms, on its lead 1740000 to 51000000 ms. true and a bare "dated_ahead" or "older_than_gap" are not accepted: a rerun that lands on another reader showing another case, or a reader that stopped, must be refused.'
     ],
     [
       { ...atFreeze, acceptUnknownReplicaLag: 'older_than_gap' },
@@ -577,7 +578,7 @@ describe('parseIdentityExportEvent', () => {
       'acceptUnknownReplicaLag must name each case to accept'
     ],
     // Both bounds within the zones: a lead of a minute or more, an age of
-    // the 2-minute minimum gap or more, neither past 14 h 10 min.
+    // the 5-minute minimum gap or more, neither past 14 h 10 min.
     [
       { ...atFreeze, acceptUnknownReplicaLag: { dated_ahead: 59_999 } },
       'acceptUnknownReplicaLag must name each case to accept'
@@ -592,7 +593,7 @@ describe('parseIdentityExportEvent', () => {
       'acceptUnknownReplicaLag must name each case to accept'
     ],
     [
-      { ...atFreeze, acceptUnknownReplicaLag: { older_than_gap: 119_999 } },
+      { ...atFreeze, acceptUnknownReplicaLag: { older_than_gap: 299_999 } },
       'acceptUnknownReplicaLag must name each case to accept'
     ],
     [
@@ -621,8 +622,8 @@ describe('parseIdentityExportEvent', () => {
       {
         ...atFreeze,
         acceptUnknownReplicaLag: [
-          { older_than_gap: 180_000 },
-          { older_than_gap: 240_000 }
+          { older_than_gap: 360_000 },
+          { older_than_gap: 420_000 }
         ]
       },
       'acceptUnknownReplicaLag must name each case to accept'
@@ -649,7 +650,7 @@ describe('parseIdentityExportEvent', () => {
     [
       {
         ...atFreeze,
-        acceptUnknownReplicaLag: { older_than_gap: 180_000, extra: 1 }
+        acceptUnknownReplicaLag: { older_than_gap: 360_000, extra: 1 }
       },
       'acceptUnknownReplicaLag must name each case to accept'
     ],
@@ -1886,10 +1887,10 @@ describe('runIdentityExportJob', () => {
   it.each([
     ['before the freeze', '2026-11-23T23:59:00.000Z', 40, /before the freeze/],
     [
-      'less than 2 minutes after it',
-      '2026-11-24T00:01:59.000Z',
+      'less than 5 minutes after it',
+      '2026-11-24T00:04:59.000Z',
       null,
-      'The snapshot is 119 s after the freeze: wait until at least 120 s after it'
+      'The snapshot is 299 s after the freeze: wait until at least 300 s after it'
     ],
     [
       '400 ms before the freeze',
@@ -1898,10 +1899,10 @@ describe('runIdentityExportJob', () => {
       /is before the freeze/
     ],
     [
-      '119.6 s after it',
-      '2026-11-24T00:01:59.600Z',
+      '299.6 s after it',
+      '2026-11-24T00:04:59.600Z',
       40,
-      'The snapshot is 119.6 s after the freeze: wait until at least 120 s after it'
+      'The snapshot is 299.6 s after the freeze: wait until at least 300 s after it'
     ],
     [
       'from a replica as far behind as the gap, to the millisecond',
@@ -1933,22 +1934,69 @@ describe('runIdentityExportJob', () => {
     }
   );
 
+  it('holds a real run to the 5-minute minimum gap, to the millisecond', async () => {
+    const T0 = Date.UTC(2026, 10, 24);
+    expect(MIN_SNAPSHOT_GAP_SECONDS).toBe(300);
+    expect(() =>
+      checkSnapshotTime(T0, T0 + 299_999, null, MIN_SNAPSHOT_GAP_SECONDS)
+    ).toThrow(
+      'The snapshot is 299.999 s after the freeze: wait until at least 300 s after it'
+    );
+    expect(
+      checkSnapshotTime(T0, T0 + 300_000, null, MIN_SNAPSHOT_GAP_SECONDS)
+    ).toEqual({ gapMs: 300_000, gapSeconds: 300 });
+    // The run holds its snapshot to it: a millisecond short writes nothing.
+    mockBuild.mockResolvedValue(document());
+    const short = setup({ snapshotAt: '2026-11-24T00:04:59.999Z' });
+    await expect(run(short.deps)).rejects.toThrow(
+      'The snapshot is 299.999 s after the freeze: wait until at least 300 s after it'
+    );
+    expect(mockBuild).not.toHaveBeenCalled();
+    expect(short.order).toEqual([]);
+    const at = setup({ snapshotAt: '2026-11-24T00:05:00.000Z' });
+    const result = await run(at.deps);
+    expect([result.snapshotGapMs, result.snapshotGapSeconds]).toEqual([
+      300_000, 300
+    ]);
+    // A row-age bound starts at the same minimum gap.
+    expect(() =>
+      parseIdentityExportEvent({
+        ...atFreeze,
+        acceptUnknownReplicaLag: { older_than_gap: 299_999 }
+      })
+    ).toThrow("A bound on a row's age is 300000 to 51000000 ms");
+    expect(
+      parseIdentityExportEvent({
+        ...atFreeze,
+        acceptUnknownReplicaLag: { older_than_gap: 300_000 }
+      })
+    ).toEqual(
+      expect.objectContaining({
+        acceptUnknownReplicaLag: [{ older_than_gap: 300_000 }]
+      })
+    );
+  });
+
   it('checks the gap in milliseconds and reports it both ways', async () => {
     const T0 = Date.UTC(2026, 10, 24);
-    expect(checkSnapshotTime(T0, T0 + 120_000, null, 120)).toEqual({
-      gapMs: 120_000,
-      gapSeconds: 120
+    expect(
+      checkSnapshotTime(T0, T0 + 300_000, null, MIN_SNAPSHOT_GAP_SECONDS)
+    ).toEqual({
+      gapMs: 300_000,
+      gapSeconds: 300
     });
-    expect(checkSnapshotTime(T0, T0 + 300_400, null, 120)).toEqual({
+    expect(
+      checkSnapshotTime(T0, T0 + 300_400, null, MIN_SNAPSHOT_GAP_SECONDS)
+    ).toEqual({
       gapMs: 300_400,
       gapSeconds: 300
     });
     expect(() => checkSnapshotTime(T0, T0 - 400, null)).toThrow(
       'before the freeze'
     );
-    expect(() => checkSnapshotTime(T0, T0 + 119_600, null, 120)).toThrow(
-      'The snapshot is 119.6 s after the freeze'
-    );
+    expect(() =>
+      checkSnapshotTime(T0, T0 + 299_600, null, MIN_SNAPSHOT_GAP_SECONDS)
+    ).toThrow('The snapshot is 299.6 s after the freeze');
     // Just over the limit, by half a second.
     expect(() => checkSnapshotTime(T0, T0 + 90 * 60_000 + 500, null)).toThrow(
       'over the 90-minute limit'
@@ -2004,7 +2052,7 @@ describe('runIdentityExportJob', () => {
     expect(() => checkReplicaLag(300_400, lag(100_000, 198_899))).not.toThrow();
     // A row older than the whole gap: checked first, and not a wait.
     const old =
-      "The replica's lag row is 300400 ms old (a 0 ms lag), older than the 300400 ms since the freeze: LAST_UPDATE_TIMESTAMP may not be in UTC, or the reader stopped updating its row. If the same refusal returns with the row's age grown by the time you waited, the reader stopped updating: report it. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: {\"older_than_gap\": <Monday's replicaLagAgeMs plus 60000>}) only for a reading Monday's rehearsal also showed, and only with the switch owner's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it.";
+      "The replica's lag row is 300400 ms old (a 0 ms lag), older than the 300400 ms since the freeze: LAST_UPDATE_TIMESTAMP may not be in UTC, or the reader stopped updating its row. If the same refusal returns with the row's age grown by the time you waited, the reader stopped updating: report it. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: {\"older_than_gap\": <Monday's replicaLagAgeMs plus 60000>}) only for a reading Monday's rehearsal also showed, and only with the switch owner's agreement: the run then relies on the 5-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it.";
     expect(() => checkReplicaLag(300_400, lag(0, 300_400))).toThrow(old);
     expect(() => checkReplicaLag(300_400, lag(10, 400_000))).toThrow(
       "The replica's lag row is 400000 ms old (a 10 ms lag), older than the 300400 ms since the freeze"
@@ -2062,7 +2110,7 @@ describe('runIdentityExportJob', () => {
     mockBuild.mockResolvedValue(document());
     const refused = setup({ replicaLagMs: null });
     await expect(run(refused.deps)).rejects.toThrow(
-      "The replica's lag can't be read from information_schema.replica_host_status (ER_UNKNOWN_TABLE 1109). Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: \"unreadable\") only for a reading Monday's rehearsal also showed: for an error, only ER_UNKNOWN_TABLE 1109 or ER_UNKNOWN_SYSTEM_VARIABLE 1193 (the reader isn't Aurora), and only with the switch owner's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it."
+      "The replica's lag can't be read from information_schema.replica_host_status (ER_UNKNOWN_TABLE 1109). Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: \"unreadable\") only for a reading Monday's rehearsal also showed: for an error, only ER_UNKNOWN_TABLE 1109 or ER_UNKNOWN_SYSTEM_VARIABLE 1193 (the reader isn't Aurora), and only with the switch owner's agreement: the run then relies on the 5-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it."
     );
     // The server's own error is named, whatever it is: a parse error is a
     // fault to report, not an Aurora question.
@@ -2117,10 +2165,10 @@ describe('runIdentityExportJob', () => {
     ).toThrow('an acknowledgement is only for an export at the freeze');
   });
 
-  it('takes a snapshot 2 minutes after the freeze, the lag unknown and accepted, or below the gap', async () => {
+  it('takes a snapshot 5 minutes after the freeze, the lag unknown and accepted, or below the gap', async () => {
     mockBuild.mockResolvedValue(document());
     const unknown = setup({
-      snapshotAt: '2026-11-24T00:02:00.000Z',
+      snapshotAt: '2026-11-24T00:05:00.000Z',
       replicaLagMs: null
     });
     expect(
@@ -2130,7 +2178,7 @@ describe('runIdentityExportJob', () => {
           acceptUnknownReplicaLag: ['unreadable']
         })
       ).snapshotGapSeconds
-    ).toBe(120);
+    ).toBe(300);
     const behind = setup({
       snapshotAt: '2026-11-24T00:05:00.000Z',
       replicaLagMs: 298_499
@@ -2164,7 +2212,7 @@ describe('runIdentityExportJob', () => {
     expect(() =>
       checkReplicaLag(300_000, reading(null, null, 'dated_ahead'))
     ).toThrow(
-      "The replica's lag row is dated ahead of UTC (LAST_UPDATE_TIMESTAMP is 7200000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown): LAST_UPDATE_TIMESTAMP may not be in UTC, so the row's age is unknown. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: {\"dated_ahead\": <Monday's replicaLagAheadMs minus 60000>}) only for a reading Monday's rehearsal also showed, and only with the switch owner's agreement: the run then relies on the 2-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it."
+      "The replica's lag row is dated ahead of UTC (LAST_UPDATE_TIMESTAMP is 7200000 ms ahead of UTC_TIMESTAMP: not UTC, so the row's age is unknown): LAST_UPDATE_TIMESTAMP may not be in UTC, so the row's age is unknown. Run once more first: a passing error, such as a timeout, clears, and through the reader endpoint the run may land on another reader. Accept it (acceptUnknownReplicaLag: {\"dated_ahead\": <Monday's replicaLagAheadMs minus 60000>}) only for a reading Monday's rehearsal also showed, and only with the switch owner's agreement: the run then relies on the 5-minute minimum gap, and still on the lag the row reports when it has one. Otherwise report it."
     );
     const all: ReplicaLagAcceptance[] = [
       'unreadable',
@@ -2325,7 +2373,7 @@ describe('runIdentityExportJob', () => {
       expect(
         warn.mock.calls.some(([line]) =>
           String(line).includes(
-            "[REPLICA LAG ACCEPTED older_than_gap] [THE ROW'S REPORTED LAG, 5 MS, STILL CHECKED] [THE 120 S MINIMUM GAP HELD]"
+            "[REPLICA LAG ACCEPTED older_than_gap] [THE ROW'S REPORTED LAG, 5 MS, STILL CHECKED] [THE 300 S MINIMUM GAP HELD]"
           )
         )
       ).toBe(true);
@@ -2495,8 +2543,8 @@ describe('runIdentityExportJob', () => {
         },
         'dated_ahead'
       ],
-      // Older than the 2-minute minimum gap.
-      [{ replicaLagMs: 5, replicaLagAgeMs: 180_000 }, 'older_than_gap'],
+      // Older than the 5-minute minimum gap.
+      [{ replicaLagMs: 5, replicaLagAgeMs: 360_000 }, 'older_than_gap'],
       [{ replicaLagMs: 5, replicaLagAgeMs: 2_000 }, null]
     ] as const) {
       const { deps, bodies } = setup(options);
@@ -2523,14 +2571,14 @@ describe('runIdentityExportJob', () => {
     expect(
       JSON.parse(ahead.bodies.get(led.manifestKey)!).read.replicaLagAheadMs
     ).toBe(7_199_000);
-    // A run at the freeze names the case against its own gap: a row 200 s
-    // old, 300 s after the freeze, is trusted, though older than the
-    // 2-minute minimum.
+    // A run at the freeze names the case against its own gap: a row 400 s
+    // old, 600 s after the freeze, is trusted, though older than the
+    // 5-minute minimum.
     mockBuild.mockResolvedValue(document());
     const later = setup({
-      snapshotAt: '2026-11-24T00:05:00.000Z',
+      snapshotAt: '2026-11-24T00:10:00.000Z',
       replicaLagMs: 5,
-      replicaLagAgeMs: 200_000
+      replicaLagAgeMs: 400_000
     });
     const atGap = await run(later.deps);
     expect([atGap.replicaLagCase, atGap.replicaLagAccepted]).toEqual([
