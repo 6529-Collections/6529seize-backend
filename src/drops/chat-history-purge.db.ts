@@ -86,8 +86,15 @@ export class ChatHistoryPurgeDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  /**
+   * The next batch of the author's chat drops to purge, locked. `keepPolls`
+   * leaves drops with a poll out (while waves are frozen, polls stay).
+   */
   async findBatchForUpdate(
-    scope: ChatHistoryPurgeScope & { pinnedDropId: string | null },
+    scope: ChatHistoryPurgeScope & {
+      pinnedDropId: string | null;
+      keepPolls?: boolean;
+    },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
     if (!ctx.connection)
@@ -103,8 +110,13 @@ export class ChatHistoryPurgeDb extends LazyDbAccessCompatibleService {
            and not exists (select 1 from ${COMPETITION_ENTRIES_TABLE} e where e.drop_id = ${DROPS_TABLE}.id)
            and serial_no <= :cutoffSerialNo
            and (:pinnedDropId is null or id <> :pinnedDropId)
+           and (:keepPolls = false or not exists (select 1 from ${DROP_POLLS_TABLE} p where p.drop_id = ${DROPS_TABLE}.id))
          order by serial_no asc limit :limit for update`,
-        { ...scope, limit: CHAT_HISTORY_PURGE_BATCH_SIZE + 1 },
+        {
+          ...scope,
+          keepPolls: scope.keepPolls ?? false,
+          limit: CHAT_HISTORY_PURGE_BATCH_SIZE + 1
+        },
         { wrappedConnection: ctx.connection }
       );
     } finally {

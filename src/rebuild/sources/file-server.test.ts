@@ -6,12 +6,31 @@ import {
   checkFiles,
   FILE_INDEX,
   fileIdOf,
+  namedSha256,
   startFileServer
 } from '@/rebuild/sources/file-server';
 import { writeProvenance } from '@/rebuild/sources/running-source';
 
 const sha256 = (text: string) =>
   createHash('sha256').update(text).digest('hex');
+
+/** RFC 4648 base32, lower case, no padding. */
+function base32(bytes: Buffer): string {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz234567';
+  let out = '';
+  let bits = 0;
+  let value = 0;
+  for (const byte of Array.from(bytes)) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      out += alphabet[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) out += alphabet[(value << (5 - bits)) & 31];
+  return out;
+}
 
 describe('file server', () => {
   let dir: string;
@@ -99,6 +118,130 @@ describe('file server', () => {
     }
   });
 
+  describe('files named by their SHA-256', () => {
+    const named = (text: string) => path.join(dir, sha256(text));
+    beforeEach(() => {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.mkdirSync(dir);
+      fs.writeFileSync(named('one'), 'one');
+      fs.writeFileSync(named('two'), 'two');
+      fs.writeFileSync(
+        path.join(dir, FILE_INDEX),
+        JSON.stringify({
+          [sha256('one')]: sha256('one'),
+          [sha256('two')]: sha256('two')
+        })
+      );
+    });
+
+    it('counts a directory of only such files as verified', async () => {
+      expect(checkFiles(dir)).toMatchObject({ problems: [], unverified: [] });
+      const server = await startFileServer(dir);
+      try {
+        expect(server.info.provisional).toBe(false);
+        expect(server.info.provisionalWhy).toBeUndefined();
+        expect(
+          await (await fetch(`${server.url}/${sha256('one')}`)).text()
+        ).toBe('one');
+      } finally {
+        await server.stop();
+      }
+    });
+
+    it('keeps a directory provisional for any other file, naming it', async () => {
+      fs.writeFileSync(path.join(dir, 'bafyone'), 'one');
+      fs.writeFileSync(
+        path.join(dir, FILE_INDEX),
+        JSON.stringify({
+          [sha256('one')]: sha256('one'),
+          [sha256('two')]: sha256('two'),
+          bafyone: sha256('one')
+        })
+      );
+      const server = await startFileServer(dir);
+      try {
+        expect(server.info).toMatchObject({
+          provisional: true,
+          provisionalWhy: 'ids not verified: bafyone'
+        });
+        expect(server.problems()).toEqual([]);
+      } finally {
+        await server.stop();
+      }
+    });
+
+    it('takes a raw CIDv1 with a SHA-256 multihash as such a name', () => {
+      // The CID of the bytes "one": 0x01 0x55 0x12 0x20 and the digest, base32.
+      const cid = `b${base32(
+        Buffer.concat([
+          Buffer.from([0x01, 0x55, 0x12, 0x20]),
+          Buffer.from(sha256('one'), 'hex')
+        ])
+      )}`;
+      expect(cid.startsWith('bafkrei')).toBe(true);
+      expect(namedSha256(cid)).toBe(sha256('one'));
+      expect(namedSha256(sha256('one'))).toBe(sha256('one'));
+      expect(namedSha256('bafyone')).toBeNull();
+      // A published CID: SHA-256 of 'hello world'.
+      expect(
+        namedSha256(
+          'bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e'
+        )
+      ).toBe(sha256('hello world'));
+      // The same with non-zero padding bits: not a canonical encoding.
+      expect(
+        namedSha256(
+          'bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5f'
+        )
+      ).toBeNull();
+      // A dag-pb CIDv1 (0x70) names a node, not the file's bytes.
+      expect(
+        namedSha256(
+          `b${base32(
+            Buffer.concat([
+              Buffer.from([0x01, 0x70, 0x12, 0x20]),
+              Buffer.from(sha256('one'), 'hex')
+            ])
+          )}`
+        )
+      ).toBeNull();
+      fs.writeFileSync(path.join(dir, cid), 'one');
+      fs.writeFileSync(path.join(dir, 'bafkreiwrong'), 'x');
+      const index = JSON.parse(
+        fs.readFileSync(path.join(dir, FILE_INDEX), 'utf8')
+      ) as Record<string, string>;
+      fs.writeFileSync(
+        path.join(dir, FILE_INDEX),
+        JSON.stringify({
+          ...index,
+          [cid]: sha256('one'),
+          bafkreiwrong: sha256('x')
+        })
+      );
+      expect(checkFiles(dir)).toMatchObject({
+        problems: [],
+        unverified: ['bafkreiwrong']
+      });
+      fs.writeFileSync(path.join(dir, cid), 'two');
+      expect(checkFiles(dir).problems).toContain(
+        `${cid} is named by a SHA-256, but its bytes hash to ${sha256('two')}`
+      );
+    });
+
+    it('fails on other bytes under a SHA-256 name, not just stays provisional', async () => {
+      fs.writeFileSync(named('one'), 'not one');
+      const server = await startFileServer(dir);
+      try {
+        expect(server.problems()).toEqual([
+          `files: ${sha256('one')} is named by a SHA-256, but its bytes hash to ${sha256('not one')}`,
+          `files: ${sha256('one')} does not match its hash in ${FILE_INDEX}`
+        ]);
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+
   it('counts only the seeds own files, never an outside directory on its label', async () => {
     writeProvenance(dir, { made_by: 'devnet example' });
     const outside = await startFileServer(dir);
@@ -109,7 +252,7 @@ describe('file server', () => {
       expect(outside.info).toMatchObject({
         provenance: 'devnet example',
         provisional: true,
-        provisionalWhy: 'ids not verified'
+        provisionalWhy: 'ids not verified: artwo, bafyone'
       });
       expect(seedsOnly.info.provisional).toBe(false);
       expect(seedsOnly.info.provisionalWhy).toBeUndefined();

@@ -10,12 +10,15 @@ interface PendingCallback {
 
 const logger = Logger.get('AFTER_COMMIT');
 const pendingByConnection = new WeakMap<object, PendingCallback[]>();
+/** Checks to run right before COMMIT, by key; only for a transaction that registered one. */
+const checksByConnection = new WeakMap<object, Map<string, () => void>>();
 /** Commit-path budget for callbacks; slower ones finish in the background. */
 const AFTER_COMMIT_WAIT_MS = 1_000;
 
 /** Transaction helpers call this right after BEGIN on `connection`. */
 export function openAfterCommitScope(connection: object): void {
   pendingByConnection.set(connection, []);
+  checksByConnection.delete(connection);
 }
 
 /**
@@ -27,6 +30,7 @@ export function closeAfterCommitScope(
 ): AfterCommitCallback[] {
   const pending = pendingByConnection.get(connection) ?? [];
   pendingByConnection.delete(connection);
+  checksByConnection.delete(connection);
   return pending.map(({ callback }) => callback);
 }
 
@@ -86,4 +90,49 @@ export async function afterCommit(
     return;
   }
   pending.push({ key, callback });
+}
+
+/**
+ * Runs `check` as the last step of the transaction that owns `connection`,
+ * right before its COMMIT. A check that throws rolls the whole transaction
+ * back, and the caller gets its error. Checks sharing a `key` run once.
+ * Without a tracked transaction (no connection, or a transaction helper that
+ * does not track it) nothing would run it at COMMIT, so `check` runs now.
+ * A transaction that registers nothing does no extra work.
+ */
+export function beforeCommit(
+  connection: ConnectionWrapper<any> | undefined,
+  key: string,
+  check: () => void
+): void {
+  const handle = connection?.connection;
+  if (
+    !handle ||
+    typeof handle !== 'object' ||
+    !pendingByConnection.has(handle)
+  ) {
+    check();
+    return;
+  }
+  let checks = checksByConnection.get(handle);
+  if (!checks) {
+    checks = new Map();
+    checksByConnection.set(handle, checks);
+  }
+  if (!checks.has(key)) {
+    checks.set(key, check);
+  }
+}
+
+/**
+ * Transaction helpers call this right before COMMIT on `connection`: it runs
+ * the registered checks, in the order they were registered, and throws the
+ * first failure.
+ */
+export function runBeforeCommitChecks(connection: object): void {
+  const checks = checksByConnection.get(connection);
+  if (!checks) {
+    return;
+  }
+  checks.forEach((check) => check());
 }

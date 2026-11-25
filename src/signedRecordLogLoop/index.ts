@@ -5,6 +5,7 @@ import {
   SignedRecordLogSegmentEntity
 } from '@/entities/ISignedRecordLog';
 import { createRecordLogSegmenter } from '@/signed-records/record-log/record-log';
+import { readRecordsWaveSetting } from '@/waves-scope/waves-scope';
 import { runPersonalImport } from '@/personal-records/personal-import-task';
 import { personalRecordsStateDb } from '@/personal-records/personal-records-state.db';
 import { Logger } from '../logging';
@@ -13,13 +14,19 @@ import * as sentryContext from '../sentry.context';
 
 const logger = Logger.get('SIGNED_RECORD_LOG_LOOP');
 
+let reportedNoRecordsWave = false;
+
 /**
  * The interim record log. SIGNED_RECORD_LOG_TASK=close (every 5 minutes)
  * closes segments, pins them and posts their heads; =archive (hourly)
  * uploads posted segments to Arweave and lists them in an archive drop.
  * Does nothing unless FEATURE_SIGNED_RECORD_LOG is true. Invoked by hand at
  * the personal settings switch with {"task": "personal-freeze"},
- * {"task": "personal-import"} or {"task": "personal-unfreeze"}.
+ * {"task": "personal-import"} or {"task": "personal-unfreeze"}; none of
+ * them posts anything. With SIGNED_RECORDS_WAVE_ID=none (6529.io has no
+ * records wave) it posts nothing and closes nothing: the entries wait in
+ * their table, and that is logged once per cold start. Unset is a mistake:
+ * the run fails, as before.
  */
 export const handler = sentryContext.wrapLambdaHandler(
   async (event?: { readonly task?: string }) => {
@@ -42,6 +49,15 @@ export const handler = sentryContext.wrapLambdaHandler(
         }
         if (event?.task === 'personal-import') {
           await runPersonalImport();
+          return;
+        }
+        if (readRecordsWaveSetting(process.env).kind === 'none') {
+          if (!reportedNoRecordsWave) {
+            reportedNoRecordsWave = true;
+            logger.info(
+              '[RECORDS WAVE: none] [NOTHING IS POSTED] [ENTRIES WAIT IN THEIR TABLE]'
+            );
+          }
           return;
         }
         const segmenter = createRecordLogSegmenter();

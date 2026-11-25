@@ -1,3 +1,4 @@
+import { RequestContext } from '@/request.context';
 import {
   DELEGATIONS_TABLE,
   DELEGATION_ALL_ADDRESS,
@@ -75,7 +76,8 @@ export async function fetchProcessedDelegations(
   collection: string,
   useCase: number,
   wallets?: string[],
-  tokenId?: number | null
+  tokenId?: number | null,
+  ctx: RequestContext = {}
 ): Promise<Delegation[]> {
   const tokenScope = delegationTokenScopeCondition(collection, tokenId);
   const results = await sqlExecutor.execute(
@@ -114,7 +116,8 @@ export async function fetchProcessedDelegations(
       expiry: Date.now() / 1000,
       wallets: wallets?.map((w) => w.toLowerCase()),
       ...tokenScope.params
-    }
+    },
+    { wrappedConnection: ctx.connection }
   );
   return results;
 }

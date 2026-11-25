@@ -17,6 +17,7 @@ const clean: VerdictInput = {
   plannedTables: 0,
   plannedSteps: [],
   waitingSteps: [],
+  staleNeeds: [],
   unownedRows: [],
   heldProbes: [],
   notInSchema: [],
@@ -70,6 +71,15 @@ const findings: [string, Partial<VerdictInput>, RegExp][] = [
     'rows no partition owns',
     { unownedRows: ["heads (1 rows whose type is in no writer's partition)"] },
     /1 partitioned tables hold rows no rebuilder owns after the seeds: heads/
+  ],
+  [
+    'needs on tables the schema has',
+    {
+      staleNeeds: [
+        'subs.switch needs identity_chain_principals, which the schema now has: drop the need'
+      ]
+    },
+    /1 needs name tables the schema already has, so they hold nothing back: subs\.switch needs identity_chain_principals/
   ],
   ['held probes', { heldProbes: ['a.p'] }, /planned probes were held/],
   [
