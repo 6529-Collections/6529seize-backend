@@ -4,31 +4,28 @@
     {
       "Effect": "Allow",
       "Action": [
-        "lambda:AddPermission",
         "lambda:CreateFunction",
         "lambda:DeleteFunction",
         "lambda:DeleteFunctionConcurrency",
-        "lambda:DeleteFunctionEventInvokeConfig",
         "lambda:GetFunction",
+        "lambda:GetFunctionCodeSigningConfig",
         "lambda:GetFunctionConcurrency",
         "lambda:GetFunctionConfiguration",
-        "lambda:GetFunctionEventInvokeConfig",
+        "lambda:GetFunctionRecursionConfig",
         "lambda:GetPolicy",
+        "lambda:GetRuntimeManagementConfig",
         "lambda:ListTags",
         "lambda:ListVersionsByFunction",
         "lambda:PublishVersion",
         "lambda:PutFunctionConcurrency",
-        "lambda:PutFunctionEventInvokeConfig",
-        "lambda:RemovePermission",
         "lambda:TagResource",
         "lambda:UntagResource",
         "lambda:UpdateFunctionCode",
-        "lambda:UpdateFunctionConfiguration",
-        "lambda:UpdateFunctionEventInvokeConfig"
+        "lambda:UpdateFunctionConfiguration"
       ],
       "Resource": [
-        "arn:aws:lambda:eu-west-1:987989283142:function:dropForgeLaunchHandler",
-        "arn:aws:lambda:eu-west-1:987989283142:function:memesDistributionHandler"
+        "arn:aws:lambda:eu-west-1:296096934726:function:dropForgeLaunchHandler",
+        "arn:aws:lambda:eu-west-1:296096934726:function:memesDistributionHandler"
       ],
       "Condition": {
         "StringEquals": {
@@ -39,20 +36,16 @@
     {
       "Effect": "Allow",
       "Action": [
-        "lambda:AddPermission",
         "lambda:DeleteFunction",
-        "lambda:DeleteFunctionEventInvokeConfig",
         "lambda:GetFunction",
         "lambda:GetFunctionConfiguration",
-        "lambda:GetFunctionEventInvokeConfig",
         "lambda:GetPolicy",
-        "lambda:PutFunctionEventInvokeConfig",
-        "lambda:RemovePermission",
-        "lambda:UpdateFunctionEventInvokeConfig"
+        "lambda:GetProvisionedConcurrencyConfig",
+        "lambda:GetRuntimeManagementConfig"
       ],
       "Resource": [
-        "arn:aws:lambda:eu-west-1:987989283142:function:dropForgeLaunchHandler:*",
-        "arn:aws:lambda:eu-west-1:987989283142:function:memesDistributionHandler:*"
+        "arn:aws:lambda:eu-west-1:296096934726:function:dropForgeLaunchHandler:*",
+        "arn:aws:lambda:eu-west-1:296096934726:function:memesDistributionHandler:*"
       ],
       "Condition": {
         "StringEquals": {
@@ -84,8 +77,21 @@
         "cloudformation:UpdateStack"
       ],
       "Resource": [
-        "arn:aws:cloudformation:eu-west-1:987989283142:stack/dropForgeLaunchHandler-staging/*",
-        "arn:aws:cloudformation:eu-west-1:987989283142:stack/memesDistributionHandler-staging/*"
+        "arn:aws:cloudformation:eu-west-1:296096934726:stack/dropForgeLaunchHandler-staging/*",
+        "arn:aws:cloudformation:eu-west-1:296096934726:stack/memesDistributionHandler-staging/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": "s3:CreateBucket",
+      "Resource": [
+        "arn:aws:s3:::dropforgelaunchhandler-st*-serverlessdeploy*",
+        "arn:aws:s3:::memesdistributionhandler-*-serverlessdeploy*"
       ],
       "Condition": {
         "StringEquals": {
@@ -96,7 +102,6 @@
     {
       "Effect": "Allow",
       "Action": [
-        "s3:CreateBucket",
         "s3:DeleteBucket",
         "s3:DeleteBucketPolicy",
         "s3:GetBucketAcl",
@@ -124,7 +129,8 @@
       ],
       "Condition": {
         "StringEquals": {
-          "aws:RequestedRegion": "eu-west-1"
+          "aws:RequestedRegion": "eu-west-1",
+          "s3:ResourceAccount": "296096934726"
         }
       }
     },
@@ -147,7 +153,8 @@
       ],
       "Condition": {
         "StringEquals": {
-          "aws:RequestedRegion": "eu-west-1"
+          "aws:RequestedRegion": "eu-west-1",
+          "s3:ResourceAccount": "296096934726"
         }
       }
     },
@@ -169,10 +176,10 @@
         "logs:UntagResource"
       ],
       "Resource": [
-        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/dropForgeLaunchHandler",
-        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/dropForgeLaunchHandler:*",
-        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/memesDistributionHandler",
-        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/memesDistributionHandler:*"
+        "arn:aws:logs:eu-west-1:296096934726:log-group:/aws/lambda/dropForgeLaunchHandler",
+        "arn:aws:logs:eu-west-1:296096934726:log-group:/aws/lambda/dropForgeLaunchHandler:*",
+        "arn:aws:logs:eu-west-1:296096934726:log-group:/aws/lambda/memesDistributionHandler",
+        "arn:aws:logs:eu-west-1:296096934726:log-group:/aws/lambda/memesDistributionHandler:*"
       ],
       "Condition": {
         "StringEquals": {
@@ -184,14 +191,60 @@
       "Effect": "Allow",
       "Action": [
         "cloudwatch:DeleteAlarms",
+        "cloudwatch:DescribeAlarms",
         "cloudwatch:ListTagsForResource",
         "cloudwatch:PutMetricAlarm",
         "cloudwatch:TagResource",
         "cloudwatch:UntagResource"
       ],
       "Resource": [
-        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:dropForgeLaunchHandler-staging-*",
-        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:memesDistributionHandler-staging-*"
+        "arn:aws:cloudwatch:eu-west-1:296096934726:alarm:dropForgeLaunchHandler-staging-*",
+        "arn:aws:cloudwatch:eu-west-1:296096934726:alarm:memesDistributionHandler-staging-*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Sid": "ReadDeploymentMetadata",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:ValidateTemplate",
+        "ec2:DescribeNetworkAcls",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeVpcs",
+        "lambda:GetAccountSettings",
+        "logs:DescribeLogGroups"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Sid": "ReadDeploymentVpcSecurityGroups",
+      "Effect": "Allow",
+      "Action": "ec2:GetSecurityGroupsForVpc",
+      "Resource": "arn:aws:ec2:eu-west-1:296096934726:vpc/vpc-00846958dea4a78e6",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Sid": "ReadDropForgeStagingDeploymentParameters",
+      "Effect": "Allow",
+      "Action": "ssm:GetParameter",
+      "Resource": [
+        "arn:aws:ssm:eu-west-1:296096934726:parameter/6529/workload/alarms-topic-arn",
+        "arn:aws:ssm:eu-west-1:296096934726:parameter/6529/workload/vpc/lambda-security-group-ids",
+        "arn:aws:ssm:eu-west-1:296096934726:parameter/6529/workload/vpc/lambda-subnet-ids"
       ],
       "Condition": {
         "StringEquals": {

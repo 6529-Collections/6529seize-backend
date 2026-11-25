@@ -50,12 +50,31 @@
         "iam:PassRole"
       ],
       "Resource": [
-        "arn:aws:iam::987989283142:role/drop-forge-prod-launch",
+        "arn:aws:iam::987989283142:role/drop-forge-prod-launch"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "lambda.amazonaws.com"
+        },
+        "ArnEquals": {
+          "iam:AssociatedResourceArn": "arn:aws:lambda:us-east-1:987989283142:function:dropForgeLaunchHandler"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:PassRole"
+      ],
+      "Resource": [
         "arn:aws:iam::987989283142:role/drop-forge-prod-distribution"
       ],
       "Condition": {
         "StringEquals": {
           "iam:PassedToService": "lambda.amazonaws.com"
+        },
+        "ArnEquals": {
+          "iam:AssociatedResourceArn": "arn:aws:lambda:us-east-1:987989283142:function:memesDistributionHandler"
         }
       }
     },
@@ -155,6 +174,54 @@
       "Condition": {
         "StringEquals": {
           "iam:PassedToService": "scheduler.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": "lambda:TagResource",
+      "Resource": "arn:aws:lambda:us-east-1:987989283142:event-source-mapping:*",
+      "Sid": "TagDropForgeMappingsOnCreate",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1",
+          "aws:RequestTag/aws:cloudformation:stack-name": [
+            "dropForgeLaunchHandler-prod",
+            "memesDistributionHandler-prod"
+          ]
+        },
+        "ForAnyValue:StringEquals": {
+          "aws:CalledVia": "cloudformation.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "lambda:ListTags",
+        "lambda:TagResource",
+        "lambda:UntagResource"
+      ],
+      "Resource": "arn:aws:lambda:us-east-1:987989283142:event-source-mapping:*",
+      "Sid": "ManageDropForgeMappingTags",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1",
+          "aws:ResourceTag/aws:cloudformation:stack-name": [
+            "dropForgeLaunchHandler-prod",
+            "memesDistributionHandler-prod"
+          ]
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": "scheduler:DeleteSchedule",
+      "Resource": "arn:aws:scheduler:us-east-1:987989283142:schedule/drop-forge-prod/*",
+      "Sid": "DeleteSchedulesInDropForgeGroup",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
         }
       }
     }

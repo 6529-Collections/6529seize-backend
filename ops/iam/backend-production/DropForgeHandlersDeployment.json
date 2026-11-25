@@ -4,27 +4,24 @@
     {
       "Effect": "Allow",
       "Action": [
-        "lambda:AddPermission",
         "lambda:CreateFunction",
         "lambda:DeleteFunction",
         "lambda:DeleteFunctionConcurrency",
-        "lambda:DeleteFunctionEventInvokeConfig",
         "lambda:GetFunction",
+        "lambda:GetFunctionCodeSigningConfig",
         "lambda:GetFunctionConcurrency",
         "lambda:GetFunctionConfiguration",
-        "lambda:GetFunctionEventInvokeConfig",
+        "lambda:GetFunctionRecursionConfig",
         "lambda:GetPolicy",
+        "lambda:GetRuntimeManagementConfig",
         "lambda:ListTags",
         "lambda:ListVersionsByFunction",
         "lambda:PublishVersion",
         "lambda:PutFunctionConcurrency",
-        "lambda:PutFunctionEventInvokeConfig",
-        "lambda:RemovePermission",
         "lambda:TagResource",
         "lambda:UntagResource",
         "lambda:UpdateFunctionCode",
-        "lambda:UpdateFunctionConfiguration",
-        "lambda:UpdateFunctionEventInvokeConfig"
+        "lambda:UpdateFunctionConfiguration"
       ],
       "Resource": [
         "arn:aws:lambda:us-east-1:987989283142:function:dropForgeLaunchHandler",
@@ -39,16 +36,12 @@
     {
       "Effect": "Allow",
       "Action": [
-        "lambda:AddPermission",
         "lambda:DeleteFunction",
-        "lambda:DeleteFunctionEventInvokeConfig",
         "lambda:GetFunction",
         "lambda:GetFunctionConfiguration",
-        "lambda:GetFunctionEventInvokeConfig",
         "lambda:GetPolicy",
-        "lambda:PutFunctionEventInvokeConfig",
-        "lambda:RemovePermission",
-        "lambda:UpdateFunctionEventInvokeConfig"
+        "lambda:GetProvisionedConcurrencyConfig",
+        "lambda:GetRuntimeManagementConfig"
       ],
       "Resource": [
         "arn:aws:lambda:us-east-1:987989283142:function:dropForgeLaunchHandler:*",
@@ -95,8 +88,20 @@
     },
     {
       "Effect": "Allow",
+      "Action": "s3:CreateBucket",
+      "Resource": [
+        "arn:aws:s3:::dropforgelaunchhandler-pr*-serverlessdeploy*",
+        "arn:aws:s3:::memesdistributionhandler-*-serverlessdeploy*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
       "Action": [
-        "s3:CreateBucket",
         "s3:DeleteBucket",
         "s3:DeleteBucketPolicy",
         "s3:GetBucketAcl",
@@ -119,12 +124,13 @@
         "s3:PutEncryptionConfiguration"
       ],
       "Resource": [
-        "arn:aws:s3:::dropforgelaunchhandler-pro*-serverlessdeploy*",
+        "arn:aws:s3:::dropforgelaunchhandler-pr*-serverlessdeploy*",
         "arn:aws:s3:::memesdistributionhandler-*-serverlessdeploy*"
       ],
       "Condition": {
         "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
+          "aws:RequestedRegion": "us-east-1",
+          "s3:ResourceAccount": "987989283142"
         }
       }
     },
@@ -142,12 +148,13 @@
         "s3:PutObjectTagging"
       ],
       "Resource": [
-        "arn:aws:s3:::dropforgelaunchhandler-pro*-serverlessdeploy*/*",
+        "arn:aws:s3:::dropforgelaunchhandler-pr*-serverlessdeploy*/*",
         "arn:aws:s3:::memesdistributionhandler-*-serverlessdeploy*/*"
       ],
       "Condition": {
         "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
+          "aws:RequestedRegion": "us-east-1",
+          "s3:ResourceAccount": "987989283142"
         }
       }
     },
@@ -184,6 +191,7 @@
       "Effect": "Allow",
       "Action": [
         "cloudwatch:DeleteAlarms",
+        "cloudwatch:DescribeAlarms",
         "cloudwatch:ListTagsForResource",
         "cloudwatch:PutMetricAlarm",
         "cloudwatch:TagResource",
@@ -193,6 +201,36 @@
         "arn:aws:cloudwatch:us-east-1:987989283142:alarm:dropForgeLaunchHandler-prod-*",
         "arn:aws:cloudwatch:us-east-1:987989283142:alarm:memesDistributionHandler-prod-*"
       ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      }
+    },
+    {
+      "Sid": "ReadDeploymentMetadata",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:ValidateTemplate",
+        "ec2:DescribeNetworkAcls",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeVpcs",
+        "lambda:GetAccountSettings",
+        "logs:DescribeLogGroups"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      }
+    },
+    {
+      "Sid": "ReadDeploymentVpcSecurityGroups",
+      "Effect": "Allow",
+      "Action": "ec2:GetSecurityGroupsForVpc",
+      "Resource": "arn:aws:ec2:us-east-1:987989283142:vpc/vpc-0049175e3bed48694",
       "Condition": {
         "StringEquals": {
           "aws:RequestedRegion": "us-east-1"

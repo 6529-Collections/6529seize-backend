@@ -21,7 +21,9 @@ Wallet and reporting identities remain operator-supplied; never commit real cred
 
 Use separate KMS keys, operational wallets, waves, profile configuration and spending
 limits for each environment. A profile or wave UUID must belong to the application's
-selected environment. The deployment injects `DROP_FORGE_STAGE`; staging selects Sepolia and production selects mainnet. No feature-specific GitHub variable is needed.
+selected environment. The deployment injects `DROP_FORGE_STAGE`. Staging
+selects Sepolia and production selects mainnet. GitHub Actions uses the
+environment's `AWS_DROP_FORGE_DEPLOY_ROLE_ARN` for both Drop Forge workers.
 
 Runtime configuration is loaded from AWS Secrets Manager **`prod/lambdas` in the
 function's region**, including for staging. The API, launch worker and preparation
@@ -113,7 +115,9 @@ Manager and the upstream APIs from the configured subnets.
 Scope the launch role's `kms:GetPublicKey` and `kms:Sign` to the Ethereum
 transaction key. Grant both handler roles `kms:Sign` on the separate Ed25519
 report key. Match those grants in the two key policies and review existing broad
-IAM grants when checking effective access.
+IAM grants when checking effective access. In production, install the
+[signing guards](../ops/iam/backend-production/README.md#drop-forge-deployment-policies)
+on both runtime roles to require signing calls to come from their assigned Lambda.
 
 Role names are maintained in the stage configuration:
 
@@ -142,16 +146,18 @@ Required runtime permissions, scoped to this account and region:
   Scheduler delivery role, restricted to `scheduler.amazonaws.com`.
 - Launch alone: `kms:GetPublicKey` and `kms:Sign` on the exact operational key.
 - Both handlers: `kms:Sign` on the dedicated Ed25519 report signing key.
-- Deployment role: existing scoped CloudFormation/SQS/alarms/event-source-mapping
+- Dedicated deployment role: scoped CloudFormation/SQS/alarms/event-source-mapping
   permissions, Scheduler group and readiness schedule management, and
   `iam:PassRole` for the two exact Lambda execution roles and the regional
-  Scheduler delivery role, each restricted to its service.
+  Scheduler delivery role, each restricted to its service. Each Lambda role
+  is paired with its assigned function.
 
 The API and handlers do not require `lambda:InvokeFunction` for this feature.
-Review/apply the proposed `DropForgeHandlersDeployment.json` and
-`DropForgeDispatchDeployment.json` supplements under
-`ops/iam/backend-{staging,production}/`; their READMEs state the scope and remaining
-administrative step. They have not been applied or AWS-validated in this change.
+Install `DropForgeHandlersDeployment.json` and
+`DropForgeDispatchDeployment.json` on the dedicated role according to the
+[staging](../ops/iam/backend-staging/README.md#drop-forge-deployment-policies)
+and [production](../ops/iam/backend-production/README.md#drop-forge-deployment-policies)
+runbooks. Verify the staging deployment before installing the production role.
 No permissions to edit arbitrary IAM policies are added to deployment. Ensure VPC
 endpoints or outbound networking allow SQS and Scheduler as well as RPC/KMS/EMMA.
 
