@@ -778,6 +778,9 @@ export * from '../models/ApiSetCompetitionVoteRequest';
 export * from '../models/ApiSetDropReplyCollapseRequest';
 export * from '../models/ApiSetPinnedDropRequest';
 export * from '../models/ApiSetProfileWaveRequest';
+export * from '../models/ApiSignedRecordsAnchor';
+export * from '../models/ApiSignedRecordsOwner';
+export * from '../models/ApiSignedRecordsOwners';
 export * from '../models/ApiStartMultipartMediaUploadResponse';
 export * from '../models/ApiSubmissionDropContext';
 export * from '../models/ApiSubmissionDropStatus';
@@ -1229,7 +1232,7 @@ import { ApiCommunityMetric } from '../models/ApiCommunityMetric';
 import { ApiCommunityMetricSample } from '../models/ApiCommunityMetricSample';
 import { ApiCommunityMetrics } from '../models/ApiCommunityMetrics';
 import { ApiCommunityMetricsSeries } from '../models/ApiCommunityMetricsSeries';
-import { ApiCompetition                         } from '../models/ApiCompetition';
+import { ApiCompetition                           } from '../models/ApiCompetition';
 import { ApiCompetitionActionRequest } from '../models/ApiCompetitionActionRequest';
 import { ApiCompetitionAward } from '../models/ApiCompetitionAward';
 import { ApiCompetitionAwardPage } from '../models/ApiCompetitionAwardPage';
@@ -1699,7 +1702,7 @@ import { ApiProfileCmsAgentSchemaBundleSourcePacketTypesInner , ApiProfileCmsAge
 import { ApiProfileCmsAgentSourcePacket, ApiProfileCmsAgentSourcePacketSchemaEnum       , ApiProfileCmsAgentSourcePacketVisibilityEnum          } from '../models/ApiProfileCmsAgentSourcePacket';
 import { ApiProfileCmsAgentSourcePacketSafety } from '../models/ApiProfileCmsAgentSourcePacketSafety';
 import { ApiProfileCmsAgentSourcePacketValidationDiagnostics } from '../models/ApiProfileCmsAgentSourcePacketValidationDiagnostics';
-import { ApiProfileCmsPackage               } from '../models/ApiProfileCmsPackage';
+import { ApiProfileCmsPackage                } from '../models/ApiProfileCmsPackage';
 import { ApiProfileCmsPackageExport                 } from '../models/ApiProfileCmsPackageExport';
 import { ApiProfileCmsPackageStatus } from '../models/ApiProfileCmsPackageStatus';
 import { ApiProfileCmsPackageStorageUploadResult } from '../models/ApiProfileCmsPackageStorageUploadResult';
@@ -1782,13 +1785,16 @@ import { ApiSetCompetitionVoteRequest } from '../models/ApiSetCompetitionVoteReq
 import { ApiSetDropReplyCollapseRequest } from '../models/ApiSetDropReplyCollapseRequest';
 import { ApiSetPinnedDropRequest } from '../models/ApiSetPinnedDropRequest';
 import { ApiSetProfileWaveRequest } from '../models/ApiSetProfileWaveRequest';
+import { ApiSignedRecordsAnchor } from '../models/ApiSignedRecordsAnchor';
+import { ApiSignedRecordsOwner } from '../models/ApiSignedRecordsOwner';
+import { ApiSignedRecordsOwners } from '../models/ApiSignedRecordsOwners';
 import { ApiStartMultipartMediaUploadResponse     } from '../models/ApiStartMultipartMediaUploadResponse';
 import { ApiSubmissionDropContext        } from '../models/ApiSubmissionDropContext';
 import { ApiSubmissionDropStatus } from '../models/ApiSubmissionDropStatus';
 import { ApiSubmissionDropVoting } from '../models/ApiSubmissionDropVoting';
 import { ApiSubmissionDropVotingContextProfileContext } from '../models/ApiSubmissionDropVotingContextProfileContext';
 import { ApiSubmitProfileCmsAgentProposalRequest } from '../models/ApiSubmitProfileCmsAgentProposalRequest';
-import { ApiSubscriptionCoverage                 } from '../models/ApiSubscriptionCoverage';
+import { ApiSubscriptionCoverage                   } from '../models/ApiSubscriptionCoverage';
 import { ApiSubscriptionCoverageDeadlineBasis } from '../models/ApiSubscriptionCoverageDeadlineBasis';
 import { ApiSubscriptionCoverageEligibilityBasis } from '../models/ApiSubscriptionCoverageEligibilityBasis';
 import { ApiSubscriptionCoverageForecast           } from '../models/ApiSubscriptionCoverageForecast';
@@ -1880,7 +1886,7 @@ import { ApiWaveMentionSearchResult } from '../models/ApiWaveMentionSearchResult
 import { ApiWaveMetadata } from '../models/ApiWaveMetadata';
 import { ApiWaveMetadataType } from '../models/ApiWaveMetadataType';
 import { ApiWaveMetrics } from '../models/ApiWaveMetrics';
-import { ApiWaveMin                            } from '../models/ApiWaveMin';
+import { ApiWaveMin                             } from '../models/ApiWaveMin';
 import { ApiWaveNotificationPreferences } from '../models/ApiWaveNotificationPreferences';
 import { ApiWaveOutcome        } from '../models/ApiWaveOutcome';
 import { ApiWaveOutcomeCredit } from '../models/ApiWaveOutcomeCredit';
@@ -3034,6 +3040,9 @@ let typeMap: {[index: string]: any} = {
     "ApiSetDropReplyCollapseRequest": ApiSetDropReplyCollapseRequest,
     "ApiSetPinnedDropRequest": ApiSetPinnedDropRequest,
     "ApiSetProfileWaveRequest": ApiSetProfileWaveRequest,
+    "ApiSignedRecordsAnchor": ApiSignedRecordsAnchor,
+    "ApiSignedRecordsOwner": ApiSignedRecordsOwner,
+    "ApiSignedRecordsOwners": ApiSignedRecordsOwners,
     "ApiStartMultipartMediaUploadResponse": ApiStartMultipartMediaUploadResponse,
     "ApiSubmissionDropContext": ApiSubmissionDropContext,
     "ApiSubmissionDropVoting": ApiSubmissionDropVoting,

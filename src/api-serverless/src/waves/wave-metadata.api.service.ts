@@ -16,6 +16,7 @@ import {
 } from '@/api/community-members/user-groups.service';
 import { NotFoundException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
+import { assertWaveWritable } from '@/waves-freeze/waves-freeze-scope';
 
 export class WaveMetadataApiService {
   constructor(
@@ -56,7 +57,11 @@ export class WaveMetadataApiService {
     },
     ctx: RequestContext
   ): Promise<ApiWaveMetadata> {
+    // Metadata of a moving wave is held while waves are frozen.
+    await assertWaveWritable(waveId, ctx);
     await this.assertCanManageWaveMetadata(waveId, ctx);
+    // No transaction here: check again right before the write.
+    await assertWaveWritable(waveId, ctx);
     const metadata = await this.waveMetadataDb.create(
       { waveId, dataKey, dataValue },
       ctx
@@ -74,7 +79,11 @@ export class WaveMetadataApiService {
     },
     ctx: RequestContext
   ): Promise<ApiWaveMetadata> {
+    // Metadata of a moving wave is held while waves are frozen.
+    await assertWaveWritable(waveId, ctx);
     await this.assertCanManageWaveMetadata(waveId, ctx);
+    // No transaction here: check again right before the write.
+    await assertWaveWritable(waveId, ctx);
     const metadata = await this.waveMetadataDb.deleteByIdAndWaveId(
       metadataId,
       waveId,

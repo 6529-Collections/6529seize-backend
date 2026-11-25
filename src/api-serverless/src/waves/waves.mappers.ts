@@ -2,6 +2,7 @@ import {
   ActivityEventAction,
   ActivityEventTargetType
 } from '../../../entities/IActivityEvent';
+import { wavesScopeService } from '@/waves-scope/waves-scope.service';
 import {
   ParticipationRequiredMedia,
   WaveCreditScope,
@@ -107,6 +108,8 @@ type WaveMappingRelatedData = {
   votingCreditNftsByWaveId: Record<string, WaveVotingCreditNft[]>;
   pinnedWaveIds: Set<string>;
   identityWaveIds: Set<string>;
+  /** Whether each wave stays on 6529.io (wavesScopeService.staysForDisplay). */
+  staysOnSiteByWaveId: Map<string, boolean>;
   parentWaveOverviewsByChildWaveId: Record<string, ApiWaveOverview>;
   waveIdsWithVisibleSubwaves: Set<string>;
   /** Imported waves' chain ids, by wave id. */
@@ -361,6 +364,7 @@ export class WavesMappers {
       votingCreditNftsByWaveId,
       pinnedWaveIds,
       identityWaveIds,
+      staysOnSiteByWaveId,
       parentWaveOverviewsByChildWaveId,
       waveIdsWithVisibleSubwaves,
       chainIdsByWaveId = {}
@@ -572,6 +576,7 @@ export class WavesMappers {
     const apiWave: ApiWave = {
       chain_id: chainId,
       id: waveEntity.id,
+      stays_on_site: staysOnSiteByWaveId.get(waveEntity.id) ?? false,
       name: displayByWaveId[waveEntity.id]?.name ?? waveEntity.name,
       picture: resolveWavePictureOverride(
         waveEntity.picture,
@@ -657,7 +662,8 @@ export class WavesMappers {
       votingCreditNftsByWaveId,
       pinnedWaveIds,
       identityWaveIds,
-      waveIdsWithVisibleSubwaves
+      waveIdsWithVisibleSubwaves,
+      staysOnSiteByWaveId
     ] = await Promise.all([
       this.userGroupsService.getByIds(
         waveEntities.flatMap((waveEntity) =>
@@ -761,7 +767,8 @@ export class WavesMappers {
         waveIds,
         groupIdsUserIsEligibleFor,
         ctx
-      )
+      ),
+      wavesScopeService.staysForDisplay(waveIds, ctx)
     ]);
     const profileIds = collections.distinct([
       ...waveEntities.flatMap((waveEntity) =>
@@ -859,6 +866,7 @@ export class WavesMappers {
       votingCreditNftsByWaveId,
       pinnedWaveIds,
       identityWaveIds,
+      staysOnSiteByWaveId,
       parentWaveOverviewsByChildWaveId,
       waveIdsWithVisibleSubwaves,
       chainIdsByWaveId: await this.wavesApiDb.findChainIdsOfImportedWaves(

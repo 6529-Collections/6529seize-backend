@@ -21,11 +21,6 @@
       "name": "rpcProxy",
       "environments": ["prod"],
       "owner": "external-or-legacy"
-    },
-    {
-      "name": "dropVideoRenditionsCompletionLoop",
-      "environments": ["staging"],
-      "owner": "legacy"
     }
   ]
 }

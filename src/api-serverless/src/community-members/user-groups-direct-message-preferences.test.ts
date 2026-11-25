@@ -22,9 +22,8 @@ const transactionConnection: ConnectionWrapper<unknown> = {
 type UserGroupsDbDependency = ConstructorParameters<
   typeof UserGroupsService
 >[0];
-type AbusivenessDependency = ConstructorParameters<typeof UserGroupsService>[1];
-type MetricsDependency = ConstructorParameters<typeof UserGroupsService>[2];
-type PreferencesDependency = ConstructorParameters<typeof UserGroupsService>[3];
+type MetricsDependency = ConstructorParameters<typeof UserGroupsService>[1];
+type PreferencesDependency = ConstructorParameters<typeof UserGroupsService>[2];
 
 function recipientRow(
   overrides: Partial<DirectMessageRecipientPreference> = {}
@@ -102,7 +101,6 @@ function createService({
   });
   const service = new UserGroupsService(
     userGroupsDb as unknown as UserGroupsDbDependency,
-    {} as AbusivenessDependency,
     {} as MetricsDependency,
     profilePreferences as unknown as PreferencesDependency,
     admission

@@ -159,9 +159,31 @@ export function chainGatewayConfigFromEnv(
       ''
     );
   }
+  // Settings that make every request fail before it is sent are refused
+  // here, so that no submit can read as "maybe landed" because of them:
+  // a URL carrying a user name or password (fetch refuses it), and a key
+  // that isn't plain visible ASCII (no header can carry it).
+  const url = new URL(baseUrl);
+  if (url.username || url.password) {
+    throw new ChainGatewayError(
+      'CHAIN_GATEWAY_URL carries credentials; the key goes in CHAIN_GATEWAY_SERVICE_KEY',
+      null,
+      'not_configured',
+      ''
+    );
+  }
+  const serviceKey = env.CHAIN_GATEWAY_SERVICE_KEY?.trim() || null;
+  if (serviceKey !== null && !/^[!-~]+$/.test(serviceKey)) {
+    throw new ChainGatewayError(
+      'CHAIN_GATEWAY_SERVICE_KEY is not plain visible ASCII',
+      null,
+      'not_configured',
+      ''
+    );
+  }
   return {
     baseUrl: trimTrailingSlashes(baseUrl),
-    serviceKey: env.CHAIN_GATEWAY_SERVICE_KEY?.trim() || null,
+    serviceKey,
     // 0 would abort every request at once.
     timeoutMs: intOr(env.CHAIN_GATEWAY_TIMEOUT_MS, 10_000) || 10_000,
     retries: intOr(env.CHAIN_GATEWAY_RETRIES, 3),
@@ -264,6 +286,12 @@ type RetryableError = ChainGatewayError & {
  * own), not one the caller asked for.
  */
 type PinnedHere = ChainReadOptions & { readonly pinnedHere?: boolean };
+
+/** A network's pin: the highest finalized height read, and its block's time. */
+interface PinFloor {
+  readonly height: number;
+  readonly time: number | null;
+}
 
 /** A caller's check of an answer; it throws to refuse it. */
 type AnswerCheck<T> = (answer: ChainAnswer<T> | null) => void;
@@ -1003,7 +1031,7 @@ export class ChainGatewayClient {
    * The highest finalized height seen on each network: kept per network,
    * so a status flipping between two during a relaunch keeps both.
    */
-  private readonly pinFloors = new Map<string, number>();
+  private readonly pinFloors = new Map<string, PinFloor>();
   /** The highest head height seen on each network, likewise. */
   private readonly headFloors = new Map<string, number>();
   private caches: {
@@ -1407,7 +1435,11 @@ export class ChainGatewayClient {
           }
           // Reads never pin below a finalized height already seen on this
           // network (a node behind the others can answer the status).
-          this.raiseFloor(value.network!, value.finalizedHeight);
+          this.raiseFloor(
+            value.network!,
+            value.finalizedHeight,
+            finalized!.time
+          );
           this.headFloors.set(
             value.network!,
             Math.max(this.headFloors.get(value.network!) ?? 0, value.headHeight)
@@ -1435,8 +1467,12 @@ export class ChainGatewayClient {
       ...node,
       headHeight: Math.max(node.headHeight, pin, headFloor ?? 0),
       finalizedHeight: pin,
-      // The answering node's block time, for its own height only.
-      finalizedTime: pin === node.finalizedHeight ? node.finalizedTime : null,
+      // The pinned block's time: the answering node's when the pin is its
+      // own height, else the one kept with the pin when it was raised.
+      finalizedTime:
+        pin === node.finalizedHeight
+          ? node.finalizedTime
+          : this.pinTimeOf(node.network, pin),
       nodeFinalizedHeight: node.finalizedHeight,
       nodeFinalizedTime: node.finalizedTime ?? undefined
     };
@@ -1570,7 +1606,7 @@ export class ChainGatewayClient {
     }
     check?.(answer);
     // A finalized height read is one the next reads don't go below.
-    this.raiseFloor(lower(read.network), read.height);
+    this.raiseFloor(lower(read.network), read.height, read.time);
     return answer;
   }
 
@@ -1609,17 +1645,37 @@ export class ChainGatewayClient {
     }
   }
 
+  /** The time kept with a network's pin, when the pin is at `height`. */
+  private pinTimeOf(network: string | null, height: number): number | null {
+    const floor = network ? this.pinFloors.get(network) : undefined;
+    return floor && floor.height === height ? floor.time : null;
+  }
+
   /** The height a read without one pins: the head's, never going down. */
   private pinOf(head: ChainHead): number {
-    const floor = head.network ? this.pinFloors.get(head.network) : undefined;
+    const floor = head.network
+      ? this.pinFloors.get(head.network)?.height
+      : undefined;
     return Math.max(floor ?? 0, head.finalizedHeight);
   }
 
-  private raiseFloor(network: string, height: number) {
-    this.pinFloors.set(
-      network,
-      Math.max(this.pinFloors.get(network) ?? 0, height)
-    );
+  /**
+   * Raises a network's pin to a finalized height read, keeping that
+   * block's time with it: the time only ever goes with its own height, so
+   * a later raise replaces both.
+   */
+  private raiseFloor(network: string, height: number, time?: unknown) {
+    const floor = this.pinFloors.get(network);
+    const known = Number.isSafeInteger(time) ? (time as number) : null;
+    if (!floor || height > floor.height) {
+      this.pinFloors.set(network, { height, time: known });
+    } else if (
+      height === floor.height &&
+      floor.time === null &&
+      known !== null
+    ) {
+      this.pinFloors.set(network, { height, time: known });
+    }
   }
 
   private async pinnedRead<T>(
@@ -1935,7 +1991,7 @@ export class ChainGatewayClient {
     // Ranked at the answering node's finalized state: one behind the
     // height reads already pinned would take them back.
     const network = lower(answer.read.network);
-    const floor = this.pinFloors.get(network) ?? 0;
+    const floor = this.pinFloors.get(network)?.height ?? 0;
     if (answer.read.height < floor) {
       throw new ChainGatewayError(
         `${path}: answered at ${answer.read.height}, below the height ${floor} already read`,
@@ -1944,7 +2000,7 @@ export class ChainGatewayClient {
         path
       );
     }
-    this.raiseFloor(network, answer.read.height);
+    this.raiseFloor(network, answer.read.height, answer.read.time);
     return answer;
   }
 
@@ -2439,7 +2495,11 @@ export class ChainGatewayClient {
     // A page read at a finalized height is a height later reads don't go
     // below: what it says changed is then seen by the reads that follow.
     if (answer.read.at === 'finalized') {
-      this.raiseFloor(lower(answer.read.network), answer.read.height);
+      this.raiseFloor(
+        lower(answer.read.network),
+        answer.read.height,
+        answer.read.time
+      );
     }
     // A node behind the height asked from answers through its own head:
     // the next height stays where the reader is.
@@ -2569,7 +2629,9 @@ export class ChainGatewayClient {
       if (
         !(error instanceof ChainGatewayError) ||
         notTaken(error) ||
-        NEVER_LEFT.indexOf(error.code) >= 0
+        // The client's own refusals (no status: never sent); a server's
+        // answer with the same code still went out.
+        (error.status === null && NEVER_LEFT.indexOf(error.code) >= 0)
       ) {
         throw error;
       }

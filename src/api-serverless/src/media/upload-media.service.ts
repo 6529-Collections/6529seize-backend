@@ -16,7 +16,7 @@ import { ApiCompleteMultipartUploadResponse } from '../generated/models/ApiCompl
 import { ApiDropMediaStatus } from '../generated/models/ApiDropMediaStatus';
 import { ApiStartMultipartMediaUploadResponse } from '../generated/models/ApiStartMultipartMediaUploadResponse';
 import { getFileExtension, slugifyBaseName } from './sanitize-file-name';
-import { CLOUDFRONT_LINK } from '@/constants';
+import { getUserMediaOrigin } from '@/constants';
 import {
   BadRequestException,
   CustomApiCompliantException,
@@ -133,7 +133,11 @@ export class UploadMediaService {
     content_type: string;
   }): Promise<ApiCreateMediaUrlResponse> {
     this.assertSinglePutImageUploadAllowed(content_type);
-    const { key, uploadId } = this.createWaveMediaKey({ file_name, author_id });
+    const { key, uploadId } = this.createWaveMediaKey({
+      file_name,
+      author_id,
+      content_type
+    });
     return await this.withBudgetedUpload(
       {
         id: uploadId,
@@ -182,7 +186,7 @@ export class UploadMediaService {
     author_id: string;
   }): Promise<ApiStartMultipartMediaUploadResponse> {
     return await this.createMultipartUpload({
-      ...this.createWaveMediaKey({ file_name, author_id }),
+      ...this.createWaveMediaKey({ file_name, author_id, content_type }),
       content_type,
       author_id,
       source: DropMediaUploadSource.WAVE,
@@ -334,7 +338,7 @@ export class UploadMediaService {
       });
     }
     return {
-      media_url: `${CLOUDFRONT_LINK}/${completeResp.Key}`,
+      media_url: `${getUserMediaOrigin()}/${completeResp.Key}`,
       media_status: ApiDropMediaStatus.Ready
     };
   }
@@ -466,14 +470,21 @@ export class UploadMediaService {
   /** The author prefix stays: untracked wave keys are owner-checked by it. */
   private createWaveMediaKey({
     file_name,
-    author_id
+    author_id,
+    content_type
   }: {
     file_name: string;
     author_id: string;
+    content_type: string;
   }): ReservedMediaKey {
     const uploadId = randomUUID();
+    // Derive the WebP suffix from its MIME type to keep filename data private.
+    const publicFileName =
+      content_type === 'image/webp'
+        ? `${uploadId}.webp`
+        : neutralMediaFileName(uploadId, file_name);
     return {
-      key: `waves/author_${author_id}/${neutralMediaFileName(uploadId, file_name)}`,
+      key: `waves/author_${author_id}/${publicFileName}`,
       uploadId
     };
   }
@@ -581,11 +592,11 @@ export class UploadMediaService {
       bucket: ingestBucket,
       s3: this.getIngestS3(),
       metadata: {
-        // Decision entries are never stripped, even by a sanitizer that
-        // predates the purpose column.
+        // Wave pictures always use the metadata stripping policy.
         [DROP_MEDIA_SANITIZE_UPLOAD_METADATA_KEY]: String(
-          isDropMediaSanitizationEnabled() &&
-            purpose !== DropMediaUploadPurpose.DECISION_ENTRY
+          purpose !== DropMediaUploadPurpose.DECISION_ENTRY &&
+            (source === DropMediaUploadSource.WAVE ||
+              isDropMediaSanitizationEnabled())
         )
       }
     });
@@ -595,7 +606,7 @@ export class UploadMediaService {
       profile_id: author_id,
       source,
       public_key: key,
-      public_url: `${CLOUDFRONT_LINK}/${key}`,
+      public_url: `${getUserMediaOrigin()}/${key}`,
       ingest_bucket: ingestBucket,
       ingest_key: ingestKey,
       s3_upload_id: uploadId,
@@ -642,7 +653,7 @@ export class UploadMediaService {
       profile_id: authorId,
       source: DropMediaUploadSource.DROP,
       public_key: key,
-      public_url: `${CLOUDFRONT_LINK}/${key}`,
+      public_url: `${getUserMediaOrigin()}/${key}`,
       ingest_bucket: this.getS3Bucket(),
       ingest_key: key,
       s3_upload_id: s3UploadId,
@@ -864,7 +875,7 @@ export class UploadMediaService {
     return {
       upload_url: signedUrl,
       content_type,
-      media_url: `${CLOUDFRONT_LINK}/${key}`
+      media_url: `${getUserMediaOrigin()}/${key}`
     };
   }
 

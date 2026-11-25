@@ -1,4 +1,5 @@
 import { Entity, PrimaryColumn } from 'typeorm';
+import { CONSOLIDATION_KEY_LENGTH } from '@/constants';
 import { IDENTITY_TDH_SYNC_SCOPE_TABLE } from '@/constants/db-tables';
 
 /**
@@ -27,6 +28,6 @@ export class IdentityTdhSyncScopeEntity {
   readonly kind!: string;
 
   /** As long as tdh_consolidation.consolidation_key, its longest source. */
-  @PrimaryColumn({ type: 'varchar', length: 500 })
+  @PrimaryColumn({ type: 'varchar', length: CONSOLIDATION_KEY_LENGTH })
   readonly value!: string;
 }
