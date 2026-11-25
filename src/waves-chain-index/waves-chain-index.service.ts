@@ -1,3 +1,7 @@
+import {
+  isWavesImportRouteMissing,
+  WavesImportRouteWait
+} from '@/chain-gateway/waves-import-route';
 import { ChainGatewayError } from '@/chain-gateway/chain-gateway.client';
 import {
   ChainFeedBlock,
@@ -122,7 +126,11 @@ const FEED_FAMILIES: readonly string[] = [
 
 export interface WavesChainIndexReport {
   mode: 'idle' | 'skipped' | 'indexed';
-  skipped?: 'import_not_complete' | 'gateway_behind' | 'head_time_unknown';
+  skipped?:
+    | 'import_not_complete'
+    | 'import_route_missing'
+    | 'gateway_behind'
+    | 'head_time_unknown';
   height: number | null;
   feedFrom: number | null;
   feedNext: number | null;
@@ -247,6 +255,12 @@ export function splitCursor(after: string | null): {
 }
 
 export class WavesChainIndex {
+  /** A gateway without /v1/waves/import: waits before the switch-on. */
+  private readonly importRouteWait = new WavesImportRouteWait(
+    logger,
+    'WAVES CHAIN INDEX'
+  );
+
   constructor(
     private readonly api: WavesChainApi,
     private readonly db: WavesChainIndexDb,
@@ -328,7 +342,24 @@ export class WavesChainIndex {
       });
       report.restartedFull = 'network_changed';
     }
-    const imported = await this.api.importState(height);
+    const imported = await this.api
+      .importState(height)
+      .catch((error: unknown) => {
+        // A gateway without the waves routes: before the switch-on, not yet
+        // (one warning); from it, an error as any other gateway failure.
+        if (
+          isWavesImportRouteMissing(error) &&
+          this.importRouteWait.waits(this.now())
+        ) {
+          return 'route_missing' as const;
+        }
+        throw error;
+      });
+    if (imported === 'route_missing') {
+      report.mode = 'skipped';
+      report.skipped = 'import_route_missing';
+      return report;
+    }
     if (!imported?.completed) {
       report.mode = 'skipped';
       report.skipped = 'import_not_complete';
