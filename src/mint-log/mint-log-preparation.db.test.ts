@@ -3,7 +3,9 @@ import {
   DISTRIBUTION_TABLE,
   DROP_FORGE_JOBS_TABLE,
   DROP_FORGE_LAUNCHES_TABLE,
+  DROP_FORGE_PREPARATIONS_TABLE,
   MEMES_CONTRACT,
+  MINT_LOG_HEAD_TABLE,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE
 } from '@/constants';
 import { resetAllowlistRows } from '@/api/subscriptions/api.subscriptions.allowlist';
@@ -19,7 +21,11 @@ import {
   loggedPreparationReset,
   loggedPreparationWrite
 } from './mint-log-preparation';
-import { MintLogRecorder, MintWriteSpec } from './mint-log-recorder';
+import {
+  InvalidSignedRecordException,
+  MintLogRecorder,
+  MintWriteSpec
+} from './mint-log-recorder';
 import type { MintLogEntryBody, MintLogKind } from './mint-log.types';
 
 const CONTRACT = MEMES_CONTRACT.toLowerCase();
@@ -28,16 +34,73 @@ const CARD = mintCard(CONTRACT, CARD_ID);
 const W = (n: number) => `0x${n.toString(16).padStart(40, '0')}`;
 const AT = new Date('2026-11-20T00:00:00Z');
 
-/** Long enough for a started transaction to reach the lock it waits on. */
-const SETTLE_MS = 400;
-const settle = () => new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
-
 function gate() {
   let open!: () => void;
   const opened = new Promise<void>((resolve) => {
     open = resolve;
   });
   return { open, opened };
+}
+
+/** Where a writer signals that it holds its locks, and waits to go on. */
+interface Hold {
+  readonly reached: () => void;
+  readonly until: Promise<void>;
+}
+const NO_HOLD: Hold = { reached: () => undefined, until: Promise.resolve() };
+
+function hold() {
+  const reached = gate();
+  const release = gate();
+  const held: Hold = { reached: reached.open, until: release.opened };
+  return { held, reached: reached.opened, release: release.open };
+}
+
+/**
+ * Fails a step that should not wait, so a test's finally still releases the
+ * transactions it holds instead of Jest abandoning the test mid-wait.
+ */
+function within<T>(promise: Promise<T>, what: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`${what} still waiting after 10 s`)),
+        10_000
+      );
+    })
+  ]).finally(() => clearTimeout(timer));
+}
+
+/** The statement a write blocks on when another holds that lock. */
+const WAITS_ON_PREPARATION = `INSERT INTO ${DROP_FORGE_PREPARATIONS_TABLE}%`;
+const WAITS_ON_HEAD = `insert into ${MINT_LOG_HEAD_TABLE}%`;
+
+/**
+ * Waits until another session is blocked in the statement that takes the
+ * given lock (seen still running in two polls in a row), so a test knows
+ * the order its transactions reached their locks in rather than guessing.
+ * Only this test's database counts; every test connection uses the same
+ * user, so the processlist shows them.
+ */
+async function waitingOn(statement: string): Promise<void> {
+  const deadline = Date.now() + 20_000;
+  let seen = 0;
+  for (;;) {
+    const [row] = await sqlExecutor.execute<{ waiting: number | string }>(
+      `select count(*) as waiting from information_schema.processlist
+       where command = 'Query' and info like :statement
+         and db = database() and id <> connection_id()`,
+      { statement }
+    );
+    seen = Number(row.waiting) > 0 ? seen + 1 : 0;
+    if (seen >= 2) return;
+    if (Date.now() > deadline) {
+      throw new Error(`No session waiting in ${statement} after 20 s`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
 }
 
 const subscription = (n: number) => ({
@@ -82,6 +145,23 @@ async function distributionWallets(): Promise<string[]> {
   ).map((row) => row.wallet);
 }
 
+/** The card's Drop Forge preparation mode, or 'none' with no row. */
+async function preparationMode(): Promise<string> {
+  const [row] = await sqlExecutor.execute<{ mode: string | null }>(
+    `select mode from ${DROP_FORGE_PREPARATIONS_TABLE} where id = :id`,
+    { id: `${CONTRACT}:${CARD_ID}` }
+  );
+  return row ? (row.mode ?? 'null') : 'none';
+}
+
+/** How many mint log heads an entry has moved. */
+async function advancedHeads(): Promise<number> {
+  const [row] = await sqlExecutor.execute<{ n: number | string }>(
+    `select count(*) as n from ${MINT_LOG_HEAD_TABLE} where seq >= 0`
+  );
+  return Number(row.n);
+}
+
 describeWithSeed(
   'mint log writes under the Drop Forge preparation',
   [
@@ -101,14 +181,29 @@ describeWithSeed(
         }
       }
     };
-    const recorder = new MintLogRecorder(
-      {
-        isMintLogShadowEnabled: () => true,
-        isMintLogPrimaryEnabled: () => false,
-        isMintLogReplayCheckEnabled: () => false
-      },
-      () => ({ records: null, log })
-    );
+    const recorderWith = (args: {
+      readonly primary?: boolean;
+      readonly replay?: boolean;
+      readonly failingLog?: boolean;
+    }) =>
+      new MintLogRecorder(
+        {
+          isMintLogShadowEnabled: () => true,
+          isMintLogPrimaryEnabled: () => args.primary === true,
+          isMintLogReplayCheckEnabled: () => args.replay === true
+        },
+        () => ({
+          records: null,
+          log: args.failingLog
+            ? {
+                append: async () => {
+                  throw new Error('the record log is down');
+                }
+              }
+            : log
+        })
+      );
+    const recorder = recorderWith({});
     const spec = <T>(kind: MintLogKind): MintWriteSpec<T> => ({
       kind,
       card: CARD,
@@ -118,36 +213,40 @@ describeWithSeed(
     /** A phase split's write, as the route runs it, with its own row. */
     const preparedWrite = (
       wallet: string,
-      before: () => Promise<void> = async () => undefined
+      args: {
+        readonly held?: Hold;
+        readonly recorder?: MintLogRecorder;
+        readonly spec?: MintWriteSpec<void>;
+      } = {}
     ) =>
       loggedPreparationWrite({
-        spec: spec<void>('dist.phase'),
+        spec: args.spec ?? spec<void>('dist.phase'),
         contract: CONTRACT,
         claim: CARD_ID,
         write: async (ctx) => {
           await insertDistribution(wallet, 'Phase 1', ctx);
-          await before();
+          (args.held ?? NO_HOLD).reached();
+          await (args.held ?? NO_HOLD).until;
         },
         start: 'MANUAL',
-        recorder
+        recorder: args.recorder ?? recorder
       });
     /** Another logged write to the card that takes no Drop Forge lock. */
-    const plainWrite = (
-      wallet: string,
-      before: () => Promise<void> = async () => undefined
-    ) =>
+    const plainWrite = (wallet: string, held: Hold = NO_HOLD) =>
       recorder.write(spec<void>('dist.airdrops'), async () => {
         await insertDistribution(wallet, 'Airdrop', {});
-        await before();
+        held.reached();
+        await held.until;
       });
     /** Drop Forge's worker holding the preparation, writing unlogged. */
-    const workerHolding = (wallet: string, release: Promise<void>) =>
+    const workerHolding = (wallet: string, held: Hold) =>
       dropForgePreparationRepository.run(
         CONTRACT,
         CARD_ID,
         async (_, ctx) => {
           await insertDistribution(wallet, 'Worker', ctx);
-          await release;
+          held.reached();
+          await held.until;
         },
         {}
       );
@@ -204,8 +303,7 @@ describeWithSeed(
          values ('job-1', :contract, :claim, 'FINALIZE', 'PROCESSING', 1)`,
         { contract: CONTRACT, claim: CARD_ID }
       );
-      const held = gate();
-      const locked = gate();
+      const job_ = hold();
       const job = sqlExecutor.executeNativeQueriesInTransaction(
         async (connection) => {
           await sqlExecutor.execute(
@@ -213,11 +311,11 @@ describeWithSeed(
             undefined,
             { wrappedConnection: connection }
           );
-          locked.open();
-          await held.opened;
+          job_.held.reached();
+          await job_.held.until;
         }
       );
-      await locked.opened;
+      await job_.reached;
 
       try {
         await expect(
@@ -230,7 +328,7 @@ describeWithSeed(
           })
         ).rejects.toMatchObject({ status: 409 });
       } finally {
-        held.open();
+        job_.release();
         await job;
       }
       expect(entries).toEqual([]);
@@ -258,12 +356,17 @@ describeWithSeed(
     });
 
     it('completes a preparation write and another logged write together, the preparation first', async () => {
-      const held = gate();
-      const prepared = preparedWrite(W(2), () => held.opened);
-      await settle();
-      const plain = plainWrite(W(3));
-      await settle();
-      held.open();
+      const first = hold();
+      const prepared = preparedWrite(W(2), { held: first.held });
+      let plain: Promise<void> | undefined;
+      try {
+        // It holds the preparation and the head; the other write waits.
+        await first.reached;
+        plain = plainWrite(W(3));
+        await waitingOn(WAITS_ON_HEAD);
+      } finally {
+        first.release();
+      }
 
       await Promise.all([prepared, plain]);
       expect(entries.map((entry) => entry.kind)).toEqual([
@@ -274,12 +377,18 @@ describeWithSeed(
     });
 
     it('completes a preparation write and another logged write together, the other first', async () => {
-      const held = gate();
-      const plain = plainWrite(W(3), () => held.opened);
-      await settle();
-      const prepared = preparedWrite(W(2));
-      await settle();
-      held.open();
+      const first = hold();
+      const plain = plainWrite(W(3), first.held);
+      let prepared: Promise<void> | undefined;
+      try {
+        // It holds the head; the preparation write takes the preparation
+        // and waits for the head.
+        await first.reached;
+        prepared = preparedWrite(W(2));
+        await waitingOn(WAITS_ON_HEAD);
+      } finally {
+        first.release();
+      }
 
       await Promise.all([plain, prepared]);
       expect(entries.map((entry) => entry.kind)).toEqual([
@@ -290,18 +399,23 @@ describeWithSeed(
     });
 
     it("doesn't hold other logged writes behind a preparation the worker holds", async () => {
-      const released = gate();
-      const worker = workerHolding(W(1), released.opened);
-      await settle();
-      const prepared = preparedWrite(W(2));
-      await settle();
-
-      // The preparation write waits for the worker; the head stays free.
-      await plainWrite(W(3));
-      expect(entries.map((entry) => entry.kind)).toEqual(['dist.airdrops']);
-
-      released.open();
+      const worker_ = hold();
+      const worker = workerHolding(W(1), worker_.held);
+      let prepared: Promise<void> | undefined;
+      let whileHeld: string[] = [];
+      try {
+        await worker_.reached;
+        prepared = preparedWrite(W(2));
+        await waitingOn(WAITS_ON_PREPARATION);
+        // The preparation write waits for the worker; the head stays free.
+        await within(plainWrite(W(3)), 'the other logged write');
+        whileHeld = entries.map((entry) => entry.kind);
+      } finally {
+        worker_.release();
+      }
       await Promise.all([worker, prepared]);
+
+      expect(whileHeld).toEqual(['dist.airdrops']);
       expect(entries.map((entry) => entry.kind)).toEqual([
         'dist.airdrops',
         'dist.phase'
@@ -309,12 +423,17 @@ describeWithSeed(
     });
 
     it('reads the entry\'s "before" rows once the preparation is held, so a worker\'s rows stay out of it', async () => {
-      const released = gate();
-      const worker = workerHolding(W(1), released.opened);
-      await settle();
-      const prepared = preparedWrite(W(2));
-      await settle();
-      released.open();
+      const worker_ = hold();
+      const worker = workerHolding(W(1), worker_.held);
+      let prepared: Promise<void> | undefined;
+      try {
+        await worker_.reached;
+        // The write waits for the preparation before it reads anything.
+        prepared = preparedWrite(W(2));
+        await waitingOn(WAITS_ON_PREPARATION);
+      } finally {
+        worker_.release();
+      }
       await Promise.all([worker, prepared]);
 
       const [entry] = entries;
@@ -322,6 +441,54 @@ describeWithSeed(
       expect(
         (entry.effects.distribution?.upsert ?? []).map((row) => row.wallet)
       ).toEqual([W(2)]);
+      expect(await distributionWallets()).toEqual([W(1), W(2)]);
+    });
+
+    it('keeps the write and its preparation in shadow mode when the log fails, with no entry and no head', async () => {
+      await preparedWrite(W(2), {
+        recorder: recorderWith({ failingLog: true })
+      });
+
+      expect(await distributionWallets()).toEqual([W(2)]);
+      expect(await preparationMode()).toBe('MANUAL');
+      expect(entries).toEqual([]);
+      expect(await advancedHeads()).toBe(0);
+    });
+
+    it('rolls the write and its preparation back in primary mode when the record is missing', async () => {
+      await expect(
+        preparedWrite(W(2), { recorder: recorderWith({ primary: true }) })
+      ).rejects.toBeInstanceOf(InvalidSignedRecordException);
+
+      expect(await distributionWallets()).toEqual([]);
+      expect(await preparationMode()).toBe('none');
+      expect(entries).toEqual([]);
+    });
+
+    it('rolls the write and its preparation back in primary mode when the log fails', async () => {
+      await expect(
+        preparedWrite(W(2), {
+          recorder: recorderWith({ primary: true, failingLog: true }),
+          spec: {
+            ...spec<void>('dist.phase'),
+            actor: { type: 'service', wallet: null, authority: 'test' }
+          }
+        })
+      ).rejects.toThrow('the record log is down');
+
+      expect(await distributionWallets()).toEqual([]);
+      expect(await preparationMode()).toBe('none');
+      expect(await advancedHeads()).toBe(0);
+    });
+
+    it('replays the entry inside the preparation when the replay check is on', async () => {
+      await insertDistribution(W(1), 'Airdrop');
+
+      await preparedWrite(W(2), { recorder: recorderWith({ replay: true }) });
+
+      const [entry] = entries;
+      expect(entry.checks.replay).toBe('match');
+      expect(entry.checks.replay_mismatches).toEqual([]);
       expect(await distributionWallets()).toEqual([W(1), W(2)]);
     });
   }

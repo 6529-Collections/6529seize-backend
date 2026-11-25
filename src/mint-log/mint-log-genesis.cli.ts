@@ -21,33 +21,25 @@ import { chainOfCard, MintLogChain } from './mint-log.types';
 const ipfsContent: MintContentPort = ipfsMintContent();
 
 /**
- * The dry run's figures per chain: cards, the gzipped files' total bytes,
- * and the largest file. Each file is built as the live run builds it and
- * then dropped; nothing is uploaded or written.
+ * One chain's dry-run figures: its cards, the gzipped files' total bytes and
+ * the largest file. Each file is built as the live run builds it and then
+ * dropped; nothing is uploaded or written.
  */
-async function dryRunSizes(
-  chains: readonly MintLogChain[],
+async function dryRunChain(
+  chain: MintLogChain,
   connection: ConnectionWrapper<any>
-) {
-  const cards: Record<string, number> = {};
-  const bytes: Record<string, number> = {};
-  const largest: Record<string, number> = {};
-  for (const chain of chains) {
-    cards[chain] = 0;
-    bytes[chain] = 0;
-    largest[chain] = 0;
-  }
+): Promise<{ cards: number; bytes: number; largest: number }> {
+  const figures = { cards: 0, bytes: 0, largest: 0 };
   for (const card of await mintGenesisReader.cards(connection)) {
-    const chain = chainOfCard(card);
-    if (!chains.includes(chain)) continue;
+    if (chainOfCard(card) !== chain) continue;
     const size = encodeGenesisFile(
       await mintGenesisReader.file(card, connection)
     ).length;
-    cards[chain] += 1;
-    bytes[chain] += size;
-    largest[chain] = Math.max(largest[chain], size);
+    figures.cards += 1;
+    figures.bytes += size;
+    figures.largest = Math.max(figures.largest, size);
   }
-  return { cards, bytes, largest_file_bytes: largest };
+  return figures;
 }
 
 export async function main(args = process.argv.slice(2)): Promise<void> {
@@ -74,14 +66,20 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   const output = await doInDbContext(
     async () => {
       if (!live) {
-        return {
-          live: false,
-          ...(await dbSupplier().executeNativeQueriesInTransaction(
-            (connection) => dryRunSizes(chains, connection),
-            // One snapshot, as the live run reads its files.
+        const cards: Record<string, number> = {};
+        const bytes: Record<string, number> = {};
+        const largest: Record<string, number> = {};
+        for (const it of chains) {
+          // One snapshot per chain, as the live run reads a chain's files.
+          const figures = await dbSupplier().executeNativeQueriesInTransaction(
+            (connection) => dryRunChain(it, connection),
             { isolationLevel: 'REPEATABLE READ' }
-          ))
-        };
+          );
+          cards[it] = figures.cards;
+          bytes[it] = figures.bytes;
+          largest[it] = figures.largest;
+        }
+        return { live: false, cards, bytes, largest_file_bytes: largest };
       }
       const log = getMintLogPorts().log;
       if (!log) {

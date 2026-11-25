@@ -26,7 +26,7 @@ import { saveDistributionPhotos } from '@/api/distribution-photos/api.distributi
 import { updateMintingClaim } from '@/api/minting-claims/api.minting-claims.db';
 import { upsertMintingClaimActionAndGetResponse } from '@/api/minting-claims/minting-claim-actions.api.service';
 import {
-  resetAllowlist,
+  resetAllowlistRows,
   splitAllowlistResults
 } from '@/api/subscriptions/api.subscriptions.allowlist';
 import {
@@ -53,6 +53,7 @@ import { differingParts } from './mint-log-diff';
 import { MintContentPort, runMintGenesis } from './mint-log-genesis';
 import { distributionCursorBlock } from './mint-log-inputs';
 import { mintCard } from './mint-log-parts';
+import { loggedPreparationReset } from './mint-log-preparation';
 import type { MintRecordLogEntry, MintRecordLogPort } from './mint-log-ports';
 import { MintLogRebuilder } from './mint-log-rebuild';
 import { rebuildMintLogFromRecordLog } from './mint-log-rebuild.run';
@@ -372,7 +373,19 @@ describeWithSeed(
           {}
         )
       );
-      await write('dist.reset', () => resetAllowlist(CONTRACT, CARD_ID));
+      // As the reset route runs it: inside Drop Forge's reset.
+      await loggedPreparationReset({
+        spec: {
+          kind: 'dist.reset',
+          card: CARD,
+          actor: { type: 'admin', wallet: W(9), authority: 'test' },
+          intent: { route: 'dist.reset', params: {}, body: null }
+        },
+        contract: CONTRACT,
+        claim: CARD_ID,
+        reset: (ctx) => resetAllowlistRows(CONTRACT, CARD_ID, ctx),
+        recorder
+      });
       await write('dist.phase', async () => {
         const split = await splitAllowlistResults(
           CONTRACT,
