@@ -34,6 +34,7 @@ import {
   PrivateBucketError
 } from './chain-exports/private-export-bucket';
 import {
+  byCodeUnit,
   MAX_CUT_OFFS,
   parseWavesExportEvent,
   runWavesExportJob,
@@ -460,6 +461,31 @@ function expectWholeExport(bucket: FakeBucket, waves: readonly string[]) {
 describe('the waves export job event', () => {
   const parse = (event: Record<string, unknown>) =>
     parseWavesExportEvent({ job: 'wavesExport', ...event });
+
+  it('orders wave ids and file names by code unit, as sort() with no compare function did', () => {
+    const names = [
+      'b-wave',
+      'B-wave',
+      'a_wave',
+      'A-wave',
+      'a-wave',
+      '_wave',
+      '9-wave',
+      `wave-${String.fromCharCode(0xe9)}`,
+      `wave-${String.fromCharCode(0xd83d, 0xde00)}`,
+      `wave-${String.fromCharCode(0xffff)}`,
+      'a-wave'
+    ];
+    // The order before: sort() with no compare function.
+    const before = [...names].sort(); // NOSONAR: the old order, to compare with
+    expect([...names].sort(byCodeUnit)).toEqual(before);
+    expect(before.slice(0, 4)).toEqual(['9-wave', 'A-wave', 'B-wave', '_wave']);
+    expect(byCodeUnit('a', 'a')).toBe(0);
+    expect(
+      parse({ rehearsal: true, run: 'r1', waves: ['b', 'B', 'a', 'A', '_'] })
+        ?.waveIds
+    ).toEqual(['A', 'B', '_', 'a', 'b']);
+  });
 
   it('reads a run at the freeze and a rehearsal', () => {
     expect(parse({ freezeAt: '2026-11-26T00:00:00Z' })).toEqual({

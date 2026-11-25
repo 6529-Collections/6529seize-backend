@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto';
 import * as mysql from 'mysql';
 import {
   apiDbConnection,
@@ -24,6 +24,11 @@ let used = false;
 /** The process's scope while a caller keeps it open for its next run. */
 let kept: {
   readonly server: string;
+  /**
+   * The password its pool logs in with (password mode), held only to
+   * compare with the next run's: never hashed, written or logged.
+   */
+  readonly password: string | undefined;
   readonly executor: SqlExecutor;
   readonly pool: mysql.Pool;
 } | null = null;
@@ -74,7 +79,10 @@ export async function withApiSqlExecutor<T>(
     );
   }
   const server = serverIdentity(target, port);
-  if (kept && kept.server !== server) {
+  if (
+    kept &&
+    (kept.server !== server || !samePassword(kept.password, target.password))
+  ) {
     throw new Error(
       "The export's DB scope is open on another server or login: DB services keep the executor they first read, so a new server or password needs a new process"
     );
@@ -102,20 +110,33 @@ export async function withApiSqlExecutor<T>(
 }
 
 /**
- * What a kept scope must match: the mode, host, port and user, and in
- * password mode a digest of the password (never the password itself). A
- * password rotated in the process's settings is then a refusal here, not a
- * kept pool whose new connections log in with the old one and fail.
+ * What a kept scope must match, besides its password: the mode, host, port
+ * and user. Only compared and kept with the scope, never written to a
+ * message or a log.
  */
 function serverIdentity(
   target: ReturnType<typeof resolveDbConnectionTargets>['write'],
   port: number
 ): string {
-  const password =
-    target.password === undefined
-      ? null
-      : createHash('sha256').update(target.password).digest('hex');
-  return JSON.stringify([target.iam, target.host, port, target.user, password]);
+  return JSON.stringify([target.iam, target.host, port, target.user]);
+}
+
+/**
+ * Whether the next run's password is the kept scope's, compared in constant
+ * time. Unset (IAM mode) matches only unset; a different length is a
+ * different password, so timingSafeEqual never meets unequal lengths. A
+ * password rotated in the process's settings is then a refusal, not a kept
+ * pool whose new connections log in with the old one and fail.
+ */
+function samePassword(
+  kept: string | undefined,
+  next: string | undefined
+): boolean {
+  if (kept === undefined || next === undefined) return kept === next;
+  const a = Buffer.from(kept, 'utf8');
+  const b = Buffer.from(next, 'utf8');
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }
 
 function open(
@@ -160,5 +181,5 @@ function open(
     poolFor: () => DbPoolName.READ,
     connection: readOnlyConnection
   });
-  return { server, executor, pool };
+  return { server, password: target.password, executor, pool };
 }

@@ -286,22 +286,42 @@ describe('withApiSqlExecutor', () => {
     expect(mockCreateApiDbPool).toHaveBeenCalledTimes(1);
   });
 
-  it('refuses a kept scope after the password changes: a new process opens the new login', async () => {
-    const { db } = load();
-    await db.withApiSqlExecutor(async () => undefined, { keepOpen: true });
-    process.env.DB_PASS = 'made-up-rotated';
-    const action = jest.fn();
-    await expect(
-      db.withApiSqlExecutor(action, { keepOpen: true })
-    ).rejects.toThrow('a new server or password needs a new process');
-    expect(action).not.toHaveBeenCalled();
-    expect(mockCreateApiDbPool).toHaveBeenCalledTimes(1);
-    // The same password again: the kept scope runs.
-    process.env.DB_PASS = 'made-up';
-    await db.withApiSqlExecutor(action);
-    expect(action).toHaveBeenCalledTimes(1);
-    expect(mockPoolEnd).toHaveBeenCalledTimes(1);
-  });
+  it.each([
+    ['longer', 'made-up-rotated'],
+    ['the same length', 'made-uq'],
+    ['shorter', 'made']
+  ])(
+    'refuses a kept scope after the password changes (%s): a new process opens the new login',
+    async (_, rotated) => {
+      const { db } = load();
+      const createHash = jest.spyOn(
+        jest.requireActual('node:crypto'),
+        'createHash'
+      );
+      await db.withApiSqlExecutor(async () => undefined, { keepOpen: true });
+      process.env.DB_PASS = rotated;
+      const action = jest.fn();
+      const refusal = db.withApiSqlExecutor(action, { keepOpen: true });
+      await expect(refusal).rejects.toThrow(
+        'a new server or password needs a new process'
+      );
+      // The refusal names neither password, nor the server it was open on.
+      const message = await refusal.catch((error: Error) => error.message);
+      for (const secret of ['made-up', rotated, 'db.invalid', 'reader']) {
+        expect(message).not.toContain(secret);
+      }
+      expect(action).not.toHaveBeenCalled();
+      expect(mockCreateApiDbPool).toHaveBeenCalledTimes(1);
+      // No password is hashed: it is only compared.
+      expect(createHash).not.toHaveBeenCalled();
+      createHash.mockRestore();
+      // The same password again: the kept scope runs.
+      process.env.DB_PASS = 'made-up';
+      await db.withApiSqlExecutor(action);
+      expect(action).toHaveBeenCalledTimes(1);
+      expect(mockPoolEnd).toHaveBeenCalledTimes(1);
+    }
+  );
 
   it('keeps an IAM scope across runs: no password in its identity', async () => {
     process.env.DB_IAM_AUTH = 'true';

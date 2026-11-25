@@ -459,7 +459,10 @@ function verdict(reading: ServerReading, caughtUpMs: number): Verdict {
       };
     }
     if (blocking.length) {
-      const oldest = blocking.reduce((a, b) => (b.ageMs > a.ageMs ? b : a));
+      const oldest = blocking.reduce(
+        (a, b) => (b.ageMs > a.ageMs ? b : a),
+        blocking[0]
+      );
       reasons.push(
         `the row of ${oneOf(lag.readers.length)} stopped updating ` +
           `${seconds(oldest.ageMs)} ago, so its lag can't be known`
@@ -610,7 +613,10 @@ async function rehearseReplicaLag(
     );
     const stale = lag.readers.filter((it) => it.ageMs >= STALE_READING_MS);
     if (stale.length) {
-      const oldest = stale.reduce((a, b) => (b.ageMs > a.ageMs ? b : a));
+      const oldest = stale.reduce(
+        (a, b) => (b.ageMs > a.ageMs ? b : a),
+        stale[0]
+      );
       say(
         `${stale.length} of its ${lag.readers.length} readers' rows are a ` +
           `minute old or more (the oldest ${Math.ceil(oldest.ageMs)} ms): ` +

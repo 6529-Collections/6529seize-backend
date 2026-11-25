@@ -179,6 +179,16 @@ export interface WavesExportJobEvent {
   readonly recordsWaveId: string | null;
 }
 
+/**
+ * UTF-16 code unit order, as sort() with no compare function gives it:
+ * wave ids, file names and links keep the order they always had.
+ */
+export function byCodeUnit(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 function fail(message: string): never {
   throw new WavesExportJobEventError(message);
 }
@@ -291,7 +301,7 @@ export function parseWavesExportEvent(
     if (waveIds.some((id) => !/^[A-Za-z0-9_-]+$/.test(id))) {
       fail('A wave id is letters, digits, dashes and underscores only');
     }
-    waveIds.sort();
+    waveIds.sort(byCodeUnit);
   }
   const recordsWaveId = record.recordsWaveId;
   if (
@@ -1004,12 +1014,12 @@ class RunFiles {
     return names
       .filter((name) => name.endsWith('.jsonl.gz'))
       .filter((name) => !this.kept.has(`drops/${name}`))
-      .sort();
+      .sort(byCodeUnit);
   }
 
   private async topLevelJson(): Promise<string[]> {
     const names = await fs.promises.readdir(this.raw);
-    return names.filter((name) => name.endsWith('.json')).sort();
+    return names.filter((name) => name.endsWith('.json')).sort(byCodeUnit);
   }
 
   /**
@@ -1514,7 +1524,7 @@ async function finish(
   const now = deps.now();
   const presign = (key: string) =>
     deps.presign(bucket, key, PRESIGNED_URL_SECONDS);
-  const names = Object.keys(state.files).sort();
+  const names = Object.keys(state.files).sort(byCodeUnit);
   const fileLinks: Record<string, string> = {};
   for (const name of names) {
     fileLinks[`raw/${name}`] = await presign(writer.key(`raw/${name}`));
