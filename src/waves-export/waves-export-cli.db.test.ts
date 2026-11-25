@@ -379,8 +379,9 @@ describeWithSeed(
       const mentioning = readLines(
         path.join(out, 'raw', 'drops', `${FIRST_ID}.jsonl.gz`)
       ).find((line) => line.id === DROP(9));
-      // The compact drop row keeps the mention's wave id; the nested wave
-      // the API gives with it is in waves_v3.json's description drops.
+      // Compaction keeps only the mention's wave id, so the API's nested
+      // wave never reaches a drop file. The nested copy a file could carry
+      // is a description drop's wave, in waves_v3.json.
       expect(mentioning?.mentioned_waves).toMatchObject([
         { wave_id: SECOND_ID }
       ]);
