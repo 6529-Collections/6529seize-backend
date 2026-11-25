@@ -48,32 +48,36 @@ describe('decisionCreatedAt', () => {
 describe('waveManagerOf', () => {
   const WAVE = `0x${'0e'.repeat(32)}`;
   const PRINCIPAL = `0x${'11'.repeat(32)}`;
+  const PATH = `/v1/waves/${WAVE}/rights/${PRINCIPAL}`;
   afterEach(() => jest.restoreAllMocks());
 
-  it("reads the chain's rights at the client's pin, isManager", async () => {
+  it("reads the chain's rights at the index's height, isManager", async () => {
     const read = jest.spyOn(chainGatewayClient, 'read').mockResolvedValue({
       data: { waveId: WAVE, principalId: PRINCIPAL, isManager: true }
     } as never);
-    expect(await waveManagerOf(WAVE, PRINCIPAL)).toBe(true);
-    // One read, unpinned: the client pins it (the head live, a recording's
-    // mark in a rebuild), as the mirror's other gateway reads.
-    expect(read.mock.calls).toEqual([
-      [`/v1/waves/${WAVE}/rights/${PRINCIPAL}`]
-    ]);
+    expect(await waveManagerOf(WAVE, PRINCIPAL, 4_200)).toBe(true);
     read.mockResolvedValue({ data: { isManager: false } } as never);
+    expect(await waveManagerOf(WAVE, PRINCIPAL, 4_200)).toBe(false);
+    // Without a height: the client's pin.
     expect(await waveManagerOf(WAVE, PRINCIPAL)).toBe(false);
+    expect(read.mock.calls).toEqual([
+      [PATH, {}, { height: 4_200 }],
+      [PATH, {}, { height: 4_200 }],
+      [PATH, {}, {}]
+    ]);
   });
 
-  it("is false for the node's not_found, and null when the gateway can't say", async () => {
+  it("is null when the gateway can't say, its not_found included", async () => {
     const read = jest.spyOn(chainGatewayClient, 'read');
-    // No such wave or principal on the node.
+    // The node's not_found: a read behind the index, never a "no" (a
+    // parent left out would be for good).
     read.mockResolvedValue(null);
-    expect(await waveManagerOf(WAVE, PRINCIPAL)).toBe(false);
+    expect(await waveManagerOf(WAVE, PRINCIPAL, 4_200)).toBeNull();
     // An answer without isManager.
     read.mockResolvedValue({ data: { canRead: true } } as never);
-    expect(await waveManagerOf(WAVE, PRINCIPAL)).toBeNull();
+    expect(await waveManagerOf(WAVE, PRINCIPAL, 4_200)).toBeNull();
     // A failed read (503 unavailable, a height gone, any error).
     read.mockRejectedValue(new Error('unavailable'));
-    expect(await waveManagerOf(WAVE, PRINCIPAL)).toBeNull();
+    expect(await waveManagerOf(WAVE, PRINCIPAL, 4_200)).toBeNull();
   });
 });

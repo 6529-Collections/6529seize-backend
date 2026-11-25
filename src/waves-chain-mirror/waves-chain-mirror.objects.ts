@@ -116,12 +116,14 @@ export interface ObjectEffects {
   /**
    * Whether the chain counts `principal` a manager of the chain wave
    * `waveId` (a parent wave's rule): the gateway's
-   * /v1/waves/{waveId}/rights/{principal}, isManager, read at the run's
-   * pin. Null when the gateway can't say.
+   * /v1/waves/{waveId}/rights/{principal}, isManager, read at `height`
+   * (the chain index's read height; null: the client's pin). Null when
+   * the gateway can't say.
    */
   waveManager(input: {
     readonly waveId: string;
     readonly principal: string;
+    readonly height: number | null;
   }): Promise<boolean | null>;
   /** The wave row 6529.io's create maps a request to. */
   newWaveEntity(input: {
@@ -350,6 +352,12 @@ export class WavesChainObjectsMirror {
     readonly outOfTime: () => boolean;
     /** Objects left out for a legacy id that isn't an RFC 4122 UUID. */
     readonly legacyIds?: InvalidLegacyIds;
+    /**
+     * The chain index's read height (the feed height it has applied): the
+     * chain's answers the pass asks for are read there, so they see what
+     * the index saw. Null or absent: at the gateway client's pin.
+     */
+    readonly height?: number | null;
   }): Promise<ObjectsReport> {
     const report = emptyObjectsReport();
     const now = this.clock();
@@ -865,6 +873,7 @@ export class WavesChainObjectsMirror {
       readonly write: boolean;
       readonly documents: DocumentSource;
       readonly counter: PlanCounter;
+      readonly height?: number | null;
     },
     now: number,
     parents: ParentWaits
@@ -1065,7 +1074,11 @@ export class WavesChainObjectsMirror {
     groups: WaveGroups,
     chatWait: string | null,
     document: Awaited<ReturnType<WavesChainObjectsMirror['document']>>,
-    input: { readonly write: boolean; readonly counter: PlanCounter },
+    input: {
+      readonly write: boolean;
+      readonly counter: PlanCounter;
+      readonly height?: number | null;
+    },
     now: number,
     parents: ParentWaits
   ): Promise<Outcome> {
@@ -1114,7 +1127,8 @@ export class WavesChainObjectsMirror {
         doc.parentWave,
         creator!,
         wave.waveId,
-        parents
+        parents,
+        input.height ?? null
       );
       if (parent === WAIT_FOR_PARENT) {
         // Not created yet: created once its parent has a row (this run's
@@ -1370,11 +1384,13 @@ export class WavesChainObjectsMirror {
    * The parent a wave made on the chain may keep, as 6529.io's create
    * allows it: a top-level wave, not a DM, that its creator manages. Who
    * manages the parent is the chain's answer
-   * (/v1/waves/{parent}/rights/{creator}, isManager), read at the run's
-   * pin: the head live, the recording's mark in a rebuild. 6529.io's own
-   * eligibility, computed from its identities' TDH and level, isn't asked,
-   * so the answer doesn't depend on 6529.io's current TDH or on when a
-   * rebuild writes it.
+   * (/v1/waves/{parent}/rights/{creator}, isManager), read at the chain
+   * index's read height: the height whose state the run mirrors, live a
+   * minute or so behind the head, in a rebuild the recording's mark. The
+   * answer then sees the parent and the creator the index saw. 6529.io's
+   * own eligibility, computed from its identities' TDH and level, isn't
+   * asked, so the answer doesn't depend on 6529.io's current TDH or on
+   * when a rebuild writes it.
    *
    * - A parent with no row that a wave made on the chain may still give:
    *   the child waits for it (WAIT_FOR_PARENT).
@@ -1382,21 +1398,25 @@ export class WavesChainObjectsMirror {
    *   one: left out.
    * - A parent the chain doesn't hold (a wave that stays on 6529.io): left
    *   out, as the chain can't say who manages it.
-   * - The creator not a manager: left out. The gateway's answer unread: the
-   *   child waits and the run asks again.
+   * - The creator not a manager: left out.
+   * - No answer, the node's not_found included: the child waits and the
+   *   run asks again. A parent is set only when the wave is created, so a
+   *   wrong "no" would be for good; the index has seen the parent and the
+   *   creator, so a not_found is a read behind them, not an answer.
    *
-   * Known limit: the answer is the chain's at the run that writes the
+   * Known limits: the answer is the chain's at the run that writes the
    * wave, live minutes after it was made. A node keeps its last 64 views
    * only, so the rights at the creation height can't be read or recorded.
    * A later rebuild reads them at its own mark, so a live row and a later
    * rebuild differ when the creator's rights on the parent changed in
-   * between.
+   * between. A subwave of a wave that stays on 6529.io never keeps it.
    */
   private async allowedParent(
     parentId: string,
     creator: string,
     childId: string,
-    parents: ParentWaits
+    parents: ParentWaits,
+    height: number | null
   ): Promise<ParentChoice> {
     const leave = (reason: string): ParentChoice => ({ kind: 'leave', reason });
     const parent = await this.store.waveRow(parentId);
@@ -1414,7 +1434,8 @@ export class WavesChainObjectsMirror {
     if (!chainParent) return leave('wave_parent_not_on_chain');
     const manages = await this.effects.waveManager({
       waveId: chainParent,
-      principal: creator
+      principal: creator,
+      height
     });
     if (manages === null) {
       return { kind: 'wait', reason: 'wave_parent_rights_unavailable' };

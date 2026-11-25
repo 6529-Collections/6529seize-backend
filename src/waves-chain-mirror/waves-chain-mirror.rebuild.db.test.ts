@@ -1020,12 +1020,12 @@ describe("the mirror's rebuild", () => {
     ).toEqual([{ id: archived }]);
   });
 
-  it("keeps a subwave's parent by the chain's rights at the run's pin, never 6529.io's eligibility", async () => {
+  it("keeps a subwave's parent by the chain's rights at the index's height, never 6529.io's eligibility", async () => {
     // The gateway's rights answer (in a run, the recording's at its mark);
     // every other read goes through as it would.
     const original = ChainGatewayClient.prototype.read;
     const rightsReads: string[] = [];
-    let isManager = true;
+    let isManager: boolean | null = true;
     const read = jest
       .spyOn(ChainGatewayClient.prototype, 'read')
       .mockImplementation(function (
@@ -1033,8 +1033,11 @@ describe("the mirror's rebuild", () => {
         ...args: Parameters<ChainGatewayClient['read']>
       ) {
         if (args[0].includes('/rights/')) {
-          rightsReads.push(args[0]);
-          return Promise.resolve({ data: { isManager } } as never);
+          rightsReads.push(`${args[0]}@${args[2]?.height}`);
+          // null: the node's not_found.
+          return Promise.resolve(
+            isManager === null ? null : ({ data: { isManager } } as never)
+          );
         }
         return original.apply(this, args);
       });
@@ -1062,10 +1065,31 @@ describe("the mirror's rebuild", () => {
           )
         ).toEqual([{ parent_wave_id: manager ? W : null }]);
       }
-      // The parent's chain id and the creator's principal; 6529.io's
-      // eligibility never asked.
+      // A not_found: the subwave waits, counted, never written without its
+      // parent.
+      isManager = null;
+      await seedWorld({ subwave: true });
+      await forgetDocuments();
+      const waited = await rebuildWavesChainMirror(
+        rebuildCtx,
+        () => sqlExecutor,
+        { CHAIN_GATEWAY_URL: GATEWAY },
+        { fetchImpl: filesFetch as unknown as typeof fetch }
+      );
+      expect(
+        await sqlExecutor.execute(
+          `select id from ${WAVES_TABLE} where id = :id`,
+          { id: SUBWAVE }
+        )
+      ).toEqual([]);
+      expect(waited.last.waiting).toMatchObject({
+        wave_parent_rights_unavailable: 1
+      });
+      // The parent's chain id and the creator's principal, at the index's
+      // read height (feedNext 61: height 60); 6529.io's eligibility never
+      // asked.
       expect(new Set(rightsReads)).toEqual(
-        new Set([`/v1/waves/${W}/rights/${V1}`])
+        new Set([`/v1/waves/${W}/rights/${V1}@60`])
       );
       expect(eligibility).not.toHaveBeenCalled();
     } finally {

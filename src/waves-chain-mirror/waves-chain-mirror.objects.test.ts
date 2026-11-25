@@ -73,13 +73,18 @@ function world() {
     gate,
     () => now
   );
-  const run = async (write = true, outOfTime = () => false) => {
+  const run = async (
+    write = true,
+    outOfTime = () => false,
+    height: number | null = null
+  ) => {
     const counter = new PlanCounter();
     const report = await mirror.run({
       write,
       documents,
       counter,
-      outOfTime
+      outOfTime,
+      height
     });
     return { report, counter };
   };
@@ -525,13 +530,23 @@ describe('WavesChainObjectsMirror: waves', () => {
     };
 
     // A manager on the chain: kept. The chain is asked about the parent's
-    // chain id and the creator's principal, never about 6529.io's groups.
+    // chain id and the creator's principal, at the index's read height the
+    // run is given, never about 6529.io's groups.
     const kept = child(true);
-    await kept.run();
+    await kept.run(true, () => false, 4_200);
     expect(kept.store.waveCreates[0].entity.parent_wave_id).toBe(PARENT);
     expect(kept.effects.waveManager).toHaveBeenCalledWith({
       waveId: CHAIN_PARENT,
-      principal: P1
+      principal: P1,
+      height: 4_200
+    });
+    // A run with no index height: the client's pin.
+    const unpinned = child(true);
+    await unpinned.run();
+    expect(unpinned.effects.waveManager).toHaveBeenCalledWith({
+      waveId: CHAIN_PARENT,
+      principal: P1,
+      height: null
     });
 
     // Not a manager: written without it, counted.

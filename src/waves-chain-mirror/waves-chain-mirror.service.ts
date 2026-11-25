@@ -661,7 +661,9 @@ export class WavesChainMirror {
         documents: this.documents(write),
         counter,
         outOfTime: () => this.outOfTime(deadline),
-        legacyIds: this.legacyIds
+        legacyIds: this.legacyIds,
+        // The index's read height: the pass's chain reads see what it saw.
+        height: report.height
       });
     } catch (error) {
       logger.error(`[WAVES CHAIN MIRROR] groups and waves failed: ${error}`);
