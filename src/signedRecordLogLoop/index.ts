@@ -23,10 +23,11 @@ let reportedNoRecordsWave = false;
  * Does nothing unless FEATURE_SIGNED_RECORD_LOG is true. Invoked by hand at
  * the personal settings switch with {"task": "personal-freeze"},
  * {"task": "personal-import"} or {"task": "personal-unfreeze"}; none of
- * them posts anything. With SIGNED_RECORDS_WAVE_ID=none (6529.io has no
- * records wave) it posts nothing and closes nothing: the entries wait in
- * their table, and that is logged once per cold start. Unset is a mistake:
- * the run fails, as before.
+ * them posts anything. Freezing and the import refuse until a records wave
+ * is set; unfreezing always runs. With SIGNED_RECORDS_WAVE_ID=none (6529.io
+ * has no records wave) it posts nothing and closes nothing: the entries
+ * wait in their table, and that is logged once per cold start. Unset is a
+ * mistake: the run fails, as before.
  */
 export const handler = sentryContext.wrapLambdaHandler(
   async (event?: { readonly task?: string }) => {
@@ -36,7 +37,16 @@ export const handler = sentryContext.wrapLambdaHandler(
           logger.info('[SIGNED RECORD LOG OFF]');
           return;
         }
-        // Invoked by hand at the personal settings switch.
+        // Invoked by hand at the personal settings switch. Freezing and the
+        // import wait for a records wave; unfreezing, the way back, always
+        // runs.
+        if (
+          (event?.task === 'personal-freeze' ||
+            event?.task === 'personal-import') &&
+          readRecordsWaveSetting(process.env).kind !== 'id'
+        ) {
+          throw new Error('no records wave set');
+        }
         if (event?.task === 'personal-freeze') {
           await personalRecordsStateDb.setFrozen(true);
           logger.info('[PERSONAL SETTINGS FROZEN]');

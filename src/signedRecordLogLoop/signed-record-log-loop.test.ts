@@ -8,6 +8,17 @@ const mockCreateSegmenter = jest.fn(() => ({
 jest.mock('@/signed-records/record-log/record-log', () => ({
   createRecordLogSegmenter: () => mockCreateSegmenter()
 }));
+const mockSetFrozen = jest.fn(async (_frozen: boolean) => undefined);
+const mockRunImport = jest.fn(async () => undefined);
+
+jest.mock('@/personal-records/personal-records-state.db', () => ({
+  personalRecordsStateDb: {
+    setFrozen: (frozen: boolean) => mockSetFrozen(frozen)
+  }
+}));
+jest.mock('@/personal-records/personal-import-task', () => ({
+  runPersonalImport: () => mockRunImport()
+}));
 jest.mock('../secrets', () => ({
   doInDbContext: async (fn: () => Promise<unknown>) => fn()
 }));
@@ -19,6 +30,10 @@ import { Logger } from '../logging';
 import { handler } from './index';
 
 const run = () => (handler as unknown as () => Promise<void>)();
+const runTask = (task: string) =>
+  (handler as unknown as (event: { task: string }) => Promise<void>)({
+    task
+  });
 
 describe('signedRecordLogLoop', () => {
   const saved = { ...process.env };
@@ -52,6 +67,52 @@ describe('signedRecordLogLoop', () => {
       )
     ).toHaveLength(1);
     info.mockRestore();
+  });
+
+  it('refuses to freeze personal settings while no records wave is set', async () => {
+    process.env.FEATURE_SIGNED_RECORD_LOG = 'true';
+    process.env.SIGNED_RECORDS_WAVE_ID = 'none';
+    await expect(runTask('personal-freeze')).rejects.toThrow(
+      'no records wave set'
+    );
+    delete process.env.SIGNED_RECORDS_WAVE_ID;
+    await expect(runTask('personal-freeze')).rejects.toThrow(
+      'no records wave set'
+    );
+    expect(mockSetFrozen).not.toHaveBeenCalled();
+    expect(mockCreateSegmenter).not.toHaveBeenCalled();
+  });
+
+  it('refuses the personal settings import while no records wave is set', async () => {
+    process.env.FEATURE_SIGNED_RECORD_LOG = 'true';
+    process.env.SIGNED_RECORDS_WAVE_ID = 'none';
+    await expect(runTask('personal-import')).rejects.toThrow(
+      'no records wave set'
+    );
+    delete process.env.SIGNED_RECORDS_WAVE_ID;
+    await expect(runTask('personal-import')).rejects.toThrow(
+      'no records wave set'
+    );
+    expect(mockRunImport).not.toHaveBeenCalled();
+    expect(mockCreateSegmenter).not.toHaveBeenCalled();
+  });
+
+  it('unfreezes personal settings with the records wave none, posting nothing', async () => {
+    process.env.FEATURE_SIGNED_RECORD_LOG = 'true';
+    process.env.SIGNED_RECORDS_WAVE_ID = 'none';
+    await runTask('personal-unfreeze');
+    expect(mockSetFrozen).toHaveBeenCalledWith(false);
+    expect(mockCreateSegmenter).not.toHaveBeenCalled();
+  });
+
+  it('freezes and imports once a records wave is set, posting nothing', async () => {
+    process.env.FEATURE_SIGNED_RECORD_LOG = 'true';
+    process.env.SIGNED_RECORDS_WAVE_ID = '00000000-0000-4000-8000-0000000000e1';
+    await runTask('personal-freeze');
+    await runTask('personal-import');
+    expect(mockSetFrozen).toHaveBeenCalledWith(true);
+    expect(mockRunImport).toHaveBeenCalledTimes(1);
+    expect(mockCreateSegmenter).not.toHaveBeenCalled();
   });
 
   it('closes segments, or archives when told to', async () => {

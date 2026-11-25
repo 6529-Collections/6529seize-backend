@@ -11,10 +11,13 @@ import {
   signedRecord,
   VECTORS
 } from '@/signed-records/record-test-fixtures';
+import type { RebuildContext } from '@/rebuild/manifest.types';
+import { personalManifest } from '@/rebuild/manifests/personal.manifest';
 import type { PersonalRebuildReport } from './personal-import';
 import {
   PersonalLogRead,
   readPersonalLog,
+  rebuildPersonalTables,
   runPersonalRebuild
 } from './personal-rebuild.step';
 
@@ -121,5 +124,21 @@ describe('runPersonalRebuild', () => {
       })
     ).rejects.toThrow('left out 0 refused and 2 rejected records');
     expect(setImport).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('rebuildPersonalTables', () => {
+  it("takes the records wave 'none' as no records wave, and reads nothing", async () => {
+    const ctx = {
+      sources: { files: 'https://192.0.2.1' }
+    } as unknown as RebuildContext;
+    for (const wave of ['none', 'NONE', '']) {
+      await expect(
+        rebuildPersonalTables(ctx, {
+          ...personalManifest.flags,
+          SIGNED_RECORDS_WAVE_ID: wave
+        })
+      ).rejects.toThrow('no records wave set');
+    }
   });
 });
