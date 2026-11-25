@@ -4,9 +4,16 @@ import * as http from 'node:http';
 import * as path from 'node:path';
 import {
   checkDropArchiveIndex,
+  dropArchiveRoot,
   keccakHex,
+  wavesFileDocsRoot,
   wavesFileDropArchiveRoot
 } from '@/rebuild/sources/drop-archives';
+import {
+  checkDocsIndex,
+  docsRoot,
+  WaveDocEntry
+} from '@/rebuild/sources/wave-docs';
 import {
   closeServer,
   listenLoopback,
@@ -86,6 +93,21 @@ const KECCAK_NAME = /^keccak256-([0-9a-f]{64})$/;
  * the chain commits to only through a Waves v1 file's dropArchiveRoot.
  */
 export const DROP_ARCHIVE_INDEX = 'drop-archives';
+/**
+ * The import reader's id for the Waves v1 file: the chain names it by the
+ * Keccak-256 its import answer gives.
+ */
+export const WAVES_FILE = 'waves-v1';
+/** The import reader's id for one wave's drop archive: its waveId. */
+const DROP_ARCHIVE_FILE = /^drop-archive-([0-9a-f]{64})$/;
+/**
+ * The documents' index (the snapshot tool's docs/index.json), which the
+ * chain commits to through a Waves v1 file's docsRoot.
+ */
+export const DOCS_INDEX = 'docs-index';
+/** The roots of an empty list: a Waves v1 file with no archives, no documents. */
+const EMPTY_ARCHIVES = dropArchiveRoot([]);
+const EMPTY_DOCS = docsRoot([]);
 
 /** What the run's other sources tell the files check. */
 export interface FileCheckOptions {
@@ -113,34 +135,43 @@ export function namedKeccak256(name: string): string | null | 'bad' {
   return match ? match[1] : 'bad';
 }
 
+/** What checkFiles found. */
+export interface FilesCheck {
+  readonly files: Map<string, Buffer>;
+  /** Faults that fail the run. */
+  readonly problems: string[];
+  /** Files nothing verifies: their names say nothing the run can check. */
+  readonly unverified: string[];
+  /**
+   * Files the chain names that the directory lacks (an archive or a
+   * document its checked index lists): the directory isn't the whole set.
+   */
+  readonly lacking: string[];
+  /** Why some files can't be checked against the chain yet, or null. */
+  readonly waiting: string | null;
+}
+
 /**
  * Checks every file against `files.json`: a file listed with another hash,
  * or listed and missing, is a problem. Files not listed are served but
  * reported, so the index stays complete.
  *
- * A file named by the SHA-256 of its bytes (in hex, or as a raw CIDv1)
- * has its id checked against its bytes. A file named `keccak256-<hex>` has
- * its Keccak-256 checked the same way; it counts as verified when its name
- * is a Waves v1 fileHash the chain gives (`options.wavesFileHashes`), or
- * when it is an archive the drop archive index names and the index's root
- * equals that Waves v1 file's dropArchiveRoot (the index then counts as
- * verified too). A file with such a name and other bytes, or a keccak256-
- * name of another form, is a problem. Every other file, and a Keccak-named
- * file nothing on the chain vouches for, is listed in `unverified`.
+ * A file named by the SHA-256 of its bytes (in hex, or as a raw CIDv1) has
+ * its id checked against its bytes. The files of the waves import count
+ * as verified once the chain vouches for them (see attestChainFiles),
+ * under the import reader's ids (`waves-v1`, `drop-archives`,
+ * `drop-archive-<waveId>`, `docs-index`) or named by their Keccak-256
+ * (`keccak256-<hex>`, checked against the bytes; other bytes, or a
+ * keccak256- name of another form, are a problem). Every other file, and
+ * a file the chain doesn't vouch for, is listed in `unverified`.
  */
 export function checkFiles(
   dir: string,
   options: FileCheckOptions = {}
-): {
-  readonly files: Map<string, Buffer>;
-  readonly problems: string[];
-  readonly unverified: string[];
-  /** Why some files can't be checked against the chain yet, or null. */
-  readonly waiting: string | null;
-} {
+): FilesCheck {
   const files = new Map<string, Buffer>();
   const problems: string[] = [];
-  const unverified: string[] = [];
+  const pending: string[] = [];
   const keccakFiles = new Map<string, { name: string; bytes: Buffer }>();
   const refused = new Set<string>();
   const indexFile = path.join(dir, FILE_INDEX);
@@ -170,11 +201,11 @@ export function checkFiles(
           `${name} is named by a Keccak-256, but its bytes hash to ${keccak}`
         );
       } else {
-        // Attested below: the Waves v1 file the chain names, or an
-        // archive a checked index names.
+        // Attested below, or listed as unverified.
         keccakFiles.set(keccakNamed, { name, bytes });
+        pending.push(name);
       }
-    } else if (named === null) unverified.push(name);
+    } else if (named === null) pending.push(name);
     else if (hash !== named) {
       problems.push(
         `${name} is named by a SHA-256, but its bytes hash to ${hash}`
@@ -190,86 +221,177 @@ export function checkFiles(
       problems.push(`${name} is in ${FILE_INDEX} but missing`);
     }
   }
-  const attested = attestKeccakFiles(files, keccakFiles, unverified, options);
+  const attested = attestChainFiles(
+    files,
+    keccakFiles,
+    new Set(pending),
+    options
+  );
   problems.push(...attested.problems);
   return {
     files,
     problems,
-    unverified: unverified.sort((a, b) => (a < b ? -1 : Number(a > b))),
-    waiting: attested.waiting
+    unverified: pending
+      .filter((name) => !attested.vouched.has(name))
+      .sort((a, b) => (a < b ? -1 : Number(a > b))),
+    lacking: attested.lacking,
+    waiting: attested.reasons.length ? attested.reasons.join('; ') : null
   };
 }
 
+/** A name for a file in messages: its id. */
+const listed = (names: readonly string[], most = 5) =>
+  `${names.slice(0, most).join(', ')}${names.length > most ? ` and ${names.length - most} more` : ''}`;
+
 /**
- * Which Keccak-named files the chain attests. The Waves v1 file is the one
- * named by the fileHash of the gateway's recorded import answers
- * (`wavesFileHashes`; none counts when they name more than one), and only
- * its dropArchiveRoot may vouch for the drop archive index; an archive
- * counts once the checked index names it, at the size the index lists.
+ * Which of the import's files the chain vouches for, from the Waves v1
+ * file down:
+ * - the Waves v1 file is the one whose Keccak-256 is the fileHash of the
+ *   gateway's recorded import answers (`wavesFileHashes`; none counts
+ *   when they name more than one): `waves-v1`, or `keccak256-<that hash>`;
+ *   it must be a Waves v1 file, and `waves-v1` with other bytes fails;
+ * - the drop archive index counts when its root equals that file's
+ *   dropArchiveRoot (see checkDropArchiveIndex), and then each archive it
+ *   lists: `drop-archive-<waveId>` whose Keccak-256 is the entry's hash
+ *   (other bytes fail), or `keccak256-<hash>`, at the size it lists; an
+ *   entry with no file is `lacking`;
+ * - the docs index counts when its root equals that file's docsRoot (see
+ *   checkDocsIndex), and then each document it lists: the file its
+ *   rawCid names, whose Keccak-256 must be the entry's hash (other bytes
+ *   fail); an entry with no file is `lacking`;
+ * - an index the Waves v1 file's root says isn't empty, missing from the
+ *   directory, is `lacking` too: the directory isn't the whole set.
  * They all count only while the gateway source is verified: a name from a
- * gateway answer that isn't verified yet vouches for nothing. Any
- * other Keccak-named file, and anything the chain can't vouch for yet,
- * stays unverified, with `waiting` saying why. Faults in the index, a
- * root that differs, an archive of another size, and a named Waves v1
- * file that isn't one are problems.
+ * gateway answer that isn't verified yet vouches for nothing. Anything
+ * else of `pending` stays unverified, with `reasons` saying why when it
+ * can.
  */
-function attestKeccakFiles(
+function attestChainFiles(
   files: ReadonlyMap<string, Buffer>,
   keccakFiles: ReadonlyMap<string, { name: string; bytes: Buffer }>,
-  unverified: string[],
+  pending: ReadonlySet<string>,
   options: FileCheckOptions
-): { problems: string[]; waiting: string | null } {
+): {
+  problems: string[];
+  reasons: string[];
+  vouched: Set<string>;
+  lacking: string[];
+} {
   const problems: string[] = [];
   const reasons: string[] = [];
+  const vouched = new Set<string>();
+  const lacking: string[] = [];
   const named = options.wavesFileHashes ?? [];
   if (named.length > 1) {
     reasons.push(
       `the gateway's import answers name more than one Waves v1 file (${named.join(', ')}), so none counts`
     );
   }
-  const wavesFiles = new Set<string>();
-  const roots: string[] = [];
+  // The Waves v1 file, under either name.
+  const wavesBytes: { name: string; bytes: Buffer }[] = [];
+  const readerWaves = files.get(WAVES_FILE);
   for (const hash of named.length === 1 ? named : []) {
-    const file = keccakFiles.get(hash);
-    if (!file) continue;
-    const root = wavesFileDropArchiveRoot(file.bytes);
-    if (root === null) {
+    const byHash = keccakFiles.get(hash);
+    if (byHash) wavesBytes.push(byHash);
+    if (readerWaves) {
+      const keccak = keccakHex(readerWaves);
+      if (keccak === hash)
+        wavesBytes.push({ name: WAVES_FILE, bytes: readerWaves });
+      else {
+        problems.push(
+          `${WAVES_FILE} hashes to ${keccak}, but the chain's import answer names ${hash}`
+        );
+      }
+    }
+  }
+  if (readerWaves && !named.length) {
+    reasons.push(
+      `no import answer names a Waves v1 file, so ${WAVES_FILE} can't be checked against the chain`
+    );
+  }
+  const archiveRoots: string[] = [];
+  const docsRoots: string[] = [];
+  for (const { name, bytes } of wavesBytes) {
+    const archiveRoot = wavesFileDropArchiveRoot(bytes);
+    if (archiveRoot === null) {
       problems.push(
-        `${file.name} is the file the chain's import answer names, but isn't a Waves v1 file (schema 0x411D, version 1)`
+        `${name} is the file the chain's import answer names, but isn't a Waves v1 file (schema 0x411D, version 1)`
       );
       continue;
     }
-    wavesFiles.add(hash);
-    roots.push(root);
+    vouched.add(name);
+    archiveRoots.push(archiveRoot);
+    docsRoots.push(wavesFileDocsRoot(bytes)!);
   }
+  if (archiveRoots.some((root) => root !== EMPTY_ARCHIVES)) {
+    if (!files.has(DROP_ARCHIVE_INDEX)) lacking.push(DROP_ARCHIVE_INDEX);
+  }
+  if (docsRoots.some((root) => root !== EMPTY_DOCS)) {
+    if (!files.has(DOCS_INDEX)) lacking.push(DOCS_INDEX);
+  }
+  // The drop archive index, and the archives it lists.
   let archives = new Map<string, number | null>();
-  let indexChecked = false;
+  let byWave = new Map<string, string>();
   const indexBytes = files.get(DROP_ARCHIVE_INDEX);
   if (indexBytes) {
-    const checked = checkDropArchiveIndex(indexBytes, roots);
+    const checked = checkDropArchiveIndex(indexBytes, archiveRoots);
     problems.push(...checked.problems);
     if (checked.waiting && named.length <= 1) reasons.push(checked.waiting);
     archives = checked.archives;
-    indexChecked = !checked.problems.length && !checked.waiting;
+    byWave = checked.waves;
+    if (!checked.problems.length && !checked.waiting) {
+      // The index's own name says nothing; the chain's root vouches for it.
+      vouched.add(DROP_ARCHIVE_INDEX);
+    }
   }
-  const vouched: string[] = [];
+  const sized = (
+    name: string,
+    bytes: Buffer,
+    size: number | null | undefined
+  ) => {
+    if (size !== null && size !== undefined && size !== bytes.length) {
+      problems.push(
+        `${name} is ${bytes.length} bytes, but the drop archive index lists ${size}`
+      );
+    }
+  };
+  const unnamedArchives: string[] = [];
+  let unvouchedArchives = 0;
+  files.forEach((bytes, name) => {
+    const match = DROP_ARCHIVE_FILE.exec(name);
+    if (!match) return;
+    if (!vouched.has(DROP_ARCHIVE_INDEX)) {
+      if (!indexBytes) unvouchedArchives += 1;
+      return;
+    }
+    const listedHash = byWave.get(match[1]);
+    if (listedHash === undefined) {
+      unnamedArchives.push(name);
+      return;
+    }
+    const keccak = keccakHex(bytes);
+    if (keccak !== listedHash) {
+      problems.push(
+        `${name} hashes to ${keccak}, but the drop archive index lists ${listedHash} for its wave`
+      );
+      return;
+    }
+    sized(name, bytes, archives.get(listedHash));
+    vouched.add(name);
+  });
+  if (unnamedArchives.length) {
+    reasons.push(
+      `the drop archive index lists no wave for ${listed(unnamedArchives)}`
+    );
+  }
   let loose = 0;
   keccakFiles.forEach(({ name, bytes }, hash) => {
-    if (wavesFiles.has(hash)) {
-      vouched.push(name);
-      return;
-    }
+    if (vouched.has(name)) return;
     if (archives.has(hash)) {
-      const size = archives.get(hash);
-      if (size !== null && size !== undefined && size !== bytes.length) {
-        problems.push(
-          `${name} is ${bytes.length} bytes, but the drop archive index lists ${size}`
-        );
-      }
-      vouched.push(name);
+      sized(name, bytes, archives.get(hash));
+      vouched.add(name);
       return;
     }
-    unverified.push(name);
     // A file the answers name already has its reason: they name more than one.
     if (named.includes(hash)) return;
     if (wavesFileDropArchiveRoot(bytes) !== null) {
@@ -280,24 +402,91 @@ function attestKeccakFiles(
       loose += 1;
     }
   });
-  if (loose && !indexBytes) {
+  if ((loose || unvouchedArchives) && !indexBytes) {
     reasons.push(
-      'no drop archive index vouches for the Keccak-named files that are not the Waves v1 file'
+      'no drop archive index vouches for the archives (drop-archive- or Keccak-named files that are not the Waves v1 file)'
     );
   }
-  if (vouched.length || indexChecked) {
-    if (options.gatewayVerified) {
-      // The index's own name says nothing; the chain's root vouches for it.
-      const at = unverified.indexOf(DROP_ARCHIVE_INDEX);
-      if (indexChecked && at >= 0) unverified.splice(at, 1);
-    } else {
-      unverified.push(...vouched);
-      reasons.push(
-        "the Waves v1 file, the drop archive index and its archives are named by a gateway answer that isn't verified yet"
-      );
+  if (vouched.has(DROP_ARCHIVE_INDEX)) {
+    byWave.forEach((hash, waveId) => {
+      if (!keccakFiles.has(hash) && !files.has(`drop-archive-${waveId}`)) {
+        lacking.push(`drop-archive-${waveId}`);
+      }
+    });
+  }
+  // The docs index, and the documents it lists.
+  const docsBytes = files.get(DOCS_INDEX);
+  if (docsBytes) {
+    const checked = checkDocsIndex(docsBytes, docsRoots);
+    problems.push(...checked.problems);
+    if (checked.waiting && named.length <= 1) reasons.push(checked.waiting);
+    if (!checked.problems.length && !checked.waiting) {
+      vouched.add(DOCS_INDEX);
+      vouchDocs(files, checked.docs, vouched, lacking, problems);
     }
   }
-  return { problems, waiting: reasons.length ? reasons.join('; ') : null };
+  if (!options.gatewayVerified && (vouched.size || lacking.length)) {
+    vouched.clear();
+    reasons.push(
+      "the Waves v1 file, the indexes and the files they list are named by a gateway answer that isn't verified yet"
+    );
+  }
+  return {
+    problems,
+    reasons,
+    vouched,
+    // A file two entries name is lacking once.
+    lacking: Array.from(new Set(lacking))
+  };
+}
+
+/**
+ * The documents a checked docs index lists: each is the file its rawCid
+ * names (`b` and the CID in lower-case base32), already checked against
+ * that name by its SHA-256, whose Keccak-256 must be the entry's hash. A
+ * document with no file is lacking.
+ */
+function vouchDocs(
+  files: ReadonlyMap<string, Buffer>,
+  docs: readonly WaveDocEntry[],
+  vouched: Set<string>,
+  lacking: string[],
+  problems: string[]
+): void {
+  for (const doc of docs) {
+    const name = `b${base32Of(Buffer.from(doc.rawCid, 'hex'))}`;
+    const bytes = files.get(name);
+    if (!bytes) {
+      lacking.push(name);
+      continue;
+    }
+    const keccak = keccakHex(bytes);
+    if (keccak !== doc.hash) {
+      problems.push(
+        `${name} hashes to ${keccak}, but the docs index lists ${doc.hash} for it`
+      );
+      continue;
+    }
+    vouched.add(name);
+  }
+}
+
+/** Bytes in RFC 4648 lower-case base32, unpadded (a CID's `b` form). */
+export function base32Of(bytes: Buffer): string {
+  let out = '';
+  let bits = 0;
+  let value = 0;
+  for (let i = 0; i < bytes.length; i += 1) {
+    value = (value << 8) | bytes[i];
+    bits += 8;
+    while (bits >= 5) {
+      out += BASE32[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+    value &= (1 << bits) - 1;
+  }
+  if (bits > 0) out += BASE32[(value << (5 - bits)) & 31];
+  return out;
 }
 
 /**
@@ -358,7 +547,19 @@ export async function startFileServer(
   seedDir?: string,
   options: FileCheckOptions = {}
 ): Promise<RunningSource> {
-  const { files, problems, unverified, waiting } = checkFiles(dir, options);
+  const { files, problems, unverified, lacking, waiting } = checkFiles(
+    dir,
+    options
+  );
+  // Each part says why: files nothing verifies, files the chain names the
+  // directory lacks, and what the chain can't vouch for yet.
+  const why = [
+    ...(unverified.length ? [`ids not verified: ${listed(unverified)}`] : []),
+    ...(lacking.length
+      ? [`files the chain names are missing: ${listed(lacking)}`]
+      : []),
+    ...(waiting && (unverified.length || lacking.length) ? [waiting] : [])
+  ];
   const missing: string[] = [];
   const provenance = readProvenance(dir);
   const server = http.createServer((request, response) => {
@@ -384,12 +585,8 @@ export async function startFileServer(
       url,
       mode: 'local',
       provenance: provenance?.made_by ?? `${files.size} files in ${dir}`,
-      provisional: unverified.length > 0,
-      ...(unverified.length > 0
-        ? {
-            provisionalWhy: `ids not verified: ${unverified.slice(0, 5).join(', ')}${unverified.length > 5 ? ` and ${unverified.length - 5} more` : ''}${waiting ? `; ${waiting}` : ''}`
-          }
-        : {})
+      provisional: why.length > 0,
+      ...(why.length ? { provisionalWhy: why.join('; ') } : {})
     },
     problems: () => [
       ...problems.map((p) => `files: ${p}`),

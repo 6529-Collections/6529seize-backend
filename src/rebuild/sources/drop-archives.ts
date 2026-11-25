@@ -18,7 +18,7 @@ export function keccakHex(bytes: Uint8Array): string {
 }
 
 /** TAG(name): Keccak-256 of the name's ASCII bytes. */
-function tag(name: string): Buffer {
+export function tag(name: string): Buffer {
   return keccak(Buffer.from(name, 'ascii'));
 }
 
@@ -28,7 +28,7 @@ const ROOT = tag('6529.DropArchives.v1');
 const DERIVED_ID = tag('6529.DerivedId.v1');
 
 /** A number as one big-endian 32-byte word. */
-function word(n: bigint): Buffer {
+export function word(n: bigint): Buffer {
   return Buffer.from(n.toString(16).padStart(64, '0'), 'hex');
 }
 
@@ -52,7 +52,22 @@ function top(leaves: readonly Buffer[]): Buffer {
   return level[0];
 }
 
-const HEX32 = /^[0-9a-f]{64}$/;
+/**
+ * ROOT(rootClass, L) = H(rootClass, uint64 len(L), bytes32 TOP(L)): the
+ * canonical encodings' root of a list, bound to its length.
+ */
+export function listRoot(rootTag: Buffer, leaves: readonly Buffer[]): string {
+  return keccak(rootTag, word(BigInt(leaves.length)), top(leaves)).toString(
+    'hex'
+  );
+}
+
+/** H(name, words): Keccak-256 of TAG(name) followed by 32-byte words. */
+export function taggedHash(nameTag: Buffer, ...words: Buffer[]): Buffer {
+  return keccak(nameTag, ...words);
+}
+
+export const HEX32 = /^[0-9a-f]{64}$/;
 
 /** One archive of an index: its wave and the Keccak-256 of its bytes. */
 export interface DropArchiveEntry {
@@ -86,9 +101,7 @@ export function dropArchiveRoot(entries: readonly DropArchiveEntry[]): string {
       Buffer.from(entry.hash, 'hex')
     )
   );
-  return keccak(ROOT, word(BigInt(entries.length)), top(leaves)).toString(
-    'hex'
-  );
+  return listRoot(ROOT, leaves);
 }
 
 /**
@@ -130,6 +143,15 @@ export function wavesFileDropArchiveRoot(bytes: Buffer): string | null {
 }
 
 /**
+ * A Waves v1 file's docsRoot (bytes 64 to 96, after the identities file
+ * hash), or null when the bytes aren't a Waves v1 file.
+ */
+export function wavesFileDocsRoot(bytes: Buffer): string | null {
+  if (wavesFileDropArchiveRoot(bytes) === null) return null;
+  return bytes.subarray(64, 96).toString('hex');
+}
+
+/**
  * The Waves v1 file hashes the chain gives in recorded answers to its
  * import route: exchanges keyed as a GET of `/v1/waves/import` (by key,
  * as the replay serves them), answered 200 with a completed import, each
@@ -166,6 +188,8 @@ export function importAnswerFileHashes(
 export interface DropArchiveIndexCheck {
   /** The archives it attests: each hash, with the size it lists. */
   readonly archives: Map<string, number | null>;
+  /** The same archives by wave: each waveId's hash. */
+  readonly waves: Map<string, string>;
   /** Faults in the index, or a root that differs: each fails the run. */
   readonly problems: string[];
   /**
@@ -191,6 +215,7 @@ export function checkDropArchiveIndex(
 ): DropArchiveIndexCheck {
   const none = (problems: string[]): DropArchiveIndexCheck => ({
     archives: new Map(),
+    waves: new Map(),
     problems,
     waiting: null
   });
@@ -266,6 +291,7 @@ export function checkDropArchiveIndex(
   if (!chainRoots.length) {
     return {
       archives: new Map(),
+      waves: new Map(),
       problems: [],
       waiting:
         "no Waves v1 file the chain names (a recorded import answer's fileHash) is served, so the drop archive index can't be checked against the chain"
@@ -278,6 +304,7 @@ export function checkDropArchiveIndex(
   }
   return {
     archives: new Map(entries.map((e) => [e.hash, e.bytes])),
+    waves: new Map(entries.map((e) => [e.waveId, e.hash])),
     problems: [],
     waiting: null
   };

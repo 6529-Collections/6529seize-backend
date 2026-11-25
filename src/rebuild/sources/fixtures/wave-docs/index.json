@@ -1,0 +1,32 @@
+{
+ "docsRoot": "9509ca9829eb8060aa2e9b418b6f6ad04ee3c1c6c67497c0238fb9adf5ca7139",
+ "docs": [
+  {
+   "docClass": 3,
+   "ref": "ee32bfd48b69b09ed3b8cf1747b21f753dda20f4d14c4f11fb1599c1cf82e8f8",
+   "hash": "4652b21ab9fff76e367f1cc79906f2b0f3f0c3e68ebd10d3090a279dd1fbb82a",
+   "cid": "015512202301ffe17204bb8e15b19853bbb46beba5361501b06281d0c19e1978f4ae6f28",
+   "nonce": null,
+   "rawCid": "015512202301ffe17204bb8e15b19853bbb46beba5361501b06281d0c19e1978f4ae6f28",
+   "file": "3-ee32bfd48b69b09ed3b8cf1747b21f753dda20f4d14c4f11fb1599c1cf82e8f8.json"
+  },
+  {
+   "docClass": 6,
+   "ref": "7d45c426fd1f3ead04bbb0f1fab00f6f3f10556831ada9c5d84e39eb5ec512c1",
+   "hash": "d0a6e448c2cd257fdcda8920da8c8cc210806ba7df6a1f29ded1e2d4e8d92e6a",
+   "cid": null,
+   "nonce": "0123456789abcdef0123456789abcdef00000000000000000000000000000000",
+   "rawCid": "01551220b19da42728506b326d7a17e9a838a1845a96112def07fc54234b2c9ebdbee7aa",
+   "file": "6-7d45c426fd1f3ead04bbb0f1fab00f6f3f10556831ada9c5d84e39eb5ec512c1.json"
+  },
+  {
+   "docClass": 10,
+   "ref": "9cd24ffd3e3b373a5df1c29377aa76fab648818e85c7a7d5ad9fb7bf305047f3",
+   "hash": "4a56fb04abab2cdd9077325b35d76c7d426099086420b8058b2bf8f4afca7c4f",
+   "cid": "0155122092f552d8679ae2b3aacd36cf8b7428d2c03fabcfebb2cfc52b538d7d053dcc9b",
+   "nonce": null,
+   "rawCid": "0155122092f552d8679ae2b3aacd36cf8b7428d2c03fabcfebb2cfc52b538d7d053dcc9b",
+   "file": "10-9cd24ffd3e3b373a5df1c29377aa76fab648818e85c7a7d5ad9fb7bf305047f3.json"
+  }
+ ]
+}

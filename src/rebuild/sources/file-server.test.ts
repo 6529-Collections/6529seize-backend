@@ -3,16 +3,20 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { dropArchiveRoot, keccakHex } from '@/rebuild/sources/drop-archives';
+import { docsRoot } from '@/rebuild/sources/wave-docs';
 import { exchangeKey } from '@/rebuild/sources/http-recording';
 import { startSources, stopSources } from '@/rebuild/sources/start-sources';
 import {
+  base32Of,
   checkFiles,
+  DOCS_INDEX,
   DROP_ARCHIVE_INDEX,
   FILE_INDEX,
   fileIdOf,
   namedKeccak256,
   namedSha256,
-  startFileServer
+  startFileServer,
+  WAVES_FILE
 } from '@/rebuild/sources/file-server';
 import { writeProvenance } from '@/rebuild/sources/running-source';
 
@@ -259,10 +263,12 @@ describe('file server', () => {
       dropArchiveRoot: string;
       archives: { waveId: string; file: string; hash: string; bytes: number }[];
     };
+    // No documents (the empty docsRoot), so no docs index is needed.
     const wavesFile = (root: string, fill = 7) => {
       const bytes = Buffer.alloc(160, fill);
       bytes.writeUInt16BE(0x411d, 0);
       bytes.writeUInt16BE(1, 2);
+      Buffer.from(docsRoot([]), 'hex').copy(bytes, 64);
       Buffer.from(root, 'hex').copy(bytes, 96);
       return bytes;
     };
@@ -363,7 +369,7 @@ describe('file server', () => {
         [`keccak256-${wavesHash}`, DROP_ARCHIVE_INDEX, ...archiveNames].sort()
       );
       expect(checked.waiting).toBe(
-        "the Waves v1 file, the drop archive index and its archives are named by a gateway answer that isn't verified yet"
+        "the Waves v1 file, the indexes and the files they list are named by a gateway answer that isn't verified yet"
       );
     });
 
@@ -456,19 +462,26 @@ describe('file server', () => {
       });
     });
 
-    it('serves an index that names an archive the files lack, and reports the request for it', async () => {
+    it('stays provisional while an archive the index names is missing, and reports the request for it', async () => {
       const [missing, ...rest] = index.archives;
       lay({
         [`keccak256-${wavesHash}`]: waves,
         [DROP_ARCHIVE_INDEX]: indexBytes(),
         ...archives(rest)
       });
+      // The directory isn't the whole set: the archive is lacking, and
+      // the source stays provisional, failing nothing.
       expect(checkFiles(dir, chain)).toMatchObject({
         problems: [],
-        unverified: []
+        unverified: [],
+        lacking: [`drop-archive-${missing.waveId}`]
       });
       const server = await startFileServer(dir, undefined, chain);
       try {
+        expect(server.info.provisional).toBe(true);
+        expect(server.info.provisionalWhy).toBe(
+          `files the chain names are missing: drop-archive-${missing.waveId}`
+        );
         expect(
           (await fetch(`${server.url}/keccak256-${missing.hash}`)).status
         ).toBe(404);
@@ -570,6 +583,293 @@ describe('file server', () => {
         fs.rmSync(gatewayDir, { recursive: true, force: true });
         fs.rmSync(runDir, { recursive: true, force: true });
       }
+    });
+  });
+
+  describe("the import reader's ids", () => {
+    // The waves import's files as the reader lays them out (made-up data):
+    // waves-v1, drop-archives, drop-archive-<waveId>, docs-index, and each
+    // document under its raw CID.
+    const archiveFixtures = path.join(__dirname, 'fixtures', 'drop-archives');
+    const docFixtures = path.join(__dirname, 'fixtures', 'wave-docs');
+    const archiveIndex = JSON.parse(
+      fs.readFileSync(path.join(archiveFixtures, 'index-3.json'), 'utf8')
+    ) as {
+      dropArchiveRoot: string;
+      archives: { waveId: string; file: string; hash: string; bytes: number }[];
+    };
+    const docsIndexBytes = fs.readFileSync(
+      path.join(docFixtures, 'index.json')
+    );
+    const docsIndex = JSON.parse(docsIndexBytes.toString('utf8')) as {
+      docsRoot: string;
+      docs: { file: string; rawCid: string; hash: string }[];
+    };
+    const wavesFile = (docs: string, archives: string, fill = 7) => {
+      const bytes = Buffer.alloc(160, fill);
+      bytes.writeUInt16BE(0x411d, 0);
+      bytes.writeUInt16BE(1, 2);
+      Buffer.from(docs, 'hex').copy(bytes, 64);
+      Buffer.from(archives, 'hex').copy(bytes, 96);
+      return bytes;
+    };
+    const waves = wavesFile(docsIndex.docsRoot, archiveIndex.dropArchiveRoot);
+    const chain = {
+      wavesFileHashes: [keccakHex(waves)],
+      gatewayVerified: true
+    };
+    const archiveFiles = (list = archiveIndex.archives) =>
+      Object.fromEntries(
+        list.map((a) => [
+          `drop-archive-${a.waveId}`,
+          fs.readFileSync(path.join(archiveFixtures, a.file))
+        ])
+      );
+    const docName = (rawCid: string) =>
+      `b${base32Of(Buffer.from(rawCid, 'hex'))}`;
+    const docFiles = (list = docsIndex.docs) =>
+      Object.fromEntries(
+        list.map((d) => [
+          docName(d.rawCid),
+          fs.readFileSync(path.join(docFixtures, d.file))
+        ])
+      );
+    const set = (): Record<string, Buffer> => ({
+      [WAVES_FILE]: waves,
+      [DROP_ARCHIVE_INDEX]: fs.readFileSync(
+        path.join(archiveFixtures, 'index-3.json')
+      ),
+      ...archiveFiles(),
+      [DOCS_INDEX]: docsIndexBytes,
+      ...docFiles()
+    });
+    const lay = (entries: Record<string, Buffer>) => {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.mkdirSync(dir);
+      const listed: Record<string, string> = {};
+      for (const [name, bytes] of Object.entries(entries)) {
+        fs.writeFileSync(path.join(dir, name), bytes);
+        listed[name] = createHash('sha256').update(bytes).digest('hex');
+      }
+      fs.writeFileSync(path.join(dir, FILE_INDEX), JSON.stringify(listed));
+    };
+
+    it('names each document as its raw CID, which the name check verifies', () => {
+      for (const doc of docsIndex.docs) {
+        const bytes = fs.readFileSync(path.join(docFixtures, doc.file));
+        expect(namedSha256(docName(doc.rawCid))).toBe(
+          createHash('sha256').update(bytes).digest('hex')
+        );
+      }
+    });
+
+    it('verifies the whole set the chain names, and the source counts', async () => {
+      lay(set());
+      expect(checkFiles(dir, chain)).toMatchObject({
+        problems: [],
+        unverified: [],
+        lacking: [],
+        waiting: null
+      });
+      const server = await startFileServer(dir, undefined, chain);
+      try {
+        expect(server.info.provisional).toBe(false);
+        const [archive] = archiveIndex.archives;
+        const served = await fetch(
+          `${server.url}/drop-archive-${archive.waveId}`
+        );
+        expect(keccakHex(Buffer.from(await served.arrayBuffer()))).toBe(
+          archive.hash
+        );
+      } finally {
+        await server.stop();
+      }
+    });
+
+    it("fails a waves-v1, an archive or a document with other bytes than the chain's", () => {
+      const [archive] = archiveIndex.archives;
+      const other = wavesFile(
+        docsIndex.docsRoot,
+        archiveIndex.dropArchiveRoot,
+        9
+      );
+      lay({ ...set(), [WAVES_FILE]: other });
+      expect(checkFiles(dir, chain).problems).toEqual([
+        `${WAVES_FILE} hashes to ${keccakHex(other)}, but the chain's import answer names ${chain.wavesFileHashes[0]}`
+      ]);
+      const forged = Buffer.from('{"forged":true}\n');
+      lay({ ...set(), [`drop-archive-${archive.waveId}`]: forged });
+      expect(checkFiles(dir, chain).problems).toEqual([
+        `drop-archive-${archive.waveId} hashes to ${keccakHex(forged)}, but the drop archive index lists ${archive.hash} for its wave`
+      ]);
+      // rawCid isn't in the root: an index pointing the commitment
+      // document at another document's file keeps its root, and that file
+      // fails on the hash.
+      const [cidDoc, commitment] = docsIndex.docs;
+      const repointed = {
+        ...docsIndex,
+        docs: docsIndex.docs.map((d) =>
+          d === commitment ? { ...d, rawCid: cidDoc.rawCid } : d
+        )
+      };
+      lay({
+        ...set(),
+        [DOCS_INDEX]: Buffer.from(JSON.stringify(repointed, null, 1))
+      });
+      const cidBytes = fs.readFileSync(path.join(docFixtures, cidDoc.file));
+      expect(checkFiles(dir, chain).problems).toEqual([
+        `${docName(cidDoc.rawCid)} hashes to ${keccakHex(cidBytes)}, but the docs index lists ${commitment.hash} for it`
+      ]);
+    });
+
+    it('stays provisional, failing nothing, while an archive or a document is missing', async () => {
+      const [archive] = archiveIndex.archives;
+      const [doc] = docsIndex.docs;
+      const files = set();
+      delete files[`drop-archive-${archive.waveId}`];
+      delete files[docName(doc.rawCid)];
+      lay(files);
+      expect(checkFiles(dir, chain)).toMatchObject({
+        problems: [],
+        unverified: [],
+        lacking: [`drop-archive-${archive.waveId}`, docName(doc.rawCid)]
+      });
+      const server = await startFileServer(dir, undefined, chain);
+      try {
+        expect(server.info.provisionalWhy).toBe(
+          `files the chain names are missing: drop-archive-${archive.waveId}, ${docName(doc.rawCid)}`
+        );
+      } finally {
+        await server.stop();
+      }
+    });
+
+    it('stays provisional while an index the Waves v1 file says is not empty is missing', async () => {
+      const files = set();
+      delete files[DROP_ARCHIVE_INDEX];
+      delete files[DOCS_INDEX];
+      lay(files);
+      const checked = checkFiles(dir, chain);
+      expect(checked).toMatchObject({
+        problems: [],
+        lacking: [DROP_ARCHIVE_INDEX, DOCS_INDEX]
+      });
+      // The archives wait for the index that would vouch for them.
+      expect(checked.unverified).toEqual(
+        Object.keys(archiveFiles()).sort((a, b) => (a < b ? -1 : Number(a > b)))
+      );
+      expect(checked.waiting).toBe(
+        'no drop archive index vouches for the archives (drop-archive- or Keccak-named files that are not the Waves v1 file)'
+      );
+      const server = await startFileServer(dir, undefined, chain);
+      try {
+        expect(server.info.provisional).toBe(true);
+      } finally {
+        await server.stop();
+      }
+      // A Waves v1 file with no archives and no documents needs neither.
+      const empty = wavesFile(docsRoot([]), dropArchiveRoot([]));
+      lay({ [WAVES_FILE]: empty });
+      expect(
+        checkFiles(dir, {
+          wavesFileHashes: [keccakHex(empty)],
+          gatewayVerified: true
+        })
+      ).toMatchObject({
+        problems: [],
+        unverified: [],
+        lacking: [],
+        waiting: null
+      });
+    });
+
+    it('checks the size an archive under its wave id has, and takes the Waves v1 file under both names', () => {
+      const [archive] = archiveIndex.archives;
+      const sized = JSON.parse(
+        fs.readFileSync(path.join(archiveFixtures, 'index-3.json'), 'utf8')
+      );
+      sized.archives[0].bytes = archive.bytes + 1;
+      lay({
+        ...set(),
+        [DROP_ARCHIVE_INDEX]: Buffer.from(JSON.stringify(sized)),
+        [`keccak256-${keccakHex(waves)}`]: waves
+      });
+      expect(checkFiles(dir, chain)).toMatchObject({
+        problems: [
+          `drop-archive-${archive.waveId} is ${archive.bytes} bytes, but the drop archive index lists ${archive.bytes + 1}`
+        ],
+        unverified: []
+      });
+    });
+
+    it('fails a docs index that is not JSON', () => {
+      lay({ ...set(), [DOCS_INDEX]: Buffer.from('{') });
+      expect(checkFiles(dir, chain)).toMatchObject({
+        problems: ['the docs index is not JSON'],
+        unverified: [DOCS_INDEX]
+      });
+    });
+
+    it('keeps an archive of a wave the index lists not, and a file of no known kind, provisional', () => {
+      const stray = 'ab'.repeat(32);
+      lay({
+        ...set(),
+        [`drop-archive-${stray}`]: Buffer.from('{}\n'),
+        extra: Buffer.from('x')
+      });
+      const checked = checkFiles(dir, chain);
+      expect(checked.problems).toEqual([]);
+      expect(checked.unverified).toEqual([`drop-archive-${stray}`, 'extra']);
+      expect(checked.waiting).toBe(
+        `the drop archive index lists no wave for drop-archive-${stray}`
+      );
+    });
+
+    it("fails a docs index whose root isn't the Waves v1 file's docsRoot", () => {
+      const moved = wavesFile('cd'.repeat(32), archiveIndex.dropArchiveRoot);
+      lay({ ...set(), [WAVES_FILE]: moved });
+      expect(
+        checkFiles(dir, {
+          wavesFileHashes: [keccakHex(moved)],
+          gatewayVerified: true
+        }).problems
+      ).toEqual([
+        `the docs index's root ${docsIndex.docsRoot} is not the docsRoot of the Waves v1 file the chain names`
+      ]);
+    });
+
+    it('waits on an import answer and on a verified gateway, and fails a named file that is no Waves v1 file', () => {
+      lay(set());
+      const unanswered = checkFiles(dir, { gatewayVerified: true });
+      expect(unanswered.problems).toEqual([]);
+      expect(unanswered.unverified).toEqual(
+        [
+          WAVES_FILE,
+          DROP_ARCHIVE_INDEX,
+          DOCS_INDEX,
+          ...Object.keys(archiveFiles())
+        ].sort((a, b) => (a < b ? -1 : Number(a > b)))
+      );
+      expect(unanswered.waiting).toContain(
+        `no import answer names a Waves v1 file, so ${WAVES_FILE} can't be checked against the chain`
+      );
+      const unverifiedGateway = checkFiles(dir, {
+        wavesFileHashes: chain.wavesFileHashes
+      });
+      expect(unverifiedGateway.unverified).toEqual(unanswered.unverified);
+      expect(unverifiedGateway.waiting).toBe(
+        "the Waves v1 file, the indexes and the files they list are named by a gateway answer that isn't verified yet"
+      );
+      const notWaves = Buffer.from('not a Waves v1 file');
+      lay({ ...set(), [WAVES_FILE]: notWaves });
+      expect(
+        checkFiles(dir, {
+          wavesFileHashes: [keccakHex(notWaves)],
+          gatewayVerified: true
+        }).problems
+      ).toEqual([
+        `${WAVES_FILE} is the file the chain's import answer names, but isn't a Waves v1 file (schema 0x411D, version 1)`
+      ]);
     });
   });
 

@@ -290,34 +290,59 @@ Each `--source <name>=<spec>`:
   with other bytes fails the run. For any other file nothing checks its id
   yet, so a directory that holds one is provisional ("ids not verified",
   naming the files), whatever its `PROVENANCE.json` says.
-  A file named `keccak256-<64 lowercase hex>` has its Keccak-256 checked
-  against its bytes the same way; another name that starts `keccak256-`
-  in any case (capitals, an extension) fails the run. Such a file counts
-  as verified only when the chain vouches for its name:
-  - the Waves v1 file is the one named by the `fileHash` of the chain's
-    import answer, which the run reads from the gateway's recording: an
-    exchange keyed as a GET of `/v1/waves/import`, answered 200 with
-    `completed: true`. If those answers name more than one file, none
-    counts. It must be a Waves v1 file (schema `0x411D`, version 1). In
-    record mode a fresh recording holds no such answer yet, so the import
-    files wait;
+  The waves import's files count as verified once the chain vouches for
+  them. They go by the import reader's ids (`waves-v1`, `drop-archives`,
+  `drop-archive-<waveId>`, `docs-index`, each document under its raw
+  CID), or by their Keccak-256: a file named
+  `keccak256-<64 lowercase hex>` has it checked against its bytes the
+  same way, and another name that starts `keccak256-` in any case
+  (capitals, an extension) fails the run. From the Waves v1 file down:
+  - the Waves v1 file is the one whose Keccak-256 is the `fileHash` of
+    the chain's import answer, which the run reads from the gateway's
+    recording: an exchange keyed as a GET of `/v1/waves/import`,
+    answered 200 with `completed: true`. If those answers name more than
+    one file, none counts. It must be a Waves v1 file (schema `0x411D`,
+    version 1), and `waves-v1` with other bytes fails the run. In record
+    mode a fresh recording holds no such answer yet, so the import files
+    wait;
   - the drop archives' index (`drop-archives`, the snapshot tool's
     `archives/index.json`) is accepted only when the root over its
     (waveId, hash) pairs, strictly ascending by waveId, equals that Waves
     v1 file's dropArchiveRoot, its own `dropArchiveRoot` (when it gives
     one) is that root, and each entry's 6529.io wave UUID derives its
     waveId; its `file` and `drops` are informative and aren't checked;
-  - an archive counts once the checked index names it, at the size
-    (`bytes`) the index lists.
+  - an archive counts once the checked index lists it, at the size
+    (`bytes`) the index lists: `drop-archive-<waveId>` must hash to the
+    hash the index lists for its wave (other bytes fail), and
+    `keccak256-<hash>` names it by that hash; an archive of a wave the
+    index doesn't list stays provisional;
+  - the docs index (`docs-index`, the snapshot tool's
+    `docs/index.json`) is accepted only when the root over its entries,
+    `ROOT("6529.WaveDocs.v1", L)` of the leaves
+    `H("6529.WaveDoc.v1", uint8 docClass, bytes32 ref, bytes32 hash)`
+    strictly ascending by (docClass, ref), equals that Waves v1 file's
+    docsRoot, and its own `docsRoot` (when it gives one) is that root.
+    Each entry names the raw CID its document is served under (`rawCid`;
+    a CID document's is its `cid`, whose Keccak-256 must be its `ref`),
+    and that file must hash to the entry's Keccak-256 (other bytes fail).
 
-  The root is computed here from the chain spec's definition, not by the
-  code that reads the archives. All of them count only while the gateway
-  source is verified: a name from a gateway answer that isn't verified
-  yet vouches for nothing, and the reason says so. Until an import answer
-  names a Waves v1 file that is served, the Waves v1 file, the index and
-  its archives stay provisional, with the reason, and fail nothing. A
-  fault in the index, a root that differs, or an archive of another size
-  fails the run. Any other Keccak-named file stays provisional.
+  Both roots are computed here from the chain spec's definitions, not by
+  the code that reads the files; the indexes' `file`, `drops` and
+  `nonce` fields aren't checked, and a commitment document's `ref` is
+  bound through the root, not recomputed from its nonce. All of them count
+  only while the gateway source is verified: a name from a gateway answer
+  that isn't verified yet vouches for nothing, and the reason says so.
+  Until an import answer names a Waves v1 file that is served, the Waves
+  v1 file, the indexes and the files they list stay provisional, with the
+  reason. An index or file the chain names that the directory lacks keeps
+  it provisional too, naming it, as a directory that isn't the whole set:
+  an archive or document a checked index lists, or an index the Waves v1
+  file's root says isn't empty. Bytes that aren't the ones a name or an
+  answer gives fail the run as soon as they are checked, the gateway
+  verified or not, as do a fault in an index, a root that differs, and
+  an archive of another size. Any other file stays provisional unless its
+  name is checked as above.
+
 - A flag value may name a source: `{gateway}`, `{relays}`, `{ethereum}`
   or `{files}` become its URL in the run.
 
