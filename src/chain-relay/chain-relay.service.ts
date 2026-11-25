@@ -39,6 +39,7 @@ import {
   RelayRateLimits,
   RetryLaterException
 } from './chain-relay-limits';
+import { assertWavesOperationOpen } from './chain-relay-waves';
 
 const logger = Logger.get('CHAIN_RELAY');
 
@@ -667,6 +668,9 @@ export class ChainRelayService {
       this.checkUnsigned(request.unsigned, MAX_UNSIGNED_BYTES);
     }
     const head = readEnvelopeHead(bytes);
+    // Waves operations open on the 6529 chain at the switch-on: none is
+    // relayed before it, whoever signs it (chain-relay-waves.ts).
+    assertWavesOperationOpen(head, this.now());
     const viaGrant =
       (head !== null &&
         (head.keyType !== WALLET_KEY_TYPE || head.authRef !== null)) ||

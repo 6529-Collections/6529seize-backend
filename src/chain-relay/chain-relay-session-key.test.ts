@@ -18,6 +18,19 @@ import {
 import { join } from './identity-join.fixtures';
 import { ChainPendingOperationsDb } from './chain-pending-operations.db';
 
+// These tests relay waves operations (votes, poll ballots) as after the
+// waves switch-on; chain-relay-switch-on.test.ts covers the time before.
+const WAVES_ON_CHAIN = 'FEATURE_WAVES_ON_CHAIN';
+let wavesOnChain: string | undefined;
+beforeAll(() => {
+  wavesOnChain = process.env[WAVES_ON_CHAIN];
+  process.env[WAVES_ON_CHAIN] = 'true';
+});
+afterAll(() => {
+  if (wavesOnChain === undefined) delete process.env[WAVES_ON_CHAIN];
+  else process.env[WAVES_ON_CHAIN] = wavesOnChain;
+});
+
 /**
  * P40 §13's E3: a VOTE_SET signed by an Ed25519 session key (keyType 2,
  * authRef = its grant), on the devnet network of P28's appendix A.
