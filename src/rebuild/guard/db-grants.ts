@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 
 /** MySQL user names are at most 32 characters. */
 export function stepUserName(stepId: string): string {

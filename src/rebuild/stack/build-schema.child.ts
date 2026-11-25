@@ -8,6 +8,7 @@ import { DataSource } from 'typeorm';
 import * as Entities from '@/entities/entities';
 import * as dbMigrationsLoop from '@/dbMigrationsLoop';
 import { env } from '@/env';
+import { mysql2TypeOrmOptions } from '@/db/mysql-driver-compat';
 import { exitWithError } from '@/rebuild/stack/child-exit';
 
 async function main(): Promise<void> {
@@ -19,7 +20,7 @@ async function main(): Promise<void> {
     password: env.getStringOrThrow('DB_PASS'),
     database: env.getStringOrThrow('DB_NAME'),
     charset: 'utf8mb4',
-    timezone: 'Etc/UTC',
+    ...mysql2TypeOrmOptions({ timezone: 'Etc/UTC' }),
     entities: Object.values(Entities).filter(
       (entity) => typeof entity === 'function'
     ),

@@ -1,5 +1,7 @@
-import * as mysql from 'mysql';
+import * as mysql from 'mysql2';
 import { DB_TEXT_COLLATION } from '@/db/db-collation';
+import { dbAuthPlugins } from '@/db-iam-auth';
+import { mysqljsTypeCast } from '@/db/mysql-driver-compat';
 
 export interface AdminTarget {
   readonly host: string;
@@ -37,7 +39,16 @@ export class MysqlAdmin {
       supportBigNumbers: true,
       bigNumberStrings: true,
       dateStrings: true,
-      connectTimeout: 5000
+      connectTimeout: 5000,
+      // On mysql2, values as mysqljs gave them for these options (JSON as
+      // text, for one), and a password login as mysqljs made it.
+      typeCast: mysqljsTypeCast({
+        supportBigNumbers: true,
+        bigNumberStrings: true,
+        dateStrings: true,
+        timezone: 'Z'
+      }),
+      authPlugins: dbAuthPlugins(null)
     });
     await new Promise<void>((resolve, reject) =>
       connection.connect((error) => (error ? reject(error) : resolve()))
