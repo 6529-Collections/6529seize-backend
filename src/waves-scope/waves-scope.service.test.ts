@@ -14,6 +14,8 @@ import {
   STAY_REASONS
 } from '@/waves-scope/waves-scope';
 import {
+  CHAIN_NOT_READY_CACHE_MS,
+  CHAIN_READY_CACHE_MS,
   CHAIN_TABLES_MISSING_MESSAGE,
   NETWORK_UNSET_MESSAGE,
   RECORDS_NONE_MESSAGE,
@@ -149,6 +151,7 @@ function fakeDb({
   usedIn = [] as string[]
 } = {}) {
   const statements: { sql: string; params: Record<string, any> }[] = [];
+  let current = state;
   const scopeRow = (id: string) => ({
     id,
     [MOVED_ON_CHAIN_COLUMN]: 0,
@@ -158,7 +161,7 @@ function fakeDb({
     execute: jest.fn(async (sql: string, params: Record<string, any>) => {
       statements.push({ sql, params });
       if (sql.includes(`from ${CHAIN_INDEX_STATE_TABLE_NAME}`))
-        return state ? [state] : [];
+        return current ? [current] : [];
       return (params.waveIds ?? []).map(scopeRow);
     }),
     oneOrNull: jest.fn(async (sql: string, params: Record<string, any>) => {
@@ -174,13 +177,19 @@ function fakeDb({
   };
   const of = (needle: string) =>
     statements.filter((it) => it.sql.includes(needle));
-  return { db, statements, of };
+  const setState = (next: Record<string, unknown> | null) => {
+    current = next;
+  };
+  return { db, statements, of, setState };
 }
 
 function service(
   db: ReturnType<typeof fakeDb>['db'],
   switchedOn: boolean,
-  readinessCacheMs = 0
+  cacheMs: { readyCacheMs?: number; notReadyCacheMs?: number } = {
+    readyCacheMs: 0,
+    notReadyCacheMs: 0
+  }
 ) {
   const log = fakeLog();
   return {
@@ -189,7 +198,7 @@ function service(
       () => db as any,
       () => switchedOn,
       {
-        readinessCacheMs,
+        ...cacheMs,
         log
       }
     )
@@ -240,7 +249,7 @@ describe('the chain index, after the switch-on', () => {
   it('reuses its reading of readiness for the cache time, per network', async () => {
     process.env[CHAIN_NETWORK_ID_ENV] = NETWORK;
     const fake = fakeDb();
-    const { scope } = service(fake.db, true, 30_000);
+    const { scope } = service(fake.db, true, {});
     await scope.waveScopes(['a'], {});
     await scope.usedByMovingWave(['g'], {});
     expect(fake.of('information_schema')).toHaveLength(1);
@@ -253,8 +262,63 @@ describe('the chain index, after the switch-on', () => {
   });
 });
 
+describe('the readiness cache', () => {
+  beforeEach(() => {
+    process.env.WAVES_SWITCH_ON_AT = '2026-11-28T00:00:00Z';
+    process.env[RECORDS_WAVE_ID_ENV] = 'none';
+    process.env[CHAIN_NETWORK_ID_ENV] = NETWORK;
+  });
+
+  async function readsTheChain(
+    scope: WavesScopeService,
+    fake: ReturnType<typeof fakeDb>
+  ) {
+    await scope.waveScopes(['a'], {});
+    const reads = fake.of('where w.id in');
+    return reads[reads.length - 1].sql.includes(READS_THE_CHAIN);
+  }
+
+  it('sees an index reset after it read ready within CHAIN_READY_CACHE_MS', async () => {
+    expect(CHAIN_READY_CACHE_MS).toBe(5_000);
+    let now = 1_000_000;
+    jest.spyOn(Date, 'now').mockImplementation(() => now);
+    const fake = fakeDb();
+    const { scope } = service(fake.db, true, {});
+    expect(await readsTheChain(scope, fake)).toBe(true);
+    // A chain relaunch resets the index: its state no longer counts.
+    fake.setState({ last_full_at: null, network: NETWORK });
+    now += CHAIN_READY_CACHE_MS - 1;
+    expect(await readsTheChain(scope, fake)).toBe(true);
+    now += 2;
+    expect(await readsTheChain(scope, fake)).toBe(false);
+    // Read again at once: not ready is now the reading.
+    expect(await readsTheChain(scope, fake)).toBe(false);
+  });
+
+  it('reuses not ready for CHAIN_NOT_READY_CACHE_MS, then reads ready', async () => {
+    expect(CHAIN_NOT_READY_CACHE_MS).toBe(30_000);
+    let now = 1_000_000;
+    jest.spyOn(Date, 'now').mockImplementation(() => now);
+    const fake = fakeDb({ state: null });
+    const { scope } = service(fake.db, true, {});
+    expect(await readsTheChain(scope, fake)).toBe(false);
+    fake.setState({ last_full_at: 1, network: NETWORK });
+    now += CHAIN_NOT_READY_CACHE_MS - 1;
+    expect(await readsTheChain(scope, fake)).toBe(false);
+    expect(fake.of(`from ${CHAIN_INDEX_STATE_TABLE_NAME}`)).toHaveLength(1);
+    now += 2;
+    expect(await readsTheChain(scope, fake)).toBe(true);
+  });
+});
+
 describe('statement sizes', () => {
-  const ids = (n: number) => Array.from({ length: n }, () => randomUUID());
+  // The longest ids a statement can carry: a wave or group made on the
+  // chain keeps its 66-character chain id.
+  const ids = (n: number) =>
+    Array.from(
+      { length: n },
+      () => '0x' + randomUUID().replace(/-/g, '').repeat(2)
+    );
   const formattedBytes = (statement: {
     sql: string;
     params: Record<string, unknown>;
@@ -263,23 +327,24 @@ describe('statement sizes', () => {
 
   beforeEach(() => {
     process.env.WAVES_FREEZE_AT = '2026-11-27T00:00:00Z';
-    process.env[RECORDS_WAVE_ID_ENV] = randomUUID();
+    process.env[RECORDS_WAVE_ID_ENV] = ids(1)[0];
     process.env[CHAIN_NETWORK_ID_ENV] = NETWORK;
   });
 
   it.each([false, true])(
-    'reads wave scopes in statements of at most 100 ids, each under the pin size (switched on: %s)',
+    'reads wave scopes in statements of at most 80 chain ids, each under the pin size (switched on: %s)',
     async (switchedOn) => {
       const fake = fakeDb();
       const { scope } = service(fake.db, switchedOn);
-      const waveIds = ids(250);
+      const waveIds = ids(200);
+      expect(waveIds[0]).toHaveLength(66);
       const scopes = await scope.waveScopes(waveIds, {});
-      expect(scopes.size).toBe(250);
+      expect(scopes.size).toBe(200);
       const reads = fake.of('where w.id in');
       expect(reads.map((it) => it.params.waveIds.length)).toEqual([
         SCOPE_WAVE_IDS_PER_STATEMENT,
         SCOPE_WAVE_IDS_PER_STATEMENT,
-        50
+        40
       ]);
       for (const read of reads)
         expect(formattedBytes(read)).toBeLessThan(PROXY_PIN_STATEMENT_BYTES);
@@ -287,7 +352,7 @@ describe('statement sizes', () => {
   );
 
   it.each([false, true])(
-    'asks about groups in statements of at most 10 ids, each under the pin size (switched on: %s)',
+    'asks about groups in statements of at most 10 chain ids, each under the pin size (switched on: %s)',
     async (switchedOn) => {
       const groupIds = ids(25);
       const fake = fakeDb({ usedIn: [groupIds[24]] });

@@ -299,7 +299,7 @@ async function withChainIndex(ready: boolean, work: () => Promise<void>) {
 }
 
 /** Each read asks the chain index again, as the cases change it. */
-const NO_CACHE = { readinessCacheMs: 0 };
+const NO_CACHE = { readyCacheMs: 0, notReadyCacheMs: 0 };
 
 const BEFORE: [ChainStateSql, (id: string) => ChainState] = [
   { switchedOn: false },

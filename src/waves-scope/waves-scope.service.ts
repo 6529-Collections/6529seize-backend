@@ -95,14 +95,25 @@ export function scopeSqlParamValues(): Record<string, unknown> {
 
 const MAPPER_CACHE_MS = 60_000;
 const MAPPER_CACHE_MAX_WAVES = 50_000;
-/** How long a process reuses its reading of the chain index's readiness. */
-export const CHAIN_READINESS_CACHE_MS = 30_000;
 /**
- * The most wave ids one scope statement carries. With 100 ids a
- * statement stays under RDS Proxy's 16,000 bytes, past which it pins the
- * session (src/db/proxy-session-pinning.ts).
+ * How long a process reuses a "not ready" reading of the chain index. Not
+ * ready keeps every moving wave frozen, so a late "ready" only delays the
+ * switch-on's opening, by at most this long.
  */
-export const SCOPE_WAVE_IDS_PER_STATEMENT = 100;
+export const CHAIN_NOT_READY_CACHE_MS = 30_000;
+/**
+ * How long a process reuses a "ready" reading: briefly. An index that is
+ * reset (a chain relaunch empties chain_waves, then its state) must read as
+ * not ready again within this long, since meanwhile every moved wave would
+ * read as not on the chain and open.
+ */
+export const CHAIN_READY_CACHE_MS = 5_000;
+/**
+ * The most wave ids one scope statement carries. With 80 ids, each a
+ * 66-character chain id at most, a statement stays under RDS Proxy's 16,000
+ * bytes, past which it pins the session (src/db/proxy-session-pinning.ts).
+ */
+export const SCOPE_WAVE_IDS_PER_STATEMENT = 80;
 /** The most group ids one usedByMovingWave statement carries, likewise. */
 export const SCOPE_GROUP_IDS_PER_STATEMENT = 10;
 
@@ -133,8 +144,9 @@ export interface DecisionRef {
  * time set too early opens no moving wave. The index counts as ready only
  * on the network WAVES_SETTLEMENT_NETWORK_ID names: with it unset, nothing
  * is ready. Missing chain index tables read as not ready, without a failed
- * statement. A process reuses its reading of readiness for
- * CHAIN_READINESS_CACHE_MS, so a change shows within that time.
+ * statement. A process reuses a "not ready" reading for up to
+ * CHAIN_NOT_READY_CACHE_MS and a "ready" one for CHAIN_READY_CACHE_MS, so a
+ * reset index reads as not ready again within the shorter time.
  */
 export class WavesScopeService extends LazyDbAccessCompatibleService {
   private readonly mapperCache = new Map<
@@ -151,19 +163,26 @@ export class WavesScopeService extends LazyDbAccessCompatibleService {
   private readonly reportSettings: (
     env: Readonly<Record<string, string | undefined>>
   ) => void;
-  private readonly readinessCacheMs: number;
+  private readonly readyCacheMs: number;
+  private readonly notReadyCacheMs: number;
   private readonly log: ScopeLog;
 
   constructor(
     sqlExecutorGetter: typeof dbSupplier,
     private readonly switchedOn: () => boolean = () => isWavesSwitchedOn(),
     {
-      readinessCacheMs = CHAIN_READINESS_CACHE_MS,
+      readyCacheMs = CHAIN_READY_CACHE_MS,
+      notReadyCacheMs = CHAIN_NOT_READY_CACHE_MS,
       log = LOGGER_LOG
-    }: { readonly readinessCacheMs?: number; readonly log?: ScopeLog } = {}
+    }: {
+      readonly readyCacheMs?: number;
+      readonly notReadyCacheMs?: number;
+      readonly log?: ScopeLog;
+    } = {}
   ) {
     super(sqlExecutorGetter);
-    this.readinessCacheMs = readinessCacheMs;
+    this.readyCacheMs = readyCacheMs;
+    this.notReadyCacheMs = notReadyCacheMs;
     this.log = log;
     this.reportSettings = wavesSettingsReporter(log);
   }
@@ -191,7 +210,11 @@ export class WavesScopeService extends LazyDbAccessCompatibleService {
     return { switchedOn: true, heldSql: ready ? waveOnChainSql : null };
   }
 
-  /** chainIndexReady, reused for readinessCacheMs, and quiet on missing tables. */
+  /**
+   * chainIndexReady, quiet on missing tables. A reading is reused only for
+   * its own time (ready briefly, not ready longer), and every fresh reading
+   * replaces it, so one that finds the index not ready ends a "ready".
+   */
   private async chainIndexReady(
     network: string,
     options: DbQueryOptions
@@ -203,7 +226,11 @@ export class WavesScopeService extends LazyDbAccessCompatibleService {
     const ready =
       (await this.chainIndexTablesExist(options)) &&
       (await chainIndexReady(this.db, options, network));
-    this.readiness = { network, ready, until: now + this.readinessCacheMs };
+    this.readiness = {
+      network,
+      ready,
+      until: now + (ready ? this.readyCacheMs : this.notReadyCacheMs)
+    };
     return ready;
   }
 
