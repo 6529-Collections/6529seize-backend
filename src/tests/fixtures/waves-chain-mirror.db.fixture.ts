@@ -304,7 +304,7 @@ export async function dumpTables(
           )
         )
       )
-      .sort();
+      .sort((a, b) => (a < b ? -1 : Number(a > b)));
   }
   return out;
 }

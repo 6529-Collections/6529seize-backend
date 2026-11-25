@@ -57,7 +57,7 @@ function canonical(value: unknown): unknown {
   if (value && typeof value === 'object') {
     return Object.fromEntries(
       Object.keys(value as Record<string, unknown>)
-        .sort()
+        .sort((a, b) => (a < b ? -1 : Number(a > b)))
         .map((key) => [key, canonical((value as Record<string, unknown>)[key])])
     );
   }
@@ -380,7 +380,7 @@ export class FakeMirrorStore implements MirrorStore {
   }
   async decisionIdsAfter(after: string | null, limit: number) {
     return Array.from(this.chain.keys())
-      .sort()
+      .sort((a, b) => (a < b ? -1 : Number(a > b)))
       .filter((id) => after === null || id > after)
       .slice(0, limit);
   }
