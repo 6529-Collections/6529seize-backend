@@ -1,4 +1,5 @@
 import { cicDb, CicDb } from './cic.db';
+import { assertIdentityNotFrozenAtCommit } from '../identity-freeze/identity-freeze';
 import { CicStatement, CicStatementGroup } from '../entities/ICICStatement';
 import { BadRequestException, NotFoundException } from '../exceptions';
 import { profileActivityLogsDb } from '../profileActivityLogs/profile-activity-logs.db';
@@ -300,6 +301,7 @@ export class CicService {
       );
     return await this.cicDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        assertIdentityNotFrozenAtCommit(connection);
         await this.cicDb.lockProfileForCicStatementMutation(
           statementToInsert.profile_id,
           connection
@@ -437,6 +439,7 @@ export class CicService {
 
   public async deleteCicStatement(props: { profile_id: string; id: string }) {
     await this.cicDb.executeNativeQueriesInTransaction(async (connection) => {
+      assertIdentityNotFrozenAtCommit(connection);
       await this.cicDb.lockProfileForCicStatementMutation(
         props.profile_id,
         connection

@@ -1,4 +1,5 @@
 import * as Joi from 'joi';
+import { isAcceptedMediaOrigin } from '@/constants';
 import { ApiUpdateWaveHubRequest } from '@/api/generated/models/ApiUpdateWaveHubRequest';
 import { ApiCreateNewWave } from '@/api/generated/models/ApiCreateNewWave';
 import { ApiUpdateWaveRequest } from '@/api/generated/models/ApiUpdateWaveRequest';
@@ -14,14 +15,13 @@ import { getValidatedByJoiOrThrow } from '@/api/validation';
 // Strip ignored legacy fields before applying any competition-specific schema.
 // participation.scope is never reinterpreted as chat access: competition inputs
 // must have no effect on wave settings, including on requests from old clients.
-const WAVE_PICTURE_HOST = 'd3lqz0a4bldqgf.cloudfront.net';
 export const WaveHubPictureSchema = Joi.string()
   .uri({ scheme: ['https'] })
   .custom((value: string, helpers) => {
     const url = new URL(value);
     if (
-      url.hostname !== WAVE_PICTURE_HOST ||
-      !value.startsWith(`https://${WAVE_PICTURE_HOST}/`)
+      !isAcceptedMediaOrigin(url.origin) ||
+      !value.startsWith(`${url.origin}/`)
     ) {
       return helpers.error('any.invalid');
     }

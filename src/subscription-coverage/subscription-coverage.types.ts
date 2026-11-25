@@ -123,6 +123,16 @@ export interface SubscriptionCoverageForecastProvenance {
   readonly horizon: SubscriptionCoverageForecastHorizon;
 }
 
+/**
+ * Consecutive fully funded intended drops counted past the forecast horizon,
+ * assuming the current mint price, eligibility and subscription settings stay
+ * as they are. `capped` is true when counting stopped at the maximum.
+ */
+export interface SubscriptionCoverageFundedDropsAtCurrentSettings {
+  readonly count: number;
+  readonly capped: boolean;
+}
+
 export interface SubscriptionCoverageForecast {
   readonly consolidationKey: string;
   readonly calculatedAt: string;
@@ -141,6 +151,11 @@ export interface SubscriptionCoverageForecast {
   readonly minimumTopUp: SubscriptionCoverageMinimumTopUp | null;
   readonly recommendedTopUp: SubscriptionCoverageRecommendedTopUp | null;
   readonly forecast: SubscriptionCoverageForecastProvenance;
+  /**
+   * Null when the forecast could not allocate the balance (unknown, not set
+   * up, no eligibility or no selections). Not part of the fingerprint.
+   */
+  readonly fundedDropsAtCurrentSettings?: SubscriptionCoverageFundedDropsAtCurrentSettings | null;
   /**
    * Stable risk fingerprint. It deliberately excludes calculatedAt so a
    * reconciliation clock tick cannot create a new alert by itself.

@@ -1,0 +1,84 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Private bucket for the 6529 chain exports (dbDumpsDaily jobs): the profile
+  site export and the identity export. No public access, no CDN origin, objects
+  expire after 30 days. Created once per account and region with
+  administrative credentials; the deployment roles can't create buckets.
+
+Resources:
+  ChainExportsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub '6529-chain-exports-${AWS::AccountId}-${AWS::Region}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireChainExports
+            Status: Enabled
+            ExpirationInDays: 30
+          - Id: AbortIncompleteUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+
+  ChainExportsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ChainExportsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyNonTls
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - !GetAtt ChainExportsBucket.Arn
+              - !Sub '${ChainExportsBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+          - Sid: DenyCloudFrontOrigins
+            Effect: Deny
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:*
+            Resource:
+              - !GetAtt ChainExportsBucket.Arn
+              - !Sub '${ChainExportsBucket.Arn}/*'
+          - Sid: ExportRuntimeBucketChecks
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:role/lambda-vpc-role'
+            Action:
+              - s3:GetBucketPublicAccessBlock
+              - s3:GetBucketPolicyStatus
+            Resource: !GetAtt ChainExportsBucket.Arn
+          - Sid: ExportRuntimeObjects
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:role/lambda-vpc-role'
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:AbortMultipartUpload
+            Resource:
+              - !Sub '${ChainExportsBucket.Arn}/profile-site-export/*'
+              - !Sub '${ChainExportsBucket.Arn}/identity-export/*'
+
+Outputs:
+  ChainExportsBucketName:
+    Value: !Ref ChainExportsBucket

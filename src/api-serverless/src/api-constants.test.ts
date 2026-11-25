@@ -30,6 +30,14 @@ describe('api CORS constants', () => {
     expect(corsOptions.exposedHeaders).toContain('X-Request-Id');
   });
 
+  it('lets browsers send device-signed records with a write', () => {
+    expect(corsOptions.allowedHeaders).toContain('x-6529-signed-records');
+    expect(
+      getCorsOptionsForRequest('/api/drops', 'https://6529.io', 'api.6529.io')
+        .allowedHeaders
+    ).toContain('x-6529-signed-records');
+  });
+
   it('caches preflights for the two-hour browser maximum', () => {
     expect(CORS_PREFLIGHT_MAX_AGE_SECONDS).toBe(7200);
     expect(corsOptions.maxAge).toBe(7200);

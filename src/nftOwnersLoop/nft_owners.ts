@@ -21,9 +21,11 @@ import {
   GRADIENT_CONTRACT,
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
+  NFT_OWNERS_CONSOLIDATION_TABLE,
   NULL_ADDRESS
 } from '@/constants';
 import { fetchConsolidationGroupsForAddresses } from '../db';
+import { deferGroupsThatDoNotFit } from '@/holdings/consolidation-key-fit';
 
 function normalizeAddress(addr: string): string {
   return addr.toLowerCase();
@@ -214,8 +216,10 @@ export async function consolidateNftOwners(
 
   // one batched lookup for all addresses, then one owners fetch per unique
   // consolidation instead of one per member address
-  const consolidationGroups = await fetchConsolidationGroupsForAddresses(
-    Array.from(addresses)
+  const consolidationGroups = await deferGroupsThatDoNotFit(
+    await fetchConsolidationGroupsForAddresses(Array.from(addresses)),
+    [NFT_OWNERS_CONSOLIDATION_TABLE],
+    'owners'
   );
 
   await Promise.all(
