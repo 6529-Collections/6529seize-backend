@@ -12,7 +12,7 @@ export interface MirrorKeyMap {
 /**
  * Reads, for every key in the snapshot, the consolidation key each of its
  * wallets has now (the identity mirror re-keys wallets from the chain from
- * about 01:00 on Friday). A key whose wallets all moved to one new key
+ * its first run on Saturday). A key whose wallets all moved to one new key
  * maps to it; a key split across keys is listed, since no single identity
  * explains it.
  */
