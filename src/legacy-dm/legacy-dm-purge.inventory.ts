@@ -154,8 +154,6 @@ export const LEGACY_DM_DROP_STEPS: readonly LegacyDmDropStep[] = [
     bindings: 2
   },
   { table: DEVICE_SIGNED_EVENTS_TABLE, where: 'drop_id in (?)', bindings: 1 },
-  // The drop index's copies of relay events about the drop.
-  { table: WAVE_RELAY_EVENTS_TABLE, where: 'drop_id in (?)', bindings: 1 },
   {
     table: HELP_BOT_INTERACTIONS_TABLE,
     where:
@@ -187,6 +185,9 @@ export const LEGACY_DM_WAVE_STEPS: readonly LegacyDmDropStep[] = [
   },
   { table: DEVICE_SIGNED_EVENTS_TABLE, where: 'wave_id = ?', bindings: 1 },
   // Relay events the drop index read for the wave (it names it in `wave`).
+  // By wave only, not by drop: an edit, delete or reaction names its drop
+  // in drop_id, and one in another wave that names a DM drop is that other
+  // wave's, which stays.
   { table: WAVE_RELAY_EVENTS_TABLE, where: 'wave = ?', bindings: 1 },
   { table: HELP_BOT_INTERACTIONS_TABLE, where: 'wave_id = ?', bindings: 1 },
   { table: DROP_MEDIA_UPLOADS_TABLE, where: 'wave_id = ?', bindings: 1 },

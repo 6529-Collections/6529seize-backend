@@ -69,13 +69,18 @@ const drop = (id: string, waveId: string) => ({
   drop_type: 'CHAT'
 });
 
-const relayEvent = (n: number, wave: string, dropId: string | null) => ({
+const relayEvent = (
+  n: number,
+  wave: string,
+  dropId: string | null,
+  kind = 1
+) => ({
   event_id: hex(100 + n),
   relay_id: 'relay-1',
   wave,
   wave_key: null,
   drop_id: dropId,
-  kind: 1,
+  kind,
   author: `0x${'1'.repeat(40)}`,
   device_key: hex(200),
   auth_ref: hex(300),
@@ -113,7 +118,11 @@ describeWithSeed(
         // A public wave's, and a wave the chain holds: never touched.
         relayEvent(4, publicWave.id, 'public-drop'),
         relayEvent(5, chainWave.id, 'chain-drop'),
-        relayEvent(6, chainWave.id, null)
+        relayEvent(6, chainWave.id, null),
+        // Reactions (kind 4) in a public wave and in a wave the chain holds
+        // that name the DM's drop: they are those waves' events, and stay.
+        relayEvent(7, publicWave.id, 'dm-drop', 4),
+        relayEvent(8, chainWave.id, 'dm-drop', 4)
       ]
     }
   ],
@@ -125,26 +134,40 @@ describeWithSeed(
         )
       ).map((row) => row.event_id);
 
-    it("deletes only a direct message's relay events, by its drops and by its wave", async () => {
+    it("plans only a direct message's relay events, by its wave", async () => {
       const plan = await planLegacyDmPurge(db);
       expect(plan.dmWaves).toBe(1);
-      // By drop: the two events naming the DM's drops (its description's
-      // included); by wave: the DM wave's three.
-      expect(plan.rows[WAVE_RELAY_EVENTS_TABLE]).toBe(2);
+      // By wave only: the DM wave's three. Nothing by drop, so the other
+      // waves' events that name a DM drop aren't counted.
+      expect(plan.rows[WAVE_RELAY_EVENTS_TABLE]).toBeUndefined();
       expect(plan.rows[`${WAVE_RELAY_EVENTS_TABLE} (by wave)`]).toBe(3);
+    });
 
+    it("deletes only a direct message's relay events, not other waves' that name its drop", async () => {
       const result = await executeLegacyDmPurge(db, {
         nowMillis: CUTOFF,
         cutoffMillis: CUTOFF
       });
       expect(result.waves).toBe(1);
-      expect(await left()).toEqual([hex(104), hex(105), hex(106)]);
+      expect(await left()).toEqual([
+        hex(104),
+        hex(105),
+        hex(106),
+        hex(107),
+        hex(108)
+      ]);
       // A second run finds nothing more to delete.
       await executeLegacyDmPurge(db, {
         nowMillis: CUTOFF,
         cutoffMillis: CUTOFF
       });
-      expect(await left()).toEqual([hex(104), hex(105), hex(106)]);
+      expect(await left()).toEqual([
+        hex(104),
+        hex(105),
+        hex(106),
+        hex(107),
+        hex(108)
+      ]);
     });
 
     it('refuses before the cutoff and deletes nothing', async () => {
@@ -154,7 +177,7 @@ describeWithSeed(
           cutoffMillis: CUTOFF
         })
       ).rejects.toThrow('has not passed');
-      expect(await left()).toHaveLength(6);
+      expect(await left()).toHaveLength(8);
     });
   }
 );
