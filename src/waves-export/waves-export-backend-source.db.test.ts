@@ -356,6 +356,10 @@ describeWithSeed(
       // The rule's fields: a direct message's group says so, and created_at
       // is in ms.
       expect(groups[DM_GROUP.id]).toMatchObject({ is_direct_message: true });
+      // The API's stays_on_site is left out of every object the export reads.
+      for (const group of Object.values(groups)) {
+        expect(group).not.toHaveProperty('stays_on_site');
+      }
       expect(groups[PRIVATE_GROUP.id].is_direct_message).toBeUndefined();
       expect(groups[LATE_GROUP.id].created_at).toBe(FREEZE_MS + 60_000);
       expect(groups[PRIVATE_GROUP.id]).toMatchObject({
@@ -378,6 +382,7 @@ describeWithSeed(
         lifecycle: 'PUBLISHED',
         permissions: { view: true, vote: false, submit: false }
       });
+      expect(competition?.competition).not.toHaveProperty('stays_on_site');
       expect(competition?.details).toEqual({
         entries: [],
         decisions: [],
@@ -399,6 +404,7 @@ describeWithSeed(
       const configuration = await source.waveConfiguration(members, [
         PRIVATE_GROUP.id
       ]);
+      expect(configuration).not.toHaveProperty('stays_on_site');
       expect(configuration).toMatchObject({
         id: MEMBERS_WAVE.id,
         visibility: { scope: { group: { id: PRIVATE_GROUP.id } } },

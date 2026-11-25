@@ -112,8 +112,20 @@ function toMillis(value: unknown): number | null {
 }
 
 /** A JSON round trip: what the API's response body holds. */
+/**
+ * The API's objects carry stays_on_site, true when a wave stays on 6529.io.
+ * The export writes only waves that move, and says so once, on each wave's
+ * configuration (the waves stage), so the API's own copies are left out
+ * wherever they are, and the documents read as they did before the field.
+ */
+const API_STAYS_ON_SITE = 'stays_on_site';
+
 function asJson<T>(value: T): Json {
-  return JSON.parse(JSON.stringify(value)) as Json;
+  return JSON.parse(
+    JSON.stringify(value, (key, field) =>
+      key === API_STAYS_ON_SITE ? undefined : field
+    )
+  ) as Json;
 }
 
 /**
@@ -292,11 +304,16 @@ export class BackendWavesExportSource implements WavesExportSource {
       configuration_activated_at: _activatedAt,
       ...publicData
     } = competition;
-    const api = toApiCompetition({
-      ...publicData,
-      your_active_entries_count: null,
-      permissions: GUEST_COMPETITION_PERMISSIONS
-    });
+    // A decision the export reads belongs to a wave that moves: false, which
+    // asJson then leaves out like every other copy of the field.
+    const api = toApiCompetition(
+      {
+        ...publicData,
+        your_active_entries_count: null,
+        permissions: GUEST_COMPETITION_PERMISSIONS
+      },
+      false
+    );
     const [entries, decisions, outcomes, pauses, voters] = await Promise.all([
       collectCompetitionPages((page) =>
         reader.listEntries(record, page, ALL_ENTRY_STATUSES)
