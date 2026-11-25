@@ -1,3 +1,4 @@
+import { apiCompliantErrorBody } from '@/exceptions';
 import { Time } from '@/time';
 import {
   movingWaveRefusal,
@@ -67,6 +68,16 @@ describe('refusals in a moved wave from the switch-on', () => {
       expect(WAVES_ON_CHAIN_MESSAGE).toBe(
         'This wave moved to the 6529 Network, so this change is made there now, not through this route.'
       );
+    });
+
+    it('answers the client with exactly this message and code', () => {
+      // The site matches this text when the code doesn't reach it: change
+      // both together.
+      expect(apiCompliantErrorBody(movingWaveRefusal())).toEqual({
+        error:
+          'This wave moved to the 6529 Network, so this change is made there now, not through this route.',
+        code: 'WAVES_ON_CHAIN'
+      });
     });
 
     it("is the freeze's own refusal, with the message given, before the switch-on", () => {
