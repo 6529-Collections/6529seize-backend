@@ -1,14 +1,20 @@
+import { Logger } from '@/logging';
 import {
   afterCommit,
   afterCommitAwaited,
+  afterCommitMark,
+  beforeCommit,
   closeAfterCommitScope,
+  dropAfterCommitSince,
   openAfterCommitScope,
-  runAfterCommitCallbacks
+  runAfterCommitCallbacks,
+  runBeforeCommitChecks
 } from './after-commit';
 
 describe('afterCommit', () => {
   afterEach(() => {
     jest.useRealTimers();
+    jest.restoreAllMocks();
   });
 
   it('runs at once without a tracked transaction', async () => {
@@ -101,9 +107,38 @@ describe('afterCommit', () => {
   });
 
   it('logs and swallows an awaited callback failure', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn');
+    const failure = new Error('shadow');
     await expect(
-      afterCommitAwaited(undefined, () => Promise.reject(new Error('shadow')))
+      afterCommitAwaited(undefined, () => Promise.reject(failure))
     ).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledWith('After-commit callback failed', failure);
+  });
+
+  it('drops the work registered after a savepoint mark when the savepoint is rolled back', async () => {
+    const connection = {};
+    const kept = jest.fn();
+    const undone = jest.fn();
+    const keptCheck = jest.fn();
+    const undoneCheck = jest.fn();
+    expect(afterCommitMark({ connection })).toBeNull();
+    dropAfterCommitSince({ connection }, null);
+
+    openAfterCommitScope(connection);
+    await afterCommit({ connection }, kept);
+    beforeCommit({ connection }, 'kept', keptCheck);
+    const mark = afterCommitMark({ connection });
+    await afterCommitAwaited({ connection }, undone);
+    await afterCommit({ connection }, undone);
+    beforeCommit({ connection }, 'undone', undoneCheck);
+    dropAfterCommitSince({ connection }, mark);
+
+    runBeforeCommitChecks(connection);
+    await runAfterCommitCallbacks(closeAfterCommitScope(connection));
+    expect(kept).toHaveBeenCalledTimes(1);
+    expect(keptCheck).toHaveBeenCalledTimes(1);
+    expect(undone).not.toHaveBeenCalled();
+    expect(undoneCheck).not.toHaveBeenCalled();
   });
 
   it('swallows callback failures', async () => {

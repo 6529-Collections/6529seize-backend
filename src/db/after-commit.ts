@@ -130,6 +130,54 @@ export async function afterCommitAwaited(
   pending.push({ key: null, callback: awaited });
 }
 
+/** Where a transaction's after-commit work stood when a savepoint was set. */
+export interface AfterCommitMark {
+  readonly callbacks: number;
+  readonly checks: ReadonlySet<string>;
+}
+
+/**
+ * Marks the after-commit work registered so far on the transaction that owns
+ * `connection`, right after a SAVEPOINT. Null without a tracked transaction.
+ */
+export function afterCommitMark(
+  connection: ConnectionWrapper<any> | undefined
+): AfterCommitMark | null {
+  const handle = connection?.connection;
+  const pending =
+    handle && typeof handle === 'object'
+      ? pendingByConnection.get(handle)
+      : undefined;
+  if (!pending) {
+    return null;
+  }
+  return {
+    callbacks: pending.length,
+    checks: new Set(checksByConnection.get(handle)?.keys() ?? [])
+  };
+}
+
+/**
+ * After a ROLLBACK TO SAVEPOINT: drops the callbacks and checks registered
+ * since `mark`, so work the savepoint undid has no after-commit effect.
+ */
+export function dropAfterCommitSince(
+  connection: ConnectionWrapper<any> | undefined,
+  mark: AfterCommitMark | null
+): void {
+  const handle = connection?.connection;
+  if (!mark || !handle || typeof handle !== 'object') {
+    return;
+  }
+  pendingByConnection.get(handle)?.splice(mark.callbacks);
+  const checks = checksByConnection.get(handle);
+  checks?.forEach((_, key) => {
+    if (!mark.checks.has(key)) {
+      checks.delete(key);
+    }
+  });
+}
+
 /**
  * Runs `check` as the last step of the transaction that owns `connection`,
  * right before its COMMIT. A check that throws rolls the whole transaction

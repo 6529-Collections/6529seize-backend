@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import {
   ADDRESS_CONSOLIDATION_KEY,
+  DROP_FORGE_JOBS_TABLE,
   IDENTITIES_TABLE,
   SUBSCRIPTIONS_ID_KEY_MAP_TABLE,
   SUBSCRIPTION_DEFERRED_WRITES_TABLE,
@@ -39,6 +40,7 @@ import {
   getPublicSubscriptions,
   resetAllowlist
 } from '@/api/subscriptions/api.subscriptions.allowlist';
+import { dropForgeJobsRepository } from '@/drop-forge/drop-forge.jobs.repository';
 import { dropForgePreparationRepository } from '@/drop-forge/drop-forge.preparation.repository';
 import * as journalModule from '../timeline/journal';
 import { updateSubscriptions } from '@/subscriptionsDaily/subscriptions';
@@ -3041,6 +3043,68 @@ describeWithSeed(
       expect(await phaseReports()).toEqual([
         { verdict: 'MATCH', mode: 'SHADOW' }
       ]);
+    });
+
+    it("in shadow, a worker step rolled back to its savepoint runs no identity split, and the job's failure still commits", async () => {
+      await seedLegacy();
+      await cutAndLoad(false);
+      process.env[SHADOW_ENV] = 'true';
+      subscriptionsIdentitySwitch.invalidate();
+      await updateSubscriptions();
+      const jobId = 'savepoint-rollback-job';
+      await sqlExecutor.execute(
+        `INSERT INTO ${DROP_FORGE_JOBS_TABLE}
+          (id, contract, claim_id, kind, step, status, updated_at)
+          VALUES (:id, :contract, :claim, 'PROCESS_ALL', 0, 'PENDING', :now)`,
+        {
+          id: jobId,
+          contract: MEMES_CONTRACT.toLowerCase(),
+          claim: CARD,
+          now: Date.now()
+        }
+      );
+
+      // As Drop Forge's worker runs a step: the pull succeeds inside the
+      // preparation, then a later statement of the same step fails, and the
+      // worker rolls back to its savepoint and commits the job's failure.
+      expect(
+        await dropForgeJobsRepository.processOne(
+          (_, ctx) =>
+            dropForgePreparationRepository.run(
+              MEMES_CONTRACT,
+              CARD,
+              async (__, txCtx) => {
+                await getPublicSubscriptions(MEMES_CONTRACT, CARD, txCtx);
+                throw new Error('a later statement of the step failed');
+              },
+              ctx,
+              false,
+              false,
+              'MANUAL'
+            ),
+          {},
+          jobId
+        )
+      ).toBe(true);
+
+      const [job] = await sqlExecutor.execute<{ status: string }>(
+        `SELECT status FROM ${DROP_FORGE_JOBS_TABLE} WHERE id = :id`,
+        { id: jobId }
+      );
+      expect(job.status).toBe('FAILED');
+      // The savepoint undid the legacy pull, and the identity split it had
+      // registered never ran: no phase on either side, and no comparison.
+      for (const [table, key] of [
+        [SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key'],
+        [SUBSCRIPTIONS_NFTS_FINAL_TABLE, 'consolidation_key']
+      ]) {
+        const rows = await phases(table, key);
+        expect(rows.length).toBeGreaterThan(0);
+        for (const [, phase] of rows) {
+          expect(phase).toBeNull();
+        }
+      }
+      expect(await phaseReports()).toEqual([]);
     });
 
     it('in shadow, a failing identity split leaves the preparation committed, logs the failure, and the gate refuses', async () => {
