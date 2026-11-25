@@ -55,10 +55,10 @@ import * as mcache from 'memory-cache';
 import { RequestContext } from '@/request.context';
 import { readWaveCatalogueWithDiagnostics } from './wave-catalogue-read-diagnostics';
 import {
+  movingWaveRefusal,
   wavesFreezeAtMs,
   WAVES_FROZEN_GROUP_MESSAGE,
-  WAVES_FROZEN_GROUP_VISIBILITY_MESSAGE,
-  WavesFrozenException
+  WAVES_FROZEN_GROUP_VISIBILITY_MESSAGE
 } from '@/waves-freeze/waves-freeze';
 import { groupStays } from '@/waves-scope/waves-scope';
 import { isAnyGroupFrozen } from '@/waves-freeze/waves-freeze-scope';
@@ -1738,9 +1738,12 @@ export class UserGroupsService {
     return isAnyGroupFrozen([group_id, old_version_id], ctx);
   }
 
-  /** A replacement is told to save a new group; hiding or showing is not. */
+  /**
+   * A replacement is told to save a new group; hiding or showing is not.
+   * From the switch-on both are WAVES_ON_CHAIN (movingWaveRefusal).
+   */
   private frozenGroupChange(change: GroupVisibilityChange) {
-    return new WavesFrozenException(
+    return movingWaveRefusal(
       change.old_version_id
         ? WAVES_FROZEN_GROUP_MESSAGE
         : WAVES_FROZEN_GROUP_VISIBILITY_MESSAGE

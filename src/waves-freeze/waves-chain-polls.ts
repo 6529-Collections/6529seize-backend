@@ -6,8 +6,8 @@ import { Time } from '@/time';
 import {
   isWavesFrozen,
   isWavesSwitchedOn,
-  WAVES_FROZEN_STATUS,
-  WavesFrozenException
+  movingWaveRefusal,
+  WAVES_FROZEN_STATUS
 } from '@/waves-freeze/waves-freeze';
 import { wavesScopeService } from '@/waves-scope/waves-scope.service';
 
@@ -56,8 +56,9 @@ export function isChainPollCreationPaused(
 /**
  * Throws when 6529.io can't make a poll in this wave now. In a wave that
  * moves: WavesPollsPausedException while new polls are paused (from the
- * switch-on), else WavesFrozenException while waves are frozen. A wave that
- * stays passes. The wave's side is read once, from the primary or the
+ * switch-on), else the freeze's refusal while waves are frozen
+ * (movingWaveRefusal: WAVES_ON_CHAIN once switched on). A wave that stays
+ * passes. The wave's side is read once, from the primary or the
  * transaction's connection.
  */
 export async function assertPollCreationOpen(
@@ -68,7 +69,7 @@ export async function assertPollCreationOpen(
   if (!paused && !isWavesFrozen()) return;
   if (await wavesScopeService.waveStays(waveId, ctx)) return;
   if (paused) throw new WavesPollsPausedException();
-  throw new WavesFrozenException();
+  throw movingWaveRefusal();
 }
 
 /**

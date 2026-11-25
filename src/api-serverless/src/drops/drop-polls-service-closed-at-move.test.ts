@@ -3,7 +3,10 @@ import { DropPollsApiService } from '@/api/drops/drop-polls.api.service';
 import { DropPollState, DropPollsOrderBy } from '@/api/drops/drop-polls.db';
 import { PageSortDirection } from '@/api/page-request';
 import { Time } from '@/time';
-import { WavesFrozenException } from '@/waves-freeze/waves-freeze';
+import {
+  WavesFrozenException,
+  WavesOnChainException
+} from '@/waves-freeze/waves-freeze';
 import { WavesPollClosedAtMoveException } from '@/waves-freeze/waves-moved-polls';
 import { stubWavesScope } from '@/tests/fixtures/waves-scope.fixture';
 
@@ -120,11 +123,11 @@ describe('a poll still open at the freeze, from the switch-on', () => {
       await expect(vote(service, 'drop-1')).rejects.toBe(PAST_THE_CHECKS);
     });
 
-    it('leaves a poll that closed before the freeze to the freeze', async () => {
+    it("leaves a poll that closed before the freeze to the freeze's refusal, WAVES_ON_CHAIN after the switch-on", async () => {
       const { service, dropPollsDb } = createService(imported('moved-wave'));
       dropPollsDb.findPollsByDropIds.mockResolvedValue(pollClosing(FREEZE - 1));
       await expect(vote(service, 'drop-1')).rejects.toBeInstanceOf(
-        WavesFrozenException
+        WavesOnChainException
       );
     });
 
@@ -134,7 +137,7 @@ describe('a poll still open at the freeze, from the switch-on', () => {
         created_at: FREEZE + 1
       });
       await expect(vote(later.service, 'drop-1')).rejects.toBeInstanceOf(
-        WavesFrozenException
+        WavesOnChainException
       );
       expect(later.dropPollsDb.findPollsByDropIds).not.toHaveBeenCalled();
 

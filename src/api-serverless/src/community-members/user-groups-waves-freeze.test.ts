@@ -4,12 +4,16 @@ import { Time } from '@/time';
 import {
   WAVES_FROZEN_GROUP_MESSAGE,
   WAVES_FROZEN_GROUP_VISIBILITY_MESSAGE,
-  WavesFrozenException
+  WAVES_ON_CHAIN_CODE,
+  WAVES_ON_CHAIN_MESSAGE,
+  WavesFrozenException,
+  WavesOnChainException
 } from '@/waves-freeze/waves-freeze';
 import { stubWavesScope } from '@/tests/fixtures/waves-scope.fixture';
 
 const FLAG = 'FEATURE_WAVES_FROZEN';
 const AT = 'WAVES_FREEZE_AT';
+const ON_CHAIN = 'FEATURE_WAVES_ON_CHAIN';
 const PAST_FREEZE = new Error('past the waves freeze check');
 
 /** The connection the fake transaction hands its work. */
@@ -64,16 +68,16 @@ function visibility(group_id: string, visible: boolean) {
 describe('group replacement during the waves freeze', () => {
   const original: Record<string, string | undefined> = {};
   beforeAll(() => {
-    for (const name of [FLAG, AT]) original[name] = process.env[name];
+    for (const name of [FLAG, AT, ON_CHAIN]) original[name] = process.env[name];
   });
   beforeEach(() => {
-    for (const name of [FLAG, AT]) delete process.env[name];
+    for (const name of [FLAG, AT, ON_CHAIN]) delete process.env[name];
   });
   afterEach(() => {
     jest.restoreAllMocks();
   });
   afterAll(() => {
-    for (const name of [FLAG, AT]) {
+    for (const name of [FLAG, AT, ON_CHAIN]) {
       if (original[name] === undefined) delete process.env[name];
       else process.env[name] = original[name];
     }
@@ -255,6 +259,37 @@ describe('group replacement during the waves freeze', () => {
       expect(userGroupsDb.completeVisibilityRequest).not.toHaveBeenCalled();
     }
   );
+
+  it.each([
+    ['replacing', change('wave-admin-group')],
+    ['hiding', visibility('wave-admin-group', false)],
+    ['showing', visibility('decision-vote-group', true)]
+  ])(
+    "refuses %s a moved wave's group after the switch-on: WAVES_ON_CHAIN",
+    async (_name, request) => {
+      process.env[FLAG] = 'true';
+      process.env[ON_CHAIN] = 'true';
+      const { service, userGroupsDb } = createService();
+      const result = service.changeVisibility(request, {});
+      await expect(result).rejects.toBeInstanceOf(WavesOnChainException);
+      await expect(result).rejects.toMatchObject({
+        code: WAVES_ON_CHAIN_CODE,
+        message: WAVES_ON_CHAIN_MESSAGE
+      });
+      expect(
+        userGroupsDb.executeNativeQueriesInTransaction
+      ).not.toHaveBeenCalled();
+    }
+  );
+
+  it('still changes a group no moved wave uses after the switch-on', async () => {
+    process.env[FLAG] = 'true';
+    process.env[ON_CHAIN] = 'true';
+    const { service } = createService();
+    await expect(
+      service.changeVisibility(visibility('a-staying-group', false), {})
+    ).rejects.toBe(PAST_FREEZE);
+  });
 
   it('replaces groups as before when not frozen', async () => {
     delete process.env[FLAG];

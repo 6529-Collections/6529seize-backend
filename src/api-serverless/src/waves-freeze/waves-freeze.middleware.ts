@@ -2,8 +2,13 @@ import { NextFunction, Request, Response } from 'express';
 import {
   isMainStageKeptDuringWavesFreeze,
   isWavesFrozen,
-  WavesFrozenException
+  isWavesSwitchedOn,
+  movingWaveRefusal
 } from '@/waves-freeze/waves-freeze';
+import {
+  isChainPollCreationPaused,
+  WavesPollsPausedException
+} from '@/waves-freeze/waves-chain-polls';
 import {
   WavesScopeService,
   wavesScopeService
@@ -40,6 +45,8 @@ interface PathRule {
   readonly kind: WavesWriteKind;
   /** The write's wave, from the path. */
   readonly target: (match: RegExpExecArray) => WavesWriteTarget;
+  /** A poll ballot (see WavesWrite.ballot). */
+  readonly ballot?: true;
 }
 
 const SEGMENT = '[^/]+';
@@ -99,7 +106,8 @@ const PATH_RULES: readonly PathRule[] = [
     method: 'POST',
     path: new RegExp(`^/v2/drops/${CAPTURED}/poll/vote${END}`, 'i'),
     kind: 'WAVE',
-    target: DROP_ID
+    target: DROP_ID,
+    ballot: true
   },
   // Decision create.
   {
@@ -194,6 +202,13 @@ export interface WavesWrite {
   readonly kind: WavesWriteKind;
   /** Null when the request names no wave: the service then decides. */
   readonly target: WavesWriteTarget | null;
+  /** A new drop with a poll: refused as a new poll while polls are paused. */
+  readonly poll?: true;
+  /**
+   * A poll ballot: from the switch-on the poll service answers it, since a
+   * poll still open at the freeze answers that it closed then.
+   */
+  readonly ballot?: true;
 }
 
 /**
@@ -217,7 +232,8 @@ export function findWavesWrite({
     if (match) {
       return {
         kind: rule.kind,
-        target: rule.target(match)
+        target: rule.target(match),
+        ...(rule.ballot ? { ballot: true } : {})
       };
     }
   }
@@ -225,9 +241,11 @@ export function findWavesWrite({
     const kind = dropCreateWrite(body);
     if (!kind) return null;
     const waveId = field(body, 'wave_id');
+    const poll = field(body, 'poll');
     return {
       kind,
-      target: typeof waveId === 'string' && waveId ? { waveId } : null
+      target: typeof waveId === 'string' && waveId ? { waveId } : null,
+      ...(poll !== undefined && poll !== null ? { poll: true } : {})
     };
   }
   return null;
@@ -272,13 +290,27 @@ async function targetWaveMoves(
 }
 
 /**
+ * The refusal of a write to a wave that moves: a new poll while new polls
+ * are paused gets the poll guard's (WAVES_POLLS_PAUSED); anything else the
+ * freeze's, WAVES_FROZEN until the switch-on and WAVES_ON_CHAIN from it.
+ */
+function refusalOf(write: WavesWrite) {
+  return write.poll && isChainPollCreationPaused()
+    ? new WavesPollsPausedException()
+    : movingWaveRefusal();
+}
+
+/**
  * Refuses wave, decision, entry, vote, wave REP and poll writes to a wave
- * that moves to the 6529 chain with 423 and code WAVES_FROZEN while the
- * waves freeze is on; writes to a wave that stays on 6529.io pass. Mount it
- * on the API router before the routers it covers. The services check every
- * write again, including new waves, those no route shows and the Main
- * Stage's: wave edits and deletes, replacing a group a wave uses, legacy
- * votes, legacy entry edits and withdrawals (src/waves-freeze).
+ * that moves to the 6529 chain with 423 while the waves freeze is on: code
+ * WAVES_FROZEN until the switch-on, WAVES_ON_CHAIN from it, and
+ * WAVES_POLLS_PAUSED for a new poll while new polls are paused. Writes to a
+ * wave that stays on 6529.io pass. From the switch-on a poll ballot is left
+ * to the poll service. Mount it on the API router before the routers it
+ * covers. The services check every write again, including new waves, those
+ * no route shows and the Main Stage's: wave edits and deletes, replacing a
+ * group a wave uses, legacy votes, legacy entry edits and withdrawals
+ * (src/waves-freeze).
  */
 export function wavesFreezeMiddleware(scope: WaveLookup = wavesScopeService) {
   return (req: Request, _res: Response, next: NextFunction) => {
@@ -287,12 +319,16 @@ export function wavesFreezeMiddleware(scope: WaveLookup = wavesScopeService) {
       path: req.path,
       body: req.body
     });
-    if (!write || !isRefusedByWavesFreeze(write.kind)) {
+    if (
+      !write ||
+      !isRefusedByWavesFreeze(write.kind) ||
+      (write.ballot && isWavesSwitchedOn())
+    ) {
       next();
       return;
     }
     targetWaveMoves(write.target, scope).then(
-      (moves) => next(moves ? new WavesFrozenException() : undefined),
+      (moves) => next(moves ? refusalOf(write) : undefined),
       next
     );
   };

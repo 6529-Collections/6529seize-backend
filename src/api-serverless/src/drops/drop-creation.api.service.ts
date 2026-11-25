@@ -38,6 +38,7 @@ import {
 import { ApiDropType } from '../generated/models/ApiDropType';
 import {
   assertDecisionWritable,
+  assertNotMovedOnChain,
   isWaveFrozen
 } from '@/waves-freeze/waves-freeze-scope';
 import { assertPollCreationOpen } from '@/waves-freeze/waves-chain-polls';
@@ -777,6 +778,9 @@ export class DropCreationApiService {
         const txCtx = { ...ctx, connection };
         const wave = await this.wavesApiDb.findWaveByIdForUpdate(waveId, txCtx);
         if (!wave) throw new NotFoundException(`Wave ${waveId} not found`);
+        // A moved wave's posts are served from the 6529 Network too, so
+        // from the switch-on 6529.io purges none of them.
+        await assertNotMovedOnChain(waveId, txCtx);
         const cutoffSerialNo = await this.purgeDb.findCutoff(
           { waveId, authorId },
           txCtx
@@ -820,6 +824,9 @@ export class DropCreationApiService {
             transactionContext
           );
           if (!wave) throw new NotFoundException(`Wave ${waveId} not found`);
+          // From the switch-on 6529.io purges nothing in a moved wave: its
+          // posts are served from the 6529 Network too.
+          await assertNotMovedOnChain(waveId, transactionContext);
           const cutoffSerialNo =
             tokenCutoff ??
             (await this.purgeDb.findCutoff(

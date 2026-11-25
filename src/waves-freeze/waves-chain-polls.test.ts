@@ -1,5 +1,8 @@
 import { Time } from '@/time';
-import { WavesFrozenException } from '@/waves-freeze/waves-freeze';
+import {
+  WavesFrozenException,
+  WavesOnChainException
+} from '@/waves-freeze/waves-freeze';
 import {
   assertPollCreationOpen,
   assertRelayedPollCreationOpen,
@@ -142,11 +145,12 @@ describe('new polls in moved waves from the switch-on', () => {
       await expect(
         assertPollCreationOpen('moved-wave', ctx)
       ).resolves.toBeUndefined();
-      // With the freeze on, the freeze's own refusal stays.
+      // With the freeze on, the freeze's own refusal stays: from the
+      // switch-on, WAVES_ON_CHAIN.
       process.env.WAVES_FREEZE_AT = new Date(FREEZE).toISOString();
       await expect(
         assertPollCreationOpen('moved-wave', ctx)
-      ).rejects.toBeInstanceOf(WavesFrozenException);
+      ).rejects.toBeInstanceOf(WavesOnChainException);
     });
 
     it('allows a staying wave after the switch-on, frozen or not', async () => {
