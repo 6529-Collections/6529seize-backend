@@ -70,17 +70,16 @@ describe('refusals in a moved wave from the switch-on', () => {
     });
 
     it("is the freeze's own refusal, with the message given, before the switch-on", () => {
-      const refusal = movingWaveRefusal(
-        WAVES_FROZEN_GROUP_MESSAGE,
-        SWITCH_ON - 1
-      );
+      const refusal = movingWaveRefusal(WAVES_FROZEN_GROUP_MESSAGE, {
+        nowMillis: SWITCH_ON - 1
+      });
       expect(refusal).toBeInstanceOf(WavesFrozenException);
       expect(refusal.getStatusCode()).toBe(423);
       expect(refusal.code).toBe(WAVES_FROZEN_CODE);
       expect(refusal.message).toBe(WAVES_FROZEN_GROUP_MESSAGE);
-      expect(movingWaveRefusal(undefined, SWITCH_ON - 1).message).toBe(
-        WAVES_FROZEN_MESSAGE
-      );
+      expect(
+        movingWaveRefusal(undefined, { nowMillis: SWITCH_ON - 1 }).message
+      ).toBe(WAVES_FROZEN_MESSAGE);
     });
 
     it('takes the switch-on from FEATURE_WAVES_ON_CHAIN too, as the waves scope does', () => {

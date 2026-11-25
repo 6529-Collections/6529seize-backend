@@ -5,7 +5,8 @@ import {
   WAVES_FROZEN_GROUP_MESSAGE,
   WAVES_FROZEN_GROUP_VISIBILITY_MESSAGE,
   WAVES_ON_CHAIN_CODE,
-  WAVES_ON_CHAIN_MESSAGE,
+  WAVES_ON_CHAIN_GROUP_MESSAGE,
+  WAVES_ON_CHAIN_GROUP_VISIBILITY_MESSAGE,
   WavesFrozenException,
   WavesOnChainException
 } from '@/waves-freeze/waves-freeze';
@@ -261,12 +262,20 @@ describe('group replacement during the waves freeze', () => {
   );
 
   it.each([
-    ['replacing', change('wave-admin-group')],
-    ['hiding', visibility('wave-admin-group', false)],
-    ['showing', visibility('decision-vote-group', true)]
+    ['replacing', change('wave-admin-group'), WAVES_ON_CHAIN_GROUP_MESSAGE],
+    [
+      'hiding',
+      visibility('wave-admin-group', false),
+      WAVES_ON_CHAIN_GROUP_VISIBILITY_MESSAGE
+    ],
+    [
+      'showing',
+      visibility('decision-vote-group', true),
+      WAVES_ON_CHAIN_GROUP_VISIBILITY_MESSAGE
+    ]
   ])(
-    "refuses %s a moved wave's group after the switch-on: WAVES_ON_CHAIN",
-    async (_name, request) => {
+    "refuses %s a moved wave's group after the switch-on: WAVES_ON_CHAIN, in the group's words",
+    async (_name, request, message) => {
       process.env[FLAG] = 'true';
       process.env[ON_CHAIN] = 'true';
       const { service, userGroupsDb } = createService();
@@ -274,13 +283,22 @@ describe('group replacement during the waves freeze', () => {
       await expect(result).rejects.toBeInstanceOf(WavesOnChainException);
       await expect(result).rejects.toMatchObject({
         code: WAVES_ON_CHAIN_CODE,
-        message: WAVES_ON_CHAIN_MESSAGE
+        message
       });
       expect(
         userGroupsDb.executeNativeQueriesInTransaction
       ).not.toHaveBeenCalled();
     }
   );
+
+  it('words the group refusals after the switch-on as the site shows them', () => {
+    expect(WAVES_ON_CHAIN_GROUP_MESSAGE).toBe(
+      "This group is used by a wave that moved to the 6529 Network, so it can't be changed here. Save it as a new group instead."
+    );
+    expect(WAVES_ON_CHAIN_GROUP_VISIBILITY_MESSAGE).toBe(
+      "This group is used by a wave that moved to the 6529 Network, so it can't be hidden or shown here."
+    );
+  });
 
   it('still changes a group no moved wave uses after the switch-on', async () => {
     process.env[FLAG] = 'true';

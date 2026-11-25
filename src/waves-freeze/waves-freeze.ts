@@ -91,29 +91,45 @@ export const WAVES_ON_CHAIN_CODE = 'WAVES_ON_CHAIN';
 export const WAVES_ON_CHAIN_MESSAGE =
   'This wave moved to the 6529 Network, so this change is made there now, not through this route.';
 
+/** Replacing a group a moved wave uses, from the switch-on. */
+export const WAVES_ON_CHAIN_GROUP_MESSAGE =
+  `This group is used by a wave that moved to the 6529 Network, so it ` +
+  `can't be changed here. Save it as a new group instead.`;
+
+/** Hiding or showing a group a moved wave uses, from the switch-on. */
+export const WAVES_ON_CHAIN_GROUP_VISIBILITY_MESSAGE =
+  `This group is used by a wave that moved to the 6529 Network, so it ` +
+  `can't be hidden or shown here.`;
+
 /**
  * From the switch-on a wave that moved is changed on the 6529 chain, not
- * here, for good: the freeze's 423, with its own code and one message.
+ * here, for good: the freeze's 423, with its own code. The message is
+ * WAVES_ON_CHAIN_MESSAGE, or for a group a moved wave uses one of the two
+ * group messages.
  */
 export class WavesOnChainException extends CustomApiCompliantException {
-  constructor() {
-    super(WAVES_FROZEN_STATUS, WAVES_ON_CHAIN_MESSAGE, WAVES_ON_CHAIN_CODE);
+  constructor(message: string = WAVES_ON_CHAIN_MESSAGE) {
+    super(WAVES_FROZEN_STATUS, message, WAVES_ON_CHAIN_CODE);
   }
 }
 
 /**
  * The refusal of a write in a wave that moves to the 6529 chain: the
  * freeze's (WAVES_FROZEN, with `message`) until the switch-on, and
- * WavesOnChainException from it (WAVES_SWITCH_ON_AT or
- * FEATURE_WAVES_ON_CHAIN, as the waves scope reads it). New waves keep the
- * freeze's refusal after the switch-on too (assertWaveCreationOpen).
+ * WavesOnChainException (with `onChainMessage`) from it
+ * (WAVES_SWITCH_ON_AT or FEATURE_WAVES_ON_CHAIN, as the waves scope reads
+ * it). New waves keep the freeze's refusal after the switch-on too
+ * (assertWaveCreationOpen).
  */
 export function movingWaveRefusal(
   message: string = WAVES_FROZEN_MESSAGE,
-  nowMillis: number = Time.currentMillis()
+  {
+    onChainMessage = WAVES_ON_CHAIN_MESSAGE,
+    nowMillis = Time.currentMillis()
+  }: { readonly onChainMessage?: string; readonly nowMillis?: number } = {}
 ): CustomApiCompliantException {
   return isWavesSwitchedOn(nowMillis)
-    ? new WavesOnChainException()
+    ? new WavesOnChainException(onChainMessage)
     : new WavesFrozenException(message);
 }
 
