@@ -43,8 +43,10 @@ import { compareCodePoints } from './waves-export.json';
  * tooling's check that such an entry has a vote log runs too.
  * WAVES_E2E_OUT keeps the output, and each step's output, there.
  */
+// The identity fixture's default sub_classification is random per process:
+// pinned, so two runs of this world export the same bytes.
 const AUTHOR = anIdentity(
-  {},
+  { sub_classification: 'made-up-sub-classification' },
   {
     consolidation_key: 'e2e-author-wallet',
     profile_id: 'e0000000-0000-4000-8000-000000000001',
@@ -93,7 +95,7 @@ const DECISION_WAVE = aWave(
 const COMPETITION_ID = legacyCompetitionId(DECISION_ID);
 const ENTRY_ID = legacyCompetitionEntryId(COMPETITION_ID, DROP(7));
 const VOTER = anIdentity(
-  {},
+  { sub_classification: 'made-up-sub-classification' },
   {
     consolidation_key: 'e2e-voter-wallet',
     profile_id: 'e0000000-0000-4000-8000-000000000002',
