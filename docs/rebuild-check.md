@@ -230,8 +230,11 @@ The steps of a run:
    sync, then the migrations loop's schema steps; the old db-migrate
    scripts are left out, as in the tests), and check the live schema
    against the classes.
-2. Run every area's seeds, then count the rows of every INDEX table, so the
-   report shows which tables the probes can find data in.
+2. Run every area's seeds in `after` and `before` order, those marked
+   `last` after all the others, then count the rows of every INDEX table, so
+   the report shows which tables the probes can find data in. Here and in
+   step 7, a step whose needed table isn't in the schema is skipped as
+   planned.
 3. Copy the kept tables aside: EPHEMERAL, PROVIDER, EXEMPT, and, unless
    `--final`, INDEX tables no rebuilder writes yet.
 4. Probe the API (pass A).
@@ -239,8 +242,8 @@ The steps of a run:
 6. Drop: the full run drops the database, builds the schema again and
    restores the kept tables; an `--area` run empties that area's rebuilt
    tables and restores the kept ones.
-7. Run the rebuilders in `after` order, each as its own MySQL user and under
-   the source guard.
+7. Run the rebuilders in `after` and `before` order, each as its own MySQL
+   user and under the source guard.
 8. Probe again (pass B), snapshot again, and compare.
 
 With `--mark switch`, pass A runs without the areas' flags: the old path's
@@ -366,6 +369,11 @@ differences and unproven probes it never compared.
 
 It runs single-area runs whose rebuilders restore the seeded rows, change them, read
 an undeclared table, and call a host outside the sources, and checks the
-verdict of each. Its home is `.rebuild/self-check` unless
+verdict of each. It also runs a step that waits on a planned table no code
+creates (in a normal run and a final one), a step whose need the schema
+already meets, and partitioned writers of one table: an area run that
+rebuilds only its own partition, and, in an area run and a full run of
+every area, a writer whose partition of a kept table is emptied before it
+runs. Two runs go through the API. Its home is `.rebuild/self-check` unless
 `REBUILD_SELF_CHECK_HOME` names another; `REBUILD_SELF_CHECK_PORT` sets the
 `mysqld` port (default 3407). Each run takes a minute or two.
