@@ -19,11 +19,12 @@ import { main } from './cli';
  * API's legacy view of a drop's type (the public API's view).
  *
  * With WAVES_SNAPSHOT_TOOL set to the snapshot tooling's directory
- * (validator repository, tools/legacy-snapshot), the export then goes
- * through the tooling as the export run does: normalize, table-check and
- * build (each given the records wave setting the export ran with, as its
- * export.json records it) must exit 0 and write a Waves v1 file.
- * WAVES_E2E_OUT keeps the output there.
+ * (validator repository, tools/legacy-snapshot) and WAVES_SNAPSHOT_REVISION
+ * to that tooling's 40-hex commit, the export then goes through the
+ * tooling as the export run does: normalize, table-check and build (each
+ * given the records wave setting the export ran with, as its export.json
+ * records it; build its revision too) must exit 0 and write a Waves v1
+ * file and the import set. WAVES_E2E_OUT keeps the output there.
  */
 const AUTHOR = anIdentity(
   {},
@@ -252,6 +253,9 @@ describeWithSeed(
 
       const tool = process.env.WAVES_SNAPSHOT_TOOL;
       if (!tool) return;
+      // The tooling's own commit, which its build records.
+      const toolRevision = process.env.WAVES_SNAPSHOT_REVISION ?? '';
+      expect(toolRevision).toMatch(/^[0-9a-f]{40}$/);
       // The records wave setting the export ran with, as export.json
       // records it: its id, or none when null. The tooling refuses one that
       // disagrees.
@@ -281,10 +285,14 @@ describeWithSeed(
         '--out',
         out,
         '--records-wave',
-        recordsWave
+        recordsWave,
+        '--revision',
+        toolRevision
       ]);
       expect({ step: 'build', ...build }).toMatchObject({ status: 0 });
       expect(fs.existsSync(path.join(out, 'waves-v1.bin'))).toBe(true);
+      // The published set: the file, its docs and the archives.
+      expect(fs.existsSync(path.join(out, 'import-set.tar'))).toBe(true);
     });
   }
 );
