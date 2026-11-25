@@ -229,7 +229,10 @@ proves nothing whatever its probes answered.
 - tables a manifest keeps or rebuilds that the schema build doesn't make;
 - provisional sources, and command steps that don't run Node (the source
   guard watches only Node processes);
-- documented GET routes with no probe and no waiver.
+- documented GET routes with no probe and no waiver;
+- steps skipped while a table they need isn't in the schema, and needs on
+  a table the schema already has;
+- rows of a shared table in no writer's partition.
 
 Without `--final` each of these is a note in the report.
 
@@ -274,6 +277,9 @@ Each `--source <name>=<spec>`:
   `alchemy_getAssetTransfers` from its logs and blocks. Children get the
   shim as `ETHEREUM_RPC_URL` and `ALCHEMY_BASE_URL`. The Alchemy NFT API and
   its other `alchemy_*` methods are not served; a call to them fails the run.
+  `ALCHEMY_BASE_URL` is honoured only on a loopback host (127.0.0.1, ::1 or
+  localhost), since the Alchemy key travels in its path: an `ethereum` URL
+  on another host fails a step as soon as it makes its Alchemy client.
 - The files server answers `/ipfs/<id>`, `/ar/<id>`, `/docs/<id>` and
   `/<id>` from the directory, and checks every file against
   `<dir>/files.json` (id to SHA-256). It derives an id from the content

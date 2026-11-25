@@ -1,6 +1,13 @@
+import {
+  profileCmsFrozenError,
+  ProfileCmsRollout,
+  profileCmsRollout
+} from '@/profile-cms/profile-cms-identity-freeze';
 import { AuthenticationContext } from '@/auth-context';
+import { isIdentityFreezeConfigured } from '@/identity-freeze/identity-freeze';
 import {
   BadRequestException,
+  CustomApiCompliantException,
   ForbiddenException,
   NotFoundException
 } from '@/exceptions';
@@ -184,10 +191,34 @@ function mapPublishedSite(row: CmsPublishedSiteRow): ApiCmsPublishedSite {
 }
 
 export class CmsApiService {
+  constructor(
+    private readonly features: ProfileCmsRollout = profileCmsRollout
+  ) {}
+
+  /**
+   * Legacy CMS sites froze at the identity freeze and were carried into each
+   * owner's ProfileDoc archive; from the switch they are read-only.
+   */
+  private assertLegacyWritesOpen(): void {
+    if (this.features.isProfileCmsChainPointerEnabled()) {
+      throw new CustomApiCompliantException(
+        410,
+        'Legacy CMS sites are read-only. Publish from your profile site instead.',
+        'cms_legacy_retired'
+      );
+    }
+    if (this.features.isIdentityFreezeOn()) {
+      throw profileCmsFrozenError(
+        "Legacy CMS sites can't change while profiles move to the 6529 Network."
+      );
+    }
+  }
+
   public async createSite(
     request: ApiCmsCreateSiteRequest,
     ctx: CmsServiceContext
   ): Promise<ApiCmsSite> {
+    this.assertLegacyWritesOpen();
     const ownerProfileId = requireAuthenticatedProfileId(ctx);
     const wallet = requireAuthenticatedWallet(ctx);
     const slug = normalizeSlug(request.slug);
@@ -263,6 +294,7 @@ export class CmsApiService {
     request: ApiCmsPublishPackageRequest,
     ctx: CmsServiceContext
   ): Promise<ApiCmsPublishedSite> {
+    this.assertLegacyWritesOpen();
     assertHash(request.package_hash, 'package_hash');
     assertHash(request.payload_hash, 'payload_hash');
     assertLegacyCmsJsonBounded(
@@ -320,7 +352,13 @@ export class CmsApiService {
         published_at: publishedAt,
         published_by_wallet: wallet
       },
-      request.set_primary ?? true
+      request.set_primary ?? true,
+      // The same check again right before COMMIT: a publish let in just
+      // before the freeze can wait on a lock and commit after it, with a
+      // published_at from before it.
+      isIdentityFreezeConfigured()
+        ? () => this.assertLegacyWritesOpen()
+        : undefined
     );
     const primarySite =
       await cmsDb.findPrimaryPublishedSiteByOwnerProfileId(ownerProfileId);

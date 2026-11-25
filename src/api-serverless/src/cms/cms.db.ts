@@ -1,4 +1,5 @@
 import { CMS_PUBLISHED_PACKAGES_TABLE, CMS_SITES_TABLE } from '@/constants';
+import { beforeCommit } from '@/db/after-commit';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 
 export type CmsSiteRow = {
@@ -223,9 +224,13 @@ export class CmsDb extends LazyDbAccessCompatibleService {
 
   public async publishPackage(
     cmsPackage: CmsPublishedPackageRow,
-    setPrimary: boolean
+    setPrimary: boolean,
+    checkBeforeCommit?: () => void
   ): Promise<void> {
     await this.executeNativeQueriesInTransaction(async (connection) => {
+      if (checkBeforeCommit) {
+        beforeCommit(connection, 'legacy-cms-freeze', checkBeforeCommit);
+      }
       await this.db.execute(
         `
           INSERT INTO ${CMS_PUBLISHED_PACKAGES_TABLE}

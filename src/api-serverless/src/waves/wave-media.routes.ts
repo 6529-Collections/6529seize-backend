@@ -134,7 +134,7 @@ router.post(
 );
 
 const MediaPrepRequestSchema = createMediaPrepRequestSchema({
-  allowedMimeTypes: ['image/png', 'image/jpeg', 'image/gif']
+  allowedMimeTypes: ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
 });
 
 export default router;

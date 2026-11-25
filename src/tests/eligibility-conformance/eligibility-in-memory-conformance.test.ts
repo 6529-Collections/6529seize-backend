@@ -1,5 +1,4 @@
 import { UserGroupsService } from '@/api/community-members/user-groups.service';
-import { AbusivenessCheckService } from '@/profiles/abusiveness-check.service';
 import { MetricsRecorder } from '@/metrics/MetricsRecorder';
 import { getRedisClient } from '@/redis';
 import * as mcache from 'memory-cache';
@@ -36,7 +35,6 @@ describe('eligibility conformance: in-memory engine vs golden vectors', () => {
     async (_name, vector) => {
       const service = new UserGroupsService(
         buildVectorUserGroupsDbMock(vector),
-        {} as unknown as AbusivenessCheckService,
         {} as unknown as MetricsRecorder
       );
 
