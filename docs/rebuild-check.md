@@ -229,7 +229,10 @@ proves nothing whatever its probes answered.
 - tables a manifest keeps or rebuilds that the schema build doesn't make;
 - provisional sources, and command steps that don't run Node (the source
   guard watches only Node processes);
-- documented GET routes with no probe and no waiver.
+- documented GET routes with no probe and no waiver;
+- steps skipped while a table they need isn't in the schema, and needs on
+  a table the schema already has;
+- rows of a shared table in no writer's partition.
 
 Without `--final` each of these is a note in the report.
 
