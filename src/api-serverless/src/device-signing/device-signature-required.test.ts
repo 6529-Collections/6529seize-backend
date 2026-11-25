@@ -437,3 +437,48 @@ describe('device signatures required: only from the switch-on', () => {
     );
   });
 });
+
+describe('device signatures required: the flag with no switch-on set', () => {
+  /** A fresh copy of the module (the warning is once a process), and its warnings. */
+  async function freshRequirement() {
+    let required!: (env: Record<string, string>, nowMillis: number) => boolean;
+    let warn!: jest.SpyInstance;
+    await jest.isolateModulesAsync(async () => {
+      const { Logger: FreshLogger } = await import('@/logging');
+      warn = jest
+        .spyOn(FreshLogger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+      required = (await import('./device-signed-writes.service'))
+        .isDeviceSignatureRequired;
+    });
+    const warnings = () =>
+      warn.mock.calls
+        .map(([line]) => String(line))
+        .filter((line) => line.startsWith('[DEVICE SIGNATURES NOT REQUIRED]'));
+    return { required, warnings, restore: () => warn.mockRestore() };
+  }
+
+  it('refuses nothing, and warns once', async () => {
+    const { required, warnings, restore } = await freshRequirement();
+    const env = { [FLAG]: 'true' };
+    expect(required(env, SWITCH_ON_MS)).toBe(false);
+    expect(required(env, SWITCH_ON_MS + 1)).toBe(false);
+    expect(warnings()).toEqual([
+      '[DEVICE SIGNATURES NOT REQUIRED] FEATURE_WAVES_DEVICE_SIGNATURE_REQUIRED is true, but neither WAVES_SWITCH_ON_AT nor FEATURE_WAVES_ON_CHAIN is set: nothing is refused until one is'
+    ]);
+    restore();
+  });
+
+  it('says nothing with a switch-on time, with FEATURE_WAVES_ON_CHAIN, or with the flag off', async () => {
+    for (const env of [
+      { [FLAG]: 'true', [SWITCH_ON_AT]: SWITCH_ON },
+      { [FLAG]: 'true', [ON_CHAIN]: 'true' },
+      {}
+    ]) {
+      const { required, warnings, restore } = await freshRequirement();
+      required(env, SWITCH_ON_MS - 1);
+      expect(warnings()).toEqual([]);
+      restore();
+    }
+  });
+});

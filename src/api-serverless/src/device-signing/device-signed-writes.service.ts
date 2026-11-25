@@ -26,6 +26,8 @@ import {
 import {
   WaveRelayScope,
   waveRelayScope,
+  WAVES_ON_CHAIN_FLAG_ENV,
+  WAVES_SWITCH_ON_AT_ENV,
   wavesSwitchedOn
 } from '@/wave-relay-publish/wave-relay-scope';
 import { DeviceSigningDb, deviceSigningDb } from './device-signing.db';
@@ -54,21 +56,35 @@ export const DEVICE_SIGNATURE_REQUIRED_PROXY_MESSAGE =
   `Posts in waves are now signed by the author's own device, ` +
   `so a proxy can't post, edit or react for them.`;
 
+const requirementLogger = Logger.get('DEVICE_SIGNATURE_REQUIRED');
+let warnedNoSwitchOn = false;
+
 /**
  * Whether writes without a device signature are refused now: the flag is
  * on and waves have switched on (wavesSwitchedOn). Read on each request,
  * so a process that started before WAVES_SWITCH_ON_AT refuses from that
  * time on. A wave that stays on 6529.io is never refused (see
- * assertUnsignedWriteAllowed).
+ * assertUnsignedWriteAllowed). The flag with no switch-on set at all
+ * (neither WAVES_SWITCH_ON_AT nor FEATURE_WAVES_ON_CHAIN) refuses nothing,
+ * and says so once; a WAVES_SWITCH_ON_AT that is not a time is logged by
+ * wavesSwitchedOn.
  */
 export function isDeviceSignatureRequired(
   env: Readonly<Record<string, string | undefined>> = process.env,
   nowMillis: number = Date.now()
 ): boolean {
-  return (
-    env.FEATURE_WAVES_DEVICE_SIGNATURE_REQUIRED === 'true' &&
-    wavesSwitchedOn(env, nowMillis)
-  );
+  if (env.FEATURE_WAVES_DEVICE_SIGNATURE_REQUIRED !== 'true') return false;
+  if (
+    !warnedNoSwitchOn &&
+    env[WAVES_ON_CHAIN_FLAG_ENV] !== 'true' &&
+    !env[WAVES_SWITCH_ON_AT_ENV]?.trim()
+  ) {
+    warnedNoSwitchOn = true;
+    requirementLogger.warn(
+      `[DEVICE SIGNATURES NOT REQUIRED] FEATURE_WAVES_DEVICE_SIGNATURE_REQUIRED is true, but neither ${WAVES_SWITCH_ON_AT_ENV} nor ${WAVES_ON_CHAIN_FLAG_ENV} is set: nothing is refused until one is`
+    );
+  }
+  return wavesSwitchedOn(env, nowMillis);
 }
 
 export class DeviceSignatureRequiredException extends ApiCompliantException {
