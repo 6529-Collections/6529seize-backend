@@ -107,6 +107,7 @@ function fixture(
             created_by: mock<ApiProfileMin>(),
             visible: true,
             is_private: group.is_private,
+            stays_on_site: group.is_private,
             group: {
               cic: {
                 min: null,
