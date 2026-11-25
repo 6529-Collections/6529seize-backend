@@ -4,10 +4,8 @@ Watch Tower records moderation in the application database. Moderation decisions
 submitted text, report notes and model responses are never sent to Discord or an
 operational webhook. Operational failures contain a safe diagnostic marker.
 
-The policy families remain separate: REP categories, About text and group names
-use the existing public-field prompts; posts use the existing permissive wave
-policy, deterministic signals and confidence thresholds. This change adds review
-and durable history, not a new image classifier or a tighter wave speech policy.
+REP categories and About text use the public-field prompts. Posts use the
+permissive wave policy, deterministic signals and confidence thresholds.
 
 ## Access and API
 
@@ -54,7 +52,7 @@ REP allow/block rules govern future use of the exact category until revoked.
 They do not change existing ratings. The REP classifier cache records policy
 and model provenance; legacy unversioned entries are reevaluated lazily.
 
-Approving rejected About, group-name or post content issues a seven-day,
+Approving rejected About or post content issues a seven-day,
 single-use permit. The author submits through the ordinary save endpoint with
 an `Idempotency-Key` UUID. The permit matches author, exact content, operation,
 relevant context and the preserved target revision. Its consumption and the save
@@ -71,16 +69,13 @@ saved result after expiry.
 Posting suspension, ordinary permissions, rate limits and unsafe-host blocks
 remain authoritative.
 
-Group permits match the group definition and replacement target, excluding
-ephemeral draft IDs and creation timestamps. Included/excluded membership is
-compared by profile IDs, not the freshly generated membership-container IDs.
-The same approved definition can therefore be resubmitted after reloading the
-editor. Changed criteria or a changed replacement target require fresh review.
+Group saves use their own visibility request receipts. The Checks list, manual
+queue, totals and detail endpoints exclude historical group-name checks.
+Replays of previously completed saves use the original receipt.
 
-Current About/group names can be suppressed and restored through a presentation
-overlay bound to the preserved field revision. Stored source fields and group
-membership are preserved. Published posts use the existing quarantine/removal
-states. Re-evaluation always examines the preserved original snapshot, records a
+Published About text can be suppressed and restored through a presentation
+overlay bound to the preserved revision. Published posts use the existing
+quarantine and removal states. Re-evaluation examines the original snapshot, records a
 new result using current policy/model configuration and does not revoke explicit
 human decisions. The initial deterministic signal is preserved for later checks.
 

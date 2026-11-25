@@ -1,3 +1,4 @@
+import { creditTdh } from '@/rates/rating-credit';
 import { constructFilters, constructFiltersOR } from '@/api/api-helpers';
 import { MetricsSort } from '@/api/tdh/api.tdh.metrics-sort';
 import { BadRequestException } from '@/exceptions';
@@ -149,7 +150,7 @@ export const fetchNftTdh = async (
   );
   results.data.forEach((d: any) => {
     d.level = calculateLevel({
-      tdh: d.total_boosted_tdh ?? 0 + (d.xtdh ?? 0),
+      tdh: creditTdh(d.total_boosted_tdh ?? 0, d.xtdh),
       rep: d.rep_score
     });
   });

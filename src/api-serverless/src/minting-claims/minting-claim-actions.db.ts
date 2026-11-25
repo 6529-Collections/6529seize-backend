@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { MINTING_CLAIM_ACTIONS_TABLE } from '@/constants';
+import { DbPoolName } from '@/db-query.options';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { Time } from '@/time';
@@ -45,7 +46,7 @@ export class MintingClaimActionsDb extends LazyDbAccessCompatibleService {
           contract: contract.toLowerCase(),
           claimId
         },
-        { wrappedConnection: ctx.connection }
+        { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
       );
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->findByContractAndClaimId`);

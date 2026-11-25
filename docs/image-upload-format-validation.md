@@ -14,16 +14,18 @@ WebP and their strict decode limits. HEIC is not an accepted upload format. PNG 
 
 Format validation is independent of `DROP_MEDIA_SANITIZE_IMAGES`. The drop and
 wave multipart start request carries an optional `purpose` (`chat`, the default,
-or `decision_entry`), stored on the `drop_media_uploads` row; wave pictures are
-always `chat`. The API captures `DROP_MEDIA_SANITIZE_IMAGES && purpose != decision_entry`
-in the private multipart object's `sanitize-image-metadata` metadata when the
-upload starts. Parts cannot change it. The worker honors that captured choice
-rather than consulting a potentially different worker environment, and never
-strips a `decision_entry` upload whatever the captured flag says:
+or `decision_entry`), stored on the `drop_media_uploads` row. Wave pictures
+always use `chat` and require metadata stripping. JPEG, PNG, GIF and WebP Wave
+pictures use the same private multipart upload route.
+
+The API captures the policy in the private multipart object's
+`sanitize-image-metadata` field at upload start. For chat drops, it uses
+`DROP_MEDIA_SANITIZE_IMAGES`. For Wave pictures, it sets the field to `true`.
+Parts cannot change this field. The worker applies the captured policy.
 
 - `decision_entry`, or `false`: inspect the container format and publish exactly
   the original bytes, preserving metadata, orientation and GIF frames/timing.
-  The flag stays the production kill switch for chat stripping.
+  The flag controls stripping for chat drops.
 - `true`: strip identifying metadata losslessly (below), falling back to the
   existing orientation correction and re-encoding when the lossless result does
   not verify; the fallback is logged with its reason.
@@ -38,8 +40,9 @@ EXIF becomes a 26-byte TIFF holding only Orientation (dropped when upright), and
 XMP, IPTC/Photoshop, comments, other application segments, embedded thumbnails
 and data after EOI are removed (HDR gain maps excepted, below). PNG keeps only rendering chunks (including iCCP,
 sRGB, gAMA, cHRM, cICP and APNG chunks); text, time and private chunks are
-removed and eXIf is reduced to Orientation. WebP drops EXIF/XMP/unknown chunks,
-keeps ICCP and animation, and updates the VP8X flags and RIFF size. GIF drops
+removed and eXIf is reduced to Orientation. WebP drops top-level XMP and unknown
+chunks and reduces EXIF to Orientation. It keeps the ICC profile and animation
+frame blocks and updates the VP8X flags and RIFF size. GIF drops
 comments and application extensions other than looping (NETSCAPE2.0,
 ANIMEXTS1.0) and the GIF ICC extension. The result must re-parse with the same
 size, orientation and byte-identical render stream and none of the removed
