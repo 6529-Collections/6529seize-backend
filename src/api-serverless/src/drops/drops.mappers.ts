@@ -1,4 +1,5 @@
 import { mapDropMedia } from '@/api/drops/drop-media.mapper';
+import { wavesScopeService } from '@/waves-scope/waves-scope.service';
 import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
 import {
   anonymousCompetitionAuthor,
@@ -324,6 +325,9 @@ export class DropsMappers {
     const { noRightToVote, noRightToParticipate } = getWaveMinPermissionMask(
       effectiveAuthenticationContext
     );
+    const staysOnSiteByWaveId = await timed('wavesStaysOnSite', () =>
+      wavesScopeService.staysForDisplay(waveIds, { connection, timer })
+    );
     return dWoW.map<ApiDrop>((d) => {
       const wave = waveOverviews[d.id];
       const waveMin: ApiWaveMin | null = wave
@@ -338,7 +342,8 @@ export class DropsMappers {
             noRightToParticipate,
             pinned: pinnedWaveIds.has(wave.id),
             identityWave: identityWaveIds.has(wave.id),
-            authenticatedProfileId: readContextProfileId
+            authenticatedProfileId: readContextProfileId,
+            staysOnSite: staysOnSiteByWaveId.get(wave.id) ?? false
           })
         : null;
       return {
@@ -802,6 +807,12 @@ export class DropsMappers {
           ctx.connection
         )
     );
+    const mentionedStaysOnSite = await timed('mentionedWavesStaysOnSite', () =>
+      wavesScopeService.staysForDisplay(
+        mentionedWaveEntities.map((wave) => wave.id),
+        ctx
+      )
+    );
     const mentionedWavesById = mentionedWaveEntities.reduce(
       (acc, wave) => {
         acc[wave.id] = mapWaveToApiWaveMin({
@@ -815,7 +826,8 @@ export class DropsMappers {
           noRightToParticipate,
           pinned: pinnedMentionedWaveIds.has(wave.id),
           identityWave: identityWaveIds.has(wave.id),
-          authenticatedProfileId: contextProfileId
+          authenticatedProfileId: contextProfileId,
+          staysOnSite: mentionedStaysOnSite.get(wave.id) ?? false
         });
         return acc;
       },

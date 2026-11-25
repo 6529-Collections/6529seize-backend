@@ -26,11 +26,18 @@ import { findNextgenMarketStats } from './nft_market_stats_nextgen';
 import { pollOpenSeaMarketDepthForContract } from '../market-depth/opensea-poller';
 import { marketDepthDb } from '../market-depth/market-depth.db';
 import { purgeMarketDepthHistory } from '../market-depth/market-depth-retention';
+import {
+  archiveMarketDepthHistory,
+  MarketDepthArchivedThrough,
+  readArchivedThrough
+} from '../market-depth/market-depth-archive';
+import { marketDepthArchiveStoreFromEnv } from '../market-depth/market-depth-archive-store';
 
 const logger = Logger.get('MARKET_STATS_LOOP');
 const RESERVED_COMPLETION_MS = 60_000;
 const MAX_INVOCATION_WORK_MS = 13 * 60_000;
 const LEGACY_BUDGET_MS = 10 * 60_000;
+const ARCHIVE_BUDGET_MS = 3 * 60_000;
 const RETENTION_BUDGET_MS = 4 * 60_000;
 
 const batchContracts = new Set(
@@ -73,8 +80,9 @@ async function refreshNextgen(deadlineMs: number): Promise<void> {
   );
 }
 
-// Retention runs after the refresh, even a failed one, so a persistently
-// failing provider cannot let market-depth history grow without bound.
+// Archiving and retention run after the refresh, even a failed one, so a
+// persistently failing provider cannot let market-depth history grow without
+// bound. Where an archive is configured, retention waits for it.
 async function refreshThenPurge(
   label: string,
   contract: string,
@@ -87,10 +95,35 @@ async function refreshThenPurge(
   } catch (error) {
     refreshError = error;
   }
+  let archivedThrough: MarketDepthArchivedThrough | undefined;
+  const archive = marketDepthArchiveStoreFromEnv();
+  if (archive) {
+    try {
+      await archiveMarketDepthHistory({
+        contract,
+        db: marketDepthDb,
+        store: archive,
+        deadlineMs: Math.min(deadlineMs, Date.now() + ARCHIVE_BUDGET_MS)
+      });
+    } catch (error) {
+      logger.error(`[${label}] Market-depth archive failed`, error);
+      refreshError ??= error;
+    }
+    // Retention deletes only what the archive already holds; an unreadable
+    // watermark keeps everything.
+    archivedThrough = await readArchivedThrough(archive, contract).catch(
+      (error: unknown) => {
+        logger.error(`[${label}] Market-depth archive state unreadable`, error);
+        refreshError ??= error;
+        return { snapshots: null, events: null };
+      }
+    );
+  }
   try {
     await purgeMarketDepthHistory({
       contract,
       db: marketDepthDb,
+      archivedThrough,
       deadlineMs: Math.min(deadlineMs, Date.now() + RETENTION_BUDGET_MS)
     });
   } catch (error) {

@@ -7,6 +7,7 @@ import {
   LeaderboardSort
 } from '@/drops/drops.db';
 import { ConnectionWrapper } from '@/sql-executor';
+import { wavesScopeService } from '@/waves-scope/waves-scope.service';
 import {
   BadRequestException,
   ForbiddenException,
@@ -757,6 +758,10 @@ export class DropsApiService {
         },
         ctx.connection
       );
+    const staysOnSite = await wavesScopeService.staysForDisplay(
+      [visibleWave.id],
+      ctx
+    );
     const waveMin = mapWaveToApiWaveMin({
       wave: {
         ...visibleWave,
@@ -768,7 +773,8 @@ export class DropsApiService {
       noRightToParticipate,
       pinned: pinnedWaveIds.has(wave_id),
       identityWave: identityWaveIds.has(wave_id),
-      authenticatedProfileId: context_profile_id
+      authenticatedProfileId: context_profile_id,
+      staysOnSite: staysOnSite.get(visibleWave.id) ?? false
     });
     if (drop_id) {
       const dropEntity = await this.dropsDb.findDropByIdWithEligibilityCheck(
@@ -1122,6 +1128,10 @@ export class DropsApiService {
         ctx.connection
       );
     const votingPeriodEnd = visibleWaveEntity.voting_period_end;
+    const staysOnSite = await wavesScopeService.staysForDisplay(
+      [visibleWaveEntity.id],
+      ctx
+    );
     const waveMin = mapWaveToApiWaveMin({
       wave: {
         ...visibleWaveEntity,
@@ -1135,7 +1145,8 @@ export class DropsApiService {
       noRightToParticipate,
       pinned: pinnedWaveIds.has(params.wave_id),
       identityWave: identityWaveIds.has(params.wave_id),
-      authenticatedProfileId
+      authenticatedProfileId,
+      staysOnSite: staysOnSite.get(visibleWaveEntity.id) ?? false
     });
     const isTimeLockedWave =
       visibleWaveEntity.time_lock_ms !== null &&

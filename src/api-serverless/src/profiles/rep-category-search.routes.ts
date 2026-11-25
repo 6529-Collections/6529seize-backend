@@ -8,28 +8,8 @@ import { ApiGlobalRepCategorySuggestedCategory } from '../generated/models/ApiGl
 import { globalRepCategoryApiService } from '../rep-categories/global-rep-category.api.service';
 import { getAuthenticationContext } from '../auth/auth';
 import { Timer } from '../../../time';
-import {
-  HELP_BOT_CREDIT_CATEGORY,
-  HELP_BOT_RESERVED_CREDIT_CATEGORY_MESSAGE,
-  isHelpBotCreditCategory
-} from '@/help-bot/help-bot.config';
 
 const router = asyncRouter();
-
-export function maybeIncludeHelpBotCreditCategory(
-  categories: string[],
-  searchParam: string
-): string[] {
-  const normalizedSearchParam = searchParam.trim().toLowerCase();
-  if (
-    normalizedSearchParam.length === 0 ||
-    !HELP_BOT_CREDIT_CATEGORY.toLowerCase().includes(normalizedSearchParam) ||
-    categories.some((category) => isHelpBotCreditCategory(category))
-  ) {
-    return categories;
-  }
-  return [HELP_BOT_CREDIT_CATEGORY, ...categories];
-}
 
 router.get(
   `/top`,
@@ -69,7 +49,7 @@ router.get(
         text: searchParam,
         limit: 10
       });
-      res.send(maybeIncludeHelpBotCreditCategory(categories, searchParam));
+      res.send(categories);
     }
   }
 );
@@ -91,9 +71,6 @@ router.get(
     const searchParam = req.query.param?.trim() ?? '';
     if (searchParam.length < 3 || searchParam.length > 100) {
       throw new BadRequestException(`Given category is not allowed`);
-    }
-    if (isHelpBotCreditCategory(searchParam)) {
-      throw new BadRequestException(HELP_BOT_RESERVED_CREDIT_CATEGORY_MESSAGE);
     }
     // Read-only probe: no moderation rows and no new category suggestions.
     const abusivenessDetectionResult =

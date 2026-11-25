@@ -79,6 +79,31 @@ describeWithSeed(
   'ChatHistoryPurgeDb synthetic MySQL cleanup',
   withWaves([wave]),
   () => {
+    it('leaves drops with a poll out of the batch when asked (the waves freeze)', async () => {
+      await insertDrops(4);
+      await insert(tables.DROP_POLLS_TABLE, {
+        id: 'poll-2',
+        wave_id: 'wave',
+        drop_id: 'drop-2',
+        closing_time: 0,
+        multichoice: false,
+        anonymous: false,
+        only_droppers_can_respond: false
+      });
+      const batch = (keepPolls?: boolean) =>
+        sqlExecutor.executeNativeQueriesInTransaction(async (connection) =>
+          (
+            await repo.findBatchForUpdate(
+              { ...scope, pinnedDropId: null, keepPolls },
+              { connection }
+            )
+          ).map((drop) => drop.id)
+        );
+      expect(await batch(true)).toEqual(['drop-1', 'drop-4']);
+      expect(await batch(false)).toEqual(['drop-1', 'drop-2', 'drop-4']);
+      expect(await batch()).toEqual(['drop-1', 'drop-2', 'drop-4']);
+    });
+
     it('retains content referenced by native entries and refuses a direct purge bypass', async () => {
       await insertDrops(2);
       await insert(tables.COMPETITION_ENTRIES_TABLE, {
