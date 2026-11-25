@@ -21,10 +21,13 @@ import {
   LEGACY_DM_BLOCKERS,
   LEGACY_DM_DROP_ID_TABLES,
   LEGACY_DM_DROP_STEPS,
+  LEGACY_DM_RELAY_STEPS,
   LEGACY_DM_WAVE_STEPS,
+  type LegacyDmRelayStep,
   NOTIFICATIONS_FOR_DROPS,
   type LegacyDmDropStep
 } from './legacy-dm-purge.inventory';
+import { relayWaveKey } from '@/wave-drop-index/relay-wave-key';
 
 /**
  * The D146 deletion of unencrypted DM content. Two modes:
@@ -145,6 +148,20 @@ function bind(step: LegacyDmDropStep, value: unknown): unknown[] {
   return Array.from({ length: step.bindings }, () => value);
 }
 
+/** What a relay step's `?` binds for these DM waves (LegacyDmRelayStep). */
+function relayValues(step: LegacyDmRelayStep, waveIds: string[]): string[] {
+  const values = waveIds.flatMap((id) => {
+    const key = relayWaveKey(id);
+    if (step.binds === 'keys') return key ? [key] : [];
+    // A wave with no relay key (not a UUID) has no other name.
+    return key ? [id, id.replace(/-/g, ''), key] : [id];
+  });
+  return Array.from(new Set(values));
+}
+
+/** The relay steps' batches in the plan: lists of at most this many. */
+const RELAY_PLAN_BATCH = 500;
+
 /** Read-only dry run: counts of what the purge would remove. */
 export async function planLegacyDmPurge(
   sql: LegacyDmSql
@@ -184,6 +201,26 @@ export async function planLegacyDmPurge(
       `${step.table} (by wave)`,
       await count(`select count(*) as c from ${step.table} where ${where}`)
     );
+  }
+  const dmWaveIds = (
+    await sql.query<{ id: string }>(
+      `select w.id from ${WAVES_TABLE} w where w.id in (${DM_WAVES_SQL})`
+    )
+  ).map((row) => row.id);
+  for (const step of LEGACY_DM_RELAY_STEPS) {
+    let relayRows = 0;
+    for (let i = 0; i < dmWaveIds.length; i += RELAY_PLAN_BATCH) {
+      const values = relayValues(
+        step,
+        dmWaveIds.slice(i, i + RELAY_PLAN_BATCH)
+      );
+      if (!values.length) continue;
+      relayRows += await count(
+        `select count(*) as c from ${step.table} where ${step.where}`,
+        [values]
+      );
+    }
+    add(`${step.table} (by relay key)`, relayRows);
   }
   const blockers: Record<string, number> = {};
   for (const blocker of LEGACY_DM_BLOCKERS) {
@@ -619,6 +656,16 @@ async function purgeWaveLevel(
         `delete from ${step.table} where ${step.where}`,
         bind(step, wave.id)
       )
+    );
+  }
+  for (const step of LEGACY_DM_RELAY_STEPS) {
+    const values = relayValues(step, [wave.id]);
+    if (!values.length) continue;
+    add(
+      `${step.table} (by relay key)`,
+      await tx.execute(`delete from ${step.table} where ${step.where}`, [
+        values
+      ])
     );
   }
 }
