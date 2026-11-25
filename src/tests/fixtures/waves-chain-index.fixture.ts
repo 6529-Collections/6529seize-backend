@@ -422,12 +422,8 @@ export class FakeChain implements WavesChainApi {
     };
   }
 
-  /** Thrown by the import read instead of answering (a gateway error). */
-  importError: Error | null = null;
-
   async importState(_at: number): Promise<WavesImportState | null> {
     this.call('importState');
-    if (this.importError) throw this.importError;
     return { completed: this.completed };
   }
 
