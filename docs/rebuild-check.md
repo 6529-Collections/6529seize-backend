@@ -379,6 +379,16 @@ creates (in a normal run and a final one), a step whose need the schema
 already meets, and partitioned writers of one table: an area run that
 rebuilds only its own partition, and, in an area run and a full run of
 every area, a writer whose partition of a kept table is emptied before it
-runs. Two runs go through the API. Its home is `.rebuild/self-check` unless
-`REBUILD_SELF_CHECK_HOME` names another; `REBUILD_SELF_CHECK_PORT` sets the
-`mysqld` port (default 3407). Each run takes a minute or two.
+runs. The column owners' runs give a row writer and the owner of one of
+its table's columns: the row writer inserts and deletes rows under column
+grants, owned columns are reset before the owner runs and on rows kept
+for a skipped writer, and a row writer that updates an owned column, or
+an owner that adds a row or writes another column, fails. An exempt
+column is left out of the comparison with its reason; an owner that
+doesn't run here, another area's or a planned one, has its column left
+out and noted, and a planned one fails a final run; a table a step
+writes but its writes don't name is named. Three runs go through the
+API: two compare its answers before and after the rebuild, and one reads
+an owned column whose owner is absent. Its home is `.rebuild/self-check`
+unless `REBUILD_SELF_CHECK_HOME` names another; `REBUILD_SELF_CHECK_PORT`
+sets the `mysqld` port (default 3407). Each run takes a minute or two.
