@@ -720,7 +720,14 @@ export class WavesSettlementSender {
       if (error instanceof BudgetSpent) throw error;
       const lastError = `draft: ${describe(error)}`;
       if (importRunning(error)) {
-        return this.notYet(base, plan, null, noted(lastError), where, rows);
+        return this.notYet(
+          base,
+          plan,
+          null,
+          withNotIncluded(lastError, inRow),
+          where,
+          rows
+        );
       }
       logger.warn(`[SETTLEMENT NOT SENT] ${where} ${lastError}`);
       await this.save(
@@ -775,7 +782,7 @@ export class WavesSettlementSender {
           base,
           plan,
           checked.txId,
-          noted(lastError),
+          withNotIncluded(lastError, inRow),
           sent,
           rows
         );
@@ -1010,6 +1017,8 @@ function notIncludedInRow(note: string | null): number {
 }
 
 /** A row's error, with the run of never-included requests before it. */
+function withNotIncluded(error: string, inRow: number): string;
+function withNotIncluded(error: string | null, inRow: number): string | null;
 function withNotIncluded(error: string | null, inRow: number): string | null {
   if (inRow <= 0) return error;
   const note = `before it, never included (${inRow} in a row)`;
