@@ -269,6 +269,23 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /**
+   * The chain's id of a wave 6529.io holds (its own id: the legacy id of an
+   * imported wave, the chain id of one made on the chain), or null when the
+   * chain doesn't hold it.
+   */
+  async chainWaveIdOf(waveId: string): Promise<string | null> {
+    const id = waveId.toLowerCase();
+    const row = await this.db.oneOrNull<{ wave_id: string }>(
+      `select wave_id from ${CHAIN_WAVES_TABLE}
+        where wave_id = :id or legacy_id = :id
+        order by wave_id
+        limit 1`,
+      { id }
+    );
+    return row?.wave_id ?? null;
+  }
+
   /** 6529.io's id of a chain wave: an imported wave's own, else the chain's. */
   async waveIdOfChainWave(chainWaveId: string): Promise<string> {
     const row = await this.db.oneOrNull<{ legacy_id: string | null }>(

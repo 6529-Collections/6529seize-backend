@@ -36,8 +36,7 @@ export const defaultObjectEffects: ObjectEffects = {
       ]);
     }
   },
-  eligibleGroups: (profileId) =>
-    userGroupsService.getGroupsUserIsEligibleFor(profileId),
+  waveManager: ({ waveId, principal }) => waveManagerOf(waveId, principal),
   newWaveEntity: ({ id, createdAt, request, createdBy, descriptionDropId }) =>
     wavesMappers.createWaveToNewWaveEntity({
       id,
@@ -57,6 +56,31 @@ export const defaultObjectEffects: ObjectEffects = {
     ),
   decisionCreatedAt: (decisionId) => decisionCreatedAt(decisionId)
 };
+
+/**
+ * Whether the chain counts `principal` a manager of the chain wave
+ * `waveId`: the gateway's /v1/waves/{waveId}/rights/{principal}, isManager,
+ * read at the client's pin, as the mirror's other gateway reads are (the
+ * head live; a rebuild's recorded gateway answers at its mark). False when
+ * the node has no such wave or principal (its not_found); null when the
+ * gateway can't say (an error, 503 unavailable, a height gone, or an
+ * answer without isManager).
+ */
+export async function waveManagerOf(
+  waveId: string,
+  principal: string
+): Promise<boolean | null> {
+  try {
+    const answer = await chainGatewayClient.read<{ isManager?: unknown }>(
+      `/v1/waves/${waveId}/rights/${principal}`
+    );
+    if (!answer) return false;
+    const isManager = answer.data?.isManager;
+    return typeof isManager === 'boolean' ? isManager : null;
+  } catch {
+    return null;
+  }
+}
 
 function positive(value: unknown): number | null {
   const n = Number(value);

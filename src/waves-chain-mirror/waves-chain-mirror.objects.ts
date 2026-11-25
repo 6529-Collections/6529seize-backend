@@ -2,7 +2,6 @@ import { Logger } from '@/logging';
 import { WaveEntity } from '@/entities/IWave';
 import { InsertWaveEntity } from '@/api/waves/waves.api.db';
 import { ApiCreateNewWave } from '@/api/generated/models/ApiCreateNewWave';
-import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 import { ApiCompetitionDraftInput } from '@/api/generated/models/ApiCompetitionDraftInput';
 import { configurationToRecord } from '@/api/competitions/competition-configuration';
 import {
@@ -114,8 +113,16 @@ export interface ObjectEffects {
     readonly groupIds: string[];
     readonly followerId: string | null;
   }): Promise<void>;
-  /** The groups a profile is in (a parent wave's rule). */
-  eligibleGroups(profileId: string): Promise<string[]>;
+  /**
+   * Whether the chain counts `principal` a manager of the chain wave
+   * `waveId` (a parent wave's rule): the gateway's
+   * /v1/waves/{waveId}/rights/{principal}, isManager, read at the run's
+   * pin. Null when the gateway can't say.
+   */
+  waveManager(input: {
+    readonly waveId: string;
+    readonly principal: string;
+  }): Promise<boolean | null>;
   /** The wave row 6529.io's create maps a request to. */
   newWaveEntity(input: {
     readonly id: string;
@@ -179,6 +186,7 @@ export type ObjectsStore = Pick<
   | 'descriptionDropInWave'
   | 'chainImportedGroups'
   | 'insertImportedWave'
+  | 'chainWaveIdOf'
   | 'insertImportedCompetition'
   | 'mode'
 >;
@@ -210,6 +218,17 @@ interface ParentWaits {
 }
 
 const WAIT_FOR_PARENT = Symbol('wait for parent');
+
+/**
+ * A named parent's fate: kept, left out (the wave is written without it),
+ * or the wave waits for a read that failed; each but the kept with the
+ * reason the run counts.
+ */
+type ParentChoice =
+  | { readonly kind: 'keep'; readonly id: string }
+  | { readonly kind: 'leave'; readonly reason: string }
+  | { readonly kind: 'wait'; readonly reason: string }
+  | typeof WAIT_FOR_PARENT;
 /** A child waits this long after it was made for a parent made on the chain. */
 export const PARENT_WAIT_MS = 24 * 60 * 60_000;
 
@@ -1093,7 +1112,7 @@ export class WavesChainObjectsMirror {
     if (doc.parentWave) {
       const parent = await this.allowedParent(
         doc.parentWave,
-        creatorId,
+        creator!,
         wave.waveId,
         parents
       );
@@ -1106,8 +1125,16 @@ export class WavesChainObjectsMirror {
         });
         return 'waiting';
       }
-      parentWaveId = parent;
-      if (!parentWaveId) counter.wait('wave_parent_left_out');
+      if (parent.kind === 'wait') {
+        // The chain's answer couldn't be read: asked again next run.
+        counter.wait(parent.reason);
+        return 'waiting';
+      }
+      if (parent.kind === 'keep') {
+        parentWaveId = parent.id;
+      } else {
+        counter.wait(parent.reason);
+      }
     }
     const checked = checkedWaveRequest({
       doc,
@@ -1341,32 +1368,60 @@ export class WavesChainObjectsMirror {
 
   /**
    * The parent a wave made on the chain may keep, as 6529.io's create
-   * allows it: a top-level wave, not a DM, that its creator made or
-   * administers (and can see). Null otherwise.
+   * allows it: a top-level wave, not a DM, that its creator manages. Who
+   * manages the parent is the chain's answer
+   * (/v1/waves/{parent}/rights/{creator}, isManager), read at the run's
+   * pin: the head live, the recording's mark in a rebuild. 6529.io's own
+   * eligibility, computed from its identities' TDH and level, isn't asked,
+   * so the answer doesn't depend on 6529.io's current TDH or on when a
+   * rebuild writes it.
+   *
+   * - A parent with no row that a wave made on the chain may still give:
+   *   the child waits for it (WAIT_FOR_PARENT).
+   * - A parent that isn't top-level, is a DM, or has no row and won't get
+   *   one: left out.
+   * - A parent the chain doesn't hold (a wave that stays on 6529.io): left
+   *   out, as the chain can't say who manages it.
+   * - The creator not a manager: left out. The gateway's answer unread: the
+   *   child waits and the run asks again.
+   *
+   * Known limit: the answer is the chain's at the run that writes the
+   * wave, live minutes after it was made. A node keeps its last 64 views
+   * only, so the rights at the creation height can't be read or recorded.
+   * A later rebuild reads them at its own mark, so a live row and a later
+   * rebuild differ when the creator's rights on the parent changed in
+   * between.
    */
   private async allowedParent(
     parentId: string,
-    creatorId: string,
+    creator: string,
     childId: string,
     parents: ParentWaits
-  ): Promise<string | null | typeof WAIT_FOR_PARENT> {
+  ): Promise<ParentChoice> {
+    const leave = (reason: string): ParentChoice => ({ kind: 'leave', reason });
     const parent = await this.store.waveRow(parentId);
     if (!parent) {
       // A wave made on the chain that may still get its row: wait for it.
       const id = parentId.toLowerCase();
-      return id !== childId && parents.pending.has(id) ? WAIT_FOR_PARENT : null;
+      return id !== childId && parents.pending.has(id)
+        ? WAIT_FOR_PARENT
+        : leave('wave_parent_left_out');
     }
     if (parent.parent_wave_id !== null || parent.is_direct_message) {
-      return null;
+      return leave('wave_parent_left_out');
     }
-    const eligible = await this.effects.eligibleGroups(creatorId);
-    return isWaveCreatorOrAdmin({
-      authenticatedProfileId: creatorId,
-      wave: parent,
-      groupIdsUserIsEligibleFor: eligible
-    })
-      ? parent.id
-      : null;
+    const chainParent = await this.store.chainWaveIdOf(parent.id);
+    if (!chainParent) return leave('wave_parent_not_on_chain');
+    const manages = await this.effects.waveManager({
+      waveId: chainParent,
+      principal: creator
+    });
+    if (manages === null) {
+      return { kind: 'wait', reason: 'wave_parent_rights_unavailable' };
+    }
+    return manages
+      ? { kind: 'keep', id: parent.id }
+      : leave('wave_parent_not_managed');
   }
 
   // ------------------------------------------------------------ decisions
