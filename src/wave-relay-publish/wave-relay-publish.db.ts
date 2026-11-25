@@ -21,6 +21,7 @@ import {
   LazyDbAccessCompatibleService,
   SqlExecutor
 } from '@/sql-executor';
+import { stayingWaveSql } from './wave-relay-scope';
 import {
   CandidateEvent,
   PublishableEvent,
@@ -53,13 +54,24 @@ export interface WaveRelayPublishDbOptions {
    * with one) too: only to relays that serve them to their members alone.
    */
   readonly includeMembersOnly: boolean;
+  /**
+   * Which waves stay, this run (wave-relay-scope.ts relayRunScope): the
+   * rule before the switch-on, the chain's mapping after it.
+   */
+  readonly mode: 'rule' | 'chain';
+  /** The staying SQL's parameters (scopeSqlParamValues). */
+  readonly scopeParams: Readonly<Record<string, unknown>>;
 }
 
 /**
  * The publisher's reads and its per-relay cursors. Reads run on the writer
  * in one transaction, so an event, its drop and the drop's signature are
  * read as they stand now. Events of direct-message waves are never read:
- * legacy plaintext DMs stay off the relays.
+ * legacy plaintext DMs stay off the relays. Nor are those of any wave that
+ * stays on 6529.io (wave-relay-scope.ts): only waves that move to the 6529
+ * chain are published. After the switch-on, until the chain index has
+ * finished a full read, a run reads nothing (wave-relay-publish.ts): the
+ * cursors wait, so no event is passed over.
  */
 export class WaveRelayPublishDb
   extends LazyDbAccessCompatibleService
@@ -87,7 +99,7 @@ export class WaveRelayPublishDb
     cursor: Pick<RelayCursor, 'createdAt' | 'eventId'>,
     before: number,
     limit: number,
-    { includeMembersOnly }: WaveRelayPublishDbOptions
+    { includeMembersOnly, mode, scopeParams }: WaveRelayPublishDbOptions
   ): Promise<CandidateEvent[]> {
     return this.executeNativeQueriesInTransaction(async (connection) => {
       const rows = await this.db.execute<CandidateRow>(
@@ -105,6 +117,7 @@ export class WaveRelayPublishDb
                 ? ''
                 : 'and w.visibility_group_id is null and pw.visibility_group_id is null'
             }
+            and not ${stayingWaveSql('w', mode)}
             and e.created_at < :before
             and (e.created_at > :createdAt
               or (e.created_at = :createdAt and e.id > :eventId))
@@ -114,7 +127,8 @@ export class WaveRelayPublishDb
           before,
           createdAt: cursor.createdAt,
           eventId: cursor.eventId,
-          limit
+          limit,
+          ...scopeParams
         },
         { wrappedConnection: connection }
       );

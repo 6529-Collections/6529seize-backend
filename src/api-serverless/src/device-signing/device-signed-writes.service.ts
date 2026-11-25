@@ -23,6 +23,13 @@ import {
   DeviceEventKind,
   verifyEd25519EventSignature
 } from './device-event';
+import {
+  WaveRelayScope,
+  waveRelayScope,
+  WAVES_ON_CHAIN_FLAG_ENV,
+  WAVES_SWITCH_ON_AT_ENV,
+  wavesSwitchedOn
+} from '@/wave-relay-publish/wave-relay-scope';
 import { DeviceSigningDb, deviceSigningDb } from './device-signing.db';
 
 export const DEVICE_SIGNATURE_FIELD = 'device_signature';
@@ -32,9 +39,12 @@ export const INVALID_DEVICE_SIGNATURE_PREFIX = 'Invalid device signature:';
 /**
  * From waves' switch-on to the 6529 chain, drops travel peer to peer as
  * device-signed events, so a write without a device signature can't reach
- * the relays. FEATURE_WAVES_DEVICE_SIGNATURE_REQUIRED=true refuses drop
- * posts, edits, deletes and reactions without one, except in direct
- * messages (they stay off the relays).
+ * the relays. With FEATURE_WAVES_DEVICE_SIGNATURE_REQUIRED=true, from the
+ * switch-on (WAVES_SWITCH_ON_AT, or FEATURE_WAVES_ON_CHAIN=true), drop
+ * posts, edits, deletes and reactions without one are refused, except in
+ * direct messages and every other wave that stays on 6529.io (they stay
+ * off the relays: wave-relay-scope.ts). The flag can be set ahead of the
+ * switch-on: nothing is refused before it.
  */
 export const DEVICE_SIGNATURE_REQUIRED_CODE = 'DEVICE_SIGNATURE_REQUIRED';
 
@@ -46,10 +56,35 @@ export const DEVICE_SIGNATURE_REQUIRED_PROXY_MESSAGE =
   `Posts in waves are now signed by the author's own device, ` +
   `so a proxy can't post, edit or react for them.`;
 
+const requirementLogger = Logger.get('DEVICE_SIGNATURE_REQUIRED');
+let warnedNoSwitchOn = false;
+
+/**
+ * Whether writes without a device signature are refused now: the flag is
+ * on and waves have switched on (wavesSwitchedOn). Read on each request,
+ * so a process that started before WAVES_SWITCH_ON_AT refuses from that
+ * time on. A wave that stays on 6529.io is never refused (see
+ * assertUnsignedWriteAllowed). The flag with no switch-on set at all
+ * (neither WAVES_SWITCH_ON_AT nor FEATURE_WAVES_ON_CHAIN) refuses nothing,
+ * and says so once; a WAVES_SWITCH_ON_AT that is not a time is logged by
+ * wavesSwitchedOn.
+ */
 export function isDeviceSignatureRequired(
-  env: Record<string, string | undefined> = process.env
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  nowMillis: number = Date.now()
 ): boolean {
-  return env.FEATURE_WAVES_DEVICE_SIGNATURE_REQUIRED === 'true';
+  if (env.FEATURE_WAVES_DEVICE_SIGNATURE_REQUIRED !== 'true') return false;
+  if (
+    !warnedNoSwitchOn &&
+    env[WAVES_ON_CHAIN_FLAG_ENV] !== 'true' &&
+    !env[WAVES_SWITCH_ON_AT_ENV]?.trim()
+  ) {
+    warnedNoSwitchOn = true;
+    requirementLogger.warn(
+      `[DEVICE SIGNATURES NOT REQUIRED] FEATURE_WAVES_DEVICE_SIGNATURE_REQUIRED is true, but neither ${WAVES_SWITCH_ON_AT_ENV} nor ${WAVES_ON_CHAIN_FLAG_ENV} is set: nothing is refused until one is`
+    );
+  }
+  return wavesSwitchedOn(env, nowMillis);
 }
 
 export class DeviceSignatureRequiredException extends ApiCompliantException {
@@ -261,7 +296,11 @@ export class DeviceSignedWritesService {
     private readonly db: DeviceSigningDb,
     private readonly identities: IdentitiesDb,
     private readonly drops: DropsDb,
-    private readonly now: () => number = () => Date.now()
+    private readonly now: () => number = () => Date.now(),
+    private readonly waveScope: Pick<
+      WaveRelayScope,
+      'staysOnSite'
+    > = waveRelayScope
   ) {}
 
   /**
@@ -288,7 +327,7 @@ export class DeviceSignedWritesService {
     ctx: SignedWriteContext
   ): Promise<T> {
     if (envelope === undefined) {
-      if (isDeviceSignatureRequired()) {
+      if (this.signatureRequired()) {
         await this.assertUnsignedWriteAllowed({ waveId }, ctx);
       }
       return write();
@@ -343,7 +382,7 @@ export class DeviceSignedWritesService {
     ctx: SignedWriteContext
   ): Promise<T> {
     if (envelope === undefined) {
-      if (isDeviceSignatureRequired()) {
+      if (this.signatureRequired()) {
         await this.assertUnsignedWriteAllowed({ waveId, dropId }, ctx);
       }
       return this.runUnsigned(kind, dropId, write, ctx);
@@ -560,9 +599,14 @@ export class DeviceSignedWritesService {
     return result;
   }
 
+  /** isDeviceSignatureRequired at this service's clock, per request. */
+  private signatureRequired(): boolean {
+    return isDeviceSignatureRequired(process.env, this.now());
+  }
+
   /**
    * Refuses a write without a device signature once they are required,
-   * except in a direct message.
+   * except in a direct message or another wave that stays on 6529.io.
    */
   private async assertUnsignedWriteAllowed(
     target: { readonly waveId?: string; readonly dropId?: string },
@@ -587,6 +631,11 @@ export class DeviceSignedWritesService {
     if (!wave || wave.is_direct_message) {
       return;
     }
+    // A wave that stays on 6529.io stays open as today: its drops never go
+    // to the relays.
+    if (await this.waveScope.staysOnSite(wave.id)) {
+      return;
+    }
     throw new DeviceSignatureRequiredException(
       ctx.authenticationContext.isAuthenticatedAsProxy()
         ? DEVICE_SIGNATURE_REQUIRED_PROXY_MESSAGE
@@ -603,7 +652,7 @@ export class DeviceSignedWritesService {
     dropId: string,
     ctx: SignedWriteContext
   ): Promise<void> {
-    if (!isDeviceSignatureRequired()) {
+    if (!this.signatureRequired()) {
       return;
     }
     const drop = await this.db.executeNativeQueriesInTransaction((connection) =>

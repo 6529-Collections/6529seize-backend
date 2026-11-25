@@ -131,6 +131,11 @@ export interface WaveRelayPublisherOptions {
   readonly grantRate: number;
   readonly grantBurst: number;
   /**
+   * Events one relay is sent per run, at most (passed-over ones count):
+   * a backlog drains on every relay in step.
+   */
+  readonly maxPerRelayRun: number;
+  /**
    * After this many runs failed at the same event (an exception or a lost
    * connection while sending it), pass it over. Runs stopped by a "not now"
    * refusal (isRetryableRejection) don't count: that event is sent again,
@@ -210,9 +215,15 @@ export class WaveRelayPublisher {
   ): Promise<RelayRunResult[]> {
     const deadline = this.now() + options.budgetMs;
     const results: RelayRunResult[] = [];
-    // One relay after another: the run ends with every relay settled.
-    for (const relay of options.relays) {
-      results.push(await this.publishToRelay(relay, deadline, options));
+    // One relay after another, each with an equal share of the time left,
+    // so a backlog on one can't take the run from the next: the run ends
+    // with every relay settled.
+    for (let i = 0; i < options.relays.length; i++) {
+      const left = Math.max(0, deadline - this.now());
+      const share = this.now() + left / (options.relays.length - i);
+      results.push(
+        await this.publishToRelay(options.relays[i], share, options)
+      );
     }
     return results;
   }
@@ -229,12 +240,13 @@ export class WaveRelayPublisher {
     let stoppedNotNow = false;
     let connection: RelayConnection | null = null;
     const pacer = new GrantPacer(options.grantRate, options.grantBurst);
+    let settled = 0;
     try {
-      while (this.now() < deadline) {
+      while (this.now() < deadline && settled < options.maxPerRelayRun) {
         const batch = await this.events.candidatesAfter(
           cursor,
           this.now() - options.graceMs,
-          options.batchSize
+          Math.min(options.batchSize, options.maxPerRelayRun - settled)
         );
         if (!batch.length) break;
         const grants = await this.events.grants(
@@ -249,6 +261,7 @@ export class WaveRelayPublisher {
           cursor,
           options
         );
+        settled += outcome.done;
         totals.published += outcome.counts.published;
         totals.duplicates += outcome.counts.duplicates;
         totals.rejected += outcome.counts.rejected;
