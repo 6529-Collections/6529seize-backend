@@ -34,6 +34,8 @@ import {
   mainStageRequestsFirstDay,
   mainStageDecisionIdsOf,
   mainStageFirst,
+  NOT_YET_VALID_CODE,
+  isNotYetRefusal,
   WAVES_IMPORT_RUNNING_CODE,
   WavesSettlementSender
 } from './waves-settlement.sender';
@@ -1714,5 +1716,97 @@ describe('WavesSettlementSender: never included, against a node that drops at ex
 
   it("counts at most 99 requests in a failing step's first 24 hours", () => {
     expect(mainStageRequestsFirstDay()).toBe(99);
+  });
+});
+
+describe('WavesSettlementSender: NOT_YET_VALID is "not yet"', () => {
+  const notYetValid = (path: string) =>
+    new ChainGatewayError(
+      `${path}: inadmissible: 0x0302 NOT_YET_VALID, detail 0`,
+      422,
+      'inadmissible',
+      path
+    );
+
+  it('reads 0x0302 NOT_YET_VALID as "not yet", and nothing like it', () => {
+    expect(isNotYetRefusal(NOT_YET_VALID_CODE)).toBe(true);
+    expect(isNotYetRefusal('0x0302')).toBe(true);
+    expect(isNotYetRefusal('NOT_YET_VALID')).toBe(true);
+    expect(isNotYetRefusal(WAVES_IMPORT_RUNNING_CODE)).toBe(true);
+    expect(isNotYetRefusal(0x0305, 'FEE_UNCOVERED')).toBe(false);
+    expect(isNotYetRefusal('0x0302ab')).toBe(false);
+  });
+
+  it.each(['draft', 'admission', 'block'] as const)(
+    'sends a step again on the next run after NOT_YET_VALID (%s), with no failure, no try and no wait',
+    async (where) => {
+      const { gateway, store, run, later } = setup({ mainStage: [D1] });
+      gateway.due(D1);
+      // Two paid failures first: the next try would wait 2 minutes.
+      for (let n = 0; n < 2; n++) {
+        while (!(await run()).sent) later();
+        gateway.land(gateway.lastTx(), 'failed');
+      }
+      later(2 * MINUTE);
+      const getDraft = gateway.getDraft.bind(gateway);
+      if (where === 'draft') {
+        gateway.getDraft = async () => {
+          throw notYetValid('/v1/draft');
+        };
+      }
+      if (where === 'admission') {
+        gateway.submitAnswer = () => notYetValid('/v1/submit');
+      }
+      const first = await run();
+      if (where === 'block') {
+        expect(first.sent).toBe(1);
+        gateway.land(gateway.lastTx(), 'failed', {
+          code: NOT_YET_VALID_CODE,
+          name: 'NOT_YET_VALID',
+          feePaid: '900'
+        });
+      } else {
+        expect(first).toEqual(expect.objectContaining({ waiting: 1 }));
+        expect(store.rows.get(D1)).toEqual(
+          expect.objectContaining({ status: 'not_yet', failures: 2 })
+        );
+      }
+      gateway.getDraft = getDraft;
+      gateway.submitAnswer = () => ({ txId: '', accepted: true });
+      const before = gateway.submitted.length;
+      later();
+      expect(await run()).toEqual(expect.objectContaining({ sent: 1 }));
+      expect(gateway.submitted).toHaveLength(before + 1);
+      expect(store.rows.get(D1)).toEqual(
+        expect.objectContaining({ status: 'submitted', failures: 2 })
+      );
+      expect(logged(warn, '[SETTLEMENT FAILED]').length).toBe(2);
+      expect(logged(warn, '[SETTLEMENT REFUSED]')).toEqual([]);
+    }
+  );
+
+  it('keeps the never-included count across NOT_YET_VALID', async () => {
+    const { gateway, store, run, later } = setup({ mainStage: [D1] });
+    gateway.due(D1);
+    await run();
+    later(SETTLEMENT_PAST_EXPIRY_MS);
+    gateway.submitAnswer = () => notYetValid('/v1/submit');
+    await run();
+    expect(store.rows.get(D1)).toEqual(
+      expect.objectContaining({
+        status: 'not_yet',
+        last_error: expect.stringMatching(
+          /NOT_YET_VALID.*never included \(1 in a row\)/
+        )
+      })
+    );
+    gateway.submitAnswer = () => ({ txId: '', accepted: true });
+    later();
+    await run();
+    later(SETTLEMENT_PAST_EXPIRY_MS);
+    await run();
+    expect(logged(error, '[MAIN STAGE SETTLEMENT NOT INCLUDED]')[0]).toContain(
+      '2 requests in a row'
+    );
   });
 });

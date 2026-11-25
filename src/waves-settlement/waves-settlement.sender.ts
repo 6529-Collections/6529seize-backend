@@ -68,9 +68,13 @@ import {
  * request on its nonce lane, up to SETTLEMENT_RESEND_AFTER_MS.
  *
  * Nothing is sent while the chain's waves import is not complete
- * (GET /v1/waves/import); the chain's WAVES_IMPORT_RUNNING (0x2507), on a
- * draft, at admission or in a block, is "not yet": no failure, and the step
- * is tried again on the next run, whatever its earlier tries.
+ * (GET /v1/waves/import). Two refusals are "not yet", on a draft, at
+ * admission or in a block: the chain's WAVES_IMPORT_RUNNING (0x2507), and
+ * NOT_YET_VALID (0x0302), a request whose notBefore the chain's head hasn't
+ * reached (right after the import, the head can be a slot behind the
+ * node's clock). Neither is a failure or a try; the step is drafted, signed
+ * and sent again on the next run, whatever its earlier tries, and a run of
+ * requests never included is kept.
  *
  * Settings: WAVES_SETTLEMENT_SENDER_KEY (required);
  * MAIN_STAGE_DECISION_IDS; WAVES_SETTLEMENT_HOLD_DECISION_IDS (decision
@@ -130,6 +134,27 @@ export function isWavesImportRunning(...parts: unknown[]): boolean {
     typeof part === 'number'
       ? part === WAVES_IMPORT_RUNNING_CODE
       : typeof part === 'string' && /0x2507\b|WAVES_IMPORT_RUNNING/i.test(part)
+  );
+}
+
+/**
+ * The chain's refusal of a request whose notBefore its head hasn't reached
+ * (NOT_YET_VALID): not a failure, only "not yet".
+ */
+export const NOT_YET_VALID_CODE = 0x0302;
+
+/**
+ * Whether any of these (a code, a name, a message) is a "not yet" refusal:
+ * WAVES_IMPORT_RUNNING or NOT_YET_VALID.
+ */
+export function isNotYetRefusal(...parts: unknown[]): boolean {
+  return (
+    isWavesImportRunning(...parts) ||
+    parts.some((part) =>
+      typeof part === 'number'
+        ? part === NOT_YET_VALID_CODE
+        : typeof part === 'string' && /0x0302\b|NOT_YET_VALID/i.test(part)
+    )
   );
 }
 
@@ -566,12 +591,12 @@ export class WavesSettlementSender {
         status = tx && TX_STATUSES.includes(tx.status) ? tx.status : 'unknown';
         if (
           tx?.status === 'failed' &&
-          isWavesImportRunning(tx.result?.code, tx.result?.name)
+          isNotYetRefusal(tx.result?.code, tx.result?.name)
         ) {
           // Not yet: no failure, and tried again at once.
           status = 'not_yet';
           attempts = Math.max(0, attempts - 1);
-          lastError = `not yet in block ${tx.height}: the waves import is running`;
+          lastError = `not yet in block ${tx.height}: ${tx.result?.code} ${tx.result?.name}`;
           logger.info(
             `[SETTLEMENT NOT YET] [decision ${row.decision_id}] [tx ${txId}] ${lastError}`
           );
@@ -719,7 +744,7 @@ export class WavesSettlementSender {
     } catch (error) {
       if (error instanceof BudgetSpent) throw error;
       const lastError = `draft: ${describe(error)}`;
-      if (importRunning(error)) {
+      if (notYetRefusal(error)) {
         return this.notYet(
           base,
           plan,
@@ -777,7 +802,7 @@ export class WavesSettlementSender {
     } catch (error) {
       if (error instanceof BudgetSpent) throw error;
       const lastError = `submit: ${describe(error)}`;
-      if (isRefusal(error) && importRunning(error)) {
+      if (isRefusal(error) && notYetRefusal(error)) {
         return this.notYet(
           base,
           plan,
@@ -988,11 +1013,14 @@ function stepOf(settlement: ChainSettlement): Step | null {
   return readable ? { decisionId, occurrence, next, maxEntries } : null;
 }
 
-/** The chain's WAVES_IMPORT_RUNNING, as a gateway error carries it. */
-function importRunning(error: unknown): boolean {
+/**
+ * A "not yet" refusal (WAVES_IMPORT_RUNNING or NOT_YET_VALID), as a gateway
+ * error carries it.
+ */
+function notYetRefusal(error: unknown): boolean {
   return (
     error instanceof ChainGatewayError &&
-    isWavesImportRunning(error.code, error.message)
+    isNotYetRefusal(error.code, error.message)
   );
 }
 
