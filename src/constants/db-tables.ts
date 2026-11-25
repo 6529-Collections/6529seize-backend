@@ -38,6 +38,8 @@ export const ABUSIVENESS_DETECTION_RESULTS_TABLE =
 export const CIC_STATEMENTS_TABLE = 'cic_statements';
 export const RATINGS_SNAPSHOTS_TABLE = 'ratings_snapshots';
 export const USER_GROUPS_TABLE = 'community_groups';
+export const USER_GROUP_VISIBILITY_REQUESTS_TABLE =
+  'community_group_visibility_requests';
 export const PROFILE_GROUPS_TABLE = 'profile_groups';
 export const PROFILES_TABLE = 'profiles';
 export const PROFILES_ACTIVITY_LOGS_TABLE = 'profile_activity_logs';
@@ -54,6 +56,35 @@ export const SIGNED_RECORD_LOG_SEGMENTS_TABLE = 'signed_record_log_segments';
 export const WALLET_CONNECTION_SHARES_TABLE = 'wallet_connection_shares';
 export const IDENTITIES_TABLE = 'identities';
 export const ADDRESS_CONSOLIDATION_KEY = 'address_consolidation_keys';
+/** 6529 chain operations waiting for more signatures (a join's two wallets). */
+export const CHAIN_PENDING_OPERATIONS_TABLE = 'chain_pending_operations';
+export const CHAIN_PENDING_OPERATION_SIGNERS_TABLE =
+  'chain_pending_operation_signers';
+/** 6529 chain principal id -> the 6529.io profile id it is mirrored as. */
+export const IDENTITY_CHAIN_PRINCIPALS_TABLE = 'identity_chain_principals';
+/** Where the identity mirror is in the chain gateway's change feed. */
+export const IDENTITY_CHAIN_MIRROR_STATE_TABLE = 'identity_chain_mirror_state';
+/** Each REP and NIC rating change on the chain (notifications). */
+export const IDENTITY_CHAIN_RATING_EVENTS_TABLE =
+  'identity_chain_rating_events';
+/** Each chain rating's value and height, as the rating events follower saw it. */
+export const IDENTITY_CHAIN_RATING_LEDGER_TABLE =
+  'identity_chain_rating_ledger';
+/** The chain's REP category names, as the rating events follower read them. */
+export const IDENTITY_CHAIN_RATING_CATEGORIES_TABLE =
+  'identity_chain_rating_categories';
+/** Each bound wallet's principal and the height it has been bound since. */
+export const IDENTITY_CHAIN_WALLETS_TABLE = 'identity_chain_wallets';
+/** 6529.io's placeholder profiles as the identity mirror first found them. */
+export const IDENTITY_CHAIN_PLACEHOLDERS_TABLE = 'identity_chain_placeholders';
+/** Each wallet's first principal, when the mirror followed it from the import. */
+export const IDENTITY_CHAIN_FIRST_BINDINGS_TABLE =
+  'identity_chain_first_bindings';
+/** Wallets the identity mirror regrouped, until their tables are re-keyed. */
+export const IDENTITY_CHAIN_REGROUPS_TABLE = 'identity_chain_regroups';
+/** Identities whose founder no history could tell yet, and since when. */
+export const IDENTITY_CHAIN_FOUNDER_WAITS_TABLE =
+  'identity_chain_founder_waits';
 export const TEAM_TABLE = 'team';
 export const DISTRIBUTION_TABLE = 'distribution';
 export const DISTRIBUTION_PHOTO_TABLE = 'distribution_photo';
@@ -66,6 +97,9 @@ export const LATEST_TDH_GLOBAL_HISTORY_TABLE = 'latest_tdh_global_history';
 export const LATEST_TDH_HISTORY_TABLE = 'latest_tdh_history';
 export const RECENT_TDH_HISTORY_TABLE = 'recent_tdh_history';
 export const NFTDELEGATION_BLOCKS_TABLE = 'nftdelegation_blocks';
+/** NFTDelegation logs after the identity freeze block: recorded, never applied. */
+export const NFTDELEGATION_LOGS_AFTER_FREEZE_TABLE =
+  'nftdelegation_logs_after_freeze';
 export const CONSOLIDATIONS_TABLE = 'consolidations';
 export const DELEGATIONS_TABLE = 'delegations';
 export const DROP_RELATIONS_TABLE = 'drop_relations';
@@ -78,6 +112,7 @@ export const REMEMES_TABLE = 'rememes';
 export const REMEMES_UPLOADS = 'uploads_rememes';
 export const RATINGS_TABLE = 'ratings';
 export const RATING_CREDIT_LOCKS_TABLE = 'rating_credit_locks';
+export const REP_RATING_REMOVALS_TABLE = 'rep_rating_removals';
 export const DROPS_VOTES_CREDIT_SPENDINGS_TABLE =
   'drops_votes_credit_spendings';
 export const DROP_VOTER_STATE_TABLE = 'drop_voter_states';
@@ -168,6 +203,8 @@ export const PROFILE_CMS_UPLOADS_TABLE = 'profile_cms_uploads';
 export const PROFILE_CMS_POINTER_EVENTS_TABLE = 'profile_cms_pointer_events';
 export const PROFILE_CMS_PUBLISH_SIGNATURES_TABLE =
   'profile_cms_publish_signatures';
+export const PROFILE_CMS_CHAIN_HEADS_TABLE = 'profile_cms_chain_heads';
+export const PROFILE_CMS_CHAIN_PARKED_TABLE = 'profile_cms_chain_parked';
 export const WAVES_TABLE = 'waves';
 export const WAVES_METADATA_TABLE = 'waves_metadatas';
 export const OFFICIAL_WAVES_TABLE = 'official_waves';
@@ -339,6 +376,16 @@ export const COMPETITION_LEGACY_MIRROR_PERMITS_TABLE =
 export const COMPETITION_LEGACY_EXECUTION_EFFECTS_TABLE =
   'competition_legacy_execution_effects';
 
+export const DROP_FORGE_LAUNCHES_TABLE = 'drop_forge_launches';
+export const DROP_FORGE_SIGNERS_TABLE = 'drop_forge_signers';
+export const DROP_FORGE_PREPARATIONS_TABLE = 'drop_forge_preparations';
+export const DROP_FORGE_JOBS_TABLE = 'drop_forge_jobs';
+export const DROP_FORGE_EVIDENCE_TABLE = 'drop_forge_evidence';
+export const DROP_FORGE_SETTINGS_TABLE = 'drop_forge_settings';
+export const DROP_FORGE_FUNDING_TABLE = 'drop_forge_funding';
+export const DROP_FORGE_READINESS_TABLE = 'drop_forge_readiness_checks';
+export const TRANSACTION_SCAN_CHECKPOINTS_TABLE =
+  'transaction_scan_checkpoints';
 // End-to-end encrypted DMs and groups (D109). The server stores ciphertext
 // and delivery metadata only; see docs/e2ee-messaging.md.
 export const E2EE_DEVICES_TABLE = 'e2ee_devices';

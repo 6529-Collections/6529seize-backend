@@ -2,6 +2,7 @@ import { WaveHubCreationService } from './wave-hub-creation.service';
 import { ApiCreateWaveHubRequest } from '@/api/generated/models/ApiCreateWaveHubRequest';
 import { AuthenticationContext } from '@/auth-context';
 import { RequestContext, getRequestScopedPromise } from '@/request.context';
+import { stubWavesScope } from '@/tests/fixtures/waves-scope.fixture';
 
 const mockPrepare = jest.fn();
 const mockCreate = jest.fn();
@@ -24,6 +25,11 @@ jest.mock('@/competitions/competition-command.repository', () => ({
     command: (...args: unknown[]) => mockCommand(...args)
   }
 }));
+// Waves scope lookups read the database; here every wave moves.
+beforeEach(() => {
+  stubWavesScope();
+});
+
 describe('Native private hub creation', () => {
   const request = {
     idempotency_key: 'create-private-hub',

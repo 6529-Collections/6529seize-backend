@@ -179,7 +179,7 @@ async function seedLegacy() {
     { a: A }
   );
   await execute(
-    `INSERT INTO identity_chain_principals VALUES (:p, 'profile-1', 'LEGACY', 0)`,
+    `INSERT INTO identity_chain_principals (principal_id, profile_id, origin, created_at) VALUES (:p, 'profile-1', 'LEGACY', 0)`,
     { p: P1 }
   );
   await execute(
@@ -236,7 +236,7 @@ async function seedWideIdentity(): Promise<{
     { k: wideKey, w: W }
   );
   await execute(
-    `INSERT INTO identity_chain_principals VALUES (:p, 'profile-9', 'LEGACY', 0)`,
+    `INSERT INTO identity_chain_principals (principal_id, profile_id, origin, created_at) VALUES (:p, 'profile-9', 'LEGACY', 0)`,
     { p: P9 }
   );
   return { W, P9, wideKey };
@@ -2584,7 +2584,7 @@ describeWithSeed('identity writers after the switch', [], () => {
       { leaver }
     );
     await execute(
-      `INSERT INTO identity_chain_principals VALUES (:p, 'profile-10', 'LEGACY', 0)`,
+      `INSERT INTO identity_chain_principals (principal_id, profile_id, origin, created_at) VALUES (:p, 'profile-10', 'LEGACY', 0)`,
       { p: P10 }
     );
 

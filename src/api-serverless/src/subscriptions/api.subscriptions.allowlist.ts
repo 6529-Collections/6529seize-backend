@@ -1,3 +1,5 @@
+import { RequestContext } from '@/request.context';
+import { resetDistributionPreparation } from '@/drop-forge/drop-forge.preparation.repository';
 import { Request } from 'express';
 import { Logger } from '@/logging';
 import fetch from 'node-fetch';
@@ -17,7 +19,7 @@ import {
   BadRequestException,
   CustomApiCompliantException
 } from '../../../exceptions';
-import { sqlExecutor } from '../../../sql-executor';
+import { ConnectionWrapper, sqlExecutor } from '../../../sql-executor';
 import { equalIgnoreCase } from '../../../strings';
 import { mergeDuplicateWallets } from '@/api/api-wallet-helpers';
 import { getAuthenticatedWalletOrNull } from '../auth/auth';
@@ -84,12 +86,15 @@ export function authenticateSubscriptionsAdmin(
   return isAdmin;
 }
 
+type EmmaRequestMode = 'manual' | 'background';
+
 export async function validateDistribution(
   auth: string,
   allowlistId: string,
-  phaseId?: string
+  phaseId?: string,
+  mode: EmmaRequestMode = 'manual'
 ): Promise<AllowlistResponse> {
-  const operations = await fetchDistributionOperations(auth, allowlistId);
+  const operations = await fetchDistributionOperations(auth, allowlistId, mode);
   const hasRanDelegationMapping = operations.some(
     (o) => o.code === 'MAP_RESULTS_TO_DELEGATED_WALLETS'
   );
@@ -103,59 +108,78 @@ export async function validateDistribution(
   };
 }
 
-export async function fetchDistributionOperations(
+export function fetchDistributionOperations(
   auth: string,
-  allowlistId: string
+  allowlistId: string,
+  mode: EmmaRequestMode = 'manual'
 ): Promise<ALOperationsResponse[]> {
-  const url = `${process.env.ALLOWLIST_API_ENDPOINT}/allowlists/${allowlistId}/operations`;
-  const response = await fetch(url, {
-    headers: {
-      accept: 'application/json',
-      Authorization: auth
-    }
-  });
-  const json = await response.json();
-  if (response.status !== 200) {
-    throw new CustomApiCompliantException(response.status, json.message);
-  }
-  return json;
+  return fetchEmma(
+    `/allowlists/${encodeURIComponent(allowlistId)}/operations`,
+    auth,
+    mode
+  );
+}
+
+export function fetchDistributionPhases(
+  auth: string,
+  allowlistId: string,
+  mode: EmmaRequestMode = 'manual'
+): Promise<{ id: string; name: string }[]> {
+  return fetchEmma(
+    `/allowlists/${encodeURIComponent(allowlistId)}/phases`,
+    auth,
+    mode
+  );
 }
 
 export async function fetchPhaseName(
   auth: string,
   allowlistId: string,
-  phaseId: string
+  phaseId: string,
+  mode: EmmaRequestMode = 'manual'
 ): Promise<string> {
-  const url = `${process.env.ALLOWLIST_API_ENDPOINT}/allowlists/${allowlistId}/phases/${phaseId}`;
-  const response = await fetch(url, {
-    headers: {
-      accept: 'application/json',
-      Authorization: auth
-    }
-  });
-  const json = await response.json();
-  if (response.status !== 200) {
-    throw new CustomApiCompliantException(response.status, json.message);
-  }
-  return json.name;
+  const phase = await fetchEmma<{ name: string }>(
+    `/allowlists/${encodeURIComponent(allowlistId)}/phases/${encodeURIComponent(phaseId)}`,
+    auth,
+    mode
+  );
+  return phase.name;
 }
 
-export async function fetchPhaseResults(
+export function fetchPhaseResults(
   auth: string,
   allowlistId: string,
-  phaseId: string
+  phaseId: string,
+  mode: EmmaRequestMode = 'manual'
 ): Promise<ALResultsResponse[]> {
-  const url = `${process.env.ALLOWLIST_API_ENDPOINT}/allowlists/${allowlistId}/results/phases/${phaseId}`;
-  const response = await fetch(url, {
+  return fetchEmma(
+    `/allowlists/${encodeURIComponent(allowlistId)}/results/phases/${encodeURIComponent(phaseId)}`,
+    auth,
+    mode
+  );
+}
+
+async function fetchEmma<T>(
+  path: string,
+  auth: string,
+  mode: EmmaRequestMode
+): Promise<T> {
+  const background = mode === 'background';
+  const response = await fetch(`${process.env.ALLOWLIST_API_ENDPOINT}${path}`, {
+    ...(background && { timeout: 20000, size: 32 * 1024 * 1024 }),
     headers: {
       accept: 'application/json',
       Authorization: auth
     }
   });
+  if (background && (response.status === 401 || response.status === 403))
+    throw new CustomApiCompliantException(
+      response.status,
+      'EMMA access expired or was denied'
+    );
   const json = await response.json();
-  if (response.status !== 200) {
+  if (response.status !== 200)
     throw new CustomApiCompliantException(response.status, json.message);
-  }
   return json;
 }
 
@@ -184,14 +208,16 @@ function buildSubscriptionMaps(filteredSubscriptions: NFTFinalSubscription[]): {
 /**
  * Writes a phase pull's phase, size and positions to the final rows, by id,
  * in each target table. The identity rows' write and its journal entry go
- * in one transaction.
+ * in one transaction: the caller's, when it passes a connection (the
+ * distribution preparation's), else one of its own.
  */
 async function writePhases(
   card: { readonly contract: string; readonly tokenId: number },
   phaseName: string,
   phaseSubscriptions: number,
   ranked: ReadonlyArray<{ readonly id?: number; readonly rank?: number }>,
-  targets: readonly string[]
+  targets: readonly string[],
+  ctx: RequestContext = {}
 ): Promise<void> {
   if (ranked.length === 0) {
     return;
@@ -208,7 +234,7 @@ async function writePhases(
   const journaled = targets.includes(IDENTITY_SUBSCRIPTION_TABLES.final);
   // Every target, and the identity rows' journal entry, in one transaction:
   // after the switch the rollback copy never misses a phase.
-  await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
+  const write = async (connection: ConnectionWrapper<any>) => {
     const options = { wrappedConnection: connection };
     const before = journaled
       ? await journalBefore(
@@ -251,7 +277,12 @@ async function writePhases(
         options
       );
     }
-  });
+  };
+  if (ctx.connection) {
+    await write(ctx.connection);
+  } else {
+    await sqlExecutor.executeNativeQueriesInTransaction(write);
+  }
 }
 
 async function buildAirdropsAndUpdateSubscriptions(
@@ -259,7 +290,8 @@ async function buildAirdropsAndUpdateSubscriptions(
   filteredSubscriptions: NFTFinalSubscription[],
   subscriptionRanks: Map<string, number>,
   phaseName: string,
-  targets: readonly string[]
+  targets: readonly string[],
+  ctx: RequestContext = {}
 ): Promise<ResultsResponse[]> {
   const phaseSubscriptions = filteredSubscriptions.length;
   const airdrops: ResultsResponse[] = filteredSubscriptions.map((sub) => ({
@@ -275,7 +307,8 @@ async function buildAirdropsAndUpdateSubscriptions(
       id: sub.id,
       rank: subscriptionRanks.get(sub.consolidation_key)
     })),
-    targets
+    targets,
+    ctx
   );
 
   return airdrops;
@@ -421,7 +454,8 @@ export async function splitAllowlistResults(
   contract: string,
   tokenId: number,
   phaseName: string,
-  results: ALResultsResponse[]
+  results: ALResultsResponse[],
+  ctx: RequestContext = {}
 ): Promise<SplitResult> {
   const { mode, source, targets } = await phaseTargets();
   const result = await splitAllowlistResultsOn(
@@ -430,7 +464,8 @@ export async function splitAllowlistResults(
     phaseName,
     results,
     source,
-    targets
+    targets,
+    ctx
   );
   await shadowSplit(
     mode,
@@ -446,7 +481,8 @@ export async function splitAllowlistResults(
           phaseName,
           results,
           IDENTITY_SUBSCRIPTION_TABLES,
-          [IDENTITY_SUBSCRIPTION_TABLES.final]
+          [IDENTITY_SUBSCRIPTION_TABLES.final],
+          ctx
         )
       ).airdrops
   );
@@ -459,7 +495,8 @@ async function splitAllowlistResultsOn(
   phaseName: string,
   results: ALResultsResponse[],
   source: SubscriptionTables,
-  targets: readonly string[]
+  targets: readonly string[],
+  ctx: RequestContext = {}
 ): Promise<SplitResult> {
   const wallets = results.map((r) => r.wallet.toLowerCase());
   const listHasDuplicates = new Set(wallets).size !== wallets.length;
@@ -468,12 +505,18 @@ async function splitAllowlistResultsOn(
   }
 
   const [subscriptions, walletMintingDelegations] = await Promise.all([
-    fetchAllNftFinalSubscriptionsForContractAndToken(contract, tokenId, source),
+    fetchAllNftFinalSubscriptionsForContractAndToken(
+      contract,
+      tokenId,
+      source,
+      ctx
+    ),
     fetchProcessedDelegations(
       MEMES_CONTRACT,
       USE_CASE_MINTING,
       undefined,
-      equalIgnoreCase(contract, MEMES_CONTRACT) ? tokenId : null
+      equalIgnoreCase(contract, MEMES_CONTRACT) ? tokenId : null,
+      ctx
     )
   ]);
 
@@ -486,7 +529,8 @@ async function splitAllowlistResultsOn(
     filteredSubscriptions,
     subscriptionRanks,
     phaseName,
-    targets
+    targets,
+    ctx
   );
   const allowlists = buildAllowlists(
     results,
@@ -506,7 +550,8 @@ async function splitAllowlistResultsOn(
 
 export async function getPublicSubscriptions(
   contract: string,
-  tokenId: number
+  tokenId: number,
+  ctx: RequestContext = {}
 ): Promise<{
   airdrops: ResultsResponse[];
 }> {
@@ -515,7 +560,8 @@ export async function getPublicSubscriptions(
     contract,
     tokenId,
     source,
-    targets
+    targets,
+    ctx
   );
   await shadowSplit(
     mode,
@@ -529,7 +575,8 @@ export async function getPublicSubscriptions(
           contract,
           tokenId,
           IDENTITY_SUBSCRIPTION_TABLES,
-          [IDENTITY_SUBSCRIPTION_TABLES.final]
+          [IDENTITY_SUBSCRIPTION_TABLES.final],
+          ctx
         )
       ).airdrops
   );
@@ -540,7 +587,8 @@ async function getPublicSubscriptionsOn(
   contract: string,
   tokenId: number,
   source: SubscriptionTables,
-  targets: readonly string[]
+  targets: readonly string[],
+  ctx: RequestContext = {}
 ): Promise<{
   airdrops: ResultsResponse[];
 }> {
@@ -548,7 +596,8 @@ async function getPublicSubscriptionsOn(
     await fetchAllPublicFinalSubscriptionsForContractAndToken(
       contract,
       tokenId,
-      source
+      source,
+      ctx
     );
 
   const subscriptionRanks = new Map<string, number>();
@@ -570,7 +619,8 @@ async function getPublicSubscriptionsOn(
       id: sub.id,
       rank: subscriptionRanks.get(sub.consolidation_key)
     })),
-    targets
+    targets,
+    ctx
   );
 
   const mergedAirDrops = mergeDuplicateWallets(airdrops);
@@ -628,8 +678,10 @@ export async function resetAllowlist(contract: string, tokenId: number) {
     mode === 'TRUTH'
       ? [SUBSCRIPTIONS_NFTS_FINAL_TABLE, IDENTITY_SUBSCRIPTION_TABLES.final]
       : [SUBSCRIPTIONS_NFTS_FINAL_TABLE];
-  await sqlExecutor.executeNativeQueriesInTransaction(
-    async (wrappedConnection) => {
+  await resetDistributionPreparation(
+    contract,
+    tokenId,
+    async ({ connection: wrappedConnection }) => {
       const resetBefore =
         mode === 'TRUTH'
           ? await phaseResetBefore(contract, tokenId, { wrappedConnection })

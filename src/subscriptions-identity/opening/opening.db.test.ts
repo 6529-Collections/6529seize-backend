@@ -106,7 +106,7 @@ async function seedLegacy() {
     { k: PAIR, a: A }
   );
   await execute(
-    `INSERT INTO identity_chain_principals VALUES (:p, 'profile-1', 'LEGACY', 0)`,
+    `INSERT INTO identity_chain_principals (principal_id, profile_id, origin, created_at) VALUES (:p, 'profile-1', 'LEGACY', 0)`,
     { p: P1 }
   );
   await execute(
