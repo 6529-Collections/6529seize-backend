@@ -275,7 +275,8 @@ export class ArweaveUploadSession {
         path: `tx/${id}/status`,
         method: 'GET',
         validate: (body, status) =>
-          status === 202 || isTransactionConfirmationText(body)
+          status === 202 ||
+          (status === 200 && isTransactionConfirmationText(body))
       });
       return true;
     } catch (error) {
@@ -382,6 +383,7 @@ export class ArweaveUploadSession {
     const index = (firstGateway + attempt) % GATEWAYS.length;
     const gateway = GATEWAYS[index];
     let requestedOperation = operation;
+    let registration: Promise<void> | undefined;
     try {
       if (operation.path === 'chunk') {
         requestedOperation = {
@@ -389,7 +391,8 @@ export class ArweaveUploadSession {
           method: 'POST',
           body: this.signedHeader
         };
-        await this.ensureHeader(gateway, requestedOperation);
+        registration = this.ensureHeader(gateway, requestedOperation);
+        await registration;
         requestedOperation = operation;
       }
       const body = await this.fetch(gateway, operation);
@@ -402,6 +405,12 @@ export class ArweaveUploadSession {
         error instanceof GatewayError
           ? error
           : new GatewayError(0, 'network_error', true);
+      this.discardMissingHeader(
+        gateway,
+        registration,
+        requestedOperation,
+        failure
+      );
       const context = `[TX ${this.transactionId}] [GATEWAY ${gateway}] [OP ${requestedOperation.method} ${requestedOperation.path}] [CHUNK ${operation.chunk ?? '-'}] [ATTEMPT ${attempt + 1}/${attempts}] [STATUS ${failure.status}] [ERROR ${failure.code}]`;
       this.logger.warn(`[ARWEAVE REQUEST FAILED] ${context}`);
       if (!failure.retryable || attempt + 1 === attempts)
@@ -411,6 +420,21 @@ export class ArweaveUploadSession {
       await this.pause(retryDelay(operation, attempt));
       return this.requestAttempt(operation, firstGateway, attempt + 1);
     }
+  }
+
+  private discardMissingHeader(
+    gateway: string,
+    registration: Promise<void> | undefined,
+    operation: Operation,
+    failure: GatewayError
+  ): void {
+    if (
+      operation.path === 'chunk' &&
+      failure.code === 'data_root_not_found' &&
+      registration !== undefined &&
+      this.headers.get(gateway) === registration
+    )
+      this.headers.delete(gateway);
   }
 
   private ensureHeader(gateway: string, operation: Operation): Promise<void> {
@@ -462,7 +486,11 @@ export class ArweaveUploadSession {
         signal: requestController.signal
       });
       const body = await boundedResponseText(response);
-      if (!response.ok) throw providerError(response.status, body);
+      if (
+        !response.ok ||
+        (operation.path === 'chunk' && response.status !== 200)
+      )
+        throw providerError(response.status, body);
       if (operation.validate && !operation.validate(body, response.status)) {
         throw new GatewayError(response.status, 'invalid_response', true);
       }

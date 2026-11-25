@@ -38,20 +38,38 @@ function addImportNames(statement: ts.Statement, names: SdkNames): void {
   }
 }
 
+function isSdkReceiver(
+  receiver: ts.Expression,
+  bindings: Set<string>
+): boolean {
+  if (ts.isIdentifier(receiver)) return bindings.has(receiver.text);
+  if (!ts.isPropertyAccessExpression(receiver)) return false;
+  if (receiver.expression.kind === ts.SyntaxKind.ThisKeyword)
+    return bindings.has(receiver.name.text);
+  return (
+    ['transactions', 'api', 'arweave'].includes(receiver.name.text) &&
+    isSdkReceiver(receiver.expression, bindings)
+  );
+}
+
 function addFactoryBinding(
   node: ts.Node,
   source: ts.SourceFile,
   names: SdkNames,
   bindings: Set<string>
 ): void {
+  if (!ts.isVariableDeclaration(node) || !node.initializer) return;
+  const initializer = ts.isAwaitExpression(node.initializer)
+    ? node.initializer.expression
+    : node.initializer;
+  if (!ts.isCallExpression(initializer)) return;
+  const factory = initializer.expression.getText(source);
+  const fromUploader =
+    ts.isPropertyAccessExpression(initializer.expression) &&
+    initializer.expression.name.text === 'getUploader' &&
+    isSdkReceiver(initializer.expression.expression, bindings);
   if (
-    !ts.isVariableDeclaration(node) ||
-    !node.initializer ||
-    !ts.isCallExpression(node.initializer)
-  )
-    return;
-  const factory = node.initializer.expression.getText(source);
-  if (
+    !fromUploader &&
     !names.factories.has(factory) &&
     !Array.from(names.types).some((type) => factory === `${type}.init`)
   )
@@ -92,7 +110,10 @@ function addTypedBinding(
     bindings.add(node.name.text);
 }
 
-function sdkBindings(source: ts.SourceFile): Set<string> {
+function sdkBindings(source: ts.SourceFile): {
+  bindings: Set<string>;
+  names: SdkNames;
+} {
   const bindings = new Set<string>();
   const names = {
     factories: new Set(['createArweaveClient', 'getArweaveInstance']),
@@ -105,7 +126,7 @@ function sdkBindings(source: ts.SourceFile): Set<string> {
     ts.forEachChild(node, visit);
   };
   visit(source);
-  return bindings;
+  return { bindings, names };
 }
 
 function directSdkPost(
@@ -118,15 +139,9 @@ function directSdkPost(
   const api = method.expression;
   if (!ts.isPropertyAccessExpression(api) || api.name.text !== 'api')
     return false;
-  const receiver = api.expression;
-  const name = ts.isIdentifier(receiver)
-    ? receiver.text
-    : ts.isPropertyAccessExpression(receiver)
-      ? receiver.name.text
-      : '';
   const endpoint = call.arguments[0];
   return (
-    bindings.has(name) &&
+    isSdkReceiver(api.expression, bindings) &&
     endpoint !== undefined &&
     ts.isStringLiteralLike(endpoint) &&
     /^\/?(?:tx|chunk)$/.test(endpoint.text)
@@ -135,7 +150,7 @@ function directSdkPost(
 
 function violationsIn(name: string, text: string): string[] {
   const source = ts.createSourceFile(name, text, ts.ScriptTarget.Latest, true);
-  const bindings = sdkBindings(source);
+  const { bindings, names } = sdkBindings(source);
   const violations: string[] = [];
   const visit = (node: ts.Node) => {
     if (
@@ -144,9 +159,11 @@ function violationsIn(name: string, text: string): string[] {
     ) {
       const method = node.expression.name.text;
       if (
-        ['uploadChunk', 'getUploader', 'createTransaction'].includes(method) ||
+        (['uploadChunk', 'getUploader', 'createTransaction'].includes(method) &&
+          isSdkReceiver(node.expression.expression, bindings)) ||
         (method === 'init' &&
-          /arweave/i.test(node.expression.expression.getText(source))) ||
+          ts.isIdentifier(node.expression.expression) &&
+          names.types.has(node.expression.expression.text)) ||
         directSdkPost(node, bindings)
       )
         violations.push(`${name}:${method}`);
@@ -184,4 +201,21 @@ it('detects a typed SDK receiver without blocking an unrelated typed client', ()
       client.api.post('chunk', payload); httpClient.api.post('chunk', payload);
     }`;
   expect(violationsIn('outside.ts', text)).toEqual(['outside.ts:post']);
+});
+
+it('detects aliased SDK initialization and permits unrelated init methods', () => {
+  const text = `import Ar from 'arweave'; Ar.init(config); otherArweaveTools.init(config);`;
+  expect(violationsIn('outside.ts', text)).toEqual(['outside.ts:init']);
+});
+
+it('restricts transaction and uploader methods to resolved SDK receivers', () => {
+  const text = `import { createArweaveClient } from '@/arweave/client';
+    const client = createArweaveClient(); client.createTransaction(data);
+    const uploader = await client.transactions.getUploader(tx); uploader.uploadChunk();
+    payments.createTransaction(data); payments.getUploader(tx); payments.uploadChunk();`;
+  expect(violationsIn('outside.ts', text)).toEqual([
+    'outside.ts:createTransaction',
+    'outside.ts:getUploader',
+    'outside.ts:uploadChunk'
+  ]);
 });

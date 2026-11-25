@@ -140,3 +140,18 @@ it.each(['?download=1', '#preview', '/asset.json?download=1'])(
     );
   }
 );
+
+it('preserves a manifest raw path on transaction subdomains during fallback', async () => {
+  const manifest = 'a'.repeat(43);
+  const segment = 'B'.repeat(43);
+  const input = `https://${manifest}.arweave.net/raw/${segment}/asset.json`;
+  const fetch = jest
+    .fn()
+    .mockRejectedValueOnce(new Error('primary failed'))
+    .mockResolvedValue('asset');
+  await expect(withArweaveFallback(input, fetch)).resolves.toBe('asset');
+  expect(fetch.mock.calls[0][0]).toBe(input);
+  expect(fetch.mock.calls[1][0]).toBe(
+    `https://ardrive.net/${manifest}/raw/${segment}/asset.json`
+  );
+});

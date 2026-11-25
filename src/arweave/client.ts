@@ -14,6 +14,31 @@ class ArweaveApiResponseError extends Error {
   }
 }
 
+function validateApiData(
+  path: string,
+  response: ResponseWithData<unknown>
+): void {
+  const data = response.data;
+  if (
+    response.status === 200 &&
+    /^tx\/[\w-]+\/status$/.test(path) &&
+    !isTransactionConfirmation(data)
+  )
+    throw new Error('Invalid Arweave transaction status');
+  if (
+    path === 'tx_anchor' &&
+    (typeof data !== 'string' || !/^[\w-]{43,64}$/.test(data))
+  )
+    throw new Error('Invalid Arweave API response');
+  if (/^(price\/|wallet\/.*\/balance)/.test(path)) {
+    if (
+      (typeof data !== 'string' && typeof data !== 'number') ||
+      !/^\d+$/.test(String(data))
+    )
+      throw new Error('Invalid Arweave API response');
+  }
+}
+
 /** Every SDK network method shares the same bounded, immutable request replay. */
 export function createArweaveClient(
   options: ArweaveRecoveryOptions = {}
@@ -35,6 +60,7 @@ export function createArweaveClient(
     // SDK endpoints are relative paths, never arbitrary caller-controlled origins.
     if (/^[a-z]+:|^\/\//i.test(path))
       throw new Error('Invalid Arweave API path');
+    const endpoint = path.startsWith('/') ? path.slice(1) : path;
     try {
       return await recoverArweave(
         ARWEAVE_WRITE_GATEWAYS.map((host) => `https://${host}`),
@@ -42,7 +68,7 @@ export function createArweaveClient(
           const index = ARWEAVE_WRITE_GATEWAYS.findIndex(
             (host) => origin === `https://${host}`
           );
-          const response = await endpoints[index].request<T>(path, {
+          const response = await endpoints[index].request<T>(endpoint, {
             ...init,
             headers: new Headers(init.headers),
             redirect: 'error',
@@ -50,19 +76,7 @@ export function createArweaveClient(
           });
           if (!response.ok && response.status !== 202)
             throw new ArweaveApiResponseError(response);
-          if (
-            response.status === 200 &&
-            /^tx\/[\w-]+\/status$/.test(path) &&
-            !isTransactionConfirmation(response.data)
-          )
-            throw new Error('Invalid Arweave transaction status');
-          const text = String(response.data);
-          if (
-            (path === 'tx_anchor' && !/^[\w-]{43,64}$/.test(text)) ||
-            (/^(price\/|wallet\/.*\/balance)/.test(path) && !/^\d+$/.test(text))
-          ) {
-            throw new Error('Invalid Arweave API response');
-          }
+          validateApiData(endpoint, response);
           return response;
         },
         {
@@ -73,7 +87,7 @@ export function createArweaveClient(
             !(
               error instanceof ArweaveApiResponseError &&
               error.response.status === 400
-            )
+            ) && options.shouldRetry?.(error) !== false
         }
       );
     } catch (error) {
@@ -81,7 +95,7 @@ export function createArweaveClient(
       if (
         error instanceof ArweaveApiResponseError &&
         error.response.status === 404 &&
-        /^tx\/[\w-]+\/status$/.test(path)
+        /^tx\/[\w-]+\/status$/.test(endpoint)
       ) {
         return error.response as ResponseWithData<T>;
       }

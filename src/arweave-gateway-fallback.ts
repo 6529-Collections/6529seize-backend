@@ -1,19 +1,32 @@
+import { ARWEAVE_INPUT_GATEWAYS } from '@/arweave/gateways';
 import { recoverArweave, ArweaveRecoveryOptions } from '@/arweave/recovery';
 import {
   parseDecentralizedMediaRef,
   toExternalFallbackUrls
 } from '@/decentralized-media/decentralized-media';
 
+const pathGateways = new Set<string>(ARWEAVE_INPUT_GATEWAYS);
+
+function normalizeRawGatewayUrl(input: string): string {
+  try {
+    const url = new URL(input);
+    if (url.protocol !== 'https:' || !pathGateways.has(url.hostname))
+      return input;
+    url.pathname = url.pathname.replace(
+      /^\/raw\/([A-Za-z0-9_-]{43})(?=\/|$)/,
+      '/$1'
+    );
+    return url.href;
+  } catch {
+    return input;
+  }
+}
+
 /**
  * Returns all external Arweave gateway variants for the given URL.
  */
 export function getArweaveFallbackUrls(url: string): string[] {
-  const ref = parseDecentralizedMediaRef(
-    url.replace(
-      /^(https:\/\/[^/]+)\/raw\/([A-Za-z0-9_-]{43})(?=[/?#]|$)/,
-      '$1/$2'
-    )
-  );
+  const ref = parseDecentralizedMediaRef(normalizeRawGatewayUrl(url));
   if (ref?.protocol !== 'arweave') return [];
 
   return toExternalFallbackUrls(ref);

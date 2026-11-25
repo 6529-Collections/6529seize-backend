@@ -82,3 +82,78 @@ it('preserves pending transaction status', async () => {
   ).resolves.toEqual({ status: 202, confirmed: null });
   expect(fetch).toHaveBeenCalledTimes(1);
 });
+
+it.each(['tx_anchor', 'price/10', `wallet/${'a'.repeat(43)}/balance`])(
+  'validates the leading-slash SDK endpoint /%s',
+  async (path) => {
+    const good = path === 'tx_anchor' ? 'a'.repeat(43) : '100';
+    const fetch = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValueOnce(new Response('<html>error</html>'))
+      .mockResolvedValueOnce(new Response(good));
+    await expect(
+      createArweaveClient().api.get(`/${path}`)
+    ).resolves.toMatchObject({ data: good });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(
+      fetch.mock.calls.every(
+        ([input]) => new URL(String(input)).pathname === `/${path}`
+      )
+    ).toBe(true);
+  }
+);
+
+it('validates leading-slash status data and preserves final 404 semantics', async () => {
+  const path = `/tx/${'a'.repeat(43)}/status`;
+  const fetch = jest
+    .spyOn(global, 'fetch')
+    .mockResolvedValueOnce(new Response('<html>error</html>'))
+    .mockResolvedValueOnce(new Response('', { status: 404 }));
+  await expect(createArweaveClient().api.get(path)).resolves.toMatchObject({
+    status: 404
+  });
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it.each([
+  ['tx_anchor', JSON.stringify(['a'.repeat(43)]), 'a'.repeat(43)],
+  ['price/10', '[100]', '100'],
+  [`wallet/${'a'.repeat(43)}/balance`, '[100]', '100'],
+  ['price/10', '{"value":100}', '100']
+])(
+  'rejects a non-scalar SDK body for %s before string coercion',
+  async (path, body, good) => {
+    const fetch = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValueOnce(new Response(body))
+      .mockResolvedValueOnce(new Response(good));
+    await expect(createArweaveClient().api.get(path)).resolves.toMatchObject({
+      data: good
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  }
+);
+
+it('honors a caller retry veto for provider failures', async () => {
+  const fetch = jest
+    .spyOn(global, 'fetch')
+    .mockResolvedValue(new Response('', { status: 503 }));
+  const shouldRetry = jest.fn(() => false);
+  await expect(
+    createArweaveClient({ shouldRetry }).wallets.getBalance('a'.repeat(43))
+  ).rejects.toThrow('HTTP 503');
+  expect(shouldRetry).toHaveBeenCalledTimes(1);
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+it('keeps HTTP 400 terminal when the caller permits retries', async () => {
+  const fetch = jest
+    .spyOn(global, 'fetch')
+    .mockResolvedValue(new Response('', { status: 400 }));
+  await expect(
+    createArweaveClient({ shouldRetry: () => true }).wallets.getBalance(
+      'a'.repeat(43)
+    )
+  ).rejects.toThrow('HTTP 400');
+  expect(fetch).toHaveBeenCalledTimes(1);
+});

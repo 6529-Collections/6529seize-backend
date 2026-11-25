@@ -31,7 +31,13 @@ engine. It signs once, submits the same public transaction header to each
 required gateway, and retries identical chunk proofs and bytes. Each gateway's
 header registration is coordinated before concurrent chunks. Explicit protocol
 validation errors are terminal; transient failures rotate gateways and may get a
-second round after a propagation delay.
+second round after a propagation delay. A `data_root_not_found` chunk response
+invalidates that gateway's observed header registration so the signed header can
+be submitted again. Late responses from older workers cannot invalidate a newer
+registration. Only HTTP 200 acknowledges a chunk; other successful HTTP statuses
+retry the identical bytes without advancing persisted progress. Header submission
+still accepts HTTP 208, and resumed status probes accept HTTP 202 or an HTTP 200
+confirmation with the expected shape.
 
 Durable consumers checkpoint the signed transaction and original bytes before
 submission and after each acknowledged step. They upload sequentially so the

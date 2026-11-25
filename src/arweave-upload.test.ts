@@ -7,6 +7,14 @@ import { ArweaveFileUploader, ArweaveUploadState } from '@/arweave';
 const transactionId = 'a'.repeat(43);
 const bytes = Buffer.from('original immutable publication');
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 function setup() {
   const arweave = Arweave.init({ host: 'arweave.test', protocol: 'https' });
   const create = jest.spyOn(arweave, 'createTransaction').mockImplementation(
@@ -450,3 +458,146 @@ it.each(['default', 'supplied'] as const)(
     }
   }
 );
+
+it.each([201, 202, 204, 208])(
+  'does not checkpoint a chunk HTTP %s response; retries identical bytes until HTTP 200',
+  async (statusCode) => {
+    const { uploader, post, sign } = setup();
+    const states: ArweaveUploadState[] = [];
+    let pending = true;
+    try {
+      post.mockImplementation(async (path) => {
+        if (path === 'tx') return new Response(null, { status: 208 });
+        if (pending) {
+          pending = false;
+          expect(states.at(-1)?.chunkIndex).toBe(0);
+          return new Response(null, { status: statusCode });
+        }
+        expect(states.at(-1)?.chunkIndex).toBe(0);
+        return new Response('');
+      });
+      await uploader.uploadFileWithTransactionId(bytes, 'text/plain', {
+        onState: async (state) => {
+          states.push(state);
+        }
+      });
+      const chunks = post.mock.calls.filter(([path]) => path === 'chunk');
+      expect(chunks).toHaveLength(2);
+      expect(chunks[0][1]).toBe(chunks[1][1]);
+      expect(states.map((state) => state.chunkIndex)).toEqual([0, 0, 1]);
+      expect(sign).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.restoreAllMocks();
+    }
+  }
+);
+
+it.each([201, 208])(
+  'rejects resume HTTP %s even when its body looks confirmed',
+  async (statusCode) => {
+    const { uploader, post, sign } = setup();
+    let savedState: ArweaveUploadState | undefined;
+    try {
+      await expect(
+        uploader.uploadFileWithTransactionId(bytes, 'text/plain', {
+          onState: async (state) => {
+            savedState = state;
+            throw new Error('checkpoint only');
+          }
+        })
+      ).rejects.toThrow('checkpoint only');
+      const original = jest.mocked(global.fetch).getMockImplementation()!;
+      let probes = 0;
+      jest.mocked(global.fetch).mockImplementation(async (input, init) => {
+        if (!new URL(String(input)).pathname.endsWith('/status'))
+          return original(input, init);
+        probes++;
+        return new Response(
+          probes === 1
+            ? JSON.stringify({
+                block_height: 1,
+                block_indep_hash: 'b'.repeat(64),
+                number_of_confirmations: 1
+              })
+            : '',
+          { status: probes === 1 ? statusCode : 202 }
+        );
+      });
+      await uploader.uploadFileWithTransactionId(bytes, 'text/plain', {
+        savedState,
+        onState: async () => undefined
+      });
+      expect(probes).toBe(2);
+      expect(post.mock.calls.map(([path]) => path)).toEqual(['tx', 'chunk']);
+      expect(sign).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.restoreAllMocks();
+    }
+  }
+);
+
+it('re-registers a lost header without letting a stale worker discard the new registration', async () => {
+  jest.useFakeTimers();
+  const { uploader, sign } = setup();
+  const original = jest.mocked(global.fetch).getMockImplementation()!;
+  const firstWorkers = deferred<void>();
+  const freshHeaderStarted = deferred<void>();
+  const freshHeader = deferred<Response>();
+  const initialChunks: ReturnType<typeof deferred<Response>>[] = [];
+  const headers: string[] = [];
+  const accepted = new Set<string>();
+  try {
+    jest.mocked(global.fetch).mockImplementation(async (input, init) => {
+      const url = new URL(String(input));
+      if (init?.method !== 'POST') return original(input, init);
+      if (url.pathname === '/tx') {
+        if (url.hostname !== 'ardrive.net') return new Response('');
+        headers.push(init.body as string);
+        if (headers.length === 1) return new Response('');
+        freshHeaderStarted.resolve();
+        return freshHeader.promise;
+      }
+      const chunk = init.body as string;
+      if (url.hostname === 'ardrive.net' && initialChunks.length < 8) {
+        const response = deferred<Response>();
+        initialChunks.push(response);
+        if (initialChunks.length === 8) firstWorkers.resolve();
+        if (initialChunks.length === 1)
+          return new Response('data_root_not_found', { status: 400 });
+        const result = await response.promise;
+        if (result.status === 200) accepted.add(chunk);
+        return result;
+      }
+      accepted.add(chunk);
+      return new Response('');
+    });
+    // Ten chunks: eight initial workers, then two workers share a replacement
+    // registration while an older chunk response arrives late.
+    const upload = uploader.uploadFile(
+      Buffer.alloc(2_400_000, 7),
+      'text/plain'
+    );
+    await firstWorkers.promise;
+    await jest.advanceTimersByTimeAsync(0);
+    initialChunks[2].resolve(new Response(''));
+    await freshHeaderStarted.promise;
+    initialChunks[1].resolve(
+      new Response('data_root_not_found', { status: 400 })
+    );
+    await jest.advanceTimersByTimeAsync(0);
+    for (const response of initialChunks.slice(3))
+      response.resolve(new Response(''));
+    await jest.advanceTimersByTimeAsync(0);
+    expect(headers).toHaveLength(2);
+    freshHeader.resolve(new Response(''));
+    await jest.advanceTimersByTimeAsync(1000);
+    await upload;
+    expect(headers).toHaveLength(2);
+    expect(new Set(headers).size).toBe(1);
+    expect(accepted.size).toBe(10);
+    expect(sign).toHaveBeenCalledTimes(1);
+  } finally {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  }
+});
