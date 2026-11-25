@@ -23,8 +23,13 @@ const ROWS = [
   }
 ];
 
-async function insertTeam(rename: boolean): Promise<void> {
-  for (const row of ROWS) {
+async function insertTeam(
+  rename: boolean,
+  collection: string | null = null
+): Promise<void> {
+  for (const row of ROWS.filter(
+    (r) => collection === null || r.collection === collection
+  )) {
     await dbSupplier().execute(
       `INSERT INTO ${TEAM_TABLE} (wallet, collection, name, created_at)
        VALUES (:wallet, :collection, :name, :created_at)`,
@@ -45,6 +50,19 @@ export async function seedTeam(): Promise<void> {
 /** Restores exactly the seeded rows. */
 export async function rebuildTeam(): Promise<void> {
   await insertTeam(false);
+}
+
+/** Restores only the MEMES rows: one area's partition of the table. */
+export async function rebuildMemesTeam(): Promise<void> {
+  await insertTeam(false, 'MEMES');
+}
+
+/** Restores the MEMES rows, and renames another partition's row. */
+export async function rebuildMemesTeamTouchingOthers(): Promise<void> {
+  await insertTeam(false, 'MEMES');
+  await dbSupplier().execute(
+    `UPDATE ${TEAM_TABLE} SET name = 'changed' WHERE collection = '6529'`
+  );
 }
 
 /** Restores the rows with different names. */

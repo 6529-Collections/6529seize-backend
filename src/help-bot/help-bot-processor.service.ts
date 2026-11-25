@@ -41,10 +41,6 @@ import {
 } from './help-bot-profile-resolver';
 import { withHelpBotAuthentication } from './help-bot.auth';
 import { errorToMessage } from './help-bot.errors';
-import {
-  helpBotCreditsService,
-  HelpBotCreditsService
-} from './help-bot-credits.service';
 
 function buildRenderer(): HelpBotLlmRenderer & HelpBotPublicDataLlm {
   return new HelpBotBedrockRenderer(HELP_BOT_BEDROCK_MODEL_ID);
@@ -99,8 +95,7 @@ export class HelpBotProcessorService {
     private readonly dropWriter: HelpBotDropWriterService,
     private readonly dropsService: DropsApiService,
     private readonly profileResolver: HelpBotProfileResolver,
-    private readonly answererFactory: () => HelpBotAnswerer,
-    private readonly creditsService: HelpBotCreditsService
+    private readonly answererFactory: () => HelpBotAnswerer
   ) {}
 
   public async processInteraction(
@@ -124,9 +119,8 @@ export class HelpBotProcessorService {
       return;
     }
 
-    // The credit is refunded only while the answer is still being produced.
-    // Once an answer exists the model work is done, so a failure to post it
-    // (for example a wave rule that rejects the reply) keeps the charge.
+    // A failure after the answer exists (for example a wave rule that rejects
+    // the reply) is recorded as a failure to post the produced answer.
     let answerProduced = false;
     try {
       const previousBotAnswer = await this.getPreviousBotAnswer(
@@ -197,7 +191,7 @@ export class HelpBotProcessorService {
         botProfileId,
         interaction,
         error,
-        refundCredit: !answerProduced,
+        answerProduced,
         ctx
       });
     }
@@ -312,24 +306,21 @@ export class HelpBotProcessorService {
     botProfileId,
     interaction,
     error,
-    refundCredit,
+    answerProduced,
     ctx
   }: {
     readonly botProfileId: string;
     readonly interaction: HelpBotInteractionRow;
     readonly error: unknown;
-    readonly refundCredit: boolean;
+    readonly answerProduced: boolean;
     readonly ctx: RequestContext;
   }): Promise<void> {
     this.logger.error(
-      refundCredit
-        ? `Help bot failed to answer interaction ${interaction.id}`
-        : `Help bot produced an answer but failed to post it for interaction ${interaction.id}`,
+      answerProduced
+        ? `Help bot produced an answer but failed to post it for interaction ${interaction.id}`
+        : `Help bot failed to answer interaction ${interaction.id}`,
       error
     );
-    if (refundCredit) {
-      await this.tryRefundQuestionCredit(interaction, ctx);
-    }
     let replyDropId: string | null = null;
     try {
       const reply = await this.dropWriter.reply(
@@ -363,9 +354,9 @@ export class HelpBotProcessorService {
         {
           id: interaction.id,
           replyDropId,
-          failureReason: refundCredit
-            ? errorToMessage(error)
-            : `Failed to post produced answer: ${errorToMessage(error)}`
+          failureReason: answerProduced
+            ? `Failed to post produced answer: ${errorToMessage(error)}`
+            : errorToMessage(error)
         },
         ctx
       );
@@ -373,26 +364,6 @@ export class HelpBotProcessorService {
       this.logger.error(
         `Help bot failed to mark interaction ${interaction.id} as failed`,
         markFailedError
-      );
-    }
-  }
-
-  private async tryRefundQuestionCredit(
-    interaction: HelpBotInteractionRow,
-    ctx: RequestContext
-  ): Promise<void> {
-    try {
-      await this.creditsService.refundQuestionCredit(
-        {
-          profileId: interaction.author_id,
-          interactionId: interaction.id
-        },
-        ctx
-      );
-    } catch (error) {
-      this.logger.error(
-        `Failed to refund help bot credit for interaction ${interaction.id}`,
-        error
       );
     }
   }
@@ -444,6 +415,5 @@ export const helpBotProcessorService = new HelpBotProcessorService(
       new HelpBotPublicDataService(renderer),
       new HelpBotCalendarService()
     );
-  },
-  helpBotCreditsService
+  }
 );

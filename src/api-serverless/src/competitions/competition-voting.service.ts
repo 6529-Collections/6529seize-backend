@@ -1,4 +1,5 @@
 import { metricsRecorder } from '@/metrics/MetricsRecorder';
+import { assertDecisionWritable } from '@/waves-freeze/waves-freeze-scope';
 import { ApiSetCompetitionVoteRequest } from '@/api/generated/models/ApiSetCompetitionVoteRequest';
 import {
   competitionCommandRepository,
@@ -131,6 +132,11 @@ export class CompetitionVotingService {
           tx
         );
         competitionCreditService.assertVoteFits(budget, request.value);
+        // The decision was checked under its lock; the credit reconciliation
+        // above can wait past the freeze. Check again before the vote, and
+        // before the vote change budget is spent, so a refused vote costs
+        // the voter nothing.
+        await assertDecisionWritable(competition, tx);
         if (request.value !== (budget.current_vote ?? 0))
           await competitionVoteChangeBudget.spend(competitionId, actor);
         await competitionInteractionRepository.setVote(

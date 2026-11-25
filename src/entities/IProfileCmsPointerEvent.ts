@@ -71,4 +71,12 @@ export class ProfileCmsPointerEventEntity {
 
   @Column({ type: 'bigint' })
   readonly created_at!: number;
+
+  /** For events derived from a ProfileDoc change: the chain height of that change. */
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly chain_height?: number | null;
+
+  /** For events derived from a ProfileDoc change: the new document's CID. */
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  readonly doc_cid?: string | null;
 }

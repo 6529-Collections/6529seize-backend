@@ -145,7 +145,8 @@ export const e2eeUploadKeyPackagesSchema = Joi.object({
     )
     .min(1)
     .max(E2EE_MAX_KEY_PACKAGES_PER_UPLOAD)
-    .required()
+    .required(),
+  replace_one_time: Joi.boolean().optional()
 });
 
 export const e2eeClaimKeyPackagesSchema = Joi.object({

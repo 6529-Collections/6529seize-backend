@@ -1,3 +1,5 @@
+import { freezeClock } from '@/tests/fixtures/freeze-at-commit.fixture';
+import { PROFILE_CMS_FROZEN_CODE } from '@/profile-cms/profile-cms-identity-freeze';
 import { AuthenticationContext } from '@/auth-context';
 import {
   BadRequestException,
@@ -372,12 +374,41 @@ describe('CmsApiService', () => {
         static_path: '/punk6529/index.html',
         published_by_wallet: '0x0000000000000000000000000000000000006529'
       }),
-      true
+      true,
+      undefined
     );
     expect(response.published_package.package_hash).toBe(
       publishRequest().package_hash
     );
     expect(response.site.primary_static_path).toBe('/punk6529/index.html');
+  });
+
+  it('hands the publish a check that refuses at commit once the freeze has come', async () => {
+    const clock = freezeClock();
+    try {
+      jest.spyOn(cmsDb, 'findSiteById').mockResolvedValue(siteRow());
+      jest.spyOn(cmsDb, 'findPublishedPackageByHash').mockResolvedValue(null);
+      let handed: (() => void) | undefined;
+      jest
+        .spyOn(cmsDb, 'publishPackage')
+        .mockImplementation(async (_row, _primary, check) => {
+          handed = check;
+        });
+      jest
+        .spyOn(cmsDb, 'findPrimaryPublishedSiteByOwnerProfileId')
+        .mockResolvedValue(publishedSiteRow());
+
+      await service.publishPackage('site-1', publishRequest(), authContext());
+
+      expect(handed).toBeInstanceOf(Function);
+      expect(() => handed!()).not.toThrow();
+      clock.pass();
+      expect(() => handed!()).toThrow(
+        expect.objectContaining({ code: PROFILE_CMS_FROZEN_CODE })
+      );
+    } finally {
+      clock.restore();
+    }
   });
 
   it('publishes a duplicate package hash for the same site idempotently', async () => {
@@ -397,7 +428,8 @@ describe('CmsApiService', () => {
         package_hash: publishRequest().package_hash,
         site_id: 'site-1'
       }),
-      true
+      true,
+      undefined
     );
   });
 });
