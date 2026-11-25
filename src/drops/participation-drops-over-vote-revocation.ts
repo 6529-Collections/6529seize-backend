@@ -15,6 +15,7 @@ import { Competition } from '@/competitions/competition.types';
 import { wavesApiDb } from '@/api/waves/waves.api.db';
 import { competitionTdhOvervotesDb } from '@/competitions/competition-tdh-overvotes.db';
 import { isRetryableDbLockError } from '@/nextgen/nextgen-db-lock-retry';
+import { competitionExecutionRouter } from '@/competitions/competition-execution.router';
 import { countsTowardAllCategoryRep } from '@/rates/rating-credit';
 
 const logger = Logger.get('PARTICIPATION_DROPS_OVER_VOTE_REVOCATION');
@@ -118,15 +119,20 @@ export async function revokeTdhBasedDropWavesOverVotesPerCompetition(): Promise<
   return { candidates, failed, slowestMs };
 }
 
-function isRevocable(
-  competition: Competition | null,
-  accepts: (competition: Competition) => boolean
-): competition is Competition {
+async function isRevocable(
+  competition: Competition,
+  accepts: (competition: Competition) => boolean,
+  ctx: RequestContext
+): Promise<boolean> {
   return (
-    !!competition &&
     accepts(competition) &&
-    competition.execution_mode === 'ACTIVE' &&
-    competition.lifecycle === 'PUBLISHED'
+    competition.lifecycle === 'PUBLISHED' &&
+    // ACTIVE, and not held by the waves freeze (votes of a moving wave's
+    // decision stay as imported).
+    (await competitionExecutionRouter.isNativeExecutionAllowed(
+      competition,
+      ctx
+    ))
   );
 }
 
@@ -172,12 +178,12 @@ async function revokeCandidate(
     id,
     ctx
   );
-  if (!isRevocable(unlocked, accepts)) return;
+  if (!unlocked || !(await isRevocable(unlocked, accepts, ctx))) return;
   const competition = await nativeCompetitionRuntimeRepository.lockCompetition(
     id,
     ctx
   );
-  if (!isRevocable(competition, accepts)) return;
+  if (!competition || !(await isRevocable(competition, accepts, ctx))) return;
   if (profileId) await reconcileNativeVoter(competition, profileId, ctx);
   else await reconcileTdhOvervoters(competition, ctx);
 }
