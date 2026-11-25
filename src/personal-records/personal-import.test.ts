@@ -19,6 +19,7 @@ import {
   RecordRegistry,
   SenderKeyring
 } from '@/signed-records/record-index';
+import { byCodeUnit } from '@/signed-records/record-order';
 import { MemoryHeadStore } from '@/signed-records/record-test-fixtures';
 
 const P_ME = `0x${'0'.repeat(63)}1`;
@@ -70,7 +71,7 @@ async function build(page: Partial<PersonalExportPage>) {
     anchor: 1000,
     at: 5000,
     ownersOf: async (ids) => {
-      lookups.push([...ids].sort());
+      lookups.push([...ids].sort(byCodeUnit));
       return new Map(
         ids.filter((id) => owners.has(id)).map((id) => [id, owners.get(id)!])
       );

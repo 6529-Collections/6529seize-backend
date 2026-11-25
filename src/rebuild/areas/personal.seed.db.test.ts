@@ -8,6 +8,7 @@ import { rebuildPersonalTables } from '@/personal-records/personal-rebuild.step'
 import type { RebuildContext } from '@/rebuild/manifest.types';
 import { personalManifest } from '@/rebuild/manifests/personal.manifest';
 import { seedProbeIdentities } from '@/rebuild/run/probe-fixture.steps';
+import { byCodeUnit } from '@/signed-records/record-order';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { seedPersonalSettings } from './personal.seed';
@@ -57,7 +58,7 @@ async function snapshot(): Promise<Record<string, unknown[]>> {
     );
     rows[table] = all
       .map((row) => JSON.stringify(row))
-      .sort()
+      .sort(byCodeUnit)
       .map((row) => JSON.parse(row));
   }
   return rows;
