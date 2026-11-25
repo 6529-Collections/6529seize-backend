@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { compareCodeUnits } from '@/rebuild/code-units';
 import { MysqlAdmin, Row, scopeFlag } from '@/rebuild/stack/mysql-admin';
 
 export interface TableSnapshot {
@@ -17,6 +18,15 @@ export interface TableSnapshot {
    * keys of the rows the condition matched, which leave the column out.
    */
   readonly scoped: { readonly column: string; readonly keys: string[] }[];
+  /**
+   * For a table with a key, so a changed row can name the columns that
+   * changed (names only: values can hold user data): the columns in name
+   * order, and per row, in the entry's order, a fixed-width short hash of
+   * each column's value in that order, dashes for a column the row leaves
+   * out. Absent for a table without a key, whose changed rows show as
+   * missing and extra.
+   */
+  readonly cells?: { readonly columns: string[]; readonly rows: string[] };
 }
 
 /**
@@ -70,6 +80,13 @@ export interface TableDiff {
   readonly plannedColumnRows: number;
   readonly extra: string[];
   readonly changed: string[];
+  /** How many rows on both sides changed (`changed` holds up to `limit`). */
+  readonly changedRows?: number;
+  /** The rows in `changed`, each with the names of the columns that differ. */
+  readonly changedColumns?: {
+    readonly key: string;
+    readonly columns: string[];
+  }[];
 }
 
 function canonicalValue(value: unknown): unknown {
@@ -98,6 +115,31 @@ function sha256(text: string): string {
   return createHash('sha256').update(text).digest('hex');
 }
 
+/** The width of a cell's short hash. */
+const CELL = 8;
+const LEFT_OUT = '-'.repeat(CELL);
+
+/**
+ * A short hash of each of `columns` in `row`, joined, dashes for a column
+ * the row leaves out. A missing column hashes as null, as MySQL gives it.
+ */
+function cellHashes(
+  row: Row,
+  columns: readonly string[],
+  leftOut: ReadonlySet<string>
+): string {
+  return columns
+    .map((column) =>
+      leftOut.has(column)
+        ? LEFT_OUT
+        : sha256(JSON.stringify(canonicalValue(row[column]) ?? null)).slice(
+            0,
+            CELL
+          )
+    )
+    .join('');
+}
+
 /**
  * Hashes rows, keyed by `key`: the table's row key (its declared rowKey,
  * else its primary key). Rows without one are ordered by their hash. A key
@@ -112,27 +154,36 @@ export function snapshotRows(
   rows: readonly Row[],
   key: readonly string[],
   volatile: ReadonlySet<string> = new Set(),
-  scoped: readonly ScopedVolatile[] = []
+  scoped: readonly ScopedVolatile[] = [],
+  /** False when only the keys are wanted: no per-column hashes. */
+  withCells = true
 ): TableSnapshot {
   const keyed = key.some(
     (column) => volatile.has(column) || scoped.some((s) => s.column === column)
   )
     ? []
     : key;
+  // Every row of a read has the same columns; a volatile one is never
+  // compared, so it needs no cell.
+  const columns =
+    withCells && keyed.length && rows.length
+      ? Object.keys(unscoped(rows[0], scoped).row)
+          .filter((column) => !volatile.has(column))
+          .sort(compareCodeUnits)
+      : [];
   let entries = rows.map((row) => {
     const { row: plain, left } = unscoped(row, scoped);
-    const hash = sha256(
-      canonicalRow(
-        plain,
-        left.length ? new Set([...Array.from(volatile), ...left]) : volatile
-      )
-    );
+    const compared = left.length
+      ? new Set([...Array.from(volatile), ...left])
+      : volatile;
+    const hash = sha256(canonicalRow(plain, compared));
     return {
       key: keyed.length
         ? JSON.stringify(keyed.map((column) => canonicalValue(plain[column])))
         : hash,
       hash,
-      left
+      left,
+      cells: columns.length ? cellHashes(plain, columns, compared) : ''
     };
   });
   if (!keyed.length) {
@@ -149,7 +200,10 @@ export function snapshotRows(
       keys: entries
         .filter((entry) => entry.left.includes(column))
         .map((entry) => entry.key)
-    }))
+    })),
+    ...(columns.length
+      ? { cells: { columns, rows: entries.map((entry) => entry.cells) } }
+      : {})
   };
 }
 
@@ -280,6 +334,61 @@ export function goneRows(
 }
 
 /**
+ * The names of the columns whose values differ in the row `key` names, on
+ * a table with a key; none without one. Only hashes are compared.
+ */
+function columnsChanged(
+  before: TableSnapshot,
+  after: TableSnapshot,
+  keys: readonly string[]
+): { key: string; columns: string[] }[] {
+  // The last row of a key, as changedKeys takes it.
+  const rowOf = (snapshot: TableSnapshot) => {
+    const wanted = new Set(keys);
+    const at = new Map<string, number>();
+    snapshot.keys.forEach((key, i) => {
+      if (wanted.has(key)) at.set(key, i);
+    });
+    return (key: string) => {
+      const i = at.get(key);
+      return i === undefined ? undefined : snapshot.cells?.rows[i];
+    };
+  };
+  const a = rowOf(before);
+  const b = rowOf(after);
+  const positions = (snapshot: TableSnapshot) =>
+    new Map((snapshot.cells?.columns ?? []).map((column, i) => [column, i]));
+  const at = { before: positions(before), after: positions(after) };
+  const hashOf = (
+    side: 'before' | 'after',
+    row: string | undefined,
+    column: string
+  ) => {
+    const i = at[side].get(column);
+    return row === undefined || i === undefined
+      ? undefined
+      : row.slice(i * CELL, (i + 1) * CELL);
+  };
+  const columns = Array.from(
+    new Set([...(before.cells?.columns ?? []), ...(after.cells?.columns ?? [])])
+  ).sort(compareCodeUnits);
+  return keys.map((key) => {
+    const rowA = a(key);
+    const rowB = b(key);
+    return {
+      key,
+      columns:
+        rowA === undefined || rowB === undefined
+          ? []
+          : columns.filter(
+              (column) =>
+                hashOf('before', rowA, column) !== hashOf('after', rowB, column)
+            )
+    };
+  });
+}
+
+/**
  * Compares two snapshots of one table, counting rows per key: rows
  * without a key are keyed by their hash, so identical ones share it. A
  * row only before that `planned` names (one key per planned row, repeated
@@ -326,6 +435,8 @@ export function diffSnapshots(
     plannedColumns: columnsOnly.slice(0, limit),
     plannedColumnRows: columnsOnly.length,
     extra: extra.slice(0, limit),
-    changed: changed.slice(0, limit)
+    changed: changed.slice(0, limit),
+    changedRows: changed.length,
+    changedColumns: columnsChanged(before, after, changed.slice(0, limit))
   };
 }
