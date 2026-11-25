@@ -21,15 +21,43 @@ import {
   competitionAnonymityService
 } from '@/competitions/competition-anonymity';
 
+import { wavesScopeService } from '@/waves-scope/waves-scope.service';
 import { mainStageTraitRules } from './main-stage-traits';
 
+/**
+ * Maps decisions with stays_on_site: each one's wave's value (true when the
+ * wave, and with it the decision, stays on 6529.io).
+ */
+export async function toApiCompetitions(
+  competitions: readonly PublicCompetition[],
+  ctx: RequestContext
+): Promise<ApiCompetition[]> {
+  const stays = await wavesScopeService.staysForDisplay(
+    competitions.map((competition) => competition.wave_id),
+    ctx
+  );
+  return competitions.map((competition) =>
+    toApiCompetition(competition, stays.get(competition.wave_id) ?? false)
+  );
+}
+
+/** toApiCompetitions for one decision. */
+export async function toApiCompetitionInScope(
+  competition: PublicCompetition,
+  ctx: RequestContext
+): Promise<ApiCompetition> {
+  return (await toApiCompetitions([competition], ctx))[0];
+}
+
 export function toApiCompetition(
-  competition: PublicCompetition
+  competition: PublicCompetition,
+  staysOnSite: boolean
 ): ApiCompetition {
   const { presentation, ...details } = competition;
   const traitRules = mainStageTraitRules(competition.capabilities);
   return {
     ...details,
+    stays_on_site: staysOnSite,
     type: enums.resolveOrThrow(ApiCompetitionType, competition.type),
     lifecycle: enums.resolveOrThrow(
       ApiCompetitionLifecycle,
