@@ -96,10 +96,9 @@ describe('the settlement request typed data', () => {
     );
   });
 
-  // The validator's EIP-712 vector (chain-tx vectors/p40/encoding-vectors,
-  // which chain-tx's p40_vectors test checks against its txId): a VoteSet
-  // over the same domain and TxHeader. There is no vector for a
-  // SETTLEMENT_REQUEST itself.
+  // The validator's EIP-712 encoding vector, the one its own tests check
+  // against its txId: a VoteSet over the same domain and TxHeader. There is
+  // no vector for a SETTLEMENT_REQUEST itself.
   it("matches the validator's txId vector for the domain and the TxHeader", () => {
     const networkId =
       '0x53929f81f84ac199d1155e0cff0ae25cc43ca45d7434abdabf675c583f1c02b5';
