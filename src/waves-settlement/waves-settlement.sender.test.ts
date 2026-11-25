@@ -1653,6 +1653,65 @@ describe('WavesSettlementSender: never included, against a node that drops at ex
     expect(logged(error, 'NOT INCLUDED')).toEqual([]);
   });
 
+  it('keeps the count across a "not yet" on the draft', async () => {
+    const { gateway, store, run, later } = setup({ mainStage: [D1] });
+    gateway.due(D1);
+    await run();
+    later(SETTLEMENT_PAST_EXPIRY_MS);
+    const getDraft = gateway.getDraft.bind(gateway);
+    gateway.getDraft = async () => {
+      throw new ChainGatewayError(
+        '/v1/draft: inadmissible: 0x2507 WAVES_IMPORT_RUNNING',
+        422,
+        'inadmissible',
+        '/v1/draft'
+      );
+    };
+    await run();
+    expect(logged(warn, '[SETTLEMENT NOT INCLUDED]')).toHaveLength(1);
+    expect(store.rows.get(D1)).toEqual(
+      expect.objectContaining({
+        status: 'not_yet',
+        last_error: expect.stringMatching(
+          /^not yet: draft: .*0x2507.*never included \(1 in a row\)/
+        )
+      })
+    );
+    // The next one is never included too: the second in a row.
+    gateway.getDraft = getDraft;
+    later();
+    await run();
+    later(SETTLEMENT_PAST_EXPIRY_MS);
+    await run();
+    expect(logged(error, '[MAIN STAGE SETTLEMENT NOT INCLUDED]')[0]).toContain(
+      '2 requests in a row'
+    );
+  });
+
+  it('never calls a request in a block never included, though a lagging node answers not_held for it', async () => {
+    const { gateway, store, run, later } = setup({ mainStage: [D1] });
+    gateway.due(D1);
+    await run();
+    const txId = gateway.lastTx();
+    gateway.land(txId);
+    later();
+    await run();
+    expect(store.rows.get(D1)?.status).toBe('in_block');
+    // A node behind the block, or another one behind a load balancer,
+    // answers that it holds the request nowhere, past the 8 minutes.
+    gateway.notHeldNow.add(txId);
+    for (let minute = 2; minute <= 9; minute++) {
+      later();
+      await run();
+    }
+    expect(logged(warn, 'NOT INCLUDED')).toEqual([]);
+    expect(logged(error, 'NOT INCLUDED')).toEqual([]);
+    expect(gateway.submitted).toHaveLength(1);
+    expect(store.rows.get(D1)).toEqual(
+      expect.objectContaining({ status: 'in_block', failures: 0 })
+    );
+  });
+
   it("counts at most 99 requests in a failing step's first 24 hours", () => {
     expect(mainStageRequestsFirstDay()).toBe(99);
   });
