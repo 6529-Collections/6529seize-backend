@@ -445,7 +445,9 @@ export class WavesChainMirrorDb
        union select decision_id from ${CHAIN_RESULTS_TABLE} where height > :height`,
       { height }
     );
-    return rows.map((row) => row.decision_id).sort();
+    return rows
+      .map((row) => row.decision_id)
+      .sort((a, b) => (a < b ? -1 : Number(a > b)));
   }
 
   /** A decision and everything under it, as the index holds them. */

@@ -166,7 +166,11 @@ describe('viewer-state schema drift', () => {
         'parent_wave',
         'has_subwaves',
         'wave_rep',
-        'wave_score'
+        'wave_score',
+        // Per wave, not per viewer: the wave's own id when it is a chain id,
+        // else its chain id looked up by wave id
+        // (wavesApiDb.findChainIdsOfImportedWaves), the same for every viewer.
+        'chain_id'
       ].sort((a, b) => a.localeCompare(b))
     );
   });
