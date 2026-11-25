@@ -1,11 +1,15 @@
 import { RebuildStep } from '@/rebuild/manifest.types';
 import { refusalsIn } from '@/rebuild/run/refusals';
 
-function step(writes: RebuildStep['writes']): RebuildStep {
+function step(
+  writes: RebuildStep['writes'],
+  reads?: readonly string[]
+): RebuildStep {
   return {
     id: 'a.step',
     run: { module: 'src/x', exportName: 'run' },
     writes,
+    reads,
     sources: ['repo'],
     timeoutMinutes: 5
   };
@@ -42,6 +46,17 @@ describe('refusals in a step log', () => {
       'a.step may not INSERT other: its grants on the table refuse it',
       'a.step may not DELETE ident: its grants on the table refuse it',
       'a.step may not INSERT, DELETE ident: its grants on the table refuse it'
+    ]);
+  });
+
+  it('says why a table it neither writes nor reads was refused', () => {
+    const log = [
+      "ERROR 1142 (42000): SELECT command denied to user 'rw'@'localhost' for table 'secret'",
+      "ERROR 1142 (42000): INSERT command denied to user 'rw'@'localhost' for table 'kept'"
+    ].join('\n');
+    expect(refusalsIn(step(['ident'], ['kept']), log)).toEqual([
+      "a.step may not SELECT secret: the table isn't in its reads or writes",
+      'a.step may not INSERT kept: it only reads the table'
     ]);
   });
 

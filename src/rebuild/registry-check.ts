@@ -32,7 +32,7 @@ export type RegistryProblemKind =
    * of it on one column.
    */
   | 'DOUBLE_WRITER'
-  /** `after` names an unknown step, or steps wait on each other. */
+  /** `after` or `before` names an unknown step, or steps wait on each other. */
   | 'BAD_ORDER'
   /** A probe with a repeated id, a bad path or a placeholder without values. */
   | 'BAD_PROBE'
@@ -213,9 +213,10 @@ const NEVER_NEEDED: ReadonlySet<TableClass> = new Set<TableClass>([
 ]);
 
 /**
- * Why a step can't wait for `table`, or null when it can: a step waits
- * only for a table a later branch adds, one marked planned or one no
- * entity in this tree creates yet.
+ * Why a step can't wait for `table`, or null when it can: a step may wait
+ * for any INDEX, EPHEMERAL, PROVIDER or EXEMPT table a manifest declares.
+ * One the schema already has is noted by the run as a need to drop, not
+ * refused here, since the branch that adds it may land first.
  */
 function needRefusal(
   table: string,
@@ -466,11 +467,13 @@ function orderProblems(
     seen.add(step.id);
   }
   const { unknown, cyclic } = orderSteps(steps);
-  for (const id of unknown) {
-    problems.push({
-      kind: 'BAD_ORDER',
-      detail: `a ${label} waits on unknown step ${id}`
-    });
+  const details = unknown.map(({ step, field, id }) =>
+    field === 'after'
+      ? `a ${label} waits on unknown step ${id}`
+      : `${label} ${step} lists unknown step ${id} in \`before\``
+  );
+  for (const detail of Array.from(new Set(details))) {
+    problems.push({ kind: 'BAD_ORDER', detail });
   }
   if (cyclic.length) {
     problems.push({

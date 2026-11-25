@@ -242,6 +242,24 @@ describe('rating writes serialise credit checks per rater', () => {
     );
   });
 
+  it('rates in the Help6529 Credits category like any other category', async () => {
+    const ratingsDb = new FakeRatingsDb();
+    const { service } = createService(ratingsDb, 100);
+    const request = {
+      ...rateRequest('target-1', 10),
+      matter_category: 'Help6529 Credits'
+    };
+
+    await service.updateRating(request, {});
+
+    expect(ratingsDb.committed.get(ratingKey(request))).toEqual(
+      expect.objectContaining({
+        matter_category: 'Help6529 Credits',
+        rating: 10
+      })
+    );
+  });
+
   it('lets concurrent ratings of one rater pass only as if sent one by one', async () => {
     await fc.assert(
       fc.asyncProperty(

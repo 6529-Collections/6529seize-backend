@@ -1,11 +1,14 @@
 import { readWaveHub } from '@/api/waves/wave-hub.handlers';
 import {
-  toApiCompetition,
+  toApiCompetitionInScope,
+  toApiCompetitions,
   toApiEntry,
   toApiEntryPage
 } from './competition-api.mapper';
 export {
   toApiCompetition,
+  toApiCompetitionInScope,
+  toApiCompetitions,
   toApiEntry,
   toApiEntryPage
 } from './competition-api.mapper';
@@ -283,6 +286,7 @@ export async function handleListWaveCompetitionsV3(
 ): Promise<ApiCompetitionPage> {
   const { wave_id } = getValidatedByJoiOrThrow(req.params, WavePathSchema);
   const query = getValidatedByJoiOrThrow(req.query, CompetitionListQuerySchema);
+  const ctx = await getContext(req);
   const page = await competitionService.listCompetitions(
     wave_id,
     {
@@ -293,11 +297,11 @@ export async function handleListWaveCompetitionsV3(
       cursor: query.cursor,
       limit: query.limit
     },
-    await getContext(req)
+    ctx
   );
   return {
     ...page,
-    data: page.data.map(toApiCompetition)
+    data: await toApiCompetitions(page.data, ctx)
   };
 }
 
@@ -309,12 +313,10 @@ export async function handleGetWaveCompetitionV3(
     req.params,
     CompetitionPathSchema
   );
-  return toApiCompetition(
-    await competitionService.getCompetition(
-      wave_id,
-      competition_id,
-      await getContext(req)
-    )
+  const ctx = await getContext(req);
+  return toApiCompetitionInScope(
+    await competitionService.getCompetition(wave_id, competition_id, ctx),
+    ctx
   );
 }
 

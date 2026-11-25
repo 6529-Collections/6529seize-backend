@@ -115,9 +115,12 @@ export const mintManifest: AreaManifest = {
 - `rebuilders`: steps that fill your INDEX tables from empty. A module step
   exports `async (ctx: RebuildContext) => void`; the run calls it inside
   `doInDbContext`, so the usual DB services work. `ctx.sources` holds the base
-  URLs of the run's sources and `ctx.mark` the chain height and Ethereum block
-  to rebuild to. A command step gets the same values in `REBUILD_*`
-  environment variables.
+  URLs of the run's sources, `ctx.mark` the chain height and Ethereum block
+  to rebuild to, `ctx.final` whether the run is a final one (`--final`), and
+  `ctx.seedFilesDir`, for a seed in a run that serves files, the directory
+  its own files go in (see the files server below). A command step gets the
+  sources and the mark in `REBUILD_*` environment variables, and the whole
+  context, `final` included, only as JSON in `REBUILD_CONTEXT`.
   - Each rebuilder connects as its own MySQL user. It can write its `writes`
     and read its `reads`, and lock rows it reads (`SELECT ... FOR UPDATE`,
     as production writers do); anything else is refused.
@@ -156,13 +159,15 @@ export const mintManifest: AreaManifest = {
     row set and every other column, leaving out what MySQL writes itself:
     ON UPDATE and generated columns) before and after it runs, and fails on
     any change. At its start the run fails on an owned column the schema
-    lacks, one in the primary key, one it can't reset (NOT NULL, with no
-    default, of a type with no zero), and on a table with owners but no
-    primary key. A writer of the table that reads it doesn't wait on its
-    owners; owners run in their `after` order, so one that reads another's
-    columns names it there. When a table's row writer doesn't run (it is
-    another area's, or skipped), the table keeps its rows. When an owner
-    doesn't run, the run saves its columns with each row's key before the
+    lacks, one in the primary key, a generated one (MySQL writes it), one
+    it can't reset (NOT NULL, with no default, of a type with no zero), and
+    on a table with owners but no primary key or with a volatile or exempt
+    column in it (a key that changes on a rebuild matches no saved row). A
+    writer of the table that reads it doesn't wait on its owners; owners
+    run in their `after` order, so one that reads another's columns names
+    it there. When a table's row writer doesn't run (it is another
+    area's, or skipped), the table keeps its rows. When an owner doesn't
+    run, the run saves its columns with each row's key before the
     drop and puts them back after the last running row writer, so the
     API's answers keep them; they are still left out of the comparison and
     listed with why (another area's, planned, or waiting for a table), as
@@ -225,8 +230,11 @@ The steps of a run:
    sync, then the migrations loop's schema steps; the old db-migrate
    scripts are left out, as in the tests), and check the live schema
    against the classes.
-2. Run every area's seeds, then count the rows of every INDEX table, so the
-   report shows which tables the probes can find data in.
+2. Run every area's seeds in `after` and `before` order, those marked
+   `last` after all the others, then count the rows of every INDEX table, so
+   the report shows which tables the probes can find data in. Here and in
+   step 7, a step whose needed table isn't in the schema is skipped as
+   planned.
 3. Copy the kept tables aside: EPHEMERAL, PROVIDER, EXEMPT, and, unless
    `--final`, INDEX tables no rebuilder writes yet.
 4. Probe the API (pass A).
@@ -234,8 +242,8 @@ The steps of a run:
 6. Drop: the full run drops the database, builds the schema again and
    restores the kept tables; an `--area` run empties that area's rebuilt
    tables and restores the kept ones.
-7. Run the rebuilders in `after` order, each as its own MySQL user and under
-   the source guard.
+7. Run the rebuilders in `after` and `before` order, each as its own MySQL
+   user and under the source guard.
 8. Probe again (pass B), snapshot again, and compare.
 
 With `--mark switch`, pass A runs without the areas' flags: the old path's
@@ -243,7 +251,8 @@ answers against the rebuilt ones.
 
 A run passes when the registry is clean, every step exits 0 in its time, no
 step connects outside the sources, no source reports a problem (a request a
-recording lacks, a file that doesn't match its hash), the rebuilt tables were
+recording lacks or its server failed on, a call the Alchemy stand-in failed
+on, a file that doesn't match its hash), the rebuilt tables were
 empty after the drop, and every probe answers the same in both passes. A
 probe whose first pass gets no answer, a 5xx, or not the `expectStatus` it
 names fails every run, and so does one whose two answers differ.
@@ -268,7 +277,10 @@ proves nothing whatever its probes answered.
 - tables a manifest keeps or rebuilds that the schema build doesn't make;
 - provisional sources, and command steps that don't run Node (the source
   guard watches only Node processes);
-- documented GET routes with no probe and no waiver.
+- documented GET routes with no probe and no waiver;
+- steps skipped while a table they need isn't in the schema, and needs on
+  a table the schema already has;
+- rows of a shared table in no writer's partition.
 
 Without `--final` each of these is a note in the report.
 
@@ -291,13 +303,19 @@ Each `--source <name>=<spec>`:
 
 - `replay` serves `<dir>/recording.jsonl`. A request it doesn't have
   answers 599 and fails the run. `record` proxies to the URL and adds every
-  new answer to the recording. Keys leave out JSON-RPC ids and key order.
+  new answer to the recording. Keys leave out JSON-RPC ids and key order. A
+  request the server fails on answers 502 `replay failed` and fails the run;
+  the error is in the report. `record` sends each request only to a path
+  under the URL, with the URL's own query first: a target that isn't a
+  path (an absolute URL, `//host`) or whose dot segments climb out of the
+  URL's path answers 400 and fails the run, and nothing is fetched.
 - `<dir>/PROVENANCE.json` says what made a recording (`made_by`: a
   devnet scenario, an anvil state, or `hand`), as a label for the report.
   Provisional, so `--final` fails on them: a live URL, a `record` run (it
   reaches a live URL), the harness relay, every gateway or ethereum
   recording but a frozen gateway one that passes its checks (below), and a
-  files directory that holds any file. A label is never a basis, so the
+  files directory that holds a file whose id nothing checks (see the
+  files server below). A label is never a basis, so the
   report says "answers not verified" whatever `PROVENANCE.json` says;
   checking the node's proofs (for ethereum, the blocks' hash chain and
   receipt proofs) is what will let an ethereum recording count. `anvil`
@@ -372,17 +390,26 @@ Each `--source <name>=<spec>`:
   `alchemy_getAssetTransfers` from its logs and blocks. Children get the
   shim as `ETHEREUM_RPC_URL` and `ALCHEMY_BASE_URL`. The Alchemy NFT API and
   its other `alchemy_*` methods are not served; a call to them fails the run.
+  A call the shim fails on answers the JSON-RPC error `shim error` and fails
+  the run; the error is in the report. `ALCHEMY_BASE_URL` is honoured only
+  on a loopback host (127.0.0.1, ::1 or localhost), since the Alchemy key
+  travels in its path: an `ethereum` URL on another host fails a step as
+  soon as it makes its Alchemy client.
 - The files server answers `/ipfs/<id>`, `/ar/<id>`, `/docs/<id>` and
   `/<id>` from the directory, and checks every file against
-  `<dir>/files.json` (id to SHA-256). It doesn't derive an id from the
-  content: an Arweave id is a transaction's, not a hash of the file, so
-  `files.json` is what ties each id to its bytes. A seed can add files: it
-  writes them into `ctx.seedFilesDir` and lists them in that directory's own
-  `files.json`; the server checks each one's hash when it is asked for.
+  `<dir>/files.json` (id to SHA-256). It derives an id from the content
+  only for a SHA-256 name (below): an Arweave id is a transaction's, not a
+  hash of the file, so for other names `files.json` is what ties each id
+  to its bytes. A seed can add files: it writes them into
+  `ctx.seedFilesDir` and lists them in that directory's own `files.json`;
+  the server checks each one's hash when it is asked for.
   The seeds' files are the run's own world. Files in `<dir>` come from
-  outside the run, and nothing checks their ids against their bytes yet,
-  so a directory that holds any is provisional ("ids not verified"),
-  whatever its `PROVENANCE.json` says.
+  outside the run. A file named by the SHA-256 of its bytes, as lowercase
+  hex or as a raw CIDv1 with a sha2-256 multihash (`bafkrei...`, the
+  document store's naming), has its id checked against its bytes, and one
+  with other bytes fails the run. For any other file nothing checks its id
+  yet, so a directory that holds one is provisional ("ids not verified",
+  naming the files), whatever its `PROVENANCE.json` says.
 - A flag value may name a source: `{gateway}`, `{relays}`, `{ethereum}`
   or `{files}` become its URL in the run.
 
@@ -410,6 +437,21 @@ differences and unproven probes it never compared.
 
 It runs single-area runs whose rebuilders restore the seeded rows, change them, read
 an undeclared table, and call a host outside the sources, and checks the
-verdict of each. Its home is `.rebuild/self-check` unless
-`REBUILD_SELF_CHECK_HOME` names another; `REBUILD_SELF_CHECK_PORT` sets the
-`mysqld` port (default 3407). Each run takes a minute or two.
+verdict of each. It also runs a step that waits on a planned table no code
+creates (in a normal run and a final one), a step whose need the schema
+already meets, and partitioned writers of one table: an area run that
+rebuilds only its own partition, and, in an area run and a full run of
+every area, a writer whose partition of a kept table is emptied before it
+runs. The column owners' runs give a row writer and the owner of one of
+its table's columns: the row writer inserts and deletes rows under column
+grants, owned columns are reset before the owner runs and on rows kept
+for a skipped writer, and a row writer that updates an owned column, or
+an owner that adds a row or writes another column, fails. An exempt
+column is left out of the comparison with its reason; an owner that
+doesn't run here, another area's or a planned one, has its column left
+out and noted, and a planned one fails a final run; a table a step
+writes but its writes don't name is named. Three runs go through the
+API: two compare its answers before and after the rebuild, and one reads
+an owned column whose owner is absent. Its home is `.rebuild/self-check`
+unless `REBUILD_SELF_CHECK_HOME` names another; `REBUILD_SELF_CHECK_PORT`
+sets the `mysqld` port (default 3407). Each run takes a minute or two.

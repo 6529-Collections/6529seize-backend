@@ -1,2 +1,5 @@
 export const DEVS_6529_MENTION_TOKEN = 'devs6529';
 export const DEVS_6529_MENTION = `@${DEVS_6529_MENTION_TOKEN}`;
+
+export const DROP_FORGE_ALERT_MENTION_TOKEN = 'dropforgeops';
+export const DROP_FORGE_ALERT_MENTION = `@${DROP_FORGE_ALERT_MENTION_TOKEN}`;
