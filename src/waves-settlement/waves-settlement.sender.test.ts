@@ -29,7 +29,9 @@ import {
   SETTLEMENT_GIVE_UP_PAUSE_MS,
   SETTLEMENT_MAX_BACKOFF_MS,
   SETTLEMENT_MAX_FAILURES,
+  SETTLEMENT_PAST_EXPIRY_MS,
   SETTLEMENT_RESEND_AFTER_MS,
+  mainStageRequestsFirstDay,
   mainStageDecisionIdsOf,
   mainStageFirst,
   WAVES_IMPORT_RUNNING_CODE,
@@ -153,6 +155,16 @@ class FakeGateway {
   /** Whether the chain's waves import is complete; null: no answer. */
   importCompleted: boolean | null = true;
   importReads = 0;
+  /**
+   * As a node: a request still in the pool at its expiresAt is dropped,
+   * and then held nowhere (not_held). Off: the pool keeps it (slots that
+   * stopped, say).
+   */
+  dropAtExpiry = true;
+  /** Requests the gateway's node holds nowhere yet (it answers not_held). */
+  readonly notHeldNow = new Set<string>();
+  private readonly expiresAt = new Map<string, number>();
+  private readonly dropped = new Set<string>();
   /** How long each call takes on the fake clock. */
   callMs = 0;
   submitAnswer: () => ChainSubmitResult | Error = () => ({
@@ -244,6 +256,10 @@ class FakeGateway {
     });
     const draft = this.tamper(honest, request);
     this.byUnsigned.set(draft.unsigned, { txId: draft.txId, lane });
+    const header = (
+      draft.typedData.message as { header: { expiresAt: string } }
+    ).header;
+    this.expiresAt.set(draft.txId, Number(header.expiresAt));
     return draft;
   }
 
@@ -269,6 +285,23 @@ class FakeGateway {
 
   async getTx(txId: string): Promise<ChainTx | null> {
     this.tick();
+    const tx = this.txs.get(txId);
+    if (
+      this.dropAtExpiry &&
+      tx?.status === 'pending' &&
+      this.clock.now >= (this.expiresAt.get(txId) ?? Infinity)
+    ) {
+      this.txs.delete(txId);
+      this.dropped.add(txId);
+    }
+    if (this.dropped.has(txId) || this.notHeldNow.has(txId)) {
+      throw new ChainGatewayError(
+        `/v1/tx/${txId}: not_held: neither a block on this node's chain nor its pool holds that transaction`,
+        404,
+        'not_held',
+        `/v1/tx/${txId}`
+      );
+    }
     return this.txs.get(txId) ?? null;
   }
 
@@ -387,6 +420,8 @@ describe('WavesSettlementSender', () => {
 
   it('sends one request for a due decision, signed by the sender wallet, and not again while it is pending', async () => {
     const { gateway, store, run, later } = setup();
+    // The pool keeps it past its expiry (slots that stopped, say).
+    gateway.dropAtExpiry = false;
     gateway.due(D1, { occurrence: 3, maxEntries: 40 });
 
     expect(await run()).toEqual(
@@ -466,6 +501,8 @@ describe('WavesSettlementSender', () => {
 
   it('backs off up to 15 minutes, gives a step up after 8 paid failures, and tries it again hours later', async () => {
     const { gateway, store, run, later } = setup();
+    // The last request stays in the pool to the end (slots that stopped).
+    gateway.dropAtExpiry = false;
     gateway.due(D1);
     const sentAt: number[] = [];
     for (let minute = 0; minute < 430; minute++) {
@@ -1313,7 +1350,7 @@ describe('WavesSettlementSender: not yet, held, never included', () => {
     const failing = logged(error, '[MAIN STAGE SETTLEMENT FAILING]');
     expect(failing.length).toBeGreaterThan(0);
     expect(failing[0]).toContain(
-      'at most 96 requests a day, each paying at most WAVES_SETTLEMENT_MAX_FEE (100 coins), so at most 9600 coins a day'
+      'at most 99 requests in its first 24 hours and 96 a day after, each paying at most WAVES_SETTLEMENT_MAX_FEE (100 coins), so at most 9900 coins a day'
     );
     expect(failing[0]).toContain(
       'To stop this decision alone, add it to WAVES_SETTLEMENT_HOLD_DECISION_IDS (claim builds go on)'
@@ -1424,5 +1461,199 @@ describe('WavesSettlementSender: not yet, held, never included', () => {
       expect.objectContaining({ failures: 0 })
     );
     expect(store.rows.get(D1)?.status).not.toBe('given_up');
+  });
+});
+
+describe('WavesSettlementSender: never included, against a node that drops at expiry', () => {
+  const lostAnswer = () =>
+    new ChainGatewayError(
+      '/v1/submit: the node may have taken it',
+      null,
+      'outcome_unknown',
+      '/v1/submit'
+    );
+
+  it('calls a request the node dropped at its expiry never included, with an error from the second in a row', async () => {
+    const { gateway, store, run, later } = setup({ mainStage: [D1] });
+    gateway.due(D1);
+    const sentAt: number[] = [];
+    let firstAlarm = -1;
+    for (let minute = 0; minute < 60; minute++) {
+      const before = gateway.submitted.length;
+      await run();
+      if (gateway.submitted.length > before) sentAt.push(minute);
+      if (
+        firstAlarm < 0 &&
+        logged(error, '[MAIN STAGE SETTLEMENT NOT INCLUDED]').length
+      ) {
+        firstAlarm = minute;
+      }
+      later();
+    }
+    // Each is called never included 8 minutes after it was sent (past the
+    // latest expiry its draft can carry), and sent again then.
+    expect(sentAt.slice(0, 4)).toEqual([0, 8, 16, 24]);
+    expect(logged(warn, '[SETTLEMENT NOT INCLUDED]')).toHaveLength(1);
+    expect(firstAlarm).toBe(16);
+    const alarms = logged(error, '[MAIN STAGE SETTLEMENT NOT INCLUDED]');
+    expect(alarms.length).toBeGreaterThan(3);
+    expect(alarms[0]).toContain(
+      'accepted, never included: 2 requests in a row'
+    );
+    expect(alarms[0]).toContain('[gateway gateway-1]');
+    // The node's not_held is the answer it gives, not an unread one.
+    expect(logged(warn, '[SETTLEMENT TX UNREAD]')).toEqual([]);
+    expect(store.rows.get(D1)?.failures).toBe(0);
+  });
+
+  it('raises nothing for a request that reaches a block before its expiry, however slowly', async () => {
+    const { gateway, store, run, later } = setup({ mainStage: [D1] });
+    gateway.due(D1);
+    await run();
+    const txId = gateway.lastTx();
+    // Not held by the gateway's node at first: read again, nothing decided.
+    gateway.notHeldNow.add(txId);
+    later();
+    await run();
+    expect(logged(warn, '[SETTLEMENT TX UNREAD]')).toHaveLength(1);
+    gateway.notHeldNow.delete(txId);
+    for (let minute = 2; minute < 4; minute++) {
+      later();
+      await run();
+    }
+    // In a block at minute 4, a minute before its expiry; the count closes.
+    gateway.land(txId);
+    gateway.due(D1, {
+      count: { status: 'counted', stage: 'final', next: 250 }
+    });
+    for (let minute = 4; minute < 30; minute++) {
+      later();
+      await run();
+    }
+    expect(gateway.submitted).toHaveLength(1);
+    expect(logged(warn, 'NOT INCLUDED')).toEqual([]);
+    expect(logged(error, 'NOT INCLUDED')).toEqual([]);
+    expect(store.rows.get(D1)).toEqual(
+      expect.objectContaining({ status: 'in_block', last_error: null })
+    );
+  });
+
+  it('keeps the count across a lost submit answer, so a gateway that never answers still escalates', async () => {
+    const { gateway, store, run, later } = setup({ mainStage: [D1] });
+    gateway.due(D1);
+    await run();
+    // The first is taken and dropped at its expiry: 1 in a row.
+    later(SETTLEMENT_PAST_EXPIRY_MS);
+    gateway.submitAnswer = lostAnswer;
+    await run();
+    expect(logged(warn, '[SETTLEMENT NOT INCLUDED]')).toHaveLength(1);
+    expect(store.rows.get(D1)).toEqual(
+      expect.objectContaining({
+        status: 'submitting',
+        last_error: expect.stringContaining('never included (1 in a row)')
+      })
+    );
+    // Its answer lost, and never in a block either: 2 in a row.
+    later(SETTLEMENT_RESEND_AFTER_MS);
+    await run();
+    const alarms = logged(error, '[MAIN STAGE SETTLEMENT NOT INCLUDED]');
+    expect(alarms).toHaveLength(1);
+    expect(alarms[0]).toContain('sent, never included: 2 requests in a row');
+  });
+
+  it('keeps the count across a draft error, a refusal and a "not yet" in between', async () => {
+    const { gateway, store, run, later } = setup({ mainStage: [D1] });
+    gateway.due(D1);
+    await run();
+    later(SETTLEMENT_PAST_EXPIRY_MS);
+    const getDraft = gateway.getDraft.bind(gateway);
+    gateway.getDraft = async () => {
+      throw new ChainGatewayError('/v1/draft: busy', 503, 'busy', '/v1/draft');
+    };
+    await run();
+    expect(store.rows.get(D1)?.last_error).toContain(
+      'never included (1 in a row)'
+    );
+    gateway.getDraft = getDraft;
+    gateway.submitAnswer = () => ({ txId: '', accepted: false });
+    later(SETTLEMENT_MAX_BACKOFF_MS);
+    await run();
+    expect(store.rows.get(D1)).toEqual(
+      expect.objectContaining({
+        status: 'refused',
+        last_error: expect.stringContaining('never included (1 in a row)')
+      })
+    );
+    // A refusal the node gives as an error.
+    gateway.submitAnswer = () =>
+      new ChainGatewayError(
+        '/v1/submit: inadmissible: 0x0305 FEE_UNCOVERED, detail 0',
+        422,
+        'inadmissible',
+        '/v1/submit'
+      );
+    later(SETTLEMENT_MAX_BACKOFF_MS);
+    await run();
+    expect(store.rows.get(D1)).toEqual(
+      expect.objectContaining({
+        status: 'refused',
+        last_error: expect.stringMatching(
+          /FEE_UNCOVERED.*never included \(1 in a row\)/
+        )
+      })
+    );
+    gateway.submitAnswer = () =>
+      new ChainGatewayError(
+        '/v1/submit: inadmissible: 0x2507 WAVES_IMPORT_RUNNING, detail 0',
+        422,
+        'inadmissible',
+        '/v1/submit'
+      );
+    later(SETTLEMENT_MAX_BACKOFF_MS);
+    await run();
+    expect(store.rows.get(D1)).toEqual(
+      expect.objectContaining({
+        status: 'not_yet',
+        last_error: expect.stringContaining('never included (1 in a row)')
+      })
+    );
+    gateway.submitAnswer = () => ({ txId: '', accepted: true });
+    later();
+    await run();
+    later(SETTLEMENT_PAST_EXPIRY_MS);
+    await run();
+    expect(logged(error, '[MAIN STAGE SETTLEMENT NOT INCLUDED]')[0]).toContain(
+      '2 requests in a row'
+    );
+  });
+
+  it('ends the run of never-included requests at one that reaches a block, though the step is sent again', async () => {
+    const { gateway, store, run, later } = setup({ mainStage: [D1] });
+    gateway.due(D1);
+    await run();
+    later(SETTLEMENT_PAST_EXPIRY_MS);
+    await run();
+    expect(logged(warn, '[SETTLEMENT NOT INCLUDED]')).toHaveLength(1);
+    // The next one reaches a block; the due read lags, so once it lapses
+    // the step is sent again, and that one is never included.
+    gateway.land(gateway.lastTx());
+    later();
+    await run();
+    expect(store.rows.get(D1)).toEqual(
+      expect.objectContaining({ status: 'in_block', last_error: null })
+    );
+    later(SETTLEMENT_RESEND_AFTER_MS);
+    await run();
+    expect(gateway.submitted).toHaveLength(3);
+    later(SETTLEMENT_PAST_EXPIRY_MS);
+    await run();
+    const warned = logged(warn, '[SETTLEMENT NOT INCLUDED]');
+    expect(warned).toHaveLength(2);
+    expect(warned[1]).toContain('(1 in a row)');
+    expect(logged(error, 'NOT INCLUDED')).toEqual([]);
+  });
+
+  it("counts at most 99 requests in a failing step's first 24 hours", () => {
+    expect(mainStageRequestsFirstDay()).toBe(99);
   });
 });

@@ -8,6 +8,7 @@ import { ChainDraft } from '@/chain-gateway/chain-gateway.types';
 import { Logger } from '@/logging';
 import {
   checkSettlementDraft,
+  CLOCK_SLACK_MS,
   SettlementSettings,
   settlementSettingsFromEnv,
   SettlementSettingsResult,
@@ -50,8 +51,13 @@ import {
  *
  * A request the gateway took that no block holds by the time it expired
  * ("accepted, never included": a node that can't reach the chain's peers,
- * say) is logged as [SETTLEMENT NOT INCLUDED] and sent again. It pays no
- * fee, so it doesn't count toward giving up.
+ * say) is logged as [SETTLEMENT NOT INCLUDED] and sent again. Nodes drop
+ * such a request from their pool at its expiry and then answer that they
+ * hold it nowhere (not_held): past the latest expiry its draft can carry,
+ * that answer means never included. It pays no fee, so it doesn't count
+ * toward giving up. The run of them is kept on the step's row until a
+ * request reaches a block, whatever errors, refusals or "not yet" come in
+ * between.
  *
  * The Main Stage (MAIN_STAGE_DECISION_IDS) is drafted and sent first in
  * every run, ahead of the gateway's order, and is never given up: from its
@@ -104,6 +110,14 @@ export const SETTLEMENT_MAX_BACKOFF_MS = 15 * 60_000;
 /** Main Stage requests a day at most, once each waits the full backoff. */
 export const MAIN_STAGE_REQUESTS_A_DAY =
   (24 * 60 * 60_000) / SETTLEMENT_MAX_BACKOFF_MS;
+/**
+ * Past this after it was sent, a request is past the latest expiresAt its
+ * draft can carry (its validity and the clock slack the draft check
+ * allows, with a minute for the draft itself): no block can take it, and a
+ * node that holds it nowhere never included it.
+ */
+export const SETTLEMENT_PAST_EXPIRY_MS =
+  SETTLEMENT_VALID_FOR_MS + CLOCK_SLACK_MS + 60_000;
 /**
  * The chain's refusal of every waves operation while its waves import runs
  * (WAVES_IMPORT_RUNNING): not a failure, only "not yet".
@@ -580,6 +594,18 @@ export class WavesSettlementSender {
         }
       } catch (error) {
         if (error instanceof BudgetSpent) throw error;
+        if (isNotHeld(error) && MAY_RUN.includes(row.status)) {
+          const age = this.deps.now() - row.sent_at;
+          if (age >= SETTLEMENT_PAST_EXPIRY_MS) {
+            // Nodes drop a request from their pool at its expiry, then hold
+            // it nowhere: past the latest expiry, it was never included.
+            await this.notIncluded(row, rows, run);
+            continue;
+          }
+          // Dropped at its expiry, as nodes do: it is called never included
+          // once past the latest expiry its draft can carry.
+          if (age >= SETTLEMENT_VALID_FOR_MS) continue;
+        }
         logger.warn(`[SETTLEMENT TX UNREAD] [tx ${txId}] ${describe(error)}`);
         continue;
       }
@@ -589,7 +615,14 @@ export class WavesSettlementSender {
       }
       if (status !== row.status) {
         await this.save(
-          { ...row, status, failures, attempts, last_error: lastError },
+          {
+            ...row,
+            status,
+            failures,
+            attempts,
+            // A request in a block ends the run of never-included ones.
+            last_error: LANDED.includes(status) ? null : lastError
+          },
           rows
         );
       }
@@ -633,6 +666,11 @@ export class WavesSettlementSender {
     if (row?.status === 'given_up' && sameStep(row, step)) {
       logger.warn(`[SETTLEMENT TRYING AGAIN] ${where} after giving it up`);
     }
+    // The run of never-included requests before this one, kept on the row
+    // whatever this try meets, until a request reaches a block.
+    const inRow =
+      row && sameStep(row, step) ? notIncludedInRow(row.last_error) : 0;
+    const noted = (error: string | null) => withNotIncluded(error, inRow);
     // Every try counts toward the wait before the next, whatever its end.
     const attempts = plan.attempts + 1;
     const base = {
@@ -682,11 +720,16 @@ export class WavesSettlementSender {
       if (error instanceof BudgetSpent) throw error;
       const lastError = `draft: ${describe(error)}`;
       if (importRunning(error)) {
-        return this.notYet(base, plan, null, lastError, where, rows);
+        return this.notYet(base, plan, null, noted(lastError), where, rows);
       }
       logger.warn(`[SETTLEMENT NOT SENT] ${where} ${lastError}`);
       await this.save(
-        { ...base, tx_id: null, status: 'error', last_error: lastError },
+        {
+          ...base,
+          tx_id: null,
+          status: 'error',
+          last_error: noted(lastError)
+        },
         rows
       );
       return 'errors';
@@ -698,12 +741,9 @@ export class WavesSettlementSender {
       ...base,
       tx_id: checked.txId,
       status: 'submitting',
-      // After a request never included, its note stays until this one's
-      // fate is known: the next never included counts from it.
-      last_error:
-        row?.status === 'not_included' && sameStep(row, step)
-          ? row.last_error
-          : null
+      // The run of never-included requests stays until this one's fate is
+      // known: the next never included counts from it.
+      last_error: noted(null)
     };
     await this.save(sending, rows);
     const sent = `${where} [attempt ${attempts}] [tx ${checked.txId}]`;
@@ -719,7 +759,7 @@ export class WavesSettlementSender {
       if (!result.accepted) {
         logger.warn(`[SETTLEMENT REFUSED] ${sent} not accepted`);
         await this.save(
-          { ...sending, status: 'refused', last_error: 'not accepted' },
+          { ...sending, status: 'refused', last_error: noted('not accepted') },
           rows
         );
         return 'refused';
@@ -731,12 +771,19 @@ export class WavesSettlementSender {
       if (error instanceof BudgetSpent) throw error;
       const lastError = `submit: ${describe(error)}`;
       if (isRefusal(error) && importRunning(error)) {
-        return this.notYet(base, plan, checked.txId, lastError, sent, rows);
+        return this.notYet(
+          base,
+          plan,
+          checked.txId,
+          noted(lastError),
+          sent,
+          rows
+        );
       }
       if (isRefusal(error)) {
         logger.warn(`[SETTLEMENT REFUSED] ${sent} ${lastError}`);
         await this.save(
-          { ...sending, status: 'refused', last_error: lastError },
+          { ...sending, status: 'refused', last_error: noted(lastError) },
           rows
         );
         return 'refused';
@@ -744,7 +791,7 @@ export class WavesSettlementSender {
       // The gateway may have relayed it: it stays `submitting`, and the
       // next run asks the gateway about it.
       logger.warn(`[SETTLEMENT SUBMIT UNCLEAR] ${sent} ${lastError}`);
-      await this.save({ ...sending, last_error: lastError }, rows);
+      await this.save({ ...sending, last_error: noted(lastError) }, rows);
       return 'errors';
     }
   }
@@ -962,6 +1009,26 @@ function notIncludedInRow(note: string | null): number {
   return found ? Number(found[1]) : 0;
 }
 
+/** A row's error, with the run of never-included requests before it. */
+function withNotIncluded(error: string | null, inRow: number): string | null {
+  if (inRow <= 0) return error;
+  const note = `before it, never included (${inRow} in a row)`;
+  return error ? `${error}; ${note}` : note;
+}
+
+/** The gateway's word that no block and no pool of its node holds it. */
+function isNotHeld(error: unknown): boolean {
+  return error instanceof ChainGatewayError && error.code === 'not_held';
+}
+
+/** Requests a step that keeps failing sends in its first 24 hours, at most. */
+export function mainStageRequestsFirstDay(): number {
+  const day = 24 * 60 * 60_000;
+  let sent = 0;
+  for (let at = 0; at < day; at += backoffMs(sent)) sent++;
+  return sent;
+}
+
 /** Base units of 18 decimals as coins, to four places. */
 function coinsOf(base: bigint): string {
   const unit = BigInt('1000000000000000000');
@@ -976,8 +1043,9 @@ function coinsOf(base: bigint): string {
 
 /** What a Main Stage step's tries cost a day at most, and how to stop them. */
 function costAndStop(maxFee: bigint): string {
-  const perDay = BigInt(MAIN_STAGE_REQUESTS_A_DAY) * maxFee;
-  return `It is tried again ${SETTLEMENT_MAX_BACKOFF_MS / 60_000} minutes after each try: at most ${MAIN_STAGE_REQUESTS_A_DAY} requests a day, each paying at most WAVES_SETTLEMENT_MAX_FEE (${coinsOf(maxFee)} coins), so at most ${coinsOf(perDay)} coins a day. To stop this decision alone, add it to ${HOLD_DECISION_IDS_ENV} (claim builds go on); FEATURE_WAVES_SETTLEMENT_SENDER=false stops every settlement`;
+  const firstDay = mainStageRequestsFirstDay();
+  const perDay = BigInt(firstDay) * maxFee;
+  return `It is tried again ${SETTLEMENT_MAX_BACKOFF_MS / 60_000} minutes after each try: at most ${firstDay} requests in its first 24 hours and ${MAIN_STAGE_REQUESTS_A_DAY} a day after, each paying at most WAVES_SETTLEMENT_MAX_FEE (${coinsOf(maxFee)} coins), so at most ${coinsOf(perDay)} coins a day. To stop this decision alone, add it to ${HOLD_DECISION_IDS_ENV} (claim builds go on); FEATURE_WAVES_SETTLEMENT_SENDER=false stops every settlement`;
 }
 
 function describe(error: unknown): string {
