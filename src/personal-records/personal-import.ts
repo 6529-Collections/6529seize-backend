@@ -34,6 +34,11 @@ import {
 import type { VerifiedRecord } from '@/signed-records/record-verify';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import {
+  COLLECT_RULE_OPERATIONS_TABLE,
+  COLLECT_RULES_TABLE
+} from '@/collecting/collecting-rules.service';
+import { CollectRecordType } from './collect-rule-records';
+import {
   PERSONAL_MODERATION_ACTIONS,
   PERSONAL_MODERATION_LOG_TYPE,
   PersonalRecordType
@@ -43,8 +48,11 @@ import { isKeysRecord, restoreServiceHeads } from './personal-record-heads';
 /** The record log lane of the one-time import at the switch. */
 export const PERSONAL_IMPORT_LANE = 'personal-import';
 
-// One owner's items per entry, split so an entry stays far below 4 MiB.
+// One owner's items per entry, split so an entry stays far below 4 MiB:
+// at most this many items, and this many bytes of them (a Collect rule
+// with many targets is large).
 const ITEMS_PER_ENTRY = 2_000;
+const ITEM_BYTES_PER_ENTRY = 3 * 1024 * 1024;
 // Owners read and resolved per page.
 const OWNERS_PER_PAGE = 500;
 
@@ -131,6 +139,9 @@ export interface PersonalExportPage {
   readonly eula: Row[];
   // The person's own block and hide history (four audit actions).
   readonly moderationLog: Row[];
+  // Collect rules as stored, and their operation bindings.
+  readonly collectRules: Row[];
+  readonly collectOperations: Row[];
 }
 
 /**
@@ -192,6 +203,7 @@ export class PersonalImportBuilder {
     collect(page.push, 'profile_id');
     collect(page.eula, 'profile_id');
     collect(page.moderationLog, 'actor_profile_id', 'target_profile_id');
+    collect(page.collectRules, 'profile_id');
     const owners = await this.deps.ownersOf(Array.from(ids));
 
     const items = new Map<string, PersonalImportItem[]>();
@@ -314,6 +326,7 @@ export class PersonalImportBuilder {
     }
 
     this.addModerationLog(page, owners, add);
+    this.addCollectRules(page, add);
 
     const entries: RecordLogEntry[] = [];
     // Public entries first; in pv a follow comes before its wave-notify.
@@ -321,21 +334,97 @@ export class PersonalImportBuilder {
       for (const [id, list] of Array.from(items.entries())) {
         if (!id.startsWith(`${family}|`)) continue;
         const owner = id.slice(family.length + 1);
-        for (let i = 0; i < list.length; i += ITEMS_PER_ENTRY) {
+        let chunk: PersonalImportItem[] = [];
+        let bytes = 0;
+        const flush = () => {
+          if (!chunk.length) return;
           const body: PersonalImportBody = {
             v: 1,
             anchor: this.deps.anchor,
             at: this.deps.at,
             owner,
             family,
-            items: list.slice(i, i + ITEMS_PER_ENTRY)
+            items: chunk
           };
           entries.push(importEntry(family, body));
+          chunk = [];
+          bytes = 0;
+        };
+        for (const item of list) {
+          const size = Buffer.byteLength(JSON.stringify(item), 'utf8');
+          if (
+            chunk.length >= ITEMS_PER_ENTRY ||
+            bytes + size > ITEM_BYTES_PER_ENTRY
+          ) {
+            flush();
+          }
+          chunk.push(item);
+          bytes += size;
         }
+        flush();
       }
     }
     this.entries += entries.length;
     if (entries.length) await this.deps.emit(entries);
+  }
+
+  /**
+   * Each Collect rule as stored (counters, pending review, revision and
+   * times) and each of its operation bindings, so a rebuild restores them
+   * as they were at the switch.
+   */
+  private addCollectRules(
+    page: PersonalExportPage,
+    add: (
+      profileId: string,
+      family: 'ps' | 'pv',
+      item: PersonalImportItem
+    ) => void
+  ) {
+    const profileOfRule = new Map<string, string>();
+    for (const row of page.collectRules) {
+      profileOfRule.set(String(row.id), String(row.profile_id));
+      const rule =
+        typeof row.payload_json === 'string'
+          ? JSON.parse(row.payload_json)
+          : row.payload_json;
+      add(String(row.profile_id), 'pv', {
+        t: CollectRecordType.RULE_STATE,
+        k: String(row.id),
+        b: {
+          rule,
+          idempotency_key: String(row.idempotency_key),
+          request_hash: String(row.request_hash)
+        }
+      });
+    }
+    for (const row of page.collectOperations) {
+      const profileId = profileOfRule.get(String(row.rule_id));
+      if (!profileId) {
+        this.skip('collect operation without its rule');
+        continue;
+      }
+      add(profileId, 'pv', {
+        t: CollectRecordType.OPERATION,
+        k: String(row.operation_id),
+        b: {
+          rule_id: String(row.rule_id),
+          review_hash: String(row.review_hash),
+          settlement_hash:
+            row.settlement_hash === null ? null : String(row.settlement_hash),
+          transaction_hash:
+            row.transaction_hash === null || row.transaction_hash === undefined
+              ? null
+              : String(row.transaction_hash),
+          transaction_nonce:
+            row.transaction_nonce === null ||
+            row.transaction_nonce === undefined
+              ? null
+              : Number(row.transaction_nonce),
+          created_at: Number(row.created_at)
+        }
+      });
+    }
   }
 
   /**
@@ -896,6 +985,7 @@ export class PersonalExportDb extends LazyDbAccessCompatibleService {
       [MENTION_ALIASES_TABLE, 'owner_profile_id'],
       [PUSH_NOTIFICATION_SETTINGS_TABLE, 'profile_id'],
       [EULA_CONSENT_TABLE, 'profile_id', 'profile_id is not null'],
+      [COLLECT_RULES_TABLE, 'profile_id'],
       [
         CONTENT_MODERATION_AUDIT_LOG_TABLE,
         'actor_profile_id',
@@ -1004,6 +1094,17 @@ export class PersonalExportDb extends LazyDbAccessCompatibleService {
              .map((action) => `'${action}'`)
              .join(', ')})
          order by created_at, id`
+      ),
+      collectRules: await read(
+        `select id, profile_id, idempotency_key, request_hash, payload_json
+         from ${COLLECT_RULES_TABLE} where profile_id in (:ids)`
+      ),
+      collectOperations: await read(
+        `select o.operation_id, o.rule_id, o.review_hash, o.settlement_hash,
+                o.transaction_hash, o.transaction_nonce, o.created_at
+         from ${COLLECT_RULE_OPERATIONS_TABLE} o
+         join ${COLLECT_RULES_TABLE} r on r.id = o.rule_id
+         where r.profile_id in (:ids)`
       )
     };
   }

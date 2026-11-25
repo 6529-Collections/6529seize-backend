@@ -7,6 +7,8 @@ import { writtenTables } from '@/rebuild/step-writes';
 const PROBE_WAVE = '00000000-0000-4000-8000-000000000001';
 const PROBE_DROP = '00000000-0000-4000-8000-000000000002';
 const PROBE_DEVICE = 'rebuild-check-settings-device';
+/** The Collect rule the seed makes for the probe caller. */
+const PROBE_COLLECT_RULE = '00000000-0000-4000-8000-0000000000c1';
 
 /**
  * The records service identity of a rebuild run: a fake wave, profile and
@@ -20,7 +22,7 @@ const FIXTURE_RECORDS_FLAGS = {
   SIGNED_RECORDS_PROVIDER_KEYS: JSON.stringify([
     { id: 'rebuild-fixture', private_key: FIXTURE_PROVIDER_KEY }
   ]),
-  SIGNED_RECORDS_WAVE_ID: '00000000-0000-4000-8000-0000000000a1',
+  SIGNED_RECORDS_WAVE_ID: '00000000-0000-4000-8000-0000000000e1',
   SIGNED_RECORDS_SERVICE_PROFILE_ID: 'rebuild-records-service',
   SIGNED_RECORDS_SERVICE_WALLET: '0x00000000000000000000000000000000000000a1'
 };
@@ -139,7 +141,16 @@ const PROBES: Probe[] = [
     path: `/api/policies/eula-consent/${PROBE_DEVICE}`,
     as: PROBE_CALLER
   },
-  { id: 'personal.collect-rules', path: '/api/collect/rules', as: PROBE_CALLER }
+  {
+    id: 'personal.collect-rules',
+    path: '/api/collect/rules',
+    as: PROBE_CALLER
+  },
+  {
+    id: 'personal.collect-rule',
+    path: `/api/collect/rules/${PROBE_COLLECT_RULE}`,
+    as: PROBE_CALLER
+  }
 ];
 
 /**
@@ -158,10 +169,14 @@ const PROBES: Probe[] = [
  *   and takeLogHead, personal-record-heads.ts). Keys records are SEALED,
  *   which ps doesn't carry (record-families.ts), and readers are pv
  *   RECORDs, so both are pv only.
+ * - `collect.rule`: a person's Collect rule records (collectRuleHandlers,
+ *   collect-rule-records.ts), live and in the rebuild's first pass, which
+ *   keeps their heads (deferredCollectRules).
  *
- * The import's own types keep no head: the rebuild applies import entries
- * and report effects with `heads: false` (personal-import.ts), and a signed
- * record of such a type is refused.
+ * The import's own types keep no head (moderation-log, collect.rule-state,
+ * collect.op): the rebuild applies import entries and report effects with
+ * `heads: false` (personal-import.ts), and a signed record of such a type
+ * is refused.
  */
 const PERSONAL_HEAD_TYPES = [
   ['ps', 'follow'],
@@ -177,6 +192,7 @@ const PERSONAL_HEAD_TYPES = [
   ['pv', 'alias'],
   ['pv', 'push'],
   ['pv', 'eula'],
+  ['pv', 'collect.rule'],
   ['pv', '~owner'],
   ['pv', '~keys'],
   ['pv', '~reader']
@@ -217,7 +233,11 @@ const PERSONAL_SETTINGS_REBUILD: RebuildStep = {
       }
     },
     'signed_record_log_segments',
-    'personal_records_state'
+    'personal_records_state',
+    // Collect rules: the import, then the collect lane in its order, each
+    // settlement checked against Ethereum.
+    'collect_rules',
+    'collect_rule_operations'
   ],
   // The records wave's drops and the waves index (the waves rebuild's),
   // and the profiles and identities owners map to.
@@ -260,6 +280,9 @@ const PERSONAL_SETTINGS_SEED: RebuildStep = {
     'waves',
     'drops',
     'drops_parts',
+    // Each drop's metrics, as drop creation writes them.
+    'wave_metrics',
+    'wave_dropper_metrics',
     'identities',
     'address_consolidation_keys',
     'profiles'
@@ -271,7 +294,8 @@ const PERSONAL_SETTINGS_SEED: RebuildStep = {
     'competition_entries'
   ],
   after: ['identity.probe-profiles'],
-  sources: ['files'],
+  // Ethereum: a purchase's nonce is used by another transaction.
+  sources: ['files', 'ethereum'],
   timeoutMinutes: 20
 };
 
@@ -300,7 +324,10 @@ export const personalManifest: AreaManifest = {
     ...FIXTURE_RECORDS_FLAGS
   },
   tables: {
-    collect_plans: { class: 'INDEX' },
+    collect_plans: {
+      class: 'EPHEMERAL',
+      why: 'Scan jobs with leases; the page makes a plan again when it needs one, and a rule keeps its plan and analysis ids in its own terms.'
+    },
     collect_rule_operations: { class: 'INDEX' },
     collect_rules: { class: 'INDEX' },
     market_operation_events: {
@@ -434,6 +461,13 @@ export const personalManifest: AreaManifest = {
   rebuilders: [PERSONAL_SETTINGS_REBUILD],
   probes: PROBES,
   waivers: {
+    unprobedTables: [
+      {
+        target: 'collect_rule_operations',
+        reason:
+          "No GET route reads it: only reconcile, a POST, reads a pending purchase's binding. The row comparison covers it; the seed fills it with a settled purchase the import carries and a released one the collect lane carries."
+      }
+    ],
     routes: [
       {
         target: 'GET /api/signed-records/owners',

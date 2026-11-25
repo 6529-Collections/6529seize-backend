@@ -32,6 +32,11 @@ import type {
 } from './personal-records.ports';
 import { ownersUnavailable } from './personal-records.ports';
 import type { RecordOwnerDirectory } from './record-owner-directory';
+import {
+  collectRuleHandlers,
+  CollectRuleDeps,
+  SignedCollectRule
+} from './collect-rule-records';
 
 /**
  * The personal settings as records (DESIGN.md 1.2). `follow` is a public
@@ -85,6 +90,8 @@ export interface PersonalHandlerDeps {
   readonly owners: RecordOwnerDirectory;
   readonly tables: PersonalTables;
   readonly live: PersonalLiveEffects;
+  // Collect rules (collect-rule-records.ts); unset where none are applied.
+  readonly collect?: CollectRuleDeps;
 }
 
 const ID_PATTERN = /^[A-Za-z0-9-]{1,100}$/;
@@ -1051,9 +1058,20 @@ function moderationLogHandler(): RecordTypeHandler {
   };
 }
 
-/** Every personal type, as the indexer's handlers. */
+/** A rebuild's first pass: `collect.rule` records go here, by event id. */
+export interface PersonalHandlerOptions {
+  readonly deferredCollectRules?: Map<string, SignedCollectRule>;
+}
+
+/**
+ * Every personal type, as the indexer's handlers. With
+ * `deferredCollectRules` (a rebuild's first pass) `collect.rule` records
+ * keep their heads and change no table; each is kept as signed, and the
+ * rebuild applies rules in the collect lane's order.
+ */
 export function personalRecordHandlers(
-  deps: PersonalHandlerDeps
+  deps: PersonalHandlerDeps,
+  opts: PersonalHandlerOptions = {}
 ): RecordTypeHandler[] {
   const { tables } = deps;
   return [
@@ -1126,16 +1144,22 @@ export function personalRecordHandlers(
     aliasHandler(deps),
     pushHandler(deps),
     eulaHandler(deps),
-    moderationLogHandler()
+    moderationLogHandler(),
+    ...collectRuleHandlers({
+      collect: deps.collect,
+      profileIdOf: (change, mode) => ownerProfileId(change, deps, mode),
+      deferred: opts.deferredCollectRules
+    })
   ];
 }
 
 /** Registers every personal type. */
 export function registerPersonalRecordTypes(
   registry: RecordRegistry,
-  deps: PersonalHandlerDeps
+  deps: PersonalHandlerDeps,
+  opts: PersonalHandlerOptions = {}
 ): RecordRegistry {
-  for (const handler of personalRecordHandlers(deps)) {
+  for (const handler of personalRecordHandlers(deps, opts)) {
     registry.register(handler);
   }
   return registry;

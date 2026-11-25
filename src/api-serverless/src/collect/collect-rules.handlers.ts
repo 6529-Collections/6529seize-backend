@@ -15,6 +15,11 @@ import {
 } from '@/marketplace/seaport.schema';
 import { marketPrepareSchema } from '@/marketplace/market-preparation';
 import {
+  assertLegacySettingsWrite,
+  assertNotFrozen
+} from '@/personal-records/personal-records.mode';
+import { personalRecordsStateDb } from '@/personal-records/personal-records-state.db';
+import {
   createRule,
   prepareRule,
   reconcileRule,
@@ -58,15 +63,17 @@ function ruleDto(rule: CollectingRule): ApiCollectRule {
 export function handleCreateCollectRule(
   req: Operations.CreateCollectRuleRequest
 ): Promise<Operations.CreateCollectRuleResponse> {
-  return executeMarketRequest(req, async (auth) =>
-    ruleDto(
+  return executeMarketRequest(req, async (auth) => {
+    // In primary mode a rule is created by a signed collect.rule record.
+    await assertLegacySettingsWrite(personalRecordsStateDb);
+    return ruleDto(
       await createRule(
         auth,
         definitionSchema.parse(req.body),
         id.parse(req.get('Idempotency-Key'))
       )
-    )
-  );
+    );
+  });
 }
 export function handleGetCollectRules(
   req: Operations.GetCollectRulesRequest
@@ -95,6 +102,8 @@ export function handlePauseCollectRule(
   req: Operations.PauseCollectRuleRequest
 ): Promise<Operations.PauseCollectRuleResponse> {
   return executeMarketRequest(req, async (auth) => {
+    // In primary mode a pause or resume is a signed collect.rule record.
+    await assertLegacySettingsWrite(personalRecordsStateDb);
     const actor = assertMarketActor(auth),
       rule = await requireRuleWallet(id.parse(req.params.id), actor);
     const body = z
@@ -118,6 +127,7 @@ export function handlePrepareCollectRule(
   req: Operations.PrepareCollectRuleRequest
 ): Promise<Operations.PrepareCollectRuleResponse> {
   return executeMarketRequest(req, async (auth) => {
+    await assertNotFrozen(personalRecordsStateDb);
     const body = z
       .object({
         expected_revision: z.number().int().positive(),
@@ -137,7 +147,8 @@ export function handlePrepareCollectRule(
 export function handleReconcileCollectRule(
   req: Operations.ReconcileCollectRuleRequest
 ): Promise<Operations.ReconcileCollectRuleResponse> {
-  return executeMarketRequest(req, async (auth) =>
-    ruleDto(await reconcileRule(id.parse(req.params.id), auth))
-  );
+  return executeMarketRequest(req, async (auth) => {
+    await assertNotFrozen(personalRecordsStateDb);
+    return ruleDto(await reconcileRule(id.parse(req.params.id), auth));
+  });
 }
