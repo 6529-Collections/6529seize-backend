@@ -213,6 +213,9 @@ Each `--source <name>=<spec>`:
   `alchemy_getAssetTransfers` from its logs and blocks. Children get the
   shim as `ETHEREUM_RPC_URL` and `ALCHEMY_BASE_URL`. The Alchemy NFT API and
   its other `alchemy_*` methods are not served; a call to them fails the run.
+  `ALCHEMY_BASE_URL` is honoured only on a loopback host (127.0.0.1, ::1 or
+  localhost), since the Alchemy key travels in its path: an `ethereum` URL
+  on another host fails a step as soon as it makes its Alchemy client.
 - The files server answers `/ipfs/<id>`, `/ar/<id>`, `/docs/<id>` and
   `/<id>` from the directory, and checks every file against
   `<dir>/files.json` (id to SHA-256). It doesn't derive an id from the
