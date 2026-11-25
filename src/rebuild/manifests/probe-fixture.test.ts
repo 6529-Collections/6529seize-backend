@@ -13,20 +13,28 @@ import {
   worldActorProfileId,
   worldActorWallet
 } from '@/rebuild/manifests/probe-fixture';
+import { compareCodeUnits } from '@/rebuild/code-units';
 
 const sha256 = (value: unknown) =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
 /**
- * The wallets derived from the labels by the key rule in probe-fixture.ts:
- * the SHA-256 of JSON.stringify of the [label, address] pairs, in label
- * order. A hash, so this test holds no address. Once a gateway recording
- * carries these wallets, the pins move to it.
+ * The wallets derived from the actors' labels by the key rule in
+ * probe-fixture.ts: the SHA-256 of JSON.stringify of the [label, address]
+ * pairs, in label order. A hash, so this test holds no address. Once a
+ * gateway recording carries the actors, the pin moves to it.
  */
 const ACTOR_WALLETS_SHA256 =
   '353104b27f6906fe7fb0460174bee851a60ee87c8d6da48b5942a3a28fc58aa6';
-const PEOPLE_WALLETS_SHA256 =
-  '4dda5b129fdcb36b89b0466a7d32bfe9a6854d54f88eca2f110e6d20bf8f0864';
+/**
+ * The waves people as the identity world file of the gateway recording the
+ * check replays holds them: the SHA-256 of JSON.stringify of the [person,
+ * wallets] pairs, people and each person's wallets in code-unit order.
+ * devnet_p4 and devnet_p8 each hold a second wallet, labelled with _b; the
+ * file doesn't say which of the two is the _b one.
+ */
+const RECORDED_PEOPLE_WALLETS_SHA256 =
+  '4dbcd40a7d1aa1bb3f8523b25938eb0521a74ee80089c6bf4293e2cc98c76d33';
 
 describe("the world's actors", () => {
   it('derive their wallets from their labels', () => {
@@ -35,11 +43,6 @@ describe("the world's actors", () => {
         WORLD_ACTOR_LABELS.map((label) => [label, worldActorWallet(label)])
       )
     ).toBe(ACTOR_WALLETS_SHA256);
-    expect(
-      sha256(
-        WAVES_PERSON_LABELS.map((label) => [label, wavesPersonWallet(label)])
-      )
-    ).toBe(PEOPLE_WALLETS_SHA256);
   });
 
   it('give each label its own key and the key its wallet', () => {
@@ -113,5 +116,28 @@ describe("the world's actors", () => {
     expect(primary).toBe(wallets[0]);
     // Its consolidation key: 15 addresses and 14 dashes.
     expect(wallets.join('-')).toHaveLength(644);
+  });
+});
+
+describe('the waves people', () => {
+  it('hold the wallets the gateway recording holds for them', () => {
+    const people = new Map<string, string[]>();
+    for (const label of WAVES_PERSON_LABELS) {
+      const person = label.replace(/_b$/, '');
+      people.set(person, [
+        ...(people.get(person) ?? []),
+        wavesPersonWallet(label)
+      ]);
+    }
+    expect(
+      sha256(
+        Array.from(people.entries())
+          .sort(([a], [b]) => compareCodeUnits(a, b))
+          .map(([person, wallets]) => [
+            person,
+            [...wallets].sort(compareCodeUnits)
+          ])
+      )
+    ).toBe(RECORDED_PEOPLE_WALLETS_SHA256);
   });
 });
