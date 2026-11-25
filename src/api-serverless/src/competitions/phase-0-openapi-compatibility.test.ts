@@ -27,7 +27,12 @@ const ACCEPTED_ADDITIVE_ENUM_EXTENSIONS: Readonly<Record<string, string[]>> = {
   'schema ApiWaveMentionSearchResult.required': ['level'],
   // Settings responses gain the four-wallet consolidation policy; existing
   // fields are unchanged, so older clients keep working.
-  'schema ApiSeizeSettings.required': ['consolidation']
+  'schema ApiSeizeSettings.required': ['consolidation'],
+  // Waves, wave summaries and groups gain stays_on_site: a response field
+  // added, so existing clients are unaffected.
+  'schema ApiWave.required': ['stays_on_site'],
+  'schema ApiWaveMin.required': ['stays_on_site'],
+  'schema ApiGroupFull.required': ['stays_on_site']
 };
 
 const ACCEPTED_NULLABLE_REFERENCE_EXTENSIONS = new Set([
