@@ -4,13 +4,26 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as zlib from 'node:zlib';
-import { DROPS_PARTS_TABLE, DROPS_TABLE } from '@/constants';
+import {
+  legacyCompetitionEntryId,
+  legacyCompetitionId
+} from '@/competitions/competition-id';
+import {
+  COMPETITION_ENTRIES_TABLE,
+  COMPETITION_VOTE_HISTORY_TABLE,
+  COMPETITION_VOTES_TABLE,
+  DROPS_PARTS_TABLE,
+  DROPS_TABLE
+} from '@/constants';
 import { DropType } from '@/entities/IDrop';
+import { WaveType } from '@/entities/IWave';
 import { setSqlExecutor, sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
+import { seedNativeOriginalPrimaryFixture } from '@/tests/fixtures/native-competition.fixture';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import { main } from './cli';
+import { compareCodePoints } from './waves-export.json';
 
 /**
  * The export as the CLI runs it, on made-up rows: `main` with its own DB
@@ -24,7 +37,10 @@ import { main } from './cli';
  * tooling as the export run does: normalize, table-check and build (each
  * given the records wave setting the export ran with, as its export.json
  * records it; build its revision too) must exit 0 and write a Waves v1
- * file and the import set. WAVES_E2E_OUT keeps the output there.
+ * file and the import set, which check-set reads back. The world holds a
+ * published decision with a native active entry that has votes, so the
+ * tooling's check that such an entry has a vote log runs too.
+ * WAVES_E2E_OUT keeps the output, and each step's output, there.
  */
 const AUTHOR = anIdentity(
   {},
@@ -62,6 +78,38 @@ const RECORDS_WAVE = aWave(
   { created_by: AUTHOR.profile_id!, description_drop_id: DROP(6) },
   { id: RECORDS_ID, name: 'Records', serial_no: 4 }
 );
+// A published decision with a native active entry that holds votes: the
+// tooling refuses such an entry when its vote log is empty.
+const DECISION_ID = 'e1000000-0000-4000-8000-000000000005';
+const DECISION_WAVE = aWave(
+  {
+    type: WaveType.RANK,
+    created_by: AUTHOR.profile_id!,
+    description_drop_id: DROP(8)
+  },
+  { id: DECISION_ID, name: 'Decision', serial_no: 5 }
+);
+const COMPETITION_ID = legacyCompetitionId(DECISION_ID);
+const ENTRY_ID = legacyCompetitionEntryId(COMPETITION_ID, DROP(7));
+const VOTER = anIdentity(
+  {},
+  {
+    consolidation_key: 'e2e-voter-wallet',
+    profile_id: 'e0000000-0000-4000-8000-000000000002',
+    primary_address: '0x00000000000000000000000000000000000e2e02',
+    handle: 'e2evoter'
+  }
+);
+/** The entry's votes now, and how they got there, oldest first. */
+const ENTRY_VOTES = [
+  { voter: AUTHOR.profile_id!, value: 8 },
+  { voter: VOTER.profile_id!, value: 3 }
+];
+const ENTRY_HISTORY = [
+  { voter: AUTHOR.profile_id!, previous: 0, value: 5, aggregate: 5, at: 2_000 },
+  { voter: VOTER.profile_id!, previous: 0, value: 3, aggregate: 8, at: 3_000 },
+  { voter: AUTHOR.profile_id!, previous: 5, value: 8, aggregate: 11, at: 4_000 }
+];
 
 function dropRow(waveId: string, id: string, serial: number) {
   return {
@@ -114,7 +162,11 @@ const DROPS = [
   },
   dropRow(SECOND_ID, DROP(4), 4),
   dropRow(STAYING_ID, DROP(5), 5),
-  dropRow(RECORDS_ID, DROP(6), 6)
+  dropRow(RECORDS_ID, DROP(6), 6),
+  // The decision's entry, stored as a native entry's drop, and the
+  // decision wave's description.
+  { ...dropRow(DECISION_ID, DROP(7), 7), drop_type: DropType.COMPETITION },
+  dropRow(DECISION_ID, DROP(8), 8)
 ];
 
 function readLines(file: string): Record<string, unknown>[] {
@@ -138,12 +190,62 @@ function python(tool: string, args: string[]) {
 describeWithSeed(
   'waves:export through the CLI',
   [
-    withIdentities([AUTHOR]),
-    withWaves([FIRST_WAVE, SECOND_WAVE, STAYING_WAVE, RECORDS_WAVE]),
+    withIdentities([AUTHOR, VOTER]),
+    withWaves([
+      FIRST_WAVE,
+      SECOND_WAVE,
+      STAYING_WAVE,
+      RECORDS_WAVE,
+      DECISION_WAVE
+    ]),
     { table: DROPS_TABLE, rows: DROPS },
     {
       table: DROPS_PARTS_TABLE,
       rows: DROPS.map((drop) => partRow(drop.wave_id, drop.id))
+    },
+    {
+      table: COMPETITION_ENTRIES_TABLE,
+      rows: [
+        {
+          id: ENTRY_ID,
+          competition_id: COMPETITION_ID,
+          wave_id: DECISION_ID,
+          drop_id: DROP(7),
+          submitter_id: AUTHOR.profile_id!,
+          status: 'ACTIVE',
+          config_version: 1,
+          submitted_at: 1_500
+        }
+      ]
+    },
+    {
+      table: COMPETITION_VOTES_TABLE,
+      rows: ENTRY_VOTES.map((vote, i) => ({
+        id: `e3000000-0000-4000-8000-00000000000${i + 1}`,
+        competition_id: COMPETITION_ID,
+        entry_id: ENTRY_ID,
+        voter_profile_id: vote.voter,
+        value: vote.value,
+        credit_spent: vote.value,
+        created_at: 2_000,
+        updated_at: 4_000
+      }))
+    },
+    {
+      table: COMPETITION_VOTE_HISTORY_TABLE,
+      rows: ENTRY_HISTORY.map((change, i) => ({
+        sequence: i + 1,
+        competition_id: COMPETITION_ID,
+        entry_id: ENTRY_ID,
+        drop_id: DROP(7),
+        submitter_id: AUTHOR.profile_id!,
+        voter_profile_id: change.voter,
+        value: change.value,
+        previous_value: change.previous,
+        aggregate_value: change.aggregate,
+        credit_delta: change.value - change.previous,
+        occurred_at: change.at
+      }))
     }
   ],
   () => {
@@ -165,6 +267,8 @@ describeWithSeed(
       // The CLI opens its own DB context and executor; the test's comes
       // back afterwards for the hooks that reset the database.
       const testExecutor = sqlExecutor;
+      // The decision, published, as the primary decision of its wave.
+      await seedNativeOriginalPrimaryFixture(DECISION_WAVE);
       const stdout = jest
         .spyOn(process.stdout, 'write')
         .mockImplementation(() => true);
@@ -178,7 +282,7 @@ describeWithSeed(
           '--records-wave-id',
           RECORDS_ID,
           '--waves',
-          `${FIRST_ID},${SECOND_ID},${STAYING_ID},${RECORDS_ID}`
+          `${FIRST_ID},${SECOND_ID},${STAYING_ID},${RECORDS_ID},${DECISION_ID}`
         ]);
       } finally {
         stdout.mockRestore();
@@ -223,8 +327,8 @@ describeWithSeed(
       // out whole, and counted.
       const raw = (name: string) =>
         JSON.parse(fs.readFileSync(path.join(out, 'raw', name), 'utf8'));
-      expect(Object.keys(raw('waves_v3.json')).sort()).toEqual(
-        [FIRST_ID, SECOND_ID].sort()
+      expect(Object.keys(raw('waves_v3.json')).sort(compareCodePoints)).toEqual(
+        [FIRST_ID, SECOND_ID, DECISION_ID].sort(compareCodePoints)
       );
       for (const id of [STAYING_ID, RECORDS_ID]) {
         expect(
@@ -236,8 +340,24 @@ describeWithSeed(
       );
       expect(raw('curations.json')).toEqual({
         [FIRST_ID]: [],
-        [SECOND_ID]: []
+        [SECOND_ID]: [],
+        [DECISION_ID]: []
       });
+      // The native entry's vote log is its stored history, newest first,
+      // and adds up to its votes.
+      const log = raw('entry_logs.json')[DROP(7)] as Record<string, number>[];
+      expect(
+        log.map((row) => [row.voter_profile_id, row.old_vote, row.new_vote])
+      ).toEqual(
+        [...ENTRY_HISTORY]
+          .reverse()
+          .map((change) => [change.voter, change.previous, change.value])
+      );
+      const total = ENTRY_VOTES.reduce((sum, vote) => sum + vote.value, 0);
+      expect(
+        log.reduce((sum, row) => sum + row.new_vote - row.old_vote, 0)
+      ).toBe(total);
+      expect(Object.keys(raw('entry_votes.json'))).toEqual([ENTRY_ID]);
       expect(raw('export.json')).toMatchObject({
         records_wave_id: RECORDS_ID,
         left_out: {
@@ -261,6 +381,12 @@ describeWithSeed(
       // disagrees.
       const recordsWave = String(raw('export.json').records_wave_id ?? 'none');
       expect(recordsWave).toBe(RECORDS_ID);
+      // With WAVES_E2E_OUT, each step's output is kept beside the export.
+      const keep = (step: string, run: { output: string }) => {
+        if (process.env.WAVES_E2E_OUT) {
+          fs.writeFileSync(path.join(out, `tool-${step}.log`), run.output);
+        }
+      };
       const normalize = python(tool, [
         'normalize',
         '--out',
@@ -272,11 +398,13 @@ describeWithSeed(
         '--records-wave',
         recordsWave
       ]);
+      keep('normalize', normalize);
       expect({ step: 'normalize', ...normalize }).toMatchObject({
         status: 0
       });
       // The gate on the drops table's values before the build.
       const tableCheck = python(tool, ['table-check', '--out', out]);
+      keep('table-check', tableCheck);
       expect({ step: 'table-check', ...tableCheck }).toMatchObject({
         status: 0
       });
@@ -289,10 +417,15 @@ describeWithSeed(
         '--revision',
         toolRevision
       ]);
+      keep('build', build);
       expect({ step: 'build', ...build }).toMatchObject({ status: 0 });
       expect(fs.existsSync(path.join(out, 'waves-v1.bin'))).toBe(true);
-      // The published set: the file, its docs and the archives.
+      // The published set: the file, its docs and the archives, read back
+      // as before its upload.
       expect(fs.existsSync(path.join(out, 'import-set.tar'))).toBe(true);
+      const checkSet = python(tool, ['check-set', '--out', out]);
+      keep('check-set', checkSet);
+      expect({ step: 'check-set', ...checkSet }).toMatchObject({ status: 0 });
     });
   }
 );
