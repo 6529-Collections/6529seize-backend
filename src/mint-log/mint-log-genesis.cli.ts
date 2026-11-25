@@ -1,6 +1,8 @@
 import { ipfsMintContent } from './mint-log-content';
 import { getMintLogPorts } from './mint-log-ports';
+import type { ConnectionWrapper } from '@/sql-executor';
 import {
+  encodeGenesisFile,
   GENESIS_CHAINS,
   MintContentPort,
   mintGenesisReader,
@@ -10,17 +12,48 @@ import { chainOfCard, MintLogChain } from './mint-log.types';
 
 /**
  * `mint-log:genesis`: writes the mint log's genesis files to IPFS and appends
- * the genesis entries. Without `--live` it is a read-only dry run that counts
- * the cards of each chain. Run with `--live` once, right after
+ * the genesis entries. Without `--live` it is a read-only dry run: it counts
+ * the cards of each chain and builds their files in memory to give their
+ * size, uploading and writing nothing. Run with `--live` once, right after
  * MINT_LOG_SHADOW is on. `--chain mint|rememes|collab` limits it to one chain.
  */
 
 const ipfsContent: MintContentPort = ipfsMintContent();
 
+/**
+ * The dry run's figures per chain: cards, the gzipped files' total bytes,
+ * and the largest file. Each file is built as the live run builds it and
+ * then dropped; nothing is uploaded or written.
+ */
+async function dryRunSizes(
+  chains: readonly MintLogChain[],
+  connection: ConnectionWrapper<any>
+) {
+  const cards: Record<string, number> = {};
+  const bytes: Record<string, number> = {};
+  const largest: Record<string, number> = {};
+  for (const chain of chains) {
+    cards[chain] = 0;
+    bytes[chain] = 0;
+    largest[chain] = 0;
+  }
+  for (const card of await mintGenesisReader.cards(connection)) {
+    const chain = chainOfCard(card);
+    if (!chains.includes(chain)) continue;
+    const size = encodeGenesisFile(
+      await mintGenesisReader.file(card, connection)
+    ).length;
+    cards[chain] += 1;
+    bytes[chain] += size;
+    largest[chain] = Math.max(largest[chain], size);
+  }
+  return { cards, bytes, largest_file_bytes: largest };
+}
+
 export async function main(args = process.argv.slice(2)): Promise<void> {
   if (args.includes('--help')) {
     process.stdout.write(
-      'mint-log:genesis [--live] [--chain mint|rememes|collab]\nDefaults to a read-only dry run that counts the cards of each chain. --live writes the files to IPFS and appends the genesis entries.\n'
+      'mint-log:genesis [--live] [--chain mint|rememes|collab]\nDefaults to a read-only dry run that counts the cards of each chain and the size of their files, uploading nothing. --live writes the files to IPFS and appends the genesis entries.\n'
     );
     return;
   }
@@ -41,17 +74,13 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   const output = await doInDbContext(
     async () => {
       if (!live) {
-        const cards = await dbSupplier().executeNativeQueriesInTransaction(
-          (connection) => mintGenesisReader.cards(connection)
-        );
         return {
           live: false,
-          cards: Object.fromEntries(
-            chains.map((it) => [
-              it,
-              cards.filter((card) => chainOfCard(card) === it).length
-            ])
-          )
+          ...(await dbSupplier().executeNativeQueriesInTransaction(
+            (connection) => dryRunSizes(chains, connection),
+            // One snapshot, as the live run reads its files.
+            { isolationLevel: 'REPEATABLE READ' }
+          ))
         };
       }
       const log = getMintLogPorts().log;
