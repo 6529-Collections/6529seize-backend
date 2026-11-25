@@ -22,7 +22,8 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
   );
 });
 
-async function saveTeam() {
+/** Fills the team table from team.csv in this folder, the list's source. */
+export async function saveTeam() {
   const team: Team[] = [];
   const csv = await readCsvFile(FILE_DIR);
   logger.info(`[TEAM MEMBERS ${csv.length}]`);

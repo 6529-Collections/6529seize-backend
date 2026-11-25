@@ -25,3 +25,6 @@ src/*/.serverless-offline
 
 # Records service key files (signed-records:service-setup) hold secrets.
 records-service-*.json*
+
+# Rebuild check: private mysqld data and run reports
+/.rebuild/
