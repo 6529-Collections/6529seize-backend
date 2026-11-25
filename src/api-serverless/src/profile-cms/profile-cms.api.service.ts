@@ -129,6 +129,9 @@ export interface ProfileCmsPackageStorageUploadResponse {
   readonly receipt: CmsStorageReceiptV1;
 }
 
+/** The gateway's document store takes uploads up to 2 MiB a file. */
+const CHAIN_DOCUMENT_MAX_BYTES = 2 * 1024 * 1024;
+
 export interface ProfileCmsPackageResponse {
   readonly is_primary: boolean;
   readonly recovery_receipt?: unknown;
@@ -146,6 +149,25 @@ export interface ProfileCmsPackageResponse {
   readonly published_at?: number;
   /** The signed publication record's CID, once the package was signed for publishing. */
   readonly publication_cid?: string;
+  /**
+   * In a publish answer with profile sites on the chain: the two files the
+   * person's browser uploads to the gateway's document store before the
+   * PROFILE_REPLACE that names them.
+   */
+  readonly chain_documents?: ProfileCmsChainDocumentsResponse;
+}
+
+/** A file by its CID, with its bytes in base64. */
+export interface ProfileCmsChainDocumentResponse {
+  readonly cid: string;
+  readonly bytes_base64: string;
+}
+
+export interface ProfileCmsChainDocumentsResponse {
+  /** The content core: the package's hash input, named by `cms.primary.package`. */
+  readonly content_core: ProfileCmsChainDocumentResponse;
+  /** The signed publication record, named by `cms.primary.publication`. */
+  readonly publication: ProfileCmsChainDocumentResponse;
 }
 
 export interface ProfileCmsPrimaryPackageResponse {
@@ -419,9 +441,12 @@ export class ProfileCmsApiService {
     }
     if (this.isRecordedChainPublication(entity, request)) {
       // Signed for the chain already (a second click, or a retry after the
-      // PROFILE_REPLACE failed): the stored record stands, nothing is signed
-      // or uploaded again.
-      return this.toPackageResponse(entity);
+      // upload or the PROFILE_REPLACE failed): the stored record stands,
+      // nothing is signed again, and the browser gets the files once more.
+      return {
+        ...this.toPackageResponse(entity),
+        chain_documents: await this.chainDocuments(entity)
+      };
     }
     this.assertDraftCanBePublished(entity);
     this.assertExpectedHashes(entity, request);
@@ -543,12 +568,21 @@ export class ProfileCmsApiService {
       verification: signatureVerification,
       publishedAt: Time.currentMillis()
     });
+    const manifestUploadBytes = Buffer.from(canonicalizeJson(manifest), 'utf8');
+    if (this.features.isProfileCmsChainPointerEnabled()) {
+      // Before anything is stored: the browser uploads both files, and the
+      // gateway's store takes each up to its size limit.
+      this.assertChainUploadable([
+        this.contentCore(entity).bytes,
+        manifestUploadBytes
+      ]);
+    }
     const recoveryReceipt = await this.publicationStorage.upload(
       {
         operationKey: `${entity.id}:publication:${signatureVerification.typed_data_hash}:${signatureVerification.signer_address}:${request.signature}`,
         profileId: entity.profile_id,
         packageDbId: entity.id,
-        bytes: Buffer.from(canonicalizeJson(manifest), 'utf8')
+        bytes: manifestUploadBytes
       },
       ctx
     );
@@ -556,7 +590,6 @@ export class ProfileCmsApiService {
     if (this.features.isProfileCmsChainPointerEnabled()) {
       return this.recordChainPublication(
         entity,
-        rebuiltPackage,
         manifestBytes,
         recoveryReceipt,
         ctx
@@ -698,38 +731,20 @@ export class ProfileCmsApiService {
 
   /**
    * With profile sites on the chain, publish stops before the pointer: the
-   * content core and the signed publication record go to the gateway's
-   * document store, the draft keeps the publication's CID, and the person's
-   * PROFILE_REPLACE names both in their ProfileDoc. The follower then marks
-   * the package published and writes its events and signature row.
+   * draft keeps the signed publication record's CID, and the answer carries
+   * the content core and the record. The person's browser uploads both to
+   * the gateway's document store (by its public name, with each CID, so a
+   * mismatch is refused), then signs the PROFILE_REPLACE that names them.
+   * The follower then marks the package published and writes its events
+   * and signature row.
    */
   private async recordChainPublication(
     entity: ProfileCmsPackageEntity,
-    rebuiltPackage: CmsPackageV1,
     manifestBytes: Buffer,
     recoveryReceipt: CmsStorageReceiptV1,
     ctx: RequestContext
   ): Promise<ProfileCmsPackageResponse> {
-    const coreBytes = Buffer.from(
-      canonicalizeJson(toPackageHashInput(rebuiltPackage)),
-      'utf8'
-    );
-    const port = this.chainPort();
     const publicationCid = cmsCidFromBytes(manifestBytes);
-    const stored = await Promise.all([
-      port.putDocBytes(coreBytes),
-      port.putDocBytes(manifestBytes)
-    ]);
-    if (
-      stored[0] !== cmsCidFromHash(entity.package_hash) ||
-      stored[1] !== publicationCid
-    ) {
-      throw new CustomApiCompliantException(
-        502,
-        'The document store returned an unexpected CID',
-        'cms_doc_store_mismatch'
-      );
-    }
     await this.packagesDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const txCtx: RequestContext = { ...ctx, connection };
@@ -760,9 +775,125 @@ export class ProfileCmsApiService {
         );
       }
     );
-    return this.toPackageResponse(
-      await this.getPackageEntityOrThrow(entity.id, ctx)
+    const recorded = await this.getPackageEntityOrThrow(entity.id, ctx);
+    return {
+      ...this.toPackageResponse(recorded),
+      chain_documents: await this.chainDocuments(recorded, {
+        cid: publicationCid,
+        bytes: manifestBytes
+      })
+    };
+  }
+
+  /**
+   * The two files a chain publish names, each checked against its CID: the
+   * content core, rebuilt from the stored package (its CID is the package
+   * hash's), and the signed publication record (`publication_cid`), from
+   * this request or else from the storage it was recorded in.
+   */
+  private async chainDocuments(
+    entity: ProfileCmsPackageEntity,
+    justSigned?: { readonly cid: string; readonly bytes: Buffer }
+  ): Promise<ProfileCmsChainDocumentsResponse> {
+    const core = this.contentCore(entity);
+    const publicationCid = entity.publication_cid;
+    if (!publicationCid) {
+      throw new CustomApiCompliantException(
+        500,
+        'The package holds no publication record',
+        'cms_publication_missing'
+      );
+    }
+    const publicationBytes =
+      justSigned?.cid === publicationCid
+        ? justSigned.bytes
+        : await this.storedPublicationRecord(entity, publicationCid);
+    return {
+      content_core: {
+        cid: core.cid,
+        bytes_base64: core.bytes.toString('base64')
+      },
+      publication: {
+        cid: publicationCid,
+        bytes_base64: publicationBytes.toString('base64')
+      }
+    };
+  }
+
+  /** Refuses a file the gateway's document store won't take (413). */
+  private assertChainUploadable(files: readonly Buffer[]): void {
+    if (files.some((bytes) => bytes.length > CHAIN_DOCUMENT_MAX_BYTES)) {
+      throw new CustomApiCompliantException(
+        413,
+        `The site is too large for the 6529 chain's document store (${CHAIN_DOCUMENT_MAX_BYTES} bytes a file)`,
+        'cms_chain_document_too_large'
+      );
+    }
+  }
+
+  /** The content core, rebuilt from the stored package; its CID is the package hash's. */
+  private contentCore(entity: ProfileCmsPackageEntity): {
+    readonly cid: string;
+    readonly bytes: Buffer;
+  } {
+    const bytes = Buffer.from(
+      canonicalizeJson(
+        toPackageHashInput(this.parsePackageOrThrow(entity.cms_package))
+      ),
+      'utf8'
     );
+    const cid = cmsCidFromHash(entity.package_hash);
+    if (cmsCidFromBytes(bytes) !== cid) {
+      throw new CustomApiCompliantException(
+        500,
+        'The content core does not match the package hash',
+        'cms_core_mismatch'
+      );
+    }
+    return { cid, bytes };
+  }
+
+  /** The publication record from the storage its recovery receipt names. */
+  private async storedPublicationRecord(
+    entity: ProfileCmsPackageEntity,
+    publicationCid: string
+  ): Promise<Buffer> {
+    const receipt = entity.recovery_receipt as CmsStorageReceiptV1 | null;
+    if (!receipt) {
+      throw new CustomApiCompliantException(
+        500,
+        'The package holds no publication record receipt',
+        'cms_publication_missing'
+      );
+    }
+    let bytes: Buffer;
+    try {
+      bytes = await this.publicationStorage.verify(receipt);
+    } catch (error) {
+      if (
+        error instanceof CustomApiCompliantException &&
+        error.code === 'cms_storage_hash_mismatch'
+      ) {
+        throw new CustomApiCompliantException(
+          502,
+          'The stored publication record does not match its receipt',
+          'cms_publication_mismatch'
+        );
+      }
+      throw new CustomApiCompliantException(
+        503,
+        "The publication record can't be read from storage now; publish again shortly",
+        'cms_check_unavailable'
+      );
+    }
+    if (cmsCidFromBytes(bytes) !== publicationCid) {
+      throw new CustomApiCompliantException(
+        502,
+        'The stored publication record does not match its CID',
+        'cms_publication_mismatch'
+      );
+    }
+    return bytes;
   }
 
   /**
