@@ -327,5 +327,79 @@ describe('Alchemy SDK replacement', () => {
         'http://127.0.0.1:8545'
       );
     });
+
+    it('takes a loopback host only, over http or https, on any port', () => {
+      const cases: [string, string][] = [
+        ['http://127.0.0.1:8545/', 'http://127.0.0.1:8545'],
+        ['https://localhost:3000/alchemy/', 'https://localhost:3000/alchemy'],
+        ['http://[::1]:8545', 'http://[::1]:8545'],
+        ['http://LOCALHOST', 'http://localhost'],
+        ['  http://127.0.0.1  ', 'http://127.0.0.1'],
+        // The parser's reading is the one used: shorthand loopback forms
+        // come back as 127.0.0.1, and a backslash ends the host.
+        ['http://127.1:8545', 'http://127.0.0.1:8545'],
+        ['http://0x7f000001', 'http://127.0.0.1'],
+        ['http://localhost\\@evil.example', 'http://localhost/@evil.example']
+      ];
+      for (const [value, base] of cases) {
+        process.env.ALCHEMY_BASE_URL = value;
+        expect(getAlchemyBaseUrl(Network.ETH_MAINNET)).toBe(base);
+      }
+    });
+
+    it('refuses any other host, naming the setting and not its value', () => {
+      const refused = [
+        'https://example.com',
+        'https://localhost.example',
+        'https://127.0.0.1.example',
+        // userinfo tricks: the host is what follows the @.
+        'https://127.0.0.1@evil.example',
+        'https://evil.example@127.0.0.1',
+        'https://user:secret@localhost:8545',
+        'ftp://127.0.0.1',
+        'https://127.0.0.1/?key=1',
+        'https://127.0.0.1/#frag',
+        'localhost:8545',
+        'not a url',
+        // Loopback-looking, but not the three hosts.
+        'http://localhost.',
+        'http://[::ffff:127.0.0.1]',
+        'http://127.0.0.2',
+        'http://0.0.0.0'
+      ];
+      for (const value of refused) {
+        process.env.ALCHEMY_BASE_URL = value;
+        let message = '';
+        try {
+          getAlchemyBaseUrl(Network.ETH_MAINNET);
+        } catch (error) {
+          message = (error as Error).message;
+        }
+        expect(message).toBe(
+          'ALCHEMY_BASE_URL must be an http or https URL on 127.0.0.1, ::1 or localhost, with no user, query or fragment: the Alchemy key would be sent to its host'
+        );
+      }
+    });
+
+    it('refuses when a client is made, before any request', () => {
+      process.env.ALCHEMY_BASE_URL = 'https://example.com';
+      expect(() => new Alchemy({ apiKey: 'test-key' })).toThrow(
+        'ALCHEMY_BASE_URL must be'
+      );
+      delete process.env.ALCHEMY_BASE_URL;
+      expect(() => new Alchemy({ apiKey: 'test-key' })).not.toThrow();
+    });
+
+    it('turns proxies off for the override, so the key goes to this machine only', () => {
+      mockedAxios.create.mockClear();
+      process.env.ALCHEMY_BASE_URL = 'http://127.0.0.1:8545';
+      new Alchemy({ apiKey: 'test-key' });
+      expect(mockedAxios.create).toHaveBeenLastCalledWith(
+        expect.objectContaining({ proxy: false })
+      );
+      delete process.env.ALCHEMY_BASE_URL;
+      new Alchemy({ apiKey: 'test-key' });
+      expect(mockedAxios.create.mock.lastCall?.[0]).not.toHaveProperty('proxy');
+    });
   });
 });

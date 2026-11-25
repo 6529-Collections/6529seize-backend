@@ -17,6 +17,7 @@ const workflow = parse(
   )
 );
 const finalSteps: { name?: string; run?: string }[] = workflow.jobs.build.steps;
+const shardNumbers = [1, 2, 3, 4, 5, 6];
 
 /** Finds an executable gate step and reports workflow renames explicitly. */
 function getRunScript(name: string): string {
@@ -29,7 +30,7 @@ function getRunScript(name: string): string {
 
 const gateScript = getRunScript('Require all checks and shards to pass');
 const inventoryScript = getRunScript(
-  'Verify every test belongs to exactly one shard'
+  'Verify every discovered suite appears in exactly one shard result'
 );
 
 /** Exercises the script's own fail-fast guards without implicit Bash options. */
@@ -46,10 +47,10 @@ function runScript(
 }
 
 describe('parallel PR workflow', () => {
-  it('runs all four shards independently of builds and keeps the required gate', () => {
+  it('runs six shards independently of builds and keeps the required gate', () => {
     expect(workflow.jobs.checks.needs).toBeUndefined();
     expect(workflow.jobs.test.needs).toBeUndefined();
-    expect(workflow.jobs.test.strategy.matrix.shard).toEqual([1, 2, 3, 4]);
+    expect(workflow.jobs.test.strategy.matrix.shard).toEqual(shardNumbers);
     expect(workflow.jobs.test.strategy['fail-fast']).toBe(false);
     expect(workflow.jobs.build.name).toBe('Build backend and API');
     expect(workflow.jobs.build.needs).toEqual(['checks', 'test']);
@@ -102,15 +103,15 @@ describe('cross-runner test inventory', () => {
     inventoryDirectory = path.join(directory, 'pr-ci-jest-inventory');
     // Use the same directory layout as download-artifact's merge-multiple mode.
     mkdirSync(inventoryDirectory);
-    const complete = 'a.test.ts\nb.test.ts\nc.test.ts\nd.test.ts\n';
-    for (let shard = 1; shard <= 4; shard++) {
+    const complete = shardNumbers.map((shard) => `${shard}.test.ts\n`).join('');
+    for (const shard of shardNumbers) {
       writeFileSync(
         path.join(inventoryDirectory, `complete-${shard}.txt`),
         complete
       );
       writeFileSync(
         path.join(inventoryDirectory, `shard-${shard}.txt`),
-        `${String.fromCodePoint(96 + shard)}.test.ts\n`
+        `${shard}.test.ts\n`
       );
     }
   });
@@ -122,18 +123,19 @@ describe('cross-runner test inventory', () => {
   });
 
   it.each([
-    ['missing test', 'shard-4.txt', ''],
-    ['duplicate test', 'shard-4.txt', 'a.test.ts\n'],
-    ['unexpected test', 'shard-4.txt', 'other.test.ts\n'],
-    ['extra test', 'shard-4.txt', 'd.test.ts\nother.test.ts\n'],
-    ['inconsistent discovery', 'complete-4.txt', 'other.test.ts\n'],
-    ['corrupt comparison baseline', 'complete-1.txt', 'a.test.ts\n']
+    ['missing test', 'shard-6.txt', ''],
+    ['duplicate test across shards', 'shard-6.txt', '1.test.ts\n'],
+    ['duplicate test within a shard', 'shard-6.txt', '6.test.ts\n6.test.ts\n'],
+    ['unexpected test', 'shard-6.txt', 'other.test.ts\n'],
+    ['extra test', 'shard-6.txt', '6.test.ts\nother.test.ts\n'],
+    ['inconsistent discovery', 'complete-6.txt', 'other.test.ts\n'],
+    ['corrupt comparison baseline', 'complete-1.txt', '1.test.ts\n']
   ])('rejects %s', (_reason, file, content) => {
     writeFileSync(path.join(inventoryDirectory, file), content);
     expect(runScript(inventoryScript, directory).status).not.toBe(0);
   });
 
-  it.each(['complete-4.txt', 'shard-4.txt'])(
+  it.each(['complete-6.txt', 'shard-6.txt'])(
     'rejects a missing artifact file: %s',
     (file) => {
       rmSync(path.join(inventoryDirectory, file));

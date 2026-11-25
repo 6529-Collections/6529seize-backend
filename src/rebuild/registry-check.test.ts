@@ -244,7 +244,36 @@ describe('checkRegistry', () => {
       codeTables: code('t1', 't2')
     });
     expect(result.problems.map((p) => p.detail)).toEqual([
-      'a rebuilder waits on unknown step nowhere'
+      'rebuilder a.ghost lists unknown step nowhere in `before`'
+    ]);
+  });
+
+  it('names the field an unknown step comes from', () => {
+    const result = checkRegistry({
+      manifests: [
+        area(
+          'a',
+          { t1: index() },
+          {
+            seeds: [
+              step('a.seed', { after: ['a.gone'] }),
+              step('a.seed-too', { after: ['a.gone'] }),
+              step('a.early', { before: ['a.gone'] })
+            ],
+            rebuilders: [
+              step('a.rebuild', { writes: ['t1'], after: ['a.missing'] })
+            ]
+          }
+        )
+      ],
+      codeTables: code('t1')
+    });
+    expect(
+      result.problems.filter((p) => p.kind === 'BAD_ORDER').map((p) => p.detail)
+    ).toEqual([
+      'a seed waits on unknown step a.gone',
+      'seed a.early lists unknown step a.gone in `before`',
+      'a rebuilder waits on unknown step a.missing'
     ]);
   });
 
@@ -707,8 +736,8 @@ describe('checkRegistry', () => {
     it("still fails an unknown id of the step's own area, or of no area", () => {
       const result = check({ before: ['waves.ghost', 'sbus.identity'] });
       expect(result.problems.map((p) => p.detail)).toEqual([
-        'a rebuilder waits on unknown step waves.ghost',
-        'a rebuilder waits on unknown step sbus.identity'
+        'rebuilder waves.mirror lists unknown step waves.ghost in `before`',
+        'rebuilder waves.mirror lists unknown step sbus.identity in `before`'
       ]);
       expect(result.crossAreaEdges).toEqual([]);
     });
@@ -786,7 +815,7 @@ describe('checkRegistry', () => {
         step('subs.identity', { writes: ['subs'] })
       ]);
       expect(result.problems.map((p) => p.detail)).toEqual([
-        'a rebuilder waits on unknown step subs.'
+        'rebuilder waves.mirror lists unknown step subs. in `before`'
       ]);
       expect(result.crossAreaEdges).toEqual([
         {
@@ -938,7 +967,10 @@ describe('checkRegistry', () => {
       });
       expect(result.problems.map((p) => [p.kind, p.detail])).toEqual([
         ['BAD_ORDER', 'a rebuilder waits on unknown step a.nowhere'],
-        ['BAD_ORDER', 'a rebuilder waits on unknown step b.nowhere']
+        [
+          'BAD_ORDER',
+          'rebuilder a.mirror lists unknown step b.nowhere in `before`'
+        ]
       ]);
     });
   });

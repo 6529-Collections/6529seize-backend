@@ -33,8 +33,15 @@ jest.mock('@/api/waves/waves.api.db', () => ({
 jest.mock('@/notifications/user.notifier', () => ({
   userNotifier: { notifyOfDropVote: jest.fn() }
 }));
+const mockFeatures = { onChain: false };
 jest.mock('@/app-features', () => ({
-  appFeatures: { isDropOvervoteRevocationEnabled: () => true }
+  appFeatures: {
+    isDropOvervoteRevocationEnabled: () => true,
+    isWavesFrozen: jest.fn(),
+    isWavesFreezeKeepingMainStage: jest.fn(),
+    isIdentityOnChain: () => mockFeatures.onChain,
+    isIdentityFrozen: () => false
+  }
 }));
 
 import {
@@ -51,6 +58,8 @@ import { competitionDropVotesDb as votes } from '@/competitions/competition-drop
 import { wavesApiDb } from '@/api/waves/waves.api.db';
 import { userNotifier } from '@/notifications/user.notifier';
 import { competitionTdhOvervotesDb } from '@/competitions/competition-tdh-overvotes.db';
+import { appFeatures } from '@/app-features';
+import { stubWavesScope } from '@/tests/fixtures/waves-scope.fixture';
 
 const connection = {} as never;
 const competition = {
@@ -68,6 +77,8 @@ const competition = {
 
 beforeEach(() => {
   jest.resetAllMocks();
+  // Every wave moves unless a test says otherwise.
+  stubWavesScope();
   jest
     .mocked(runtime.findOvervoteCandidateCompetitions)
     .mockResolvedValueOnce([competition.id])
@@ -123,6 +134,44 @@ it('reconciles native TDH votes in the existing transaction and preserves notifi
   );
 });
 
+it.each([
+  ['in one transaction', () => revokeTdhBasedDropWavesOverVotes(connection)],
+  ['per competition', () => revokeTdhBasedDropWavesOverVotesPerCompetition()]
+])('leaves votes as they stood while waves are frozen (%s)', async (_, run) => {
+  setSqlExecutor({
+    executeNativeQueriesInTransaction: async <T>(
+      executable: (connection: ConnectionWrapper<unknown>) => Promise<T>
+    ) => executable(connection)
+  } as never);
+  jest.mocked(appFeatures.isWavesFrozen).mockReturnValue(true);
+  await run();
+  expect(runtime.readCompetition).toHaveBeenCalledWith(
+    competition.id,
+    expect.anything()
+  );
+  expect(runtime.lockCompetition).not.toHaveBeenCalled();
+  expect(service.reconcileVoterCredit).not.toHaveBeenCalled();
+  expect(userNotifier.notifyOfDropVote).not.toHaveBeenCalled();
+});
+
+it("keeps reconciling a staying wave's decision while waves are frozen", async () => {
+  stubWavesScope({ staying: [competition.wave_id] });
+  jest.mocked(appFeatures.isWavesFrozen).mockReturnValue(true);
+  await revokeTdhBasedDropWavesOverVotes(connection);
+  expect(runtime.lockCompetition).toHaveBeenCalled();
+  expect(service.reconcileVoterCredit).toHaveBeenCalled();
+});
+
+it('keeps reconciling the Main Stage when the waves freeze keeps it', async () => {
+  const mainStage = { ...competition, capabilities: ['MAIN_STAGE'] };
+  jest.mocked(runtime.readCompetition).mockResolvedValue(mainStage as never);
+  jest.mocked(runtime.lockCompetition).mockResolvedValue(mainStage as never);
+  jest.mocked(appFeatures.isWavesFrozen).mockReturnValue(true);
+  jest.mocked(appFeatures.isWavesFreezeKeepingMainStage).mockReturnValue(true);
+  await revokeTdhBasedDropWavesOverVotes(connection);
+  expect(service.reconcileVoterCredit).toHaveBeenCalled();
+});
+
 it('does not execute disabled competitions', async () => {
   jest
     .mocked(runtime.lockCompetition)
@@ -167,6 +216,84 @@ it('never locks a candidate whose unlocked configuration does not apply', async 
   await revokeTdhBasedDropWavesOverVotes(connection);
   expect(runtime.lockCompetition).not.toHaveBeenCalled();
   expect(service.reconcileVoterCredit).not.toHaveBeenCalled();
+});
+
+it.each([
+  [
+    'a wave that names the credit category',
+    'Help6529 Credits',
+    'Help6529 Credits',
+    1
+  ],
+  ['a wave with no category, for another category', null, 'Kind', 1],
+  ['a wave with no category, for the credits', null, 'Help6529 Credits', 0]
+])(
+  'from switch-on, a REP change checks %s accordingly',
+  async (_name, waveCategory, changeCategory, locks) => {
+    mockFeatures.onChain = true;
+    try {
+      jest.mocked(runtime.readCompetition).mockResolvedValue({
+        ...competition,
+        voting: {
+          ...competition.voting,
+          credit_type: 'REP',
+          credit_category: waveCategory,
+          credit_creditor: null
+        }
+      } as never);
+      await revokeRepBasedDropOverVotes(
+        {
+          rep_recipient_id: 'voter',
+          rep_giver_id: 'giver',
+          credit_category: changeCategory as string
+        },
+        connection
+      );
+      expect(runtime.lockCompetition).toHaveBeenCalledTimes(locks as number);
+    } finally {
+      mockFeatures.onChain = false;
+    }
+  }
+);
+
+it('leaves REP competitions to the leaderboard snapshotter, also from switch-on', async () => {
+  mockFeatures.onChain = true;
+  try {
+    jest.mocked(runtime.readCompetition).mockResolvedValue({
+      ...competition,
+      voting: { ...competition.voting, credit_type: 'REP' }
+    } as never);
+    await revokeTdhBasedDropWavesOverVotes(connection);
+    expect(runtime.lockCompetition).not.toHaveBeenCalled();
+  } finally {
+    mockFeatures.onChain = false;
+  }
+});
+
+it('from switch-on a help-bot charge does not check REP waves with no category', async () => {
+  mockFeatures.onChain = true;
+  try {
+    jest.mocked(runtime.readCompetition).mockResolvedValue({
+      ...competition,
+      voting: {
+        ...competition.voting,
+        credit_type: 'REP',
+        credit_category: null,
+        credit_creditor: null
+      }
+    } as never);
+    await revokeRepBasedDropOverVotes(
+      {
+        rep_recipient_id: 'voter',
+        rep_giver_id: 'help-bot',
+        credit_category: 'Help6529 Credits'
+      },
+      connection
+    );
+    expect(runtime.lockCompetition).not.toHaveBeenCalled();
+  } finally {
+    mockFeatures.onChain = false;
+  }
 });
 
 it('never locks a candidate that is no longer active and published', async () => {

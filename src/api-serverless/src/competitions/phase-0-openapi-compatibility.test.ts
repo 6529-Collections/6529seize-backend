@@ -22,12 +22,19 @@ const ACCEPTED_ADDITIVE_ENUM_EXTENSIONS: Readonly<Record<string, string[]>> = {
   ],
   'schema ApiProfileCmsPointerEvent.properties.event_type.enum': ['unpublish'],
   'schema ApiPushNotificationSettings.required': ['subscription_coverage'],
+  // The explicitly configured Drop Forge alert shortcut extends existing groups.
+  'schema ApiDropGroupMention.enum': ['DROPS_6529'],
   // Mention suggestions include the requested display level; existing response
   // fields and older clients remain compatible with this additive field.
   'schema ApiWaveMentionSearchResult.required': ['level'],
   // Settings responses gain the four-wallet consolidation policy; existing
   // fields are unchanged, so older clients keep working.
-  'schema ApiSeizeSettings.required': ['consolidation']
+  'schema ApiSeizeSettings.required': ['consolidation'],
+  // Waves, wave summaries and groups gain stays_on_site: a response field
+  // added, so existing clients are unaffected.
+  'schema ApiWave.required': ['stays_on_site'],
+  'schema ApiWaveMin.required': ['stays_on_site'],
+  'schema ApiGroupFull.required': ['stays_on_site']
 };
 
 const ACCEPTED_NULLABLE_REFERENCE_EXTENSIONS = new Set([

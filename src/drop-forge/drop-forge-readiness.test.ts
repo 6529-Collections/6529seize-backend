@@ -1,0 +1,225 @@
+import {
+  ZeroAddress,
+  ZeroHash,
+  type Result,
+  type JsonRpcProvider
+} from 'ethers';
+import * as claims from '@/api/minting-claims/api.minting-claims.db';
+import { mintingClaimActionsDb } from '@/api/minting-claims/minting-claim-actions.db';
+import * as push from '@/api/push-notifications/push-notifications.service';
+import * as chain from '@/drop-forge/drop-forge.chain';
+import * as config from '@/drop-forge/drop-forge.config';
+import * as evidence from '@/drop-forge/drop-forge.evidence';
+import * as notifier from '@/drop-forge/drop-forge.notifier';
+import * as policy from '@/drop-forge/drop-forge.policy';
+import * as storage from '@/drop-forge/drop-forge.readiness.repository';
+import {
+  resolveReadinessCheckpoint,
+  runReadinessDelivery
+} from '@/drop-forge/drop-forge.readiness';
+import { dropForgeRepository } from '@/drop-forge/drop-forge.repository';
+import { STANDARD_MINT_PRICE_WEI } from '@/drop-forge/drop-forge.schedule';
+import { testConfig } from '@/drop-forge/drop-forge.test-fixtures';
+import * as rpc from '@/ethereum-rpc/ethereum-rpc-provider';
+
+const publicDelivery = 'readiness:3:2026-11-13T17:22:00Z';
+const phase2Delivery = 'readiness:2:2026-11-13T16:58:00Z';
+const root = '0x' + '12'.repeat(32);
+
+function stubConfiguration(
+  id: string,
+  merkleRoot: string,
+  total = 0,
+  earlierWindow = false
+) {
+  const { phase, claimId, scheduledAt } = resolveReadinessCheckpoint(id)!;
+  jest.spyOn(Date, 'now').mockReturnValue(+scheduledAt + 20_000);
+  jest.spyOn(rpc, 'getEthereumRpcProvider').mockReturnValue({
+    getBlock: jest
+      .fn()
+      .mockResolvedValue({ number: 123, timestamp: +scheduledAt / 1000 + 12 })
+  } as unknown as JsonRpcProvider);
+  return jest.spyOn(chain, 'readDropForgeClaim').mockResolvedValue({
+    startDate: earlierWindow ? BigInt(1) : BigInt(+phase.start / 1000),
+    endDate: BigInt(+phase.end / 1000),
+    merkleRoot,
+    cost: BigInt(STANDARD_MINT_PRICE_WEI),
+    paymentReceiver: testConfig.receiver,
+    erc20: ZeroAddress,
+    signingAddress: ZeroAddress,
+    tokenId: BigInt(claimId),
+    totalMax: BigInt(100),
+    total: BigInt(total)
+  } as unknown as Result);
+}
+
+beforeEach(() => {
+  jest
+    .spyOn(policy, 'getDropForgePolicy')
+    .mockReturnValue(
+      testConfig as ReturnType<typeof policy.getDropForgePolicy>
+    );
+  jest.spyOn(config, 'getDropForgeReportingConfig').mockReturnValue(testConfig);
+  jest.spyOn(dropForgeRepository, 'find').mockResolvedValue(null);
+  jest.spyOn(storage, 'hasPublishedMemePage').mockResolvedValue(false);
+  jest
+    .spyOn(claims, 'fetchMintingClaimByClaimId')
+    .mockResolvedValue({ edition_size: 100 } as claims.MintingClaimRow);
+  jest
+    .spyOn(storage, 'recordReadinessCheck')
+    .mockImplementation(
+      async (_, post) => (await post({})).pending_push_notification_ids
+    );
+  jest
+    .spyOn(notifier, 'postForgeReport')
+    .mockResolvedValue({ drop_id: 'alert', pending_push_notification_ids: [] });
+  jest.spyOn(push, 'sendIdentityPushNotifications').mockResolvedValue();
+});
+
+afterEach(() => jest.restoreAllMocks());
+
+it('resolves Athens checkpoints in winter and summer and skips non-mint days', () => {
+  expect(
+    resolveReadinessCheckpoint('readiness:0:2026-11-13T15:20:00Z')?.time
+  ).toBe('17:20');
+  expect(
+    resolveReadinessCheckpoint('readiness:0:2026-07-20T14:20:00Z')?.time
+  ).toBe('17:20');
+  expect(
+    resolveReadinessCheckpoint('readiness:0:2026-11-13T15:30:00Z')
+  ).toBeNull();
+  expect(
+    resolveReadinessCheckpoint('readiness:1:2026-07-20T15:28:00Z')?.time
+  ).toBe('18:28');
+  expect(
+    resolveReadinessCheckpoint('readiness:3:2026-11-12T17:22:00Z')
+  ).toBeNull();
+});
+
+it('posts an untagged Ready report for a manual public launch without a saved plan', async () => {
+  const onChain = stubConfiguration(publicDelivery, ZeroHash);
+  jest.mocked(storage.hasPublishedMemePage).mockResolvedValue(true);
+  await runReadinessDelivery(publicDelivery);
+  expect(onChain).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({
+      contract: testConfig.creator
+    }),
+    123
+  );
+  expect(storage.recordReadinessCheck).toHaveBeenCalledTimes(1);
+  const { claimId } = resolveReadinessCheckpoint(publicDelivery)!;
+  expect(notifier.postForgeReport).toHaveBeenCalledWith(
+    testConfig,
+    `[👀 MINT WATCH] **[Claim #${claimId}](https://staging.6529.io/drop-forge/launch/${claimId})** · **[Meme #${claimId}](https://staging.6529.io/the-memes/${claimId})** · Public Phase is Ready ✅`,
+    false,
+    {}
+  );
+});
+
+it('warns when only the Drop Forge card is missing', async () => {
+  stubConfiguration(publicDelivery, ZeroHash);
+  jest.mocked(claims.fetchMintingClaimByClaimId).mockResolvedValue(null);
+  await runReadinessDelivery(publicDelivery);
+
+  const { claimId } = resolveReadinessCheckpoint(publicDelivery)!;
+  expect(notifier.postForgeReport).toHaveBeenCalledWith(
+    testConfig,
+    `[👀 MINT WATCH] **Claim #${claimId}** · **Meme #${claimId}** · Public Phase needs attention ⚠️\n\n- No Drop Forge card was found for this scheduled claim.`,
+    true,
+    {}
+  );
+});
+
+it('reports a missing scheduled claim without needing a plan or signing configuration', async () => {
+  stubConfiguration(publicDelivery, ZeroHash).mockResolvedValue(null);
+  jest.mocked(claims.fetchMintingClaimByClaimId).mockResolvedValue(null);
+  await runReadinessDelivery(publicDelivery);
+  const { claimId } = resolveReadinessCheckpoint(publicDelivery)!;
+  expect(notifier.postForgeReport).toHaveBeenCalledWith(
+    testConfig,
+    `[👀 MINT WATCH] **Claim #${claimId}** · **Meme #${claimId}** · Public Phase needs attention 🚨\n\n- No Drop Forge card was found for this scheduled claim.\n- The claim is missing on-chain.`,
+    true,
+    {}
+  );
+});
+
+it('links the upcoming public Meme page before it is indexed', async () => {
+  const delivery = 'readiness:0:2026-11-13T15:20:00Z';
+  const { claimId, scheduledAt } = resolveReadinessCheckpoint(delivery)!;
+  jest.spyOn(Date, 'now').mockReturnValue(+scheduledAt + 5 * 60_000);
+  await runReadinessDelivery(delivery);
+
+  expect(storage.hasPublishedMemePage).not.toHaveBeenCalled();
+  expect(notifier.postForgeReport).toHaveBeenCalledWith(
+    testConfig,
+    expect.stringContaining(
+      `[👀 MINT WATCH] **[Claim #${claimId}](https://staging.6529.io/drop-forge/launch/${claimId})** · **[Meme #${claimId}](https://staging.6529.io/the-memes/${claimId})** · Phase 0 needs attention 🚨`
+    ),
+    true,
+    {}
+  );
+});
+
+it.each([100, 99])(
+  'recognizes a skipped Public window only when the claim is sold out (%i mints)',
+  async (total) => {
+    const onChain = stubConfiguration(publicDelivery, root, total, true);
+
+    await runReadinessDelivery(publicDelivery);
+    if (total === 100) {
+      expect(onChain).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        112
+      );
+      expect(notifier.postForgeReport).toHaveBeenCalledWith(
+        testConfig,
+        expect.stringContaining('Public Phase skipped (sold out) ✅'),
+        false,
+        {}
+      );
+    } else {
+      expect(notifier.postForgeReport).toHaveBeenCalledWith(
+        testConfig,
+        expect.stringContaining('wrong on-chain mint window'),
+        true,
+        {}
+      );
+    }
+  }
+);
+
+it('checks Phase 2 and Public allocations separately on a manual launch', async () => {
+  stubConfiguration(phase2Delivery, root);
+  jest.mocked(storage.hasPublishedMemePage).mockResolvedValue(true);
+  jest
+    .spyOn(storage, 'readinessMerkleRoots')
+    .mockResolvedValue([{ phase: 'Phase 2', merkle_root: root }]);
+  const wallet = testConfig.signer.toLowerCase();
+  jest
+    .spyOn(storage, 'readinessAllocations')
+    .mockResolvedValue([
+      [{ phase: 'Phase 2', wallet, total: 1 }],
+      [{ phase: 'Public', wallet, total: 1 }]
+    ]);
+  jest.spyOn(evidence, 'evidenceForClaim').mockResolvedValue([]);
+  jest
+    .spyOn(mintingClaimActionsDb, 'findByContractAndClaimId')
+    .mockResolvedValue([
+      { action: 'PHASE2_AIRDROP', completed: true } as Awaited<
+        ReturnType<typeof mintingClaimActionsDb.findByContractAndClaimId>
+      >[number]
+    ]);
+
+  await runReadinessDelivery(phase2Delivery);
+
+  expect(notifier.postForgeReport).toHaveBeenCalledTimes(1);
+  const content = jest.mocked(notifier.postForgeReport).mock.calls[0][1];
+  const { claimId } = resolveReadinessCheckpoint(phase2Delivery)!;
+  expect(content.split('\n')[0]).toBe(
+    `[👀 MINT WATCH] **[Claim #${claimId}](https://staging.6529.io/drop-forge/launch/${claimId})** · **[Meme #${claimId}](https://staging.6529.io/the-memes/${claimId})** · Phase 2 needs attention 🚨`
+  );
+  expect(content).toContain('Public subscription airdrops are incomplete');
+  expect(content).not.toContain('Phase 2 subscription airdrops');
+});
