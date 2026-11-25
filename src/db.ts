@@ -8,6 +8,7 @@ import {
 import {
   closeAfterCommitScope,
   openAfterCommitScope,
+  runBeforeCommitChecks,
   runAfterCommitCallbacks
 } from '@/db/after-commit';
 import { enqueueTransfersWithManager } from './transactions/transfer-reconciliation.db';
@@ -67,6 +68,8 @@ import {
   Delegation,
   DelegationEvent,
   NFTDelegationBlock,
+  NFTDelegationLogAfterFreeze,
+  NftDelegationLogRecord,
   WalletConsolidationKey
 } from './entities/IDelegation';
 import { ENS } from './entities/IENS';
@@ -153,6 +156,7 @@ import {
 } from '@/db/sql-execution-budget';
 import type { PoolConnection } from 'mysql';
 import { formatNamedParameters } from '@/db/sql-named-parameters';
+import { logTransactionFailure } from '@/db/transaction-failure-log';
 
 const logger = Logger.get('DB');
 
@@ -357,10 +361,12 @@ async function execNativeTransactionally<T>(
           }
         },
         budget,
-        (handle) => {
+        async (handle) => {
           scoped = handle;
           openAfterCommitScope(handle);
-          return executable({ connection: handle as QueryRunner });
+          const work = await executable({ connection: handle as QueryRunner });
+          runBeforeCommitChecks(handle);
+          return work;
         }
       );
     } catch (error) {
@@ -379,11 +385,12 @@ async function execNativeTransactionally<T>(
   let committed: { result: T; afterCommit: (() => unknown)[] };
   try {
     const result = await executable({ connection: queryRunner });
+    runBeforeCommitChecks(queryRunner);
     await queryRunner.commitTransaction();
     committed = { result, afterCommit: closeAfterCommitScope(queryRunner) };
   } catch (err: any) {
     closeAfterCommitScope(queryRunner);
-    logger.error(`Database transaction failed [${err}]`);
+    logTransactionFailure(err, logger);
     if (queryRunner.isTransactionActive) {
       await queryRunner.rollbackTransaction();
     }
@@ -593,6 +600,26 @@ export async function fetchLatestNftDelegationBlock(): Promise<number> {
     .select('MAX(block)', 'maxBlock')
     .getRawOne();
   return block.maxBlock ?? 0;
+}
+
+/**
+ * Keeps NFTDelegation logs after the identity freeze block for the record.
+ * A log already kept (same block and log index) is left as it is, so a scan
+ * that reads a block twice stores it once.
+ */
+export async function persistNftDelegationLogsAfterFreeze(
+  logs: NftDelegationLogRecord[],
+  freezeBlock: number
+) {
+  if (!logs.length) {
+    return;
+  }
+  await AppDataSource.getRepository(NFTDelegationLogAfterFreeze)
+    .createQueryBuilder()
+    .insert()
+    .values(logs.map((log) => ({ ...log, freeze_block: freezeBlock })))
+    .orIgnore()
+    .execute();
 }
 
 export async function persistNftDelegationBlock(

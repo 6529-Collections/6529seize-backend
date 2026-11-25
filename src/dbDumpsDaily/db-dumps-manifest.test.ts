@@ -47,7 +47,12 @@ function uploads(): Record<string, { body: string; type: string }> {
 
 describe('dbDumpsDaily', () => {
   const env = process.env;
-  const invoke = () => (handler as unknown as () => Promise<void>)();
+  // The daily schedule's event, as EventBridge sends it.
+  const invoke = () =>
+    (handler as unknown as (e: unknown, c: unknown) => Promise<void>)(
+      { source: 'aws.events' },
+      {}
+    );
 
   beforeEach(() => {
     jest.clearAllMocks();

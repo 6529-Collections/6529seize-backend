@@ -1,0 +1,16 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenySigningOutsideDistributionFunction",
+      "Effect": "Deny",
+      "Action": "kms:Sign",
+      "Resource": "arn:aws:kms:us-east-1:987989283142:key/fd1433e2-1f5b-4bcd-99b1-a322aafed824",
+      "Condition": {
+        "ArnNotEquals": {
+          "lambda:SourceFunctionArn": "arn:aws:lambda:us-east-1:987989283142:function:memesDistributionHandler"
+        }
+      }
+    }
+  ]
+}

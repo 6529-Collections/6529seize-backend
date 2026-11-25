@@ -7,6 +7,7 @@ import {
 import { revokeTdhBasedDropWavesOverVotesPerCompetition } from '@/drops/participation-drops-over-vote-revocation';
 import { identitiesDb } from '@/identities/identities.db';
 import { identityConsolidationEffects } from '@/identity';
+import { isIdentityOnChain } from '@/identity-freeze/identity-freeze';
 import {
   IdentityMetricsScopedSyncOptions,
   identityMetricsSync,
@@ -222,9 +223,10 @@ async function syncScopedMetrics(
     progress.syncedGeneration,
     generation
   );
-  const rated = await identityTdhSyncScopeDb.findRatedProfilesSince(
-    plan.ratingsSince
-  );
+  // From switch-on a chunk writes only TDH, so ratings don't widen the walk.
+  const rated = isIdentityOnChain()
+    ? []
+    : await identityTdhSyncScopeDb.findRatedProfilesSince(plan.ratingsSince);
   logger.info(
     `[C SCOPED] [GENERATION ${generation}] [KEYS ${scope.consolidationKeys.length}] [PROFILES ${scope.profileIds.length}] [RATED ${rated.length}]`
   );
@@ -431,7 +433,8 @@ export async function syncIdentitiesAfterTdh(
         logger.warn(
           `[PROFILE ADDRESS RECONCILIATION DEFERRED] [GENERATION ${generation}] [NO BUDGET LEFT] [NEXT FULL WALK]`
         );
-      } else {
+      } else if (!isIdentityOnChain()) {
+        // From switch-on the identity mirror writes profiles' addresses.
         await reconcileAllProfileAddresses();
       }
     }
@@ -532,6 +535,13 @@ async function reconcileAllProfileAddresses(): Promise<void> {
  * covers them even when it resumes in a later invocation.
  */
 async function syncConsolidations(generation: number): Promise<void> {
+  if (isIdentityOnChain()) {
+    // From switch-on identities, their wallets and their consolidations come
+    // from the chain (the identity mirror): TDH consolidations no longer
+    // make, split or merge identity rows.
+    logger.info(`[B CONSOLIDATIONS SKIPPED] [IDENTITIES ARE ON THE CHAIN]`);
+    return;
+  }
   const invalidations = await sqlExecutor.executeNativeQueriesInTransaction(
     async (connection) => {
       const { written, ...cacheInvalidations } =

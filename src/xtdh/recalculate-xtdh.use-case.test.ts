@@ -1,6 +1,7 @@
 const mockSqsSend = jest.fn();
 const mockGetStringOrNull = jest.fn();
 const mockIsXTdhEnabled = jest.fn();
+const mockIsIdentityFrozen = jest.fn();
 const mockBulkCreateIdentities = jest.fn();
 const mockUpdateAllIdentitiesLevels = jest.fn();
 
@@ -19,7 +20,9 @@ jest.mock('../env', () => ({
 
 jest.mock('../app-features', () => ({
   appFeatures: {
-    isXTdhEnabled: mockIsXTdhEnabled
+    isXTdhEnabled: mockIsXTdhEnabled,
+    isIdentityFrozen: mockIsIdentityFrozen,
+    isIdentityOnChain: () => false
   }
 }));
 
@@ -78,6 +81,7 @@ describe('RecalculateXTdhUseCase phase handling', () => {
       'https://sqs.us-east-1.amazonaws.com/123/xtdh-start.fifo'
     );
     mockIsXTdhEnabled.mockReturnValue(true);
+    mockIsIdentityFrozen.mockReturnValue(false);
     mockSqsSend.mockResolvedValue({});
     mockUpdateAllIdentitiesLevels.mockResolvedValue(undefined);
   });
@@ -258,5 +262,30 @@ describe('RecalculateXTdhUseCase phase handling', () => {
     expect(stats.handle).toHaveBeenCalledTimes(1);
     expect(repository.executeNativeQueriesInTransaction).not.toHaveBeenCalled();
     expect(mockSqsSend).not.toHaveBeenCalled();
+  });
+
+  it('creates identities for wallets without one when not frozen', async () => {
+    const { repository, useCase } = makeUseCase();
+    repository.getWalletsWithoutIdentities.mockResolvedValueOnce([
+      '0x0000000000000000000000000000000000000001'
+    ]);
+    await useCase.handleUniversePhase({});
+    expect(mockBulkCreateIdentities).toHaveBeenCalledWith(
+      ['0x0000000000000000000000000000000000000001'],
+      expect.anything()
+    );
+    expect(repository.publishIdentitySnapshot).toHaveBeenCalled();
+  });
+
+  it('makes no identities during the identity freeze and still recalculates', async () => {
+    mockIsIdentityFrozen.mockReturnValue(true);
+    const { repository, useCase } = makeUseCase();
+    repository.getWalletsWithoutIdentities.mockResolvedValueOnce([
+      '0x0000000000000000000000000000000000000001'
+    ]);
+    await useCase.handleUniversePhase({});
+    expect(mockBulkCreateIdentities).not.toHaveBeenCalled();
+    expect(repository.updateProducedXTDH).toHaveBeenCalled();
+    expect(repository.publishIdentitySnapshot).toHaveBeenCalled();
   });
 });
