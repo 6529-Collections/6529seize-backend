@@ -23,6 +23,12 @@ public-network/redirect validation, byte caps and content validation.
 `createArweaveClient` provides SDK network reads through the same registry and
 bounded recovery policy. Local signing and conversion do not contact gateways. SDK responses must be
 buffered; `webstream` is rejected before making a request.
+Status queries accept pending HTTP 202 or a validated HTTP 200 confirmation;
+text mode validates parsed JSON while preserving the original response text.
+Raw URL inputs retain `/raw/<id>` on each path-style alternate, bypassing
+manifest index resolution as specified by the [gateway raw-data contract](https://docs.ar.io/build/access/fetch-data/).
+Raw-mode recovery does not invent a transaction-subdomain endpoint; manifest
+paths on ordinary transaction-subdomain inputs retain their existing meaning.
 
 ## Upload identity and recovery
 
@@ -39,6 +45,15 @@ retry the identical bytes without advancing persisted progress. Header submissio
 still accepts HTTP 208, and resumed status probes accept HTTP 202 or an HTTP 200
 confirmation with the expected shape.
 
+The file-uploader facade preserves the SDK's inline-data path for a new
+one-chunk transaction: `POST /tx` includes the signed transaction and data, and
+HTTP 200 records complete progress. An ambiguous successful status, including
+duplicate-header HTTP 208, requires separate chunk acknowledgement if alternate
+inline submissions cannot establish acceptance. Saved checkpoints retain their
+existing format and resume through the header/chunk path unless their data
+progress was already durably acknowledged. A known transaction status alone
+never completes a saved chunk. TDH retains its existing header/chunk path.
+
 Durable consumers checkpoint the signed transaction and original bytes before
 submission and after each acknowledged step. They upload sequentially so the
 persisted chunk index is a monotonic contiguous prefix. A resumed upload rebuilds
@@ -46,6 +61,11 @@ and verifies the signed data root; regenerated caller bytes never replace the
 saved bytes. Each resumed gateway registers the original signed header before
 receiving chunks; a prior acknowledgement does not establish gateway-local state. Re-registering the identical signed header at another gateway does
 not create or sign a replacement transaction. A failed checkpoint stops work.
+Checkpoint waits share the session deadline and receive its abort signal. A
+cancelled wait cannot undo a database write already in flight: CMS retains that
+lease while the write is pending and fences persistence under its existing
+row-lock/token ownership check. A stale attempt cannot overwrite a replacement
+owner's checkpoint. Successful checkpoints still finish before the next chunk.
 The SDK's potentially hour-long internal upload retry loop is not used.
 
 TDH retains eight concurrent chunk workers and its 120-second total budget. The

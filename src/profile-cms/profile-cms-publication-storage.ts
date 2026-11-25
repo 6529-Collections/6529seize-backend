@@ -150,15 +150,23 @@ export class ProfileCmsPublicationStorage {
     );
     if (reservation.receipt) return reservation.receipt;
     let uploadState = reservation.uploadState;
+    let checkpointInFlight = false;
     try {
       const result = await this.uploader.uploadFileWithTransactionId(
         params.bytes,
         'application/json',
         {
           savedState: uploadState,
-          onState: async (state) => {
-            await this.uploads.saveState(reservation, state, ctx);
-            uploadState = state;
+          onState: async (state, { signal }) => {
+            signal.throwIfAborted();
+            checkpointInFlight = true;
+            try {
+              await this.uploads.saveState(reservation, state, ctx);
+              signal.throwIfAborted();
+              uploadState = state;
+            } finally {
+              checkpointInFlight = false;
+            }
           }
         }
       );
@@ -182,7 +190,8 @@ export class ProfileCmsPublicationStorage {
       // Once a signed transaction is durable, retain the lease until expiry.
       // A retry resumes that transaction even if submission or receipt commit
       // succeeded remotely but its acknowledgement was lost.
-      if (!uploadState) await this.uploads.release(reservation, ctx);
+      if (!uploadState && !checkpointInFlight)
+        await this.uploads.release(reservation, ctx);
       if (error instanceof CustomApiCompliantException) throw error;
       throw new CustomApiCompliantException(
         502,

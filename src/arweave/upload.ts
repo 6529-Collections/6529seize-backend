@@ -174,7 +174,8 @@ export class ArweaveUploadSession {
   constructor(
     private readonly logger: UploadLogger,
     private readonly client: Arweave = createArweaveClient(),
-    private readonly timeoutMs = UPLOAD_TIMEOUT_MS
+    private readonly timeoutMs = UPLOAD_TIMEOUT_MS,
+    private readonly inlineSmallUploads = false
   ) {}
 
   async upload(
@@ -209,7 +210,22 @@ export class ArweaveUploadSession {
 
   private async checkpoint(): Promise<void> {
     this.throwIfStopped();
-    if (this.state) await this.hooks?.onState(structuredClone(this.state));
+    if (this.state && this.hooks) {
+      const signal = this.controller.signal;
+      let onAbort!: () => void;
+      const cancelled = new Promise<never>((_resolve, reject) => {
+        onAbort = () => reject(this.stopped ?? new Error('Upload cancelled'));
+        signal.addEventListener('abort', onAbort, { once: true });
+      });
+      try {
+        await Promise.race([
+          this.hooks.onState(structuredClone(this.state), { signal }),
+          cancelled
+        ]);
+      } finally {
+        signal.removeEventListener('abort', onAbort);
+      }
+    }
     this.throwIfStopped();
   }
 
@@ -302,12 +318,18 @@ export class ArweaveUploadSession {
     // acknowledged, durably checkpointed chunks, not a zero-based chunk ID.
     await this.checkpoint();
     if (!this.state!.txPosted) {
-      await this.request({
-        path: 'tx',
-        method: 'POST',
-        body: this.signedHeader
-      });
+      // Preserve the file uploader's inline-data contract for new, one-chunk
+      // transactions. A saved header/status alone never proves data acceptance.
+      const inline =
+        this.inlineSmallUploads &&
+        !this.hooks?.savedState &&
+        transaction.chunks!.chunks.length === 1;
+      const dataAcknowledged = await this.submitTransaction(
+        transaction,
+        inline
+      );
       this.state!.txPosted = true;
+      if (dataAcknowledged) this.state!.chunkIndex = 1;
       await this.checkpoint();
     }
     await this.uploadChunks(transaction, data);
@@ -318,6 +340,34 @@ export class ArweaveUploadSession {
       url: `https://${GATEWAYS[0]}/${transaction.id}`,
       transactionId: transaction.id
     };
+  }
+
+  private async submitTransaction(
+    transaction: Transaction,
+    inline: boolean
+  ): Promise<boolean> {
+    try {
+      await this.request({
+        path: 'tx',
+        method: 'POST',
+        body: inline ? JSON.stringify(transaction.toJSON()) : this.signedHeader,
+        ...(inline
+          ? { validate: (_body: string, status: number) => status === 200 }
+          : {})
+      });
+      return inline;
+    } catch (error) {
+      // An already-processed header may outlive a lost inline acknowledgement.
+      // Keep that signed transaction, but require /chunk to prove data acceptance.
+      if (
+        inline &&
+        error instanceof UploadRequestError &&
+        error.status >= 200 &&
+        error.status < 300
+      )
+        return false;
+      throw error;
+    }
   }
 
   private async uploadChunks(

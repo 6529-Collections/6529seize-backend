@@ -13,7 +13,12 @@ export type ArweaveUploadState = Omit<SerializedUploader, 'transaction'> & {
 
 export type ArweaveUploadHooks = {
   savedState?: ArweaveUploadState;
-  onState(state: ArweaveUploadState): Promise<void>;
+  // Persistence must fence writes against replacement attempts: cancellation
+  // releases the caller's wait but cannot undo a write already sent to a DB.
+  onState(
+    state: ArweaveUploadState,
+    context: { signal: AbortSignal }
+  ): Promise<void>;
 };
 
 let arweaveAndKey: { arweave: Arweave; key: any } | null = null;
@@ -57,7 +62,8 @@ export class ArweaveFileUploader {
     const result = await new ArweaveUploadSession(
       this.logger,
       arweave,
-      600_000
+      600_000,
+      true
     ).upload(fileBuffer, arweaveKey as JWKInterface, contentType, hooks);
     return {
       url: arweaveContentUrl(result.transactionId),

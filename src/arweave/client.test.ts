@@ -157,3 +157,64 @@ it('keeps HTTP 400 terminal when the caller permits retries', async () => {
   ).rejects.toThrow('HTTP 400');
   expect(fetch).toHaveBeenCalledTimes(1);
 });
+
+it.each(['get', 'request'] as const)(
+  'validates text-mode SDK %s confirmations without changing returned bytes',
+  async (method) => {
+    const text =
+      '{ "block_height": 1, "block_indep_hash": "block", "number_of_confirmations": 2 }';
+    const fetch = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValueOnce(new Response('<html>error</html>'))
+      .mockResolvedValueOnce(new Response(text));
+    const response = await createArweaveClient().api[method](
+      `/tx/${'a'.repeat(43)}/status`,
+      { responseType: 'text' }
+    );
+    expect(response.data).toBe(text);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  }
+);
+
+it.each([201, 204, 208])(
+  'retries unexpected HTTP %s status responses before accepting a confirmation',
+  async (status) => {
+    const confirmed = {
+      block_height: 1,
+      block_indep_hash: 'block',
+      number_of_confirmations: 2
+    };
+    const fetch = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValueOnce(new Response(null, { status }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(confirmed)));
+    await expect(
+      createArweaveClient().transactions.getStatus('a'.repeat(43))
+    ).resolves.toEqual({ status: 200, confirmed });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  }
+);
+
+it.each([
+  ['tx_anchor', 'a'.repeat(43)],
+  ['price/10', '100'],
+  [`wallet/${'a'.repeat(43)}/balance`, '100'],
+  [
+    `tx/${'a'.repeat(43)}/status`,
+    '{"block_height":1,"block_indep_hash":"block","number_of_confirmations":2}'
+  ]
+])(
+  'validates arraybuffer SDK responses for %s while preserving their representation',
+  async (path, body) => {
+    const fetch = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValueOnce(new Response('<html>error</html>'))
+      .mockResolvedValueOnce(new Response(body));
+    const response = await createArweaveClient().api.get(path, {
+      responseType: 'arraybuffer'
+    });
+    expect(response.data).toBeInstanceOf(ArrayBuffer);
+    expect(new TextDecoder().decode(response.data as ArrayBuffer)).toBe(body);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  }
+);

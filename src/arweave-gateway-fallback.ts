@@ -1,4 +1,7 @@
-import { ARWEAVE_INPUT_GATEWAYS } from '@/arweave/gateways';
+import {
+  ARWEAVE_INPUT_GATEWAYS,
+  ARWEAVE_READ_GATEWAYS
+} from '@/arweave/gateways';
 import { recoverArweave, ArweaveRecoveryOptions } from '@/arweave/recovery';
 import {
   parseDecentralizedMediaRef,
@@ -7,18 +10,16 @@ import {
 
 const pathGateways = new Set<string>(ARWEAVE_INPUT_GATEWAYS);
 
-function normalizeRawGatewayUrl(input: string): string {
+function rawGatewayRef(input: string) {
   try {
     const url = new URL(input);
     if (url.protocol !== 'https:' || !pathGateways.has(url.hostname))
-      return input;
-    url.pathname = url.pathname.replace(
-      /^\/raw\/([A-Za-z0-9_-]{43})(?=\/|$)/,
-      '/$1'
-    );
-    return url.href;
+      return null;
+    if (!/^\/raw\/[A-Za-z0-9_-]{43}(?=\/|$)/.test(url.pathname)) return null;
+    url.pathname = url.pathname.slice(4);
+    return parseDecentralizedMediaRef(url.href);
   } catch {
-    return input;
+    return null;
   }
 }
 
@@ -26,9 +27,15 @@ function normalizeRawGatewayUrl(input: string): string {
  * Returns all external Arweave gateway variants for the given URL.
  */
 export function getArweaveFallbackUrls(url: string): string[] {
-  const ref = parseDecentralizedMediaRef(normalizeRawGatewayUrl(url));
+  const raw = rawGatewayRef(url);
+  const ref = raw ?? parseDecentralizedMediaRef(url);
   if (ref?.protocol !== 'arweave') return [];
-
+  // Raw retrieval must bypass manifest resolution. Only offer the documented
+  // path-style raw endpoint; transaction subdomains have different path semantics.
+  if (raw)
+    return ARWEAVE_READ_GATEWAYS.map(
+      (host) => `https://${host}/raw/${ref.id}${ref.path ? `/${ref.path}` : ''}`
+    );
   return toExternalFallbackUrls(ref);
 }
 

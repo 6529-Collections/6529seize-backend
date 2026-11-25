@@ -77,7 +77,11 @@ describe('durable Arweave uploads', () => {
       file
     );
     expect(sign).toHaveBeenCalledTimes(1);
-    expect(post).toHaveBeenCalledTimes(2);
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(post.mock.calls[0][0]).toBe('tx');
+    expect(JSON.parse(post.mock.calls[0][1]).data).toBe(
+      file.toString('base64url')
+    );
     expect(status).not.toHaveBeenCalled();
   });
 
@@ -109,8 +113,8 @@ describe('durable Arweave uploads', () => {
       })
     );
     expect(states[1].txPosted).toBe(true);
-    expect(states[1].chunkIndex).toBe(0);
-    expect(states[2].chunkIndex).toBe(1);
+    expect(states[1].chunkIndex).toBe(1);
+    expect(states).toHaveLength(2);
     expect(JSON.stringify(states)).not.toContain('must-not-persist');
     expect(states[0].txPosted).toBe(false);
   });
@@ -208,7 +212,7 @@ describe('durable Arweave uploads', () => {
     });
     expect(create).toHaveBeenCalledTimes(1);
     expect(sign).toHaveBeenCalledTimes(1);
-    expect(post).toHaveBeenCalledTimes(2);
+    expect(post).toHaveBeenCalledTimes(1);
     expect(status).not.toHaveBeenCalled();
   });
 
@@ -256,7 +260,7 @@ describe('durable Arweave uploads', () => {
         onState: async () => undefined
       })
     ).rejects.toThrow('Data mismatch');
-    expect(post).toHaveBeenCalledTimes(2);
+    expect(post).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -464,8 +468,17 @@ it.each([201, 202, 204, 208])(
   async (statusCode) => {
     const { uploader, post, sign } = setup();
     const states: ArweaveUploadState[] = [];
+    let savedState: ArweaveUploadState | undefined;
     let pending = true;
     try {
+      await expect(
+        uploader.uploadFileWithTransactionId(bytes, 'text/plain', {
+          onState: async (state) => {
+            savedState = state;
+            throw new Error('checkpoint only');
+          }
+        })
+      ).rejects.toThrow('checkpoint only');
       post.mockImplementation(async (path) => {
         if (path === 'tx') return new Response(null, { status: 208 });
         if (pending) {
@@ -477,6 +490,7 @@ it.each([201, 202, 204, 208])(
         return new Response('');
       });
       await uploader.uploadFileWithTransactionId(bytes, 'text/plain', {
+        savedState,
         onState: async (state) => {
           states.push(state);
         }
@@ -487,6 +501,163 @@ it.each([201, 202, 204, 208])(
       expect(states.map((state) => state.chunkIndex)).toEqual([0, 0, 1]);
       expect(sign).toHaveBeenCalledTimes(1);
     } finally {
+      jest.restoreAllMocks();
+    }
+  }
+);
+
+it('publishes a new small file inline when both chunk endpoints are unavailable', async () => {
+  const { uploader, post, sign } = setup();
+  try {
+    post.mockImplementation(
+      async (path) => new Response('', { status: path === 'tx' ? 200 : 503 })
+    );
+    const states: ArweaveUploadState[] = [];
+    await uploader.uploadFileWithTransactionId(bytes, 'application/json', {
+      onState: async (state) => {
+        states.push(state);
+      }
+    });
+    expect(post.mock.calls.map(([path]) => path)).toEqual(['tx']);
+    expect(JSON.parse(post.mock.calls[0][1]).data).toBe(
+      bytes.toString('base64url')
+    );
+    expect(states.map((state) => [state.txPosted, state.chunkIndex])).toEqual([
+      [false, 0],
+      [true, 1]
+    ]);
+    expect(sign).toHaveBeenCalledTimes(1);
+  } finally {
+    jest.restoreAllMocks();
+  }
+});
+
+it('replays the identical inline transaction across gateways after a lost acknowledgement', async () => {
+  const { uploader, post, sign } = setup();
+  try {
+    post
+      .mockRejectedValueOnce(new Error('lost acknowledgement'))
+      .mockResolvedValue(new Response(''));
+    await uploader.uploadFile(bytes, 'text/plain');
+    expect(post.mock.calls.map(([path]) => path)).toEqual(['tx', 'tx']);
+    expect(post.mock.calls[0][1]).toBe(post.mock.calls[1][1]);
+    expect(JSON.parse(post.mock.calls[1][1]).data).toBe(
+      bytes.toString('base64url')
+    );
+    expect(sign).toHaveBeenCalledTimes(1);
+  } finally {
+    jest.restoreAllMocks();
+  }
+});
+
+it('does not treat a duplicate-header HTTP 208 as proof of inline data acceptance', async () => {
+  jest.useFakeTimers();
+  const { uploader, post } = setup();
+  const submitted = deferred<void>();
+  const states: ArweaveUploadState[] = [];
+  try {
+    post.mockImplementation(async (path) => {
+      submitted.resolve();
+      return path === 'chunk'
+        ? new Response('invalid_proof', { status: 400 })
+        : new Response('', { status: 208 });
+    });
+    const upload = uploader
+      .uploadFileWithTransactionId(bytes, 'text/plain', {
+        onState: async (state) => {
+          states.push(state);
+        }
+      })
+      .catch((error) => error);
+    await submitted.promise;
+    await jest.advanceTimersByTimeAsync(2000);
+    expect(await upload).toBeInstanceOf(Error);
+    expect(states.every((state) => state.chunkIndex === 0)).toBe(true);
+    expect(states.at(-1)?.txPosted).toBe(true);
+  } finally {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  }
+});
+
+it.each([201, 202, 208])(
+  'requires a chunk acknowledgement after ambiguous inline HTTP %s responses',
+  async (status) => {
+    jest.useFakeTimers();
+    const { uploader, post, sign } = setup();
+    const submitted = deferred<void>();
+    const states: ArweaveUploadState[] = [];
+    try {
+      post.mockImplementation(async (path) => {
+        submitted.resolve();
+        return new Response('', { status: path === 'chunk' ? 200 : status });
+      });
+      const upload = uploader.uploadFileWithTransactionId(bytes, 'text/plain', {
+        onState: async (state) => {
+          states.push(state);
+        }
+      });
+      await submitted.promise;
+      await jest.advanceTimersByTimeAsync(2000);
+      await upload;
+      expect(post.mock.calls.filter(([path]) => path === 'chunk')).toHaveLength(
+        1
+      );
+      expect(states.map((state) => [state.txPosted, state.chunkIndex])).toEqual(
+        [
+          [false, 0],
+          [true, 0],
+          [true, 1]
+        ]
+      );
+      const headers = post.mock.calls
+        .filter(([path]) => path === 'tx')
+        .map(([, body]) => JSON.parse(body));
+      expect(new Set(headers.map((header) => header.id))).toEqual(
+        new Set([transactionId])
+      );
+      expect(sign).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+      jest.restoreAllMocks();
+    }
+  }
+);
+
+it.each([0, 1])(
+  'bounds a stalled checkpoint at chunk %s and stops before further submission',
+  async (chunkIndex) => {
+    jest.useFakeTimers();
+    const { arweave, post } = setup();
+    const stalled = deferred<void>();
+    const release = deferred<void>();
+    let signal: AbortSignal | undefined;
+    const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
+    try {
+      const upload = new ArweaveUploadSession(logger, arweave, 100)
+        .upload(Buffer.alloc(600000, 7), {} as JWKInterface, 'text/plain', {
+          onState: async (state, context) => {
+            if (state.chunkIndex !== chunkIndex) return;
+            signal = context.signal;
+            stalled.resolve();
+            await release.promise;
+          }
+        })
+        .catch((error) => error);
+      await stalled.promise;
+      const submissions = post.mock.calls.length;
+      await jest.advanceTimersByTimeAsync(101);
+      expect(await upload).toMatchObject({
+        message: 'Arweave upload exceeded 100ms deadline'
+      });
+      expect(signal?.aborted).toBe(true);
+      release.resolve();
+      await jest.advanceTimersByTimeAsync(0);
+      expect(post).toHaveBeenCalledTimes(submissions);
+      expect(submissions).toBe(chunkIndex === 0 ? 0 : 2);
+    } finally {
+      release.resolve();
+      jest.useRealTimers();
       jest.restoreAllMocks();
     }
   }

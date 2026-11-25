@@ -1,4 +1,7 @@
-import { isTransactionConfirmation } from '@/arweave/transaction-status';
+import {
+  isTransactionConfirmation,
+  isTransactionConfirmationText
+} from '@/arweave/transaction-status';
 import Arweave from 'arweave';
 import Api, {
   RequestInitWithAxios,
@@ -14,17 +17,37 @@ class ArweaveApiResponseError extends Error {
   }
 }
 
+function validateTransactionStatus(
+  response: ResponseWithData<unknown>,
+  responseType: RequestInitWithAxios['responseType']
+): void {
+  if (response.status === 202) return;
+  const data = validationData(response.data, responseType);
+  const confirmed =
+    responseType === 'text' || responseType === 'arraybuffer'
+      ? typeof data === 'string' && isTransactionConfirmationText(data)
+      : isTransactionConfirmation(data);
+  if (response.status !== 200 || !confirmed)
+    throw new Error('Invalid Arweave transaction status');
+}
+
+function validationData(
+  data: unknown,
+  responseType: RequestInitWithAxios['responseType']
+): unknown {
+  return responseType === 'arraybuffer' && data instanceof ArrayBuffer
+    ? new TextDecoder().decode(data)
+    : data;
+}
+
 function validateApiData(
   path: string,
-  response: ResponseWithData<unknown>
+  response: ResponseWithData<unknown>,
+  responseType: RequestInitWithAxios['responseType']
 ): void {
-  const data = response.data;
-  if (
-    response.status === 200 &&
-    /^tx\/[\w-]+\/status$/.test(path) &&
-    !isTransactionConfirmation(data)
-  )
-    throw new Error('Invalid Arweave transaction status');
+  const data = validationData(response.data, responseType);
+  if (/^tx\/[\w-]+\/status$/.test(path))
+    validateTransactionStatus(response, responseType);
   if (
     path === 'tx_anchor' &&
     (typeof data !== 'string' || !/^[\w-]{43,64}$/.test(data))
@@ -76,7 +99,7 @@ export function createArweaveClient(
           });
           if (!response.ok && response.status !== 202)
             throw new ArweaveApiResponseError(response);
-          validateApiData(endpoint, response);
+          validateApiData(endpoint, response, init.responseType);
           return response;
         },
         {

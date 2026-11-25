@@ -35,6 +35,77 @@ describe('CMS durable storage', () => {
     else process.env.ARWEAVE_KEY = originalKey;
   });
 
+  it('retains the lease while a cancelled initial checkpoint can still finish', async () => {
+    process.env.ARWEAVE_KEY = 'configured-for-test';
+    let finishWrite!: () => void;
+    const pendingWrite = new Promise<void>((resolve) => {
+      finishWrite = resolve;
+    });
+    let started!: () => void;
+    const checkpointStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const controller = new AbortController();
+    const reason = new Error('upload deadline');
+    let rejectUpload!: (error: Error) => void;
+    let checkpointResult: Promise<unknown> | undefined;
+    const uploads = {
+      reserve: jest.fn().mockResolvedValue({ id: 'id', token: 'lease' }),
+      saveState: jest.fn(async () => {
+        started();
+        await pendingWrite;
+      }),
+      complete: jest.fn(),
+      release: jest.fn()
+    };
+    const uploader = {
+      uploadFileWithTransactionId: jest.fn(
+        async (_bytes: Buffer, _type: string, hooks: ArweaveUploadHooks) => {
+          checkpointResult = hooks
+            .onState(
+              {
+                chunkIndex: 0,
+                transaction: { id: 'a'.repeat(43) },
+                data_base64: bytes.toString('base64'),
+                txPosted: false,
+                lastRequestTimeEnd: 0,
+                lastResponseStatus: 0,
+                lastResponseError: ''
+              },
+              { signal: controller.signal }
+            )
+            .catch((error) => error);
+          return new Promise<never>((_resolve, reject) => {
+            rejectUpload = reject;
+          });
+        }
+      )
+    };
+    const storage = new ProfileCmsPublicationStorage(
+      uploads as unknown as ProfileCmsUploadsDb,
+      uploader as unknown as ArweaveFileUploader
+    );
+    const outcome = storage
+      .upload(
+        {
+          operationKey: 'cancelled-checkpoint',
+          profileId: 'profile',
+          packageDbId: 'draft',
+          bytes
+        },
+        {}
+      )
+      .catch((error) => error);
+    await checkpointStarted;
+    controller.abort(reason);
+    rejectUpload(reason);
+    expect((await outcome).getStatusCode()).toBe(502);
+    expect(uploads.release).not.toHaveBeenCalled();
+    finishWrite();
+    expect(await checkpointResult).toBe(reason);
+    expect(uploads.complete).not.toHaveBeenCalled();
+  });
+
   it('retrieves bounded bytes from an allowlisted gateway and checks their actual hash', async () => {
     const download = jest
       .fn()
@@ -242,9 +313,12 @@ describe('CMS durable storage', () => {
             txPosted: false,
             data_base64: body.toString('base64')
           };
-          await hooks.onState(state);
+          await hooks.onState(state, { signal: new AbortController().signal });
           submittedIds.push(state.transaction.id);
-          await hooks.onState({ ...state, txPosted: true });
+          await hooks.onState(
+            { ...state, txPosted: true },
+            { signal: new AbortController().signal }
+          );
           return { transaction_id: state.transaction.id, url: '' };
         }
       )
@@ -293,15 +367,18 @@ describe('CMS durable storage', () => {
     const uploader = {
       uploadFileWithTransactionId: jest.fn(
         async (_body: Buffer, _type: string, hooks: ArweaveUploadHooks) => {
-          await hooks.onState({
-            chunkIndex: 0,
-            transaction: { id: 'a'.repeat(43) },
-            lastRequestTimeEnd: 0,
-            lastResponseError: '',
-            lastResponseStatus: 0,
-            txPosted: false,
-            data_base64: bytes.toString('base64')
-          });
+          await hooks.onState(
+            {
+              chunkIndex: 0,
+              transaction: { id: 'a'.repeat(43) },
+              lastRequestTimeEnd: 0,
+              lastResponseError: '',
+              lastResponseStatus: 0,
+              txPosted: false,
+              data_base64: bytes.toString('base64')
+            },
+            { signal: new AbortController().signal }
+          );
           submit();
           return { transaction_id: 'a'.repeat(43), url: '' };
         }

@@ -29,9 +29,14 @@ it('recovers the identical transaction/path from an alternative after a primary 
 });
 
 it('tries every candidate and preserves the final failure rather than reporting success', async () => {
-  const error = new Error('all gateways unavailable');
-  const fetch = jest.fn().mockRejectedValue(error);
-  await expect(withArweaveFallback(url, fetch)).rejects.toBe(error);
+  const count = new Set([url, ...getArweaveFallbackUrls(url)]).size;
+  const errors = Array.from(
+    { length: count },
+    (_, index) => new Error(`gateway ${index} unavailable`)
+  );
+  const fetch = jest.fn();
+  for (const error of errors) fetch.mockRejectedValueOnce(error);
+  await expect(withArweaveFallback(url, fetch)).rejects.toBe(errors.at(-1));
   expect(fetch).toHaveBeenCalledTimes(
     new Set([url, ...getArweaveFallbackUrls(url)]).size
   );
@@ -102,7 +107,7 @@ it('recognizes retired inputs without offering broken hosts as active alternativ
     )
   ).toBe(true);
   expect(getArweaveFallbackUrls(`https://arweave.net/raw/${id}`)).toContain(
-    `https://ardrive.net/${id}`
+    `https://ardrive.net/raw/${id}`
   );
 });
 
@@ -136,7 +141,7 @@ it.each(['?download=1', '#preview', '/asset.json?download=1'])(
     await expect(withArweaveFallback(input, fetch)).resolves.toBe('ready');
     expect(fetch.mock.calls[0][0]).toBe(input);
     expect(fetch.mock.calls[1][0]).toBe(
-      `https://ardrive.net/${id}${suffix.startsWith('/') ? '/asset.json' : ''}`
+      `https://ardrive.net/raw/${id}${suffix.startsWith('/') ? '/asset.json' : ''}`
     );
   }
 );
@@ -153,5 +158,31 @@ it('preserves a manifest raw path on transaction subdomains during fallback', as
   expect(fetch.mock.calls[0][0]).toBe(input);
   expect(fetch.mock.calls[1][0]).toBe(
     `https://ardrive.net/${manifest}/raw/${segment}/asset.json`
+  );
+});
+
+it('retrieves stored manifest bytes without resolving its index on every raw fallback', async () => {
+  const manifest = {
+    manifest: 'arweave/paths',
+    version: '0.1.0',
+    index: { path: 'index.html' },
+    paths: { 'index.html': { id: 'B'.repeat(43) } }
+  };
+  const input = `https://arweave.net/raw/${id}`;
+  const candidates = getArweaveFallbackUrls(input);
+  expect(candidates).toHaveLength(4);
+  expect(
+    candidates.every(
+      (candidate) => new URL(candidate).pathname === `/raw/${id}`
+    )
+  ).toBe(true);
+  const fetch = jest.fn(async (candidate: string) => {
+    if (candidate === input) throw new Error('primary down');
+    return new URL(candidate).pathname.startsWith('/raw/')
+      ? JSON.stringify(manifest)
+      : '<html>manifest index</html>';
+  });
+  await expect(withArweaveFallback(input, fetch)).resolves.toBe(
+    JSON.stringify(manifest)
   );
 });
