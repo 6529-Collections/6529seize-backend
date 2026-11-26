@@ -14,6 +14,7 @@ import {
   MEMES_SEASONS_TABLE,
   NFT_OWNERS_CONSOLIDATION_TABLE,
   NULL_ADDRESS,
+  TDH_BLOCKS_TABLE,
   TDH_NFT_TABLE
 } from '@/constants';
 import { fetchPaginated } from '@/db-api';
@@ -391,9 +392,25 @@ export const fetchConsolidatedMetrics = async (
   return results;
 };
 
-export const fetchTDH = async (key: string, value: string, table: string) => {
+/**
+ * The one row of `table` whose `key` is `value`, or null.
+ *
+ * `atLatestTdhBlock` reads only the row at the newest block in tdh_blocks,
+ * as the other wallet TDH reads do. The wallets TDH table needs it: a full
+ * TDH write replaces only its own block's rows, so a wallet keeps a row for
+ * every earlier day. A wallet with no row at that block has no current TDH.
+ */
+export const fetchTDH = async (
+  key: string,
+  value: string,
+  table: string,
+  { atLatestTdhBlock = false }: { atLatestTdhBlock?: boolean } = {}
+) => {
+  const latestBlock = atLatestTdhBlock
+    ? ` and block = (select max(block_number) from ${TDH_BLOCKS_TABLE})`
+    : '';
   const sql = `
-    SELECT * from ${table} where ${key} = :value
+    SELECT * from ${table} where ${key} = :value${latestBlock}
     `;
   const result = await sqlExecutor.execute(sql, { value });
   if (result.length !== 1) {
