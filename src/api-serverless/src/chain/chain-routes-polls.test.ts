@@ -21,11 +21,11 @@ import { Server } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { customErrorMiddleware } from '@/api/api-error-middleware';
 import { ChainRelayService } from '@/chain-relay/chain-relay.service';
+import { Time } from '@/time';
 import {
   WAVES_NOT_SWITCHED_ON_CODE,
   WAVES_NOT_SWITCHED_ON_MESSAGE
 } from '@/chain-relay/chain-relay-waves';
-import { Time } from '@/time';
 import {
   POLL_CREATE_OP_TYPE,
   WAVES_POLLS_PAUSED_CODE,
@@ -43,6 +43,7 @@ const TX = '0x' + '5a'.repeat(32);
 const WALLET = '0x' + '1a'.repeat(20);
 const SIG = '0x' + '1b'.repeat(65);
 const VOTE_SET = 0x0606;
+const RATING_SET = 0x0701;
 
 const hexOf = (value: number | bigint, bytes: number) =>
   BigInt(value)
@@ -110,8 +111,7 @@ describe('POST /chain/submit and new polls from the switch-on', () => {
     for (const name of NAMES) delete process.env[name];
     process.env.WAVES_SWITCH_ON_AT = new Date(SWITCH_ON).toISOString();
     now = jest.spyOn(Time, 'currentMillis').mockReturnValue(SWITCH_ON + 1);
-    // The real relay's submit, in front of a gateway that answers. Its own
-    // switch-on gate reads the same clock as the poll check.
+    // The real relay's submit, in front of a gateway that answers.
     const relay = new ChainRelayService(mockGateway as never, {} as never, () =>
       Time.currentMillis()
     );
@@ -173,7 +173,7 @@ describe('POST /chain/submit and new polls from the switch-on', () => {
     expect(mockGateway.submit).toHaveBeenCalledTimes(2);
   });
 
-  it('passes a POLL_CREATE before the switch-on to the relay, whose own gate refuses every waves operation until then', async () => {
+  it('keeps POLL_CREATE closed at the relay before the switch-on', async () => {
     now.mockReturnValue(SWITCH_ON - 1);
     for (const body of pollForms()) {
       expect(await submit(body)).toEqual({
@@ -188,9 +188,19 @@ describe('POST /chain/submit and new polls from the switch-on', () => {
     expect(mockGateway.submit).not.toHaveBeenCalled();
   });
 
-  it('relays other operations after the switch-on', async () => {
+  it('relays a wave vote after the switch-on', async () => {
     const answer = await submit({
       unsigned: envelope(VOTE_SET),
+      signatures: [{ role: 0, key_type: 1, sig: SIG }]
+    });
+    expect(answer.status).toBe(200);
+    expect(mockGateway.submit).toHaveBeenCalledTimes(1);
+  });
+
+  it('relays a non-wave operation before the switch-on', async () => {
+    now.mockReturnValue(SWITCH_ON - 1);
+    const answer = await submit({
+      unsigned: envelope(RATING_SET),
       signatures: [{ role: 0, key_type: 1, sig: SIG }]
     });
     expect(answer.status).toBe(200);
