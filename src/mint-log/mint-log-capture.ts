@@ -9,6 +9,7 @@ import {
   selectExpression
 } from './mint-log-columns';
 import { compactMerkleRoot, MintProofRow } from './mint-log-merkle';
+import { subscriptionsIdentitySwitch } from '@/subscriptions-identity/identity/identity-switch';
 import {
   cardParams,
   compareText,
@@ -30,20 +31,48 @@ import {
 export class MintStateReader {
   constructor(
     private readonly db: () => SqlExecutor = dbSupplier,
-    private readonly catalog: MintColumnCatalog = new MintColumnCatalog(db)
+    private readonly catalog: MintColumnCatalog = new MintColumnCatalog(db),
+    /**
+     * Whether the subscriptions switch names the identity tables now, read
+     * uncached, as the phase pulls read it to choose the tables they write.
+     */
+    private readonly identitySubscriptionsAreTruth: () => Promise<boolean> = async () =>
+      (await subscriptionsIdentitySwitch.writeModeOrFail()) === 'TRUTH'
   ) {}
 
+  /**
+   * The switch's answer for one logged write, read once and given to each of
+   * its captures, so they all agree even if go-live commits in between.
+   * Undefined for a card no identity subscriptions part applies to.
+   */
+  async identityTruthFor(card: MintCardRef): Promise<boolean | undefined> {
+    const applies = MINT_ROW_PARTS.some((part) => {
+      const spec = MINT_ROW_PART_SPECS[part];
+      return spec.identitySubscriptions && partApplies(spec, card);
+    });
+    return applies ? this.identitySubscriptionsAreTruth() : undefined;
+  }
+
+  /**
+   * `identityTruth` is the write's answer from identityTruthFor; without it
+   * (a genesis, a rebuild) the switch is read here, once.
+   */
   async capture(
     card: MintCardRef,
-    connection: ConnectionWrapper<any>
+    connection: ConnectionWrapper<any>,
+    identityTruth?: boolean
   ): Promise<MintCardState> {
     const rows = {} as Record<MintRowPart, MintRow[]>;
     for (const part of MINT_ROW_PARTS) {
-      rows[part] = await this.captureRows(
-        MINT_ROW_PART_SPECS[part],
-        card,
-        connection
-      );
+      const spec = MINT_ROW_PART_SPECS[part];
+      if (spec.identitySubscriptions && partApplies(spec, card)) {
+        identityTruth ??= await this.identitySubscriptionsAreTruth();
+        if (!identityTruth) {
+          rows[part] = [];
+          continue;
+        }
+      }
+      rows[part] = await this.captureRows(spec, card, connection);
     }
     const merkle = await this.captureMerkle(card, connection);
     return { ...rows, merkle };
