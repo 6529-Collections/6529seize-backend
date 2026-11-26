@@ -138,20 +138,6 @@ export class NotificationsApiService {
     ]);
   }
 
-  public async markNotificationAsUnread(param: {
-    id: number;
-    identity_id: string;
-  }) {
-    await this.identityNotificationsDb.updateNotificationReadAt({
-      ...param,
-      readAt: null
-    });
-    await requestDeviceBadgeRefresh(param.identity_id);
-    await this.wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
-      param.identity_id
-    ]);
-  }
-
   public async markAllNotificationsAsRead(
     identityId: string,
     ctx: RequestContext
