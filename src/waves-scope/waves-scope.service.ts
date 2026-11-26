@@ -4,10 +4,17 @@ import {
   DROPS_TABLE,
   WAVES_TABLE
 } from '@/constants';
+import { withoutLegacyCompetitionGetFacade } from '@/competitions/legacy-competition-get-facade';
 import { DbPoolName, DbQueryOptions } from '@/db-query.options';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
-import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
+import {
+  ConnectionWrapper,
+  dbSupplier,
+  LazyDbAccessCompatibleService,
+  SqlExecutor,
+  SqlTransactionOptions
+} from '@/sql-executor';
 import {
   CHAIN_INDEX_STATE_TABLE_NAME,
   CHAIN_NETWORK_ID_ENV,
@@ -124,6 +131,48 @@ function chunked<T>(items: T[], size: number): T[][] {
   return chunks;
 }
 
+/**
+ * The scope service's statements, run outside the API's legacy competition
+ * GET facade. The rule reads the real tables by design: under that facade
+ * a GET's `waves` and `drops` read its legacy_get_* views, which don't have
+ * every column the rule reads (the waves' hub configurations), and a scope
+ * read on any GET (stays_on_site) would fail.
+ */
+export class OutsideLegacyGetFacade extends SqlExecutor {
+  constructor(private readonly inner: SqlExecutor) {
+    super();
+  }
+
+  execute<T = any>(
+    sql: string,
+    params?: Record<string, any>,
+    options?: DbQueryOptions
+  ): Promise<T[]> {
+    return withoutLegacyCompetitionGetFacade(() =>
+      this.inner.execute<T>(sql, params, options)
+    );
+  }
+
+  oneOrNull<T>(
+    sql: string,
+    params?: Record<string, any>,
+    options?: DbQueryOptions
+  ): Promise<T | null> {
+    return withoutLegacyCompetitionGetFacade(() =>
+      this.inner.oneOrNull<T>(sql, params, options)
+    );
+  }
+
+  executeNativeQueriesInTransaction<T>(
+    executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>,
+    options?: SqlTransactionOptions
+  ): Promise<T> {
+    return withoutLegacyCompetitionGetFacade(() =>
+      this.inner.executeNativeQueriesInTransaction(executable, options)
+    );
+  }
+}
+
 /** A decision's wave, legacy wave and capabilities. */
 export interface DecisionRef {
   readonly wave_id: string;
@@ -180,7 +229,8 @@ export class WavesScopeService extends LazyDbAccessCompatibleService {
       readonly log?: ScopeLog;
     } = {}
   ) {
-    super(sqlExecutorGetter);
+    // Every statement runs outside the legacy GET facade (OutsideLegacyGetFacade).
+    super(() => new OutsideLegacyGetFacade(sqlExecutorGetter()));
     this.readyCacheMs = readyCacheMs;
     this.notReadyCacheMs = notReadyCacheMs;
     this.log = log;

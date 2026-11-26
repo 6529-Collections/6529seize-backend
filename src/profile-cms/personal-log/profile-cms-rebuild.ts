@@ -1,3 +1,5 @@
+import fetch from 'node-fetch';
+import { AppFeatures, appFeatures } from '@/app-features';
 import { RequestContext } from '@/request.context';
 import {
   PROFILE_CMS_MAX_CHANGE_ATTEMPTS,
@@ -16,6 +18,13 @@ import {
   readProfileCmsPrivateEntry
 } from '@/profile-cms/personal-log/profile-cms-private-log';
 import { RecordLogEntry } from '@/signed-records/record-log/record-log-format';
+import {
+  RecordLogReader,
+  RecordsWaveReader,
+  SegmentFetcher
+} from '@/signed-records/record-log/record-log-reader';
+import { LocalRecordsWaveReader } from '@/signed-records/record-log/records-wave-local-reader';
+import { loadProviderKeys, ProviderKey } from '@/signed-records/sealed-crypto';
 
 type RebuildItem =
   | {
@@ -141,39 +150,130 @@ async function allChanges(
   }
 }
 
+/** The records wave and segment files a walk of the record log reads. */
+export interface ProfileCmsRecordLogSources {
+  readonly wave: RecordsWaveReader;
+  readonly fetcher: SegmentFetcher;
+  readonly serviceWallets: readonly string[];
+  readonly providers: readonly ProviderKey[];
+}
+
 /**
- * The private chain of the interim record log, walked from its head drops.
- * It needs a reader of the records wave and the record log's segment fetcher
- * and provider keys; until those are wired it refuses, so a rebuild never
- * runs without the private half.
+ * The record log as a rebuild reads it: the records wave from the drops the
+ * records service posted (rebuilt from the relays), each segment file from
+ * the run's files source by CID or Arweave id, opened with the provider
+ * keys. The SIGNED_RECORDS_* settings name the wave, the service and the
+ * keys.
  */
-export function createProfileCmsPrivateLogWalk(): AsyncIterable<{
-  readonly entry: RecordLogEntry;
-}> {
+export function profileCmsRecordLogSources(
+  files: string | null,
+  env: Readonly<Record<string, string | undefined>> = process.env
+): ProfileCmsRecordLogSources {
+  if (!files) {
+    throw new Error(
+      'The profile site rebuild reads segment files: the run has no files source'
+    );
+  }
+  const waveId = env.SIGNED_RECORDS_WAVE_ID;
+  const profileId = env.SIGNED_RECORDS_SERVICE_PROFILE_ID;
+  const wallet = env.SIGNED_RECORDS_SERVICE_WALLET?.toLowerCase();
+  if (!waveId || !profileId || !wallet) {
+    throw new Error(
+      'SIGNED_RECORDS_WAVE_ID, SIGNED_RECORDS_SERVICE_PROFILE_ID and SIGNED_RECORDS_SERVICE_WALLET are needed to read the records wave'
+    );
+  }
+  const providers = loadProviderKeys(env.SIGNED_RECORDS_PROVIDER_KEYS);
+  if (providers.length === 0) {
+    throw new Error('SIGNED_RECORDS_PROVIDER_KEYS is not configured');
+  }
+  return {
+    wave: new LocalRecordsWaveReader({ waveId, profileId, wallet }),
+    fetcher: filesSourceFetcher(files),
+    serviceWallets: [wallet],
+    providers
+  };
+}
+
+/** Segment files from the run's files source (`/ipfs/<cid>`, `/ar/<id>`). */
+function filesSourceFetcher(base: string): SegmentFetcher {
+  const root = base.endsWith('/') ? base.slice(0, -1) : base;
+  const get = async (path: string): Promise<Buffer> => {
+    const response = await fetch(`${root}${path}`);
+    if (!response.ok) {
+      throw new Error(
+        `The files source answered ${response.status} for ${path}`
+      );
+    }
+    return response.buffer();
+  };
+  return {
+    fetchCid: (cid) => get(`/ipfs/${encodeURIComponent(cid)}`),
+    fetchArweave: (id) => get(`/ar/${encodeURIComponent(id)}`)
+  };
+}
+
+/**
+ * The private chain of the interim record log, walked from its head drops:
+ * every segment in order, each checked against its head.
+ */
+export function createProfileCmsPrivateLogWalk(
+  sources: ProfileCmsRecordLogSources
+): AsyncIterable<{ readonly entry: RecordLogEntry }> {
+  return new RecordLogReader(sources).walk('private');
+}
+
+/**
+ * Reads no chain: with FEATURE_PROFILE_CMS_CHAIN_POINTER off the live index
+ * applies no chain change, so a rebuild of what it wrote reads none either.
+ */
+const CHAIN_FLAG_OFF: ProfileCmsChainPort = {
+  getChanges: async () => ({ changes: [], next_height: null }),
+  getIdentityByPrincipal: chainFlagOff,
+  getIdentityImport: chainFlagOff,
+  getImportedProfileDocCid: chainFlagOff,
+  getProfileDoc: chainFlagOff,
+  getDocBytes: chainFlagOff
+};
+
+async function chainFlagOff(): Promise<never> {
   throw new Error(
-    'No records wave reader yet: the private record log cannot be walked here.'
+    'FEATURE_PROFILE_CMS_CHAIN_POINTER is off: the profile site rebuild reads no chain'
   );
 }
 
-/** The rebuild check's step for every profile site table. */
+/**
+ * The rebuild check's step for every profile site table. It follows
+ * FEATURE_PROFILE_CMS_CHAIN_POINTER, as the live index does: on, the
+ * chain's Profile changes (through createProfileCmsChainPort, at the run's
+ * gateway) and the private log; off, the private log alone, since the live
+ * index then applied no chain change.
+ */
 export async function rebuildProfileCmsFromChainAndLog(
-  ctx: { readonly sources: { readonly gateway: string | null } },
+  ctx: {
+    readonly sources: {
+      readonly gateway: string | null;
+      readonly files: string | null;
+    };
+  },
   deps: {
+    readonly features?: Pick<AppFeatures, 'isProfileCmsChainPointerEnabled'>;
     readonly createPort?: (gateway: string | null) => ProfileCmsChainPort;
-    readonly privateWalk?: () => AsyncIterable<{
-      readonly entry: RecordLogEntry;
-    }>;
+    readonly recordLog?: ProfileCmsRecordLogSources;
+    readonly env?: Readonly<Record<string, string | undefined>>;
   } = {}
-): Promise<void> {
-  const fromHeight = Number(process.env.PROFILE_CMS_CHAIN_FROM_HEIGHT ?? '0');
+): Promise<{ readonly changes: number; readonly entries: number }> {
+  const env = deps.env ?? process.env;
+  const fromHeight = Number(env.PROFILE_CMS_CHAIN_FROM_HEIGHT ?? '0');
   if (!Number.isSafeInteger(fromHeight) || fromHeight < 0) {
     throw new Error('PROFILE_CMS_CHAIN_FROM_HEIGHT must be a height');
   }
-  const port = (deps.createPort ?? createProfileCmsChainPort)(
-    ctx.sources.gateway
+  const port = (deps.features ?? appFeatures).isProfileCmsChainPointerEnabled()
+    ? (deps.createPort ?? createProfileCmsChainPort)(ctx.sources.gateway)
+    : CHAIN_FLAG_OFF;
+  const walk = createProfileCmsPrivateLogWalk(
+    deps.recordLog ?? profileCmsRecordLogSources(ctx.sources.files, env)
   );
-  const walk = (deps.privateWalk ?? createProfileCmsPrivateLogWalk)();
-  await rebuildProfileCms(
+  return rebuildProfileCms(
     { port, fromHeight, privateEntries: profileCmsPrivateEntries(walk) },
     {}
   );

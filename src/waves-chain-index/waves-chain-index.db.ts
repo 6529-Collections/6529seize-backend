@@ -483,6 +483,42 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
   }
 
   /**
+   * Keeps the finalized block time of the height the run reads at
+   * (read_time, beside read_height): readers of which waves the chain
+   * holds (waves-chain-mapping.ts) tell from it how far the index has read
+   * the chain. Saved after read_height, so a run that stops between the two
+   * leaves an earlier time, never a later one. False when the column isn't
+   * there yet (code deployed before the schema sync): nothing is kept, the
+   * readers read through nothing, and the index goes on. Any other error
+   * throws.
+   */
+  async saveReadTime(readTime: number): Promise<boolean> {
+    try {
+      await this.db.execute(
+        `update ${WAVES_CHAIN_INDEX_STATE_TABLE} set read_time = :readTime
+          where name = :name`,
+        { name: STATE_NAME, readTime }
+      );
+      return true;
+    } catch (error) {
+      const e = error as {
+        code?: unknown;
+        errno?: unknown;
+        driverError?: { code?: unknown; errno?: unknown };
+      } | null;
+      if (
+        e?.code === 'ER_BAD_FIELD_ERROR' ||
+        e?.errno === 1054 ||
+        e?.driverError?.code === 'ER_BAD_FIELD_ERROR' ||
+        e?.driverError?.errno === 1054
+      ) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Writes rows, each stamped with the height it was read at and the full
    * read it belongs to. A row read at a lower height than the stored one
    * changes nothing but its generation (the reads of one run are pinned to
@@ -1212,6 +1248,51 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: connection }
       );
     }
+  }
+
+  /**
+   * Final, decided results counted on the chain (origin native, in the
+   * column and in the chain's own answer: not one the import carried) of
+   * these decisions, with a rank-1 winner, that have no claim build on
+   * `network`, oldest first, at most `limit`. Read from the index's own
+   * rows, so a result the event log never saw is found too: one that went
+   * final before the log started, or in a feed gap, or while claim builds
+   * were off or the setting named other decisions. A decided result with
+   * no winners (no active entries) is never read: it has nothing to build.
+   */
+  async resultsWithoutClaimBuild(
+    decisionIds: readonly string[],
+    network: string,
+    limit: number
+  ): Promise<{ decisionId: string; data: Record<string, unknown> }[]> {
+    if (!decisionIds.length) return [];
+    const rows = await this.db.execute<{ decision_id: string; data: unknown }>(
+      `select r.decision_id, r.data from ${CHAIN_RESULTS_TABLE} r
+        where r.decision_id in (:decisionIds)
+          and r.stage = 'final' and r.status = 'decided' and r.origin = 'native'
+          and json_unquote(json_extract(r.data, '$.origin')) = 'native'
+          and json_contains(json_extract(r.data, '$.winners[*].rank'), '1')
+          and not exists (
+            select 1 from ${CHAIN_CLAIM_BUILDS_TABLE} b
+             where b.network = :network
+               and b.decision_id = r.decision_id
+               and b.occurrence = cast(json_unquote(json_extract(r.data, '$.occurrence')) as signed))
+        order by r.result_time
+        limit :limit`,
+      { decisionIds: [...decisionIds], network, limit }
+    );
+    return rows.map((row) => ({
+      decisionId: String(row.decision_id).toLowerCase(),
+      data: jsonOf(row.data)
+    }));
+  }
+
+  /** Writes claim builds on their own; one already there is kept as it is. */
+  async writeClaimBuilds(builds: readonly ClaimBuild[]): Promise<void> {
+    if (!builds.length) return;
+    await this.executeNativeQueriesInTransaction((connection) =>
+      this.insertClaimBuilds(builds, connection)
+    );
   }
 
   /** Claim builds still to send, oldest first. */

@@ -5,6 +5,7 @@ import {
   id
 } from '@/tests/fixtures/waves-chain-index.fixture';
 import { ChainFeedBlock } from '@/chain-gateway/chain-gateway.types';
+import { Logger } from '@/logging';
 import { ChainObject, GatewayWavesChainApi } from './waves-chain-index.api';
 import { IndexTableName } from './waves-chain-index.db';
 import { WavesChainIndex } from './waves-chain-index.service';
@@ -418,6 +419,58 @@ describe('WavesChainIndex', () => {
     expect(rowsOf(db)).toEqual(before);
   });
 
+  it('keeps the finalized block time of the height it read at, and keeps it while no time can be read', async () => {
+    const { db, index } = indexOf(chain, clock);
+    expect(db.readTime).toBeNull();
+    const first = await chain.head();
+    await index.run({ budgetMs: BIG });
+    expect(db.state.readHeight).toBe(first.finalizedHeight);
+    expect(db.readTime).toBe(first.finalizedTime);
+    chain.vote(E(1), V(1), 10);
+    chain.tick(60_000);
+    chain.tick(60_000);
+    // Finalized one block behind the newest: its time is not the clock's.
+    chain.lag = 1;
+    const second = await chain.head();
+    expect(second.finalizedTime).toBeGreaterThan(first.finalizedTime!);
+    expect(second.finalizedTime).toBeLessThan(clock.now());
+    await index.run({ budgetMs: BIG });
+    expect(db.state.readHeight).toBe(second.finalizedHeight);
+    expect(db.readTime).toBe(second.finalizedTime);
+    chain.vote(E(1), V(1), 11);
+    chain.timeUnknown = true;
+    await index.run({ budgetMs: BIG });
+    expect(db.readTime).toBe(second.finalizedTime);
+    // Each time was saved after its height: a run that stops between the
+    // two leaves an earlier time beside the new height, never a later one.
+    expect(db.readTimeSavedAtHeight).toEqual([
+      first.finalizedHeight,
+      second.finalizedHeight
+    ]);
+  });
+
+  it('goes on without the read_time column, saying so once', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn');
+    const { db, index } = indexOf(chain, clock);
+    db.noReadTimeColumn = true;
+    expect(await index.run({ budgetMs: BIG })).toMatchObject({
+      mode: 'indexed'
+    });
+    chain.vote(E(1), V(1), 12);
+    expect(await index.run({ budgetMs: BIG })).toMatchObject({
+      mode: 'indexed'
+    });
+    expect(db.state.lastFullAt).not.toBeNull();
+    expect(rowsOf(db)).toEqual(await freshRows(chain, clock));
+    expect(db.readTime).toBeNull();
+    expect(
+      warn.mock.calls.filter(([message]) =>
+        String(message).includes('HAS NO READ_TIME COLUMN YET')
+      )
+    ).toHaveLength(1);
+    warn.mockRestore();
+  });
+
   it('waits when no block time can be read for the head', async () => {
     const { db, index } = indexOf(chain, clock);
     await index.run({ budgetMs: BIG });
@@ -651,6 +704,40 @@ describe('WavesChainIndex', () => {
     expect(db.rows('waves').map((w) => w.wave_id)).toEqual([id('aa')]);
     expect(db.rows('votes')).toHaveLength(0);
     expect(db.state).toMatchObject({ network: 'net-2', readHeight: 51 });
+  });
+
+  it('counts no full read while a relaunched chain empties the index, and empties it again after a stop', async () => {
+    const { db, index } = indexOf(chain, clock);
+    await index.run({ budgetMs: BIG });
+    expect(db.state.lastFullAt).not.toBeNull();
+    const fresh = new FakeChain(clock);
+    fresh.network = 'net-2';
+    fresh.height = 50;
+    fresh.putWave(id('aa'));
+    const clearAll = db.clearAll.bind(db);
+    const seen: (number | null)[] = [];
+    let failures = 1;
+    db.clearAll = async () => {
+      seen.push(db.state.lastFullAt);
+      if (failures > 0) {
+        failures--;
+        throw new Error('lost the connection');
+      }
+      await clearAll();
+    };
+    const relaunched = new WavesChainIndex(fresh, db.asDb(), clock.now);
+    await expect(relaunched.run({ budgetMs: BIG })).rejects.toThrow(
+      'lost the connection'
+    );
+    // Stopped half way: no full read counts, and the old network is kept,
+    // so the next run empties the index again.
+    expect(db.state).toMatchObject({ lastFullAt: null, network: 'net-1' });
+    expect(db.rows('waves').length).toBeGreaterThan(0);
+    const report = await relaunched.run({ budgetMs: BIG });
+    expect(report.restartedFull).toBe('network_changed');
+    expect(seen).toEqual([null, null]);
+    expect(db.rows('waves').map((w) => w.wave_id)).toEqual([id('aa')]);
+    expect(db.state).toMatchObject({ network: 'net-2' });
   });
 
   it('starts again at a full-read phase it does not know, without emptying anything', async () => {

@@ -137,6 +137,7 @@ import {
   isAcceptedMediaOrigin,
   DEVS_6529_MENTION,
   DEVS_6529_MENTION_TOKEN,
+  DROP_FORGE_ALERT_MENTION_TOKEN,
   UUID_REGEX,
   WALLET_REGEX
 } from '@/constants';
@@ -219,7 +220,8 @@ const GROUP_MENTION_TOKENS: Readonly<Record<DropGroupMention, string>> = {
   [DropGroupMention.ALL]: 'all',
   [DropGroupMention.CONTRIBUTORS]: 'contributors',
   [DropGroupMention.ADMINS]: 'admins',
-  [DropGroupMention.DEVS_6529]: DEVS_6529_MENTION_TOKEN
+  [DropGroupMention.DEVS_6529]: DEVS_6529_MENTION_TOKEN,
+  [DropGroupMention.DROPS_6529]: DROP_FORGE_ALERT_MENTION_TOKEN
 };
 const ADMIN_ONLY_GROUP_MENTIONS = [
   DropGroupMention.ALL,
@@ -227,7 +229,8 @@ const ADMIN_ONLY_GROUP_MENTIONS = [
 ] as const;
 const ESCALATION_GROUP_MENTIONS = new Set<DropGroupMention>([
   DropGroupMention.ADMINS,
-  DropGroupMention.DEVS_6529
+  DropGroupMention.DEVS_6529,
+  DropGroupMention.DROPS_6529
 ]);
 
 function createGroupMentionPattern(token: string): RegExp {
@@ -235,6 +238,9 @@ function createGroupMentionPattern(token: string): RegExp {
 }
 
 const GROUP_MENTION_PATTERNS: Readonly<Record<DropGroupMention, RegExp>> = {
+  [DropGroupMention.DROPS_6529]: createGroupMentionPattern(
+    DROP_FORGE_ALERT_MENTION_TOKEN
+  ),
   [DropGroupMention.ALL]: createGroupMentionPattern(
     GROUP_MENTION_TOKENS[DropGroupMention.ALL]
   ),
@@ -358,6 +364,23 @@ export function sanitizeDropStructuredFields(
         (metadata) => metadata.data_key !== '' && metadata.data_value !== ''
       )
   };
+}
+
+/**
+ * The moderation context of a drop write: the drop, without how it is
+ * written (its preset id, the notify flag). A signed post's id follows its
+ * event, and a resend after review is signed anew: the id must not set it
+ * apart from the review it passed.
+ */
+export function dropModerationFingerprint(
+  model: CreateOrUpdateDropModel
+): string {
+  const {
+    new_drop_id: _newDropId,
+    notify: _notify,
+    ...drop
+  } = sanitizeDropStructuredFields(model);
+  return moderationFingerprint(drop);
 }
 
 export class CreateOrUpdateDropUseCase {
@@ -819,7 +842,8 @@ export class CreateOrUpdateDropUseCase {
     const sanitizedModel = sanitizeDropStructuredFields(model);
     const operation: 'CREATE' | 'UPDATE' =
       sanitizedModel.drop_id === null ? 'CREATE' : 'UPDATE';
-    const dropId = sanitizedModel.drop_id ?? randomUUID();
+    const dropId =
+      sanitizedModel.drop_id ?? sanitizedModel.new_drop_id ?? randomUUID();
     const authorProfileId = this.getRequiredAuthorId(sanitizedModel);
     const currentRevision = sanitizedModel.drop_id
       ? await moderationReviewDb.currentRevision(
@@ -838,7 +862,7 @@ export class CreateOrUpdateDropUseCase {
       title: sanitizedModel.title,
       waveId: sanitizedModel.wave_id,
       currentRevision,
-      contextFingerprint: moderationFingerprint(sanitizedModel),
+      contextFingerprint: dropModerationFingerprint(sanitizedModel),
       // File attachment contents intentionally remain in their existing
       // asynchronous validation pipeline and are not inspected here.
       parts: sanitizedModel.parts.map((part) => ({ content: part.content }))
@@ -1104,7 +1128,7 @@ export class CreateOrUpdateDropUseCase {
     const operation = preExistingDropId === null ? 'CREATE' : 'UPDATE';
     const candidateDropId =
       'trustedSystem' in prePublication
-        ? (preExistingDropId ?? randomUUID())
+        ? (preExistingDropId ?? validatedModel.new_drop_id ?? randomUUID())
         : prePublication.dropId;
     if (
       !('trustedSystem' in prePublication) &&
@@ -2917,7 +2941,8 @@ export class CreateOrUpdateDropUseCase {
     const permissionMentionGroups = [
       DropGroupMention.CONTRIBUTORS,
       DropGroupMention.ADMINS,
-      DropGroupMention.DEVS_6529
+      DropGroupMention.DEVS_6529,
+      DropGroupMention.DROPS_6529
     ];
     if (
       !permissionMentionGroups.some((group) =>
@@ -2930,16 +2955,18 @@ export class CreateOrUpdateDropUseCase {
       model,
       wave
     });
-    const configuredDeveloperIds = model.mentioned_groups.includes(
-      DropGroupMention.DEVS_6529
-    )
-      ? collections.distinct(
-          env
-            .getStringArray('DEVS_6529_MENTION_PROFILE_IDS', ',')
-            .map((id) => id.trim())
-            .filter(Boolean)
-        )
-      : [];
+    const configuredDeveloperIds = collections.distinct(
+      [
+        ...(model.mentioned_groups.includes(DropGroupMention.DEVS_6529)
+          ? env.getStringArray('DEVS_6529_MENTION_PROFILE_IDS', ',')
+          : []),
+        ...(model.mentioned_groups.includes(DropGroupMention.DROPS_6529)
+          ? env.getStringArray('DROP_FORGE_ALERT_PROFILE_IDS', ',')
+          : [])
+      ]
+        .map((id) => id.trim())
+        .filter(Boolean)
+    );
     this.warnIfDeveloperMentionHasNoRecipients({
       model,
       configuredDeveloperIds
@@ -3255,6 +3282,8 @@ export class CreateOrUpdateDropUseCase {
     },
     { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ): Promise<number[]> {
+    // History written from the 6529 relays notifies no one, on create or edit.
+    if (model.notify === false) return [];
     timer?.start(`${CreateOrUpdateDropUseCase.name}->notifyWaveDropRecipients`);
     const dropId = this.getRequiredDropId(model);
     const authorId = this.getRequiredAuthorId(model);

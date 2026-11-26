@@ -19,12 +19,27 @@ import {
 } from '@/exceptions';
 import { Logger } from '@/logging';
 import { ConnectionWrapper } from '@/sql-executor';
+import { rateLimitingService } from '@/api/rate-limiting/rate-limiting.service';
 import {
   chainPendingOperationsDb,
   ChainPendingOperationsDb,
   PendingOperation,
   PendingSigner
 } from './chain-pending-operations.db';
+import {
+  EnvelopeHead,
+  readEnvelopeHead,
+  signatureListBytes,
+  splitSingleSignature
+} from './chain-envelope';
+import {
+  chainRelayRateLimitsFromEnv,
+  ChainRelayThrottle,
+  RelayRateLimiter,
+  RelayRateLimits,
+  RetryLaterException
+} from './chain-relay-limits';
+import { assertWavesOperationOpen } from './chain-relay-waves';
 
 const logger = Logger.get('CHAIN_RELAY');
 
@@ -63,6 +78,32 @@ const CHECK_EVERY_MS = 10_000;
  * expiry to reach the node that answers.
  */
 const SETTLE_GRACE_MS = 5 * 60_000;
+/**
+ * keyType 2: an Ed25519 session key's signature over the txId. A session key
+ * signs under the CAPABILITY_GRANT the header's authRef names, with keyType
+ * 2 or, for a secp256k1 key, keyType 1.
+ */
+export const SESSION_KEY_TYPE = 2;
+/** A grant's key's signature length by key type. */
+const GRANT_SIG_BYTES: Readonly<Record<number, number>> = { 1: 65, 2: 64 };
+/**
+ * The operations a session key may sign at rule version 7, which this relay
+ * forwards: its grant's (grant_ops: PROFILE_REPLACE, VOTE_SET,
+ * POLL_BALLOT_SET, RATING_SET) and the two every key has by the chain's
+ * rules (a NONCE_SKIP of its own lanes, a CAPABILITY_REVOKE of its own
+ * grant). Every
+ * other operation needs a wallet at the chain (0x020D).
+ */
+export const SESSION_KEY_OPS: ReadonlySet<number> = new Set([
+  0x0102, 0x0201, 0x0303, 0x0606, 0x0608, 0x0701
+]);
+/** A directly submitted signed operation's cap: its envelope and signatures. */
+const MAX_SIGNED_BYTES = MAX_UNSIGNED_BYTES + 16 * 1024;
+/**
+ * The chain's maxTxBytes (param 0x0204): a session key's whole transaction,
+ * signature list included, fits in it. A vote is about 380 bytes.
+ */
+const MAX_SESSION_OP_BYTES = 4096;
 
 const TX_ID = /^0x[0-9a-f]{64}$/;
 const ADDRESS = /^0x[0-9a-f]{40}$/;
@@ -461,10 +502,30 @@ function isInsertRace(error: unknown): boolean {
   return code === 'ER_DUP_ENTRY' || isDeadlock(error);
 }
 
+function hexBytes(hex: string): number {
+  return (lower(hex).length - 2) / 2;
+}
+
+/** The gateway's own wait, in seconds, from 1 to 60 (5 when it gave none). */
+function retryAfterSecondsOf(error: ChainGatewayError): number {
+  const ms = (error as { retryAfterMs?: number }).retryAfterMs;
+  return Math.min(60, Math.max(1, Math.ceil((ms ?? 5000) / 1000)));
+}
+
+/** A gateway answering 429 or 503 (after the client's own retries). */
+function isBusy(error: unknown): boolean {
+  return (
+    error instanceof ChainGatewayError &&
+    (error.status === 429 || error.status === 503)
+  );
+}
+
 /**
  * A direct submit's failure as an API answer. Each carries `tx_id` and an
  * `outcome`: `refused` (422), `unknown` (502: it may have landed, so ask the
- * chain and don't send it again) or `not_taken` (502: it may be sent again).
+ * chain and don't send it again) or `not_taken` (it may be sent again: 503
+ * CHAIN_BUSY with Retry-After when the gateway was busy or rate limiting,
+ * else 502).
  */
 function gatewayFailure(error: unknown, txId: string): never {
   const failure = submitFailure(error, txId);
@@ -489,11 +550,42 @@ function gatewayFailure(error: unknown, txId: string): never {
       details
     );
   }
+  if (isBusy(error)) {
+    throw new RetryLaterException(
+      503,
+      `The 6529 Network is busy: ${failure.message}`,
+      'CHAIN_BUSY',
+      retryAfterSecondsOf(error as ChainGatewayError),
+      details
+    );
+  }
   throw new CustomApiCompliantException(
     502,
     `The 6529 Network could not be reached: ${failure.message}`,
     'CHAIN_UNAVAILABLE',
     details
+  );
+}
+
+/**
+ * A gateway read's failure (a session key's caller check) as an API answer:
+ * never CHAIN_REFUSED. 503 CHAIN_BUSY with Retry-After when the gateway was
+ * busy or rate limiting, else 502 CHAIN_UNAVAILABLE: send again later.
+ */
+function readFailure(error: unknown): never {
+  if (!(error instanceof ChainGatewayError)) throw error;
+  if (isBusy(error)) {
+    throw new RetryLaterException(
+      503,
+      `The 6529 Network is busy: ${error.message}`,
+      'CHAIN_BUSY',
+      retryAfterSecondsOf(error)
+    );
+  }
+  throw new CustomApiCompliantException(
+    502,
+    `The 6529 Network could not be reached: ${error.message}`,
+    'CHAIN_UNAVAILABLE'
   );
 }
 
@@ -521,8 +613,18 @@ function sameSigners(
  * needs two wallets (the identity's and the joining one), until both have
  * signed. Each signature is checked against its signer before it is kept;
  * the chain checks everything again.
+ *
+ * It also relays the operations a session key signs under its grant
+ * (SESSION_KEY_OPS: profile edits, votes, poll ballots, ratings), only those
+ * and only for the identity of the signed-in wallet. The chain checks the
+ * key, its grant and the grant's budgets.
+ *
+ * Every relayed write counts against the signed-in wallet's and the source
+ * address's budgets; a session key's also against its identity's.
  */
 export class ChainRelayService {
+  private readonly throttle: ChainRelayThrottle;
+
   constructor(
     private readonly gateway: Gateway = chainGatewayClient,
     private readonly db: ChainPendingOperationsDb = chainPendingOperationsDb,
@@ -532,8 +634,12 @@ export class ChainRelayService {
       readonly chainCheckMs?: number;
       /** For the gateway's reads when a join is held. */
       readonly gatewayReadMs?: number;
-    } = {}
-  ) {}
+    } = {},
+    limiter: RelayRateLimiter = rateLimitingService,
+    limits: () => RelayRateLimits = chainRelayRateLimitsFromEnv
+  ) {
+    this.throttle = new ChainRelayThrottle(limiter, limits);
+  }
 
   /** The chain's maxValidityMs as last read, and when. */
   private maxValidity: { readonly ms: number; readonly at: number } | null =
@@ -542,17 +648,48 @@ export class ChainRelayService {
   /**
    * Relays a fully signed operation. `txId` is its draft's, which every
    * signer signed: the node's answer must be of it, and a failure names it.
+   * `caller` is the signed-in wallet and `address` the request's source
+   * address: they are rate limited, and a session key's operation must be
+   * for the caller's identity.
    */
-  async submit(request: RelaySubmitRequest): Promise<RelaySubmitResult> {
+  async submit(
+    request: RelaySubmitRequest,
+    caller?: string,
+    address?: string | null
+  ): Promise<RelaySubmitResult> {
     const txId = lower(String(request.txId ?? ''));
     if (!TX_ID.test(txId)) badRequest('tx_id must be 32 bytes of 0x hex');
+    const bytes = 'signed' in request ? request.signed : request.unsigned;
     if ('signed' in request) {
-      if (!HEX_BYTES.test(lower(request.signed))) {
-        badRequest('signed must be 0x hex bytes');
+      const hex = lower(request.signed);
+      if (!HEX_BYTES.test(hex) || hexBytes(hex) > MAX_SIGNED_BYTES) {
+        badRequest(`signed must be 0x hex bytes, at most ${MAX_SIGNED_BYTES}`);
       }
     } else {
       this.checkUnsigned(request.unsigned, MAX_UNSIGNED_BYTES);
+    }
+    const head = readEnvelopeHead(bytes);
+    // Waves operations open on the 6529 chain at the switch-on: none is
+    // relayed before it, whoever signs it (chain-relay-waves.ts).
+    assertWavesOperationOpen(head, this.now());
+    const viaGrant =
+      (head !== null &&
+        (head.keyType !== WALLET_KEY_TYPE || head.authRef !== null)) ||
+      ('signatures' in request &&
+        request.signatures.some((it) => it.keyType !== WALLET_KEY_TYPE));
+    if (viaGrant) {
+      this.checkGrantSigned(request, head);
+    } else if ('signatures' in request) {
       request.signatures.forEach((it) => this.checkSignatureShape(it));
+    }
+    if (caller) {
+      await this.throttle.take(
+        ChainRelayThrottle.callerBuckets(caller, address)
+      );
+    }
+    if (viaGrant) {
+      await this.checkGrantCaller(head!, caller);
+      await this.throttle.take([{ kind: 'principal', id: head!.principal }]);
     }
     let result: ChainSubmitResult;
     try {
@@ -560,7 +697,94 @@ export class ChainRelayService {
     } catch (error) {
       return gatewayFailure(error, txId);
     }
+    if (head && result.opType !== undefined && result.opType !== head.opType) {
+      logger.error(
+        `[RELAY ${txId}] the gateway read operation ${result.opType}, the envelope says ${head.opType}`
+      );
+    }
     return { ...result, outcome: 'accepted' };
+  }
+
+  /**
+   * An operation signed under a grant: a session key (keyType 2, or 1 for a
+   * secp256k1 key) with its grant in authRef, a non-zero principal, one of
+   * SESSION_KEY_OPS, one signature (role 0, the header's key type, 64 or 65
+   * bytes) in either request form, and at most MAX_SESSION_OP_BYTES whole.
+   */
+  private checkGrantSigned(
+    request: RelaySubmitRequest,
+    head: EnvelopeHead | null
+  ) {
+    if (!head) {
+      badRequest('The operation is not a 6529 Network transaction');
+    }
+    const sigBytes = GRANT_SIG_BYTES[head.keyType];
+    if (head.authRef === null || sigBytes === undefined) {
+      badRequest(
+        'Only wallets (keyType 1) and session keys (keyType 1 or 2, with their grant) sign the operations relayed here'
+      );
+    }
+    if (!SESSION_KEY_OPS.has(head.opType)) {
+      badRequest(
+        'A session key may not sign this operation: sign it with your wallet'
+      );
+    }
+    if (head.principal === ZERO_WORD) {
+      badRequest('A session key signs for an identity: principal is zero');
+    }
+    const oneSignature = `A session key's operation carries one signature: role 0, keyType ${head.keyType}, ${sigBytes} bytes, nothing after it`;
+    let signatures: readonly ChainSignature[];
+    let wholeBytes: number;
+    if ('signed' in request) {
+      const split = splitSingleSignature(request.signed, sigBytes);
+      if (!split) badRequest(oneSignature);
+      signatures = [split.signature];
+      wholeBytes = hexBytes(request.signed);
+    } else {
+      signatures = request.signatures;
+      wholeBytes =
+        hexBytes(request.unsigned) +
+        signatureListBytes(signatures.map((it) => hexBytes(it.sig)));
+    }
+    const [signature, ...more] = signatures;
+    if (
+      more.length ||
+      signature?.role !== 0 ||
+      signature.keyType !== head.keyType ||
+      !HEX_BYTES.test(lower(signature.sig)) ||
+      hexBytes(signature.sig) !== sigBytes
+    ) {
+      badRequest(oneSignature);
+    }
+    if (wholeBytes > MAX_SESSION_OP_BYTES) {
+      badRequest(
+        `A session key's operation is at most ${MAX_SESSION_OP_BYTES} bytes with its signature`
+      );
+    }
+  }
+
+  /**
+   * The signed-in wallet must be bound to the identity the key signs for.
+   * The identity is read at the latest finalized height the gateway client
+   * pinned, a few seconds behind the head: a wallet bound in the last blocks
+   * reads as unbound until they finalize.
+   */
+  private async checkGrantCaller(head: EnvelopeHead, caller?: string) {
+    if (!caller) {
+      throw new ForbiddenException("Sign in to send a session key's operation");
+    }
+    let principalId: string | null;
+    try {
+      principalId =
+        (await this.gateway.getIdentityByWallet(caller))?.principalId ?? null;
+    } catch (error) {
+      return readFailure(error);
+    }
+    if (!principalId || lower(principalId) !== head.principal) {
+      throw new ForbiddenException(
+        'The session key signs for an identity your wallet is not bound to'
+      );
+    }
   }
 
   private checkUnsigned(unsigned: string, maxBytes: number) {
@@ -728,9 +952,11 @@ export class ChainRelayService {
    */
   async createPending(
     input: PendingOperationInput,
-    wallet: string
+    wallet: string,
+    address?: string | null
   ): Promise<PendingOperation> {
     const join = this.checkInput(input);
+    await this.throttle.take(ChainRelayThrottle.callerBuckets(wallet, address));
     const txId = lower(input.txId);
     const me = lower(wallet);
     const signers = joinSigners(join);
@@ -839,8 +1065,10 @@ export class ChainRelayService {
   async addSignature(
     txId: string,
     signature: ChainSignature,
-    wallet: string
+    wallet: string,
+    address?: string | null
   ): Promise<PendingOperation> {
+    await this.throttle.take(ChainRelayThrottle.callerBuckets(wallet, address));
     const id = lower(txId);
     // Checked and stored with the operation's row locked, so a signature
     // never lands on an operation a signer has just withdrawn.
@@ -871,7 +1099,12 @@ export class ChainRelayService {
    * (the chain was unreachable). One whose outcome is unknown is SUBMITTED,
    * and is never sent again.
    */
-  async retry(txId: string, wallet: string): Promise<PendingOperation> {
+  async retry(
+    txId: string,
+    wallet: string,
+    address?: string | null
+  ): Promise<PendingOperation> {
+    await this.throttle.take(ChainRelayThrottle.callerBuckets(wallet, address));
     return await this.submitIfComplete(lower(txId), (op) => {
       this.assertParty(op, wallet);
       this.assertOpen(op);
