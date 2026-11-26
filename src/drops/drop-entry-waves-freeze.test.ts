@@ -13,7 +13,10 @@ import { memeCollaborationsService } from '@/meme-collaborations/meme-collaborat
 import { Time } from '@/time';
 import {
   WAVES_FROZEN_POLL_MESSAGE,
-  WavesFrozenException
+  WAVES_ON_CHAIN_CODE,
+  WAVES_ON_CHAIN_MESSAGE,
+  WavesFrozenException,
+  WavesOnChainException
 } from '@/waves-freeze/waves-freeze';
 import { CreateOrUpdateDropUseCase } from './create-or-update-drop.use-case';
 import { DeleteDropUseCase } from './delete-drop.use-case';
@@ -23,7 +26,9 @@ const NAMES = [
   'FEATURE_WAVES_FROZEN',
   'FEATURE_WAVES_FREEZE_KEEP_MAIN_STAGE',
   'WAVES_FREEZE_AT',
-  'MAIN_STAGE_WAVE_ID'
+  'MAIN_STAGE_WAVE_ID',
+  'FEATURE_WAVES_ON_CHAIN',
+  'WAVES_SWITCH_ON_AT'
 ];
 const PAST_FREEZE = new Error('past the waves freeze check');
 const FREEZE = Date.UTC(2026, 10, 25);
@@ -105,6 +110,17 @@ describe('legacy entries during the waves freeze', () => {
         WavesFrozenException
       );
       expect(withLegacyPrimaryMutation).not.toHaveBeenCalled();
+    });
+
+    it('makes or edits no legacy entry after the switch-on: WAVES_ON_CHAIN', async () => {
+      process.env.FEATURE_WAVES_ON_CHAIN = 'true';
+      await expect(
+        execute(DropType.PARTICIPATORY, 'wave')
+      ).rejects.toBeInstanceOf(WavesOnChainException);
+      await expect(execute(DropType.WINNER, 'wave')).rejects.toMatchObject({
+        code: WAVES_ON_CHAIN_CODE,
+        message: WAVES_ON_CHAIN_MESSAGE
+      });
     });
 
     it('takes Main Stage entries when the freeze keeps it', async () => {
@@ -288,6 +304,16 @@ describe('legacy entries during the waves freeze', () => {
       }
     );
 
+    it('withdraws no entry after the switch-on: WAVES_ON_CHAIN', async () => {
+      process.env.FEATURE_WAVES_ON_CHAIN = 'true';
+      await expect(
+        deleteDrop(DropType.PARTICIPATORY, 'DELETE')
+      ).rejects.toBeInstanceOf(WavesOnChainException);
+      await expect(
+        deleteDrop(DropType.PARTICIPATORY, 'UPDATE')
+      ).rejects.toBeInstanceOf(WavesOnChainException);
+    });
+
     it('deletes chat as before while frozen', async () => {
       await expect(deleteDrop(DropType.CHAT, 'DELETE')).rejects.toBe(
         PAST_FREEZE
@@ -436,6 +462,18 @@ describe('legacy entries during the waves freeze', () => {
       }
     );
 
+    it.each(['DELETE', 'UPDATE'] as const)(
+      'neither deletes nor edits away a poll after the switch-on: WAVES_ON_CHAIN (%s)',
+      async (purpose) => {
+        process.env.FEATURE_WAVES_ON_CHAIN = 'true';
+        const forDrop = useCase({ poll: true });
+        await expect(run(forDrop, purpose)).rejects.toBeInstanceOf(
+          WavesOnChainException
+        );
+        expect(forDrop.dropPollsDb.deleteByDropId).not.toHaveBeenCalled();
+      }
+    );
+
     it('checks right before the deletion, after the waits before it', async () => {
       delete process.env.FEATURE_WAVES_FROZEN;
       process.env.WAVES_FREEZE_AT = new Date(FREEZE).toISOString();
@@ -539,6 +577,15 @@ describe('legacy entries during the waves freeze', () => {
       expect(forBatch.purgeDb.deleteBatch).not.toHaveBeenCalled();
     });
 
+    it('refuses a batch with a poll after the switch-on: WAVES_ON_CHAIN', async () => {
+      process.env.FEATURE_WAVES_ON_CHAIN = 'true';
+      const forBatch = useCase(['with-poll']);
+      await expect(purge(forBatch)).rejects.toBeInstanceOf(
+        WavesOnChainException
+      );
+      expect(forBatch.purgeDb.deleteBatch).not.toHaveBeenCalled();
+    });
+
     it('purges a batch with no poll while frozen, and direct messages as before', async () => {
       await expect(purge(useCase([]))).rejects.toBe(PAST_FREEZE);
       const forMessages = useCase(['with-poll']);
@@ -576,6 +623,17 @@ describe('legacy entries during the waves freeze', () => {
       await expect(
         hooks.preparePresentationUpdate({} as any, [], {})
       ).resolves.toEqual({ entries: [], reset_votes: false });
+    });
+
+    it('changes no entry after the switch-on: WAVES_ON_CHAIN', async () => {
+      process.env.FEATURE_WAVES_ON_CHAIN = 'true';
+      await expect(
+        new CompetitionEntryDropHooks().preparePresentationUpdate(
+          {} as any,
+          [entry],
+          {}
+        )
+      ).rejects.toBeInstanceOf(WavesOnChainException);
     });
 
     it('changes entries as before when not frozen', async () => {

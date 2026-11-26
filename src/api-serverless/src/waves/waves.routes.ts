@@ -1,4 +1,5 @@
 import { getGroupsUserIsEligibleForReadContext } from '@/api/waves/wave-access.helpers';
+import { assertNotMovedOnChain } from '@/waves-freeze/waves-freeze-scope';
 import { optionalQueryString } from '@/api/query-values';
 import {
   legacyWaveCreation,
@@ -1013,6 +1014,8 @@ router.post(
     // Keep the administration guard while ignoring the legacy pause command.
     const ctx = { timer, authenticationContext };
     await waveApiService.updateWaveHub(id, {}, ctx);
+    // A moved wave's decisions pause on the 6529 chain, not here.
+    await assertNotMovedOnChain(id, ctx);
     const groups = await getGroupsUserIsEligibleForReadContext(
       userGroupsService,
       ctx
@@ -1035,6 +1038,8 @@ router.delete(
 
     const ctx = { timer, authenticationContext };
     await waveApiService.updateWaveHub(waveId, {}, ctx);
+    // A moved wave's decisions pause on the 6529 chain, not here.
+    await assertNotMovedOnChain(waveId, ctx);
     const groups = await getGroupsUserIsEligibleForReadContext(
       userGroupsService,
       ctx
