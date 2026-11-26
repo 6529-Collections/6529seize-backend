@@ -1450,6 +1450,20 @@ export class FakeIndexDb {
     this.state = { ...state };
   }
 
+  /** waves_chain_index_state.read_time, beside the state. */
+  readTime: number | null = null;
+  /** The read_height in the state when each read_time was saved. */
+  readonly readTimeSavedAtHeight: (number | null)[] = [];
+  /** No read_time column (a schema before the sync). */
+  noReadTimeColumn = false;
+
+  async saveReadTime(readTime: number) {
+    if (this.noReadTimeColumn) return false;
+    this.readTimeSavedAtHeight.push(this.state.readHeight);
+    this.readTime = readTime;
+    return true;
+  }
+
   async upsert(
     name: IndexTableName,
     rows: readonly IndexRow[],

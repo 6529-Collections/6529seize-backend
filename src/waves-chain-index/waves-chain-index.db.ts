@@ -471,6 +471,42 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
   }
 
   /**
+   * Keeps the finalized block time of the height the run reads at
+   * (read_time, beside read_height): readers of which waves the chain
+   * holds (waves-chain-mapping.ts) tell from it how far the index has read
+   * the chain. Saved after read_height, so a run that stops between the two
+   * leaves an earlier time, never a later one. False when the column isn't
+   * there yet (code deployed before the schema sync): nothing is kept, the
+   * readers read through nothing, and the index goes on. Any other error
+   * throws.
+   */
+  async saveReadTime(readTime: number): Promise<boolean> {
+    try {
+      await this.db.execute(
+        `update ${WAVES_CHAIN_INDEX_STATE_TABLE} set read_time = :readTime
+          where name = :name`,
+        { name: STATE_NAME, readTime }
+      );
+      return true;
+    } catch (error) {
+      const e = error as {
+        code?: unknown;
+        errno?: unknown;
+        driverError?: { code?: unknown; errno?: unknown };
+      } | null;
+      if (
+        e?.code === 'ER_BAD_FIELD_ERROR' ||
+        e?.errno === 1054 ||
+        e?.driverError?.code === 'ER_BAD_FIELD_ERROR' ||
+        e?.driverError?.errno === 1054
+      ) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Writes rows, each stamped with the height it was read at and the full
    * read it belongs to. A row read at a lower height than the stored one
    * changes nothing but its generation (the reads of one run are pinned to

@@ -120,6 +120,21 @@ function asArray(data: unknown): ChainObject[] {
   return [];
 }
 
+/**
+ * A page whose `next` repeats the cursor it was asked from: a gateway
+ * fault, never the end of a list. Taken as the end, a full read would sweep
+ * the rows it never saw, and a replaced list (a wave's roles, an entry's
+ * votes) would lose the rest. Thrown as the client's typed lists do.
+ */
+export function repeatedCursor(path: string, after: string): ChainGatewayError {
+  return new ChainGatewayError(
+    `${path}: a page whose next repeats the cursor it was asked from (${after})`,
+    200,
+    'bad_answer',
+    path
+  );
+}
+
 function recordBytes(block: ChainFeedBlock): number {
   return block.records.reduce((n, r) => n + JSON.stringify(r).length, 0);
 }
@@ -198,6 +213,9 @@ export class GatewayWavesChainApi implements WavesChainApi {
         path
       );
     }
+    if (after !== null && answer?.next === after) {
+      throw repeatedCursor(path, after);
+    }
     return {
       items: answer ? asArray(answer.data) : [],
       next: answer?.next ?? null
@@ -239,8 +257,11 @@ export class GatewayWavesChainApi implements WavesChainApi {
           path
         );
       }
+      if (after !== null && answer.next === after) {
+        throw repeatedCursor(path, after);
+      }
       items.push(...asArray(answer.data));
-      if (!answer.next || answer.next === after) return items;
+      if (!answer.next) return items;
       after = answer.next;
     }
   }
@@ -349,11 +370,15 @@ export class GatewayWavesChainApi implements WavesChainApi {
           `[FEED BLOCK TOO LARGE] block ${block.height}: its feed records passed ${pages} pages and ${bytes} bytes (limits ${limits.maxPages} pages, ${limits.maxBytes} bytes); the index applies whole blocks only`
         );
       }
-      page = await this.client.getChanges(page.next, {
+      const asked = page.next;
+      page = await this.client.getChanges(asked, {
         ...opts,
         network: first.network ?? undefined
       });
       pages++;
+      if (page.blocks.length && String(page.next) === String(asked)) {
+        throw repeatedCursor('/v1/feed', String(asked));
+      }
       const rest = page.blocks[0];
       if (!rest) {
         // A node behind the block: nothing past the height before it now.

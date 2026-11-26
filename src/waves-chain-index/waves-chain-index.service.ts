@@ -13,6 +13,7 @@ import { compareCodeUnits } from './waves-chain-index.order';
 import {
   ChainObject,
   GatewayWavesChainApi,
+  repeatedCursor,
   WavesChainApi
 } from './waves-chain-index.api';
 import {
@@ -69,6 +70,17 @@ import {
 } from './waves-chain-index.rows';
 
 const logger = Logger.get('WAVES_CHAIN_INDEX');
+
+let warnedAboutReadTime = false;
+
+/** Logged once a cold start: the state has no read_time column yet. */
+function warnNoReadTimeOnce() {
+  if (warnedAboutReadTime) return;
+  warnedAboutReadTime = true;
+  logger.warn(
+    '[WAVES_CHAIN_INDEX_STATE HAS NO READ_TIME COLUMN YET] [THE INDEX GOES ON] [STAYING-WAVE GUARDS READ THROUGH NOTHING UNTIL THE SCHEMA SYNC ADDS IT]'
+  );
+}
 
 /**
  * 6529.io's index of the 6529 chain's waves (entities/IWavesChainIndex.ts).
@@ -386,6 +398,9 @@ export class WavesChainIndex {
       readHeight: height,
       network: head.network ?? state.network
     });
+    if (!(await this.db.saveReadTime(head.finalizedTime))) {
+      warnNoReadTimeOnce();
+    }
     try {
       try {
         await this.catchUpClaimBuilds(state, report);
@@ -1402,9 +1417,8 @@ export class WavesChainIndex {
       const page = await this.api.listGroups(after, stamp.height);
       await this.db.upsert('groups', page.items.map(groupRow), stamp);
       report.full.items += page.items.length;
-      if (!page.next || page.next === after) {
-        return this.save(this.nextPhase(state));
-      }
+      if (!page.next) return this.save(this.nextPhase(state));
+      if (page.next === after) throw repeatedCursor('/v1/groups', after);
       after = page.next;
       state = await this.save({ ...state, fullAfter: after });
       if (this.now() >= deadline) return state;
@@ -1440,9 +1454,8 @@ export class WavesChainIndex {
         });
         if (this.now() >= deadline) return state;
       }
-      if (!page.next || page.next === after) {
-        return this.save(this.nextPhase(state));
-      }
+      if (!page.next) return this.save(this.nextPhase(state));
+      if (page.next === after) throw repeatedCursor('/v1/waves', after);
       after = page.next;
     }
   }
@@ -1497,9 +1510,8 @@ export class WavesChainIndex {
         state = await this.save({ ...state, fullAfter: decisionId });
         if (this.now() >= deadline) return state;
       }
-      if (!page.next || page.next === after) {
-        return this.save(this.nextPhase(state));
-      }
+      if (!page.next) return this.save(this.nextPhase(state));
+      if (page.next === after) throw repeatedCursor('/v1/decisions', after);
       after = page.next;
     }
   }
@@ -1572,8 +1584,9 @@ export class WavesChainIndex {
         });
         if (this.now() >= deadline) return { state, finished: false };
       }
-      if (!page.next || page.next === after) {
-        return { state, finished: true };
+      if (!page.next) return { state, finished: true };
+      if (page.next === after) {
+        throw repeatedCursor(`/v1/decisions/${decisionId}/entries`, after);
       }
       after = page.next;
     }

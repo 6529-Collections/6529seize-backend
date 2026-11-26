@@ -1,0 +1,69 @@
+import { AreaManifest } from '@/rebuild/manifest.types';
+
+/**
+ * Personal settings and Collect plans.
+ */
+export const personalManifest: AreaManifest = {
+  area: 'personal',
+  flags: {},
+  tables: {
+    collect_plans: { class: 'INDEX' },
+    collect_rule_operations: { class: 'INDEX' },
+    collect_rules: { class: 'INDEX' },
+    market_operation_events: {
+      class: 'EPHEMERAL',
+      why: 'Journal of orders in flight; a settled order is its Ethereum receipt.'
+    },
+    market_operations: {
+      class: 'EPHEMERAL',
+      why: 'Journal of orders in flight; a settled order is its Ethereum receipt.'
+    },
+    market_reviewed_transactions: {
+      class: 'EPHEMERAL',
+      why: 'Journal of orders in flight; a settled order is its Ethereum receipt.'
+    },
+    market_wallet_exposure_locks: {
+      class: 'EPHEMERAL',
+      why: 'Locks on orders in flight.'
+    },
+    artist_artwork_alerts: { class: 'INDEX' },
+    content_moderation_hidden_drops: { class: 'INDEX' },
+    content_moderation_profile_blocks: { class: 'INDEX' },
+    cookies_consent: {
+      class: 'EPHEMERAL',
+      why: "The browser's cookie is the record."
+    },
+    drop_bookmarks: { class: 'INDEX' },
+    drop_quickvote_skips: {
+      class: 'EPHEMERAL',
+      why: 'A per-person cursor through the quick-vote queue. If lost, quick vote shows a few drops again.'
+    },
+    eula_consent: { class: 'INDEX' },
+    identity_mutes: { class: 'INDEX' },
+    identity_subscriptions: { class: 'INDEX' },
+    mention_alias_members: { class: 'INDEX' },
+    mention_aliases: {
+      class: 'INDEX',
+      volatileColumns: [
+        {
+          column: 'created_at',
+          reason: 'Row housekeeping; the API never returns it.'
+        },
+        {
+          column: 'updated_at',
+          reason: 'Row housekeeping; the API never returns it.'
+        }
+      ]
+    },
+    pinned_waves: { class: 'INDEX' },
+    profile_preferences: { class: 'INDEX' },
+    push_notification_settings: { class: 'INDEX' },
+    wave_group_notification_subscriptions: { class: 'INDEX' },
+    signed_record_heads: { class: 'INDEX', origin: 'planned' },
+    signed_record_log_entries: { class: 'INDEX', origin: 'planned' },
+    signed_record_log_segments: { class: 'INDEX', origin: 'planned' }
+  },
+  seeds: [],
+  rebuilders: [],
+  probes: []
+};
