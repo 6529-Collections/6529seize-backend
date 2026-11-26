@@ -170,8 +170,9 @@ const WAVE_SCORE_COLUMNS = [
  * wave, group and competition rows from the chain index, frozen, at the
  * chain's time, with no outbox, claim, follow, notification, activity or
  * socket effects. It reads the chain through the gateway and each document
- * from the capture's files, by CID. Planned until its code is in this
- * tree. It also needs the identity mirror's principal map
+ * from the capture's files, by CID. Its code is in this tree; the step
+ * stays planned until the check runs it. It also needs the identity
+ * mirror's principal map
  * (identity_chain_principals), which the identity rebuilder writes; that
  * step goes in `after` once both are in one tree.
  */
@@ -702,7 +703,9 @@ export const wavesManifest: AreaManifest = {
     art_curation_token_watch_drops: { class: 'INDEX' },
     art_curation_token_watches: { class: 'INDEX' },
     // 6529.io's index of the chain's waves and its event log
-    // (src/waves-chain-index), rebuilt by waves.chain-index from the gateway.
+    // (src/waves-chain-index): the chain API's answers and its change feed,
+    // rebuilt by waves.chain-index from the gateway. Its cursors and
+    // completion marker are rebuilt with the indexed rows.
     ...CHAIN_INDEX_TABLE_ENTRIES,
     chain_claim_builds: {
       class: 'EPHEMERAL',
@@ -712,7 +715,7 @@ export const wavesManifest: AreaManifest = {
     // src/wave-drop-index).
     wave_relay_cursors: {
       class: 'EPHEMERAL',
-      why: 'Relay publishing cursor: the relays already hold what it passed, and a lost cursor only publishes copies they drop.'
+      why: 'Per-relay publication cursors and their delivery retries: the relays already hold what a cursor passed, and a lost cursor only publishes copies they drop.'
     },
     // received_at is compared: the rebuild stores when the relays first
     // held each event (their receipts), as the seed does, so it must come
@@ -741,15 +744,15 @@ export const wavesManifest: AreaManifest = {
         { column: 'updated_at', reason: 'When the cursor last moved.' }
       ]
     },
-    // The settlement sender (src/waves-settlement); planned until its code
-    // is in this tree.
+    // The settlement sender (src/waves-settlement), whose code is in this
+    // tree.
     waves_settlement_sends: {
       class: 'EPHEMERAL',
       origin: 'planned',
       why: "The sender's in-flight request per decision step. A lost row costs one repeat request, which the chain refuses: every request for a decision step takes the same nonce."
     },
     // The chain mirror (src/waves-chain-mirror): its own tables, rebuilt
-    // with competition_* by the mirror's rebuild once its code is here.
+    // with competition_* by the mirror's rebuild, waves.chain-mirror.
     waves_chain_mirror_state: { class: 'INDEX', origin: 'planned' },
     waves_chain_mirror_events: { class: 'INDEX', origin: 'planned' },
     chain_docs: { class: 'INDEX', origin: 'planned' },
