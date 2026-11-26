@@ -1,5 +1,7 @@
 import { arweaveFileUploader } from '@/arweave';
 import { createReadStream, readFileSync } from 'fs';
+import { appFeatures } from '@/app-features';
+import { loadHandListFiles } from './hand-lists';
 import { replaceTeam } from '../db';
 import { Team } from '../entities/ITeam';
 import { Logger } from '../logging';
@@ -17,6 +19,12 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     async () => {
       await saveTeam();
       await uploadTeam();
+      // After the team upload: a file the team has not filled in yet fails
+      // the run loudly without holding up the team list.
+      if (appFeatures.isMintHandListsEnabled()) {
+        const loaded = await loadHandListFiles();
+        logger.info(`[HAND LISTS] [PRE-VOTE ARTISTS ${loaded.artists}]`);
+      }
     },
     { logger, entities: [Team] }
   );
