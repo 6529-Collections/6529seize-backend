@@ -1442,7 +1442,6 @@ function wireApp() {
   apiRouter.use(`/distribution_photos`, distributionPhotosRoutes);
   apiRouter.use(``, distributionsRoutes);
   apiRouter.use(`/minting-claims`, mintingClaimsRoutes);
-  apiRouter.use(`/wave`, waveQuickVoteRoutes);
   apiRouter.use(`/waves`, waveQuickVoteRoutes);
   apiRouter.use(`/waves`, wavesRoutes);
   apiRouter.use(`/public/waves`, publicWavesRoutes);

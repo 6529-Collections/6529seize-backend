@@ -2172,9 +2172,9 @@ flags remain intersected with View eligibility if group criteria later drift.
 
 The waves v2 read boundary keeps timeline, reply-thread, and curation feeds as separate contracts. `/v2/waves/{id}/drops` returns the wave timeline feed, `/v2/drops/{id}/replies` returns the reply thread for a root drop after resolving its owning visible wave, and `/v2/waves/{id}/curations/{curation_id}/drops` returns drops for one wave curation.
 
-Quick Vote's legacy `GET /waves/{id}/undiscovered-drop` remains compatible,
-while `GET /waves/{id}/undiscovered-drops` returns up to four ordered previews
-with one pair of exact counts. Both use the original legacy competition's
+Quick Vote serves `GET /waves/{id}/undiscovered-drop` for the current candidate.
+`GET /waves/{id}/undiscovered-drops` returns up to four ordered previews with
+one pair of exact counts. Both use the original legacy competition's
 active native entries and an indexed fallback for retained participatory drops
 without a projected native status. Votes and skips remain scoped to the acting
 profile; zero allocations are unrated, and either sign of nonzero allocation is
