@@ -12,6 +12,7 @@ import {
   worldActorWallet
 } from '@/rebuild/manifests/probe-fixture';
 import {
+  checkWorldActors,
   importedPrincipalId,
   principalByProfileId,
   probeProfileId,
@@ -34,9 +35,12 @@ describeWithSeed("the world's actors, read by wallet", [], () => {
         importedPrincipalId(profileId)
       );
     }
-    await expect(probeProfileId(1)).resolves.toBe(
-      '00000000-0000-4000-8000-000000000101'
-    );
+    // The probes' fixed ids are the ones the world holds.
+    for (const n of [1, 2]) {
+      await expect(profileIdByWallet(PROBE_WALLETS[n - 1])).resolves.toBe(
+        probeProfileId(n)
+      );
+    }
   });
 
   it('keeps subs-wide one identity, its 644-character key whole', async () => {
@@ -98,7 +102,7 @@ describeWithSeed("the world's actors, read by wallet", [], () => {
   it('seeds the fallback world, and can run again', async () => {
     await seedProbeIdentities();
     await seedProbeIdentities();
-    await expect(probeProfileId(2)).resolves.toBe(
+    await expect(profileIdByWallet(PROBE_WALLETS[1])).resolves.toBe(
       '00000000-0000-4000-8000-000000000102'
     );
     await expect(
@@ -107,6 +111,33 @@ describeWithSeed("the world's actors, read by wallet", [], () => {
       )
     ).resolves.toBe(
       importedPrincipalId('00000000-0000-4000-8000-0000000000b1')
+    );
+  });
+
+  it('checks the fallback world, every actor held with its principal', async () => {
+    await seedProbeIdentities();
+    await expect(checkWorldActors()).resolves.toEqual([]);
+  });
+
+  it('notes a world without the dm actors, and fails one whose probe has another id', async () => {
+    // A recording's identity world without the dm actors, as v9 and v10.
+    await writeWorldActorsForTests(
+      ALL_WORLD_ACTORS.filter((actor) => !actor.startsWith('dm-')),
+      { principals: true }
+    );
+    await expect(checkWorldActors()).resolves.toEqual(
+      ['dm-e2ee-a', 'dm-e2ee-b', 'dm-e2ee-c'].map(
+        (actor) =>
+          `${actor} is not in this world; a seed that reads it by wallet fails there`
+      )
+    );
+    await sqlExecutor.execute(
+      `update ${IDENTITIES_TABLE} set profile_id = 'p-other'
+        where primary_address = :wallet`,
+      { wallet: PROBE_WALLETS[0] }
+    );
+    await expect(checkWorldActors()).rejects.toThrow(
+      `probe-1: wallet ${PROBE_WALLETS[0]} is held by profile p-other, not the world's 00000000-0000-4000-8000-000000000101`
     );
   });
 });

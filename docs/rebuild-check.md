@@ -341,7 +341,12 @@ The steps of a run:
    `last` after all the others, then count the rows of every INDEX table, so
    the report shows which tables the probes can find data in. Here and in
    step 7, a step whose needed table isn't in the schema is skipped as
-   planned.
+   planned. Identity's seeds come first: identity.probe-profiles gives the
+   world's actors (src/rebuild/manifests/probe-fixture.ts), and
+   identity.actors-check fails the run unless every actor the world holds
+   has the world's fixed profile id under each of its wallets and the
+   chain's principal of it, and the two probes, whose ids seeds take
+   without reading, are held. An actor the world lacks is noted.
 3. Copy the kept tables aside: EPHEMERAL, PROVIDER, EXEMPT, and, unless
    `--final`, INDEX tables no rebuilder writes yet.
 4. Probe the API (pass A).

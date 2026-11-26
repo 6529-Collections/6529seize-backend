@@ -327,10 +327,10 @@ async function ensureRecordsService(service: {
 
 /**
  * The site's profile: the first probe profile, which the identity seed
- * writes, read by its wallet, with the handle of its profiles row.
+ * writes, with the handle of its profiles row.
  */
 async function firstProbeProfile(): Promise<PublishSeedProfile> {
-  const id = await probeProfileId(1);
+  const id = probeProfileId(1);
   const row = await dbSupplier().oneOrNull<{ handle: string | null }>(
     `select handle from ${PROFILES_TABLE} where external_id = :id`,
     { id }

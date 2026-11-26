@@ -1,8 +1,9 @@
 // The world's actors for seeds: their wallets and keys by label, and their
-// profile ids and principals read by wallet. From switch-on the chain is the
-// only source of identities, so no seed writes a profile, identity,
-// consolidation key or principal for an actor; it reads them here, after
-// identity.probe-profiles.
+// profile ids and principals read by wallet (the probes' ids are fixed, and
+// identity.actors-check proves the world holds them). From switch-on the
+// chain is the only source of identities, so no seed writes a profile,
+// identity, consolidation key or principal for an actor; it reads them
+// here, after identity.probe-profiles.
 //
 // That seed (seedProbeIdentities) is the identity area's on the fallback
 // world, where the gateway serves no identity import. It writes every
@@ -112,15 +113,76 @@ export async function principalByProfileId(profileId: string): Promise<string> {
   return row.principal_id;
 }
 
-/** The n-th probe wallet's profile id, from 1, read by its wallet. */
-export async function probeProfileId(n: number): Promise<string> {
-  const wallet = PROBE_WALLETS[n - 1];
-  if (!Number.isInteger(n) || !wallet) {
+/** The actors that probeProfileId names without reading the database. */
+const PROBE_ACTORS: readonly WorldActor[] = ['probe-1', 'probe-2'];
+
+/**
+ * The n-th probe wallet's profile id, from 1: the world's fixed id for
+ * probe-n. identity.actors-check proves the world holds that profile
+ * under the probe's wallet before any other seed runs.
+ */
+export function probeProfileId(n: number): string {
+  const actor = PROBE_ACTORS[n - 1];
+  if (!Number.isInteger(n) || !PROBE_WALLETS[n - 1] || !actor) {
     throw new Error(
       `There is no probe wallet ${n}: they run from 1 to ${PROBE_WALLETS.length}`
     );
   }
-  return profileIdByWallet(wallet);
+  return worldActorIdentity(actor).profileId;
+}
+
+/**
+ * identity.actors-check, right after identity.probe-profiles on every
+ * world: each actor the world holds has the world's fixed profile id under
+ * every one of its wallets, and the chain's principal of that id. Any
+ * difference fails, naming the actor, the wallet or profile, and both
+ * ids. An actor no identity holds fails only if probeProfileId names it;
+ * any other is noted, since a seed that reads it by wallet fails there.
+ * Returns the notes.
+ */
+export async function checkWorldActors(): Promise<string[]> {
+  const notes: string[] = [];
+  for (const actor of ALL_WORLD_ACTORS) {
+    const { profileId, wallets } = worldActorIdentity(actor);
+    const held = await Promise.all(wallets.map((wallet) => heldBy(wallet)));
+    if (held.every((id) => id === null)) {
+      if (PROBE_ACTORS.includes(actor)) {
+        throw new Error(
+          `${actor}: no identity holds wallet ${wallets[0]}, but probeProfileId gives the world's id ${profileId} for it`
+        );
+      }
+      notes.push(
+        `${actor} is not in this world; a seed that reads it by wallet fails there`
+      );
+      continue;
+    }
+    for (let i = 0; i < wallets.length; i += 1) {
+      if (held[i] !== profileId) {
+        throw new Error(
+          `${actor}: wallet ${wallets[i]} is held by ${held[i] === null ? 'no profile' : `profile ${held[i]}`}, not the world's ${profileId}`
+        );
+      }
+    }
+    const want = importedPrincipalId(profileId);
+    const row = await dbSupplier().oneOrNull<{ principal_id: string }>(
+      `select principal_id from ${IDENTITY_CHAIN_PRINCIPALS_TABLE}
+        where profile_id = :profileId`,
+      { profileId }
+    );
+    if (row?.principal_id !== want) {
+      throw new Error(
+        `${actor}: profile ${profileId}'s principal is ${row ? row.principal_id : 'missing'}, not the chain's ${want}`
+      );
+    }
+  }
+  return notes;
+}
+
+/** The step: checkWorldActors, with its notes in the step's log. */
+export async function checkWorldActorsStep(): Promise<void> {
+  for (const note of await checkWorldActors()) {
+    process.stdout.write(`${note}\n`);
+  }
 }
 
 const DERIVED_ID_TAG = keccak256(Buffer.from('6529.DerivedId.v1', 'ascii'));

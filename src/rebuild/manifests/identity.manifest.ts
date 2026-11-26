@@ -146,6 +146,26 @@ export const identityManifest: AreaManifest = {
       ],
       sources: ['repo'],
       timeoutMinutes: 5
+    },
+    {
+      // Before any other seed: each actor the world holds has the world's
+      // fixed profile id and the chain's principal of it, and the probes,
+      // whose ids probeProfileId gives without reading, are held.
+      id: 'identity.actors-check',
+      run: {
+        module: 'src/rebuild/run/probe-fixture.steps',
+        exportName: 'checkWorldActorsStep'
+      },
+      writes: [],
+      reads: [
+        'profiles',
+        'identities',
+        'address_consolidation_keys',
+        'identity_chain_principals'
+      ],
+      after: ['identity.probe-profiles'],
+      sources: ['repo'],
+      timeoutMinutes: 5
     }
   ],
   rebuilders: [],

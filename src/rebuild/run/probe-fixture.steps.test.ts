@@ -1,11 +1,16 @@
 import { createHash } from 'node:crypto';
+import { identityManifest } from '@/rebuild/manifests/identity.manifest';
 import {
+  ALL_WORLD_ACTORS,
   PROBE_WALLETS,
   SUBS_WIDE_LABELS,
   wavesPersonWallet,
+  WorldActor,
+  worldActorIdentity,
   worldActorWallet
 } from '@/rebuild/manifests/probe-fixture';
 import {
+  checkWorldActors,
   importedPrincipalId,
   principalByProfileId,
   probeProfileId,
@@ -66,12 +71,100 @@ describe('the lookups', () => {
     await expect(principalByProfileId('p-1')).resolves.toBe('0x01');
   });
 
-  it('read a probe profile by the probe wallet, from 1', async () => {
-    oneOrNull.mockResolvedValue({ profile_id: 'p-2' });
-    await expect(probeProfileId(2)).resolves.toBe('p-2');
-    expect(oneOrNull.mock.calls[0][1]).toEqual({ wallet: PROBE_WALLETS[1] });
-    await expect(probeProfileId(0)).rejects.toThrow('no probe wallet 0');
-    await expect(probeProfileId(3)).rejects.toThrow('no probe wallet 3');
+  it("give a probe's fixed profile id, from 1, without reading", () => {
+    expect(probeProfileId(1)).toBe('00000000-0000-4000-8000-000000000101');
+    expect(probeProfileId(2)).toBe('00000000-0000-4000-8000-000000000102');
+    expect(oneOrNull).not.toHaveBeenCalled();
+    expect(() => probeProfileId(0)).toThrow('no probe wallet 0');
+    expect(() => probeProfileId(3)).toThrow('no probe wallet 3');
+    expect(() => probeProfileId(1.5)).toThrow('no probe wallet 1.5');
+  });
+});
+
+describe('identity.actors-check', () => {
+  /** Answers the lookups as a world holding `held` (wallet -> profile). */
+  const world = (
+    held: Record<string, string>,
+    principals: Record<string, string> = {}
+  ) =>
+    oneOrNull.mockImplementation(
+      async (sql: string, params: Record<string, string>) => {
+        if (sql.includes('address_consolidation_keys')) {
+          const id = held[params.wallet];
+          return id ? { profile_id: id } : null;
+        }
+        const principal =
+          principals[params.profileId] ?? importedPrincipalId(params.profileId);
+        return { principal_id: principal };
+      }
+    );
+  const everyone = (except: WorldActor[] = []) =>
+    Object.fromEntries(
+      ALL_WORLD_ACTORS.filter((actor) => !except.includes(actor)).flatMap(
+        (actor) => {
+          const { profileId, wallets } = worldActorIdentity(actor);
+          return wallets.map((wallet) => [wallet, profileId]);
+        }
+      )
+    );
+
+  it("passes a world that holds every actor under the world's ids", async () => {
+    world(everyone());
+    await expect(checkWorldActors()).resolves.toEqual([]);
+  });
+
+  it('notes an actor the world lacks, unless probeProfileId names it', async () => {
+    world(everyone(['dm-e2ee-a', 'records-service']));
+    await expect(checkWorldActors()).resolves.toEqual([
+      'records-service is not in this world; a seed that reads it by wallet fails there',
+      'dm-e2ee-a is not in this world; a seed that reads it by wallet fails there'
+    ]);
+    world(everyone(['probe-2']));
+    await expect(checkWorldActors()).rejects.toThrow(
+      `probe-2: no identity holds wallet ${PROBE_WALLETS[1]}, but probeProfileId gives the world's id 00000000-0000-4000-8000-000000000102 for it`
+    );
+  });
+
+  it('fails on another id under any wallet, or another principal', async () => {
+    world({ ...everyone(), [PROBE_WALLETS[0]]: 'p-other' });
+    await expect(checkWorldActors()).rejects.toThrow(
+      `probe-1: wallet ${PROBE_WALLETS[0]} is held by profile p-other, not the world's 00000000-0000-4000-8000-000000000101`
+    );
+    // One of subs-wide's 15 wallets missing is a difference, not an absence.
+    const last = worldActorWallet(SUBS_WIDE_LABELS[14]);
+    const partial = everyone();
+    delete partial[last];
+    world(partial);
+    await expect(checkWorldActors()).rejects.toThrow(
+      `subs-wide: wallet ${last} is held by no profile, not the world's 00000000-0000-4000-8000-0000000001d0`
+    );
+    world(everyone(), { '00000000-0000-4000-8000-0000000000b1': '0x01' });
+    await expect(checkWorldActors()).rejects.toThrow(
+      `live-owner: profile 00000000-0000-4000-8000-0000000000b1's principal is 0x01, not the chain's ${importedPrincipalId('00000000-0000-4000-8000-0000000000b1')}`
+    );
+  });
+
+  it('runs right after identity.probe-profiles, reading the four tables', () => {
+    const seeds = identityManifest.seeds.map((s) => s.id);
+    expect(seeds.slice(0, 2)).toEqual([
+      'identity.probe-profiles',
+      'identity.actors-check'
+    ]);
+    const check = identityManifest.seeds[1];
+    expect(check).toMatchObject({
+      run: {
+        module: 'src/rebuild/run/probe-fixture.steps',
+        exportName: 'checkWorldActorsStep'
+      },
+      writes: [],
+      after: ['identity.probe-profiles']
+    });
+    expect([...(check.reads ?? [])].sort()).toEqual([
+      'address_consolidation_keys',
+      'identities',
+      'identity_chain_principals',
+      'profiles'
+    ]);
   });
 });
 
