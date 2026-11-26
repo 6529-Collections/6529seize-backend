@@ -27,6 +27,15 @@ import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
 import { numbers } from '@/numbers';
 import { Timer } from '@/time';
+import { getClaimsAdminWallets } from '@/api/seize-settings';
+import {
+  adminWriteSpec,
+  MINT_ADMIN_ROUTES,
+  MINT_AUTHORITY,
+  mintCard
+} from '@/mint-log/mint-log-http';
+import { mintLogRecorder } from '@/mint-log/mint-log-recorder';
+import { equalIgnoreCase } from '@/strings';
 import { Request, Response } from 'express';
 import * as Joi from 'joi';
 
@@ -108,12 +117,28 @@ router.post(
     );
     assertSupportedMintingClaimAction(params.contract, body.action);
 
-    const response = await upsertMintingClaimActionAndGetResponse(
-      params.contract,
-      claimId,
-      body,
-      getWalletOrThrow(req),
-      { timer: Timer.getFromRequest(req) }
+    const wallet = getWalletOrThrow(req);
+    const response = await mintLogRecorder.write(
+      adminWriteSpec({
+        req,
+        kind: 'claim.action',
+        route: MINT_ADMIN_ROUTES.claimAction,
+        card: mintCard(params.contract, claimId),
+        authority: getClaimsAdminWallets().some((admin) =>
+          equalIgnoreCase(admin, wallet)
+        )
+          ? MINT_AUTHORITY.claimsAdmins
+          : MINT_AUTHORITY.memesContractAdmin,
+        body: req.body
+      }),
+      () =>
+        upsertMintingClaimActionAndGetResponse(
+          params.contract,
+          claimId,
+          body,
+          wallet,
+          { timer: Timer.getFromRequest(req) }
+        )
     );
 
     return res.json(response);
