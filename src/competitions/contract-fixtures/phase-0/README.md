@@ -28,15 +28,16 @@ The complete Release Bus removal retired three more operational UI routes.
 - `/deploy/ui/bus`
 - `/deploy/ui/bus/app.js`
 
-The census also excludes four other retired GET routes.
+The census also excludes five other retired GET routes.
 
 - `/oracle/prenodes` (backend PR #2487)
 - `/rpc/test` (RPC proxy restriction)
 - `/api/groups_im_eligible_for` (backend PR #2626)
 - `/api/wave/:id/undiscovered-drop` (the undocumented Quick Vote alias)
+- `/api/delegations/minting/:wallet` (the former profile Mints tab lookup)
 
 The frozen manifest records all 296 historical routes. The runtime census
-checks 285 route declarations after excluding the 11 retirements.
+checks 284 route declarations after excluding the 12 retirements.
 
 ## Accepted Alchemy search retirement
 

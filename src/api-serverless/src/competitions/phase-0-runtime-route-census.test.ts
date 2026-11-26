@@ -18,6 +18,7 @@ type GetCall = {
 };
 
 const RETIRED_GET_ROUTES = new Set([
+  '/api/delegations/minting/:wallet',
   '/api/groups_im_eligible_for',
   '/deploy/release-bus/controls',
   '/deploy/release-candidates',
@@ -183,7 +184,7 @@ describe('Phase 0 permanent mounted GET route census', () => {
     expect(new Set(manifest.routes.map((route) => route.path)).size).toBe(296);
     expect(
       manifest.routes.filter((route) => !RETIRED_GET_ROUTES.has(route.path))
-    ).toHaveLength(285);
+    ).toHaveLength(284);
   });
 
   it('mounts the Quick Vote router only at the documented waves prefix', () => {

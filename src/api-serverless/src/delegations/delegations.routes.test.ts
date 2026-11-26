@@ -12,8 +12,7 @@ jest.mock('@/api/request-cache', () => ({
 
 jest.mock('@/db-api', () => ({
   fetchDelegations: jest.fn(),
-  fetchDelegationsByUseCase: jest.fn(),
-  fetchMintingDelegations: jest.fn()
+  fetchDelegationsByUseCase: jest.fn()
 }));
 
 jest.mock('@/api/api-helpers', () => ({
@@ -21,11 +20,7 @@ jest.mock('@/api/api-helpers', () => ({
   returnPaginatedResult: jest.fn()
 }));
 
-import {
-  fetchDelegations,
-  fetchDelegationsByUseCase,
-  fetchMintingDelegations
-} from '@/db-api';
+import { fetchDelegations, fetchDelegationsByUseCase } from '@/db-api';
 import './delegations.routes';
 
 type Handler = (req: any, res: any) => Promise<unknown>;
@@ -42,22 +37,21 @@ function handlerFor(path: string): Handler {
 
 const page = { count: 0, page: 1, next: null, data: [] };
 
+it('does not register the retired minting delegation route', () => {
+  const paths = mockRouterGet.mock.calls.map(([path]) => path);
+  expect(paths).not.toContain('/minting/:wallet');
+});
+
 describe('delegations routes pagination', () => {
   beforeEach(() => {
     jest.mocked(fetchDelegations).mockReset().mockResolvedValue(page);
     jest.mocked(fetchDelegationsByUseCase).mockReset().mockResolvedValue(page);
-    jest.mocked(fetchMintingDelegations).mockReset().mockResolvedValue(page);
   });
 
   describe.each([
     {
       route: '/:wallet',
       mock: () => jest.mocked(fetchDelegations),
-      expectedArgs: (size: number, pageNo: number) => ['0xabc', size, pageNo]
-    },
-    {
-      route: '/minting/:wallet',
-      mock: () => jest.mocked(fetchMintingDelegations),
       expectedArgs: (size: number, pageNo: number) => ['0xabc', size, pageNo]
     },
     {
