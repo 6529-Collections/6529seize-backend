@@ -158,7 +158,6 @@ export const identityManifest: AreaManifest = {
       },
       writes: [],
       reads: [
-        'profiles',
         'identities',
         'address_consolidation_keys',
         'identity_chain_principals'

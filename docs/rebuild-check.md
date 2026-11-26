@@ -346,7 +346,8 @@ The steps of a run:
    identity.actors-check fails the run unless every actor the world holds
    has the world's fixed profile id under each of its wallets and the
    chain's principal of it, and the two probes, whose ids seeds take
-   without reading, are held. An actor the world lacks is noted.
+   without reading, are held. An actor the world lacks is noted in the
+   step's log.
 3. Copy the kept tables aside: EPHEMERAL, PROVIDER, EXEMPT, and, unless
    `--final`, INDEX tables no rebuilder writes yet.
 4. Probe the API (pass A).

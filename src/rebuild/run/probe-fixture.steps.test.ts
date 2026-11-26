@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { identityManifest } from '@/rebuild/manifests/identity.manifest';
+import { AREA_MANIFESTS } from '@/rebuild/manifests';
 import {
   ALL_WORLD_ACTORS,
   PROBE_WALLETS,
@@ -9,8 +9,10 @@ import {
   worldActorIdentity,
   worldActorWallet
 } from '@/rebuild/manifests/probe-fixture';
+import * as steps from '@/rebuild/run/probe-fixture.steps';
 import {
   checkWorldActors,
+  checkWorldActorsStep,
   importedPrincipalId,
   principalByProfileId,
   probeProfileId,
@@ -18,6 +20,7 @@ import {
   seedProbeIdentities,
   writeWorldActorRows
 } from '@/rebuild/run/probe-fixture.steps';
+import { orderSeeds } from '@/rebuild/step-order';
 
 const execute = jest.fn();
 const oneOrNull = jest.fn();
@@ -85,7 +88,7 @@ describe('identity.actors-check', () => {
   /** Answers the lookups as a world holding `held` (wallet -> profile). */
   const world = (
     held: Record<string, string>,
-    principals: Record<string, string> = {}
+    principals: Record<string, string | null> = {}
   ) =>
     oneOrNull.mockImplementation(
       async (sql: string, params: Record<string, string>) => {
@@ -94,8 +97,10 @@ describe('identity.actors-check', () => {
           return id ? { profile_id: id } : null;
         }
         const principal =
-          principals[params.profileId] ?? importedPrincipalId(params.profileId);
-        return { principal_id: principal };
+          params.profileId in principals
+            ? principals[params.profileId]
+            : importedPrincipalId(params.profileId);
+        return principal === null ? null : { principal_id: principal };
       }
     );
   const everyone = (except: WorldActor[] = []) =>
@@ -138,32 +143,55 @@ describe('identity.actors-check', () => {
     await expect(checkWorldActors()).rejects.toThrow(
       `subs-wide: wallet ${last} is held by no profile, not the world's 00000000-0000-4000-8000-0000000001d0`
     );
-    world(everyone(), { '00000000-0000-4000-8000-0000000000b1': '0x01' });
+    const liveOwner = '00000000-0000-4000-8000-0000000000b1';
+    world(everyone(), { [liveOwner]: '0x01' });
     await expect(checkWorldActors()).rejects.toThrow(
-      `live-owner: profile 00000000-0000-4000-8000-0000000000b1's principal is 0x01, not the chain's ${importedPrincipalId('00000000-0000-4000-8000-0000000000b1')}`
+      `live-owner: profile ${liveOwner}'s principal is 0x01, not the chain's ${importedPrincipalId(liveOwner)}`
+    );
+    world(everyone(), { [liveOwner]: null });
+    await expect(checkWorldActors()).rejects.toThrow(
+      `live-owner: profile ${liveOwner}'s principal is missing, not the chain's ${importedPrincipalId(liveOwner)}`
     );
   });
 
-  it('runs right after identity.probe-profiles, reading the four tables', () => {
-    const seeds = identityManifest.seeds.map((s) => s.id);
-    expect(seeds.slice(0, 2)).toEqual([
+  it("writes the notes into the step's log", async () => {
+    world(everyone(['dm-e2ee-c']));
+    const write = jest
+      .spyOn(process.stdout, 'write')
+      .mockImplementation(() => true);
+    try {
+      await checkWorldActorsStep();
+      expect(write.mock.calls).toEqual([
+        [
+          'dm-e2ee-c is not in this world; a seed that reads it by wallet fails there\n'
+        ]
+      ]);
+    } finally {
+      write.mockRestore();
+    }
+  });
+
+  it('runs right after identity.probe-profiles, before every other seed', () => {
+    const order = orderSeeds(AREA_MANIFESTS.flatMap((m) => m.seeds)).order;
+    expect(order.slice(0, 2).map((s) => s.id)).toEqual([
       'identity.probe-profiles',
       'identity.actors-check'
     ]);
-    const check = identityManifest.seeds[1];
+    const check = order[1];
     expect(check).toMatchObject({
-      run: {
-        module: 'src/rebuild/run/probe-fixture.steps',
-        exportName: 'checkWorldActorsStep'
-      },
+      run: { module: 'src/rebuild/run/probe-fixture.steps' },
       writes: [],
       after: ['identity.probe-profiles']
     });
+    // The runner calls the export the manifest names: the check's step.
+    const exportName = 'exportName' in check.run ? check.run.exportName : '';
+    expect((steps as Record<string, unknown>)[exportName]).toBe(
+      checkWorldActorsStep
+    );
     expect([...(check.reads ?? [])].sort()).toEqual([
       'address_consolidation_keys',
       'identities',
-      'identity_chain_principals',
-      'profiles'
+      'identity_chain_principals'
     ]);
   });
 });

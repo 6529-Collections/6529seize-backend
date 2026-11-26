@@ -1,9 +1,10 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-// The world's actors are chain identities: a seed reads them by wallet
-// (src/rebuild/run/probe-fixture.steps.ts) and never writes or hard-codes
-// them. These names write their rows, give their fixed ids or make a
+// The world's actors are chain identities: a seed reads them by wallet, or
+// takes a probe's fixed id from probeProfileId, which identity.actors-check
+// backs (src/rebuild/run/probe-fixture.steps.ts), and never writes or
+// hard-codes them. These names write their rows, give their fixed ids or make a
 // principal without reading one, so only the modules that own them,
 // manifests (a probe's literal path, a seed's step name) and tests may name
 // them. A comment that names one counts too: say it another way.

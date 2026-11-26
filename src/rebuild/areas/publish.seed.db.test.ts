@@ -136,7 +136,7 @@ describeWithSeed('the publish area of the rebuild check', [], () => {
       ['rebuild-publish-draft-1', ProfileCmsPackageStatus.PUBLISHED, true],
       ['rebuild-publish-draft-2', ProfileCmsPackageStatus.DRAFT, false]
     ]);
-    // The first probe profile, read by wallet; the seed writes no profile.
+    // The first probe profile, by its fixed id; the seed writes no profile.
     const probe = worldActorIdentity('probe-1');
     expect(
       (seeded.packages as { profile_id: string; profile_handle: string }[]).map(

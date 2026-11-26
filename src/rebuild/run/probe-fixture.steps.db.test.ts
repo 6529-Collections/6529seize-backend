@@ -120,7 +120,7 @@ describeWithSeed("the world's actors, read by wallet", [], () => {
   });
 
   it('notes a world without the dm actors, and fails one whose probe has another id', async () => {
-    // A recording's identity world without the dm actors, as v9 and v10.
+    // A recording's identity world without the dm actors.
     await writeWorldActorsForTests(
       ALL_WORLD_ACTORS.filter((actor) => !actor.startsWith('dm-')),
       { principals: true }

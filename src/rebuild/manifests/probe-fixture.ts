@@ -197,8 +197,9 @@ export const ALL_WORLD_ACTORS: readonly WorldActor[] = Object.keys(
 /**
  * An actor's fixed profile (legacy) id, for a probe whose path names it
  * (a probe's `each` and `params` hold literals). Manifests and tests only:
- * a seed reads the id by wallet (profileIdByWallet), and a unit test fails
- * on any other file that names this function.
+ * a seed takes a probe's id from probeProfileId, which identity.actors-check
+ * backs, and any other actor's by wallet (profileIdByWallet); a unit test
+ * fails on any other file that names this function.
  */
 export function worldActorProfileId(actor: WorldActor): string {
   return WORLD_ACTORS[actor].profileId;
