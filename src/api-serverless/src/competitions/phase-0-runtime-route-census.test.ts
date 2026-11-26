@@ -18,6 +18,7 @@ type GetCall = {
 };
 
 const RETIRED_GET_ROUTES = new Set([
+  '/api/delegations/minting/:wallet',
   '/api/groups_im_eligible_for',
   '/deploy/release-bus/controls',
   '/deploy/release-candidates',
@@ -172,7 +173,7 @@ describe('Phase 0 permanent mounted GET route census', () => {
     expect(manifest.baseline.counts.runtime_route_shapes).toBe(288);
     expect(manifest.baseline.counts.openapi_get_operations).toBe(183);
     expect(manifestPaths.size).toBe(288);
-    expect(RETIRED_GET_ROUTES.size).toBe(8);
+    expect(RETIRED_GET_ROUTES.size).toBe(9);
     expect(
       Array.from(RETIRED_GET_ROUTES).filter(
         (route) => !manifestPaths.has(route)
