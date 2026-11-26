@@ -265,10 +265,20 @@ describeWithSeed(
     });
 
     it('runs a direct-message post under the budget', async () => {
-      const created = await budgetedPost(
-        chatDrop('dm', { wave_id: dmWave.id })
-      );
-      expect(created.drop_id).toBeTruthy();
+      // Unencrypted DMs take no new posts from the legacy DM cutoff. This
+      // test is about the post's write budget, not the cutoff, so the
+      // cutoff is moved far ahead for the post.
+      const cutoff = process.env.LEGACY_DM_DELETION_CUTOFF;
+      process.env.LEGACY_DM_DELETION_CUTOFF = '2999-01-01T00:00:00Z';
+      try {
+        const created = await budgetedPost(
+          chatDrop('dm', { wave_id: dmWave.id })
+        );
+        expect(created.drop_id).toBeTruthy();
+      } finally {
+        if (cutoff === undefined) delete process.env.LEGACY_DM_DELETION_CUTOFF;
+        else process.env.LEGACY_DM_DELETION_CUTOFF = cutoff;
+      }
     });
 
     it('runs a competition entry post under the budget', async () => {
