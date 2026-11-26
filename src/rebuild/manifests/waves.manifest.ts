@@ -170,11 +170,14 @@ const WAVE_SCORE_COLUMNS = [
  * wave, group and competition rows from the chain index, frozen, at the
  * chain's time, with no outbox, claim, follow, notification, activity or
  * socket effects. It reads the chain through the gateway and each document
- * from the capture's files, by CID. Its code is in this tree; the step
- * stays planned until the check runs it. It also needs the identity
- * mirror's principal map
- * (identity_chain_principals), which the identity rebuilder writes; that
- * step goes in `after` once both are in one tree.
+ * from the capture's files, by CID. It also needs the identity mirror's
+ * principal map (identity_chain_principals), which the identity rebuilder
+ * writes; that step goes in `after` once both are in one tree.
+ *
+ * The step (WAVES_CHAIN_MIRROR_REBUILDER) is not among the rebuilders: its
+ * module is in this tree, so a run would run it although it is marked
+ * planned, and with no principal map it writes no wave or group. Its
+ * tables stay as seeded until it joins the rebuilders.
  */
 const MIRROR_STEPS = 'src/waves-chain-mirror/waves-chain-mirror.rebuild';
 // The drop tables (drops, drops_parts, drop_medias, drops_metadatas) are
@@ -211,6 +214,28 @@ const MIRROR_WRITES = [
   'waves_chain_mirror_decisions'
 ];
 
+/** The chain mirror's rebuild; not among the rebuilders (see MIRROR_STEPS). */
+export const WAVES_CHAIN_MIRROR_REBUILDER: RebuildStep = {
+  id: 'waves.chain-mirror',
+  run: { module: MIRROR_STEPS, exportName: 'rebuildWavesChainMirror' },
+  writes: MIRROR_WRITES,
+  reads: [
+    ...WAVES_CHAIN_INDEX_TABLES,
+    // Its moderation holds, which it reads and never writes in a rebuild.
+    'chain_entry_holds',
+    'identity_chain_principals',
+    'identities',
+    'profiles',
+    'address_consolidation_keys'
+  ],
+  after: ['waves.chain-index'],
+  // The chain through the gateway; the documents from the capture's files.
+  sources: ['gateway', 'files'],
+  timeoutMinutes: 30,
+  origin: 'planned',
+  plannedRows: stayingWavesPlans(MIRROR_WRITES)
+};
+
 /**
  * The drop metrics' rebuilder and the planned owners of wave_metrics'
  * other columns. The recount writes wave_metrics' rows (a wave's row
@@ -229,7 +254,6 @@ export const DROP_METRICS_REBUILDERS: RebuildStep[] = [
       'competition_entries',
       'competitions'
     ],
-    after: ['waves.chain-mirror'],
     sources: ['repo'],
     timeoutMinutes: 15,
     plannedRows: [
@@ -751,8 +775,8 @@ export const wavesManifest: AreaManifest = {
       origin: 'planned',
       why: "The sender's in-flight request per decision step. A lost row costs one repeat request, which the chain refuses: every request for a decision step takes the same nonce."
     },
-    // The chain mirror (src/waves-chain-mirror): its own tables, rebuilt
-    // with competition_* by the mirror's rebuild, waves.chain-mirror.
+    // The chain mirror (src/waves-chain-mirror): its own tables, which its
+    // rebuild (WAVES_CHAIN_MIRROR_REBUILDER) writes with competition_*.
     waves_chain_mirror_state: { class: 'INDEX', origin: 'planned' },
     waves_chain_mirror_events: { class: 'INDEX', origin: 'planned' },
     chain_docs: { class: 'INDEX', origin: 'planned' },
@@ -839,26 +863,6 @@ export const wavesManifest: AreaManifest = {
       timeoutMinutes: 15
     },
     {
-      id: 'waves.chain-mirror',
-      run: { module: MIRROR_STEPS, exportName: 'rebuildWavesChainMirror' },
-      writes: MIRROR_WRITES,
-      reads: [
-        ...WAVES_CHAIN_INDEX_TABLES,
-        // Its moderation holds, which it reads and never writes in a rebuild.
-        'chain_entry_holds',
-        'identity_chain_principals',
-        'identities',
-        'profiles',
-        'address_consolidation_keys'
-      ],
-      after: ['waves.chain-index'],
-      // The chain through the gateway; the documents from the capture's files.
-      sources: ['gateway', 'files'],
-      timeoutMinutes: 30,
-      origin: 'planned',
-      plannedRows: stayingWavesPlans(MIRROR_WRITES)
-    },
-    {
       // Writes nothing: proves the exempt holds come through every waves
       // rebuilder that could touch them exactly as the seed left them, and,
       // once the mirror runs, that the refused description stays out while
@@ -873,7 +877,7 @@ export const wavesManifest: AreaManifest = {
         'drops_parts',
         'waves_chain_mirror_state'
       ],
-      after: ['waves.chain-index', 'waves.drop-index', 'waves.chain-mirror'],
+      after: ['waves.chain-index', 'waves.drop-index'],
       sources: ['repo'],
       timeoutMinutes: 5
     },
