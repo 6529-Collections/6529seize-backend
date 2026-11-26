@@ -294,8 +294,8 @@ export const wavesManifest: AreaManifest = {
       origin: 'planned',
       why: 'Outbox of Main Stage claim-build messages: a kept row stops a second send. The rebuild queues none.'
     },
-    // The drop index (src/wave-drop-index). received_at is compared: the
-    // relays' receipts give when they first held each event.
+    // The drop index (src/wave-drop-index). wave_relay_events' received_at
+    // is compared: the relays' receipts give when they first held each event.
     wave_relay_events: {
       class: 'INDEX',
       origin: 'planned',
