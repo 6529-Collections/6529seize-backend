@@ -79,6 +79,21 @@ describe('runNotificationFeeds', () => {
     });
   });
 
+  it('keeps starting batches until its deadline, and for never more than a minute', async () => {
+    process.env.NOTIFY_VIEW_MODE = 'shadow';
+    process.env.NOTIFY_DERIVED_CAUSES = `IDENTITY_REP@${Date.now() + 60_000}`;
+    const untilOf = async (deadlineMs?: number) => {
+      run.mockClear();
+      await runNotificationFeeds([RATINGS], runner, deadlineMs);
+      return run.mock.calls[0][1].untilMs;
+    };
+    const deadline = Date.now() + 20_000;
+    expect(await untilOf(deadline)).toBe(deadline);
+    const before = Date.now();
+    expect(await untilOf(before + 600_000)).toBeLessThan(before + 61_000);
+    expect(await untilOf()).toBeGreaterThanOrEqual(before + 60_000);
+  });
+
   describe('runNotificationFeedsSafely', () => {
     it('opens no database context and runs nothing while the view is off', async () => {
       jest.mocked(doInDbContext).mockClear();

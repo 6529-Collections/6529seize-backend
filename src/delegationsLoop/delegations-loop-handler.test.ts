@@ -61,13 +61,15 @@ jest.mock('../identity-tdh-sync', () => ({
   resumePendingIdentityTdhSync: jest.fn(),
   startIdentitySyncBudget: jest.fn()
 }));
-// The real safe runner, around a stand-in for the feeds themselves.
+// The real runner within the Lambda's time, around a stand-in for the feeds.
 const mockRunFeeds = jest.fn();
 jest.mock('../notifications/view/notification-feeds', () => ({
-  runNotificationFeedsSafely: () =>
+  runNotificationFeedsWithin: (timeLeft: () => number) =>
     jest
       .requireActual('../notifications/view/notification-feeds')
-      .runNotificationFeedsSafely(() => mockRunFeeds())
+      .runNotificationFeedsWithin(timeLeft, (deadlineMs: number) =>
+        mockRunFeeds(deadlineMs)
+      )
 }));
 
 import * as db from '../db';
@@ -289,6 +291,48 @@ describe('delegations loop on-demand reconsolidation', () => {
     await invoke({ source: 'aws.events' });
     expect(mockRunFeeds).toHaveBeenCalledTimes(1);
     expect(checkpointBefore).toBe(true);
+  });
+
+  it("runs the notification feeds within the Lambda's time left, and not at all with too little", async () => {
+    process.env.NOTIFY_VIEW_MODE = 'shadow';
+    jest.mocked(delegations.findDelegationTransactions).mockResolvedValue({
+      latestBlock: 26_000_001,
+      latestBlockTimestamp: 1,
+      consolidations: [],
+      registrations: [],
+      revocation: []
+    });
+    const invokeWith = (msLeft: number) =>
+      (
+        handler as unknown as (
+          event: unknown,
+          context: { getRemainingTimeInMillis: () => number }
+        ) => Promise<unknown>
+      )({ source: 'aws.events' }, { getRemainingTimeInMillis: () => msLeft });
+
+    // The feeds get an absolute deadline, fixed before their database
+    // context opens.
+    const budgetOf = async (msLeft: number) => {
+      mockRunFeeds.mockClear();
+      const before = Date.now();
+      await invokeWith(msLeft);
+      const after = Date.now();
+      expect(mockRunFeeds).toHaveBeenCalledTimes(1);
+      const deadline = mockRunFeeds.mock.calls[0][0] as number;
+      return { from: deadline - after, to: deadline - before };
+    };
+    // 70 s left: the feeds get 40 s and end 30 s before the limit.
+    const short = await budgetOf(70_000);
+    expect(short.to).toBeGreaterThanOrEqual(40_000);
+    expect(short.from).toBeLessThanOrEqual(40_000);
+    // Ten minutes left: at most a minute.
+    const long = await budgetOf(600_000);
+    expect(long.to).toBeGreaterThanOrEqual(60_000);
+    expect(long.from).toBeLessThanOrEqual(60_000);
+    // 40 s left: under 15 s for the feeds, so they wait for the next run.
+    mockRunFeeds.mockClear();
+    await invokeWith(40_000);
+    expect(mockRunFeeds).not.toHaveBeenCalled();
   });
 
   it('does not fail the delegations run when the notification feeds fail', async () => {

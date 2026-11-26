@@ -59,7 +59,7 @@ import { consolidateSubscriptions } from '../subscriptionsDaily/subscriptions';
 import { updateTDH } from '../tdhLoop/tdh';
 import { consolidateAndPersistTDH } from '../tdhLoop/tdh_consolidation';
 import { Time } from '../time';
-import { runNotificationFeedsSafely } from '../notifications/view/notification-feeds';
+import { runNotificationFeedsWithin } from '../notifications/view/notification-feeds';
 import { createScopeBackfillDeps } from './delegation-scope-backfill.deps';
 import {
   readScopeBackfillConfig,
@@ -230,8 +230,9 @@ export const handler = sentryContext.wrapLambdaHandler(
         }
       );
     } finally {
-      // After every run, a failed one too; it never throws.
-      await runNotificationFeedsSafely();
+      // After every run, a failed one too, within the time the Lambda has
+      // left; it never throws.
+      await runNotificationFeedsWithin(timeLeft);
       if (reconsolidated) collectGarbageAfter('RECONSOLIDATION');
       else if (identitiesSynced) collectGarbageAfter('IDENTITIES SYNC');
     }

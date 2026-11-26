@@ -3,8 +3,10 @@
  * named after what the notification view needs from the chain indexes and
  * the drop index: the identity mirror's rating log, the waves chain index's
  * event log, the drop index's applied events, and the personal records.
- * Until those logs land, tests feed these shapes directly; the adapters
- * that map each log onto them come with the logs.
+ * The rating log has its adapter (feeds/identity-ratings-feed.ts). The
+ * waves index and the drop index are in the codebase; the adapters that
+ * map their logs onto these shapes come with the waves feed, and until
+ * then tests feed these shapes directly.
  *
  * Every id is a 6529.io id as the indexes store it: profile ids through the
  * identity mirror's principal map, wave, drop and decision ids through the

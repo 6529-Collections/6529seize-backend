@@ -1,3 +1,4 @@
+import { IDENTITY_CHAIN_RATING_EVENTS_TABLE } from '@/constants';
 import { DbPoolName } from '@/db-query.options';
 import { Logger } from '@/logging';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
@@ -75,7 +76,7 @@ export interface RatingEventSource {
   heightOf(id: number): Promise<number | null>;
 }
 
-const RATING_EVENTS_TABLE = 'identity_chain_rating_events';
+const RATING_EVENTS_TABLE = IDENTITY_CHAIN_RATING_EVENTS_TABLE;
 
 /**
  * Rows are read only once they are this old. The mirror writes its events

@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { IDENTITY_CHAIN_RATING_EVENTS_TABLE } from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
 import { Time } from '@/time';
 import {
@@ -6,45 +7,15 @@ import {
   RATING_EVENTS_SETTLE_MS
 } from './identity-ratings-feed';
 
-// The feed's queries against the identity mirror's table. The table comes
-// with the mirror; where it is not there yet, the test makes it with the
-// columns the feed reads.
-const TABLE = 'identity_chain_rating_events';
+// The feed's queries against the identity mirror's table, which the test
+// database has from the mirror's entity.
+const TABLE = IDENTITY_CHAIN_RATING_EVENTS_TABLE;
 
 describe('identity_chain_rating_events reads', () => {
   const source = new MirrorRatingEventSource(() => sqlExecutor);
-  let created = false;
 
-  // The test database's pool lives for one test, so the table is made and
-  // dropped around each.
   beforeEach(async () => {
-    const existing = await sqlExecutor.execute(`show tables like '${TABLE}'`);
-    created = !existing.length;
-    if (created) {
-      await sqlExecutor.execute(`
-        create table ${TABLE} (
-          id bigint not null auto_increment primary key,
-          height bigint not null,
-          block_time_ms bigint not null,
-          rater_principal varchar(66) not null,
-          rater_profile_id varchar(50) null,
-          target_principal varchar(66) not null,
-          target_profile_id varchar(50) null,
-          matter varchar(50) not null,
-          matter_category varchar(100) not null,
-          old_rating int not null,
-          new_rating int not null,
-          total_after bigint not null,
-          origin varchar(16) not null,
-          by_import tinyint(1) not null,
-          source varchar(20) not null,
-          created_at bigint not null
-        )`);
-    }
     await sqlExecutor.execute(`delete from ${TABLE}`);
-  });
-  afterEach(async () => {
-    if (created) await sqlExecutor.execute(`drop table ${TABLE}`);
   });
 
   const insert = async (

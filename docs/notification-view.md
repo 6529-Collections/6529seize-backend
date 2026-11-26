@@ -2,7 +2,7 @@
 
 Notifications are moving from rows each feature writes into `identity_notifications` to a view derived from source events: the chain's identity and wave records, the drop events on the relays, and people's signed records. Rebuilt from those sources and its archive, the table gives the same answers, ids and read state included, for the causes whose feeds run; what a rebuild relies on, and how to run it, is under Archive and rebuild.
 
-The pieces: the table, the per-cause switch, the deriver, the rules, the feed runner, the switch steps, the archive and the rebuild. The adapters that feed the rules from the chain and relay indexes land with those indexes; until then the rules and the runner are tested with fixtures of the source shapes in `src/notifications/view/notification-sources.ts`.
+The pieces: the table, the per-cause switch, the deriver, the rules, the feed runner, the switch steps, the archive and the rebuild. The ratings feed reads the identity mirror's rating log. The waves chain index and the drop index are in the codebase, and the adapters that feed their events to the rules come with the waves feed (a follow-up PR); until then the waves rules and the runner are tested with fixtures of the source shapes in `src/notifications/view/notification-sources.ts`. Until the waves feed runs, a wave made on the chain notifies nobody: the waves mirror leaves WAVE_CREATED for chain-made waves to that feed.
 
 ## Table
 
