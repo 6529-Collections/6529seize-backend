@@ -217,6 +217,11 @@ export interface MirrorRunReport {
   regroupedWallets: string[];
   /** Other profiles whose wallets all joined an identity: left without a row. */
   orphanedProfiles: string[];
+  /**
+   * Keys of handle-less rows that held some of an identity's wallets
+   * without its key, so the identity didn't take their ids.
+   */
+  handlelessNotAdopted: string[];
   /** AddressBinding changes applied to the wallet bindings. */
   walletBindings: number;
   /** AddressBinding records that could not be read (height:key). */
@@ -505,6 +510,7 @@ export class IdentityChainMirror {
       retryLeft: 0,
       regroupedWallets: [],
       orphanedProfiles: [],
+      handlelessNotAdopted: [],
       walletBindings: 0,
       bindingProblems: [],
       bindingsNextHeight: null,
@@ -527,6 +533,7 @@ export class IdentityChainMirror {
     } finally {
       this.readAt = undefined;
       report.orphanedProfiles.push(...this.ids.takeLeftPlaceholders());
+      report.handlelessNotAdopted.push(...this.ids.takeNotAdopted());
     }
     return report;
   }
@@ -1829,6 +1836,18 @@ export class IdentityChainMirror {
       logger.warn(
         `[PROFILES LEFT WITHOUT WALLETS] [${plan.orphanedProfiles.join(', ')}] [THEIR WALLETS JOINED ${identity.principalId}]`
       );
+      // One line each, for the follow-up that moves their references.
+      for (const old of plan.orphanedProfiles) {
+        logger.warn(
+          `[PROFILE ORPHANED] ${JSON.stringify({
+            old_profile_id: old,
+            profile_id: plan.identity.profile_id,
+            principal_id: identity.principalId.toLowerCase(),
+            wallets: plan.orphanedWallets[old] ?? [],
+            height: at.height
+          })}`
+        );
+      }
       report.orphanedProfiles.push(...plan.orphanedProfiles);
     }
     report.identities++;

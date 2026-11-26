@@ -745,6 +745,45 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     return row?.profile_id ?? null;
   }
 
+  /**
+   * The handle-less identities rows that hold any of these wallets, or sit
+   * under this consolidation key: rows with a profile id but no handle and
+   * no profiles row, whose id no principal holds. 6529.io made them before
+   * switch-on (the TDH sync's step B, a group listing an address) with an
+   * id ratings, follows and groups may already name. An identity whose key
+   * equals one of them takes its id (ProfileIds.chooseProfileId).
+   */
+  async handlelessRowsOf(
+    wallets: readonly string[],
+    key: string,
+    conn?: Conn
+  ): Promise<{ consolidation_key: string; profile_id: string }[]> {
+    const addresses = Array.from(new Set(wallets.map((w) => w.toLowerCase())));
+    return await this.db.execute<{
+      consolidation_key: string;
+      profile_id: string;
+    }>(
+      `select distinct i.consolidation_key, i.profile_id
+       from ${IDENTITIES_TABLE} i
+       left join ${PROFILES_TABLE} p on p.external_id = i.profile_id
+       left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} m on m.profile_id = i.profile_id
+       where i.profile_id is not null
+         and i.handle is null
+         and p.external_id is null
+         and m.principal_id is null
+         and (i.consolidation_key = :key
+              or i.consolidation_key in (
+                select a.consolidation_key from ${ADDRESS_CONSOLIDATION_KEY} a
+                where a.address in (:addresses)))
+       order by i.consolidation_key`,
+      {
+        key: key.toLowerCase(),
+        addresses: addresses.length ? addresses : ['']
+      },
+      conn ? { wrappedConnection: conn } : undefined
+    );
+  }
+
   async insertMapping(
     principalId: string,
     profileId: string,

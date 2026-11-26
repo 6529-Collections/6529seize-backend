@@ -470,6 +470,35 @@ class FakeDb {
   async insertMapping(p: string, profile: string, origin: string) {
     this.mapping.set(p, { profile, origin });
   }
+  /** Rows with a profile id, no handle, no profiles row and no principal. */
+  async handlelessRowsOf(wallets: readonly string[], key: string) {
+    const mapped = new Set(
+      Array.from(this.mapping.values()).map((it) => it.profile)
+    );
+    const keys = new Set<string>([key.toLowerCase()]);
+    for (const w of wallets) {
+      const k = this.addressKeys.get(w.toLowerCase());
+      if (k) keys.add(k);
+    }
+    return Array.from(this.rows.values())
+      .filter(
+        (row) =>
+          keys.has(row.consolidation_key) &&
+          !!row.profile_id &&
+          !row.handle &&
+          !this.profiles.has(row.profile_id) &&
+          !mapped.has(row.profile_id)
+      )
+      .map((row) => ({
+        consolidation_key: row.consolidation_key,
+        profile_id: row.profile_id!
+      }))
+      .sort((a, b) =>
+        a.consolidation_key < b.consolidation_key
+          ? -1
+          : Number(a.consolidation_key > b.consolidation_key)
+      );
+  }
   async readIdentityState(
     wallets: string[],
     profileId: string,
