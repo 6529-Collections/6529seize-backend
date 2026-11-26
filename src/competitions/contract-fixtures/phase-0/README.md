@@ -1,14 +1,12 @@
 # Phase 0 permanent GET contract locks
 
-These three files are byte-for-byte copies of the accepted Phase 0 evidence in
+These three files mirror the accepted Phase 0 evidence in
 `6529seize-frontend/ops/roadmap/waves-multi-competition/phase-0/baseline`.
-They are deliberately stored at the backend enforcement boundary so backend CI
-does not depend on a sibling checkout. Do not regenerate or relax them when an
-implementation changes; update them only through a separately accepted
-compatibility decision.
+Backend CI reads these local copies. Update them only through a separately
+accepted compatibility decision.
 
 - OpenAPI snapshot: 183 permanent GET operations and their reachable schemas.
-- Runtime route manifest: 296 permanent mounted GET route shapes.
+- Runtime route manifest: 288 retained GET route shapes.
 - Representative fixtures: synthetic legacy/native mapping, pagination, and
   masked-error cases.
 
@@ -22,11 +20,13 @@ authenticated operational GET routes.
 - `/deploy/release-trains`
 - `/deploy/release-trains/:id`
 
-The complete Release Bus removal retired three more operational UI routes.
+[Backend PR #2625](https://github.com/6529-Collections/6529seize-backend/pull/2625)
+approves removal of eight operational GET records from the retained inventory.
+Three of those records were for routes already retired in
+[backend PR #1965](https://github.com/6529-Collections/6529seize-backend/pull/1965).
+The source revision identifies the original Phase 0 capture. The counts reflect
+the amended inventory.
 
-- `/deploy/ui/branch-head`
-- `/deploy/ui/bus`
-- `/deploy/ui/bus/app.js`
 
 The census also excludes four other retired GET routes.
 
@@ -35,8 +35,8 @@ The census also excludes four other retired GET routes.
 - `/api/groups_im_eligible_for` (backend PR #2626)
 - `/api/wave/:id/undiscovered-drop` (the undocumented Quick Vote alias)
 
-The frozen manifest records all 296 historical routes. The runtime census
-checks 285 route declarations after excluding the 11 retirements.
+The runtime census checks 280 route declarations after excluding eight
+retirement records from the 288 retained route shapes.
 
 ## Accepted Alchemy search retirement
 

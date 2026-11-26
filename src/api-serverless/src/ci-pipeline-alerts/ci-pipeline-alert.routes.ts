@@ -7,7 +7,8 @@ import { getRedisClient } from '@/redis';
 import { Timer } from '@/time';
 import { asyncRouter } from '@/api/async.router';
 import { ApiResponse } from '@/api/api-response';
-import { isDeployService } from '@/api/deploy/deploy.config';
+import { validateDeployConfig } from '@/config/deploy-config.validation';
+import deployConfig from '@/config/deploy-services.json';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { RELEASE_NOTE_DEPLOYED_AT_PATTERN } from '@/release-notes/release-note-generation-queue';
 import { GITHUB_CONTRIBUTOR_LOGIN_PATTERN } from '@/release-notes/release-note-contributors.config';
@@ -27,6 +28,15 @@ const logger = Logger.get('CiPipelineAlertRoutes');
 const CI_PIPELINE_ALERT_SIGNATURE_SKEW_SECONDS = 300;
 const CI_PIPELINE_ALERT_DEDUPE_TTL_SECONDS = 86400;
 const CI_PIPELINE_ALERT_PROCESSING_LOCK_TTL_SECONDS = 300;
+
+validateDeployConfig(deployConfig);
+const deployServiceNames = new Set(
+  deployConfig.services.map((service) => service.name)
+);
+
+function isDeployService(name: string): boolean {
+  return deployServiceNames.has(name);
+}
 
 function getE2EValidationError(value: CiPipelineAlertRequest): string | null {
   if (value.alert_type === 'web_e2e') {
