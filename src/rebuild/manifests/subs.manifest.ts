@@ -640,7 +640,7 @@ export const subsManifest: AreaManifest = {
       {
         target: 'GET /api/subscriptions/redeemed-memes-counts',
         reason:
-          "It lists cards from 220 on, where subscriptions began; the probe world's cards are 1 to 4, so it can't hold data there."
+          "It lists cards from 220 on, where subscriptions began; the probe world's cards are 1 to 3, and 4 is upcoming, so it can't hold data there."
       }
     ]
   }
