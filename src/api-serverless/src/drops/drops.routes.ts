@@ -552,6 +552,10 @@ router.post(
       );
     }
     const ctx = { timer, authenticationContext };
+    await deviceSignedWritesService.assertUnsignedChatRatingAllowed(
+      dropId,
+      ctx
+    );
     const group_ids_user_is_eligible_for =
       await userGroupsService.getGroupsUserIsEligibleFor(raterProfileId, timer);
     await dropCheeringService.updateCheers(

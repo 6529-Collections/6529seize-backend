@@ -309,6 +309,7 @@ export * from './IDropForgeSettings';
 export * from './IDropForgeReadinessCheck';
 export { DeviceGrantEntity } from './IDeviceGrant';
 export { DeviceSignedEventEntity } from './IDeviceSignedEvent';
+export { WaveRelayCursorEntity } from './IWaveRelayCursor';
 export { DropAuthorSignatureEntity } from './IDropAuthorSignature';
 export { SignedRecordHeadEntity } from './ISignedRecordHead';
 export {
