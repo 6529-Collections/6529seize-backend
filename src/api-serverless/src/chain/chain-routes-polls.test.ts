@@ -21,6 +21,10 @@ import { Server } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { customErrorMiddleware } from '@/api/api-error-middleware';
 import { ChainRelayService } from '@/chain-relay/chain-relay.service';
+import {
+  WAVES_NOT_SWITCHED_ON_CODE,
+  WAVES_NOT_SWITCHED_ON_MESSAGE
+} from '@/chain-relay/chain-relay-waves';
 import { Time } from '@/time';
 import {
   POLL_CREATE_OP_TYPE,
@@ -106,8 +110,11 @@ describe('POST /chain/submit and new polls from the switch-on', () => {
     for (const name of NAMES) delete process.env[name];
     process.env.WAVES_SWITCH_ON_AT = new Date(SWITCH_ON).toISOString();
     now = jest.spyOn(Time, 'currentMillis').mockReturnValue(SWITCH_ON + 1);
-    // The real relay's submit, in front of a gateway that answers.
-    const relay = new ChainRelayService(mockGateway as never, {} as never);
+    // The real relay's submit, in front of a gateway that answers. Its own
+    // switch-on gate reads the same clock as the poll check.
+    const relay = new ChainRelayService(mockGateway as never, {} as never, () =>
+      Time.currentMillis()
+    );
     mockService.submit.mockImplementation((request) => relay.submit(request));
     mockGateway.submit.mockResolvedValue({ txId: TX, accepted: true });
   });
@@ -166,12 +173,19 @@ describe('POST /chain/submit and new polls from the switch-on', () => {
     expect(mockGateway.submit).toHaveBeenCalledTimes(2);
   });
 
-  it('relays a POLL_CREATE before the switch-on', async () => {
+  it('passes a POLL_CREATE before the switch-on to the relay, whose own gate refuses every waves operation until then', async () => {
     now.mockReturnValue(SWITCH_ON - 1);
     for (const body of pollForms()) {
-      expect((await submit(body)).status).toBe(200);
+      expect(await submit(body)).toEqual({
+        status: 423,
+        body: {
+          error: WAVES_NOT_SWITCHED_ON_MESSAGE,
+          code: WAVES_NOT_SWITCHED_ON_CODE
+        }
+      });
     }
-    expect(mockGateway.submit).toHaveBeenCalledTimes(2);
+    expect(mockService.submit).toHaveBeenCalledTimes(2);
+    expect(mockGateway.submit).not.toHaveBeenCalled();
   });
 
   it('relays other operations after the switch-on', async () => {
