@@ -36,6 +36,17 @@ type Db = Pick<
  */
 export const FOUNDER_WAIT_MS = 6 * 60 * 60 * 1000;
 
+/**
+ * The ids 6529.io issued handle-less rows before switch-on: randomUUID,
+ * version 4 (the TDH sync's step B, a group listing an address). From
+ * switch-on an address-only row's id is the address's derived one
+ * (address-identity-id.ts), version 5.
+ */
+const UUID_V4 =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const UUID_V5 =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
 /** Whether a wallet was first bound to an identity at its creation. */
 type FirstBound = boolean | 'unknowable';
 
@@ -239,6 +250,12 @@ export class ProfileIds {
    * equal key: a handle-less row holding some of the identity's wallets
    * under another key is a different group of wallets, so it isn't taken;
    * `note` logs it (WARN, with the key) and counts it for the run.
+   * Only an id issued before switch-on (randomUUID, version 4): a row made
+   * after it has its address's derived id (version 5), which a rebuild
+   * doesn't make until after the identities (the waves rebuild runs after
+   * them), so taking it would give the identity another id there; such a
+   * row is left to the plan, which orphans it. An id of neither version is
+   * not guessed at: noted (WARN) and not taken.
    */
   private async adoptedProfileId(
     identity: ChainIdentity,
@@ -248,7 +265,17 @@ export class ProfileIds {
     const key = consolidationKeyOf(identity.wallets);
     const rows = await this.db.handlelessRowsOf(identity.wallets, key);
     const equal = rows.find((it) => it.consolidation_key.toLowerCase() === key);
-    if (equal) return equal.profile_id.toLowerCase();
+    if (equal) {
+      const id = equal.profile_id.toLowerCase();
+      if (UUID_V4.test(id)) return id;
+      if (!UUID_V5.test(id) && note) {
+        logger.warn(
+          `[HANDLE-LESS ROW NOT ADOPTED: ID NEITHER V4 NOR V5] [${identity.principalId.toLowerCase()}] [KEY ${key}] [ID ${id}]`
+        );
+        this.notAdopted.push(key);
+      }
+      return null;
+    }
     if (rows.length && note) {
       const keys = rows.map((it) => it.consolidation_key.toLowerCase());
       logger.warn(

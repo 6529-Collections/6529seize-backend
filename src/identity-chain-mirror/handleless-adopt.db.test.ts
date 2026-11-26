@@ -234,7 +234,13 @@ describeWithSeed(
           state
         );
         expect(state.rows.map((it) => it.consolidation_key)).toEqual([key]);
-        await db.applyIdentityPlan(plan, 1_000_000_200, 99, conn, eventTime);
+        await db.applyIdentityPlan(
+          plan,
+          1_000_000_200,
+          99,
+          conn,
+          () => eventTime
+        );
         return plan;
       });
     }
@@ -338,7 +344,7 @@ describeWithSeed(
           1_000_000_100,
           99,
           conn,
-          AFTER_SWITCH_ON
+          () => AFTER_SWITCH_ON
         );
         return planned;
       });

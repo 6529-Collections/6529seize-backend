@@ -246,7 +246,7 @@ describeWithSeed(
           1_000_000_050,
           77,
           conn,
-          AFTER_SWITCH_ON
+          () => AFTER_SWITCH_ON
         );
       });
       const key = consolidationKeyOf([A, B, C]);
@@ -485,7 +485,7 @@ describeWithSeed(
           1_000_000_050,
           77,
           conn,
-          AFTER_SWITCH_ON
+          () => AFTER_SWITCH_ON
         );
       });
       const row = await sqlExecutor.oneOrNull<any>(

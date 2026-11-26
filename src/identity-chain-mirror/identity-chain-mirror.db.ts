@@ -763,7 +763,7 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
   private async withAddressIds(
     rows: readonly IdentityRowState[],
     others: readonly IdentityRowState[],
-    derived: boolean,
+    derived: (row: IdentityRowState) => boolean,
     conn: Conn
   ): Promise<IdentityRowState[]> {
     const chosen = new Set<string>(
@@ -779,7 +779,7 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
         continue;
       }
       let id: string;
-      if (!derived) {
+      if (!derived(row)) {
         id = randomUUID();
       } else {
         // A few candidates at a time; more only when all of them are held.
@@ -972,24 +972,25 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
   }
 
   /**
-   * Writes a plan. `eventTime` is the block time (ms) of the chain event
-   * the write is for: a wallet that left the identity gets its own row, and
-   * from switch-on that row's id is the address's derived one
-   * (address-identity-id.ts, the first no row or profile holds), before it
-   * a random one, so a mirror catching up and a rebuild give the same ids.
+   * Writes a plan. `eventTimeOf` gives the block time (ms) of the chain
+   * event a wallet that left the identity follows: the wallet gets its own
+   * row, and if that event is from switch-on the row's id is the address's
+   * derived one (address-identity-id.ts, the first no row or profile
+   * holds), before it a random one. Per event, so a mirror catching up and
+   * a rebuild, whose feed pages split at other heights, give the same ids.
    */
   async applyIdentityPlan(
     plan: IdentityPlan,
     block: number,
     now: number,
     conn: Conn,
-    eventTime: number
+    eventTimeOf: (wallet: string) => number
   ) {
     const opts = { wrappedConnection: conn };
     const soloRows = await this.withAddressIds(
       plan.soloRows,
       [plan.identity, ...plan.rekeyedRows],
-      addressIdentityIdsFrom(eventTime),
+      (row) => addressIdentityIdsFrom(eventTimeOf(row.consolidation_key)),
       conn
     );
     if (plan.releaseHandle) {

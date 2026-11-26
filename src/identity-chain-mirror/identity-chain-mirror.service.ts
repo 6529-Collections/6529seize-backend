@@ -317,10 +317,44 @@ export interface MirrorAt {
   readonly height: number;
   readonly source: 'FEED' | 'FULL_SYNC';
   /**
-   * The block time (ms, the feed block's `time`) of the last block the
-   * write is for, when the read gives it; else the mirror's clock is used.
+   * Each wallet's and principal's own event time in the feed page the write
+   * is for (feedEventTimes), when the read is a page; else none.
    */
-  readonly time?: number | null;
+  readonly times?: FeedEventTimes | null;
+}
+
+/**
+ * The block time (ms, the feed block's `time`) of the last record in a
+ * page that names each wallet and each principal: the event a write for
+ * them follows. Per event, not per page, so where a page splits doesn't
+ * move a row to the other side of switch-on (address-identity-id.ts).
+ */
+export interface FeedEventTimes {
+  readonly wallets: ReadonlyMap<string, number>;
+  readonly principals: ReadonlyMap<string, number>;
+}
+
+export function feedEventTimes(
+  blocks: readonly ChainFeedBlock[]
+): FeedEventTimes {
+  const wallets = new Map<string, number>();
+  const principals = new Map<string, number>();
+  for (const block of blocks) {
+    for (const record of block.records) {
+      const named = new Set<string>();
+      const walletsNamed = new Set<string>();
+      collectHex(record.keyFields, named, walletsNamed, new Set());
+      collectHex(
+        record.valueFields ?? undefined,
+        named,
+        walletsNamed,
+        new Set()
+      );
+      walletsNamed.forEach((it) => wallets.set(it.toLowerCase(), block.time));
+      named.forEach((it) => principals.set(it.toLowerCase(), block.time));
+    }
+  }
+  return { wallets, principals };
 }
 
 export interface FeedEffects {
@@ -1446,9 +1480,7 @@ export class IdentityChainMirror {
           {
             height: read.nextHeight - 1,
             source: 'FEED',
-            time: read.blocks.length
-              ? read.blocks[read.blocks.length - 1].time
-              : null
+            times: feedEventTimes(read.blocks)
           },
           deadline
         )
@@ -1826,7 +1858,12 @@ export class IdentityChainMirror {
           CHAIN_BLOCK_BASE + Number(identity.createdHeight ?? 0),
           this.now(),
           conn,
-          at.time ?? this.now()
+          // A leaving wallet's own event; else the identity's; else (a full
+          // sync, which reads no events) the mirror's clock.
+          (wallet) =>
+            at.times?.wallets.get(wallet.toLowerCase()) ??
+            at.times?.principals.get(view.principalId.toLowerCase()) ??
+            this.now()
         );
         await this.membershipChanged(
           membershipChangeOf(plan, state, at.height),

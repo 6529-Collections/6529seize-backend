@@ -1,4 +1,5 @@
 import { ChainIdentity } from '@/chain-gateway/chain-gateway.types';
+import { addressIdentityId } from '@/identities/address-identity-id';
 import { consolidationKeyOf, principalProfileId } from './identity-plan';
 import { ProfileIds } from './profile-ids';
 
@@ -131,6 +132,23 @@ describe("ProfileIds: a handle-less row's id, kept", () => {
     const { ids } = idsWith([]);
     expect(await ids.profileIdOf(identity([A, B]))).toBe(principalProfileId(P));
     expect(ids.takeNotAdopted()).toEqual([]);
+  });
+
+  it('does not take an id issued after switch-on (version 5), noting nothing', async () => {
+    const { ids, db } = idsWith([
+      { consolidation_key: A, profile_id: addressIdentityId(A) }
+    ]);
+    expect(await ids.profileIdOf(identity([A]))).toBe(principalProfileId(P));
+    expect(db.mapping.get(P)?.origin).toBe('NEW');
+    expect(ids.takeNotAdopted()).toEqual([]);
+  });
+
+  it('does not take an id of neither version, and notes it', async () => {
+    const { ids } = idsWith([
+      { consolidation_key: A, profile_id: 'not-a-uuid-at-all' }
+    ]);
+    expect(await ids.profileIdOf(identity([A]))).toBe(principalProfileId(P));
+    expect(ids.takeNotAdopted()).toEqual([A]);
   });
 
   it("lists the row's id among the candidates of an identity still waiting, without a note", async () => {

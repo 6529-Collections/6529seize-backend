@@ -23,8 +23,13 @@ import { MembershipChange } from './membership-change';
 import { ProfileSiteFollower } from './profile-site-port';
 import { WalletBindingRow } from './wallet-bindings';
 import {
+  addressIdentityId,
+  addressIdentityIdsFrom
+} from '@/identities/address-identity-id';
+import {
   CHAIN_DELEGATION_USE_CASES,
   feedEffects,
+  feedEventTimes,
   IdentityChainMirror,
   RELAUNCH_ALLOWED_ENV,
   toDelegationRow
@@ -537,7 +542,23 @@ class FakeDb {
       placeholderTaken: !!holderOf(`id-${primary}`)
     };
   }
-  async applyIdentityPlan(plan: IdentityPlan) {
+  /** Each wallet that left an identity, with its event time as given. */
+  soloEventTimes: [string, number][] = [];
+  async applyIdentityPlan(
+    plan: IdentityPlan,
+    _block?: number,
+    _now?: number,
+    _conn?: unknown,
+    eventTimeOf?: (wallet: string) => number
+  ) {
+    for (const row of plan.soloRows) {
+      if (eventTimeOf) {
+        this.soloEventTimes.push([
+          row.consolidation_key,
+          eventTimeOf(row.consolidation_key)
+        ]);
+      }
+    }
     if (plan.releaseHandle) {
       const p = this.profiles.get(plan.releaseHandle.external_id)!;
       this.profiles.set(p.external_id, {
@@ -1114,6 +1135,122 @@ describe('IdentityChainMirror', () => {
       keysBefore: { [A]: `${A}-${B}`, [B]: `${A}-${B}`, [C]: C },
       keysAfter: { [A]: key, [B]: key, [C]: key }
     });
+  });
+
+  it('times each leaving wallet by its own event, in a page that spans switch-on', async () => {
+    const SWITCH_ON = Date.parse('2026-11-28T00:00:00Z');
+    const saved = process.env.IDENTITY_SWITCH_ON_AT;
+    process.env.IDENTITY_SWITCH_ON_AT = '2026-11-28T00:00:00Z';
+    try {
+      const D = W(0xd);
+      const E = W(0xe);
+      const { mirror, db, chain, alice } = world();
+      const carol = chainIdentity(PID(7), [D, E], { handle: 'carol' });
+      chain.identities.set(carol.principalId, carol);
+      await mirror.run({ budgetMs: 60_000 });
+      db.soloEventTimes = [];
+      // B leaves Alice a minute before switch-on, E leaves Carol a minute
+      // after it: one page, two blocks.
+      chain.identities.set(alice.principalId, { ...alice, wallets: [A] });
+      chain.identities.set(carol.principalId, { ...carol, wallets: [D] });
+      const binding = (address: string, principalId: string) => ({
+        family: '0x0102',
+        name: 'AddressBinding',
+        key: '0x',
+        value: null,
+        keyFields: { address },
+        valueFields: { principalId }
+      });
+      chain.feed.push({
+        from: 101,
+        through: 105,
+        next: 106,
+        blocks: [
+          {
+            height: 102,
+            slot: 0,
+            root: '0x',
+            time: SWITCH_ON - 60_000,
+            records: [binding(B, alice.principalId)]
+          },
+          {
+            height: 104,
+            slot: 0,
+            root: '0x',
+            time: SWITCH_ON + 60_000,
+            records: [binding(E, carol.principalId)]
+          }
+        ]
+      });
+      await mirror.run({ budgetMs: 60_000 });
+      const times = new Map(db.soloEventTimes);
+      expect(times.get(B)).toBe(SWITCH_ON - 60_000);
+      expect(times.get(E)).toBe(SWITCH_ON + 60_000);
+      // So B's row takes a random id and E's its derived one.
+      expect(addressIdentityIdsFrom(times.get(B)!)).toBe(false);
+      expect(addressIdentityIdsFrom(times.get(E)!)).toBe(true);
+    } finally {
+      if (saved === undefined) delete process.env.IDENTITY_SWITCH_ON_AT;
+      else process.env.IDENTITY_SWITCH_ON_AT = saved;
+    }
+  });
+
+  it('times wallets and principals by the last record naming them in a page', () => {
+    const PRINCIPAL = PID(8);
+    const record = (address: string) => ({
+      family: '0x0102',
+      name: 'AddressBinding',
+      key: '0x',
+      value: null,
+      keyFields: { address },
+      valueFields: { principalId: PRINCIPAL }
+    });
+    const times = feedEventTimes([
+      { height: 1, slot: 0, root: '0x', time: 10, records: [record(A)] },
+      { height: 2, slot: 0, root: '0x', time: 20, records: [record(B)] },
+      { height: 3, slot: 0, root: '0x', time: 30, records: [record(A)] }
+    ]);
+    expect(times.wallets.get(A)).toBe(30);
+    expect(times.wallets.get(B)).toBe(20);
+    expect(times.principals.get(PRINCIPAL.toLowerCase())).toBe(30);
+  });
+
+  it('leaves a handle-less row with an id from after switch-on to the plan: one orphan line', async () => {
+    const D = W(0xd);
+    const warn = jest.spyOn(Logger.get('IDENTITY_CHAIN_MIRROR'), 'warn');
+    try {
+      const { mirror, db, chain } = world();
+      // A group listed D after switch-on: its row has D's derived id.
+      const derived = addressIdentityId(D);
+      db.rows.set(D, {
+        ...db.rows.values().next().value!,
+        consolidation_key: D,
+        profile_id: derived,
+        primary_address: D,
+        handle: null,
+        normalised_handle: null
+      });
+      db.addressKeys.set(D, D);
+      const dave = chainIdentity(PID(9), [D], { legacyId: null });
+      chain.identities.set(dave.principalId, dave);
+      const report = await mirror.run({ budgetMs: 60_000 });
+      expect(db.mapping.get(dave.principalId)?.origin).toBe('NEW');
+      expect(db.mapping.get(dave.principalId)?.profile).not.toBe(derived);
+      expect(report.orphanedProfiles).toEqual([derived]);
+      const lines = warn.mock.calls
+        .map((it) => String(it[0]))
+        .filter((it) => it.startsWith('[PROFILE ORPHANED]'));
+      expect(lines).toHaveLength(1);
+      expect(JSON.parse(lines[0].slice('[PROFILE ORPHANED] '.length))).toEqual(
+        expect.objectContaining({
+          old_profile_id: derived,
+          principal_id: dave.principalId.toLowerCase(),
+          wallets: [D]
+        })
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('tells the membership handlers nothing when no key changes', async () => {
