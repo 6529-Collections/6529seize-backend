@@ -115,7 +115,7 @@ router.get(
 );
 
 router.post(
-  ['/read', '/all/read'],
+  '/read',
   needsAuthenticatedUser(),
   async (
     req: Request<any, any, any, any, any>,
@@ -164,9 +164,7 @@ router.post(
         identity_id: authenticationContext.getActingAsId()!
       });
     } else {
-      throw new BadRequestException(
-        `Invalid notification id: ${id}. Supply a correct one or 'all' to mark all as read.`
-      );
+      throw new BadRequestException(`Invalid notification id: ${id}.`);
     }
     res.send({});
   }
