@@ -200,18 +200,6 @@ router.get(
   }
 );
 
-router.get(`/proofs`, async function (req: any, res: any) {
-  const pageSize = getPageSize(req);
-  const page = getPage(req);
-  const addresses = req.query.address;
-
-  db.fetchNextGenProofs(addresses, pageSize, page).then((result) => {
-    res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-    res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
-    res.end(JSON.stringify(result));
-  });
-});
-
 router.get(
   `/proofs/:merkle_root/:address`,
   async function (req: any, res: any) {
@@ -243,18 +231,6 @@ router.get(
     });
   }
 );
-
-router.get(`/allowlist_phases`, async function (req: any, res: any) {
-  const pageSize = getPageSize(req);
-  const page = getPage(req);
-
-  logger.info(
-    `[FETCHING ALLOWLIST PHASES FOR ALL COLLECTIONS] : [PAGE SIZE ${pageSize}] : [PAGE ${page}]`
-  );
-  await db.fetchAllAllowlistPhases(pageSize, page).then(async (result) => {
-    return returnPaginatedResult(result, req, res);
-  });
-});
 
 router.get(
   `/allowlist_phases/:collection_id`,
@@ -358,29 +334,6 @@ router.get(
       .then(async (result) => {
         return returnPaginatedResult(result, req, res);
       });
-  }
-);
-
-router.get(
-  `/collections/:id/tokens/:token`,
-  validateCollectionId,
-  cacheRequest(),
-  async function (req: any, res: any) {
-    const id: number = req.params.id;
-    const token = numbers.parseIntOrNull(req.params.token);
-
-    if (token === null) {
-      throw new BadRequestException('Token must be a number.');
-    }
-
-    const tokenId = id * 10000000000 + token;
-    await db.fetchNextGenToken(tokenId).then(async (result) => {
-      if (result.id) {
-        return res.json(result);
-      } else {
-        return res.status(404).send({});
-      }
-    });
   }
 );
 
@@ -525,26 +478,6 @@ router.get(`/tokens/:id`, cacheRequest(), async function (req: any, res: any) {
     }
   });
 });
-
-router.get(
-  `/tokens/:id/transactions`,
-  cacheRequest(),
-  async function (req: any, res: any) {
-    const id = numbers.parseIntOrNull(req.params.id);
-    if (id === null) {
-      throw new BadRequestException('Token ID must be a number.');
-    }
-
-    const pageSize = getPageSize(req);
-    const page = getPage(req);
-
-    await db
-      .fetchNextGenTokenTransactions(id, pageSize, page)
-      .then(async (result) => {
-        return res.json(result);
-      });
-  }
-);
 
 router.get(
   `/tokens/:id/traits`,
