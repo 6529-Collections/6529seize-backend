@@ -175,6 +175,14 @@ export async function rebuildMemesTeamTouchingOthers(): Promise<void> {
   );
 }
 
+/** Restores the MEMES rows, and deletes another partition's row. */
+export async function rebuildMemesTeamDeletingOthers(): Promise<void> {
+  await insertTeam(false, 'MEMES');
+  await dbSupplier().execute(
+    `DELETE FROM ${TEAM_TABLE} WHERE collection = '6529'`
+  );
+}
+
 /** Restores the rows with different names. */
 export async function rebuildTeamDifferently(): Promise<void> {
   await insertTeam(true);

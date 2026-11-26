@@ -1396,18 +1396,6 @@ class RebuildRun {
       }
       if (!rebuilt) continue;
       // A row is either missing or back with planned columns, not both.
-      const overlap = rowAndColumnPlanOverlap(
-        table,
-        found.plans.map((p) => ({
-          step: p.plan.step,
-          columns: p.entry.columns,
-          keys: p.keys
-        }))
-      );
-      if (overlap) {
-        this.failures.push(overlap);
-        return false;
-      }
       // A kept row comes back unchanged: no other plan may match it.
       const keptOverlap = keptPlanOverlap(
         table,
@@ -1419,6 +1407,20 @@ class RebuildRun {
       );
       if (keptOverlap) {
         this.failures.push(keptOverlap);
+        return false;
+      }
+      const overlap = rowAndColumnPlanOverlap(
+        table,
+        found.plans
+          .filter((p) => !p.entry.keep)
+          .map((p) => ({
+            step: p.plan.step,
+            columns: p.entry.columns,
+            keys: p.keys
+          }))
+      );
+      if (overlap) {
+        this.failures.push(overlap);
         return false;
       }
       if (!(await this.copyKeptRows(table, plans, keysOf))) return false;
@@ -1470,6 +1472,17 @@ class RebuildRun {
         where
       );
       this.keptRows.set(table, { copy, keys: keysOf(rows), count });
+      // Put back first, the kept rows move an AUTO_INCREMENT counter on:
+      // a rebuilder's rows that take their values from it come after them.
+      const volatile = new Set(this.volatileOf(table));
+      const counters = (await this.admin!.columnInfo(MAIN_DB, table))
+        .filter((c) => /auto_increment/i.test(c.extra) && !volatile.has(c.name))
+        .map((c) => c.name);
+      if (counters.length) {
+        this.notes.push(
+          `Kept rows of ${table}: ${counters.join(', ')} counts AUTO_INCREMENT, and the kept rows go back before the rebuilders, so rows a rebuilder inserts without a value take numbers after the kept rows'`
+        );
+      }
       return true;
     } catch (error) {
       this.failures.push(
@@ -1481,16 +1494,32 @@ class RebuildRun {
 
   /**
    * Puts the rows keep plans matched back after the drop, before any
-   * rebuilder runs, and records how many each plan kept.
+   * rebuilder runs, and records how many each plan kept. A table the drop
+   * left rows in gets none back (the drop's failure names it); a put-back
+   * MySQL refuses stops the run.
    */
-  private async putKeptRowsBack(): Promise<void> {
+  private async putKeptRowsBack(): Promise<boolean> {
     for (const [table, kept] of Array.from(this.keptRows)) {
-      const back = await this.admin!.putRowsBack(
-        KEPT_DB,
-        kept.copy,
-        MAIN_DB,
-        table
-      );
+      if (this.notEmptyAfterDrop.includes(table)) {
+        this.failures.push(
+          `Kept rows of ${table} were not put back: the table isn't empty after the drop`
+        );
+        continue;
+      }
+      let back: number;
+      try {
+        back = await this.admin!.putRowsBack(
+          KEPT_DB,
+          kept.copy,
+          MAIN_DB,
+          table
+        );
+      } catch (error) {
+        this.failures.push(
+          `Kept rows of ${table} can't be put back: ${error instanceof Error ? error.message : String(error)}`
+        );
+        return false;
+      }
       if (back !== kept.count) {
         this.failures.push(
           `Kept rows of ${table}: ${kept.count} copied aside, ${back} put back`
@@ -1500,29 +1529,56 @@ class RebuildRun {
         if (entry.keep) plan.kept = plan.seeded;
       }
     }
+    return true;
   }
 
   /**
    * After the comparison: every kept row is back unchanged, or the run
-   * fails, final or not. A rebuilder must leave the rows it doesn't
-   * rebuild alone.
+   * fails, final or not. The steps after the put-back must leave the rows
+   * they don't rebuild alone. In a table without a primary key a changed
+   * row counts as gone.
    */
   private checkKeptRows(
     snapshotsBefore: ReadonlyMap<string, TableSnapshot>,
     snapshotsAfter: ReadonlyMap<string, TableSnapshot>
   ): void {
+    const countOf = (keys: readonly string[]) => {
+      const counts = new Map<string, number>();
+      for (const key of keys) counts.set(key, (counts.get(key) ?? 0) + 1);
+      return counts;
+    };
     for (const [table, kept] of Array.from(this.keptRows)) {
       const before = snapshotsBefore.get(table);
       const after = snapshotsAfter.get(table);
       if (!before || !after) continue;
-      const keys = new Set(kept.keys);
-      const gone = goneRows(before, after, kept.keys);
-      const changed = changedKeys(before, after).filter((key) => keys.has(key));
-      if (gone || changed.length) {
-        this.failures.push(
-          `Kept rows of ${table} didn't come back unchanged: ${gone} gone, ${changed.length} changed${changed.length ? `, keys ${changed.slice(0, 20).join(' ')}` : ''}; a rebuilder may not touch rows a keep plan keeps`
+      const beforeCounts = countOf(before.keys);
+      const afterCounts = countOf(after.keys);
+      const goneKeys: string[] = [];
+      let gone = 0;
+      countOf(kept.keys).forEach((n, key) => {
+        const lost = Math.min(
+          n,
+          Math.max(
+            0,
+            (beforeCounts.get(key) ?? 0) - (afterCounts.get(key) ?? 0)
+          )
         );
-      }
+        if (lost) {
+          gone += lost;
+          goneKeys.push(key);
+        }
+      });
+      const keys = new Set(kept.keys);
+      const changed = changedKeys(before, after).filter((key) => keys.has(key));
+      if (!gone && !changed.length) continue;
+      const steps = (this.plannedRows.get(table)?.plans ?? [])
+        .filter((p) => p.entry.keep)
+        .map((p) => p.plan.step);
+      const listed = (what: string, list: string[]) =>
+        list.length ? ` (${what} ${list.slice(0, 20).join(' ')})` : '';
+      this.failures.push(
+        `Kept rows of ${table}, kept by ${Array.from(new Set(steps)).join(', ')}, didn't come back unchanged: ${gone} gone${listed('keys', goneKeys)}, ${changed.length} changed${listed('keys', changed)}; no step may delete or change kept rows once they are put back`
+      );
     }
   }
 
@@ -1714,8 +1770,7 @@ class RebuildRun {
       );
     }
     // Kept rows go back once the drop is proven, before any rebuilder.
-    await this.putKeptRowsBack();
-    return true;
+    return this.putKeptRowsBack();
   }
 
   private async setUp(): Promise<boolean> {

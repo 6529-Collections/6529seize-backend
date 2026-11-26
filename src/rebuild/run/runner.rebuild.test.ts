@@ -1001,13 +1001,22 @@ describe('rebuild check, end to end', () => {
         ...step('self-check.kept-reader', 'readKeptTeamRow', [], ['team']),
         after: [writer]
       });
-      const keepRun = (id: string, exportName: string, final = false) =>
+      const keepRun = (
+        id: string,
+        exportName: string,
+        options: { final?: boolean; full?: boolean; reader?: boolean } = {}
+      ) =>
         run('mint', {
           seed: teamSeed,
           rebuilder: planning(id, exportName, [KEEP]),
-          more: [reader(id)],
-          final
+          // A reader of a deleted kept row would stop the run first.
+          more: options.reader === false ? [] : [reader(id)],
+          final: options.final,
+          full: options.full
         });
+      const ROW_6529 = JSON.stringify([
+        '0x0000000000000000000000000000000000000002'
+      ]);
       const kept = (stepId: string, seeded: number | null) => ({
         step: stepId,
         where: KEEP.where,
@@ -1056,12 +1065,35 @@ describe('rebuild check, end to end', () => {
         const final = await keepRun(
           'self-check.keeping-final',
           'rebuildMemesTeam',
-          true
+          { final: true }
         );
         expect(final.report.verdict).toBe('FAIL');
         expect(final.report.failures).toContain(
           '1 plans of planned rows, seeded rows only a later change rebuilds; a final run fails on every plan: team by self-check.keeping-final: seeded 1, kept 1, not rebuilt, missing 0, until 9999-12-31 (the 6529 writer)'
         );
+      });
+
+      it('puts the kept rows back after a full run drops the database', async () => {
+        const { report } = await keepRun(
+          'self-check.keeping-full',
+          'rebuildMemesTeam',
+          { full: true }
+        );
+        expect(report.failures).toEqual([]);
+        expect(report.verdict).toBe('PASS');
+        expect(report.scope).toBe('full');
+        expect(
+          report.tables.diffs
+            .filter((d) => d.table === 'team')
+            .map((d) => [d.same, d.plannedRows])
+        ).toEqual([[true, 0]]);
+        expect(report.tables.plannedRows).toEqual([
+          expect.objectContaining({
+            table: 'team',
+            keptRows: 1,
+            plans: [kept('self-check.keeping-full', 1)]
+          })
+        ]);
       });
 
       it('fails a run whose rebuilder changes a kept row', async () => {
@@ -1071,8 +1103,24 @@ describe('rebuild check, end to end', () => {
         );
         expect(report.verdict).toBe('FAIL');
         expect(report.failures).toContain(
-          `Kept rows of team didn't come back unchanged: 0 gone, 1 changed, keys ${JSON.stringify(['0x0000000000000000000000000000000000000002'])}; a rebuilder may not touch rows a keep plan keeps`
+          `Kept rows of team, kept by self-check.keeping-touches, didn't come back unchanged: 0 gone, 1 changed (keys ${ROW_6529}); no step may delete or change kept rows once they are put back`
         );
+        const [diff] = report.tables.diffs;
+        expect(diff.same).toBe(false);
+        expect(diff.plannedRows).toBe(0);
+      });
+
+      it('fails a run whose rebuilder deletes a kept row', async () => {
+        const { report } = await keepRun(
+          'self-check.keeping-deletes',
+          'rebuildMemesTeamDeletingOthers',
+          { reader: false }
+        );
+        expect(report.verdict).toBe('FAIL');
+        expect(report.failures).toContain(
+          `Kept rows of team, kept by self-check.keeping-deletes, didn't come back unchanged: 1 gone (keys ${ROW_6529}), 0 changed; no step may delete or change kept rows once they are put back`
+        );
+        // The deleted row isn't excused: the table differs too.
         const [diff] = report.tables.diffs;
         expect(diff.same).toBe(false);
         expect(diff.plannedRows).toBe(0);

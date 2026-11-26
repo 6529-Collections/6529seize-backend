@@ -463,9 +463,20 @@ function stepProblems(
           `${kind} ${step.id}'s planned rows of ${plan.table} name no change that brings their source`
         );
       }
+      if (
+        plan.keep &&
+        input.manifests.map((m) => m.tables[plan.table]).find(Boolean)
+          ?.checkpoint
+      ) {
+        // The row diff compares only a checkpoint table's newest rows, so
+        // it couldn't prove older kept rows came back.
+        problem(
+          `${kind} ${step.id} keeps rows of ${plan.table}, a checkpoint table; its older rows are never compared, so it can't keep rows`
+        );
+      }
       if (plan.keep && plan.columns !== undefined) {
         problem(
-          `rebuilder ${step.id} keeps rows of ${plan.table} with planned columns; a kept row comes back whole, so keep takes no columns`
+          `${kind} ${step.id} keeps rows of ${plan.table} with planned columns; a kept row comes back whole, so keep takes no columns`
         );
       } else if (plan.columns !== undefined) {
         problems.push(

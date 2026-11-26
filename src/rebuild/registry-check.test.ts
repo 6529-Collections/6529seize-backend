@@ -706,7 +706,7 @@ describe('checkRegistry', () => {
     ]);
   });
 
-  it('keeps rows only of a table the rebuilder writes, and never with columns', () => {
+  it('keeps rows only of a table the rebuilder writes, never with columns, and never of a checkpoint table', () => {
     const keep = (parts: Partial<PlannedRows> = {}): PlannedRows => ({
       table: 'ids',
       where: "kind = 'records'",
@@ -721,22 +721,40 @@ describe('checkRegistry', () => {
         manifests: [
           area(
             'a',
-            { ids: index(), other: index() },
+            {
+              ids: index(),
+              other: index(),
+              heads: {
+                class: 'INDEX',
+                checkpoint: {
+                  column: 'block',
+                  reason: 'readers take MAX(block)'
+                }
+              }
+            },
             {
               rebuilders: [
-                step('a.rows', { writes: ['ids'], plannedRows: plans })
+                step('a.rows', {
+                  writes: ['ids', 'heads'],
+                  plannedRows: plans
+                })
               ]
             }
           )
         ],
-        codeTables: code('ids', 'other')
+        codeTables: code('ids', 'other', 'heads')
       }).problems.map((p) => p.detail);
     expect(check([keep()])).toEqual([]);
     expect(
-      check([keep({ table: 'other' }), keep({ columns: ['name'] })])
+      check([
+        keep({ table: 'other' }),
+        keep({ columns: ['name'] }),
+        keep({ table: 'heads' })
+      ])
     ).toEqual([
       "rebuilder a.rows keeps rows of other, whose rows it doesn't write",
-      'rebuilder a.rows keeps rows of ids with planned columns; a kept row comes back whole, so keep takes no columns'
+      'rebuilder a.rows keeps rows of ids with planned columns; a kept row comes back whole, so keep takes no columns',
+      "rebuilder a.rows keeps rows of heads, a checkpoint table; its older rows are never compared, so it can't keep rows"
     ]);
   });
 

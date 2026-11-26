@@ -315,10 +315,11 @@ describe('MysqlAdmin on the private mysqld', () => {
       seeded[0],
       seeded[2]
     ]);
-    // A condition MySQL refuses copies nothing and says why.
+    // A condition MySQL refuses fails the copy, and says why.
     await expect(
       admin.copyRowsWhere(FROM, 'keepable', TO, 'keep_2', 'nope = 1')
     ).rejects.toThrow(/nope/);
+    expect(await admin.rowCount(TO, 'keep_2')).toBe(0);
   });
 
   it('leaves no pid file once the server stops', async () => {

@@ -350,11 +350,11 @@ export class MysqlAdmin {
       .map((column) => mysql.escapeId(column))
       .join(', ');
     if (!columns) return 0;
-    await this.query(
+    const result = (await this.query(
       `INSERT INTO ${mysql.escapeId(to)}.${mysql.escapeId(table)} (${columns})
        SELECT ${columns} FROM ${mysql.escapeId(from)}.${mysql.escapeId(copy)}`
-    );
-    return this.rowCount(from, copy);
+    )) as unknown as { affectedRows: number };
+    return result.affectedRows;
   }
 
   async truncate(database: string, tables: readonly string[]): Promise<void> {
