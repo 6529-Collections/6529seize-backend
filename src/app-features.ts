@@ -154,6 +154,14 @@ export class AppFeatures {
   public isWavesChainMirrorEnabled(): boolean {
     return this.isFeatureEnabled('WAVES_CHAIN_MIRROR');
   }
+
+  /**
+   * The wave decision loop also sends a SETTLEMENT_REQUEST for each decision
+   * result due on the 6529 chain (src/waves-settlement).
+   */
+  public isWavesSettlementSenderEnabled(): boolean {
+    return this.isFeatureEnabled('WAVES_SETTLEMENT_SENDER');
+  }
 }
 
 export const appFeatures = new AppFeatures();
