@@ -26,6 +26,10 @@ function account(user: string): string {
  * Statements that create a user who can change exactly `writes` and read
  * exactly `writes` and `reads` in one database, plus its own temporary
  * tables. Anything else the step touches is refused by MySQL.
+ *
+ * Production writers lock rows they only read (SELECT ... FOR UPDATE),
+ * which MySQL allows only with a write privilege or LOCK TABLES. LOCK TABLES
+ * lets a step lock the tables it may read; it never lets it change them.
  */
 export function stepGrantStatements(grants: StepGrants): string[] {
   const who = account(grants.user);
@@ -39,6 +43,7 @@ export function stepGrantStatements(grants: StepGrants): string[] {
     `DROP USER IF EXISTS ${who}`,
     `CREATE USER ${who} IDENTIFIED WITH mysql_native_password BY ${mysql.escape(grants.password)}`,
     `GRANT CREATE TEMPORARY TABLES ON ${database}.* TO ${who}`,
+    `GRANT LOCK TABLES ON ${database}.* TO ${who}`,
     ...writes.map(
       (name) => `GRANT ${WRITE_PRIVILEGES} ON ${table(name)} TO ${who}`
     ),

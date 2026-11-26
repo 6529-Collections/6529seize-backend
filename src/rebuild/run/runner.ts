@@ -1,10 +1,11 @@
 import { spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as net from 'node:net';
 import * as path from 'node:path';
 import {
   AreaManifest,
+  NeededTable,
   RebuildContext,
   RebuildSource,
   RebuildStep,
@@ -12,7 +13,8 @@ import {
   TableEntry
 } from '@/rebuild/manifest.types';
 import { checkRegistry, RegistryResult } from '@/rebuild/registry-check';
-import { orderSteps } from '@/rebuild/step-order';
+import { orderSeeds, orderSteps } from '@/rebuild/step-order';
+import { partitionsOf, writersOf, writtenTables } from '@/rebuild/step-writes';
 import {
   CodeTables,
   discoverCodeTables,
@@ -54,6 +56,7 @@ import {
   runProbes
 } from '@/rebuild/probes/probe-runner';
 import {
+  canonicalRow,
   diffSnapshots,
   snapshotTable,
   TableDiff,
@@ -82,8 +85,15 @@ import {
   startSources,
   stopSources
 } from '@/rebuild/sources/start-sources';
-import { judge } from '@/rebuild/run/verdict';
+import { judge, WaitingStep } from '@/rebuild/run/verdict';
+import { stepContext } from '@/rebuild/run/step-context';
 import { waitForApi } from '@/rebuild/stack/api-ready';
+
+/** A table's partition columns and every tuple its writers own. */
+interface Partitions {
+  readonly columns: readonly string[];
+  readonly values: readonly (readonly string[])[];
+}
 
 export interface RunOptions {
   readonly repoRoot: string;
@@ -131,7 +141,7 @@ function secret(): string {
 
 function gitHead(repoRoot: string): string | null {
   const result = spawnSync(
-    'git',
+    'git', // NOSONAR -- the developer's own git from PATH; no shell, and every argument is fixed.
     ['-C', repoRoot, 'rev-parse', '--short', 'HEAD'],
     {
       encoding: 'utf8',
@@ -206,12 +216,20 @@ class RebuildRun {
   private unreadTables: string[] = [];
   /** Planned steps skipped because their module isn't in this tree. */
   private plannedSteps: string[] = [];
+  /** Steps skipped as planned because a table they need isn't in the schema. */
+  private waitingSteps: WaitingStep[] = [];
+  /** Needs on tables the schema has: the step runs, and the need can go. */
+  private staleNeeds: string[] = [];
+  /** The fresh schema's base tables. */
+  private baseTables: ReadonlySet<string> = new Set();
   /** Planned probes held because a table they need isn't in the schema. */
   private heldProbes: string[] = [];
   /** Tables only a skipped planned rebuilder writes: kept like pending ones. */
   private plannedWrites = new Set<string>();
   /** Rows in each INDEX table of the schema after the seeds ran. */
   private seededRows: Record<string, number> = {};
+  /** Partitioned tables with rows no writer's partition owns, after the seeds. */
+  private unownedRows: string[] = [];
   private tableDiffs: TableDiff[] = [];
   private notEmptyAfterDrop: string[] = [];
   private rebuiltTables: string[] = [];
@@ -427,26 +445,31 @@ class RebuildRun {
           user,
           password,
           database: MAIN_DB,
-          writes: step.writes.filter((t) => baseNames.has(t)),
+          writes: writtenTables(step).filter((t) => baseNames.has(t)),
           reads: (step.reads ?? []).filter((t) => liveNames.has(t))
         })
       );
       account = { ...account, user, password };
     }
-    const context: RebuildContext = {
+    // A partitioned rebuilder may change only its own rows: the rest of
+    // the table must come out as it went in.
+    const outside =
+      kind === 'rebuilder'
+        ? await this.outsideDigests(step, baseNames)
+        : new Map<string, string>();
+    const context: RebuildContext = stepContext({
       area: area.area,
       stepId: step.id,
+      kind,
       sources: this.sourceUrls(),
-      seedFilesDir:
-        kind === 'seed' && this.sourceUrl('files')
-          ? seedFilesDir(this.runDir)
-          : null,
+      seedFilesDir: seedFilesDir(this.runDir),
       mark: {
         name: this.o.mark,
         chainHeight: this.o.chainHeight,
         ethBlock: this.o.ethBlock
-      }
-    };
+      },
+      final: this.o.final
+    });
     const own: Record<string, string> = {
       REBUILD_AREA: area.area,
       REBUILD_STEP_ID: step.id
@@ -487,8 +510,16 @@ class RebuildRun {
       });
     }
     if (user) await admin.query(dropUserStatement(user));
+    const outsideAfter = await this.outsideDigests(step, baseNames);
+    outside.forEach((digest, table) => {
+      if (outsideAfter.get(table) !== digest) {
+        this.failures.push(
+          `rebuilder ${step.id} changed rows of ${table} outside its partition`
+        );
+      }
+    });
     const rowsWritten: Record<string, number> = {};
-    for (const table of step.writes.filter((t) => baseNames.has(t))) {
+    for (const table of writtenTables(step).filter((t) => baseNames.has(t))) {
       rowsWritten[table] = await admin.rowCount(MAIN_DB, table);
     }
     const outcome = this.record(
@@ -522,10 +553,23 @@ class RebuildRun {
         all.push(step);
       }
     }
-    for (const step of orderSteps(all).order) {
+    const order = kind === 'seed' ? orderSeeds(all) : orderSteps(all);
+    for (const step of order.order) {
       if (!this.stepCodeHere(step)) {
         this.o.log(`${kind} ${step.id}: planned, its module is not here`);
         this.plannedSteps.push(step.id);
+        continue;
+      }
+      const missing = this.missingNeeds(step);
+      if (missing.length) {
+        this.o.log(
+          `${kind} ${step.id}: planned, it needs ${missing
+            .map((need) => need.table)
+            .join(', ')}, not in the schema`
+        );
+        missing.forEach((need) =>
+          this.waitingSteps.push({ step: step.id, ...need })
+        );
         continue;
       }
       this.o.log(`${kind} ${step.id}`);
@@ -534,11 +578,213 @@ class RebuildRun {
     return true;
   }
 
+  /**
+   * For each kept table that rebuilders running here write by partition,
+   * those writers' partitions. A table with a writer of the whole table
+   * running here is never kept beside a partition writer: the registry
+   * refuses the pair.
+   */
+  private runningPartitionsOf(
+    kept: readonly string[]
+  ): Map<string, Partitions> {
+    const keptSet = new Set(kept);
+    const running = this.partitionedTables(
+      this.scopeManifests
+        .flatMap((m) => m.rebuilders)
+        .filter((step) => this.stepRunsHere(step))
+    );
+    return new Map(Array.from(running).filter(([table]) => keptSet.has(table)));
+  }
+
+  /**
+   * The partitions of tables every writer writes in part: the column and
+   * each writer's values. Tables with a whole writer are left out (the
+   * registry refuses them beside a partition).
+   */
+  private partitionedTables(
+    rebuilders: readonly RebuildStep[]
+  ): Map<string, Partitions> {
+    const result = new Map<string, Partitions>();
+    writersOf(rebuilders).forEach((writers, table) => {
+      const partitions = writers.map((w) => w.partition);
+      if (partitions.some((p) => p === null)) return;
+      result.set(table, {
+        columns: partitions[0]!.columns,
+        values: partitions.flatMap((p) => p!.values)
+      });
+    });
+    return result;
+  }
+
+  /**
+   * For each table a rebuilder writes in part: a digest of the rows outside
+   * its partition, the same whatever order MySQL returns them in.
+   */
+  private async outsideDigests(
+    step: RebuildStep,
+    baseNames: ReadonlySet<string>
+  ): Promise<Map<string, string>> {
+    const digests = new Map<string, string>();
+    for (const { table, partition } of partitionsOf(step)) {
+      if (!baseNames.has(table)) continue;
+      const rows = await this.admin!.partitionRows(
+        MAIN_DB,
+        table,
+        partition.columns,
+        partition.values,
+        false
+      );
+      const hashes = rows
+        .map((row) =>
+          createHash('sha256').update(canonicalRow(row)).digest('hex')
+        )
+        .sort((a, b) => (a < b ? -1 : Number(a > b)));
+      digests.set(
+        table,
+        createHash('sha256').update(hashes.join('\n')).digest('hex')
+      );
+    }
+    return digests;
+  }
+
+  /**
+   * Partitioned tables holding rows no writer's partition owns after the
+   * seeds: rows no rebuilder rebuilds.
+   */
+  private async findUnownedRows(base: ReadonlySet<string>): Promise<string[]> {
+    const found: string[] = [];
+    const partitioned = this.partitionedTables(
+      this.o.manifests.flatMap((m) => m.rebuilders)
+    );
+    for (const [table, { columns, values }] of Array.from(partitioned)) {
+      if (!base.has(table)) continue;
+      const rows = await this.admin!.partitionRowCount(
+        MAIN_DB,
+        table,
+        columns,
+        values,
+        false
+      );
+      if (rows) {
+        found.push(
+          `${table} (${rows} rows whose (${columns.join(', ')}) is in no writer's partition)`
+        );
+      }
+    }
+    return found;
+  }
+
   /** False for a planned module step whose module isn't in this tree. */
   private stepCodeHere(step: RebuildStep): boolean {
     if (step.origin !== 'planned' || !('module' in step.run)) return true;
     const base = path.join(this.o.repoRoot, step.run.module);
     return ['.ts', '.js'].some((ext) => fs.existsSync(`${base}${ext}`));
+  }
+
+  /**
+   * MySQL decides whether two partitions' tuples are one value: before the
+   * seeds, every pair of tuples from different writers of a table is
+   * compared under its columns' own collations, and any equal pair fails
+   * the run (the registry's fold is only an early warning).
+   */
+  private async partitionsDisjointInMysql(): Promise<boolean> {
+    const problems: string[] = [];
+    const writers = writersOf(this.o.manifests.flatMap((m) => m.rebuilders));
+    for (const [table, list] of Array.from(writers)) {
+      if (list.length < 2 || list.some((w) => !w.partition)) continue;
+      if (!this.baseTables.has(table)) continue;
+      // By step id, so a report names the pair the same way every run.
+      const sorted = [...list].sort((x, y) =>
+        x.step < y.step ? -1 : Number(x.step > y.step)
+      );
+      const columns = sorted[0].partition!.columns;
+      for (let i = 0; i < sorted.length; i++) {
+        for (const other of sorted.slice(i + 1)) {
+          const a = sorted[i].partition!.values;
+          const b = other.partition!.values;
+          let overlaps: [number, number][];
+          try {
+            overlaps = await this.admin!.overlappingTuples(
+              MAIN_DB,
+              table,
+              columns,
+              a,
+              b
+            );
+          } catch (error) {
+            problems.push(
+              `${table}'s partitions can't be compared in MySQL: ${String(error)}`
+            );
+            continue;
+          }
+          for (const [x, y] of overlaps) {
+            problems.push(
+              `${table}'s partitions overlap under its collation: ${sorted[i].step}'s (${a[x].join(', ')}) and ${other.step}'s (${b[y].join(', ')})`
+            );
+          }
+        }
+      }
+    }
+    this.failures.push(...problems);
+    return problems.length === 0;
+  }
+
+  /**
+   * A checkpoint column must exist and be NOT NULL, or its MAX may not be
+   * the row the table's readers take.
+   */
+  private async checkpointColumnsHold(): Promise<boolean> {
+    const entries = this.entries();
+    const problems: string[] = [];
+    for (const [table, { entry }] of Array.from(entries)) {
+      const checkpoint = entry.checkpoint;
+      if (!checkpoint || !this.baseTables.has(table)) continue;
+      const nullable = await this.admin!.columnNullable(
+        MAIN_DB,
+        table,
+        checkpoint.column
+      );
+      if (nullable === null) {
+        problems.push(`${table} has no checkpoint column ${checkpoint.column}`);
+      } else if (nullable) {
+        problems.push(
+          `${table}'s checkpoint column ${checkpoint.column} may hold NULL`
+        );
+      }
+    }
+    this.failures.push(...problems);
+    return problems.length === 0;
+  }
+
+  /**
+   * Needs, of the steps this run runs (every area's seeds, and the
+   * scope's rebuilders), on tables the schema already has: they no longer
+   * hold anything back and should be dropped.
+   */
+  private findStaleNeeds(base: ReadonlySet<string>): string[] {
+    return [
+      ...this.o.manifests.flatMap((m) => m.seeds),
+      ...this.scopeManifests.flatMap((m) => m.rebuilders)
+    ].flatMap((step) =>
+      (step.needs ?? [])
+        .filter((need) => base.has(need.table))
+        .map(
+          (need) =>
+            `${step.id} needs ${need.table}, which the schema now has: drop the need`
+        )
+    );
+  }
+
+  /** The tables a step needs that the fresh schema doesn't have. */
+  private missingNeeds(step: RebuildStep): NeededTable[] {
+    return (step.needs ?? []).filter(
+      (need) => !this.baseTables.has(need.table)
+    );
+  }
+
+  /** Whether a step runs here: its code is here and its tables are. */
+  private stepRunsHere(step: RebuildStep): boolean {
+    return this.stepCodeHere(step) && this.missingNeeds(step).length === 0;
   }
 
   /** The API bundled once per run, as its deploy bundles it. */
@@ -660,12 +906,17 @@ class RebuildRun {
     const entries = this.entries();
     const result = new Map<string, TableSnapshot>();
     for (const table of tables) {
-      const volatile = (entries.get(table)?.entry.volatileColumns ?? []).map(
-        (c) => c.column
-      );
+      const entry = entries.get(table)?.entry;
+      const volatile = (entry?.volatileColumns ?? []).map((c) => c.column);
       result.set(
         table,
-        await snapshotTable(this.admin!, MAIN_DB, table, volatile)
+        await snapshotTable(
+          this.admin!,
+          MAIN_DB,
+          table,
+          volatile,
+          entry?.checkpoint?.column
+        )
       );
     }
     return result;
@@ -692,11 +943,32 @@ class RebuildRun {
 
   private async drop(kept: readonly string[]): Promise<boolean> {
     const admin = this.admin!;
+    // In an area run, a table this area shares with another area's writer
+    // loses only this area's partition; the other's rows stay as seeded.
+    const ownPartitions = new Map<string, Partitions>();
+    if (this.o.area) {
+      const all = this.partitionedTables(
+        this.o.manifests.flatMap((m) => m.rebuilders)
+      );
+      this.partitionedTables(
+        this.scopeManifests.flatMap((m) => m.rebuilders)
+      ).forEach((own, table) => {
+        if (all.get(table)!.values.length > own.values.length) {
+          ownPartitions.set(table, own);
+        }
+      });
+    }
     if (this.o.area) {
       this.o.log(
         `truncating ${this.rebuiltTables.length} tables of ${this.o.area}`
       );
-      await admin.truncate(MAIN_DB, this.rebuiltTables);
+      await admin.truncate(
+        MAIN_DB,
+        this.rebuiltTables.filter((t) => !ownPartitions.has(t))
+      );
+      for (const [table, { columns, values }] of Array.from(ownPartitions)) {
+        await admin.deletePartition(MAIN_DB, table, columns, values);
+      }
       // Kept rows go back to their state before the first probe pass.
       await admin.truncate(MAIN_DB, kept);
       for (const table of kept) await admin.copyRows(KEPT_DB, MAIN_DB, table);
@@ -710,21 +982,41 @@ class RebuildRun {
       await admin.truncate(MAIN_DB, kept);
       for (const table of kept) await admin.copyRows(KEPT_DB, MAIN_DB, table);
     }
+    // A table kept because a skipped rebuilder writes part of it keeps
+    // only the parts no rebuilder running here writes: the copy put every
+    // row back, so the running writers' partitions are emptied for them to
+    // rebuild.
+    const running = this.runningPartitionsOf(kept);
+    for (const [table, { columns, values }] of Array.from(running)) {
+      await admin.deletePartition(MAIN_DB, table, columns, values);
+    }
     const keptSet = new Set(kept);
     const entries = this.entries();
     const mustBeEmpty = this.o.area
       ? this.rebuiltTables
-      : this.live
-          .filter(
-            (t) =>
-              t.type === 'BASE TABLE' &&
-              !keptSet.has(t.name) &&
-              entries.get(t.name)?.entry.class === 'INDEX'
-          )
-          .map((t) => t.name);
+      : [
+          ...this.live
+            .filter(
+              (t) =>
+                t.type === 'BASE TABLE' &&
+                !keptSet.has(t.name) &&
+                entries.get(t.name)?.entry.class === 'INDEX'
+            )
+            .map((t) => t.name),
+          ...Array.from(running.keys())
+        ];
     for (const table of mustBeEmpty) {
-      if ((await admin.rowCount(MAIN_DB, table)) > 0)
-        this.notEmptyAfterDrop.push(table);
+      const own = running.get(table) ?? ownPartitions.get(table);
+      const rows = own
+        ? await admin.partitionRowCount(
+            MAIN_DB,
+            table,
+            own.columns,
+            own.values,
+            true
+          )
+        : await admin.rowCount(MAIN_DB, table);
+      if (rows > 0) this.notEmptyAfterDrop.push(table);
     }
     if (this.notEmptyAfterDrop.length) {
       this.failures.push(
@@ -784,6 +1076,10 @@ class RebuildRun {
     const base = new Set(
       this.live.filter((t) => t.type === 'BASE TABLE').map((t) => t.name)
     );
+    this.baseTables = base;
+    this.staleNeeds = this.findStaleNeeds(base);
+    if (!(await this.checkpointColumnsHold())) return;
+    if (!(await this.partitionsDisjointInMysql())) return;
     const all = expandAll(this.o.manifests);
     const waits = (call: ProbeCall) =>
       call.probe.origin === 'planned' &&
@@ -793,16 +1089,17 @@ class RebuildRun {
     const rebuilders = this.scopeManifests.flatMap((m) => m.rebuilders);
     this.rebuiltTables = Array.from(
       new Set(
-        rebuilders.filter((s) => this.stepCodeHere(s)).flatMap((s) => s.writes)
+        rebuilders.filter((s) => this.stepRunsHere(s)).flatMap(writtenTables)
       )
     )
       .filter((t) => base.has(t))
       .sort((a, b) => a.localeCompare(b));
     this.plannedWrites = new Set(
-      rebuilders.filter((s) => !this.stepCodeHere(s)).flatMap((s) => s.writes)
+      rebuilders.filter((s) => !this.stepRunsHere(s)).flatMap(writtenTables)
     );
     if (!(await this.runSteps('seed', this.o.manifests))) return;
     this.seededRows = await this.countIndexRows(base);
+    this.unownedRows = await this.findUnownedRows(base);
     const kept = this.keptTables();
     this.o.log(`copying ${kept.length} kept tables aside`);
     await this.admin!.copyTables(MAIN_DB, KEPT_DB, kept);
@@ -860,6 +1157,9 @@ class RebuildRun {
         .map((source) => source.name),
       plannedTables: (this.registry?.plannedAbsent ?? []).length,
       plannedSteps: this.plannedSteps,
+      waitingSteps: this.waitingSteps,
+      staleNeeds: this.staleNeeds,
+      unownedRows: this.unownedRows,
       heldProbes: this.heldProbes,
       notInSchema: this.notInSchema().map((a) => a.table),
       openRoutes: this.routes().open.length
@@ -969,16 +1269,31 @@ class RebuildRun {
     );
   }
 
-  /** The rebuilt tables' columns the row comparison leaves out. */
+  /**
+   * What the row comparison leaves out of the rebuilt tables: volatile
+   * columns, and a checkpoint table's rows before its newest.
+   */
   private volatileColumns(): RunReport['tables']['volatileColumns'] {
     const entries = this.entries();
-    return this.rebuiltTables.flatMap((table) =>
-      (entries.get(table)?.entry.volatileColumns ?? []).map((v) => ({
-        table,
-        column: v.column,
-        reason: v.reason
-      }))
-    );
+    return this.rebuiltTables.flatMap((table) => {
+      const entry = entries.get(table)?.entry;
+      return [
+        ...(entry?.volatileColumns ?? []).map((v) => ({
+          table,
+          column: v.column,
+          reason: v.reason
+        })),
+        ...(entry?.checkpoint
+          ? [
+              {
+                table,
+                column: `rows before the newest by ${entry.checkpoint.column}`,
+                reason: entry.checkpoint.reason
+              }
+            ]
+          : [])
+      ];
+    });
   }
 
   /** Rebuilders that declare reads of kept tables. */

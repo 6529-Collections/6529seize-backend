@@ -14,6 +14,7 @@ import { SqlOperationTiming } from '@/db/sql-operation-timing';
 import {
   closeAfterCommitScope,
   openAfterCommitScope,
+  runBeforeCommitChecks,
   runAfterCommitCallbacks
 } from '@/db/after-commit';
 import {
@@ -209,6 +210,7 @@ export async function execNativeTransactionally<T>(
     }
     openAfterCommitScope(connection);
     const result = await executable({ connection: connection });
+    runBeforeCommitChecks(connection);
     await new Promise<void>((resolve, reject) => {
       connection.commit((err: any) => {
         if (err) {
@@ -265,10 +267,14 @@ export async function execBudgetedNativeTransactionally<T>(
         };
       },
       budget,
-      (handle) => {
+      async (handle) => {
         scoped = handle;
         openAfterCommitScope(handle);
-        return executable({ connection: handle as mysql.PoolConnection });
+        const work = await executable({
+          connection: handle as mysql.PoolConnection
+        });
+        runBeforeCommitChecks(handle);
+        return work;
       }
     );
   } catch (e) {

@@ -56,12 +56,24 @@ function guardNodeOptions(repoRoot: string): string {
     .join(' ');
 }
 
+/**
+ * A Windows tool by its full path under System32 rather than from PATH.
+ * An unset or empty SystemRoot falls back to C:\Windows.
+ */
+export function systemTool(...parts: string[]): string {
+  return path.join(
+    process.env.SystemRoot || 'C:\\Windows',
+    'System32',
+    ...parts
+  );
+}
+
 /** Ends a process this run started, with its children on Windows. */
 export function endProcess(pid: number): void {
   if (process.platform === 'win32') {
     // taskkill can hang on a busy server; it gets a minute, then the
     // caller's fallback ends the process itself.
-    spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], {
+    spawnSync(systemTool('taskkill.exe'), ['/PID', String(pid), '/T', '/F'], {
       windowsHide: true,
       timeout: 60_000
     });

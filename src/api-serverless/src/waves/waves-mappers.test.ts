@@ -6,6 +6,12 @@ import { ApiWaveCreditScope } from '../generated/models/ApiWaveCreditScope';
 import { ApiWaveCreditType } from '../generated/models/ApiWaveCreditType';
 import { ApiWaveType } from '../generated/models/ApiWaveType';
 import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
+import { stubWavesScope } from '@/tests/fixtures/waves-scope.fixture';
+
+// Waves scope lookups read the database; here every wave moves.
+beforeEach(() => {
+  stubWavesScope();
+});
 
 describe('WavesMappers', () => {
   it('maps approve decision counts and closed-state eligibility', () => {
@@ -64,6 +70,7 @@ describe('WavesMappers', () => {
         votingCreditNftsByWaveId: {},
         pinnedWaveIds: new Set<string>(),
         identityWaveIds: new Set<string>(),
+        staysOnSiteByWaveId: new Map<string, boolean>(),
         authenticatedUserId: waveEntity.created_by
       },
       noRightToVote: false,
@@ -146,6 +153,7 @@ describe('WavesMappers', () => {
         votingCreditNftsByWaveId: {},
         pinnedWaveIds: new Set<string>(),
         identityWaveIds: new Set<string>(),
+        staysOnSiteByWaveId: new Map<string, boolean>(),
         authenticatedUserId: 'viewer-1'
       },
       noRightToVote: false,
@@ -432,6 +440,7 @@ describe('WavesMappers', () => {
         },
         pinnedWaveIds: new Set<string>(),
         identityWaveIds: new Set<string>(),
+        staysOnSiteByWaveId: new Map<string, boolean>(),
         authenticatedUserId: waveEntity.created_by
       },
       noRightToVote: false,

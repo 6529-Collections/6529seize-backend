@@ -1,0 +1,303 @@
+import { Request, Response } from 'express';
+import * as Joi from 'joi';
+import { asyncRouter } from '../async.router';
+import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
+import { getValidatedByJoiOrThrow } from '../validation';
+import { getIp } from '../policies/policies';
+import {
+  chainRelayService,
+  RelaySubmitRequest
+} from '@/chain-relay/chain-relay.service';
+import { PendingOperation } from '@/chain-relay/chain-pending-operations.db';
+import { assertRelayedPollCreationOpen } from '@/waves-freeze/waves-chain-polls';
+
+/**
+ * Operations people sign with their wallets for the 6529 chain: relayed to
+ * the chain, or, for an identity join, held until both its wallets (the
+ * identity's and the joining one) have signed. Drafts come from the chain
+ * gateway (POST /v1/draft); the wallet signs its typed data; the signatures
+ * come here. POST /submit also takes what a session key may sign (profile
+ * edits, votes, poll ballots, ratings) for the signed-in wallet's identity.
+ */
+const router = asyncRouter();
+
+interface SignatureBody {
+  readonly role: number;
+  readonly key_type: number;
+  readonly sig: string;
+}
+
+const SignatureSchema = Joi.object<SignatureBody>({
+  role: Joi.number().integer().min(0).max(255).required(),
+  key_type: Joi.number().integer().valid(1).required(),
+  sig: Joi.string()
+    .pattern(/^0x[0-9a-fA-F]{130}$/)
+    .required()
+});
+
+interface SubmitBody {
+  readonly tx_id: string;
+  readonly signed?: string;
+  readonly unsigned?: string;
+  readonly signatures?: SignatureBody[];
+}
+
+/**
+ * A wallet's or a secp256k1 session key's signature (key_type 1, 65 bytes),
+ * or an Ed25519 session key's (key_type 2, 64 bytes).
+ */
+const SubmitSignatureSchema = Joi.object<SignatureBody>({
+  role: Joi.number().integer().min(0).max(255).required(),
+  key_type: Joi.number().integer().valid(1, 2).required(),
+  sig: Joi.string()
+    .pattern(/^0x(?:[0-9a-fA-F]{128}|[0-9a-fA-F]{130})$/)
+    .required()
+});
+
+/** Hex characters of the largest operation taken: 144 KiB as bytes. */
+const MAX_OPERATION_HEX = 2 + 2 * 144 * 1024;
+
+/**
+ * Either the whole signed operation, or its unsigned bytes and signatures,
+ * with its draft's txId (what every signer signed) in both forms.
+ */
+const SubmitSchema = Joi.object<SubmitBody>({
+  tx_id: Joi.string()
+    .pattern(/^0x[0-9a-fA-F]{64}$/)
+    .required(),
+  signed: Joi.string()
+    .max(MAX_OPERATION_HEX)
+    .pattern(/^0x[0-9a-fA-F]+$/),
+  unsigned: Joi.string()
+    .max(MAX_OPERATION_HEX)
+    .pattern(/^0x[0-9a-fA-F]+$/),
+  signatures: Joi.array().items(SubmitSignatureSchema).min(1).max(8)
+})
+  .xor('signed', 'unsigned')
+  .with('unsigned', 'signatures')
+  .without('signed', 'signatures');
+
+interface PendingBody {
+  readonly tx_id: string;
+  readonly op_type: string | number;
+  readonly principal: string | null;
+  readonly unsigned: string;
+  readonly typed_data: {
+    domain: Record<string, unknown>;
+    primaryType: string;
+    types: Record<string, { name: string; type: string }[]>;
+    message: Record<string, unknown>;
+  };
+  readonly expires_at: number;
+  readonly required: { role: number; key_type: number; signer: string }[];
+  readonly signatures: SignatureBody[];
+}
+
+const PendingSchema = Joi.object<PendingBody>({
+  tx_id: Joi.string()
+    .pattern(/^0x[0-9a-fA-F]{64}$/)
+    .required(),
+  op_type: Joi.alternatives()
+    .try(Joi.string().max(50), Joi.number().integer().min(0))
+    .required(),
+  principal: Joi.string()
+    .pattern(/^0x[0-9a-fA-F]{64}$/)
+    .allow(null)
+    .required(),
+  unsigned: Joi.string()
+    .pattern(/^0x[0-9a-fA-F]+$/)
+    .required(),
+  typed_data: Joi.object({
+    domain: Joi.object().unknown(true).required(),
+    primaryType: Joi.string().max(100).required(),
+    types: Joi.object()
+      .pattern(
+        Joi.string().max(100),
+        Joi.array().items(
+          Joi.object({
+            name: Joi.string().max(100).required(),
+            type: Joi.string().max(100).required()
+          })
+        )
+      )
+      .required(),
+    message: Joi.object().unknown(true).required()
+  }).required(),
+  expires_at: Joi.number().integer().required(),
+  required: Joi.array()
+    .items(
+      Joi.object({
+        role: Joi.number().integer().min(0).max(255).required(),
+        key_type: Joi.number().integer().valid(1).required(),
+        signer: Joi.string()
+          .pattern(/^0x[0-9a-fA-F]{40}$/)
+          .required()
+      })
+    )
+    .min(1)
+    .max(4)
+    .required(),
+  signatures: Joi.array().items(SignatureSchema).min(1).max(4).required()
+});
+
+const toSignature = (it: SignatureBody) => ({
+  role: it.role,
+  keyType: it.key_type,
+  sig: it.sig
+});
+
+/**
+ * An operation as the API shows it. A pending one past its expiry is
+ * EXPIRED: it can no longer land. `final` is true once nothing about it
+ * will change: the chain's tx is final, or it is FAILED, CANCELLED or
+ * EXPIRED. Poll GET /chain/pending/:tx_id until it is. No signature is
+ * ever shown, to anyone: the relay submits, so no wallet needs another's,
+ * and a signature handed out could finish a join its signer had withdrawn.
+ * `signed` says who has signed.
+ */
+export function toApiPendingOperation(
+  op: PendingOperation,
+  now: number = Date.now()
+) {
+  const status =
+    op.status === 'PENDING' && op.expires_at <= now ? 'EXPIRED' : op.status;
+  const result = op.result_json ? JSON.parse(op.result_json) : null;
+  return {
+    tx_id: op.tx_id,
+    op_type: op.op_type,
+    principal: op.principal,
+    unsigned: op.unsigned_hex,
+    typed_data: JSON.parse(op.typed_data_json),
+    created_by: op.created_by,
+    expires_at: op.expires_at,
+    status,
+    final:
+      status === 'FAILED' ||
+      status === 'CANCELLED' ||
+      status === 'EXPIRED' ||
+      (status === 'SUBMITTED' && result?.tx?.status === 'final'),
+    result,
+    last_error: op.last_error,
+    created_at: op.created_at,
+    updated_at: op.updated_at,
+    signers: op.signers.map((it) => ({
+      role: it.role,
+      key_type: it.key_type,
+      signer: it.signer,
+      // A withdrawn operation keeps when each signer signed, not the sig.
+      signed: !!it.sig || it.signed_at !== null,
+      sig: null
+    }))
+  };
+}
+
+router.post(
+  '/submit',
+  needsAuthenticatedUser(),
+  async (req: Request<any, any, SubmitBody>, res: Response) => {
+    const wallet = getWalletOrThrow(req);
+    const body = getValidatedByJoiOrThrow(req.body, SubmitSchema);
+    // No POLL_CREATE from the switch-on until 6529.io shows the chain's polls.
+    assertRelayedPollCreationOpen(body.signed ?? body.unsigned!);
+    const request: RelaySubmitRequest = body.signed
+      ? { signed: body.signed, txId: body.tx_id }
+      : {
+          unsigned: body.unsigned!,
+          signatures: body.signatures!.map(toSignature),
+          txId: body.tx_id
+        };
+    res.send(await chainRelayService.submit(request, wallet, getIp(req)));
+  }
+);
+
+router.get('/pending', needsAuthenticatedUser(), async (req, res) => {
+  const wallet = getWalletOrThrow(req);
+  const ops = await chainRelayService.awaiting(wallet);
+  res.send({ data: ops.map((op) => toApiPendingOperation(op)) });
+});
+
+router.post(
+  '/pending',
+  needsAuthenticatedUser(),
+  async (req: Request<any, any, PendingBody>, res: Response) => {
+    const wallet = getWalletOrThrow(req);
+    const body = getValidatedByJoiOrThrow(req.body, PendingSchema);
+    const op = await chainRelayService.createPending(
+      {
+        txId: body.tx_id,
+        opType: body.op_type,
+        principal: body.principal,
+        unsigned: body.unsigned,
+        typedData: body.typed_data,
+        expiresAt: body.expires_at,
+        required: body.required.map((it) => ({
+          role: it.role,
+          keyType: it.key_type,
+          signer: it.signer
+        })),
+        signatures: body.signatures.map(toSignature)
+      },
+      wallet,
+      getIp(req)
+    );
+    res.status(201).send(toApiPendingOperation(op));
+  }
+);
+
+router.get(
+  '/pending/:tx_id',
+  needsAuthenticatedUser(),
+  async (req: Request<{ tx_id: string }>, res: Response) => {
+    getWalletOrThrow(req);
+    res.send(
+      toApiPendingOperation(await chainRelayService.get(req.params.tx_id))
+    );
+  }
+);
+
+router.post(
+  '/pending/:tx_id/signatures',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ tx_id: string }, any, SignatureBody>,
+    res: Response
+  ) => {
+    const wallet = getWalletOrThrow(req);
+    const body = getValidatedByJoiOrThrow(req.body, SignatureSchema);
+    const op = await chainRelayService.addSignature(
+      req.params.tx_id,
+      toSignature(body),
+      wallet,
+      getIp(req)
+    );
+    res.send(toApiPendingOperation(op));
+  }
+);
+
+router.post(
+  '/pending/:tx_id/retry',
+  needsAuthenticatedUser(),
+  async (req: Request<{ tx_id: string }>, res: Response) => {
+    const wallet = getWalletOrThrow(req);
+    res.send(
+      toApiPendingOperation(
+        await chainRelayService.retry(req.params.tx_id, wallet, getIp(req))
+      )
+    );
+  }
+);
+
+router.delete(
+  '/pending/:tx_id',
+  needsAuthenticatedUser(),
+  async (req: Request<{ tx_id: string }>, res: Response) => {
+    const wallet = getWalletOrThrow(req);
+    res.send(
+      toApiPendingOperation(
+        await chainRelayService.cancel(req.params.tx_id, wallet)
+      )
+    );
+  }
+);
+
+export default router;

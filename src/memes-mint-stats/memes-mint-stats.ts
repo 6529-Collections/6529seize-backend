@@ -13,8 +13,11 @@ import { Logger } from '@/logging';
 import { fetchPaymentDetailsForMemeToken } from '@/memes-mint-stats/payment-details';
 import { numbers } from '@/numbers';
 import { sqlExecutor } from '@/sql-executor';
+import { Time } from '@/time';
 
 const ARTIST_SPLIT_RATIO = 0.5;
+/** A card's mint closes at this hour (UTC) on the day after its mint date. */
+const MEMES_MINT_STATS_CLOSE_HOUR = 17;
 const MEMES_MINT_STATS_ETH_DECIMAL_PLACES = 10;
 const logger = Logger.get('MEMES_MINT_STATS');
 
@@ -134,6 +137,25 @@ export async function calculateMemesMintStats(
     artist_split_usd: artistSplitUsd,
     payment_details: paymentDetails
   };
+}
+
+/** Whether a card's mint has closed, so its mint stats can be written. */
+export function isMemesMintStatsEligible(
+  mintDate: Date,
+  now: Time = Time.now()
+): boolean {
+  const mintCloseAt = new Date(
+    Date.UTC(
+      mintDate.getUTCFullYear(),
+      mintDate.getUTCMonth(),
+      mintDate.getUTCDate() + 1,
+      MEMES_MINT_STATS_CLOSE_HOUR,
+      0,
+      0,
+      0
+    )
+  );
+  return now.gte(Time.fromDate(mintCloseAt));
 }
 
 export async function insertMemesMintStatsIfMissing(

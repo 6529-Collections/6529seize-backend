@@ -40,6 +40,43 @@ describe('table snapshots', () => {
     );
   });
 
+  it('matches rows by content when the primary key is volatile', () => {
+    const volatile = new Set(['id']);
+    const before = snapshotRows(
+      't',
+      [
+        { id: 1, v: 'a' },
+        { id: 2, v: 'b' }
+      ],
+      ['id'],
+      volatile
+    );
+    // A rebuild that numbers the same rows anew, in another order.
+    const renumbered = snapshotRows(
+      't',
+      [
+        { id: 7, v: 'b' },
+        { id: 8, v: 'a' }
+      ],
+      ['id'],
+      volatile
+    );
+    expect(diffSnapshots(before, renumbered).same).toBe(true);
+    const changed = snapshotRows(
+      't',
+      [
+        { id: 7, v: 'b' },
+        { id: 8, v: 'c' }
+      ],
+      ['id'],
+      volatile
+    );
+    const diff = diffSnapshots(before, changed);
+    expect(diff.same).toBe(false);
+    expect(diff.missing).toHaveLength(1);
+    expect(diff.extra).toHaveLength(1);
+  });
+
   it('reports rows only before, only after and changed, by primary key', () => {
     const before = snapshotRows(
       't',

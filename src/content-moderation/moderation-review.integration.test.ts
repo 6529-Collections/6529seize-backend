@@ -66,6 +66,36 @@ describe('Moderation review durable integration', () => {
       expect.objectContaining({ id: bio.item.id })
     ]);
   });
+
+  it('keeps retired group names out of check lists, cases and counts', async () => {
+    const legacy = await db.start(
+      { ...input(), subject_type: 'GROUP_NAME', operation: 'SAVE' },
+      'PUBLIC_FIELD'
+    );
+    const bio = await db.start(input(), 'PUBLIC_FIELD');
+    await db.finish(legacy.evaluationId, {
+      outcome: 'REJECT',
+      result: {},
+      fallback: 'legacy failure'
+    });
+    await db.finish(bio.evaluationId, { outcome: 'REJECT', result: {} });
+
+    expect((await db.list({ limit: 10 })).items.map((item) => item.id)).toEqual(
+      [bio.item.id]
+    );
+    expect(
+      (await db.list({ subject_type: 'GROUP_NAME', limit: 10 })).items
+    ).toEqual([]);
+    expect((await db.listReviewCases({ limit: 10 })).items).toEqual([
+      expect.objectContaining({ check_id: bio.item.id })
+    ]);
+    expect(await db.counts()).toMatchObject({
+      needs_review: 1,
+      rejected_today: 1,
+      evaluator_failures_today: 0
+    });
+    expect((await db.get(legacy.item.id)).evidence).toEqual(input().evidence);
+  });
   describe('legacy report materialization', () => {
     const ctx = () => ({
       authenticationContext: AuthenticationContext.fromProfileId('dev')

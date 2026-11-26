@@ -1,3 +1,4 @@
+import { creditTdh } from '@/rates/rating-credit';
 import { nextgenTraitSetsDb } from '@/collecting/nextgen-trait-sets.db';
 import {
   ADDRESS_CONSOLIDATION_KEY,
@@ -404,7 +405,7 @@ export async function fetchNextGenCollectionTokens(
     token.generator = JSON.parse(token.generator);
     token.mint_data = JSON.parse(token.mint_data);
     token.level = calculateLevel({
-      tdh: (token.tdh ?? 0) + (token.xtdh ?? 0),
+      tdh: creditTdh(token.tdh ?? 0, token.xtdh),
       rep: token.rep_score
     });
   });

@@ -23,6 +23,9 @@ import {
   DROP_BOOSTS_TABLE,
   DROP_CLIENT_IDS_TABLE,
   DROP_CURATIONS_TABLE,
+  DROP_FORGE_FUNDING_TABLE,
+  DROP_FORGE_JOBS_TABLE,
+  DROP_FORGE_READINESS_TABLE,
   DROP_MEDIA_TABLE,
   DROP_MEDIA_UPLOADS_TABLE,
   DROP_MENTIONED_GROUPS_TABLE,
@@ -55,6 +58,9 @@ import {
   WAVE_GROUP_NOTIFICATION_SUBSCRIPTIONS_TABLE,
   WAVE_METRICS_TABLE,
   WAVE_READER_METRICS_TABLE,
+  WAVE_RELAY_EVENTS_TABLE,
+  WAVE_RELAY_REJECTS_TABLE,
+  WAVE_RELAY_SUBSCRIPTIONS_TABLE,
   WAVE_SCORE_REFRESH_REQUESTS_TABLE,
   WAVES_ARCHIVE_TABLE,
   WAVES_METADATA_TABLE,
@@ -184,10 +190,36 @@ export const LEGACY_DM_WAVE_STEPS: readonly LegacyDmDropStep[] = [
     bindings: 1
   },
   { table: DEVICE_SIGNED_EVENTS_TABLE, where: 'wave_id = ?', bindings: 1 },
+  // Relay events the drop index read for the wave (it names it in `wave`).
+  // By wave only, not by drop: an edit, delete or reaction names its drop
+  // in drop_id, and one in another wave that names a DM drop is that other
+  // wave's, which stays.
+  { table: WAVE_RELAY_EVENTS_TABLE, where: 'wave = ?', bindings: 1 },
   { table: HELP_BOT_INTERACTIONS_TABLE, where: 'wave_id = ?', bindings: 1 },
   { table: DROP_MEDIA_UPLOADS_TABLE, where: 'wave_id = ?', bindings: 1 },
   { table: ACTIVITY_EVENTS_TABLE, where: 'wave_id = ?', bindings: 1 },
   { table: DROP_REACTIONS_TABLE, where: 'wave_id = ?', bindings: 1 }
+];
+
+/**
+ * A purge step for the drop index's relay copies, run once per DM wave
+ * after the wave steps. A relay can name a wave by its id in any case, by
+ * its id without dashes, or by the derived id a subscription to every wave
+ * uses (relayWaveKey), which `wave = ?` alone misses. `?` binds a list:
+ * `keys`, the waves' relay keys; `names`, every name a relay may give
+ * them (the id, without dashes, and the key).
+ */
+export interface LegacyDmRelayStep {
+  readonly table: string;
+  readonly where: string;
+  readonly binds: 'keys' | 'names';
+}
+
+export const LEGACY_DM_RELAY_STEPS: readonly LegacyDmRelayStep[] = [
+  // Every event the drop index read for the wave carries its key.
+  { table: WAVE_RELAY_EVENTS_TABLE, where: 'wave_key in (?)', binds: 'keys' },
+  // Rejected copies, kept whole, under the name the relay gave the wave.
+  { table: WAVE_RELAY_REJECTS_TABLE, where: 'wave in (?)', binds: 'names' }
 ];
 
 /** The fixed text every DM description drop is created with. */
@@ -230,6 +262,12 @@ export const LEGACY_DM_KEPT_TABLES: Readonly<Record<string, string>> = {
     'Deleted by drop and by wave with identity_notifications, not by a plain step',
   [PUSH_NOTIFICATION_CANCELLATIONS_TABLE]:
     'Receives the cancelled notification ids so queued pushes are dropped',
+  [DROP_FORGE_FUNDING_TABLE]:
+    'Operational-wallet funding receipts and report acknowledgements; no message content, retained to prevent duplicate processing',
+  [DROP_FORGE_JOBS_TABLE]:
+    'Distribution job checkpoints and report acknowledgements; no message content, retained to prevent duplicate processing',
+  [DROP_FORGE_READINESS_TABLE]:
+    'Mint readiness checkpoints and Ops report acknowledgements; retained to prevent duplicate processing',
   [ATTACHMENTS_TABLE]:
     'Deleted only when no remaining drop links the attachment (shared assets survive)',
   [DROPS_TABLE]: 'Deleted by id after every drop-owned row is gone',
@@ -244,7 +282,9 @@ export const LEGACY_DM_KEPT_TABLES: Readonly<Record<string, string>> = {
   [WAVE_SCORE_REFRESH_REQUESTS_TABLE]: 'Score refresh queue; no content',
   [AD_SOURCES]:
     "An author's own deliberate import of their drop into artwork documentation; counted by the plan, kept pending the owner's call",
-  [AD_DROP_LINKS]: 'Links of those imports; kept with them'
+  [AD_DROP_LINKS]: 'Links of those imports; kept with them',
+  [WAVE_RELAY_SUBSCRIPTIONS_TABLE]:
+    "The drop index's place in each relay's log of a wave; no content"
 };
 
 /** DM waves with an open moderation report (reported before any purge). */

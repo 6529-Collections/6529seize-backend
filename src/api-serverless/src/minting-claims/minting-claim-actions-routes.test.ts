@@ -33,7 +33,10 @@ jest.mock('@/api/minting-claims/minting-claim-actions.api.service', () => ({
   getSupportedMintingClaimActionTypesOrThrow: jest.fn(),
   upsertMintingClaimActionAndGetResponse: jest.fn()
 }));
-jest.mock('@/time', () => ({ Timer: { getFromRequest: jest.fn(() => ({})) } }));
+jest.mock('@/time', () => ({
+  ...jest.requireActual('@/time'),
+  Timer: { getFromRequest: jest.fn(() => ({})) }
+}));
 import '@/api/minting-claims/api.minting-claims.actions.routes';
 
 const router = jest.mocked(asyncRouter).mock.results[0].value;

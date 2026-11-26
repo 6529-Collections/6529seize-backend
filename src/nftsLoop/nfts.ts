@@ -40,7 +40,10 @@ import {
   resolveAuditS3CheckConcurrency
 } from '@/nftsLoop/s3-uploader-audit';
 import { publishPendingS3UploaderOutboxJobs } from '@/nftsLoop/s3-uploader-outbox.publisher';
-import { insertMemesMintStatsIfMissing } from '@/memes-mint-stats/memes-mint-stats';
+import {
+  insertMemesMintStatsIfMissing,
+  isMemesMintStatsEligible
+} from '@/memes-mint-stats/memes-mint-stats';
 import {
   getPayloadPreview,
   isPlainObject,
@@ -96,7 +99,6 @@ function logError(arg1: any, ...rest: any[]) {
 }
 
 const MINT_DATE_GRACE_PERIOD_DAYS = 7;
-const MEMES_MINT_STATS_CLOSE_HOUR = 17;
 
 export enum NFT_MODE {
   DISCOVER = 'discover',
@@ -1228,28 +1230,12 @@ async function populateMintStatsForEligibleNFTs(
       continue;
     }
 
-    if (!isMintStatsEligible(mintDate)) {
+    if (!isMemesMintStatsEligible(mintDate)) {
       continue;
     }
 
     await populateMintStats(nft.id, mintDate);
   }
-}
-
-function isMintStatsEligible(mintDate: Date): boolean {
-  const mintCloseAt = new Date(
-    Date.UTC(
-      mintDate.getUTCFullYear(),
-      mintDate.getUTCMonth(),
-      mintDate.getUTCDate() + 1,
-      MEMES_MINT_STATS_CLOSE_HOUR,
-      0,
-      0,
-      0
-    )
-  );
-
-  return Time.now().gte(Time.fromDate(mintCloseAt));
 }
 
 async function populateMintStats(

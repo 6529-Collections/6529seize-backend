@@ -384,6 +384,28 @@ export * from '../models/ApiDropCompetitionEntryReference';
 export * from '../models/ApiDropContextProfileContext';
 export * from '../models/ApiDropCuration';
 export * from '../models/ApiDropCurationRequest';
+export * from '../models/ApiDropForgeAction';
+export * from '../models/ApiDropForgeControlRequest';
+export * from '../models/ApiDropForgeFundingRequest';
+export * from '../models/ApiDropForgeFundingResponse';
+export * from '../models/ApiDropForgeJob';
+export * from '../models/ApiDropForgeJobRequest';
+export * from '../models/ApiDropForgeLaunch';
+export * from '../models/ApiDropForgeListPage';
+export * from '../models/ApiDropForgeListPageRowsInner';
+export * from '../models/ApiDropForgeManualRequest';
+export * from '../models/ApiDropForgeManualResponse';
+export * from '../models/ApiDropForgePhase';
+export * from '../models/ApiDropForgePhaseInput';
+export * from '../models/ApiDropForgePlanRequest';
+export * from '../models/ApiDropForgePreparation';
+export * from '../models/ApiDropForgeRecovery';
+export * from '../models/ApiDropForgeRecoveryAllocation';
+export * from '../models/ApiDropForgeRecoveryAttempt';
+export * from '../models/ApiDropForgeRecoveryRequest';
+export * from '../models/ApiDropForgeSettings';
+export * from '../models/ApiDropForgeSettingsRequest';
+export * from '../models/ApiDropForgeSupplyEvidence';
 export * from '../models/ApiDropGroupMention';
 export * from '../models/ApiDropHiddenState';
 export * from '../models/ApiDropId';
@@ -695,6 +717,8 @@ export * from '../models/ApiProfileCmsAgentSchemaBundleSourcePacketTypesInner';
 export * from '../models/ApiProfileCmsAgentSourcePacket';
 export * from '../models/ApiProfileCmsAgentSourcePacketSafety';
 export * from '../models/ApiProfileCmsAgentSourcePacketValidationDiagnostics';
+export * from '../models/ApiProfileCmsChainDocument';
+export * from '../models/ApiProfileCmsChainDocuments';
 export * from '../models/ApiProfileCmsPackage';
 export * from '../models/ApiProfileCmsPackageExport';
 export * from '../models/ApiProfileCmsPackageStatus';
@@ -1232,7 +1256,7 @@ import { ApiCommunityMetric } from '../models/ApiCommunityMetric';
 import { ApiCommunityMetricSample } from '../models/ApiCommunityMetricSample';
 import { ApiCommunityMetrics } from '../models/ApiCommunityMetrics';
 import { ApiCommunityMetricsSeries } from '../models/ApiCommunityMetricsSeries';
-import { ApiCompetition                         } from '../models/ApiCompetition';
+import { ApiCompetition                           } from '../models/ApiCompetition';
 import { ApiCompetitionActionRequest } from '../models/ApiCompetitionActionRequest';
 import { ApiCompetitionAward } from '../models/ApiCompetitionAward';
 import { ApiCompetitionAwardPage } from '../models/ApiCompetitionAwardPage';
@@ -1391,6 +1415,28 @@ import { ApiDropCompetitionEntryReference } from '../models/ApiDropCompetitionEn
 import { ApiDropContextProfileContext } from '../models/ApiDropContextProfileContext';
 import { ApiDropCuration } from '../models/ApiDropCuration';
 import { ApiDropCurationRequest } from '../models/ApiDropCurationRequest';
+import { ApiDropForgeAction              , ApiDropForgeActionKindEnum  , ApiDropForgeActionStateEnum          } from '../models/ApiDropForgeAction';
+import { ApiDropForgeControlRequest , ApiDropForgeControlRequestOperationEnum   } from '../models/ApiDropForgeControlRequest';
+import { ApiDropForgeFundingRequest } from '../models/ApiDropForgeFundingRequest';
+import { ApiDropForgeFundingResponse } from '../models/ApiDropForgeFundingResponse';
+import { ApiDropForgeJob     , ApiDropForgeJobKindEnum  , ApiDropForgeJobStatusEnum      } from '../models/ApiDropForgeJob';
+import { ApiDropForgeJobRequest  , ApiDropForgeJobRequestKindEnum     } from '../models/ApiDropForgeJobRequest';
+import { ApiDropForgeLaunch    , ApiDropForgeLaunchStateEnum             } from '../models/ApiDropForgeLaunch';
+import { ApiDropForgeListPage } from '../models/ApiDropForgeListPage';
+import { ApiDropForgeListPageRowsInner } from '../models/ApiDropForgeListPageRowsInner';
+import { ApiDropForgeManualRequest, ApiDropForgeManualRequestActionEnum  , ApiDropForgeManualRequestOperationEnum     } from '../models/ApiDropForgeManualRequest';
+import { ApiDropForgeManualResponse } from '../models/ApiDropForgeManualResponse';
+import { ApiDropForgePhase } from '../models/ApiDropForgePhase';
+import { ApiDropForgePhaseInput } from '../models/ApiDropForgePhaseInput';
+import { ApiDropForgePlanRequest } from '../models/ApiDropForgePlanRequest';
+import { ApiDropForgePreparation, ApiDropForgePreparationModeEnum   } from '../models/ApiDropForgePreparation';
+import { ApiDropForgeRecovery    , ApiDropForgeRecoveryOutcomeEnum      } from '../models/ApiDropForgeRecovery';
+import { ApiDropForgeRecoveryAllocation } from '../models/ApiDropForgeRecoveryAllocation';
+import { ApiDropForgeRecoveryAttempt , ApiDropForgeRecoveryAttemptOperationEnum      } from '../models/ApiDropForgeRecoveryAttempt';
+import { ApiDropForgeRecoveryRequest     , ApiDropForgeRecoveryRequestOperationEnum   } from '../models/ApiDropForgeRecoveryRequest';
+import { ApiDropForgeSettings } from '../models/ApiDropForgeSettings';
+import { ApiDropForgeSettingsRequest } from '../models/ApiDropForgeSettingsRequest';
+import { ApiDropForgeSupplyEvidence, ApiDropForgeSupplyEvidenceStatusEnum           } from '../models/ApiDropForgeSupplyEvidence';
 import { ApiDropGroupMention } from '../models/ApiDropGroupMention';
 import { ApiDropHiddenState } from '../models/ApiDropHiddenState';
 import { ApiDropId } from '../models/ApiDropId';
@@ -1702,7 +1748,9 @@ import { ApiProfileCmsAgentSchemaBundleSourcePacketTypesInner , ApiProfileCmsAge
 import { ApiProfileCmsAgentSourcePacket, ApiProfileCmsAgentSourcePacketSchemaEnum       , ApiProfileCmsAgentSourcePacketVisibilityEnum          } from '../models/ApiProfileCmsAgentSourcePacket';
 import { ApiProfileCmsAgentSourcePacketSafety } from '../models/ApiProfileCmsAgentSourcePacketSafety';
 import { ApiProfileCmsAgentSourcePacketValidationDiagnostics } from '../models/ApiProfileCmsAgentSourcePacketValidationDiagnostics';
-import { ApiProfileCmsPackage               } from '../models/ApiProfileCmsPackage';
+import { ApiProfileCmsChainDocument } from '../models/ApiProfileCmsChainDocument';
+import { ApiProfileCmsChainDocuments } from '../models/ApiProfileCmsChainDocuments';
+import { ApiProfileCmsPackage                 } from '../models/ApiProfileCmsPackage';
 import { ApiProfileCmsPackageExport                 } from '../models/ApiProfileCmsPackageExport';
 import { ApiProfileCmsPackageStatus } from '../models/ApiProfileCmsPackageStatus';
 import { ApiProfileCmsPackageStorageUploadResult } from '../models/ApiProfileCmsPackageStorageUploadResult';
@@ -1886,7 +1934,7 @@ import { ApiWaveMentionSearchResult } from '../models/ApiWaveMentionSearchResult
 import { ApiWaveMetadata } from '../models/ApiWaveMetadata';
 import { ApiWaveMetadataType } from '../models/ApiWaveMetadataType';
 import { ApiWaveMetrics } from '../models/ApiWaveMetrics';
-import { ApiWaveMin                            } from '../models/ApiWaveMin';
+import { ApiWaveMin                             } from '../models/ApiWaveMin';
 import { ApiWaveNotificationPreferences } from '../models/ApiWaveNotificationPreferences';
 import { ApiWaveOutcome        } from '../models/ApiWaveOutcome';
 import { ApiWaveOutcomeCredit } from '../models/ApiWaveOutcomeCredit';
@@ -2134,6 +2182,20 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiCreateConnectionShareResponseTargetClientTypeEnum",
     "ApiCreateLegacyDesktopConnectionShareRequestClientTypeEnum",
     "ApiDecentralizedMediaProtocol",
+    "ApiDropForgeActionKindEnum",
+    "ApiDropForgeActionStateEnum",
+    "ApiDropForgeControlRequestOperationEnum",
+    "ApiDropForgeJobKindEnum",
+    "ApiDropForgeJobStatusEnum",
+    "ApiDropForgeJobRequestKindEnum",
+    "ApiDropForgeLaunchStateEnum",
+    "ApiDropForgeManualRequestActionEnum",
+    "ApiDropForgeManualRequestOperationEnum",
+    "ApiDropForgePreparationModeEnum",
+    "ApiDropForgeRecoveryOutcomeEnum",
+    "ApiDropForgeRecoveryAttemptOperationEnum",
+    "ApiDropForgeRecoveryRequestOperationEnum",
+    "ApiDropForgeSupplyEvidenceStatusEnum",
     "ApiDropGroupMention",
     "ApiDropMainType",
     "ApiDropMediaStatus",
@@ -2678,6 +2740,28 @@ let typeMap: {[index: string]: any} = {
     "ApiDropContextProfileContext": ApiDropContextProfileContext,
     "ApiDropCuration": ApiDropCuration,
     "ApiDropCurationRequest": ApiDropCurationRequest,
+    "ApiDropForgeAction": ApiDropForgeAction,
+    "ApiDropForgeControlRequest": ApiDropForgeControlRequest,
+    "ApiDropForgeFundingRequest": ApiDropForgeFundingRequest,
+    "ApiDropForgeFundingResponse": ApiDropForgeFundingResponse,
+    "ApiDropForgeJob": ApiDropForgeJob,
+    "ApiDropForgeJobRequest": ApiDropForgeJobRequest,
+    "ApiDropForgeLaunch": ApiDropForgeLaunch,
+    "ApiDropForgeListPage": ApiDropForgeListPage,
+    "ApiDropForgeListPageRowsInner": ApiDropForgeListPageRowsInner,
+    "ApiDropForgeManualRequest": ApiDropForgeManualRequest,
+    "ApiDropForgeManualResponse": ApiDropForgeManualResponse,
+    "ApiDropForgePhase": ApiDropForgePhase,
+    "ApiDropForgePhaseInput": ApiDropForgePhaseInput,
+    "ApiDropForgePlanRequest": ApiDropForgePlanRequest,
+    "ApiDropForgePreparation": ApiDropForgePreparation,
+    "ApiDropForgeRecovery": ApiDropForgeRecovery,
+    "ApiDropForgeRecoveryAllocation": ApiDropForgeRecoveryAllocation,
+    "ApiDropForgeRecoveryAttempt": ApiDropForgeRecoveryAttempt,
+    "ApiDropForgeRecoveryRequest": ApiDropForgeRecoveryRequest,
+    "ApiDropForgeSettings": ApiDropForgeSettings,
+    "ApiDropForgeSettingsRequest": ApiDropForgeSettingsRequest,
+    "ApiDropForgeSupplyEvidence": ApiDropForgeSupplyEvidence,
     "ApiDropHiddenState": ApiDropHiddenState,
     "ApiDropId": ApiDropId,
     "ApiDropMedia": ApiDropMedia,
@@ -2962,6 +3046,8 @@ let typeMap: {[index: string]: any} = {
     "ApiProfileCmsAgentSourcePacket": ApiProfileCmsAgentSourcePacket,
     "ApiProfileCmsAgentSourcePacketSafety": ApiProfileCmsAgentSourcePacketSafety,
     "ApiProfileCmsAgentSourcePacketValidationDiagnostics": ApiProfileCmsAgentSourcePacketValidationDiagnostics,
+    "ApiProfileCmsChainDocument": ApiProfileCmsChainDocument,
+    "ApiProfileCmsChainDocuments": ApiProfileCmsChainDocuments,
     "ApiProfileCmsPackage": ApiProfileCmsPackage,
     "ApiProfileCmsPackageExport": ApiProfileCmsPackageExport,
     "ApiProfileCmsPackageStorageUploadResult": ApiProfileCmsPackageStorageUploadResult,

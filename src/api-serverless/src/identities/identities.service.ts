@@ -38,6 +38,10 @@ import { wavesApiDb } from '@/api/waves/waves.api.db';
 import { ApiProfileClassification } from '@/api/generated/models/ApiProfileClassification';
 import { getLevelFromScore } from '@/profiles/profile-level';
 import { equalIgnoreCase } from '@/strings';
+import {
+  assertIdentityNotFrozen,
+  assertIdentityNotFrozenAtCommit
+} from '@/identity-freeze/identity-freeze';
 import { enums } from '@/enums';
 import { IdentityEntity } from '@/entities/IIdentity';
 import { Time } from '@/time';
@@ -47,8 +51,6 @@ import { profilesDb } from '@/profiles/profiles.db';
 import { profileWavesDb } from '@/profiles/profile-waves.db';
 import { getUserMediaOrigin, NULL_ADDRESS } from '@/constants';
 import { findEnsForAddress } from '@/ens-lookup';
-import { helpBotCreditsService } from '@/help-bot/help-bot-credits.service';
-import { Logger } from '@/logging';
 import { IMMUTABLE_MEDIA_CACHE_CONTROL } from '@/media/media-cache-control';
 import {
   ContentModerationDb,
@@ -67,8 +69,6 @@ function getPfpS3Client(): S3Client {
 }
 
 export class IdentitiesService {
-  private readonly logger = Logger.get(this.constructor.name);
-
   constructor(
     private readonly identitiesDb: IdentitiesDb,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
@@ -225,12 +225,14 @@ export class IdentitiesService {
     identity: string;
     memeOrFile: { file?: Express.Multer.File; meme?: number };
   }): Promise<{ pfp_url: string }> {
+    assertIdentityNotFrozen();
     const { meme, file } = memeOrFile;
     if (!meme && !file) {
       throw new BadRequestException('No PFP provided');
     }
     return await this.identitiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        assertIdentityNotFrozenAtCommit(connection);
         const profile = await this.identityFetcher
           .getIdentityAndConsolidationsByIdentityKey(
             { identityKey: identity },
@@ -512,25 +514,6 @@ export class IdentitiesService {
     });
   }
 
-  private async grantSignupCreditsForProfiles(
-    profiles: readonly Profile[],
-    ctx: RequestContext
-  ) {
-    for (const profile of profiles) {
-      try {
-        await helpBotCreditsService.grantSignupCredits(
-          { profileId: profile.external_id },
-          ctx
-        );
-      } catch (error) {
-        this.logger.error(
-          `Failed to grant signup help bot credits for profile ${profile.external_id}`,
-          error
-        );
-      }
-    }
-  }
-
   public async bulkCreateIdentities(addresses: string[], ctx: RequestContext) {
     try {
       ctx.timer?.start(`${this.constructor.name}->bulkCreateIdentities`);
@@ -545,6 +528,15 @@ export class IdentitiesService {
       const addressesMissingIdentities = addresses.filter(
         (it) => !allIdentitiesAndProfiles[it]
       );
+      // Wallets that already have a profile pass during the freeze; making a
+      // new identity or profile (a nominated wallet, bulk REP) does not.
+      if (
+        addressesMissingIdentities.length ||
+        Object.values(allIdentitiesAndProfiles).some((it) => !it.profile)
+      ) {
+        assertIdentityNotFrozen('nomination');
+        assertIdentityNotFrozenAtCommit(ctx.connection, 'nomination');
+      }
       const newIdentities = addressesMissingIdentities.map<IdentityEntity>(
         (address) => ({
           primary_address: address,
@@ -655,7 +647,6 @@ export class IdentitiesService {
           newProfileEntities.map((it) => it.external_id),
           ctx
         );
-        await this.grantSignupCreditsForProfiles(newProfileEntities, ctx);
       }
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->bulkCreateIdentities`);

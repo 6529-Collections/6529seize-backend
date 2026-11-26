@@ -48,21 +48,31 @@ function sha256(text: string): string {
   return createHash('sha256').update(text).digest('hex');
 }
 
-/** Hashes rows; rows without a primary key are ordered by their hash. */
+/**
+ * Hashes rows; rows without a primary key are ordered by their hash. A
+ * primary key with a volatile column (an auto-increment id the API never
+ * shows, which a rebuild numbers anew) is no key: those rows match by
+ * their other columns, like rows without one.
+ */
 export function snapshotRows(
   table: string,
   rows: readonly Row[],
   primaryKey: readonly string[],
   volatile: ReadonlySet<string> = new Set()
 ): TableSnapshot {
+  const key = primaryKey.some((column) => volatile.has(column))
+    ? []
+    : primaryKey;
   let entries = rows.map((row) => {
     const hash = sha256(canonicalRow(row, volatile));
-    const key = primaryKey.length
-      ? JSON.stringify(primaryKey.map((column) => canonicalValue(row[column])))
-      : hash;
-    return { key, hash };
+    return {
+      key: key.length
+        ? JSON.stringify(key.map((column) => canonicalValue(row[column])))
+        : hash,
+      hash
+    };
   });
-  if (!primaryKey.length) {
+  if (!key.length) {
     entries = entries.sort((a, b) => a.hash.localeCompare(b.hash));
   }
   return {
@@ -74,14 +84,20 @@ export function snapshotRows(
   };
 }
 
+/**
+ * Snapshots a table's rows. With `checkpoint`, only the rows holding the
+ * column's newest value, as MySQL orders it (MAX), the row its readers
+ * take.
+ */
 export async function snapshotTable(
   admin: MysqlAdmin,
   database: string,
   table: string,
-  volatileColumns: readonly string[] = []
+  volatileColumns: readonly string[] = [],
+  checkpoint?: string
 ): Promise<TableSnapshot> {
   const primaryKey = await admin.primaryKey(database, table);
-  const rows = await admin.orderedRows(database, table, primaryKey);
+  const rows = await admin.orderedRows(database, table, primaryKey, checkpoint);
   return snapshotRows(table, rows, primaryKey, new Set(volatileColumns));
 }
 

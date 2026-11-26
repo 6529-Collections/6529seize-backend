@@ -104,6 +104,7 @@ describe('CompetitionService', () => {
       .fn()
       .mockResolvedValue({ last_decision_time: null, decisions_done: 0 }),
     findCompetitionRecordById: jest.fn(),
+    findImportedChainDecisionId: jest.fn().mockResolvedValue(null),
     findFeedEntryReferences: jest.fn().mockResolvedValue([]),
     parseCompetitionRecord: jest.fn((record) => record),
     findCapabilities: jest.fn().mockResolvedValue([]),
@@ -466,6 +467,60 @@ describe('CompetitionService', () => {
     } finally {
       activity.mockRestore();
     }
+  });
+
+  it("shows a decision the chain counts the eligibility an imported one shows, though 6529.io's runtime never runs it", async () => {
+    const chainMade = {
+      ...first,
+      execution_mode: CompetitionExecutionMode.DISABLED,
+      chain_id: `0x${'d1'.repeat(32)}`,
+      participation_config: {
+        ...first.participation_config,
+        group_id: 'entry-group'
+      },
+      voting_config: { ...first.voting_config, group_id: 'vote-group' }
+    };
+    repository.findCompetitionRecordById.mockResolvedValue(chainMade);
+    const read = async (eligible: string[], record: object = chainMade) => {
+      repository.findCompetitionRecordById.mockResolvedValue(record);
+      groupsService.getGroupsUserIsEligibleForByIds.mockResolvedValue(eligible);
+      return (
+        await service.getCompetition(wave.id, first.id, {
+          authenticationContext: {
+            isUserFullyAuthenticated: () => true,
+            isAuthenticatedAsProxy: () => false,
+            getActingAsId: () => 'profile-viewer',
+            hasRightsTo: () => true
+          }
+        } as never)
+      ).permissions;
+    };
+    // A member of both groups, in open periods.
+    expect(await read(['entry-group', 'vote-group'])).toMatchObject({
+      submit: true,
+      vote: true
+    });
+    // Not a member.
+    expect(await read([])).toMatchObject({ submit: false, vote: false });
+    // A member, after the periods ended.
+    const ended = {
+      ...chainMade,
+      participation_config: {
+        ...chainMade.participation_config,
+        ends_at: 1_000
+      },
+      voting_config: { ...chainMade.voting_config, ends_at: 1_000 }
+    };
+    expect(await read(['entry-group', 'vote-group'], ended)).toMatchObject({
+      submit: false,
+      vote: false
+    });
+    // Without a chain id, a DISABLED decision still offers nothing.
+    const { chain_id: _chainId, ...disabled } = chainMade;
+    expect(await read(['entry-group', 'vote-group'], disabled)).toMatchObject({
+      submit: false,
+      vote: false
+    });
   });
 
   it('resolves native-only access groups for detail and list permissions', async () => {
