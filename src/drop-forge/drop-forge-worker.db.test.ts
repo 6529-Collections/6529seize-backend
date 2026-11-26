@@ -23,7 +23,13 @@ import {
   testWallet
 } from '@/drop-forge/drop-forge.test-fixtures';
 import { clearDropForgeTestTables } from '@/drop-forge/drop-forge.db-test-fixtures';
-import { DROP_FORGE_LAUNCHES_TABLE } from '@/constants';
+import {
+  DROP_FORGE_LAUNCHES_TABLE,
+  MINTING_CLAIM_ACTIONS_TABLE,
+  SIGNED_RECORD_LOG_ENTRIES_TABLE
+} from '@/constants';
+import { mintingClaimActionsDb } from '@/api/minting-claims/minting-claim-actions.db';
+import * as supported from '@/minting-claims/minting-claim-actions';
 import { sqlExecutor } from '@/sql-executor';
 import { buildLaunchPlan } from '@/drop-forge/drop-forge.plan';
 import { updateForgeSettings } from '@/drop-forge/drop-forge.settings';
@@ -1079,6 +1085,225 @@ describe('Drop Forge durable worker', () => {
     expect(chain.receipt).toHaveBeenCalledTimes(1);
     expect(chain.receipt).toHaveBeenCalledWith('hash-199');
     expect((await read())!.state).toBe('COMPLETED');
+  });
+  it('completes a launch only once its completion flags are written, retrying one that failed without blocking', async () => {
+    jest
+      .spyOn(supported, 'isSupportedMintingClaimActionType')
+      .mockReturnValue(true);
+    await repository.change(
+      id,
+      async (record) => {
+        const template = record.data.actions[0];
+        record.data.actions = [
+          {
+            ...template,
+            id: 'pay',
+            kind: 'PAY_ARTIST',
+            state: 'CONFIRMED' as const,
+            hash: 'hash-pay',
+            block_hash: 'block'
+          }
+        ];
+      },
+      {}
+    );
+    chain.receipt.mockResolvedValue({
+      status: 1,
+      blockNumber: 100,
+      blockHash: 'block',
+      confirmations: 12
+    });
+    const lockWait = () =>
+      Object.assign(new Error('Lock wait timeout exceeded'), {
+        code: 'ER_LOCK_WAIT_TIMEOUT'
+      });
+    jest
+      .spyOn(mintingClaimActionsDb, 'upsertAction')
+      .mockRejectedValueOnce(lockWait())
+      .mockRejectedValueOnce(lockWait());
+    const flagEvents = async () =>
+      (await read())!.data.events.filter((event) =>
+        event.content.includes('completion flag PAY_ARTIST was not written')
+      );
+    const flags = () =>
+      sqlExecutor.execute<{ action: string }>(
+        `select action from ${MINTING_CLAIM_ACTIONS_TABLE}`
+      );
+
+    // The completing pass holds the flag, and its write fails: the launch
+    // isn't completed, isn't blocked, and says so once.
+    await worker.tick(id);
+    expect(['COMPLETED', 'BLOCKED']).not.toContain((await read())!.state);
+    expect((await read())!.data.completion_flags).toEqual([]);
+    expect(await flagEvents()).toHaveLength(1);
+    expect((await flagEvents())[0].error).toBe(true);
+    await acknowledgeReports();
+    // It fails again on the next pass, with no second event.
+    await worker.tick(id);
+    expect(['COMPLETED', 'BLOCKED']).not.toContain((await read())!.state);
+    expect(await flagEvents()).toHaveLength(1);
+    // Then it is written; the launch completes on the pass after.
+    await worker.tick(id);
+    expect(await flags()).toEqual([{ action: 'PAY_ARTIST' }]);
+    expect((await read())!.data.completion_flags).toEqual(['PAY_ARTIST']);
+    expect(['COMPLETED', 'BLOCKED']).not.toContain((await read())!.state);
+    await worker.tick(id);
+    expect((await read())!.state).toBe('COMPLETED');
+    await sqlExecutor.execute(`delete from ${MINTING_CLAIM_ACTIONS_TABLE}`);
+  });
+  it('commits a confirmed receipt and releases the signer when the flag written with it fails', async () => {
+    jest
+      .spyOn(supported, 'isSupportedMintingClaimActionType')
+      .mockReturnValue(true);
+    await start();
+    const signed = (await read())!.data.actions[0];
+    expect(signed.state).toBe('SIGNED');
+    // A Pay Artist action confirmed earlier, whose flag the reconcile pass
+    // writes with the receipt.
+    await repository.change(
+      id,
+      async (record) => {
+        record.data.actions.push({
+          ...record.data.actions[0],
+          id: 'pay',
+          kind: 'PAY_ARTIST',
+          state: 'CONFIRMED' as const,
+          hash: 'hash-pay',
+          block_hash: 'block'
+        });
+      },
+      {}
+    );
+    chain.receipt.mockResolvedValue({
+      status: 1,
+      blockNumber: 100,
+      blockHash: 'block',
+      confirmations: 12
+    });
+    jest.spyOn(mintingClaimActionsDb, 'upsertAction').mockRejectedValueOnce(
+      Object.assign(new Error('Lock wait timeout exceeded'), {
+        code: 'ER_LOCK_WAIT_TIMEOUT'
+      })
+    );
+
+    await worker.tick(id);
+
+    const after = (await read())!;
+    expect(after.data.actions[0]).toMatchObject({
+      id: signed.id,
+      state: 'CONFIRMED'
+    });
+    expect(after.data.completion_flags).not.toContain('PAY_ARTIST');
+    expect(
+      after.data.events.filter((event) =>
+        event.content.includes('completion flag PAY_ARTIST was not written')
+      )
+    ).toHaveLength(1);
+    expect(
+      await sqlExecutor.execute(
+        `select action from ${MINTING_CLAIM_ACTIONS_TABLE}`
+      )
+    ).toEqual([]);
+    await repository.wallet(
+      `${testConfig.chainId}:${testConfig.signer.toLowerCase()}`,
+      async (pending) => {
+        expect(pending).toMatchObject({ launch_id: null, action_id: null });
+      },
+      {}
+    );
+  });
+  it('keeps the reservation made in the pass whose flag fails, and signs once the warning posts, with the mint log in shadow mode', async () => {
+    const env = { ...process.env };
+    process.env.FEATURE_MINT_LOG_SHADOW = 'true';
+    process.env.FEATURE_MINT_LOG_REPLAY_CHECK = 'true';
+    await sqlExecutor.execute(
+      `delete from ${SIGNED_RECORD_LOG_ENTRIES_TABLE} where lane = 'mint'`
+    );
+    const flagEntries = async () =>
+      (
+        await sqlExecutor.execute<{ entry: string }>(
+          `select entry from ${SIGNED_RECORD_LOG_ENTRIES_TABLE} where lane = 'mint'`
+        )
+      )
+        .map((row) => JSON.parse(row.entry))
+        .filter(
+          (entry) =>
+            entry.t === 'entry' &&
+            entry.body.kind === 'claim.action' &&
+            entry.body.intent.params.action === 'PAY_ARTIST'
+        )
+        .map((entry) => entry.body);
+    try {
+      jest
+        .spyOn(supported, 'isSupportedMintingClaimActionType')
+        .mockReturnValue(true);
+      // A Pay Artist action confirmed earlier, so the pass that reserves the
+      // first action also holds its flag.
+      await repository.change(
+        id,
+        async (record) => {
+          record.data.actions.push({
+            ...record.data.actions[0],
+            id: 'pay',
+            kind: 'PAY_ARTIST',
+            state: 'CONFIRMED' as const,
+            hash: 'hash-pay',
+            block_hash: 'block'
+          });
+        },
+        {}
+      );
+      chain.receipt.mockResolvedValue({
+        status: 1,
+        blockNumber: 100,
+        blockHash: 'block',
+        confirmations: 12
+      });
+      jest.spyOn(mintingClaimActionsDb, 'upsertAction').mockRejectedValueOnce(
+        Object.assign(new Error('Lock wait timeout exceeded'), {
+          code: 'ER_LOCK_WAIT_TIMEOUT'
+        })
+      );
+      const first = (await read())!.data.actions[0];
+
+      await worker.tick(id);
+
+      const reserved = (await read())!;
+      expect(reserved.data.actions[0]).toMatchObject({
+        id: first.id,
+        state: 'RESERVED'
+      });
+      expect(reserved.data.completion_flags).not.toContain('PAY_ARTIST');
+      await repository.wallet(
+        `${testConfig.chainId}:${testConfig.signer.toLowerCase()}`,
+        async (pending) => {
+          expect(pending).toMatchObject({ launch_id: id, action_id: first.id });
+        },
+        {}
+      );
+      // Signing waits for the warning to post, as for any event.
+      expect(signer.sign).not.toHaveBeenCalled();
+      // The failed flag left no entry behind.
+      expect(await flagEntries()).toEqual([]);
+      await acknowledgeReports();
+      await worker.tick(id);
+      expect(signer.sign).toHaveBeenCalledTimes(1);
+      // The receipt's pass wrote the flag again, logged once, as the worker.
+      const logged = await flagEntries();
+      expect(logged).toHaveLength(1);
+      expect(logged[0]).toMatchObject({
+        actor: { type: 'service', authority: 'drop-forge' },
+        checks: { replay: 'match' }
+      });
+    } finally {
+      process.env.FEATURE_MINT_LOG_SHADOW = env.FEATURE_MINT_LOG_SHADOW;
+      process.env.FEATURE_MINT_LOG_REPLAY_CHECK =
+        env.FEATURE_MINT_LOG_REPLAY_CHECK;
+      await sqlExecutor.execute(`delete from ${MINTING_CLAIM_ACTIONS_TABLE}`);
+      await sqlExecutor.execute(
+        `delete from ${SIGNED_RECORD_LOG_ENTRIES_TABLE} where lane = 'mint'`
+      );
+    }
   });
   it('blocks a reorg of the latest confirmed action before reserving another', async () => {
     await start();

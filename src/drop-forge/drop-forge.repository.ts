@@ -24,6 +24,7 @@ import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 import { NotFoundException } from '@/exceptions';
 import { wakeDropForge } from '@/drop-forge/drop-forge.wake';
+import { withDropForgeClaimActions } from '@/mint-log/mint-log-drop-forge';
 
 interface StoredLaunch extends Omit<LaunchRecord, 'data'> {
   data: string | LaunchData;
@@ -242,7 +243,11 @@ export class DropForgeRepository {
             { wrappedConnection: connection }
           );
           if (!row) throw new Error('Signer coordination row missing');
-          const result = await fn(row, ctx);
+          // Completion flags are written, and logged in the mint log, after
+          // fn: the mint log's head is then never held across a chain call.
+          const result = await withDropForgeClaimActions(ctx, () =>
+            fn(row, ctx)
+          );
           await sqlExecutor.execute(
             `UPDATE ${DROP_FORGE_SIGNERS_TABLE} SET launch_id = :launch_id, action_id = :action_id WHERE id = :id`,
             { id, ...row },

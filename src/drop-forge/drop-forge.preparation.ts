@@ -11,6 +11,7 @@ import {
   validateDistribution
 } from '@/api/subscriptions/api.subscriptions.allowlist';
 import { evictRedisCacheForPathWithTimeout } from '@/redis';
+import { afterCommit } from '@/db/after-commit';
 import {
   dropForgePreparationRepository,
   PhasePreparationResult
@@ -18,6 +19,44 @@ import {
 import { canonicalMemePhaseName } from '@/drop-forge/drop-forge.emma-phases';
 import { LaunchSafetyError } from '@/drop-forge/drop-forge.types';
 import { RequestContext } from '@/request.context';
+import {
+  dropForgeNormalizeSpec,
+  dropForgePhaseSpec,
+  logDropForgeWrite
+} from '@/mint-log/mint-log-drop-forge';
+
+/** A phase's rows: the public phase, or a split of its allowlist results. */
+async function writePhase(
+  args: {
+    readonly contract: string;
+    readonly claim: number;
+    readonly phase: string;
+    readonly name: string;
+    readonly rows: Awaited<ReturnType<typeof fetchPhaseResults>>;
+    readonly sourceHash?: string;
+  },
+  ctx: RequestContext
+): Promise<PhasePreparationResult> {
+  const { contract, claim, name } = args;
+  let prepared: PhasePreparationResult;
+  if (args.phase === 'public') {
+    const { airdrops } = await getPublicSubscriptions(contract, claim, ctx);
+    prepared = {
+      phase: 'Public',
+      airdrops,
+      airdrops_unconsolidated: airdrops,
+      allowlists: []
+    };
+  } else {
+    prepared = {
+      phase: name,
+      ...(await splitAllowlistResults(contract, claim, name, args.rows, ctx))
+    };
+  }
+  if (args.sourceHash) prepared.source_hash = args.sourceHash;
+  await populateDistribution(contract, claim, prepared.phase, prepared, ctx);
+  return prepared;
+}
 
 export async function prepareDistributionPhase(
   contract: string,
@@ -80,23 +119,11 @@ export async function prepareDistributionPhase(
         throw new LaunchSafetyError(
           'Preparation was reset during result retrieval; retry the request'
         );
-      let result: PhasePreparationResult;
-      if (phase === 'public') {
-        const { airdrops } = await getPublicSubscriptions(
-          contract,
-          claim,
-          txCtx
-        );
-        result = {
-          phase: 'Public',
-          airdrops,
-          airdrops_unconsolidated: airdrops,
-          allowlists: []
-        };
-      } else {
+      let name = 'Public';
+      if (phase !== 'public') {
         if (!phaseInput)
           throw new LaunchSafetyError('EMMA phase input missing');
-        const name = canonicalMemePhaseName(phaseInput.name) ?? phaseInput.name;
+        name = canonicalMemePhaseName(phaseInput.name) ?? phaseInput.name;
         if (
           Object.values(cached).some(
             (it) => (canonicalMemePhaseName(it.phase) ?? it.phase) === name
@@ -105,33 +132,42 @@ export async function prepareDistributionPhase(
           throw new LaunchSafetyError(
             'A different preparation already used this phase name; reset explicitly before replacing it'
           );
-        result = {
-          phase: name,
-          ...(await splitAllowlistResults(
-            contract,
-            claim,
-            name,
-            phaseInput.rows,
-            txCtx
-          ))
-        };
       }
-      if (sourceHash) result.source_hash = sourceHash;
-      await populateDistribution(contract, claim, result.phase, result, txCtx);
+      // Checked above for every phase but the public one.
+      const rows = phase === 'public' ? [] : (phaseInput?.rows ?? []);
+      // The phase's writes, logged in the mint log as the phase split route
+      // logs them, inside this preparation's transaction.
+      const result = await logDropForgeWrite(
+        dropForgePhaseSpec<PhasePreparationResult>({
+          contract,
+          claim,
+          plan,
+          phase,
+          phaseName: name,
+          results: rows
+        }),
+        txCtx,
+        () =>
+          writePhase({ contract, claim, phase, name, rows, sourceHash }, txCtx)
+      );
       cached[key] = result;
       return result;
     },
     ctx
   );
-  // Invalidation is retried by a replay too, after the durable DB result exists.
-  await Promise.allSettled([
-    evictRedisCacheForPathWithTimeout({
-      path: `/api/minting-claims/${contract}/${claim}/`
-    }),
-    evictRedisCacheForPathWithTimeout({
-      path: `/api/distributions/${contract}/${claim}/overview`
-    })
-  ]);
+  // Invalidation is retried by a replay too, after the durable DB result
+  // exists: after the job's commit, so the transaction (and the mint log's
+  // head) isn't held while Redis answers.
+  await afterCommit(ctx.connection, () =>
+    Promise.allSettled([
+      evictRedisCacheForPathWithTimeout({
+        path: `/api/minting-claims/${contract}/${claim}/`
+      }),
+      evictRedisCacheForPathWithTimeout({
+        path: `/api/distributions/${contract}/${claim}/overview`
+      })
+    ])
+  );
   return result;
 }
 export async function finalizeDistribution(
@@ -143,7 +179,12 @@ export async function finalizeDistribution(
   await dropForgePreparationRepository.run(
     contract,
     claim,
-    async (_, txCtx) => populateDistributionNormalized(contract, claim, txCtx),
+    async (_, txCtx) =>
+      logDropForgeWrite(
+        dropForgeNormalizeSpec({ contract, claim }),
+        txCtx,
+        () => populateDistributionNormalized(contract, claim, txCtx)
+      ),
     ctx,
     false,
     false,

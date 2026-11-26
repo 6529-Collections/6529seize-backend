@@ -25,10 +25,11 @@ import {
   MintLogUnavailableException,
   MintWriteSpec
 } from './mint-log-recorder';
-import type {
-  MintCardEffects,
-  MintCardState,
-  MintLogEntryBody
+import {
+  MINT_KIND_PARTS,
+  type MintCardEffects,
+  type MintCardState,
+  type MintLogEntryBody
 } from './mint-log.types';
 
 const ADMIN = '0x0000000000000000000000000000000000000001';
@@ -597,6 +598,25 @@ describe('MintLogRecorder.writeWithin', () => {
     expect(fake.log.append).toHaveBeenCalledWith(expect.any(Array), {
       connection
     });
+  });
+
+  it("reads the write's own parts with a locking read only when its spec asks for current rows", async () => {
+    const parts = async (spec: MintWriteSpec) => {
+      const fake = new Fake();
+      const { log } = within(fake, { shadow: true });
+      const capture = jest.spyOn(fake.reader, 'capture');
+      await log.writeWithin(spec, connection, async () => {
+        fake.addRow(1);
+      });
+      return capture.mock.calls.map(([, , current]) =>
+        current ? Array.from(current) : null
+      );
+    };
+
+    // Before and after the write.
+    expect(await parts(respondSpec())).toEqual([null, null]);
+    const own = [...MINT_KIND_PARTS['collab.respond']];
+    expect(await parts(respondSpec({ readCurrent: true }))).toEqual([own, own]);
   });
 
   it('keeps the caller write when the log fails in shadow mode', async () => {

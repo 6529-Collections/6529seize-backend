@@ -93,6 +93,15 @@ export interface MintWriteSpec<T = unknown> {
    * since other writes in between log their own changes.
    */
   readonly lockScope?: 'write' | 'capture';
+  /**
+   * writeWithin only: read the write's own parts with FOR UPDATE. For a
+   * caller whose transaction may hold a snapshot older than its locks (Drop
+   * Forge's job and signer transactions run at the server's REPEATABLE
+   * READ): its DELETEs and UPDATEs act on the latest rows, and a plain read
+   * would miss rows committed in between: a delete of such a row would go
+   * unlogged, and an update would be logged against a stale before.
+   */
+  readonly readCurrent?: boolean;
 }
 
 export class InvalidSignedRecordException extends CustomApiCompliantException {
@@ -132,6 +141,8 @@ interface Captured {
   readonly card: MintCardRef;
   readonly before: MintCardState;
   readonly inputs: Record<string, unknown>;
+  /** Parts read with FOR UPDATE: the write's own parts (readCurrent). */
+  readonly current?: ReadonlySet<string>;
 }
 
 /**
@@ -298,8 +309,11 @@ export class MintLogRecorder {
         mintHeadKey(MINT_KIND_CHAIN[spec.kind], card)
       );
       const inputs = spec.inputs ? await spec.inputs(connection) : {};
-      const before = await this.reader.capture(card, connection);
-      return { head, captured: { card, before, inputs } };
+      const current = spec.readCurrent
+        ? new Set<string>(MINT_KIND_PARTS[spec.kind])
+        : undefined;
+      const before = await this.reader.capture(card, connection, current);
+      return { head, captured: { card, before, inputs, current } };
     });
     const value = await run();
     if (!started) return value;
@@ -562,7 +576,11 @@ export class MintLogRecorder {
     head: MintLogHead,
     connection: ConnectionWrapper<any>
   ): Promise<MintLogEntryBody | null> {
-    const after = await this.reader.capture(captured.card, connection);
+    const after = await this.reader.capture(
+      captured.card,
+      connection,
+      captured.current
+    );
     const effects = diffCardState(captured.before, after);
     if (!needsEntry(spec, outcome, effects)) return null;
     const replay = this.features.isMintLogReplayCheckEnabled()
@@ -690,12 +708,20 @@ export class MintLogRecorder {
       const mismatches: string[] = [];
       const undo = diffCardState(after, captured.before);
       await this.writer.apply(captured.card, undo, connection);
-      const undone = await this.reader.capture(captured.card, connection);
+      const undone = await this.reader.capture(
+        captured.card,
+        connection,
+        captured.current
+      );
       mismatches.push(
         ...differingParts(undone, captured.before).map((part) => `undo:${part}`)
       );
       await this.writer.apply(captured.card, effects, connection);
-      const redone = await this.reader.capture(captured.card, connection);
+      const redone = await this.reader.capture(
+        captured.card,
+        connection,
+        captured.current
+      );
       mismatches.push(
         ...differingParts(redone, after).map((part) => `redo:${part}`)
       );

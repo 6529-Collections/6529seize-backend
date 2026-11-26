@@ -151,6 +151,10 @@ export class DropForgeWorker {
     private readonly signer: { sign(unsigned: string): Promise<string> }
   ) {}
 
+  /** Stores a launch again when a held completion flag fails to write. */
+  private readonly saveLaunch = (record: LaunchRecord, ctx: RequestContext) =>
+    this.repository.save(record, ctx);
+
   async tick(target?: string): Promise<void> {
     const walletId = `${this.config.chainId}:${this.config.signer.toLowerCase()}`;
     const work = await this.repository.wallet(
@@ -276,7 +280,7 @@ export class DropForgeWorker {
             )
           ).metadata
         );
-        await mirrorCompletion(record, ctx);
+        await mirrorCompletion(record, ctx, this.saveLaunch);
       } catch (error) {
         if (error instanceof LaunchRpcUnavailableError) throw error;
         setLaunchState(
@@ -413,12 +417,19 @@ export class DropForgeWorker {
       await this.repository.save(record, ctx);
       return null;
     }
-    await mirrorCompletion(record, ctx);
+    const flagged = await mirrorCompletion(record, ctx, this.saveLaunch);
     if (record.data.events.some((event) => !event.drop_id)) {
       await this.repository.save(record, ctx);
       return null;
     }
     if (record.data.actions.every(isLaunchActionSettled)) {
+      // The flags are written at the end of this pass. A launch completes on
+      // a pass with none left to write, so one that fails to write is
+      // retried on the next pass instead of left behind a completed launch.
+      if (flagged) {
+        await this.repository.save(record, ctx);
+        return null;
+      }
       setLaunchState(
         record,
         'COMPLETED',
@@ -442,7 +453,7 @@ export class DropForgeWorker {
         return work;
       }
     }
-    await mirrorCompletion(record, ctx);
+    await mirrorCompletion(record, ctx, this.saveLaunch);
     await this.repository.save(record, ctx);
     return null;
   }
@@ -914,7 +925,7 @@ export class DropForgeWorker {
             pending,
             await this.chain.now()
           );
-          await mirrorCompletion(record, ctx);
+          await mirrorCompletion(record, ctx, this.saveLaunch);
           await this.repository.save(record, ctx);
           return;
         }
@@ -952,7 +963,7 @@ export class DropForgeWorker {
                 pending,
                 await this.chain.now()
               );
-              await mirrorCompletion(record, ctx);
+              await mirrorCompletion(record, ctx, this.saveLaunch);
               await this.repository.save(record, ctx);
             }
             return;
