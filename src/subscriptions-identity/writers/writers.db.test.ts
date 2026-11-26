@@ -275,20 +275,24 @@ async function seedWideIdentity(): Promise<{
   return { W, P9, wideKey };
 }
 
-/** Cut, load and verify; with `goLive`, set the switch time to now. */
+/** The opening's fixed cut time; every fixture time after it is after the cut. */
+const CUT_AT_MS = Date.parse('2026-11-26T12:00:00Z');
+
+/**
+ * Cut, load and verify; with `goLive`, set the switch just after the cut. A
+ * switch must come within the cut window, and the cut is a fixed time, so
+ * the switch can't be "now": it is a time that has passed whenever this runs.
+ */
 async function cutAndLoad(goLive: boolean) {
-  const files = await cutOpeningFiles(
-    mirrorIdentityDirectory,
-    Date.parse('2026-11-26T12:00:00Z')
-  );
+  const files = await cutOpeningFiles(mirrorIdentityDirectory, CUT_AT_MS);
   const parsed = parseOpeningFiles(files.openingBytes, files.historyBytes);
   await loadOpeningFiles(parsed);
   const g4 = await compareAndMarkVerified(parsed, mirrorIdentityDirectory);
   expect(g4.ok).toBe(true);
   if (goLive) {
-    expect(await scheduleIdentitySwitch(Date.now(), parsed.openingSha256)).toBe(
-      true
-    );
+    expect(
+      await scheduleIdentitySwitch(CUT_AT_MS + 5, parsed.openingSha256)
+    ).toBe(true);
   }
   subscriptionsIdentitySwitch.invalidate();
   return files;
