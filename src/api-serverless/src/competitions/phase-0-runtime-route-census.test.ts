@@ -17,9 +17,17 @@ type GetCall = {
   readonly cache: ManifestRoute['cache'] | null;
 };
 
+const RETIRED_NEXTGEN_GET_ROUTES = [
+  '/api/nextgen/allowlist_phases',
+  '/api/nextgen/collections/:id/tokens/:token',
+  '/api/nextgen/proofs',
+  '/api/nextgen/tokens/:id/transactions'
+];
+
 const RETIRED_GET_ROUTES = new Set([
   '/api/delegations/minting/:wallet',
   '/api/groups_im_eligible_for',
+  ...RETIRED_NEXTGEN_GET_ROUTES,
   '/deploy/release-bus/controls',
   '/deploy/release-candidates',
   '/deploy/release-trains',
@@ -173,11 +181,27 @@ describe('Phase 0 permanent mounted GET route census', () => {
     expect(manifest.baseline.counts.runtime_route_shapes).toBe(288);
     expect(manifest.baseline.counts.openapi_get_operations).toBe(183);
     expect(manifestPaths.size).toBe(288);
-    expect(RETIRED_GET_ROUTES.size).toBe(9);
+    expect(RETIRED_GET_ROUTES.size).toBe(13);
     expect(
       Array.from(RETIRED_GET_ROUTES).filter(
         (route) => !manifestPaths.has(route)
       )
+    ).toEqual([]);
+    expect(
+      manifest.routes.filter((route) => !RETIRED_GET_ROUTES.has(route.path))
+    ).toHaveLength(275);
+  });
+
+  it('excludes all four retired NextGen paths from the NextGen router', () => {
+    const sourcePath = path.join(
+      repositoryRoot,
+      'src/api-serverless/src/nextgen/nextgen.routes.ts'
+    );
+    const routes = getCalls(sourcePath).flatMap(({ paths }) =>
+      paths.map((route) => `/api/nextgen${route}`)
+    );
+    expect(
+      routes.filter((route) => RETIRED_NEXTGEN_GET_ROUTES.includes(route))
     ).toEqual([]);
   });
 
