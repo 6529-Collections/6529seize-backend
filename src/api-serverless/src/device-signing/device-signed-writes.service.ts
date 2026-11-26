@@ -2,6 +2,7 @@ import * as Joi from 'joi';
 import { AuthenticationContext } from '@/auth-context';
 import { dropsDb, DropsDb } from '@/drops/drops.db';
 import { DeviceGrantEntity } from '@/entities/IDeviceGrant';
+import { DropType } from '@/entities/IDrop';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { DeviceSignedEventEntity } from '@/entities/IDeviceSignedEvent';
 import { ApiCompliantException, NotFoundException } from '@/exceptions';
@@ -22,11 +23,79 @@ import {
   DeviceEventKind,
   verifyEd25519EventSignature
 } from './device-event';
+import {
+  WaveRelayScope,
+  waveRelayScope,
+  WAVES_ON_CHAIN_FLAG_ENV,
+  WAVES_SWITCH_ON_AT_ENV,
+  wavesSwitchedOn
+} from '@/wave-relay-publish/wave-relay-scope';
 import { DeviceSigningDb, deviceSigningDb } from './device-signing.db';
 
 export const DEVICE_SIGNATURE_FIELD = 'device_signature';
 export const DEVICE_SIGNATURE_MAX_CLOCK_SKEW_MS = 10 * 60 * 1000;
 export const INVALID_DEVICE_SIGNATURE_PREFIX = 'Invalid device signature:';
+
+/**
+ * From waves' switch-on to the 6529 chain, drops travel peer to peer as
+ * device-signed events, so a write without a device signature can't reach
+ * the relays. With FEATURE_WAVES_DEVICE_SIGNATURE_REQUIRED=true, from the
+ * switch-on (WAVES_SWITCH_ON_AT, or FEATURE_WAVES_ON_CHAIN=true), drop
+ * posts, edits, deletes and reactions without one are refused, except in
+ * direct messages and every other wave that stays on 6529.io (they stay
+ * off the relays: wave-relay-scope.ts). The flag can be set ahead of the
+ * switch-on: nothing is refused before it.
+ */
+export const DEVICE_SIGNATURE_REQUIRED_CODE = 'DEVICE_SIGNATURE_REQUIRED';
+
+export const DEVICE_SIGNATURE_REQUIRED_MESSAGE =
+  `Posts in waves are now signed by your device. ` +
+  `Sign in again on this device to set it up, then post again.`;
+
+export const DEVICE_SIGNATURE_REQUIRED_PROXY_MESSAGE =
+  `Posts in waves are now signed by the author's own device, ` +
+  `so a proxy can't post, edit or react for them.`;
+
+const requirementLogger = Logger.get('DEVICE_SIGNATURE_REQUIRED');
+let warnedNoSwitchOn = false;
+
+/**
+ * Whether writes without a device signature are refused now: the flag is
+ * on and waves have switched on (wavesSwitchedOn). Read on each request,
+ * so a process that started before WAVES_SWITCH_ON_AT refuses from that
+ * time on. A wave that stays on 6529.io is never refused (see
+ * assertUnsignedWriteAllowed). The flag with no switch-on set at all
+ * (neither WAVES_SWITCH_ON_AT nor FEATURE_WAVES_ON_CHAIN) refuses nothing,
+ * and says so once; a WAVES_SWITCH_ON_AT that is not a time is logged by
+ * wavesSwitchedOn.
+ */
+export function isDeviceSignatureRequired(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  nowMillis: number = Date.now()
+): boolean {
+  if (env.FEATURE_WAVES_DEVICE_SIGNATURE_REQUIRED !== 'true') return false;
+  if (
+    !warnedNoSwitchOn &&
+    env[WAVES_ON_CHAIN_FLAG_ENV] !== 'true' &&
+    !env[WAVES_SWITCH_ON_AT_ENV]?.trim()
+  ) {
+    warnedNoSwitchOn = true;
+    requirementLogger.warn(
+      `[DEVICE SIGNATURES NOT REQUIRED] FEATURE_WAVES_DEVICE_SIGNATURE_REQUIRED is true, but neither ${WAVES_SWITCH_ON_AT_ENV} nor ${WAVES_ON_CHAIN_FLAG_ENV} is set: nothing is refused until one is`
+    );
+  }
+  return wavesSwitchedOn(env, nowMillis);
+}
+
+export class DeviceSignatureRequiredException extends ApiCompliantException {
+  constructor(message: string = DEVICE_SIGNATURE_REQUIRED_MESSAGE) {
+    super(message, DEVICE_SIGNATURE_REQUIRED_CODE);
+  }
+
+  getStatusCode(): number {
+    return 403;
+  }
+}
 
 export class InvalidDeviceSignatureException extends ApiCompliantException {
   constructor(reason: string) {
@@ -195,7 +264,11 @@ export class DeviceSignedWritesService {
     private readonly db: DeviceSigningDb,
     private readonly identities: IdentitiesDb,
     private readonly drops: DropsDb,
-    private readonly now: () => number = () => Date.now()
+    private readonly now: () => number = () => Date.now(),
+    private readonly waveScope: Pick<
+      WaveRelayScope,
+      'staysOnSite'
+    > = waveRelayScope
   ) {}
 
   /** POST /drops: the wave and reply target come from the request. */
@@ -215,6 +288,9 @@ export class DeviceSignedWritesService {
     ctx: SignedWriteContext
   ): Promise<T> {
     if (envelope === undefined) {
+      if (this.signatureRequired()) {
+        await this.assertUnsignedWriteAllowed({ waveId }, ctx);
+      }
       return write();
     }
     const reservation = await this.verifyAndReserve(
@@ -280,6 +356,9 @@ export class DeviceSignedWritesService {
     ctx: SignedWriteContext
   ): Promise<T> {
     if (envelope === undefined) {
+      if (this.signatureRequired()) {
+        await this.assertUnsignedWriteAllowed({ waveId, dropId }, ctx);
+      }
       return this.runUnsigned(kind, dropId, write, ctx);
     }
     const storedWaveId =
@@ -476,6 +555,70 @@ export class DeviceSignedWritesService {
     }
     await this.finalize(reservation, dropIdOf(result), ctx);
     return result;
+  }
+
+  /** isDeviceSignatureRequired at this service's clock, per request. */
+  private signatureRequired(): boolean {
+    return isDeviceSignatureRequired(process.env, this.now());
+  }
+
+  /**
+   * Refuses a write without a device signature once they are required,
+   * except in a direct message or another wave that stays on 6529.io.
+   */
+  private async assertUnsignedWriteAllowed(
+    target: { readonly waveId?: string; readonly dropId?: string },
+    ctx: SignedWriteContext
+  ): Promise<void> {
+    // On the writer: a drop or direct message made a moment ago counts.
+    const wave = await this.db.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const waveId =
+          target.waveId ??
+          (target.dropId
+            ? (await this.drops.findDropById(target.dropId, connection))
+                ?.wave_id
+            : undefined);
+        return waveId
+          ? this.drops.findWaveByIdOrNull(waveId, connection)
+          : null;
+      }
+    );
+    // A missing drop or wave answers as it does today (not found, or a
+    // delete that does nothing); a direct message stays open.
+    if (!wave || wave.is_direct_message) {
+      return;
+    }
+    // A wave that stays on 6529.io stays open as today: its drops never go
+    // to the relays.
+    if (await this.waveScope.staysOnSite(wave.id)) {
+      return;
+    }
+    throw new DeviceSignatureRequiredException(
+      ctx.authenticationContext.isAuthenticatedAsProxy()
+        ? DEVICE_SIGNATURE_REQUIRED_PROXY_MESSAGE
+        : DEVICE_SIGNATURE_REQUIRED_MESSAGE
+    );
+  }
+
+  /**
+   * A rating of a chat drop is the rater's +1 or -1 reaction, written with
+   * no signature: refused in a wave once signatures are required. Ratings
+   * of entries are votes, not reactions, and pass.
+   */
+  async assertUnsignedChatRatingAllowed(
+    dropId: string,
+    ctx: SignedWriteContext
+  ): Promise<void> {
+    if (!this.signatureRequired()) {
+      return;
+    }
+    const drop = await this.db.executeNativeQueriesInTransaction((connection) =>
+      this.drops.findDropById(dropId, connection)
+    );
+    if (drop?.drop_type === DropType.CHAT) {
+      await this.assertUnsignedWriteAllowed({ waveId: drop.wave_id }, ctx);
+    }
   }
 
   private async runUnsigned<T>(

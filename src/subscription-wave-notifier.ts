@@ -1,3 +1,7 @@
+import {
+  botDeviceSigner,
+  signedBodyOfDropModel
+} from '@/api/device-signing/bot-device-signer';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 import {
   waveScoreService,
@@ -195,57 +199,58 @@ async function postSubscriptionWaveDropBestEffort({
 
   try {
     const normalizedMentionedUsers = normalizeMentionHandles(mentionedUsers);
-    const pendingPushNotificationIds =
-      await sqlExecutor.executeNativeQueriesInTransaction(
-        async (connection) => {
-          const botIdentity = await identitiesDb.getIdentityByProfileId(
-            botProfileId,
-            connection
-          );
-          if (!botIdentity) {
-            logger.warn(
-              `[SKIPPING WAVE NOTIFICATION] [BOT PROFILE ${botProfileId} NOT FOUND]`
-            );
-            return [];
-          }
-          const authorIdentity =
-            botIdentity.handle ?? botIdentity.primary_address;
-          if (!authorIdentity) {
-            logger.warn(
-              `[SKIPPING WAVE NOTIFICATION] [BOT PROFILE ${botProfileId} HAS NO AUTHOR IDENTITY]`
-            );
-            return [];
-          }
-
+    const botIdentity = await identitiesDb.getIdentityByProfileId(botProfileId);
+    if (!botIdentity) {
+      logger.warn(
+        `[SKIPPING WAVE NOTIFICATION] [BOT PROFILE ${botProfileId} NOT FOUND]`
+      );
+      return;
+    }
+    const authorIdentity = botIdentity.handle ?? botIdentity.primary_address;
+    if (!authorIdentity) {
+      logger.warn(
+        `[SKIPPING WAVE NOTIFICATION] [BOT PROFILE ${botProfileId} HAS NO AUTHOR IDENTITY]`
+      );
+      return;
+    }
+    const model: CreateOrUpdateDropModel = {
+      drop_id: null,
+      wave_id: waveId,
+      reply_to: null,
+      title: null,
+      parts: [
+        {
+          content: message,
+          quoted_drop: null,
+          media: []
+        }
+      ],
+      referenced_nfts: [],
+      // CreateOrUpdateDropUseCase derives global group metadata and
+      // recipients from part content. This list is only for dynamic
+      // person-specific mentions such as the top-up profile.
+      mentioned_users: normalizedMentionedUsers.map((handle) => ({
+        handle
+      })),
+      mentioned_waves: [],
+      metadata: [],
+      author_identity: authorIdentity,
+      author_id: botProfileId,
+      drop_type: DropType.CHAT,
+      mentioned_groups: [],
+      signature: null,
+      is_additional_action_promised: null
+    };
+    const { pendingPushNotificationIds } = await botDeviceSigner.createDrop(
+      botProfileId,
+      {
+        waveId,
+        replyToDropId: null,
+        body: { ...signedBodyOfDropModel(model), hide_link_preview: true }
+      },
+      () =>
+        sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
           const ctx: RequestContext = { connection };
-          const model: CreateOrUpdateDropModel = {
-            drop_id: null,
-            wave_id: waveId,
-            reply_to: null,
-            title: null,
-            parts: [
-              {
-                content: message,
-                quoted_drop: null,
-                media: []
-              }
-            ],
-            referenced_nfts: [],
-            // CreateOrUpdateDropUseCase derives global group metadata and
-            // recipients from part content. This list is only for dynamic
-            // person-specific mentions such as the top-up profile.
-            mentioned_users: normalizedMentionedUsers.map((handle) => ({
-              handle
-            })),
-            mentioned_waves: [],
-            metadata: [],
-            author_identity: authorIdentity,
-            author_id: botProfileId,
-            drop_type: DropType.CHAT,
-            mentioned_groups: [],
-            signature: null,
-            is_additional_action_promised: null
-          };
           const { drop_id, pending_push_notification_ids } =
             await createOrUpdateDrop.execute(model, false, {
               connection,
@@ -265,9 +270,13 @@ async function postSubscriptionWaveDropBestEffort({
             WaveScoreDirtyRefreshReason.DROP_CHANGED,
             ctx
           );
-          return pending_push_notification_ids;
-        }
-      );
+          return {
+            id: drop_id,
+            pendingPushNotificationIds: pending_push_notification_ids
+          };
+        }),
+      {}
+    );
 
     await sendIdentityPushNotifications(pendingPushNotificationIds);
   } catch (error) {

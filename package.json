@@ -48,7 +48,8 @@
     "profile-cms:export": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/profile-cms/chain/profile-cms-export.cli.ts",
     "profile-cms:log-existing-rows": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/profile-cms/personal-log/profile-cms-log-existing-rows.cli.ts",
     "ws:delivery-probe": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/ws-delivery/delivery-probe/delivery-probe.cli.ts",
-    "signed-records:service-setup": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/signed-records/record-log/service-setup.cli.ts"
+    "signed-records:service-setup": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/signed-records/record-log/service-setup.cli.ts",
+    "waves:bot-device-grant": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/api-serverless/src/device-signing/bot-device-grant.cli.ts"
   },
   "keywords": [],
   "author": "",

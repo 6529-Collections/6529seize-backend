@@ -1,3 +1,4 @@
+import { CommittedDropSignatures } from '@/api/device-signing/bot-device-signer';
 import { CompetitionEventDispatcher } from './competition-event-dispatcher';
 import { CompetitionEventRepository } from './competition-event.repository';
 import { NativeCompetitionEvent } from './native-competition-runtime.repository';
@@ -505,7 +506,9 @@ describe('CompetitionEventDispatcher', () => {
           '/waves/wave/competitions/competition?entry=entry'
         )
       },
-      {}
+      {},
+      // Signed after the effect's transaction commits.
+      expect.any(CommittedDropSignatures)
     );
   });
 

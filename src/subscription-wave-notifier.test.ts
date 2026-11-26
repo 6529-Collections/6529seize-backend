@@ -22,6 +22,18 @@ jest.mock('@/identities/identities.db', () => ({
   }
 }));
 
+// The notifier's signer: by default the real one, with no bot keys set.
+let mockBotSigner: unknown;
+jest.mock('@/api/device-signing/bot-device-signer', () => {
+  const actual = jest.requireActual('@/api/device-signing/bot-device-signer');
+  const mocked = { ...actual };
+  Object.defineProperty(mocked, 'botDeviceSigner', {
+    get: () => mockBotSigner ?? actual.botDeviceSigner
+  });
+  return mocked;
+});
+
+import { signingBot } from '@/tests/fixtures/bot-device-signing.fixture';
 import {
   buildDailySubscriptionsWaveMessage,
   buildInsufficientBalanceWaveMessage,
@@ -63,6 +75,7 @@ describe('subscription wave notifier message formatting', () => {
   afterEach(() => {
     restoreEnv('SUBSCRIPTIONS_WAVE_ID', originalEnv);
     restoreEnv('SUBSCRIPTIONS_BOT_PROFILE_ID', originalEnv);
+    mockBotSigner = undefined;
   });
 
   it('builds daily subscription list posts with the card link', () => {
@@ -196,8 +209,7 @@ describe('subscription wave notifier message formatting', () => {
     });
 
     expect(identitiesDb.getIdentityByProfileId).toHaveBeenCalledWith(
-      'profile-1',
-      { connection: 'connection' }
+      'profile-1'
     );
     expect(createOrUpdateDrop.execute).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -272,7 +284,44 @@ describe('subscription wave notifier message formatting', () => {
     });
 
     expect(createOrUpdateDrop.execute).not.toHaveBeenCalled();
-    expect(sendIdentityPushNotifications).toHaveBeenCalledWith([]);
+    expect(sendIdentityPushNotifications).not.toHaveBeenCalled();
+  });
+
+  it('signs the post when the bot has a device key', async () => {
+    process.env.SUBSCRIPTIONS_WAVE_ID = 'wave-1';
+    process.env.SUBSCRIPTIONS_BOT_PROFILE_ID = 'profile-1';
+    const { signer, store } = await signingBot({ profileId: 'profile-1' });
+    mockBotSigner = signer;
+    (identitiesDb.getIdentityByProfileId as jest.Mock).mockResolvedValue({
+      handle: 'subbot',
+      primary_address: '0xbot'
+    });
+    (createOrUpdateDrop.execute as jest.Mock).mockResolvedValue({
+      drop_id: 'drop-1',
+      pending_push_notification_ids: [3]
+    });
+
+    await sendDailySubscriptionsWaveUpdate({
+      memeId: 312,
+      seizeDomain: '6529',
+      uploadLink: 'https://arweave.net/subscriptions'
+    });
+
+    expect(createOrUpdateDrop.execute).toHaveBeenCalledTimes(1);
+    expect(store.events).toHaveLength(1);
+    const event = store.events[0];
+    expect(event).toMatchObject({
+      kind: 1,
+      wave_id: 'wave-1',
+      drop_id: 'drop-1',
+      profile_id: 'profile-1',
+      refs: '[]'
+    });
+    const body = JSON.parse(event.body!);
+    expect(body.parts[0].content).toContain('The Memes #312');
+    expect(body.hide_link_preview).toBe(true);
+    expect(store.authorSignatures.get('drop-1')).toBe(event.id);
+    expect(sendIdentityPushNotifications).toHaveBeenCalledWith([3]);
   });
 
   it('mentions the top-up profile when one resolves', async () => {
