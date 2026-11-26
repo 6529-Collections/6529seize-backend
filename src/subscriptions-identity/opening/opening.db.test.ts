@@ -106,7 +106,7 @@ async function seedLegacy() {
     { k: PAIR, a: A }
   );
   await execute(
-    `INSERT INTO identity_chain_principals VALUES (:p, 'profile-1', 'LEGACY', 0)`,
+    `INSERT INTO identity_chain_principals (principal_id, profile_id, origin, created_at) VALUES (:p, 'profile-1', 'LEGACY', 0)`,
     { p: P1 }
   );
   await execute(
@@ -441,8 +441,10 @@ describeWithSeed('subscriptions opening file', [], () => {
       subscriptionsIdentitySwitch.invalidate();
       expect((await fetchDetailsForConsolidationKey(PAIR)).balance).toBe(9);
 
+      // Just after the cut, which is a fixed time: a switch must come
+      // within the cut window, and this one has passed whenever it runs.
       expect(
-        await scheduleIdentitySwitch(Date.now(), parsed.openingSha256)
+        await scheduleIdentitySwitch(CUT_MS + 5, parsed.openingSha256)
       ).toBe(true);
       // By the consolidation key, a wallet, or the principal id.
       for (const key of [PAIR, A, P1]) {

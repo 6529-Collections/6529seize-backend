@@ -1,4 +1,5 @@
 import { legacyCompetitionEntryId } from '@/competitions/competition-id';
+import { assertDecisionWritable } from '@/waves-freeze/waves-freeze-scope';
 import { randomUUID } from 'node:crypto';
 import { ApiCreateCompetitionEntryRequest } from '@/api/generated/models/ApiCreateCompetitionEntryRequest';
 import { ApiCreateDropRequest } from '@/api/generated/models/ApiCreateDropRequest';
@@ -258,7 +259,10 @@ export class CompetitionEntryService {
         authorId: actor,
         dropId: null,
         connection: tx.connection!
-      })
+      }),
+      // The decision was checked under its lock; the author's profile and
+      // review locks in the drop write can wait past the freeze.
+      recheckWavesFreeze: () => assertDecisionWritable(competition, tx)
     });
     const dropId = created.drop_id;
     if (!created.replayed) {
@@ -292,6 +296,9 @@ export class CompetitionEntryService {
       won_at: null,
       decision_id: null
     };
+    // The drop lock above can wait past the freeze too: check again right
+    // before the entry is written.
+    await assertDecisionWritable(competition, tx);
     await this.entries.insert(entry, tx);
     await metricsRecorder.recordNativeCompetitionSubmission(
       { competitionId },

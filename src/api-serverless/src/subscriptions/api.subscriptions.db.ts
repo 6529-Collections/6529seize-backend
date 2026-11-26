@@ -1,3 +1,4 @@
+import { RequestContext } from '@/request.context';
 import { PaginatedResponse } from '@/api/api-constants';
 import { constructFilters } from '@/api/api-helpers';
 import {
@@ -21,13 +22,13 @@ import {
   SUBSCRIPTIONS_BALANCES_TABLE,
   SUBSCRIPTIONS_LOGS_TABLE,
   SUBSCRIPTIONS_MODE_TABLE,
-  SUBSCRIPTIONS_NFTS_FINAL_TABLE,
   SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE,
   SUBSCRIPTIONS_NFTS_TABLE,
   SUBSCRIPTIONS_REDEEMED_TABLE,
   SUBSCRIPTIONS_TOP_UP_TABLE
 } from '@/constants';
 import { fetchPaginated } from '@/db-api';
+import { DbPoolName } from '@/db-query.options';
 import {
   SubscriptionBalance,
   SubscriptionMode
@@ -787,15 +788,51 @@ export async function fetchFinalSubscriptionsByPhase(
      WHERE contract = :contract
        AND token_id = :tokenId
        AND phase = :phaseName
-     ORDER BY phase_position ASC`,
+     ORDER BY phase_position ASC, id ASC`,
     { contract, tokenId, phaseName }
   );
+}
+
+export async function fetchRankedFinalSubscriptions(
+  contract: string,
+  tokenId: number,
+  ctx: RequestContext,
+  phaseName?: string
+): Promise<Array<PhaseAirdrop & { phase: string }>> {
+  return sqlExecutor.execute<PhaseAirdrop & { phase: string }>(
+    `SELECT phase, airdrop_address as wallet, subscribed_count as amount
+     FROM ${(await subscriptionTables()).final}
+     WHERE contract = :contract
+       AND token_id = :tokenId
+       AND ${phaseName === undefined ? 'phase IS NOT NULL' : 'phase = :phaseName'}
+     ORDER BY phase, phase_position ASC, id ASC`,
+    { contract, tokenId, phaseName },
+    phaseName === undefined
+      ? { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
+      : { wrappedConnection: ctx.connection }
+  );
+}
+
+export async function hasUnassignedFinalSubscriptions(
+  contract: string,
+  tokenId: number,
+  ctx: RequestContext
+): Promise<boolean> {
+  const row = await sqlExecutor.oneOrNull<{ id: number }>(
+    `SELECT id FROM ${(await subscriptionTables()).final}
+     WHERE contract = :contract AND token_id = :tokenId AND phase IS NULL
+     LIMIT 1`,
+    { contract, tokenId },
+    { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
+  );
+  return row !== null;
 }
 
 export async function fetchAllNftFinalSubscriptionsForContractAndToken(
   contract: string,
   token_id: number,
-  tables?: SubscriptionTables
+  tables?: SubscriptionTables,
+  ctx: RequestContext = {}
 ): Promise<NFTFinalSubscription[]> {
   return sqlExecutor.execute(
     `SELECT * FROM ${(tables ?? (await subscriptionTables())).final}
@@ -803,14 +840,16 @@ export async function fetchAllNftFinalSubscriptionsForContractAndToken(
       contract = :contract
       AND token_id = :token_id
     ORDER BY subscribed_at ASC`,
-    { contract, token_id }
+    { contract, token_id },
+    { wrappedConnection: ctx.connection }
   );
 }
 
 export async function fetchAllPublicFinalSubscriptionsForContractAndToken(
   contract: string,
   token_id: number,
-  tables?: SubscriptionTables
+  tables?: SubscriptionTables,
+  ctx: RequestContext = {}
 ): Promise<NFTFinalSubscription[]> {
   return sqlExecutor.execute(
     `SELECT * FROM ${(tables ?? (await subscriptionTables())).final}
@@ -819,7 +858,8 @@ export async function fetchAllPublicFinalSubscriptionsForContractAndToken(
       AND token_id = :token_id
       AND phase IS NULL
     ORDER BY subscribed_at ASC`,
-    { contract, token_id }
+    { contract, token_id },
+    { wrappedConnection: ctx.connection }
   );
 }
 

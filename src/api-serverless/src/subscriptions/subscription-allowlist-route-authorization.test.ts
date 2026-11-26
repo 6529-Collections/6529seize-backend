@@ -1,3 +1,18 @@
+import type { RequestContext } from '@/request.context';
+
+// The route runs its write inside Drop Forge's preparation transaction, with
+// the mint log; here only the write itself.
+jest.mock('@/mint-log/mint-log-preparation', () => ({
+  loggedPreparationWrite: (args: {
+    write: (ctx: RequestContext) => unknown;
+    ctx?: RequestContext;
+  }) => args.write(args.ctx ?? {}),
+  loggedPreparationReset: (args: {
+    reset: (ctx: RequestContext) => unknown;
+    ctx?: RequestContext;
+  }) => args.reset(args.ctx ?? {})
+}));
+
 const mockCacheStore = new Map<string, string>();
 const mockGetPublicSubscriptions = jest.fn();
 const mockValidateDistribution = jest.fn();
@@ -55,7 +70,7 @@ jest.mock('@/api/subscriptions/api.subscriptions.allowlist', () => ({
   getPublicSubscriptions: mockGetPublicSubscriptions,
   fetchPhaseName: jest.fn(),
   fetchPhaseResults: jest.fn(),
-  resetAllowlist: jest.fn(),
+  resetAllowlistRows: jest.fn(),
   splitAllowlistResults: jest.fn()
 }));
 
@@ -96,6 +111,7 @@ jest.mock('@/subscriptionsDaily/subscription-cache', () => ({
 import express, { NextFunction, Request, Response } from 'express';
 import { Server } from 'node:http';
 import { cacheKey } from '@/api/api-helpers';
+import { populateDistribution } from '@/api/distributions/api.distributions.service';
 import { ApiCompliantException } from '@/exceptions';
 import { redisGet } from '@/redis';
 import router from '@/api/subscriptions/api.subscriptions.routes';
@@ -200,6 +216,17 @@ describe('GET /subscriptions/allowlists/:contract/:token_id/:allowlist_id/:phase
         body: ADMIN_ALLOWLIST
       });
       expect(mockGetPublicSubscriptions).toHaveBeenCalledTimes(1);
+      expect(populateDistribution).not.toHaveBeenCalled();
+    });
+  });
+
+  it('returns the original upstream validation details before preparing anything', async () => {
+    const validation = { valid: false, statusText: 'EMMA is unavailable' };
+    mockValidateDistribution.mockResolvedValueOnce(validation);
+    await withServer(async (baseUrl) => {
+      const response = await getAllowlist(baseUrl, ADMIN_WALLET);
+      expect(response).toMatchObject({ status: 400, body: validation });
+      expect(mockGetPublicSubscriptions).not.toHaveBeenCalled();
     });
   });
 

@@ -205,11 +205,33 @@ describe('parseRepRatingsRemovalRequest', () => {
       fc.property(
         fc.string({ minLength: 1 }).filter((it) => !known.has(it)),
         (key) => {
-          expect(() =>
-            parseRepRatingsRemovalRequest({ ...payload(), [key]: 1 })
-          ).toThrow('unknown payload keys');
+          // A real own key, as JSON.parse makes. A computed key in a spread
+          // compiles to an assignment under the es5 target. For `__proto__`
+          // that calls the inherited setter, which ignores a value that isn't
+          // an object or null, so no key is added.
+          const input: Record<string, unknown> = { ...payload() };
+          Object.defineProperty(input, key, {
+            value: 1,
+            enumerable: true,
+            configurable: true,
+            writable: true
+          });
+          expect(() => parseRepRatingsRemovalRequest(input)).toThrow(
+            'unknown payload keys'
+          );
         }
-      )
+      ),
+      { examples: [['__proto__'], ['constructor'], ['toString']] }
+    );
+  });
+
+  it('refuses a __proto__ key in a JSON payload', () => {
+    const input = JSON.parse(
+      JSON.stringify(payload()).replace(/}$/, ',"__proto__":1}')
+    );
+    expect(Object.keys(input)).toContain('__proto__');
+    expect(() => parseRepRatingsRemovalRequest(input)).toThrow(
+      'unknown payload keys: __proto__'
     );
   });
 });

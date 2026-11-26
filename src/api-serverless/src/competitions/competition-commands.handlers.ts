@@ -63,7 +63,10 @@ import { competitionVotingService } from './competition-voting.service';
 import { competitionEntryService } from './competition-entry.service';
 import { waveHubCreationService } from './wave-hub-creation.service';
 import { competitionActor } from './competition-command-access';
-import { toApiCompetition, toApiEntry } from './competitions-v3.handlers';
+import {
+  toApiCompetitionInScope,
+  toApiEntry
+} from './competitions-v3.handlers';
 import { enums } from '@/enums';
 import { toApiCompetitionAward } from './competition-award.mapper';
 import { readCompetitionEntryContexts } from '@/api/competitions/competition-entry-context.reader';
@@ -156,12 +159,10 @@ export async function handleCreateCompetitionV3(
       config: CompetitionDraftSchema.required()
     }).unknown(false)
   );
-  return toApiCompetition(
-    await competitionLifecycleService.create(
-      wave_id,
-      request,
-      await context(req)
-    )
+  const ctx = await context(req);
+  return toApiCompetitionInScope(
+    await competitionLifecycleService.create(wave_id, request, ctx),
+    ctx
   );
 }
 
@@ -177,13 +178,15 @@ export async function handleUpdateCompetitionV3(
       config: CompetitionDraftSchema.required()
     }).unknown(false)
   );
-  return toApiCompetition(
+  const ctx = await context(req);
+  return toApiCompetitionInScope(
     await competitionLifecycleService.update(
       wave_id,
       competition_id,
       request,
-      await context(req)
-    )
+      ctx
+    ),
+    ctx
   );
 }
 
@@ -197,14 +200,16 @@ export async function handleExecuteCompetitionActionV3(
       .required()
   });
   const request = getValidatedByJoiOrThrow(req.body, actionSchema);
-  return toApiCompetition(
+  const ctx = await context(req);
+  return toApiCompetitionInScope(
     await competitionLifecycleService.action(
       wave_id,
       competition_id,
       action,
       request,
-      await context(req)
-    )
+      ctx
+    ),
+    ctx
   );
 }
 
@@ -446,7 +451,7 @@ export async function handleGetDropCompetitionContextV3(
   );
   return {
     competition: result.competition
-      ? toApiCompetition(result.competition)
+      ? await toApiCompetitionInScope(result.competition, ctx)
       : null,
     entry: result.entry ? await toApiEntry(result.entry, ctx) : null,
     vote_summary:

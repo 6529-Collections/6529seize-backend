@@ -17,6 +17,10 @@ import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
 import { equalIgnoreCase } from '../strings';
 import { isRememeFetchSourceUnchanged } from '../rememe-media-source';
+import { appFeatures } from '@/app-features';
+import { REMEMES_UPLOADS } from '@/constants';
+import { logPublicationReceipt } from '@/mint-log/mint-log-receipts';
+import { rememesMissingFromFile } from './rememes-file-sync';
 
 const Arweave = require('arweave');
 const csvParser = require('csv-parser');
@@ -125,11 +129,10 @@ function getRange(tokenIdStr: string, delim: string) {
 }
 
 async function processRememes(rememes: Rememe[], csvData: CSVData[]) {
-  const deleteRememesList = [...rememes].filter(
-    (r) =>
-      !csvData.some(
-        (d) => equalIgnoreCase(r.contract, d.contract) && r.id == d.id
-      )
+  const deleteRememesList = rememesMissingFromFile(
+    rememes,
+    csvData,
+    appFeatures.isRememesKeepAddedEnabled()
   );
 
   const addDataList = [...csvData].filter(
@@ -338,7 +341,9 @@ async function upload(rememes: Rememe[]) {
   const url = `https://arweave.net/${transaction.id}`;
   logger.info(`[ARWEAVE LINK ${url}]`);
 
-  await persistRememesUpload(`https://arweave.net/${transaction.id}`);
+  await logPublicationReceipt(REMEMES_UPLOADS, 'rememes', { url }, () =>
+    persistRememesUpload(url)
+  );
 }
 
 async function readCsvFile(filePath: string): Promise<any[]> {

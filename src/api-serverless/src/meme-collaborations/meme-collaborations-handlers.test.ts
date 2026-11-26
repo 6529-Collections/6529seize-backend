@@ -163,7 +163,15 @@ it('appends invited IDs through the dedicated endpoint and returns viewer-scoped
     'drop',
     ['C'],
     expect.any(AuthenticationContext),
-    expect.any(Object)
+    expect.any(Object),
+    {
+      intent: {
+        route: 'POST /drops/:drop_id/collaborations',
+        params: { drop_id: 'drop' },
+        body: { collaborator_ids: ['C'] }
+      },
+      signedRecords: null
+    }
   );
   expect(sendIdentityPushNotifications).toHaveBeenCalledWith([44]);
   expect(

@@ -1,10 +1,18 @@
 import 'reflect-metadata';
 import {
   ADDRESS_CONSOLIDATION_KEY,
+  DISTRIBUTION_NORMALIZED_TABLE,
+  DISTRIBUTION_TABLE,
+  DROP_FORGE_JOBS_TABLE,
+  DROP_FORGE_PREPARATIONS_TABLE,
   IDENTITIES_TABLE,
   SUBSCRIPTIONS_ID_KEY_MAP_TABLE,
   SUBSCRIPTION_DEFERRED_WRITES_TABLE,
   MEMES_CONTRACT,
+  MINT_LOG_CARD_HEADS_TABLE,
+  MINT_LOG_HEAD_TABLE,
+  MINTING_MERKLE_PROOFS_TABLE,
+  MINTING_MERKLE_ROOTS_TABLE,
   NULL_ADDRESS,
   SUBSCRIPTIONS_ADDRESS,
   SUBSCRIPTIONS_BALANCES_TABLE,
@@ -46,7 +54,13 @@ import {
   executorSink
 } from '@/subscription-key-width/subscription-deferred-writes';
 import { recordTopUps } from '@/subscriptionsTopUpLoop/db.subscriptions_topup';
-import { getPublicSubscriptions } from '@/api/subscriptions/api.subscriptions.allowlist';
+import {
+  getPublicSubscriptions,
+  resetAllowlist
+} from '@/api/subscriptions/api.subscriptions.allowlist';
+import { dropForgeJobsRepository } from '@/drop-forge/drop-forge.jobs.repository';
+import { dropForgePreparationRepository } from '@/drop-forge/drop-forge.preparation.repository';
+import * as journalModule from '../timeline/journal';
 import { updateSubscriptions } from '@/subscriptionsDaily/subscriptions';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { redeemSubscriptions } from '@/transactionsProcessingLoop/subscriptions';
@@ -103,10 +117,29 @@ import {
   fetchDetailsForConsolidationKey,
   fetchFinalSubscription,
   fetchLogsForConsolidationKey,
+  fetchRankedFinalSubscriptions,
   fetchRedeemedSubscriptionsForConsolidationKey,
   fetchSubscriptionUploads,
-  fetchTopUpsForConsolidationKey
+  fetchTopUpsForConsolidationKey,
+  hasUnassignedFinalSubscriptions
 } from '@/api/subscriptions/api.subscriptions.db';
+import { readinessAllocations } from '@/drop-forge/drop-forge.readiness.repository';
+import { walletDistributionAllocationsDb } from '@/api/distributions/wallet-distribution-allocations.db';
+import { fetchMintingAirdrops } from '@/api/minting-claims/api.minting-claims.db';
+import { resetAllowlistRows } from '@/api/subscriptions/api.subscriptions.allowlist';
+import { MintStateReader } from '@/mint-log/mint-log-capture';
+import { mintCard } from '@/mint-log/mint-log-parts';
+import type {
+  MintRecordLogEntry,
+  MintRecordLogPort
+} from '@/mint-log/mint-log-ports';
+import {
+  loggedPreparationReset,
+  loggedPreparationWrite
+} from '@/mint-log/mint-log-preparation';
+import { MintLogRebuilder } from '@/mint-log/mint-log-rebuild';
+import { MintLogRecorder, MintWriteSpec } from '@/mint-log/mint-log-recorder';
+import type { MintLogEntryBody, MintLogKind } from '@/mint-log/mint-log.types';
 import {
   runIdentityRedemptionWriters,
   runIdentityTopUpWriters
@@ -223,7 +256,7 @@ async function seedLegacy() {
     { a: A }
   );
   await execute(
-    `INSERT INTO identity_chain_principals VALUES (:p, 'profile-1', 'LEGACY', 0)`,
+    `INSERT INTO identity_chain_principals (principal_id, profile_id, origin, created_at) VALUES (:p, 'profile-1', 'LEGACY', 0)`,
     { p: P1 }
   );
   await execute(
@@ -280,26 +313,30 @@ async function seedWideIdentity(): Promise<{
     { k: wideKey, w: W }
   );
   await execute(
-    `INSERT INTO identity_chain_principals VALUES (:p, 'profile-9', 'LEGACY', 0)`,
+    `INSERT INTO identity_chain_principals (principal_id, profile_id, origin, created_at) VALUES (:p, 'profile-9', 'LEGACY', 0)`,
     { p: P9 }
   );
   return { W, P9, wideKey };
 }
 
-/** Cut, load and verify; with `goLive`, set the switch time to now. */
+/** The opening's fixed cut time; every fixture time after it is after the cut. */
+const CUT_AT_MS = Date.parse('2026-11-26T12:00:00Z');
+
+/**
+ * Cut, load and verify; with `goLive`, set the switch just after the cut. A
+ * switch must come within the cut window, and the cut is a fixed time, so
+ * the switch can't be "now": it is a time that has passed whenever this runs.
+ */
 async function cutAndLoad(goLive: boolean) {
-  const files = await cutOpeningFiles(
-    mirrorIdentityDirectory,
-    Date.parse('2026-11-26T12:00:00Z')
-  );
+  const files = await cutOpeningFiles(mirrorIdentityDirectory, CUT_AT_MS);
   const parsed = parseOpeningFiles(files.openingBytes, files.historyBytes);
   await loadOpeningFiles(parsed);
   const g4 = await compareAndMarkVerified(parsed, mirrorIdentityDirectory);
   expect(g4.ok).toBe(true);
   if (goLive) {
-    expect(await scheduleIdentitySwitch(Date.now(), parsed.openingSha256)).toBe(
-      true
-    );
+    expect(
+      await scheduleIdentitySwitch(CUT_AT_MS + 5, parsed.openingSha256)
+    ).toBe(true);
   }
   subscriptionsIdentitySwitch.invalidate();
   return files;
@@ -2745,7 +2782,7 @@ describeWithSeed('identity writers after the switch', [], () => {
       { leaver }
     );
     await execute(
-      `INSERT INTO identity_chain_principals VALUES (:p, 'profile-10', 'LEGACY', 0)`,
+      `INSERT INTO identity_chain_principals (principal_id, profile_id, origin, created_at) VALUES (:p, 'profile-10', 'LEGACY', 0)`,
       { p: P10 }
     );
 
@@ -3045,3 +3082,1116 @@ describeWithSeed('identity writers after the switch', [], () => {
     ).toBe(0.75);
   });
 });
+
+describeWithSeed(
+  'phase pulls on the distribution preparation transaction',
+  [],
+  () => {
+    beforeEach(() => {
+      published.clear();
+      uploadFile.mockReset().mockImplementation(async (bytes: Buffer) => {
+        const url = `https://example.test/file-${published.size}`;
+        published.set(url, bytes.toString('utf8'));
+        return { url };
+      });
+      closerPosts = true;
+    });
+    afterEach(() => {
+      delete process.env[SHADOW_ENV];
+      subscriptionsIdentitySwitch.invalidate();
+    });
+
+    /** A phase pull as the routes and Drop Forge's worker run it. */
+    const pullInPreparation = <T>(
+      pull: (ctx: { connection?: any }) => Promise<T>
+    ) =>
+      dropForgePreparationRepository.run(
+        MEMES_CONTRACT,
+        CARD,
+        (_, ctx) => pull(ctx),
+        {},
+        false,
+        false,
+        'MANUAL'
+      );
+    const journalPhases = async () =>
+      (
+        await sqlExecutor.execute<{ entry: string }>(
+          `SELECT entry FROM ${SIGNED_RECORD_LOG_ENTRIES_TABLE} WHERE lane = 'subs' ORDER BY id`
+        )
+      )
+        .map((r) => JSON.parse(r.entry).body)
+        .filter((b: any) => b?.kind === 'phase');
+    const counter = async () => {
+      const rows = await sqlExecutor.execute<{ block: number }>(
+        `SELECT block FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id = 'journal'`
+      );
+      return rows.length ? Number(rows[0].block) : 0;
+    };
+    const phases = async (table: string, key: string) =>
+      (await finalIds(table, key)).map((r) => [Number(r.id), r.phase]);
+    const phaseReports = () =>
+      sqlExecutor.execute<{ verdict: string; mode: string }>(
+        `SELECT verdict, mode FROM ${SUBSCRIPTIONS_ID_REPORTS_TABLE} WHERE kind = 'PHASE' ORDER BY id`
+      );
+
+    it('after the switch, a phase pull commits and rolls back with the preparation, and its reset journals inside it', async () => {
+      await seed();
+      await updateSubscriptions();
+      expect(await subscriptionsIdentitySwitch.writeModeOrFail()).toBe('TRUTH');
+      const phasesBefore = (await journalPhases()).length;
+      const counterBefore = await counter();
+
+      await expect(
+        pullInPreparation(async (ctx) => {
+          await getPublicSubscriptions(MEMES_CONTRACT, CARD, ctx);
+          throw new Error('after the pull');
+        })
+      ).rejects.toThrow('after the pull');
+      expect((await journalPhases()).length).toBe(phasesBefore);
+      expect(await counter()).toBe(counterBefore);
+      for (const [, phase] of await phases(
+        SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+        'identity_key'
+      )) {
+        expect(phase).toBeNull();
+      }
+      for (const [, phase] of await phases(
+        SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+        'consolidation_key'
+      )) {
+        expect(phase).toBeNull();
+      }
+
+      const { airdrops } = await pullInPreparation((ctx) =>
+        getPublicSubscriptions(MEMES_CONTRACT, CARD, ctx)
+      );
+      expect(airdrops.length).toBeGreaterThan(0);
+      const identity = await phases(
+        SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+        'identity_key'
+      );
+      expect(identity.length).toBeGreaterThan(0);
+      expect(identity.every(([, p]) => p === 'Public')).toBe(true);
+      expect(
+        await phases(SUBSCRIPTIONS_NFTS_FINAL_TABLE, 'consolidation_key')
+      ).toEqual(identity);
+      const pulled = await journalPhases();
+      expect(pulled.length).toBe(phasesBefore + 1);
+      expect(pulled[pulled.length - 1].inputs.phase).toBe('Public');
+      expect(await counter()).toBe(counterBefore + 1);
+
+      await resetAllowlist(MEMES_CONTRACT, CARD);
+      for (const [, phase] of await phases(
+        SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+        'identity_key'
+      )) {
+        expect(phase).toBeNull();
+      }
+      for (const [, phase] of await phases(
+        SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+        'consolidation_key'
+      )) {
+        expect(phase).toBeNull();
+      }
+      const reset = await journalPhases();
+      expect(reset.length).toBe(phasesBefore + 2);
+      expect(reset[reset.length - 1].inputs.reset).toBe(true);
+      expect(
+        await dropForgePreparationRepository.readMode(MEMES_CONTRACT, CARD)
+      ).toBe('UNSTARTED');
+    });
+
+    /**
+     * After the switch, with a wide identity (P9) on the next card's list:
+     * its final row is on the identity side only, since the key-width guard
+     * holds its legacy copy back.
+     */
+    const switchWithWideIdentity = async () => {
+      await seedLegacy();
+      const { W, P9, wideKey } = await seedWideIdentity();
+      // A top-up for the wide key, queued whole and credited at the cut: it
+      // covers a card, so automatic mode is on and the next list has P9.
+      const queuedTopUp = {
+        hash: `0x${'e4'.repeat(32)}`,
+        block: 40,
+        transaction_date: new Date('2026-11-25T10:00:00Z'),
+        from_wallet: W,
+        amount: 0.3
+      };
+      await deferSubscriptionWrites(
+        [
+          {
+            kind: 'TOP_UP',
+            consolidationKey: wideKey,
+            dedupe: queuedTopUp.hash,
+            payload: { topUp: queuedTopUp },
+            reason: {
+              narrow: [{ table: 'subscriptions_redeemed', width: 567 }],
+              pendingEarlier: false
+            }
+          }
+        ],
+        executorSink()
+      );
+      expect((await goLiveForTest()).switched).toBe(true);
+      await updateSubscriptions();
+
+      const identityRows = await finalIds(
+        SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+        'identity_key'
+      );
+      expect(identityRows.map((r) => r.key)).toContain(P9);
+      expect(
+        (
+          await finalIds(SUBSCRIPTIONS_NFTS_FINAL_TABLE, 'consolidation_key')
+        ).map((r) => r.key)
+      ).not.toContain(wideKey);
+      return { P9, identityRows };
+    };
+
+    it("after the switch, Drop Forge reads the final rows the switch names: a wide identity's row is there", async () => {
+      const { P9, identityRows } = await switchWithWideIdentity();
+      const setPhase = (table: string, where: string, phase: string | null) =>
+        sqlExecutor.execute(
+          `UPDATE ${table} SET phase = :phase
+          WHERE contract = :c AND token_id = :card AND ${where}`,
+          { phase, c: MEMES_CONTRACT, card: CARD, p: P9 }
+        );
+
+      // Readiness counts every subscriber as Public, the wide one included.
+      const [, publicAllocations] = await readinessAllocations(
+        MEMES_CONTRACT,
+        CARD
+      );
+      expect(
+        publicAllocations.reduce((sum, a) => sum + Number(a.total), 0)
+      ).toBe(identityRows.length);
+
+      // Only the wide identity's row has a phase: the ranked read and the
+      // preparation's mode see it.
+      await setPhase(
+        SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+        'identity_key = :p',
+        'Phase 0'
+      );
+      const ranked = await fetchRankedFinalSubscriptions(
+        MEMES_CONTRACT,
+        CARD,
+        {}
+      );
+      expect(ranked).toHaveLength(1);
+      expect(
+        await dropForgePreparationRepository.readMode(MEMES_CONTRACT, CARD)
+      ).toBe('MANUAL');
+
+      // Every row but the wide identity's has a phase: it is still unassigned.
+      await setPhase(
+        SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+        'identity_key <> :p',
+        'Phase 0'
+      );
+      await setPhase(
+        SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+        'identity_key = :p',
+        null
+      );
+      await setPhase(SUBSCRIPTIONS_NFTS_FINAL_TABLE, '1 = 1', 'Phase 0');
+      expect(
+        await hasUnassignedFinalSubscriptions(MEMES_CONTRACT, CARD, {})
+      ).toBe(true);
+    });
+
+    it("after the switch, the API's Public airdrop answers read the final rows the switch names: a wide identity's row is there", async () => {
+      const { P9, identityRows } = await switchWithWideIdentity();
+      // Every row of the card is a Public airdrop, on both sides.
+      for (const table of [
+        SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+        SUBSCRIPTIONS_NFTS_FINAL_TABLE
+      ]) {
+        await sqlExecutor.execute(
+          `UPDATE ${table} SET phase = 'Public'
+            WHERE contract = :c AND token_id = :card`,
+          { c: MEMES_CONTRACT, card: CARD }
+        );
+      }
+
+      // The minting claim's Public Phase counts every subscriber.
+      const publicPhase = (
+        await fetchMintingAirdrops(CARD, MEMES_CONTRACT)
+      ).find((row) => row.phase === 'Public Phase');
+      expect(Number(publicPhase?.total)).toBe(identityRows.length);
+
+      // The wide identity's wallet sees its Public airdrop.
+      const [wide] = await sqlExecutor.execute<{
+        airdrop_address: string;
+        subscribed_count: number;
+      }>(
+        `SELECT airdrop_address, subscribed_count
+          FROM ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE}
+          WHERE contract = :c AND token_id = :card AND identity_key = :p`,
+        { c: MEMES_CONTRACT, card: CARD, p: P9 }
+      );
+      expect(Number(wide.subscribed_count)).toBeGreaterThan(0);
+      await sqlExecutor.execute(
+        `INSERT INTO ${DISTRIBUTION_NORMALIZED_TABLE}
+          (card_id, contract, wallet, wallet_display, airdrops, total_spots,
+           total_count, minted, allowlist)
+          VALUES (:card, :c, :w, :w, 0, 0, 0, 0, '[]')`,
+        {
+          card: CARD,
+          c: MEMES_CONTRACT.toLowerCase(),
+          w: wide.airdrop_address.toLowerCase()
+        }
+      );
+      const allocation = await walletDistributionAllocationsDb.findByWallet(
+        MEMES_CONTRACT,
+        CARD,
+        wide.airdrop_address,
+        {}
+      );
+      expect(allocation.publicAirdropCount).toBe(Number(wide.subscribed_count));
+    });
+
+    it('in shadow, the identity split runs after the preparation commits, never after it rolls back', async () => {
+      await seedLegacy();
+      await cutAndLoad(false);
+      process.env[SHADOW_ENV] = 'true';
+      subscriptionsIdentitySwitch.invalidate();
+      await updateSubscriptions();
+
+      await expect(
+        pullInPreparation(async (ctx) => {
+          await getPublicSubscriptions(MEMES_CONTRACT, CARD, ctx);
+          throw new Error('after the pull');
+        })
+      ).rejects.toThrow('after the pull');
+      // Rolled back: neither side has the phase, and the shadow never ran.
+      for (const [table, key] of [
+        [SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key'],
+        [SUBSCRIPTIONS_NFTS_FINAL_TABLE, 'consolidation_key']
+      ]) {
+        for (const [, phase] of await phases(table, key)) {
+          expect(phase).toBeNull();
+        }
+      }
+      expect(await phaseReports()).toEqual([]);
+
+      await pullInPreparation((ctx) =>
+        getPublicSubscriptions(MEMES_CONTRACT, CARD, ctx)
+      );
+      // Committed: the legacy pull, then the identity split in its own
+      // transaction, done and compared before the preparation returned.
+      const legacy = await phases(
+        SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+        'consolidation_key'
+      );
+      expect(legacy.length).toBeGreaterThan(0);
+      expect(legacy.every(([, p]) => p === 'Public')).toBe(true);
+      expect(
+        await phases(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key')
+      ).toEqual(legacy);
+      expect(await phaseReports()).toEqual([
+        { verdict: 'MATCH', mode: 'SHADOW' }
+      ]);
+    });
+
+    it("in shadow, a worker step rolled back to its savepoint runs no identity split, and the job's failure still commits", async () => {
+      await seedLegacy();
+      await cutAndLoad(false);
+      process.env[SHADOW_ENV] = 'true';
+      subscriptionsIdentitySwitch.invalidate();
+      await updateSubscriptions();
+      const jobId = 'savepoint-rollback-job';
+      await sqlExecutor.execute(
+        `INSERT INTO ${DROP_FORGE_JOBS_TABLE}
+          (id, contract, claim_id, kind, step, status, updated_at)
+          VALUES (:id, :contract, :claim, 'PROCESS_ALL', 0, 'PENDING', :now)`,
+        {
+          id: jobId,
+          contract: MEMES_CONTRACT.toLowerCase(),
+          claim: CARD,
+          now: Date.now()
+        }
+      );
+
+      // As Drop Forge's worker runs a step: the pull succeeds inside the
+      // preparation, then a later statement of the same step fails, and the
+      // worker rolls back to its savepoint and commits the job's failure.
+      expect(
+        await dropForgeJobsRepository.processOne(
+          (_, ctx) =>
+            dropForgePreparationRepository.run(
+              MEMES_CONTRACT,
+              CARD,
+              async (__, txCtx) => {
+                await getPublicSubscriptions(MEMES_CONTRACT, CARD, txCtx);
+                throw new Error('a later statement of the step failed');
+              },
+              ctx,
+              false,
+              false,
+              'MANUAL'
+            ),
+          {},
+          jobId
+        )
+      ).toBe(true);
+
+      const [job] = await sqlExecutor.execute<{ status: string }>(
+        `SELECT status FROM ${DROP_FORGE_JOBS_TABLE} WHERE id = :id`,
+        { id: jobId }
+      );
+      expect(job.status).toBe('FAILED');
+      // The savepoint undid the legacy pull, and the identity split it had
+      // registered never ran: no phase on either side, and no comparison.
+      for (const [table, key] of [
+        [SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key'],
+        [SUBSCRIPTIONS_NFTS_FINAL_TABLE, 'consolidation_key']
+      ]) {
+        const rows = await phases(table, key);
+        expect(rows.length).toBeGreaterThan(0);
+        for (const [, phase] of rows) {
+          expect(phase).toBeNull();
+        }
+      }
+      expect(await phaseReports()).toEqual([]);
+    });
+
+    describe('a logged allowlist write against a Drop Forge preparation, on two connections, after the switch', () => {
+      const mintEntries: MintLogEntryBody[] = [];
+      const mintLog: MintRecordLogPort = {
+        append: async (queued: readonly MintRecordLogEntry[]) => {
+          for (const entry of queued) {
+            if (entry.t === 'entry') {
+              mintEntries.push(entry.body as unknown as MintLogEntryBody);
+            }
+          }
+        }
+      };
+      const recorder = new MintLogRecorder(
+        {
+          isMintLogShadowEnabled: () => true,
+          isMintLogPrimaryEnabled: () => false,
+          isMintLogReplayCheckEnabled: () => false
+        },
+        () => ({ records: null, log: mintLog })
+      );
+      const mintSpec = <T>(kind: MintLogKind): MintWriteSpec<T> => ({
+        kind,
+        card: mintCard(MEMES_CONTRACT.toLowerCase(), CARD),
+        actor: {
+          type: 'admin',
+          wallet: `0x${'9'.repeat(40)}`,
+          authority: 'test'
+        },
+        intent: { route: kind, params: {}, body: null }
+      });
+      const gate = () => {
+        let open!: () => void;
+        const opened = new Promise<void>((resolve) => {
+          open = resolve;
+        });
+        return { open, opened };
+      };
+      /**
+       * Waits until another session's statement on `table` is running, which
+       * for these statements means waiting for a lock: the holders' own
+       * statements are done, and their sessions sit idle in a transaction.
+       */
+      const waitingOn = async (table: string) => {
+        for (let i = 0; i < 200; i++) {
+          const [row] = await sqlExecutor.execute<{ waiting: number }>(
+            `SELECT COUNT(*) AS waiting FROM information_schema.processlist
+              WHERE info LIKE '%${table}%' AND info NOT LIKE '%processlist%'`
+          );
+          if (Number(row.waiting) > 0) return;
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        throw new Error(`no statement waited on ${table}`);
+      };
+      /** The route's reset: logged, inside Drop Forge's reset. */
+      const loggedReset = (paused?: { held: Promise<void>; at: () => void }) =>
+        loggedPreparationReset({
+          spec: mintSpec<void>('dist.reset'),
+          contract: MEMES_CONTRACT,
+          claim: CARD,
+          reset: async (ctx) => {
+            await resetAllowlistRows(MEMES_CONTRACT, CARD, ctx);
+            paused?.at();
+            await paused?.held;
+          },
+          recorder
+        });
+      /** Drop Forge's worker pulling Public under the preparation, unlogged. */
+      const workerPull = (paused?: { held: Promise<void>; at: () => void }) =>
+        dropForgePreparationRepository.run(
+          MEMES_CONTRACT,
+          CARD,
+          async (_, ctx) => {
+            const result = await getPublicSubscriptions(
+              MEMES_CONTRACT,
+              CARD,
+              ctx
+            );
+            paused?.at();
+            await paused?.held;
+            return result;
+          },
+          {},
+          false,
+          false,
+          'MANUAL'
+        );
+      /** A logged write that takes the mint head and no Drop Forge lock. */
+      const plainLoggedWrite = () =>
+        recorder.write(mintSpec<void>('dist.airdrops'), async () => {
+          await sqlExecutor.execute(
+            `INSERT INTO ${DISTRIBUTION_TABLE}
+              (card_id, contract, phase, wallet, wallet_tdh, wallet_balance,
+               wallet_unique_balance, count, count_airdrop, count_allowlist)
+              VALUES (:card, :contract, 'Airdrop', :wallet, 0, 0, 0, 1, 1, 0)`,
+            {
+              card: CARD,
+              contract: MEMES_CONTRACT.toLowerCase(),
+              wallet: `0x${'8'.repeat(40)}`
+            }
+          );
+        });
+      const journalKinds = async () =>
+        (await journalPhases()).map((body: any) =>
+          body.inputs?.reset ? 'reset' : `phase ${body.inputs?.phase}`
+        );
+
+      beforeEach(async () => {
+        mintEntries.length = 0;
+        await seed();
+        await updateSubscriptions();
+        expect(await subscriptionsIdentitySwitch.writeModeOrFail()).toBe(
+          'TRUTH'
+        );
+      });
+
+      it('one logged write takes one answer from the switch, for every capture and its replay check', async () => {
+        // The switch read answers "legacy" once, then "identity": as if
+        // go-live committed in the middle of the write.
+        const answers = [false];
+        const identityTruth = jest.fn(async () => answers.shift() ?? true);
+        const flipping = new MintLogRecorder(
+          {
+            isMintLogShadowEnabled: () => true,
+            isMintLogPrimaryEnabled: () => false,
+            isMintLogReplayCheckEnabled: () => true
+          },
+          () => ({ records: null, log: mintLog }),
+          undefined,
+          new MintStateReader(undefined, undefined, identityTruth)
+        );
+
+        await loggedPreparationWrite({
+          spec: mintSpec<unknown>('dist.public'),
+          contract: MEMES_CONTRACT,
+          claim: CARD,
+          write: (ctx) => getPublicSubscriptions(MEMES_CONTRACT, CARD, ctx),
+          start: 'MANUAL',
+          recorder: flipping
+        });
+
+        expect(identityTruth).toHaveBeenCalledTimes(1);
+        const [entry] = mintEntries;
+        expect(entry.kind).toBe('dist.public');
+        expect(
+          entry.effects.subscription_phases?.upsert.length
+        ).toBeGreaterThan(0);
+        expect(entry.effects.subscription_phases_identity).toBeUndefined();
+        expect(entry.checks.replay).toBe('match');
+      });
+
+      it('the logged write first: the preparation waits on the preparation row, and both finish', async () => {
+        const held = gate();
+        const reached = gate();
+        const reset = loggedReset({ held: held.opened, at: reached.open });
+        let pull: Promise<unknown> = Promise.resolve();
+        try {
+          // The reset holds the preparation, the mint head and the journal
+          // counter; the worker stops at the preparation row, before either.
+          await reached.opened;
+          pull = workerPull();
+          await waitingOn('drop_forge_preparations');
+        } finally {
+          held.open();
+        }
+
+        await Promise.all([reset, pull]);
+        expect(mintEntries.map((entry) => entry.kind)).toEqual(['dist.reset']);
+        expect(await journalKinds()).toEqual(['reset', 'phase Public']);
+      });
+
+      it('the preparation first: the logged write waits on the preparation row, not the mint head, and both finish', async () => {
+        const held = gate();
+        const reached = gate();
+        const pull = workerPull({ held: held.opened, at: reached.open });
+        let reset: Promise<unknown> = Promise.resolve();
+        try {
+          // The worker holds the preparation and the journal counter; the
+          // logged reset stops at the preparation row, before the mint head.
+          await reached.opened;
+          reset = loggedReset();
+          await waitingOn('drop_forge_preparations');
+          // So another logged write takes the mint head and finishes.
+          await plainLoggedWrite();
+          expect(mintEntries.map((entry) => entry.kind)).toEqual([
+            'dist.airdrops'
+          ]);
+        } finally {
+          held.open();
+        }
+
+        await Promise.all([pull, reset]);
+        expect(mintEntries.map((entry) => entry.kind)).toEqual([
+          'dist.airdrops',
+          'dist.reset'
+        ]);
+        expect(await journalKinds()).toEqual(['phase Public', 'reset']);
+      });
+    });
+
+    it('the mint log across the switch: each side logs and rebuilds the final table it wrote', async () => {
+      const entries: MintLogEntryBody[] = [];
+      const recorder = new MintLogRecorder(
+        {
+          isMintLogShadowEnabled: () => true,
+          isMintLogPrimaryEnabled: () => false,
+          isMintLogReplayCheckEnabled: () => true
+        },
+        () => ({
+          records: null,
+          log: {
+            append: async (queued: readonly MintRecordLogEntry[]) => {
+              for (const entry of queued) {
+                if (entry.t === 'entry') {
+                  entries.push(entry.body as unknown as MintLogEntryBody);
+                }
+              }
+            }
+          }
+        })
+      );
+      const logged = <T>(kind: MintLogKind) => ({
+        spec: {
+          kind,
+          card: mintCard(MEMES_CONTRACT.toLowerCase(), CARD),
+          actor: {
+            type: 'admin' as const,
+            wallet: `0x${'9'.repeat(40)}`,
+            authority: 'test'
+          },
+          intent: { route: kind, params: {}, body: null }
+        } as MintWriteSpec<T>,
+        contract: MEMES_CONTRACT,
+        claim: CARD,
+        recorder
+      });
+      const publicPull = () =>
+        loggedPreparationWrite({
+          ...logged<unknown>('dist.public'),
+          write: (ctx) => getPublicSubscriptions(MEMES_CONTRACT, CARD, ctx),
+          start: 'MANUAL'
+        });
+      const reset = () =>
+        loggedPreparationReset({
+          ...logged<void>('dist.reset'),
+          reset: (ctx) => resetAllowlistRows(MEMES_CONTRACT, CARD, ctx)
+        });
+      const ids = (diff?: { upsert: { id?: unknown }[] }) =>
+        (diff?.upsert ?? []).map((row) => Number(row.id)).sort((a, b) => a - b);
+
+      // Before the switch: the legacy list, pulled Public and logged.
+      await seedLegacy();
+      const { P9, wideKey } = await seedWideIdentity();
+      await updateSubscriptions();
+      await publicPull();
+
+      // The switch. The opening keeps the legacy ids; the wide identity's
+      // row is then the identity side's alone, as its next list makes it.
+      expect((await goLiveForTest()).switched).toBe(true);
+      const [{ maxId }] = await sqlExecutor.execute<{ maxId: number }>(
+        `SELECT MAX(id) AS maxId FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}`
+      );
+      const wideId = Number(maxId) + 1000;
+      await sqlExecutor.execute(
+        `INSERT INTO ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE}
+          (id, identity_key, consolidation_key, contract, token_id,
+           subscribed_count, airdrop_address, balance, subscribed_at,
+           phase, phase_subscriptions, phase_position, redeemed_count)
+          VALUES (:id, :p, :k, :c, :card, 1, :w, 1, '2026-11-26', NULL, -1, -1, 0)`,
+        {
+          id: wideId,
+          p: P9,
+          k: wideKey,
+          c: MEMES_CONTRACT,
+          card: CARD,
+          w: wideKey.split('-')[0]
+        }
+      );
+      // All three phase columns, as the mint log's parts carry them.
+      const phaseColumns = (table: string) =>
+        sqlExecutor.execute<{
+          id: number;
+          phase: string | null;
+          phase_subscriptions: number;
+          phase_position: number;
+        }>(
+          `SELECT id, phase, phase_subscriptions, phase_position FROM ${table}
+            WHERE contract = :c AND token_id = :card ORDER BY id`,
+          { c: MEMES_CONTRACT, card: CARD }
+        );
+
+      // After it: a reset and a Public pull, logged.
+      await reset();
+      await publicPull();
+      const live = {
+        legacy: await phases(
+          SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+          'consolidation_key'
+        ),
+        identity: await phases(
+          SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+          'identity_key'
+        )
+      };
+      const liveColumns = {
+        legacy: await phaseColumns(SUBSCRIPTIONS_NFTS_FINAL_TABLE),
+        identity: await phaseColumns(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE)
+      };
+      expect(live.identity).toContainEqual([wideId, 'Public']);
+      expect(live.legacy.map(([id]) => id)).not.toContain(wideId);
+
+      // Before the switch an entry carries the legacy part only; after it,
+      // both, and the wide row is in the identity part alone.
+      expect(entries.map((entry) => entry.kind)).toEqual([
+        'dist.public',
+        'dist.reset',
+        'dist.public'
+      ]);
+      expect(entries.map((entry) => entry.checks.replay)).toEqual([
+        'match',
+        'match',
+        'match'
+      ]);
+      const [before, , after] = entries;
+      expect(ids(before.effects.subscription_phases).length).toBeGreaterThan(0);
+      expect(ids(before.effects.subscription_phases_identity)).toEqual([]);
+      expect(ids(after.effects.subscription_phases_identity)).toEqual(
+        live.identity.map(([id]) => Number(id)).sort((a, b) => a - b)
+      );
+      expect(ids(after.effects.subscription_phases)).toEqual(
+        live.legacy.map(([id]) => Number(id)).sort((a, b) => a - b)
+      );
+
+      const emptyMintTables = async () => {
+        for (const table of [
+          DISTRIBUTION_TABLE,
+          DISTRIBUTION_NORMALIZED_TABLE,
+          MINTING_MERKLE_ROOTS_TABLE,
+          MINTING_MERKLE_PROOFS_TABLE,
+          MINT_LOG_HEAD_TABLE,
+          MINT_LOG_CARD_HEADS_TABLE
+        ]) {
+          await sqlExecutor.execute(`DELETE FROM ${table}`);
+        }
+      };
+      const rebuildMintLog = () =>
+        new MintLogRebuilder({
+          put: async () => {
+            throw new Error('no files in this log');
+          },
+          get: async () => {
+            throw new Error('no files in this log');
+          }
+        }).rebuild(entries);
+
+      // A rebuild in the registry's order. The subscriptions rebuild has
+      // restored the identity rows from the journal, one of them to a value
+      // the mint log never saw; the legacy phases and the mint tables are
+      // gone. The mint log gives back the legacy phases and leaves every
+      // identity row as the journal restored it.
+      await emptyMintTables();
+      await sqlExecutor.execute(
+        `UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
+          SET phase = NULL, phase_subscriptions = -1, phase_position = -1`
+      );
+      await sqlExecutor.execute(
+        `UPDATE ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE}
+          SET phase = 'Phase 9', phase_subscriptions = 1, phase_position = 1
+          WHERE id = :id`,
+        { id: wideId }
+      );
+      const restored = await phaseColumns(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE);
+      expect(restored).toContainEqual(
+        expect.objectContaining({ id: wideId, phase: 'Phase 9' })
+      );
+      await rebuildMintLog();
+      expect(await phaseColumns(SUBSCRIPTIONS_NFTS_FINAL_TABLE)).toEqual(
+        liveColumns.legacy
+      );
+      expect(await phaseColumns(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE)).toEqual(
+        restored
+      );
+
+      // After a suspend and a second go-live the wide identity's row is gone
+      // from the new opening; the entries that named it still rebuild.
+      await sqlExecutor.execute(
+        `DELETE FROM ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE} WHERE id = :id`,
+        { id: wideId }
+      );
+      await emptyMintTables();
+      await rebuildMintLog();
+      expect(await phaseColumns(SUBSCRIPTIONS_NFTS_FINAL_TABLE)).toEqual(
+        liveColumns.legacy
+      );
+
+      // Out of order, before the legacy final rows are rebuilt, the mint log
+      // rebuild stops and says what must run first.
+      await emptyMintTables();
+      await sqlExecutor.execute(
+        `DELETE FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}`
+      );
+      await expect(rebuildMintLog()).rejects.toThrow(
+        "the legacy subscription tables' rebuild creates these rows and must run before the mint log rebuild"
+      );
+    });
+
+    it("in shadow, the identity split waits for the card's preparation row, and reads the rows after it", async () => {
+      await seedLegacy();
+      await cutAndLoad(false);
+      process.env[SHADOW_ENV] = 'true';
+      subscriptionsIdentitySwitch.invalidate();
+      await updateSubscriptions();
+      const id = `${MEMES_CONTRACT.toLowerCase()}:${CARD}`;
+      await sqlExecutor.execute(
+        `INSERT INTO ${DROP_FORGE_PREPARATIONS_TABLE} (id, results)
+          VALUES (:id, '{}') ON DUPLICATE KEY UPDATE id = :id`,
+        { id }
+      );
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let lockHeld!: () => void;
+      const held = new Promise<void>((resolve) => {
+        lockHeld = resolve;
+      });
+      // Another transaction holds the card's preparation, as a pull or a
+      // reset does.
+      const holder = sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          await sqlExecutor.execute(
+            `SELECT id FROM ${DROP_FORGE_PREPARATIONS_TABLE} WHERE id = :id FOR UPDATE`,
+            { id },
+            { wrappedConnection: connection }
+          );
+          lockHeld();
+          await released;
+        }
+      );
+      let pull: Promise<unknown> = Promise.resolve();
+      try {
+        await held;
+        // Outside a transaction the legacy pull commits at once, and its
+        // identity split then waits on the preparation row: its locking
+        // read stays in the processlist until the holder lets go.
+        pull = getPublicSubscriptions(MEMES_CONTRACT, CARD);
+        let waiting = 0;
+        for (let i = 0; i < 200 && !waiting; i++) {
+          const [row] = await sqlExecutor.execute<{ waiting: number }>(
+            `SELECT COUNT(*) AS waiting FROM information_schema.processlist
+              WHERE info LIKE '%${DROP_FORGE_PREPARATIONS_TABLE}%FOR UPDATE%'
+                AND info NOT LIKE '%processlist%'`
+          );
+          waiting = Number(row.waiting);
+          if (!waiting) {
+            await new Promise((resolve) => setTimeout(resolve, 25));
+          }
+        }
+        expect(waiting).toBe(1);
+        for (const [, phase] of await phases(
+          SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+          'identity_key'
+        )) {
+          expect(phase).toBeNull();
+        }
+        expect(await phaseReports()).toEqual([]);
+      } finally {
+        release();
+        await holder;
+        await pull;
+      }
+      expect(
+        await phases(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key')
+      ).toEqual(
+        await phases(SUBSCRIPTIONS_NFTS_FINAL_TABLE, 'consolidation_key')
+      );
+      expect(await phaseReports()).toEqual([
+        { verdict: 'MATCH', mode: 'SHADOW' }
+      ]);
+    });
+
+    describe('the reset in shadow', () => {
+      /** Shadow, with card 1 pulled Public on both sides. */
+      const shadowWithPublicPull = async () => {
+        await seedLegacy();
+        await cutAndLoad(false);
+        process.env[SHADOW_ENV] = 'true';
+        subscriptionsIdentitySwitch.invalidate();
+        await updateSubscriptions();
+        await pullInPreparation((ctx) =>
+          getPublicSubscriptions(MEMES_CONTRACT, CARD, ctx)
+        );
+        const legacy = await phases(
+          SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+          'consolidation_key'
+        );
+        expect(legacy.length).toBeGreaterThan(0);
+        expect(legacy.every(([, phase]) => phase === 'Public')).toBe(true);
+        expect(
+          await phases(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key')
+        ).toEqual(legacy);
+      };
+      const shadowResets = async () =>
+        (
+          await sqlExecutor.execute<{ entry: string }>(
+            `SELECT entry FROM ${SIGNED_RECORD_LOG_ENTRIES_TABLE} WHERE lane = 'subs-shadow' ORDER BY id`
+          )
+        )
+          .map((r) => JSON.parse(r.entry).body)
+          .filter((b: any) => b?.kind === 'phase' && b?.inputs?.reset === true);
+      const allPhases = async (table: string, key: string) =>
+        (await phases(table, key)).map(([, phase]) => phase);
+
+      it('a logged reset that rolls back changes neither side and journals no shadow reset', async () => {
+        await shadowWithPublicPull();
+
+        await expect(
+          loggedPreparationReset({
+            spec: {
+              kind: 'dist.reset',
+              card: mintCard(MEMES_CONTRACT.toLowerCase(), CARD),
+              actor: {
+                type: 'admin',
+                wallet: `0x${'9'.repeat(40)}`,
+                authority: 'test'
+              },
+              intent: { route: 'dist.reset', params: {}, body: null }
+            },
+            contract: MEMES_CONTRACT,
+            claim: CARD,
+            reset: async (ctx) => {
+              await resetAllowlistRows(MEMES_CONTRACT, CARD, ctx);
+              throw new Error('after the reset');
+            }
+          })
+        ).rejects.toThrow('after the reset');
+
+        for (const [table, key] of [
+          [SUBSCRIPTIONS_NFTS_FINAL_TABLE, 'consolidation_key'],
+          [SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key']
+        ]) {
+          expect(
+            (await allPhases(table, key)).every((phase) => phase === 'Public')
+          ).toBe(true);
+        }
+        expect(await shadowResets()).toEqual([]);
+      });
+
+      it('a committed reset resets the identity rows after it, with one shadow reset entry', async () => {
+        await shadowWithPublicPull();
+
+        await loggedPreparationReset({
+          spec: {
+            kind: 'dist.reset',
+            card: mintCard(MEMES_CONTRACT.toLowerCase(), CARD),
+            actor: {
+              type: 'admin',
+              wallet: `0x${'9'.repeat(40)}`,
+              authority: 'test'
+            },
+            intent: { route: 'dist.reset', params: {}, body: null }
+          },
+          contract: MEMES_CONTRACT,
+          claim: CARD,
+          reset: (ctx) => resetAllowlistRows(MEMES_CONTRACT, CARD, ctx)
+        });
+
+        for (const [table, key] of [
+          [SUBSCRIPTIONS_NFTS_FINAL_TABLE, 'consolidation_key'],
+          [SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key']
+        ]) {
+          expect(
+            (await allPhases(table, key)).every((phase) => phase === null)
+          ).toBe(true);
+        }
+        expect(await shadowResets()).toHaveLength(1);
+      });
+
+      it("waits for the card's preparation row before it resets the identity rows", async () => {
+        await shadowWithPublicPull();
+        const id = `${MEMES_CONTRACT.toLowerCase()}:${CARD}`;
+        let release!: () => void;
+        const released = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        let lockHeld!: () => void;
+        const held = new Promise<void>((resolve) => {
+          lockHeld = resolve;
+        });
+        const holder = sqlExecutor.executeNativeQueriesInTransaction(
+          async (connection) => {
+            await sqlExecutor.execute(
+              `SELECT id FROM ${DROP_FORGE_PREPARATIONS_TABLE} WHERE id = :id FOR UPDATE`,
+              { id },
+              { wrappedConnection: connection }
+            );
+            lockHeld();
+            await released;
+          }
+        );
+        let reset: Promise<unknown> = Promise.resolve();
+        try {
+          await held;
+          // Outside a transaction the legacy reset commits at once, and the
+          // identity reset after it waits on the preparation row.
+          reset = resetAllowlistRows(MEMES_CONTRACT, CARD, {});
+          let waiting = 0;
+          for (let i = 0; i < 200 && !waiting; i++) {
+            const [row] = await sqlExecutor.execute<{ waiting: number }>(
+              `SELECT COUNT(*) AS waiting FROM information_schema.processlist
+                WHERE info LIKE '%${DROP_FORGE_PREPARATIONS_TABLE}%FOR UPDATE%'
+                  AND info NOT LIKE '%processlist%'`
+            );
+            waiting = Number(row.waiting);
+            if (!waiting) {
+              await new Promise((resolve) => setTimeout(resolve, 25));
+            }
+          }
+          expect(waiting).toBe(1);
+          expect(
+            (
+              await allPhases(
+                SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+                'consolidation_key'
+              )
+            ).every((phase) => phase === null)
+          ).toBe(true);
+          expect(
+            (
+              await allPhases(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key')
+            ).every((phase) => phase === 'Public')
+          ).toBe(true);
+        } finally {
+          release();
+          await holder;
+          await reset;
+        }
+        expect(
+          (
+            await allPhases(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key')
+          ).every((phase) => phase === null)
+        ).toBe(true);
+        expect(await shadowResets()).toHaveLength(1);
+      });
+
+      it('a failed identity reset leaves the legacy reset, logs, and saves a failed phase report', async () => {
+        await shadowWithPublicPull();
+        const journalBefore = jest
+          .spyOn(journalModule, 'journalBefore')
+          .mockRejectedValueOnce(new Error('identity reset failed'));
+        const errors = jest.spyOn(Logger.prototype, 'error');
+        try {
+          try {
+            await resetAllowlistRows(MEMES_CONTRACT, CARD, {});
+          } finally {
+            journalBefore.mockRestore();
+          }
+          expect(
+            (
+              await allPhases(
+                SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+                'consolidation_key'
+              )
+            ).every((phase) => phase === null)
+          ).toBe(true);
+          expect(
+            (
+              await allPhases(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key')
+            ).every((phase) => phase === 'Public')
+          ).toBe(true);
+          expect(errors).toHaveBeenCalledWith(
+            '[SHADOW ALLOWLIST RESET FAILED]',
+            expect.any(Error)
+          );
+          expect(await phaseReports()).toContainEqual({
+            verdict: 'FAILED',
+            mode: 'SHADOW'
+          });
+        } finally {
+          errors.mockRestore();
+        }
+      });
+    });
+
+    it('in shadow, a failing identity split leaves the preparation committed, logs the failure, and the gate refuses', async () => {
+      await seedLegacy();
+      await cutAndLoad(false);
+      process.env[SHADOW_ENV] = 'true';
+      subscriptionsIdentitySwitch.invalidate();
+      await updateSubscriptions();
+      // Only the identity split journals in shadow, so this fails it alone.
+      const journalBefore = jest
+        .spyOn(journalModule, 'journalBefore')
+        .mockRejectedValueOnce(new Error('identity write failed'));
+      const errors = jest.spyOn(Logger.prototype, 'error');
+      try {
+        const { airdrops } = await pullInPreparation((ctx) =>
+          getPublicSubscriptions(MEMES_CONTRACT, CARD, ctx)
+        );
+        expect(airdrops.length).toBeGreaterThan(0);
+      } finally {
+        journalBefore.mockRestore();
+      }
+      try {
+        // The legacy pull committed; the identity rows have no phase.
+        const legacy = await phases(
+          SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+          'consolidation_key'
+        );
+        expect(legacy.every(([, p]) => p === 'Public')).toBe(true);
+        for (const [, phase] of await phases(
+          SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+          'identity_key'
+        )) {
+          expect(phase).toBeNull();
+        }
+        expect(errors).toHaveBeenCalledWith(
+          '[SHADOW PHASE SPLIT FAILED] [Public]',
+          expect.any(Error)
+        );
+        expect(await phaseReports()).toEqual([
+          { verdict: 'FAILED', mode: 'SHADOW' }
+        ]);
+        // The failed comparison holds the switch back.
+        const gate = await shadowReportsMatch(CARD);
+        expect(gate.ok).toBe(false);
+        expect(gate.problems).toEqual(
+          expect.arrayContaining([
+            expect.stringMatching(
+              new RegExp(`^PHASE comparison \\d+ \\(card ${CARD}\\) is a DIFF$`)
+            )
+          ])
+        );
+      } finally {
+        errors.mockRestore();
+      }
+    });
+  }
+);

@@ -18,6 +18,13 @@ after lease replacement or explicit invalidation. See
 - SQS and EventBridge as the async execution fabric.
 - S3, CloudFront, Arweave, Ethereum/RPC providers, Firebase, Sentry, CloudWatch, Discord, and SNS around the core.
 
+Cookie-consent country checks prefer the WAF country header on REST API Gateway
+requests, with FindIP retained as a permanent fallback. Before deploying this
+code in an environment, configure every WAF Allow path to overwrite the header.
+This changes the geolocation source without changing sanctions enforcement,
+EU/EEA classification or the response contract. See [country checks](country-check.md).
+Only the `api` service needs deployment.
+
 The six Sharp media packages also accept the exact direct-invocation payload
 `{"operator_action":"verify_media_dependencies_v1"}` for release diagnostics.
 This IAM-invoked path runs fixed synthetic codec operations in memory and
@@ -600,8 +607,7 @@ flowchart TD
     NftLinkRefresherLoop --> NftLinkPreviewQueue["SQS: nft-link-media-previews"] --> NftLinkMediaPreviewLoop["nftLinkMediaPreviewLoop"]
     SeizeAPI --> PushQueue["SQS: firebase-push-notifications"] --> PushNotificationsHandler["pushNotificationsHandler"]
     SeizeAPI --> HelpBotQueue["SQS: help-bot-replies"] --> HelpBotReplyLoop["helpBotReplyLoop"]
-    SeizeAPI --> HelpBotDailyCreditsQueue["SQS: help-bot-daily-activity-credits.fifo"] --> HelpBotDailyActivityCreditLoop["helpBotDailyActivityCreditLoop"]
-    EventBridge --> HelpBotDailyCreditsQueue
+    EventBridge --> HelpBotDailyCreditsQueue["SQS: help-bot-daily-activity-credits.fifo"] --> HelpBotDailyActivityCreditLoop["helpBotDailyActivityCreditLoop"]
     SeizeAPI --> ReleaseNotesQueue["SQS: release-note-generation"] --> ReleaseNotesGenerationLoop["releaseNotesGenerationLoop"]
     SeizeAPI --> WaveDropMetricsDirtyQueue["SQS: wave-drop-metrics-refresh-dirty.fifo"] --> WaveDropMetricsRefreshLoop
     SeizeAPI --> WaveScoreDirtyQueue["SQS: wave-score-refresh-dirty.fifo"] --> WaveScoreRefreshLoop
@@ -742,7 +748,7 @@ reset behavior, and the required writer-before-collector deployment order.
 | `nftLinkMediaPreviewLoop`        | SQS `nft-link-media-previews`                                                                                                       | Generate media previews for NFT links.                                                                                                                                                  |
 | `pushNotificationsHandler`       | SQS `firebase-push-notifications`                                                                                                   | Deliver Firebase pushes and recipient-scoped WebSocket notification invalidations after notification rows are durable; also content-free `e2ee_wake` notifications for encrypted chats. |
 | `helpBotReplyLoop`               | SQS `help-bot-replies`                                                                                                              | Answer `@help6529` interactions and direct follow-ups to bot replies.                                                                                                                   |
-| `helpBotDailyActivityCreditLoop` | SQS `help-bot-daily-activity-credits.fifo` with EventBridge wakeup fallback                                                         | Grant idempotent once-per-UTC-day activity credits from durable post-drop requests.                                                                                                     |
+| `helpBotDailyActivityCreditLoop` | SQS `help-bot-daily-activity-credits.fifo`, woken by a one-minute EventBridge rule                                                  | Complete leftover daily-activity requests without a grant; removed in a later change.                                                                                                   |
 | `releaseNotesGenerationLoop`     | SQS `release-note-generation`                                                                                                       | Publish production Backend, Frontend, and Desktop release notes as `ci6529`.                                                                                                            |
 | `waveDropMetricsRefreshLoop`     | SQS `wave-drop-metrics-refresh-dirty.fifo`; EventBridge fallback                                                                    | Repair materialized wave/dropper drop counts and latest-drop timestamps after drop deletes.                                                                                             |
 | `xTdhLoop`                       | SNS `tdh-calculation-done.fifo` or a direct post-persistence partial-TDH enqueue via SQS `xtdh-start.fifo`; self-queued stats phase | Recalculate the xTDH universe after TDH finishes, then rebuild and publish xTDH stats in a follow-up queue message.                                                                     |
@@ -770,6 +776,8 @@ The API's Redis client is fail-fast: initialization waits a bounded time for the
 Database login: both the API pools and the TypeORM data source pick their target in `src/db-iam-auth.ts`. When the shared secret sets `DB_IAM_AUTH=true` with `DB_IAM_HOST`, `DB_IAM_USER`, `DB_IAM_HOST_READ` and `DB_IAM_USER_READ`, services connect over verified TLS to an RDS Proxy that only accepts IAM tokens, as the Lambda execution role, with no database password; each new pool connection gets a token at most 10 minutes old. The `mysql` driver only speaks native passwords, so IAM mode adds the plugin-auth handshake and the `mysql_clear_password` reply to it at runtime. Without those settings, services use `DB_HOST`/`DB_USER`/`DB_PASS` as before, so services built before IAM support keep working while the secret carries both.
 
 Background Lambdas that read or write application state use a shared `doInDbContext` wrapper. That wrapper prepares environment/secrets, initializes TypeORM-backed DB access, initializes Redis, runs the job, then disconnects. The `dropVideoConversionInvokerLoop` is intentionally environment-only: it reads only its function environment (no shared secret, no VPC), filters the S3 object key, and invokes MediaConvert without opening MySQL or Redis connections. Its production stack runs in `eu-west-1`, next to the media bucket it watches, while other production services run in `us-east-1`.
+
+The API's SQL executor lives in `src/db/api-sql-executor.ts`: the legacy competition GET facade's rewrite, the API's type casting (`CustomTypeCaster`) and its pool factory. `db-api.ts` builds the API's executor from it. A CLI that must read exactly what the public API's mappers read, such as the waves export, runs inside `doInDbContext` and then swaps in the same executor over its own pool (`src/waves-export/waves-export.db.ts`): TypeORM's default executor applies neither the rewrite nor the casting. The DB services keep the executor they first read, so such a swap runs once per process, before any service is used. The export's pool is one read-only pool on `DB_HOST` (`SET SESSION TRANSACTION READ ONLY` on each connection).
 
 MySQL is the integration contract between nearly all modules. API routes, scheduled pollers, queue workers, and derived-data loops all read and write shared tables. Redis is secondary and mostly disposable: API request cache, rate limiting, webhook dedupe, locks, and selected feature caches can fail open or be repopulated from MySQL.
 
@@ -855,13 +863,389 @@ this API support while new clients are deployed; roll back the frontend first.
 
    Other drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception. Drop-video multipart completion can accept a bounded device-generated JPEG, validate and strip its metadata, and store it before completing the original video. Conversion always keeps the existing HLS/MP4 renditions and adds bounded first-frame/one-second JPEGs only if a validated device poster is unavailable. Chat prefers the device image, then the later backend image, falling back to the first for legacy or short clips, and displays it before Play without fetching video bytes. The worker reads and expands the existing MediaConvert template without modifying it; its deployment includes template-scoped read and device-poster access policies. Before a job it skips objects that are gone, superseded or over a configurable size (2 GiB default), and allows one job per object version and a configurable number of jobs per key per window, recorded in a per-key S3 ledger (`_video-conversion-ledger/` in the media bucket) written with conditional writes. The HEAD and the ledger rely on the shared execution role's existing access to that bucket; the function adds no inline grants for them. The API execution role also needs narrow device-poster write and pending-upload read access. Existing uploads need a separate authorized replay. See [chat video previews](chat-video-previews.md) for storage and rollout details.
    The on-demand media resizer spools each S3 source into its own temporary file before metadata inspection and conversion. A shared 256 MiB source limit rejects oversized inputs with HTTP 422. PNG uses measured 100 MP/8-bit and 64 MP/16-bit admission, a 100,000-pixel input-side limit, and disposable Sharp child processes. PNG output is capped at 4096 pixels per side, two million pixels and 10 MiB encoded; ordinary fit/orientation behavior is preserved and oversized results are fitted inside a bounded box. Each PNG child has a 256 MiB JS heap, a 30-second lifetime and a sampled 1 GiB combined parent/child RSS watchdog. These are guards with headroom under the 2 GiB Lambda allocation, not hard native allocation guarantees. Corrupt/over-limit input is permanent; timeout, allocation/worker, monitor and I/O failures remain operational. Source and output files live until upload completes and are removed after success or failure. Non-PNG codecs retain the conservative 512 MiB decoded-work estimate; animated GIF admission counts every frame. Baseline 8-bit JPEG admission accounts conservatively for the decoder shrink used by the requested resize; progressive JPEGs and other codecs retain the full-input estimate. When a GIF animation exceeds the budget, only its first frame is resized if that frame independently fits. Otherwise it remains HTTP 422. Originals are unchanged, and already-posted images can receive previews on demand without re-uploading. Resize, rotation and output contracts are preserved for ordinary accepted inputs. Multipart upload concurrency is one, and the temporary directory is removed after completion or failure. These admission limits reduce resource risk; they do not guarantee a maximum native allocation for every codec. The specific HEIF missing-compression-plugin error is returned as `422 UNSUPPORTED_CODEC`, regardless of the filename or MIME label. One operational report is claimed per original S3 key and source version (VersionId, or ETag for unversioned objects), across resize variants and Lambda instances, using an empty conditional-write marker under `_resize-rejections/v1/` in the existing source bucket. Later requests retain warning logs and the controlled response; replacing the source enables a new report. Marker failures remain operational errors. Detected HEIF/HEVC inputs now use an isolated, pinned WebAssembly HEVC decoder and explicit JPEG output, independent of the source suffix/MIME label. The child has separate source/pixel, JS heap, WASM memory and time budgets. Confirmed permanent HEVC decoder rejections use `_resize-rejections/v2/` markers keyed by source revision and decoder policy: later requests still spool/inspect the source but skip pixel decoding and return HTTP 422. Source or decoder-policy changes permit another attempt. S3/worker/timeout/allocation failures remain operational; the generic Sharp HEIF `(7.0)` error is not broadly suppressed. A source length mismatch remains operational before decoding or caching. See [media-resizer-unsupported-input.md](media-resizer-unsupported-input.md) for decoder, alert and recovery limits.
-   Chat image stripping is lossless when it verifies (pixels and ICC profile unchanged, Orientation kept); decision-entry uploads are never stripped and keep the artist's file name, while chat and wave uploads get neutral `<upload id>.<ext>` public names. See [image-upload-format-validation.md](image-upload-format-validation.md). Chat images published before stripping can be rewritten in place by an operator-run CLI (no Lambda) that skips decision entries, keeps private safety copies in the ingest bucket and batches CloudFront invalidations; see [chat media metadata backfill](chat-media-metadata-backfill.md).
+   Chat image stripping is lossless when it verifies (pixels and ICC profile unchanged, Orientation kept); decision-entry uploads are never stripped and keep the artist's file name, while chat and wave uploads get neutral `<upload id>.<ext>` public names. The Wave picture multipart route accepts WebP alongside JPEG, PNG and GIF. Newly initiated Wave picture uploads always require the shared metadata stripping policy, including when chat-drop stripping is disabled. See [image-upload-format-validation.md](image-upload-format-validation.md). Chat images published before stripping can be rewritten in place by an operator-run CLI (no Lambda) that skips decision entries, keeps private safety copies in the ingest bucket and batches CloudFront invalidations; see [chat media metadata backfill](chat-media-metadata-backfill.md).
 
    Drop/wave image finalization now generates and verifies both legacy `AUTOx450` and `AUTOx1080` previews using the same admission and PNG renderer as on-demand resizing before it can mark media ready. All image source handling and re-encoding privacy stripping are file-based; full source and encoded-original buffers are not retained in the parent, except that lossless stripping reads sources of up to 256 MiB (the upload limit) into memory and frees them before previews are rendered. Its pixel check decodes in bands of at most 64 MiB, so memory does not grow with image size; it is bounded by a 268 MP pixel ceiling, a 64 MP frame cap for whole-frame decoders, the PNG upload limits and a 240-second budget (see [image-upload-format-validation.md](image-upload-format-validation.md#pixel-check-bounds)). PNG original stripping uses an isolated child when the lossless strip does not verify; other original re-encodes must fit the conservative full-decode budget without preview shrink or discarded GIF frames. The original and both derivatives must be stored before the ready transition and ingest deletion. Derivative storage failures remain retryable and never imply ready. A retry regenerates the previews and overwrites the same keys; a ready-message redelivery only retries best-effort private-source deletion. Other formats retain their format/privacy transformations and existing animated-GIF first-frame fallback. The sanitizer reserves 1 GiB ephemeral storage for source, sanitized original and derivatives. Existing ready uploads are not requeued; the corrected on-demand PNG path can populate their missing derivatives without changing source/drop URLs.
    The animation-preview implementation (requires `mediaResizerLoop` deployment) handles versioned GIF requests (`AUTOx450_gifv2`, and the other existing sizes with `_gifv2` appended) with animation-preserving processing instead of the legacy first-frame fallback. The suffix is removed before checking the existing size whitelist and resolving the original key, but retained in the S3 derivative key. AUTO sizes use a sequential native decode and one resize directly to bounded output dimensions; fixed crop sizes retain individually coalesced frames and a repeated-scan guard. The bounded RGBA strip is spooled before encoding; output resolution can shrink further to bound the complete animation. The deployment catalog sets this worker to 2048 MiB for CPU headroom while retaining its processing deadline and source/output safety limits. Frame timing, loop count, and transparency are retained. Admission limits cover source bytes, per-frame pixels, frame count, repeated decoder work, retained output, and processing time. An eligible original that already fits an AUTO dimension is copied unchanged. See [GIF animation previews](gif-animation-previews.md) for limits, rollout, and compatibility. Originals and legacy derivative keys are not overwritten.
    Public media objects carry `Cache-Control` set when they are written, because the media CloudFront distribution also serves the desktop app's update feeds (`6529-core-app/`, `6529-staging-core-app/`), which must not be cached long. Keys that never receive different bytes use `public, max-age=31536000, immutable`: drop, wave and distribution uploads (random id per upload; multipart uploads set it at creation), sanitized drop media, profile pictures, rememe images (write-once), device video posters and NFT link previews. Per-token NFT originals and derivatives under `images/` and `videos/` are rewritten in place when a token's media source changes, so they use `public, max-age=86400`, as do on-demand resizer outputs and upload-generated previews at those same derivative keys. Single-PUT presigned uploads and MediaConvert renditions do not set it yet.
 
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
+
+### 6529 chain gateway boundary
+
+Identities (profiles, handles, consolidations, delegations, REP, NIC and
+levels) move to the 6529 chain. `src/chain-gateway/chain-gateway.client.ts`
+(`chainGatewayClient`) is the backend's one client for it: reads through the
+chain gateway's service access (`CHAIN_GATEWAY_URL`, bearer
+`CHAIN_GATEWAY_SERVICE_KEY`), relays signed operations (`POST /v1/draft`,
+`POST /v1/submit`), and fetches profile documents from the gateway's document
+store by CID, checking each against its CID. Reads are pinned to the latest
+finalized height it knows (refreshed every two seconds, never going back)
+and cached in memory by network and height, except answers of the node's
+own data (wallet histories, saved days, TDH lists, the feed), which can
+change at one height and are never cached. Reads retry network errors, 429
+and 5xx. A submit is sent again only after a 503, a 429 or a connection that
+never opened; after anything else it throws `outcome_unknown` with its txId,
+and callers ask `getTx` rather than wrapping it in a retry of their own.
+Uploads to the document store go through the gateway's public name, not
+service access. Every answer must name the chain the gateway's status names
+(`wrong_network` otherwise), and answers that can't be read, such as feed
+pages that don't hold together, throw `bad_answer` rather than reading as
+empty. Settings are read at first
+use, so loops that never call it need none. Loops and API code that read
+identity data from the chain add calls to this client, not their own.
+
+`/api/chain` relays operations people sign with their wallets: `POST
+/chain/submit` passes a signed operation to the gateway's `/v1/submit`, and
+`/chain/pending` holds an identity join, which needs two wallets, in
+`chain_pending_operations` and `chain_pending_operation_signers` until both
+have signed, checking each signature against its signer, then relays it.
+
+Only identity joins are held, and only the identity's wallet (role 0)
+holds one (`POST /chain/pending`, signed; 403 for any other wallet); the
+joining wallet signs it after (`POST /chain/pending/:tx_id/signatures`).
+What is held is read from the join's typed data, which must hash to its
+`tx_id`: the principal, the window, and the signers (role 0, the wallet the
+header's key id names; role 4, the body's joining wallet). A given
+`principal`, `expires_at` or `required` that says otherwise is refused. A
+new join is held only when the role-0 wallet belongs to that principal now,
+read through the gateway at the latest finalized height (400 if not; 503
+when the chain can't be read, or doesn't answer in 5 s), its window is one
+the chain takes (at most `maxValidityMs` from `GET /v1/ops`, a day when
+unreadable), its envelope is at most 4 KiB and its typed data 8 KiB, and
+the wallet holding it has fewer than five pending joins (429
+`TOO_MANY_PENDING`; counted under a lock on that wallet's joins, so two
+posts at once can't both pass at four, and a repeat of one that landed
+meanwhile answers its state. A wallet that has never held a join has no
+row to lock: a first burst of posts sent at once can go over five).
+Posting a join again once it was sent answers its state, also after its
+expiry. No signature is ever returned
+(`signers[].sig` is always null; `signed` says who has signed): the relay
+submits, and a signature handed out could finish a join its signer had
+withdrawn. A pending join past its expiry shows as `EXPIRED`. The list of
+joins waiting for a wallet (`GET /chain/pending`, one query, at most 50)
+carries each join's `unsigned` and `typed_data`, which the joining wallet
+checks and signs.
+
+Every operation the API answers has `final`: true once nothing about it
+will change (the chain's tx is final, or it is `FAILED`, `CANCELLED` or
+`EXPIRED`). Poll `GET /chain/pending/:tx_id` until it is final.
+
+Every submit carries its draft's txId, the digest every signer signed: a
+direct submit's body needs `tx_id` (400 without it), and a held operation
+uses its own. The client checks that the node's answer is of that
+transaction. A direct submit answers the node's answer with `outcome:
+'accepted'`; a failure answers `tx_id` and an `outcome`: `refused` (422
+`CHAIN_REFUSED`), `not_taken` (502 `CHAIN_UNAVAILABLE`, safe to send again)
+or `unknown` (502 `CHAIN_OUTCOME_UNKNOWN`, with `node_tx_id` when the node
+took another transaction): it may have landed, so ask the chain rather than
+send it again.
+
+A held operation is sent at most once. It is claimed under its row lock,
+moving from `PENDING` to `SUBMITTED` before anything is sent. Its `result`
+always says its `outcome`: `accepted` (the node's answer, and the chain's
+`tx` once a read has asked), `unknown` (with `txId`, and `nodeTxId` when the
+node named another), or `refused` (with the node's `code`, the chain's
+result name for a join that ran and failed, or `expired`). It stays
+`SUBMITTED` with an unknown outcome while it is sent, and when the answer
+is lost. A read of a sent join (`GET /chain/pending/:tx_id`) asks the
+chain, bounded, at most every 10 s (the time is kept in `result.checkedAt`),
+until it is final: held in a block or the pool, `accepted` with the
+chain's `tx`; run and failed, `FAILED`, with `last_error` worded as the
+node words a refusal (`0x210E REJOIN_WAIT`, and `, detail N` when it has
+one); held nowhere as of a chain time
+five minutes past its expiry (the answer's read time, not this backend's
+clock), `FAILED` (`expired`). Each of these writes applies only while
+the outcome and `checkedAt` are still the ones read (every one moves
+`checkedAt` on), so a slower read never undoes a faster one; the send's
+own applies only while the outcome is still unknown. Only an answer that
+the node surely didn't take it puts it back to `PENDING` for a retry, and a
+refusal of the operation marks it `FAILED`. A cancel takes the same lock
+and moves it only from `PENDING`, so a withdrawn join is never sent and a
+sent one is never shown as withdrawn; a cancel also drops the signatures it
+held, and is tried once more when MySQL rolls it back to break a deadlock
+with a post of the same wallet.
+
+From switch-on the delegations loop also runs the identity mirror
+(`src/identity-chain-mirror`, `FEATURE_IDENTITY_CHAIN_MIRROR`) after its
+NFTDelegation work, also when that work failed (the failure still fails the
+run). From switch-on, with the flag on, NFTDelegation's events are read so
+the checkpoint moves on but not applied, before the freeze block as after it (on the freeze
+path too, which records the logs past the freeze block as before):
+consolidations, delegations, re-keying and primary addresses come from the
+chain; ENS still runs. Each step's
+time comes from what the Lambda has left: the mirror (at most six minutes),
+the re-keying (as many wallets as the time left allows, at 50 ms each, and
+half the last batch when that one didn't finish, the marks counting the last
+batch only; a failure there is logged,
+and a mirror error stays the run's), then the
+profile site followers (once a first full sync has ended). A gateway node
+that says it isn't ready is logged and still read (its finalized state); a
+feed page of another chain ends the run without moving on. Another network id
+than the mirror's is a misconfiguration in production: the run stops with an
+error and nothing is wiped; only a test stage with
+`IDENTITY_CHAIN_MIRROR_RELAUNCH_ALLOWED=true` starts again on a relaunched
+chain.
+
+The mirror keeps `profiles`, `identities`, `address_consolidation_keys`,
+`consolidations` (confirmed pairs), `delegations`, REP and CIC `ratings`,
+`cic_statements` and the `rep`/`cic`/`level_raw` aggregates equal to the
+chain, so the SQL readers keep working. It follows the gateway's change feed;
+a full sync (the first time, every six hours, and when the feed no longer
+holds its height) walks every identity, delegation and pair over several runs,
+and the feed goes first in each of those runs with its share of the time, so
+a full sync never holds the site's changes back (it never moves the feed's
+place back either). Delegations are walked one use case at a time, only the
+use cases the chain's records take (1 to 17, 997, 998), the wallets of each in
+order, with the use case and the last wallet written saved (a new full sync
+starts from the first); rows of other use cases go at the end. Every chain
+identity's `rep`, `cic` and `level_raw` are written from the chain by each
+full sync, the first one at switch-on included (an imported identity with too
+many wallets for a key is still mapped to its profile); a full sync page
+stops at the run's deadline or an old pin, and the next run goes on from the
+identity after the last one written. Profiles that are not chain identities
+keep 6529.io's REP and CIC, without the help bot's credits, and a level of
+REP + TDH: when a full sync has written every chain identity, the REP of a
+profile with credits becomes its REP ratings outside the credit category, and
+then, after each level sweep and, 20,000 rows a run from where the last run
+got to, every run (so the levels follow 6529.io's TDH days), `level_raw`
+becomes `rep + tdh` where it differs, a row without a profile included; the
+ids an identity waiting to be retried could have are left out. A feed page
+writes the identities, rating targets and wallets it touches (a rating touches
+its target, not its rater, and a rater's own records touch nothing; a
+delegation of use case 997 touches its holder identity too, whose `primary`
+it sets; a 997 record that only expires is caught by the next full sync)
+until the run's deadline, for at most 2,000 keys and while its pin is under
+eight minutes old; the keys it doesn't reach go to the retry list, and its
+place moves on. Each key's reads are its own: one that fails is tried again
+and the page goes on (a refused pin still stops it).
+Each feed page, retry batch and full sync page reads the identities, ratings
+and delegations it touches pinned to one finalized height at or past the one
+it needs, and never below a height read before, in this run or an earlier one
+(`pin_floor`), so another gateway node behind can't make it write older
+state; a pinned read the gateway refuses (a height it no longer holds, about
+13 minutes on, or an answer from another chain) ends the run without moving
+on. A run that fails part way returns what it did, with the error.
+
+`identity_chain_principals` maps each principal to the 6529.io profile id its
+rows use: an imported identity's legacy id; for an identity made on the
+chain, its founding wallet's placeholder profile when no principal holds it,
+the import didn't take it, and the identity is the first the wallet was ever
+bound to (from its creation); else the principal id's first 16 bytes written
+as a UUID. Which identity a wallet was first bound to comes from the mirror's
+own `identity_chain_first_bindings`, recorded while the wallet bindings follow
+the feed without a break from the import's start, else from the gateway's
+history of the wallet (the gateway client keeps its first range, up to the
+read, counted from the import's start, before which no wallet was bound). When neither can say (the import's start unknown, or the node's
+history starting after it, or ending before a read past the creation: a gap),
+the identity is tried
+again for six hours (`identity_chain_founder_waits`), since another gateway
+node may answer meanwhile; when it stays so, it is mapped to its derived id
+and the placeholder is logged and reported as orphaned, for the later merge.
+A merged or closed identity is filed under its mapping, else the id the same
+rule gives, without a mapping: an id decided from its founder is kept
+(`identity_chain_founder_waits`), so it is filed under one id only. An
+answer the gateway's node doesn't hold (`not_held`) or gives unreadably
+(`bad_answer`) for these reads is tried again later, as another node may
+give it. The
+placeholder profiles are listed once, before the mirror's first write
+(`identity_chain_placeholders`), and 6529.io makes none from switch-on, so a
+rebuild from the chain gives the same ids. A placeholder profile whose wallets
+all join an identity is left without an identity row and logged; its ratings
+and follows are not moved.
+
+`identity_chain_mirror_state` holds the mirror's place in the feed. An
+identity, a rating target or a wallet whose rows fail to be written is logged
+and kept in the state (`retry_json`), saved with the feed's place, and tried
+again by later runs, up to 500 keys a run (one that fails again goes to the
+back), until it is written; a full sync starts that list again, and with more
+than 10,000 keys left the mirror starts one instead. A rater whose profile id can't be settled yet is left as it is:
+its rows under the ids it could get stay, the target's other ratings
+(removals included) are written, and the target is kept to try again. Raters
+already mapped are named from the mapping without reading their identity. A
+delegation expiry of 0 never expires. Profile documents come from the
+gateway's store; a value 6529.io can't hold (longer than its column, or a
+classification or statement group it doesn't have) is left out and reported
+in the run's `docProblems`, and the rest of the identity is written.
+
+One writer per `identities` column: from switch-on the mirror alone writes
+`rep`, `cic`, `level_raw` and the profile columns, all from the chain (the
+level is REP + TDH), and the TDH sync writes only `tdh` and `basetdh_rate`. A
+level changes with REP, which the feed carries, and with each TDH day, which
+it doesn't: when the chain's TDH day (`/v1/tdh`, read once a run) or the
+identities a run reads show a day later than the last one seen
+(`levels_tdh_day`, with the height it was first seen at), the mirror sweeps
+the chain's level ranking (`/v1/identities/by-level`, its latest finalized
+state, 500 identities a page), writing only `level_raw` of the mapped
+identities, one statement a page. A page ranked below the height the day was
+first seen at, or with a level of an earlier day, stops the sweep for the run
+without saving. Every level write (feed, full sync or sweep) records the
+chain height it was read at on the mapping (`level_height`; a sweep's is the
+height its answer was read at, and a level the ranking leaves out is read
+there), and no write puts an older level over a newer one. The sweep goes first in each run with a quarter of the time,
+keeps its place in the state across runs, and starts again from the top for a
+newer day. The help bot's credit category stays in 6529.io's ratings table as
+a site feature, not counted as REP, and the mirror never touches it (written
+in any case or spacing). It never
+updates `tdh`, `basetdh_rate` or the xTDH columns of a row that exists (the
+TDH and xTDH loops own them), and a row it creates for a new consolidation
+key starts from the profile's previous values. When wallets change keys, the
+mirror calls the handlers in `src/identity-chain-mirror/membership-change.ts`
+in its own transaction; the first queues every wallet of the rows before and
+after into `transfer_reconciliations` for the holdings loops. In the same
+transaction the regrouped wallets go to `identity_chain_regroups`; the
+delegations loop re-keys TDH, owners, balances, activity and subscriptions for
+them (up to 5,000 a run) and only then takes them off, so a run cut short
+loses none. The pairs of identities it doesn't write (merged, closing, too
+many wallets for a key) stay as they are.
+
+From switch-on `identity_chain_rating_events` is the source of REP and NIC
+notifications. The rating events follower
+(`src/identity-chain-mirror/rating-events-follower.ts`, reading with
+`rating-events.ts`) writes it. Like the wallet bindings follower it reads the
+feed from the import's first block, whole blocks of the mirror's chain, only
+the rating families: Rating (0x0701), RatingTotal (0x0704) and Category
+(0x0705). Its place is in the `events_` columns of the mirror's state, which
+only it writes: the next height (`events_next_height`), a ledger rebuild
+under way (`events_rebuild_height`, `events_rebuild_after`), a gone height
+seen once (`events_gone_at`) and the runs it has been stuck
+(`events_stuck_runs`). It starts once the import has completed and the
+identity sync has a place (`next_height`, set when the first full sync
+starts), never goes past that place, and doesn't wait for the first full sync
+to end: during one the feed goes first in every run and moves the place on.
+So REP and NIC rating rows start once the import completes and the follower
+reaches its end, normally within a run or two; the rows of ratings made
+during the import come then. For the rows that notify (origin OPERATION) the
+follower maps a rater or target the identity sync hasn't mapped yet itself,
+up to 200 a page: it reads the identity at a finalized height at or past the
+page and takes the identity sync's own id (`ProfileIds.profileIdOf`, stored,
+so the sync later finds the same one; a merged, closing or walletless one
+named without storing, as the sync names such a rater). The two never map at
+the same time: the follower runs after the identity steps, and one Lambda runs
+at a time. A failure that passes on its own (of the gateway: a height not
+held, a timeout, the network, 429 or 5xx; of the database, by its MySQL
+code: a deadlock, a lock wait, too many connections, read-only during a
+failover, a new connection's handshake or connect timing out, refused,
+reset, broken or lost, a host not found, or any error the driver marks fatal)
+ends the follower's run before the page is written; one that keeps
+coming back for a principal holds the page, and the stuck alarm calls a
+person. When more than 200 are left to map
+after some were newly named, the page is read again while time is left, going
+on from there; ids named without storing (merged, closing or walletless
+identities) are kept for the page in memory (forgotten when the chain
+changes), not read or counted again, and
+only ids stored count as a step on for the stuck alarm. An id that can't be settled yet
+(a chain-made identity in its founder wait, an answer another node may give),
+one whose mapping fails some other way (reported with the principal, as the
+identity sync isolates such an identity), and the rows of other origins (the
+import's above all) are written with a null id, which the fill below sets
+once the identity sync maps it. Each page's rows, ledger
+changes, category names and place are written in one transaction. The
+follower keeps its own copy of every rating in
+`identity_chain_rating_ledger`, keyed by the record's key fields (rater,
+matter, target kind, target, category) with the value, the height it was set
+at and a `stale` mark, and the REP category names it has read in
+`identity_chain_rating_categories`, so a cold start reads none again. Nothing
+comes from 6529.io's ratings table, which the identity sync writes at newer
+heights, so that sync can't change an event. Each run fills in profile ids,
+then runs the follower last, after the identity steps (which leave it a
+quarter of the time, and at least a minute when they run into it, never more
+than a minute past the mirror's budget), also when one of them threw. Its first start clears the
+ledger, the rows and the names in the transaction that saves its first place;
+without the import's start it logs an error and builds the ledger at the
+latest finalized height (as after a gap), with no rows before it.
+
+Each Rating record of an identity gives one row: the block's height and time
+(`block_time_ms`, the block's slot start), the rater and target principals
+and, when mapped, their profile ids (made here only for the rows that notify,
+as above; each run fills in those of the rows whose principal is mapped since,
+by primary key, 5,000 ids a statement, at most 500,000 ids and a quarter of
+the follower's time a run, going on next run from where it got to: every row
+until a whole pass has run after a full sync ended, since the import's rows
+wait on the first one, which can take more than a day, then the rows written
+in the last day. Where a pass got to, and whether that whole pass has run,
+are kept in memory only: a cold start begins again from the window's first
+row, and runs one whole pass again. A principal never mapped, merged or
+closed, can leave one null), the matter
+(REP, or CIC for NIC), the REP category's name (`''` for CIC; cut to 100
+characters, noted), the value before and the new one (`old_rating` and
+`new_rating`, bigint; 0 when removed), `total_after`, the record's `byImport`
+and raw `writer` (`tx:<op>` or `system:<step>`), and `origin`: IMPORT below
+the height the import ended at, and from it OPERATION for a RATING_SET
+transaction, CAP_CUT for the daily rating reduction (RATING_SCAN), IMPORT for
+no writer on a record the import wrote, UNKNOWN otherwise. Only OPERATION
+notifies.
+
+The value before is the ledger's (0 without a row). A key whose ledger row is
+marked stale (a record of it the follower couldn't read) reads it from the
+chain at the height before; when the gateway no longer holds that height the
+row is still written, with the ledger's value and origin UNKNOWN, and noted
+in the report. `total_after` is the target's total in that matter and
+category after the block: its RatingTotal record; without one, the ledger's
+total plus the change when none of its rows is stale, else the chain's
+totals of the target read at that height (when the gateway no longer holds
+those, the ledger's guess, noted). The node serves pinned reads of its last
+64 views only, so these reads work only for recent heights; a refusal from a
+node that hasn't finalized the height yet is not taken for gone: the page
+waits.
+
+When the gateway no longer holds the follower's place, the follower notes
+the height, and only when the next run finds it gone too (one answer may be
+a node's) does it rebuild the ledger: it empties it and lists every rating
+of the identities with raters at the latest finalized height (500
+identities a page, eight targets read at once, a page per transaction, all
+pinned to that height, its time logged); then it goes on from the next one. The heights from the gap to that height give no rows (logged).
+When the gateway drops the pin during the rebuild, it starts again at a
+newer one.
+
+Rows are written with `on duplicate key update id = id` (one row per height,
+rater, target, matter and category), so a page read again writes no row
+twice and a run cut short loses none. A record that changes nothing (a value
+before equal to the new one) or of the help bot's credit category writes no
+row but still updates the ledger. A record whose key can't be read, or a REP
+category the chain has no name for, is left out, logged and listed in the
+run's report, and the place moves on; a value without its fields, or one it
+can't hold exactly, is never taken for a removal and marks its key stale.
+Any other read that fails (a category name, a value before, a total), or a
+run's time running out before a read, ends the follower's run before the
+page is written, so the page waits; that failure goes to the run's report
+(the first 50 problems listed, the rest counted) and doesn't fail the run.
+When the follower hasn't moved for five runs while behind the identity sync
+(or in a gap), it logs an error and the delegations loop fails the run, so it
+alarms, once the profile site followers have run. A Rating
+record from the import's end on with no writer (an old gateway) has origin
+UNKNOWN and notifies no one; the run logs one error and counts them in its
+report. A full sync and a retry of keys write no rows. A relaunch clears the
+ledger, the rows, the names and the place, and the follower starts again
+from the new import.
+
+`identity_chain_wallets` holds each bound wallet's principal and the chain
+height it has been bound to that principal since
+(`wallet-bindings-follower.ts`). It follows the feed's AddressBinding records
+with its own cursor (`bindings_next_height`) from the import's first block;
+rows and cursor are written in one transaction. When the gateway no longer
+holds the cursor's height, the import's start is unknown, or a record's wallet
+can't be read, it lists the membership at one pinned height and stores every
+wallet as bound since then: later than the truth, never earlier; from then on
+no first binding is recorded (nor after a binding whose principal can't be
+read). The mirror names its chain by the network id (`chain_id`); on another
+one, read three times a second apart (one answer from a node of another chain
+wipes nothing; while the answers differ the mirror doesn't run), as after a
+relaunch, which only test chains have, the bindings and first bindings start
+again empty, the mappings of identities made on the old chain go (and every
+mapping's level height), and a full
+sync rewrites the identities of the new chain; rows of identities only the old
+chain had are not deleted. `IdentityChainLookups` (`identity-chain-lookups.ts`)
+answers "the principal of wallet W at height H" from that table below its
+cursor, on the chain the gateway serves, else from the wallet's history on the
+chain where that history is exact (a history held from the import's start
+says "bound to none" before a wallet's first change), and throws
+`WalletPrincipalUnknownError` when neither can say; and "the principal of
+profile id X" from the mapping or the import. As its last step the delegations
+loop calls `followProfileSites()`, which runs the followers in
+`PROFILE_SITE_FOLLOWERS` with `GatewayProfileSitePort` (`profile-site-port.ts`)
+for at most four minutes: the profile site index's chain reads, served from
+the gateway client and the mirror's profile ids.
 
 ### Ordinary Ethereum RPC boundary
 
@@ -1254,16 +1638,22 @@ stable cursors. There is no continuous review queue or hold-before-publish
 state.
 
 The developer [moderation review API](../ops/docs/developer/moderation-review.md)
-captures REP, About, group-name, signaled pre-publication and reported-content
+captures REP, About, signaled pre-publication and reported-content
 evaluations in `content_moderation_items` and `content_moderation_evaluations`.
 It replaces moderation's Discord notifications with database evidence and
 versioned, idempotent human actions. Existing stricter public-field prompts
 remain separate from permissive wave-content prompts. Exact rejected content
 can receive a seven-day single-use resubmission permit; approval never publishes
-an archived draft. About and group-name suppression uses an exact-revision
-presentation overlay while preserving source values. Routine successes expire
+an archived draft. About suppression uses an exact-revision presentation
+overlay while preserving the source value. Routine successes expire
 after 30 days, resolved evidence after 90 days, and compact history after one
 year; unresolved evidence and active rules retain their required provenance.
+
+Group visibility changes and replacements commit their idempotency receipts in
+`community_group_visibility_requests` alongside the group write. Historical
+group-name reviews remain stored for legacy save replays and exact-revision
+suppression. WatchTower excludes these reviews. Synchronize the additive table
+with `dbMigrationsLoop` before deploying the API.
 
 Standalone moderation capture uses bounded five-second SQL units with at most
 three total attempts; it retries only after acknowledged deadlock rollback.
@@ -1718,6 +2108,28 @@ Important API responsibilities:
   and validation diagnostics, and authenticated draft patch validation that
   dry-runs agent proposals without applying changes or bypassing publish
   signing/storage authority.
+- Profile sites on the 6529 chain, behind `FEATURE_PROFILE_CMS_CHAIN_POINTER`
+  (default off). The person's ProfileDoc keys `cms.primary.publication` and
+  `cms.primary.package` name the primary site's signed publication record and
+  content core by CID; `PROFILE_REPLACE` moves them. At the end of each
+  identity mirror run, `src/profile-cms/chain` follows the finalized Profile
+  changes from its own cursor: it reads the documents and files through the
+  chain gateway, checks them, and indexes the pointer and its events in the
+  profile CMS tables, so a rebuild from the change feed writes the same rows. The
+  `profile-cms:export` command builds the import's site keys, archive files
+  and package files at the identity freeze. With the flag on, publish stores
+  the signed publication in the document store and returns its CID for the
+  person's PROFILE_REPLACE, unpublish refuses with 409, rollback answers 409
+  only for a version the chain index would accept (422 otherwise), and legacy
+  `/cms` writes return 410; before that, during the identity freeze, all of
+  them and archive refuse with 423 `IDENTITY_FROZEN`.
+- Profile site private state, behind `FEATURE_PROFILE_CMS_PERSONAL_LOG`
+  (default off): drafts, the pointer events and publish signatures 6529.io's
+  own path writes, and BYO agent grants, proposals and events are appended,
+  row by row in the write's transaction, to the interim record log's private
+  chain (lane `publish`), so the profile CMS tables can be rebuilt from the
+  chain and the record log together. `profile-cms:log-existing-rows` logs the
+  rows that exist once the flag is on.
 - Public decentralized media resolution under `/media/resolve`, which maps
   native `ipfs://`, `ipns://`, and `ar://` references plus recognized gateway
   URLs to canonical native URIs, resolver URLs on the path gateway selected by
@@ -2077,9 +2489,7 @@ refresh frequency remain unchanged.
 
 Wave drop metric repairs use the same DB-backed/SQS pattern. Drop deletes apply a bounded in-transaction counter decrement, write `wave_drop_metrics_refresh_requests`, and publish to `wave-drop-metrics-refresh-dirty.fifo` after commit. `waveDropMetricsRefreshLoop` drains from the write pool and runs the full wave/dropper metric reconciliation outside the API path, with an EventBridge fallback for missed wakeups.
 
-Help6529 daily activity credits use the same durable handoff shape. They run only while `FEATURE_HELP_BOT_CREDITS` is `true`; by default the credit meter is off, drop creation writes no request and sends no wakeup, and a leftover request completes without a grant. When on, drop creation inserts one `help_bot_daily_activity_credit_requests` row per profile and UTC date inside the drop transaction, then publishes a small wakeup to `help-bot-daily-activity-credits.fifo` only after commit. `helpBotDailyActivityCreditLoop` grants outside the request path, records retry state and errors on the durable row, prioritizes untouched requests over retrying failures, retains completed rows for 30 days to suppress repeated daily work, and parks repeatedly failing rows as `DEAD`. A single FIFO message group and reserved concurrency of one serialize credit processing in a Lambda isolated from normal bot replies. The queue DLQ surfaces unhandled worker failures and a dead-row log metric alarm surfaces exhausted durable retries; a one-minute EventBridge rule wakes the same queue after a recorded retry or when post-commit SQS publication fails. The existing unique `help_bot_credit_events` grant key remains the final idempotency barrier if processing is redelivered or crashes between granting and marking the request complete.
-
-The zero-downtime rollout order is mandatory: deploy `dbMigrationsLoop` first to create the request table and indexes, deploy `helpBotReplyLoop` second to create the queue and worker, and deploy `api` last to begin inserting requests and publishing wakeups. Follow the same `dbMigrationsLoop -> helpBotReplyLoop -> api` dependency chain when dispatching the services.
+Help6529 Credits are removed, and drop creation no longer writes `help_bot_daily_activity_credit_requests` rows or sends wakeups to `help-bot-daily-activity-credits.fifo`. `helpBotDailyActivityCreditLoop` only completes requests left from before, without granting anything. A one-minute EventBridge rule still wakes the queue, the worker still records retries and parks a row it cannot complete as `DEAD` (with its log metric alarm), and completed rows are deleted after 30 days. The queue, its DLQ, the EventBridge rule and the Lambda are to be removed in a later change. The `help_bot_daily_activity_credit_requests` and `help_bot_credit_events` tables stay as history.
 
 Upcoming automatic subscription quantities are synchronized in the same primary
 DB transaction as incremental consolidated owner balances. Full resets commit
@@ -2285,7 +2695,7 @@ commit it.
 
 The V1 6529 Help Bot is intentionally bounded and fast. Drop creation remains the synchronous user write. After a drop is created, the API checks for an explicit `@help6529` mention or a direct reply to a prior bot-authored reply. When matched, it inserts one `help_bot_interactions` row keyed by `trigger_drop_id`, stores `target_drop_id` for the drop that should receive reactions/replies, reacts with the bot's seen marker, and sends `{ interaction_id }` to `help-bot-replies`.
 
-The daily activity-credit side effect is separate from reply generation. The drop and its durable daily-credit request commit together, and the API never performs the credit rating or identity updates. A dedicated FIFO worker in the same deployable service processes those updates asynchronously, so identities-table locks cannot hold the drop response open or consume reply-worker concurrency.
+Asking the bot is free. It grants, charges and refunds no credits and gives no REP, and drop creation writes no daily-activity request.
 
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 44, "curve": "basis"}} }%%
@@ -2400,6 +2810,15 @@ the next dispatch. The service catalog records allowed environments and
 default dependencies. The workflow's environment concurrency avoids overlapping
 backend deployment runs; it does not create a cross-repository scheduler.
 
+Drop Forge handler deployments select a dedicated deploy role through each
+GitHub environment's `AWS_DROP_FORGE_DEPLOY_ROLE_ARN`. The role must be distinct
+from the shared deploy role and belong to the same AWS account. The execution
+roles are selected through versioned `serverless-config/{staging,prod}/drop-forge.js`.
+Only the launch role can sign with the operational KMS key.
+The separate Scheduler delivery role can publish only to the work queues/DLQs.
+Role provisioning, scoped `iam:PassRole` and rollout are covered by the
+maintained [setup guide](drop-forge-auto-launch-setup.md).
+
 Backend deployment uses separate IAM roles through GitHub OIDC in the
 `staging` and `production` GitHub environments, restricted to `1a-staging` and
 `main` respectively. Each environment's `AWS_DEPLOY_ROLE_ARN` selects its role;
@@ -2444,6 +2863,239 @@ Typical deployment order when schema or generated API contracts change:
 4. `api` when routes, OpenAPI models, auth behavior, upload behavior, or user-facing responses changed.
 
 For a documentation-only change, no Lambda redeploy is required.
+
+## Drop Forge Automated Launch
+
+This section describes the internal EMMA and launch execution architecture. Use
+the maintained [setup guide](drop-forge-auto-launch-setup.md) for environment values,
+IAM/KMS provisioning, deployment order and rollout, and the
+[operations guide](drop-forge-auto-launch.md) for manual evidence and recovery.
+
+| Component | Responsibility |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api` | Authorize operator requests, persist revisioned jobs/launches and publish targeted SQS messages under the SQL lock |
+| `memesDistributionHandler` | Consume `memes-distribution`; snapshot the clicking operator's EMMA inputs, process checkpoints and finalize persisted download lists |
+| `dropForgeLaunchHandler` | Consume `drop-forge-launch`; reconcile manual/automatic work, execute due actions, track signed transactions and recover exceptional failures |
+| EventBridge Scheduler | Deliver one-time future group and crash-watchdog messages to SQS; it does not sign or invoke the handlers directly |
+| MySQL | Authoritative job checkpoints, exact allocation evidence, signed-intent/nonce reservations and reporting acknowledgements |
+| Existing `transactionsLoop` | Complete creator transaction discovery, then record bounded finalized scan coverage, including empty blocks, for post-mint accounting |
+| AWS KMS | Hold the operational private key and sign digests only for the dedicated launch role |
+
+Four readiness schedules feed the Launch queue at 17:20, 18:28, 18:58 and
+19:22 Athens time, independently of any launch plan. The consumer resolves the
+claim through the shared mint calendar, reads Ethereum and completion evidence,
+and records the checkpoint together with its signed Mint Watch post in the Ops
+wave. The delivery ledger deduplicates queue retries.
+
+`dropForgeLaunchHandler` and `memesDistributionHandler` consume dedicated SQS
+queues and have default-disabled execution flags. API mutations
+publish under their SQL lock before committing a dispatch revision; consumers retry
+if the revision is not yet committed. This closes the commit-before-publish crash
+gap. Launch installs independent, per-drop one-time Scheduler events for future
+phase/Research groups before opening work. Each active invocation establishes a
+two-minute one-time watchdog before processing and removes it on normal exit;
+hard crashes leave it intact. Outstanding checkpoints/receipts/report backlogs queue
+continuations before acknowledgement. The readiness schedules handle calendar
+checks while execution is idle. One-time Scheduler events delete themselves after delivery;
+stale deliveries check current pause/cancel/action state before any write. Queue
+redelivery uses the existing SQL and signer locks. Each queue has a DLQ and alarm;
+no uncertain nonce or mint allocation is reset during redrive. The API returns a
+single PROCESS_ALL job for EMMA, immediately wakes preparation, and exposes
+read-only completed list pages. The operator's Authorization header is encrypted
+for its specific preparation job using a key derived from the existing JWT secret,
+then cleared when upstream inputs commit or the job fails. Expired or denied
+EMMA access pauses for authenticated resumption of the same job and checkpoints;
+no preconfigured EMMA token is required. Preparation snapshots upstream phase inputs,
+commits ordered phase checkpoints and finalizes. Craft Launch derives the fixed
+mint calendar and arms execution immediately; Craft Update Claim queues a
+metadata-only action without reopening completed allocations.
+The launch stays active through Research, eligible one hour after the
+final mint close (18:00 Europe/Athens the following day). Version 4 plans derive
+the top-up from fresh on-chain total toward `min(310, frozen Craft edition)`,
+verify the on-chain maximum, and reconcile manual Research evidence separately.
+Research shares the launch handler, signer ledger, wave reports and completion
+flags, with its own one-time scheduled wake. Optional artist payment shares its 18:00 eligibility group and the same transaction/recovery ledger.
+
+The comparison uses a covered finalized block no more than five minutes behind
+the finalized tip, so normal indexer cadence does not chase a moving block. Missing,
+older or pre-close coverage defers execution. Recovery winners use the same
+post-mint settlement gate before releasing their reservation.
+
+A separate one-time **17:15 Europe/Athens** wake records a readonly preview once.
+It reports expected Research quantity and optional artist payment without signing;
+normal previews are untagged, while discrepancies alert once without recalculation.
+All new reports use `DROP_FORGE_OPERATIONS_WAVE_ID`; the preexisting
+`DEPLOYER_ANNOUNCEMENTS_WAVE_IDS` destinations are never used by this feature.
+
+Research/payment share `drop-forge.supply.ts`: the configured RPC reads a finalized
+post-close claim at an explicit canonical block hash; DB cumulative mints through
+that block must agree and have completed scan coverage. The new
+`transaction_scan_checkpoints` entity advances monotonically only after an explicit
+bounded scan succeeds. Normal discovery and past data remain in place; explicit
+backfills do not publish that coverage. The existing discovery service remains
+mainnet-only and cannot publish coverage under a test-chain ID. Sepolia post-mint
+exercises need isolated matching transaction data and coverage. The checkpoint assumes existing history
+is complete rather than certifying or rewriting historical data. Subscription
+redemptions are additionally scoped to indexed transactions at the payment cutoff.
+Unsigned discrepancies retry after 1/5/15 minutes within the action window.
+Pre-sign and pre-broadcast checks retain the quantity and exact signed intent.
+Confirmed Research checks mint logs and resulting supply; payment checks its actual
+recipient/value. A lagging DB retains the reservation until finalized settlement;
+unexpected evidence blocks for recovery. Completion, reservation release and the
+operations outbox remain atomic. The API returns optional evidence and retry times
+for the Launch UI. No new Lambda or RPC provider is introduced for these checks.
+
+```mermaid
+flowchart LR
+  EMMA[EMMA Process and Finalize] --> API[Operation APIs]
+  Craft[Craft Launch / Update Claim] --> API
+  Manual[Manual Launch wallet controls] --> API
+  API --> DB[Launch, signer, evidence, preparation and job tables]
+  API --> PrepQueue[Distribution SQS]
+  API --> LaunchQueue[Launch SQS]
+  PrepQueue --> Prep[memesDistributionHandler]
+  LaunchQueue --> Worker[dropForgeLaunchHandler]
+  Worker --> Scheduler[One-time phase / Research / watchdog schedules]
+  Prep --> Scheduler
+  Scheduler --> PrepQueue
+  Scheduler --> LaunchQueue
+  Prep --> DB
+  Worker --> DB
+  Worker --> KMS[AWS KMS secp256k1]
+  Worker --> ReportKMS[AWS KMS Ed25519 report key]
+  Prep --> ReportKMS
+  Worker --> Chain[Creator and lazy claim contracts]
+  Prep --> Wave[Author-signed reports in the operations wave]
+  Worker --> Wave
+  Wave -->|Failures only| Alerts[Configured Drop Forge alert profiles]
+```
+
+### Drop Forge scheduled groups
+
+Craft Launch derives the standard plan from the configured Memes calendar.
+The times below use `Europe/Athens`, including daylight saving time. Phase 1
+and Phase 2 become eligible one minute after the preceding phase closes.
+Public becomes eligible one second after Phase 2 closes. See `buildPhaseActions` in
+[`drop-forge.plan.ts`](../src/drop-forge/drop-forge.plan.ts).
+
+| Group | Eligible time | Actions |
+| -------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Opening | Immediately after accepted Launch, before Phase 0 opens at 17:40 | Initialize, then general/artist/team and Phase 0 subscriber batches |
+| Phase 1 | 18:21; Phase 1 opens at 18:30 | Update claim, then Phase 1 subscriber batches |
+| Phase 2 | 18:51; Phase 2 opens at 19:00 | Update claim, then Phase 2 and Public subscriber batches |
+| Public | 19:20:01; public is scheduled from 19:20 | Update claim after Phase 2 closes; actual public availability follows transaction inclusion |
+| Research and optional Pay Artist | 18:00 the next day, after public closes at 17:00                 | Research tops up toward `min(310, frozen Craft edition)`; artist payment independently sends the final 50% share to the designated payee |
+| Metadata | Immediately after an accepted Craft Update Claim request | Synchronize republished metadata while preserving active phase configuration and completed allocations |
+
+Eligibility is not guaranteed block inclusion or finality. Admission budgets serial
+transactions and confirmations; new submissions stop two minutes before the action's
+deadline. SQS delays handle short continuations, while longer future wakes use
+one-time Scheduler events. Ordinary readiness failures leave independent later
+groups scheduled; a signed or uncertain transaction still holds the signer lock
+until reconciled. Every action checks confirmed completion before sending work.
+
+Manual controls acquire a durable lease before prompting the wallet. Confirmed
+transaction evidence carries the action category and credits exact remaining
+allocations. Compatible initialize/update configuration is observed on chain;
+ambiguous state blocks. Completion is mirrored into existing manual action flags.
+Metadata updates retain current mint configuration and cannot replay airdrops.
+
+The worker reserves an unsigned intent under a signer row lock, persists its
+signed bytes and hash in another commit, and only then broadcasts. Pending
+reports are rechecked at the final signature commit. Candidate selection filters
+by the next unfinished action's due time and report acknowledgement before its
+20-row limit, preventing future launches from starving due work. Fully missed launches stay available for manual reconciliation without occupying scheduled candidate slots. Pending
+receipts reconcile across pause/cancel, with configurable confirmations. Exceptional administrator recovery tracks
+same-nonce replacements and waits for finalized winning evidence; normal scheduling
+does not replace transactions automatically. Each subsequent action checks the latest
+confirmed canonical receipt, frozen source hash, claim configuration, creator-admin
+permission, nonce availability, and gas budgets. Confirmation is distinct from a
+scheduled mint window becoming active. Already-signed transactions cannot be
+revoked or guaranteed to mine before a deadline.
+
+Phase-scoped plans initialize and execute only Phase 0 allocations before its
+window, then update and airdrop each later phase inside its own closed transition
+gap. Gapless public subscriptions share the preceding Phase 2 transition, matching
+the existing launch UI; the public update waits until Phase 2 closes. Updates
+persist a minted-supply checkpoint so legitimate prior-phase mints do not block
+later airdrops. Legacy flattened plans fail closed while outstanding receipts
+remain reconcilable. Late confirmations credit completed work without reopening expired submission windows or stopping later groups.
+
+EMMA phase results, subscription assignments, distribution rows and Merkle
+proofs commit with replayable checkpoints under the preparation lock. The
+PROCESS_ALL job snapshots upstream inputs once and processes each stage in a
+separate invocation. Pending jobs block conflicting preparation/reset operations.
+Finalization shares that lock and chunks normalized-row inserts. A savepoint
+rolls back a failed stage before persisting the failure; invocation loss rolls
+back the stage for SQS redelivery or its one-time watchdog. Legacy synchronous
+endpoints retain their response shapes. Completed downloads are paginated reads
+of persisted results.
+
+Reporting drops and outbox acknowledgements share a DB transaction. Push
+transport runs after commit. `@dropforgeops` resolves configured profile IDs
+through existing visibility and notification rules. Both handlers create their own
+reports in `DROP_FORGE_OPERATIONS_WAVE_ID`; failures tag the group, while successes
+and detected-complete skips do not. Existing subscription alerts retain `@devs6529`
+and their existing wave; those reporting consumers need no redeploy for these
+automation alerts. Initial wave reporting is required before new launch signing;
+receipt reconciliation continues separately.
+See [configuration and recovery](drop-forge-auto-launch.md). The creator owner
+still grants/revokes on-chain admins, and artist payments require the separate opt-in setting and configured payout cap.
+
+Drop Forge launch scheduling groups actions by phase, with independent completed-state and readiness checks. Unsigned action failures and missed windows remain visible without blocking later groups; a persisted signed nonce remains reserved until reconciled. The Launch API exposes groups, attempt errors and observed skips, and each outcome is committed to the operations-wave outbox.
+
+Environment boundaries are regional: staging uses `eu-west-1`, production uses
+`us-east-1`, and each reads its own regional `prod/lambdas` runtime secret. Chain
+selection is explicit and does not follow the deployment environment automatically.
+The two Lambda execution roles and Scheduler delivery role are referenced in
+`serverless-config/{staging,prod}/drop-forge.js`; handler stacks inject the Scheduler
+settings, without feature-specific GitHub role variables. Only the launch role has
+KMS signing authority; the distribution handler uses the clicking operator's
+encrypted EMMA authorization, and the wave posting profile is configured separately
+from the on-chain wallet. All execution flags default to disabled.
+
+### Drop Forge exceptional transaction recovery
+
+The existing Launch API queues revision-checked administrator recovery requests.
+`dropForgeLaunchHandler` tracks same-nonce original, speed-up and cancellation attempts,
+signs with AWS KMS and waits for canonical finalized evidence. Winning ERC-1155
+mint events reconcile exact recipient allocations; receipt-block supply, action
+outcome, completion flags, signer reservation release and wave outbox commit
+atomically. A recovery-only flag permits this path while normal scheduling remains
+disabled. Signed bytes stay server-side. Reviewed fresh-nonce delivery requires
+proven prior nonce settlement; unknown evidence blocks further wallet use.
+
+### Launch settings and funding boundary
+
+The `drop_forge_settings` row is scoped by chain and creator. Automatic launch
+and automatic artist payment default Off. The per-payout cap is nullable and
+stored in wei. API changes use an optimistic revision and row lock. The creator
+owner and configured claims admins can edit these settings. The launch worker
+checks the same row while reserving, committing a signature and submitting the
+transaction. Turning Automatic launch Off retains scheduled skip reporting and
+signed-receipt tracking. Re-enabling wakes eligible active claims.
+
+Distribution administrators choose manual or background preparation in EMMA.
+The claim preparation lock records the first successful manual phase write or
+finalization, or saves background mode with job creation. The distribution
+handler runs queued checkpoints from the durable job. Reset Subscriptions clears
+subscriber results and retires previous jobs under the same preparation lock.
+A reset encountering an active worker step can be retried once that step exits.
+
+The `PAY_ARTIST` action stores the exact wei amount and designated payee in the
+existing launch ledger. Fresh paid-mint/subscription accounting must match confirmed
+indexed supply before reservation, and the positive payout cap is independent of
+gas caps. Manual payment hashes are claim-bound evidence; a completion checkbox
+alone blocks automatic payment. Same-nonce speed-up retains recipient/value;
+cancellation uses zero value. Successful canonical settlement mirrors `PAY_ARTIST`.
+
+All authorized Drop Forge users can view the configured wallet and fund it. Top Up
+ETH is signed by their connected wallet, not KMS. The API verifies sender, network,
+destination and value, then persists a `drop_forge_funding` intent keyed by sending
+wallet/nonce and queues it to the existing launch handler. Replacement hashes remain
+on that intent; canonical receipt evidence chooses the winner. Its wave report and
+acknowledgement commit atomically. ENS is optional display data, forward-checked
+against the pinned address. Funding never grants settings or on-chain admin rights.
 
 ## Architecture Notes
 
@@ -3433,6 +4085,18 @@ ready. See `ops/runbooks/voting-credit-returns.md` for activation and rollback.
 
 Craft, subscription coverage and Help Bot calendar answers use the bundled, versioned Memes calendar instead of frontend HTTP calls. See [shared calendar maintenance](shared-memes-calendar.md) for canonical-source synchronization, rollout services and Athens/DST policy. Shared next/current/status queries also back the existing frontend API, preserving its routes and response shapes.
 
+### Drop Forge calendar and environment policy
+
+Launch planning imports the bundled [shared calendar](shared-memes-calendar.md), never
+a frontend endpoint. Accepted managed ledgers store the calendar version, timezone
+and UTC windows. Later code versions and Craft metadata updates preserve those windows.
+The manual Launch UI reads saved phase times for an accepted launch.
+
+`drop-forge.policy.ts` pins stage-specific network and contract bindings, receiver,
+confirmations and gas ceilings. Deployment supplies the stage to API/handlers/indexer;
+wallet/reporting identities remain in regional secrets. Launch and preparation keep
+independent environment switches and default-Off UI controls. Signed-intent recovery
+continues with launch execution Off. A receiver mismatch still blocks execution.
 ### NFT metadata history
 
 `nftHistoryLoop` discovers history by creator contract and verified extension events, independently of transaction sender. Claim initialization, zero-address ERC1155 mint logs (including public paid mints), URI logs, and claim updates share one ordered decoder/planner. Direct zero-value calls to the creator contracts cover eventless top-level `setTokenURI` writes. Creator-scoped claim mappings come from verified initialization receipts and historical claim state, never from an assumption that claim ID equals token ID. Scheduled ingestion starts at the verified metadata initialization. Existing baselines are preserved until a reviewed repair. Finalized blocks are processed in up to five 200-block windows per invocation, with discovery split into 20-block chunks. The checkpoint advances only after every source transaction in a block commits; retries begin at the next block and repeat all transactions of an interrupted block idempotently. Completed block prefixes survive time-budget exhaustion or later failures. A failed decode, missing earlier baseline, or metadata fetch prevents advancement past its block. Unlisted claim logs incidentally present in a mint receipt are ignored; audit-explicit unlisted logs remain failures for review. Mapping and history writes for one scheduled source transaction are atomic and insert-only for baselines.
