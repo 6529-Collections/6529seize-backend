@@ -27,13 +27,16 @@ const logger = Logger.get('SUBSCRIPTIONS_LEGACY_COPY');
  * After the switch the legacy subscription tables are the rollback copy:
  * every write to the identity tables is written to them too, under the
  * identity's consolidation key. Code that doesn't switch still reads them
- * (mint stats, the ETH price recovery, the public coverage route and the
- * mint log's legacy part), so they are rebuilt from the identity tables the
- * way the dual write fills them. The copy is exact only
- * where a legacy key and an identity are one to one: a legacy key the
- * opening merged into another identity, or one whose wallets now span
- * identities, has no row of its own here, and the rows' own times are the
- * identity side's.
+ * (mint stats, the ETH price recovery, the public coverage route, the mint
+ * log's legacy part, the owners balances loop's quantity sync and the
+ * identity redemption writer's comparison with the legacy side), so they
+ * are rebuilt from the identity tables the way the dual write fills them.
+ * The copy is exact only where a legacy key and an identity are one to
+ * one: a legacy key the opening merged into another identity, or one whose
+ * wallets now span identities, has no row of its own here, and the rows'
+ * own times are the identity side's. The automatic all-editions counts the
+ * owners balances loop syncs on the legacy side after the switch come back
+ * as the identity rows hold them.
  *
  * The key-width guard writes a key to the legacy tables only when every
  * subscription table can hold it (SUBSCRIPTION_WRITE_TABLES) and none of its

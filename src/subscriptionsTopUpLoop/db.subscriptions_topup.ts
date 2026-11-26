@@ -46,13 +46,17 @@ const SUBSCRIPTIONS_TOP_UP_LATEST_BLOCK_ID = 'subscription_top_up_latest_block';
  * the switch): no balance credit, log line or mode change. Each top-up goes
  * where persistTopUps puts it, by its own rule (topUpTarget): a key the
  * key-width guard holds back gets the whole top-up queued (queueTopUp),
- * and any other gets its row. A hash already there is left as it is.
+ * and any other gets its row. A hash that already has its row is skipped,
+ * as persistTopUps skips it.
  */
 export async function recordTopUps(topUps: SubscriptionTopUp[]): Promise<void> {
   await sqlExecutor.executeNativeQueriesInTransaction(async (qrHolder) => {
     const manager = (qrHolder.connection as QueryRunner).manager;
     const sink = executorSink({ wrappedConnection: qrHolder });
     for (const topUp of topUps) {
+      if (await isTopUpProcessed(topUp.hash, manager)) {
+        continue;
+      }
       const { consolidationKey, reason } = await topUpTarget(
         topUp,
         manager,
@@ -99,7 +103,8 @@ async function topUpTarget(
 }> {
   let consolidationKey = (
     await manager.query(
-      `SELECT consolidation_key FROM ${ADDRESS_CONSOLIDATION_KEY} WHERE address = '${topUp.from_wallet}'`
+      `SELECT consolidation_key FROM ${ADDRESS_CONSOLIDATION_KEY} WHERE address = ?`,
+      [topUp.from_wallet]
     )
   )[0]?.consolidation_key;
 

@@ -370,14 +370,6 @@ describeWithSeed('the subscriptions rebuild check', [], () => {
 
   beforeEach(async () => {
     setSqlExecutor(new TypeOrmExecutor());
-    // A test fixture only: the identity mirror's principals table, which the
-    // cut reads. The identity mirror (#2516) owns it and creates it; until
-    // that is in, the test schema has no entity for it.
-    await sqlExecutor.execute(`CREATE TABLE IF NOT EXISTS identity_chain_principals (
-      principal_id varchar(66) NOT NULL PRIMARY KEY,
-      profile_id varchar(50) NOT NULL UNIQUE,
-      origin varchar(20) NOT NULL,
-      created_at bigint NOT NULL)`);
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'subs-seed-'));
     server = await serveFiles(dir);
     files = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -650,7 +642,7 @@ describeWithSeed('the subscriptions rebuild check', [], () => {
     );
   });
 
-  it("pulls card 1's subscriptions into a phase on both sides, journaled, and another area's later split for wallets nobody subscribes leaves it alone", async () => {
+  it("pulls card 1's subscriptions into a phase on both sides, journaled, and the mint seed's later split leaves it alone", async () => {
     const env = subsManifest.flags;
     const deps = creditedTopUps();
     await seedProbeIdentities();
@@ -680,24 +672,25 @@ describeWithSeed('the subscriptions rebuild check', [], () => {
     expect(await journalKinds()).toContain('phase');
     expect(await openLanes()).toEqual([]);
 
-    // The mint seed's split of card 1, for allowlist wallets nobody
-    // subscribes: no subscription is in it, so no phase is written and
-    // nothing is journaled.
+    // The mint seed's split of card 1, its wallets and spots as it runs it
+    // (src/mint-log/mint-log-rebuild.seed.ts): the first wallet, card 1's
+    // subscriber, whose row already has its phase, and the second, which
+    // isn't on card 1's list. No phase is written and nothing is journaled.
     const phaseCount = (await journalKinds()).filter(
       (kind) => kind === 'phase'
     ).length;
     await splitAllowlistResults(MEMES_CONTRACT, 1, 'Phase 1', [
       {
-        id: 'other-split-1',
-        wallet: '0x00000000000000000000000000000000000000c3',
+        id: 'probe-1-1',
+        wallet: PROBE_CONSOLIDATION_KEYS[0],
         phaseId: 'phase-1',
         allowlistId: 'allowlist-1',
         phaseComponentId: 'component-1',
         amount: 1
       },
       {
-        id: 'other-split-2',
-        wallet: '0x00000000000000000000000000000000000000c4',
+        id: 'probe-1-2',
+        wallet: PROBE_CONSOLIDATION_KEYS[1],
         phaseId: 'phase-1',
         allowlistId: 'allowlist-1',
         phaseComponentId: 'component-1',

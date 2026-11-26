@@ -173,6 +173,37 @@ describeWithSeed('the top-up writes discovery can use', [], () => {
     expect(await rows()).toEqual([{ hash: queued.hash }]);
   });
 
+  it("skips a hash that already has its row, as the loop's write does, even once its key waits", async () => {
+    const recorded = topUp(`0x${'c'.repeat(63)}4`, RECORDED);
+    await recordTopUps([recorded]);
+    // Now an earlier write for the key waits: a new top-up would be queued.
+    await deferSubscriptionWrites(
+      [
+        {
+          kind: 'LOG',
+          consolidationKey: RECORDED,
+          dedupe: 'later',
+          payload: {},
+          reason: { narrow: [], pendingEarlier: false }
+        }
+      ],
+      executorSink()
+    );
+    await recordTopUps([recorded]);
+
+    expect(
+      await sqlExecutor.execute(
+        `SELECT hash FROM ${SUBSCRIPTIONS_TOP_UP_TABLE} WHERE from_wallet = :wallet`,
+        { wallet: RECORDED }
+      )
+    ).toEqual([{ hash: recorded.hash }]);
+    expect(
+      await sqlExecutor.execute(
+        `SELECT kind FROM ${SUBSCRIPTION_DEFERRED_WRITES_TABLE} ORDER BY sequence`
+      )
+    ).toEqual([{ kind: 'LOG' }]);
+  });
+
   it("queues a top-up for a key the guard holds back exactly as the loop's write does", async () => {
     // A sender whose consolidation key (15 wallets, 644 characters) fits
     // address_consolidation_keys but not the narrowest legacy key column.

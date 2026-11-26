@@ -170,8 +170,7 @@ const SUBS_SWITCH_SEED: RebuildStep = {
  * transactions loop's redemption run, the legacy loop then the identity
  * writer, which charges card 1's airdrop to its subscriber; then a
  * checkpoint and the journal's new segment (src/rebuild/areas/subs.seed.ts).
- * It waits on the identity mirror with the switch, whose journal it
- * continues.
+ * It continues the switch seed's journal.
  */
 const SUBS_REDEMPTIONS_SEED: RebuildStep = {
   id: 'subs.redemptions',
@@ -512,10 +511,6 @@ export const subsManifest: AreaManifest = {
       class: 'EPHEMERAL',
       why: 'Loop cursor.'
     },
-    // Writes queued because their consolidation key is too long for a key
-    // column. Since the rework the API refuses such a change instead of
-    // queuing it, so every entry comes back from Ethereum, the daily build
-    // or the membership tables.
     // The key-width guard's queue of held-back writes. After the switch the
     // identity top-up writer reads its pending top-ups, so it is rebuilt,
     // not exempt. subs.top-ups rebuilds its TOP_UP rows. Not rebuilt, and
