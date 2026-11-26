@@ -18,6 +18,7 @@ import {
   captureWavesGateway,
   gatewayBase,
   mirrorReadTargets,
+  PROXY_FAILED,
   readMirrorExtras,
   startRecorder,
   upstreamTarget
@@ -349,6 +350,32 @@ describe('the capture recorder', () => {
     } finally {
       await replay.stop();
     }
+  });
+
+  it('answers a request it could not forward with a fixed text, and logs the request and its cause', async () => {
+    // A node that drops every connection: the fetch fails, and why is in
+    // the failure's cause. It keeps listening, so no other server can
+    // take its port before the request.
+    const dropping = http.createServer();
+    dropping.on('connection', (socket) => socket.destroy());
+    const droppingUrl = (await listenLoopback(dropping)).url;
+    const recorder = await startRecorder(droppingUrl, dir);
+    const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const answer = await fetch(`${recorder.url}/v1/status`);
+      expect(answer.status).toBe(502);
+      expect(await answer.json()).toEqual({ error: PROXY_FAILED });
+      expect(logged).toHaveBeenCalledTimes(1);
+      // The fetch's own text, then its cause in brackets (errorText).
+      expect(String(logged.mock.calls[0][0])).toMatch(
+        /^\[GATEWAY CAPTURE\] the recording proxy could not answer GET \/v1\/status: TypeError: fetch failed \(.+\)$/
+      );
+    } finally {
+      logged.mockRestore();
+      await recorder.stop();
+      await closeServer(dropping);
+    }
+    expect(fs.readFileSync(path.join(dir, 'recording.jsonl'), 'utf8')).toBe('');
   });
 });
 

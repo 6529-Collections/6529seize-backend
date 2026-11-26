@@ -11,6 +11,7 @@ import {
 } from '@/rebuild/sources/http-recording';
 import {
   closeServer,
+  errorText,
   listenLoopback,
   readBody,
   writeProvenance
@@ -138,6 +139,9 @@ export function upstreamTarget(base: URL, requestUrl: string): URL | null {
   return target.origin === base.origin && underBase ? target : null;
 }
 
+/** The recorder's whole answer to a request it could not forward. */
+export const PROXY_FAILED = 'the recording proxy could not answer this request';
+
 /** Forwards to the node and keeps what it answered, by the harness's key. */
 export async function startRecorder(upstream: string, dir: string) {
   const base = gatewayBase(upstream);
@@ -193,8 +197,14 @@ export async function startRecorder(upstream: string, dir: string) {
       });
       response.end(Buffer.from(exchange.body, exchange.encoding));
     } catch (error) {
+      // The request and why it failed (with a failed fetch's cause) go to
+      // the capture's log, on one line; the client gets a fixed answer,
+      // never the error's text.
+      const line = `[GATEWAY CAPTURE] the recording proxy could not answer ${request.method ?? 'GET'} ${request.url ?? '/'}: ${errorText(error)}`;
+      // eslint-disable-next-line no-console
+      console.error(line.replace(/[\r\n]+/g, ' '));
       response.writeHead(502, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ error: String(error) }));
+      response.end(JSON.stringify({ error: PROXY_FAILED }));
     }
   });
   const { url } = await listenLoopback(server);
