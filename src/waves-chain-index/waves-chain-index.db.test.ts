@@ -63,6 +63,10 @@ describeWithSeed('WavesChainIndexDb', [], () => {
       readHeight: 130,
       network: 'net-1',
       lastError: 'x'.repeat(3000),
+      eventsNext: 125,
+      trustFrom: 2,
+      scanState: { scanning: 0, finishedDay: 20612, reducing: null },
+      voteRereads: { entries: [`${D}`], votes: [`${D}:${E1}:${D}`] },
       feedPart: 2
     };
     await db.saveState(state, 5);

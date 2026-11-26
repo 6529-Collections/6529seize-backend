@@ -7,7 +7,10 @@ import { AuthenticationContext } from '@/auth-context';
 import { dropCreationService } from '@/api/drops/drop-creation.api.service';
 import { deviceSigningDb } from '@/api/device-signing/device-signing.db';
 import { deviceSignedWritesService } from '@/api/device-signing/device-signed-writes.service';
-import { DeviceEventKind } from '@/api/device-signing/device-event';
+import {
+  DeviceEventKind,
+  dropIdOfEvent
+} from '@/api/device-signing/device-event';
 import { dropsDb } from '@/drops/drops.db';
 import { identitiesDb } from '@/identities/identities.db';
 import { DeviceGrantEntity } from '@/entities/IDeviceGrant';
@@ -29,7 +32,12 @@ jest.mock('@/help-bot/help-bot-trigger.service', () => ({
   }
 }));
 jest.mock('@/api/drops/drop-creation.api.service', () => ({
-  dropCreationService: { createDrop: jest.fn(), updateDrop: jest.fn() }
+  dropCreationService: {
+    createDrop: jest.fn(),
+    updateDrop: jest.fn(),
+    findAuthorsDrop: jest.fn(),
+    findClientDropReplay: jest.fn()
+  }
 }));
 
 // Shared DN1 contract vectors.
@@ -286,9 +294,12 @@ describe('POST /drops device signatures', () => {
       expectedCreateRequest(),
       expect.any(Object)
     );
-    const [{ createDropRequest }] = jest.mocked(dropCreationService.createDrop)
-      .mock.calls[0];
+    const [{ createDropRequest, newDropId }] = jest.mocked(
+      dropCreationService.createDrop
+    ).mock.calls[0];
     expect(createDropRequest).not.toHaveProperty('device_signature');
+    // Unsigned: a random id, as before.
+    expect(newDropId).toBeUndefined();
     expect(deviceSigningDb.findGrantById).not.toHaveBeenCalled();
     expect(deviceSigningDb.reserveEvent).not.toHaveBeenCalled();
     expect(
@@ -318,9 +329,14 @@ describe('POST /drops device signatures', () => {
       expectedCreateRequest(),
       expect.any(Object)
     );
-    const [{ createDropRequest }] = jest.mocked(dropCreationService.createDrop)
-      .mock.calls[0];
+    const [{ createDropRequest, newDropId }] = jest.mocked(
+      dropCreationService.createDrop
+    ).mock.calls[0];
     expect(createDropRequest).not.toHaveProperty('device_signature');
+    // Its id is its event's, as a relay-only post's is.
+    expect(newDropId).toBe(dropIdOfEvent(VECTOR_EVENT_ID));
+    expect(newDropId).toBe('85085439-fde8-8ab7-c9c2-979f922c1eb9');
+    expect(dropCreationService.findAuthorsDrop).not.toHaveBeenCalled();
     expect(deviceSigningDb.reserveEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         id: VECTOR_EVENT_ID,
@@ -358,8 +374,9 @@ describe('POST /drops device signatures', () => {
     expect(deviceSigningDb.reserveEvent).not.toHaveBeenCalled();
   });
 
-  it('rejects a replayed device signature', async () => {
+  it('rejects a used device signature when no drop of the author has its id', async () => {
     jest.spyOn(deviceSigningDb, 'reserveEvent').mockResolvedValue(false);
+    jest.mocked(dropCreationService.findAuthorsDrop).mockResolvedValue(null);
 
     const response = await post({
       ...VECTOR_BODY,
@@ -367,10 +384,74 @@ describe('POST /drops device signatures', () => {
     });
 
     expect(response.status).toBe(400);
-    expect(String(response.json().error)).toMatch(
-      /^Invalid device signature: /
+    expect(response.json()).toEqual({
+      error:
+        'Invalid device signature: event or sequence number was already used',
+      code: 'INVALID_DEVICE_SIGNATURE'
+    });
+    expect(dropCreationService.findAuthorsDrop).toHaveBeenCalledWith(
+      {
+        dropId: dropIdOfEvent(VECTOR_EVENT_ID),
+        authorId: 'author-profile'
+      },
+      expect.anything()
     );
     expect(dropCreationService.createDrop).not.toHaveBeenCalled();
+  });
+
+  it('answers a signed post sent twice with the drop its event wrote', async () => {
+    // The first send, or the relay applier, wrote it under the event's id.
+    const firstDrop = { id: dropIdOfEvent(VECTOR_EVENT_ID) };
+    jest.spyOn(deviceSigningDb, 'reserveEvent').mockResolvedValue(false);
+    jest
+      .mocked(dropCreationService.findAuthorsDrop)
+      .mockResolvedValue(
+        firstDrop as Awaited<
+          ReturnType<typeof dropCreationService.findAuthorsDrop>
+        >
+      );
+    jest
+      .mocked(deviceSigningDb.findAuthorSignedDropIds)
+      .mockResolvedValue(new Set([firstDrop.id]));
+
+    const response = await post({
+      ...VECTOR_BODY,
+      device_signature: VECTOR_DEVICE_SIGNATURE
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.json()).toEqual({ ...firstDrop, is_author_signed: true });
+    expect(dropCreationService.createDrop).not.toHaveBeenCalled();
+    expect(deviceSigningDb.attachEventToDrop).not.toHaveBeenCalled();
+    expect(deviceSigningDb.deleteReservedEvent).not.toHaveBeenCalled();
+  });
+
+  it('answers a client_drop_id retry with the first drop, reserving nothing', async () => {
+    // The first attempt wrote it under its event's id; the retry is signed
+    // anew (another event), and is answered before any signature check.
+    const firstDrop = { id: dropIdOfEvent(VECTOR_EVENT_ID) };
+    jest
+      .mocked(dropCreationService.findClientDropReplay)
+      .mockResolvedValue(
+        firstDrop as Awaited<
+          ReturnType<typeof dropCreationService.findClientDropReplay>
+        >
+      );
+    jest
+      .mocked(deviceSigningDb.findAuthorSignedDropIds)
+      .mockResolvedValue(new Set([firstDrop.id]));
+
+    const response = await post({
+      ...VECTOR_BODY,
+      client_drop_id: '0b7f3c52-8f2e-4b8e-9a51-0c1e2d3f4a5b',
+      device_signature: { ...VECTOR_DEVICE_SIGNATURE, seq: 1760000000009 }
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.json()).toEqual({ ...firstDrop, is_author_signed: true });
+    expect(deviceSigningDb.reserveEvent).not.toHaveBeenCalled();
+    expect(dropCreationService.createDrop).not.toHaveBeenCalled();
+    expect(dropCreationService.findAuthorsDrop).not.toHaveBeenCalled();
   });
 
   it('rejects a null device_signature as malformed', async () => {

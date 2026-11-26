@@ -65,7 +65,10 @@ import {
   stripDeviceSignature
 } from '@/api/device-signing/device-signed-writes.service';
 import { withStoredAuthorSignature } from '@/api/device-signing/author-signed-drop-response';
-import { DeviceEventKind } from '@/api/device-signing/device-event';
+import {
+  DeviceEventKind,
+  dropIdOfEvent
+} from '@/api/device-signing/device-event';
 
 const router = asyncRouter();
 const logger = Logger.get('DropsRoutes');
@@ -273,9 +276,16 @@ router.post(
         envelope: deviceSignature,
         waveId: newDrop.wave_id,
         replyToDropId: newDrop.reply_to?.drop_id,
-        body: apiRequest
+        body: apiRequest,
+        // The same signed post again (sent twice, or written first from the
+        // 6529 relays): its drop, under its event's id, is the answer.
+        alreadyWritten: (eventId) =>
+          dropCreationService.findAuthorsDrop(
+            { dropId: dropIdOfEvent(eventId), authorId: authorProfileId },
+            { timer, authenticationContext }
+          )
       },
-      () =>
+      (eventId) =>
         dropCreationService.createDrop(
           {
             createDropRequest,
@@ -283,7 +293,10 @@ router.post(
             representativeId: authenticationContext.isAuthenticatedAsProxy()
               ? authenticationContext.roleProfileId!
               : authorProfileId,
-            hideLinkPreview: newDrop.hide_link_preview
+            hideLinkPreview: newDrop.hide_link_preview,
+            // A signed post's id is its event's, as a relay-only post's is,
+            // so a rebuild from the relays gives it. Unsigned: random.
+            newDropId: eventId ? dropIdOfEvent(eventId) : undefined
           },
           {
             timer,
