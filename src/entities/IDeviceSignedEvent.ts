@@ -5,6 +5,8 @@ import { DEVICE_SIGNED_EVENTS_TABLE } from '@/constants';
 @Index('idx_device_signed_events_key_seq', ['device_key', 'seq'], {
   unique: true
 })
+// The relay publisher reads events in (created_at, id) order.
+@Index('idx_device_signed_events_created_id', ['created_at', 'id'])
 export class DeviceSignedEventEntity {
   // EIP-712 event id that the device key signed.
   @PrimaryColumn({ type: 'varchar', length: 66, nullable: false })

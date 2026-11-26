@@ -38,9 +38,10 @@ import {
 import { ApiDropType } from '../generated/models/ApiDropType';
 import {
   assertDecisionWritable,
-  assertWaveWritable,
+  assertNotMovedOnChain,
   isWaveFrozen
 } from '@/waves-freeze/waves-freeze-scope';
+import { assertPollCreationOpen } from '@/waves-freeze/waves-chain-polls';
 import {
   wsListenersNotifier,
   WsListenersNotifier
@@ -373,11 +374,12 @@ export class DropCreationApiService {
         return replay;
       }
     }
-    // Refused before any moderation work while waves move to the 6529 chain:
-    // new polls and legacy entries in a moving wave (the use case checks
-    // them again). A wave that stays on 6529.io takes both.
+    // Refused before any moderation work while waves move to the 6529 chain,
+    // and from the switch-on until 6529.io shows the chain's polls: new
+    // polls and legacy entries in a moving wave (the use case and the poll
+    // service check them again). A wave that stays on 6529.io takes both.
     if (createDropRequest.poll)
-      await assertWaveWritable(createDropRequest.wave_id, ctx);
+      await assertPollCreationOpen(createDropRequest.wave_id, ctx);
     if (createDropRequest.drop_type === ApiDropType.Participatory)
       await assertDecisionWritable({ wave_id: createDropRequest.wave_id }, ctx);
     const preResolvedIdentityNomination =
@@ -1099,6 +1101,9 @@ export class DropCreationApiService {
         const txCtx = { ...ctx, connection };
         const wave = await this.wavesApiDb.findWaveByIdForUpdate(waveId, txCtx);
         if (!wave) throw new NotFoundException(`Wave ${waveId} not found`);
+        // A moved wave's posts are served from the 6529 Network too, so
+        // from the switch-on 6529.io purges none of them.
+        await assertNotMovedOnChain(waveId, txCtx);
         const cutoffSerialNo = await this.purgeDb.findCutoff(
           { waveId, authorId },
           txCtx
@@ -1142,6 +1147,9 @@ export class DropCreationApiService {
             transactionContext
           );
           if (!wave) throw new NotFoundException(`Wave ${waveId} not found`);
+          // From the switch-on 6529.io purges nothing in a moved wave: its
+          // posts are served from the 6529 Network too.
+          await assertNotMovedOnChain(waveId, transactionContext);
           const cutoffSerialNo =
             tokenCutoff ??
             (await this.purgeDb.findCutoff(

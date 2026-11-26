@@ -5,8 +5,8 @@ import {
   recordWebSocketEvents
 } from '@/websocket-outbox/outbox.db';
 import {
-  WAVES_FROZEN_POLL_MESSAGE,
-  WavesFrozenException
+  movingWaveRefusal,
+  WAVES_FROZEN_POLL_MESSAGE
 } from '@/waves-freeze/waves-freeze';
 import {
   assertDecisionWritable,
@@ -197,7 +197,7 @@ export class DeleteDropUseCase {
         )
       ).length
     )
-      throw new WavesFrozenException(WAVES_FROZEN_POLL_MESSAGE);
+      throw movingWaveRefusal(WAVES_FROZEN_POLL_MESSAGE);
     await this.purgeDb.deleteBatch(
       scope,
       drops.map((drop) => drop.id),
@@ -352,7 +352,7 @@ export class DeleteDropUseCase {
             connection
           }))
         )
-          throw new WavesFrozenException(WAVES_FROZEN_POLL_MESSAGE);
+          throw movingWaveRefusal(WAVES_FROZEN_POLL_MESSAGE);
         await inSequence([
           () =>
             memeCollaborationsService.closeDeleted(dropId, {

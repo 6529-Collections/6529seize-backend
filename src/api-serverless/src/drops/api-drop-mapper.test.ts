@@ -15,6 +15,7 @@ import { ApiSubmissionDropStatus } from '@/api/generated/models/ApiSubmissionDro
 import { ApiDropMapper } from './api-drop.mapper';
 import { DropMediaUploadStatus } from '@/entities/IDropMediaUpload';
 import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
+import { stubWavesScope } from '@/tests/fixtures/waves-scope.fixture';
 
 beforeEach(() => {
   jest.spyOn(memeCollaborationsDb, 'acceptedByDrops').mockResolvedValue({});
@@ -544,6 +545,48 @@ describe('ApiDropMapper', () => {
         { option_no: 2, option_string: 'Second', votes: 3 }
       ]
     });
+  });
+
+  it("shows a moved wave's poll still open at the freeze closed at the freeze, from the switch-on", async () => {
+    const names = ['WAVES_FREEZE_AT', 'WAVES_SWITCH_ON_AT'];
+    const original = names.map((name) => process.env[name]);
+    const freeze = Date.now() - 2 * 86_400_000;
+    process.env.WAVES_FREEZE_AT = String(freeze);
+    process.env.WAVES_SWITCH_ON_AT = String(freeze + 86_400_000);
+    stubWavesScope({ staying: ['staying-wave'] });
+    try {
+      const { mapper, deps } = createMapper();
+      const poll = (dropId: string, waveId: string) => ({
+        id: `poll-${dropId}`,
+        wave_id: waveId,
+        drop_id: dropId,
+        closing_time: Date.now() + 86_400_000,
+        created_at: freeze - 60_000,
+        multichoice: false,
+        voted: [],
+        options: []
+      });
+      deps.dropPollsDb.findPollsByDropIds.mockResolvedValue({
+        'drop-1': poll('drop-1', 'moved-wave'),
+        'drop-2': poll('drop-2', 'staying-wave')
+      });
+
+      const result = await mapper.mapDrops(
+        [makeDrop(), makeDrop({ id: 'drop-2', serial_no: 2 })],
+        { authenticationContext: AuthenticationContext.notAuthenticated() }
+      );
+
+      expect(result['drop-1'].poll).toMatchObject({
+        closing_time: freeze,
+        is_open: false
+      });
+      expect(result['drop-2'].poll).toMatchObject({ is_open: true });
+    } finally {
+      names.forEach((name, i) => {
+        if (original[i] === undefined) delete process.env[name];
+        else process.env[name] = original[i];
+      });
+    }
   });
 
   it('uses provided eligible groups for mentioned wave overviews', async () => {

@@ -101,6 +101,7 @@ import {
   DropPollWithOptions
 } from '@/api/drops/drop-polls.db';
 import { mapDropPollToApi } from '@/api/drops/drop-polls.mappers';
+import { withPollsClosedAtMove } from '@/waves-freeze/waves-moved-polls';
 import { nftLinksDb, NftLinksDb } from '@/nft-links/nft-links.db';
 import { mapNftLinkEntityToApiLink } from '@/nft-links/nft-link-api.mapper';
 import {
@@ -361,7 +362,10 @@ export class ApiDropMapper {
               ctx
             )
           : Promise.resolve({} as Record<string, number>),
-        this.dropPollsDb.findPollsByDropIds(dropIds, ctx),
+        // A poll still open at the freeze in a moved wave shows closed then.
+        this.dropPollsDb
+          .findPollsByDropIds(dropIds, ctx)
+          .then((polls) => withPollsClosedAtMove(polls, ctx)),
         mainStageWaveId && mainStageWinnerDropIds.length
           ? this.memeCardDropMappingsDb.findMemeCardIdsByDropIds(
               mainStageWinnerDropIds,

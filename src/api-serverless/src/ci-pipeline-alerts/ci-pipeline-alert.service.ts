@@ -2,6 +2,10 @@ import { AuthenticationContext } from '@/auth-context';
 import { ApiCreateDropRequest } from '@/api/generated/models/ApiCreateDropRequest';
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
 import {
+  BotDeviceSigner,
+  botDeviceSigner
+} from '@/api/device-signing/bot-device-signer';
+import {
   DropCreationApiService,
   dropCreationService
 } from '@/api/drops/drop-creation.api.service';
@@ -420,7 +424,8 @@ export class CiPipelineAlertService {
     private readonly dropCreationApiService: DropCreationApiService,
     private readonly identitiesRepository: IdentitiesDb,
     private readonly releaseNotesQueue: ReleaseNoteGenerationQueue = releaseNoteGenerationQueue,
-    private readonly alertTargetStore: CiPipelineAlertTargetStore = ciPipelineAlertTargetStore
+    private readonly alertTargetStore: CiPipelineAlertTargetStore = ciPipelineAlertTargetStore,
+    private readonly botSigner: BotDeviceSigner = botDeviceSigner
   ) {}
 
   public async postAlert(
@@ -443,17 +448,28 @@ export class CiPipelineAlertService {
     const authenticationContext =
       AuthenticationContext.fromProfileId(botProfileId);
 
-    const drop = await this.dropCreationApiService.createDrop(
+    const drop = await this.botSigner.createDrop(
+      botProfileId,
       {
-        createDropRequest,
-        authorId: botProfileId,
-        representativeId: botProfileId,
-        hideLinkPreview: true
+        waveId,
+        replyToDropId: createDropRequest.reply_to?.drop_id ?? null,
+        // The drop is stored with link previews hidden.
+        body: { ...createDropRequest, hide_link_preview: true }
       },
-      {
-        ...ctx,
-        authenticationContext
-      }
+      () =>
+        this.dropCreationApiService.createDrop(
+          {
+            createDropRequest,
+            authorId: botProfileId,
+            representativeId: botProfileId,
+            hideLinkPreview: true
+          },
+          {
+            ...ctx,
+            authenticationContext
+          }
+        ),
+      ctx
     );
 
     if (isSuccessfulWebDeployAlert(request)) {
