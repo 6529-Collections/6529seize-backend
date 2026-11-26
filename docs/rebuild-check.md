@@ -235,11 +235,11 @@ export const mintManifest: AreaManifest = {
     before the rebuilders, so on a table with an AUTO_INCREMENT column
     the comparison doesn't leave out, the rows a rebuilder inserts
     without a value number after them; the run notes such a table. Only
-    the step that writes a table's rows
-    keeps them: the registry refuses keep on a table the step doesn't
-    write the rows of (a table no rebuilder writes is kept whole
-    already), keep with `columns` (a kept row comes back whole), and keep
-    on a checkpoint table (its older rows are never compared). A run
+    the step that writes a table's rows keeps them: the registry refuses
+    keep on a table the step doesn't write the rows of (a table no
+    rebuilder writes is kept whole already), keep with `columns` (a kept
+    row comes back whole), and keep on a checkpoint table (its older
+    rows are never compared). A run
     refuses a row that a keep plan and another plan both match, and a
     partition writer's keep plan on rows outside its partition.
     Plans don't excuse probe answers: a probe over planned rows would
@@ -498,6 +498,6 @@ deletes a kept row fails the run, a final run fails on the plan, and a
 partition writer can't keep another partition's rows. Three runs go
 through the API: two compare its answers before and after the rebuild,
 and one reads an owned column whose owner is absent. Its home is
-`.rebuild/self-check`
-unless `REBUILD_SELF_CHECK_HOME` names another; `REBUILD_SELF_CHECK_PORT`
-sets the `mysqld` port (default 3407). Each run takes a minute or two.
+`.rebuild/self-check` unless `REBUILD_SELF_CHECK_HOME` names another;
+`REBUILD_SELF_CHECK_PORT` sets the `mysqld` port (default 3407). Each run
+takes a minute or two.
