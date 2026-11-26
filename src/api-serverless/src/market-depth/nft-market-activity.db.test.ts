@@ -5,8 +5,12 @@ import { describeWithSeed } from '@/tests/_setup/seed';
 import { resolveEns } from '@/db-api';
 import { GetNftMarketActivityQuery } from '@/api/generated/routes/operations';
 import { marketDepthEventRetentionCutoff } from '@/market-depth/market-depth-retention';
+import { MarketDepthEventInput } from '@/market-depth/market-depth.types';
 import { marketDepthApiDb } from './market-depth-api.db';
-import { NftMarketActivityService } from './nft-market-activity.service';
+import {
+  marketEventToActivity,
+  NftMarketActivityService
+} from './nft-market-activity.service';
 
 jest.mock('@/db-api', () => ({ resolveEns: jest.fn() }));
 
@@ -161,5 +165,90 @@ describeWithSeed(
       );
       expect(result.market_history_started_at).toEqual(cutoff);
     });
+  }
+);
+
+const bothRolesEventId = 'e'.repeat(64);
+const cancellationRows = [
+  ...recentRows.map((row, index) => ({
+    ...row,
+    kind: ['item_cancelled', 'CANCELLED', 'offer_cancelled', 'item_listed'][
+      index % 4
+    ],
+    maker: index % 2 === 0 ? wallet : null,
+    taker: index % 2 === 1 ? wallet : otherWallet
+  })),
+  {
+    ...recentRows[119],
+    event_id: bothRolesEventId,
+    kind: 'Cancel',
+    maker: wallet,
+    taker: wallet
+  },
+  {
+    ...rows[rows.length - 1],
+    kind: 'cancellation'
+  },
+  {
+    ...recentRows[119],
+    event_id: 'd'.repeat(64),
+    kind: 'cancellation',
+    maker: wallet,
+    chain_id: '2'
+  }
+];
+
+describeWithSeed(
+  'NFT collection wallet cancellation query equivalence',
+  { table: MARKET_DEPTH_EVENTS_TABLE, rows: cancellationRows },
+  () => {
+    afterEach(() => jest.restoreAllMocks());
+
+    it.each([
+      { pageSize: 2, wallets: [wallet] },
+      { pageSize: 50, wallets: [wallet] },
+      { pageSize: 50, wallets: [wallet, otherWallet] }
+    ])(
+      'matches the original event fields and order across pages for %j',
+      async ({ pageSize, wallets }) => {
+        jest.mocked(resolveEns).mockResolvedValue(wallets);
+        const reference = await sqlExecutor.execute<
+          MarketDepthEventInput & { occurred_at: Date }
+        >(
+          `SELECT e.* FROM ${MARKET_DEPTH_EVENTS_TABLE} e
+         WHERE e.chain_id='1' AND e.contract=:contract
+           AND LOWER(e.kind) NOT IN ('sale','sold','item_sold','transfer','item_transferred','mint')
+           AND e.occurred_at >= :cutoff
+           AND (e.maker IN (:wallets) OR e.taker IN (:wallets))
+           AND LOWER(e.kind) IN ('cancellation','cancel','cancelled','item_cancelled','listing_cancelled','offer_cancelled')
+         ORDER BY e.occurred_at DESC, e.event_id DESC`,
+          { contract, cutoff, wallets }
+        );
+        const expected = reference.map(marketEventToActivity);
+        expect(expected.length).toBeGreaterThan(51);
+        expect(expected[0].event_id).toBe(`m:${bothRolesEventId}`);
+
+        const execute = jest.spyOn(sqlExecutor, 'execute');
+        const service = new NftMarketActivityService(dbSupplier, now);
+        let cursor: string | undefined;
+        for (let offset = 0; offset < expected.length; offset += pageSize) {
+          const page = await service.getActivity({
+            contract,
+            wallet: wallets.join(','),
+            filter: 'cancellations',
+            page_size: pageSize,
+            cursor
+          });
+          expect(page.data).toEqual(expected.slice(offset, offset + pageSize));
+          expect(Boolean(page.next)).toBe(offset + pageSize < expected.length);
+          cursor = page.next ?? undefined;
+        }
+        expect(
+          execute.mock.calls.some(([sql]) =>
+            sql.startsWith('WITH maker_events AS')
+          )
+        ).toBe(wallets.length === 1);
+      }
+    );
   }
 );
