@@ -503,38 +503,6 @@ export async function fetchNextGenCollectionOnlyLogs(
   );
 }
 
-export async function fetchNextGenTokenTransactions(
-  tokenId: number,
-  pageSize: number,
-  page: number
-) {
-  let filters = constructFilters(
-    '',
-    `${TRANSACTIONS_TABLE}.contract = :nextgenContract`
-  );
-  filters = constructFilters(
-    filters,
-    `${TRANSACTIONS_TABLE}.token_id = :tokenId`
-  );
-
-  const fields = `${TRANSACTIONS_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;
-  const joins = `LEFT JOIN ${ENS_TABLE} ens1 ON ${TRANSACTIONS_TABLE}.from_address=ens1.wallet LEFT JOIN ${ENS_TABLE} ens2 ON ${TRANSACTIONS_TABLE}.to_address=ens2.wallet`;
-
-  return fetchPaginated(
-    TRANSACTIONS_TABLE,
-    {
-      nextgenContract: NEXTGEN_CORE[getNextGenChainId()],
-      tokenId: tokenId
-    },
-    'block desc, transaction_date desc, token_id desc',
-    pageSize,
-    page,
-    filters,
-    fields,
-    joins
-  );
-}
-
 export async function fetchNextGenCollectionTraits(collectionId: number) {
   return sqlExecutor.execute(
     `SELECT DISTINCT trait, value, COUNT(*) as count
@@ -598,31 +566,6 @@ export async function fetchFeaturedCollection() {
   return returnEmpty();
 }
 
-export async function fetchAllAllowlistPhases(pageSize: number, page: number) {
-  const joins = `LEFT JOIN ${NEXTGEN_COLLECTIONS_TABLE} ON ${NEXTGEN_COLLECTIONS_TABLE}.id=${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.collection_id`;
-  const fields = `
-    ${NEXTGEN_COLLECTIONS_TABLE}.name as collection_name,
-    ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.collection_id, 
-    ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.phase,
-    ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.merkle_root,
-    ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.start_time, 
-    ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.end_time, 
-    ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.al_type, 
-    ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.mint_price, 
-    ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.added_by
-  `;
-  return fetchPaginated(
-    NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE,
-    {},
-    'collection_id asc, phase asc',
-    pageSize,
-    page,
-    '',
-    fields,
-    joins
-  );
-}
-
 export async function fetchAllowlistPhasesForCollection(collectionId: number) {
   const sql = `SELECT 
     created_at, merkle_root, collection_id, added_by, al_type, phase, start_time, end_time
@@ -678,28 +621,6 @@ export async function fetchNextGenAllowlistByPhase(
     filters,
     `${NEXTGEN_ALLOWLIST_TABLE}.*, ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.phase, ${ENS_TABLE}.display as wallet_display`,
     joins
-  );
-}
-
-export async function fetchNextGenProofs(
-  addressesStr: string,
-  pageSize: number,
-  page: number
-) {
-  let filters = '';
-  const params: any = {};
-  if (addressesStr) {
-    filters = constructFilters(filters, `address in (:addresses)`);
-    params.addresses = addressesStr.toLowerCase().split(',');
-  }
-
-  return fetchPaginated(
-    NEXTGEN_ALLOWLIST_TABLE,
-    params,
-    'collection_id asc, address asc',
-    pageSize,
-    page,
-    filters
   );
 }
 

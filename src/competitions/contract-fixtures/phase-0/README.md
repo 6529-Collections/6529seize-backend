@@ -35,8 +35,15 @@ The census also excludes four other retired GET routes.
 - `/api/groups_im_eligible_for` (backend PR #2626)
 - `/api/wave/:id/undiscovered-drop` (the undocumented Quick Vote alias)
 
+The NextGen retirement removes four legacy GET routes.
+
+- `/api/nextgen/allowlist_phases`
+- `/api/nextgen/collections/:id/tokens/:token`
+- `/api/nextgen/proofs`
+- `/api/nextgen/tokens/:id/transactions`
+
 The frozen manifest records all 296 historical routes. The runtime census
-checks 285 route declarations after excluding the 11 retirements.
+checks 281 route declarations after excluding the 15 retirements.
 
 ## Accepted Alchemy search retirement
 
