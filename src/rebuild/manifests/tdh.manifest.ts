@@ -4,8 +4,6 @@ import {
   PROBE_CONSOLIDATION_KEYS,
   PROBE_MEME_IDS,
   PROBE_MEMES_CONTRACT,
-  PROBE_SINCE_MS,
-  PROBE_TO_MS,
   PROBE_WALLETS
 } from '@/rebuild/manifests/probe-fixture';
 
@@ -54,10 +52,6 @@ const PROBES: Probe[] = [
     path: '/api/consolidated_uploads?page_size=20'
   },
   { id: 'tdh.nextgen', path: '/api/nextgen/tdh' },
-  {
-    id: 'tdh.community-metrics.series',
-    path: `/api/community-metrics/series?since=${PROBE_SINCE_MS}&to=${PROBE_TO_MS}`
-  },
   { id: 'tdh.oracle.total', path: '/oracle/tdh/total' },
   { id: 'tdh.oracle.percentile', path: '/oracle/tdh/percentile/5000' },
   { id: 'tdh.oracle.cutoff', path: '/oracle/tdh/cutoff/10' },
@@ -84,7 +78,7 @@ const PROBES: Probe[] = [
 ];
 
 /**
- * TDH, its history and files, xTDH and community metrics.
+ * TDH, its history and files, and xTDH.
  */
 export const tdhManifest: AreaManifest = {
   area: 'tdh',
@@ -131,7 +125,6 @@ export const tdhManifest: AreaManifest = {
     xtdh_token_grant_stats_b: { class: 'INDEX' },
     xtdh_token_stats_a: { class: 'INDEX' },
     xtdh_token_stats_b: { class: 'INDEX' },
-    metric_rollup_hour: { class: 'INDEX' },
     tdh_chain_days: { class: 'INDEX', origin: 'planned' }
   },
   seeds: [],

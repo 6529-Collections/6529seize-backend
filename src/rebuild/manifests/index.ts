@@ -11,6 +11,7 @@ import { dmManifest } from '@/rebuild/manifests/dm.manifest';
 import { notifyManifest } from '@/rebuild/manifests/notify.manifest';
 import { artdocManifest } from '@/rebuild/manifests/artdoc.manifest';
 import { harnessManifest } from '@/rebuild/manifests/harness.manifest';
+import { metricsManifest } from '@/rebuild/manifests/metrics.manifest';
 
 /** Every area's manifest. An area edits only its own file. */
 export const AREA_MANIFESTS: readonly AreaManifest[] = [
@@ -25,5 +26,6 @@ export const AREA_MANIFESTS: readonly AreaManifest[] = [
   dmManifest,
   notifyManifest,
   artdocManifest,
-  harnessManifest
+  harnessManifest,
+  metricsManifest
 ];
