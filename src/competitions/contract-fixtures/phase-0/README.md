@@ -14,29 +14,29 @@ compatibility decision.
 
 ## Accepted retirements
 
-The Simple Release Bus V1 operational GET routes are retired by the accepted
-V1-removal decision in backend PR #1831. The immutable baseline remains
-byte-for-byte intact for auditability; the runtime census excludes only these
-four authenticated operational routes:
+The Simple Release Bus V1 removal in backend PR #1831 retired four
+authenticated operational GET routes.
 
 - `/deploy/release-bus/controls`
 - `/deploy/release-candidates`
 - `/deploy/release-trains`
 - `/deploy/release-trains/:id`
 
-The accepted complete Release Bus removal also retires these three operational
-UI routes. They are excluded from the runtime census while the immutable
-baseline remains unchanged:
+The complete Release Bus removal retired three more operational UI routes.
 
 - `/deploy/ui/branch-head`
 - `/deploy/ui/bus`
 - `/deploy/ui/bus/app.js`
 
-The runtime census also records the undocumented Quick Vote alias
-`/api/wave/:id/undiscovered-drop` as retired. The original manifest records
-the historical mount.
+The census also excludes four other retired GET routes.
 
-The ordinary deployment UI and all other mounted GET contracts remain enforced.
+- `/oracle/prenodes` (backend PR #2487)
+- `/rpc/test` (RPC proxy restriction)
+- `/api/groups_im_eligible_for` (backend PR #2626)
+- `/api/wave/:id/undiscovered-drop` (the undocumented Quick Vote alias)
+
+The frozen manifest records all 296 historical routes. The runtime census
+checks 285 route declarations after excluding the 11 retirements.
 
 ## Accepted Alchemy search retirement
 
