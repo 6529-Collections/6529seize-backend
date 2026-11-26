@@ -1,14 +1,12 @@
 # Phase 0 permanent GET contract locks
 
-These three files are byte-for-byte copies of the accepted Phase 0 evidence in
+These three files mirror the accepted Phase 0 evidence in
 `6529seize-frontend/ops/roadmap/waves-multi-competition/phase-0/baseline`.
-They are deliberately stored at the backend enforcement boundary so backend CI
-does not depend on a sibling checkout. Do not regenerate or relax them when an
-implementation changes; update them only through a separately accepted
-compatibility decision.
+Backend CI reads these local copies. Update them only through a separately
+accepted compatibility decision.
 
 - OpenAPI snapshot: 183 permanent GET operations and their reachable schemas.
-- Runtime route manifest: 296 permanent mounted GET route shapes.
+- Runtime route manifest: 288 retained GET route shapes.
 - Representative fixtures: synthetic legacy/native mapping, pagination, and
   masked-error cases.
 
@@ -22,11 +20,12 @@ authenticated operational GET routes.
 - `/deploy/release-trains`
 - `/deploy/release-trains/:id`
 
-The complete Release Bus removal retired three more operational UI routes.
-
-- `/deploy/ui/branch-head`
-- `/deploy/ui/bus`
-- `/deploy/ui/bus/app.js`
+[Backend PR #2625](https://github.com/6529-Collections/6529seize-backend/pull/2625)
+approves removal of eight operational GET records from the retained inventory.
+Three of those records were for routes already retired in
+[backend PR #1965](https://github.com/6529-Collections/6529seize-backend/pull/1965).
+The source revision identifies the original Phase 0 capture. The counts reflect
+the amended inventory.
 
 The census also excludes four other retired GET routes.
 
@@ -42,8 +41,8 @@ The NextGen retirement removes four legacy GET routes.
 - `/api/nextgen/proofs`
 - `/api/nextgen/tokens/:id/transactions`
 
-The frozen manifest records all 296 historical routes. The runtime census
-checks 281 route declarations after excluding the 15 retirements.
+The runtime census checks 276 route declarations after excluding twelve
+retirement records from the 288 retained route shapes.
 
 ## Accepted Alchemy search retirement
 

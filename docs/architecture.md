@@ -2849,11 +2849,6 @@ automatic E2E validation. For coupled releases, complete backend dependencies
 before merging and deploying dependent frontend changes. Workflows resolve the
 source commit and verify artifact and runtime versions automatically.
 
-The API's authenticated `/deploy/ui` remains a convenience for viewing refs
-and runs and dispatching the ordinary workflows. GitHub authentication and
-repository permissions remain in place. It has no release queue, candidate
-registry, environment-state ledger, or separate deployment authority.
-
 For backend production, each service notification carries the merged PR and
 canonical service group. Earlier services hold publication; the final
 successful service supplies the publication signal. Internal operations may

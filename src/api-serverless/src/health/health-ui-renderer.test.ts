@@ -10,8 +10,7 @@ function buildHealthData(healthy: boolean): HealthData {
     },
     links: {
       api_documentation: '/docs',
-      health_ui: '/health/ui',
-      deploy_ui: '/deploy/ui'
+      health_ui: '/health/ui'
     },
     db: 'ok',
     redis: {
