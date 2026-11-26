@@ -1,22 +1,19 @@
 # Phase 0 permanent GET contract locks
 
-These three files are byte-for-byte copies of the accepted Phase 0 evidence in
+These three files mirror the accepted Phase 0 evidence in
 `6529seize-frontend/ops/roadmap/waves-multi-competition/phase-0/baseline`.
-They are deliberately stored at the backend enforcement boundary so backend CI
-does not depend on a sibling checkout. Do not regenerate or relax them when an
-implementation changes; update them only through a separately accepted
-compatibility decision.
+Backend CI reads these local copies. Update them only through a separately
+accepted compatibility decision.
 
 - OpenAPI snapshot: 183 permanent GET operations and their reachable schemas.
-- Runtime route manifest: 296 permanent mounted GET route shapes.
+- Runtime route manifest: 288 retained GET route shapes.
 - Representative fixtures: synthetic legacy/native mapping, pagination, and
   masked-error cases.
 
 ## Accepted retirements
 
 The Simple Release Bus V1 operational GET routes are retired by the accepted
-V1-removal decision in backend PR #1831. The immutable baseline remains
-byte-for-byte intact for auditability; the runtime census excludes only these
+V1-removal decision in backend PR #1831. The runtime census excludes these
 four authenticated operational routes:
 
 - `/deploy/release-bus/controls`
@@ -24,19 +21,16 @@ four authenticated operational routes:
 - `/deploy/release-trains`
 - `/deploy/release-trains/:id`
 
-The accepted complete Release Bus removal also retires these three operational
-UI routes. They are excluded from the runtime census while the immutable
-baseline remains unchanged:
-
-- `/deploy/ui/branch-head`
-- `/deploy/ui/bus`
-- `/deploy/ui/bus/app.js`
-
 The runtime census also records the undocumented Quick Vote alias
 `/api/wave/:id/undiscovered-drop` as retired. The original manifest records
 the historical mount.
 
-The ordinary deployment UI and all other mounted GET contracts remain enforced.
+[Backend PR #2625](https://github.com/6529-Collections/6529seize-backend/pull/2625)
+approves removal of eight operational GET records from the retained inventory.
+Three of those records were for routes already retired in
+[backend PR #1965](https://github.com/6529-Collections/6529seize-backend/pull/1965).
+The source revision identifies the original Phase 0 capture. The counts reflect
+the amended inventory.
 
 ## Accepted Alchemy search retirement
 

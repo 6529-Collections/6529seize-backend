@@ -108,7 +108,7 @@ You can run it from anywhere inside this repository, but it only works in these 
 - In `src/api-serverless`, it maps to service `api`.
 
 The single source of truth for deployable services is `src/config/deploy-services.json`.
-`.github/workflows/deploy.yml` is generated from it, and the API deploy UI reads the same JSON directly.
+`.github/workflows/deploy.yml` is generated from this catalog.
 
 Before it triggers the GitHub workflow, it checks that:
 

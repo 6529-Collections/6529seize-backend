@@ -23,9 +23,6 @@ const RETIRED_GET_ROUTES = new Set([
   '/deploy/release-candidates',
   '/deploy/release-trains',
   '/deploy/release-trains/:id',
-  '/deploy/ui/branch-head',
-  '/deploy/ui/bus',
-  '/deploy/ui/bus/app.js',
   '/oracle/prenodes',
   '/rpc/test',
   '/api/wave/:id/undiscovered-drop'
@@ -102,13 +99,6 @@ function literalPaths(node: ts.Expression): string[] {
 function authMode(text: string): ManifestRoute['auth'] | 'unknown' {
   if (text.includes('needsAuthenticatedUser(')) return 'required';
   if (text.includes('maybeAuthenticatedUser(')) return 'optional';
-  if (
-    /getGitHubTokenOrThrow\(|requireAuthenticatedViewer\(|requireWorkflowCredential\(/.test(
-      text
-    )
-  ) {
-    return 'required';
-  }
   return 'unknown';
 }
 
@@ -177,13 +167,13 @@ describe('Phase 0 permanent mounted GET route census', () => {
   };
 
   it('keeps the accepted manifest internally complete and unique', () => {
-    expect(manifest.routes).toHaveLength(296);
-    expect(manifest.baseline.counts.runtime_route_shapes).toBe(296);
+    expect(manifest.routes).toHaveLength(288);
+    expect(manifest.baseline.counts.runtime_route_shapes).toBe(288);
     expect(manifest.baseline.counts.openapi_get_operations).toBe(183);
-    expect(new Set(manifest.routes.map((route) => route.path)).size).toBe(296);
+    expect(new Set(manifest.routes.map((route) => route.path)).size).toBe(288);
     expect(
       manifest.routes.filter((route) => !RETIRED_GET_ROUTES.has(route.path))
-    ).toHaveLength(285);
+    ).toHaveLength(280);
   });
 
   it('mounts the Quick Vote router only at the documented waves prefix', () => {
