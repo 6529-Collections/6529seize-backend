@@ -2,6 +2,7 @@ import {
   MINTING_MERKLE_PROOFS_TABLE,
   MINTING_MERKLE_ROOTS_TABLE
 } from '@/constants';
+import { Logger } from '@/logging';
 import { ConnectionWrapper, dbSupplier, SqlExecutor } from '@/sql-executor';
 import {
   MintColumn,
@@ -32,6 +33,12 @@ const BATCH = 200;
  * on every write.
  */
 /** The log and the tables disagree: an update found no row, or several. */
+const logger = Logger.get('MINT_LOG_APPLY');
+
+function cardLabelOf(card: MintCardRef): string {
+  return `${card.contract}#${card.key ?? card.card_id}`;
+}
+
 export class MintApplyError extends Error {
   constructor(message: string) {
     super(message);
@@ -178,6 +185,7 @@ export class MintStateWriter {
     )
       .filter((column) => spec.only?.includes(column.name) ?? true)
       .filter((column) => !spec.key.includes(column.name));
+    const missing: string[] = [];
     for (const row of diff.upsert) {
       const params: Record<string, unknown> = cardParams(card);
       const sets = columns.map((column) => {
@@ -197,14 +205,28 @@ export class MintStateWriter {
       // The rows belong to another writer; one that is missing means the
       // tables disagree with the log, and a rebuild must not go on quietly.
       const matched = this.db().getAffectedRows(result);
+      const where = spec.key
+        .map((column) => `${column} ${String(row[column])}`)
+        .join(', ');
+      // The identity final rows belong to the subscriptions journal. After a
+      // suspend and a second go-live the opening is cut from the legacy
+      // tables again, so a row that only the identity side had (a wide
+      // identity's) is gone, and entries from before still name it: report
+      // it and go on.
+      if (matched === 0 && spec.identitySubscriptions) {
+        missing.push(where);
+        continue;
+      }
       if (matched !== 1) {
-        const where = spec.key
-          .map((column) => `${column} ${String(row[column])}`)
-          .join(', ');
         throw new MintApplyError(
           `${spec.table} row ${where} matched ${matched} rows, not 1`
         );
       }
+    }
+    if (missing.length) {
+      logger.warn(
+        `[MINT_LOG_IDENTITY_ROWS_MISSING] [${cardLabelOf(card)}] ${spec.table} has no row ${missing.join('; ')}`
+      );
     }
   }
 

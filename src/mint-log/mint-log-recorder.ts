@@ -28,11 +28,13 @@ import {
   MintRecordVerifyResult,
   MintVerifiedRecord
 } from './mint-log-ports';
+import { MINT_ROW_PART_SPECS } from './mint-log-parts';
 import {
   MINT_KIND_CHAIN,
   MINT_KIND_PARTS,
   MINT_LOG_ENTRY_VERSION,
   MINT_LOG_LANE,
+  MINT_ROW_PARTS,
   MintCardEffects,
   MintCardRef,
   MintCardState,
@@ -559,11 +561,23 @@ export class MintLogRecorder {
           connection,
           captured.identityTruth
         );
-        await this.writer.apply(
-          captured.card,
-          diffCardState(current, captured.before),
-          connection
+        // The identity final rows are the subscriptions journal's: their
+        // phase writes are journaled, so a revert leaves them and says so.
+        // Only recorder.write() reverts, and no route logs a phase pull
+        // through it (the routes use writeWithin, whose writer rolls back
+        // with the log); the rebuild check's probe seed is the one caller.
+        const undo = diffCardState(current, captured.before);
+        const identityParts = MINT_ROW_PARTS.filter(
+          (part) =>
+            MINT_ROW_PART_SPECS[part].identitySubscriptions && undo[part]
         );
+        for (const part of identityParts) {
+          delete (undo as Record<string, unknown>)[part];
+          logger.error(
+            `[MINT_LOG_REVERT_KEPT_IDENTITY_ROWS] [${spec.kind}] [card ${cardLabel(captured.card)}] ${part}`
+          );
+        }
+        await this.writer.apply(captured.card, undo, connection);
       },
       { isolationLevel: 'READ COMMITTED' }
     );

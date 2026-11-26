@@ -185,7 +185,8 @@ export const MINT_ROW_PART_SPECS: Readonly<
   // genesis taken after the switch captures this part too (MINT_PARTS).
   subscription_phases_identity: {
     part: 'subscription_phases_identity',
-    appliesTo: isToken,
+    // The identity final table holds memes rows only.
+    appliesTo: (card) => card.contract === MEMES_CONTRACT.toLowerCase(),
     identitySubscriptions: true,
     table: SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
     scope: 'contract = :contract and token_id = :card_id',

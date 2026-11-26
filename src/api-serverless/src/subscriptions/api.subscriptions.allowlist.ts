@@ -719,7 +719,12 @@ async function shadowResetIdentityRows(
       }
     );
   } catch (error) {
+    // The legacy reset stands; the gate sees the failure, as for a split.
     shadowLogger.error('[SHADOW ALLOWLIST RESET FAILED]', error);
+    await saveFailedReport('PHASE', { contract, tokenId }, error).catch(
+      (reportError) =>
+        shadowLogger.error('[FAILED REPORT NOT SAVED]', reportError)
+    );
   }
 }
 

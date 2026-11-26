@@ -3465,10 +3465,19 @@ describeWithSeed(
           w: wideKey.split('-')[0]
         }
       );
-      const opening = await phases(
-        SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
-        'identity_key'
-      );
+      // All three phase columns, as the part logs and rebuilds them.
+      const phaseColumns = (table: string) =>
+        sqlExecutor.execute<{
+          id: number;
+          phase: string | null;
+          phase_subscriptions: number;
+          phase_position: number;
+        }>(
+          `SELECT id, phase, phase_subscriptions, phase_position FROM ${table}
+            WHERE contract = :c AND token_id = :card ORDER BY id`,
+          { c: MEMES_CONTRACT, card: CARD }
+        );
+      const opening = await phaseColumns(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE);
 
       // After it: a reset and a Public pull, logged.
       await reset();
@@ -3482,6 +3491,10 @@ describeWithSeed(
           SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
           'identity_key'
         )
+      };
+      const liveColumns = {
+        legacy: await phaseColumns(SUBSCRIPTIONS_NFTS_FINAL_TABLE),
+        identity: await phaseColumns(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE)
       };
       expect(live.identity).toContainEqual([wideId, 'Public']);
       expect(live.legacy.map(([id]) => id)).not.toContain(wideId);
@@ -3525,12 +3538,18 @@ describeWithSeed(
         `UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
           SET phase = NULL, phase_subscriptions = -1, phase_position = -1`
       );
-      for (const [id, phase] of opening) {
+      for (const row of opening) {
         await sqlExecutor.execute(
           `UPDATE ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE}
-            SET phase = :phase, phase_subscriptions = -1, phase_position = -1
+            SET phase = :phase, phase_subscriptions = :subscriptions,
+              phase_position = :position
             WHERE id = :id`,
-          { id, phase }
+          {
+            id: row.id,
+            phase: row.phase,
+            subscriptions: row.phase_subscriptions,
+            position: row.phase_position
+          }
         );
       }
       await new MintLogRebuilder({
@@ -3547,6 +3566,46 @@ describeWithSeed(
       expect(
         await phases(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key')
       ).toEqual(live.identity);
+      expect(await phaseColumns(SUBSCRIPTIONS_NFTS_FINAL_TABLE)).toEqual(
+        liveColumns.legacy
+      );
+      expect(await phaseColumns(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE)).toEqual(
+        liveColumns.identity
+      );
+
+      // After a suspend and a second go-live, the wide identity's row is
+      // gone from the new opening, and the entries that name it still
+      // rebuild: the missing identity row is reported, not fatal.
+      await sqlExecutor.execute(
+        `DELETE FROM ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE} WHERE id = :id`,
+        { id: wideId }
+      );
+      for (const table of [
+        MINT_LOG_HEAD_TABLE,
+        MINT_LOG_CARD_HEADS_TABLE,
+        DISTRIBUTION_TABLE,
+        DISTRIBUTION_NORMALIZED_TABLE,
+        MINTING_MERKLE_ROOTS_TABLE,
+        MINTING_MERKLE_PROOFS_TABLE
+      ]) {
+        await sqlExecutor.execute(`DELETE FROM ${table}`);
+      }
+      const warnings = jest.spyOn(Logger.prototype, 'warn');
+      try {
+        await new MintLogRebuilder({
+          put: async () => {
+            throw new Error('no files in this log');
+          },
+          get: async () => {
+            throw new Error('no files in this log');
+          }
+        }).rebuild(entries);
+        expect(warnings).toHaveBeenCalledWith(
+          expect.stringContaining('[MINT_LOG_IDENTITY_ROWS_MISSING]')
+        );
+      } finally {
+        warnings.mockRestore();
+      }
     });
 
     it("in shadow, the identity split waits for the card's preparation row, and reads the rows after it", async () => {
@@ -3622,6 +3681,203 @@ describeWithSeed(
       expect(await phaseReports()).toEqual([
         { verdict: 'MATCH', mode: 'SHADOW' }
       ]);
+    });
+
+    describe('the reset in shadow', () => {
+      /** Shadow, with card 1 pulled Public on both sides. */
+      const shadowWithPublicPull = async () => {
+        await seedLegacy();
+        await cutAndLoad(false);
+        process.env[SHADOW_ENV] = 'true';
+        subscriptionsIdentitySwitch.invalidate();
+        await updateSubscriptions();
+        await pullInPreparation((ctx) =>
+          getPublicSubscriptions(MEMES_CONTRACT, CARD, ctx)
+        );
+        const legacy = await phases(
+          SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+          'consolidation_key'
+        );
+        expect(legacy.length).toBeGreaterThan(0);
+        expect(legacy.every(([, phase]) => phase === 'Public')).toBe(true);
+        expect(
+          await phases(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key')
+        ).toEqual(legacy);
+      };
+      const shadowResets = async () =>
+        (
+          await sqlExecutor.execute<{ entry: string }>(
+            `SELECT entry FROM ${SIGNED_RECORD_LOG_ENTRIES_TABLE} WHERE lane = 'subs-shadow' ORDER BY id`
+          )
+        )
+          .map((r) => JSON.parse(r.entry).body)
+          .filter((b: any) => b?.kind === 'phase' && b?.inputs?.reset === true);
+      const allPhases = async (table: string, key: string) =>
+        (await phases(table, key)).map(([, phase]) => phase);
+
+      it('a logged reset that rolls back changes neither side and journals no shadow reset', async () => {
+        await shadowWithPublicPull();
+
+        await expect(
+          loggedPreparationReset({
+            spec: {
+              kind: 'dist.reset',
+              card: mintCard(MEMES_CONTRACT.toLowerCase(), CARD),
+              actor: {
+                type: 'admin',
+                wallet: `0x${'9'.repeat(40)}`,
+                authority: 'test'
+              },
+              intent: { route: 'dist.reset', params: {}, body: null }
+            },
+            contract: MEMES_CONTRACT,
+            claim: CARD,
+            reset: async (ctx) => {
+              await resetAllowlistRows(MEMES_CONTRACT, CARD, ctx);
+              throw new Error('after the reset');
+            }
+          })
+        ).rejects.toThrow('after the reset');
+
+        for (const [table, key] of [
+          [SUBSCRIPTIONS_NFTS_FINAL_TABLE, 'consolidation_key'],
+          [SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key']
+        ]) {
+          expect(
+            (await allPhases(table, key)).every((phase) => phase === 'Public')
+          ).toBe(true);
+        }
+        expect(await shadowResets()).toEqual([]);
+      });
+
+      it('a committed reset resets the identity rows after it, with one shadow reset entry', async () => {
+        await shadowWithPublicPull();
+
+        await loggedPreparationReset({
+          spec: {
+            kind: 'dist.reset',
+            card: mintCard(MEMES_CONTRACT.toLowerCase(), CARD),
+            actor: {
+              type: 'admin',
+              wallet: `0x${'9'.repeat(40)}`,
+              authority: 'test'
+            },
+            intent: { route: 'dist.reset', params: {}, body: null }
+          },
+          contract: MEMES_CONTRACT,
+          claim: CARD,
+          reset: (ctx) => resetAllowlistRows(MEMES_CONTRACT, CARD, ctx)
+        });
+
+        for (const [table, key] of [
+          [SUBSCRIPTIONS_NFTS_FINAL_TABLE, 'consolidation_key'],
+          [SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key']
+        ]) {
+          expect(
+            (await allPhases(table, key)).every((phase) => phase === null)
+          ).toBe(true);
+        }
+        expect(await shadowResets()).toHaveLength(1);
+      });
+
+      it("waits for the card's preparation row before it resets the identity rows", async () => {
+        await shadowWithPublicPull();
+        const id = `${MEMES_CONTRACT.toLowerCase()}:${CARD}`;
+        let release!: () => void;
+        const released = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        let lockHeld!: () => void;
+        const held = new Promise<void>((resolve) => {
+          lockHeld = resolve;
+        });
+        const holder = sqlExecutor.executeNativeQueriesInTransaction(
+          async (connection) => {
+            await sqlExecutor.execute(
+              `SELECT id FROM ${DROP_FORGE_PREPARATIONS_TABLE} WHERE id = :id FOR UPDATE`,
+              { id },
+              { wrappedConnection: connection }
+            );
+            lockHeld();
+            await released;
+          }
+        );
+        let reset: Promise<unknown> = Promise.resolve();
+        try {
+          await held;
+          // Outside a transaction the legacy reset commits at once, and the
+          // identity reset after it waits on the preparation row.
+          reset = resetAllowlistRows(MEMES_CONTRACT, CARD, {});
+          let waiting = 0;
+          for (let i = 0; i < 200 && !waiting; i++) {
+            const [row] = await sqlExecutor.execute<{ waiting: number }>(
+              `SELECT COUNT(*) AS waiting FROM information_schema.processlist
+                WHERE info LIKE '%${DROP_FORGE_PREPARATIONS_TABLE}%FOR UPDATE%'
+                  AND info NOT LIKE '%processlist%'`
+            );
+            waiting = Number(row.waiting);
+            if (!waiting) {
+              await new Promise((resolve) => setTimeout(resolve, 25));
+            }
+          }
+          expect(waiting).toBe(1);
+          expect(
+            (
+              await allPhases(
+                SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+                'consolidation_key'
+              )
+            ).every((phase) => phase === null)
+          ).toBe(true);
+          expect(
+            (
+              await allPhases(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key')
+            ).every((phase) => phase === 'Public')
+          ).toBe(true);
+        } finally {
+          release();
+          await holder;
+          await reset;
+        }
+        expect(
+          (
+            await allPhases(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key')
+          ).every((phase) => phase === null)
+        ).toBe(true);
+        expect(await shadowResets()).toHaveLength(1);
+      });
+
+      it('a failed identity reset leaves the legacy reset, logs, and saves a failed phase report', async () => {
+        await shadowWithPublicPull();
+        const journalBefore = jest
+          .spyOn(journalModule, 'journalBefore')
+          .mockRejectedValueOnce(new Error('identity reset failed'));
+        const errors = jest.spyOn(Logger.prototype, 'error');
+        try {
+          await resetAllowlistRows(MEMES_CONTRACT, CARD, {});
+        } finally {
+          journalBefore.mockRestore();
+        }
+        expect(
+          (
+            await allPhases(SUBSCRIPTIONS_NFTS_FINAL_TABLE, 'consolidation_key')
+          ).every((phase) => phase === null)
+        ).toBe(true);
+        expect(
+          (
+            await allPhases(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key')
+          ).every((phase) => phase === 'Public')
+        ).toBe(true);
+        expect(errors).toHaveBeenCalledWith(
+          '[SHADOW ALLOWLIST RESET FAILED]',
+          expect.any(Error)
+        );
+        expect(await phaseReports()).toContainEqual({
+          verdict: 'FAILED',
+          mode: 'SHADOW'
+        });
+        errors.mockRestore();
+      });
     });
 
     it('in shadow, a failing identity split leaves the preparation committed, logs the failure, and the gate refuses', async () => {
