@@ -1,6 +1,7 @@
 import { PushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
 import {
   ACTIVITY_EVENTS_TABLE,
+  CHAIN_WAVES_TABLE,
   DROP_BOOSTS_TABLE,
   DROP_MEDIA_TABLE,
   DROP_MENTIONED_WAVES_TABLE,
@@ -1212,10 +1213,15 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     };
   }
 
+  /**
+   * A wave's hub row. `withoutMetrics` reads waves alone (last_drop_time
+   * 0), for a reader that must not depend on wave_metrics.
+   */
   public async findWaveHubById(
     id: string,
     forUpdate: boolean,
-    ctx: RequestContext
+    ctx: RequestContext,
+    options: { readonly withoutMetrics?: boolean } = {}
   ): Promise<WaveEntityWithLastDropTime | null> {
     const timerName = `${this.constructor.name}->findWaveHubById`;
     ctx.timer?.start(timerName);
@@ -1225,7 +1231,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       }
       const row = await withoutLegacyCompetitionGetFacade(() =>
         this.db.oneOrNull<RawWaveEntityWithLastDropTime>(
-          `select ${waveHubSelectColumns()}, coalesce(wm.latest_drop_timestamp,0) as last_drop_time
+          options.withoutMetrics
+            ? `select ${waveHubSelectColumns()}, 0 as last_drop_time
+         from ${WAVES_TABLE} w
+         where w.id=:id ${forUpdate ? 'for update' : ''}`
+            : `select ${waveHubSelectColumns()}, coalesce(wm.latest_drop_timestamp,0) as last_drop_time
          from ${WAVES_TABLE} w
          left join ${WAVE_METRICS_TABLE} wm on wm.wave_id=w.id
          where w.id=:id ${forUpdate ? 'for update' : ''}`,
@@ -1835,6 +1845,30 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           {} as Record<string, WaveEntityWithLastDropTime>
         )
       );
+  }
+
+  /**
+   * The chain ids of imported waves, by 6529.io wave id, from the chain
+   * index's rows; a wave the index has no row of is left out.
+   */
+  async findChainIdsOfImportedWaves(
+    waveIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, string>> {
+    const ids = waveIds.filter((id) => !/^0x[0-9a-fA-F]{64}$/.test(id));
+    if (!ids.length) return {};
+    const rows = await this.db.execute<{
+      legacy_id: string;
+      wave_id: string;
+    }>(
+      `select legacy_id, wave_id from ${CHAIN_WAVES_TABLE}
+        where legacy_id in (:ids)`,
+      { ids },
+      ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+    );
+    return Object.fromEntries(
+      rows.map((row) => [row.legacy_id, row.wave_id.toLowerCase()])
+    );
   }
 
   async findVisibleParentWavesByChildWaveIds(

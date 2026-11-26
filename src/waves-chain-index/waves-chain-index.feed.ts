@@ -1,4 +1,5 @@
 import { ChainFeedPage } from '@/chain-gateway/chain-gateway.types';
+import { compareCodeUnits } from './waves-chain-index.order';
 
 /**
  * The rule-version-7 families the index follows in the change feed
@@ -109,12 +110,12 @@ export function splitFeedEffects(
   ] as const;
   const items: { add: (into: FeedEffects) => void }[] = [];
   for (const field of sets) {
-    for (const id of Array.from(effects[field]).sort()) {
+    for (const id of Array.from(effects[field]).sort(compareCodeUnits)) {
       items.push({ add: (into) => into[field].add(id) });
     }
   }
   for (const [key, result] of Array.from(effects.results.entries()).sort(
-    ([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)
+    ([a], [b]) => compareCodeUnits(a, b)
   )) {
     items.push({ add: (into) => into.results.set(key, result) });
   }

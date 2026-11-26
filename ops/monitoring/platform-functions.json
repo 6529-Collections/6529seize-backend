@@ -16,16 +16,6 @@
       "name": "allowlist-token-pool-downloader",
       "environments": ["prod", "staging"],
       "owner": "external"
-    },
-    {
-      "name": "rpcProxy",
-      "environments": ["prod"],
-      "owner": "external-or-legacy"
-    },
-    {
-      "name": "dropVideoRenditionsCompletionLoop",
-      "environments": ["staging"],
-      "owner": "legacy"
     }
   ]
 }

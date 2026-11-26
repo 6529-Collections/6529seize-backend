@@ -83,11 +83,7 @@ function fixture(
     parent_group_id: 'parent'
   });
   const db = { execute, oneOrNull } as unknown as SqlExecutor;
-  const service = new UserGroupsService(
-    new UserGroupsDb(() => db),
-    mock(),
-    mock()
-  );
+  const service = new UserGroupsService(new UserGroupsDb(() => db), mock());
   jest
     .spyOn(service, 'getGroupsUserIsEligibleFor')
     .mockImplementation(async (profile) =>
@@ -111,6 +107,7 @@ function fixture(
             created_by: mock<ApiProfileMin>(),
             visible: true,
             is_private: group.is_private,
+            stays_on_site: group.is_private,
             group: {
               cic: {
                 min: null,

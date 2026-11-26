@@ -2,6 +2,7 @@ import {
   ActivityEventAction,
   ActivityEventTargetType
 } from '../../../entities/IActivityEvent';
+import { wavesScopeService } from '@/waves-scope/waves-scope.service';
 import {
   ParticipationRequiredMedia,
   WaveCreditScope,
@@ -107,8 +108,12 @@ type WaveMappingRelatedData = {
   votingCreditNftsByWaveId: Record<string, WaveVotingCreditNft[]>;
   pinnedWaveIds: Set<string>;
   identityWaveIds: Set<string>;
+  /** Whether each wave stays on 6529.io (wavesScopeService.staysForDisplay). */
+  staysOnSiteByWaveId: Map<string, boolean>;
   parentWaveOverviewsByChildWaveId: Record<string, ApiWaveOverview>;
   waveIdsWithVisibleSubwaves: Set<string>;
+  /** Imported waves' chain ids, by wave id. */
+  chainIdsByWaveId?: Record<string, string>;
   authenticatedUserId: string | null;
 };
 
@@ -359,8 +364,10 @@ export class WavesMappers {
       votingCreditNftsByWaveId,
       pinnedWaveIds,
       identityWaveIds,
+      staysOnSiteByWaveId,
       parentWaveOverviewsByChildWaveId,
-      waveIdsWithVisibleSubwaves
+      waveIdsWithVisibleSubwaves,
+      chainIdsByWaveId = {}
     } = relatedData;
     const decisionsDone = decisionsDoneByWaveId[waveEntity.id] ?? 0;
     const waveIsClosed = isApproveWaveClosed({
@@ -562,8 +569,14 @@ export class WavesMappers {
         start_time: +entity.start_time,
         end_time: +entity.end_time
       }));
+    // A wave made on the chain is stored under its chain id.
+    const chainId = /^0x[0-9a-fA-F]{64}$/.test(waveEntity.id)
+      ? waveEntity.id.toLowerCase()
+      : (chainIdsByWaveId[waveEntity.id] ?? null);
     const apiWave: ApiWave = {
+      chain_id: chainId,
       id: waveEntity.id,
+      stays_on_site: staysOnSiteByWaveId.get(waveEntity.id) ?? false,
       name: displayByWaveId[waveEntity.id]?.name ?? waveEntity.name,
       picture: resolveWavePictureOverride(
         waveEntity.picture,
@@ -649,7 +662,8 @@ export class WavesMappers {
       votingCreditNftsByWaveId,
       pinnedWaveIds,
       identityWaveIds,
-      waveIdsWithVisibleSubwaves
+      waveIdsWithVisibleSubwaves,
+      staysOnSiteByWaveId
     ] = await Promise.all([
       this.userGroupsService.getByIds(
         waveEntities.flatMap((waveEntity) =>
@@ -753,7 +767,8 @@ export class WavesMappers {
         waveIds,
         groupIdsUserIsEligibleFor,
         ctx
-      )
+      ),
+      wavesScopeService.staysForDisplay(waveIds, ctx)
     ]);
     const profileIds = collections.distinct([
       ...waveEntities.flatMap((waveEntity) =>
@@ -851,8 +866,13 @@ export class WavesMappers {
       votingCreditNftsByWaveId,
       pinnedWaveIds,
       identityWaveIds,
+      staysOnSiteByWaveId,
       parentWaveOverviewsByChildWaveId,
       waveIdsWithVisibleSubwaves,
+      chainIdsByWaveId: await this.wavesApiDb.findChainIdsOfImportedWaves(
+        waveIds,
+        ctx
+      ),
       authenticatedUserId
     };
   }

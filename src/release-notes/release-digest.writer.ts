@@ -9,6 +9,7 @@ import {
   InvokeModelCommandInput
 } from '@aws-sdk/client-bedrock-runtime';
 import { TextDecoder } from 'node:util';
+import { sliceWholeCodePoints } from '@/strings';
 import {
   RELEASE_DIGEST_INSTRUCTIONS,
   RELEASE_DIGEST_RESPONSE_SCHEMA,
@@ -76,9 +77,12 @@ function serializeContext(entries: readonly ReleaseDigestSourceEntry[]) {
     id: entry.key,
     repository: getRepositoryLabel(entry.repository),
     services: entry.services,
-    title: entry.title.slice(0, MAX_TITLE_LENGTH),
-    summary: entry.summary.slice(0, MAX_SUMMARY_LENGTH),
-    details: entry.body?.slice(0, MAX_BODY_EXCERPT_LENGTH) ?? null
+    title: sliceWholeCodePoints(entry.title, MAX_TITLE_LENGTH),
+    summary: sliceWholeCodePoints(entry.summary, MAX_SUMMARY_LENGTH),
+    details:
+      entry.body === null || entry.body === undefined
+        ? null
+        : sliceWholeCodePoints(entry.body, MAX_BODY_EXCERPT_LENGTH)
   }));
   return JSON.stringify(payload, null, 1).replace(/[<>]/g, (character) =>
     character === '<' ? String.raw`\u003c` : String.raw`\u003e`
@@ -141,18 +145,15 @@ function cleanText(value: unknown, maxLength: number): string {
   if (typeof value !== 'string') {
     return '';
   }
-  return (
-    value
-      .replace(/\s+/g, ' ')
-      .replace(/@\[/g, '@(')
-      // Bounded quantifiers keep link stripping linear on hostile input.
-      .replace(/\[([^\]]{0,300})\]\([^)\s]{0,500}\)/g, '$1')
-      .replace(/[`*~[\]#<>]/g, '')
-      .replace(/^\s*[-•]\s*/, '')
-      .trim()
-      .slice(0, maxLength)
-      .trim()
-  );
+  const cleaned = value
+    .replace(/\s+/g, ' ')
+    .replace(/@\[/g, '@(')
+    // Bounded quantifiers keep link stripping linear on hostile input.
+    .replace(/\[([^\]]{0,300})\]\([^)\s]{0,500}\)/g, '$1')
+    .replace(/[`*~[\]#<>]/g, '')
+    .replace(/^\s*[-•]\s*/, '')
+    .trim();
+  return sliceWholeCodePoints(cleaned, maxLength).trim();
 }
 
 function parseItems(

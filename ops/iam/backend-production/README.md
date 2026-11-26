@@ -113,6 +113,55 @@ References:
 
 `WebSocketDeliveryDeployment.json` is an additional narrowly scoped inline policy for the existing deployment role. An administrative identity installs it before deploying `webSocketDeliveryLoop`; the GitHub role cannot modify its own permissions. It permits only the new worker function/versions, its environment-specific CloudFormation stack, deployment-bucket prefix, schedule, log group and alarms. Existing managed policies and their ten attachments are unchanged. The deployment-bucket prefix allows CloudFormation's truncated stack component and generated suffix (for example, `websocketdeliveryloop-sta-serverlessdeploymentbuck-...` on staging); it does not grant application-data access. Validate the document with Access Analyzer and simulate new-worker operations and unrelated denials before installation. Deploy through the ordinary GitHub workflow afterward.
 
+## Drop Forge deployment policies
+
+`DropForgeHandlersDeployment.json` and `DropForgeDispatchDeployment.json`
+define the dedicated deploy role for `dropForgeLaunchHandler` and
+`memesDistributionHandler`. They cover the two stacks, artifact buckets,
+functions, log groups, alarms, queues, schedule group and readiness schedules.
+Each Lambda execution role can be passed only to its named function. The
+Scheduler delivery role can be passed to EventBridge Scheduler. The deploy role
+has no KMS signing or IAM policy-editing permission.
+Production resolves network settings from the checked-in production deployment
+configuration.
+
+After staging validation, an AWS administrator creates these customer-managed
+policies in production account `987989283142`.
+
+| Policy name | Policy document |
+| --- | --- |
+| `DropForgeProductionHandlersDeployment` | `DropForgeHandlersDeployment.json` |
+| `DropForgeProductionDispatchDeployment` | `DropForgeDispatchDeployment.json` |
+
+Create `gha-backend-deploy-drop-forge-production` with `DropForgeDeployTrust.json`
+and attach both policies. Set the GitHub `production` environment's
+`AWS_DROP_FORGE_DEPLOY_ROLE_ARN` to that role ARN before the first Drop Forge
+deployment. Install each signing guard as an inline identity policy on its
+corresponding runtime role.
+
+| Inline policy file | Runtime role |
+| --- | --- |
+| `DropForgeLaunchSigningGuard.json` | `drop-forge-prod-launch` |
+| `DropForgeDistributionSigningGuard.json` | `drop-forge-prod-distribution` |
+
+The guards deny signing if the Lambda source ARN is absent or belongs to a
+different function. Install them alongside each role's `DropForgeProdRuntime`
+policy. The [setup guide](../../../docs/drop-forge-auto-launch-setup.md)
+covers the runtime roles and queue-producer permissions.
+
+Verify function-scoped role passing through an actual stack deployment and
+verify signing from the intended Lambda execution environments. IAM simulation
+evaluates supplied destination context for `iam:PassRole`, but does not reproduce
+Lambda's credential-derived `lambda:SourceFunctionArn` for KMS calls.
+
+GetEventSourceMapping is read-only and region-scoped across mapping IDs because
+new UUIDs do not exist before creation and that read API has no FunctionArn
+condition. Mapping creation/update/delete remains constrained to the two named
+functions. CloudFormation creates deployment buckets using service-specific
+name prefixes in `us-east-1`. Operations on existing buckets and objects also
+require production account ownership. The handlers consume SQS via event source
+mappings and do not need permission to modify Lambda resource policies.
+
 ## Voting credit return worker
 
 `VotingCreditReturnDeployment.json` enrolls only the voting credit return
@@ -154,3 +203,33 @@ The stack also owns the `drop-video-template-read-prod` inline policy on
 write role policies, so the stack's first creation (or any change to that
 policy) is an administrative deployment. Later code and configuration updates
 use the ordinary `Deploy a service` workflow.
+
+## Signed record log worker
+
+`signedRecordLogLoop` runs two scheduled functions in `us-east-1` on
+`lambda-vpc-role`: `signedRecordLogCloser` every 5 minutes and
+`signedRecordLogArchiver` hourly at minute 7.
+`SignedRecordLogProductionDeployment.json` permits only those two functions and
+their versions, the `signedRecordLogLoop-prod` stack, the
+`signedrecordlogloop-pro*-serverlessdeploy*` deployment-bucket prefix, the two
+log groups with their out-of-memory metric filters, the two schedules
+`signedRecordLogLoop-prod-close` and `signedRecordLogLoop-prod-archive`, and the
+two out-of-memory alarms (`signedRecordLogLoop-prod-<function>-OOM`), all in
+`us-east-1`. The schedule names are declared in the worker definition, because
+CloudFormation would otherwise truncate the stack name in generated rule names.
+The bucket prefix allows CloudFormation's truncated stack component and
+generated suffix; it grants no application-bucket access and no direct
+invocation.
+
+`SignedRecordLogProductionDeployment.json` has `ACCOUNT_ID` where the account id
+goes. Replace it with the account id, as in the sibling files, before validating
+and installing. Its manifest entry measures the committed file's compact JSON,
+placeholder included; with the id filled in, the document is 4,877 compact
+characters. The role's inline budget is 10,240 characters in total and the two
+inline worker policies above already use most of it, so install this one as a
+customer-managed policy named `SignedRecordLogProductionDeployment` and attach
+it to this environment's deployment role (the account's
+managed-policies-per-role quota is 20). Install it through the administrative
+identity after Access Analyzer validation and positive/negative simulation. The
+existing managed policies, trust policy and runtime role remain unchanged.
+Deploy through the ordinary GitHub workflow afterward.

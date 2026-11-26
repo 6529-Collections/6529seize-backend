@@ -37,6 +37,7 @@ jest.mock('@/api/drops/api-drop.mapper', () => ({
 }));
 jest.mock('./competition-api.mapper', () => ({
   toApiCompetition: (value: unknown) => value,
+  toApiCompetitionInScope: async (value: unknown) => value,
   toApiEntryPage: async (value: unknown) => value
 }));
 jest.mock('./competitions-v3.handlers', () => ({
@@ -44,6 +45,7 @@ jest.mock('./competitions-v3.handlers', () => ({
     authenticationContext: { getActingAsId: () => 'viewer' }
   }),
   toApiCompetition: (value: unknown) => value,
+  toApiCompetitionInScope: async (value: unknown) => value,
   toApiEntryPage: async (value: unknown) => value
 }));
 const competitionId = '10000000-0000-4000-8000-000000000001';

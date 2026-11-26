@@ -68,6 +68,17 @@ export class CompetitionEntity {
   @Column({ type: 'varchar', length: 100, nullable: true, unique: true })
   readonly legacy_wave_id!: string | null;
 
+  // The decision's id on the 6529 chain (0x and 64 hex digits), once the
+  // chain mirror writes it; null for a decision the chain has no copy of.
+  @Column({
+    type: 'varchar',
+    length: 66,
+    nullable: true,
+    default: null,
+    unique: true
+  })
+  readonly chain_id?: string | null;
+
   @Column({
     type: 'varchar',
     length: 16,

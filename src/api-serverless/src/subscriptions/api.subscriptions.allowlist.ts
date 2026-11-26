@@ -1,3 +1,5 @@
+import { RequestContext } from '@/request.context';
+import { resetDistributionPreparation } from '@/drop-forge/drop-forge.preparation.repository';
 import { Request } from 'express';
 import fetch from 'node-fetch';
 import { DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES } from '@/airdrop-phases';
@@ -61,12 +63,15 @@ export function authenticateSubscriptionsAdmin(
   return isAdmin;
 }
 
+type EmmaRequestMode = 'manual' | 'background';
+
 export async function validateDistribution(
   auth: string,
   allowlistId: string,
-  phaseId?: string
+  phaseId?: string,
+  mode: EmmaRequestMode = 'manual'
 ): Promise<AllowlistResponse> {
-  const operations = await fetchDistributionOperations(auth, allowlistId);
+  const operations = await fetchDistributionOperations(auth, allowlistId, mode);
   const hasRanDelegationMapping = operations.some(
     (o) => o.code === 'MAP_RESULTS_TO_DELEGATED_WALLETS'
   );
@@ -80,59 +85,78 @@ export async function validateDistribution(
   };
 }
 
-export async function fetchDistributionOperations(
+export function fetchDistributionOperations(
   auth: string,
-  allowlistId: string
+  allowlistId: string,
+  mode: EmmaRequestMode = 'manual'
 ): Promise<ALOperationsResponse[]> {
-  const url = `${process.env.ALLOWLIST_API_ENDPOINT}/allowlists/${allowlistId}/operations`;
-  const response = await fetch(url, {
-    headers: {
-      accept: 'application/json',
-      Authorization: auth
-    }
-  });
-  const json = await response.json();
-  if (response.status !== 200) {
-    throw new CustomApiCompliantException(response.status, json.message);
-  }
-  return json;
+  return fetchEmma(
+    `/allowlists/${encodeURIComponent(allowlistId)}/operations`,
+    auth,
+    mode
+  );
+}
+
+export function fetchDistributionPhases(
+  auth: string,
+  allowlistId: string,
+  mode: EmmaRequestMode = 'manual'
+): Promise<{ id: string; name: string }[]> {
+  return fetchEmma(
+    `/allowlists/${encodeURIComponent(allowlistId)}/phases`,
+    auth,
+    mode
+  );
 }
 
 export async function fetchPhaseName(
   auth: string,
   allowlistId: string,
-  phaseId: string
+  phaseId: string,
+  mode: EmmaRequestMode = 'manual'
 ): Promise<string> {
-  const url = `${process.env.ALLOWLIST_API_ENDPOINT}/allowlists/${allowlistId}/phases/${phaseId}`;
-  const response = await fetch(url, {
-    headers: {
-      accept: 'application/json',
-      Authorization: auth
-    }
-  });
-  const json = await response.json();
-  if (response.status !== 200) {
-    throw new CustomApiCompliantException(response.status, json.message);
-  }
-  return json.name;
+  const phase = await fetchEmma<{ name: string }>(
+    `/allowlists/${encodeURIComponent(allowlistId)}/phases/${encodeURIComponent(phaseId)}`,
+    auth,
+    mode
+  );
+  return phase.name;
 }
 
-export async function fetchPhaseResults(
+export function fetchPhaseResults(
   auth: string,
   allowlistId: string,
-  phaseId: string
+  phaseId: string,
+  mode: EmmaRequestMode = 'manual'
 ): Promise<ALResultsResponse[]> {
-  const url = `${process.env.ALLOWLIST_API_ENDPOINT}/allowlists/${allowlistId}/results/phases/${phaseId}`;
-  const response = await fetch(url, {
+  return fetchEmma(
+    `/allowlists/${encodeURIComponent(allowlistId)}/results/phases/${encodeURIComponent(phaseId)}`,
+    auth,
+    mode
+  );
+}
+
+async function fetchEmma<T>(
+  path: string,
+  auth: string,
+  mode: EmmaRequestMode
+): Promise<T> {
+  const background = mode === 'background';
+  const response = await fetch(`${process.env.ALLOWLIST_API_ENDPOINT}${path}`, {
+    ...(background && { timeout: 20000, size: 32 * 1024 * 1024 }),
     headers: {
       accept: 'application/json',
       Authorization: auth
     }
   });
+  if (background && (response.status === 401 || response.status === 403))
+    throw new CustomApiCompliantException(
+      response.status,
+      'EMMA access expired or was denied'
+    );
   const json = await response.json();
-  if (response.status !== 200) {
+  if (response.status !== 200)
     throw new CustomApiCompliantException(response.status, json.message);
-  }
   return json;
 }
 
@@ -161,7 +185,8 @@ function buildSubscriptionMaps(filteredSubscriptions: NFTFinalSubscription[]): {
 async function buildAirdropsAndUpdateSubscriptions(
   filteredSubscriptions: NFTFinalSubscription[],
   subscriptionRanks: Map<string, number>,
-  phaseName: string
+  phaseName: string,
+  ctx: RequestContext = {}
 ): Promise<ResultsResponse[]> {
   const phaseSubscriptions = filteredSubscriptions.length;
   const airdrops: ResultsResponse[] = [];
@@ -195,7 +220,9 @@ async function buildAirdropsAndUpdateSubscriptions(
         END
       WHERE id IN (${filteredSubscriptions.map((_, i) => `:id_${i}`).join(', ')})
     `;
-    await sqlExecutor.execute(batchUpdateQuery, updateParams);
+    await sqlExecutor.execute(batchUpdateQuery, updateParams, {
+      wrappedConnection: ctx.connection
+    });
   }
 
   return airdrops;
@@ -250,7 +277,8 @@ export async function splitAllowlistResults(
   contract: string,
   tokenId: number,
   phaseName: string,
-  results: ALResultsResponse[]
+  results: ALResultsResponse[],
+  ctx: RequestContext = {}
 ): Promise<{
   airdrops: ResultsResponse[];
   airdrops_unconsolidated: ResultsResponse[];
@@ -263,12 +291,13 @@ export async function splitAllowlistResults(
   }
 
   const [subscriptions, walletMintingDelegations] = await Promise.all([
-    fetchAllNftFinalSubscriptionsForContractAndToken(contract, tokenId),
+    fetchAllNftFinalSubscriptionsForContractAndToken(contract, tokenId, ctx),
     fetchProcessedDelegations(
       MEMES_CONTRACT,
       USE_CASE_MINTING,
       undefined,
-      equalIgnoreCase(contract, MEMES_CONTRACT) ? tokenId : null
+      equalIgnoreCase(contract, MEMES_CONTRACT) ? tokenId : null,
+      ctx
     )
   ]);
 
@@ -279,7 +308,8 @@ export async function splitAllowlistResults(
   const airdrops = await buildAirdropsAndUpdateSubscriptions(
     filteredSubscriptions,
     subscriptionRanks,
-    phaseName
+    phaseName,
+    ctx
   );
   const allowlists = buildAllowlists(
     results,
@@ -299,14 +329,16 @@ export async function splitAllowlistResults(
 
 export async function getPublicSubscriptions(
   contract: string,
-  tokenId: number
+  tokenId: number,
+  ctx: RequestContext = {}
 ): Promise<{
   airdrops: ResultsResponse[];
 }> {
   const publicSubscriptions =
     await fetchAllPublicFinalSubscriptionsForContractAndToken(
       contract,
-      tokenId
+      tokenId,
+      ctx
     );
 
   const subscriptionRanks = new Map<string, number>();
@@ -347,7 +379,9 @@ export async function getPublicSubscriptions(
         END
       WHERE id IN (${publicSubscriptions.map((_, i) => `:id_${i}`).join(', ')})
     `;
-    await sqlExecutor.execute(batchUpdateQuery, updateParams);
+    await sqlExecutor.execute(batchUpdateQuery, updateParams, {
+      wrappedConnection: ctx.connection
+    });
   }
 
   const mergedAirDrops = mergeDuplicateWallets(airdrops);
@@ -366,74 +400,94 @@ function filterSubscriptions(
   });
 }
 
-export async function resetAllowlist(contract: string, tokenId: number) {
+/**
+ * Clears a card's distribution: the subscriptions' phase columns, its
+ * distribution rows (automatic airdrops stay), merkle roots and proofs, and
+ * normalized rows, on the caller's connection. Run it inside Drop Forge's
+ * reset, as resetAllowlist and the logged reset route do, so its checks
+ * come first.
+ */
+export async function resetAllowlistRows(
+  contract: string,
+  tokenId: number,
+  ctx: RequestContext
+): Promise<void> {
+  const wrappedConnection = ctx.connection;
+  if (!wrappedConnection) {
+    // The rows go together or not at all.
+    return sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+      resetAllowlistRows(contract, tokenId, { ...ctx, connection })
+    );
+  }
   const contractLower = contract.toLowerCase();
-  await sqlExecutor.executeNativeQueriesInTransaction(
-    async (wrappedConnection) => {
-      const updateQuery = `
-        UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
-        SET 
-          phase = NULL, 
-          phase_subscriptions = -1,
-          phase_position = -1
-        WHERE contract = :contract AND token_id = :tokenId`;
+  const updateQuery = `
+      UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
+      SET 
+        phase = NULL, 
+        phase_subscriptions = -1,
+        phase_position = -1
+      WHERE contract = :contract AND token_id = :tokenId`;
 
-      await sqlExecutor.execute(
-        updateQuery,
-        {
-          contract,
-          tokenId
-        },
-        { wrappedConnection }
-      );
+  await sqlExecutor.execute(
+    updateQuery,
+    {
+      contract,
+      tokenId
+    },
+    { wrappedConnection }
+  );
 
-      await sqlExecutor.execute(
-        `DELETE FROM ${DISTRIBUTION_TABLE}
+  await sqlExecutor.execute(
+    `DELETE FROM ${DISTRIBUTION_TABLE}
+       WHERE contract = :contract
+         AND card_id = :tokenId
+         AND phase NOT IN (:automaticAirdropPhases)`,
+    {
+      contract: contractLower,
+      tokenId,
+      automaticAirdropPhases: [...DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES]
+    },
+    { wrappedConnection }
+  );
+
+  await sqlExecutor.execute(
+    `DELETE FROM ${MINTING_MERKLE_PROOFS_TABLE}
+       WHERE merkle_root IN (
+         SELECT merkle_root
+         FROM ${MINTING_MERKLE_ROOTS_TABLE}
          WHERE contract = :contract
            AND card_id = :tokenId
-           AND phase NOT IN (:automaticAirdropPhases)`,
-        {
-          contract: contractLower,
-          tokenId,
-          automaticAirdropPhases: [...DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES]
-        },
-        { wrappedConnection }
-      );
+       )`,
+    {
+      contract: contractLower,
+      tokenId
+    },
+    { wrappedConnection }
+  );
 
-      await sqlExecutor.execute(
-        `DELETE FROM ${MINTING_MERKLE_PROOFS_TABLE}
-         WHERE merkle_root IN (
-           SELECT merkle_root
-           FROM ${MINTING_MERKLE_ROOTS_TABLE}
-           WHERE contract = :contract
-             AND card_id = :tokenId
-         )`,
-        {
-          contract: contractLower,
-          tokenId
-        },
-        { wrappedConnection }
-      );
+  await sqlExecutor.execute(
+    `DELETE FROM ${MINTING_MERKLE_ROOTS_TABLE}
+       WHERE contract = :contract
+         AND card_id = :tokenId`,
+    {
+      contract: contractLower,
+      tokenId
+    },
+    { wrappedConnection }
+  );
 
-      await sqlExecutor.execute(
-        `DELETE FROM ${MINTING_MERKLE_ROOTS_TABLE}
-         WHERE contract = :contract
-           AND card_id = :tokenId`,
-        {
-          contract: contractLower,
-          tokenId
-        },
-        { wrappedConnection }
-      );
+  await sqlExecutor.execute(
+    `DELETE FROM ${DISTRIBUTION_NORMALIZED_TABLE} WHERE contract = :contract AND card_id = :tokenId`,
+    {
+      contract: contractLower,
+      tokenId
+    },
+    { wrappedConnection }
+  );
+}
 
-      await sqlExecutor.execute(
-        `DELETE FROM ${DISTRIBUTION_NORMALIZED_TABLE} WHERE contract = :contract AND card_id = :tokenId`,
-        {
-          contract: contractLower,
-          tokenId
-        },
-        { wrappedConnection }
-      );
-    }
+export async function resetAllowlist(contract: string, tokenId: number) {
+  await resetDistributionPreparation(contract, tokenId, (ctx) =>
+    resetAllowlistRows(contract, tokenId, ctx)
   );
 }

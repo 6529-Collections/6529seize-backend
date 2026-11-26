@@ -717,6 +717,30 @@
       ]
     },
     {
+      "service": "dropForgeLaunchHandler",
+      "region": "us-east-1",
+      "functions": [
+        "dropForgeLaunchHandler"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "memesDistributionHandler",
+      "region": "us-east-1",
+      "functions": [
+        "memesDistributionHandler"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
       "service": "webSocketDeliveryLoop",
       "region": "us-east-1",
       "functions": [
@@ -764,15 +788,6 @@
     {
       "name": "allowlist-token-pool-downloader",
       "owner": "external",
-      "coverage": [
-        "lambda-errors",
-        "lambda-throttles"
-      ],
-      "deployCode": false
-    },
-    {
-      "name": "rpcProxy",
-      "owner": "external-or-legacy",
       "coverage": [
         "lambda-errors",
         "lambda-throttles"

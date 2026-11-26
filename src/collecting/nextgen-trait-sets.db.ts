@@ -1,3 +1,4 @@
+import { creditTdh } from '@/rates/rating-credit';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   CONSOLIDATED_WALLETS_TDH_TABLE,
@@ -171,7 +172,7 @@ function mapAccountSet(
     xtdh: Number(row.xtdh),
     rep_score: Number(row.rep_score),
     level: calculateLevel({
-      tdh: Number(row.tdh) + Number(row.xtdh),
+      tdh: creditTdh(Number(row.tdh), Number(row.xtdh)),
       rep: Number(row.rep_score)
     }),
     distinct_values_count: Number(row.distinct_values_count),

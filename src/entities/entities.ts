@@ -44,7 +44,12 @@ export {
   CompetitionPauseEntity,
   CompetitionVoteEntity
 } from './ICompetition';
-export { Consolidation, Delegation, NFTDelegationBlock } from './IDelegation';
+export {
+  Consolidation,
+  Delegation,
+  NFTDelegationBlock,
+  NFTDelegationLogAfterFreeze
+} from './IDelegation';
 export { DeletedDropEntity } from './IDeletedDrop';
 export { Distribution, DistributionNormalized } from './IDistribution';
 export { DistributionPhoto } from './IDistributionPhoto';
@@ -52,6 +57,7 @@ export { MintingMerkleProof } from './IMintingMerkleProof';
 export { MintingMerkleRoot } from './IMintingMerkleRoot';
 export { MintingClaimActionEntity } from './IMintingClaimAction';
 export { MemeCardDropMappingEntity } from './IMemeCardDropMapping';
+export { MintLogCardHeadEntity, MintLogHeadEntity } from './IMintLogHead';
 export {
   DropGroupMentionEntity,
   DropBoostEntity,
@@ -166,6 +172,8 @@ export {
 } from './IProfileCmsPointerEvent';
 export { ProfileCmsPublishSignatureEntity } from './IProfileCmsPublishSignature';
 export { ProfileCmsUploadEntity } from './IProfileCmsUpload';
+export { ProfileCmsChainHeadEntity } from './IProfileCmsChainHead';
+export { ProfileCmsChainParkedEntity } from './IProfileCmsChainParked';
 export { PushNotificationDevice } from './IPushNotification';
 export { PushNotificationSettingsEntity } from './IPushNotificationSettings';
 export { Rating } from './IRating';
@@ -182,6 +190,7 @@ export {
 } from './IReleaseNotePublication';
 export { ReleaseNoteStreamStateEntity } from './IReleaseNoteStreamState';
 export { Rememe, RememeUpload } from './IRememe';
+export { RepRatingRemovalEntity } from './IRepRatingRemoval';
 export { ProfileTotalRepScoreAggregation } from './IRepScoreAggregations';
 export { RoyaltiesUpload } from './IRoyalties';
 export { MemesSeason } from './ISeason';
@@ -207,6 +216,7 @@ export {
 } from './ISubscription';
 export { SubscriptionCoverageAlertStateEntity } from './ISubscriptionCoverageAlertState';
 export { SubscriptionCoverageRefreshRequestEntity } from './ISubscriptionCoverageRefreshRequest';
+export { SubscriptionDeferredWriteEntity } from './ISubscriptionDeferredWrite';
 export {
   ConsolidatedTDH,
   ConsolidatedTDHEditions,
@@ -233,12 +243,15 @@ export {
 } from './ITransactionsProcessing';
 export { ConsolidatedTDHUpload, UploadEntity } from './IUpload';
 export { UserGroupEntity } from './IUserGroup';
+export { UserGroupVisibilityRequestEntity } from './IUserGroupVisibilityRequest';
 export { WaveArchiveEntity, WaveEntity } from './IWave';
 export {
   ChainDecisionEntity,
   ChainDecisionLeaderboardEntity,
   ChainLeaderboardRowEntity,
   ChainEntryEntity,
+  ChainClaimBuildEntity,
+  ChainEventEntity,
   ChainGroupEntity,
   ChainPollEntity,
   ChainResultEntity,
@@ -248,6 +261,15 @@ export {
   ChainWaveRoleEntity,
   WavesChainIndexStateEntity
 } from './IWavesChainIndex';
+export {
+  ChainDocEntity,
+  ChainEntryHoldEntity,
+  WavesChainMirrorDecisionEntity,
+  WavesChainMirrorEventEntity,
+  WavesChainMirrorGroupEntity,
+  WavesChainMirrorStateEntity,
+  WavesChainMirrorWaveEntity
+} from './IWavesChainMirror';
 export { WalletAuthSessionEntity } from './IWalletAuthSession';
 export type { WalletAuthClientType } from './IWalletAuthSession';
 export { WalletConnectionShareEntity } from './IWalletConnectionShare';
@@ -299,6 +321,7 @@ export { PushNotificationCancellationEntity } from './IPushNotificationCancellat
 
 export * from './ICompetitionRuntime';
 export { CompetitionWorkerCursorEntity } from './ICompetitionWorkerCursor';
+export { WavesSettlementSendEntity } from './IWavesSettlementSend';
 
 export * from './ICompetitionCommand';
 export * from './ICompetitionEntryContentVersion';
@@ -306,9 +329,25 @@ export * from './ICompetitionEntryContentVersion';
 export * from './ICompetitionCapabilityAudit';
 export { PushNotificationOutboxEntity } from './IPushNotificationOutbox';
 export { SubscriptionCacheInvalidationEntity } from './ISubscriptionCacheInvalidation';
+
+export * from './IDropForgeLaunch';
+export * from './IDropForgeEvidence';
+export * from './IDropForgeSettings';
+export * from './IDropForgeReadinessCheck';
 export { DeviceGrantEntity } from './IDeviceGrant';
 export { DeviceSignedEventEntity } from './IDeviceSignedEvent';
+export { WaveRelayCursorEntity } from './IWaveRelayCursor';
+export {
+  WaveRelayEventEntity,
+  WaveRelayRejectEntity,
+  WaveRelaySubscriptionEntity
+} from './IWaveRelayIngest';
 export { DropAuthorSignatureEntity } from './IDropAuthorSignature';
+export { SignedRecordHeadEntity } from './ISignedRecordHead';
+export {
+  SignedRecordLogEntryEntity,
+  SignedRecordLogSegmentEntity
+} from './ISignedRecordLog';
 export * from './IE2ee';
 export {
   MemeCollaborationEntity,
@@ -319,6 +358,7 @@ export { TransferReconciliationEntity } from './ITransferReconciliation';
 export { MarketDepthPublicationLockEntity } from './IMarketDepthPublicationLock';
 
 export * from './IVotingCreditRelease';
+export * from './ITransactionScanCheckpoint';
 export { ReleaseNoteRecoveryJobEntity } from './IReleaseNoteRecoveryJob';
 
 export { ArtistArtworkAlertEntity } from './IArtistArtworkAlert';
@@ -331,3 +371,19 @@ export { IdentityTdhSyncStateEntity } from './IIdentityTdhSyncState';
 export { IdentityTdhSyncScopeEntity } from './IIdentityTdhSyncScope';
 
 export * from './ICompetitionScoreReset';
+export {
+  ChainPendingOperationEntity,
+  ChainPendingOperationSignerEntity
+} from './IChainPendingOperation';
+export {
+  IdentityChainFirstBindingEntity,
+  IdentityChainFounderWaitEntity,
+  IdentityChainMirrorStateEntity,
+  IdentityChainPrincipalEntity,
+  IdentityChainPlaceholderEntity,
+  IdentityChainRatingCategoryEntity,
+  IdentityChainRatingEventEntity,
+  IdentityChainRatingLedgerEntity,
+  IdentityChainRegroupEntity,
+  IdentityChainWalletEntity
+} from './IIdentityChainMirror';

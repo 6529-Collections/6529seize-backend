@@ -5,9 +5,11 @@ import {
   id
 } from '@/tests/fixtures/waves-chain-index.fixture';
 import { ChainFeedBlock } from '@/chain-gateway/chain-gateway.types';
+import { Logger } from '@/logging';
 import { ChainObject, GatewayWavesChainApi } from './waves-chain-index.api';
 import { IndexTableName } from './waves-chain-index.db';
 import { WavesChainIndex } from './waves-chain-index.service';
+import { compareCodeUnits } from './waves-chain-index.order';
 
 const TABLES: IndexTableName[] = [
   'groups',
@@ -191,6 +193,20 @@ describe('WavesChainIndex', () => {
     });
     expect(db.state.generation).toBe(0);
     expect(chain.calls).toBe(2);
+  });
+
+  it("keeps the waves import's start from the first run that read it complete", async () => {
+    chain.completed = false;
+    const { db, index } = indexOf(chain, clock);
+    await index.run({ budgetMs: BIG });
+    expect(db.state.importStartedAt).toBeNull();
+    chain.completed = true;
+    await index.run({ budgetMs: BIG });
+    expect(db.state.importStartedAt).toBe(1_763_990_000_000);
+    // Kept: a later answer doesn't change it.
+    chain.importStartedAt = 1_770_000_000_000;
+    await index.run({ budgetMs: BIG });
+    expect(db.state.importStartedAt).toBe(1_763_990_000_000);
   });
 
   it('reads everything at one height, then follows the feed from the next', async () => {
@@ -403,6 +419,58 @@ describe('WavesChainIndex', () => {
     expect(rowsOf(db)).toEqual(before);
   });
 
+  it('keeps the finalized block time of the height it read at, and keeps it while no time can be read', async () => {
+    const { db, index } = indexOf(chain, clock);
+    expect(db.readTime).toBeNull();
+    const first = await chain.head();
+    await index.run({ budgetMs: BIG });
+    expect(db.state.readHeight).toBe(first.finalizedHeight);
+    expect(db.readTime).toBe(first.finalizedTime);
+    chain.vote(E(1), V(1), 10);
+    chain.tick(60_000);
+    chain.tick(60_000);
+    // Finalized one block behind the newest: its time is not the clock's.
+    chain.lag = 1;
+    const second = await chain.head();
+    expect(second.finalizedTime).toBeGreaterThan(first.finalizedTime!);
+    expect(second.finalizedTime).toBeLessThan(clock.now());
+    await index.run({ budgetMs: BIG });
+    expect(db.state.readHeight).toBe(second.finalizedHeight);
+    expect(db.readTime).toBe(second.finalizedTime);
+    chain.vote(E(1), V(1), 11);
+    chain.timeUnknown = true;
+    await index.run({ budgetMs: BIG });
+    expect(db.readTime).toBe(second.finalizedTime);
+    // Each time was saved after its height: a run that stops between the
+    // two leaves an earlier time beside the new height, never a later one.
+    expect(db.readTimeSavedAtHeight).toEqual([
+      first.finalizedHeight,
+      second.finalizedHeight
+    ]);
+  });
+
+  it('goes on without the read_time column, saying so once', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn');
+    const { db, index } = indexOf(chain, clock);
+    db.noReadTimeColumn = true;
+    expect(await index.run({ budgetMs: BIG })).toMatchObject({
+      mode: 'indexed'
+    });
+    chain.vote(E(1), V(1), 12);
+    expect(await index.run({ budgetMs: BIG })).toMatchObject({
+      mode: 'indexed'
+    });
+    expect(db.state.lastFullAt).not.toBeNull();
+    expect(rowsOf(db)).toEqual(await freshRows(chain, clock));
+    expect(db.readTime).toBeNull();
+    expect(
+      warn.mock.calls.filter(([message]) =>
+        String(message).includes('HAS NO READ_TIME COLUMN YET')
+      )
+    ).toHaveLength(1);
+    warn.mockRestore();
+  });
+
   it('waits when no block time can be read for the head', async () => {
     const { db, index } = indexOf(chain, clock);
     await index.run({ budgetMs: BIG });
@@ -547,14 +615,18 @@ describe('WavesChainIndex', () => {
       db
         .rows('leaderboardRows', true)
         .filter((r) => r.decision_id === D3 && r.height === chain.height)
-        .map((r) => r.entry_id);
+        .map((r) => String(r.entry_id));
     expect(
       db.rows('leaderboardRows').filter((r) => r.decision_id === D3)
     ).toHaveLength(21);
     // E12 moves past E13 and E14 (D3 ranks by total): three rows move.
     chain.vote(id('e12'), V(3), 145);
     await index.run({ budgetMs: BIG });
-    expect(written().sort()).toEqual([id('e12'), id('e13'), id('e14')]);
+    expect(written().sort(compareCodeUnits)).toEqual([
+      id('e12'),
+      id('e13'),
+      id('e14')
+    ]);
     // Its total moves, not its place: one row.
     chain.vote(id('e12'), V(3), 146);
     await index.run({ budgetMs: BIG });
@@ -634,6 +706,40 @@ describe('WavesChainIndex', () => {
     expect(db.state).toMatchObject({ network: 'net-2', readHeight: 51 });
   });
 
+  it('counts no full read while a relaunched chain empties the index, and empties it again after a stop', async () => {
+    const { db, index } = indexOf(chain, clock);
+    await index.run({ budgetMs: BIG });
+    expect(db.state.lastFullAt).not.toBeNull();
+    const fresh = new FakeChain(clock);
+    fresh.network = 'net-2';
+    fresh.height = 50;
+    fresh.putWave(id('aa'));
+    const clearAll = db.clearAll.bind(db);
+    const seen: (number | null)[] = [];
+    let failures = 1;
+    db.clearAll = async () => {
+      seen.push(db.state.lastFullAt);
+      if (failures > 0) {
+        failures--;
+        throw new Error('lost the connection');
+      }
+      await clearAll();
+    };
+    const relaunched = new WavesChainIndex(fresh, db.asDb(), clock.now);
+    await expect(relaunched.run({ budgetMs: BIG })).rejects.toThrow(
+      'lost the connection'
+    );
+    // Stopped half way: no full read counts, and the old network is kept,
+    // so the next run empties the index again.
+    expect(db.state).toMatchObject({ lastFullAt: null, network: 'net-1' });
+    expect(db.rows('waves').length).toBeGreaterThan(0);
+    const report = await relaunched.run({ budgetMs: BIG });
+    expect(report.restartedFull).toBe('network_changed');
+    expect(seen).toEqual([null, null]);
+    expect(db.rows('waves').map((w) => w.wave_id)).toEqual([id('aa')]);
+    expect(db.state).toMatchObject({ network: 'net-2' });
+  });
+
   it('starts again at a full-read phase it does not know, without emptying anything', async () => {
     const { db, index } = indexOf(chain, clock);
     await index.run({ budgetMs: BIG });
@@ -645,6 +751,45 @@ describe('WavesChainIndex', () => {
     await index.run({ budgetMs: BIG });
     expect(db.state.fullPhase).toBeNull();
     expect(rowsOf(db)).toEqual(before);
+  });
+
+  it('stops a full read at a page whose next repeats its cursor, before any sweep', async () => {
+    chain.pageSize = 1;
+    const { db, index } = indexOf(chain, clock);
+    await index.run({ budgetMs: BIG });
+    const keys = () => ({
+      decisions: db.rows('decisions').map((d) => d.decision_id),
+      entries: db.rows('entries').map((e) => e.entry_id),
+      votes: db.rows('votes').map((v) => `${v.entry_id}:${v.voter}`),
+      results: db.rows('results').map((r) => r.decision_id)
+    });
+    const before = keys();
+    expect(before.decisions).toEqual([D1, D2, D3]);
+    // A day later the full read runs again, and the gateway answers the
+    // decisions' second page with the cursor it was asked from.
+    const listDecisions = chain.listDecisions.bind(chain);
+    let faulty = true;
+    chain.listDecisions = async (after: string | null, at: number) => {
+      const page = await listDecisions(after, at);
+      return faulty && after !== null ? { ...page, next: after } : page;
+    };
+    clock.t += 25 * 3600_000;
+    await expect(index.run({ budgetMs: BIG })).rejects.toThrow(
+      'repeats the cursor'
+    );
+    // Stopped in the decisions phase: nothing swept, every row still there.
+    expect(db.state).toMatchObject({
+      fullPhase: 'decisions',
+      lastError: expect.stringContaining('repeats the cursor')
+    });
+    expect(keys()).toEqual(before);
+    // The gateway answers right again: the full read goes on and ends as a
+    // fresh read.
+    faulty = false;
+    const report = await index.run({ budgetMs: BIG });
+    expect(report.full.completed).toBe(true);
+    expect(keys()).toEqual(before);
+    expect(rowsOf(db)).toEqual(await freshRows(chain, clock));
   });
 
   it('saves the error and carries on at the next run', async () => {

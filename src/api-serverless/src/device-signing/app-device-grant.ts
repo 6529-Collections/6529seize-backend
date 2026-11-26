@@ -151,12 +151,13 @@ const keysNote = (grant: AppDeviceGrant): string =>
       `encrypted messages key ${deviceKeyFingerprint(grant.mls_device_key)})`;
 
 /**
- * DRAFT wording, NOT owner-approved yet: the approved sign-in statements
- * without "Sign in to 6529 and", since the app grant is not a sign-in.
- * Changing it before release only needs this renderer and the frontend's
- * lib/device-signing/app-grant.ts (and the shared vectors) changed together.
+ * The approved wording (confirmed 22 Nov 2026): the approved sign-in
+ * statement without "Sign in to 6529 and", since the app grant is not a
+ * sign-in; on main since 8 Nov. It matches the frontend's
+ * lib/device-signing/app-grant.ts, the validator's wave-events
+ * (AppGrant::statement) and the shared vectors byte for byte.
  */
-const renderAppGrantStatementDraft1: StatementRenderer = (grant) =>
+const renderAppGrantStatement1: StatementRenderer = (grant) =>
   `Turn on signed messages on this device until ` +
   `${formatGrantExpiryDateUtc(grant.expires_at)}. ` +
   `This device will sign your ${describeDeviceGrantScopes(grant.scopes)} ` +
@@ -172,11 +173,13 @@ const renderAppGrantStatementDraft1: StatementRenderer = (grant) =>
 /**
  * Statements, newest first. New grants use the first; verification accepts
  * every entry, so grants signed under an earlier wording keep verifying. To
- * change the wording after release, add a renderer at the front and keep the
- * old ones.
+ * change the wording, add a renderer at the front, in every verifier (this
+ * backend, the relays' and validators' wave-events) before any client signs
+ * with it. Never remove an entry: an event is checked against its grant for
+ * as long as anyone reads it, long after the grant expired.
  */
 const APP_GRANT_STATEMENTS: readonly StatementRenderer[] = [
-  renderAppGrantStatementDraft1
+  renderAppGrantStatement1
 ];
 
 export function renderAppDeviceGrantStatement(grant: AppDeviceGrant): string {

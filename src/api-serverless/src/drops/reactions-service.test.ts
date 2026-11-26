@@ -414,6 +414,52 @@ describe('ReactionsService', () => {
     ).toHaveBeenCalledWith(drop, ctx);
   });
 
+  it.each([
+    [{ notify: false }, false],
+    [{ notify: true }, true],
+    [{}, true]
+  ])(
+    'with %j, a reaction tells the author: %s, and updates sockets',
+    async (options, notifies) => {
+      (reactionsDb.addReaction as jest.Mock).mockResolvedValue(true);
+
+      await service.addReaction(
+        dropEntity.id,
+        'profile-1',
+        ':+1:',
+        ctx as any,
+        options
+      );
+
+      expect(
+        (userNotifier.notifyOfDropReaction as jest.Mock).mock.calls.length
+      ).toBe(notifies ? 1 : 0);
+      expect(reactionsDb.addReaction).toHaveBeenCalled();
+      expect(profileActivityLogsDb.insertLogEntry).toHaveBeenCalled();
+      expect(
+        wsListenersNotifier.notifyAboutDropReactionUpdate
+      ).toHaveBeenCalledWith(drop, ctx);
+    }
+  );
+
+  it('tells the author nothing with notify false inside a caller-owned transaction', async () => {
+    (reactionsDb.addReaction as jest.Mock).mockResolvedValue(true);
+    jest.spyOn(profileActivityLogsDb, 'insert').mockResolvedValue(undefined);
+    const callerCtx = { connection } as any;
+
+    await service.addReaction(dropEntity.id, 'profile-1', ':+1:', callerCtx, {
+      notify: false
+    });
+
+    expect(userNotifier.notifyOfDropReaction).not.toHaveBeenCalled();
+    expect(profileActivityLogsDb.insert).toHaveBeenCalled();
+    expect(
+      wsListenersNotifier.notifyAboutDropReactionUpdate
+    ).toHaveBeenCalledWith(drop, callerCtx);
+    await service.addReaction(dropEntity.id, 'profile-1', ':+1:', callerCtx);
+    expect(userNotifier.notifyOfDropReaction).toHaveBeenCalledTimes(1);
+  });
+
   describe('reaction broadcast (waves plan 1.6)', () => {
     function withCoalescer(
       behave: (

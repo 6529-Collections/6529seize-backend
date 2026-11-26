@@ -202,73 +202,16 @@ export class AbusivenessCheckService {
       false
     );
   }
-  async checkFilterName(query: {
-    text: string;
-    handle: string;
-    group_id?: string;
-    profile_id: string;
-    actor_profile_id?: string | null;
-    current_revision?: string | null;
-    old_version_id?: string | null;
-    visible?: boolean;
-    context_fingerprint?: string;
-    previously_reviewed?: boolean;
-  }): Promise<AbusivenessDetectionResult> {
-    const text = query.text.trim();
-    if (text.length > 100)
-      throw new BadRequestException('Text must be up to 100 characters');
-    if (!query.profile_id)
-      throw new BadRequestException('Profile ID is required');
-    const safe =
-      query.previously_reviewed ||
-      text === 'Only Me' ||
-      text === 'Can message me' ||
-      (!!query.handle && text === `Only ${query.handle}`);
-    return this.evaluate(
-      {
-        subject_type: 'GROUP_NAME',
-        subject_id: query.old_version_id ?? `${query.profile_id}:new`,
-        author_profile_id: query.profile_id,
-        actor_profile_id: query.actor_profile_id ?? query.profile_id,
-        operation: 'SAVE',
-        policy_family: 'PUBLIC_FIELDS',
-        policy_version: PUBLIC_TEXT_POLICY_VERSION,
-        scope: {
-          group_review: true,
-          acting_as_profile_id: query.profile_id,
-          handle: query.handle,
-          current_revision: query.current_revision ?? null,
-          old_version_id: query.old_version_id ?? null,
-          visible: query.visible ?? true,
-          context_fingerprint: query.context_fingerprint ?? null
-        },
-        evidence: { text }
-      },
-      async () =>
-        safe
-          ? {
-              text,
-              status: 'ALLOWED',
-              explanation: 'Known personal group name',
-              external_check_performed_at: new Date()
-            }
-          : this.detector.checkUserGroupName({ text, handle: query.handle }),
-      false,
-      false,
-      safe
-    );
-  }
   private async evaluate(
     input: ModerationInput,
     classifier: () => Promise<AbusivenessDetectionResult>,
     failOpen: boolean,
-    useCache: boolean,
-    knownSafe = false
+    useCache: boolean
   ): Promise<AbusivenessDetectionResult> {
     const model = publicTextModel();
     const { item, evaluationId } = await this.reviews.start(
       input,
-      knownSafe ? 'KNOWN_SAFE_PERSONAL_NAME' : 'PUBLIC_FIELD'
+      'PUBLIC_FIELD'
     );
     const text = input.evidence.text;
     if (typeof text !== 'string')
@@ -290,7 +233,7 @@ export class AbusivenessCheckService {
           explanation: result.explanation,
           permit_generation: permitGeneration
         },
-        model: knownSafe || manual ? null : model,
+        model: manual ? null : model,
         cacheHit,
         fallback
       });

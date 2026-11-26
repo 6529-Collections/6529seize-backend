@@ -1,8 +1,10 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 import {
+  CHAIN_CLAIM_BUILDS_TABLE,
   CHAIN_DECISION_LEADERBOARDS_TABLE,
   CHAIN_DECISIONS_TABLE,
   CHAIN_ENTRIES_TABLE,
+  CHAIN_EVENTS_TABLE,
   CHAIN_GROUPS_TABLE,
   CHAIN_LEADERBOARD_ROWS_TABLE,
   CHAIN_POLLS_TABLE,
@@ -55,9 +57,38 @@ export class WavesChainIndexStateEntity {
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly feed_next!: number | null;
 
+  // The finalized block time (ms) of read_height, saved with it by each run
+  // that reads the chain: once the feed has applied through read_height,
+  // the chain has been read through this time. Null before the first such
+  // run; nullable, so the schema sync only adds it.
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly read_time!: number | null;
+
   // The highest height a run has read at: a run never reads below it.
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly read_height!: number | null;
+
+  // The next height whose events chain_events doesn't hold yet; null before
+  // the first.
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly events_next!: number | null;
+
+  // The full read that last had to check every row again (the first one,
+  // or one after the feed lost the cursor): until it completes, only rows
+  // it or the feed wrote tell an event what was there before.
+  @Column({ type: 'int', nullable: false, default: 0 })
+  readonly trust_from!: number;
+
+  // The vote scan as the event log last saw it (JSON: scanning,
+  // finishedDay, the reduction under way): it tells a scan's cut from a
+  // voter's own VOTE_SET.
+  @Column({ type: 'varchar', length: 300, nullable: true, default: null })
+  readonly scan_state!: string | null;
+
+  // Entries whose vote records the node could not decode, to read whole at
+  // the feed's height, and those votes (JSON: entries, votes).
+  @Column({ type: 'text', nullable: true, default: null })
+  readonly vote_rereads!: string | null;
 
   // The chain's network id; another one means a relaunched chain.
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
@@ -70,6 +101,13 @@ export class WavesChainIndexStateEntity {
   // one batch is applied in parts).
   @Column({ type: 'int', nullable: false, default: 0 })
   readonly feed_part!: number;
+
+  // The waves import's start (ms): startMs of the chain's /v1/waves/import
+  // answer, kept from the first run that read the import complete. Null
+  // before (no run has read it complete), so a comparison with it selects
+  // nothing; another chain's index starts again without it.
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly import_started_at!: number | null;
 
   @Column({ type: 'bigint', nullable: false })
   readonly updated_at!: number;
@@ -190,6 +228,8 @@ export class ChainDecisionEntity {
   @Column({ type: 'varchar', length: 16, nullable: false })
   readonly origin!: string;
 
+  // The mirror reads the decisions written above a height.
+  @Index()
   @Column({ type: 'bigint', nullable: false })
   readonly height!: number;
 
@@ -283,6 +323,8 @@ export class ChainResultEntity {
   @Column({ type: 'varchar', length: 16, nullable: false })
   readonly origin!: string;
 
+  // The mirror reads the results written above a height.
+  @Index()
   @Column({ type: 'bigint', nullable: false })
   readonly height!: number;
 
@@ -406,4 +448,135 @@ export class ChainLeaderboardRowEntity {
 
   @Column({ type: 'json', nullable: false })
   readonly data!: unknown;
+}
+
+/**
+ * The chain index's event log (src/waves-chain-index/waves-chain-index.events.ts):
+ * what changed in each finalized block, as the change feed and the index
+ * before it tell, in the order a block's records come (`seq`). Append
+ * only: written once per block, by the pass that applies the block, never
+ * by a full read. The cursor is `height:seq@network`.
+ */
+@Entity(CHAIN_EVENTS_TABLE)
+@Index(['kind', 'height', 'seq'])
+@Index(['entry_id', 'height'])
+@Index(['poll_id', 'actor'])
+export class ChainEventEntity {
+  @PrimaryColumn({ type: 'bigint', nullable: false })
+  readonly height!: number;
+
+  // The event's place among its block's events.
+  @PrimaryColumn({ type: 'int', nullable: false })
+  readonly seq!: number;
+
+  // The block's time (its slot's start, ms).
+  @Column({ type: 'bigint', nullable: false })
+  readonly block_time!: number;
+
+  @Column({ type: 'varchar', length: 32, nullable: false })
+  readonly kind!: string;
+
+  // OPERATION, SCAN (the daily vote scan), RELEASE (a vote released from
+  // an entry no longer ACTIVE or a decision no longer PUBLISHED),
+  // AMBIGUOUS (a scan's cut or the voter's own VOTE_SET, which the records
+  // can't tell apart) or SYSTEM (a GAP).
+  @Column({ type: 'varchar', length: 16, nullable: false })
+  readonly origin!: string;
+
+  @Index()
+  @Column({ type: 'varchar', length: 66, nullable: true, default: null })
+  readonly wave_id!: string | null;
+
+  @Column({ type: 'varchar', length: 36, nullable: true, default: null })
+  readonly wave_legacy_id!: string | null;
+
+  @Column({ type: 'varchar', length: 66, nullable: true, default: null })
+  readonly decision_id!: string | null;
+
+  @Column({ type: 'varchar', length: 36, nullable: true, default: null })
+  readonly decision_legacy_id!: string | null;
+
+  @Column({ type: 'varchar', length: 66, nullable: true, default: null })
+  readonly entry_id!: string | null;
+
+  @Column({ type: 'varchar', length: 36, nullable: true, default: null })
+  readonly entry_legacy_id!: string | null;
+
+  @Column({ type: 'varchar', length: 66, nullable: true, default: null })
+  readonly poll_id!: string | null;
+
+  @Column({ type: 'varchar', length: 36, nullable: true, default: null })
+  readonly poll_legacy_id!: string | null;
+
+  @Column({ type: 'varchar', length: 66, nullable: true, default: null })
+  readonly group_id!: string | null;
+
+  @Column({ type: 'varchar', length: 36, nullable: true, default: null })
+  readonly group_legacy_id!: string | null;
+
+  // Who acted: the voter, the ballot's TDH cluster, the entry's author, the
+  // wave's creator, the group's controller, the moderator.
+  @Column({ type: 'varchar', length: 66, nullable: true, default: null })
+  readonly actor!: string | null;
+
+  @Column({ type: 'json', nullable: false })
+  readonly data!: unknown;
+}
+
+/**
+ * The Main Stage claim builds (waves-chain-index.claims.ts): one a
+ * (network, decision, occurrence), written by the event log with the
+ * events of the block whose Result went final, or by the claim build
+ * catch-up from the index's result rows for a result the log never saw.
+ * Sent to the claims-builder queue after that commits and retried each run
+ * until a send succeeds. A row is never written twice, so a replayed or
+ * rebuilt log, or the catch-up, sends nothing again. Not emptied with the
+ * index.
+ */
+@Entity(CHAIN_CLAIM_BUILDS_TABLE)
+@Index(['status', 'height'])
+export class ChainClaimBuildEntity {
+  // The chain's network id ('' when the head gave none).
+  @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })
+  readonly network!: string;
+
+  @PrimaryColumn({ type: 'varchar', length: 66, nullable: false })
+  readonly decision_id!: string;
+
+  @PrimaryColumn({ type: 'int', nullable: false })
+  readonly occurrence!: number;
+
+  // The block the result went final in.
+  @Column({ type: 'bigint', nullable: false })
+  readonly height!: number;
+
+  @Column({ type: 'varchar', length: 66, nullable: false })
+  readonly entry_id!: string;
+
+  // 6529.io's drop id of the entry (its legacy id), if it has one.
+  @Column({ type: 'varchar', length: 36, nullable: true, default: null })
+  readonly drop_id!: string | null;
+
+  // The message to send; null when none is sent.
+  @Column({ type: 'json', nullable: true, default: null })
+  readonly message!: unknown;
+
+  // pending, sent, or skipped (with the reason).
+  @Column({ type: 'varchar', length: 16, nullable: false })
+  readonly status!: string;
+
+  @Column({ type: 'varchar', length: 200, nullable: true, default: null })
+  readonly reason!: string | null;
+
+  @Column({ type: 'int', nullable: false, default: 0 })
+  readonly attempts!: number;
+
+  @Column({ type: 'text', nullable: true, default: null })
+  readonly last_error!: string | null;
+
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly sent_at!: number | null;
+
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  readonly message_id!: string | null;
 }

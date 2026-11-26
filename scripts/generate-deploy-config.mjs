@@ -119,6 +119,7 @@ ${indent(yamlList(serviceNames))}
           - claims-media-upload
           - nft-link-page-retry
           - market-depth-publication-lock
+          - market-depth-wallet-activity-indexes
           - voting-credit-returns
           - wave-score-input-index
           - profile-groups-collation
@@ -204,7 +205,7 @@ jobs:
           set -euo pipefail
           [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]] || exit 1
           [[ "$INPUT_SERVICE" =~ ^(${serviceCasePattern})$ ]] || exit 1
-          [[ "$DB_SCHEMA_SCOPE" =~ ^(full|maintenance|wallet-transfer-analysis|claims-media-upload|nft-link-page-retry|market-depth-publication-lock|voting-credit-returns|wave-score-input-index|profile-groups-collation|profile-groups-collation-revert|profile-activity-log-wave-index|nft-history-events|nft-history-replay|competition-lifecycle-events|competition-score-resets|pinned-wave-order-schema|pinned-wave-order-backfill)$ ]] || exit 1
+          [[ "$DB_SCHEMA_SCOPE" =~ ^(full|maintenance|wallet-transfer-analysis|claims-media-upload|nft-link-page-retry|market-depth-publication-lock|market-depth-wallet-activity-indexes|voting-credit-returns|wave-score-input-index|profile-groups-collation|profile-groups-collation-revert|profile-activity-log-wave-index|nft-history-events|nft-history-replay|competition-lifecycle-events|competition-score-resets|pinned-wave-order-schema|pinned-wave-order-backfill)$ ]] || exit 1
           if [ "$DB_SCHEMA_SCOPE" != full ] && [ "$INPUT_SERVICE" != dbMigrationsLoop ]; then
             echo "db_schema_scope is only supported for dbMigrationsLoop" >&2
             exit 1
@@ -283,13 +284,29 @@ jobs:
         shell: bash
         env:
           AWS_DEPLOY_ROLE_ARN: \${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          AWS_DROP_FORGE_DEPLOY_ROLE_ARN: \${{ vars.AWS_DROP_FORGE_DEPLOY_ROLE_ARN }}
         run: |
           set -euo pipefail
-          if ! [[ "$AWS_DEPLOY_ROLE_ARN" =~ ^arn:aws:iam::([0-9]{12}):role/[A-Za-z0-9_+=,.@/-]+$ ]]; then
+          role_arn_pattern='^arn:aws:iam::([0-9]{12}):role/[A-Za-z0-9_+=,.@/-]+$'
+          if ! [[ "$AWS_DEPLOY_ROLE_ARN" =~ $role_arn_pattern ]]; then
             echo "::error::Configure AWS_DEPLOY_ROLE_ARN in the selected GitHub environment with a valid IAM role ARN"
             exit 1
           fi
-          echo "account_id=\${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          account_id="\${BASH_REMATCH[1]}"
+          role_arn="$AWS_DEPLOY_ROLE_ARN"
+          if [[ "$INPUT_SERVICE" == dropForgeLaunchHandler || "$INPUT_SERVICE" == memesDistributionHandler ]]; then
+            if ! [[ "$AWS_DROP_FORGE_DEPLOY_ROLE_ARN" =~ $role_arn_pattern ]]; then
+              echo "::error::Configure AWS_DROP_FORGE_DEPLOY_ROLE_ARN in the selected GitHub environment with a valid IAM role ARN"
+              exit 1
+            fi
+            if [[ "\${BASH_REMATCH[1]}" != "$account_id" || "$AWS_DROP_FORGE_DEPLOY_ROLE_ARN" == "$role_arn" ]]; then
+              echo "::error::AWS_DROP_FORGE_DEPLOY_ROLE_ARN must select a dedicated role in the same AWS account as AWS_DEPLOY_ROLE_ARN"
+              exit 1
+            fi
+            role_arn="$AWS_DROP_FORGE_DEPLOY_ROLE_ARN"
+          fi
+          echo "arn=$role_arn" >> "$GITHUB_OUTPUT"
+          echo "account_id=$account_id" >> "$GITHUB_OUTPUT"
       - name: Checkout
         id: source
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -336,7 +353,7 @@ jobs:
         if: github.event.inputs.environment == 'staging'
         uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
         with:
-          role-to-assume: \${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: \${{ steps.deploy_role.outputs.arn }}
           allowed-account-ids: \${{ steps.deploy_role.outputs.account_id }}
           role-session-name: backend-staging-\${{ github.run_id }}
           unset-current-credentials: true
@@ -346,7 +363,7 @@ jobs:
         if: github.event.inputs.environment == 'prod'
         uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
         with:
-          role-to-assume: \${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: \${{ steps.deploy_role.outputs.arn }}
           allowed-account-ids: \${{ steps.deploy_role.outputs.account_id }}
           role-session-name: backend-prod-\${{ github.run_id }}
           unset-current-credentials: true
@@ -504,7 +521,7 @@ jobs:
           sleep 10
           # Re-read after the code update so the merge uses the latest values.
           read_current_api_env
-          jq --arg commit "$GIT_COMMIT" --arg claimsMediaArweaveUploadSqsUrl "$CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL" --arg attachmentsIngestS3Bucket "$ATTACHMENTS_INGEST_S3_BUCKET" --arg dropMediaSanitizeImages "$DROP_MEDIA_SANITIZE_IMAGES" --arg dropMediaIngestS3Bucket "$DROP_MEDIA_INGEST_S3_BUCKET" --arg dropMediaIngestS3Region "$DROP_MEDIA_INGEST_S3_REGION" --arg dropMediaIngestStage "$DROP_MEDIA_INGEST_STAGE" --arg dropMediaSanitizerSqsQueueName "$DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME" --arg apiGatewayWsEndpoint "$API_GATEWAY_WS_ENDPOINT" 'del(.MEMBERSHIP_SOURCE_TRACKING_MODE, .MEMBERSHIP_SOURCE_TRACKING_STAGE, .MEMBERSHIP_READ_MODE, .MEMBERSHIP_SHADOW_MODE, .MEMBERSHIP_READER_PROFILE_IDS, .MEMBERSHIP_READER_COVERAGE_REVISION, .MEMBERSHIP_READER_STAGE) + {GIT_COMMIT: $commit, CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL: $claimsMediaArweaveUploadSqsUrl, ATTACHMENTS_INGEST_S3_BUCKET: $attachmentsIngestS3Bucket, DROP_MEDIA_SANITIZE_IMAGES: $dropMediaSanitizeImages, DROP_MEDIA_INGEST_S3_BUCKET: $dropMediaIngestS3Bucket, DROP_MEDIA_INGEST_S3_REGION: $dropMediaIngestS3Region, DROP_MEDIA_INGEST_STAGE: $dropMediaIngestStage, DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME: $dropMediaSanitizerSqsQueueName, API_GATEWAY_WS_ENDPOINT: $apiGatewayWsEndpoint}' "$current_env" > "$app_env"
+          jq --arg dropForgeStage "$INPUT_ENVIRONMENT" --arg commit "$GIT_COMMIT" --arg claimsMediaArweaveUploadSqsUrl "$CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL" --arg attachmentsIngestS3Bucket "$ATTACHMENTS_INGEST_S3_BUCKET" --arg dropMediaSanitizeImages "$DROP_MEDIA_SANITIZE_IMAGES" --arg dropMediaIngestS3Bucket "$DROP_MEDIA_INGEST_S3_BUCKET" --arg dropMediaIngestS3Region "$DROP_MEDIA_INGEST_S3_REGION" --arg dropMediaIngestStage "$DROP_MEDIA_INGEST_STAGE" --arg dropMediaSanitizerSqsQueueName "$DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME" --arg apiGatewayWsEndpoint "$API_GATEWAY_WS_ENDPOINT" 'del(.MEMBERSHIP_SOURCE_TRACKING_MODE, .MEMBERSHIP_SOURCE_TRACKING_STAGE, .MEMBERSHIP_READ_MODE, .MEMBERSHIP_SHADOW_MODE, .MEMBERSHIP_READER_PROFILE_IDS, .MEMBERSHIP_READER_COVERAGE_REVISION, .MEMBERSHIP_READER_STAGE) + {DROP_FORGE_STAGE: $dropForgeStage, GIT_COMMIT: $commit, CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL: $claimsMediaArweaveUploadSqsUrl, ATTACHMENTS_INGEST_S3_BUCKET: $attachmentsIngestS3Bucket, DROP_MEDIA_SANITIZE_IMAGES: $dropMediaSanitizeImages, DROP_MEDIA_INGEST_S3_BUCKET: $dropMediaIngestS3Bucket, DROP_MEDIA_INGEST_S3_REGION: $dropMediaIngestS3Region, DROP_MEDIA_INGEST_STAGE: $dropMediaIngestStage, DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME: $dropMediaSanitizerSqsQueueName, API_GATEWAY_WS_ENDPOINT: $apiGatewayWsEndpoint}' "$current_env" > "$app_env"
           jq --arg enabled "$ARTWORK_DOCUMENTATION_ENABLED_VALUE" --arg selfService "$ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_VALUE" --arg archiveRegion "$DEPLOY_REGION" --arg archiveBucket "6529-artwork-documentation-$DEPLOY_ACCOUNT_ID-$DEPLOY_REGION" '. + {ARTWORK_DOCUMENTATION_ENABLED: (if $enabled == "" then (.ARTWORK_DOCUMENTATION_ENABLED // "false") else $enabled end), ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED: (if $selfService == "" then (.ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED // "false") else $selfService end), ARTWORK_DOCUMENTATION_S3_REGION: $archiveRegion, ARTWORK_DOCUMENTATION_S3_BUCKET: $archiveBucket}' "$app_env" > "$artwork_env"
           jq '{Variables: .}' "$artwork_env" > "$env_config"
           aws lambda update-function-configuration --function-name seizeAPI --description "$VERSION_DESCRIPTION" --environment "file://$env_config" --memory-size "$API_MEMORY_SIZE" --timeout "$API_TIMEOUT" --no-cli-pager > /dev/null 2>&1

@@ -1,5 +1,9 @@
 # Backend staging deployment permissions
 
+The shared-role inventory below records the retired staging account. The
+[Drop Forge deployment policies](#drop-forge-deployment-policies) section
+documents the dedicated role in the active staging account.
+
 These customer-managed policies are intended only for
 `arn:aws:iam::987989283142:role/gha-backend-deploy-staging`.
 The role trusts GitHub OIDC for the backend repository's `staging` environment.
@@ -151,6 +155,26 @@ References:
 
 `WebSocketDeliveryDeployment.json` is an additional narrowly scoped inline policy for the existing deployment role. An administrative identity installs it before deploying `webSocketDeliveryLoop`; the GitHub role cannot modify its own permissions. It permits only the new worker function/versions, its environment-specific CloudFormation stack, deployment-bucket prefix, schedule, log group and alarms. Existing managed policies and their ten attachments are unchanged. The deployment-bucket prefix allows CloudFormation's truncated stack component and generated suffix (for example, `websocketdeliveryloop-sta-serverlessdeploymentbuck-...` on staging); it does not grant application-data access. Validate the document with Access Analyzer and simulate new-worker operations and unrelated denials before installation. Deploy through the ordinary GitHub workflow afterward.
 
+## Drop Forge deployment policies
+
+In active staging account `296096934726` in `eu-west-1`, create
+`gha-backend-deploy-drop-forge-staging` with `DropForgeDeployTrust.json`.
+Attach these customer-managed policies and set the GitHub `staging`
+environment's `AWS_DROP_FORGE_DEPLOY_ROLE_ARN` to the dedicated role ARN.
+
+| Policy | Document |
+| --- | --- |
+| `DropForgeStagingHandlersDeployment` | `DropForgeHandlersDeployment.json` |
+| `DropForgeStagingDispatchDeployment` | `DropForgeDispatchDeployment.json` |
+
+The role deploys `dropForgeLaunchHandler` and `memesDistributionHandler`.
+Each worker role can be passed only to its named Lambda function. Artifact
+operations on existing buckets and objects require staging account ownership.
+Serverless reads three named SSM parameters for the subnets, security groups
+and alarm topic. The Scheduler role covers the four readiness schedules. See the
+[setup guide](../../../docs/drop-forge-auto-launch-setup.md) for runtime roles
+and queue-producer permissions.
+
 ## Voting credit return worker
 
 `VotingCreditReturnDeployment.json` enrolls only the voting credit return
@@ -166,3 +190,34 @@ environment's required AWS region. It grants no application-bucket access.
 Keep the aggregate role inline-policy size below 10,240 characters. Verify the
 remote document and unrelated-resource/other-environment denials, then deploy
 through GitHub Actions and verify the disabled schedule before activation.
+
+## Signed record log worker
+
+`signedRecordLogLoop` runs two scheduled functions in `eu-west-1` on
+`lambda-vpc-role`: `signedRecordLogCloser` every 5 minutes and
+`signedRecordLogArchiver` hourly at minute 7.
+`SignedRecordLogStagingDeployment.json` permits only those two functions and
+their versions, the `signedRecordLogLoop-staging` stack, the
+`signedrecordlogloop-sta*-serverlessdeploy*` deployment-bucket prefix, the two
+log groups with their out-of-memory metric filters, the two schedules
+`signedRecordLogLoop-staging-close` and `signedRecordLogLoop-staging-archive`,
+and the two out-of-memory alarms (`signedRecordLogLoop-staging-<function>-OOM`),
+all in `eu-west-1`. The schedule names are declared in the worker definition,
+because CloudFormation would otherwise truncate the stack name in generated rule
+names (for example, `signedRecordLogLoop-stagi-...`). The bucket prefix allows
+CloudFormation's truncated stack component and generated suffix; it grants no
+application-bucket access and no direct invocation.
+
+`SignedRecordLogStagingDeployment.json` has `ACCOUNT_ID` where the account id
+goes. Replace it with the account id, as in the sibling files, before validating
+and installing. Its manifest entry measures the committed file's compact JSON,
+placeholder included; with the id filled in, the document is 4,889 compact
+characters. The role's inline budget is 10,240 characters in total and the two
+inline worker policies above already use most of it, so install this one as a
+customer-managed policy named `SignedRecordLogStagingDeployment` and attach it
+to this environment's deployment role (the account's managed-policies-per-role
+quota is 20). Customer-managed policy names are account-wide, so the staging and
+production documents have different names. Install it through the administrative
+identity after Access Analyzer validation and positive/negative simulation. The
+existing managed policies, trust policy and runtime role remain unchanged.
+Deploy through the ordinary GitHub workflow afterward.

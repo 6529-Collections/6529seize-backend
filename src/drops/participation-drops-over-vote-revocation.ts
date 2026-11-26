@@ -15,6 +15,8 @@ import { Competition } from '@/competitions/competition.types';
 import { wavesApiDb } from '@/api/waves/waves.api.db';
 import { competitionTdhOvervotesDb } from '@/competitions/competition-tdh-overvotes.db';
 import { isRetryableDbLockError } from '@/nextgen/nextgen-db-lock-retry';
+import { competitionExecutionRouter } from '@/competitions/competition-execution.router';
+import { countsTowardAllCategoryRep } from '@/rates/rating-credit';
 
 const logger = Logger.get('PARTICIPATION_DROPS_OVER_VOTE_REVOCATION');
 
@@ -32,8 +34,11 @@ export async function revokeRepBasedDropOverVotes(
   await revokeNativeOvervotes(
     (competition) =>
       competition.voting.credit_type === WaveCreditType.REP &&
-      (competition.voting.credit_category === null ||
-        competition.voting.credit_category === change.credit_category) &&
+      // A wave with no category counts the change unless it is a help-bot
+      // credit after switch-on (credits then aren't REP).
+      (competition.voting.credit_category === null
+        ? countsTowardAllCategoryRep('REP', change.credit_category)
+        : competition.voting.credit_category === change.credit_category) &&
       (competition.voting.credit_creditor === null ||
         competition.voting.credit_creditor === change.rep_giver_id),
     change.rep_recipient_id,
@@ -41,6 +46,12 @@ export async function revokeRepBasedDropOverVotes(
   );
 }
 
+/**
+ * The competitions an identities sync checks for over-votes: those whose
+ * credit is TDH. REP competitions, also after switch-on when REP comes from
+ * the chain, are reconciled every few minutes by the leaderboard
+ * snapshotter (reconcileCompetitionCredit, every credit type).
+ */
 const acceptsTdhCredit = (competition: Competition) =>
   competition.voting.credit_type !== WaveCreditType.REP;
 
@@ -108,15 +119,20 @@ export async function revokeTdhBasedDropWavesOverVotesPerCompetition(): Promise<
   return { candidates, failed, slowestMs };
 }
 
-function isRevocable(
-  competition: Competition | null,
-  accepts: (competition: Competition) => boolean
-): competition is Competition {
+async function isRevocable(
+  competition: Competition,
+  accepts: (competition: Competition) => boolean,
+  ctx: RequestContext
+): Promise<boolean> {
   return (
-    !!competition &&
     accepts(competition) &&
-    competition.execution_mode === 'ACTIVE' &&
-    competition.lifecycle === 'PUBLISHED'
+    competition.lifecycle === 'PUBLISHED' &&
+    // ACTIVE, and not held by the waves freeze (votes of a moving wave's
+    // decision stay as imported).
+    (await competitionExecutionRouter.isNativeExecutionAllowed(
+      competition,
+      ctx
+    ))
   );
 }
 
@@ -162,12 +178,12 @@ async function revokeCandidate(
     id,
     ctx
   );
-  if (!isRevocable(unlocked, accepts)) return;
+  if (!unlocked || !(await isRevocable(unlocked, accepts, ctx))) return;
   const competition = await nativeCompetitionRuntimeRepository.lockCompetition(
     id,
     ctx
   );
-  if (!isRevocable(competition, accepts)) return;
+  if (!competition || !(await isRevocable(competition, accepts, ctx))) return;
   if (profileId) await reconcileNativeVoter(competition, profileId, ctx);
   else await reconcileTdhOvervoters(competition, ctx);
 }

@@ -50,6 +50,8 @@ type DropPollOptionVoteRow = DropPollEntity &
   DropPollOptionEntity & {
     readonly votes: number | string;
     readonly voted_by_context_profile: boolean | number | string;
+    /** The poll's drop's created_at; null when the drop has no row. */
+    readonly created_at?: number | string | null;
   };
 
 type DropPollRowWithCreatedAt = DropPollEntity & {
@@ -103,11 +105,13 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
           p.multichoice,
           p.anonymous,
           p.only_droppers_can_respond,
+          d.created_at,
           o.option_no,
           o.option_string,
           count(v.voter_id) as votes,
           max(case when viewer_votes.voter_id is null then 0 else 1 end) as voted_by_context_profile
         from ${DROP_POLLS_TABLE} p
+        left join ${DROPS_TABLE} d on d.id = p.drop_id
         join ${DROP_POLL_OPTIONS_TABLE} o on o.poll_id = p.id
         left join ${DROP_POLL_VOTES_TABLE} v
           on v.poll_id = o.poll_id
@@ -125,6 +129,7 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
           p.multichoice,
           p.anonymous,
           p.only_droppers_can_respond,
+          d.created_at,
           o.option_no,
           o.option_string
         order by p.drop_id asc, o.option_no asc
@@ -312,7 +317,8 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
       order,
       orderBy,
       state,
-      now
+      now,
+      closesAt = null
     }: {
       readonly waveId: string;
       readonly limit: number;
@@ -321,6 +327,8 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
       readonly orderBy: DropPollsOrderBy;
       readonly state: DropPollState | null;
       readonly now: number;
+      /** The wave's close time for polls made by then (wavePollsCloseAt). */
+      readonly closesAt?: number | null;
     },
     ctx: RequestContext
   ): Promise<DropPollWithOptions[]> {
@@ -341,11 +349,11 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
         from ${DROP_POLLS_TABLE} p
         join ${DROPS_TABLE} d on d.id = p.drop_id
         where p.wave_id = :waveId
-          ${this.getStateFilter(state)}
-        order by ${this.getOrderBySql(orderBy)} ${order}, p.id ${order}
+          ${this.getStateFilter(state, closesAt)}
+        order by ${this.getOrderBySql(orderBy, closesAt)} ${order}, p.id ${order}
         limit :limit offset :offset
       `,
-        { waveId, now, limit, offset },
+        { waveId, now, limit, offset, ...this.closesAtParam(closesAt) },
         { wrappedConnection: ctx.connection }
       );
       const optionsByPollId = await this.findOptionsWithVotesByPollIds(
@@ -370,11 +378,14 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
     {
       waveId,
       state,
-      now
+      now,
+      closesAt = null
     }: {
       readonly waveId: string;
       readonly state: DropPollState | null;
       readonly now: number;
+      /** The wave's close time for polls made by then (wavePollsCloseAt). */
+      readonly closesAt?: number | null;
     },
     ctx: RequestContext
   ): Promise<number> {
@@ -385,10 +396,11 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
         `
         select count(*) as cnt
         from ${DROP_POLLS_TABLE} p
+        ${this.dropJoin(closesAt)}
         where p.wave_id = :waveId
-          ${this.getStateFilter(state)}
+          ${this.getStateFilter(state, closesAt)}
       `,
-        { waveId, now },
+        { waveId, now, ...this.closesAtParam(closesAt) },
         { wrappedConnection: ctx.connection }
       );
       return Number(row?.cnt ?? 0);
@@ -400,10 +412,13 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
   public async countOpenUnansweredWavePolls(
     {
       waveId,
-      now
+      now,
+      closesAt = null
     }: {
       readonly waveId: string;
       readonly now: number;
+      /** The wave's close time for polls made by then (wavePollsCloseAt). */
+      readonly closesAt?: number | null;
     },
     ctx: RequestContext
   ): Promise<number> {
@@ -417,8 +432,9 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
         `
         select count(*) as cnt
         from ${DROP_POLLS_TABLE} p
+        ${this.dropJoin(closesAt)}
         where p.wave_id = :waveId
-          and p.closing_time > :now
+          and ${this.closingTimeSql(closesAt)} > :now
           and (
             :contextProfileId is null
             or not exists (
@@ -429,13 +445,27 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
             )
           )
       `,
-        { waveId, now, contextProfileId },
+        { waveId, now, contextProfileId, ...this.closesAtParam(closesAt) },
         { wrappedConnection: ctx.connection }
       );
       return Number(row?.cnt ?? 0);
     } finally {
       ctx.timer?.stop(timerKey);
     }
+  }
+
+  /** Which of these drops have a poll, with the poll rows locked. */
+  public async findDropIdsWithPollForUpdate(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<string[]> {
+    if (!dropIds.length) return [];
+    const rows = await this.db.execute<{ drop_id: string }>(
+      `select drop_id from ${DROP_POLLS_TABLE} where drop_id in (:dropIds) for update`,
+      { dropIds },
+      { wrappedConnection: ctx.connection }
+    );
+    return rows.map((row) => row.drop_id);
   }
 
   public async deleteByDropId(
@@ -693,6 +723,9 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
       (acc, row) => {
         const poll = acc[row.drop_id] ?? {
           ...this.mapPollRow(row),
+          ...(row.created_at === undefined || row.created_at === null
+            ? {}
+            : { created_at: Number(row.created_at) }),
           options: [],
           voted: []
         };
@@ -736,24 +769,52 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
       .sort((a, b) => a - b);
   }
 
-  private getOrderBySql(orderBy: DropPollsOrderBy): string {
+  private getOrderBySql(
+    orderBy: DropPollsOrderBy,
+    closesAt: number | null = null
+  ): string {
     switch (orderBy) {
       case DropPollsOrderBy.CREATED_AT:
         return 'd.created_at';
       case DropPollsOrderBy.CLOSING_TIME:
-        return 'p.closing_time';
+        return this.closingTimeSql(closesAt);
     }
   }
 
-  private getStateFilter(state: DropPollState | null): string {
+  private getStateFilter(
+    state: DropPollState | null,
+    closesAt: number | null = null
+  ): string {
     switch (state) {
       case DropPollState.OPEN:
-        return 'and p.closing_time > :now';
+        return `and ${this.closingTimeSql(closesAt)} > :now`;
       case DropPollState.CLOSED:
-        return 'and p.closing_time <= :now';
+        return `and ${this.closingTimeSql(closesAt)} <= :now`;
       case null:
         return '';
     }
+  }
+
+  /**
+   * A poll's close time as its wave shows it. With `closesAt` (a moved wave
+   * from the switch-on), a poll made by then and still open then closes at
+   * it (src/waves-freeze/waves-moved-polls.ts). Needs `d`, the poll's drop.
+   */
+  private closingTimeSql(closesAt: number | null): string {
+    return closesAt === null
+      ? 'p.closing_time'
+      : '(case when p.closing_time > :closesAt and (d.created_at is null or d.created_at <= :closesAt) then :closesAt else p.closing_time end)';
+  }
+
+  /** The poll's drop, for closingTimeSql, joined only when it is needed. */
+  private dropJoin(closesAt: number | null): string {
+    return closesAt === null
+      ? ''
+      : `left join ${DROPS_TABLE} d on d.id = p.drop_id`;
+  }
+
+  private closesAtParam(closesAt: number | null): { closesAt?: number } {
+    return closesAt === null ? {} : { closesAt };
   }
 }
 
