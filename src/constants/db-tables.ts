@@ -49,6 +49,7 @@ export const REFRESH_TOKENS_TABLE = 'refresh_tokens';
 export const WALLET_AUTH_SESSIONS_TABLE = 'wallet_auth_sessions';
 export const DEVICE_GRANTS_TABLE = 'device_grants';
 export const DEVICE_SIGNED_EVENTS_TABLE = 'device_signed_events';
+export const WAVE_RELAY_CURSORS_TABLE = 'wave_relay_cursors';
 export const DROP_AUTHOR_SIGNATURES_TABLE = 'drop_author_signatures';
 export const SIGNED_RECORD_HEADS_TABLE = 'signed_record_heads';
 export const SIGNED_RECORD_LOG_ENTRIES_TABLE = 'signed_record_log_entries';
@@ -192,6 +193,20 @@ export const PROFILE_CMS_CHAIN_PARKED_TABLE = 'profile_cms_chain_parked';
 export const WAVES_TABLE = 'waves';
 export const WAVES_METADATA_TABLE = 'waves_metadatas';
 export const OFFICIAL_WAVES_TABLE = 'official_waves';
+// The 6529 chain's waves, groups and decisions, as 6529.io indexes them
+// (src/waves-chain-index).
+export const WAVES_CHAIN_INDEX_STATE_TABLE = 'waves_chain_index_state';
+export const CHAIN_WAVES_TABLE = 'chain_waves';
+export const CHAIN_GROUPS_TABLE = 'chain_groups';
+export const CHAIN_WAVE_ROLES_TABLE = 'chain_wave_roles';
+export const CHAIN_DECISIONS_TABLE = 'chain_decisions';
+export const CHAIN_ENTRIES_TABLE = 'chain_entries';
+export const CHAIN_VOTES_TABLE = 'chain_votes';
+export const CHAIN_RESULTS_TABLE = 'chain_results';
+export const CHAIN_POLLS_TABLE = 'chain_polls';
+export const CHAIN_WAVE_REP_TABLE = 'chain_wave_rep';
+export const CHAIN_DECISION_LEADERBOARDS_TABLE = 'chain_decision_leaderboards';
+export const CHAIN_LEADERBOARD_ROWS_TABLE = 'chain_leaderboard_rows';
 export const WAVE_OUTCOMES_TABLE = 'wave_outcomes';
 export const WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE =
   'wave_outcome_distribution_items';

@@ -59,6 +59,16 @@ export class AppFeatures {
   }
 
   /**
+   * 6529.io shows polls made on the 6529 chain (the waves chain mirror
+   * writes them into its poll tables). Until this is on, new polls in waves
+   * that moved to the chain are refused from the switch-on
+   * (src/waves-freeze/waves-chain-polls.ts).
+   */
+  public isWavesChainPollsLive(): boolean {
+    return this.isFeatureEnabled('WAVES_CHAIN_POLLS');
+  }
+
+  /**
    * The delegations loop also mirrors the 6529 chain's identities into
    * 6529.io's identity tables (src/identity-chain-mirror).
    */
@@ -117,6 +127,14 @@ export class AppFeatures {
     return (
       (process.env.FEATURE_PROFILE_CMS_WALLET_GALLERY ?? 'true') === 'true'
     );
+  }
+
+  /**
+   * The wave decision loop also keeps 6529.io's index of the 6529 chain's
+   * waves, decisions and votes (src/waves-chain-index).
+   */
+  public isWavesChainIndexEnabled(): boolean {
+    return this.isFeatureEnabled('WAVES_CHAIN_INDEX');
   }
 }
 
