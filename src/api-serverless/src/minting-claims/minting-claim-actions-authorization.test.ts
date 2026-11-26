@@ -1,4 +1,4 @@
-import { Interface } from 'ethers';
+import { getAddress, Interface } from 'ethers';
 import { getClaimsAdminWallets } from '@/api/seize-settings';
 import { MEMES_CONTRACT } from '@/constants';
 import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
@@ -79,6 +79,28 @@ it('rejects attacker-controlled and testnet contracts without RPC', async () => 
     ).rejects.toBeInstanceOf(BadRequestException);
   }
   expect(call).not.toHaveBeenCalled();
+});
+
+it('accepts only the configured staging creator on Sepolia', async () => {
+  const env = jest.replaceProperty(process, 'env', {
+    ...process.env,
+    DROP_FORGE_STAGE: 'staging'
+  });
+  const contract = '0xb84170c1073c7292ed108c3f0d1d2a1f304caa2c';
+  try {
+    await expect(
+      assertMintingClaimActionAccess(wallet, wallet)
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await assertMintingClaimActionAccess(wallet, contract);
+    expect(getEthereumRpcProvider).toHaveBeenCalledTimes(1);
+    expect(getEthereumRpcProvider).toHaveBeenCalledWith(11155111);
+    expect(call).toHaveBeenCalledWith({
+      to: getAddress(contract),
+      data: abi.encodeFunctionData('isAdmin', [wallet])
+    });
+  } finally {
+    env.restore();
+  }
 });
 
 it.each([new Error('RPC failure'), null])(

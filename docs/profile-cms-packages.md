@@ -500,20 +500,29 @@ succeeds. Don't delete parked rows: the cursor is past them, so only a
 rebuild would read that change again.
 
 With the flag on, `publish` checks the signature and storage as before and
-uploads the signed publication record, then stops before the pointer: it puts
-the content core and the record in the gateway's document store, stores the
-record's CID on the draft, and returns the draft with `publication_cid`. The
-builder then writes the next ProfileDoc version with `cms.primary.publication`
-set to `publication_cid` and `cms.primary.package` to the package hash as a
-Cid, and signs PROFILE_REPLACE with the session key, or the wallet when there
-is none. The follower marks the package published once the change is final.
+uploads the signed publication record to 6529.io's storage, then stops before
+the pointer: it stores the record's CID on the draft and returns the draft
+with `publication_cid` and `chain_documents`, the content core and the
+record, each with its CID and its bytes in base64. 6529.io uploads nothing to
+the gateway: the person's browser uploads both files to the gateway's
+document store through its public name, with each CID so a mismatch is
+refused, then writes the next ProfileDoc version with
+`cms.primary.publication` set to `publication_cid` and `cms.primary.package`
+to the package hash as a Cid, and signs PROFILE_REPLACE with the session
+key, or the wallet when there is none. The follower marks the package
+published once the change is final. A file over the store's 2 MiB is refused
+before anything is recorded (413 `cms_chain_document_too_large`).
 Publishing a draft that already has a `publication_cid` (a second click, or a
-retry after the PROFILE_REPLACE failed) returns it as stored; nothing is
-signed or uploaded again. Only a draft: the archive import fills
-`publication_cid` on packages published before the switch, and those go
-through the normal checks, so publishing one again can't act as a rollback. If the document store answers with another CID
-than the file's, publish returns 502 `cms_doc_store_mismatch` and records
-nothing. `unpublish` returns 409 `cms_pointer_on_chain`, and the builder
+retry after the upload or the PROFILE_REPLACE failed) returns it as stored,
+with its `chain_documents`; nothing is signed again. The record then comes
+back from 6529.io's storage, as it does for a first publish when another
+click recorded first, so publish answers 503 `cms_check_unavailable` when it
+can't be read now and 502 `cms_publication_mismatch` when it doesn't match
+its CID. The sizes are checked before the record is stored. With the package,
+the answer stays under 5 MB for a package at the 2 MiB storage cap, inside
+Lambda's 6 MB. Only a draft: the archive import fills `publication_cid` on packages
+published before the switch, and those go through the normal checks, so
+publishing one again can't act as a rollback. `unpublish` returns 409 `cms_pointer_on_chain`, and the builder
 does it with PROFILE_REPLACE too, naming no site. `rollback` first checks
 the target the way public reads and the chain index will (the current
 handle, then the files, signature, a Safe at the latest block and

@@ -1,3 +1,4 @@
+import { CommittedDropSignatures } from '@/api/device-signing/bot-device-signer';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { Time } from '@/time';
@@ -204,13 +205,17 @@ export class AnnounceMintStateChangeUseCase {
         message += `\n\nMinting for this phase closes ${this.getPhaseCloseAtUtcString(announcementWindow.phase)}`;
       }
       this.logger.info(message);
+      // The announcements are signed after the commit, so a rollback leaves
+      // no signed event behind.
+      const signatures = new CommittedDropSignatures();
       const pendingPushNotificationIds =
         await sqlExecutor.executeNativeQueriesInTransaction(
           async (connection) => {
             const ctxWithConnection = { ...ctx, connection };
             const pendingPushNotificationIds = await this.deployerDropper.drop(
               { message, mentionedUsers, waves },
-              ctxWithConnection
+              ctxWithConnection,
+              signatures
             );
             if (announcementWindow.type === 'PHASE' && cardSoldOut) {
               await sqlExecutor.execute(
@@ -236,6 +241,7 @@ export class AnnounceMintStateChangeUseCase {
             return pendingPushNotificationIds;
           }
         );
+      await signatures.signCommitted(ctx);
       await waveScoreService.requestWaveScoreRefreshBestEffort(
         waves,
         WaveScoreDirtyRefreshReason.DROP_CHANGED,

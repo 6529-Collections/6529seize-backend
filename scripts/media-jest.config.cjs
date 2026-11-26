@@ -1,7 +1,16 @@
 // Codec/multipart checks have no database dependency and also run on native OS CI.
+// Each file is transpiled on its own (scripts/tsconfig.media-jest.json):
+// type-checking loads every TypeScript file of the repository but these
+// suites into one program, which outgrows this job's memory. CI's build
+// runs the full tsc.
 module.exports = {
   rootDir: '..',
-  preset: 'ts-jest',
+  transform: {
+    '^.+\\.tsx?$': [
+      'ts-jest',
+      { tsconfig: '<rootDir>/scripts/tsconfig.media-jest.json' }
+    ]
+  },
   testEnvironment: 'node',
   moduleNameMapper: {
     '^@/api/(.*)$': '<rootDir>/src/api-serverless/src/$1',

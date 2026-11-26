@@ -313,10 +313,6 @@ export class InMemoryProfileCmsChain implements ProfileCmsChainPort {
   async getDocBytes(cid: string): Promise<Buffer | null> {
     return this.files.get(cid) ?? null;
   }
-
-  async putDocBytes(bytes: Buffer): Promise<string> {
-    return this.addFile(bytes);
-  }
 }
 
 export function aChainIdentity(
