@@ -16,8 +16,9 @@ const config: Config = {
     '<rootDir>/build/',
     '<rootDir>/src/.*/dist/',
     '<rootDir>/ops/monitoring/',
-    // The rebuild harness's end-to-end check: scripts/rebuild-jest.config.cjs
-    '\\.rebuild\\.test\\.ts$'
+    // The rebuild harness's end-to-end check, which scripts/rebuild-jest.config.cjs
+    // runs. Only its own files: other *.rebuild.test.ts files are unit tests.
+    '<rootDir>/src/rebuild/.*\\.rebuild\\.test\\.ts$'
   ],
   globalSetup: './src/tests/_setup/globalSetup.ts',
   globalTeardown: './src/tests/_setup/globalTeardown.ts',
