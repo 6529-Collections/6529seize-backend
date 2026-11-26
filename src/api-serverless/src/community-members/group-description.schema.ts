@@ -47,10 +47,12 @@ const GroupTdhFilterSchema: Joi.ObjectSchema<ApiGroupTdhFilter> =
       .default(ApiGroupTdhInclusionStrategy.Tdh)
   });
 
+// Levels have no cap at 100, so level bounds have none either. Joi keeps
+// them to safe integers (up to 2^53 - 1).
 const GroupLevelFilterSchema: Joi.ObjectSchema<ApiGroupLevelFilter> =
   Joi.object<ApiGroupLevelFilter>({
-    min: NullableIntegerSchema.min(-100).max(100),
-    max: NullableIntegerSchema.min(-100).max(100)
+    min: NullableIntegerSchema.min(-100),
+    max: NullableIntegerSchema.min(-100)
   });
 
 const GroupRepFilterSchema: Joi.ObjectSchema<ApiGroupRepFilter> =

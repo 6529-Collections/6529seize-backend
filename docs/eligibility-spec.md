@@ -1,7 +1,7 @@
 # Group Eligibility Rule Specification
 
 ```yaml
-spec_version: 2
+spec_version: 3
 status: normative
 scope: user-group (community-group) membership / eligibility evaluation
 ```
@@ -176,13 +176,24 @@ influence eligibility.
 ## 4. Level bounds
 
 `level_min` / `level_max` store **LEVEL NUMBERS**, not raw scores. The API
-accepts bounds from -100 to 100; derived profile levels range from 0 to 100.
-Levels are derived from `identities.level_raw` via the fixed table in
-`src/profiles/profile-level.ts`: `getLevelFromScore(score)` returns the highest
-level whose border (`minTdh`) is ≤ score; scores below 25 (including negative
-scores) are level 0. `getLevelComponentsBorderByLevel(level)` returns that
-level's lower border (level 0 → 0, 1 → 25, 2 → 50, 3 → 100, 4 → 250, …;
-inputs < 0 return themselves; inputs > 100 return `Number.MAX_SAFE_INTEGER`).
+accepts bounds from -100 up to 2^53 - 1; derived profile levels start at 0
+and have no cap at 100.
+Levels are derived from `identities.level_raw` in
+`src/profiles/profile-level.ts`. Up to level 100 they follow a fixed table.
+Above it, each level's border is the previous border plus a 25th of it,
+rounded down (101 → 26,000,000, 102 → 27,040,000, 150 → 177,667,015,
+200 → 1,262,623,144). `getLevelFromScore(score)` returns the highest level
+whose border is ≤ score; scores below 25 (including negative scores) are
+level 0. `getLevelComponentsBorderByLevel(level)` returns that level's lower
+border (level 0 → 0, 1 → 25, 2 → 50, 3 → 100, 4 → 250, …; inputs < 0 return
+themselves).
+
+JS numbers hold scores exactly only as safe integers (up to 2^53 - 1,
+`Number.MAX_SAFE_INTEGER`). Level 602 has the last border that is a safe
+integer (8,885,382,734,061,690). `getLevelFromScore` reads every larger
+score as 602, and `getLevelComponentsBorderByLevel` returns
+`Number.MAX_SAFE_INTEGER` for levels 603 and up. No identity's score comes
+near these values.
 
 The two engines approach the same rule differently:
 
@@ -193,14 +204,27 @@ The two engines approach the same rule differently:
   numbers**.
 - **SQL** (`getSqlAndParams` → `getGeneralPart`): compares the raw score to
   `i.level_raw >= border(level_min)` only when `level_min > 0`, and
-  `i.level_raw < border(level_max + 1)` when `level_max < 100`.
-  A minimum of zero needs no raw-score predicate: negative raw scores are
-  level zero too. Level 100 has no upper bound.
+  `i.level_raw < border(level_max + 1)` when `0 ≤ level_max < 602`. A
+  minimum of zero needs no raw-score predicate: negative raw scores are
+  level zero too. No level is above 602 (`LAST_SAFE_LEVEL`), so a
+  `level_max` of 602 or more needs no predicate either, and a `level_min`
+  above 602 makes the criteria branch empty. The two engines then agree for
+  every bound and every score, including scores past 2^53 - 1.
+
+While levels ended at 100, a `level_max` of 100 or more admitted everyone at
+the top and a `level_min` above 100 admitted nobody. Before levels went above
+100, the migrations
+`20261122180000-rewrite-group-level-bounds-for-uncapped-levels` and
+`20261123090000-rewrite-group-level-bounds-saved-during-rollout` rewrote such
+saved groups so that their members did not change: such a `level_max` became
+NULL (with a NULL `level_min` set to 0), and a `level_min` above 100 got
+`level_max = -1`.
 
 For positive `level_min`, `level ≥ N ⟺ level_raw ≥ border(N)`. This equivalence
 **does not hold at zero**. Keep the supplied bounds on the rule and translate
-them only while building SQL predicates, so an explicit minimum zero or maximum
-100 still activates the criteria branch (including its union with an inclusion list).
+them only while building SQL predicates, so an explicit minimum zero or any
+explicit maximum still activates the criteria branch (including its union with
+an inclusion list).
 An absent criterion must not turn an empty group or a pure inclusion list into
 an unrestricted group. The optimized online-recipient path follows the same
 rule and admits negative raw scores for a minimum-zero-only group.
@@ -570,7 +594,7 @@ Received`), ignoring `cic_direction = 'SENT'`. The in-memory engine honors
 
 ## 13. Current-consumer conformance and rollout
 
-The 72 shared vectors (306 group definitions) exercise direct evaluation, real-MySQL membership SQL,
+The 76 shared vectors (339 group definitions) exercise direct evaluation, real-MySQL membership SQL,
 member lists and counts with wallet search, unsaved previews, and trusted online
 broadcast SQL. A legacy-invalid `ALL_TOKENS` rule over an `ALL` grant remains an
 empty saved member set; preview validation rejects it. Existing consumer suites
@@ -627,6 +651,7 @@ eligibility knowledge in each environment.
 
 | spec_version | Date       | Changes                                                                                                                                                                                                                                                                                 |
 | ------------ | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 3            | 2026-11-23 | Levels go on above 100: each level above 100 needs a 25th more than the one before. `level_max` of 100 or more is a real bound and `level_min` above 100 can admit profiles; two migrations kept the members of saved groups.                                                           |
 | 2            | 2026-09-15 | Clarified negative-score minimum-zero semantics, preview parity, full empty projections, and current-consumer coverage.                                                                                                                                                                 |
 | 2            | 2026-07-23 | Resolved D-1…D-9 by aligning the set-based SQL member-set generator with the normative in-memory rules; both conformance harnesses now require identical outcomes.                                                                                                                      |
 | 1            | 2026-07-08 | Initial specification extracted from the in-memory predicates and the member-set SQL generator, including the new NFT-ownership match modes (`owns_*_tokens_match_mode`) and grant-beneficiary match mode (`is_beneficiary_of_grant_match_mode`). Divergences D-1…D-9 recorded as open. |

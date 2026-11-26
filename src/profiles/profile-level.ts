@@ -402,6 +402,41 @@ const LEVELS: { minTdh: number; level: number }[] = [
   }
 ].reverse();
 
+// LEVELS runs from the top: its first entry is level 100.
+const TABLE_TOP_LEVEL = LEVELS[0].level;
+const TABLE_TOP_BORDER = LEVELS[0].minTdh;
+
+/**
+ * Above level 100 there is no cap. Each level needs the previous border plus
+ * a 25th of it, rounded down: 101 needs 26,000,000, 102 needs 27,040,000,
+ * 150 needs 177,667,015 and 200 needs 1,262,623,144.
+ */
+function nextBorderAbove100(border: number): number {
+  // Integer division with no rounded float quotient: border - border % 25
+  // is a multiple of 25, so dividing it is exact.
+  return border + (border - (border % 25)) / 25;
+}
+
+/**
+ * Borders from level 100 up, while they are safe integers (up to 2^53 - 1,
+ * Number.MAX_SAFE_INTEGER): index i holds level 100 + i. The last one is
+ * level 602 at 8,885,382,734,061,690; the border of 603 is past 2^53 - 1.
+ */
+const BORDERS_FROM_100: number[] = [TABLE_TOP_BORDER];
+for (
+  let next = nextBorderAbove100(TABLE_TOP_BORDER);
+  next <= Number.MAX_SAFE_INTEGER;
+  next = nextBorderAbove100(next)
+) {
+  BORDERS_FROM_100.push(next);
+}
+
+/**
+ * The highest level a JS number reaches: 602, the last level whose border is
+ * a safe integer. getLevelFromScore never returns more.
+ */
+export const LAST_SAFE_LEVEL = TABLE_TOP_LEVEL + BORDERS_FROM_100.length - 1;
+
 export function calculateLevel({
   tdh,
   rep
@@ -412,16 +447,46 @@ export function calculateLevel({
   return getLevelFromScore(+tdh + +rep);
 }
 
+/**
+ * The level of a raw score. Scores below 25, negative scores and NaN are
+ * level 0. JS numbers hold scores exactly only as safe integers (up to
+ * 2^53 - 1). A larger score reads as level 602, the last level whose border
+ * is a safe integer.
+ */
 export function getLevelFromScore(score: number): number {
+  if (score >= TABLE_TOP_BORDER) {
+    return TABLE_TOP_LEVEL + lastBorderIndexAtOrBelow(score);
+  }
   return LEVELS.find((l) => score >= l.minTdh)?.level ?? 0;
 }
 
+/** Binary search for the highest index whose border is at or below score. */
+function lastBorderIndexAtOrBelow(score: number): number {
+  let low = 0;
+  let high = BORDERS_FROM_100.length - 1;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (BORDERS_FROM_100[middle] <= score) {
+      low = middle;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return low;
+}
+
+/**
+ * The lowest raw score of a level. Negative levels return themselves. A
+ * level whose border is not a safe integer (603 and up, past 2^53 - 1)
+ * returns Number.MAX_SAFE_INTEGER, a score no identity can reach, so SQL
+ * bounds built from it stay exact in practice.
+ */
 export function getLevelComponentsBorderByLevel(level: number): number {
   if (level < 0) {
     return level;
   }
-  if (level > 100) {
-    return Number.MAX_SAFE_INTEGER;
+  if (level > TABLE_TOP_LEVEL) {
+    return BORDERS_FROM_100[level - TABLE_TOP_LEVEL] ?? Number.MAX_SAFE_INTEGER;
   }
   return LEVELS.find((l) => l.level === level)?.minTdh ?? 0;
 }
