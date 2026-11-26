@@ -313,8 +313,11 @@ The steps of a run:
    sync, then the migrations loop's schema steps; the old db-migrate
    scripts are left out, as in the tests), and check the live schema
    against the classes.
-2. Run every area's seeds, then count the rows of every INDEX table, so the
-   report shows which tables the probes can find data in.
+2. Run every area's seeds in `after` and `before` order, those marked
+   `last` after all the others, then count the rows of every INDEX table, so
+   the report shows which tables the probes can find data in. Here and in
+   step 7, a step whose needed table isn't in the schema is skipped as
+   planned.
 3. Copy the kept tables aside: EPHEMERAL, PROVIDER, EXEMPT, and, unless
    `--final`, INDEX tables no rebuilder writes yet.
 4. Probe the API (pass A).
@@ -322,8 +325,8 @@ The steps of a run:
 6. Drop: the full run drops the database, builds the schema again and
    restores the kept tables; an `--area` run empties that area's rebuilt
    tables and restores the kept ones.
-7. Run the rebuilders in `after` order, each as its own MySQL user and under
-   the source guard.
+7. Run the rebuilders in `after` and `before` order, each as its own MySQL
+   user and under the source guard.
 8. Probe again (pass B), snapshot again, and compare.
 
 With `--mark switch`, pass A runs without the areas' flags: the old path's
@@ -331,7 +334,8 @@ answers against the rebuilt ones.
 
 A run passes when the registry is clean, every step exits 0 in its time, no
 step connects outside the sources, no source reports a problem (a request a
-recording lacks, a file that doesn't match its hash), the rebuilt tables were
+recording lacks or its server failed on, a call the Alchemy stand-in failed
+on, a file that doesn't match its hash), the rebuilt tables were
 empty after the drop, and every probe answers the same in both passes. A
 probe whose first pass gets no answer, a 5xx, or not the `expectStatus` it
 names fails every run, and so does one whose two answers differ.
@@ -383,7 +387,12 @@ Each `--source <name>=<spec>`:
 
 - `replay` serves `<dir>/recording.jsonl`. A request it doesn't have
   answers 599 and fails the run. `record` proxies to the URL and adds every
-  new answer to the recording. Keys leave out JSON-RPC ids and key order.
+  new answer to the recording. Keys leave out JSON-RPC ids and key order. A
+  request the server fails on answers 502 `replay failed` and fails the run;
+  the error is in the report. `record` sends each request only to a path
+  under the URL, with the URL's own query first: a target that isn't a
+  path (an absolute URL, `//host`) or whose dot segments climb out of the
+  URL's path answers 400 and fails the run, and nothing is fetched.
 - `<dir>/PROVENANCE.json` says what made a recording (`made_by`: a
   devnet scenario, an anvil state, or `hand`), as a label for the report.
   Provisional, so `--final` fails on them: a live URL, a `record` run (it
@@ -473,9 +482,11 @@ Each `--source <name>=<spec>`:
   `alchemy_getAssetTransfers` from its logs and blocks. Children get the
   shim as `ETHEREUM_RPC_URL` and `ALCHEMY_BASE_URL`. The Alchemy NFT API and
   its other `alchemy_*` methods are not served; a call to them fails the run.
-  `ALCHEMY_BASE_URL` is honoured only on a loopback host (127.0.0.1, ::1 or
-  localhost), since the Alchemy key travels in its path: an `ethereum` URL
-  on another host fails a step as soon as it makes its Alchemy client.
+  A call the shim fails on answers the JSON-RPC error `shim error` and fails
+  the run; the error is in the report. `ALCHEMY_BASE_URL` is honoured only
+  on a loopback host (127.0.0.1, ::1 or localhost), since the Alchemy key
+  travels in its path: an `ethereum` URL on another host fails a step as
+  soon as it makes its Alchemy client.
 - The files server answers `/ipfs/<id>`, `/ar/<id>`, `/docs/<id>` and
   `/<id>` from the directory, and checks every file against
   `<dir>/files.json` (id to SHA-256). It derives an id from the content
@@ -518,6 +529,21 @@ differences and unproven probes it never compared.
 
 It runs single-area runs whose rebuilders restore the seeded rows, change them, read
 an undeclared table, and call a host outside the sources, and checks the
-verdict of each. Its home is `.rebuild/self-check` unless
-`REBUILD_SELF_CHECK_HOME` names another; `REBUILD_SELF_CHECK_PORT` sets the
-`mysqld` port (default 3407). Each run takes a minute or two.
+verdict of each. It also runs a step that waits on a planned table no code
+creates (in a normal run and a final one), a step whose need the schema
+already meets, and partitioned writers of one table: an area run that
+rebuilds only its own partition, and, in an area run and a full run of
+every area, a writer whose partition of a kept table is emptied before it
+runs. The column owners' runs give a row writer and the owner of one of
+its table's columns: the row writer inserts and deletes rows under column
+grants, owned columns are reset before the owner runs and on rows kept
+for a skipped writer, and a row writer that updates an owned column, or
+an owner that adds a row or writes another column, fails. An exempt
+column is left out of the comparison with its reason; an owner that
+doesn't run here, another area's or a planned one, has its column left
+out and noted, and a planned one fails a final run; a table a step
+writes but its writes don't name is named. Three runs go through the
+API: two compare its answers before and after the rebuild, and one reads
+an owned column whose owner is absent. Its home is `.rebuild/self-check`
+unless `REBUILD_SELF_CHECK_HOME` names another; `REBUILD_SELF_CHECK_PORT`
+sets the `mysqld` port (default 3407). Each run takes a minute or two.
