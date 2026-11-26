@@ -195,6 +195,20 @@ describe('WavesChainIndex', () => {
     expect(chain.calls).toBe(2);
   });
 
+  it("keeps the waves import's start from the first run that read it complete", async () => {
+    chain.completed = false;
+    const { db, index } = indexOf(chain, clock);
+    await index.run({ budgetMs: BIG });
+    expect(db.state.importStartedAt).toBeNull();
+    chain.completed = true;
+    await index.run({ budgetMs: BIG });
+    expect(db.state.importStartedAt).toBe(1_763_990_000_000);
+    // Kept: a later answer doesn't change it.
+    chain.importStartedAt = 1_770_000_000_000;
+    await index.run({ budgetMs: BIG });
+    expect(db.state.importStartedAt).toBe(1_763_990_000_000);
+  });
+
   it('reads everything at one height, then follows the feed from the next', async () => {
     const { db, index } = indexOf(chain, clock);
     const height = chain.height;

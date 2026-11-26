@@ -26,6 +26,7 @@ import lightDropsRoutes from './drops/light-drops.routes';
 import feedRoutes from './feed/feed.routes';
 import gasRoutes from './gas/gas.routes';
 import generatedOpenApiRoutes from './generated/routes/openapi-generated.routes';
+import { competitionChainIdPaths } from './competitions/competition-chain-id.middleware';
 import { validateDocumentationRawJson } from '@/artwork-documentation/artwork-documentation.raw-json';
 import { documentationErrorMiddleware } from '@/api/artwork-documentation/artwork-documentation.http';
 import { marketErrorMiddleware } from '@/api/marketplace/marketplace.http';
@@ -1447,6 +1448,8 @@ function wireApp() {
   apiRouter.use(`/push-notifications`, pushNotificationsRoutes);
   apiRouter.use(`/xtdh`, xtdhRoutes);
   apiRouter.use(`/nft-link`, nftLinksRoutes);
+  // A decision's chain id in place of its competition id (v3 routes).
+  apiRouter.use(competitionChainIdPaths());
   apiRouter.use(``, generatedOpenApiRoutes);
 
   rootRouter.use(BASE_PATH, apiRouter);

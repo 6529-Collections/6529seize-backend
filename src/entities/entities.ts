@@ -260,6 +260,15 @@ export {
   ChainWaveRoleEntity,
   WavesChainIndexStateEntity
 } from './IWavesChainIndex';
+export {
+  ChainDocEntity,
+  ChainEntryHoldEntity,
+  WavesChainMirrorDecisionEntity,
+  WavesChainMirrorEventEntity,
+  WavesChainMirrorGroupEntity,
+  WavesChainMirrorStateEntity,
+  WavesChainMirrorWaveEntity
+} from './IWavesChainMirror';
 export { WalletAuthSessionEntity } from './IWalletAuthSession';
 export type { WalletAuthClientType } from './IWalletAuthSession';
 export { WalletConnectionShareEntity } from './IWalletConnectionShare';
@@ -311,6 +320,7 @@ export { PushNotificationCancellationEntity } from './IPushNotificationCancellat
 
 export * from './ICompetitionRuntime';
 export { CompetitionWorkerCursorEntity } from './ICompetitionWorkerCursor';
+export { WavesSettlementSendEntity } from './IWavesSettlementSend';
 
 export * from './ICompetitionCommand';
 export * from './ICompetitionEntryContentVersion';

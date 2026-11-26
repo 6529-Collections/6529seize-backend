@@ -102,6 +102,13 @@ export class WavesChainIndexStateEntity {
   @Column({ type: 'int', nullable: false, default: 0 })
   readonly feed_part!: number;
 
+  // The waves import's start (ms): startMs of the chain's /v1/waves/import
+  // answer, kept from the first run that read the import complete. Null
+  // before (no run has read it complete), so a comparison with it selects
+  // nothing; another chain's index starts again without it.
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly import_started_at!: number | null;
+
   @Column({ type: 'bigint', nullable: false })
   readonly updated_at!: number;
 }
@@ -221,6 +228,8 @@ export class ChainDecisionEntity {
   @Column({ type: 'varchar', length: 16, nullable: false })
   readonly origin!: string;
 
+  // The mirror reads the decisions written above a height.
+  @Index()
   @Column({ type: 'bigint', nullable: false })
   readonly height!: number;
 
@@ -314,6 +323,8 @@ export class ChainResultEntity {
   @Column({ type: 'varchar', length: 16, nullable: false })
   readonly origin!: string;
 
+  // The mirror reads the results written above a height.
+  @Index()
   @Column({ type: 'bigint', nullable: false })
   readonly height!: number;
 
