@@ -94,6 +94,22 @@ class TypeOrmExecutor extends SqlExecutor {
   }
 }
 
+/**
+ * Whether a query runner call is the top-up's key lookup for `wallet`: the
+ * read of the consolidation key mapping by one address, with the wallet as
+ * its bound parameter. The balance lock's read of the same table (`IN`,
+ * FOR SHARE) doesn't match, so a hook never runs while that lock is held.
+ */
+function looksUpKeyOf(args: unknown[], wallet: string): boolean {
+  const [sql, params] = args;
+  return (
+    String(sql).includes(ADDRESS_CONSOLIDATION_KEY) &&
+    /WHERE address = \?/.test(String(sql)) &&
+    Array.isArray(params) &&
+    params.some((param) => String(param).toLowerCase() === wallet.toLowerCase())
+  );
+}
+
 /** In a describe body: each test runs on the TypeORM executor. */
 function onTypeOrmExecutor() {
   let previous: SqlExecutor;
@@ -501,11 +517,7 @@ describeWithSeed(
           ...args: unknown[]
         ) => {
           const result = await query(...args);
-          if (
-            !merged &&
-            String(args[0]).includes(ADDRESS_CONSOLIDATION_KEY) &&
-            String(args[0]).includes(`'${A}'`)
-          ) {
+          if (!merged && looksUpKeyOf(args, A)) {
             merged = true;
             await sqlExecutor.execute(
               `UPDATE ${ADDRESS_CONSOLIDATION_KEY} SET consolidation_key = :key`,
@@ -579,11 +591,7 @@ describeWithSeed(
           const result = await query(...args);
           // Right after the top-up reads the wallet's own key, the identity
           // sync puts the wallet in a fourteen-wallet identity.
-          if (
-            !moved &&
-            String(args[0]).includes(ADDRESS_CONSOLIDATION_KEY) &&
-            String(args[0]).includes(`'${WIDE_WALLETS[0]}'`)
-          ) {
+          if (!moved && looksUpKeyOf(args, WIDE_WALLETS[0])) {
             moved = true;
             for (const address of WIDE_WALLETS) {
               await sqlExecutor.execute(
