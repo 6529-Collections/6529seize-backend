@@ -9,7 +9,6 @@ import aggregatedActivityRoutes from './aggregated-activity/api.aggregated-activ
 import authRoutes from './auth/auth.routes';
 import attachmentsRoutes from './attachments/attachments.routes';
 import communityMembersRoutes from './community-members/community-members.routes';
-import userGroupsImEligibleForRoutes from './community-members/user-groups-im-elgigible-for.routes';
 import userGroupsRoutes from './community-members/user-groups.routes';
 import communityMetricsRoutes from './community-metrics/community-metrics.routes';
 import delegationsRoutes from './delegations/delegations.routes';
@@ -1427,7 +1426,6 @@ function wireApp() {
   apiRouter.use(`/community-members`, communityMembersRoutes);
   apiRouter.use(`/community-metrics`, communityMetricsRoutes);
   apiRouter.use(`/groups`, userGroupsRoutes);
-  apiRouter.use(`/groups_im_eligible_for`, userGroupsImEligibleForRoutes);
   apiRouter.use(`/auth`, authRoutes);
   apiRouter.use(`/rememes`, rememesRoutes);
   apiRouter.use(`/nextgen`, nextgenRoutes);
