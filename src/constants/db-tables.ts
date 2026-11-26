@@ -49,6 +49,10 @@ export const REFRESH_TOKENS_TABLE = 'refresh_tokens';
 export const WALLET_AUTH_SESSIONS_TABLE = 'wallet_auth_sessions';
 export const DEVICE_GRANTS_TABLE = 'device_grants';
 export const DEVICE_SIGNED_EVENTS_TABLE = 'device_signed_events';
+export const WAVE_RELAY_CURSORS_TABLE = 'wave_relay_cursors';
+export const WAVE_RELAY_EVENTS_TABLE = 'wave_relay_events';
+export const WAVE_RELAY_REJECTS_TABLE = 'wave_relay_rejects';
+export const WAVE_RELAY_SUBSCRIPTIONS_TABLE = 'wave_relay_subscriptions';
 export const DROP_AUTHOR_SIGNATURES_TABLE = 'drop_author_signatures';
 export const SIGNED_RECORD_HEADS_TABLE = 'signed_record_heads';
 export const SIGNED_RECORD_LOG_ENTRIES_TABLE = 'signed_record_log_entries';
@@ -167,6 +171,22 @@ export const SUBSCRIPTIONS_LOGS_TABLE = 'subscriptions_logs';
 export const SUBSCRIPTIONS_REDEEMED_TABLE = 'subscriptions_redeemed';
 export const SUBSCRIPTION_DEFERRED_WRITES_TABLE =
   'subscription_deferred_writes';
+export const SUBSCRIPTION_REKEY_FALLBACK_STATE_TABLE =
+  'subscription_rekey_fallback_state';
+/** The identity-keyed subscription tables (src/subscriptions-identity). */
+export const SUBSCRIPTIONS_ID_TOP_UP_TABLE = 'subscriptions_id_top_up';
+export const SUBSCRIPTIONS_ID_BALANCES_TABLE = 'subscriptions_id_balances';
+export const SUBSCRIPTIONS_ID_MODE_TABLE = 'subscriptions_id_mode';
+export const SUBSCRIPTIONS_ID_NFTS_TABLE = 'subscriptions_id_nfts';
+export const SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE = 'subscriptions_id_nfts_final';
+export const SUBSCRIPTIONS_ID_NFTS_FINAL_UPLOAD_TABLE =
+  'subscriptions_id_nfts_final_upload';
+export const SUBSCRIPTIONS_ID_LOGS_TABLE = 'subscriptions_id_logs';
+export const SUBSCRIPTIONS_ID_REDEEMED_TABLE = 'subscriptions_id_redeemed';
+export const SUBSCRIPTIONS_ID_KEY_MAP_TABLE = 'subscriptions_id_key_map';
+export const SUBSCRIPTIONS_ID_STATE_TABLE = 'subscriptions_id_state';
+export const SUBSCRIPTIONS_ID_CURSORS_TABLE = 'subscriptions_id_cursors';
+export const SUBSCRIPTIONS_ID_REPORTS_TABLE = 'subscriptions_id_reports';
 export const SUBSCRIPTION_COVERAGE_ALERT_STATES_TABLE =
   'subscription_coverage_alert_states';
 export const SUBSCRIPTION_COVERAGE_REFRESH_REQUESTS_TABLE =
@@ -192,6 +212,32 @@ export const PROFILE_CMS_CHAIN_PARKED_TABLE = 'profile_cms_chain_parked';
 export const WAVES_TABLE = 'waves';
 export const WAVES_METADATA_TABLE = 'waves_metadatas';
 export const OFFICIAL_WAVES_TABLE = 'official_waves';
+// The 6529 chain's waves, groups and decisions, as 6529.io indexes them
+// (src/waves-chain-index).
+export const WAVES_CHAIN_INDEX_STATE_TABLE = 'waves_chain_index_state';
+export const CHAIN_WAVES_TABLE = 'chain_waves';
+export const CHAIN_GROUPS_TABLE = 'chain_groups';
+export const CHAIN_WAVE_ROLES_TABLE = 'chain_wave_roles';
+export const CHAIN_DECISIONS_TABLE = 'chain_decisions';
+export const CHAIN_ENTRIES_TABLE = 'chain_entries';
+export const CHAIN_VOTES_TABLE = 'chain_votes';
+export const CHAIN_RESULTS_TABLE = 'chain_results';
+export const CHAIN_POLLS_TABLE = 'chain_polls';
+export const CHAIN_WAVE_REP_TABLE = 'chain_wave_rep';
+export const CHAIN_DECISION_LEADERBOARDS_TABLE = 'chain_decision_leaderboards';
+export const CHAIN_LEADERBOARD_ROWS_TABLE = 'chain_leaderboard_rows';
+export const CHAIN_EVENTS_TABLE = 'chain_events';
+export const CHAIN_CLAIM_BUILDS_TABLE = 'chain_claim_builds';
+// 6529.io's copy of the chain's waves and decisions in its own tables
+// (src/waves-chain-mirror).
+export const WAVES_CHAIN_MIRROR_STATE_TABLE = 'waves_chain_mirror_state';
+export const CHAIN_DOCS_TABLE = 'chain_docs';
+export const CHAIN_ENTRY_HOLDS_TABLE = 'chain_entry_holds';
+export const WAVES_CHAIN_MIRROR_EVENTS_TABLE = 'waves_chain_mirror_events';
+export const WAVES_CHAIN_MIRROR_GROUPS_TABLE = 'waves_chain_mirror_groups';
+export const WAVES_CHAIN_MIRROR_WAVES_TABLE = 'waves_chain_mirror_waves';
+export const WAVES_CHAIN_MIRROR_DECISIONS_TABLE =
+  'waves_chain_mirror_decisions';
 export const WAVE_OUTCOMES_TABLE = 'wave_outcomes';
 export const WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE =
   'wave_outcome_distribution_items';
@@ -202,9 +248,13 @@ export const WAVES_DECISION_PAUSES_TABLE = 'waves_decision_pauses';
 export const WAVES_ARCHIVE_TABLE = 'waves_archive';
 export const WAVES_DECISIONS_TABLE = 'wave_decisions';
 export const WAVES_DECISION_WINNER_DROPS_TABLE = 'wave_decision_winner_drops';
+/** Last SETTLEMENT_REQUEST sent per chain decision (src/waves-settlement). */
+export const WAVES_SETTLEMENT_SENDS_TABLE = 'waves_settlement_sends';
 export const MEME_CARD_DROP_MAPPINGS_TABLE = 'meme_card_drop_mappings';
 export const MINTING_CLAIMS_TABLE = 'minting_claims';
 export const MINTING_CLAIM_ACTIONS_TABLE = 'minting_claim_actions';
+export const MINT_LOG_HEAD_TABLE = 'mint_log_head';
+export const MINT_LOG_CARD_HEADS_TABLE = 'mint_log_card_heads';
 export const WAVE_METRICS_TABLE = 'wave_metrics';
 export const WAVE_SCORE_REFRESH_REQUESTS_TABLE = 'wave_score_refresh_requests';
 export const WAVE_DROP_METRICS_REFRESH_REQUESTS_TABLE =

@@ -33,6 +33,7 @@ const cases = [
     fallback: 'denied'
   },
   { name: 'source existing topic preserved', source: true },
+  { name: 'source preflight only', source: true, preflightOnly: true },
   { name: 'source topic explicitly disabled', source: true, topic: '' },
   {
     name: 'source topic explicitly configured',
@@ -42,7 +43,7 @@ const cases = [
 ] as const;
 for (const scenario of cases) {
   const source = scenario.source;
-  test(`${scenario.name}: validates configuration and uploads oversized templates under its approved artifact prefix`, async () => {
+  test(`validates deployment commands for ${scenario.name}`, async () => {
     const scratch = mkdtempSync(join(tmpdir(), 'monitoring-deploy-'));
     const executable = join(scratch, 'aws');
     writeFileSync(executable, 'mocked CLI fixture; never executed', {
@@ -50,6 +51,7 @@ for (const scenario of cases) {
       flag: 'wx'
     });
     const original = process.env;
+    const originalArgv = process.argv;
     const monitorAccount = '222222222222';
     const sourceAccount = '111111111111';
     const sha = 'a'.repeat(40);
@@ -129,6 +131,9 @@ for (const scenario of cases) {
     );
     syncBuiltinESMExports();
     try {
+      if ('preflightOnly' in scenario) {
+        process.argv = [...originalArgv, '--preflight-only'];
+      }
       const script = new URL(
         `../scripts/${source ? 'deploy-source' : 'deploy'}.mjs`,
         import.meta.url
@@ -157,6 +162,26 @@ for (const scenario of cases) {
           /AWS cloudformation update-termination-protection failed/
         );
       else await load();
+      if ('preflightOnly' in scenario) {
+        const allowedReads = new Set([
+          'sts get-caller-identity',
+          's3api head-bucket',
+          'lambda list-functions',
+          'logs describe-log-groups',
+          'logs describe-subscription-filters'
+        ]);
+        assert.deepEqual(
+          new Set(calls.map((args) => args.slice(0, 2).join(' '))),
+          allowedReads
+        );
+        assert.deepEqual(
+          calls
+            .filter((args) => args[1] === 'describe-subscription-filters')
+            .map((args) => args[args.indexOf('--log-group-name') + 1]),
+          functions.map((name: string) => `/aws/lambda/${name}`)
+        );
+        return;
+      }
       const template = readFileSync(
         new URL(
           `../${source ? 'source' : 'monitoring'}-prod.json`,
@@ -221,6 +246,7 @@ for (const scenario of cases) {
       subprocess.mock.restore();
       syncBuiltinESMExports();
       process.env = original;
+      process.argv = originalArgv;
       unlinkSync(executable);
       rmdirSync(scratch);
     }

@@ -1,0 +1,13 @@
+DROP TABLE IF EXISTS transactions_cpy;
+DROP TABLE IF EXISTS transactions_copy;
+DROP TABLE IF EXISTS transactions_remake;
+DROP TABLE IF EXISTS transactions_remake_copy;
+DROP TABLE IF EXISTS profile_activity_logs_backup15may2024;
+DROP TABLE IF EXISTS profile_activity_logs_backup_6_05_2025_11_00;
+DROP TABLE IF EXISTS profile_activity_logs_backup_6_05_2025_14_00;
+DROP TABLE IF EXISTS profile_activity_logs_bckup_20251505;
+DROP TABLE IF EXISTS community_groups_bckp_28_03_2025;
+DROP TABLE IF EXISTS profile_groups_bckp_28_03_2025;
+DROP TABLE IF EXISTS drop_ranks_backup_20250506;
+DROP TABLE IF EXISTS subscriptions_nfts_final_backup;
+DROP TABLE IF EXISTS analysis_9_08_2025;

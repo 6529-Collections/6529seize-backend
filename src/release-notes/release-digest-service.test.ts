@@ -3,7 +3,9 @@ jest.mock('@/api/drops/drop-creation.api.service', () => ({
 }));
 jest.mock('@/drops/drops.db', () => ({ dropsDb: {} }));
 
+import type { BotDeviceSigner } from '@/api/device-signing/bot-device-signer';
 import type { DropCreationApiService } from '@/api/drops/drop-creation.api.service';
+import { signingBot } from '@/tests/fixtures/bot-device-signing.fixture';
 import {
   ReleaseDigestEntity,
   ReleaseDigestEntryEntity,
@@ -73,7 +75,8 @@ function createService({
   claimed = aDigest(),
   pending = [] as ReleaseDigestEntity[],
   receipt = null as string | null,
-  write = jest.fn().mockResolvedValue(draft)
+  write = jest.fn().mockResolvedValue(draft),
+  signer = undefined as BotDeviceSigner | undefined
 } = {}) {
   const digestDb = {
     claimDigest: jest.fn().mockResolvedValue(claimed),
@@ -88,7 +91,8 @@ function createService({
     digestDb as unknown as ReleaseDigestDb,
     { write },
     { createDrop } as unknown as DropCreationApiService,
-    { findDropIdByMetadata }
+    { findDropIdByMetadata },
+    signer
   );
   return { service, digestDb, createDrop, findDropIdByMetadata, write };
 }
@@ -100,6 +104,34 @@ describe('ReleaseDigestService', () => {
     process.env.CI_RELEASES_WAVE_ID = 'releases-wave';
     process.env.CI_PIPELINES_PROD_WAVE_ID = 'deploy-wave';
     process.env.CI_PIPELINES_BOT_PROFILE_ID = 'bot-profile';
+  });
+
+  it('signs the digest when the bot has a device key', async () => {
+    const { signer, store } = await signingBot({ profileId: 'bot-profile' });
+    const { service, createDrop } = createService({ signer });
+
+    await expect(
+      service.publish(
+        { digestKey: '2026-10-12', cutoff: 5_000, dryRun: false },
+        {}
+      )
+    ).resolves.toEqual({ status: 'published', dropId: 'new-drop' });
+
+    const { createDropRequest } = createDrop.mock.calls[0][0];
+    expect(store.events).toHaveLength(1);
+    const event = store.events[0];
+    expect(event).toMatchObject({
+      kind: 1,
+      wave_id: 'releases-wave',
+      drop_id: 'new-drop',
+      profile_id: 'bot-profile'
+    });
+    expect(JSON.parse(event.body!)).toEqual(
+      JSON.parse(
+        JSON.stringify({ ...createDropRequest, hide_link_preview: true })
+      )
+    );
+    expect(store.authorSignatures.get('new-drop')).toBe(event.id);
   });
 
   afterAll(() => {

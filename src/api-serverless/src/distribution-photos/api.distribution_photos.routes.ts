@@ -32,6 +32,13 @@ import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { BadRequestException, ForbiddenException } from '@/exceptions';
 import { numbers } from '@/numbers';
 import { evictRedisCacheForPathWithTimeout } from '@/redis';
+import {
+  adminWriteSpec,
+  MINT_ADMIN_ROUTES,
+  MINT_AUTHORITY,
+  mintCard
+} from '@/mint-log/mint-log-http';
+import { mintLogRecorder } from '@/mint-log/mint-log-recorder';
 
 const router = asyncRouter();
 
@@ -285,7 +292,17 @@ router.post(
 
     const photoUrls = validatedRequest.photos.map((p) => p.media_url);
 
-    await saveDistributionPhotos(contract, nftId, photoUrls);
+    await mintLogRecorder.write(
+      adminWriteSpec({
+        req,
+        kind: 'dist.photos',
+        route: MINT_ADMIN_ROUTES.distPhotos,
+        card: mintCard(contract, nftId),
+        authority: MINT_AUTHORITY.distributionAdmins,
+        body: req.body
+      }),
+      () => saveDistributionPhotos(contract, nftId, photoUrls)
+    );
     await invalidateDistributionPhotoCaches(contract, nftId);
 
     return res.json({

@@ -132,6 +132,20 @@ index-aware revision and retaining the additive index. Full manual schema
 synchronization also ensures this index through the same online helper; the
 entity marks it `synchronize: false` so TypeORM does not create or drop it itself.
 
+### Wallet-filtered NFT cancellations
+
+Deploy `dbMigrationsLoop` with `db_schema_scope=market-depth-wallet-activity-indexes`
+before `api`. This scope creates the maker/time and taker/time indexes on
+`market_depth_events` with `ALGORITHM=INPLACE, LOCK=NONE` and a two-second
+metadata-lock wait. It checks the full index definitions and makes matching
+invisible indexes visible in place, including those from the staging benchmark.
+An incompatible definition fails the migration before it changes either index.
+
+Verify both indexes are visible on the database serving API reads before
+deploying `api`. Staging uses its single database. In production, allow the
+schema change to reach the read replica. Verify the wallet-filtered cancellation
+request after deployment and retain the additive indexes during an API rollback.
+
 ### Retired membership materialisation
 
 The dedicated worker and dispatcher are no longer ordinary deployment choices.

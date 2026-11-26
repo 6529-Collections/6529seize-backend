@@ -250,51 +250,90 @@ async function sqlScopes(recordsWaveId: string | null, chain: ChainStateSql) {
   return scopes;
 }
 
-/** The chain index's two tables, made here as the index's schema makes them. */
+/**
+ * The chain index's two tables with the rows these cases need: each HELD
+ * wave held by the chain, and the index's state, ready or not, on NETWORK.
+ * Where the chain index's own schema made the tables (its entities are in
+ * this tree), their rows are cleared and written as that schema takes
+ * them, and cleared again after; where it didn't, the tables are made here
+ * with the columns the scope reads, and dropped after.
+ */
 async function withChainIndex(ready: boolean, work: () => Promise<void>) {
   const opts = { forcePool: DbPoolName.WRITE };
-  await sqlExecutor.execute(
-    `create table ${CHAIN_WAVES_TABLE_NAME} (wave_id varchar(100) primary key, legacy_id varchar(100) null, origin varchar(16) not null)`,
-    undefined,
+  const existing = await sqlExecutor.execute<{ name: string }>(
+    `select table_name as name from information_schema.tables
+      where table_schema = database() and table_name in (:tables)`,
+    { tables: [CHAIN_WAVES_TABLE_NAME, CHAIN_INDEX_STATE_TABLE_NAME] },
     opts
   );
-  await sqlExecutor.execute(
-    `create table ${CHAIN_INDEX_STATE_TABLE_NAME} (name varchar(64) primary key, last_full_at bigint null, network varchar(100) null, last_error text null, feed_next bigint null, read_height bigint null, feed_part int null, full_phase varchar(32) null, updated_at bigint null)`,
-    undefined,
-    opts
-  );
+  const indexSchema = existing.length === 2;
+  const clear = async () => {
+    await sqlExecutor.execute(
+      `delete from ${CHAIN_WAVES_TABLE_NAME}`,
+      undefined,
+      opts
+    );
+    await sqlExecutor.execute(
+      `delete from ${CHAIN_INDEX_STATE_TABLE_NAME}`,
+      undefined,
+      opts
+    );
+  };
+  if (indexSchema) {
+    await clear();
+  } else {
+    await sqlExecutor.execute(
+      `create table ${CHAIN_WAVES_TABLE_NAME} (wave_id varchar(100) primary key, legacy_id varchar(100) null, origin varchar(16) not null)`,
+      undefined,
+      opts
+    );
+    await sqlExecutor.execute(
+      `create table ${CHAIN_INDEX_STATE_TABLE_NAME} (name varchar(64) primary key, last_full_at bigint null, network varchar(100) null, last_error text null, feed_next bigint null, read_height bigint null, feed_part int null, full_phase varchar(32) null, updated_at bigint null)`,
+      undefined,
+      opts
+    );
+  }
   try {
     for (const id of Array.from(HELD)) {
       // An imported wave is named by its LegacyId, a chain-made one by its
       // chain id.
       const chainMade = id.startsWith('0x');
+      const row = {
+        waveId: chainMade ? id : '0x' + Buffer.from(id).toString('hex'),
+        legacyId: chainMade ? null : id,
+        origin: chainMade ? NATIVE_ORIGIN : IMPORTED_ORIGIN
+      };
       await sqlExecutor.execute(
-        `insert into ${CHAIN_WAVES_TABLE_NAME} (wave_id, legacy_id, origin) values (:waveId, :legacyId, :origin)`,
-        {
-          waveId: chainMade ? id : '0x' + Buffer.from(id).toString('hex'),
-          legacyId: chainMade ? null : id,
-          origin: chainMade ? NATIVE_ORIGIN : IMPORTED_ORIGIN
-        },
+        indexSchema
+          ? `insert into ${CHAIN_WAVES_TABLE_NAME} (wave_id, legacy_id, status, members_only, origin, height, generation, data) values (:waveId, :legacyId, 'open', false, :origin, 1, 1, '{}')`
+          : `insert into ${CHAIN_WAVES_TABLE_NAME} (wave_id, legacy_id, origin) values (:waveId, :legacyId, :origin)`,
+        row,
         opts
       );
     }
     await sqlExecutor.execute(
-      `insert into ${CHAIN_INDEX_STATE_TABLE_NAME} (name, last_full_at, network) values (:name, :at, :network)`,
+      indexSchema
+        ? `insert into ${CHAIN_INDEX_STATE_TABLE_NAME} (name, last_full_at, network, updated_at) values (:name, :at, :network, 1)`
+        : `insert into ${CHAIN_INDEX_STATE_TABLE_NAME} (name, last_full_at, network) values (:name, :at, :network)`,
       { name: CHAIN_INDEX_STATE_ROW, at: ready ? 1 : null, network: NETWORK },
       opts
     );
     await work();
   } finally {
-    await sqlExecutor.execute(
-      `drop table if exists ${CHAIN_WAVES_TABLE_NAME}`,
-      undefined,
-      opts
-    );
-    await sqlExecutor.execute(
-      `drop table if exists ${CHAIN_INDEX_STATE_TABLE_NAME}`,
-      undefined,
-      opts
-    );
+    if (indexSchema) {
+      await clear();
+    } else {
+      await sqlExecutor.execute(
+        `drop table if exists ${CHAIN_WAVES_TABLE_NAME}`,
+        undefined,
+        opts
+      );
+      await sqlExecutor.execute(
+        `drop table if exists ${CHAIN_INDEX_STATE_TABLE_NAME}`,
+        undefined,
+        opts
+      );
+    }
   }
 }
 

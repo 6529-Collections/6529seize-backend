@@ -66,6 +66,8 @@ export type CompetitionWinnerConfig = {
 
 export type Competition = {
   readonly legacy_origin?: boolean;
+  /** The decision's id on the 6529 chain; null while unknown. */
+  readonly chain_id?: string | null;
   readonly configuration_activated_at?: number | null;
   readonly id: string;
   readonly wave_id: string;

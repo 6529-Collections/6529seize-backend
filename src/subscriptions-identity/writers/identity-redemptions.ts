@@ -1,0 +1,682 @@
+import {
+  MEMES_CONTRACT,
+  MEMES_MINT_PRICE,
+  NULL_ADDRESS,
+  SUBSCRIPTIONS_ID_BALANCES_TABLE,
+  SUBSCRIPTIONS_ID_CURSORS_TABLE,
+  SUBSCRIPTIONS_ID_KEY_MAP_TABLE,
+  SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+  SUBSCRIPTIONS_ID_REDEEMED_TABLE,
+  SUBSCRIPTIONS_BALANCES_TABLE,
+  SUBSCRIPTIONS_REDEEMED_TABLE,
+  TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE,
+  TRANSACTIONS_TABLE
+} from '@/constants';
+import { Transaction } from '@/entities/ITransaction';
+import { sqlExecutor } from '@/sql-executor';
+import {
+  buildTransactionLinkFor,
+  sendSubscriptionWaveNotifications,
+  SubscriptionWaveNotification,
+  validateNonSubscriptionAirdrop
+} from '@/transactionsProcessingLoop/subscriptions';
+import { EntityManager } from 'typeorm';
+import { DbQueryOptions } from '@/db-query.options';
+import { Logger } from '@/logging';
+import { journal, JournalBefore, journalBefore } from '../timeline/journal';
+import { msToDbText } from '../opening/legacy-tables';
+import { roundSubscriptionBalance } from '../engine/parity-money';
+import { IdentityWriteMode } from '../identity/identity-switch';
+import { REDEMPTION_CURSOR_ID } from '../opening/opening-load';
+import { compareKeyed, saveReport } from './identity-reports';
+import { identityOfLegacyKeys } from './legacy-key-identities';
+
+const logger = Logger.get('SUBSCRIPTIONS_IDENTITY_REDEMPTIONS');
+
+export interface IdentityRedemptionRun {
+  /** The airdrop transactions matched in this run, by card. */
+  readonly cards: ReadonlyArray<{
+    readonly contract: string;
+    readonly tokenId: number;
+    /** At or below the legacy loop's block: compared with its charges. */
+    readonly transactions: string[];
+    /** Above it (only after the switch): not compared; legacy had not charged them. */
+    readonly pending: string[];
+  }>;
+  /** The legacy loop's processed block when the run started. */
+  readonly legacyThrough: number | null;
+  readonly charged: number;
+  readonly unmatched: number;
+  /** Warnings for the subscriptions wave, posted after the switch. */
+  readonly notices: SubscriptionWaveNotification[];
+}
+
+/** One token of one airdrop, charged to one identity (the journal's input). */
+interface Charge {
+  readonly transaction: string;
+  readonly contract: string;
+  readonly token_id: number;
+  readonly to_address: string;
+  readonly token_count: number;
+  readonly identity_key: string;
+}
+
+interface ChargeTouches {
+  /** The rows this run changes, captured before it changes each. */
+  readonly before: JournalBefore;
+  readonly insertedRedeemedIds: number[];
+  readonly charges: Charge[];
+}
+
+async function chargeToken(
+  transaction: Transaction,
+  options: DbQueryOptions,
+  notices: SubscriptionWaveNotification[],
+  touches: ChargeTouches
+): Promise<boolean> {
+  const q = <T>(sql: string, params: Record<string, unknown>) =>
+    sqlExecutor.execute<T>(sql, params, options);
+  const [row] = await q<{
+    id: number;
+    identity_key: string;
+    consolidation_key: string;
+  }>(
+    `SELECT id, identity_key, consolidation_key FROM ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE}
+      WHERE contract = :contract AND token_id = :tokenId AND airdrop_address = :address
+        AND redeemed_count < subscribed_count
+      ORDER BY phase ASC, phase_position ASC, id ASC
+      LIMIT 1 FOR UPDATE`,
+    {
+      contract: transaction.contract,
+      tokenId: transaction.token_id,
+      address: transaction.to_address
+    }
+  );
+  const transactionLink = buildTransactionLinkFor(transaction.transaction);
+  if (!row) {
+    notices.push({
+      kind: 'no-subscription-found',
+      airdropAddress: transaction.to_address,
+      transactionLink
+    });
+    return false;
+  }
+  const identityKey: string = row.identity_key;
+  await touches.before.capture(
+    {
+      rows: [
+        { table: 'balances', keys: [{ identity_key: identityKey }] },
+        { table: 'final', keys: [{ id: Number(row.id) }] }
+      ]
+    },
+    options
+  );
+  const [balanceRow] = await q<{ balance: number }>(
+    `SELECT balance FROM ${SUBSCRIPTIONS_ID_BALANCES_TABLE} WHERE identity_key = :identityKey FOR UPDATE`,
+    { identityKey }
+  );
+  if (!balanceRow) {
+    notices.push({
+      kind: 'no-balance-found',
+      consolidationKey: row.consolidation_key,
+      transactionLink
+    });
+  } else if (MEMES_MINT_PRICE > Number(balanceRow.balance)) {
+    notices.push({
+      kind: 'insufficient-balance',
+      consolidationKey: row.consolidation_key,
+      transactionLink
+    });
+  }
+  // As the legacy loop: no balance counts as 0, and the charge is taken even
+  // when it makes the balance negative.
+  const balanceAfter = roundSubscriptionBalance(
+    Number(balanceRow?.balance ?? 0) - MEMES_MINT_PRICE
+  );
+  await q(
+    `INSERT INTO ${SUBSCRIPTIONS_ID_BALANCES_TABLE} (identity_key, balance) VALUES (:identityKey, :balanceAfter)
+      ON DUPLICATE KEY UPDATE balance = VALUES(balance)`,
+    { identityKey, balanceAfter }
+  );
+  const redeemedKey = {
+    contract: transaction.contract,
+    tokenId: transaction.token_id,
+    address: transaction.to_address,
+    transaction: transaction.transaction,
+    identityKey
+  };
+  const [existing] = await q<{ id: number }>(
+    `SELECT id FROM ${SUBSCRIPTIONS_ID_REDEEMED_TABLE}
+      WHERE contract = :contract AND token_id = :tokenId AND address = :address
+        AND \`transaction\` = :transaction AND identity_key = :identityKey`,
+    redeemedKey
+  );
+  if (existing) {
+    await touches.before.capture(
+      { rows: [{ table: 'redeemed', keys: [{ id: Number(existing.id) }] }] },
+      options
+    );
+    await q(
+      `UPDATE ${SUBSCRIPTIONS_ID_REDEEMED_TABLE}
+        SET value = value + :price, count = count + 1, balance_after = :balanceAfter WHERE id = :id`,
+      { price: MEMES_MINT_PRICE, balanceAfter, id: existing.id }
+    );
+  } else {
+    await q(
+      `INSERT INTO ${SUBSCRIPTIONS_ID_REDEEMED_TABLE}
+        (identity_key, consolidation_key, contract, token_id, address, \`transaction\`,
+         transaction_date, value, balance_after, count)
+        VALUES (:identityKey, :consolidationKey, :contract, :tokenId, :address, :transaction,
+         :transactionDate, :price, :balanceAfter, 1)`,
+      {
+        ...redeemedKey,
+        consolidationKey: row.consolidation_key,
+        transactionDate: transaction.transaction_date
+          ? msToDbText(new Date(transaction.transaction_date).getTime())
+          : null,
+        price: MEMES_MINT_PRICE,
+        balanceAfter
+      }
+    );
+    const [inserted] = await q<{ id: number | string }>(
+      `SELECT LAST_INSERT_ID() AS id`,
+      {}
+    );
+    touches.insertedRedeemedIds.push(Number(inserted.id));
+  }
+  await q(
+    `UPDATE ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE} SET redeemed_count = redeemed_count + 1 WHERE id = :id`,
+    { id: row.id }
+  );
+  touches.charges.push({
+    transaction: transaction.transaction,
+    contract: transaction.contract,
+    token_id: Number(transaction.token_id),
+    to_address: transaction.to_address.toLowerCase(),
+    token_count: Number(transaction.token_count),
+    identity_key: identityKey
+  });
+  return true;
+}
+
+function blockOrNull(value: number | string | null | undefined): number | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const block = Number(value);
+  return Number.isNaN(block) ? null : block;
+}
+
+/** A run charges at most this many airdrops (whole blocks), so its journal stays small. */
+export const REDEMPTION_RUN_MAX_AIRDROPS = 200;
+/** ... and at most this many tokens. */
+export const REDEMPTION_RUN_MAX_TOKENS = 1000;
+
+/**
+ * The airdrops a run takes: whole blocks, in order, while the run stays
+ * within REDEMPTION_RUN_MAX_AIRDROPS airdrops and REDEMPTION_RUN_MAX_TOKENS
+ * tokens, and the block the cursor moves to; the next run goes on from
+ * there. A first block larger than either is taken whole: its journal
+ * entry spreads the charges over as many parts as it needs, so any block
+ * fits, and the caps keep every other run, and the time a run holds the
+ * journal's counter, small.
+ */
+function boundedBatch(
+  airdrops: Transaction[],
+  through: number
+): { airdrops: Transaction[]; through: number } {
+  let airdropCount = 0;
+  let tokens = 0;
+  let end = 0;
+  while (end < airdrops.length) {
+    const block = Number(airdrops[end].block);
+    let blockEnd = end;
+    let blockTokens = 0;
+    while (
+      blockEnd < airdrops.length &&
+      Number(airdrops[blockEnd].block) === block
+    ) {
+      blockTokens += Number(airdrops[blockEnd].token_count);
+      blockEnd++;
+    }
+    const fits =
+      airdropCount + (blockEnd - end) <= REDEMPTION_RUN_MAX_AIRDROPS &&
+      tokens + blockTokens <= REDEMPTION_RUN_MAX_TOKENS;
+    if (!fits && end > 0) {
+      break;
+    }
+    airdropCount += blockEnd - end;
+    tokens += blockTokens;
+    end = blockEnd;
+    if (!fits) {
+      break;
+    }
+  }
+  if (end === airdrops.length) {
+    return { airdrops, through };
+  }
+  return {
+    airdrops: airdrops.slice(0, end),
+    through: Number(airdrops[end - 1].block)
+  };
+}
+
+/**
+ * The legacy airdrop check (validateNonSubscriptionAirdrop) reads through
+ * a TypeORM EntityManager's positional query; this runs those reads in the
+ * redemption run's own transaction.
+ */
+function inTransactionReads(options: DbQueryOptions): EntityManager {
+  const query = (sql: string, values: unknown[] = []) => {
+    const params: Record<string, unknown> = {};
+    let index = 0;
+    const named = sql.replace(/\?/g, () => {
+      const name = `p${index}`;
+      params[name] = values[index++];
+      return `:${name}`;
+    });
+    return sqlExecutor.execute(named, params, options);
+  };
+  return { query } as unknown as EntityManager;
+}
+
+/**
+ * Matches the airdrop mints after the identity tables' cursor against their
+ * final rows, by the legacy redemption rules (validateNonSubscriptionAirdrop,
+ * then one charge per token to the row for the airdrop address in phase and
+ * position order), in one transaction with the cursor and the run's journal
+ * entry. In shadow it goes only as far as the legacy loop has processed,
+ * so both sides match the same airdrops. After the switch it goes as far
+ * as the highest memes block in the transactions table, read once at the
+ * start of the run, so the truth does not wait on the legacy loop. Returns
+ * null before an opening is loaded (no cursor).
+ */
+export async function redeemIdentityAirdrops(
+  mode: IdentityWriteMode
+): Promise<IdentityRedemptionRun | null> {
+  const [cursor] = await sqlExecutor.execute<{ block: number }>(
+    `SELECT block FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id = :id`,
+    { id: REDEMPTION_CURSOR_ID }
+  );
+  if (!cursor) {
+    return null;
+  }
+  const legacyThrough = blockOrNull(
+    (
+      await sqlExecutor.execute<{ block: number | null }>(
+        `SELECT MAX(block) AS block FROM ${TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE}`
+      )
+    )[0]?.block
+  );
+  // In shadow the run goes as far as the legacy loop has processed, so both
+  // sides charge the same airdrops. Once the identity tables are the truth
+  // it no longer waits for the legacy loop: it goes to the highest memes
+  // block in the transactions table, read once here. The memes contract's,
+  // not all contracts': its loop commits whole blocks in order, so every
+  // memes airdrop up to that block is already there, while another
+  // contract's loop can be ahead of it.
+  const through =
+    mode === 'TRUTH'
+      ? blockOrNull(
+          (
+            await sqlExecutor.execute<{ block: number | null }>(
+              `SELECT MAX(block) AS block FROM ${TRANSACTIONS_TABLE} WHERE contract = :contract`,
+              { contract: MEMES_CONTRACT.toLowerCase() }
+            )
+          )[0]?.block
+        )
+      : legacyThrough;
+  const nothing: IdentityRedemptionRun = {
+    cards: [],
+    legacyThrough,
+    charged: 0,
+    unmatched: 0,
+    notices: []
+  };
+  if (through === null || through <= Number(cursor.block)) {
+    return nothing;
+  }
+  const airdrops: Transaction[] = await sqlExecutor.execute(
+    `SELECT * FROM ${TRANSACTIONS_TABLE}
+      WHERE block > :after AND block <= :through
+        AND from_address = :nullAddress AND value = 0 AND token_count > 0
+      ORDER BY block ASC`,
+    {
+      after: Number(cursor.block),
+      through,
+      nullAddress: NULL_ADDRESS
+    }
+  );
+  const batch = boundedBatch(airdrops, through);
+  let charged = 0;
+  let unmatched = 0;
+  const notices: SubscriptionWaveNotification[] = [];
+  const byCard = new Map<
+    string,
+    {
+      contract: string;
+      tokenId: number;
+      transactions: Set<string>;
+      pending: Set<string>;
+    }
+  >();
+  let cursorMoved = false;
+  await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
+    const options = { wrappedConnection: connection };
+    const touches: ChargeTouches = {
+      before: await journalBefore(
+        { rows: [{ table: 'cursor', keys: [{ id: REDEMPTION_CURSOR_ID }] }] },
+        options
+      ),
+      insertedRedeemedIds: [],
+      charges: []
+    };
+    // The cursor and the airdrops were read before this transaction. A load
+    // (the CLI's, go-live's or a rebuild's) replaces the cursor and the
+    // identity tables together, and the tables it loads can already hold
+    // these airdrops' charges. The cursor is locked now: if it is not the
+    // one this run read, charge nothing. The next run starts from the new
+    // cursor.
+    const [locked] = await sqlExecutor.execute<{ block: number }>(
+      `SELECT block FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id = :id FOR UPDATE`,
+      { id: REDEMPTION_CURSOR_ID },
+      options
+    );
+    if (!locked || Number(locked.block) !== Number(cursor.block)) {
+      cursorMoved = true;
+      return;
+    }
+    for (const airdrop of batch.airdrops) {
+      const validation = await validateNonSubscriptionAirdrop(
+        airdrop,
+        inTransactionReads(options)
+      );
+      if (validation.valid) {
+        continue;
+      }
+      const card = `${airdrop.contract.toLowerCase()}|${airdrop.token_id}`;
+      const entry = byCard.get(card) ?? {
+        contract: airdrop.contract,
+        tokenId: Number(airdrop.token_id),
+        transactions: new Set<string>(),
+        pending: new Set<string>()
+      };
+      if (legacyThrough !== null && Number(airdrop.block) <= legacyThrough) {
+        entry.transactions.add(airdrop.transaction);
+      } else {
+        entry.pending.add(airdrop.transaction);
+      }
+      byCard.set(card, entry);
+      for (let i = 0; i < airdrop.token_count; i++) {
+        if (await chargeToken(airdrop, options, notices, touches)) {
+          charged++;
+        } else {
+          unmatched++;
+        }
+      }
+    }
+    await sqlExecutor.execute(
+      `UPDATE ${SUBSCRIPTIONS_ID_CURSORS_TABLE} SET block = :through, updated_at = :nowMs WHERE id = :id`,
+      { through: batch.through, nowMs: Date.now(), id: REDEMPTION_CURSOR_ID },
+      options
+    );
+    await journal(
+      {
+        kind: 'redemption',
+        inputs: {
+          after_block: Number(cursor.block),
+          through_block: batch.through
+        },
+        // One charge per token: split across the entry's parts, so a large
+        // airdrop block always fits.
+        spread: { key: 'charges', items: touches.charges },
+        before: touches.before,
+        rows: [
+          {
+            table: 'redeemed',
+            keys: touches.insertedRedeemedIds.map((id) => ({ id })),
+            inserted: true
+          }
+        ]
+      },
+      options
+    );
+  });
+  if (cursorMoved) {
+    logger.warn(
+      `[REDEMPTION CURSOR MOVED] [read ${cursor.block}] [a load replaced it during the run; nothing charged]`
+    );
+    return nothing;
+  }
+  return {
+    cards: Array.from(byCard.values()).map((c) => ({
+      contract: c.contract,
+      tokenId: c.tokenId,
+      transactions: Array.from(c.transactions),
+      pending: Array.from(c.pending)
+    })),
+    legacyThrough,
+    charged,
+    unmatched,
+    notices
+  };
+}
+
+/**
+ * Compares, per card, the legacy and identity redemptions of the same
+ * airdrops: the tokens charged per identity and transaction, and each
+ * touched identity's balance afterwards. A balance is compared only for an
+ * identity whose legacy charges went to one legacy key; any other is named
+ * in the notes, which makes the report DIFF. Only airdrops the legacy loop
+ * has processed are compared; the rest (after the switch, when the legacy
+ * loop is behind) are named in the notes as not compared, since the legacy
+ * loop had not charged them, and so are the balances of the identities
+ * they charged. A later run does not come back to them.
+ */
+export async function reportRedemptionComparison(
+  mode: IdentityWriteMode,
+  run: IdentityRedemptionRun
+): Promise<void> {
+  for (const card of run.cards) {
+    await reportCard(mode, card, run.legacyThrough);
+  }
+}
+
+async function pendingIdentities(
+  card: IdentityRedemptionRun['cards'][number]
+): Promise<Set<string>> {
+  if (card.pending.length === 0) {
+    return new Set();
+  }
+  const rows = await sqlExecutor.execute<{ identity_key: string }>(
+    `SELECT DISTINCT identity_key FROM ${SUBSCRIPTIONS_ID_REDEEMED_TABLE}
+      WHERE \`transaction\` IN (:transactions) AND contract = :contract AND token_id = :tokenId`,
+    {
+      transactions: card.pending,
+      contract: card.contract,
+      tokenId: card.tokenId
+    }
+  );
+  return new Set(rows.map((r) => r.identity_key));
+}
+
+async function reportCard(
+  mode: IdentityWriteMode,
+  card: IdentityRedemptionRun['cards'][number],
+  legacyThrough: number | null
+): Promise<void> {
+  const notes: string[] = [];
+  if (card.pending.length > 0) {
+    notes.push(
+      `${card.pending.length} airdrop transaction(s) after the legacy loop's block ${legacyThrough ?? 'none'}: not compared; the legacy loop had not charged them`
+    );
+  }
+  const uncompared = await pendingIdentities(card);
+  if (card.transactions.length === 0) {
+    await saveReport({
+      kind: 'REDEMPTIONS',
+      mode,
+      contract: card.contract,
+      tokenId: card.tokenId,
+      verdict: 'DIFF',
+      legacyRows: 0,
+      identityRows: 0,
+      diffs: [],
+      notes,
+      unexplained: 0
+    });
+    return;
+  }
+  const legacyRows = await sqlExecutor.execute<{
+    consolidation_key: string;
+    transaction: string;
+    count: number;
+  }>(
+    `SELECT consolidation_key, \`transaction\`, count FROM ${SUBSCRIPTIONS_REDEEMED_TABLE}
+      WHERE \`transaction\` IN (:transactions) AND contract = :contract AND token_id = :tokenId`,
+    {
+      transactions: card.transactions,
+      contract: card.contract,
+      tokenId: card.tokenId
+    }
+  );
+  const identityRows = await sqlExecutor.execute<{
+    identity_key: string;
+    transaction: string;
+    count: number;
+  }>(
+    `SELECT identity_key, \`transaction\`, count FROM ${SUBSCRIPTIONS_ID_REDEEMED_TABLE}
+      WHERE \`transaction\` IN (:transactions) AND contract = :contract AND token_id = :tokenId`,
+    {
+      transactions: card.transactions,
+      contract: card.contract,
+      tokenId: card.tokenId
+    }
+  );
+  const identities = await identityOfLegacyKeys(
+    legacyRows.map((r) => r.consolidation_key)
+  );
+  const legacyCounts = new Map<string, number>();
+  const legacyKeysOf = new Map<string, Set<string>>();
+  for (const r of legacyRows) {
+    const identity = identities.get(r.consolidation_key.toLowerCase());
+    if (!identity) {
+      notes.push(`legacy key spans identities: ${r.consolidation_key}`);
+      continue;
+    }
+    const key = `${identity}|${r.transaction}`;
+    legacyCounts.set(key, (legacyCounts.get(key) ?? 0) + Number(r.count));
+    legacyKeysOf.set(
+      identity,
+      new Set([
+        ...Array.from(legacyKeysOf.get(identity) ?? []),
+        r.consolidation_key
+      ])
+    );
+  }
+  const identityCounts = new Map<string, number>();
+  for (const r of identityRows) {
+    const key = `${r.identity_key}|${r.transaction}`;
+    identityCounts.set(key, (identityCounts.get(key) ?? 0) + Number(r.count));
+  }
+  const asText = (m: Map<string, number>) =>
+    new Map(Array.from(m.entries()).map(([k, v]) => [k, `x${v}`]));
+  const legacy = asText(legacyCounts);
+  const identity = asText(identityCounts);
+
+  // Each touched identity's balance afterwards.
+  const touched = Array.from(
+    new Set([
+      ...identityRows.map((r) => r.identity_key),
+      ...Array.from(legacyKeysOf.keys())
+    ])
+  );
+  // Every legacy key an identity has (the opening's key map), not only the
+  // ones this card charged: a merged identity's balance is their sum.
+  if (touched.length > 0) {
+    const mapped = await sqlExecutor.execute<{
+      consolidation_key: string;
+      identity_key: string;
+    }>(
+      `SELECT consolidation_key, identity_key FROM ${SUBSCRIPTIONS_ID_KEY_MAP_TABLE}
+        WHERE identity_key IN (:touched)`,
+      { touched }
+    );
+    for (const row of mapped) {
+      legacyKeysOf.set(
+        row.identity_key,
+        new Set([
+          ...Array.from(legacyKeysOf.get(row.identity_key) ?? []),
+          row.consolidation_key
+        ])
+      );
+    }
+  }
+  for (const identityKey of touched) {
+    if (uncompared.has(identityKey)) {
+      // The legacy loop has not charged its later airdrops yet.
+      notes.push(
+        `balance of ${identityKey} not compared: charged after the legacy loop's block too`
+      );
+      continue;
+    }
+    const keys = Array.from(legacyKeysOf.get(identityKey) ?? []);
+    if (keys.length > 1) {
+      // One identity, several legacy keys: its balance should be theirs
+      // together, give or take each key's own rounding to five decimals.
+      const [sum] = await sqlExecutor.execute<{ balance: number | null }>(
+        `SELECT SUM(balance) AS balance FROM ${SUBSCRIPTIONS_BALANCES_TABLE} WHERE consolidation_key IN (:keys)`,
+        { keys }
+      );
+      const [identityBalance] = await sqlExecutor.execute<{ balance: number }>(
+        `SELECT balance FROM ${SUBSCRIPTIONS_ID_BALANCES_TABLE} WHERE identity_key = :identityKey`,
+        { identityKey }
+      );
+      const legacyTotal = Number(sum?.balance ?? 0);
+      const identityTotal = Number(identityBalance?.balance ?? 0);
+      if (Math.abs(legacyTotal - identityTotal) <= 0.00001 * keys.length) {
+        notes.push(
+          `balance of ${identityKey} compared as the sum of its ${keys.length} legacy keys`
+        );
+      } else {
+        legacy.set(`${identityKey}|balance`, `sum ${legacyTotal}`);
+        identity.set(`${identityKey}|balance`, `sum ${identityTotal}`);
+      }
+      continue;
+    }
+    if (keys.length === 0) {
+      continue;
+    }
+    const [legacyBalance] = await sqlExecutor.execute<{ balance: number }>(
+      `SELECT balance FROM ${SUBSCRIPTIONS_BALANCES_TABLE} WHERE consolidation_key = :key`,
+      { key: keys[0] }
+    );
+    const [identityBalance] = await sqlExecutor.execute<{ balance: number }>(
+      `SELECT balance FROM ${SUBSCRIPTIONS_ID_BALANCES_TABLE} WHERE identity_key = :identityKey`,
+      { identityKey }
+    );
+    legacy.set(
+      `${identityKey}|balance`,
+      String(Number(legacyBalance?.balance ?? 0))
+    );
+    identity.set(
+      `${identityKey}|balance`,
+      String(Number(identityBalance?.balance ?? 0))
+    );
+  }
+  const diffs = compareKeyed(legacy, identity);
+  await saveReport({
+    kind: 'REDEMPTIONS',
+    mode,
+    contract: card.contract,
+    tokenId: card.tokenId,
+    verdict: diffs.length === 0 && notes.length === 0 ? 'MATCH' : 'DIFF',
+    legacyRows: legacyRows.length,
+    identityRows: identityRows.length,
+    diffs,
+    notes,
+    // The notes are known causes (a key spanning identities, a balance
+    // compared as a sum); a difference is not.
+    unexplained: diffs.length
+  });
+}
