@@ -294,6 +294,11 @@ export function parseTdhOnlyRecord(
   ).map(
     ([address, key]): TdhOnlyAddressKey => ({ address, consolidation_key: key })
   );
+  if (rows.length > 0 && keysTsv === '') {
+    // Recorded rows always have address keys; an empty keys file next to
+    // them is a keys query that wrote nothing, not an empty result.
+    fail('address keys: the file is empty while identities has rows');
+  }
   checkAscending(
     rows.map((r) => r.consolidation_key),
     'identities'

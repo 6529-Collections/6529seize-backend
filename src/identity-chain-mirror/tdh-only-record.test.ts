@@ -268,6 +268,12 @@ describe('parseTdhOnlyRecord', () => {
     ).toEqual({ rows: [], keys: [] });
   });
 
+  it('refuses an empty keys file next to recorded rows, a keys take that wrote nothing', () => {
+    expect(refused(IDENTITIES_TSV, '')).toContain(
+      'address keys: the file is empty while identities has rows'
+    );
+  });
+
   it('refuses a number, a wallet or a key it cannot read', () => {
     expect(
       refused(IDENTITIES_TSV.replace('\t1250\t0', '\t1,250\t0'), KEYS_TSV)
