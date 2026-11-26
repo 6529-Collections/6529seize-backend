@@ -8,8 +8,8 @@ Updates depend on APNs delivery and the user's badge permission.
 
 ## Processing
 
-1. Existing individual read, mark-all-read, wave-read and mark-unread operations
-   persist their state and enqueue `{ "type": "badge_refresh", "profile_id": "..." }`.
+1. Individual reads, mark-all-read and wave reads persist their state and
+   enqueue `{ "type": "badge_refresh", "profile_id": "..." }`.
    There is no new public API request/response shape. Device lookup, count queries
    and Firebase calls run outside the read API request.
 2. The existing `firebase-push-notifications` SQS queue feeds
@@ -56,7 +56,7 @@ Updates depend on APNs delivery and the user's badge permission.
   failure is logged and does not turn an already successful read into an API
   error. There is no transactional outbox: a failed enqueue or a process stopping
   between persistence and publication can leave the badge stale until a later
-  read/unread operation or normal push updates it.
+  notification read or normal push updates it.
 - Worker serialization prevents overlapping server-side badge submissions for
   the same device ID, including when connected profiles temporarily have different
   tokens during rotation. Counts include all profiles registered to that device.
@@ -265,13 +265,13 @@ revision fence rejects delayed registration with the old revision, while another
 credential can establish the installation. A valid subsequent login can therefore
 receive a nonzero aggregate badge without restoring the logged-out registration.
 A registration committed after the read can leave the submitted badge temporarily
-stale until a later read/unread event or ordinary push recalculates it; registration alone does not
-schedule a corrective badge update. Revocation must not bypass Redis
-during an outage: a pending alert could otherwise submit after its last recipient
-check and after logout. The client keeps that revocation queued until coordination
-recovers. Installation lookups use the `device_id` primary key; the additional
-token predicate during invalid-token cleanup protects a concurrent replacement,
-so there is no token-only lookup requiring another index.
+stale until a later notification read or ordinary push recalculates it.
+Registration alone does not schedule a corrective badge update. Revocation must
+not bypass Redis during an outage: a pending alert could otherwise submit after
+its last recipient check and after logout. The client keeps that revocation
+queued until coordination recovers. Installation lookups use the `device_id`
+primary key. The additional token predicate during invalid-token cleanup
+protects a concurrent replacement while keeping the lookup on that index.
 
 Installation credentials are two independently generated UUIDv4 values (244 random
 bits), stored only in native secure storage. Their SHA-256 digest is a verifier,
