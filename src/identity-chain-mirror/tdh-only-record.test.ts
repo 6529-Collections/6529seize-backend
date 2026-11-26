@@ -252,10 +252,35 @@ describe('parseTdhOnlyRecord', () => {
     expect(refused(IDENTITIES_TSV, repeated)).toContain('is not after line');
   });
 
+  it('reads empty files, as the MySQL client writes no rows, and header-only ones', () => {
+    expect(
+      parseTdhOnlyRecord('', '', {
+        identitiesSha256: sha256Hex(''),
+        keysSha256: sha256Hex('')
+      })
+    ).toEqual({ rows: [], keys: [] });
+    const headersOnly = formatTdhOnlyRecord([], []);
+    expect(
+      parseTdhOnlyRecord(headersOnly.identitiesTsv, headersOnly.keysTsv, {
+        identitiesSha256: headersOnly.identitiesSha256,
+        keysSha256: headersOnly.keysSha256
+      })
+    ).toEqual({ rows: [], keys: [] });
+  });
+
   it('refuses a number, a wallet or a key it cannot read', () => {
     expect(
       refused(IDENTITIES_TSV.replace('\t1250\t0', '\t1,250\t0'), KEYS_TSV)
     ).toContain('is not a decimal integer');
+    expect(
+      refused(IDENTITIES_TSV.replace('\t-3\t', '\t-0\t'), KEYS_TSV)
+    ).toContain('"-0" is not a decimal integer');
+    expect(
+      refused(
+        IDENTITIES_TSV.replace('\t1250\t0', '\t9007199254740993\t0'),
+        KEYS_TSV
+      )
+    ).toContain('tdh 9007199254740993 is past the safe integer range');
     expect(
       refused(
         IDENTITIES_TSV.replace(`\t${A}\t7`, '\tnot-a-wallet\t7'),

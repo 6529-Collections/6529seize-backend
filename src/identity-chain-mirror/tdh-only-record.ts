@@ -18,7 +18,9 @@ import { createHash } from 'node:crypto';
  * - keys and addresses lowercase as stored, numbers as decimal integers, and
  *   a NULL as `NULL` (only profile_id can be NULL);
  * - ascending means by UTF-16 code unit, which for these values (lowercase
- *   hex and `-`) is byte order and the database's order.
+ *   hex and `-`) is byte order and the database's order;
+ * - with no rows, the MySQL client writes nothing at all, so parse reads an
+ *   empty file as an empty one; format writes the header line alone.
  */
 
 export const TDH_ONLY_IDENTITIES_COLUMNS = [
@@ -75,7 +77,7 @@ export class TdhOnlyRecordError extends Error {
 const NULL = 'NULL';
 const BOM = 0xfeff;
 const WALLET = /^0x[0-9a-f]{40}$/;
-const INTEGER = /^-?(0|[1-9]\d*)$/;
+const INTEGER = /^(0|-?[1-9]\d*)$/;
 const PROFILE_ID = /^[0-9A-Za-z_-]{1,50}$/;
 
 const byCodeUnit = (a: string, b: string) => (a < b ? -1 : Number(a > b));
@@ -122,7 +124,10 @@ function parseInteger(text: string, column: string, where: string): number {
     );
   }
   const value = Number(text);
-  checkInteger(value, column, where);
+  if (!Number.isSafeInteger(value)) {
+    // The text, not the rounded number: 9007199254740993 reads as ...992.
+    fail(`${where}: ${column} ${text} is past the safe integer range`);
+  }
   return value;
 }
 
@@ -228,6 +233,8 @@ function splitTsv(
   header: readonly string[],
   what: string
 ): string[][] {
+  // The MySQL client writes nothing, not even the header, for no rows.
+  if (text === '') return [];
   if (text.charCodeAt(0) === BOM)
     fail(`${what}: starts with a byte order mark`);
   if (text.includes('\r')) fail(`${what}: has a carriage return; LF only`);
