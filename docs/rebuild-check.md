@@ -233,8 +233,9 @@ export const mintManifest: AreaManifest = {
     those columns on every row once the row writers are done, kept rows
     included, and must fill them again the same. Kept rows go back
     before the rebuilders, so on a table with an AUTO_INCREMENT column
-    the rows a rebuilder inserts without a value number after them; the
-    run notes such a table. Only the step that writes a table's rows
+    the comparison doesn't leave out, the rows a rebuilder inserts
+    without a value number after them; the run notes such a table. Only
+    the step that writes a table's rows
     keeps them: the registry refuses keep on a table the step doesn't
     write the rows of (a table no rebuilder writes is kept whole
     already), keep with `columns` (a kept row comes back whole), and keep
@@ -350,11 +351,11 @@ answers against the rebuilt ones.
 A run passes when the registry is clean, every step exits 0 in its time, no
 step connects outside the sources, no source reports a problem (a request a
 recording lacks or its server failed on, a call the Alchemy stand-in failed
-on, a file that doesn't match its hash), the rebuilt tables were
-empty after the drop, kept rows came back unchanged, and every probe
-answers the same in both passes. A
-probe whose first pass gets no answer, a 5xx, or not the `expectStatus` it
-names fails every run, and so does one whose two answers differ.
+on, a file that doesn't match its hash), the rebuilt tables were empty
+after the drop, kept rows came back unchanged, and every probe answers
+the same in both passes. A probe whose first pass gets no answer, a 5xx,
+or not the `expectStatus` it names fails every run, and so does one
+whose two answers differ.
 
 A probe whose answers match but whose first answer is a 4xx, or a 2xx that
 is empty, not JSON, or carries no data (an empty list, a page whose lists
@@ -495,7 +496,8 @@ rewrites one group of rows and a later reader finds the group a plan
 keeps, in an area run and a full run; a rebuilder that changes or
 deletes a kept row fails the run, a final run fails on the plan, and a
 partition writer can't keep another partition's rows. Three runs go
-through the API: two compare its answers before and after the rebuild, and one reads
-an owned column whose owner is absent. Its home is `.rebuild/self-check`
+through the API: two compare its answers before and after the rebuild,
+and one reads an owned column whose owner is absent. Its home is
+`.rebuild/self-check`
 unless `REBUILD_SELF_CHECK_HOME` names another; `REBUILD_SELF_CHECK_PORT`
 sets the `mysqld` port (default 3407). Each run takes a minute or two.

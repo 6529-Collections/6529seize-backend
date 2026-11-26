@@ -68,6 +68,7 @@ import {
   canonicalRow,
   changedKeys,
   diffSnapshots,
+  goneCounts,
   goneRows,
   snapshotRows,
   snapshotTable,
@@ -1395,7 +1396,6 @@ class RebuildRun {
         });
       }
       if (!rebuilt) continue;
-      // A row is either missing or back with planned columns, not both.
       // A kept row comes back unchanged: no other plan may match it.
       const keptOverlap = keptPlanOverlap(
         table,
@@ -1409,6 +1409,7 @@ class RebuildRun {
         this.failures.push(keptOverlap);
         return false;
       }
+      // A row is either missing or back with planned columns, not both.
       const overlap = rowAndColumnPlanOverlap(
         table,
         found.plans
@@ -1472,24 +1473,25 @@ class RebuildRun {
         where
       );
       this.keptRows.set(table, { copy, keys: keysOf(rows), count });
-      // Put back first, the kept rows move an AUTO_INCREMENT counter on:
-      // a rebuilder's rows that take their values from it come after them.
-      const volatile = new Set(this.volatileOf(table));
-      const counters = (await this.admin!.columnInfo(MAIN_DB, table))
-        .filter((c) => /auto_increment/i.test(c.extra) && !volatile.has(c.name))
-        .map((c) => c.name);
-      if (counters.length) {
-        this.notes.push(
-          `Kept rows of ${table}: ${counters.join(', ')} counts AUTO_INCREMENT, and the kept rows go back before the rebuilders, so rows a rebuilder inserts without a value take numbers after the kept rows'`
-        );
-      }
-      return true;
+      if (!count) return true;
     } catch (error) {
       this.failures.push(
         `${steps}'s kept rows of ${table} can't be copied aside (where ${where}): ${error instanceof Error ? error.message : String(error)}`
       );
       return false;
     }
+    // The kept rows go back first and move an AUTO_INCREMENT counter on,
+    // so a rebuilder's rows that take their values from it come after them.
+    const volatile = new Set(this.volatileOf(table));
+    const counters = (await this.admin!.columnInfo(MAIN_DB, table))
+      .filter((c) => /auto_increment/i.test(c.extra) && !volatile.has(c.name))
+      .map((c) => c.name);
+    if (counters.length) {
+      this.notes.push(
+        `Kept rows of ${table}: ${counters.join(', ')} is AUTO_INCREMENT, and the kept rows go back before the rebuilders, so a row a rebuilder inserts without a value gets a number above theirs`
+      );
+    }
+    return true;
   }
 
   /**
@@ -1535,34 +1537,26 @@ class RebuildRun {
   /**
    * After the comparison: every kept row is back unchanged, or the run
    * fails, final or not. The steps after the put-back must leave the rows
-   * they don't rebuild alone. In a table without a primary key a changed
-   * row counts as gone.
+   * they don't rebuild alone. In a table without a primary key, or one
+   * whose primary key has a volatile column, a changed row counts as gone.
    */
   private checkKeptRows(
     snapshotsBefore: ReadonlyMap<string, TableSnapshot>,
     snapshotsAfter: ReadonlyMap<string, TableSnapshot>
   ): void {
-    const countOf = (keys: readonly string[]) => {
-      const counts = new Map<string, number>();
-      for (const key of keys) counts.set(key, (counts.get(key) ?? 0) + 1);
-      return counts;
-    };
     for (const [table, kept] of Array.from(this.keptRows)) {
       const before = snapshotsBefore.get(table);
       const after = snapshotsAfter.get(table);
       if (!before || !after) continue;
-      const beforeCounts = countOf(before.keys);
-      const afterCounts = countOf(after.keys);
+      const goneByKey = goneCounts(before, after);
+      const keptByKey = new Map<string, number>();
+      for (const key of kept.keys) {
+        keptByKey.set(key, (keptByKey.get(key) ?? 0) + 1);
+      }
       const goneKeys: string[] = [];
       let gone = 0;
-      countOf(kept.keys).forEach((n, key) => {
-        const lost = Math.min(
-          n,
-          Math.max(
-            0,
-            (beforeCounts.get(key) ?? 0) - (afterCounts.get(key) ?? 0)
-          )
-        );
+      keptByKey.forEach((n, key) => {
+        const lost = Math.min(n, goneByKey.get(key) ?? 0);
         if (lost) {
           gone += lost;
           goneKeys.push(key);
