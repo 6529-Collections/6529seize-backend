@@ -12,9 +12,8 @@ accepted compatibility decision.
 
 ## Accepted retirements
 
-The Simple Release Bus V1 operational GET routes are retired by the accepted
-V1-removal decision in backend PR #1831. The runtime census excludes these
-four authenticated operational routes:
+The Simple Release Bus V1 removal in backend PR #1831 retired four
+authenticated operational GET routes.
 
 - `/deploy/release-bus/controls`
 - `/deploy/release-candidates`
@@ -27,6 +26,17 @@ Three of those records were for routes already retired in
 [backend PR #1965](https://github.com/6529-Collections/6529seize-backend/pull/1965).
 The source revision identifies the original Phase 0 capture. The counts reflect
 the amended inventory.
+
+
+The census also excludes four other retired GET routes.
+
+- `/oracle/prenodes` (backend PR #2487)
+- `/rpc/test` (RPC proxy restriction)
+- `/api/groups_im_eligible_for` (backend PR #2626)
+- `/api/wave/:id/undiscovered-drop` (the undocumented Quick Vote alias)
+
+The runtime census checks 280 route declarations after excluding eight
+retirement records from the 288 retained route shapes.
 
 ## Accepted Alchemy search retirement
 
