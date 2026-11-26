@@ -12,6 +12,8 @@ import {
   finalDispatchBudgetMs
 } from './decision-loop-budget';
 import { indexChainWavesBestEffort } from './waves-chain-index-step';
+import { mirrorChainWavesBestEffort } from './waves-chain-mirror-step';
+import { sendSettlementsBestEffort } from './waves-settlement-step';
 
 const logger = Logger.get('WAVE_DECISION_EXECUTION_LOOP');
 
@@ -56,6 +58,8 @@ export const handler = sentryContext.wrapLambdaHandler(
           ]);
         } finally {
           await indexChainWavesBestEffort(remainingMillis?.());
+          await mirrorChainWavesBestEffort(remainingMillis?.());
+          await sendSettlementsBestEffort(remainingMillis?.());
           if (
             !context?.getRemainingTimeInMillis ||
             context.getRemainingTimeInMillis() > 5000

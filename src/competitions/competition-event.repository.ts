@@ -3,6 +3,7 @@ import {
   COMPETITIONS_TABLE,
   COMPETITION_ENTRIES_TABLE,
   COMPETITION_DECISION_WINNERS_TABLE,
+  COMPETITION_DECISIONS_TABLE,
   COMPETITION_CAPABILITIES_TABLE,
   COMPETITION_CLAIMS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
@@ -172,7 +173,9 @@ export class CompetitionEventRepository extends LazyDbAccessCompatibleService {
         ctx
       );
     // Archiving stops future decisions, but delayed delivery must retain the
-    // claims earned by an already finalized Main Stage decision.
+    // claims earned by an already finalized Main Stage decision. A result the
+    // waves chain mirror wrote (execution key chain:...) is the chain's: its
+    // claim is built from the chain index (chain_claim_builds), never here.
     const rows = await this.query<NativeDecisionWinner>(
       'getPrivilegedWinners',
       `select e.id as entry_id, e.drop_id, e.submitter_id, w.\`rank\`, w.final_rating
@@ -183,7 +186,10 @@ export class CompetitionEventRepository extends LazyDbAccessCompatibleService {
       join ${COMPETITION_CAPABILITIES_TABLE} cap on cap.competition_id = c.id and cap.wave_id = c.wave_id and cap.capability = 'MAIN_STAGE'
       where e.competition_id = :competitionId and e.decision_id = :decisionId and e.status = 'WINNER'
         and c.published_at is not null
-        and c.lifecycle in ('PUBLISHED', 'ENDED', 'ARCHIVED') order by w.\`rank\` asc, e.id asc`,
+        and c.lifecycle in ('PUBLISHED', 'ENDED', 'ARCHIVED')
+        and not exists (select 1 from ${COMPETITION_DECISIONS_TABLE} chain_decision
+          where chain_decision.id = e.decision_id and chain_decision.execution_key like 'chain:%')
+        order by w.\`rank\` asc, e.id asc`,
       { competitionId, decisionId },
       ctx
     );
