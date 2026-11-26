@@ -140,7 +140,12 @@ describe('drop archive root', () => {
     it('takes an empty index against the empty root', () => {
       expect(
         checkDropArchiveIndex(bytes(indexOf(0)), [dropArchiveRoot([])])
-      ).toEqual({ archives: new Map(), problems: [], waiting: null });
+      ).toEqual({
+        archives: new Map(),
+        waves: new Map(),
+        problems: [],
+        waiting: null
+      });
     });
 
     it('waits, without failing, when no Waves v1 file the chain names is served', () => {
