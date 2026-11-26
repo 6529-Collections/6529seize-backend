@@ -77,6 +77,18 @@ describeWithSeed(
       );
     });
 
+    it('creates a missing index and adopts its invisible peer in the same migration', async () => {
+      await source.query(
+        `ALTER TABLE \`${MARKET_DEPTH_EVENTS_TABLE}\` ALTER INDEX \`${makerIndex}\` INVISIBLE, DROP INDEX \`${takerIndex}\``
+      );
+      await expect(applyMarketDepthWalletActivityIndexes(source)).resolves.toBe(
+        2
+      );
+      await expect(applyMarketDepthWalletActivityIndexes(source)).resolves.toBe(
+        0
+      );
+    });
+
     it('rejects a conflicting index definition before changing its invisible peer', async () => {
       await source.query(
         `ALTER TABLE \`${MARKET_DEPTH_EVENTS_TABLE}\` ALTER INDEX \`${makerIndex}\` INVISIBLE,

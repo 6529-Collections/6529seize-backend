@@ -325,12 +325,17 @@ export class NftMarketActivityService extends LazyDbAccessCompatibleService {
     }
     // Apply all filters before each branch limit. The same event can match
     // both wallet roles, so deduplicate their IDs before the final limit.
+    const branches = scopes
+      .map(([name, predicate]) => `${name} AS (${candidateQuery(predicate)})`)
+      .join(', ');
+    const union = splitByWalletRole ? ' UNION DISTINCT ' : ' UNION ALL ';
+    const candidateIds = scopes
+      .map(([name]) => `SELECT event_id, occurred_at FROM ${name}`)
+      .join(union);
     const sql = scopes.length
-      ? `WITH ${scopes.map(([name, predicate]) => `${name} AS (${candidateQuery(predicate)})`).join(', ')},
+      ? `WITH ${branches},
          selected_events AS (
-           ${scopes
-             .map(([name]) => `SELECT event_id, occurred_at FROM ${name}`)
-             .join(splitByWalletRole ? ' UNION DISTINCT ' : ' UNION ALL ')}
+           ${candidateIds}
            ORDER BY occurred_at DESC, event_id DESC LIMIT :rowLimit
          )
          SELECT ${columns} FROM selected_events selected
