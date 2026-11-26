@@ -32,6 +32,10 @@ baseline remains unchanged:
 - `/deploy/ui/bus`
 - `/deploy/ui/bus/app.js`
 
+The runtime census also records the undocumented Quick Vote alias
+`/api/wave/:id/undiscovered-drop` as retired. The original manifest records
+the historical mount.
+
 The ordinary deployment UI and all other mounted GET contracts remain enforced.
 
 ## Accepted Alchemy search retirement
