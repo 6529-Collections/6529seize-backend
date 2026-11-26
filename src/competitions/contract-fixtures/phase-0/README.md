@@ -28,15 +28,17 @@ The source revision identifies the original Phase 0 capture. The counts reflect
 the amended inventory.
 
 
-The census also excludes four other retired GET routes.
+The census also excludes five other retired GET routes.
 
 - `/oracle/prenodes` (backend PR #2487)
 - `/rpc/test` (RPC proxy restriction)
 - `/api/groups_im_eligible_for` (backend PR #2626)
 - `/api/wave/:id/undiscovered-drop` (the undocumented Quick Vote alias)
+- `/api/delegations/minting/:wallet` (the former profile Mints tab lookup)
 
-The runtime census checks 280 route declarations after excluding eight
-retirement records from the 288 retained route shapes.
+The 288 retained route shapes include the four Release Bus V1 routes and the
+five other retired routes listed above. The census excludes those nine entries
+and checks the remaining 279 route declarations.
 
 ## Accepted Alchemy search retirement
 
