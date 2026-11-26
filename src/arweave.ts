@@ -42,11 +42,14 @@ export class ArweaveFileUploader {
 
   public async uploadFile(
     fileBuffer: Buffer,
-    contentType: string
+    contentType: string,
+    tags?: Readonly<Record<string, string>>
   ): Promise<{ url: string }> {
     const { url } = await this.uploadFileWithTransactionId(
       fileBuffer,
-      contentType
+      contentType,
+      undefined,
+      tags
     );
     return { url };
   }
@@ -54,12 +57,19 @@ export class ArweaveFileUploader {
   public async uploadFileWithTransactionId(
     fileBuffer: Buffer,
     contentType: string,
-    hooks?: ArweaveUploadHooks
+    hooks?: ArweaveUploadHooks,
+    tags?: Readonly<Record<string, string>>
   ): Promise<{ url: string; transaction_id: string }> {
     const { arweave, key: arweaveKey } = this.arweaveAndKeySupplier();
     const uploader = hooks?.savedState
       ? await resumeUpload(arweave, hooks.savedState)
-      : await createSignedUpload(arweave, arweaveKey, fileBuffer, contentType);
+      : await createSignedUpload(
+          arweave,
+          arweaveKey,
+          fileBuffer,
+          contentType,
+          tags
+        );
     const dataBase64 = hooks
       ? Buffer.from(uploader.data).toString('base64')
       : '';
@@ -85,7 +95,8 @@ async function createSignedUpload(
   arweave: Arweave,
   key: Parameters<Arweave['createTransaction']>[1],
   fileBuffer: Buffer,
-  contentType: string
+  contentType: string,
+  tags: Readonly<Record<string, string>> = {}
 ): Promise<TransactionUploader> {
   const data = new Uint8Array(
     fileBuffer.buffer,
@@ -94,6 +105,9 @@ async function createSignedUpload(
   );
   const transaction = await arweave.createTransaction({ data }, key);
   transaction.addTag('Content-Type', contentType);
+  for (const [name, value] of Object.entries(tags)) {
+    transaction.addTag(name, value);
+  }
   await arweave.transactions.sign(transaction, key);
   return arweave.transactions.getUploader(transaction);
 }

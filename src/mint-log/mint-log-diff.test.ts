@@ -82,6 +82,27 @@ const cardState: fc.Arbitrary<MintCardState> = fc
   });
 
 describe('mint log diff', () => {
+  it('reads a part missing from an older state (a genesis file written before the part) as empty', () => {
+    const current: MintCardState = {
+      ...emptyCardState(),
+      subscription_phases_identity: [
+        { id: 7, phase: 'Public', phase_subscriptions: 1, phase_position: 1 }
+      ]
+    };
+    const { subscription_phases_identity: _missing, ...older } =
+      emptyCardState();
+    const file = older as MintCardState;
+
+    expect(changedParts(diffCardState(current, file))).toEqual([]);
+    expect(changedParts(diffCardState(file, current))).toEqual([
+      'subscription_phases_identity'
+    ]);
+    expect(applyEffectsToState(file, {}).subscription_phases_identity).toEqual(
+      []
+    );
+    expect(differingParts(file, emptyCardState())).toEqual([]);
+  });
+
   it('turns any captured state into any other by its diff', () => {
     fc.assert(
       fc.property(cardState, cardState, (before, after) => {
