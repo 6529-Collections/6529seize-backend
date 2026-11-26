@@ -193,6 +193,28 @@ describe('rebuild report', () => {
     );
   });
 
+  it("adds a source's notes to its line", () => {
+    const markdown = renderMarkdown(
+      report({
+        sources: {
+          gateway: {
+            url: 'http://127.0.0.1:8',
+            mode: 'replay',
+            provenance: 'devnet example',
+            provisional: false,
+            notes: [
+              'the copies were re-served by the binary with SHA-256 abc',
+              'a second note'
+            ]
+          }
+        }
+      })
+    );
+    expect(markdown).toContain(
+      '- gateway: replay at http://127.0.0.1:8, from devnet example; note: the copies were re-served by the binary with SHA-256 abc; a second note'
+    );
+  });
+
   it('lists failures, differences, unproven probes, violations and pending tables by area', () => {
     const markdown = renderMarkdown(
       report({

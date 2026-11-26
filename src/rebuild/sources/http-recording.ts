@@ -1,8 +1,7 @@
-import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
 import * as path from 'node:path';
-import { canonicalStringify } from '@/rebuild/probes/canonical';
+import { exchangeKey, parseJson } from '@/rebuild/sources/exchange-key';
 import {
   closeServer,
   errorText,
@@ -14,8 +13,31 @@ import {
   writeProvenance
 } from '@/rebuild/sources/running-source';
 import { UrlSource } from '@/rebuild/sources/source-spec';
+import {
+  FrozenHeader,
+  FrozenValidator,
+  verifyFrozenRecording
+} from '@/rebuild/sources/frozen-gateway';
+
+/** How a run re-serves a frozen recording's copies. */
+export interface FrozenOptions {
+  readonly validator?: FrozenValidator;
+  /** A 127.0.0.1 port claimed for the frozen node. */
+  readonly port?: number;
+  /**
+   * The reviewed build, `<commit>@<sha256>`: the capture's commit and the
+   * replay binary's hash. With it a recording that passes can be final.
+   */
+  readonly reviewed?: string;
+  /** Where the copies are unpacked: a folder of the run's own. */
+  readonly workDir?: string;
+}
 
 const RECORDING_FILE = 'recording.jsonl';
+
+export { exchangeKey };
+
+type Json = unknown;
 
 /** One saved answer. JSON-RPC ids are left out of the key and put back. */
 export interface RecordedExchange {
@@ -26,54 +48,6 @@ export interface RecordedExchange {
   readonly contentType: string | null;
   readonly body: string;
   readonly encoding: 'utf8' | 'base64';
-}
-
-type Json = unknown;
-
-function withoutIds(value: Json): Json {
-  if (Array.isArray(value)) return value.map(withoutIds);
-  if (value && typeof value === 'object' && 'jsonrpc' in value) {
-    const { id: _id, ...rest } = value as Record<string, unknown>;
-    return rest;
-  }
-  return value;
-}
-
-function parseJson(body: Buffer): Json | undefined {
-  if (!body.length) return undefined;
-  try {
-    return JSON.parse(body.toString('utf8'));
-  } catch {
-    return undefined;
-  }
-}
-
-function sortedQuery(rawPath: string): string {
-  const [pathname, query] = rawPath.split('?');
-  if (!query) return pathname;
-  const params = query
-    .split('&')
-    .filter(Boolean)
-    .sort((a, b) => a.localeCompare(b));
-  return `${pathname}?${params.join('&')}`;
-}
-
-/**
- * The key of a request: method, path with sorted query, and the body. A
- * JSON body is compared canonically, without JSON-RPC ids, since clients
- * number their requests differently on every run.
- */
-export function exchangeKey(
-  method: string,
-  rawPath: string,
-  body: Buffer
-): string {
-  const json = parseJson(body);
-  const bodyText =
-    json === undefined
-      ? createHash('sha256').update(body).digest('hex')
-      : canonicalStringify(withoutIds(json));
-  return `${method} ${sortedQuery(rawPath)} ${bodyText}`;
 }
 
 /** Puts the request's JSON-RPC ids into a recorded response. */
@@ -115,16 +89,15 @@ export function withRequestIds(
   return responseBody;
 }
 
-function loadRecording(dir: string): Map<string, RecordedExchange> {
+/** Every line of a recording, repeats included, in file order. */
+function readRecordingLines(dir: string): RecordedExchange[] {
   const file = path.join(dir, RECORDING_FILE);
-  const exchanges = new Map<string, RecordedExchange>();
-  if (!fs.existsSync(file)) return exchanges;
-  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
-    if (!line.trim()) continue;
-    const exchange = JSON.parse(line) as RecordedExchange;
-    exchanges.set(exchange.key, exchange);
-  }
-  return exchanges;
+  if (!fs.existsSync(file)) return [];
+  return fs
+    .readFileSync(file, 'utf8')
+    .split('\n')
+    .filter((line) => line.trim())
+    .map((line) => JSON.parse(line) as RecordedExchange);
 }
 
 function textBody(buffer: Buffer, contentType: string | null) {
@@ -192,18 +165,49 @@ async function forward(
  * itself goes to the source's problems, so it reaches the run's report and
  * log.
  *
- * Nothing verifies a recording's answers yet, a gateway's or an Ethereum
- * node's, and a label is never a basis: a recording is provisional
- * whatever its PROVENANCE.json says. It can count once the run checks the
- * node's proofs (for Ethereum, the blocks' hash chain and receipt proofs).
+ * A label is never a basis: a recording is provisional whatever its
+ * PROVENANCE.json says, unless the run verifies its answers. A gateway
+ * recording made through the frozen-snapshot node can be (see
+ * frozen-gateway.ts); nothing verifies an Ethereum node's answers yet
+ * (the blocks' hash chain and receipt proofs).
  */
 
 export async function startHttpRecording(options: {
   readonly name: UrlSource;
   readonly dir: string;
   readonly upstream?: string;
+  /**
+   * For a replayed recording whose PROVENANCE.json names frozen
+   * snapshots: how to re-serve them, and the reviewed build.
+   */
+  readonly frozen?: FrozenOptions;
 }): Promise<RunningSource> {
-  const recording = loadRecording(options.dir);
+  const lines = readRecordingLines(options.dir);
+  const recording = new Map(lines.map((line) => [line.key, line]));
+  const header = readProvenance(options.dir) as FrozenHeader | null;
+  // A frozen recording holds the snapshots' answers only: recording into
+  // it would add answers no snapshot served.
+  if (options.upstream && header?.frozen) {
+    throw new Error(
+      `${options.name}: a frozen-snapshot recording can't be recorded into`
+    );
+  }
+  const frozen = !header?.frozen
+    ? null
+    : options.frozen?.workDir
+      ? await verifyFrozenRecording({
+          dir: options.dir,
+          header,
+          lines,
+          workDir: options.frozen.workDir,
+          validator: options.frozen.validator,
+          port: options.frozen.port,
+          reviewed: options.frozen.reviewed
+        })
+      : {
+          problems: ['no work folder was given for its frozen copies'],
+          provisionalWhy: 'its frozen copies have no work folder'
+        };
   const unrecorded: string[] = [];
   const failed: string[] = [];
   const refused: string[] = [];
@@ -286,10 +290,17 @@ export async function startHttpRecording(options: {
       url,
       mode: options.upstream ? 'record' : 'replay',
       provenance: provenance?.made_by ?? null,
-      provisional: true,
-      provisionalWhy: 'answers not verified'
+      ...(frozen
+        ? frozen.provisionalWhy
+          ? { provisional: true, provisionalWhy: frozen.provisionalWhy }
+          : { provisional: false }
+        : { provisional: true, provisionalWhy: 'answers not verified' }),
+      ...(frozen?.notes?.length ? { notes: frozen.notes } : {})
     },
     problems: () => [
+      ...(frozen?.problems ?? []).map(
+        (problem) => `${options.name}: frozen snapshot check: ${problem}`
+      ),
       ...(unrecorded.length
         ? [
             `${options.name}: ${unrecorded.length} requests not in the recording, first ${unrecorded.slice(0, 5).join(', ')}`

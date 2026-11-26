@@ -3,7 +3,10 @@ import * as path from 'node:path';
 import { startAnvil } from '@/rebuild/sources/anvil';
 import { startCrpRelay } from '@/rebuild/sources/crp-relay';
 import { startFileServer } from '@/rebuild/sources/file-server';
-import { startHttpRecording } from '@/rebuild/sources/http-recording';
+import {
+  FrozenOptions,
+  startHttpRecording
+} from '@/rebuild/sources/http-recording';
 import { redactUrl, RunningSource } from '@/rebuild/sources/running-source';
 import {
   SourceSpec,
@@ -34,7 +37,8 @@ function live(name: UrlSource, url: string): RunningSource {
 async function startOne(
   name: UrlSource,
   spec: SourceSpec,
-  runDir: string
+  runDir: string,
+  frozen: FrozenOptions
 ): Promise<RunningSource> {
   switch (spec.kind) {
     case 'live':
@@ -43,7 +47,12 @@ async function startOne(
       if (!fs.existsSync(spec.dir)) {
         throw new Error(`${name}: no recording at ${spec.dir}`);
       }
-      return startHttpRecording({ name, dir: spec.dir });
+      return startHttpRecording({
+        name,
+        dir: spec.dir,
+        // A frozen recording's copies are unpacked in the run's folder.
+        frozen: { ...frozen, workDir: path.join(runDir, 'frozen', name) }
+      });
     case 'record':
       return startHttpRecording({
         name,
@@ -79,13 +88,14 @@ export function seedFilesDir(runDir: string): string {
 /** Starts every configured source; on a failure stops the ones started. */
 export async function startSources(
   specs: SourceSpecs,
-  runDir: string
+  runDir: string,
+  frozen: FrozenOptions = {}
 ): Promise<RunningSource[]> {
   const running: RunningSource[] = [];
   try {
     for (const name of URL_SOURCES) {
       const spec = specs[name];
-      if (spec) running.push(await startOne(name, spec, runDir));
+      if (spec) running.push(await startOne(name, spec, runDir, frozen));
     }
   } catch (error) {
     await stopSources(running);

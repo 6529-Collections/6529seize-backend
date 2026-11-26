@@ -70,4 +70,40 @@ describe('rebuild:check options', () => {
     expect(() => parseArgs(['--mysql-port', 'x'], '/repo')).toThrow();
     expect(() => parseArgs(['--area'], '/repo')).toThrow('needs a value');
   });
+
+  it('reads the frozen re-serve options, and refuses a bad port or build', () => {
+    const build = `${'c'.repeat(40)}@${'d'.repeat(64)}`;
+    expect(
+      parseArgs(
+        [
+          '--validator-bin',
+          '/bin/validator',
+          '--frozen-port',
+          '3411',
+          '--frozen-reviewed',
+          build
+        ],
+        '/repo'
+      )
+    ).toMatchObject({
+      validatorBin: path.resolve('/bin/validator'),
+      frozenPort: 3411,
+      frozenReviewed: build
+    });
+    for (const port of ['80', '65536', 'x']) {
+      expect(() => parseArgs(['--frozen-port', port], '/repo')).toThrow(
+        '--frozen-port'
+      );
+    }
+    for (const reviewed of [
+      'c'.repeat(40),
+      `${'c'.repeat(12)}@${'d'.repeat(64)}`,
+      `${'c'.repeat(40)}@${'d'.repeat(12)}`,
+      `${'C'.repeat(40)}@${'d'.repeat(64)}`
+    ]) {
+      expect(() => parseArgs(['--frozen-reviewed', reviewed], '/repo')).toThrow(
+        '--frozen-reviewed needs <commit>@<sha256>, both in full'
+      );
+    }
+  });
 });

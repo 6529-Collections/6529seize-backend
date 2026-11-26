@@ -34,6 +34,8 @@ export interface SourceInfo {
   readonly provisional: boolean;
   /** Why it is provisional, when the report should say more. */
   readonly provisionalWhy?: string;
+  /** What else the report should say about it. */
+  readonly notes?: readonly string[];
 }
 
 export interface AreaSummary {
@@ -191,7 +193,8 @@ function sourceLines(sources: RunReport['sources']): string[] {
     const flag = info.provisional
       ? ` (provisional: ${info.provisionalWhy ? `${info.provisionalWhy}; ` : ''}a final run fails on it)`
       : '';
-    return `- ${name}: ${info.mode}${where}${from}${flag}`;
+    const notes = info.notes?.length ? `; note: ${info.notes.join('; ')}` : '';
+    return `- ${name}: ${info.mode}${where}${from}${flag}${notes}`;
   });
 }
 

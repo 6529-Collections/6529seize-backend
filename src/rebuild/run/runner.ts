@@ -87,6 +87,7 @@ import {
   UrlSource
 } from '@/rebuild/sources/source-spec';
 import { RunningSource } from '@/rebuild/sources/running-source';
+import { FrozenOptions } from '@/rebuild/sources/http-recording';
 import {
   seedFilesDir,
   startSources,
@@ -131,6 +132,12 @@ export interface RunOptions {
   readonly apiPort: number;
   readonly mysqldPath?: string;
   readonly sources: SourceSpecs;
+  /**
+   * For a gateway recording made through the frozen-snapshot node: the
+   * validator that re-serves its copies, a claimed 127.0.0.1 port, and the
+   * reviewed build (the capture's commit and the replay binary's hash).
+   */
+  readonly frozen?: FrozenOptions;
   readonly chainHeight: number | null;
   readonly ethBlock: number | null;
   readonly log: (line: string) => void;
@@ -1349,7 +1356,11 @@ class RebuildRun {
     fs.mkdirSync(path.join(this.runDir, 'logs'), { recursive: true });
     this.releaseLock = acquireHomeLock(path.resolve(this.o.home));
     this.apiPort = this.o.apiPort || (await freePort());
-    this.running = await startSources(this.o.sources, this.runDir);
+    this.running = await startSources(
+      this.o.sources,
+      this.runDir,
+      this.o.frozen
+    );
     for (const source of this.running) {
       this.o.log(`${source.name}: ${source.info.mode} at ${source.url}`);
     }

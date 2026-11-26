@@ -17,7 +17,14 @@ const USAGE = `Usage: rebuild:check -- [options]
                         record:<dir>@<url>, files: <dir>, ethereum: anvil[:<state>],
                         relays: relay[:<dir>]
   --chain-height <n>    the chain height of the mark
-  --eth-block <n>       the Ethereum block of the mark`;
+  --eth-block <n>       the Ethereum block of the mark
+  --validator-bin <file> the validator that re-serves a frozen gateway
+                        recording's copies (called by its full path)
+  --frozen-port <n>     the 127.0.0.1 port for that frozen node (1024-65535)
+  --frozen-reviewed <commit>@<sha256>
+                        the reviewed build: the capture's commit and the
+                        replay binary's SHA-256. A frozen recording that
+                        passes its checks counts as final only with it`;
 
 function say(line: string): void {
   process.stdout.write(`${line}\n`);
@@ -34,6 +41,9 @@ interface Parsed {
   sources: SourceSpecs;
   chainHeight: number | null;
   ethBlock: number | null;
+  validatorBin?: string;
+  frozenPort?: number;
+  frozenReviewed?: string;
 }
 
 function number(name: string, value: string | undefined): number {
@@ -103,6 +113,25 @@ export function parseArgs(argv: readonly string[], repoRoot: string): Parsed {
       case '--eth-block':
         parsed.ethBlock = number(flag, value());
         break;
+      case '--validator-bin':
+        parsed.validatorBin = path.resolve(value());
+        break;
+      case '--frozen-port': {
+        const port = number(flag, value());
+        if (port < 1024 || port > 65535) {
+          throw new Error(`${flag} needs a port from 1024 to 65535`);
+        }
+        parsed.frozenPort = port;
+        break;
+      }
+      case '--frozen-reviewed': {
+        const reviewed = value() ?? '';
+        if (!/^[0-9a-f]{40}([0-9a-f]{24})?@[0-9a-f]{64}$/.test(reviewed)) {
+          throw new Error(`${flag} needs <commit>@<sha256>, both in full`);
+        }
+        parsed.frozenReviewed = reviewed;
+        break;
+      }
       default:
         throw new Error(`Unknown option ${flag}\n${USAGE}`);
     }
@@ -117,6 +146,13 @@ async function main(): Promise<number> {
     say(`[rebuild ${new Date().toISOString()}] ${line}`);
   const { report, runDir } = await runRebuildCheck({
     ...options,
+    frozen: {
+      validator: options.validatorBin
+        ? { file: options.validatorBin, command: [options.validatorBin] }
+        : undefined,
+      port: options.frozenPort,
+      reviewed: options.frozenReviewed
+    },
     repoRoot,
     manifests: AREA_MANIFESTS,
     log
