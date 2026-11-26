@@ -1,7 +1,6 @@
 import { getAddress, isAddress } from 'ethers';
 import {
   TRANSACTIONS_TABLE,
-  SUBSCRIPTIONS_REDEEMED_TABLE,
   DROP_METADATA_TABLE,
   MINTING_CLAIMS_TABLE,
   MINTING_CLAIM_ACTIONS_TABLE,
@@ -17,6 +16,7 @@ import {
   LaunchSafetyError
 } from '@/drop-forge/drop-forge.types';
 import { parseMemesMintPaymentDetails } from '@/memes-mint-stats/payment-details';
+import { subscriptionTables } from '@/subscriptions-identity/identity/subscription-tables';
 import {
   isResearchAirdrop,
   RESEARCH_DELAY_SECONDS
@@ -76,8 +76,12 @@ export async function artistPaymentQuote(
     throw new LaunchSafetyError(
       'Mint indexing has not reconciled confirmed on-chain supply; artist payment deferred'
     );
+  // The redemptions the subscriptions switch names. After it, the identity
+  // table: it holds every redemption (go-live copies the legacy ones), and
+  // the legacy copy lacks the airdrops of subscribers it can't hold.
+  const redeemed = (await subscriptionTables()).redeemed;
   const subscriptions = await sqlExecutor.oneOrNull<{ count: string }>(
-    `SELECT COALESCE(SUM(sr.count), 0) AS count FROM ${SUBSCRIPTIONS_REDEEMED_TABLE} sr WHERE sr.contract = :contract AND sr.token_id = :claim AND EXISTS (SELECT 1 FROM ${TRANSACTIONS_TABLE} t WHERE t.transaction = sr.transaction AND t.contract = sr.contract AND t.token_id = sr.token_id AND t.block <= :block)`,
+    `SELECT COALESCE(SUM(sr.count), 0) AS count FROM ${redeemed} sr WHERE sr.contract = :contract AND sr.token_id = :claim AND EXISTS (SELECT 1 FROM ${TRANSACTIONS_TABLE} t WHERE t.transaction = sr.transaction AND t.contract = sr.contract AND t.token_id = sr.token_id AND t.block <= :block)`,
     params,
     options
   );
