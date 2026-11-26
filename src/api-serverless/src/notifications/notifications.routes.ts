@@ -173,36 +173,6 @@ router.post(
 );
 
 router.post(
-  '/:id/unread',
-  needsAuthenticatedUser(),
-  async (
-    req: Request<{ id: string }, any, any, any, any>,
-    res: Response<ApiResponse<any>>
-  ) => {
-    const authenticationContext = await getAuthenticationContext(req);
-    if (!authenticationContext.getActingAsId()) {
-      throw new ForbiddenException(
-        `You need to create a profile before you can access notifications`
-      );
-    }
-    rejectProxySession(
-      authenticationContext,
-      `Proxies cannot access notifications`
-    );
-    const id = req.params.id;
-    if (numbers.parseIntOrNull(id) !== null) {
-      await notificationsApiService.markNotificationAsUnread({
-        id: parseInt(id),
-        identity_id: authenticationContext.getActingAsId()!
-      });
-    } else {
-      throw new BadRequestException(`Invalid notification id: ${id}.`);
-    }
-    res.send({});
-  }
-);
-
-router.post(
   '/wave/:wave_id/read',
   needsAuthenticatedUser(),
   async (

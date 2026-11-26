@@ -1019,10 +1019,6 @@ describe('NotificationsApiService realtime invalidation', () => {
       id: 1,
       identity_id: 'profile-1'
     });
-    await service.markNotificationAsUnread({
-      id: 2,
-      identity_id: 'profile-1'
-    });
     await service.markAllNotificationsAsRead('profile-1', {});
     await service.markWaveNotificationsAsRead(
       'wave-1',
@@ -1032,9 +1028,8 @@ describe('NotificationsApiService realtime invalidation', () => {
       false
     );
 
-    expect(requestDeviceBadgeRefresh).toHaveBeenCalledTimes(4);
+    expect(requestDeviceBadgeRefresh).toHaveBeenCalledTimes(3);
     expect(jest.mocked(requestDeviceBadgeRefresh).mock.calls).toEqual([
-      ['profile-1'],
       ['profile-1'],
       ['profile-1'],
       ['profile-1']
@@ -1047,16 +1042,10 @@ describe('NotificationsApiService realtime invalidation', () => {
     );
     expect(
       identityNotificationsDb.updateNotificationReadAt
-    ).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({ id: 1, identity_id: 'profile-1' })
-    );
-    expect(
-      identityNotificationsDb.updateNotificationReadAt
-    ).toHaveBeenNthCalledWith(2, {
-      id: 2,
+    ).toHaveBeenCalledWith({
+      id: 1,
       identity_id: 'profile-1',
-      readAt: null
+      readAt: expect.any(Number)
     });
     expect(
       identityNotificationsDb.markWaveNotificationsAsRead
@@ -1078,9 +1067,6 @@ describe('NotificationsApiService realtime invalidation', () => {
     expect(
       wsListenersNotifier.notifyAboutIdentityNotificationsChanged
     ).toHaveBeenNthCalledWith(3, ['profile-1']);
-    expect(
-      wsListenersNotifier.notifyAboutIdentityNotificationsChanged
-    ).toHaveBeenNthCalledWith(4, ['profile-1']);
 
     jest.mocked(requestDeviceBadgeRefresh).mockClear();
     identityNotificationsDb.updateNotificationReadAt.mockRejectedValueOnce(
