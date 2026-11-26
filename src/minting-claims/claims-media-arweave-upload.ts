@@ -611,12 +611,26 @@ async function uploadClaimMetadataToArweave(
     seasonValue
   );
   const buffer = Buffer.from(JSON.stringify(metadata), 'utf8');
+  // Claim columns are fenced by the recovery input hash. Pin the remaining
+  // resolved inputs too, while allowing the checkpoint's original issuance
+  // month to survive a retry across a calendar boundary.
+  const metadataSource = `claim-metadata:${computeSha256Hex(
+    Buffer.from(
+      JSON.stringify({
+        contract: contract.toLowerCase(),
+        typeMemeId,
+        seasonValue,
+        imageLocation,
+        animationLocation
+      })
+    )
+  )}`;
   await beforePublish?.();
   const { url } = await publishFile(
     'metadata',
     buffer,
     'application/json',
-    'claim-metadata',
+    metadataSource,
     publisher
   );
   return buildMintingClaimLocationUrl(url, false) ?? url;

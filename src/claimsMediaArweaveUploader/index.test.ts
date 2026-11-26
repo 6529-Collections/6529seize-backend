@@ -132,6 +132,12 @@ describe('claims worker retry and ownership', () => {
       processMintingClaimUpload(contract, 1, 10)
     ).rejects.toBeInstanceOf(ClaimUploadRetryError);
     expect(alert).not.toHaveBeenCalled();
+    expect(db.update).toHaveBeenLastCalledWith(
+      lease,
+      expect.objectContaining({
+        media_upload_state: expect.objectContaining({ failures: 1 })
+      })
+    );
     expect(db.update).not.toHaveBeenCalledWith(
       lease,
       expect.objectContaining({ media_uploading: false })
@@ -375,5 +381,33 @@ describe('claims worker retry and ownership', () => {
         metadata_location: 'a'.repeat(43)
       })
     );
+  });
+
+  it('uses a short transport retry for failures before a recovery envelope can be loaded', async () => {
+    fetchClaim.mockRejectedValueOnce(new Error('database read unavailable'));
+    const event = {
+      Records: [
+        {
+          messageId: 'early-failure',
+          body: JSON.stringify({ contract, claim_id: 1 }),
+          attributes: {},
+          receiptHandle: 'receipt',
+          eventSourceARN:
+            'arn:aws:sqs:region:account:claims-media-arweave-upload'
+        }
+      ]
+    } as unknown as SQSEvent;
+    const response = await handler(
+      event,
+      { getRemainingTimeInMillis: () => 900000 } as Context,
+      () => undefined
+    );
+    expect(response).toEqual({
+      batchItemFailures: [{ itemIdentifier: 'early-failure' }]
+    });
+    expect(sqs.changeVisibility).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutSeconds: 30 })
+    );
+    expect(db.acquire).not.toHaveBeenCalled();
   });
 });

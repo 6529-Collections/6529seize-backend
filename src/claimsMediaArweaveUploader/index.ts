@@ -169,8 +169,8 @@ async function handleOwnedUploadFailure(
     await recovery.finishAttempt(!isHandoff || !madeProgress);
     try {
       recovery.assertRecoverable();
-    } catch (exhausted) {
-      await failOwnedClaim(lease, recovery, exhausted);
+    } catch (error_) {
+      await failOwnedClaim(lease, recovery, error_);
       return;
     }
   }
@@ -189,7 +189,7 @@ export async function processMintingClaimUpload(
   assertExecutionBudget(getRemainingTimeInMillis());
   const primary = { forcePool: DbPoolName.WRITE };
   const existing = await fetchMintingClaimByClaimId(contract, claimId, primary);
-  if (!existing || !existing.media_uploading) return;
+  if (!existing?.media_uploading) return;
   if (getRemainingTimeInMillis() <= HANDOFF_RESERVE_MS)
     throw new ClaimUploadRetryError('Claim upload needs a fresh invocation', 2);
   const lease = await claimsMediaUploadLeaseDb.acquire(
@@ -213,7 +213,7 @@ export async function processMintingClaimUpload(
   let recovery: ClaimMediaUploadRecovery | undefined;
   try {
     const claim = await fetchMintingClaimByClaimId(contract, claimId, primary);
-    if (!claim || !claim.media_uploading) return;
+    if (!claim?.media_uploading) return;
     recovery = new ClaimMediaUploadRecovery(
       restoreClaimUploadState(
         await claimsMediaUploadLeaseDb.loadState(lease),

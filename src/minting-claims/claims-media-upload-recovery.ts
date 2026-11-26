@@ -115,7 +115,7 @@ export function restoreClaimUploadState(
 
 /** Only small public transaction state is persisted. Source bytes stay at their existing URL. */
 export class ClaimMediaUploadRecovery {
-  private pending = new Set<Promise<void>>();
+  private readonly pending = new Set<Promise<void>>();
   constructor(
     readonly state: ClaimUploadRecoveryState,
     private readonly persist: (

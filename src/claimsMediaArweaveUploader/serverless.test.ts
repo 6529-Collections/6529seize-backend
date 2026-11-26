@@ -11,6 +11,19 @@ it('keeps continuation delivery separate from the application failure budget', (
   const config = document.toJS();
   expect(config.provider.memorySize).toBe(4096);
   expect(config.provider.timeout).toBe(900);
+  expect(config.functions.claimsMediaArweaveUploader.reservedConcurrency).toBe(
+    2
+  );
+  expect(config.functions.claimsMediaArweaveUploader.events).toHaveLength(1);
+  expect(
+    config.resources.Resources.ClaimsMediaArweaveUploaderFailureAlarm.Properties
+  ).toMatchObject({
+    Namespace: 'AWS/Lambda',
+    MetricName: 'Errors',
+    Period: 60,
+    Threshold: 1,
+    Dimensions: [{ Name: 'FunctionName', Value: 'claimsMediaArweaveUploader' }]
+  });
   expect(
     config.functions.claimsMediaArweaveUploader.events[0].sqs
       .functionResponseType
@@ -19,6 +32,6 @@ it('keeps continuation delivery separate from the application failure budget', (
     config.resources.Resources.ClaimsMediaArweaveUploadQueue.Properties
   ).toMatchObject({
     VisibilityTimeout: 930,
-    RedrivePolicy: { maxReceiveCount: 1000 }
+    RedrivePolicy: { maxReceiveCount: 200 }
   });
 });

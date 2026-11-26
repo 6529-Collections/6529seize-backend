@@ -18,7 +18,8 @@ Before posting a transaction, its checkpoint must commit. Each acknowledged chun
 must commit before the next begins. A lost acknowledgement replays the same signed
 header or chunk; it never signs a replacement. Resume re-downloads the existing
 source and verifies its hash, byte count, signed data root, transaction signature,
-transaction ID, signer, content type and chunk bounds. Corrupt state or changed
+transaction ID, signer, content type and chunk bounds. Metadata source identity
+also pins the resolved meme/season values and completed media locations. Corrupt state or changed
 bytes fail closed. Input changes require a new explicit publication request.
 
 Checkpoint and final-receipt writes require the current unexpired owner token on
@@ -46,14 +47,19 @@ the already-completed transaction. No new metadata transaction is needed.
 - Ten recorded upload failures, 128 owned attempts, or 24 hours exhaust automatic
   recovery. Progress-making deadline handoffs do not increment failures. Killed
   attempts without durable progress count as failures on the next acquisition.
-- The queue's 1000-receive DLQ backstop protects against transport/initialization
+- The queue's 200-receive DLQ backstop protects against transport/initialization
   failures independently of application counters. DLQ delivery remains an operator
-  recovery case when the database or worker cannot run at all.
+  recovery case when the database or worker cannot run at all. The 200-receive
+  bound fits within the queue retention period even for full-duration failures.
+  A Lambda Errors alarm reports initialization failures, crashes and hard timeouts
+  through the existing workload alarm topic.
 - Terminal validation/protocol/checkpoint errors and exhausted budgets persist a
   failed state, clear publishing intent and issue a priority alert. Redelivery then
   performs no upload. Alert delivery remains best effort after the failure commit.
 - An explicit admin retry resets recovery budgets while retaining signed transactions
-  for unchanged inputs. Automatic redeliveries cannot reset these budgets.
+  for unchanged inputs. With no checkpoint, NULL intentionally remains NULL and
+  the worker initializes a complete fresh envelope. Automatic redeliveries cannot
+  reset these budgets.
 
 ## Rollout and rollback
 

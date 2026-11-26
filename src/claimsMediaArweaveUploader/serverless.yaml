@@ -50,12 +50,31 @@ resources:
         RedrivePolicy:
           deadLetterTargetArn:
             Fn::GetAtt: [ClaimsMediaArweaveUploadDLQ, Arn]
-          maxReceiveCount: 1000
+          maxReceiveCount: 200
 
     ClaimsMediaArweaveUploadDLQ:
       Type: AWS::SQS::Queue
       Properties:
         QueueName: claims-media-arweave-upload-dlq
+
+    ClaimsMediaArweaveUploaderFailureAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-claimsMediaArweaveUploader-Failures'
+        AlarmDescription: 'Claim uploader initialization errors, crashes, or hard timeouts require investigation'
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: claimsMediaArweaveUploader
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
 
     ClaimsMediaArweaveUploadQueuePolicy:
       Type: AWS::SQS::QueuePolicy

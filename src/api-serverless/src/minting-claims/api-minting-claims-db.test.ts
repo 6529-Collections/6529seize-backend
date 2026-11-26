@@ -107,7 +107,8 @@ describe('explicit claim publication retry', () => {
       updateMintingClaimIfNotUploading('0xabc', 1, { media_uploading: true })
     ).resolves.toBe(true);
     const query = jest.mocked(sqlExecutor.execute).mock.calls.at(-1)![0];
-    expect(query).toContain('JSON_SET(media_upload_state');
+    expect(query).toContain('CASE WHEN media_upload_state IS NULL THEN NULL');
+    expect(query).toContain('ELSE JSON_SET(media_upload_state');
     expect(query).toContain("'$.failures', 0");
     expect(query).toContain("'$.newRequest', CAST('true' AS JSON)");
     expect(query).not.toContain('media_upload_state = NULL');

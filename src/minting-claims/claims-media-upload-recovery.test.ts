@@ -215,4 +215,41 @@ describe('claim upload durable recovery', () => {
     );
     expect(upload).not.toHaveBeenCalled();
   });
+
+  it('initializes a complete fresh recovery envelope when an admin request has no checkpoint', async () => {
+    const f = fixture(null);
+    await f.recovery.begin();
+    expect(f.persisted[0]).toMatchObject({
+      version: 1,
+      failures: 0,
+      attempts: 1,
+      inputHash,
+      files: {},
+      attemptActive: true
+    });
+  });
+
+  it('discards old signed artifacts only for an explicit new request with changed inputs', () => {
+    const state = restoreClaimUploadState(null, inputHash);
+    state.newRequest = true;
+    state.files.metadata = {
+      source: 'claim-metadata',
+      sha256: inputHash,
+      bytes: 2,
+      contentType: 'application/json',
+      metadataBytes: Buffer.from('{}').toString('base64'),
+      upload: { ...uploadState(1), data_base64: '' }
+    };
+    const changed = restoreClaimUploadState(state, 'c'.repeat(64));
+    expect(changed.inputHash).toBe('c'.repeat(64));
+    expect(changed.files).toEqual({});
+    expect(changed.newRequest).not.toBe(true);
+    expect(state.files.metadata.upload!.transaction.id).toBe(tx);
+    const unchanged = restoreClaimUploadState(state, inputHash);
+    expect(unchanged.files.metadata!.upload!.transaction.id).toBe(tx);
+    expect(unchanged.newRequest).toBe(false);
+    expect(() => restoreClaimUploadState(unchanged, 'c'.repeat(64))).toThrow(
+      'Invalid persisted'
+    );
+  });
 });
