@@ -1,7 +1,7 @@
 import { ChainGatewayClient } from '@/chain-gateway/chain-gateway.client';
 import { ChainIdentity } from '@/chain-gateway/chain-gateway.types';
 import { IdentityChainMirrorDb } from './identity-chain-mirror.db';
-import { principalProfileId } from './identity-plan';
+import { consolidationKeyOf, principalProfileId } from './identity-plan';
 import { ChainReadRetryLater, orRetryLater } from './mirror-errors';
 import { Logger } from '@/logging';
 
@@ -21,6 +21,7 @@ type Db = Pick<
   | 'profileIdOfPrincipal'
   | 'insertMapping'
   | 'unmappedPlaceholderProfile'
+  | 'handlelessRowsOf'
   | 'firstBindingOf'
   | 'founderWaitSince'
   | 'founderWaitDone'
@@ -34,6 +35,17 @@ type Db = Pick<
  * another node (one with the whole history) meanwhile.
  */
 export const FOUNDER_WAIT_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * The ids 6529.io issued handle-less rows before switch-on: randomUUID,
+ * version 4 (the TDH sync's step B, a group listing an address). From
+ * switch-on an address-only row's id is the address's derived one
+ * (address-identity-id.ts), version 5.
+ */
+const UUID_V4 =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const UUID_V5 =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 /** Whether a wallet was first bound to an identity at its creation. */
 type FirstBound = boolean | 'unknowable';
@@ -90,6 +102,8 @@ export class ProfileIds {
   private importDone: number | null = null;
   /** Placeholders left to a later merge since last taken (see below). */
   private left: string[] = [];
+  /** Handle-less rows' keys not adopted since last taken (see below). */
+  private notAdopted: string[] = [];
 
   constructor(
     private readonly gateway: Gateway,
@@ -115,6 +129,17 @@ export class ProfileIds {
   }
 
   /**
+   * The keys of handle-less rows holding some of an identity's wallets
+   * that the identity didn't take, since the last call: their ids stay on
+   * rows the identity's write then re-keys or leaves without wallets.
+   */
+  takeNotAdopted(): string[] {
+    const keys = this.notAdopted;
+    this.notAdopted = [];
+    return keys;
+  }
+
+  /**
    * The profile ids an identity whose id can't be settled yet could get:
    * its legacy id, its derived id and its founding wallet's placeholder.
    * Its rows, if any, are under one of them.
@@ -124,6 +149,8 @@ export class ProfileIds {
     try {
       const legacy = await this.legacyIdOf(identity);
       if (legacy) ids.push(legacy);
+      const adopted = await this.adoptedProfileId(identity, false);
+      if (adopted) ids.push(adopted);
       const wallet = await this.foundingWalletOf(identity);
       const placeholder = wallet
         ? await this.db.unmappedPlaceholderProfile(wallet)
@@ -158,7 +185,8 @@ export class ProfileIds {
       (await this.db.profileIdOfPrincipal(principal)) ??
       (await this.db.founderDecisionOf(principal));
     if (mapped) return { profileId: mapped, imported: legacy !== null };
-    const chosen = await this.chooseProfileId(identity);
+    // Not noted here: a merged or closed identity is asked for each time.
+    const chosen = await this.chooseProfileId(identity, false);
     // Decided from its founder: kept, so it is filed under this id only.
     if (chosen.founderAsked) {
       await this.db.founderDecided(principal, chosen.profileId, this.now());
@@ -169,6 +197,9 @@ export class ProfileIds {
   /**
    * The 6529.io profile id of a chain identity: its mapping, else
    * - an imported identity's legacy id (its 6529.io profile id);
+   * - else the id of the handle-less row under the identity's own
+   *   consolidation key (no handle, no profiles row, no principal): 6529.io
+   *   issued it before switch-on and ratings, follows and groups may name it;
    * - for an identity made on the chain, the listed placeholder profile of
    *   the wallet that made it, when no principal holds it, the import didn't
    *   take it, and this is the first identity that wallet was bound to, so
@@ -210,7 +241,56 @@ export class ProfileIds {
     return chosen;
   }
 
-  private async chooseProfileId(identity: ChainIdentity): Promise<{
+  /**
+   * The id of the handle-less identities row whose consolidation key
+   * equals the identity's (its wallets, keyed as 6529.io keys them): a row
+   * with a profile id but no handle, no profiles row and no principal,
+   * which 6529.io made before switch-on (the TDH sync's step B, a group
+   * listing an address). Its id may already be named by ratings, follows
+   * and groups, so the identity keeps it rather than a new one. Only an
+   * equal key: a handle-less row holding some of the identity's wallets
+   * under another key is a different group of wallets, so it isn't taken;
+   * `note` logs it (WARN, with the key) and counts it for the run.
+   * Only an id issued before switch-on (randomUUID, version 4): a row made
+   * after it has its address's derived id (version 5), which a rebuild
+   * doesn't make until after the identities (the waves rebuild runs after
+   * them), so taking it would give the identity another id there; such a
+   * row is left to the plan, which orphans it. An id of neither version is
+   * not guessed at: noted (WARN) and not taken.
+   */
+  private async adoptedProfileId(
+    identity: ChainIdentity,
+    note: boolean
+  ): Promise<string | null> {
+    if (!identity.wallets.length) return null;
+    const key = consolidationKeyOf(identity.wallets);
+    const rows = await this.db.handlelessRowsOf(identity.wallets, key);
+    const equal = rows.find((it) => it.consolidation_key.toLowerCase() === key);
+    if (equal) {
+      const id = equal.profile_id.toLowerCase();
+      if (UUID_V4.test(id)) return id;
+      if (!UUID_V5.test(id) && note) {
+        logger.warn(
+          `[HANDLE-LESS ROW NOT ADOPTED: ID NEITHER V4 NOR V5] [${identity.principalId.toLowerCase()}] [KEY ${key}] [ID ${id}]`
+        );
+        this.notAdopted.push(key);
+      }
+      return null;
+    }
+    if (rows.length && note) {
+      const keys = rows.map((it) => it.consolidation_key.toLowerCase());
+      logger.warn(
+        `[HANDLE-LESS ROWS NOT ADOPTED] [${identity.principalId.toLowerCase()}] [KEY ${key}] [ROWS ${keys.join(', ')}] [NO EQUAL KEY: THE DERIVED OR FOUNDER'S ID]`
+      );
+      this.notAdopted.push(...keys);
+    }
+    return null;
+  }
+
+  private async chooseProfileId(
+    identity: ChainIdentity,
+    note = true
+  ): Promise<{
     profileId: string;
     origin: string;
     left?: string;
@@ -219,6 +299,8 @@ export class ProfileIds {
     const principalId = identity.principalId.toLowerCase();
     const legacy = await this.legacyIdOf(identity);
     if (legacy) return { profileId: legacy, origin: 'LEGACY' };
+    const adopted = await this.adoptedProfileId(identity, note);
+    if (adopted) return { profileId: adopted, origin: 'ADOPTED' };
     const wallet = await this.foundingWalletOf(identity);
     const placeholder = wallet
       ? await this.db.unmappedPlaceholderProfile(wallet)
