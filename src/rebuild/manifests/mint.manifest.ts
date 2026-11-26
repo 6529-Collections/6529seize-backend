@@ -46,9 +46,14 @@ const MINT_PROBES_SEED: RebuildStep = {
     'mint_log_head',
     'signed_record_log_entries'
   ],
-  // The mint log's capture reads the subscriptions switch for a memes card,
-  // and after the switch the identity final rows' phases.
-  reads: ['subscriptions_id_state', 'subscriptions_id_nfts_final'],
+  // The mint log's capture reads the legacy final rows' phases, and for a
+  // memes card the subscriptions switch and, after the switch, the identity
+  // final rows' phases.
+  reads: [
+    'subscriptions_nfts_final',
+    'subscriptions_id_state',
+    'subscriptions_id_nfts_final'
+  ],
   // The holdings fixture's mints first: the mint stats count them.
   after: ['holdings.seed'],
   sources: ['repo'],
