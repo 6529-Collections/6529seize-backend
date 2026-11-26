@@ -8,6 +8,26 @@ export const wavesManifest: AreaManifest = {
   area: 'waves',
   flags: {},
   tables: {
+    // Materialized answers from the chain API and its change feed.
+    chain_waves: { class: 'INDEX' },
+    chain_groups: { class: 'INDEX' },
+    chain_wave_roles: { class: 'INDEX' },
+    chain_decisions: { class: 'INDEX' },
+    chain_entries: { class: 'INDEX' },
+    chain_votes: { class: 'INDEX' },
+    chain_results: { class: 'INDEX' },
+    chain_polls: { class: 'INDEX' },
+    chain_wave_rep: { class: 'INDEX' },
+    chain_decision_leaderboards: { class: 'INDEX' },
+    chain_leaderboard_rows: { class: 'INDEX' },
+    waves_chain_index_state: {
+      class: 'EPHEMERAL',
+      why: 'Chain index full-read and change-feed cursors, generation and retry diagnostics.'
+    },
+    wave_relay_cursors: {
+      class: 'EPHEMERAL',
+      why: 'Per-relay publication cursors and delivery retry diagnostics.'
+    },
     official_waves: { class: 'INDEX' },
     profile_waves: { class: 'INDEX' },
     waves: { class: 'INDEX' },
