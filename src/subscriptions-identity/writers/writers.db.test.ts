@@ -3582,14 +3582,14 @@ describeWithSeed(
         liveColumns.legacy
       );
 
-      // Out of order, before the subscriptions rebuild has made the final
-      // rows, the mint log rebuild stops and says what must run first.
+      // Out of order, before the legacy final rows are rebuilt, the mint log
+      // rebuild stops and says what must run first.
       await emptyMintTables();
       await sqlExecutor.execute(
         `DELETE FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}`
       );
       await expect(rebuildMintLog()).rejects.toThrow(
-        'the subscriptions rebuild creates these rows and must run before the mint log rebuild'
+        "the legacy subscription tables' rebuild creates these rows and must run before the mint log rebuild"
       );
     });
 
