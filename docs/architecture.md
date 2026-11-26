@@ -1564,11 +1564,14 @@ watermark.
 The API exposes currency-specific quoted depth for an individual token and a
 merged feed of canonical transactions and market actions. Quoted quantities can
 share inventory or funding and are not a verified executable security budget.
-The activity feed uses the read replica, including partition discovery and
+The activity feed uses the API read pool, including partition discovery and
 history metadata. Token activity selects bounded token and collection-event
 pages separately using the existing token/time index, then merges their IDs
-before fetching public event fields. Order-book snapshots, critical partition
-discovery and order-status validation continue to use the writer.
+before fetching public event fields. Collection-level cancellations for a single
+collection and wallet select bounded maker and taker pages with wallet/time
+indexes and deduplicate the IDs before fetching the final page. Order-book
+snapshots, critical partition discovery and order-status validation continue to
+use the writer.
 See the [market depth runbook](../ops/runbooks/market-depth.md) for interpretation,
 provider limitations, deployment order and verification.
 
@@ -1687,7 +1690,10 @@ falls back to a standalone result. Workflows never own Seize drop IDs. See
 [CI Pipeline Alerts](./ci-pipeline-alerts.md) for the request, formatting,
 retention, rerun, and rollout contract.
 
-Notification read/unread mutations also enqueue a `badge_refresh` job with the affected profile ID on the existing `firebase-push-notifications` queue. `pushNotificationsHandler` combines shared-device refreshes within each batch, discovers current iOS registrations, and computes aggregate unread counts from the primary database using the existing push settings, visibility and moderation filters. The API performs only the queue handoff, not device lookup, counting or Firebase delivery. Normal iOS alerts and badge-only refreshes share a per-device Redis lock covering count calculation and submission. Android delivery and installation logout use the same lock to fence removed recipients. Failed or invalid profile contributions never become partial badge totals. See [Mobile badge synchronization](./mobile-badge-sync.md) for the payload, failure handling and rollout boundaries.
+Clients mark all notifications as read with `POST /api/notifications/read`.
+`POST /api/notifications/{id}/read` marks an individual notification as read.
+
+Individual, bulk and wave notification reads enqueue a `badge_refresh` job with the affected profile ID on the existing `firebase-push-notifications` queue. `pushNotificationsHandler` combines shared-device refreshes within each batch, discovers current iOS registrations, and computes aggregate unread counts from the primary database using the existing push settings, visibility and moderation filters. The API performs only the queue handoff, not device lookup, counting or Firebase delivery. Normal iOS alerts and badge-only refreshes share a per-device Redis lock covering count calculation and submission. Android delivery and installation logout use the same lock to fence removed recipients. Failed or invalid profile contributions never become partial badge totals. See [Mobile badge synchronization](./mobile-badge-sync.md) for the payload, failure handling and rollout boundaries.
 
 The push worker's SQS event source is capped at 18 concurrent batches, below the Lambda's reserved concurrency of 20. This leaves two slots of headroom and keeps excess burst traffic queued instead of allowing the poller to exceed the function limit. The same cap applies in staging and production. Batch size remains 10; partial-batch retries, visibility timeout, dead-letter routing, and monitoring thresholds/frequency are unchanged. Queueing can increase during bursts, so queue-age and dead-letter alarms remain important. Deploy only `pushNotificationsHandler` to apply this event-source configuration.
 
@@ -1726,6 +1732,20 @@ Rolling fleet counters distinguish widespread throttling, a persistent outage ev
 ## API Boundary
 
 The API is organized by domain routers under `src/api-serverless/src`. The OpenAPI file defines the public contract and generated models. Legacy routes are wired manually, while newer OpenAPI operations can opt into generated route wiring through `x-6529-router` and thin domain handlers.
+
+The approved Phase 0 compatibility exception retires
+`GET /api/groups_im_eligible_for`. Wave and competition access evaluates group
+eligibility internally. Roll out this route removal by deploying `api`.
+
+`GET /api/delegations/minting/{wallet}` is retired. It served the former NextGen
+Pebbles profile Mints tab. Wallet Checker reads `GET /api/delegations/{wallet}`.
+
+NextGen minting uses `GET /api/nextgen/allowlist_phases/:collection_id` for
+collection phases and `GET /api/nextgen/proofs/:merkle_root/:address` for
+wallet proofs. NextGen token pages use `GET /api/nextgen/tokens/:id` for
+token details and `GET /api/nft-activity` for activity. The
+[route census](../src/competitions/contract-fixtures/phase-0/README.md) lists
+the four retired NextGen GET routes. Roll out their removal by deploying `api`.
 
 `/e2ee/...` is the end-to-end encrypted messaging delivery service (D109),
 behind `E2EE_DMS_ENABLED` (off in production). It is a ciphertext-only
@@ -2165,9 +2185,9 @@ flags remain intersected with View eligibility if group criteria later drift.
 
 The waves v2 read boundary keeps timeline, reply-thread, and curation feeds as separate contracts. `/v2/waves/{id}/drops` returns the wave timeline feed, `/v2/drops/{id}/replies` returns the reply thread for a root drop after resolving its owning visible wave, and `/v2/waves/{id}/curations/{curation_id}/drops` returns drops for one wave curation.
 
-Quick Vote's legacy `GET /waves/{id}/undiscovered-drop` remains compatible,
-while `GET /waves/{id}/undiscovered-drops` returns up to four ordered previews
-with one pair of exact counts. Both use the original legacy competition's
+Quick Vote serves `GET /waves/{id}/undiscovered-drop` for the current candidate.
+`GET /waves/{id}/undiscovered-drops` returns up to four ordered previews with
+one pair of exact counts. Both use the original legacy competition's
 active native entries and an indexed fallback for retained participatory drops
 without a projected native status. Votes and skips remain scoped to the acting
 profile; zero allocations are unrated, and either sign of nonzero allocation is
@@ -2834,11 +2854,6 @@ pushes to `1a-staging`; frontend production is dispatched through
 automatic E2E validation. For coupled releases, complete backend dependencies
 before merging and deploying dependent frontend changes. Workflows resolve the
 source commit and verify artifact and runtime versions automatically.
-
-The API's authenticated `/deploy/ui` remains a convenience for viewing refs
-and runs and dispatching the ordinary workflows. GitHub authentication and
-repository permissions remain in place. It has no release queue, candidate
-registry, environment-state ledger, or separate deployment authority.
 
 For backend production, each service notification carries the merged PR and
 canonical service group. Earlier services hold publication; the final

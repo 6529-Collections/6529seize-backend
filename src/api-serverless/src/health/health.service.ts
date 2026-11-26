@@ -286,7 +286,6 @@ export interface HealthData {
   links: {
     api_documentation: string;
     health_ui: string;
-    deploy_ui: string;
   };
   db: 'ok' | 'degraded';
   redis: {
@@ -385,8 +384,7 @@ export async function getHealthData(): Promise<HealthData> {
     },
     links: {
       api_documentation: '/docs',
-      health_ui: '/health/ui',
-      deploy_ui: '/deploy/ui'
+      health_ui: '/health/ui'
     },
     db: isDbHealthy ? 'ok' : 'degraded',
     redis: redisResponse,
