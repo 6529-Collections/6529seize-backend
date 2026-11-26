@@ -14,8 +14,13 @@ import * as priorityAlertsContext from '../priority-alerts.context';
 import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
 import { discoverTopUps } from './subscription_topups';
+import {
+  runIdentityTopUpWriters,
+  runLegacySubscriptionStep
+} from '@/subscriptions-identity/writers/identity-loop-hooks';
 import { appFeatures } from '../app-features';
 import { replayTopUpLoopDeferredWrites } from '../subscription-key-width/subscription-deferred-replay';
+import { rekeyStaleSubscriptions } from '../subscriptionsDaily/subscription-rekey-fallback';
 
 const logger = Logger.get('SUBSCRIPTIONS_TOP_UP_LOOP');
 const ALERT_TITLE = 'Subscriptions TopUp Loop';
@@ -32,13 +37,36 @@ async function replayDeferredWrites() {
   }
 }
 
+/**
+ * A failed re-key is logged and never stops the top-up scan. The fallback
+ * spaces its own runs by its last run's time.
+ */
+async function rekeyOnMirror() {
+  try {
+    const { consolidateSubscriptions } =
+      await import('../subscriptionsDaily/subscriptions');
+    await rekeyStaleSubscriptions((wallets) =>
+      consolidateSubscriptions(wallets)
+    );
+  } catch (error) {
+    logger.error('[REKEY FALLBACK FAILED]', error);
+  }
+}
+
 export const handler = sentryContext.wrapLambdaHandler(async () => {
   await doInDbContext(
     priorityAlertsContext.wrapAsyncFunction(ALERT_TITLE, async () => {
       if (appFeatures.isSubscriptionDeferredReplayEnabled()) {
         await replayDeferredWrites();
       }
-      await discoverTopUps(process.env.SUBSCRIPTIONS_RESET == 'true');
+      // Before the scan, so a top-up is credited to the key as re-keyed.
+      if (appFeatures.isSubscriptionRekeyOnMirrorEnabled()) {
+        await rekeyOnMirror();
+      }
+      await runLegacySubscriptionStep('TOP-UPS', () =>
+        discoverTopUps(process.env.SUBSCRIPTIONS_RESET == 'true')
+      );
+      await runIdentityTopUpWriters();
     }),
     {
       logger,

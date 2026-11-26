@@ -201,8 +201,14 @@ export class MintStateWriter {
         const where = spec.key
           .map((column) => `${column} ${String(row[column])}`)
           .join(', ');
+        // The legacy subscription tables' rebuild creates the final rows; a
+        // mint log rebuild run before it finds none.
+        const hint =
+          spec.part === 'subscription_phases' && matched === 0
+            ? "; the legacy subscription tables' rebuild creates these rows and must run before the mint log rebuild"
+            : '';
         throw new MintApplyError(
-          `${spec.table} row ${where} matched ${matched} rows, not 1`
+          `${spec.table} row ${where} matched ${matched} rows, not 1${hint}`
         );
       }
     }

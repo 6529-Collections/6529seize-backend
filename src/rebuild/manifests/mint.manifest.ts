@@ -113,7 +113,18 @@ const MINT_PROBES_SEED: RebuildStep = {
     'wave_group_notification_subscriptions',
     'identity_notifications'
   ],
-  reads: ['nfts', 'transactions', 'subscriptions_redeemed', 'drops_metadatas'],
+  // The mint log's capture reads the legacy final rows' phases, and for a
+  // memes card the subscriptions switch and, after the switch, the identity
+  // final rows' phases.
+  reads: [
+    'nfts',
+    'transactions',
+    'subscriptions_redeemed',
+    'drops_metadatas',
+    'subscriptions_nfts_final',
+    'subscriptions_id_state',
+    'subscriptions_id_nfts_final'
+  ],
   // The holdings fixture's mints first: the mint stats and the minted
   // counts count them.
   after: ['holdings.seed'],

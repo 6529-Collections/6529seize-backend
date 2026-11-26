@@ -41,10 +41,11 @@ import {
   replayDeferredSubscriptionWrites
 } from '@/subscription-key-width/subscription-deferred-writes';
 import { appFeatures } from '@/app-features';
+import { subscriptionsIdentitySwitch } from '@/subscriptions-identity/identity/identity-switch';
 
 const logger = Logger.get('TRANSACTIONS_PROCESSING_SUBSCRIPTIONS');
 
-type SubscriptionWaveNotification =
+export type SubscriptionWaveNotification =
   | {
       kind: 'no-subscription-found';
       airdropAddress: string;
@@ -506,9 +507,31 @@ function buildTransactionLink(transactionHash: string): string {
   return ethTools.toEtherScanTransactionLink(chainId, transactionHash);
 }
 
-async function sendSubscriptionWaveNotifications(
-  notifications: SubscriptionWaveNotification[]
+export function buildTransactionLinkFor(transactionHash: string): string {
+  return buildTransactionLink(transactionHash);
+}
+
+/**
+ * Posts redemption warnings to the subscriptions wave. After the identity
+ * switch the legacy loop only logs them: it runs on the rollback copy, and
+ * the identity writer posts them from the truth.
+ */
+export async function sendSubscriptionWaveNotifications(
+  notifications: SubscriptionWaveNotification[],
+  from: 'LEGACY' | 'IDENTITY' = 'LEGACY'
 ): Promise<void> {
+  if (notifications.length === 0) {
+    return;
+  }
+  if (
+    from === 'LEGACY' &&
+    (await subscriptionsIdentitySwitch.writeModeForLegacy()) === 'TRUTH'
+  ) {
+    logger.info(
+      `[REDEMPTION WARNINGS FROM THE ROLLBACK COPY, NOT POSTED] ${JSON.stringify(notifications)}`
+    );
+    return;
+  }
   for (const notification of notifications) {
     switch (notification.kind) {
       case 'no-subscription-found':

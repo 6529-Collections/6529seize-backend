@@ -16,8 +16,15 @@ import { RequestContext } from '../../../request.context';
 import { Time } from '../../../time';
 import { MetricRollupHourMetric } from '../../../entities/IMetricRollupHour';
 import { numbers } from '../../../numbers';
+import { subscriptionTables } from '@/subscriptions-identity/identity/subscription-tables';
 export class CommunityMetricsService {
-  constructor(private readonly metricsDb: MetricsDb) {}
+  constructor(
+    private readonly metricsDb: MetricsDb,
+    // The subscriptions final table the switch names: after it, the
+    // identity rows, which hold every subscriber's redemptions.
+    private readonly finalTable: () => Promise<string> = async () =>
+      (await subscriptionTables()).final
+  ) {}
 
   async getCommunityMetricsSummary(
     interval: MetricGroupInterval,
@@ -270,8 +277,9 @@ export class CommunityMetricsService {
   ): Promise<ApiMintMetricsPage> {
     ctx.timer?.start(`${this.constructor.name}->getCommunityMintMetrics`);
     try {
+      const finalTable = await this.finalTable();
       const [data, count] = await Promise.all([
-        this.metricsDb.getCommunityMintMetrics(query, ctx),
+        this.metricsDb.getCommunityMintMetrics(query, ctx, finalTable),
         this.metricsDb.countCommunityMintMetrics(ctx)
       ]);
       return {

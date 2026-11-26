@@ -6,7 +6,6 @@ import {
   NFTS_TABLE,
   NULL_ADDRESS,
   RESEARCH_6529_ADDRESS,
-  SUBSCRIPTIONS_NFTS_FINAL_TABLE,
   TRANSACTIONS_TABLE
 } from '@/constants';
 import {
@@ -350,9 +349,14 @@ export class MetricsDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  /**
+   * `finalTable` is the subscriptions final table the switch names: the
+   * legacy one before it, the identity one after.
+   */
   public async getCommunityMintMetrics(
     query: CommunityMintMetricsQueryParams,
-    ctx: RequestContext
+    ctx: RequestContext,
+    finalTable: string
   ): Promise<CommunityMintMetricRow[]> {
     const sortDirection = query.sort_direction === 'ASC' ? 'asc' : 'desc';
     const offset = (query.page - 1) * query.page_size;
@@ -389,7 +393,7 @@ export class MetricsDb extends LazyDbAccessCompatibleService {
           ) u on u.token_id = n.id
           left join (
             select token_id, sum(redeemed_count) as subscriptions
-            from ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
+            from ${finalTable}
             where contract = :contract
             group by 1
           ) s on s.token_id = n.id

@@ -1,4 +1,5 @@
 import { DISTRIBUTION_PHASE_AIRDROP_TEAM } from '@/airdrop-phases';
+import { SUBSCRIPTIONS_NFTS_FINAL_TABLE } from '@/constants';
 import { Distribution } from '@/entities/IDistribution';
 import { sqlExecutor } from '@/sql-executor';
 import { populateDistributionNormalized } from './api.distributions.service';
@@ -88,7 +89,8 @@ describe('wallet distribution normalization contract', () => {
       .mockResolvedValueOnce({ allowlist: walletAAllowlist });
     const publicExecute = jest.fn().mockResolvedValue([]);
     const allocationsDb = new WalletDistributionAllocationsDb(
-      () => ({ oneOrNull, execute: publicExecute }) as any
+      () => ({ oneOrNull, execute: publicExecute }) as any,
+      async () => SUBSCRIPTIONS_NFTS_FINAL_TABLE
     );
 
     await expect(

@@ -1,0 +1,1096 @@
+import fc from 'fast-check';
+import {
+  MEMES_CONTRACT,
+  MEMES_MINT_PRICE,
+  SUBSCRIPTIONS_ADDRESS
+} from '@/constants';
+import { RecordKind } from '@/signed-records/record-kinds';
+import type { RecordVerifyResult } from '@/signed-records/record-verify';
+import { roundSubscriptionBalance } from '../engine/parity-money';
+import type { JournalBody, JournalChange, JournalKind } from './journal';
+import {
+  EthereumFacts,
+  ReplayedSubscriptionEvents,
+  SignedEventLookup,
+  verifyEntryMoney,
+  verifyJournal
+} from './journal-verify';
+
+// Obviously fake keys, wallets and hashes.
+const OPENING = 'a'.repeat(64);
+const OTHER_OPENING = 'b'.repeat(64);
+const P1 = `0x${'b1'.padStart(64, '0')}`;
+const P2 = `0x${'b2'.padStart(64, '0')}`;
+const W1 = `0x${'1'.padStart(40, '0')}`;
+const W2 = `0x${'2'.padStart(40, '0')}`;
+const AIRDROP = `0x${'a1'.padStart(40, '0')}`;
+const hash = (n: number) => `0x${n.toString(16).padStart(64, '0')}`;
+const T = '2026-11-25 10:00:00.000000';
+const EVENT = 'e'.repeat(32);
+
+type Row = Record<string, unknown>;
+
+function body(
+  n: number,
+  kind: JournalKind,
+  inputs: Row,
+  changes: JournalChange[],
+  extra: Partial<JournalBody> = {}
+): JournalBody {
+  return {
+    t: 'journal',
+    v: 2,
+    kind,
+    n,
+    part: 0,
+    parts: 1,
+    opening: OPENING,
+    mode: 'truth',
+    at_ms: 1_764_064_800_000 + n,
+    inputs,
+    changes,
+    rekeys: [],
+    checkpoint: null,
+    ...extra
+  };
+}
+
+const balanceRow = (identity: string, balance: number): Row => ({
+  identity_key: identity,
+  balance,
+  created_at: T,
+  updated_at: T
+});
+
+/** A balances change; `before` undefined means not captured. */
+function balance(
+  identity: string,
+  before: number | null | undefined,
+  after: number | null
+): JournalChange {
+  return {
+    table: 'balances',
+    key: { identity_key: identity },
+    ...(before === undefined
+      ? {}
+      : { before: before === null ? null : balanceRow(identity, before) }),
+    after: after === null ? null : balanceRow(identity, after)
+  };
+}
+
+function topUpInputs(n: number, amount: number, identity = P1, from = W1) {
+  return {
+    hash: hash(n),
+    block: 1000 + n,
+    transaction_date: T,
+    from_wallet: from,
+    amount,
+    identity_key: identity
+  };
+}
+
+function topUpRow(inputs: ReturnType<typeof topUpInputs>): JournalChange {
+  return {
+    table: 'top_up',
+    key: { hash: inputs.hash },
+    before: null,
+    after: {
+      hash: inputs.hash,
+      block: inputs.block,
+      from_wallet: inputs.from_wallet,
+      amount: inputs.amount,
+      identity_key: inputs.identity_key,
+      created_at: T,
+      transaction_date: T
+    }
+  };
+}
+
+/** A top-up entry as the writer makes it. */
+function topUp(
+  n: number,
+  amount: number,
+  before: number | null,
+  identity = P1
+): JournalBody {
+  const inputs = topUpInputs(n, amount, identity);
+  return body(n, 'top-up', inputs, [
+    balance(
+      identity,
+      before,
+      before === null ? amount : roundSubscriptionBalance(before + amount)
+    ),
+    topUpRow(inputs)
+  ]);
+}
+
+interface ChargeInput {
+  readonly transaction: string;
+  readonly identity_key: string;
+  readonly token_count: number;
+}
+
+function charge(c: ChargeInput) {
+  return {
+    transaction: c.transaction,
+    contract: MEMES_CONTRACT,
+    token_id: 7,
+    to_address: AIRDROP,
+    token_count: c.token_count,
+    identity_key: c.identity_key
+  };
+}
+
+/** A redemption entry charging each identity from its balance, as the writer does. */
+function redemption(
+  n: number,
+  charges: ChargeInput[],
+  balances: Record<string, number | null>
+): JournalBody {
+  const changes: JournalChange[] = [];
+  for (const [identity, before] of Object.entries(balances)) {
+    let after = before ?? 0;
+    for (const _ of charges.filter((c) => c.identity_key === identity)) {
+      after = roundSubscriptionBalance(after - MEMES_MINT_PRICE);
+    }
+    changes.push(balance(identity, before, after));
+  }
+  const perRow = new Map<string, number>();
+  for (const c of charges) {
+    const key = `${c.transaction}|${c.identity_key}`;
+    perRow.set(key, (perRow.get(key) ?? 0) + 1);
+  }
+  let id = n * 100;
+  for (const [key, count] of Array.from(perRow.entries())) {
+    const [transaction, identity] = key.split('|');
+    changes.push({
+      table: 'redeemed',
+      key: { id: ++id },
+      before: null,
+      after: {
+        id,
+        identity_key: identity,
+        transaction,
+        count,
+        value: MEMES_MINT_PRICE * count
+      }
+    });
+  }
+  changes.push({
+    table: 'cursor',
+    key: { id: 'redemption' },
+    before: { id: 'redemption', block: 10, updated_at: 1 },
+    after: { id: 'redemption', block: 20, updated_at: 2 }
+  });
+  return body(
+    n,
+    'redemption',
+    { after_block: 10, through_block: 20, charges: charges.map(charge) },
+    changes
+  );
+}
+
+/** A fold entry as the writer makes it: W's balance deleted, I's the sum. */
+function fold(
+  n: number,
+  identityBefore: number | null,
+  walletBefore: number | null
+): JournalBody {
+  const changes: JournalChange[] = [];
+  if (identityBefore !== null || walletBefore !== null) {
+    changes.push(
+      balance(P1, identityBefore, (identityBefore ?? 0) + (walletBefore ?? 0))
+    );
+  }
+  if (walletBefore !== null) {
+    changes.push(balance(W2, walletBefore, null));
+  }
+  return body(
+    n,
+    'fold',
+    { wallet: W2, identity_key: P1, at_text: T },
+    changes,
+    { rekeys: [{ from: W2, to: P1 }] }
+  );
+}
+
+function choice(n: number, eventId = EVENT): JournalBody {
+  return body(
+    n,
+    'choice',
+    {
+      event_id: eventId,
+      owner: P1,
+      type: 'subs.mode',
+      key: '',
+      anchor: 100,
+      claimed_time: 1
+    },
+    [
+      {
+        table: 'mode',
+        key: { identity_key: P1 },
+        before: null,
+        after: { identity_key: P1, automatic: 1, subscribe_all_editions: 0 }
+      }
+    ]
+  );
+}
+
+function build(n: number, parts = 1): JournalBody[] {
+  const inputs = { contract: MEMES_CONTRACT, token_id: 7, build_at_ms: 1 };
+  return Array.from({ length: parts }, (_, part) =>
+    body(
+      n,
+      'build',
+      inputs,
+      [
+        {
+          table: 'final',
+          key: { id: n * 10 + part },
+          before: null,
+          after: { id: n * 10 + part, identity_key: P1, redeemed_count: 0 }
+        }
+      ],
+      { part, parts }
+    )
+  );
+}
+
+const MINT_TX = hash(900);
+const MINT_KEY = `${MINT_TX}|${MEMES_CONTRACT.toLowerCase()}|7|${AIRDROP}`;
+
+/** A journal that keeps every rule, in log order. */
+function goodJournal(): JournalBody[] {
+  return [
+    topUp(1, 0.1, null),
+    // Another opening's entry (an earlier rehearsal) is skipped.
+    { ...topUp(2, 0.5, null, P2), opening: OTHER_OPENING },
+    topUp(3, 0.2, 0.1),
+    fold(4, roundSubscriptionBalance(0.1 + 0.2), 0.05),
+    ...build(5, 2),
+    body(6, 'checkpoint', {}, [], {
+      checkpoint: { through_n: 5, state_sha256: 'c'.repeat(64) }
+    }),
+    redemption(
+      7,
+      [
+        { transaction: MINT_TX, identity_key: P1, token_count: 2 },
+        { transaction: MINT_TX, identity_key: P1, token_count: 2 }
+      ],
+      { [P1]: roundSubscriptionBalance(0.1 + 0.2) + 0.05 }
+    ),
+    choice(8),
+    body(
+      9,
+      'upload',
+      { contract: MEMES_CONTRACT, token_id: 7, date: '', upload_url: 'ar://x' },
+      [
+        {
+          table: 'upload',
+          key: { contract: MEMES_CONTRACT, token_id: 7 },
+          before: null,
+          after: { contract: MEMES_CONTRACT, token_id: 7, upload_url: 'ar://x' }
+        }
+      ]
+    )
+  ];
+}
+
+/** Ethereum as the good journal has it. */
+function ethereumFixture(): EthereumFacts & { calls: number } {
+  const facts = {
+    calls: 0,
+    async topUp(h: string) {
+      facts.calls++;
+      const n = parseInt(h.slice(2), 16);
+      const amounts: Record<number, number> = { 1: 0.1, 3: 0.2, 6: 0.3 };
+      return amounts[n] === undefined
+        ? null
+        : {
+            from: W1.toUpperCase().replace('0X', '0x'),
+            to: SUBSCRIPTIONS_ADDRESS.toLowerCase(),
+            valueEth: amounts[n],
+            block: 1000 + n
+          };
+    },
+    async mintedTo(h: string, contract: string, tokenId: number, to: string) {
+      facts.calls++;
+      return h === MINT_TX &&
+        contract === MEMES_CONTRACT &&
+        tokenId === 7 &&
+        to === AIRDROP
+        ? 2
+        : 0;
+    }
+  };
+  return facts;
+}
+
+const eventsFixture = (
+  events: Record<string, Awaited<ReturnType<SignedEventLookup['find']>>>
+): SignedEventLookup => ({
+  find: async (id) => events[id] ?? null
+});
+
+const GOOD_EVENT = {
+  type: 'subs.mode',
+  key: '',
+  body: { automatic: true },
+  owner: P1
+};
+
+async function verify(
+  bodies: JournalBody[],
+  options: Partial<Parameters<typeof verifyJournal>[1]> = {}
+) {
+  return verifyJournal(bodies, { openingSha256: OPENING, ...options });
+}
+
+describe('verifyJournal', () => {
+  it('passes a journal that keeps every rule, against Ethereum and the signed records', async () => {
+    const ethereum = ethereumFixture();
+    const report = await verify(goodJournal(), {
+      ethereum,
+      events: eventsFixture({ [EVENT]: GOOD_EVENT })
+    });
+    expect(report.failures).toEqual([]);
+    expect(report).toMatchObject({
+      openingSha256: OPENING,
+      writes: 8,
+      counts: { topUps: 2, charges: 2, mints: 1, choices: 1 },
+      checked: { ethereum: true, events: true }
+    });
+    // Two top-ups and one mint.
+    expect(ethereum.calls).toBe(3);
+  });
+
+  it('makes no call without ports, and says what it left unchecked', async () => {
+    const report = await verify(goodJournal());
+    expect(report.failures).toEqual([]);
+    expect(report.checked).toEqual({
+      opening: false,
+      ethereum: false,
+      events: false
+    });
+  });
+
+  describe('a top-up', () => {
+    it('fails when the balance moves by another amount', async () => {
+      const wrong = topUp(2, 0.2, 0.1);
+      (wrong.changes[0].after as Row).balance = 0.31;
+      const report = await verify([topUp(1, 0.1, null), wrong]);
+      expect(report.failures).toEqual([
+        `n=2 top-up: the balance of ${P1} is 0.31 after a top-up of 0.2 to 0.1; expected 0.3`
+      ]);
+    });
+
+    it('opens a first balance at the amount, unrounded', async () => {
+      const amount = 0.1234567;
+      expect(verifyEntryMoney([topUp(1, amount, null)])).toEqual([]);
+      const rounded = topUp(1, amount, null);
+      (rounded.changes[0].after as Row).balance =
+        roundSubscriptionBalance(amount);
+      expect(verifyEntryMoney([rounded])).toEqual([
+        `n=1 top-up: the balance of ${P1} is 0.12346 after a top-up of ${amount} to no balance; expected ${amount}`
+      ]);
+    });
+
+    it('passes a dust top-up that rounds away on the balance the journal knows, and fails any other', async () => {
+      const dust = topUp(3, 0.000001, 1);
+      dust.changes.splice(0, 1);
+      expect(verifyEntryMoney([dust], () => 1)).toEqual([]);
+      // Unknown, or a balance it would move: the change is missing.
+      const unchanged = `n=3 top-up: the top-up leaves the balance of ${P1} as it was`;
+      expect(verifyEntryMoney([dust])).toEqual([unchanged]);
+      expect(verifyEntryMoney([dust], () => 0.0000049)).toEqual([unchanged]);
+      const lost = topUp(3, 0.2, 0.1);
+      lost.changes.splice(0, 1);
+      expect(verifyEntryMoney([lost], () => 0.1)).toEqual([unchanged]);
+    });
+
+    it('fails a top-up of 0 or less', async () => {
+      const negative = topUp(2, -0.9, 1);
+      expect(verifyEntryMoney([negative])).toEqual([
+        'n=2 top-up: a top-up of -0.9 ETH; only a positive amount is credited'
+      ]);
+    });
+
+    it("fails when a change's after row is another identity's", async () => {
+      // The key names P1, so the verifier and the rebuild check P1's row,
+      // but the rebuild would write P2's.
+      const moved = topUp(2, 0.5, 1);
+      moved.changes[0] = {
+        ...moved.changes[0],
+        after: { ...(moved.changes[0].after as Row), identity_key: P2 }
+      };
+      expect(verifyEntryMoney([moved])).toEqual([
+        `n=2 top-up: the balances change {"identity_key":"${P1}"}: its after row is another row`
+      ]);
+      const wrongKey = topUp(2, 0.5, 1);
+      wrongKey.changes[1] = { ...wrongKey.changes[1], key: { id: 1 } };
+      expect(verifyEntryMoney([wrongKey])).toEqual([
+        'n=2 top-up: the top_up change {"id":1}: keyed by id, not hash'
+      ]);
+    });
+
+    it('fails when the hash is credited twice, in any case', async () => {
+      const again = topUp(0xac, 0.1, 0.1);
+      const inputs = again.inputs as { hash: string };
+      inputs.hash = hash(0xab).toUpperCase().replace('0X', '0x');
+      (again.changes[1].after as Row).hash = inputs.hash;
+      again.changes[1] = { ...again.changes[1], key: { hash: inputs.hash } };
+      const report = await verify([topUp(0xab, 0.1, null), again]);
+      expect(report.failures).toEqual([
+        `n=172 top-up: top-up ${hash(0xab)} is credited again (first at n=171)`
+      ]);
+    });
+
+    it('fails when the opening file already holds the hash', async () => {
+      const report = await verify([topUp(1, 0.1, null)], {
+        opening: {
+          balances: [],
+          keys: [],
+          topUps: [{ hash: hash(1) } as never],
+          redeemed: []
+        }
+      });
+      expect(report.failures).toEqual([
+        `n=1 top-up: top-up ${hash(1)} is already in the opening file`
+      ]);
+    });
+
+    it('fails when its top_up row or other balances disagree with its inputs', async () => {
+      const entry = topUp(1, 0.1, null);
+      (entry.changes[1].after as Row).identity_key = P2;
+      entry.changes.push(balance(P2, 1, 2));
+      expect(verifyEntryMoney([entry])).toEqual([
+        `n=1 top-up: a top-up for ${P1} changes the balance of ${P2}`,
+        `n=1 top-up: the top_up row does not match the entry's inputs in identity_key`
+      ]);
+    });
+
+    it('fails when the balance before was not captured', async () => {
+      const entry = body(1, 'top-up', topUpInputs(1, 0.1), [
+        balance(P1, undefined, 0.1),
+        topUpRow(topUpInputs(1, 0.1))
+      ]);
+      expect(verifyEntryMoney([entry])).toEqual([
+        `n=1 top-up: the balance of ${P1} changes with no before captured`
+      ]);
+    });
+
+    it('fails against Ethereum when the transfer is missing or differs', async () => {
+      const missing = topUp(5, 0.1, null);
+      const otherValue = topUp(6, 0.25, 0.1);
+      const report = await verify([missing, otherValue], {
+        ethereum: ethereumFixture()
+      });
+      expect(report.failures).toEqual([
+        `n=5 top-up: no ETH transfer ${hash(5)} on Ethereum`,
+        `n=6 top-up: the transfer ${hash(6)} on Ethereum differs in value`
+      ]);
+    });
+  });
+
+  describe('a redemption', () => {
+    it('fails when the balance moves by less than the mint price per charge', async () => {
+      const entry = redemption(
+        7,
+        [
+          { transaction: MINT_TX, identity_key: P1, token_count: 2 },
+          { transaction: MINT_TX, identity_key: P1, token_count: 2 }
+        ],
+        { [P1]: 1 }
+      );
+      (entry.changes[0].after as Row).balance = roundSubscriptionBalance(
+        1 - MEMES_MINT_PRICE
+      );
+      expect(verifyEntryMoney([entry])).toEqual([
+        `n=7 redemption: the balance of ${P1} is 0.93471 after 2 charges from 1; expected 0.86942`
+      ]);
+    });
+
+    it('charges a missing balance from zero, below zero', async () => {
+      const entry = redemption(
+        7,
+        [{ transaction: MINT_TX, identity_key: P1, token_count: 1 }],
+        { [P1]: null }
+      );
+      expect(entry.changes[0].after).toMatchObject({
+        balance: -MEMES_MINT_PRICE
+      });
+      expect(verifyEntryMoney([entry])).toEqual([]);
+    });
+
+    it('fails when a balance changes with no charge, or the redeemed count disagrees', async () => {
+      const entry = redemption(
+        7,
+        [{ transaction: MINT_TX, identity_key: P1, token_count: 1 }],
+        { [P1]: 1, [P2]: 1 }
+      );
+      const redeemed = entry.changes.find((c) => c.table === 'redeemed')!;
+      (redeemed.after as Row).count = 2;
+      expect(verifyEntryMoney([entry])).toEqual([
+        `n=7 redemption: the balance of ${P2} changes with no charge`,
+        `n=7 redemption: the redeemed count of ${P1} for ${MINT_TX} moves by 2; it was charged 1 times`
+      ]);
+    });
+
+    it('fails when a mint is charged more tokens than it delivered', async () => {
+      const first = redemption(
+        7,
+        [
+          { transaction: MINT_TX, identity_key: P1, token_count: 2 },
+          { transaction: MINT_TX, identity_key: P2, token_count: 2 }
+        ],
+        { [P1]: 1, [P2]: 1 }
+      );
+      const again = redemption(
+        8,
+        [{ transaction: MINT_TX, identity_key: P1, token_count: 2 }],
+        { [P1]: roundSubscriptionBalance(1 - MEMES_MINT_PRICE) }
+      );
+      const report = await verify([first, again]);
+      expect(report.failures).toEqual([
+        `mint ${MINT_KEY} delivered 2 tokens and is charged 3 times (journal n=7, 8)`
+      ]);
+    });
+
+    it('counts the opening file charges of a mint the journal charges too', async () => {
+      const entry = redemption(
+        7,
+        [{ transaction: MINT_TX, identity_key: P1, token_count: 2 }],
+        { [P1]: 1 }
+      );
+      const opening = {
+        balances: [{ identityKey: P1, balance: 1 } as never],
+        keys: [],
+        topUps: [],
+        redeemed: [
+          {
+            transaction: MINT_TX.toUpperCase().replace('0X', '0x'),
+            contract: MEMES_CONTRACT,
+            tokenId: 7,
+            address: AIRDROP,
+            count: 2
+          } as never
+        ]
+      };
+      expect((await verify([entry], { opening })).failures).toEqual([
+        `mint ${MINT_KEY} delivered 2 tokens and is charged 3 times (journal n=7)`
+      ]);
+    });
+
+    it('fails against Ethereum when the mint delivered another count', async () => {
+      const entry = redemption(
+        7,
+        [{ transaction: MINT_TX, identity_key: P1, token_count: 3 }],
+        { [P1]: 1 }
+      );
+      const report = await verify([entry], { ethereum: ethereumFixture() });
+      expect(report.failures).toEqual([
+        `mint ${MINT_KEY}: Ethereum shows 2 tokens minted; the charges say 3`
+      ]);
+    });
+  });
+
+  describe('a redemption spread over parts', () => {
+    const MINT2_TX = hash(901);
+    const MINT2_KEY = `${MINT2_TX}|${MEMES_CONTRACT.toLowerCase()}|7|${AIRDROP}`;
+    /** Ten charges over two mints: P1 six times, P2 four times. */
+    const charges: ChargeInput[] = [
+      ...Array.from({ length: 4 }, () => ({
+        transaction: MINT_TX,
+        identity_key: P1,
+        token_count: 6
+      })),
+      ...Array.from({ length: 2 }, () => ({
+        transaction: MINT_TX,
+        identity_key: P2,
+        token_count: 6
+      })),
+      ...Array.from({ length: 2 }, () => ({
+        transaction: MINT2_TX,
+        identity_key: P1,
+        token_count: 4
+      })),
+      ...Array.from({ length: 2 }, () => ({
+        transaction: MINT2_TX,
+        identity_key: P2,
+        token_count: 4
+      }))
+    ];
+    const whole = () => redemption(7, charges, { [P1]: 1, [P2]: 1 });
+    /** `charged(b, k)`: b after k charges, with the legacy rounding. */
+    const charged = (balance: number, times: number) => {
+      let b = balance;
+      for (let i = 0; i < times; i++) {
+        b = roundSubscriptionBalance(b - MEMES_MINT_PRICE);
+      }
+      return b;
+    };
+    /** The write over `count` parts, each with its share of the charges and the changes. */
+    function spread(body: JournalBody, count: number): JournalBody[] {
+      const share = <T>(items: readonly T[], part: number) =>
+        items.slice(
+          Math.floor((part * items.length) / count),
+          Math.floor(((part + 1) * items.length) / count)
+        );
+      return Array.from({ length: count }, (_, part) => ({
+        ...body,
+        part,
+        parts: count,
+        inputs: {
+          ...body.inputs,
+          charges: share(body.inputs.charges as unknown[], part)
+        },
+        changes: share(body.changes, part)
+      }));
+    }
+
+    it("takes the union of the parts' charges, however they are split", async () => {
+      const evenly = spread(whole(), 5);
+      expect(evenly.map((b) => (b.inputs.charges as unknown[]).length)).toEqual(
+        [2, 2, 2, 2, 2]
+      );
+      expect(verifyEntryMoney(evenly)).toEqual([]);
+      const report = await verify(evenly);
+      expect(report.failures).toEqual([]);
+      expect(report.counts).toMatchObject({ charges: 10, mints: 2 });
+      // As the writer splits: the changes first, then the charges.
+      const body = whole();
+      const changesFirst = spread(body, 5).map((part, i) => ({
+        ...part,
+        changes: i === 0 ? body.changes : [],
+        inputs: {
+          ...part.inputs,
+          charges:
+            i === 0
+              ? []
+              : (body.inputs.charges as unknown[]).slice(
+                  (i - 1) * 3,
+                  i === 4 ? undefined : i * 3
+                )
+        }
+      }));
+      expect((await verify(changesFirst)).failures).toEqual([]);
+    });
+
+    it("fails when one part's charge is tampered", async () => {
+      const parts = spread(whole(), 5);
+      // Part 3 charges P1 for the second mint; the entry says P2.
+      const list = [...(parts[3].inputs.charges as Row[])];
+      list[0] = { ...list[0], identity_key: P2 };
+      parts[3] = { ...parts[3], inputs: { ...parts[3].inputs, charges: list } };
+      const failures = verifyEntryMoney(parts);
+      expect(failures).toHaveLength(4);
+      expect(failures).toEqual(
+        expect.arrayContaining([
+          `n=7 redemption: the balance of ${P1} is ${charged(1, 6)} after 5 charges from 1; expected ${charged(1, 5)}`,
+          `n=7 redemption: the balance of ${P2} is ${charged(1, 4)} after 5 charges from 1; expected ${charged(1, 5)}`,
+          `n=7 redemption: the redeemed count of ${P1} for ${MINT2_TX} moves by 2; it was charged 1 times`,
+          `n=7 redemption: the redeemed count of ${P2} for ${MINT2_TX} moves by 2; it was charged 3 times`
+        ])
+      );
+    });
+
+    it("counts every part's charges against the mint, in this write and later ones", async () => {
+      // A charge repeated in another part over-charges the first mint.
+      const parts = spread(whole(), 5);
+      const extra = (parts[0].inputs.charges as Row[])[0];
+      parts[4] = {
+        ...parts[4],
+        inputs: {
+          ...parts[4].inputs,
+          charges: [...(parts[4].inputs.charges as Row[]), extra]
+        }
+      };
+      expect((await verify(parts)).failures).toContain(
+        `mint ${MINT_KEY} delivered 6 tokens and is charged 7 times (journal n=7)`
+      );
+      // A later write charging the second mint again.
+      const again = redemption(
+        8,
+        [{ transaction: MINT2_TX, identity_key: P1, token_count: 4 }],
+        { [P1]: charged(1, 6) }
+      );
+      expect((await verify([...spread(whole(), 5), again])).failures).toEqual([
+        `mint ${MINT2_KEY} delivered 4 tokens and is charged 5 times (journal n=7, 8)`
+      ]);
+    });
+
+    it('fails when a part has no list of charges, or the parts disagree on the rest', async () => {
+      const parts = spread(whole(), 5);
+      const { charges: _none, ...rest } = parts[2].inputs;
+      const missing = [...parts];
+      missing[2] = { ...parts[2], inputs: rest };
+      expect(verifyEntryMoney(missing)).toEqual([
+        'n=7 redemption: inputs.charges is not a list of charges in every part'
+      ]);
+      const other = [...parts];
+      other[2] = {
+        ...parts[2],
+        inputs: { ...parts[2].inputs, through_block: 21 }
+      };
+      expect((await verify(other)).failures).toEqual([
+        'n=7 redemption: its parts differ in kind, mode, time or inputs'
+      ]);
+    });
+  });
+
+  describe('a fold', () => {
+    it('sums, unrounded, and passes when either side had no balance', async () => {
+      expect(verifyEntryMoney([fold(4, 0.1, 0.2)])).toEqual([]);
+      expect(verifyEntryMoney([fold(4, null, 0.2)])).toEqual([]);
+      expect(verifyEntryMoney([fold(4, 0.1, null)])).toEqual([]);
+      expect(verifyEntryMoney([fold(4, null, null)])).toEqual([]);
+    });
+
+    it('fails when the sum is wrong or the wallet keeps a balance', async () => {
+      const entry = fold(4, 0.1, 0.2);
+      (entry.changes[0].after as Row).balance = 0.3;
+      (entry.changes[1] as { after: Row | null }).after = balanceRow(W2, 0);
+      expect(verifyEntryMoney([entry])).toEqual([
+        `n=4 fold: the fold leaves a balance on ${W2}`,
+        `n=4 fold: the balance of ${P1} is 0.3 after folding 0.2 into 0.1; expected ${0.1 + 0.2}`
+      ]);
+    });
+
+    it('fails when it moves the history of another key', async () => {
+      const entry = { ...fold(4, 1, 2), rekeys: [{ from: W1, to: P1 }] };
+      expect(verifyEntryMoney([entry])).toEqual([
+        `n=4 fold: a fold of ${W2} into ${P1} moves history [{"from":"${W1}","to":"${P1}"}]`
+      ]);
+    });
+
+    it('fails when it leaves out a wallet balance the opening file shows', async () => {
+      const entry = fold(4, null, null);
+      const report = await verify([entry], {
+        opening: {
+          balances: [{ identityKey: W2, balance: 2 } as never],
+          keys: [],
+          topUps: [],
+          redeemed: []
+        }
+      });
+      expect(report.failures).toEqual([
+        `n=4 fold: the fold leaves the balance of 2 on ${W2}`
+      ]);
+    });
+
+    it("fails when the wallet's balance leaves and the identity's stays", async () => {
+      const entry = fold(4, 0.1, 0.2);
+      entry.changes.splice(0, 1);
+      expect(verifyEntryMoney([entry])).toEqual([
+        `n=4 fold: 0.2 leaves ${W2} and the balance of ${P1} does not change`
+      ]);
+    });
+  });
+
+  it('fails when any other kind changes a balance', async () => {
+    const [entry] = build(5);
+    entry.changes.push(balance(P1, 1, 2));
+    expect(verifyEntryMoney([entry])).toEqual([
+      `n=5 build: a build entry changes the balance of ${P1}`
+    ]);
+    const report = await verify([entry]);
+    expect(report.failures).toEqual([
+      'n=5 build: a build entry changes balances',
+      `n=5 build: a build entry changes the balance of ${P1}`
+    ]);
+  });
+
+  describe('a choice', () => {
+    it('fails when no verified record in lane `subs` has its event id', async () => {
+      const report = await verify([choice(8, 'f'.repeat(32))], {
+        events: eventsFixture({ [EVENT]: GOOD_EVENT })
+      });
+      expect(report.failures).toEqual([
+        `n=8 choice: event ${'f'.repeat(32)} is not a verified record in lane \`subs\``
+      ]);
+    });
+
+    it('fails when one event makes two choices, or a choice changes another identity', async () => {
+      const stranger = choice(9);
+      stranger.changes[0] = {
+        table: 'mode',
+        key: { identity_key: P2 },
+        before: null,
+        after: { identity_key: P2, automatic: 1, subscribe_all_editions: 0 }
+      };
+      const report = await verify([choice(8), stranger], {
+        events: eventsFixture({ [EVENT]: GOOD_EVENT })
+      });
+      expect(report.failures).toEqual([
+        `n=9 choice: a choice of ${P1} changes rows of ${P2}`,
+        `n=9 choice: event ${EVENT} makes a choice again (first at n=8)`
+      ]);
+    });
+
+    it("passes a bare wallet's choice after the empty fold the writer journals for it, and fails it without", async () => {
+      // The wallet has no state of its own to move: the fold changes no row
+      // and only says where the wallet's choices now go.
+      const emptyFold = body(
+        4,
+        'fold',
+        { wallet: W2, identity_key: P1, at_text: T },
+        [],
+        { rekeys: [{ from: W2, to: P1 }] }
+      );
+      const entry = choice(5, `${'e'.repeat(31)}5`);
+      const byWallet = { ...entry, inputs: { ...entry.inputs, owner: W2 } };
+      expect((await verify([emptyFold, byWallet])).failures).toEqual([]);
+      expect((await verify([byWallet])).failures).toEqual([
+        `n=5 choice: a choice of ${W2} changes rows of ${P1}`
+      ]);
+    });
+
+    it("passes a wallet's choice that changes the identity its state went to, by the opening file or a fold", async () => {
+      // A choice owned by W2, written to P1's rows.
+      const byWallet = (n: number, wallet: string) => {
+        const entry = choice(n, `${'e'.repeat(31)}${n}`);
+        return {
+          ...entry,
+          inputs: { ...entry.inputs, owner: wallet }
+        };
+      };
+      const stranger = `n=5 choice: a choice of ${W2} changes rows of ${P1}`;
+      expect((await verify([byWallet(5, W2)])).failures).toEqual([stranger]);
+      // W2 folded into P1 first.
+      expect((await verify([fold(4, 1, 2), byWallet(5, W2)])).failures).toEqual(
+        []
+      );
+      // The opening file put W2's key under P1, through a key of two wallets.
+      const opening = {
+        balances: [],
+        keys: [
+          {
+            consolidationKey: `${W1}-${W2}`,
+            identityKey: P1,
+            identities: [P1]
+          } as never
+        ],
+        topUps: [],
+        redeemed: []
+      };
+      expect((await verify([byWallet(5, W2)], { opening })).failures).toEqual(
+        []
+      );
+      // But not another identity's rows.
+      const elsewhere = byWallet(5, W2);
+      elsewhere.changes[0] = {
+        ...elsewhere.changes[0],
+        key: { identity_key: P2 },
+        after: { identity_key: P2, automatic: 1, subscribe_all_editions: 0 }
+      };
+      expect((await verify([fold(4, 1, 2), elsewhere])).failures).toEqual([
+        `n=5 choice: a choice of ${W2} changes rows of ${P2}`
+      ]);
+    });
+
+    it('fails when the record has another type, key or owner, or no body', async () => {
+      const report = await verify([choice(8)], {
+        events: eventsFixture({
+          [EVENT]: { type: 'subs.card', key: '', body: null, owner: P2 }
+        })
+      });
+      expect(report.failures).toEqual([
+        `n=8 choice: event ${EVENT} differs in type, owner`,
+        `n=8 choice: event ${EVENT} has no body, so it is no choice`
+      ]);
+    });
+  });
+
+  describe('order and parts', () => {
+    it('fails when a write misses a part, and checks no money in it', async () => {
+      const [first] = build(2, 2);
+      const report = await verify([topUp(1, 0.1, null), first]);
+      expect(report.failures).toEqual([
+        'n=2 build: parts 0 of 2 are in the journal'
+      ]);
+    });
+
+    it('takes parts in any order, but not parts that disagree', async () => {
+      const [a, b] = build(5, 2);
+      expect((await verify([b, a])).failures).toEqual([]);
+      const report = await verify([a, { ...b, at_ms: b.at_ms + 1 }]);
+      expect(report.failures).toEqual([
+        'n=5 build: its parts differ in kind, mode, time or inputs'
+      ]);
+    });
+
+    it('fails when an n between two writes is in no entry of the log, and not when another opening has it', async () => {
+      const report = await verify([
+        topUp(1, 0.1, null),
+        { ...topUp(2, 0.5, null, P2), opening: OTHER_OPENING },
+        topUp(5, 0.2, 0.1)
+      ]);
+      expect(report.failures).toEqual([
+        '2 writes, n=3 to n=4, are missing between n=1 and n=5: a write was never posted'
+      ]);
+      const one = await verify([topUp(1, 0.1, null), topUp(3, 0.2, 0.1)]);
+      expect(one.failures).toEqual([
+        'n=2 is missing between n=1 and n=3: a write was never posted'
+      ]);
+    });
+
+    it('fails when n does not increase in log order', async () => {
+      const report = await verify([topUp(3, 0.2, null), topUp(1, 0.1, 0.2)]);
+      expect(report.failures).toEqual([
+        'n=1 top-up comes after n=3 in the log'
+      ]);
+    });
+
+    it('fails when a kind changes a table it may not', async () => {
+      const entry = body(9, 'phase', { contract: MEMES_CONTRACT }, [
+        {
+          table: 'top_up',
+          key: { hash: hash(1) },
+          before: null,
+          after: { hash: hash(1) }
+        }
+      ]);
+      expect((await verify([entry])).failures).toEqual([
+        'n=9 phase: a phase entry changes top_up'
+      ]);
+    });
+  });
+
+  describe('the balances, entry to entry', () => {
+    it('fails a before that is not what the previous entry left', async () => {
+      // P1 had 1; the second entry claims 5, so it credits 4.5 more than 0.5.
+      const forged = topUp(2, 0.5, 5);
+      const report = await verify([topUp(1, 1, null), forged]);
+      expect(report.failures).toEqual([
+        `n=2 top-up: the balance of ${P1} is 5 before this entry; the journal left 1`
+      ]);
+    });
+
+    it('starts from the opening file, where an identity it lacks has no balance', async () => {
+      const opening = {
+        balances: [{ identityKey: P1, balance: 2 } as never],
+        keys: [],
+        topUps: [],
+        redeemed: []
+      };
+      expect(
+        (await verify([topUp(1, 0.5, 2), topUp(2, 0.5, null, P2)], { opening }))
+          .failures
+      ).toEqual([]);
+      const report = await verify([topUp(1, 0.5, 3), topUp(2, 0.5, 1, P2)], {
+        opening
+      });
+      expect(report.failures).toEqual([
+        `n=1 top-up: the balance of ${P1} is 3 before this entry; the opening file left 2`,
+        `n=2 top-up: the balance of ${P2} is 1 before this entry; the opening file left no balance`
+      ]);
+      expect(report.checked.opening).toBe(true);
+    });
+
+    it('fails a top-up that leaves out a change the arithmetic needs', async () => {
+      // P1 opened at 0.0000049; 0.000004 more rounds to 0.00001.
+      const missing = topUp(2, 0.000004, 0.0000049);
+      missing.changes.splice(0, 1);
+      const report = await verify([topUp(1, 0.0000049, null), missing]);
+      expect(report.failures).toEqual([
+        `n=2 top-up: the top-up leaves the balance of ${P1} as it was`
+      ]);
+    });
+  });
+
+  it('rejects when a port fails, as nothing could be checked', async () => {
+    const ethereum: EthereumFacts = {
+      topUp: async () => {
+        throw new Error('provider unavailable');
+      },
+      mintedTo: async () => 0
+    };
+    await expect(verify([topUp(1, 0.1, null)], { ethereum })).rejects.toThrow(
+      'provider unavailable'
+    );
+  });
+
+  it('passes any run of top-ups and charges made with the legacy arithmetic, and fails it when one balance is off', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.array(
+          fc.oneof(
+            fc.record({
+              kind: fc.constant('top-up' as const),
+              amount: fc.integer({ min: 1, max: 2_000_000 }).map((x) => x / 1e6)
+            }),
+            fc.record({
+              kind: fc.constant('charge' as const),
+              tokens: fc.integer({ min: 1, max: 3 })
+            })
+          ),
+          { minLength: 1, maxLength: 30 }
+        ),
+        fc.nat(),
+        async (steps, pick) => {
+          let current: number | null = null;
+          const bodies: JournalBody[] = [];
+          steps.forEach((step, i) => {
+            const n = i + 1;
+            if (step.kind === 'top-up') {
+              bodies.push(topUp(n, step.amount, current));
+              current =
+                current === null
+                  ? step.amount
+                  : roundSubscriptionBalance(current + step.amount);
+            } else {
+              const charges = Array.from({ length: step.tokens }, () => ({
+                transaction: hash(5000 + n),
+                identity_key: P1,
+                token_count: step.tokens
+              }));
+              const entry = redemption(n, charges, { [P1]: current });
+              bodies.push(entry);
+              current = Number((entry.changes[0].after as Row).balance);
+            }
+          });
+          expect((await verify(bodies)).failures).toEqual([]);
+          const target = bodies[pick % bodies.length];
+          const change = target.changes[0];
+          (change.after as Row).balance =
+            Number((change.after as Row).balance) + 0.00001;
+          // That entry fails, and the next one's before no longer chains.
+          const { failures } = await verify(bodies);
+          expect(failures[0]).toMatch(new RegExp(`^n=${target.n} `));
+          expect(failures.length).toBe(
+            target === bodies[bodies.length - 1] ? 1 : 2
+          );
+        }
+      ),
+      { numRuns: 200 }
+    );
+  });
+});
+
+describe('ReplayedSubscriptionEvents', () => {
+  const verified = (ok: boolean, id = EVENT): RecordVerifyResult =>
+    ok
+      ? ({
+          ok: true,
+          record: {
+            event: { id },
+            owner: P1,
+            parsed: {
+              kind: RecordKind.RECORD,
+              type: 'subs.mode',
+              key: '',
+              body: { automatic: true }
+            }
+          }
+        } as never)
+      : { ok: false, reason: 'sig', detail: 'bad signature' };
+
+  it('finds the records that verified, and only those', async () => {
+    const events = new ReplayedSubscriptionEvents();
+    events.add(verified(true));
+    events.add(verified(false, 'f'.repeat(32)));
+    expect(await events.find(EVENT)).toEqual(GOOD_EVENT);
+    expect(await events.find('f'.repeat(32))).toBeNull();
+  });
+});
