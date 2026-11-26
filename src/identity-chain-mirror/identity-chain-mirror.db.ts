@@ -21,6 +21,12 @@ import {
 } from '@/constants';
 import { HELP_BOT_CREDIT_CATEGORY } from '@/help-bot/help-bot.config';
 import {
+  addressIdentityId,
+  addressIdentityIdsFrom,
+  pickAddressIdentityId
+} from '@/identities/address-identity-id';
+import { identitiesDb } from '@/identities/identities.db';
+import {
   ConnectionWrapper,
   dbSupplier,
   LazyDbAccessCompatibleService
@@ -107,6 +113,9 @@ export interface MirrorRetry {
   readonly targets: readonly string[];
   readonly wallets: readonly string[];
 }
+
+/** Address-only id candidates read at a time (address-identity-id.ts). */
+const ADDRESS_ID_CANDIDATES = 4;
 
 export const NO_RETRY: MirrorRetry = {
   principals: [],
@@ -746,6 +755,59 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
   }
 
   /**
+   * A profile id for each address-only row without one (a wallet that
+   * left an identity): derived from its address, the first candidate no
+   * identities row or profile holds and no other row of the same write
+   * takes, or, before switch-on, a random one.
+   */
+  private async withAddressIds(
+    rows: readonly IdentityRowState[],
+    others: readonly IdentityRowState[],
+    derived: boolean,
+    conn: Conn
+  ): Promise<IdentityRowState[]> {
+    const chosen = new Set<string>(
+      others
+        .map((it) => it.profile_id?.toLowerCase())
+        .filter((it): it is string => !!it)
+    );
+    const out: IdentityRowState[] = [];
+    for (const row of rows) {
+      if (row.profile_id) {
+        out.push(row);
+        chosen.add(row.profile_id.toLowerCase());
+        continue;
+      }
+      let id: string;
+      if (!derived) {
+        id = randomUUID();
+      } else {
+        // A few candidates at a time; more only when all of them are held.
+        const held = new Set<string>();
+        for (let from = 0; ; from += ADDRESS_ID_CANDIDATES) {
+          const candidates = Array.from(
+            { length: ADDRESS_ID_CANDIDATES },
+            (_, i) => addressIdentityId(row.consolidation_key, from + i)
+          );
+          (await identitiesDb.takenProfileIds(candidates, conn)).forEach((it) =>
+            held.add(it)
+          );
+          if (candidates.some((it) => !held.has(it) && !chosen.has(it))) {
+            break;
+          }
+        }
+        id = pickAddressIdentityId(
+          row.consolidation_key,
+          (it) => held.has(it) || chosen.has(it)
+        );
+      }
+      chosen.add(id);
+      out.push({ ...row, profile_id: id });
+    }
+    return out;
+  }
+
+  /**
    * The handle-less identities rows that hold any of these wallets, or sit
    * under this consolidation key: rows with a profile id but no handle and
    * no profiles row, whose id no principal holds. 6529.io made them before
@@ -909,13 +971,27 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     };
   }
 
+  /**
+   * Writes a plan. `eventTime` is the block time (ms) of the chain event
+   * the write is for: a wallet that left the identity gets its own row, and
+   * from switch-on that row's id is the address's derived one
+   * (address-identity-id.ts, the first no row or profile holds), before it
+   * a random one, so a mirror catching up and a rebuild give the same ids.
+   */
   async applyIdentityPlan(
     plan: IdentityPlan,
     block: number,
     now: number,
-    conn: Conn
+    conn: Conn,
+    eventTime: number
   ) {
     const opts = { wrappedConnection: conn };
+    const soloRows = await this.withAddressIds(
+      plan.soloRows,
+      [plan.identity, ...plan.rekeyedRows],
+      addressIdentityIdsFrom(eventTime),
+      conn
+    );
     if (plan.releaseHandle) {
       const params = {
         externalId: plan.releaseHandle.external_id,
@@ -947,7 +1023,7 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
         opts
       );
     }
-    for (const row of [plan.identity, ...plan.rekeyedRows, ...plan.soloRows]) {
+    for (const row of [plan.identity, ...plan.rekeyedRows, ...soloRows]) {
       await this.upsertIdentityRow(row, conn);
     }
     for (const address of plan.addressKeys) {

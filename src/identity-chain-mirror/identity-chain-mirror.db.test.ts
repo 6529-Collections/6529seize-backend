@@ -32,6 +32,8 @@ const AB = consolidationKeyOf([A, B]);
 const P = '0x' + 'ab'.repeat(32);
 const Q = '0x' + 'cd'.repeat(32);
 
+/** The block time of the event a plan is written for (no leavers here). */
+const AFTER_SWITCH_ON = Date.parse('2026-11-28T00:01:00Z');
 const db = new IdentityChainMirrorDb(() => sqlExecutor);
 const inTx = <T>(fn: (conn: any) => Promise<T>) =>
   sqlExecutor.executeNativeQueriesInTransaction(fn);
@@ -239,7 +241,13 @@ describeWithSeed(
           },
           state
         );
-        await db.applyIdentityPlan(plan, 1_000_000_050, 77, conn);
+        await db.applyIdentityPlan(
+          plan,
+          1_000_000_050,
+          77,
+          conn,
+          AFTER_SWITCH_ON
+        );
       });
       const key = consolidationKeyOf([A, B, C]);
       const rows = await sqlExecutor.execute<any>(
@@ -476,7 +484,8 @@ describeWithSeed(
           },
           1_000_000_050,
           77,
-          conn
+          conn,
+          AFTER_SWITCH_ON
         );
       });
       const row = await sqlExecutor.oneOrNull<any>(

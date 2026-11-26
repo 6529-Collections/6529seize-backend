@@ -316,6 +316,11 @@ function retrySize(retry: MirrorRetry): number {
 export interface MirrorAt {
   readonly height: number;
   readonly source: 'FEED' | 'FULL_SYNC';
+  /**
+   * The block time (ms, the feed block's `time`) of the last block the
+   * write is for, when the read gives it; else the mirror's clock is used.
+   */
+  readonly time?: number | null;
 }
 
 export interface FeedEffects {
@@ -1438,7 +1443,13 @@ export class IdentityChainMirror {
         this.applyEffects(
           feedEffects(records),
           report,
-          { height: read.nextHeight - 1, source: 'FEED' },
+          {
+            height: read.nextHeight - 1,
+            source: 'FEED',
+            time: read.blocks.length
+              ? read.blocks[read.blocks.length - 1].time
+              : null
+          },
           deadline
         )
       );
@@ -1814,7 +1825,8 @@ export class IdentityChainMirror {
           plan,
           CHAIN_BLOCK_BASE + Number(identity.createdHeight ?? 0),
           this.now(),
-          conn
+          conn,
+          at.time ?? this.now()
         );
         await this.membershipChanged(
           membershipChangeOf(plan, state, at.height),

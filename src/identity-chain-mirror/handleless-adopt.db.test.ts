@@ -7,6 +7,8 @@ import {
   PROFILE_GROUPS_TABLE,
   RATINGS_TABLE
 } from '@/constants';
+import { addressIdentityId } from '@/identities/address-identity-id';
+import { identitiesDb } from '@/identities/identities.db';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
@@ -38,6 +40,20 @@ const ROW_J = '00000000-0000-4000-8000-000000000081';
 const RATER = '00000000-0000-4000-8000-00000000a7e1';
 const GROUP = 'group-listing-d';
 const P = '0x' + 'ab'.repeat(32);
+/** An identity of two wallets; L leaves it. */
+const K = W(0x4b);
+const L = W(0x4c);
+const KL = consolidationKeyOf([K, L]);
+const ROW_KL = '00000000-0000-4000-8000-00000000004b';
+/** A second pair, whose leaver's first derived id a profile holds. */
+const M = W(0x4d);
+const N = W(0x4e);
+const MN = consolidationKeyOf([M, N]);
+const ROW_MN = '00000000-0000-4000-8000-00000000004d';
+
+const SWITCH_ON = '2026-11-28T00:00:00Z';
+const AFTER_SWITCH_ON = Date.parse('2026-11-28T00:01:00Z');
+const BEFORE_SWITCH_ON = Date.parse('2026-11-27T23:59:00Z');
 
 const db = new IdentityChainMirrorDb(() => sqlExecutor);
 const inTx = <T>(fn: (conn: any) => Promise<T>) =>
@@ -80,6 +96,24 @@ describeWithSeed(
       anIdentity(
         {},
         {
+          consolidation_key: KL,
+          profile_id: ROW_KL,
+          primary_address: K,
+          handle: 'kay'
+        }
+      ),
+      anIdentity(
+        {},
+        {
+          consolidation_key: MN,
+          profile_id: ROW_MN,
+          primary_address: M,
+          handle: 'em'
+        }
+      ),
+      anIdentity(
+        {},
+        {
           consolidation_key: W(0x99),
           profile_id: RATER,
           primary_address: W(0x99),
@@ -94,7 +128,19 @@ describeWithSeed(
         handle: 'has-a-profile',
         primary_wallet: J
       }),
-      aProfile({ external_id: RATER, handle: 'rater', primary_wallet: W(0x99) })
+      aProfile({
+        external_id: RATER,
+        handle: 'rater',
+        primary_wallet: W(0x99)
+      }),
+      aProfile({ external_id: ROW_KL, handle: 'kay', primary_wallet: K }),
+      aProfile({ external_id: ROW_MN, handle: 'em', primary_wallet: M }),
+      // A profile already holds N's first derived id.
+      aProfile({
+        external_id: addressIdentityId(N),
+        handle: 'holds-n0',
+        primary_wallet: W(0x5e)
+      })
     ]),
     {
       table: ADDRESS_CONSOLIDATION_KEY,
@@ -104,7 +150,11 @@ describeWithSeed(
         { address: F, consolidation_key: EF },
         { address: G, consolidation_key: G },
         { address: H, consolidation_key: H },
-        { address: J, consolidation_key: J }
+        { address: J, consolidation_key: J },
+        { address: K, consolidation_key: KL },
+        { address: L, consolidation_key: KL },
+        { address: M, consolidation_key: MN },
+        { address: N, consolidation_key: MN }
       ]
     },
     {
@@ -145,6 +195,104 @@ describeWithSeed(
     }
   ],
   () => {
+    const saved = process.env.IDENTITY_SWITCH_ON_AT;
+    beforeEach(() => {
+      process.env.IDENTITY_SWITCH_ON_AT = SWITCH_ON;
+    });
+    afterEach(() => {
+      if (saved === undefined) delete process.env.IDENTITY_SWITCH_ON_AT;
+      else process.env.IDENTITY_SWITCH_ON_AT = saved;
+    });
+
+    /** The identity keeps its first wallet; the second leaves it. */
+    async function leave(
+      keep: string,
+      key: string,
+      profileId: string,
+      eventTime: number
+    ) {
+      return await inTx(async (conn) => {
+        const state = await db.readIdentityState(
+          [keep],
+          profileId,
+          null,
+          keep,
+          conn
+        );
+        const plan = planIdentity(
+          {
+            principalId: '0x' + keep.slice(2, 66).padEnd(64, '0'),
+            profileId,
+            handle: null,
+            wallets: [keep],
+            primary: keep,
+            doc: { ...EMPTY_PROFILE_DOC_FIELDS },
+            rep: 0,
+            cic: 0,
+            levelRaw: 0
+          },
+          state
+        );
+        expect(state.rows.map((it) => it.consolidation_key)).toEqual([key]);
+        await db.applyIdentityPlan(plan, 1_000_000_200, 99, conn, eventTime);
+        return plan;
+      });
+    }
+
+    async function idOf(key: string): Promise<string | null> {
+      const [row] = await sqlExecutor.execute<{ profile_id: string | null }>(
+        `select profile_id from ${IDENTITIES_TABLE} where consolidation_key = :key`,
+        { key }
+      );
+      return row?.profile_id ?? null;
+    }
+
+    async function oneIdPerRow() {
+      expect(
+        await sqlExecutor.execute(
+          `select profile_id from ${IDENTITIES_TABLE}
+           where profile_id is not null
+           group by profile_id having count(*) > 1`
+        )
+      ).toEqual([]);
+    }
+
+    it('finds the ids an identities row or a profile holds', async () => {
+      const free = '00000000-0000-4000-8000-0000000f4ee0';
+      expect(
+        Array.from(
+          await identitiesDb.takenProfileIds([
+            ROW_D,
+            PLACE_G.toUpperCase(),
+            free
+          ])
+        ).sort()
+      ).toEqual([ROW_D, PLACE_G].sort());
+      expect(await identitiesDb.takenProfileIds([])).toEqual(new Set());
+    });
+
+    it("gives a wallet leaving an identity after switch-on its address's derived id", async () => {
+      const plan = await leave(K, KL, ROW_KL, AFTER_SWITCH_ON);
+      expect(plan.soloRows.map((it) => it.consolidation_key)).toEqual([L]);
+      expect(await idOf(L)).toBe(addressIdentityId(L));
+      expect(await idOf(K)).toBe(ROW_KL);
+      await oneIdPerRow();
+    });
+
+    it('takes the next derived id when a profile holds the first', async () => {
+      await leave(M, MN, ROW_MN, AFTER_SWITCH_ON);
+      expect(await idOf(N)).toBe(addressIdentityId(N, 1));
+      await oneIdPerRow();
+    });
+
+    it('gives a random id for an event before switch-on, never none', async () => {
+      await leave(K, KL, ROW_KL, BEFORE_SWITCH_ON);
+      const id = await idOf(L);
+      expect(id).toMatch(/^[0-9a-f-]{36}$/);
+      expect(id).not.toBe(addressIdentityId(L));
+      await oneIdPerRow();
+    });
+
     it('reads the handle-less rows: no handle, no profiles row, no principal', async () => {
       expect(await db.handlelessRowsOf([D], D)).toEqual([
         { consolidation_key: D, profile_id: ROW_D }
@@ -185,7 +333,13 @@ describeWithSeed(
           },
           state
         );
-        await db.applyIdentityPlan(planned, 1_000_000_100, 99, conn);
+        await db.applyIdentityPlan(
+          planned,
+          1_000_000_100,
+          99,
+          conn,
+          AFTER_SWITCH_ON
+        );
         return planned;
       });
       expect(plan.orphanedProfiles).toEqual([]);
