@@ -27,7 +27,6 @@ Three of those records were for routes already retired in
 The source revision identifies the original Phase 0 capture. The counts reflect
 the amended inventory.
 
-
 The census also excludes four other retired GET routes.
 
 - `/oracle/prenodes` (backend PR #2487)
@@ -35,7 +34,14 @@ The census also excludes four other retired GET routes.
 - `/api/groups_im_eligible_for` (backend PR #2626)
 - `/api/wave/:id/undiscovered-drop` (the undocumented Quick Vote alias)
 
-The runtime census checks 280 route declarations after excluding eight
+The NextGen retirement removes four legacy GET routes.
+
+- `/api/nextgen/allowlist_phases`
+- `/api/nextgen/collections/:id/tokens/:token`
+- `/api/nextgen/proofs`
+- `/api/nextgen/tokens/:id/transactions`
+
+The runtime census checks 276 route declarations after excluding twelve
 retirement records from the 288 retained route shapes.
 
 ## Accepted Alchemy search retirement

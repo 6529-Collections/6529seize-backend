@@ -1734,6 +1734,13 @@ The approved Phase 0 compatibility exception retires
 `GET /api/groups_im_eligible_for`. Wave and competition access evaluates group
 eligibility internally. Roll out this route removal by deploying `api`.
 
+NextGen minting uses `GET /api/nextgen/allowlist_phases/:collection_id` for
+collection phases and `GET /api/nextgen/proofs/:merkle_root/:address` for
+wallet proofs. NextGen token pages use `GET /api/nextgen/tokens/:id` for
+token details and `GET /api/nft-activity` for activity. The
+[route census](../src/competitions/contract-fixtures/phase-0/README.md) lists
+the four retired NextGen GET routes. Roll out their removal by deploying `api`.
+
 `/e2ee/...` is the end-to-end encrypted messaging delivery service (D109),
 behind `E2EE_DMS_ENABLED` (off in production). It is a ciphertext-only
 orderer for MLS groups; see [End-to-end encrypted messaging](#end-to-end-encrypted-messaging-d109)
