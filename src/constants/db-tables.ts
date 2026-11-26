@@ -212,6 +212,16 @@ export const CHAIN_DECISION_LEADERBOARDS_TABLE = 'chain_decision_leaderboards';
 export const CHAIN_LEADERBOARD_ROWS_TABLE = 'chain_leaderboard_rows';
 export const CHAIN_EVENTS_TABLE = 'chain_events';
 export const CHAIN_CLAIM_BUILDS_TABLE = 'chain_claim_builds';
+// 6529.io's copy of the chain's waves and decisions in its own tables
+// (src/waves-chain-mirror).
+export const WAVES_CHAIN_MIRROR_STATE_TABLE = 'waves_chain_mirror_state';
+export const CHAIN_DOCS_TABLE = 'chain_docs';
+export const CHAIN_ENTRY_HOLDS_TABLE = 'chain_entry_holds';
+export const WAVES_CHAIN_MIRROR_EVENTS_TABLE = 'waves_chain_mirror_events';
+export const WAVES_CHAIN_MIRROR_GROUPS_TABLE = 'waves_chain_mirror_groups';
+export const WAVES_CHAIN_MIRROR_WAVES_TABLE = 'waves_chain_mirror_waves';
+export const WAVES_CHAIN_MIRROR_DECISIONS_TABLE =
+  'waves_chain_mirror_decisions';
 export const WAVE_OUTCOMES_TABLE = 'wave_outcomes';
 export const WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE =
   'wave_outcome_distribution_items';
