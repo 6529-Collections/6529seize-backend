@@ -1,25 +1,38 @@
 import {
   fetchMintingClaimByClaimId,
-  updateMintingClaim
+  type MintingClaimRow
 } from '@/api/minting-claims/api.minting-claims.db';
 import { BadRequestException } from '@/exceptions';
-import { uploadMintingClaimToArweave } from '@/minting-claims/claims-media-arweave-upload';
+import {
+  uploadMintingClaimToArweave,
+  arweaveTxIdFromUrl
+} from '@/minting-claims/claims-media-arweave-upload';
+import { arweaveFileUploader } from '@/arweave';
+import { ArweaveUploadDeadlineError } from '@/arweave/upload';
 import * as priorityAlertsContext from '@/priority-alerts.context';
-import { processMintingClaimUpload } from './index';
-import { DbPoolName } from '@/db-query.options';
+import {
+  processMintingClaimUpload,
+  handler,
+  ClaimUploadRetryError
+} from './index';
 import {
   claimsMediaUploadLeaseDb,
-  ClaimMediaUploadLeaseLostError,
-  type ClaimMediaUploadLease
+  ClaimMediaUploadLeaseLostError
 } from '@/minting-claims/claims-media-upload-lease.db';
+import { restoreClaimUploadState } from '@/minting-claims/claims-media-upload-recovery';
+import { sqs } from '@/sqs';
+import { doInDbContext } from '@/secrets';
+import type { Context, SQSEvent } from 'aws-lambda';
 
 jest.mock('@/api/minting-claims/api.minting-claims.db', () => ({
-  fetchMintingClaimByClaimId: jest.fn(),
-  updateMintingClaim: jest.fn()
+  fetchMintingClaimByClaimId: jest.fn()
 }));
 jest.mock('@/minting-claims/claims-media-arweave-upload', () => ({
   arweaveTxIdFromUrl: jest.fn((url: string) => url.split('/').pop()),
   uploadMintingClaimToArweave: jest.fn()
+}));
+jest.mock('@/arweave', () => ({
+  arweaveFileUploader: { uploadFileWithTransactionId: jest.fn() }
 }));
 jest.mock('@/priority-alerts.context', () => ({
   sendPriorityAlert: jest.fn()
@@ -27,291 +40,340 @@ jest.mock('@/priority-alerts.context', () => ({
 jest.mock('@/sentry.context', () => ({
   wrapLambdaHandler: jest.fn((handler) => handler)
 }));
+jest.mock('@/secrets', () => ({
+  doInDbContext: jest.fn(async (action: () => Promise<void>) => action())
+}));
+jest.mock('@/sqs', () => ({ sqs: { changeVisibility: jest.fn() } }));
 jest.mock('@/minting-claims/claims-media-upload-lease.db', () => ({
   ...jest.requireActual('@/minting-claims/claims-media-upload-lease.db'),
   claimsMediaUploadLeaseDb: {
     acquire: jest.fn(),
     assertHeld: jest.fn(),
     release: jest.fn(),
-    update: jest.fn((lease: ClaimMediaUploadLease, changes: unknown) =>
-      jest
-        .requireMock('@/api/minting-claims/api.minting-claims.db')
-        .updateMintingClaim(lease.contract, lease.claimId, changes)
-    )
+    update: jest.fn(),
+    loadState: jest.fn(),
+    retryAfterSeconds: jest.fn()
   }
 }));
+const contract = '0x0000000000000000000000000000000000000001';
+const lease = { contract, claimId: 1, token: 'test-owner' };
+const result = {
+  imageLocationUrl: 'https://arweave.net/image-tx',
+  animationLocationUrl: null,
+  metadataLocationUrl: 'https://arweave.net/metadata-tx'
+};
+const claim = { claim_id: 1, media_uploading: true } as MintingClaimRow;
 
-const CONTRACT = '0x0000000000000000000000000000000000000001';
-
-describe('processMintingClaimUpload', () => {
-  const fetchClaimMock = jest.mocked(fetchMintingClaimByClaimId);
-  const updateClaimMock = jest.mocked(updateMintingClaim);
-  const uploadMock = jest.mocked(uploadMintingClaimToArweave);
-  const alertMock = jest.mocked(priorityAlertsContext.sendPriorityAlert);
-  const leaseDb = jest.mocked(claimsMediaUploadLeaseDb);
-  const lease = { contract: CONTRACT, claimId: 1, token: 'test-owner' };
-
+describe('claims worker retry and ownership', () => {
+  const fetchClaim = jest.mocked(fetchMintingClaimByClaimId);
+  const upload = jest.mocked(uploadMintingClaimToArweave);
+  const db = jest.mocked(claimsMediaUploadLeaseDb);
+  const alert = jest.mocked(priorityAlertsContext.sendPriorityAlert);
   beforeEach(() => {
-    jest.clearAllMocks();
-    fetchClaimMock.mockResolvedValue({
-      claim_id: 1,
-      media_uploading: true
-    } as any);
-    updateClaimMock.mockResolvedValue(undefined);
-    alertMock.mockResolvedValue(undefined);
-    leaseDb.acquire.mockResolvedValue(lease);
-    leaseDb.assertHeld.mockResolvedValue(undefined);
-    leaseDb.release.mockResolvedValue(undefined);
+    jest.resetAllMocks();
+    jest
+      .mocked(arweaveTxIdFromUrl)
+      .mockImplementation((url) => url.split('/').pop()!);
+    jest.mocked(doInDbContext).mockImplementation(async (action) => action());
+    fetchClaim.mockResolvedValue(claim);
+    db.acquire.mockResolvedValue(lease);
+    db.assertHeld.mockResolvedValue(undefined);
+    db.loadState.mockResolvedValue(null);
+    db.update.mockResolvedValue(undefined);
+    db.release.mockResolvedValue(undefined);
+    db.retryAfterSeconds.mockResolvedValue(301);
+    upload.mockResolvedValue(result);
+    alert.mockResolvedValue(undefined);
   });
 
-  it('keeps the upload lock set for retryable failures before the final attempt', async () => {
-    uploadMock.mockRejectedValue(new Error('temporary gateway failure'));
+  it('does no work when completed intent is redelivered', async () => {
+    fetchClaim.mockResolvedValue({ ...claim, media_uploading: false });
+    await processMintingClaimUpload(contract, 1, 10);
+    expect(upload).not.toHaveBeenCalled();
+    expect(db.acquire).not.toHaveBeenCalled();
+  });
 
-    await expect(processMintingClaimUpload(CONTRACT, 1, 2)).rejects.toThrow(
-      'temporary gateway failure'
+  it('does not publish if the primary reread finds inactive intent', async () => {
+    fetchClaim
+      .mockResolvedValueOnce(claim)
+      .mockResolvedValueOnce({ ...claim, media_uploading: false });
+    await processMintingClaimUpload(contract, 1, 1);
+    expect(upload).not.toHaveBeenCalled();
+    expect(db.release).toHaveBeenCalledWith(lease);
+  });
+
+  it('retains upload intent and requests short backoff after an early recoverable failure', async () => {
+    upload.mockRejectedValue(new Error('fetch failed'));
+    const failure = await processMintingClaimUpload(contract, 1, 1).catch(
+      (error) => error
     );
-
-    expect(updateClaimMock).not.toHaveBeenCalledWith(CONTRACT, 1, {
-      media_uploading: false
-    });
-    expect(alertMock).not.toHaveBeenCalled();
-  });
-
-  it('does not publish again when a completed claim is redelivered', async () => {
-    fetchClaimMock.mockResolvedValue({
-      claim_id: 1,
-      media_uploading: false
-    } as NonNullable<Awaited<ReturnType<typeof fetchMintingClaimByClaimId>>>);
-
-    await expect(
-      processMintingClaimUpload(CONTRACT, 1, 2)
-    ).resolves.toBeUndefined();
-
-    expect(uploadMock).not.toHaveBeenCalled();
-    expect(updateClaimMock).not.toHaveBeenCalled();
-    expect(alertMock).not.toHaveBeenCalled();
-  });
-
-  it('does not publish if the initial database update fails', async () => {
-    const failure = new Error('database unavailable before upload');
-    updateClaimMock.mockRejectedValueOnce(failure);
-
-    await expect(processMintingClaimUpload(CONTRACT, 1, 1)).rejects.toBe(
-      failure
+    expect(failure).toBeInstanceOf(ClaimUploadRetryError);
+    expect(failure.delaySeconds).toBeLessThanOrEqual(13);
+    expect(db.update).not.toHaveBeenCalledWith(
+      lease,
+      expect.objectContaining({ media_uploading: false })
     );
-    expect(uploadMock).not.toHaveBeenCalled();
-  });
-
-  it.each(['existing-metadata-tx', ''])(
-    'preserves active upload intent even with legacy metadata %j',
-    async (metadataLocation) => {
-      fetchClaimMock.mockResolvedValue({
-        claim_id: 1,
-        media_uploading: true,
-        metadata_location: metadataLocation
-      } as any);
-      uploadMock.mockResolvedValue({
-        imageLocationUrl: 'https://arweave.net/image-tx',
-        animationLocationUrl: null,
-        metadataLocationUrl: 'https://arweave.net/new-metadata-tx'
-      });
-      await expect(
-        processMintingClaimUpload(CONTRACT, 1, 1)
-      ).resolves.toBeUndefined();
-      expect(uploadMock).toHaveBeenCalledTimes(1);
-      expect(updateClaimMock).toHaveBeenCalledWith(
-        CONTRACT,
-        1,
-        expect.objectContaining({
-          metadata_location: 'new-metadata-tx',
-          media_uploading: false
+    expect(db.update).toHaveBeenLastCalledWith(
+      lease,
+      expect.objectContaining({
+        media_upload_state: expect.objectContaining({
+          failures: 1,
+          attemptActive: false
         })
-      );
-    }
-  );
+      })
+    );
+    expect(alert).not.toHaveBeenCalled();
+    expect(db.release).toHaveBeenCalledWith(lease);
+  });
 
-  it('releases ownership without publishing if the primary reread finds inactive intent', async () => {
-    fetchClaimMock
-      .mockResolvedValueOnce({ claim_id: 1, media_uploading: true } as any)
-      .mockResolvedValueOnce({
-        claim_id: 1,
+  it('does not treat the tenth SQS receive as the tenth upload failure', async () => {
+    upload.mockRejectedValue(new Error('temporary failure'));
+    await expect(
+      processMintingClaimUpload(contract, 1, 10)
+    ).rejects.toBeInstanceOf(ClaimUploadRetryError);
+    expect(alert).not.toHaveBeenCalled();
+    expect(db.update).not.toHaveBeenCalledWith(
+      lease,
+      expect.objectContaining({ media_uploading: false })
+    );
+  });
+
+  it('records a permanent failure and clears publishing intent before alerting', async () => {
+    upload.mockRejectedValue(new BadRequestException('invalid metadata'));
+    await processMintingClaimUpload(contract, 1, 1);
+    expect(db.update).toHaveBeenLastCalledWith(
+      lease,
+      expect.objectContaining({
         media_uploading: false,
-        metadata_location: 'completed-tx'
-      } as any);
-    await expect(
-      processMintingClaimUpload(CONTRACT, 1, 2)
-    ).resolves.toBeUndefined();
-    expect(uploadMock).not.toHaveBeenCalled();
-    expect(updateClaimMock).not.toHaveBeenCalled();
-    expect(leaseDb.release).toHaveBeenCalledWith(lease);
-  });
-
-  it('does not page on the first retryable failure', async () => {
-    uploadMock.mockRejectedValue(new Error('temporary gateway failure'));
-
-    await expect(processMintingClaimUpload(CONTRACT, 1, 1)).rejects.toThrow(
-      'temporary gateway failure'
+        media_upload_state: expect.objectContaining({ status: 'failed' })
+      })
     );
-
-    expect(updateClaimMock).not.toHaveBeenCalledWith(CONTRACT, 1, {
-      media_uploading: false
-    });
-    expect(alertMock).not.toHaveBeenCalled();
+    expect(alert).toHaveBeenCalledTimes(1);
   });
 
-  it('clears the upload lock when the final retry fails', async () => {
-    uploadMock.mockRejectedValue(new Error('persistent gateway failure'));
-
-    await expect(processMintingClaimUpload(CONTRACT, 1, 10)).rejects.toThrow(
-      'persistent gateway failure'
+  it('clears intent after the durable failure budget is exhausted', async () => {
+    const { claimUploadInputHash } = jest.requireActual(
+      '@/minting-claims/claims-media-upload-recovery'
     );
-
-    expect(updateClaimMock).toHaveBeenCalledWith(CONTRACT, 1, {
-      media_uploading: false
-    });
-    expect(alertMock).toHaveBeenCalledTimes(1);
+    const state = restoreClaimUploadState(null, claimUploadInputHash(claim));
+    state.failures = 9;
+    db.loadState.mockResolvedValue(state);
+    upload.mockRejectedValue(new Error('still unavailable'));
+    await processMintingClaimUpload(contract, 1, 2);
+    expect(db.update).toHaveBeenLastCalledWith(
+      lease,
+      expect.objectContaining({ media_uploading: false })
+    );
+    expect(alert).toHaveBeenCalledTimes(1);
   });
 
-  it('treats invalid claim metadata as a terminal failure', async () => {
-    uploadMock.mockRejectedValue(new BadRequestException('invalid metadata'));
-
-    await expect(
-      processMintingClaimUpload(CONTRACT, 1, 1)
-    ).resolves.toBeUndefined();
-
-    expect(updateClaimMock).toHaveBeenCalledWith(CONTRACT, 1, {
-      media_uploading: false
-    });
-    expect(alertMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('still clears terminal state when the priority alert fails', async () => {
-    uploadMock.mockRejectedValue(new BadRequestException('invalid metadata'));
-    alertMock.mockRejectedValue(new Error('alert unavailable'));
-
-    await expect(
-      processMintingClaimUpload(CONTRACT, 1, 1)
-    ).resolves.toBeUndefined();
-
-    expect(updateClaimMock).toHaveBeenCalledWith(CONTRACT, 1, {
-      media_uploading: false
-    });
-  });
-
-  it('retries when a terminal failure cannot clear the upload lock', async () => {
-    uploadMock.mockRejectedValue(new BadRequestException('invalid metadata'));
-    updateClaimMock
-      .mockResolvedValueOnce(undefined)
-      .mockRejectedValueOnce(new Error('database unavailable'));
-
-    await expect(processMintingClaimUpload(CONTRACT, 1, 1)).rejects.toThrow(
+  it('does not publish when the initial checkpoint write fails', async () => {
+    db.update.mockRejectedValue(new Error('database unavailable'));
+    await expect(processMintingClaimUpload(contract, 1, 1)).rejects.toThrow(
       'database unavailable'
     );
-
-    expect(alertMock).toHaveBeenCalledTimes(1);
+    expect(upload).not.toHaveBeenCalled();
   });
 
-  it('checkpoints media locations before saving the metadata location', async () => {
-    uploadMock.mockImplementation(async (_contract, _claim, callbacks) => {
-      await callbacks?.onImageUploaded?.('https://arweave.net/image-tx');
-      await callbacks?.onAnimationUploaded?.(
-        'https://arweave.net/animation-tx'
-      );
+  it('does not overlap an active owner and defers until its database-clock expiry', async () => {
+    db.acquire.mockResolvedValue(null);
+    const error = await processMintingClaimUpload(contract, 1, 2).catch(
+      (error) => error
+    );
+    expect(error.delaySeconds).toBe(301);
+    expect(upload).not.toHaveBeenCalled();
+    expect(db.release).not.toHaveBeenCalled();
+  });
+
+  it('never clears intent or commits completion after ownership is lost', async () => {
+    db.assertHeld.mockRejectedValue(new ClaimMediaUploadLeaseLostError());
+    upload.mockImplementation(async (_contract, _claim, callbacks) => {
+      await callbacks!.beforePublish!();
+      return result;
+    });
+    await expect(
+      processMintingClaimUpload(contract, 1, 1)
+    ).rejects.toBeInstanceOf(ClaimUploadRetryError);
+    expect(db.update).not.toHaveBeenCalledWith(
+      lease,
+      expect.objectContaining({ media_uploading: false })
+    );
+    expect(alert).not.toHaveBeenCalled();
+  });
+
+  it('checkpoints completed media before the final metadata receipt and clears recovery state atomically', async () => {
+    upload.mockImplementation(async (_contract, _claim, callbacks) => {
+      await callbacks!.onImageUploaded!('https://arweave.net/image-tx');
+      await callbacks!.onAnimationUploaded!('https://arweave.net/video-tx');
       return {
-        imageLocationUrl: 'https://arweave.net/image-tx',
-        animationLocationUrl: 'https://arweave.net/animation-tx',
-        metadataLocationUrl: 'https://arweave.net/metadata-tx'
+        ...result,
+        animationLocationUrl: 'https://arweave.net/video-tx'
       };
     });
+    await processMintingClaimUpload(contract, 1, 1);
+    const writes = db.update.mock.calls.map((call) => call[1]);
+    expect(writes[1]).toEqual({ image_location: 'image-tx' });
+    expect(writes[2]).toEqual({ animation_location: 'video-tx' });
+    expect(writes[3]).toEqual({
+      image_location: 'image-tx',
+      animation_location: 'video-tx',
+      metadata_location: 'metadata-tx',
+      media_uploading: false,
+      media_upload_state: null
+    });
+  });
 
-    await processMintingClaimUpload(CONTRACT, 1, 1);
+  it('hands off progress within seconds without charging an upload failure', async () => {
+    jest
+      .mocked(arweaveFileUploader.uploadFileWithTransactionId)
+      .mockImplementation(async (_bytes, _type, hooks) => {
+        await hooks!.onState(
+          {
+            transaction: { id: 'a'.repeat(43) },
+            data_base64: '',
+            chunkIndex: 735,
+            txPosted: true,
+            lastRequestTimeEnd: 0,
+            lastResponseStatus: 200,
+            lastResponseError: ''
+          },
+          { signal: new AbortController().signal }
+        );
+        throw new ArweaveUploadDeadlineError('session deadline');
+      });
+    upload.mockImplementation(async (_contract, _claim, callbacks) => {
+      await callbacks!.publishFile!(
+        'animation',
+        Buffer.from('video'),
+        'video/mp4',
+        'source'
+      );
+      return result;
+    });
+    const error = await processMintingClaimUpload(contract, 1, 20).catch(
+      (error) => error
+    );
+    expect(error.delaySeconds).toBe(2);
+    expect(db.update).toHaveBeenLastCalledWith(
+      lease,
+      expect.objectContaining({
+        media_upload_state: expect.objectContaining({
+          failures: 0,
+          progress: 735
+        })
+      })
+    );
+    expect(alert).not.toHaveBeenCalled();
+  });
 
-    expect(updateClaimMock.mock.calls).toEqual([
-      [CONTRACT, 1, { media_uploading: true }],
-      [CONTRACT, 1, { image_location: 'image-tx' }],
-      [CONTRACT, 1, { animation_location: 'animation-tx' }],
-      [
-        CONTRACT,
-        1,
+  it('returns an unacknowledged message and changes its visibility for a controlled retry', async () => {
+    upload.mockRejectedValue(new Error('network unavailable'));
+    const event = {
+      Records: [
         {
-          image_location: 'image-tx',
-          animation_location: 'animation-tx',
-          metadata_location: 'metadata-tx',
-          media_uploading: false
+          messageId: 'message-1',
+          body: JSON.stringify({ contract, claim_id: 1 }),
+          attributes: { ApproximateReceiveCount: '1' },
+          receiptHandle: 'receipt',
+          eventSourceARN:
+            'arn:aws:sqs:region:account:claims-media-arweave-upload'
         }
       ]
-    ]);
-  });
-
-  it('rejects an overlapping delivery without starting a second publisher', async () => {
-    leaseDb.acquire.mockResolvedValueOnce(lease).mockResolvedValueOnce(null);
-    let releaseUpload: () => void = () => undefined;
-    const pendingUpload = new Promise<void>((resolve) => {
-      releaseUpload = resolve;
-    });
-    uploadMock.mockImplementation(async () => {
-      await pendingUpload;
-      return {
-        imageLocationUrl: 'https://arweave.net/image-tx',
-        animationLocationUrl: null,
-        metadataLocationUrl: 'https://arweave.net/metadata-tx'
-      };
-    });
-    const first = processMintingClaimUpload(CONTRACT, 1, 1);
-    const second = processMintingClaimUpload(CONTRACT, 1, 2);
-    await expect(second).rejects.toThrow('already owned');
-    releaseUpload();
-    await first;
-    expect(uploadMock).toHaveBeenCalledTimes(1);
-    expect(leaseDb.release).toHaveBeenCalledTimes(1);
-    expect(fetchClaimMock).toHaveBeenCalledWith(CONTRACT, 1, {
-      forcePool: DbPoolName.WRITE
-    });
-  });
-
-  it('releases a failed attempt so redelivery can resume', async () => {
-    uploadMock
-      .mockRejectedValueOnce(new Error('temporary failure'))
-      .mockResolvedValueOnce({
-        imageLocationUrl: 'https://arweave.net/image-tx',
-        animationLocationUrl: null,
-        metadataLocationUrl: 'https://arweave.net/metadata-tx'
-      });
-    await expect(processMintingClaimUpload(CONTRACT, 1, 1)).rejects.toThrow(
-      'temporary failure'
+    } as unknown as SQSEvent;
+    const response = await handler(
+      event,
+      { getRemainingTimeInMillis: () => 900000 } as Context,
+      () => undefined
     );
-    await expect(
-      processMintingClaimUpload(CONTRACT, 1, 2)
-    ).resolves.toBeUndefined();
-    expect(leaseDb.acquire).toHaveBeenCalledTimes(2);
-    expect(leaseDb.release).toHaveBeenNthCalledWith(1, lease);
-    expect(leaseDb.release).toHaveBeenNthCalledWith(2, lease);
-  });
-
-  it('does not clear upload intent or save a final receipt after ownership is lost', async () => {
-    leaseDb.assertHeld.mockRejectedValue(new ClaimMediaUploadLeaseLostError());
-    uploadMock.mockImplementation(async (_contract, _claim, callbacks) => {
-      await callbacks?.beforePublish?.();
-      throw new Error('must not publish');
+    expect(response).toEqual({
+      batchItemFailures: [{ itemIdentifier: 'message-1' }]
     });
-    await expect(
-      processMintingClaimUpload(CONTRACT, 1, 10)
-    ).rejects.toBeInstanceOf(ClaimMediaUploadLeaseLostError);
-    expect(updateClaimMock.mock.calls).toEqual([
-      [CONTRACT, 1, { media_uploading: true }]
-    ]);
-    expect(alertMock).not.toHaveBeenCalled();
-    expect(leaseDb.release).toHaveBeenCalledWith(lease);
+    expect(sqs.changeVisibility).toHaveBeenCalledWith({
+      queueName: 'claims-media-arweave-upload',
+      receiptHandle: 'receipt',
+      timeoutSeconds: expect.any(Number)
+    });
   });
 
-  it.each([Number.NaN, 0, 5000, 1200000])(
-    'rejects an unsafe remaining runtime before acquisition (%s)',
-    async (remaining) => {
-      await expect(
-        processMintingClaimUpload(CONTRACT, 1, 1, () => remaining)
-      ).rejects.toThrow('lease safety bound');
-      expect(leaseDb.acquire).not.toHaveBeenCalled();
-      expect(uploadMock).not.toHaveBeenCalled();
-    }
-  );
+  it('acknowledges malformed input once instead of repeatedly retrying it', async () => {
+    const event = {
+      Records: [
+        {
+          messageId: 'poison',
+          body: 'not json',
+          attributes: {},
+          receiptHandle: 'receipt',
+          eventSourceARN:
+            'arn:aws:sqs:region:account:claims-media-arweave-upload'
+        }
+      ]
+    } as unknown as SQSEvent;
+    const response = await handler(
+      event,
+      { getRemainingTimeInMillis: () => 900000 } as Context,
+      () => undefined
+    );
+    expect(response).toEqual({ batchItemFailures: [] });
+    expect(alert).toHaveBeenCalledTimes(1);
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it('resumes accepted metadata after the final database commit fails', async () => {
+    let durable: unknown = null;
+    let failFinal = true;
+    let signatures = 0;
+    db.loadState.mockImplementation(async () => durable);
+    db.update.mockImplementation(async (_lease, checkpoint) => {
+      if (checkpoint.metadata_location && failFinal) {
+        failFinal = false;
+        throw new Error('final receipt commit failed');
+      }
+      if (checkpoint.media_upload_state !== undefined)
+        durable = structuredClone(checkpoint.media_upload_state);
+    });
+    jest
+      .mocked(arweaveFileUploader.uploadFileWithTransactionId)
+      .mockImplementation(async (_bytes, _type, hooks) => {
+        if (!hooks!.savedState) signatures++;
+        else expect(hooks!.savedState.transaction.id).toBe('a'.repeat(43));
+        await hooks!.onState(
+          {
+            transaction: { id: 'a'.repeat(43) },
+            data_base64: '',
+            chunkIndex: 1,
+            txPosted: true,
+            lastRequestTimeEnd: 0,
+            lastResponseStatus: 200,
+            lastResponseError: ''
+          },
+          { signal: new AbortController().signal }
+        );
+        return {
+          url: 'https://arweave.net/' + 'a'.repeat(43),
+          transaction_id: 'a'.repeat(43)
+        };
+      });
+    upload.mockImplementation(async (_contract, _claim, callbacks) => {
+      const metadata = await callbacks!.publishFile!(
+        'metadata',
+        Buffer.from('{"original":true}'),
+        'application/json',
+        'claim-metadata'
+      );
+      return { ...result, metadataLocationUrl: metadata.url };
+    });
+    await expect(processMintingClaimUpload(contract, 1, 1)).rejects.toThrow(
+      'final receipt commit failed'
+    );
+    await processMintingClaimUpload(contract, 1, 2);
+    expect(signatures).toBe(1);
+    expect(durable).toBeNull();
+    expect(db.update).toHaveBeenLastCalledWith(
+      lease,
+      expect.objectContaining({
+        media_uploading: false,
+        metadata_location: 'a'.repeat(43)
+      })
+    );
+  });
 });

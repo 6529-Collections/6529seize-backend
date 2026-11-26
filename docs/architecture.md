@@ -2300,16 +2300,16 @@ the anchors or winner sequence are inconsistent. `claimsBuilder` adds future
 mappings in the same transaction as claim creation after confirming that the
 drop is a winner in the configured Main Stage wave.
 
-`claimsMediaArweaveUploader` claims a per-claim upload lease on the MySQL writer
-before publishing. The nullable `minting_claims.media_upload_lease_token` and
-`media_upload_lease_until` columns fence media checkpoints, completion, and
-cleanup to the current owner. The lease lasts 20 minutes, exceeding the worker's
-15-minute Lambda execution limit; an expired owner cannot overwrite a successor.
-Active duplicate deliveries retry, while `media_uploading=false` remains the
-completion/idle signal. Checkpointed media can be reused on retry. This prevents
-overlapping owners but does not guarantee exactly-once Arweave publication: a
-crash or ambiguous external response before a checkpoint can still require
-republication.
+`claimsMediaArweaveUploader` claims a token-fenced upload lease on the MySQL
+writer until the invocation's remaining runtime plus a 30-second safety margin.
+It checkpoints public signed transactions, source identities and acknowledged
+chunk prefixes in `minting_claims.media_upload_state`. Media bytes remain at
+their existing source URLs and are hash-checked on resume; metadata bytes are
+frozen in the checkpoint. Controlled retries shorten the current SQS message's
+visibility and return it in `batchItemFailures`, after pending writes settle and
+ownership is released. Failed invocations recover after lease expiry. Upload
+failures have a separate durable budget from ordinary continuations. See
+[Claims Arweave recovery](claims-arweave-recovery.md).
 
 Deploy the additive schema before the uploader using `dbMigrationsLoop` with
 the explicit `db_schema_scope=claims-media-upload` input. The deploy workflow
@@ -2782,7 +2782,7 @@ Important details:
 - `claims-media-arweave-upload` messages are produced by the API only after the claim row is locked with `media_uploading=true`.
 - If media upload enqueueing fails, the API tries to roll `media_uploading` back to `false`.
 - Media inspection, claim creation, and MEMES publication readiness share media-detail validation: binary media needs positive bytes within the limit and a SHA-256 digest; images/video need positive dimensions, and video also needs positive duration and non-empty codecs. Inspection and publication share the same 250 MB (250,000,000 bytes) ceiling as Main Stage submission attachment.
-- `claimsMediaArweaveUploader` consumes `{ contract, claim_id }`, re-fetches the claim, uploads media and metadata to Arweave, and checkpoints image and animation transaction ids before uploading metadata. On SQS redelivery it re-downloads each source to verify the stored SHA-256 and reuses a matching checkpoint transaction instead of uploading a duplicate. Retryable failures keep `media_uploading=true`; terminal validation failures and the final configured queue attempt clear the flag.
+- `claimsMediaArweaveUploader` consumes `{ contract, claim_id }`, re-fetches the claim and preserves existing external-link and completed-media reuse. Required uploads persist their original signed transaction and acknowledged chunk prefix before advancing. Redeliveries verify source bytes and resume the same transaction. Metadata bytes are frozen until the final receipt and `media_uploading=false` commit atomically. Controlled handoffs keep intent active and shorten message visibility; terminal errors and exhausted durable recovery budgets record failure and clear intent. The worker uses 4096 MB, SQS partial batch failures, and a 1000-receive transport backstop independent of its ten-failure application budget.
 - Claim building completes image and animation inspection and validates the computed results before inserting the claim row. Invalid results fail creation even if the inspector returned successfully. Inspection failures are alerted by `claimsBuilder` and retried by SQS; they do not create a row containing placeholder details. This is a media-only gate, not final publication readiness: editable draft fields can remain incomplete, and HTML retains its format-only details.
 - GLB inspection validates the actual binary container (magic, version, declared length, aligned/bounded chunks, JSON asset version, and embedded BIN length/padding), rather than trusting the filename or MIME type. Publication repeats this check on fetched GLB bytes before animation upload or checkpoint reuse, including for older claims. This does not validate scene semantics or fetch/validate external dependencies. Spec-permitted unknown chunks and external references remain supported.
 - Roll out this media contract downstream-first: `claimsMediaArweaveUploader`, then `claimsBuilder`, then `api`, then the matching frontend. This updates the consumers' ceiling and validation before producers admit larger media. There is no schema migration or automatic repair of old invalid claims.

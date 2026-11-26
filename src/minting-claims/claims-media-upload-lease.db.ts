@@ -2,10 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { MINTING_CLAIMS_TABLE } from '@/constants';
 import { DbPoolName } from '@/db-query.options';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
+import type { ClaimUploadRecoveryState } from '@/minting-claims/claims-media-upload-recovery';
 
-// Longer than the worker's maximum 900-second execution. A timed-out worker
-// cannot overlap a normal takeover; a crashed owner never leaves a permanent lock.
-export const CLAIM_MEDIA_UPLOAD_LEASE_MS = 20 * 60 * 1000;
+// Maximum execution plus a 30-second crash-recovery margin. Acquisition uses
+// the actual remaining runtime so a late acquisition cannot create a long lock.
+export const CLAIM_MEDIA_UPLOAD_LEASE_MS = 900000 + 30000;
 const DB_NOW = 'CAST(UNIX_TIMESTAMP(CURRENT_TIMESTAMP(3)) * 1000 AS UNSIGNED)';
 const PRIMARY = { forcePool: DbPoolName.WRITE };
 
@@ -20,6 +21,7 @@ export interface ClaimMediaUploadCheckpoint {
   animation_location?: string | null;
   metadata_location?: string;
   media_uploading?: boolean;
+  media_upload_state?: ClaimUploadRecoveryState | null;
 }
 
 export class ClaimMediaUploadLeaseLostError extends Error {
@@ -33,7 +35,8 @@ export class ClaimMediaUploadLeaseLostError extends Error {
 export class ClaimsMediaUploadLeaseDb extends LazyDbAccessCompatibleService {
   async acquire(
     contract: string,
-    claimId: number
+    claimId: number,
+    remainingMillis = 900000
   ): Promise<ClaimMediaUploadLease | null> {
     const lease = {
       contract: contract.toLowerCase(),
@@ -47,10 +50,38 @@ export class ClaimsMediaUploadLeaseDb extends LazyDbAccessCompatibleService {
        WHERE contract = :contract AND claim_id = :claimId
          AND media_uploading = 1
          AND (media_upload_lease_until IS NULL OR media_upload_lease_until <= ${DB_NOW})`,
-      { ...lease, duration: CLAIM_MEDIA_UPLOAD_LEASE_MS },
+      {
+        ...lease,
+        duration: Math.min(remainingMillis + 30000, CLAIM_MEDIA_UPLOAD_LEASE_MS)
+      },
       PRIMARY
     );
     return this.db.getAffectedRows(result) === 1 ? lease : null;
+  }
+
+  async retryAfterSeconds(contract: string, claimId: number): Promise<number> {
+    const row = await this.db.oneOrNull<{ remaining: number }>(
+      `SELECT GREATEST(0, media_upload_lease_until - ${DB_NOW}) AS remaining
+       FROM ${MINTING_CLAIMS_TABLE} WHERE contract = :contract AND claim_id = :claimId`,
+      { contract: contract.toLowerCase(), claimId },
+      PRIMARY
+    );
+    return Math.min(
+      1200,
+      Math.max(2, Math.ceil(Number(row?.remaining ?? 0) / 1000) + 1)
+    );
+  }
+
+  async loadState(lease: ClaimMediaUploadLease): Promise<unknown> {
+    const row = await this.db.oneOrNull<{ media_upload_state: unknown }>(
+      `SELECT media_upload_state FROM ${MINTING_CLAIMS_TABLE}
+       WHERE contract = :contract AND claim_id = :claimId
+         AND media_upload_lease_token = :token AND media_upload_lease_until > ${DB_NOW}`,
+      { ...lease },
+      PRIMARY
+    );
+    if (!row) throw new ClaimMediaUploadLeaseLostError();
+    return row.media_upload_state;
   }
 
   async assertHeld(lease: ClaimMediaUploadLease): Promise<void> {
@@ -73,7 +104,8 @@ export class ClaimsMediaUploadLeaseDb extends LazyDbAccessCompatibleService {
       'image_location',
       'animation_location',
       'metadata_location',
-      'media_uploading'
+      'media_uploading',
+      'media_upload_state'
     ] as const;
     const assignments = columns
       .filter((key) => checkpoint[key] !== undefined)
@@ -90,7 +122,18 @@ export class ClaimsMediaUploadLeaseDb extends LazyDbAccessCompatibleService {
        WHERE contract = :contract AND claim_id = :claimId
          AND media_upload_lease_token = :token
          AND media_upload_lease_until > ${DB_NOW}`,
-      { ...lease, ...checkpoint },
+      {
+        ...lease,
+        ...checkpoint,
+        ...(checkpoint.media_upload_state !== undefined
+          ? {
+              media_upload_state:
+                checkpoint.media_upload_state === null
+                  ? null
+                  : JSON.stringify(checkpoint.media_upload_state)
+            }
+          : {})
+      },
       PRIMARY
     );
     // A repeated checkpoint may be unchanged. It is safe only while still owned.

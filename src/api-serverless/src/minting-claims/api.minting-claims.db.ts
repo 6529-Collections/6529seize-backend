@@ -556,6 +556,14 @@ export async function updateMintingClaimIfNotUploading(
     updates
   );
   if (setClauses.length === 0) return true;
+  if (updates.media_uploading === true) {
+    // An explicit admin retry opens a new recovery budget while retaining the
+    // original signed transactions. Automatic SQS continuations never reset it.
+    setClauses.push(`media_upload_state = JSON_SET(media_upload_state,
+      '$.status', 'uploading', '$.failures', 0, '$.attempts', 0,
+      '$.attemptActive', CAST('false' AS JSON), '$.newRequest', CAST('true' AS JSON),
+      '$.startedAt', CAST(UNIX_TIMESTAMP(CURRENT_TIMESTAMP(3)) * 1000 AS UNSIGNED))`);
+  }
   const result = await sqlExecutor.execute<{ affectedRows: number }>(
     `UPDATE ${MINTING_CLAIMS_TABLE}
      SET ${setClauses.join(', ')}

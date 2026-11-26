@@ -1,4 +1,7 @@
-import { ArweaveUploadSession } from '@/arweave/upload';
+import {
+  ArweaveUploadSession,
+  isTerminalArweaveUploadError
+} from '@/arweave/upload';
 import type { JWKInterface } from 'arweave/node/lib/wallet';
 import Arweave from 'arweave';
 import Transaction from 'arweave/node/lib/transaction';
@@ -15,7 +18,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function setup() {
+function setup(key: unknown = { privateMarker: 'must-not-persist' }) {
   const arweave = Arweave.init({ host: 'arweave.test', protocol: 'https' });
   const create = jest.spyOn(arweave, 'createTransaction').mockImplementation(
     async (input) =>
@@ -59,13 +62,27 @@ function setup() {
   });
   const uploader = new ArweaveFileUploader(() => ({
     arweave,
-    key: { privateMarker: 'must-not-persist' }
+    key
   }));
   return { arweave, create, sign, post, status, uploader };
 }
 
 describe('durable Arweave uploads', () => {
   afterEach(() => jest.restoreAllMocks());
+
+  it('exposes explicit transaction validation failures as terminal for claims', async () => {
+    const f = setup();
+    f.post.mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ error: 'invalid_signature' }), {
+          status: 400
+        })
+    );
+    const error = await f.uploader
+      .uploadFile(bytes, 'video/mp4')
+      .catch((error) => error);
+    expect(isTerminalArweaveUploadError(error)).toBe(true);
+  });
 
   it('preserves the existing uploadFile contract without checkpoint hooks', async () => {
     const { uploader, create, sign, post, status } = setup();
@@ -841,4 +858,124 @@ it('re-registers a lost header without letting a stale worker discard the new re
     jest.useRealTimers();
     jest.restoreAllMocks();
   }
+});
+
+describe('compact source-backed Arweave checkpoints', () => {
+  let key: JWKInterface;
+  beforeAll(async () => {
+    key = await Arweave.init({}).wallets.generate();
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  async function checkpoint() {
+    const f = setup(key);
+    f.sign.mockRestore();
+    const sign = jest.spyOn(f.arweave.transactions, 'sign');
+    let saved!: ArweaveUploadState;
+    await expect(
+      f.uploader.uploadFileWithTransactionId(bytes, 'video/mp4', {
+        useSourceData: true,
+        onState: async (state) => {
+          saved = state;
+          throw new Error('stop before submission');
+        }
+      })
+    ).rejects.toThrow('stop before submission');
+    expect(f.post).not.toHaveBeenCalled();
+    return { ...f, sign, saved };
+  }
+
+  it('verifies and resumes the original signed transaction without copying the source into its checkpoint', async () => {
+    const f = await checkpoint();
+    expect(f.saved.data_base64).toBe('');
+    const states: ArweaveUploadState[] = [];
+    const result = await f.uploader.uploadFileWithTransactionId(
+      bytes,
+      'video/mp4',
+      {
+        useSourceData: true,
+        savedState: f.saved,
+        onState: async (state) => {
+          states.push(state);
+        }
+      }
+    );
+    expect(result.transaction_id).toBe(f.saved.transaction.id);
+    expect(f.create).toHaveBeenCalledTimes(1);
+    expect(f.sign).toHaveBeenCalledTimes(1);
+    expect(states.every((state) => state.data_base64 === '')).toBe(true);
+  });
+
+  it.each(['id', 'signature', 'index', 'source', 'signer', 'type'])(
+    'rejects a corrupted %s before any submission',
+    async (field) => {
+      const f = await checkpoint();
+      const saved = structuredClone(f.saved);
+      if (field === 'id') saved.transaction.id = 'z'.repeat(43);
+      if (field === 'signature') saved.transaction.signature = 'z'.repeat(512);
+      if (field === 'index') saved.chunkIndex = 1000;
+      if (field === 'signer') saved.transaction.owner = 'other-owner';
+      await expect(
+        f.uploader.uploadFileWithTransactionId(
+          field === 'source' ? Buffer.alloc(bytes.length, 9) : bytes,
+          field === 'type' ? 'image/png' : 'video/mp4',
+          {
+            useSourceData: true,
+            savedState: saved,
+            onState: async () => undefined
+          }
+        )
+      ).rejects.toThrow();
+      expect(f.post).not.toHaveBeenCalled();
+      expect(f.sign).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('replays an accepted chunk when the following checkpoint write was lost', async () => {
+    const f = setup(key);
+    f.sign.mockRestore();
+    const sign = jest.spyOn(f.arweave.transactions, 'sign');
+    const source = Buffer.alloc(524288, 7);
+    let saved!: ArweaveUploadState;
+    await expect(
+      f.uploader.uploadFileWithTransactionId(source, 'video/mp4', {
+        useSourceData: true,
+        onState: async (state) => {
+          if (state.chunkIndex === 1)
+            throw new Error('lost database acknowledgement');
+          saved = state;
+        }
+      })
+    ).rejects.toThrow('lost database acknowledgement');
+    const acceptedChunk = f.post.mock.calls.find(
+      (call) => call[0] === 'chunk'
+    )![1];
+    expect(saved.chunkIndex).toBe(0);
+    const result = await f.uploader.uploadFileWithTransactionId(
+      source,
+      'video/mp4',
+      {
+        useSourceData: true,
+        savedState: saved,
+        onState: async () => undefined
+      }
+    );
+    const chunks = f.post.mock.calls.filter((call) => call[0] === 'chunk');
+    expect(chunks[1][1]).toBe(acceptedChunk);
+    expect(result.transaction_id).toBe(saved.transaction.id);
+    expect(sign).toHaveBeenCalledTimes(1);
+  });
+
+  it('honors caller cancellation before starting network work', async () => {
+    const f = setup(key);
+    const controller = new AbortController();
+    controller.abort(new Error('lambda budget exhausted'));
+    await expect(
+      f.uploader.uploadFileWithTransactionId(bytes, 'video/mp4', undefined, {
+        signal: controller.signal
+      })
+    ).rejects.toThrow('lambda budget exhausted');
+    expect(f.post).not.toHaveBeenCalled();
+    expect(f.create).not.toHaveBeenCalled();
+  });
 });

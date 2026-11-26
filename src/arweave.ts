@@ -13,12 +13,20 @@ export type ArweaveUploadState = Omit<SerializedUploader, 'transaction'> & {
 
 export type ArweaveUploadHooks = {
   savedState?: ArweaveUploadState;
+  // Compact consumers persist source identity separately and provide the exact
+  // verified source bytes on resume. Other consumers retain embedded bytes.
+  useSourceData?: boolean;
   // Persistence must fence writes against replacement attempts: cancellation
   // releases the caller's wait but cannot undo a write already sent to a DB.
   onState(
     state: ArweaveUploadState,
     context: { signal: AbortSignal }
   ): Promise<void>;
+};
+
+export type ArweaveUploadOptions = {
+  signal?: AbortSignal;
+  timeoutMs?: number;
 };
 
 let arweaveAndKey: { arweave: Arweave; key: any } | null = null;
@@ -56,15 +64,22 @@ export class ArweaveFileUploader {
   public async uploadFileWithTransactionId(
     fileBuffer: Buffer,
     contentType: string,
-    hooks?: ArweaveUploadHooks
+    hooks?: ArweaveUploadHooks,
+    options: ArweaveUploadOptions = {}
   ): Promise<{ url: string; transaction_id: string }> {
     const { arweave, key: arweaveKey } = this.arweaveAndKeySupplier();
     const result = await new ArweaveUploadSession(
       this.logger,
       arweave,
-      600_000,
+      Math.min(options.timeoutMs ?? 600_000, 600_000),
       true
-    ).upload(fileBuffer, arweaveKey as JWKInterface, contentType, hooks);
+    ).upload(
+      fileBuffer,
+      arweaveKey as JWKInterface,
+      contentType,
+      hooks,
+      options.signal
+    );
     return {
       url: arweaveContentUrl(result.transactionId),
       transaction_id: result.transactionId

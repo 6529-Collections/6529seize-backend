@@ -1,4 +1,5 @@
 import {
+  ChangeMessageVisibilityCommand,
   GetQueueUrlCommand,
   type MessageAttributeValue,
   SendMessageCommand,
@@ -61,6 +62,26 @@ export class SQS {
       `Sent SQS message ${response.MessageId} to queue ${queue}  Message sent: ${response.MessageId}`
     );
     return response;
+  }
+
+  async changeVisibility({
+    queueName,
+    receiptHandle,
+    timeoutSeconds
+  }: {
+    queueName: string;
+    receiptHandle: string;
+    timeoutSeconds: number;
+  }): Promise<void> {
+    const queueUrl = await this.getQueueUrl(queueName);
+    await this.getClient().send(
+      new ChangeMessageVisibilityCommand({
+        QueueUrl: queueUrl,
+        ReceiptHandle: receiptHandle,
+        VisibilityTimeout: timeoutSeconds
+      }),
+      { abortSignal: AbortSignal.timeout(5000) }
+    );
   }
 
   async sendToQueueName({

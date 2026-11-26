@@ -1447,4 +1447,31 @@ describe('uploadMintingClaimToArweave', () => {
     );
     expect(uploadedMetadata.animation_details).toEqual({ format: 'HTML' });
   });
+
+  it.each([
+    'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi',
+    'https://arweave.net/OI6-rpJ2C3Ab4HiZRWt5A1SumhjnYigmSPBPX0ICBj8'
+  ])(
+    'preserves external-link reuse when recovery is enabled: %s',
+    async (animationUrl) => {
+      const publisher = jest.fn(async (kind: string) => ({
+        url: `https://arweave.net/${kind}-transaction`
+      }));
+      const result = await uploadMintingClaimToArweave(
+        MEMES_CONTRACT,
+        baseClaim({
+          animation_url: animationUrl,
+          animation_details: JSON.stringify({ format: 'HTML' })
+        }),
+        { publishFile: publisher }
+      );
+      expect(result.animationLocationUrl).toBe(animationUrl);
+      expect(publisher.mock.calls.map((call) => call[0])).toEqual([
+        'image',
+        'metadata'
+      ]);
+      expect(fetchPublicUrlToBufferMock).toHaveBeenCalledTimes(1);
+      expect(uploadFileMock).not.toHaveBeenCalled();
+    }
+  );
 });

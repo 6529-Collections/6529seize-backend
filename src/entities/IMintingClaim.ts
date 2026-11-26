@@ -73,6 +73,9 @@ export class MintingClaimEntity {
   @Column({ type: 'bigint', nullable: true })
   readonly media_upload_lease_until!: number | null;
 
+  @Column({ type: 'json', nullable: true })
+  readonly media_upload_state!: unknown;
+
   @Column({ type: 'int', nullable: true })
   readonly edition_size!: number | null;
 
