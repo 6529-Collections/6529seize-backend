@@ -1693,7 +1693,7 @@ retention, rerun, and rollout contract.
 Clients mark all notifications as read with `POST /api/notifications/read`.
 `POST /api/notifications/{id}/read` marks an individual notification as read.
 
-Notification read/unread mutations also enqueue a `badge_refresh` job with the affected profile ID on the existing `firebase-push-notifications` queue. `pushNotificationsHandler` combines shared-device refreshes within each batch, discovers current iOS registrations, and computes aggregate unread counts from the primary database using the existing push settings, visibility and moderation filters. The API performs only the queue handoff, not device lookup, counting or Firebase delivery. Normal iOS alerts and badge-only refreshes share a per-device Redis lock covering count calculation and submission. Android delivery and installation logout use the same lock to fence removed recipients. Failed or invalid profile contributions never become partial badge totals. See [Mobile badge synchronization](./mobile-badge-sync.md) for the payload, failure handling and rollout boundaries.
+Individual, bulk and wave notification reads enqueue a `badge_refresh` job with the affected profile ID on the existing `firebase-push-notifications` queue. `pushNotificationsHandler` combines shared-device refreshes within each batch, discovers current iOS registrations, and computes aggregate unread counts from the primary database using the existing push settings, visibility and moderation filters. The API performs only the queue handoff, not device lookup, counting or Firebase delivery. Normal iOS alerts and badge-only refreshes share a per-device Redis lock covering count calculation and submission. Android delivery and installation logout use the same lock to fence removed recipients. Failed or invalid profile contributions never become partial badge totals. See [Mobile badge synchronization](./mobile-badge-sync.md) for the payload, failure handling and rollout boundaries.
 
 The push worker's SQS event source is capped at 18 concurrent batches, below the Lambda's reserved concurrency of 20. This leaves two slots of headroom and keeps excess burst traffic queued instead of allowing the poller to exceed the function limit. The same cap applies in staging and production. Batch size remains 10; partial-batch retries, visibility timeout, dead-letter routing, and monitoring thresholds/frequency are unchanged. Queueing can increase during bursts, so queue-age and dead-letter alarms remain important. Deploy only `pushNotificationsHandler` to apply this event-source configuration.
 
@@ -2175,9 +2175,9 @@ flags remain intersected with View eligibility if group criteria later drift.
 
 The waves v2 read boundary keeps timeline, reply-thread, and curation feeds as separate contracts. `/v2/waves/{id}/drops` returns the wave timeline feed, `/v2/drops/{id}/replies` returns the reply thread for a root drop after resolving its owning visible wave, and `/v2/waves/{id}/curations/{curation_id}/drops` returns drops for one wave curation.
 
-Quick Vote's legacy `GET /waves/{id}/undiscovered-drop` remains compatible,
-while `GET /waves/{id}/undiscovered-drops` returns up to four ordered previews
-with one pair of exact counts. Both use the original legacy competition's
+Quick Vote serves `GET /waves/{id}/undiscovered-drop` for the current candidate.
+`GET /waves/{id}/undiscovered-drops` returns up to four ordered previews with
+one pair of exact counts. Both use the original legacy competition's
 active native entries and an indexed fallback for retained participatory drops
 without a projected native status. Votes and skips remain scoped to the acting
 profile; zero allocations are unrated, and either sign of nonzero allocation is
@@ -2844,11 +2844,6 @@ pushes to `1a-staging`; frontend production is dispatched through
 automatic E2E validation. For coupled releases, complete backend dependencies
 before merging and deploying dependent frontend changes. Workflows resolve the
 source commit and verify artifact and runtime versions automatically.
-
-The API's authenticated `/deploy/ui` remains a convenience for viewing refs
-and runs and dispatching the ordinary workflows. GitHub authentication and
-repository permissions remain in place. It has no release queue, candidate
-registry, environment-state ledger, or separate deployment authority.
 
 For backend production, each service notification carries the merged PR and
 canonical service group. Earlier services hold publication; the final
