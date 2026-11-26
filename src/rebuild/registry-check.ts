@@ -438,8 +438,9 @@ function stepProblems(
           `seed ${step.id} plans rows of ${plan.table}; only a rebuilder plans rows`
         );
       } else if (!rowWrittenTables(step).includes(plan.table)) {
+        // A table no rebuilder writes is kept whole already.
         problem(
-          `rebuilder ${step.id} plans rows of ${plan.table}, whose rows it doesn't write`
+          `rebuilder ${step.id} ${plan.keep ? 'keeps' : 'plans'} rows of ${plan.table}, whose rows it doesn't write`
         );
       }
       if (!plan.where?.trim()) {
@@ -462,7 +463,11 @@ function stepProblems(
           `${kind} ${step.id}'s planned rows of ${plan.table} name no change that brings their source`
         );
       }
-      if (plan.columns !== undefined) {
+      if (plan.keep && plan.columns !== undefined) {
+        problem(
+          `rebuilder ${step.id} keeps rows of ${plan.table} with planned columns; a kept row comes back whole, so keep takes no columns`
+        );
+      } else if (plan.columns !== undefined) {
         problems.push(
           ...plannedColumnProblems(step, plan, input.manifests).map(
             (detail): RegistryProblem => ({

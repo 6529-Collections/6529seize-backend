@@ -210,6 +210,19 @@ export async function rebuildTeamRenaming6529(): Promise<void> {
   await insertTeam(true, '6529');
 }
 
+/**
+ * Reads the 6529 row, which the table's rebuilder doesn't write: a later
+ * step that needs rows a keep plan keeps. Fails when it isn't there.
+ */
+export async function readKeptTeamRow(): Promise<void> {
+  const [row] = await dbSupplier().execute<{ n: number | string }>(
+    `SELECT COUNT(*) AS n FROM ${TEAM_TABLE} WHERE collection = '6529'`
+  );
+  if (Number(row?.n) !== 1) {
+    throw new Error("The 6529 team row isn't there for its reader");
+  }
+}
+
 /** Reads a table its manifest entry doesn't declare. */
 export async function readUndeclaredTable(): Promise<void> {
   await dbSupplier().execute(`SELECT COUNT(*) AS n FROM ${NFTS_TABLE}`);

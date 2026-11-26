@@ -706,6 +706,40 @@ describe('checkRegistry', () => {
     ]);
   });
 
+  it('keeps rows only of a table the rebuilder writes, and never with columns', () => {
+    const keep = (parts: Partial<PlannedRows> = {}): PlannedRows => ({
+      table: 'ids',
+      where: "kind = 'records'",
+      reason: 'rows other steps read, whose source comes later',
+      until: '2026-12-04',
+      change: 'the records source',
+      keep: true,
+      ...parts
+    });
+    const check = (plans: PlannedRows[]) =>
+      checkRegistry({
+        manifests: [
+          area(
+            'a',
+            { ids: index(), other: index() },
+            {
+              rebuilders: [
+                step('a.rows', { writes: ['ids'], plannedRows: plans })
+              ]
+            }
+          )
+        ],
+        codeTables: code('ids', 'other')
+      }).problems.map((p) => p.detail);
+    expect(check([keep()])).toEqual([]);
+    expect(
+      check([keep({ table: 'other' }), keep({ columns: ['name'] })])
+    ).toEqual([
+      "rebuilder a.rows keeps rows of other, whose rows it doesn't write",
+      'rebuilder a.rows keeps rows of ids with planned columns; a kept row comes back whole, so keep takes no columns'
+    ]);
+  });
+
   describe('order edges to another area', () => {
     const check = (writer: Partial<RebuildStep>, readers: RebuildStep[] = []) =>
       checkRegistry({

@@ -276,6 +276,46 @@ describe('rebuild report', () => {
     );
   });
 
+  it('lists kept rows as kept, not rebuilt, on the headline and under their plan', () => {
+    const base = report();
+    const keptReport = report({
+      tables: {
+        ...base.tables,
+        plannedRows: [
+          {
+            table: 'drops',
+            rows: 0,
+            keys: [],
+            columnRows: 0,
+            columnKeys: [],
+            keptRows: 3,
+            plans: [
+              {
+                step: 'waves.mirror',
+                where: "wave_id = 'records'",
+                reason: 'rows other steps read',
+                until: '2026-12-15',
+                change: 'the records source',
+                seeded: 3,
+                missing: 0,
+                overdue: false,
+                keep: true,
+                kept: 3
+              }
+            ]
+          }
+        ]
+      }
+    });
+    expect(headline(keptReport)[1]).toMatch(/; rows kept, not rebuilt 3$/);
+    expect(renderMarkdown(keptReport)).toContain(
+      [
+        '- drops: 0 planned rows missing from the rebuild; 3 rows kept, not rebuilt',
+        "  - kept by waves.mirror: seeded 3, kept 3, not rebuilt, missing 0; until 2026-12-15, the records source; rows other steps read; where wave_id = 'records'"
+      ].join('\n')
+    );
+  });
+
   it('puts overdue exemptions on the headline and the status line, and lists every dated one', () => {
     const base = report();
     const dated = report({

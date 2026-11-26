@@ -102,6 +102,7 @@ import { stepCodeIn } from '@/rebuild/step-code';
 import {
   columnPlanDecision,
   columnPlanProblem,
+  keptPlanOverlap,
   rowAndColumnPlanOverlap
 } from '@/rebuild/run/column-plans';
 import { exemptUntil, runDay } from '@/rebuild/run/exempt-until';
@@ -321,6 +322,14 @@ class RebuildRun {
    * rebuilds, by table.
    */
   private plannedRows = new Map<string, FoundPlans>();
+  /**
+   * The rows keep plans match, by table: copied aside before the drop
+   * (`copy`, in the kept database) and put back after it.
+   */
+  private keptRows = new Map<
+    string,
+    { copy: string; keys: string[]; count: number }
+  >();
   private tableDiffs: TableDiff[] = [];
   private notEmptyAfterDrop: string[] = [];
   private rebuiltTables: string[] = [];
@@ -1354,6 +1363,24 @@ class RebuildRun {
             return false;
           }
         }
+        // A partition writer keeps only rows of its own partition: rows of
+        // a writer that doesn't run here are kept with their table already.
+        const own = partitionsOf(step).find((p) => p.table === table);
+        if (rebuilt && plan.keep && own) {
+          const inside = await this.admin!.rowsWhereInPartition(
+            MAIN_DB,
+            table,
+            plan.where,
+            own.partition.columns,
+            own.partition.values
+          );
+          if (inside !== rows.length) {
+            this.failures.push(
+              `${step.id} keeps ${rows.length - inside} rows of ${table} outside its partition; a keep plan keeps only rows its rebuilder writes`
+            );
+            return false;
+          }
+        }
         const keys = keysOf(rows);
         found.plans.push({
           entry: plan,
@@ -1381,10 +1408,27 @@ class RebuildRun {
         this.failures.push(overlap);
         return false;
       }
-      // Only plans of whole rows let rows be missing.
-      const rowPlans = plans.filter(([, plan]) => !plan.columns);
+      // A kept row comes back unchanged: no other plan may match it.
+      const keptOverlap = keptPlanOverlap(
+        table,
+        found.plans.map((p) => ({
+          step: p.plan.step,
+          keep: p.entry.keep,
+          keys: p.keys
+        }))
+      );
+      if (keptOverlap) {
+        this.failures.push(keptOverlap);
+        return false;
+      }
+      if (!(await this.copyKeptRows(table, plans, keysOf))) return false;
+      // Only plans of whole rows let rows be missing; kept rows must come
+      // back.
+      const rowPlans = plans.filter(([, plan]) => !plan.columns && !plan.keep);
       if (rowPlans.length === 1) {
-        found.keys = found.plans.find((p) => !p.entry.columns)!.keys;
+        found.keys = found.plans.find(
+          (p) => !p.entry.columns && !p.entry.keep
+        )!.keys;
         continue;
       }
       if (!rowPlans.length) continue;
@@ -1398,6 +1442,88 @@ class RebuildRun {
       found.keys = keysOf(all);
     }
     return true;
+  }
+
+  /**
+   * The seeded rows a table's keep plans match, with their keys, copied
+   * aside into the kept database before the drop: each row once, however
+   * many keep plans match it. drop() puts them back. A condition MySQL
+   * can't evaluate fails the run.
+   */
+  private async copyKeptRows(
+    table: string,
+    plans: readonly [RebuildStep, PlannedRows][],
+    keysOf: (rows: readonly Row[]) => string[]
+  ): Promise<boolean> {
+    const keeping = plans.filter(([, plan]) => plan.keep);
+    if (!keeping.length) return true;
+    const where = keeping.map(([, plan]) => `(${plan.where})`).join(' OR ');
+    const steps = keeping.map(([step]) => step.id).join(', ');
+    const copy = `rebuild_keep_${this.keptRows.size + 1}`;
+    try {
+      const rows = await this.admin!.rowsWhere(MAIN_DB, table, where);
+      const count = await this.admin!.copyRowsWhere(
+        MAIN_DB,
+        table,
+        KEPT_DB,
+        copy,
+        where
+      );
+      this.keptRows.set(table, { copy, keys: keysOf(rows), count });
+      return true;
+    } catch (error) {
+      this.failures.push(
+        `${steps}'s kept rows of ${table} can't be copied aside (where ${where}): ${error instanceof Error ? error.message : String(error)}`
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Puts the rows keep plans matched back after the drop, before any
+   * rebuilder runs, and records how many each plan kept.
+   */
+  private async putKeptRowsBack(): Promise<void> {
+    for (const [table, kept] of Array.from(this.keptRows)) {
+      const back = await this.admin!.putRowsBack(
+        KEPT_DB,
+        kept.copy,
+        MAIN_DB,
+        table
+      );
+      if (back !== kept.count) {
+        this.failures.push(
+          `Kept rows of ${table}: ${kept.count} copied aside, ${back} put back`
+        );
+      }
+      for (const { entry, plan } of this.plannedRows.get(table)?.plans ?? []) {
+        if (entry.keep) plan.kept = plan.seeded;
+      }
+    }
+  }
+
+  /**
+   * After the comparison: every kept row is back unchanged, or the run
+   * fails, final or not. A rebuilder must leave the rows it doesn't
+   * rebuild alone.
+   */
+  private checkKeptRows(
+    snapshotsBefore: ReadonlyMap<string, TableSnapshot>,
+    snapshotsAfter: ReadonlyMap<string, TableSnapshot>
+  ): void {
+    for (const [table, kept] of Array.from(this.keptRows)) {
+      const before = snapshotsBefore.get(table);
+      const after = snapshotsAfter.get(table);
+      if (!before || !after) continue;
+      const keys = new Set(kept.keys);
+      const gone = goneRows(before, after, kept.keys);
+      const changed = changedKeys(before, after).filter((key) => keys.has(key));
+      if (gone || changed.length) {
+        this.failures.push(
+          `Kept rows of ${table} didn't come back unchanged: ${gone} gone, ${changed.length} changed${changed.length ? `, keys ${changed.slice(0, 20).join(' ')}` : ''}; a rebuilder may not touch rows a keep plan keeps`
+        );
+      }
+    }
   }
 
   /**
@@ -1587,6 +1713,8 @@ class RebuildRun {
         `Not empty after the drop: ${this.notEmptyAfterDrop.join(', ')}`
       );
     }
+    // Kept rows go back once the drop is proven, before any rebuilder.
+    await this.putKeptRowsBack();
     return true;
   }
 
@@ -1751,6 +1879,7 @@ class RebuildRun {
         plan.missing = goneRows(before, after, keys);
       }
     });
+    this.checkKeptRows(snapshotsBefore, snapshotsAfter);
   }
 
   /** What stopped the run before pass B compared, or null when it did. */
@@ -1956,7 +2085,8 @@ class RebuildRun {
       overdue: this.day > plan.until,
       ...(plan.columns
         ? { columns: [...plan.columns], differing: null, excused: null }
-        : {})
+        : {}),
+      ...(plan.keep ? { keep: true as const, kept: null } : {})
     };
   }
 
@@ -1983,12 +2113,16 @@ class RebuildRun {
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([table, plans]) => {
         const diff = this.tableDiffs.find((d) => d.table === table);
+        const kept = plans.some((p) => p.kept)
+          ? (this.keptRows.get(table)?.count ?? 0)
+          : 0;
         return {
           table,
           rows: diff?.plannedRows ?? 0,
           keys: diff?.planned ?? [],
           columnRows: diff?.plannedColumnRows ?? 0,
           columnKeys: diff?.plannedColumns ?? [],
+          ...(kept ? { keptRows: kept } : {}),
           plans
         };
       });

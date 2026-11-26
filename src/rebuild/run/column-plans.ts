@@ -121,3 +121,29 @@ export function rowAndColumnPlanOverlap(
   }
   return null;
 }
+
+/**
+ * A key that a keep plan and another plan both match, or null: a kept row
+ * comes back unchanged, so it can't also be missing or back with planned
+ * columns. Keep plans may match the same rows.
+ */
+export function keptPlanOverlap(
+  table: string,
+  plans: readonly {
+    readonly step: string;
+    readonly keep?: boolean;
+    readonly keys: readonly string[];
+  }[]
+): string | null {
+  const kept = plans.filter((p) => p.keep);
+  for (const other of plans.filter((p) => !p.keep)) {
+    const keys = new Set(other.keys);
+    for (const keep of kept) {
+      const both = keep.keys.find((key) => keys.has(key));
+      if (both !== undefined) {
+        return `planned rows of ${table}: ${keep.step}'s keep plan and ${other.step}'s plan both match the row ${both}; a kept row comes back unchanged, so no other plan may match it`;
+      }
+    }
+  }
+  return null;
+}

@@ -984,6 +984,124 @@ describe('rebuild check, end to end', () => {
         "self-check.memes-plans's planned rows of team include 1 rows of self-check.other-6529's partition; a plan covers only rows its rebuilder writes"
       );
     });
+
+    describe('keep plans', () => {
+      // The seed writes two groups of rows; the rebuilder rewrites the
+      // MEMES group only, and the 6529 row, which a later step reads, has
+      // no source yet: the plan keeps it through the drop.
+      const KEEP: PlannedRows = {
+        table: 'team',
+        where: "collection = '6529'",
+        reason: 'a later step reads the 6529 row, whose source comes later',
+        until: '9999-12-31',
+        change: 'the 6529 writer',
+        keep: true
+      };
+      const reader = (writer: string): RebuildStep => ({
+        ...step('self-check.kept-reader', 'readKeptTeamRow', [], ['team']),
+        after: [writer]
+      });
+      const keepRun = (id: string, exportName: string, final = false) =>
+        run('mint', {
+          seed: teamSeed,
+          rebuilder: planning(id, exportName, [KEEP]),
+          more: [reader(id)],
+          final
+        });
+      const kept = (stepId: string, seeded: number | null) => ({
+        step: stepId,
+        where: KEEP.where,
+        reason: KEEP.reason,
+        until: KEEP.until,
+        change: KEEP.change,
+        seeded,
+        missing: 0,
+        overdue: false,
+        keep: true,
+        kept: seeded
+      });
+
+      it('puts the kept rows back before the rebuilders, lists them as kept, and fails a final run on the plan', async () => {
+        const { report } = await keepRun(
+          'self-check.keeping',
+          'rebuildMemesTeam'
+        );
+        expect(report.failures).toEqual([]);
+        expect(report.verdict).toBe('PASS');
+        expect(
+          report.steps
+            .filter((s) => s.kind === 'rebuilder')
+            .map((s) => [s.id, s.exitCode])
+        ).toEqual([
+          ['self-check.keeping', 0],
+          ['self-check.kept-reader', 0]
+        ]);
+        expect(
+          report.tables.diffs.map((d) => [d.table, d.same, d.plannedRows])
+        ).toEqual([['team', true, 0]]);
+        expect(report.tables.plannedRows).toEqual([
+          {
+            table: 'team',
+            rows: 0,
+            keys: [],
+            columnRows: 0,
+            columnKeys: [],
+            keptRows: 1,
+            plans: [kept('self-check.keeping', 1)]
+          }
+        ]);
+        expect(headline(report).join('\n')).toContain(
+          'rows kept, not rebuilt 1'
+        );
+        const final = await keepRun(
+          'self-check.keeping-final',
+          'rebuildMemesTeam',
+          true
+        );
+        expect(final.report.verdict).toBe('FAIL');
+        expect(final.report.failures).toContain(
+          '1 plans of planned rows, seeded rows only a later change rebuilds; a final run fails on every plan: team by self-check.keeping-final: seeded 1, kept 1, not rebuilt, missing 0, until 9999-12-31 (the 6529 writer)'
+        );
+      });
+
+      it('fails a run whose rebuilder changes a kept row', async () => {
+        const { report } = await keepRun(
+          'self-check.keeping-touches',
+          'rebuildMemesTeamTouchingOthers'
+        );
+        expect(report.verdict).toBe('FAIL');
+        expect(report.failures).toContain(
+          `Kept rows of team didn't come back unchanged: 0 gone, 1 changed, keys ${JSON.stringify(['0x0000000000000000000000000000000000000002'])}; a rebuilder may not touch rows a keep plan keeps`
+        );
+        const [diff] = report.tables.diffs;
+        expect(diff.same).toBe(false);
+        expect(diff.plannedRows).toBe(0);
+      });
+
+      it("refuses a partition writer's keep plan on rows outside its partition", async () => {
+        // The 6529 row is another area's: an area run keeps it already.
+        const { report } = await run('mint', {
+          seed: teamSeed,
+          rebuilder: {
+            ...memes,
+            id: 'self-check.memes-keeps',
+            plannedRows: [KEEP]
+          },
+          others: {
+            tdh: [
+              {
+                ...step('self-check.other-6529', 'rebuildTeam', []),
+                writes: [partition('6529')]
+              }
+            ]
+          }
+        });
+        expect(report.verdict).toBe('FAIL');
+        expect(report.failures).toContain(
+          'self-check.memes-keeps keeps 1 rows of team outside its partition; a keep plan keeps only rows its rebuilder writes'
+        );
+      });
+    });
   });
 
   describe('a planned rebuilder whose module is not here yet', () => {

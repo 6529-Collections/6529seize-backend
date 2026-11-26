@@ -219,6 +219,21 @@ export const mintManifest: AreaManifest = {
     it may be missing, the other that it must come back. The registry
     refuses a column name that isn't plain, a name twice, and a column
     another rebuilder owns, compared without regard to case.
+    A plan with `keep: true` keeps the rows it matches instead: for rows
+    other steps read whose source doesn't exist yet (`until` and
+    `change` name it). The run copies the seeded rows its `where` matches
+    into the kept database before the drop, once however many keep plans
+    match them, and puts them back after the drop, before any rebuilder
+    runs, so later steps find them. They excuse nothing: a kept row must
+    come back unchanged, and a run whose rebuilders delete or change one
+    fails, final or not. The report lists each such plan as kept, with
+    the rows it put back, on the headline too ("rows kept, not rebuilt
+    <n>"), and a final run fails on it like on every plan. The registry
+    refuses keep with `columns` (a kept row comes back whole) and on a
+    table the step doesn't write the rows of (that table is kept whole
+    already); a run refuses a row that a keep plan and another plan both
+    match, and a partition writer's keep plan on rows outside its
+    partition.
     Plans don't excuse probe answers: a probe over planned rows would
     answer differently while they are missing, so it stays a planned
     probe, held by its `needs`, until the rows' source exists.
