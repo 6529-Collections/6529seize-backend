@@ -20,10 +20,8 @@ export const wavesManifest: AreaManifest = {
     chain_wave_rep: { class: 'INDEX' },
     chain_decision_leaderboards: { class: 'INDEX' },
     chain_leaderboard_rows: { class: 'INDEX' },
-    waves_chain_index_state: {
-      class: 'EPHEMERAL',
-      why: 'Chain index full-read and change-feed cursors, generation and retry diagnostics.'
-    },
+    // Its cursors and completion marker must be rebuilt with the indexed rows.
+    waves_chain_index_state: { class: 'INDEX' },
     wave_relay_cursors: {
       class: 'EPHEMERAL',
       why: 'Per-relay publication cursors and delivery retry diagnostics.'
