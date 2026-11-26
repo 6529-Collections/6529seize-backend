@@ -166,13 +166,15 @@ describe('Phase 0 permanent mounted GET route census', () => {
   };
 
   it('keeps the accepted manifest internally complete and unique', () => {
+    const manifestPaths = new Set(manifest.routes.map((route) => route.path));
     expect(manifest.routes).toHaveLength(288);
     expect(manifest.baseline.counts.runtime_route_shapes).toBe(288);
     expect(manifest.baseline.counts.openapi_get_operations).toBe(183);
-    expect(new Set(manifest.routes.map((route) => route.path)).size).toBe(288);
+    expect(manifestPaths.size).toBe(288);
+    expect(RETIRED_ROUTES.size).toBe(7);
     expect(
-      manifest.routes.filter((route) => !RETIRED_ROUTES.has(route.path))
-    ).toHaveLength(281);
+      Array.from(RETIRED_ROUTES).filter((route) => !manifestPaths.has(route))
+    ).toEqual([]);
   });
 
   it('keeps every non-retired route declaration mounted in its owning source', () => {
