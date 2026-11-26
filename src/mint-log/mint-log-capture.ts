@@ -28,7 +28,7 @@ import {
 
 /** What one logged write already knows when it captures a card. */
 export interface MintCaptureOptions {
-  /** Parts read with FOR UPDATE: the write's own parts (readCurrent). */
+  /** Parts read with FOR UPDATE: its kind's parts (readCurrent). */
   readonly current?: ReadonlySet<string>;
 }
 

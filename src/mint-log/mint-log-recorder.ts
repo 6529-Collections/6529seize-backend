@@ -94,7 +94,7 @@ export interface MintWriteSpec<T = unknown> {
    */
   readonly lockScope?: 'write' | 'capture';
   /**
-   * writeWithin only: read the write's own parts with FOR UPDATE. For a
+   * writeWithin only: read its kind's parts with FOR UPDATE. For a
    * caller whose transaction may hold a snapshot older than its locks (Drop
    * Forge's job and signer transactions run at the server's REPEATABLE
    * READ): its DELETEs and UPDATEs act on the latest rows, and a plain read
@@ -141,7 +141,7 @@ interface Captured {
   readonly card: MintCardRef;
   readonly before: MintCardState;
   readonly inputs: Record<string, unknown>;
-  /** Parts read with FOR UPDATE: the write's own parts (readCurrent). */
+  /** Parts read with FOR UPDATE: its kind's parts (readCurrent). */
   readonly current?: ReadonlySet<string>;
 }
 

@@ -600,7 +600,7 @@ describe('MintLogRecorder.writeWithin', () => {
     });
   });
 
-  it("reads the write's own parts with a locking read only when its spec asks for current rows", async () => {
+  it("reads its kind's parts with a locking read only when its spec asks for current rows", async () => {
     const parts = async (spec: MintWriteSpec) => {
       const fake = new Fake();
       const { log } = within(fake, { shadow: true });
