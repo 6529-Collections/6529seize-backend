@@ -335,6 +335,7 @@ describe('generated deployment source guard', () => {
         'claims-media-upload',
         'nft-link-page-retry',
         'market-depth-publication-lock',
+        'market-depth-wallet-activity-indexes',
         'voting-credit-returns',
         'wave-score-input-index',
         'profile-groups-collation',
@@ -404,20 +405,23 @@ describe('generated deployment source guard', () => {
     }
   );
 
-  it('restricts NFT retry scope to dbMigrationsLoop before credentials', () => {
-    expect(
-      validateDispatch('', 'prod', {
-        INPUT_SERVICE: 'dbMigrationsLoop',
-        DB_SCHEMA_SCOPE: 'nft-link-page-retry'
-      }).status
-    ).toBe(0);
-    expect(
-      validateDispatch('', 'prod', {
-        INPUT_SERVICE: 'api',
-        DB_SCHEMA_SCOPE: 'nft-link-page-retry'
-      }).status
-    ).toBe(1);
-  });
+  it.each(['nft-link-page-retry', 'market-depth-wallet-activity-indexes'])(
+    'restricts %s to dbMigrationsLoop before credentials',
+    (scope) => {
+      expect(
+        validateDispatch('', 'prod', {
+          INPUT_SERVICE: 'dbMigrationsLoop',
+          DB_SCHEMA_SCOPE: scope
+        }).status
+      ).toBe(0);
+      expect(
+        validateDispatch('', 'prod', {
+          INPUT_SERVICE: 'api',
+          DB_SCHEMA_SCOPE: scope
+        }).status
+      ).toBe(1);
+    }
+  );
 
   it.each([
     {},

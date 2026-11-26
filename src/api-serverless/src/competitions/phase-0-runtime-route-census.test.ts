@@ -17,16 +17,16 @@ type GetCall = {
   readonly cache: ManifestRoute['cache'] | null;
 };
 
-const RETIRED_OPERATIONAL_ROUTES = new Set([
+const RETIRED_GET_ROUTES = new Set([
+  '/api/delegations/minting/:wallet',
+  '/api/groups_im_eligible_for',
   '/deploy/release-bus/controls',
   '/deploy/release-candidates',
   '/deploy/release-trains',
   '/deploy/release-trains/:id',
-  '/deploy/ui/branch-head',
-  '/deploy/ui/bus',
-  '/deploy/ui/bus/app.js',
   '/oracle/prenodes',
-  '/rpc/test'
+  '/rpc/test',
+  '/api/wave/:id/undiscovered-drop'
 ]);
 
 const HAND_WRITTEN_ROUTE_SOURCE_LINE_DRIFT = 250;
@@ -100,13 +100,6 @@ function literalPaths(node: ts.Expression): string[] {
 function authMode(text: string): ManifestRoute['auth'] | 'unknown' {
   if (text.includes('needsAuthenticatedUser(')) return 'required';
   if (text.includes('maybeAuthenticatedUser(')) return 'optional';
-  if (
-    /getGitHubTokenOrThrow\(|requireAuthenticatedViewer\(|requireWorkflowCredential\(/.test(
-      text
-    )
-  ) {
-    return 'required';
-  }
   return 'unknown';
 }
 
@@ -175,22 +168,35 @@ describe('Phase 0 permanent mounted GET route census', () => {
   };
 
   it('keeps the accepted manifest internally complete and unique', () => {
-    expect(manifest.routes).toHaveLength(296);
-    expect(manifest.baseline.counts.runtime_route_shapes).toBe(296);
+    const manifestPaths = new Set(manifest.routes.map((route) => route.path));
+    expect(manifest.routes).toHaveLength(288);
+    expect(manifest.baseline.counts.runtime_route_shapes).toBe(288);
     expect(manifest.baseline.counts.openapi_get_operations).toBe(183);
-    expect(new Set(manifest.routes.map((route) => route.path)).size).toBe(296);
+    expect(manifestPaths.size).toBe(288);
+    expect(RETIRED_GET_ROUTES.size).toBe(9);
     expect(
-      manifest.routes.filter(
-        (route) => !RETIRED_OPERATIONAL_ROUTES.has(route.path)
+      Array.from(RETIRED_GET_ROUTES).filter(
+        (route) => !manifestPaths.has(route)
       )
-    ).toHaveLength(287);
+    ).toEqual([]);
+  });
+
+  it('mounts the Quick Vote router only at the documented waves prefix', () => {
+    const appSource = fs.readFileSync(
+      path.join(repositoryRoot, 'src/api-serverless/src/app.ts'),
+      'utf8'
+    );
+    const mounts = appSource.matchAll(
+      /\bapiRouter\.use\(\s*['"`]([^'"`]+)['"`],\s*waveQuickVoteRoutes\s*,?\s*\)/g
+    );
+    expect(Array.from(mounts, ([, prefix]) => prefix)).toEqual(['/waves']);
   });
 
   it('keeps every non-retired route declaration mounted in its owning source', () => {
     const callsBySource = new Map<string, GetCall[]>();
     const failures: string[] = [];
     for (const route of manifest.routes.filter(
-      (entry) => !RETIRED_OPERATIONAL_ROUTES.has(entry.path)
+      (entry) => !RETIRED_GET_ROUTES.has(entry.path)
     )) {
       const acceptedSource =
         ACCEPTED_ROUTE_SOURCE_MOVES.get(route.path) ?? route.source;
