@@ -68,8 +68,9 @@ describe('siteDayFromUploads', () => {
       `${w2},"a name, ""quoted""",`
     );
     expect(named).not.toBe(consolidated);
+    // A new column on the header row (the first line) and on every row.
     const extra = wallets
-      .replace('\n', ',new_column\n')
+      .replace(/^([^\n]*)\n/, '$1,new_column\n')
       .replace(/\n(0x[^\n]+)/g, '\n$1,7');
     const day = siteDayFromUploads(extra, named);
     expect(day.notes).toEqual([
