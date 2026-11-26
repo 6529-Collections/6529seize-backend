@@ -86,6 +86,16 @@ export function canonicalizeEventBody(body: unknown): CanonicalEventBody {
   };
 }
 
+/**
+ * A post's drop id: its event id's first 16 bytes as a UUID. A post signed
+ * through 6529.io's API and one read from the 6529 relays are both written
+ * under it, so a rebuild from the relays gives the same ids.
+ */
+export function dropIdOfEvent(eventId: string): string {
+  const h = eventId.slice(2, 34).toLowerCase();
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
+}
+
 export function computeDeviceEventId(fields: DeviceEventFields): string {
   return ethers.TypedDataEncoder.hash(DEVICE_EVENT_DOMAIN, DEVICE_EVENT_TYPES, {
     ...fields,

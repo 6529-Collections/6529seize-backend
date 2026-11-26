@@ -37,6 +37,17 @@ import {
   MemeCollaborationsDb,
   memeCollaborationsDb
 } from './meme-collaborations.db';
+import type { MintUserRequest } from '@/mint-log/mint-log-http';
+import { mintCard } from '@/mint-log/mint-log-parts';
+import type {
+  MintLogRecorder,
+  MintWriteSpec
+} from '@/mint-log/mint-log-recorder';
+import {
+  COLLAB_CARD_CONTRACT,
+  MintLogActor,
+  MintLogKind
+} from '@/mint-log/mint-log.types';
 
 const INVITATION_RESPONSE_STATUS = {
   ACCEPT: 'ACCEPTED',
@@ -128,6 +139,52 @@ export function buildCollaborationCredit(
   };
 }
 
+type CollaborationRecorder = Pick<MintLogRecorder, 'write' | 'writeWithin'>;
+
+/**
+ * Loaded on first use: the recorder's record log imports the drops API,
+ * which imports this service.
+ */
+async function defaultRecorder(): Promise<CollaborationRecorder> {
+  return (await import('@/mint-log/mint-log-recorder')).mintLogRecorder;
+}
+
+const SERVICE_ACTOR: MintLogActor = {
+  type: 'service',
+  wallet: null,
+  authority: null
+};
+
+/** The signed-in wallet, or the service when a system write has none. */
+function collaborationActor(
+  auth: AuthenticationContext | undefined,
+  authority: string
+): MintLogActor {
+  const wallet = auth?.authenticatedWallet;
+  return wallet
+    ? { type: 'user', wallet: wallet.toLowerCase(), authority }
+    : SERVICE_ACTOR;
+}
+
+/**
+ * The mint log's record of a write inside a drop write, a decision or a
+ * drop deletion: that write carries the authority, so no record of its own.
+ */
+function enclosedSpec(
+  kind: MintLogKind,
+  enclosing: string,
+  dropId: string,
+  actor: MintLogActor,
+  body: unknown = null
+): Omit<MintWriteSpec, 'card'> {
+  return {
+    kind,
+    actor,
+    intent: { route: enclosing, params: { drop_id: dropId }, body },
+    enclosing
+  };
+}
+
 function responseArtistName(
   action: string,
   suppliedName: string | undefined,
@@ -144,8 +201,30 @@ function responseArtistName(
 
 export class MemeCollaborationsService {
   constructor(
-    private readonly db: MemeCollaborationsDb = memeCollaborationsDb
+    private readonly db: MemeCollaborationsDb = memeCollaborationsDb,
+    private readonly recorder: () => Promise<CollaborationRecorder> = defaultRecorder
   ) {}
+
+  /**
+   * Records a write to one artwork's collaboration rows in the mint log, in
+   * the caller's transaction. The caller holds the collaboration row (or, for
+   * a new one, the drop) before this, so the artwork's head comes after it.
+   */
+  private async logged<T>(
+    spec: Omit<MintWriteSpec<T>, 'card'>,
+    dropId: string,
+    ctx: RequestContext,
+    run: () => Promise<T>
+  ): Promise<T> {
+    const recorder = await this.recorder();
+    const full: MintWriteSpec<T> = {
+      ...spec,
+      card: mintCard(COLLAB_CARD_CONTRACT, 0, dropId)
+    };
+    return ctx.connection
+      ? recorder.writeWithin(full, ctx.connection, run)
+      : recorder.write(full, run);
+  }
 
   async onWrite(
     model: CreateOrUpdateDropModel,
@@ -171,7 +250,17 @@ export class MemeCollaborationsService {
       return [];
     const existing = await this.db.context(dropId, ctx, true);
     if (existing) {
-      await this.updateArtwork(model, existing, ctx);
+      await this.logged(
+        enclosedSpec(
+          'collab.artwork',
+          'drop.write',
+          dropId,
+          collaborationActor(ctx.authenticationContext, 'drop author')
+        ),
+        dropId,
+        ctx,
+        () => this.updateArtwork(model, existing, ctx)
+      );
       return [];
     }
     if (model.drop_id && model.collaborator_ids === undefined) return [];
@@ -195,14 +284,26 @@ export class MemeCollaborationsService {
         );
       return [];
     }
-    return this.createInvitations(model, dropId, ids, ctx, competitionId);
+    return this.logged(
+      enclosedSpec(
+        'collab.invite',
+        'drop.write',
+        dropId,
+        collaborationActor(ctx.authenticationContext, 'drop author'),
+        { collaborator_ids: ids }
+      ),
+      dropId,
+      ctx,
+      () => this.createInvitations(model, dropId, ids, ctx, competitionId)
+    );
   }
 
   async inviteExisting(
     dropId: string,
     ids: string[],
     auth: AuthenticationContext,
-    ctx: RequestContext
+    ctx: RequestContext,
+    request?: MintUserRequest
   ): Promise<number[]> {
     if (
       !auth.authenticatedProfileId ||
@@ -240,29 +341,45 @@ export class MemeCollaborationsService {
       if (!ids.length)
         throw new BadRequestException('Choose at least one collaborator');
       validateCollaborationInvitees(ids, drop.author_id, previous);
-      if (!context) {
-        const model = await this.existingArtworkModel(dropId, drop, tx);
-        await this.createInvitations(
-          model,
-          dropId,
-          [],
-          tx,
-          eligible.competition_id
-        );
-        context = await this.db.context(dropId, tx, true);
-      }
-      if (!context) throw new NotFoundException('Collaboration not found');
-      return this.insertInvitations(
-        context.author_id,
-        context.wave_id,
+      return this.logged(
+        {
+          kind: 'collab.invite',
+          actor: collaborationActor(auth, 'drop author'),
+          intent: request?.intent ?? {
+            route: 'POST /drops/:drop_id/collaborations',
+            params: { drop_id: dropId },
+            body: { collaborator_ids: ids }
+          },
+          signedRecords: request?.signedRecords ?? null
+        },
         dropId,
-        ids,
         tx,
-        context.artwork.name,
-        previous.reduce(
-          (latest, item) => Math.max(latest, Number(item.created_at) || 0),
-          0
-        )
+        async () => {
+          if (!context) {
+            const model = await this.existingArtworkModel(dropId, drop, tx);
+            await this.createInvitations(
+              model,
+              dropId,
+              [],
+              tx,
+              eligible.competition_id ?? undefined
+            );
+            context = await this.db.context(dropId, tx, true);
+          }
+          if (!context) throw new NotFoundException('Collaboration not found');
+          return this.insertInvitations(
+            context.author_id,
+            context.wave_id,
+            dropId,
+            ids,
+            tx,
+            context.artwork.name,
+            previous.reduce(
+              (latest, item) => Math.max(latest, Number(item.created_at) || 0),
+              0
+            )
+          );
+        }
       );
     });
   }
@@ -555,7 +672,8 @@ export class MemeCollaborationsService {
       artist_name?: string;
     },
     auth: AuthenticationContext,
-    ctx: RequestContext
+    ctx: RequestContext,
+    request?: MintUserRequest
   ): Promise<number[]> {
     if (
       !auth.authenticatedProfileId ||
@@ -609,20 +727,39 @@ export class MemeCollaborationsService {
         tx
       );
       if (!drop) throw new NotFoundException('Submission no longer exists');
-      await this.db.query(
-        'respond',
-        `update ${MEME_COLLABORATION_INVITATIONS_TABLE} set status=:status,profile_handle=:profileHandle,artist_name=:artistName,responded_at=:now,responder_wallet=:wallet,acceptance_copy_version=:copyVersion where id=:id and status='PENDING'`,
+      await this.logged(
         {
-          id: invitationId,
-          status: next,
-          profileHandle: invitation.profile.handle,
-          artistName,
-          now: Date.now(),
-          wallet: auth.authenticatedWallet,
-          copyVersion:
-            body.action === 'ACCEPT' ? COLLABORATION_COPY_VERSION : null
+          kind: 'collab.respond',
+          actor: collaborationActor(
+            auth,
+            body.action === 'CANCEL' ? 'drop author' : 'invitee'
+          ),
+          intent: request?.intent ?? {
+            route:
+              'POST /drops/:drop_id/collaborations/:invitation_id/response',
+            params: { drop_id: dropId, invitation_id: invitationId },
+            body
+          },
+          signedRecords: request?.signedRecords ?? null
         },
-        tx
+        dropId,
+        tx,
+        () =>
+          this.db.query(
+            'respond',
+            `update ${MEME_COLLABORATION_INVITATIONS_TABLE} set status=:status,profile_handle=:profileHandle,artist_name=:artistName,responded_at=:now,responder_wallet=:wallet,acceptance_copy_version=:copyVersion where id=:id and status='PENDING'`,
+            {
+              id: invitationId,
+              status: next,
+              profileHandle: invitation.profile.handle,
+              artistName,
+              now: Date.now(),
+              wallet: auth.authenticatedWallet,
+              copyVersion:
+                body.action === 'ACCEPT' ? COLLABORATION_COPY_VERSION : null
+            },
+            tx
+          )
       );
       if (body.action === 'DECLINE') return [];
       const [wave] = await this.db.query<{
@@ -669,34 +806,48 @@ export class MemeCollaborationsService {
       author?.handle || context.author_handle,
       invitations
     );
-    await this.db.query(
-      'freeze',
-      `update ${MEME_COLLABORATIONS_TABLE} set closed_at=:now,credit=:credit where drop_id=:dropId`,
-      { dropId, now: Date.now(), credit: JSON.stringify(credit) },
-      ctx
-    );
-    await this.db.query(
-      'closePending',
-      `update ${MEME_COLLABORATION_INVITATIONS_TABLE} set status='CLOSED',responded_at=:now where drop_id=:dropId and status='PENDING'`,
-      { dropId, now: Date.now() },
-      ctx
+    await this.logged(
+      enclosedSpec('collab.freeze', 'decision.result', dropId, SERVICE_ACTOR),
+      dropId,
+      ctx,
+      async () => {
+        await this.db.query(
+          'freeze',
+          `update ${MEME_COLLABORATIONS_TABLE} set closed_at=:now,credit=:credit where drop_id=:dropId`,
+          { dropId, now: Date.now(), credit: JSON.stringify(credit) },
+          ctx
+        );
+        await this.db.query(
+          'closePending',
+          `update ${MEME_COLLABORATION_INVITATIONS_TABLE} set status='CLOSED',responded_at=:now where drop_id=:dropId and status='PENDING'`,
+          { dropId, now: Date.now() },
+          ctx
+        );
+      }
     );
     return credit;
   }
 
   async closeDeleted(dropId: string, ctx: RequestContext): Promise<void> {
     if (!(await this.db.context(dropId, ctx, true))) return;
-    await this.db.query(
-      'closeDeleted',
-      `update ${MEME_COLLABORATIONS_TABLE} set closed_at=coalesce(closed_at,:now) where drop_id=:dropId`,
-      { dropId, now: Date.now() },
-      ctx
-    );
-    await this.db.query(
-      'cancelDeleted',
-      `update ${MEME_COLLABORATION_INVITATIONS_TABLE} set status='CANCELLED',responded_at=:now where drop_id=:dropId and status='PENDING'`,
-      { dropId, now: Date.now() },
-      ctx
+    await this.logged(
+      enclosedSpec('collab.close', 'drop.delete', dropId, SERVICE_ACTOR),
+      dropId,
+      ctx,
+      async () => {
+        await this.db.query(
+          'closeDeleted',
+          `update ${MEME_COLLABORATIONS_TABLE} set closed_at=coalesce(closed_at,:now) where drop_id=:dropId`,
+          { dropId, now: Date.now() },
+          ctx
+        );
+        await this.db.query(
+          'cancelDeleted',
+          `update ${MEME_COLLABORATION_INVITATIONS_TABLE} set status='CANCELLED',responded_at=:now where drop_id=:dropId and status='PENDING'`,
+          { dropId, now: Date.now() },
+          ctx
+        );
+      }
     );
   }
 }

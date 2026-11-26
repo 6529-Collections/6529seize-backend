@@ -24,6 +24,23 @@ export class MintingClaimsDb extends LazyDbAccessCompatibleService {
     return rows.length > 0;
   }
 
+  async findClaimIdByDropId(
+    contract: string,
+    dropId: string,
+    connection?: RequestContext['connection']
+  ): Promise<number | null> {
+    const rows = await this.db.execute<{ claim_id: unknown }>(
+      `SELECT claim_id
+       FROM ${MINTING_CLAIMS_TABLE}
+       WHERE contract = :contract
+         AND drop_id = :dropId
+       LIMIT 1`,
+      { contract: contract.toLowerCase(), dropId },
+      connection ? { wrappedConnection: connection } : undefined
+    );
+    return rows.length ? numbers.parseIntOrNull(rows[0].claim_id) : null;
+  }
+
   async getMaxSeasonId(ctx: RequestContext): Promise<number> {
     const result = await this.db.execute<{ max_id: unknown }>(
       `SELECT COALESCE(MAX(id), 0) as max_id FROM ${MEMES_SEASONS_TABLE}`,

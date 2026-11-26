@@ -6,6 +6,7 @@ import {
   LEGACY_DM_DROP_ID_TABLES,
   LEGACY_DM_DROP_STEPS,
   LEGACY_DM_KEPT_TABLES,
+  LEGACY_DM_RELAY_STEPS,
   LEGACY_DM_WAVE_STEPS
 } from './legacy-dm-purge.inventory';
 
@@ -19,7 +20,9 @@ const REFERENCE_COLUMNS = [
   'trigger_drop_id',
   'bot_reply_drop_id',
   'quoted_drop_id',
-  'reply_to_drop_id'
+  'reply_to_drop_id',
+  // The drop index's relay copies name their wave as the relay did.
+  'wave'
 ];
 
 /**
@@ -106,7 +109,8 @@ describe('legacy DM purge inventory', () => {
   const purged = new Set<string>([
     ...LEGACY_DM_DROP_ID_TABLES,
     ...LEGACY_DM_DROP_STEPS.map((step) => step.table),
-    ...LEGACY_DM_WAVE_STEPS.map((step) => step.table)
+    ...LEGACY_DM_WAVE_STEPS.map((step) => step.table),
+    ...LEGACY_DM_RELAY_STEPS.map((step) => step.table)
   ]);
 
   it('finds the drop and wave tables it is meant to guard', () => {

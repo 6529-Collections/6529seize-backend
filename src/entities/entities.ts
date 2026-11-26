@@ -57,6 +57,7 @@ export { MintingMerkleProof } from './IMintingMerkleProof';
 export { MintingMerkleRoot } from './IMintingMerkleRoot';
 export { MintingClaimActionEntity } from './IMintingClaimAction';
 export { MemeCardDropMappingEntity } from './IMemeCardDropMapping';
+export { MintLogCardHeadEntity, MintLogHeadEntity } from './IMintLogHead';
 export {
   DropGroupMentionEntity,
   DropBoostEntity,
@@ -250,6 +251,8 @@ export {
   ChainDecisionLeaderboardEntity,
   ChainLeaderboardRowEntity,
   ChainEntryEntity,
+  ChainClaimBuildEntity,
+  ChainEventEntity,
   ChainGroupEntity,
   ChainPollEntity,
   ChainResultEntity,
@@ -259,6 +262,15 @@ export {
   ChainWaveRoleEntity,
   WavesChainIndexStateEntity
 } from './IWavesChainIndex';
+export {
+  ChainDocEntity,
+  ChainEntryHoldEntity,
+  WavesChainMirrorDecisionEntity,
+  WavesChainMirrorEventEntity,
+  WavesChainMirrorGroupEntity,
+  WavesChainMirrorStateEntity,
+  WavesChainMirrorWaveEntity
+} from './IWavesChainMirror';
 export { WalletAuthSessionEntity } from './IWalletAuthSession';
 export type { WalletAuthClientType } from './IWalletAuthSession';
 export { WalletConnectionShareEntity } from './IWalletConnectionShare';
@@ -311,6 +323,7 @@ export { WebSocketOutboxEntity } from './IWebSocketOutbox';
 
 export * from './ICompetitionRuntime';
 export { CompetitionWorkerCursorEntity } from './ICompetitionWorkerCursor';
+export { WavesSettlementSendEntity } from './IWavesSettlementSend';
 
 export * from './ICompetitionCommand';
 export * from './ICompetitionEntryContentVersion';
@@ -327,6 +340,11 @@ export * from './IDropForgeReadinessCheck';
 export { DeviceGrantEntity } from './IDeviceGrant';
 export { DeviceSignedEventEntity } from './IDeviceSignedEvent';
 export { WaveRelayCursorEntity } from './IWaveRelayCursor';
+export {
+  WaveRelayEventEntity,
+  WaveRelayRejectEntity,
+  WaveRelaySubscriptionEntity
+} from './IWaveRelayIngest';
 export { DropAuthorSignatureEntity } from './IDropAuthorSignature';
 export { SignedRecordHeadEntity } from './ISignedRecordHead';
 export {

@@ -400,76 +400,94 @@ function filterSubscriptions(
   });
 }
 
-export async function resetAllowlist(contract: string, tokenId: number) {
+/**
+ * Clears a card's distribution: the subscriptions' phase columns, its
+ * distribution rows (automatic airdrops stay), merkle roots and proofs, and
+ * normalized rows, on the caller's connection. Run it inside Drop Forge's
+ * reset, as resetAllowlist and the logged reset route do, so its checks
+ * come first.
+ */
+export async function resetAllowlistRows(
+  contract: string,
+  tokenId: number,
+  ctx: RequestContext
+): Promise<void> {
+  const wrappedConnection = ctx.connection;
+  if (!wrappedConnection) {
+    // The rows go together or not at all.
+    return sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+      resetAllowlistRows(contract, tokenId, { ...ctx, connection })
+    );
+  }
   const contractLower = contract.toLowerCase();
-  await resetDistributionPreparation(
-    contract,
-    tokenId,
-    async ({ connection: wrappedConnection }) => {
-      const updateQuery = `
-        UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
-        SET 
-          phase = NULL, 
-          phase_subscriptions = -1,
-          phase_position = -1
-        WHERE contract = :contract AND token_id = :tokenId`;
+  const updateQuery = `
+      UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
+      SET 
+        phase = NULL, 
+        phase_subscriptions = -1,
+        phase_position = -1
+      WHERE contract = :contract AND token_id = :tokenId`;
 
-      await sqlExecutor.execute(
-        updateQuery,
-        {
-          contract,
-          tokenId
-        },
-        { wrappedConnection }
-      );
+  await sqlExecutor.execute(
+    updateQuery,
+    {
+      contract,
+      tokenId
+    },
+    { wrappedConnection }
+  );
 
-      await sqlExecutor.execute(
-        `DELETE FROM ${DISTRIBUTION_TABLE}
+  await sqlExecutor.execute(
+    `DELETE FROM ${DISTRIBUTION_TABLE}
+       WHERE contract = :contract
+         AND card_id = :tokenId
+         AND phase NOT IN (:automaticAirdropPhases)`,
+    {
+      contract: contractLower,
+      tokenId,
+      automaticAirdropPhases: [...DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES]
+    },
+    { wrappedConnection }
+  );
+
+  await sqlExecutor.execute(
+    `DELETE FROM ${MINTING_MERKLE_PROOFS_TABLE}
+       WHERE merkle_root IN (
+         SELECT merkle_root
+         FROM ${MINTING_MERKLE_ROOTS_TABLE}
          WHERE contract = :contract
            AND card_id = :tokenId
-           AND phase NOT IN (:automaticAirdropPhases)`,
-        {
-          contract: contractLower,
-          tokenId,
-          automaticAirdropPhases: [...DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES]
-        },
-        { wrappedConnection }
-      );
+       )`,
+    {
+      contract: contractLower,
+      tokenId
+    },
+    { wrappedConnection }
+  );
 
-      await sqlExecutor.execute(
-        `DELETE FROM ${MINTING_MERKLE_PROOFS_TABLE}
-         WHERE merkle_root IN (
-           SELECT merkle_root
-           FROM ${MINTING_MERKLE_ROOTS_TABLE}
-           WHERE contract = :contract
-             AND card_id = :tokenId
-         )`,
-        {
-          contract: contractLower,
-          tokenId
-        },
-        { wrappedConnection }
-      );
+  await sqlExecutor.execute(
+    `DELETE FROM ${MINTING_MERKLE_ROOTS_TABLE}
+       WHERE contract = :contract
+         AND card_id = :tokenId`,
+    {
+      contract: contractLower,
+      tokenId
+    },
+    { wrappedConnection }
+  );
 
-      await sqlExecutor.execute(
-        `DELETE FROM ${MINTING_MERKLE_ROOTS_TABLE}
-         WHERE contract = :contract
-           AND card_id = :tokenId`,
-        {
-          contract: contractLower,
-          tokenId
-        },
-        { wrappedConnection }
-      );
+  await sqlExecutor.execute(
+    `DELETE FROM ${DISTRIBUTION_NORMALIZED_TABLE} WHERE contract = :contract AND card_id = :tokenId`,
+    {
+      contract: contractLower,
+      tokenId
+    },
+    { wrappedConnection }
+  );
+}
 
-      await sqlExecutor.execute(
-        `DELETE FROM ${DISTRIBUTION_NORMALIZED_TABLE} WHERE contract = :contract AND card_id = :tokenId`,
-        {
-          contract: contractLower,
-          tokenId
-        },
-        { wrappedConnection }
-      );
-    }
+export async function resetAllowlist(contract: string, tokenId: number) {
+  await resetDistributionPreparation(contract, tokenId, (ctx) =>
+    resetAllowlistRows(contract, tokenId, ctx)
   );
 }

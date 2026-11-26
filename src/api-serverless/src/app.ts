@@ -26,6 +26,7 @@ import lightDropsRoutes from './drops/light-drops.routes';
 import feedRoutes from './feed/feed.routes';
 import gasRoutes from './gas/gas.routes';
 import generatedOpenApiRoutes from './generated/routes/openapi-generated.routes';
+import { competitionChainIdPaths } from './competitions/competition-chain-id.middleware';
 import { validateDocumentationRawJson } from '@/artwork-documentation/artwork-documentation.raw-json';
 import { documentationErrorMiddleware } from '@/api/artwork-documentation/artwork-documentation.http';
 import { marketErrorMiddleware } from '@/api/marketplace/marketplace.http';
@@ -102,6 +103,7 @@ import { TDHBlock } from '@/entities/ITDH';
 import { Upload } from '@/entities/IUpload';
 import { env, loadLocalConfig, loadSecrets } from '@/env';
 import { Logger } from '@/logging';
+import { describeMintLogReadiness } from '@/mint-log/mint-log-readiness';
 import { getRedisClient, initRedis } from '@/redis';
 import {
   processSentryAlertWebhook,
@@ -553,6 +555,9 @@ async function initializeApp() {
   // D172: the effective suite window. A malformed setting is reported
   // (ERROR log, EMF metric) and treated as not started; nothing else changes.
   logger.info(describeE2eeSuiteTransition());
+  // What the mint log can do as configured; PRIMARY without bound principal
+  // bindings refuses every admin minting write from the site.
+  logger.info(describeMintLogReadiness());
   await initRedis({ failFast: API_REDIS_FAIL_FAST_OPTIONS });
   // Plain-text sign-in challenges issued before this build stay valid for a
   // short transition that starts with the first instance of the build. Not
@@ -1461,6 +1466,8 @@ function wireApp() {
   apiRouter.use(`/push-notifications`, pushNotificationsRoutes);
   apiRouter.use(`/xtdh`, xtdhRoutes);
   apiRouter.use(`/nft-link`, nftLinksRoutes);
+  // A decision's chain id in place of its competition id (v3 routes).
+  apiRouter.use(competitionChainIdPaths());
   apiRouter.use(``, generatedOpenApiRoutes);
 
   rootRouter.use(BASE_PATH, apiRouter);

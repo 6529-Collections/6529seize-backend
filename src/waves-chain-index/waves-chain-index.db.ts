@@ -1,7 +1,9 @@
 import {
+  CHAIN_CLAIM_BUILDS_TABLE,
   CHAIN_DECISION_LEADERBOARDS_TABLE,
   CHAIN_DECISIONS_TABLE,
   CHAIN_ENTRIES_TABLE,
+  CHAIN_EVENTS_TABLE,
   CHAIN_GROUPS_TABLE,
   CHAIN_LEADERBOARD_ROWS_TABLE,
   CHAIN_POLLS_TABLE,
@@ -17,6 +19,23 @@ import {
   dbSupplier,
   LazyDbAccessCompatibleService
 } from '@/sql-executor';
+import { Logger } from '@/logging';
+import { ClaimBuild, ClaimBuildMessage } from './waves-chain-index.claims';
+import {
+  ballotKey,
+  ChainEvent,
+  ChainEventKind,
+  ChainEventOrigin,
+  eventCursor,
+  EventCursorError,
+  ObjectInfo,
+  parseEventCursor,
+  ScanState,
+  StoredBallot,
+  StoredVote,
+  UNKNOWN_SCAN,
+  voteKey
+} from './waves-chain-index.events';
 import { VoteChange } from './waves-chain-index.feed';
 import { hasKeys, IndexRow } from './waves-chain-index.rows';
 
@@ -79,13 +98,40 @@ export interface WavesChainIndexState {
   /** The chain's network id the rows come from. */
   readonly network: string | null;
   readonly lastError: string | null;
+  /** The next height whose events the log doesn't hold yet. */
+  readonly eventsNext: number | null;
+  /**
+   * The last full read that checked every row again (the first, or one
+   * after a feed gap); until it completes, only rows of its generation tell
+   * an event what was there before.
+   */
+  readonly trustFrom: number;
+  /** The vote scan as the log last saw it (the events module). */
+  readonly scanState: ScanState;
+  /**
+   * Entries whose vote records the node could not decode, to read whole
+   * at the feed's height, and those votes (unknown to the log till then).
+   */
+  readonly voteRereads: VoteRereads;
   /**
    * Parts of the block at `feedNext` already applied: a block too large
    * for one batch is applied in parts, and a run that stops inside it goes
    * on from there.
    */
   readonly feedPart: number;
+  /**
+   * The waves import's start (ms), from the first run that read it
+   * complete; null before.
+   */
+  readonly importStartedAt: number | null;
 }
+
+export interface VoteRereads {
+  readonly entries: readonly string[];
+  readonly votes: readonly string[];
+}
+
+const NO_REREADS: VoteRereads = { entries: [], votes: [] };
 
 export const EMPTY_INDEX_STATE: WavesChainIndexState = {
   generation: 0,
@@ -97,10 +143,17 @@ export const EMPTY_INDEX_STATE: WavesChainIndexState = {
   readHeight: null,
   network: null,
   lastError: null,
-  feedPart: 0
+  eventsNext: null,
+  trustFrom: 0,
+  scanState: UNKNOWN_SCAN,
+  voteRereads: NO_REREADS,
+  feedPart: 0,
+  importStartedAt: null
 };
 
-const STATE_NAME = 'waves';
+/** The index's state row (waves_chain_index_state.name). */
+export const WAVES_CHAIN_INDEX_STATE_NAME = 'waves';
+const STATE_NAME = WAVES_CHAIN_INDEX_STATE_NAME;
 /** Rows a statement writes at most. */
 const CHUNK_ROWS = 200;
 /**
@@ -150,6 +203,116 @@ function rowBytes(row: IndexRow): number {
 }
 const GUARD_COLUMNS = ['height', 'generation'];
 
+const logger = Logger.get('WAVES_CHAIN_INDEX_DB');
+
+/** JSON with every object's keys in order: what MySQL's JSON keeps. */
+function sortedJson(value: unknown): string {
+  return JSON.stringify(value, (_key, inner) =>
+    inner && typeof inner === 'object' && !Array.isArray(inner)
+      ? Object.fromEntries(
+          Object.entries(inner as Record<string, unknown>).sort(([a], [b]) =>
+            a < b ? -1 : a > b ? 1 : 0
+          )
+        )
+      : inner
+  );
+}
+
+/** About the bytes an id takes in a statement. */
+const ID_BYTES = 72;
+/** Events a read returns at most. */
+export const MAX_READ_EVENTS = 1000;
+/**
+ * Events one transaction writes at most: a block whose scan cut thousands
+ * of votes is written in several. A batch's events are derived again the
+ * same way until its last part has moved `events_next` (the index isn't
+ * touched before that), so a part written twice changes nothing.
+ */
+const EVENTS_PER_TRANSACTION = 500;
+
+const EVENT_COLUMNS = [
+  'height',
+  'seq',
+  'block_time',
+  'kind',
+  'origin',
+  'wave_id',
+  'wave_legacy_id',
+  'decision_id',
+  'decision_legacy_id',
+  'entry_id',
+  'entry_legacy_id',
+  'poll_id',
+  'poll_legacy_id',
+  'group_id',
+  'group_legacy_id',
+  'actor',
+  'data'
+] as const;
+
+type EventColumn = (typeof EVENT_COLUMNS)[number];
+
+function eventRow(event: ChainEvent): Record<EventColumn, unknown> {
+  return {
+    height: event.height,
+    seq: event.seq,
+    block_time: event.blockTime,
+    kind: event.kind,
+    origin: event.origin,
+    wave_id: event.waveId,
+    wave_legacy_id: event.waveLegacyId,
+    decision_id: event.decisionId,
+    decision_legacy_id: event.decisionLegacyId,
+    entry_id: event.entryId,
+    entry_legacy_id: event.entryLegacyId,
+    poll_id: event.pollId,
+    poll_legacy_id: event.pollLegacyId,
+    group_id: event.groupId,
+    group_legacy_id: event.groupLegacyId,
+    actor: event.actor,
+    data: JSON.stringify(event.data)
+  };
+}
+
+function eventBytes(event: ChainEvent): number {
+  return 800 + JSON.stringify(event.data).length;
+}
+
+type EventRowRead = Record<EventColumn, unknown>;
+
+function jsonOf(value: unknown): Record<string, unknown> {
+  const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+  return parsed && typeof parsed === 'object'
+    ? (parsed as Record<string, unknown>)
+    : {};
+}
+
+function textOrNull(value: unknown): string | null {
+  return value === null || value === undefined ? null : String(value);
+}
+
+function eventOf(row: EventRowRead): ChainEvent {
+  return {
+    height: Number(row.height),
+    seq: Number(row.seq),
+    blockTime: Number(row.block_time),
+    kind: String(row.kind) as ChainEventKind,
+    origin: String(row.origin) as ChainEventOrigin,
+    waveId: textOrNull(row.wave_id),
+    waveLegacyId: textOrNull(row.wave_legacy_id),
+    decisionId: textOrNull(row.decision_id),
+    decisionLegacyId: textOrNull(row.decision_legacy_id),
+    entryId: textOrNull(row.entry_id),
+    entryLegacyId: textOrNull(row.entry_legacy_id),
+    pollId: textOrNull(row.poll_id),
+    pollLegacyId: textOrNull(row.poll_legacy_id),
+    groupId: textOrNull(row.group_id),
+    groupLegacyId: textOrNull(row.group_legacy_id),
+    actor: textOrNull(row.actor),
+    data: jsonOf(row.data)
+  };
+}
+
 /** A transaction that deadlocks is tried this many times in all. */
 const DEADLOCK_TRIES = 4;
 const DEADLOCK_BACKOFF_MS = 25;
@@ -198,7 +361,42 @@ interface StateRow {
   readonly read_height: number | string | null;
   readonly network: string | null;
   readonly last_error: string | null;
+  readonly events_next?: number | string | null;
+  readonly trust_from?: number | string | null;
+  readonly scan_state?: string | null;
+  readonly vote_rereads?: string | null;
   readonly feed_part?: number | string | null;
+  readonly import_started_at?: number | string | null;
+}
+
+function voteRereadsOf(text: string | null | undefined): VoteRereads {
+  if (!text) return NO_REREADS;
+  try {
+    const value = JSON.parse(text) as Partial<VoteRereads>;
+    const strings = (list: unknown) =>
+      Array.isArray(list)
+        ? list.filter((item): item is string => typeof item === 'string')
+        : [];
+    return { entries: strings(value.entries), votes: strings(value.votes) };
+  } catch {
+    return NO_REREADS;
+  }
+}
+
+function scanStateOf(text: string | null | undefined): ScanState {
+  if (!text) return UNKNOWN_SCAN;
+  try {
+    const value = JSON.parse(text) as Partial<ScanState>;
+    const num = (n: unknown) =>
+      typeof n === 'number' && Number.isSafeInteger(n) ? n : null;
+    return {
+      scanning: num(value.scanning),
+      finishedDay: num(value.finishedDay),
+      reducing: typeof value.reducing === 'string' ? value.reducing : null
+    };
+  } catch {
+    return UNKNOWN_SCAN;
+  }
 }
 
 function nullableNumber(
@@ -233,7 +431,12 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
       readHeight: nullableNumber(row.read_height),
       network: row.network,
       lastError: row.last_error,
-      feedPart: Number(row.feed_part ?? 0)
+      eventsNext: nullableNumber(row.events_next),
+      trustFrom: Number(row.trust_from ?? 0),
+      scanState: scanStateOf(row.scan_state),
+      voteRereads: voteRereadsOf(row.vote_rereads),
+      feedPart: Number(row.feed_part ?? 0),
+      importStartedAt: nullableNumber(row.import_started_at)
     };
   }
 
@@ -242,17 +445,21 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
       `insert into ${WAVES_CHAIN_INDEX_STATE_TABLE}
          (name, generation, full_phase, full_after, full_from_height,
           last_full_at, feed_next, read_height, network, last_error,
-          feed_part, updated_at)
+          events_next, trust_from, scan_state, vote_rereads, feed_part,
+          import_started_at, updated_at)
        values (:name, :generation, :fullPhase, :fullAfter, :fullFromHeight,
           :lastFullAt, :feedNext, :readHeight, :network, :lastError,
-          :feedPart, :now)
+          :eventsNext, :trustFrom, :scanState, :voteRereads, :feedPart,
+          :importStartedAt, :now)
        on duplicate key update
          generation = :generation, full_phase = :fullPhase,
          full_after = :fullAfter, full_from_height = :fullFromHeight,
          last_full_at = :lastFullAt, feed_next = :feedNext,
          read_height = :readHeight, network = :network,
-         last_error = :lastError, feed_part = :feedPart,
-         updated_at = :now`,
+         last_error = :lastError, events_next = :eventsNext,
+         trust_from = :trustFrom, scan_state = :scanState,
+         vote_rereads = :voteRereads, feed_part = :feedPart,
+         import_started_at = :importStartedAt, updated_at = :now`,
       {
         name: STATE_NAME,
         generation: state.generation,
@@ -264,7 +471,12 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
         readHeight: state.readHeight,
         network: state.network,
         lastError: state.lastError?.slice(0, 2000) ?? null,
+        eventsNext: state.eventsNext,
+        trustFrom: state.trustFrom,
+        scanState: JSON.stringify(state.scanState),
+        voteRereads: JSON.stringify(state.voteRereads),
         feedPart: state.feedPart,
+        importStartedAt: state.importStartedAt,
         now
       }
     );
@@ -547,11 +759,12 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
     return removed;
   }
 
-  /** Removes every row (a relaunched chain). */
+  /** Removes every row and every event (a relaunched chain). */
   async clearAll(): Promise<void> {
     for (const { name } of Object.values(INDEX_TABLES)) {
       await this.db.execute(`delete from ${name}`);
     }
+    await this.db.execute(`delete from ${CHAIN_EVENTS_TABLE}`);
   }
 
   /** The stored status of these decisions; absent ones are left out. */
@@ -608,6 +821,549 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
       decisionIds: decisions.map((row) => row.decision_id),
       roleWaveIds: roles.map((row) => row.wave_id)
     };
+  }
+
+  // ---------------------------------------------------------- the event log
+
+  /**
+   * What the index holds of the objects these events name: legacy ids and
+   * the fields that never change once written.
+   */
+  async eventObjects(ids: {
+    entries?: readonly string[];
+    decisions?: readonly string[];
+    waves?: readonly string[];
+    polls?: readonly string[];
+    groups?: readonly string[];
+  }): Promise<{
+    entries: Map<string, ObjectInfo>;
+    decisions: Map<string, ObjectInfo>;
+    waves: Map<string, ObjectInfo>;
+    polls: Map<string, ObjectInfo>;
+    groups: Map<string, ObjectInfo>;
+  }> {
+    const lower = (value: string | null) => value?.toLowerCase() ?? null;
+    const code = (value: unknown) =>
+      value === null || value === undefined ? null : Number(value);
+    const entries = await this.byIds<{
+      entry_id: string;
+      legacy_id: string | null;
+      decision_id: string;
+      author: string;
+      total: string;
+      manifest_hash: string | null;
+    }>(
+      `select entry_id, legacy_id, decision_id, author,
+              cast(total as char) as total,
+              json_unquote(json_extract(data, '$.manifestHash'))
+                as manifest_hash
+         from ${CHAIN_ENTRIES_TABLE} where entry_id in (:ids)`,
+      ids.entries
+    );
+    const decisions = await this.byIds<{
+      decision_id: string;
+      legacy_id: string | null;
+      wave_id: string;
+      status: string;
+      height: number | string;
+      credit_scope: unknown;
+      credit_source: unknown;
+    }>(
+      `select decision_id, legacy_id, wave_id, status, height,
+              json_extract(data, '$.config.creditScope') as credit_scope,
+              json_extract(data, '$.config.creditSource') as credit_source
+         from ${CHAIN_DECISIONS_TABLE} where decision_id in (:ids)`,
+      ids.decisions
+    );
+    const waves = await this.byIds<{
+      wave_id: string;
+      legacy_id: string | null;
+    }>(
+      `select wave_id, legacy_id from ${CHAIN_WAVES_TABLE}
+        where wave_id in (:ids)`,
+      ids.waves
+    );
+    const polls = await this.byIds<{
+      poll_id: string;
+      legacy_id: string | null;
+      wave_id: string;
+    }>(
+      `select poll_id, legacy_id, wave_id from ${CHAIN_POLLS_TABLE}
+        where poll_id in (:ids)`,
+      ids.polls
+    );
+    const groups = await this.byIds<{
+      group_id: string;
+      legacy_id: string | null;
+    }>(
+      `select group_id, legacy_id from ${CHAIN_GROUPS_TABLE}
+        where group_id in (:ids)`,
+      ids.groups
+    );
+    return {
+      entries: new Map(
+        entries.map((r) => [
+          r.entry_id,
+          {
+            legacyId: lower(r.legacy_id),
+            decisionId: r.decision_id,
+            author: r.author,
+            total: String(r.total),
+            manifestHash: r.manifest_hash ?? null
+          }
+        ])
+      ),
+      decisions: new Map(
+        decisions.map((r) => [
+          r.decision_id,
+          {
+            legacyId: lower(r.legacy_id),
+            waveId: r.wave_id,
+            creditScope: code(r.credit_scope),
+            creditSource: code(r.credit_source),
+            status: r.status,
+            statusHeight: Number(r.height)
+          }
+        ])
+      ),
+      waves: new Map(
+        waves.map((r) => [r.wave_id, { legacyId: lower(r.legacy_id) }])
+      ),
+      polls: new Map(
+        polls.map((r) => [
+          r.poll_id,
+          { legacyId: lower(r.legacy_id), waveId: r.wave_id }
+        ])
+      ),
+      groups: new Map(
+        groups.map((r) => [r.group_id, { legacyId: lower(r.legacy_id) }])
+      )
+    };
+  }
+
+  private async byIds<T>(
+    sql: string,
+    ids: readonly string[] | undefined
+  ): Promise<T[]> {
+    const out: T[] = [];
+    for (const chunk of statementChunks(ids ?? [], () => ID_BYTES)) {
+      out.push(...(await this.db.execute<T>(sql, { ids: chunk })));
+    }
+    return out;
+  }
+
+  /** The stored votes of these keys, by `voteKey`. */
+  async eventVotes(
+    keys: readonly { decisionId: string; entryId: string; voter: string }[]
+  ): Promise<Map<string, StoredVote>> {
+    const found = new Map<string, StoredVote>();
+    for (const chunk of statementChunks(keys, () => 3 * ID_BYTES)) {
+      const params: Record<string, unknown> = {};
+      const tuples = chunk.map((key, i) => {
+        params[`d${i}`] = key.decisionId;
+        params[`e${i}`] = key.entryId;
+        params[`v${i}`] = key.voter;
+        return `(:d${i}, :e${i}, :v${i})`;
+      });
+      const rows = await this.db.execute<{
+        decision_id: string;
+        entry_id: string;
+        voter: string;
+        value: string;
+        updated_height: number | string;
+        generation: number | string;
+      }>(
+        `select decision_id, entry_id, voter, cast(value as char) as value,
+                updated_height, generation
+           from ${CHAIN_VOTES_TABLE}
+          where (decision_id, entry_id, voter) in (${tuples.join(', ')})`,
+        params
+      );
+      for (const row of rows) {
+        found.set(voteKey(row.decision_id, row.entry_id, row.voter), {
+          value: String(row.value),
+          updatedHeight: Number(row.updated_height),
+          generation: Number(row.generation)
+        });
+      }
+    }
+    return found;
+  }
+
+  /** The log's last ballot of each (poll, cluster) below `before`. */
+  async lastBallots(
+    keys: readonly { pollId: string; cid: string }[],
+    before: number
+  ): Promise<Map<string, StoredBallot>> {
+    const found = new Map<string, StoredBallot>();
+    for (const chunk of statementChunks(keys, () => 2 * ID_BYTES)) {
+      const params: Record<string, unknown> = { before, kind: 'POLL_BALLOT' };
+      const tuples = chunk.map((key, i) => {
+        params[`p${i}`] = key.pollId;
+        params[`c${i}`] = key.cid;
+        return `(:p${i}, :c${i})`;
+      });
+      const rows = await this.db.execute<{
+        poll_id: string;
+        actor: string;
+        data: unknown;
+      }>(
+        `select poll_id, actor, data from ${CHAIN_EVENTS_TABLE}
+          where kind = :kind and (poll_id, actor) in (${tuples.join(', ')})
+            and height < :before
+          order by height desc, seq desc`,
+        params
+      );
+      for (const row of rows) {
+        const key = ballotKey(row.poll_id, row.actor);
+        if (found.has(key)) continue;
+        const data = jsonOf(row.data);
+        found.set(key, {
+          selection: Number(data.newSelection),
+          version: Number(data.version)
+        });
+      }
+    }
+    return found;
+  }
+
+  /**
+   * Appends a batch's events, in transactions of at most
+   * EVENTS_PER_TRANSACTION events and statements under CHUNK_BYTES, then
+   * moves `events_next` past the batch (never back) and keeps the scan
+   * state with it, in the last transaction. A part written again (a run
+   * stopped between parts) keeps the rows written before; one derived
+   * otherwise is logged as an error (a batch is derived from the index
+   * before any of it is applied, so that is a fault). Returns how many
+   * events were derived otherwise.
+   */
+  async writeEvents(
+    events: readonly ChainEvent[],
+    eventsNext: number,
+    scanState: ScanState,
+    claimBuilds: readonly ClaimBuild[] = []
+  ): Promise<number> {
+    let otherwise = 0;
+    const parts: ChainEvent[][] = [];
+    for (let i = 0; i < events.length; i += EVENTS_PER_TRANSACTION) {
+      parts.push(events.slice(i, i + EVENTS_PER_TRANSACTION));
+    }
+    if (!parts.length) parts.push([]);
+    for (let p = 0; p < parts.length; p++) {
+      await this.executeNativeQueriesInTransaction(async (connection) => {
+        const fresh = parts[p].length
+          ? await this.unwrittenEvents(parts[p], connection)
+          : { events: [], otherwise: 0 };
+        otherwise += fresh.otherwise;
+        for (const chunk of statementChunks(fresh.events, eventBytes)) {
+          const params: Record<string, unknown> = {};
+          const values = chunk.map((event, i) => {
+            const row = eventRow(event);
+            return `(${EVENT_COLUMNS.map((column) => {
+              params[`${column}_${i}`] = row[column];
+              return `:${column}_${i}`;
+            }).join(', ')})`;
+          });
+          await this.db.execute(
+            `insert into ${CHAIN_EVENTS_TABLE} (${EVENT_COLUMNS.join(', ')})
+             values ${values.join(', ')}`,
+            params,
+            { wrappedConnection: connection }
+          );
+        }
+        if (p === parts.length - 1) {
+          await this.insertClaimBuilds(claimBuilds, connection);
+          await this.db.execute(
+            `update ${WAVES_CHAIN_INDEX_STATE_TABLE}
+                set events_next = greatest(coalesce(events_next, 0), :eventsNext),
+                    scan_state = :scanState
+              where name = :name`,
+            {
+              eventsNext,
+              scanState: JSON.stringify(scanState),
+              name: STATE_NAME
+            },
+            { wrappedConnection: connection }
+          );
+        }
+      });
+    }
+    return otherwise;
+  }
+
+  /**
+   * The events of a part (in the log's order) whose places the log doesn't
+   * hold yet; an event the log holds otherwise is logged and counted.
+   */
+  private async unwrittenEvents(
+    part: readonly ChainEvent[],
+    connection: ConnectionWrapper<any>
+  ): Promise<{ events: ChainEvent[]; otherwise: number }> {
+    const first = part[0];
+    const last = part[part.length - 1];
+    const stored = await this.db.execute<EventRowRead>(
+      `select * from ${CHAIN_EVENTS_TABLE}
+        where (height > :h0 or (height = :h0 and seq >= :s0))
+          and (height < :h1 or (height = :h1 and seq <= :s1))`,
+      { h0: first.height, s0: first.seq, h1: last.height, s1: last.seq },
+      { wrappedConnection: connection }
+    );
+    if (!stored.length) return { events: [...part], otherwise: 0 };
+    const held = new Map(
+      stored.map((row) => {
+        const event = eventOf(row);
+        return [eventCursor(event), event];
+      })
+    );
+    const events: ChainEvent[] = [];
+    let otherwise = 0;
+    for (const event of part) {
+      const was = held.get(eventCursor(event));
+      if (!was) events.push(event);
+      else if (sortedJson(was) !== sortedJson(event)) {
+        otherwise++;
+        logger.error(
+          `[EVENT ${eventCursor(event)} DERIVED OTHERWISE] kept ${sortedJson(was)}, derived ${sortedJson(event)}`
+        );
+      }
+    }
+    return { events, otherwise };
+  }
+
+  /**
+   * At most `limit` events after `after` (a cursor from `next`, or null
+   * for the first), in the log's order, up to `appliedHeight`: the height
+   * the index has applied, so every lookup a reader makes at an event's
+   * height can see it. Events above it (logged by a run that stopped
+   * before applying them) come once they are applied. `kinds` keeps those
+   * kinds only, each read through the (kind, height, seq) index. `next` is
+   * the cursor after the last event read (`after` when none), with the
+   * log's network; a cursor of another network throws EventCursorError
+   * (the chain was relaunched and the log started again: read from null).
+   */
+  async readEvents(
+    after: string | null,
+    limit: number,
+    kinds?: readonly ChainEventKind[]
+  ): Promise<{
+    events: ChainEvent[];
+    next: string | null;
+    appliedHeight: number | null;
+    network: string | null;
+  }> {
+    const place = parseEventCursor(after);
+    const state = await this.loadState();
+    if (place?.network && state.network && place.network !== state.network) {
+      throw new EventCursorError(
+        `${after}: a cursor of network ${place.network}; the log is ${state.network}'s`
+      );
+    }
+    const appliedHeight = state.feedNext === null ? null : state.feedNext - 1;
+    const read = Math.max(1, Math.min(Math.floor(limit) || 1, MAX_READ_EVENTS));
+    let events: ChainEvent[] = [];
+    if (appliedHeight !== null) {
+      const params: Record<string, unknown> = { limit: read, appliedHeight };
+      const conditions = ['height <= :appliedHeight'];
+      if (place) {
+        conditions.push(
+          '(height > :height or (height = :height and seq > :seq))'
+        );
+        params.height = place.height;
+        params.seq = place.seq;
+      }
+      const select = async (kind?: ChainEventKind) =>
+        (
+          await this.db.execute<EventRowRead>(
+            `select * from ${CHAIN_EVENTS_TABLE}
+              where ${[...(kind ? ['kind = :kind'] : []), ...conditions].join(' and ')}
+              order by height, seq limit :limit`,
+            { ...params, kind }
+          )
+        ).map(eventOf);
+      if (kinds?.length) {
+        for (const kind of Array.from(new Set(kinds))) {
+          events.push(...(await select(kind)));
+        }
+        events = events
+          .sort((a, b) => a.height - b.height || a.seq - b.seq)
+          .slice(0, read);
+      } else {
+        events = await select();
+      }
+    }
+    return {
+      events,
+      next: events.length
+        ? eventCursor(events[events.length - 1], state.network)
+        : after,
+      appliedHeight,
+      network: state.network
+    };
+  }
+
+  // ---------------------------------------------------------- claim builds
+
+  /** Writes claim builds; one already there is kept as it is. */
+  private async insertClaimBuilds(
+    builds: readonly ClaimBuild[],
+    connection: ConnectionWrapper<any>
+  ): Promise<void> {
+    const columns = [
+      'network',
+      'decision_id',
+      'occurrence',
+      'height',
+      'entry_id',
+      'drop_id',
+      'message',
+      'status',
+      'reason'
+    ];
+    for (const chunk of statementChunks(builds, () => 1_200)) {
+      const params: Record<string, unknown> = {};
+      const values = chunk.map((build, i) => {
+        const row: Record<string, unknown> = {
+          network: build.network,
+          decision_id: build.decisionId,
+          occurrence: build.occurrence,
+          height: build.height,
+          entry_id: build.entryId,
+          drop_id: build.dropId,
+          message: build.message ? JSON.stringify(build.message) : null,
+          status: build.status,
+          reason: build.reason
+        };
+        return `(${columns
+          .map((column) => {
+            params[`${column}_${i}`] = row[column];
+            return `:${column}_${i}`;
+          })
+          .join(', ')})`;
+      });
+      await this.db.execute(
+        `insert into ${CHAIN_CLAIM_BUILDS_TABLE} (${columns.join(', ')})
+         values ${values.join(', ')}
+         on duplicate key update status = ${CHAIN_CLAIM_BUILDS_TABLE}.status`,
+        params,
+        { wrappedConnection: connection }
+      );
+    }
+  }
+
+  /**
+   * Final, decided results counted on the chain (origin native, in the
+   * column and in the chain's own answer: not one the import carried) of
+   * these decisions, with a rank-1 winner, that have no claim build on
+   * `network`, oldest first, at most `limit`. Read from the index's own
+   * rows, so a result the event log never saw is found too: one that went
+   * final before the log started, or in a feed gap, or while claim builds
+   * were off or the setting named other decisions. A decided result with
+   * no winners (no active entries) is never read: it has nothing to build.
+   */
+  async resultsWithoutClaimBuild(
+    decisionIds: readonly string[],
+    network: string,
+    limit: number
+  ): Promise<{ decisionId: string; data: Record<string, unknown> }[]> {
+    if (!decisionIds.length) return [];
+    const rows = await this.db.execute<{ decision_id: string; data: unknown }>(
+      `select r.decision_id, r.data from ${CHAIN_RESULTS_TABLE} r
+        where r.decision_id in (:decisionIds)
+          and r.stage = 'final' and r.status = 'decided' and r.origin = 'native'
+          and json_unquote(json_extract(r.data, '$.origin')) = 'native'
+          and json_contains(json_extract(r.data, '$.winners[*].rank'), '1')
+          and not exists (
+            select 1 from ${CHAIN_CLAIM_BUILDS_TABLE} b
+             where b.network = :network
+               and b.decision_id = r.decision_id
+               and b.occurrence = cast(json_unquote(json_extract(r.data, '$.occurrence')) as signed))
+        order by r.result_time
+        limit :limit`,
+      { decisionIds: [...decisionIds], network, limit }
+    );
+    return rows.map((row) => ({
+      decisionId: String(row.decision_id).toLowerCase(),
+      data: jsonOf(row.data)
+    }));
+  }
+
+  /** Writes claim builds on their own; one already there is kept as it is. */
+  async writeClaimBuilds(builds: readonly ClaimBuild[]): Promise<void> {
+    if (!builds.length) return;
+    await this.executeNativeQueriesInTransaction((connection) =>
+      this.insertClaimBuilds(builds, connection)
+    );
+  }
+
+  /** Claim builds still to send, oldest first. */
+  async pendingClaimBuilds(limit: number): Promise<
+    {
+      network: string;
+      decisionId: string;
+      occurrence: number;
+      message: ClaimBuildMessage;
+      attempts: number;
+    }[]
+  > {
+    const rows = await this.db.execute<{
+      network: string;
+      decision_id: string;
+      occurrence: number | string;
+      message: unknown;
+      attempts: number | string;
+    }>(
+      `select network, decision_id, occurrence, message, attempts
+         from ${CHAIN_CLAIM_BUILDS_TABLE}
+        where status = 'pending'
+        order by height, decision_id, occurrence
+        limit :limit`,
+      { limit }
+    );
+    return rows.map((row) => ({
+      network: row.network,
+      decisionId: row.decision_id,
+      occurrence: Number(row.occurrence),
+      message: jsonOf(row.message) as unknown as ClaimBuildMessage,
+      attempts: Number(row.attempts)
+    }));
+  }
+
+  /** A claim build went out: sent, with its message id. */
+  async claimBuildSent(
+    key: { network: string; decisionId: string; occurrence: number },
+    messageId: string | null,
+    now: number
+  ): Promise<void> {
+    await this.db.execute(
+      `update ${CHAIN_CLAIM_BUILDS_TABLE}
+          set status = 'sent', attempts = attempts + 1, sent_at = :now,
+              message_id = :messageId, last_error = null
+        where network = :network and decision_id = :decisionId
+          and occurrence = :occurrence and status = 'pending'`,
+      { ...key, messageId, now }
+    );
+  }
+
+  /** A send failed: the build stays pending for the next run. */
+  async claimBuildFailed(
+    key: { network: string; decisionId: string; occurrence: number },
+    error: string
+  ): Promise<void> {
+    await this.db.execute(
+      `update ${CHAIN_CLAIM_BUILDS_TABLE}
+          set attempts = attempts + 1, last_error = :error
+        where network = :network and decision_id = :decisionId
+          and occurrence = :occurrence and status = 'pending'`,
+      { ...key, error: error.slice(0, 2000) }
+    );
+  }
+
+  /** Every claim build (tests). */
+  async claimBuildRows(): Promise<Record<string, unknown>[]> {
+    return this.db.execute(
+      `select * from ${CHAIN_CLAIM_BUILDS_TABLE}
+        order by network, decision_id, occurrence`
+    );
   }
 
   /** Every row of a table, key order (tests and the rebuild check). */

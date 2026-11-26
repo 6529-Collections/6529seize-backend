@@ -263,18 +263,24 @@ export class ReactionsService {
     };
   }
 
+  /**
+   * `notify: false` tells the drop's author nothing (history written from
+   * the 6529 relays); websocket updates go out as always.
+   */
   async addReaction(
     dropId: string,
     profileId: string,
     reaction: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    { notify = true }: { readonly notify?: boolean } = {}
   ): Promise<ApiDrop> {
     if (ctx.connection) {
       return await this.addReactionInExistingTransaction(
         dropId,
         profileId,
         reaction,
-        ctx
+        ctx,
+        notify
       );
     }
 
@@ -344,7 +350,7 @@ export class ReactionsService {
       )
     ];
 
-    if (mutationResult.dropEntity.author_id !== profileId) {
+    if (notify && mutationResult.dropEntity.author_id !== profileId) {
       postCommitSideEffects.push({
         name: 'notify-drop-reaction',
         run: () =>
@@ -373,7 +379,8 @@ export class ReactionsService {
     dropId: string,
     profileId: string,
     reaction: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    notify: boolean
   ): Promise<ApiDrop> {
     const connection = ctx.connection;
     if (!connection) {
@@ -417,7 +424,7 @@ export class ReactionsService {
               ctx.timer
             ),
           () =>
-            dropEntity.author_id === profileId
+            !notify || dropEntity.author_id === profileId
               ? Promise.resolve()
               : this.userNotifier.notifyOfDropReaction(
                   {

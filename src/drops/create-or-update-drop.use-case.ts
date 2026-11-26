@@ -377,6 +377,23 @@ export function sanitizeDropStructuredFields(
   };
 }
 
+/**
+ * The moderation context of a drop write: the drop, without how it is
+ * written (its preset id, the notify flag). A signed post's id follows its
+ * event, and a resend after review is signed anew: the id must not set it
+ * apart from the review it passed.
+ */
+export function dropModerationFingerprint(
+  model: CreateOrUpdateDropModel
+): string {
+  const {
+    new_drop_id: _newDropId,
+    notify: _notify,
+    ...drop
+  } = sanitizeDropStructuredFields(model);
+  return moderationFingerprint(drop);
+}
+
 export class CreateOrUpdateDropUseCase {
   // Intentionally throttled per warm Lambda container, not per wave. One
   // warning is enough to surface the shared missing environment configuration.
@@ -844,7 +861,8 @@ export class CreateOrUpdateDropUseCase {
     const sanitizedModel = sanitizeDropStructuredFields(model);
     const operation: 'CREATE' | 'UPDATE' =
       sanitizedModel.drop_id === null ? 'CREATE' : 'UPDATE';
-    const dropId = sanitizedModel.drop_id ?? randomUUID();
+    const dropId =
+      sanitizedModel.drop_id ?? sanitizedModel.new_drop_id ?? randomUUID();
     const authorProfileId = this.getRequiredAuthorId(sanitizedModel);
     const currentRevision = sanitizedModel.drop_id
       ? await moderationReviewDb.currentRevision(
@@ -863,7 +881,7 @@ export class CreateOrUpdateDropUseCase {
       title: sanitizedModel.title,
       waveId: sanitizedModel.wave_id,
       currentRevision,
-      contextFingerprint: moderationFingerprint(sanitizedModel),
+      contextFingerprint: dropModerationFingerprint(sanitizedModel),
       // File attachment contents intentionally remain in their existing
       // asynchronous validation pipeline and are not inspected here.
       parts: sanitizedModel.parts.map((part) => ({ content: part.content }))
@@ -1126,7 +1144,7 @@ export class CreateOrUpdateDropUseCase {
     const operation = preExistingDropId === null ? 'CREATE' : 'UPDATE';
     const candidateDropId =
       'trustedSystem' in prePublication
-        ? (preExistingDropId ?? randomUUID())
+        ? (preExistingDropId ?? validatedModel.new_drop_id ?? randomUUID())
         : prePublication.dropId;
     if (
       !('trustedSystem' in prePublication) &&
@@ -3436,6 +3454,8 @@ export class CreateOrUpdateDropUseCase {
     },
     { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ): Promise<number[]> {
+    // History written from the 6529 relays notifies no one, on create or edit.
+    if (model.notify === false) return [];
     timer?.start(`${CreateOrUpdateDropUseCase.name}->notifyWaveDropRecipients`);
     const dropId = this.getRequiredDropId(model);
     const authorId = this.getRequiredAuthorId(model);

@@ -27,6 +27,12 @@ import {
   WalletTransferWalletDailyEntity
 } from '@/entities/IWalletTransferAnalysis';
 import { MarketDepthPublicationLockEntity } from '@/entities/IMarketDepthPublicationLock';
+import { MarketDepthEventEntity } from '@/entities/IMarketDepth';
+import { applyMarketDepthWalletActivityIndexes } from './market-depth-wallet-activity-indexes';
+jest.mock('./market-depth-wallet-activity-indexes', () => ({
+  ...jest.requireActual('./market-depth-wallet-activity-indexes'),
+  applyMarketDepthWalletActivityIndexes: jest.fn().mockResolvedValue(2)
+}));
 import * as compatibilityFacade from '@/competitions/legacy-competition-get-facade';
 jest.mock('@/competitions/legacy-competition-get-facade', () => ({
   installLegacyCompetitionGetFacade: jest.fn()
@@ -206,6 +212,25 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     expect(getDataSource().synchronize).not.toHaveBeenCalled();
   });
 
+  it('applies only the wallet activity indexes and reports the changes', async () => {
+    await expect(
+      invoke({ schema_scope: 'market-depth-wallet-activity-indexes' })
+    ).resolves.toEqual({
+      schema_scope: 'market-depth-wallet-activity-indexes',
+      changed_indexes: 2
+    });
+    expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
+      logger: expect.anything(),
+      entities: [MarketDepthEventEntity],
+      syncEntities: false,
+      skipRedis: true
+    });
+    expect(applyMarketDepthWalletActivityIndexes).toHaveBeenCalledTimes(1);
+    expect(getDataSource().synchronize).not.toHaveBeenCalled();
+    expect(migrations.getInstance).not.toHaveBeenCalled();
+    expect(moderationReviewDb.retain).not.toHaveBeenCalled();
+  });
+
   it('executes only the inspected NFT retry schema and skips all unrelated work', async () => {
     await expect(
       invoke({ schema_scope: 'nft-link-page-retry' })
@@ -352,6 +377,7 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       );
       expect(getDataSource().synchronize).toHaveBeenCalledTimes(1);
       expect(applyWaveScoreInputIndexSchema).toHaveBeenCalledTimes(1);
+      expect(applyMarketDepthWalletActivityIndexes).toHaveBeenCalledTimes(1);
       expect(
         compatibilityFacade.installLegacyCompetitionGetFacade
       ).toHaveBeenCalledTimes(1);
@@ -526,6 +552,7 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     'claims-media-upload',
     'nft-link-page-retry',
     'market-depth-publication-lock',
+    'market-depth-wallet-activity-indexes',
     'voting-credit-returns',
     'wave-hub-configuration-preparation',
     'wave-hub-configuration-finalize',
