@@ -3465,7 +3465,7 @@ describeWithSeed(
           w: wideKey.split('-')[0]
         }
       );
-      // All three phase columns, as the part logs and rebuilds them.
+      // All three phase columns, as the mint log's parts carry them.
       const phaseColumns = (table: string) =>
         sqlExecutor.execute<{
           id: number;
@@ -3477,7 +3477,6 @@ describeWithSeed(
             WHERE contract = :c AND token_id = :card ORDER BY id`,
           { c: MEMES_CONTRACT, card: CARD }
         );
-      const opening = await phaseColumns(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE);
 
       // After it: a reset and a Public pull, logged.
       await reset();
@@ -3521,78 +3520,20 @@ describeWithSeed(
         live.legacy.map(([id]) => Number(id)).sort((a, b) => a - b)
       );
 
-      // A rebuild: the mint tables empty, the legacy phases gone, and the
-      // identity rows as the subscriptions rebuild restores them from the
-      // opening. Replaying the log gives back both tables as they were.
-      for (const table of [
-        DISTRIBUTION_TABLE,
-        DISTRIBUTION_NORMALIZED_TABLE,
-        MINTING_MERKLE_ROOTS_TABLE,
-        MINTING_MERKLE_PROOFS_TABLE,
-        MINT_LOG_HEAD_TABLE,
-        MINT_LOG_CARD_HEADS_TABLE
-      ]) {
-        await sqlExecutor.execute(`DELETE FROM ${table}`);
-      }
-      await sqlExecutor.execute(
-        `UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
-          SET phase = NULL, phase_subscriptions = -1, phase_position = -1`
-      );
-      for (const row of opening) {
-        await sqlExecutor.execute(
-          `UPDATE ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE}
-            SET phase = :phase, phase_subscriptions = :subscriptions,
-              phase_position = :position
-            WHERE id = :id`,
-          {
-            id: row.id,
-            phase: row.phase,
-            subscriptions: row.phase_subscriptions,
-            position: row.phase_position
-          }
-        );
-      }
-      await new MintLogRebuilder({
-        put: async () => {
-          throw new Error('no files in this log');
-        },
-        get: async () => {
-          throw new Error('no files in this log');
+      const emptyMintTables = async () => {
+        for (const table of [
+          DISTRIBUTION_TABLE,
+          DISTRIBUTION_NORMALIZED_TABLE,
+          MINTING_MERKLE_ROOTS_TABLE,
+          MINTING_MERKLE_PROOFS_TABLE,
+          MINT_LOG_HEAD_TABLE,
+          MINT_LOG_CARD_HEADS_TABLE
+        ]) {
+          await sqlExecutor.execute(`DELETE FROM ${table}`);
         }
-      }).rebuild(entries);
-      expect(
-        await phases(SUBSCRIPTIONS_NFTS_FINAL_TABLE, 'consolidation_key')
-      ).toEqual(live.legacy);
-      expect(
-        await phases(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key')
-      ).toEqual(live.identity);
-      expect(await phaseColumns(SUBSCRIPTIONS_NFTS_FINAL_TABLE)).toEqual(
-        liveColumns.legacy
-      );
-      expect(await phaseColumns(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE)).toEqual(
-        liveColumns.identity
-      );
-
-      // After a suspend and a second go-live, the wide identity's row is
-      // gone from the new opening, and the entries that name it still
-      // rebuild: the missing identity row is reported, not fatal.
-      await sqlExecutor.execute(
-        `DELETE FROM ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE} WHERE id = :id`,
-        { id: wideId }
-      );
-      for (const table of [
-        MINT_LOG_HEAD_TABLE,
-        MINT_LOG_CARD_HEADS_TABLE,
-        DISTRIBUTION_TABLE,
-        DISTRIBUTION_NORMALIZED_TABLE,
-        MINTING_MERKLE_ROOTS_TABLE,
-        MINTING_MERKLE_PROOFS_TABLE
-      ]) {
-        await sqlExecutor.execute(`DELETE FROM ${table}`);
-      }
-      const warnings = jest.spyOn(Logger.prototype, 'warn');
-      try {
-        await new MintLogRebuilder({
+      };
+      const rebuildMintLog = () =>
+        new MintLogRebuilder({
           put: async () => {
             throw new Error('no files in this log');
           },
@@ -3600,12 +3541,56 @@ describeWithSeed(
             throw new Error('no files in this log');
           }
         }).rebuild(entries);
-        expect(warnings).toHaveBeenCalledWith(
-          expect.stringContaining('[MINT_LOG_IDENTITY_ROWS_MISSING]')
-        );
-      } finally {
-        warnings.mockRestore();
-      }
+
+      // A rebuild in the registry's order. The subscriptions rebuild has
+      // restored the identity rows from the journal, one of them to a value
+      // the mint log never saw; the legacy phases and the mint tables are
+      // gone. The mint log gives back the legacy phases and leaves every
+      // identity row as the journal restored it.
+      await emptyMintTables();
+      await sqlExecutor.execute(
+        `UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
+          SET phase = NULL, phase_subscriptions = -1, phase_position = -1`
+      );
+      await sqlExecutor.execute(
+        `UPDATE ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE}
+          SET phase = 'Phase 9', phase_subscriptions = 1, phase_position = 1
+          WHERE id = :id`,
+        { id: wideId }
+      );
+      const restored = await phaseColumns(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE);
+      expect(restored).toContainEqual(
+        expect.objectContaining({ id: wideId, phase: 'Phase 9' })
+      );
+      await rebuildMintLog();
+      expect(await phaseColumns(SUBSCRIPTIONS_NFTS_FINAL_TABLE)).toEqual(
+        liveColumns.legacy
+      );
+      expect(await phaseColumns(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE)).toEqual(
+        restored
+      );
+
+      // After a suspend and a second go-live the wide identity's row is gone
+      // from the new opening; the entries that named it still rebuild.
+      await sqlExecutor.execute(
+        `DELETE FROM ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE} WHERE id = :id`,
+        { id: wideId }
+      );
+      await emptyMintTables();
+      await rebuildMintLog();
+      expect(await phaseColumns(SUBSCRIPTIONS_NFTS_FINAL_TABLE)).toEqual(
+        liveColumns.legacy
+      );
+
+      // Out of order, before the subscriptions rebuild has made the final
+      // rows, the mint log rebuild stops and says what must run first.
+      await emptyMintTables();
+      await sqlExecutor.execute(
+        `DELETE FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}`
+      );
+      await expect(rebuildMintLog()).rejects.toThrow(
+        'the subscriptions rebuild creates these rows and must run before the mint log rebuild'
+      );
     });
 
     it("in shadow, the identity split waits for the card's preparation row, and reads the rows after it", async () => {
@@ -3854,29 +3839,35 @@ describeWithSeed(
           .mockRejectedValueOnce(new Error('identity reset failed'));
         const errors = jest.spyOn(Logger.prototype, 'error');
         try {
-          await resetAllowlistRows(MEMES_CONTRACT, CARD, {});
+          try {
+            await resetAllowlistRows(MEMES_CONTRACT, CARD, {});
+          } finally {
+            journalBefore.mockRestore();
+          }
+          expect(
+            (
+              await allPhases(
+                SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+                'consolidation_key'
+              )
+            ).every((phase) => phase === null)
+          ).toBe(true);
+          expect(
+            (
+              await allPhases(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key')
+            ).every((phase) => phase === 'Public')
+          ).toBe(true);
+          expect(errors).toHaveBeenCalledWith(
+            '[SHADOW ALLOWLIST RESET FAILED]',
+            expect.any(Error)
+          );
+          expect(await phaseReports()).toContainEqual({
+            verdict: 'FAILED',
+            mode: 'SHADOW'
+          });
         } finally {
-          journalBefore.mockRestore();
+          errors.mockRestore();
         }
-        expect(
-          (
-            await allPhases(SUBSCRIPTIONS_NFTS_FINAL_TABLE, 'consolidation_key')
-          ).every((phase) => phase === null)
-        ).toBe(true);
-        expect(
-          (
-            await allPhases(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key')
-          ).every((phase) => phase === 'Public')
-        ).toBe(true);
-        expect(errors).toHaveBeenCalledWith(
-          '[SHADOW ALLOWLIST RESET FAILED]',
-          expect.any(Error)
-        );
-        expect(await phaseReports()).toContainEqual({
-          verdict: 'FAILED',
-          mode: 'SHADOW'
-        });
-        errors.mockRestore();
       });
     });
 

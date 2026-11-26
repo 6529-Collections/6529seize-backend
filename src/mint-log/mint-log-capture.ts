@@ -27,6 +27,12 @@ import {
   MintRowPart
 } from './mint-log.types';
 
+/** What one logged write already knows when it captures a card. */
+export interface MintCaptureOptions {
+  /** The switch's answer for the write (identityTruthFor). */
+  readonly identityTruth?: boolean;
+}
+
 /** Reads everything the minting tables hold for one card, in logged form. */
 export class MintStateReader {
   constructor(
@@ -54,14 +60,15 @@ export class MintStateReader {
   }
 
   /**
-   * `identityTruth` is the write's answer from identityTruthFor; without it
-   * (a genesis, a rebuild) the switch is read here, once.
+   * `options.identityTruth` is the write's answer from identityTruthFor;
+   * without it (a genesis, a rebuild) the switch is read here, once.
    */
   async capture(
     card: MintCardRef,
     connection: ConnectionWrapper<any>,
-    identityTruth?: boolean
+    options: MintCaptureOptions = {}
   ): Promise<MintCardState> {
+    let identityTruth = options.identityTruth;
     const rows = {} as Record<MintRowPart, MintRow[]>;
     for (const part of MINT_ROW_PARTS) {
       const spec = MINT_ROW_PART_SPECS[part];
