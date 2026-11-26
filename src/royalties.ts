@@ -2,6 +2,8 @@ import { arweaveFileUploader } from '@/arweave';
 import { fetchRoyalties, persistRoyaltiesUpload } from './db';
 import { json2csv } from 'json-2-csv';
 import { Logger } from './logging';
+import { ROYALTIES_UPLOADS_TABLE } from './constants';
+import { logPublicationReceipt } from './mint-log/mint-log-receipts';
 
 const logger = Logger.get('ROYALTIES');
 
@@ -57,7 +59,12 @@ export const findRoyalties = async () => {
   });
 
   const url = await uploadRoyalties(formattedDate, myRoyalties);
-  await persistRoyaltiesUpload(startDate, url);
+  await logPublicationReceipt(
+    ROYALTIES_UPLOADS_TABLE,
+    'royalties',
+    { date: formattedDate, url },
+    () => persistRoyaltiesUpload(startDate, url)
+  );
 };
 
 async function uploadRoyalties(formattedDate: string, royalties: Royalty[]) {

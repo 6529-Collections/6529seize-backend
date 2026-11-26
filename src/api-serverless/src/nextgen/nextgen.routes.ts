@@ -36,8 +36,49 @@ import {
   validateNextgen,
   validateNextgenBurn
 } from './validation';
+import { MINT_AUTHORITY } from '@/mint-log/mint-log-http';
+import { mintCard } from '@/mint-log/mint-log-parts';
+import { mintLogRecorder, MintWriteSpec } from '@/mint-log/mint-log-recorder';
+import { NEXTGEN_CARD_CONTRACT } from '@/mint-log/mint-log.types';
 
 const logger = Logger.get('NEXTGEN_API');
+
+const CREATE_ALLOWLIST_ROUTE = 'POST /nextgen/create_allowlist';
+const REGISTER_BURN_ROUTE = 'POST /nextgen/register_burn_collection';
+
+/**
+ * A NextGen admin upload as one mint log write. The admin's wallet signed
+ * the request (the route checked it), so the entry keeps that signature and
+ * the CSV's sha256 instead of a device record.
+ */
+export function nextgenWriteSpec(
+  kind: 'nextgen.allowlist' | 'nextgen.burn',
+  route: string,
+  body: {
+    collection_id: number;
+    signed: { wallet: string; [key: string]: unknown };
+    allowlist_sha256?: string;
+    merkle?: { merkle_root: string };
+  }
+): MintWriteSpec {
+  return {
+    kind,
+    card: mintCard(NEXTGEN_CARD_CONTRACT, body.collection_id),
+    actor: {
+      type: 'admin',
+      wallet: body.signed.wallet.toLowerCase(),
+      authority: MINT_AUTHORITY.nextgenAdmin
+    },
+    intent: { route, params: {}, body: body.signed },
+    walletSigned: true,
+    inputs: async () => ({
+      ...(body.allowlist_sha256
+        ? { allowlist_sha256: body.allowlist_sha256 }
+        : {}),
+      ...(body.merkle ? { merkle_root: body.merkle.merkle_root } : {})
+    })
+  };
+}
 
 const router = asyncRouter();
 
@@ -74,7 +115,10 @@ router.post(
     res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
     res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
     if (valid) {
-      await persistAllowlist(body);
+      await mintLogRecorder.write(
+        nextgenWriteSpec('nextgen.allowlist', CREATE_ALLOWLIST_ROUTE, body),
+        () => persistAllowlist(body)
+      );
       res
         .status(200)
         .send(JSON.stringify({ merkle_root: body.merkle.merkle_root }));
@@ -98,8 +142,13 @@ router.post(
     res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
     res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
     if (valid) {
-      await persistCollectionBurn(body);
-      res.status(200).send(JSON.stringify({ body }));
+      await mintLogRecorder.write(
+        nextgenWriteSpec('nextgen.burn', REGISTER_BURN_ROUTE, body),
+        () => persistCollectionBurn(body)
+      );
+      // The response stays as before: the signed request is only logged.
+      const { signed: _signed, ...registered } = body;
+      res.status(200).send(JSON.stringify({ body: registered }));
       res.end();
     } else {
       res.status(400).send(JSON.stringify(body));
@@ -528,7 +577,7 @@ router.get(`/tdh`, cacheRequest(), async function (req: any, res: any) {
     });
 });
 
-async function persistAllowlist(body: {
+export async function persistAllowlist(body: {
   collection_id: number;
   added_by: string;
   al_type: string;

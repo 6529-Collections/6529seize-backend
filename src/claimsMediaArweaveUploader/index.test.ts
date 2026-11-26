@@ -1,3 +1,4 @@
+import { mintLogRecorder } from '@/mint-log/mint-log-recorder';
 import {
   fetchMintingClaimByClaimId,
   type MintingClaimRow
@@ -381,6 +382,44 @@ describe('claims worker retry and ownership', () => {
         metadata_location: 'a'.repeat(43)
       })
     );
+  });
+
+  it('retries a mint-log capture failure without starting an upload', async () => {
+    const write = jest
+      .spyOn(mintLogRecorder, 'write')
+      .mockRejectedValueOnce(new Error('mint log unavailable'));
+    try {
+      const response = await handler(
+        {
+          Records: [
+            {
+              messageId: 'log-failure',
+              body: JSON.stringify({ contract, claim_id: 1 }),
+              attributes: {},
+              receiptHandle: 'receipt',
+              eventSourceARN:
+                'arn:aws:sqs:region:account:claims-media-arweave-upload'
+            }
+          ]
+        } as unknown as SQSEvent,
+        { getRemainingTimeInMillis: () => 900000 } as Context,
+        () => undefined
+      );
+      expect(write).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'claim.media', lockScope: 'capture' }),
+        expect.any(Function)
+      );
+      expect(response).toEqual({
+        batchItemFailures: [{ itemIdentifier: 'log-failure' }]
+      });
+      expect(sqs.changeVisibility).toHaveBeenCalledWith(
+        expect.objectContaining({ timeoutSeconds: 30 })
+      );
+      expect(db.acquire).not.toHaveBeenCalled();
+      expect(upload).not.toHaveBeenCalled();
+    } finally {
+      write.mockRestore();
+    }
   });
 
   it('uses a short transport retry for failures before a recovery envelope can be loaded', async () => {

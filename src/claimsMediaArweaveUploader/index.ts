@@ -29,6 +29,8 @@ import {
   claimsMediaUploadLeaseDb,
   type ClaimMediaUploadLease
 } from '@/minting-claims/claims-media-upload-lease.db';
+import { mintCard } from '@/mint-log/mint-log-parts';
+import { mintLogRecorder } from '@/mint-log/mint-log-recorder';
 
 const logger = Logger.get('CLAIMS_MEDIA_ARWEAVE_UPLOADER');
 const ALERT_TITLE = 'Claims Media Arweave Uploader';
@@ -320,11 +322,35 @@ const sqsHandler: SQSHandler = async (event, context) => {
       for (const record of event.Records) {
         try {
           const message = parseRecordBody(record.body);
-          await processMintingClaimUpload(
-            message.contract,
-            message.claim_id,
-            Number(record.attributes.ApproximateReceiveCount) || 1,
-            () => context.getRemainingTimeInMillis()
+          const receiveCount = Number(
+            record.attributes.ApproximateReceiveCount
+          );
+          // The upload runs for minutes, so the mint log's lock is held only
+          // to capture the claim before and to log the new locations after.
+          await mintLogRecorder.write(
+            {
+              kind: 'claim.media',
+              card: mintCard(message.contract, message.claim_id),
+              actor: { type: 'service', wallet: null, authority: null },
+              intent: {
+                route: 'SQS claims-media-arweave-uploader',
+                params: {
+                  contract: message.contract,
+                  claim_id: String(message.claim_id)
+                },
+                body: null
+              },
+              lockScope: 'capture'
+            },
+            () =>
+              processMintingClaimUpload(
+                message.contract,
+                message.claim_id,
+                Number.isSafeInteger(receiveCount) && receiveCount > 0
+                  ? receiveCount
+                  : 1,
+                () => context.getRemainingTimeInMillis()
+              )
           );
         } catch (error) {
           if (await shouldRetryDelivery(record, error)) {
