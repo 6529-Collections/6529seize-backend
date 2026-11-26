@@ -4,7 +4,8 @@ import {
   PlannedRows,
   Probe,
   RebuildStep,
-  TableEntry
+  TableEntry,
+  validUntil
 } from '@/rebuild/manifest.types';
 import { AREA_MANIFESTS } from '@/rebuild/manifests';
 import { headline, statusLine } from '@/rebuild/report/report';
@@ -1059,7 +1060,7 @@ describe('rebuild check, end to end', () => {
 
   describe('EXEMPT tables exempt until a day', () => {
     const artdoc = AREA_MANIFESTS.find((m) => m.area === 'artdoc')!.tables;
-    const tables = {
+    const tables: Readonly<Record<string, TableEntry>> = {
       artwork_documentation_artist_records: {
         ...artdoc.artwork_documentation_artist_records,
         until: '2000-01-01'
@@ -1076,13 +1077,19 @@ describe('rebuild check, end to end', () => {
     const days = new Map<string, string>();
     for (const manifest of AREA_MANIFESTS) {
       for (const [table, entry] of Object.entries(manifest.tables)) {
-        const used = (tables as Record<string, TableEntry>)[table] ?? entry;
-        if (used.class === 'EXEMPT' && used.until !== undefined) {
+        const used = tables[table] ?? entry;
+        if (
+          used.class === 'EXEMPT' &&
+          used.until !== undefined &&
+          validUntil(used.until)
+        ) {
           days.set(table, used.until);
         }
       }
     }
     const withDay = Array.from(days.keys()).sort();
+    const ours = (table: string) =>
+      Object.prototype.hasOwnProperty.call(tables, table);
 
     it('notes the overdue one on the headline and the status line, and passes', async () => {
       const { report } = await run('mint', {
@@ -1096,14 +1103,18 @@ describe('rebuild check, end to end', () => {
       expect(report.tables.day).toBe('2000-01-02');
       // On 2000-01-02 only the first of the test's two is past its day.
       expect(
-        report.tables.exemptUntil.map((e) => [e.table, e.overdue])
+        report.tables.exemptUntil.map((e) => [e.table, e.until, e.overdue])
       ).toEqual(
-        withDay.map((table) => [table, '2000-01-02' > days.get(table)!])
+        withDay.map((table) => [
+          table,
+          days.get(table),
+          '2000-01-02' > days.get(table)!
+        ])
       );
       // The floor, whatever the manifests hold: the test's two, their days.
       expect(
         report.tables.exemptUntil
-          .filter((e) => e.table in tables)
+          .filter((e) => ours(e.table))
           .map((e) => [e.table, e.until, e.overdue])
       ).toEqual([
         ['artwork_documentation_artist_records', '2000-01-01', true],
@@ -1123,20 +1134,21 @@ describe('rebuild check, end to end', () => {
         final: true
       });
       expect(report.verdict).toBe('FAIL');
-      const failures = report.failures.join(' ');
-      expect(failures).toContain(
-        `${withDay.length} EXEMPT tables are exempt only until a day, so a final run fails on them`
+      // The one failure that lists them, starting with the exact count.
+      const listed = report.failures.find((f) =>
+        f.includes(' EXEMPT tables are exempt only until a day')
       );
+      // Compared as a prefix, so a failure shows the count the run gave.
+      const prefix = `${withDay.length} EXEMPT tables are exempt only until a day, so a final run fails on them: `;
+      expect(listed?.slice(0, prefix.length)).toBe(prefix);
       for (const table of withDay) {
-        expect(failures).toContain(`${table} until ${days.get(table)}`);
+        expect(listed).toContain(`${table} until ${days.get(table)}`);
       }
       // The floor, whatever the manifests hold: the test's two, their days.
-      expect(failures).toContain(
+      expect(listed).toContain(
         'artwork_documentation_artist_records until 2000-01-01'
       );
-      expect(failures).toContain(
-        'artwork_documentation_assets until 9999-12-31'
-      );
+      expect(listed).toContain('artwork_documentation_assets until 9999-12-31');
       // Without a day given, the run's day is the day it started.
       expect(report.tables.day).toBe(report.startedAt.slice(0, 10));
     });
