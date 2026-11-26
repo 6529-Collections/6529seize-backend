@@ -103,6 +103,7 @@ import {
   DropPollWithOptions
 } from '@/api/drops/drop-polls.db';
 import { mapDropPollToApi } from '@/api/drops/drop-polls.mappers';
+import { withPollsClosedAtMove } from '@/waves-freeze/waves-moved-polls';
 import {
   contentModerationDb,
   ContentModerationDb,
@@ -590,14 +591,19 @@ export class DropsMappers {
       timed('rootDropNftLinks', () =>
         this.dropNftLinksDb.findByDropIds(rootDropIds, connection)
       ),
-      timed('dropPollsByDropId', () =>
-        this.dropPollsDb.findPollsByDropIds(allDropIds, {
+      timed('dropPollsByDropId', async () => {
+        const pollsCtx = {
           connection,
           authenticationContext: contextProfileId
             ? AuthenticationContext.fromProfileId(contextProfileId)
             : AuthenticationContext.notAuthenticated()
-        })
-      ),
+        };
+        // A poll still open at the freeze in a moved wave shows closed then.
+        return withPollsClosedAtMove(
+          await this.dropPollsDb.findPollsByDropIds(allDropIds, pollsCtx),
+          pollsCtx
+        );
+      }),
       timed('authorSignedDropIds', () =>
         this.authorSignaturesDb.findAuthorSignedDropIds(allDropIds, {
           connection
