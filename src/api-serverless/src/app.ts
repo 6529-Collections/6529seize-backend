@@ -115,7 +115,6 @@ import {
 } from '@/api/app-initialization';
 import { describeE2eeSuiteTransition } from '@/e2ee/e2ee-suite-policy';
 import { parseTdhResultsFromDB } from '@/sql_helpers';
-import deployRoutes from '@/api/deploy/deploy.routes';
 import alchemyProxyRoutes from './alchemy-proxy/alchemy-proxy.routes';
 import {
   DEFAULT_PAGE_SIZE,
@@ -1357,7 +1356,6 @@ function wireApp() {
     res.send({});
   });
 
-  rootRouter.use('/deploy', deployRoutes);
   rootRouter.use('/ci-pipeline-alerts', ciPipelineAlertRoutes);
 
   rootRouter.get('/health/ui', async (req, res) => {
