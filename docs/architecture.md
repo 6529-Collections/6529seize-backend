@@ -1730,6 +1730,10 @@ Rolling fleet counters distinguish widespread throttling, a persistent outage ev
 
 The API is organized by domain routers under `src/api-serverless/src`. The OpenAPI file defines the public contract and generated models. Legacy routes are wired manually, while newer OpenAPI operations can opt into generated route wiring through `x-6529-router` and thin domain handlers.
 
+The approved Phase 0 compatibility exception retires
+`GET /api/groups_im_eligible_for`. Wave and competition access evaluates group
+eligibility internally. Roll out this route removal by deploying `api`.
+
 `/e2ee/...` is the end-to-end encrypted messaging delivery service (D109),
 behind `E2EE_DMS_ENABLED` (off in production). It is a ciphertext-only
 orderer for MLS groups; see [End-to-end encrypted messaging](#end-to-end-encrypted-messaging-d109)
