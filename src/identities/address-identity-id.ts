@@ -41,7 +41,8 @@ export function pickAddressIdentityId(
  * switch-on. Before it, its creator gives a random one, as 6529.io did.
  * The identity mirror passes the block time of the event it writes for,
  * so a mirror catching up and a rebuild pick the same side; the API
- * passes the wall time.
+ * passes the wall time. Always true while FEATURE_IDENTITY_ON_CHAIN is
+ * on, whatever the time (isIdentityOnChain).
  */
 export function addressIdentityIdsFrom(nowMillis: number): boolean {
   return isIdentityOnChain(nowMillis);

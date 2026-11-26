@@ -55,6 +55,8 @@ const SWITCH_ON = '2026-11-28T00:00:00Z';
 const AFTER_SWITCH_ON = Date.parse('2026-11-28T00:01:00Z');
 const BEFORE_SWITCH_ON = Date.parse('2026-11-27T23:59:00Z');
 
+const byCodeUnit = (a: string, b: string) => (a < b ? -1 : Number(a > b));
+
 const db = new IdentityChainMirrorDb(() => sqlExecutor);
 const inTx = <T>(fn: (conn: any) => Promise<T>) =>
   sqlExecutor.executeNativeQueriesInTransaction(fn);
@@ -272,8 +274,8 @@ describeWithSeed(
             PLACE_G.toUpperCase(),
             free
           ])
-        ).sort()
-      ).toEqual([ROW_D, PLACE_G].sort());
+        ).sort(byCodeUnit)
+      ).toEqual([ROW_D, PLACE_G].sort(byCodeUnit));
       expect(await identitiesDb.takenProfileIds([])).toEqual(new Set());
     });
 

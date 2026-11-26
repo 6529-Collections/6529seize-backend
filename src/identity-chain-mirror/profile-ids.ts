@@ -185,7 +185,8 @@ export class ProfileIds {
       (await this.db.profileIdOfPrincipal(principal)) ??
       (await this.db.founderDecisionOf(principal));
     if (mapped) return { profileId: mapped, imported: legacy !== null };
-    const chosen = await this.chooseProfileId(identity);
+    // Not noted here: a merged or closed identity is asked for each time.
+    const chosen = await this.chooseProfileId(identity, false);
     // Decided from its founder: kept, so it is filed under this id only.
     if (chosen.founderAsked) {
       await this.db.founderDecided(principal, chosen.profileId, this.now());
@@ -286,7 +287,10 @@ export class ProfileIds {
     return null;
   }
 
-  private async chooseProfileId(identity: ChainIdentity): Promise<{
+  private async chooseProfileId(
+    identity: ChainIdentity,
+    note = true
+  ): Promise<{
     profileId: string;
     origin: string;
     left?: string;
@@ -295,7 +299,7 @@ export class ProfileIds {
     const principalId = identity.principalId.toLowerCase();
     const legacy = await this.legacyIdOf(identity);
     if (legacy) return { profileId: legacy, origin: 'LEGACY' };
-    const adopted = await this.adoptedProfileId(identity, true);
+    const adopted = await this.adoptedProfileId(identity, note);
     if (adopted) return { profileId: adopted, origin: 'ADOPTED' };
     const wallet = await this.foundingWalletOf(identity);
     const placeholder = wallet
