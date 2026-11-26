@@ -186,6 +186,9 @@ describe('Phase 0 permanent mounted GET route census', () => {
         (route) => !manifestPaths.has(route)
       )
     ).toEqual([]);
+    expect(
+      manifest.routes.filter((route) => !RETIRED_GET_ROUTES.has(route.path))
+    ).toHaveLength(276);
   });
 
   it('excludes all four retired NextGen paths from the NextGen router', () => {
