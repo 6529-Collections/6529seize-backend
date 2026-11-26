@@ -120,6 +120,76 @@ describe('formatTdhOnlyRecord', () => {
   });
 });
 
+/**
+ * A few hundred made-up identities, single and multi-wallet, with NULL ids,
+ * negative REP and large TDH, given in no particular order.
+ */
+function generated(count: number): {
+  rows: TdhOnlyIdentityRow[];
+  keys: TdhOnlyAddressKey[];
+} {
+  const wallet = (n: number) => `0x${n.toString(16).padStart(40, '0')}`;
+  const rows: TdhOnlyIdentityRow[] = [];
+  const keys: TdhOnlyAddressKey[] = [];
+  let next = 1;
+  for (let i = 0; i < count; i++) {
+    const size = (i % 3) + 1;
+    const wallets = Array.from({ length: size }, () => wallet(next++));
+    const key = wallets.join('-');
+    rows.push({
+      consolidation_key: key,
+      profile_id:
+        i % 7 === 0
+          ? null
+          : `00000000-0000-4000-8000-${i.toString(16).padStart(12, '0')}`,
+      primary_address: wallets[i % size],
+      tdh: i * 1_000_003,
+      rep: (i % 5) - 2,
+      cic: i % 4,
+      level_raw: i * 1_000_003 + (i % 5) - 2
+    });
+    wallets.forEach((address) =>
+      keys.push({ address, consolidation_key: key })
+    );
+  }
+  // Reverse and interleave, so format has to sort.
+  return {
+    rows: rows.reverse(),
+    keys: keys.filter((_, i) => i % 2).concat(keys.filter((_, i) => !(i % 2)))
+  };
+}
+
+describe('format and parse together', () => {
+  it('reads a generated record back to the same rows and keys', () => {
+    const { rows, keys } = generated(300);
+    const out = formatTdhOnlyRecord(rows, keys);
+    const record = parseTdhOnlyRecord(out.identitiesTsv, out.keysTsv, {
+      identitiesSha256: out.identitiesSha256,
+      keysSha256: out.keysSha256
+    });
+    const byCode = (a: string, b: string) => (a < b ? -1 : Number(a > b));
+    expect(record.rows).toEqual(
+      [...rows].sort((a, b) => byCode(a.consolidation_key, b.consolidation_key))
+    );
+    expect(record.keys).toEqual(
+      [...keys].sort((a, b) => byCode(a.address, b.address))
+    );
+    expect(record.rows).toHaveLength(300);
+    expect(record.keys).toHaveLength(600);
+  });
+
+  it('formats a parsed record to the same bytes', () => {
+    const { rows, keys } = generated(120);
+    const first = formatTdhOnlyRecord(rows, keys);
+    const record = parseTdhOnlyRecord(first.identitiesTsv, first.keysTsv, {
+      identitiesSha256: first.identitiesSha256,
+      keysSha256: first.keysSha256
+    });
+    const second = formatTdhOnlyRecord(record.rows, record.keys);
+    expect(second).toEqual(first);
+  });
+});
+
 describe('parseTdhOnlyRecord', () => {
   it('reads the pinned record back to the same rows and keys', () => {
     const record = parseTdhOnlyRecord(IDENTITIES_TSV, KEYS_TSV, pins);
