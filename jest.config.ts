@@ -15,7 +15,9 @@ const config: Config = {
   testPathIgnorePatterns: [
     '<rootDir>/build/',
     '<rootDir>/src/.*/dist/',
-    '<rootDir>/ops/monitoring/'
+    '<rootDir>/ops/monitoring/',
+    // The rebuild harness's end-to-end check: scripts/rebuild-jest.config.cjs
+    '\\.rebuild\\.test\\.ts$'
   ],
   globalSetup: './src/tests/_setup/globalSetup.ts',
   globalTeardown: './src/tests/_setup/globalTeardown.ts',
