@@ -1,6 +1,7 @@
 import { createHash, createHmac } from 'node:crypto';
 import { AreaManifest, Probe } from '@/rebuild/manifest.types';
 import { canonicalAnswer } from '@/rebuild/probes/canonical';
+import { errorText } from '@/rebuild/sources/running-source';
 
 /** One request of a probe after its placeholders are filled in. */
 export interface ProbeCall {
@@ -18,18 +19,27 @@ export interface ProbeAnswer {
   readonly body: unknown;
   /** False when the body was empty or not JSON. */
   readonly json?: boolean;
+  /** Why there is no answer (status 0). */
   readonly error?: string;
+  /**
+   * How many times the request was sent, when not once: a GET whose fetch
+   * threw before any answer is sent a second time.
+   */
+  readonly attempts?: number;
 }
 
 export interface ProbeDifference {
   readonly id: string;
   readonly area: string;
   /**
-   * `failure`: the first pass failed (no answer, 5xx, or not the status the
-   * probe expects) or the passes differ. `unproven`: the first pass answered
-   * 4xx or carried no data, so the probe proved nothing; a final run fails it.
+   * `failure`: the first pass failed (5xx, or not the status the probe
+   * expects) or the passes differ. `unanswered`: the API gave no answer in
+   * one pass or both (a fetch that threw), which is not a rebuild
+   * difference but still fails the run. `unproven`: the first pass answered
+   * 4xx or carried no data, so the probe proved nothing; a final run fails
+   * it.
    */
-  readonly kind: 'failure' | 'unproven';
+  readonly kind: 'failure' | 'unanswered' | 'unproven';
   readonly reason: string;
   readonly before: string;
   readonly after: string;
@@ -99,6 +109,9 @@ export function accessToken(
   return `${header}.${payload}.${signature}`;
 }
 
+/** How long a GET waits before it is sent again after its fetch threw. */
+const RETRY_DELAY_MS = 250;
+
 async function callOne(
   baseUrl: string,
   call: ProbeCall,
@@ -108,28 +121,62 @@ async function callOne(
   if (token) headers.authorization = `Bearer ${token}`;
   if (call.probe.body !== undefined)
     headers['content-type'] = 'application/json';
-  try {
-    const response = await fetch(`${baseUrl}${call.path}`, {
-      method: call.method,
-      headers,
-      body:
-        call.probe.body === undefined
-          ? undefined
-          : JSON.stringify(call.probe.body)
-    });
-    const text = await response.text();
-    let body: unknown;
-    let json = true;
-    try {
-      body = JSON.parse(text);
-    } catch {
-      json = false;
-      body = { sha256: createHash('sha256').update(text).digest('hex') };
+  // A GET whose fetch threw got no answer, so it is sent once more. A POST
+  // is not: it may have reached the API, and written, before the
+  // connection dropped. An answer of any status is never sent again.
+  const tries = call.method === 'GET' ? 2 : 1;
+  let attempt = 0;
+  let response: Response | null = null;
+  let error: unknown = null;
+  while (!response && attempt < tries) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
     }
-    return { id: call.id, status: response.status, body, json };
-  } catch (error) {
-    return { id: call.id, status: 0, body: null, error: String(error) };
+    attempt++;
+    try {
+      response = await fetch(`${baseUrl}${call.path}`, {
+        method: call.method,
+        headers,
+        body:
+          call.probe.body === undefined
+            ? undefined
+            : JSON.stringify(call.probe.body)
+      });
+    } catch (thrown) {
+      error = thrown;
+    }
   }
+  const attempts = attempt > 1 ? { attempts: attempt } : {};
+  if (!response) {
+    return {
+      id: call.id,
+      status: 0,
+      body: null,
+      error: errorText(error),
+      ...attempts
+    };
+  }
+  let text: string;
+  try {
+    text = await response.text();
+  } catch (thrown) {
+    return {
+      id: call.id,
+      status: 0,
+      body: null,
+      error: `the answer's body (status ${response.status}) broke off: ${errorText(thrown)}`,
+      ...attempts
+    };
+  }
+  let body: unknown;
+  let json = true;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    json = false;
+    body = { sha256: createHash('sha256').update(text).digest('hex') };
+  }
+  return { id: call.id, status: response.status, body, json, ...attempts };
 }
 
 /** Calls every probe in order, one at a time. */
@@ -215,10 +262,11 @@ export function carriesNoData(body: unknown, requestPath = ''): boolean {
 }
 
 /**
- * Compares the two passes. A probe whose first pass fails, or whose answers
- * differ, is a failure. One whose answers match but whose first answer is a
- * 4xx, or a 2xx that is empty, not JSON or carries no data, proves nothing
- * and is unproven.
+ * Compares the two passes. A probe the API didn't answer in one pass or
+ * both is unanswered, never a difference. One whose first pass fails, or whose
+ * answers differ, is a failure. One whose answers match but whose first
+ * answer is a 4xx, or a 2xx that is empty, not JSON or carries no data,
+ * proves nothing and is unproven.
  */
 export function diffAnswers(
   calls: readonly ProbeCall[],
@@ -246,13 +294,25 @@ export function diffAnswers(
       });
     const expected = call.probe.expectStatus;
     const success = !!a && a.status >= 200 && a.status < 300;
-    if (!a || a.status === 0 || a.status >= 500) {
+    const unanswered = (pass: 'A' | 'B', answer: ProbeAnswer) => {
+      const tries =
+        (answer.attempts ?? 1) > 1 ? `, ${answer.attempts} tries` : '';
+      difference(
+        'unanswered',
+        `the API didn't answer in pass ${pass}${tries}: ${answer.error ?? 'no error given'}`
+      );
+    };
+    if (a?.status === 0) {
+      unanswered('A', a);
+    } else if (!a || a.status >= 500) {
       difference('failure', 'the first pass failed');
     } else if (expected !== undefined && a.status !== expected) {
       difference(
         'failure',
         `the first pass answered ${a.status}, not ${expected}`
       );
+    } else if (b?.status === 0) {
+      unanswered('B', b);
     } else if (form(a) !== form(b)) {
       // Compared whatever the first answer was: an unproven probe that
       // answers differently after the rebuild still fails.
@@ -266,4 +326,19 @@ export function diffAnswers(
     }
   }
   return differences;
+}
+
+/** The requests answered only on a second try, as `<probe id> (pass A|B)`. */
+export function answeredOnRetry(
+  before: Readonly<Record<string, ProbeAnswer>>,
+  after: Readonly<Record<string, ProbeAnswer>>
+): string[] {
+  const retried = (
+    pass: 'A' | 'B',
+    answers: Readonly<Record<string, ProbeAnswer>>
+  ) =>
+    Object.values(answers)
+      .filter((answer) => answer.status !== 0 && (answer.attempts ?? 1) > 1)
+      .map((answer) => `${answer.id} (pass ${pass})`);
+  return [...retried('A', before), ...retried('B', after)];
 }

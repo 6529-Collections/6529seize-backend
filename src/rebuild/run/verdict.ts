@@ -51,6 +51,13 @@ export interface WaitingStep {
   readonly reason: string;
 }
 
+/** What the probes say beside rebuilt tables that differ row by row. */
+function probesBeside(input: VerdictInput): string {
+  if (input.differences) return ', and the probes differ too.';
+  if (input.unanswered) return '; the probes the API answered match.';
+  return ' while the probes match; look for a missing probe.';
+}
+
 /** What a run found, for the verdict. */
 export interface VerdictInput {
   readonly final: boolean;
@@ -64,6 +71,10 @@ export interface VerdictInput {
   readonly differences: number;
   /** Probes whose answers match but prove nothing. */
   readonly unproven: number;
+  /** Probes the API didn't answer in a pass, even on a second try. */
+  readonly unanswered?: number;
+  /** Requests the API answered only on a second try. */
+  readonly retried?: number;
   /** INDEX tables no rebuilder writes. */
   readonly pending: number;
   /** Rebuilt tables no probe read, unless waived. */
@@ -146,6 +157,16 @@ export function judge(input: VerdictInput): Verdict {
   if (input.differences) {
     failures.push(`${input.differences} probes failed or answer differently`);
   }
+  if (input.unanswered) {
+    failures.push(
+      `${input.unanswered} probes got no answer from the API. That is not a rebuild difference: check the server and run again.`
+    );
+  }
+  if (input.retried) {
+    notes.push(
+      `${input.retried} probe requests were answered only on a second try.`
+    );
+  }
   if (input.unproven) {
     finalOnly(
       `${input.unproven} probes answered 4xx or with no data in the first pass, so they prove nothing yet${input.final ? '' : '; a final run fails them'}.`
@@ -165,9 +186,7 @@ export function judge(input: VerdictInput): Verdict {
   }
   if (input.differingTables) {
     finalOnly(
-      input.differences
-        ? `${input.differingTables} rebuilt tables differ row by row (outside their volatile columns), and the probes differ too.`
-        : `${input.differingTables} rebuilt tables differ row by row (outside their volatile columns) while the probes match; look for a missing probe.`
+      `${input.differingTables} rebuilt tables differ row by row (outside their volatile columns)${probesBeside(input)}`
     );
   }
   if (input.unseededTables.length) {

@@ -181,6 +181,46 @@ describe('rebuild report', () => {
     expect(statusLine(report(), 'runs/x')).toContain('probe differences 0');
   });
 
+  it("counts and lists the probes the API didn't answer, and the second tries", () => {
+    const unanswered = report({
+      verdict: 'FAIL',
+      probes: {
+        calls: 3,
+        differences: [],
+        unproven: [],
+        unanswered: [
+          {
+            id: 'mint.team',
+            area: 'mint',
+            kind: 'unanswered',
+            reason:
+              "the API didn't answer in pass B, 2 tries: TypeError: fetch failed",
+            before: '200 {"a":1}',
+            after: '0 null'
+          }
+        ],
+        retried: ['mint.claims (pass A)'],
+        unreadTables: [],
+        stoppedBefore: null
+      }
+    });
+    expect(headline(unanswered)[2]).toBe(
+      'probes 3: differ 0, not answered 1, unproven 0; INDEX tables no probe read 0'
+    );
+    const markdown = renderMarkdown(unanswered);
+    expect(markdown).toContain(
+      "## Probes the API didn't answer\n\n- mint.team (mint): the API didn't answer in pass B, 2 tries: TypeError: fetch failed"
+    );
+    expect(markdown).toContain(
+      '## Probes answered on a second try\n\n- mint.claims (pass A)'
+    );
+    expect(statusLine(unanswered, 'runs/x')).toContain(
+      'probe differences 0, not answered 1'
+    );
+    expect(headline(report())[2]).not.toContain('not answered');
+    expect(renderMarkdown(report())).not.toContain('second try');
+  });
+
   it('counts and lists owned columns left out, with why', () => {
     const base = report();
     const leftOut = report({

@@ -294,6 +294,23 @@ describe('the verdict', () => {
     ]);
   });
 
+  it("fails a run on probes the API didn't answer, apart from the differences, and notes second tries", () => {
+    expect(judge({ ...clean, unanswered: 1, retried: 2 })).toEqual({
+      failures: [
+        '1 probes got no answer from the API. That is not a rebuild difference: check the server and run again.'
+      ],
+      notes: ['2 probe requests were answered only on a second try.']
+    });
+    // Rows that differ while some probes went unanswered: no missing probe
+    // is implied.
+    expect(
+      judge({ ...clean, unanswered: 1, differingTables: 1, final: true })
+        .failures
+    ).toContain(
+      '1 rebuilt tables differ row by row (outside their volatile columns); the probes the API answered match.'
+    );
+  });
+
   it('fails only a final run on unread rebuilt tables and open routes', () => {
     const finding = { unreadTables: ['t'], openRoutes: 5 };
     expect(judge({ ...clean, ...finding }).failures).toEqual([]);

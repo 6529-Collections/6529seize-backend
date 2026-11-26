@@ -57,6 +57,7 @@ import { acquireHomeLock } from '@/rebuild/stack/home-lock';
 import { bundleApi } from '@/rebuild/stack/api-bundle';
 import { STEP_SPEC_ENV, StepSpec } from '@/rebuild/run/step-spec';
 import {
+  answeredOnRetry,
   diffAnswers,
   expandAll,
   ProbeAnswer,
@@ -275,6 +276,10 @@ class RebuildRun {
   private differences: ProbeDifference[] = [];
   /** Probes whose first answer was 4xx or carried no data. */
   private unproven: ProbeDifference[] = [];
+  /** Probes the API didn't answer in a pass, even on a second try. */
+  private unanswered: ProbeDifference[] = [];
+  /** Requests answered only on a second try, `<probe id> (pass A|B)`. */
+  private retried: string[] = [];
   /** Whether pass B ran and the answers were compared. */
   private compared = false;
   private unreadTables: string[] = [];
@@ -1822,6 +1827,8 @@ class RebuildRun {
     const outcomes = diffAnswers(this.calls, before, after);
     this.differences = outcomes.filter((d) => d.kind === 'failure');
     this.unproven = outcomes.filter((d) => d.kind === 'unproven');
+    this.unanswered = outcomes.filter((d) => d.kind === 'unanswered');
+    this.retried = answeredOnRetry(before, after);
     this.compared = true;
     const snapshotsAfter = await this.snapshots(this.rebuiltTables);
     const diffs: TableDiff[] = [];
@@ -1878,6 +1885,8 @@ class RebuildRun {
       unguardedSteps: this.steps.filter((s) => !s.guarded).map((s) => s.id),
       differences: this.differences.length,
       unproven: this.unproven.length,
+      unanswered: this.unanswered.length,
+      retried: this.retried.length,
       pending: (this.registry?.pending ?? []).length,
       unreadTables: this.unreadTables,
       differingTables: this.tableDiffs.filter((d) => !d.same).length,
@@ -2209,6 +2218,8 @@ class RebuildRun {
         calls: this.calls.length,
         differences: this.differences,
         unproven: this.unproven,
+        unanswered: this.unanswered,
+        retried: this.retried,
         unreadTables: this.unreadTables,
         stoppedBefore: this.stoppedBefore()
       },

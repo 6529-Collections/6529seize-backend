@@ -361,8 +361,16 @@ step connects outside the sources, no source reports a problem (a request a
 recording lacks or its server failed on, a call the Alchemy stand-in failed
 on, a file that doesn't match its hash), the rebuilt tables were
 empty after the drop, and every probe answers the same in both passes. A
-probe whose first pass gets no answer, a 5xx, or not the `expectStatus` it
-names fails every run, and so does one whose two answers differ.
+probe whose first pass gets a 5xx, or not the `expectStatus` it names,
+fails every run, and so does one whose two answers differ.
+
+A probe request that gets no answer at all (its fetch throws: a dropped
+or refused connection) is not a difference. A GET is sent once more,
+250 ms later; a POST is not, since it may have written before the
+connection dropped, and no answer of any status is sent again. A request
+answered on its second try is listed in the report. One still without an
+answer, in one pass or both, is listed as not answered, with the error, and
+fails the run with its own message: check the server and run again.
 
 A probe whose answers match but whose first answer is a 4xx, or a 2xx that
 is empty, not JSON, or carries no data (an empty list, a page whose lists
@@ -468,11 +476,13 @@ registry problems, a table per area (tables, INDEX, INDEX tables with rows
 after the seeds, kept, rebuilt, pending, probes, differences, unproven
 probes, failed steps), each source with where its answers came from, each
 step with its time and the rows in its tables afterwards, source violations,
-probe differences, unproven probes, tables that differ row by row and the
-columns that comparison leaves out, rebuilders that read kept tables, INDEX
-tables no probe read, documented GET routes no probe calls and no waiver
-names, planned tables whose code isn't in the tree, tables a fresh schema
-does not have, and pending tables. `report.json` holds the same, and both
+probe differences, probes the API didn't answer (counted as "not
+answered" in the counts), probes answered on a second try, unproven
+probes, tables that differ row by row and the columns that comparison
+leaves out, rebuilders that read kept tables, INDEX tables no probe read,
+documented GET routes no probe calls and no waiver names, planned tables
+whose code isn't in the tree, tables a fresh schema does not have, and
+pending tables. `report.json` holds the same, and both
 probe passes' answers sit beside it. A run that stopped before the second
 pass says so, with the step that stopped it, instead of counting
 differences and unproven probes it never compared.

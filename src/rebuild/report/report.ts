@@ -88,6 +88,10 @@ export interface RunReport {
     readonly differences: ProbeDifference[];
     /** Probes whose first answer was 4xx or carried no data. */
     readonly unproven: ProbeDifference[];
+    /** Probes the API didn't answer in a pass, even on a second try. */
+    readonly unanswered?: ProbeDifference[];
+    /** Requests answered only on a second try, `<probe id> (pass A|B)`. */
+    readonly retried?: string[];
     /** INDEX tables in scope that no probe read in the first pass. */
     readonly unreadTables: string[];
     /**
@@ -198,6 +202,7 @@ export function headline(report: RunReport): string[] {
   const differing = report.tables.diffs.filter((d) => !d.same).length;
   const failed = report.steps.filter((s) => s.exitCode !== 0).length;
   const leftOut = report.tables.ownedColumnsLeftOut.length;
+  const unanswered = (report.probes.unanswered ?? []).length;
   const planned = report.tables.plannedRows.reduce((n, p) => n + p.rows, 0);
   const plannedColumns = report.tables.plannedRows.reduce(
     (n, p) => n + p.columnRows,
@@ -211,7 +216,7 @@ export function headline(report: RunReport): string[] {
     `${report.scope}, mark ${report.mark}${report.final ? ', final' : ''}, backend ${report.backendHead ?? 'unknown'}: ${report.verdict}`,
     `tables ${total}: ${classes}; rebuilt ${rebuilt}, pending ${report.pending.length}, planned ${report.planned.length}, differing ${differing}${leftOut ? `; owned columns left out ${leftOut}` : ''}${planned ? `; planned rows missing ${planned}` : ''}${plannedColumns ? `; rows changed only in planned columns ${plannedColumns}` : ''}`,
     report.probes.stoppedBefore === null
-      ? `probes ${report.probes.calls}: differ ${report.probes.differences.length}, unproven ${report.probes.unproven.length}; INDEX tables no probe read ${report.probes.unreadTables.length}`
+      ? `probes ${report.probes.calls}: differ ${report.probes.differences.length}${unanswered ? `, not answered ${unanswered}` : ''}, unproven ${report.probes.unproven.length}; INDEX tables no probe read ${report.probes.unreadTables.length}`
       : `probes ${report.probes.calls}: not compared: the run stopped before pass B (${report.probes.stoppedBefore})`,
     `GET routes ${report.routes.documented}: probed ${report.routes.probed}, waived ${report.routes.waived}, open ${report.routes.open.length}`,
     `steps ${report.steps.length}: failed ${failed}; source violations ${report.violations.length}; provisional sources ${provisional.length ? provisional.join(', ') : 'none'}; unresolved cross-area edges ${report.unresolvedEdges.length}`,
@@ -325,6 +330,16 @@ export function renderMarkdown(report: RunReport): string {
       )
     ),
     ...section(
+      "Probes the API didn't answer",
+      (report.probes.unanswered ?? []).map(
+        (d) => `- ${d.id} (${d.area}): ${d.reason}`
+      )
+    ),
+    ...section(
+      'Probes answered on a second try',
+      (report.probes.retried ?? []).map((id) => `- ${id}`)
+    ),
+    ...section(
       'Probes that prove nothing yet',
       report.probes.unproven.map(
         (d) =>
@@ -422,7 +437,9 @@ export function renderMarkdown(report: RunReport): string {
 /** One line per run for the status file. */
 export function statusLine(report: RunReport, runDir: string): string {
   const overdue = overdueLine(report.tables.exemptUntil, plansOf(report));
-  return `- ${report.finishedAt} ${report.scope}: ${report.verdict}, rebuilt ${report.tables.rebuilt.length}, pending ${report.pending.length}, ${report.probes.stoppedBefore === null ? `probe differences ${report.probes.differences.length}` : 'probes not compared'}, failures ${report.failures.length}${overdue ? `; ${overdue}` : ''}${report.unresolvedEdges.length ? `; unresolved cross-area edges ${report.unresolvedEdges.length}` : ''}. ${runDir}`;
+  const unanswered = (report.probes.unanswered ?? []).length;
+  const notAnswered = unanswered ? `, not answered ${unanswered}` : '';
+  return `- ${report.finishedAt} ${report.scope}: ${report.verdict}, rebuilt ${report.tables.rebuilt.length}, pending ${report.pending.length}, ${report.probes.stoppedBefore === null ? `probe differences ${report.probes.differences.length}${notAnswered}` : 'probes not compared'}, failures ${report.failures.length}${overdue ? `; ${overdue}` : ''}${report.unresolvedEdges.length ? `; unresolved cross-area edges ${report.unresolvedEdges.length}` : ''}. ${runDir}`;
 }
 
 export function writeReport(

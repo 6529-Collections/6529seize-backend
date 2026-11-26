@@ -4,6 +4,7 @@ import { AddressInfo } from 'node:net';
 import { Probe } from '@/rebuild/manifest.types';
 import {
   accessToken,
+  answeredOnRetry,
   carriesNoData,
   diffAnswers,
   expandProbe,
@@ -174,6 +175,169 @@ describe('probe runner', () => {
       ['ok-empty', 'unproven', 'the first pass answered with no data'],
       ['gone-then-back', 'failure', 'the answers differ']
     ]);
+  });
+
+  describe('a request the API never answered', () => {
+    const json = (status: number) =>
+      new Response(JSON.stringify({ ok: status }), {
+        status,
+        headers: { 'content-type': 'application/json' }
+      });
+    let fetchSpy: jest.SpyInstance;
+    afterEach(() => jest.restoreAllMocks());
+
+    it('sends a GET once more when its fetch threw, and notes the second try', async () => {
+      fetchSpy = jest
+        .spyOn(global, 'fetch')
+        .mockRejectedValueOnce(new TypeError('fetch failed'))
+        .mockResolvedValueOnce(json(200));
+      const answers = await runProbes(
+        'http://127.0.0.1:9',
+        expandProbe('l', { id: 'g', path: '/g' }),
+        'secret'
+      );
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(answers.g).toEqual({
+        id: 'g',
+        status: 200,
+        body: { ok: 200 },
+        json: true,
+        attempts: 2
+      });
+      expect(answeredOnRetry({}, answers)).toEqual(['g (pass B)']);
+    });
+
+    it('gives a GET that got no answer twice the error, as status 0', async () => {
+      fetchSpy = jest.spyOn(global, 'fetch').mockRejectedValue(
+        Object.assign(new TypeError('fetch failed'), {
+          cause: new Error('connect ECONNREFUSED 127.0.0.1:9')
+        })
+      );
+      const answers = await runProbes(
+        'http://127.0.0.1:9',
+        expandProbe('l', { id: 'g', path: '/g' }),
+        'secret'
+      );
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(answers.g).toEqual({
+        id: 'g',
+        status: 0,
+        body: null,
+        error: 'TypeError: fetch failed (connect ECONNREFUSED 127.0.0.1:9)',
+        attempts: 2
+      });
+      expect(answeredOnRetry(answers, {})).toEqual([]);
+    });
+
+    it('never sends a POST again: it may have written before the connection dropped', async () => {
+      fetchSpy = jest
+        .spyOn(global, 'fetch')
+        .mockRejectedValue(new TypeError('fetch failed'));
+      const answers = await runProbes(
+        'http://127.0.0.1:9',
+        expandProbe('l', {
+          id: 'p',
+          path: '/p',
+          method: 'POST',
+          body: { a: 1 }
+        }),
+        'secret'
+      );
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(answers.p).toEqual({
+        id: 'p',
+        status: 0,
+        body: null,
+        error: 'TypeError: fetch failed'
+      });
+    });
+
+    it('never sends again a request that got an answer, a 5xx included', async () => {
+      fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue(json(503));
+      const answers = await runProbes(
+        'http://127.0.0.1:9',
+        expandProbe('l', { id: 'g', path: '/g' }),
+        'secret'
+      );
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(answers.g).toMatchObject({ status: 503 });
+      expect(answers.g.attempts).toBeUndefined();
+    });
+
+    it('keeps the status of an answer whose body broke off, and sends it once', async () => {
+      const broken = new ReadableStream({
+        pull(controller) {
+          controller.error(new Error('socket hang up'));
+        }
+      });
+      fetchSpy = jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValue(new Response(broken, { status: 500 }));
+      const answers = await runProbes(
+        'http://127.0.0.1:9',
+        expandProbe('l', { id: 'g', path: '/g' }),
+        'secret'
+      );
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(answers.g).toEqual({
+        id: 'g',
+        status: 0,
+        body: null,
+        error: expect.stringMatching(
+          /^the answer's body \(status 500\) broke off: .*socket hang up/
+        )
+      });
+    });
+
+    it('reports an unanswered probe apart from the differences, in either pass', () => {
+      const calls = [
+        ...expandProbe('l', { id: 'a', path: '/a' }),
+        ...expandProbe('l', { id: 'b', path: '/b' }),
+        ...expandProbe('l', { id: 'post', path: '/p', method: 'POST' }),
+        ...expandProbe('l', { id: 'five', path: '/5' }),
+        ...expandProbe('l', { id: 'wrong', path: '/w', expectStatus: 404 })
+      ];
+      const ok: ProbeAnswer = { id: 'x', status: 200, body: { v: 1 } };
+      const none = (attempts?: number): ProbeAnswer => ({
+        id: 'x',
+        status: 0,
+        body: null,
+        error: 'TypeError: fetch failed',
+        ...(attempts ? { attempts } : {})
+      });
+      expect(
+        diffAnswers(
+          calls,
+          {
+            a: none(2),
+            b: ok,
+            post: ok,
+            five: { id: 'five', status: 503, body: {} },
+            wrong: ok
+          },
+          { a: ok, b: none(2), post: none(), five: none(2), wrong: none(2) }
+        ).map((d) => [d.id, d.kind, d.reason])
+      ).toEqual([
+        [
+          'a',
+          'unanswered',
+          "the API didn't answer in pass A, 2 tries: TypeError: fetch failed"
+        ],
+        [
+          'b',
+          'unanswered',
+          "the API didn't answer in pass B, 2 tries: TypeError: fetch failed"
+        ],
+        [
+          'post',
+          'unanswered',
+          "the API didn't answer in pass B: TypeError: fetch failed"
+        ],
+        // A first pass that failed stays a failure, whatever pass B got.
+        ['five', 'failure', 'the first pass failed'],
+        ['wrong', 'failure', 'the first pass answered 200, not 404']
+      ]);
+    });
   });
 
   it('tells an answer with data from one without', () => {
