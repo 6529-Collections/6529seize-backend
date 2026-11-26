@@ -27,19 +27,6 @@ const FIXTURE_RECORDS_FLAGS = {
 };
 
 /**
- * The identity mirror's principals table, which the identity mirror branch
- * (#2516) creates: the opening cut, the identity writers and the dual
- * write's keys read it. Steps that need it wait while it isn't there.
- */
-const NEEDS_IDENTITY_MIRROR = [
-  {
-    table: 'identity_chain_principals',
-    reason:
-      'The opening cut, the identity writers and the dual write read the identity mirror table, which the identity mirror branch (#2516) creates'
-  }
-];
-
-/**
  * The signed record heads subscriptions keep: their four choice types in
  * the ps family (src/subscriptions-identity/records/subscription-records.ts),
  * written live through the record index and put back by the rebuild from
@@ -175,7 +162,6 @@ const SUBS_SWITCH_SEED: RebuildStep = {
   // The list is card 1's, which the holdings seed mints after it.
   before: ['holdings.seed'],
   sources: ['ethereum', 'files', 'repo'],
-  needs: NEEDS_IDENTITY_MIRROR,
   timeoutMinutes: 15
 };
 
@@ -216,7 +202,6 @@ const SUBS_REDEMPTIONS_SEED: RebuildStep = {
   // The mint stats the mint seed writes count this redemption.
   before: ['mint.probes.seed'],
   sources: ['files'],
-  needs: NEEDS_IDENTITY_MIRROR,
   timeoutMinutes: 10
 };
 
@@ -236,7 +221,6 @@ const SUBS_REBUILD: RebuildStep = {
   // The records wave: the head drops the records service posted.
   reads: ['drops', 'drops_parts'],
   sources: ['files'],
-  needs: NEEDS_IDENTITY_MIRROR,
   timeoutMinutes: 15
 };
 
@@ -322,7 +306,6 @@ const SUBS_LEGACY_HISTORY_REBUILD: RebuildStep = {
   ],
   after: ['subs.identity'],
   sources: ['repo'],
-  needs: NEEDS_IDENTITY_MIRROR,
   timeoutMinutes: 10
 };
 
