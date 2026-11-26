@@ -183,6 +183,10 @@ to `main`.
    The region is
    derived from the catalog. Cross-region forwarding uses the monitoring bus
    ARN's region, so a production source in `us-east-1` can target `eu-west-1`.
+   Before releasing a source stack change, run the same command with
+   `-- --preflight-only` and the target AWS profile. This checks account and
+   bucket ownership, deployed functions and log groups, and subscription
+   capacity without packaging artifacts or updating AWS.
    Leaving `SOURCE_ALARM_TOPIC_ARN` undefined preserves an existing stack's topic;
    explicitly setting it to an empty string disables that optional alarm action.
    The source event-bus target uses AWS-managed retries and its retained regional

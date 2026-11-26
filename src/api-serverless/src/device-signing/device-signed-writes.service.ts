@@ -23,6 +23,13 @@ import {
   DeviceEventKind,
   verifyEd25519EventSignature
 } from './device-event';
+import {
+  WaveRelayScope,
+  waveRelayScope,
+  WAVES_ON_CHAIN_FLAG_ENV,
+  WAVES_SWITCH_ON_AT_ENV,
+  wavesSwitchedOn
+} from '@/wave-relay-publish/wave-relay-scope';
 import { DeviceSigningDb, deviceSigningDb } from './device-signing.db';
 
 export const DEVICE_SIGNATURE_FIELD = 'device_signature';
@@ -32,9 +39,12 @@ export const INVALID_DEVICE_SIGNATURE_PREFIX = 'Invalid device signature:';
 /**
  * From waves' switch-on to the 6529 chain, drops travel peer to peer as
  * device-signed events, so a write without a device signature can't reach
- * the relays. FEATURE_WAVES_DEVICE_SIGNATURE_REQUIRED=true refuses drop
- * posts, edits, deletes and reactions without one, except in direct
- * messages (they stay off the relays).
+ * the relays. With FEATURE_WAVES_DEVICE_SIGNATURE_REQUIRED=true, from the
+ * switch-on (WAVES_SWITCH_ON_AT, or FEATURE_WAVES_ON_CHAIN=true), drop
+ * posts, edits, deletes and reactions without one are refused, except in
+ * direct messages and every other wave that stays on 6529.io (they stay
+ * off the relays: wave-relay-scope.ts). The flag can be set ahead of the
+ * switch-on: nothing is refused before it.
  */
 export const DEVICE_SIGNATURE_REQUIRED_CODE = 'DEVICE_SIGNATURE_REQUIRED';
 
@@ -46,10 +56,35 @@ export const DEVICE_SIGNATURE_REQUIRED_PROXY_MESSAGE =
   `Posts in waves are now signed by the author's own device, ` +
   `so a proxy can't post, edit or react for them.`;
 
+const requirementLogger = Logger.get('DEVICE_SIGNATURE_REQUIRED');
+let warnedNoSwitchOn = false;
+
+/**
+ * Whether writes without a device signature are refused now: the flag is
+ * on and waves have switched on (wavesSwitchedOn). Read on each request,
+ * so a process that started before WAVES_SWITCH_ON_AT refuses from that
+ * time on. A wave that stays on 6529.io is never refused (see
+ * assertUnsignedWriteAllowed). The flag with no switch-on set at all
+ * (neither WAVES_SWITCH_ON_AT nor FEATURE_WAVES_ON_CHAIN) refuses nothing,
+ * and says so once; a WAVES_SWITCH_ON_AT that is not a time is logged by
+ * wavesSwitchedOn.
+ */
 export function isDeviceSignatureRequired(
-  env: Record<string, string | undefined> = process.env
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  nowMillis: number = Date.now()
 ): boolean {
-  return env.FEATURE_WAVES_DEVICE_SIGNATURE_REQUIRED === 'true';
+  if (env.FEATURE_WAVES_DEVICE_SIGNATURE_REQUIRED !== 'true') return false;
+  if (
+    !warnedNoSwitchOn &&
+    env[WAVES_ON_CHAIN_FLAG_ENV] !== 'true' &&
+    !env[WAVES_SWITCH_ON_AT_ENV]?.trim()
+  ) {
+    warnedNoSwitchOn = true;
+    requirementLogger.warn(
+      `[DEVICE SIGNATURES NOT REQUIRED] FEATURE_WAVES_DEVICE_SIGNATURE_REQUIRED is true, but neither ${WAVES_SWITCH_ON_AT_ENV} nor ${WAVES_ON_CHAIN_FLAG_ENV} is set: nothing is refused until one is`
+    );
+  }
+  return wavesSwitchedOn(env, nowMillis);
 }
 
 export class DeviceSignatureRequiredException extends ApiCompliantException {
@@ -261,7 +296,11 @@ export class DeviceSignedWritesService {
     private readonly db: DeviceSigningDb,
     private readonly identities: IdentitiesDb,
     private readonly drops: DropsDb,
-    private readonly now: () => number = () => Date.now()
+    private readonly now: () => number = () => Date.now(),
+    private readonly waveScope: Pick<
+      WaveRelayScope,
+      'staysOnSite'
+    > = waveRelayScope
   ) {}
 
   /**
@@ -288,7 +327,7 @@ export class DeviceSignedWritesService {
     ctx: SignedWriteContext
   ): Promise<T> {
     if (envelope === undefined) {
-      if (isDeviceSignatureRequired()) {
+      if (this.signatureRequired()) {
         await this.assertUnsignedWriteAllowed({ waveId }, ctx);
       }
       return write();
@@ -321,6 +360,34 @@ export class DeviceSignedWritesService {
     );
   }
 
+  /** Attach a signed post inside the transaction that created the drop. */
+  async recordCreatedDropSignature(
+    {
+      dropId,
+      waveId,
+      body,
+      envelope
+    }: {
+      readonly dropId: string;
+      readonly waveId: string;
+      readonly body: unknown;
+      readonly envelope: DeviceSignatureEnvelope;
+    },
+    ctx: SignedWriteContext
+  ): Promise<void> {
+    if (!ctx.connection) {
+      throw new Error(
+        'Recording a created drop signature requires its transaction'
+      );
+    }
+    const reservation = await this.verifyAndReserve(
+      envelope,
+      { kind: DeviceEventKind.POST, waveId, refs: [], body },
+      ctx
+    );
+    await this.finalizeInTransaction(reservation, dropId, ctx);
+  }
+
   /**
    * Edit, delete and reaction writes on an existing drop. The wave is the
    * drop's stored wave; pass it when the caller already loaded it.
@@ -343,7 +410,7 @@ export class DeviceSignedWritesService {
     ctx: SignedWriteContext
   ): Promise<T> {
     if (envelope === undefined) {
-      if (isDeviceSignatureRequired()) {
+      if (this.signatureRequired()) {
         await this.assertUnsignedWriteAllowed({ waveId, dropId }, ctx);
       }
       return this.runUnsigned(kind, dropId, write, ctx);
@@ -413,10 +480,7 @@ export class DeviceSignedWritesService {
       ctx,
       relay !== undefined
     );
-    const profileId = await this.assertGrantWalletIsActingProfile(
-      grant,
-      authenticationContext
-    );
+    const profileId = await this.assertGrantWalletIsActingProfile(grant, ctx);
     if (
       !relay &&
       Math.abs(envelope.claimed_time - now) > DEVICE_SIGNATURE_MAX_CLOCK_SKEW_MS
@@ -491,7 +555,9 @@ export class DeviceSignedWritesService {
     // signed and first seen) still covers it.
     revokedOnlyBefore = false
   ): Promise<DeviceGrantEntity> {
-    const grant = await this.db.findGrantById(grantId, { timer: ctx.timer });
+    const grant = ctx.connection
+      ? await this.db.lockGrant(grantId, ctx)
+      : await this.db.findGrantById(grantId, { timer: ctx.timer });
     if (!grant) {
       throw new InvalidDeviceSignatureException('unknown grant');
     }
@@ -521,13 +587,23 @@ export class DeviceSignedWritesService {
    */
   private async assertGrantWalletIsActingProfile(
     grant: DeviceGrantEntity,
-    authenticationContext: AuthenticationContext
+    ctx: SignedWriteContext
   ): Promise<string> {
-    const actingProfileId = authenticationContext.getActingAsId();
-    const grantProfileId = actingProfileId
-      ? await this.identities.getProfileIdByWallet(grant.wallet)
-      : null;
-    if (!actingProfileId || grantProfileId !== actingProfileId) {
+    const actingProfileId = ctx.authenticationContext.getActingAsId();
+    if (!actingProfileId) {
+      throw new InvalidDeviceSignatureException(
+        'grant wallet does not belong to the acting profile'
+      );
+    }
+    const grantProfileId = ctx.connection
+      ? (
+          await this.identities.getIdentityByWallet(
+            grant.wallet,
+            ctx.connection
+          )
+        )?.profile_id
+      : await this.identities.getProfileIdByWallet(grant.wallet);
+    if (grantProfileId !== actingProfileId) {
       throw new InvalidDeviceSignatureException(
         'grant wallet does not belong to the acting profile'
       );
@@ -560,9 +636,14 @@ export class DeviceSignedWritesService {
     return result;
   }
 
+  /** isDeviceSignatureRequired at this service's clock, per request. */
+  private signatureRequired(): boolean {
+    return isDeviceSignatureRequired(process.env, this.now());
+  }
+
   /**
    * Refuses a write without a device signature once they are required,
-   * except in a direct message.
+   * except in a direct message or another wave that stays on 6529.io.
    */
   private async assertUnsignedWriteAllowed(
     target: { readonly waveId?: string; readonly dropId?: string },
@@ -587,6 +668,11 @@ export class DeviceSignedWritesService {
     if (!wave || wave.is_direct_message) {
       return;
     }
+    // A wave that stays on 6529.io stays open as today: its drops never go
+    // to the relays.
+    if (await this.waveScope.staysOnSite(wave.id)) {
+      return;
+    }
     throw new DeviceSignatureRequiredException(
       ctx.authenticationContext.isAuthenticatedAsProxy()
         ? DEVICE_SIGNATURE_REQUIRED_PROXY_MESSAGE
@@ -603,7 +689,7 @@ export class DeviceSignedWritesService {
     dropId: string,
     ctx: SignedWriteContext
   ): Promise<void> {
-    if (!isDeviceSignatureRequired()) {
+    if (!this.signatureRequired()) {
       return;
     }
     const drop = await this.db.executeNativeQueriesInTransaction((connection) =>
@@ -653,35 +739,44 @@ export class DeviceSignedWritesService {
     dropId: string,
     ctx: RequestContext
   ): Promise<void> {
-    const effect = SIGNED_AUTHOR_SIGNATURE_EFFECT[reservation.kind];
-    const now = this.now();
     try {
-      await this.db.executeNativeQueriesInTransaction(async (connection) => {
-        const txCtx: RequestContext = { timer: ctx.timer, connection };
-        await this.db.attachEventToDrop(
-          { eventId: reservation.eventId, dropId },
-          txCtx
-        );
-        if (effect === 'set') {
-          await this.db.upsertDropAuthorSignature(
-            {
-              dropId,
-              eventId: reservation.eventId,
-              signedAt: reservation.receivedAt
-            },
-            txCtx
-          );
-        } else if (effect === 'clear') {
-          await this.db.deleteDropAuthorSignature(dropId, txCtx);
-        }
-        await this.db.touchGrantLastUsed(reservation.grantId, now, txCtx);
-      });
+      await this.db.executeNativeQueriesInTransaction((connection) =>
+        this.finalizeInTransaction(reservation, dropId, {
+          timer: ctx.timer,
+          connection
+        })
+      );
     } catch (error) {
       this.logger.error(
         `Failed to finalize device signed event ${reservation.eventId} for drop ${dropId}`,
         error
       );
     }
+  }
+
+  private async finalizeInTransaction(
+    reservation: ReservedDeviceEvent,
+    dropId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    const effect = SIGNED_AUTHOR_SIGNATURE_EFFECT[reservation.kind];
+    await this.db.attachEventToDrop(
+      { eventId: reservation.eventId, dropId },
+      ctx
+    );
+    if (effect === 'set') {
+      await this.db.upsertDropAuthorSignature(
+        {
+          dropId,
+          eventId: reservation.eventId,
+          signedAt: reservation.receivedAt
+        },
+        ctx
+      );
+    } else if (effect === 'clear') {
+      await this.db.deleteDropAuthorSignature(dropId, ctx);
+    }
+    await this.db.touchGrantLastUsed(reservation.grantId, this.now(), ctx);
   }
 
   /**

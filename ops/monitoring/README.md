@@ -27,6 +27,13 @@ handled errors require their owning service's telemetry integration. The active
 `helpBotDailyActivityCreditLoop` is a companion of `helpBotReplyLoop` and belongs
 to that service's deploy verification targets and structured-log coverage.
 
+Production source coverage for `signedRecordLogLoop` is deferred until its
+production rollout creates both Lambdas and log groups. Remove the production
+exclusion in `scripts/templates.mjs` and regenerate the templates when that
+happens. Staging source coverage remains enabled. The production source
+inventory no longer includes `rpcProxy` because the Lambda is absent from that
+account and region. The public `rpc1.6529.io` hostname points to CloudFront.
+
 This separate operational package
 is deliberately outside the application deployment catalog and release service
 bundles. `bootstrap.json` provisions its artifact bucket and deployment identities.
@@ -231,8 +238,10 @@ Within the existing five-minute fingerprint window, the first occurrence is sent
 promptly;
 repeats update a durable count. The scheduled summary edits the first confirmed
 message when its receipt identifies the same group and webhook destination.
-Safe allowlisted push condition labels distinguish
-sender mismatch, provider transients, delivery failure and retry exhaustion.
+Safe allowlisted condition labels distinguish push
+sender mismatch, provider transients, delivery failure and retry exhaustion,
+and a profile site change that has waited more than 30 minutes
+(`PROFILE_SITE_CHANGE_STALLED`).
 Critical/recovery events bypass grouping and continue sending immediately.
 The push queue has independent source alarms for any visible dead letter and
 oldest-message age of at least 30 minutes in three out of five minutes. These

@@ -244,7 +244,8 @@ async function answerAtHeight(
     return one(chain, path, height, {
       started: true,
       completed,
-      doneHeight: completed ? doneHeight : null
+      doneHeight: completed ? doneHeight : null,
+      startMs: chain.importStartedAt
     });
   }
   const parts = path.split('/').filter(Boolean);

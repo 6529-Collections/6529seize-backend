@@ -7,6 +7,7 @@ import { ApiCreateDropRequest } from '@/api/generated/models/ApiCreateDropReques
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
 import { ApiUpdateDropRequest } from '@/api/generated/models/ApiUpdateDropRequest';
 import { BadRequestException } from '@/exceptions';
+import { Logger } from '@/logging';
 import { IngestedEvent } from './drop-index.db';
 
 /**
@@ -31,6 +32,16 @@ import { IngestedEvent } from './drop-index.db';
  *
  * History (event_origin IMPORT: claimed before switch-on) is written with
  * no notifications or pushes; websocket updates go out as for any write.
+ *
+ * Only waves that moved to the 6529 chain take relay events: a wave the
+ * chain holds, by the chain index's mapping. A wave that stays on 6529.io
+ * keeps its drops as 6529.io writes them, and its relay events are refused:
+ * a direct message and 6529.io's records wave (SIGNED_RECORDS_WAVE_ID)
+ * always, and any wave the chain doesn't hold. Nothing is refused on a
+ * clock: an event waits while the index hasn't finished a full read, or
+ * hasn't read the chain through the time the event was first seen (the
+ * wave may be one made on the chain since), or while the chain mirror
+ * hasn't written a wave the chain holds. Waiting counts no try.
  */
 
 export const MAX_APPLY_ATTEMPTS = 5;
@@ -81,8 +92,30 @@ export interface RelayDropWrites {
   ): Promise<void>;
 }
 
+/**
+ * Where a wave stands for an event first seen at a time
+ * (DropIndexDb.waveOnChain): `moved` (the chain holds it and 6529.io has
+ * its row), `not_on_site` (the chain holds it; 6529.io's row is not written
+ * yet), `behind` (not held, and the index hasn't read the chain through
+ * that time), `stays` (not held, and the index has), `unknown` (the index
+ * hasn't finished a full read), `direct_message` (a direct message, which
+ * stays always).
+ */
+export type WaveOnChain =
+  | 'moved'
+  | 'not_on_site'
+  | 'behind'
+  | 'stays'
+  | 'unknown'
+  | 'direct_message';
+
 /** What the applier needs of the index's table. */
 export interface RelayApplyStore {
+  /**
+   * Where the wave stands for an event first seen at `seenAt`
+   * (waves-chain-mapping.ts).
+   */
+  waveOnChain(wave: string, seenAt: number): Promise<WaveOnChain>;
   /**
    * Relay-only events to write, oldest first: those due at `now`, a share
    * per author, none behind a waiting event of the same drop.
@@ -164,11 +197,59 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
+const logger = Logger.get('WAVE_DROP_INDEX_APPLY');
+
+let warnedAboutRecordsWave = false;
+
+function warnOnce(message: string) {
+  if (warnedAboutRecordsWave) return;
+  warnedAboutRecordsWave = true;
+  logger.warn(message);
+}
+
+/** The records wave setting that says, on purpose, there is none. */
+export const NO_RECORDS_WAVE = 'none';
+
+/**
+ * 6529.io's records wave (SIGNED_RECORDS_WAVE_ID), or null for none.
+ * `none`, in any case, says there is none, on purpose: the shared rule's
+ * reading (readRecordsWaveSetting in src/waves-scope/waves-scope.ts).
+ * Unset, no wave is refused as the records wave either (the chain's mapping
+ * still keeps it, as any wave the chain doesn't hold), and that is told to
+ * `warn` (by default, logged once).
+ */
+export function recordsWaveIdOf(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  warn: (message: string) => void = warnOnce
+): string | null {
+  const value = env.SIGNED_RECORDS_WAVE_ID?.trim();
+  if (value?.toLowerCase() === NO_RECORDS_WAVE) return null;
+  if (value) return value.toLowerCase();
+  warn(
+    '[SIGNED_RECORDS_WAVE_ID IS NOT SET] [NO WAVE REFUSED AS THE RECORDS WAVE] [SET IT, OR TO none WHEN THERE IS NONE]'
+  );
+  return null;
+}
+
+export const STAYS_ON_SITE_REASON =
+  'the wave stays on 6529.io: the 6529 chain does not hold it';
+export const DIRECT_MESSAGE_REASON =
+  'the wave stays on 6529.io: it is a direct message';
+export const RECORDS_WAVE_REASON =
+  "the wave stays on 6529.io: it is 6529.io's records wave";
+export const INDEX_NOT_READY_REASON =
+  'the chain index has not finished reading the chain';
+export const INDEX_BEHIND_REASON =
+  'the chain index has not read the chain through this event yet';
+export const NOT_ON_SITE_REASON =
+  'the 6529 chain holds the wave; 6529.io has not written it yet';
+
 export class RelayDropApplier {
   constructor(
     private readonly store: RelayApplyStore,
     private readonly writes: RelayDropWrites,
-    private readonly now: () => number = () => Date.now()
+    private readonly now: () => number = () => Date.now(),
+    private readonly recordsWaveId: string | null = recordsWaveIdOf()
   ) {}
 
   async applyPending({
@@ -269,8 +350,42 @@ export class RelayDropApplier {
     return thrown;
   }
 
+  /**
+   * Refuses an event of a wave that stays on 6529.io, before anything is
+   * written. The event's wave is the one written: a post's body must name
+   * it, an edit's drop must be in it (relay-drop-writes.ts), and a delete's
+   * or reaction's signature is checked against its drop's stored wave.
+   */
+  private async assertWaveMoved(event: IngestedEvent): Promise<void> {
+    const wave = event.wave.trim().toLowerCase();
+    if (this.recordsWaveId !== null && wave === this.recordsWaveId) {
+      throw new Refused(RECORDS_WAVE_REASON);
+    }
+    const onChain = await this.store.waveOnChain(wave, event.received_at);
+    switch (onChain) {
+      case 'moved':
+        return;
+      case 'direct_message':
+        throw new Refused(DIRECT_MESSAGE_REASON);
+      case 'stays':
+        throw new Refused(STAYS_ON_SITE_REASON);
+      case 'unknown':
+        throw new Wait(INDEX_NOT_READY_REASON);
+      case 'behind':
+        throw new Wait(INDEX_BEHIND_REASON);
+      case 'not_on_site':
+        throw new Wait(NOT_ON_SITE_REASON);
+      default: {
+        // An answer this guard doesn't know writes nothing: the event waits.
+        const unknown: never = onChain;
+        throw new Wait(`the chain index answered ${String(unknown)}`);
+      }
+    }
+  }
+
   /** Writes one event; returns the drop it wrote or touched. */
   private async apply(event: IngestedEvent): Promise<string | null> {
+    await this.assertWaveMoved(event);
     if (event.grant_check !== 'known' && event.grant_check !== 'signature') {
       // A contract wallet's grant 6529.io never verified.
       throw new Refused("the event's grant could not be verified here");

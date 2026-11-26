@@ -119,6 +119,11 @@ export interface WavesChainIndexState {
    * on from there.
    */
   readonly feedPart: number;
+  /**
+   * The waves import's start (ms), from the first run that read it
+   * complete; null before.
+   */
+  readonly importStartedAt: number | null;
 }
 
 export interface VoteRereads {
@@ -142,10 +147,13 @@ export const EMPTY_INDEX_STATE: WavesChainIndexState = {
   trustFrom: 0,
   scanState: UNKNOWN_SCAN,
   voteRereads: NO_REREADS,
-  feedPart: 0
+  feedPart: 0,
+  importStartedAt: null
 };
 
-const STATE_NAME = 'waves';
+/** The index's state row (waves_chain_index_state.name). */
+export const WAVES_CHAIN_INDEX_STATE_NAME = 'waves';
+const STATE_NAME = WAVES_CHAIN_INDEX_STATE_NAME;
 /** Rows a statement writes at most. */
 const CHUNK_ROWS = 200;
 /**
@@ -358,6 +366,7 @@ interface StateRow {
   readonly scan_state?: string | null;
   readonly vote_rereads?: string | null;
   readonly feed_part?: number | string | null;
+  readonly import_started_at?: number | string | null;
 }
 
 function voteRereadsOf(text: string | null | undefined): VoteRereads {
@@ -426,7 +435,8 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
       trustFrom: Number(row.trust_from ?? 0),
       scanState: scanStateOf(row.scan_state),
       voteRereads: voteRereadsOf(row.vote_rereads),
-      feedPart: Number(row.feed_part ?? 0)
+      feedPart: Number(row.feed_part ?? 0),
+      importStartedAt: nullableNumber(row.import_started_at)
     };
   }
 
@@ -436,10 +446,11 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
          (name, generation, full_phase, full_after, full_from_height,
           last_full_at, feed_next, read_height, network, last_error,
           events_next, trust_from, scan_state, vote_rereads, feed_part,
-          updated_at)
+          import_started_at, updated_at)
        values (:name, :generation, :fullPhase, :fullAfter, :fullFromHeight,
           :lastFullAt, :feedNext, :readHeight, :network, :lastError,
-          :eventsNext, :trustFrom, :scanState, :voteRereads, :feedPart, :now)
+          :eventsNext, :trustFrom, :scanState, :voteRereads, :feedPart,
+          :importStartedAt, :now)
        on duplicate key update
          generation = :generation, full_phase = :fullPhase,
          full_after = :fullAfter, full_from_height = :fullFromHeight,
@@ -448,7 +459,7 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
          last_error = :lastError, events_next = :eventsNext,
          trust_from = :trustFrom, scan_state = :scanState,
          vote_rereads = :voteRereads, feed_part = :feedPart,
-         updated_at = :now`,
+         import_started_at = :importStartedAt, updated_at = :now`,
       {
         name: STATE_NAME,
         generation: state.generation,
@@ -465,9 +476,46 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
         scanState: JSON.stringify(state.scanState),
         voteRereads: JSON.stringify(state.voteRereads),
         feedPart: state.feedPart,
+        importStartedAt: state.importStartedAt,
         now
       }
     );
+  }
+
+  /**
+   * Keeps the finalized block time of the height the run reads at
+   * (read_time, beside read_height): readers of which waves the chain
+   * holds (waves-chain-mapping.ts) tell from it how far the index has read
+   * the chain. Saved after read_height, so a run that stops between the two
+   * leaves an earlier time, never a later one. False when the column isn't
+   * there yet (code deployed before the schema sync): nothing is kept, the
+   * readers read through nothing, and the index goes on. Any other error
+   * throws.
+   */
+  async saveReadTime(readTime: number): Promise<boolean> {
+    try {
+      await this.db.execute(
+        `update ${WAVES_CHAIN_INDEX_STATE_TABLE} set read_time = :readTime
+          where name = :name`,
+        { name: STATE_NAME, readTime }
+      );
+      return true;
+    } catch (error) {
+      const e = error as {
+        code?: unknown;
+        errno?: unknown;
+        driverError?: { code?: unknown; errno?: unknown };
+      } | null;
+      if (
+        e?.code === 'ER_BAD_FIELD_ERROR' ||
+        e?.errno === 1054 ||
+        e?.driverError?.code === 'ER_BAD_FIELD_ERROR' ||
+        e?.driverError?.errno === 1054
+      ) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   /**
@@ -1200,6 +1248,51 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: connection }
       );
     }
+  }
+
+  /**
+   * Final, decided results counted on the chain (origin native, in the
+   * column and in the chain's own answer: not one the import carried) of
+   * these decisions, with a rank-1 winner, that have no claim build on
+   * `network`, oldest first, at most `limit`. Read from the index's own
+   * rows, so a result the event log never saw is found too: one that went
+   * final before the log started, or in a feed gap, or while claim builds
+   * were off or the setting named other decisions. A decided result with
+   * no winners (no active entries) is never read: it has nothing to build.
+   */
+  async resultsWithoutClaimBuild(
+    decisionIds: readonly string[],
+    network: string,
+    limit: number
+  ): Promise<{ decisionId: string; data: Record<string, unknown> }[]> {
+    if (!decisionIds.length) return [];
+    const rows = await this.db.execute<{ decision_id: string; data: unknown }>(
+      `select r.decision_id, r.data from ${CHAIN_RESULTS_TABLE} r
+        where r.decision_id in (:decisionIds)
+          and r.stage = 'final' and r.status = 'decided' and r.origin = 'native'
+          and json_unquote(json_extract(r.data, '$.origin')) = 'native'
+          and json_contains(json_extract(r.data, '$.winners[*].rank'), '1')
+          and not exists (
+            select 1 from ${CHAIN_CLAIM_BUILDS_TABLE} b
+             where b.network = :network
+               and b.decision_id = r.decision_id
+               and b.occurrence = cast(json_unquote(json_extract(r.data, '$.occurrence')) as signed))
+        order by r.result_time
+        limit :limit`,
+      { decisionIds: [...decisionIds], network, limit }
+    );
+    return rows.map((row) => ({
+      decisionId: String(row.decision_id).toLowerCase(),
+      data: jsonOf(row.data)
+    }));
+  }
+
+  /** Writes claim builds on their own; one already there is kept as it is. */
+  async writeClaimBuilds(builds: readonly ClaimBuild[]): Promise<void> {
+    if (!builds.length) return;
+    await this.executeNativeQueriesInTransaction((connection) =>
+      this.insertClaimBuilds(builds, connection)
+    );
   }
 
   /** Claim builds still to send, oldest first. */

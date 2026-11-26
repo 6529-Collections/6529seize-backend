@@ -6,6 +6,7 @@ import {
   LEGACY_DM_DROP_ID_TABLES,
   LEGACY_DM_DROP_STEPS,
   LEGACY_DM_KEPT_TABLES,
+  LEGACY_DM_RELAY_STEPS,
   LEGACY_DM_WAVE_STEPS
 } from './legacy-dm-purge.inventory';
 
@@ -19,7 +20,9 @@ const REFERENCE_COLUMNS = [
   'trigger_drop_id',
   'bot_reply_drop_id',
   'quoted_drop_id',
-  'reply_to_drop_id'
+  'reply_to_drop_id',
+  // The drop index's relay copies name their wave as the relay did.
+  'wave'
 ];
 
 /**
@@ -45,7 +48,24 @@ const OUT_OF_SCOPE: Readonly<Record<string, string>> = {
     'Follows of a wave are metadata; follows of a DM drop are purged by step',
   [tables.WAVES_DECISION_PAUSES_TABLE]: 'Competition scheduling',
   [tables.WAVE_OUTCOMES_TABLE]: 'Competition outcomes',
-  [tables.WAVE_LEADERBOARD_ENTRIES_TABLE]: 'Competition leaderboards'
+  [tables.WAVE_LEADERBOARD_ENTRIES_TABLE]: 'Competition leaderboards',
+  // The 6529 chain index's and the chain mirror's tables, by name.
+  chain_claim_builds:
+    "The chain index's copy of the 6529 chain; DMs never move to the chain",
+  chain_decisions:
+    "The chain index's copy of the 6529 chain; DMs never move to the chain",
+  chain_events:
+    "The chain index's copy of the 6529 chain; DMs never move to the chain",
+  chain_polls:
+    "The chain index's copy of the 6529 chain; DMs never move to the chain",
+  chain_wave_rep:
+    "The chain index's copy of the 6529 chain; DMs never move to the chain",
+  chain_wave_roles:
+    "The chain index's copy of the 6529 chain; DMs never move to the chain",
+  chain_waves:
+    "The chain index's copy of the 6529 chain; DMs never move to the chain",
+  waves_chain_mirror_waves:
+    "The chain mirror's match table; DMs never move to the chain"
 };
 
 function entityFiles(dir: string): string[] {
@@ -89,7 +109,8 @@ describe('legacy DM purge inventory', () => {
   const purged = new Set<string>([
     ...LEGACY_DM_DROP_ID_TABLES,
     ...LEGACY_DM_DROP_STEPS.map((step) => step.table),
-    ...LEGACY_DM_WAVE_STEPS.map((step) => step.table)
+    ...LEGACY_DM_WAVE_STEPS.map((step) => step.table),
+    ...LEGACY_DM_RELAY_STEPS.map((step) => step.table)
   ]);
 
   it('finds the drop and wave tables it is meant to guard', () => {

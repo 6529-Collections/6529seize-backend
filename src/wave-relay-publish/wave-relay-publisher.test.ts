@@ -116,6 +116,7 @@ const OPTIONS: WaveRelayPublisherOptions = {
   minIntervalMs: 0,
   grantRate: 1_000,
   grantBurst: 1_000,
+  maxPerRelayRun: 1_000,
   maxStuckRuns: 3
 };
 
@@ -500,6 +501,56 @@ describe('WaveRelayPublisher', () => {
     // Two at once, then one each half second.
     expect(clock.now - NOW).toBeGreaterThanOrEqual(1_500);
     expect(slept.some((ms) => ms > 0)).toBe(true);
+  });
+
+  it('sends a relay at most maxPerRelayRun events a run, then goes on from its cursor', async () => {
+    const events = new FakeEvents(
+      [1, 2, 3, 4, 5, 6, 7].map((n) => candidate(event(n)))
+    );
+    const cursors = new FakeCursors();
+    const a = new FakeRelay(accept);
+    const b = new FakeRelay(accept);
+    const { instance } = publisher(events, cursors, {
+      'wss://a.example': a,
+      'wss://b.example': b
+    });
+    const options = {
+      ...OPTIONS,
+      relays: ['wss://a.example', 'wss://b.example'],
+      maxPerRelayRun: 4
+    };
+    const first = await instance.publishPending(options);
+    // Both relays get their share of the backlog in the same run.
+    expect(first.map((r) => r.published)).toEqual([4, 4]);
+    expect(cursors.saved['wss://a.example'].eventId).toBe(event(4).id);
+    const second = await instance.publishPending(options);
+    expect(second.map((r) => r.published)).toEqual([3, 3]);
+    expect(a.received.map((e) => e.id)).toEqual(
+      [1, 2, 3, 4, 5, 6, 7].map((n) => event(n).id)
+    );
+    expect(b.received).toEqual(a.received);
+  });
+
+  it("gives each relay an equal share of the run's time, so a backlog on one can't starve the next", async () => {
+    const events = new FakeEvents(
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => candidate(event(n)))
+    );
+    const cursors = new FakeCursors();
+    const { instance } = publisher(events, cursors, {
+      'wss://a.example': new FakeRelay(accept),
+      'wss://b.example': new FakeRelay(accept)
+    });
+    // One a second for the grant, four seconds of run. The first relay has
+    // half of it (sends at 0 and 1 s); the second has what is left (1, 2
+    // and 3 s). With the whole run for the first, it was 4 and 1.
+    const results = await instance.publishPending({
+      ...OPTIONS,
+      relays: ['wss://a.example', 'wss://b.example'],
+      budgetMs: 4_000,
+      grantRate: 1,
+      grantBurst: 1
+    });
+    expect(results.map((r) => r.published)).toEqual([2, 3]);
   });
 
   it('starts nothing that would be sent after the budget', async () => {

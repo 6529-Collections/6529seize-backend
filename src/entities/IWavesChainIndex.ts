@@ -57,6 +57,13 @@ export class WavesChainIndexStateEntity {
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly feed_next!: number | null;
 
+  // The finalized block time (ms) of read_height, saved with it by each run
+  // that reads the chain: once the feed has applied through read_height,
+  // the chain has been read through this time. Null before the first such
+  // run; nullable, so the schema sync only adds it.
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly read_time!: number | null;
+
   // The highest height a run has read at: a run never reads below it.
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly read_height!: number | null;
@@ -94,6 +101,13 @@ export class WavesChainIndexStateEntity {
   // one batch is applied in parts).
   @Column({ type: 'int', nullable: false, default: 0 })
   readonly feed_part!: number;
+
+  // The waves import's start (ms): startMs of the chain's /v1/waves/import
+  // answer, kept from the first run that read the import complete. Null
+  // before (no run has read it complete), so a comparison with it selects
+  // nothing; another chain's index starts again without it.
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly import_started_at!: number | null;
 
   @Column({ type: 'bigint', nullable: false })
   readonly updated_at!: number;
@@ -214,6 +228,8 @@ export class ChainDecisionEntity {
   @Column({ type: 'varchar', length: 16, nullable: false })
   readonly origin!: string;
 
+  // The mirror reads the decisions written above a height.
+  @Index()
   @Column({ type: 'bigint', nullable: false })
   readonly height!: number;
 
@@ -307,6 +323,8 @@ export class ChainResultEntity {
   @Column({ type: 'varchar', length: 16, nullable: false })
   readonly origin!: string;
 
+  // The mirror reads the results written above a height.
+  @Index()
   @Column({ type: 'bigint', nullable: false })
   readonly height!: number;
 
@@ -506,12 +524,14 @@ export class ChainEventEntity {
 }
 
 /**
- * The claim builds the event log called for (waves-chain-index.claims.ts):
- * one a (network, decision, occurrence), written with the events of the
- * block whose Result went final, sent to the claims-builder queue after
- * that commits and retried each run until a send succeeds. A row is never
- * written twice, so a replayed or rebuilt log sends nothing again. Not
- * emptied with the index.
+ * The Main Stage claim builds (waves-chain-index.claims.ts): one a
+ * (network, decision, occurrence), written by the event log with the
+ * events of the block whose Result went final, or by the claim build
+ * catch-up from the index's result rows for a result the log never saw.
+ * Sent to the claims-builder queue after that commits and retried each run
+ * until a send succeeds. A row is never written twice, so a replayed or
+ * rebuilt log, or the catch-up, sends nothing again. Not emptied with the
+ * index.
  */
 @Entity(CHAIN_CLAIM_BUILDS_TABLE)
 @Index(['status', 'height'])

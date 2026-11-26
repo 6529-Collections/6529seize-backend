@@ -250,6 +250,10 @@ describe('relayDropWrites', () => {
         newDropId: 'drop-new',
         notify
       });
+      // Drop creation takes no activity credit request any more.
+      expect(
+        jest.mocked(dropCreationService.createDrop).mock.calls[0][0]
+      ).not.toHaveProperty('requestDailyActivityCredit');
       // History wakes no help bot.
       expect(
         jest.mocked(helpBotTriggerService.handleCreatedDrop).mock.calls

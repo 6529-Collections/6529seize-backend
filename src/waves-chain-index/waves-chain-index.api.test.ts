@@ -125,10 +125,20 @@ describe('GatewayWavesChainApi', () => {
 
   it('reads the import state at the run height, and the head fresh', async () => {
     const { client, reads } = aClient({
-      '/v1/waves/import': [answer({ started: true, completed: true })]
+      '/v1/waves/import': [
+        answer({ started: true, completed: true, startMs: 1_763_990_000_000 }),
+        answer({ started: false, completed: false })
+      ]
     });
     const api = new GatewayWavesChainApi(client);
-    expect(await api.importState(9)).toEqual({ completed: true });
+    expect(await api.importState(9)).toEqual({
+      completed: true,
+      startedAt: 1_763_990_000_000
+    });
+    expect(await api.importState(9)).toEqual({
+      completed: false,
+      startedAt: null
+    });
     expect(reads[0].opts).toEqual({ height: 9 });
     expect(await api.importState(9)).toBeNull();
     expect(await api.head()).toEqual({

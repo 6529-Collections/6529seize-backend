@@ -37,6 +37,12 @@ import {
 } from '../../../drops/delete-drop.use-case';
 import { ApiDropType } from '../generated/models/ApiDropType';
 import {
+  assertDecisionWritable,
+  assertNotMovedOnChain,
+  isWaveFrozen
+} from '@/waves-freeze/waves-freeze-scope';
+import { assertPollCreationOpen } from '@/waves-freeze/waves-chain-polls';
+import {
   wsListenersNotifier,
   WsListenersNotifier
 } from '../ws/ws-listeners-notifier';
@@ -306,6 +312,14 @@ export class DropCreationApiService {
         return replay;
       }
     }
+    // Refused before any moderation work while waves move to the 6529 chain,
+    // and from the switch-on until 6529.io shows the chain's polls: new
+    // polls and legacy entries in a moving wave (the use case and the poll
+    // service check them again). A wave that stays on 6529.io takes both.
+    if (createDropRequest.poll)
+      await assertPollCreationOpen(createDropRequest.wave_id, ctx);
+    if (createDropRequest.drop_type === ApiDropType.Participatory)
+      await assertDecisionWritable({ wave_id: createDropRequest.wave_id }, ctx);
     const preResolvedIdentityNomination =
       await this.createOrUpdateDrop.preResolveIdentityNomination(createModel, {
         timer: ctx.timer
@@ -799,6 +813,9 @@ export class DropCreationApiService {
         const txCtx = { ...ctx, connection };
         const wave = await this.wavesApiDb.findWaveByIdForUpdate(waveId, txCtx);
         if (!wave) throw new NotFoundException(`Wave ${waveId} not found`);
+        // A moved wave's posts are served from the 6529 Network too, so
+        // from the switch-on 6529.io purges none of them.
+        await assertNotMovedOnChain(waveId, txCtx);
         const cutoffSerialNo = await this.purgeDb.findCutoff(
           { waveId, authorId },
           txCtx
@@ -842,6 +859,9 @@ export class DropCreationApiService {
             transactionContext
           );
           if (!wave) throw new NotFoundException(`Wave ${waveId} not found`);
+          // From the switch-on 6529.io purges nothing in a moved wave: its
+          // posts are served from the 6529 Network too.
+          await assertNotMovedOnChain(waveId, transactionContext);
           const cutoffSerialNo =
             tokenCutoff ??
             (await this.purgeDb.findCutoff(
@@ -850,7 +870,16 @@ export class DropCreationApiService {
             ));
           const scope = { waveId, authorId, cutoffSerialNo };
           const candidates = await this.purgeDb.findBatchForUpdate(
-            { ...scope, pinnedDropId: wave.description_drop_id },
+            {
+              ...scope,
+              pinnedDropId: wave.description_drop_id,
+              // Purging deletes polls, which the waves freeze keeps in a
+              // moving wave: there, while frozen, drops with a poll stay.
+              // Direct messages and staying waves purge them as usual.
+              keepPolls:
+                !wave.is_direct_message &&
+                (await isWaveFrozen(waveId, transactionContext))
+            },
             transactionContext
           );
           const hasMore = candidates.length > CHAT_HISTORY_PURGE_BATCH_SIZE;
