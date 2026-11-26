@@ -21,6 +21,13 @@ four authenticated operational routes:
 - `/deploy/release-trains`
 - `/deploy/release-trains/:id`
 
+[Backend PR #2625](https://github.com/6529-Collections/6529seize-backend/pull/2625)
+approves removal of eight operational GET records from the retained inventory.
+Three of those records were for routes already retired in
+[backend PR #1965](https://github.com/6529-Collections/6529seize-backend/pull/1965).
+The source revision identifies the original Phase 0 capture. The counts reflect
+the amended inventory.
+
 ## Accepted Alchemy search retirement
 
 The address-only migration in backend PR #1974 retires the deprecated Alchemy
