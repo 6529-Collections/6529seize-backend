@@ -146,7 +146,10 @@ import {
   formatGitHubWebhookKind,
   parseGitHubWebhookEvent
 } from '@/api/github/github-webhook-event';
-import { githubIssueDropService } from './github/github-issue-drop.service';
+import {
+  GitHubDropRefusedError,
+  githubIssueDropService
+} from './github/github-issue-drop.service';
 import { LOGO_SVG, renderHealthUI } from './health/health-ui.renderer';
 import { getCachedHealthData } from './health/health.service';
 import { DEFAULT_MAX_SIZE } from './page-request';
@@ -1297,6 +1300,7 @@ function wireApp() {
       logger.info(
         `GitHub ${targetKind} was ${webhookEvent.action}: ${webhookEvent.htmlUrl}`
       );
+      let refused = false;
       try {
         await githubIssueDropService.postGhIssueDrop(
           webhookEvent.htmlUrl,
@@ -1322,6 +1326,7 @@ function wireApp() {
         logger.error(
           `Failed to post drop for GitHub ${targetKind} ${webhookEvent.htmlUrl}: ${err}`
         );
+        refused = err instanceof GitHubDropRefusedError;
       } finally {
         if (redis && lockAcquired) {
           try {
@@ -1332,6 +1337,17 @@ function wireApp() {
             );
           }
         }
+      }
+      if (refused) {
+        // A failed delivery can be delivered again; answering 200 would lose
+        // the drop. GitHub doesn't redeliver by itself: someone does, from
+        // the webhook's delivery log (it keeps recent deliveries only).
+        logger.error(
+          `GitHub webhook delivery ${req.get('x-github-delivery') ?? 'unknown'} for ${webhookEvent.htmlUrl} refused: the API requires a device signature the GitHub bot could not give. Redeliver it from the webhook's delivery log once the bot can sign.`
+        );
+        return res
+          .status(503)
+          .send({ error: 'The drop was refused; deliver it again later' });
       }
     }
     res.send({});

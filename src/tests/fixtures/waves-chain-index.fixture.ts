@@ -1095,15 +1095,20 @@ export class FakeChain implements WavesChainApi {
     decisionId: string,
     resultTime: number,
     winners: string[],
-    occurrence = 1
+    occurrence = 1,
+    // null: the answer names no origin.
+    origin: 'native' | 'legacy' | null = 'native',
+    status = winners.length ? 'decided' : 'skipped'
   ) {
     const result: ChainObject = {
       id: decisionId,
       resultTime,
       occurrence,
-      status: winners.length ? 'decided' : 'skipped',
+      status,
       stage: 'final',
-      origin: 'native',
+      ...(origin === null ? {} : { origin }),
+      // The block it goes final in, as the API gives it.
+      settledHeight: this.nextHeight,
       winners: winners.map((entryId, i) => ({
         entryId,
         rank: i + 1,
@@ -1445,6 +1450,20 @@ export class FakeIndexDb {
     this.state = { ...state };
   }
 
+  /** waves_chain_index_state.read_time, beside the state. */
+  readTime: number | null = null;
+  /** The read_height in the state when each read_time was saved. */
+  readonly readTimeSavedAtHeight: (number | null)[] = [];
+  /** No read_time column (a schema before the sync). */
+  noReadTimeColumn = false;
+
+  async saveReadTime(readTime: number) {
+    if (this.noReadTimeColumn) return false;
+    this.readTimeSavedAtHeight.push(this.state.readHeight);
+    this.readTime = readTime;
+    return true;
+  }
+
   async upsert(
     name: IndexTableName,
     rows: readonly IndexRow[],
@@ -1735,6 +1754,52 @@ export class FakeIndexDb {
 
   /** chain_claim_builds, by `network|decision|occurrence`. */
   readonly claims = new Map<string, FakeClaimBuild>();
+
+  /**
+   * As the SQL: final, decided, native results of these (native in the
+   * chain's answer too) with a rank-1 winner and no build.
+   */
+  async resultsWithoutClaimBuild(
+    decisionIds: readonly string[],
+    network: string,
+    limit: number
+  ) {
+    return Array.from(this.table('results').values())
+      .filter((row) => {
+        const data = row.data as ChainObject;
+        return (
+          decisionIds.includes(row.decision_id as string) &&
+          row.stage === 'final' &&
+          row.status === 'decided' &&
+          row.origin === 'native' &&
+          data.origin === 'native' &&
+          Array.isArray(data.winners) &&
+          (data.winners as ChainObject[]).some((winner) => winner.rank === 1) &&
+          !this.claims.has(`${network}|${row.decision_id}|${data.occurrence}`)
+        );
+      })
+      .sort((a, b) => Number(a.result_time) - Number(b.result_time))
+      .slice(0, limit)
+      .map((row) => ({
+        decisionId: row.decision_id as string,
+        data: JSON.parse(JSON.stringify(row.data)) as ChainObject
+      }));
+  }
+
+  /** As the SQL: a build already there is kept as it is. */
+  async writeClaimBuilds(builds: readonly ClaimBuild[]) {
+    for (const build of builds) {
+      const key = `${build.network}|${build.decisionId}|${build.occurrence}`;
+      if (this.claims.has(key)) continue;
+      this.claims.set(key, {
+        ...JSON.parse(JSON.stringify(build)),
+        attempts: 0,
+        lastError: null,
+        sentAt: null,
+        messageId: null
+      });
+    }
+  }
 
   async pendingClaimBuilds(limit: number) {
     return Array.from(this.claims.values())

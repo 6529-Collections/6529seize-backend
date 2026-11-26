@@ -55,10 +55,12 @@ import * as mcache from 'memory-cache';
 import { RequestContext } from '@/request.context';
 import { readWaveCatalogueWithDiagnostics } from './wave-catalogue-read-diagnostics';
 import {
+  movingWaveRefusal,
   wavesFreezeAtMs,
   WAVES_FROZEN_GROUP_MESSAGE,
   WAVES_FROZEN_GROUP_VISIBILITY_MESSAGE,
-  WavesFrozenException
+  WAVES_ON_CHAIN_GROUP_MESSAGE,
+  WAVES_ON_CHAIN_GROUP_VISIBILITY_MESSAGE
 } from '@/waves-freeze/waves-freeze';
 import { groupStays } from '@/waves-scope/waves-scope';
 import { isAnyGroupFrozen } from '@/waves-freeze/waves-freeze-scope';
@@ -1738,13 +1740,19 @@ export class UserGroupsService {
     return isAnyGroupFrozen([group_id, old_version_id], ctx);
   }
 
-  /** A replacement is told to save a new group; hiding or showing is not. */
+  /**
+   * A replacement is told to save a new group; hiding or showing is not.
+   * From the switch-on both are WAVES_ON_CHAIN (movingWaveRefusal), with
+   * the group's own words.
+   */
   private frozenGroupChange(change: GroupVisibilityChange) {
-    return new WavesFrozenException(
-      change.old_version_id
-        ? WAVES_FROZEN_GROUP_MESSAGE
-        : WAVES_FROZEN_GROUP_VISIBILITY_MESSAGE
-    );
+    return change.old_version_id
+      ? movingWaveRefusal(WAVES_FROZEN_GROUP_MESSAGE, {
+          onChainMessage: WAVES_ON_CHAIN_GROUP_MESSAGE
+        })
+      : movingWaveRefusal(WAVES_FROZEN_GROUP_VISIBILITY_MESSAGE, {
+          onChainMessage: WAVES_ON_CHAIN_GROUP_VISIBILITY_MESSAGE
+        });
   }
 
   /**
@@ -2083,6 +2091,44 @@ export class UserGroupsService {
     }
     ctx.timer?.stop(`${this.constructor.name}->getByIdOrThrow`);
     return (await this.mapForApi([group], ctx)).at(0)!;
+  }
+
+  /**
+   * Groups by id as `/groups/{id}` shows them, whatever their visibility to a
+   * reader: the waves export reads the groups of members-only waves too, so
+   * the 6529 chain imports every wave's rights (src/waves-export). Ids with
+   * no group are left out.
+   */
+  public async findByIdsForExport(
+    ids: readonly string[],
+    ctx: RequestContext
+  ): Promise<ApiGroupFull[]> {
+    const entities: UserGroupEntity[] = [];
+    for (const id of ids) {
+      const entity = await this.userGroupsDb.getByIdWithoutVisibilityCheck(
+        id,
+        ctx.connection
+      );
+      if (entity) entities.push(entity);
+    }
+    return entities.length ? this.mapForApi(entities, ctx) : [];
+  }
+
+  /**
+   * A group's membership SQL as getSqlAndParamsByGroupId builds it, without
+   * the reader's access check, for the waves export (src/waves-export).
+   */
+  public async getSqlAndParamsForExport(
+    group: ApiGroupFull,
+    ctx: RequestContext
+  ): Promise<{
+    sql: string;
+    params: Record<string, any>;
+  } | null> {
+    if (!group.visible) {
+      return this.getEmptyMemberSetSql();
+    }
+    return await this.getSqlAndParams(group.group, group.id, ctx);
   }
 
   /**

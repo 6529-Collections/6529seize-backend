@@ -1,3 +1,7 @@
+import {
+  isWavesImportRouteMissing,
+  WavesImportRouteWait
+} from '@/chain-gateway/waves-import-route';
 import { ChainGatewayError } from '@/chain-gateway/chain-gateway.client';
 import {
   ChainFeedBlock,
@@ -15,7 +19,9 @@ import {
 import {
   claimBuildQueue,
   ClaimBuildPort,
-  claimBuildsOf
+  claimBuildsOf,
+  resultFinalEventOf,
+  resultWaitReason
 } from './waves-chain-index.claims';
 import {
   EMPTY_INDEX_STATE,
@@ -29,6 +35,7 @@ import {
 import {
   BatchObject,
   batchObjects,
+  ChainEvent,
   deriveEvents,
   emptyEventContext,
   EVENT_ONLY_FAMILIES,
@@ -63,6 +70,17 @@ import {
 } from './waves-chain-index.rows';
 
 const logger = Logger.get('WAVES_CHAIN_INDEX');
+
+let warnedAboutReadTime = false;
+
+/** Logged once a cold start: the state has no read_time column yet. */
+function warnNoReadTimeOnce() {
+  if (warnedAboutReadTime) return;
+  warnedAboutReadTime = true;
+  logger.warn(
+    '[WAVES_CHAIN_INDEX_STATE HAS NO READ_TIME COLUMN YET] [THE INDEX GOES ON] [STAYING-WAVE GUARDS READ THROUGH NOTHING UNTIL THE SCHEMA SYNC ADDS IT]'
+  );
+}
 
 /**
  * 6529.io's index of the 6529 chain's waves (entities/IWavesChainIndex.ts).
@@ -103,6 +121,8 @@ const BATCH_READS = 100;
 const READ_CONCURRENCY = 8;
 /** Claim builds a run sends at most. */
 const CLAIM_SENDS_PER_RUN = 20;
+/** Main Stage results without a claim build a run catches up, at most. */
+export const CLAIM_CATCH_UP_PER_RUN = 50;
 /** A feed read answered `gone` is asked again this many times first. */
 const GONE_RETRIES = 2;
 /**
@@ -118,7 +138,11 @@ const FEED_FAMILIES: readonly string[] = [
 
 export interface WavesChainIndexReport {
   mode: 'idle' | 'skipped' | 'indexed';
-  skipped?: 'import_not_complete' | 'gateway_behind' | 'head_time_unknown';
+  skipped?:
+    | 'import_not_complete'
+    | 'import_route_missing'
+    | 'gateway_behind'
+    | 'head_time_unknown';
   height: number | null;
   feedFrom: number | null;
   feedNext: number | null;
@@ -243,6 +267,12 @@ export function splitCursor(after: string | null): {
 }
 
 export class WavesChainIndex {
+  /** A gateway without /v1/waves/import: waits before the switch-on. */
+  private readonly importRouteWait = new WavesImportRouteWait(
+    logger,
+    'WAVES CHAIN INDEX'
+  );
+
   constructor(
     private readonly api: WavesChainApi,
     private readonly db: WavesChainIndexDb,
@@ -251,12 +281,34 @@ export class WavesChainIndex {
     private readonly claims: ClaimBuildPort = claimBuildQueue
   ) {}
 
+  /** The Main Stage ids last logged as in force, so each is logged once. */
+  private mainStageNoted: string | null = null;
+  /** Results logged as waiting for a claim build, each logged once. */
+  private readonly waitingNoted = new Set<string>();
+
+  /** Logs the Main Stage decisions claim builds are for, once a change. */
+  private noteMainStage() {
+    const on = this.claims.enabled();
+    const ids = on ? Array.from(this.claims.mainStage()).sort() : [];
+    const note = on ? ids.join(',') : 'off';
+    if (note === this.mainStageNoted) return;
+    this.mainStageNoted = note;
+    logger.info(
+      !on
+        ? '[MAIN STAGE CLAIM BUILDS OFF]'
+        : ids.length
+          ? `[MAIN STAGE CLAIM BUILDS] for MAIN_STAGE_DECISION_IDS ${ids.join(', ')}`
+          : '[MAIN STAGE CLAIM BUILDS] MAIN_STAGE_DECISION_IDS names none: no claim builds'
+    );
+  }
+
   async run({
     budgetMs
   }: {
     budgetMs: number;
   }): Promise<WavesChainIndexReport> {
     const deadline = this.now() + budgetMs;
+    this.noteMainStage();
     let state = await this.db.loadState();
     const report: WavesChainIndexReport = {
       mode: 'idle',
@@ -289,6 +341,11 @@ export class WavesChainIndex {
       logger.warn(
         `[NETWORK ${state.network} -> ${head.network}] emptying the index`
       );
+      // No full read counts before any row goes: a reader of which waves
+      // the chain holds (waves-chain-mapping.ts) must not take the emptied
+      // tables for the chain's answer. The network stays the old one until
+      // the tables are empty, so a run that stops here empties them again.
+      state = await this.save({ ...state, lastFullAt: null });
       await this.db.clearAll();
       state = await this.save({
         ...EMPTY_INDEX_STATE,
@@ -297,7 +354,24 @@ export class WavesChainIndex {
       });
       report.restartedFull = 'network_changed';
     }
-    const imported = await this.api.importState(height);
+    const imported = await this.api
+      .importState(height)
+      .catch((error: unknown) => {
+        // A gateway without the waves routes: before the switch-on, not yet
+        // (one warning); from it, an error as any other gateway failure.
+        if (
+          isWavesImportRouteMissing(error) &&
+          this.importRouteWait.waits(this.now())
+        ) {
+          return 'route_missing' as const;
+        }
+        throw error;
+      });
+    if (imported === 'route_missing') {
+      report.mode = 'skipped';
+      report.skipped = 'import_route_missing';
+      return report;
+    }
     if (!imported?.completed) {
       report.mode = 'skipped';
       report.skipped = 'import_not_complete';
@@ -324,7 +398,18 @@ export class WavesChainIndex {
       readHeight: height,
       network: head.network ?? state.network
     });
+    if (!(await this.db.saveReadTime(head.finalizedTime))) {
+      warnNoReadTimeOnce();
+    }
     try {
+      try {
+        await this.catchUpClaimBuilds(state, report);
+      } catch (error) {
+        // A side job: the feed and the full read go on without it.
+        logger.error(
+          `[CLAIM BUILD CATCH-UP FAILED] ${error instanceof Error ? error.message : String(error)}; the index goes on, and the next run tries again`
+        );
+      }
       const fullDue =
         state.lastFullAt !== null &&
         this.now() - state.lastFullAt > this.fullEveryMs;
@@ -384,10 +469,11 @@ export class WavesChainIndex {
             ? Array.from(this.claims.mainStage())
             : [];
           if (mainStage.length) {
-            // A Main Stage result that went final in the gap has no event,
-            // so no claim build: a person checks (an error alarms).
-            logger.error(
-              `[CLAIM BUILD GAP] the event log lacks heights ${from} to ${height}: a Main Stage result that went final there got no claim build. Check the results of ${mainStage.join(', ')} (GET /v1/decisions/{id}/results) and send any missing build by hand.`
+            // A Main Stage result that went final in the gap has no event.
+            // The full read reads it again, and the catch-up builds it: a
+            // warning, not an error, as nobody need act unless it hasn't.
+            logger.warn(
+              `[CLAIM BUILD GAP] the event log lacks heights ${from} to ${height}. A Main Stage result of ${mainStage.join(', ')} that went final there has no event; full read ${current.generation + 1} reads it again, and the claim build catch-up builds it on the run after (once a network, decision and occurrence, as any other). Send nothing by hand. Only if chain_claim_builds still has no row for such a result an hour after [FULL READ ${current.generation + 1} DONE], and no [CLAIM BUILD WAITING] or [CLAIM BUILD CATCH-UP FAILED] says why, look into it.`
             );
           }
         }
@@ -675,8 +761,72 @@ export class WavesChainIndex {
   }
 
   /**
+   * The claim builds the log didn't call for: a final Main Stage result
+   * counted on the chain (not one the import carried) that went final
+   * before the log started (the index's first run reads the chain after
+   * the waves import, and a settlement can land first), or while claim
+   * builds were off, or while MAIN_STAGE_DECISION_IDS named other
+   * decisions. Each run reads the index's result rows that have no build
+   * (one read, at most CLAIM_CATCH_UP_PER_RUN), and writes their builds as
+   * the log would have, with the same key, so none is written twice; the
+   * run then sends them as any other, the collaboration frozen first. A
+   * result whose rank-1 entry the index doesn't hold yet waits, logged once
+   * as [CLAIM BUILD WAITING]. A decided result with no winners isn't read.
+   * A failure here is logged and the run goes on (see run).
+   */
+  private async catchUpClaimBuilds(
+    state: WavesChainIndexState,
+    report: WavesChainIndexReport
+  ) {
+    if (!this.claims.enabled()) return;
+    const mainStage = this.claims.mainStage();
+    if (!mainStage.size) return;
+    const results = await this.db.resultsWithoutClaimBuild(
+      Array.from(mainStage),
+      state.network ?? '',
+      CLAIM_CATCH_UP_PER_RUN
+    );
+    if (!results.length) return;
+    const winnerIds = results
+      .map(({ data }) =>
+        (Array.isArray(data.winners) ? data.winners : []).find(
+          (winner: Record<string, unknown>) => Number(winner?.rank) === 1
+        )
+      )
+      .map((winner) => String(winner?.entryId ?? '').toLowerCase())
+      .filter((id) => id.length > 0);
+    const { entries } = await this.db.eventObjects({ entries: winnerIds });
+    const events: ChainEvent[] = [];
+    for (const { decisionId, data } of results) {
+      const event = resultFinalEventOf(decisionId, data, entries);
+      if (event) {
+        events.push(event);
+        continue;
+      }
+      const key = `${decisionId}:${String(data.occurrence)}`;
+      if (this.waitingNoted.has(key)) continue;
+      this.waitingNoted.add(key);
+      logger.warn(
+        `[CLAIM BUILD WAITING] decision ${decisionId} occurrence ${String(data.occurrence)}: ${resultWaitReason(data, entries)}. It is built once the index holds it; each run looks again`
+      );
+    }
+    const builds = claimBuildsOf(events, mainStage, state.network);
+    if (!builds.length) return;
+    await this.db.writeClaimBuilds(builds);
+    const queued = builds.filter((build) => build.status === 'pending');
+    report.claimBuilds.queued += queued.length;
+    logger.info(
+      `[CLAIM BUILDS CAUGHT UP] ${builds.length} from the index's results (${queued.length} to send): ${builds
+        .map((build) => `${build.decisionId} occurrence ${build.occurrence}`)
+        .join(', ')}`
+    );
+  }
+
+  /**
    * Sends the claim builds the log has written and not sent, oldest first;
    * a failed send stays for the next run (waves-chain-index.claims.ts).
+   * Each winner's collaboration is frozen for the mint first, so the claim
+   * builder finds its credit snapshot.
    */
   private async sendClaimBuilds(report: WavesChainIndexReport) {
     if (!this.claims.enabled()) return;
@@ -687,16 +837,26 @@ export class WavesChainIndex {
         decisionId: build.decisionId,
         occurrence: build.occurrence
       };
+      const failed = async (what: string, error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error(
+          `[${what}] decision ${build.decisionId} occurrence ${build.occurrence}, attempt ${build.attempts + 1}: ${message}`
+        );
+        await this.db.claimBuildFailed(key, message);
+        report.claimBuilds.failed++;
+      };
+      try {
+        await this.claims.freezeCollaboration?.(build.message.drop_id);
+      } catch (error) {
+        // Logged as its own line: an alert on failed sends isn't one.
+        await failed('CLAIM BUILD COLLABORATION FREEZE FAILED', error);
+        continue;
+      }
       let messageId: string | null;
       try {
         messageId = await this.claims.send(build.message);
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        logger.error(
-          `[CLAIM BUILD SEND FAILED] decision ${build.decisionId} occurrence ${build.occurrence}, attempt ${build.attempts + 1}: ${message}`
-        );
-        await this.db.claimBuildFailed(key, message);
-        report.claimBuilds.failed++;
+        await failed('CLAIM BUILD SEND FAILED', error);
         continue;
       }
       await this.db.claimBuildSent(key, messageId, this.now());

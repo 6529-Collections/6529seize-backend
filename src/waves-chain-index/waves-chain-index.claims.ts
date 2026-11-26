@@ -1,7 +1,7 @@
 import { appFeatures } from '@/app-features';
 import { Logger } from '@/logging';
 import { sqs } from '@/sqs';
-import { ChainEvent } from './waves-chain-index.events';
+import { ChainEvent, ObjectInfo } from './waves-chain-index.events';
 
 /**
  * Claim builds for the Main Stage: the chain has no Main Stage designation
@@ -11,12 +11,21 @@ import { ChainEvent } from './waves-chain-index.events';
  * result's reference in `chain`. The claim builder rereads the result on
  * the gateway before it builds anything.
  *
- * Exactly one a (network, decision, occurrence): the build is written to
- * chain_claim_builds in the transaction that writes the block's events
- * (never twice: a replayed or rebuilt log finds it there), and sent after
- * that commits, each run retrying what is still pending (an outbox). A
- * run that stops between a send and its row's update sends that one again
- * on the next run; the claim builder builds one claim a drop.
+ * Exactly one a (network, decision, occurrence), the key of
+ * chain_claim_builds, whichever writes it first: the log, in the
+ * transaction that writes the block's events, or the catch-up, in its own,
+ * from the index's result rows (a result the log never saw: see
+ * WavesChainIndex.catchUpClaimBuilds). A row already there is kept, so a
+ * replayed or rebuilt log writes none again. Each run sends what is still
+ * pending after it commits (an outbox). A run that stops between a send and
+ * its row's update sends that one again on the next run; the claim builder
+ * builds one claim a drop.
+ *
+ * Before a build is sent, the winner's artwork collaboration is frozen for
+ * the mint (ClaimBuildPort.freezeCollaboration), as 6529.io's runtime does
+ * when it decides a Main Stage winner: the claim builder needs its credit
+ * snapshot. The chain mirror's write of the result freezes it too and finds
+ * it frozen.
  */
 
 const logger = Logger.get('WAVES_CHAIN_CLAIM_BUILDS');
@@ -62,9 +71,9 @@ function logOnce(key: string, message: string) {
 
 /**
  * MAIN_STAGE_DECISION_IDS: comma-separated chain decision ids, each `0x`
- * and 64 hex digits, read in lowercase as the mint log's claim build reads
- * them (src/mint-log/mint-claim-build.ts); empty, none. One of another
- * form is logged once and left out.
+ * and 64 hex digits, read in lowercase as every reader of the setting
+ * reads them (the settlement sender, the claim builder); empty, none. One
+ * of another form is logged once and left out.
  */
 export function parseMainStageDecisionIds(
   value: string | undefined | null
@@ -171,10 +180,102 @@ export function claimBuildsOf(
   return out;
 }
 
+/**
+ * Why a final result as the index holds it can't be built yet, or null
+ * when it can: the result names no block it went final in, or its rank-1
+ * winner names no entry, or the index doesn't hold that entry or its
+ * manifest hash yet.
+ */
+export function resultWaitReason(
+  result: Record<string, unknown>,
+  entries: ReadonlyMap<string, ObjectInfo>
+): string | null {
+  const height = Number(result.settledHeight);
+  if (!Number.isSafeInteger(height) || height <= 0) {
+    return 'the result names no block it went final in';
+  }
+  const winners = Array.isArray(result.winners)
+    ? (result.winners as Record<string, unknown>[])
+    : [];
+  const first = winners.find((winner) => Number(winner?.rank) === 1);
+  const firstId = hexId(String(first?.entryId ?? '').toLowerCase());
+  if (!firstId) return 'its rank-1 winner names no entry';
+  const entry = entries.get(firstId);
+  if (!entry) return `the index doesn't hold its rank-1 entry ${firstId} yet`;
+  if (!hexId(entry.manifestHash ?? null)) {
+    return `the index holds no manifest hash for its rank-1 entry ${firstId}`;
+  }
+  return null;
+}
+
+/**
+ * A final result as the index holds it (the chain API's Result), with its
+ * winners' entries, as the RESULT_FINAL event the log writes for it: the
+ * block it went final in (settledHeight), each winner with its 6529.io
+ * legacy id and manifest hash. Null, to wait for a later run, while
+ * resultWaitReason gives a reason.
+ */
+export function resultFinalEventOf(
+  decisionId: string,
+  result: Record<string, unknown>,
+  entries: ReadonlyMap<string, ObjectInfo>
+): ChainEvent | null {
+  if (resultWaitReason(result, entries) !== null) return null;
+  const height = Number(result.settledHeight);
+  const winners = result.winners as Record<string, unknown>[];
+  return {
+    height,
+    seq: 0,
+    blockTime: 0,
+    kind: 'RESULT_FINAL',
+    origin: 'OPERATION',
+    waveId: null,
+    waveLegacyId: null,
+    decisionId,
+    decisionLegacyId: null,
+    entryId: null,
+    entryLegacyId: null,
+    pollId: null,
+    pollLegacyId: null,
+    groupId: null,
+    groupLegacyId: null,
+    actor: null,
+    data: {
+      resultTime: Number(result.resultTime),
+      occurrence: result.occurrence,
+      status: result.status,
+      winnerCount: winners.length,
+      winners: winners.map((winner) => {
+        const entryId = String(winner.entryId ?? '').toLowerCase();
+        const entry = entries.get(entryId);
+        return {
+          entryId,
+          rank: Number(winner.rank),
+          score: winner.score ?? null,
+          legacyId: entry?.legacyId ?? null,
+          manifestHash: entry?.manifestHash ?? null
+        };
+      }),
+      settledHeight: height
+    }
+  };
+}
+
 /** What the index needs to queue claim builds; tests give their own. */
 export interface ClaimBuildPort {
   enabled(): boolean;
   mainStage(): ReadonlySet<string>;
+  /**
+   * Freezes the winner's artwork collaboration for the mint, before its
+   * claim build is sent: its credit snapshot taken and its pending
+   * invitations closed, as 6529.io's runtime does when it decides a Main
+   * Stage winner (freezeMemeCollaborationForNativeDecision). The claim
+   * builder refuses a collaboration without that snapshot. Idempotent: a
+   * frozen collaboration, or a drop with none, is left as it is. Throws
+   * when it fails (nothing is sent; tried again next run). Without it,
+   * nothing is frozen here.
+   */
+  freezeCollaboration?(dropId: string): Promise<void>;
   /** Sends a message; its id. Throws when the send fails. */
   send(message: ClaimBuildMessage): Promise<string | null>;
 }
@@ -183,6 +284,18 @@ export const claimBuildQueue: ClaimBuildPort = {
   enabled: () => appFeatures.isWavesChainClaimBuildsEnabled(),
   mainStage: () =>
     parseMainStageDecisionIds(process.env.MAIN_STAGE_DECISION_IDS),
+  async freezeCollaboration(dropId) {
+    // Loaded only when a claim is due: it brings 6529.io's collaboration
+    // service. MAIN_STAGE_DECISION_IDS is the Main Stage's designation
+    // here, as it is for the claim builder.
+    const [{ memeCollaborationsService }, { dbSupplier }] = await Promise.all([
+      import('@/meme-collaborations/meme-collaborations.service'),
+      import('@/sql-executor')
+    ]);
+    await dbSupplier().executeNativeQueriesInTransaction((connection) =>
+      memeCollaborationsService.freezeForMint(dropId, { connection })
+    );
+  },
   async send(message) {
     const queue = process.env.CLAIMS_BUILDER_SQS_URL;
     if (!queue) throw new Error('CLAIMS_BUILDER_SQS_URL is not configured');
