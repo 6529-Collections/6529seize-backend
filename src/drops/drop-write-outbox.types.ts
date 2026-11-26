@@ -20,6 +20,8 @@ export interface DeferredDropNotifications {
     readonly parts: readonly {
       readonly quoted_drop: CreateOrUpdateDropModel['parts'][number]['quoted_drop'];
     }[];
+    /** False: a write from the 6529 relays' history, which notifies no one. */
+    readonly notify?: false;
   };
   readonly directly_mentioned_identity_ids: string[];
   readonly group_mention_notifications_enabled: boolean;

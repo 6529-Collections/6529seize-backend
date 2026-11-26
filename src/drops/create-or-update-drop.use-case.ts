@@ -2917,7 +2917,9 @@ export class CreateOrUpdateDropUseCase {
           mentioned_groups: model.mentioned_groups,
           parts: model.parts.map((part) => ({
             quoted_drop: part.quoted_drop ?? null
-          }))
+          })),
+          // Relay history notifies no one, through the outbox as well.
+          ...(model.notify === false ? { notify: false as const } : {})
         },
         directly_mentioned_identity_ids:
           notificationInputs.directlyMentionedIdentityIds,

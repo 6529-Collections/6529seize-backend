@@ -3073,6 +3073,99 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [false, { notify: false }],
+    [true, {}]
+  ])(
+    'keeps notify false through the post outbox (notifies: %s)',
+    async (notifies, flag) => {
+      const dropsDb = {
+        insertDrop: jest.fn(),
+        insertMentionedWaves: jest.fn(),
+        insertDropGroupMentions: jest.fn(),
+        insertReferencedNfts: jest.fn(),
+        insertDropMetadata: jest.fn(),
+        insertDropMedia: jest.fn(),
+        insertDropParts: jest.fn(),
+        findDropById: jest.fn().mockResolvedValue({ id: 'drop-1' })
+      };
+      const wave = createSlowModeWave({ visibility_group_id: null });
+      const useCase = createUseCaseWithMocks({
+        dropsDb,
+        wavesApiDb: { findById: jest.fn().mockResolvedValue(wave) },
+        identitySubscriptionsDb: { addIdentitySubscription: jest.fn() },
+        attachmentsDb: { insertDropAttachments: jest.fn() },
+        dropNftLinksDb: { replaceDropLinks: jest.fn() },
+        dropMediaUploadsDb: { attachUploadsToDrop: jest.fn() }
+      });
+      jest.spyOn(profileActivityLogsDb, 'insert').mockResolvedValue(undefined);
+      jest
+        .spyOn(waveScoreService, 'markWaveScoresDirtyBestEffort')
+        .mockResolvedValue(undefined);
+      jest
+        .spyOn(useCase as any, 'resolveMentionedUsers')
+        .mockResolvedValue({ mentionEntities: [], mentionedUserIds: ['m-1'] });
+      jest
+        .spyOn(useCase as any, 'recordDropCreatedActivity')
+        .mockResolvedValue(undefined);
+      jest
+        .spyOn(useCase as any, 'insertMentionsInDrop')
+        .mockResolvedValue(undefined);
+      const notifyStep = jest
+        .spyOn(useCase as any, 'notifyWaveDropRecipients')
+        .mockResolvedValue([105]);
+      const deferred: { notifications?: any } = {};
+
+      // The write defers its notifications to the post outbox.
+      await expect(
+        (useCase as any).insertAllDropComponents(
+          {
+            model: createChatDropModel({ drop_id: 'drop-1', ...flag }),
+            wave,
+            createdAt: Date.now(),
+            updatedAt: null,
+            serialNo: null,
+            deferredNotifications: deferred
+          },
+          { connection: {} }
+        )
+      ).resolves.toEqual([]);
+      expect(notifyStep).not.toHaveBeenCalled();
+      expect('notify' in deferred.notifications.model).toBe(!notifies);
+
+      // The outbox processor hands the notifier step the same flag, which
+      // then notifies no one (see the test above).
+      await expect(
+        useCase.applyDropWriteOutbox(
+          {
+            drop_id: 'drop-1',
+            wave_id: wave.id,
+            author_id: 'author-1',
+            operation: 'CREATE',
+            payload: JSON.parse(
+              JSON.stringify({
+                v: 1,
+                drop_type: DropType.CHAT,
+                notifications: deferred.notifications,
+                record_created_drop: false
+              })
+            )
+          },
+          { connection: {} } as never
+        )
+      ).resolves.toEqual([105]);
+      expect(notifyStep).toHaveBeenCalledTimes(1);
+      expect(notifyStep).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: notifies
+            ? expect.not.objectContaining({ notify: false })
+            : expect.objectContaining({ notify: false })
+        }),
+        expect.anything()
+      );
+    }
+  );
+
   it('resolves reply and quote notification context in one drop lookup', async () => {
     const dropsDb = {
       getDropsByIds: jest.fn().mockResolvedValue([
