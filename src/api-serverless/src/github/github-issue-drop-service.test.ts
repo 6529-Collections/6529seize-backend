@@ -1,7 +1,14 @@
 import { AiPrompter } from '@/abusiveness/ai-prompter';
+import { toApiDeviceGrant } from '@/api/device-signing/device-signing.mappers';
+import { AuthenticationContext } from '@/auth-context';
+import { hasLoneSurrogate } from '@/strings';
+import { signingBot } from '@/tests/fixtures/bot-device-signing.fixture';
 import { Wallet, verifyMessage } from 'ethers';
 import fetch from 'node-fetch';
-import { GitHubIssueDropService } from './github-issue-drop.service';
+import {
+  GitHubDropRefusedError,
+  GitHubIssueDropService
+} from './github-issue-drop.service';
 
 jest.mock('node-fetch', () => jest.fn());
 
@@ -334,5 +341,292 @@ describe('GitHubIssueDropService', () => {
         }
       ]
     });
+    expect(getCreateDropBody()).not.toHaveProperty('device_signature');
+  });
+
+  it('cuts a long summary without splitting an emoji', async () => {
+    aiPrompter.promptAndGetReply.mockResolvedValue(
+      `${'a'.repeat(996)}😀${'b'.repeat(10)}`
+    );
+
+    await new GitHubIssueDropService(aiPrompter).postGhIssueDrop(
+      PR_URL,
+      'pull request',
+      { action: 'merged', title: 'Emoji' }
+    );
+
+    const content = getCreateDropBody().parts[0].content;
+    expect(hasLoneSurrogate(content)).toBe(false);
+    expect(content.endsWith(`${'a'.repeat(996)}...`)).toBe(true);
+  });
+
+  it('never repeats a malformed wallet key in its error', async () => {
+    const malformed = `${PRIVATE_KEY.slice(0, -1)}z`;
+    process.env.GH_WEBHOOK_WALLET_PRIVATE_KEY = malformed;
+
+    const error = await new GitHubIssueDropService(aiPrompter)
+      .postGhIssueDrop(ISSUE_URL, 'issue', { action: 'opened' })
+      .then(
+        () => new Error('expected a refusal'),
+        (e: Error) => e
+      );
+
+    expect(error.message).toBe(
+      'GH_WEBHOOK_WALLET_PRIVATE_KEY is not a private key'
+    );
+    expect(String(error)).not.toContain(malformed.slice(4, 30));
+  });
+
+  it('fails the delivery when the API requires a device signature it lacks', async () => {
+    routeFetch({
+      grants: () => [],
+      posts: [
+        failure(
+          403,
+          '{"error":"Posts in waves are now signed by your device.","code":"DEVICE_SIGNATURE_REQUIRED"}'
+        )
+      ]
+    });
+
+    await expect(
+      new GitHubIssueDropService(aiPrompter).postGhIssueDrop(
+        ISSUE_URL,
+        'issue',
+        { action: 'opened' }
+      )
+    ).rejects.toBeInstanceOf(GitHubDropRefusedError);
+    expect(postedBodies()).toHaveLength(1);
+  });
+
+  describe('with a device key for the bot', () => {
+    const signingGitHubBot = () =>
+      signingBot({
+        profileId: 'github-bot',
+        otherWallets: { [CLIENT_ADDRESS.toLowerCase()]: 'github-bot' }
+      });
+
+    it('signs the drop when the API holds the grant, and the API accepts it', async () => {
+      const { signer, store, writes } = await signingGitHubBot();
+      routeFetch({
+        grants: () => Array.from(store.grants.values()).map(toApiDeviceGrant)
+      });
+
+      await new GitHubIssueDropService(aiPrompter, signer).postGhIssueDrop(
+        ISSUE_URL,
+        'issue',
+        { action: 'opened' }
+      );
+
+      const [{ device_signature: envelope, ...body }] = postedBodies();
+      expect(envelope).toMatchObject({ grant_id: expect.any(String) });
+      // The API's own check of POST /drops, over the body as sent.
+      await expect(
+        writes.createDrop(
+          { envelope, waveId: 'wave-1', replyToDropId: null, body },
+          async () => ({ id: 'github-drop' }),
+          {
+            authenticationContext:
+              AuthenticationContext.fromProfileId('github-bot')
+          }
+        )
+      ).resolves.toEqual({ id: 'github-drop' });
+      expect(store.events[0]).toMatchObject({
+        wave_id: 'wave-1',
+        drop_id: 'github-drop',
+        profile_id: 'github-bot'
+      });
+    });
+
+    it.each([
+      ['holds no grant (another deployment)', () => []],
+      [
+        'holds the grant revoked',
+        (grants: Record<string, unknown>[]) =>
+          grants.map((grant) => ({ ...grant, revoked_at: 1 }))
+      ]
+    ])('posts unsigned when the API it posts to %s', async (_name, adjust) => {
+      const { signer, store } = await signingGitHubBot();
+      routeFetch({
+        grants: () =>
+          adjust(
+            Array.from(store.grants.values()).map(
+              toApiDeviceGrant
+            ) as unknown as Record<string, unknown>[]
+          )
+      });
+
+      await new GitHubIssueDropService(aiPrompter, signer).postGhIssueDrop(
+        ISSUE_URL,
+        'issue',
+        { action: 'opened' }
+      );
+
+      const bodies = postedBodies();
+      expect(bodies).toHaveLength(1);
+      expect(bodies[0]).not.toHaveProperty('device_signature');
+    });
+
+    it.each([
+      ['answers 502', () => failure(502, 'Bad Gateway')],
+      ['answers something other than a list', () => ({ grants: [] })],
+      [
+        'cannot be reached',
+        () => {
+          throw new Error('socket hang up');
+        }
+      ]
+    ])(
+      'signs anyway when the grant list %s, so a passing fault never posts unsigned',
+      async (_name, answer) => {
+        const { signer } = await signingGitHubBot();
+        routeFetch({ grants: answer });
+
+        await new GitHubIssueDropService(aiPrompter, signer).postGhIssueDrop(
+          ISSUE_URL,
+          'issue',
+          { action: 'opened' }
+        );
+
+        const bodies = postedBodies();
+        expect(bodies).toHaveLength(1);
+        expect(bodies[0]).toHaveProperty('device_signature');
+      }
+    );
+
+    it('falls back to unsigned when it signed blind and the API lacks the grant', async () => {
+      const { signer } = await signingGitHubBot();
+      routeFetch({
+        grants: () => failure(502, 'Bad Gateway'),
+        posts: [
+          failure(
+            400,
+            '{"error":"Invalid device signature: unknown grant","code":"INVALID_DEVICE_SIGNATURE"}'
+          )
+        ]
+      });
+
+      await new GitHubIssueDropService(aiPrompter, signer).postGhIssueDrop(
+        ISSUE_URL,
+        'issue',
+        { action: 'opened' }
+      );
+
+      const bodies = postedBodies();
+      expect(bodies).toHaveLength(2);
+      expect(bodies[0]).toHaveProperty('device_signature');
+      expect(bodies[1]).not.toHaveProperty('device_signature');
+    });
+
+    it('posts unsigned when the API refuses the device signature', async () => {
+      const { signer, store } = await signingGitHubBot();
+      routeFetch({
+        grants: () => Array.from(store.grants.values()).map(toApiDeviceGrant),
+        posts: [
+          failure(
+            400,
+            '{"error":"Invalid device signature: grant was revoked","code":"INVALID_DEVICE_SIGNATURE"}'
+          )
+        ]
+      });
+
+      await new GitHubIssueDropService(aiPrompter, signer).postGhIssueDrop(
+        ISSUE_URL,
+        'issue',
+        { action: 'opened' }
+      );
+
+      const bodies = postedBodies();
+      expect(bodies).toHaveLength(2);
+      expect(bodies[0]).toHaveProperty('device_signature');
+      expect(bodies[1]).not.toHaveProperty('device_signature');
+      expect(bodies[1].parts[0].content).toBe(ISSUE_URL);
+    });
+
+    it('fails the delivery when the unsigned retry is refused too', async () => {
+      const { signer, store } = await signingGitHubBot();
+      routeFetch({
+        grants: () => Array.from(store.grants.values()).map(toApiDeviceGrant),
+        posts: [
+          failure(
+            400,
+            '{"error":"Invalid device signature: grant expired","code":"INVALID_DEVICE_SIGNATURE"}'
+          ),
+          failure(
+            403,
+            '{"error":"Posts in waves are now signed by your device.","code":"DEVICE_SIGNATURE_REQUIRED"}'
+          )
+        ]
+      });
+
+      await expect(
+        new GitHubIssueDropService(aiPrompter, signer).postGhIssueDrop(
+          ISSUE_URL,
+          'issue',
+          { action: 'opened' }
+        )
+      ).rejects.toBeInstanceOf(GitHubDropRefusedError);
+      expect(postedBodies()).toHaveLength(2);
+    });
   });
 });
+
+function failure(status: number, text: string): MockResponse {
+  return {
+    ok: false,
+    status,
+    statusText: 'Refused',
+    json: jest.fn().mockRejectedValue(new Error('not JSON')),
+    text: jest.fn().mockResolvedValue(text)
+  };
+}
+
+/** Answers each API path; POST /drops takes `posts` in turn, then 200. */
+function routeFetch({
+  grants,
+  posts = []
+}: {
+  readonly grants: () => unknown;
+  readonly posts?: MockResponse[];
+}) {
+  const fetchMock = jest.mocked(fetch);
+  fetchMock.mockReset();
+  fetchMock.mockImplementation((async (url: unknown) => {
+    const path = new URL(String(url)).pathname;
+    if (path.endsWith('/auth/session-nonce')) {
+      return createJsonResponse({
+        signable_message: SIGNABLE_MESSAGE,
+        server_signature: 'server-signature'
+      });
+    }
+    if (path.endsWith('/auth/login')) {
+      return createJsonResponse({ token: 'auth-token' });
+    }
+    if (path.endsWith('/device-grants')) {
+      const answer = grants();
+      return isMockResponse(answer) ? answer : createJsonResponse(answer);
+    }
+    if (path.endsWith('/drops')) {
+      return posts.shift() ?? createJsonResponse({});
+    }
+    throw new Error(`Unexpected request to ${path}`);
+  }) as never);
+}
+
+function isMockResponse(value: unknown): value is MockResponse {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'status' in value &&
+    'text' in value
+  );
+}
+
+/** The bodies of every POST /drops, in order. */
+function postedBodies(): Record<string, any>[] {
+  return jest
+    .mocked(fetch)
+    .mock.calls.filter(([url]) =>
+      new URL(String(url)).pathname.endsWith('/drops')
+    )
+    .map(([, init]) => JSON.parse((init as { body: string }).body));
+}

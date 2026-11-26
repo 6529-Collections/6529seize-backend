@@ -1,8 +1,13 @@
 import { AuthenticationContext } from '@/auth-context';
 import {
+  BotDeviceSigner,
+  botDeviceSigner
+} from '@/api/device-signing/bot-device-signer';
+import {
   DropCreationApiService,
   dropCreationService
 } from '@/api/drops/drop-creation.api.service';
+import { ApiCreateDropRequest } from '@/api/generated/models/ApiCreateDropRequest';
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
 import { dropsDb, DropsDb } from '@/drops/drops.db';
 import {
@@ -121,7 +126,8 @@ export class ReleaseDigestService {
     private readonly digestDb: ReleaseDigestDb,
     private readonly writer: ReleaseDigestWriterLike,
     private readonly dropCreationApiService: DropCreationApiService,
-    private readonly dropsRepository: Pick<DropsDb, 'findDropIdByMetadata'>
+    private readonly dropsRepository: Pick<DropsDb, 'findDropIdByMetadata'>,
+    private readonly botSigner: BotDeviceSigner = botDeviceSigner
   ) {}
 
   public async publish(
@@ -243,37 +249,50 @@ export class ReleaseDigestService {
     ctx: RequestContext
   ): Promise<string> {
     const botProfileId = env.getStringOrThrow('CI_PIPELINES_BOT_PROFILE_ID');
-    const drop = await this.dropCreationApiService.createDrop(
+    const createDropRequest: ApiCreateDropRequest = {
+      title: null,
+      drop_type: ApiDropType.Chat,
+      parts: [{ content: rendered.content, quoted_drop: null, media: [] }],
+      mentioned_users: rendered.mentionedProfiles.map((profile) => ({
+        mentioned_profile_id: profile.profileId,
+        handle_in_content: profile.handle
+      })),
+      mentioned_groups: [],
+      referenced_nfts: [],
+      metadata: [
+        { data_key: RELEASE_DIGEST_ID_METADATA_KEY, data_value: digest.id },
+        {
+          data_key: RELEASE_DIGEST_KEY_METADATA_KEY,
+          data_value: digest.digest_key
+        }
+      ],
+      signature: null,
+      is_safe_signature: false,
+      wave_id: waveId
+    };
+    const drop = await this.botSigner.createDrop(
+      botProfileId,
       {
-        createDropRequest: {
-          title: null,
-          drop_type: ApiDropType.Chat,
-          parts: [{ content: rendered.content, quoted_drop: null, media: [] }],
-          mentioned_users: rendered.mentionedProfiles.map((profile) => ({
-            mentioned_profile_id: profile.profileId,
-            handle_in_content: profile.handle
-          })),
-          mentioned_groups: [],
-          referenced_nfts: [],
-          metadata: [
-            { data_key: RELEASE_DIGEST_ID_METADATA_KEY, data_value: digest.id },
-            {
-              data_key: RELEASE_DIGEST_KEY_METADATA_KEY,
-              data_value: digest.digest_key
-            }
-          ],
-          signature: null,
-          is_safe_signature: false,
-          wave_id: waveId
-        },
-        authorId: botProfileId,
-        representativeId: botProfileId,
-        hideLinkPreview: true
+        waveId,
+        replyToDropId: null,
+        // The drop is stored with link previews hidden.
+        body: { ...createDropRequest, hide_link_preview: true }
       },
-      {
-        ...ctx,
-        authenticationContext: AuthenticationContext.fromProfileId(botProfileId)
-      }
+      () =>
+        this.dropCreationApiService.createDrop(
+          {
+            createDropRequest,
+            authorId: botProfileId,
+            representativeId: botProfileId,
+            hideLinkPreview: true
+          },
+          {
+            ...ctx,
+            authenticationContext:
+              AuthenticationContext.fromProfileId(botProfileId)
+          }
+        ),
+      ctx
     );
     if (!drop?.id) {
       throw new Error('Release digest drop creation returned no drop id');

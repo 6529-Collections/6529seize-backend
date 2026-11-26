@@ -141,7 +141,8 @@ describe('findWavesWrite', () => {
       findWavesWrite({ method: 'POST', path: '/drops', body });
     expect(post({ wave_id: 'w', poll: { options: [] } })).toEqual({
       kind: 'WAVE',
-      target: { waveId: 'w' }
+      target: { waveId: 'w' },
+      poll: true
     });
     expect(post({ drop_type: 'PARTICIPATORY', wave_id: 'w' })).toEqual({
       kind: 'DECISION',
@@ -150,7 +151,8 @@ describe('findWavesWrite', () => {
     // No wave named: the drop service refuses it.
     expect(post({ poll: { options: [] } })).toEqual({
       kind: 'WAVE',
-      target: null
+      target: null,
+      poll: true
     });
   });
 });
