@@ -15,6 +15,8 @@ import { wavesApiDb } from '@/api/waves/waves.api.db';
 import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
 import { Timer } from '@/time';
+import { assertLegacySettingsWrite } from '@/personal-records/personal-records.mode';
+import { personalRecordsStateDb } from '@/personal-records/personal-records-state.db';
 
 const orderIds = Joi.array()
   .items(Joi.string().min(1).max(100))
@@ -65,24 +67,25 @@ export async function handleGetPinnedWaves(
   req: GetPinnedWavesRequest
 ): Promise<GetPinnedWavesResponse> {
   const { ctx, profileId, eligibleGroups } = await getPinnedWavesContext(req);
-  const { waveIds, readableWaves } =
+  const { pins, readableWaves } =
     await wavesApiDb.executeNativeQueriesInTransaction(async (connection) => {
       const txCtx = { ...ctx, connection };
       const pins = await wavesApiDb.findPinnedWavePositions(profileId, txCtx);
-      const waveIds = pins.map((pin) => pin.wave_id);
       const readableWaves = await findReadableRootPins(
-        waveIds,
+        pins.map((pin) => pin.wave_id),
         eligibleGroups,
         txCtx
       );
-      return { waveIds, readableWaves };
+      return { pins, readableWaves };
     });
   const overviews = await apiWaveOverviewMapper.mapWaves(
     Array.from(readableWaves.values()),
     ctx,
     { groupIdsUserIsEligibleFor: eligibleGroups }
   );
-  return waveIds.flatMap((id) => {
+  // Each pin's saved position, so a client that writes pins as records
+  // can change only the pins whose position moves.
+  return pins.flatMap(({ wave_id: id, position }) => {
     const wave = overviews[id];
     if (!wave?.context_profile_context) return [];
     return [
@@ -90,7 +93,8 @@ export async function handleGetPinnedWaves(
         ...wave,
         context_profile_context: {
           ...wave.context_profile_context,
-          pinned: true
+          pinned: true,
+          pinned_position: position === null ? null : Number(position)
         }
       }
     ];
@@ -100,6 +104,7 @@ export async function handleGetPinnedWaves(
 export async function handleUpdatePinnedWaveOrder(
   req: UpdatePinnedWaveOrderRequest
 ): Promise<UpdatePinnedWaveOrderResponse> {
+  await assertLegacySettingsWrite(personalRecordsStateDb);
   const { previous_wave_ids: previous, wave_ids: desired } =
     getValidatedByJoiOrThrow(req.body, orderSchema);
   const desiredIds = new Set(desired);

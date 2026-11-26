@@ -7,6 +7,12 @@ const mockAuthenticationContext = {
   isAuthenticatedAsProxy: jest.fn(() => false)
 };
 
+// Settings are open (not frozen at the personal settings switch).
+jest.mock('@/personal-records/personal-records-state.db', () => ({
+  personalRecordsStateDb: {
+    read: async () => ({ frozen: false, importOrder: null })
+  }
+}));
 jest.mock('@/api/auth/auth', () => ({
   getAuthenticationContext: jest.fn(async () => mockAuthenticationContext)
 }));

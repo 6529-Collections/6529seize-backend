@@ -255,7 +255,11 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
   async blockProfile(
     blockerProfileId: string,
     blockedProfileId: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    // The block's time, also its audit row's; a signed record passes its own.
+    at: number = Time.currentMillis(),
+    // false in a rebuild: personalModerationAuditRows supplies these rows.
+    audit = true
   ): Promise<void> {
     if (blockerProfileId === blockedProfileId) {
       throw new BadRequestException(`You can't block your own profile`);
@@ -278,7 +282,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         {
           blockerProfileId,
           blockedProfileId,
-          createdAt: Time.currentMillis()
+          createdAt: at
         },
         this.connectionOptions(connection)
       );
@@ -303,16 +307,18 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         this.connectionOptions(connection)
       );
       if (transitionedToBlocked) {
-        await this.insertAudit(
-          {
-            actorProfileId: blockerProfileId,
-            action: 'PROFILE_BLOCKED',
-            targetProfileId: blockedProfileId,
-            previousState: 'UNBLOCKED',
-            newState: 'BLOCKED'
-          },
-          connection
-        );
+        if (audit)
+          await this.insertAudit(
+            {
+              actorProfileId: blockerProfileId,
+              action: 'PROFILE_BLOCKED',
+              targetProfileId: blockedProfileId,
+              previousState: 'UNBLOCKED',
+              newState: 'BLOCKED',
+              createdAt: at
+            },
+            connection
+          );
         // The blocked author's drops leave the blocker's unread counts in
         // every wave.
         await invalidateWaveUnreadCacheForReaderAfterCommit(
@@ -344,7 +350,10 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
   async unblockProfile(
     blockerProfileId: string,
     blockedProfileId: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    // The audit row's time; a signed record passes its own.
+    at: number = Time.currentMillis(),
+    audit = true
   ): Promise<void> {
     await this.withTransaction(ctx.connection, async (connection) => {
       const deleteResult = await this.db.execute(
@@ -357,16 +366,18 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         this.connectionOptions(connection)
       );
       if (this.db.getAffectedRows(deleteResult) > 0) {
-        await this.insertAudit(
-          {
-            actorProfileId: blockerProfileId,
-            action: 'PROFILE_UNBLOCKED',
-            targetProfileId: blockedProfileId,
-            previousState: 'BLOCKED',
-            newState: 'UNBLOCKED'
-          },
-          connection
-        );
+        if (audit)
+          await this.insertAudit(
+            {
+              actorProfileId: blockerProfileId,
+              action: 'PROFILE_UNBLOCKED',
+              targetProfileId: blockedProfileId,
+              previousState: 'BLOCKED',
+              newState: 'UNBLOCKED',
+              createdAt: at
+            },
+            connection
+          );
         await invalidateWaveUnreadCacheForReaderAfterCommit(
           blockerProfileId,
           connection
@@ -480,7 +491,11 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
   async hideDrop(
     profileId: string,
     dropId: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    // The hide's time, also its audit row's; a signed record passes its own.
+    at: number = Time.currentMillis(),
+    // false in a rebuild: personalModerationAuditRows supplies these rows.
+    audit = true
   ): Promise<void> {
     await this.withTransaction(ctx.connection, async (connection) => {
       await this.assertDropExists(dropId, connection);
@@ -507,26 +522,31 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         )
         on duplicate key update created_at = values(created_at)
       `,
-        { profileId, dropId, createdAt: Time.currentMillis() },
+        { profileId, dropId, createdAt: at },
         this.connectionOptions(connection)
       );
-      await this.insertAudit(
-        {
-          actorProfileId: profileId,
-          action: 'DROP_HIDDEN',
-          targetDropId: dropId,
-          previousState: existing ? 'HIDDEN' : 'SHOWN',
-          newState: 'HIDDEN'
-        },
-        connection
-      );
+      if (audit)
+        await this.insertAudit(
+          {
+            actorProfileId: profileId,
+            action: 'DROP_HIDDEN',
+            targetDropId: dropId,
+            previousState: existing ? 'HIDDEN' : 'SHOWN',
+            newState: 'HIDDEN',
+            createdAt: at
+          },
+          connection
+        );
     });
   }
 
   async unhideDrop(
     profileId: string,
     dropId: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    // The audit row's time; a signed record passes its own.
+    at: number = Time.currentMillis(),
+    audit = true
   ): Promise<void> {
     await this.withTransaction(ctx.connection, async (connection) => {
       const existing = await this.db.oneOrNull<{ id: string }>(
@@ -548,16 +568,18 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         { profileId, dropId },
         this.connectionOptions(connection)
       );
-      await this.insertAudit(
-        {
-          actorProfileId: profileId,
-          action: 'DROP_UNHIDDEN',
-          targetDropId: dropId,
-          previousState: existing ? 'HIDDEN' : 'SHOWN',
-          newState: 'SHOWN'
-        },
-        connection
-      );
+      if (audit)
+        await this.insertAudit(
+          {
+            actorProfileId: profileId,
+            action: 'DROP_UNHIDDEN',
+            targetDropId: dropId,
+            previousState: existing ? 'HIDDEN' : 'SHOWN',
+            newState: 'SHOWN',
+            createdAt: at
+          },
+          connection
+        );
     });
   }
 
@@ -2168,6 +2190,8 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       newState?: string | null;
       reason?: string | null;
       metadata?: Record<string, unknown> | null;
+      // Defaults to now.
+      createdAt?: number;
     },
     connection?: ConnectionWrapper<any>
   ): Promise<void> {
@@ -2196,7 +2220,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         )
       `,
       {
-        createdAt: Time.currentMillis(),
+        createdAt: input.createdAt ?? Time.currentMillis(),
         actorProfileId: input.actorProfileId,
         action: input.action,
         targetDropId: input.targetDropId ?? null,

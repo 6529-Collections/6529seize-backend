@@ -16,6 +16,7 @@ import {
 import { MentionAlias } from '@/mention-aliases/mention-aliases.db';
 import { ApiMentionAlias } from '@/api/generated/models/ApiMentionAlias';
 import { ApiMentionAliasRequest } from '@/api/generated/models/ApiMentionAliasRequest';
+import { legacySettingsWrite } from '@/api/signed-records/legacy-settings-write';
 
 const router = asyncRouter();
 
@@ -91,6 +92,7 @@ router.get(
 router.post(
   '/',
   needsAuthenticatedUser(),
+  legacySettingsWrite,
   async (
     req: Request<any, any, ApiMentionAliasRequest>,
     res: Response<ApiResponse<ApiMentionAlias>>
@@ -113,6 +115,7 @@ router.post(
 router.put(
   '/:aliasId',
   needsAuthenticatedUser(),
+  legacySettingsWrite,
   async (
     req: Request<{ aliasId: string }, any, ApiMentionAliasRequest>,
     res: Response<ApiResponse<ApiMentionAlias>>
@@ -137,6 +140,7 @@ router.put(
 router.delete(
   '/:aliasId',
   needsAuthenticatedUser(),
+  legacySettingsWrite,
   async (
     req: Request<{ aliasId: string }>,
     res: Response<ApiResponse<void>>

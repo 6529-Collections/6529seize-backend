@@ -262,8 +262,11 @@ import { ApiSaveProfileCmsPackageDraftRequest } from '@/api/generated/models/Api
 import { ApiSetCompetitionVoteRequest } from '@/api/generated/models/ApiSetCompetitionVoteRequest';
 import { ApiSetDropReplyCollapseRequest } from '@/api/generated/models/ApiSetDropReplyCollapseRequest';
 import { ApiSignedRecordsAnchor } from '@/api/generated/models/ApiSignedRecordsAnchor';
+import { ApiSignedRecordsMode } from '@/api/generated/models/ApiSignedRecordsMode';
 import { ApiSignedRecordsOwners } from '@/api/generated/models/ApiSignedRecordsOwners';
 import { ApiSubmitProfileCmsAgentProposalRequest } from '@/api/generated/models/ApiSubmitProfileCmsAgentProposalRequest';
+import { ApiSubmitSignedRecordsRequest } from '@/api/generated/models/ApiSubmitSignedRecordsRequest';
+import { ApiSubmitSignedRecordsResponse } from '@/api/generated/models/ApiSubmitSignedRecordsResponse';
 import { ApiSubscriptionCoverage } from '@/api/generated/models/ApiSubscriptionCoverage';
 import { ApiTdhRules } from '@/api/generated/models/ApiTdhRules';
 import { ApiUndiscoveredDrops } from '@/api/generated/models/ApiUndiscoveredDrops';
@@ -3646,6 +3649,20 @@ export type GetGlobalRepCategoryWavesRequest = Request<
   Record<string, never>
 >;
 
+export type SubmitSignedRecordsPathParams = Record<string, never>;
+
+export type SubmitSignedRecordsQuery = Record<string, never>;
+
+export type SubmitSignedRecordsResponse = ApiSubmitSignedRecordsResponse;
+
+export type SubmitSignedRecordsRequest = Request<
+  SubmitSignedRecordsPathParams,
+  ApiResponse<SubmitSignedRecordsResponse>,
+  ApiSubmitSignedRecordsRequest,
+  SubmitSignedRecordsQuery,
+  Record<string, never>
+>;
+
 export type GetSignedRecordsAnchorPathParams = Record<string, never>;
 
 export type GetSignedRecordsAnchorQuery = Record<string, never>;
@@ -3657,6 +3674,20 @@ export type GetSignedRecordsAnchorRequest = Request<
   ApiResponse<GetSignedRecordsAnchorResponse>,
   never,
   GetSignedRecordsAnchorQuery,
+  Record<string, never>
+>;
+
+export type GetSignedRecordsModePathParams = Record<string, never>;
+
+export type GetSignedRecordsModeQuery = Record<string, never>;
+
+export type GetSignedRecordsModeResponse = ApiSignedRecordsMode;
+
+export type GetSignedRecordsModeRequest = Request<
+  GetSignedRecordsModePathParams,
+  ApiResponse<GetSignedRecordsModeResponse>,
+  never,
+  GetSignedRecordsModeQuery,
   Record<string, never>
 >;
 

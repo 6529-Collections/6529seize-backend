@@ -68,7 +68,8 @@ export class IdentityMutesApiService {
     return { muted: false };
   }
 
-  private async synchronizeDmUnreadStatesBestEffort(
+  /** Also run after a signed mute record applies (personal records). */
+  async synchronizeDmUnreadStatesBestEffort(
     pair: { muter_id: string; muted_identity_id: string },
     ctx: RequestContext
   ): Promise<void> {

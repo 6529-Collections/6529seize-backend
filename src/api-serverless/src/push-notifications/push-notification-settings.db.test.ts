@@ -46,7 +46,9 @@ describe('PushNotificationSettingsDb', () => {
         profileId: 'profile-id',
         deviceId: 'device-id',
         ...result
-      }
+      },
+      // No transaction: only a signed record passes one.
+      undefined
     );
   });
 });

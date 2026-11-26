@@ -30,6 +30,18 @@ export class SavepointRollbackError extends Error {
   }
 }
 
+// A missing row and the zero row `lock` inserts both mean no head yet.
+function orderOf(row: HeadRow | undefined): RecordOrderKey | null {
+  if (!row || Number(row.anchor) === 0) {
+    return null;
+  }
+  return {
+    anchor: Number(row.anchor),
+    claimedTime: Number(row.claimed_time),
+    eventId: row.event_id
+  };
+}
+
 const KEY_WHERE =
   'owner = :owner and family = :family and rtype = :type and rkey = :key';
 
@@ -109,15 +121,20 @@ export class SignedRecordHeadsDb
       { ...key },
       options
     );
-    const row = rows[0];
-    if (!row || Number(row.anchor) === 0) {
-      return null;
-    }
-    return {
-      anchor: Number(row.anchor),
-      claimedTime: Number(row.claimed_time),
-      eventId: row.event_id
-    };
+    return orderOf(rows[0]);
+  }
+
+  async read(
+    key: RecordHeadKey,
+    ctx: RequestContext
+  ): Promise<RecordOrderKey | null> {
+    const rows = await this.db.execute<HeadRow>(
+      `select anchor, claimed_time, event_id from ${SIGNED_RECORD_HEADS_TABLE}
+       where ${KEY_WHERE}`,
+      { ...key },
+      ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+    );
+    return orderOf(rows[0]);
   }
 
   async put(

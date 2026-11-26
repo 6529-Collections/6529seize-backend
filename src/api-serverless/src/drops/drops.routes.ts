@@ -66,6 +66,7 @@ import {
 } from '@/api/device-signing/device-signed-writes.service';
 import { withStoredAuthorSignature } from '@/api/device-signing/author-signed-drop-response';
 import { DeviceEventKind } from '@/api/device-signing/device-event';
+import { legacySettingsWrite } from '@/api/signed-records/legacy-settings-write';
 
 const router = asyncRouter();
 const logger = Logger.get('DropsRoutes');
@@ -576,6 +577,7 @@ router.post(
 router.post(
   '/:drop_id/subscriptions',
   needsAuthenticatedUser(),
+  legacySettingsWrite,
   async (
     req: Request<
       { drop_id: string },
@@ -622,6 +624,7 @@ router.post(
 router.delete(
   '/:drop_id/subscriptions',
   needsAuthenticatedUser(),
+  legacySettingsWrite,
   async (
     req: Request<
       { drop_id: string },
@@ -933,6 +936,7 @@ router.delete(
 router.post(
   '/:drop_id/bookmark',
   needsAuthenticatedUser(),
+  legacySettingsWrite,
   async (
     req: Request<{ drop_id: string }, any, any, any, any>,
     res: Response<ApiResponse<ApiDrop>>
@@ -949,6 +953,7 @@ router.post(
 router.delete(
   '/:drop_id/bookmark',
   needsAuthenticatedUser(),
+  legacySettingsWrite,
   async (
     req: Request<{ drop_id: string }, any, any, any, any>,
     res: Response<ApiResponse<ApiDrop>>

@@ -17,6 +17,7 @@ import { IdentityNotificationCause } from '../../../entities/IIdentityNotificati
 import { Timer } from '../../../time';
 import { numbers } from '../../../numbers';
 import { rejectProxySession } from '@/api/proxy-session-guard';
+import { legacySettingsWrite } from '@/api/signed-records/legacy-settings-write';
 
 const router = asyncRouter();
 
@@ -269,6 +270,7 @@ router.get(
 router.post(
   '/wave-subscription/:wave_id',
   needsAuthenticatedUser(),
+  legacySettingsWrite,
   async (
     req: Request<
       { wave_id: string },
@@ -310,6 +312,7 @@ router.post(
 router.delete(
   '/wave-subscription/:wave_id',
   needsAuthenticatedUser(),
+  legacySettingsWrite,
   async (
     req: Request<{ wave_id: string }, any, any, any, any>,
     res: Response<ApiResponse<ApiWaveNotificationPreferences>>

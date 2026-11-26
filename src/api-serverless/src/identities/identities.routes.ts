@@ -30,6 +30,7 @@ import { cacheRequest } from '@/api/request-cache';
 import { identityMutesApiService } from '@/api/identity-mutes/identity-mutes.api.service';
 import { ProfileClassification } from '@/entities/IProfile';
 import { rejectProxySession } from '@/api/proxy-session-guard';
+import { legacySettingsWrite } from '@/api/signed-records/legacy-settings-write';
 
 const router = asyncRouter();
 
@@ -178,6 +179,7 @@ router.get(
 router.post(
   '/:id/mute',
   needsAuthenticatedUser(),
+  legacySettingsWrite,
   async (
     req: Request<{ id: string }, any, any, any, any>,
     res: Response<ApiResponse<ApiIdentityMuteState>>
@@ -196,6 +198,7 @@ router.post(
 router.delete(
   '/:id/mute',
   needsAuthenticatedUser(),
+  legacySettingsWrite,
   async (
     req: Request<{ id: string }, any, any, any, any>,
     res: Response<ApiResponse<ApiIdentityMuteState>>
@@ -259,6 +262,7 @@ router.get(
 router.post(
   '/:id/subscriptions',
   needsAuthenticatedUser(),
+  legacySettingsWrite,
   async (
     req: Request<{ id: string }, any, ApiIdentitySubscriptionActions, any, any>,
     res: Response<ApiResponse<ApiIdentitySubscriptionActions>>
@@ -302,6 +306,7 @@ router.post(
 router.delete(
   '/:id/subscriptions',
   needsAuthenticatedUser(),
+  legacySettingsWrite,
   async (
     req: Request<{ id: string }, any, ApiIdentitySubscriptionActions, any, any>,
     res: Response<ApiResponse<ApiIdentitySubscriptionActions>>

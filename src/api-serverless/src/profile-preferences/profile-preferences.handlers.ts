@@ -20,6 +20,8 @@ import { BadRequestException, ForbiddenException } from '@/exceptions';
 import { profilePreferencesDb } from '@/profile-preferences/profile-preferences.db';
 import { RequestContext } from '@/request.context';
 import { Timer } from '@/time';
+import { assertLegacySettingsWrite } from '@/personal-records/personal-records.mode';
+import { personalRecordsStateDb } from '@/personal-records/personal-records-state.db';
 import * as Joi from 'joi';
 
 const notificationsSchema = Joi.object({
@@ -161,6 +163,7 @@ export async function handleGetProfilePreferences(
 export async function handlePutProfilePreferences(
   req: PutProfilePreferencesRequest
 ): Promise<ApiProfilePreferences> {
+  await assertLegacySettingsWrite(personalRecordsStateDb);
   const update = getValidatedByJoiOrThrow(
     req.body,
     updateSchema

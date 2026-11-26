@@ -2,7 +2,7 @@ import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { RecordFamily } from './record-families';
 import { RecordKind } from './record-kinds';
-import { compareOrderKeys, RecordOrderKey } from './record-order';
+import { byCodeUnit, compareOrderKeys, RecordOrderKey } from './record-order';
 import type { VerifiedRecord } from './record-verify';
 import {
   decodeKeysDocument,
@@ -95,6 +95,11 @@ export interface RecordHeadKey {
  */
 export interface RecordHeadStore {
   lock(key: RecordHeadKey, ctx: RequestContext): Promise<RecordOrderKey | null>;
+  /**
+   * The head as it is, with no lock and without creating its row: for
+   * state that keeps no head (ingestImported with `heads: false`).
+   */
+  read(key: RecordHeadKey, ctx: RequestContext): Promise<RecordOrderKey | null>;
   put(
     key: RecordHeadKey,
     order: RecordOrderKey,
@@ -396,21 +401,28 @@ export class RecordIndexer {
     return this.applyChanges(changes, true, mode, ctx);
   }
 
-  /** Imported state, each change at its import order key. */
+  /**
+   * Imported state, each change at its import order key. With `heads:
+   * false` no head is written: state that live never puts through the
+   * indexer (an import at a switch, a derived effect) leaves no head live
+   * either, so a rebuild keeps none.
+   */
   async ingestImported(
     changes: readonly RecordChange[],
     sealed: boolean,
     mode: ApplyMode,
-    ctx: RequestContext
+    ctx: RequestContext,
+    opts: { readonly heads?: boolean } = {}
   ): Promise<IngestOutcome> {
-    return this.applyChanges(changes, sealed, mode, ctx);
+    return this.applyChanges(changes, sealed, mode, ctx, opts.heads !== false);
   }
 
   private async applyChanges(
     changes: readonly RecordChange[],
     sealed: boolean,
     mode: ApplyMode,
-    ctx: RequestContext
+    ctx: RequestContext,
+    writeHeads = true
   ): Promise<IngestOutcome> {
     // Later items for the same key in one record win: keep the last of
     // each, at its own position in the record.
@@ -445,7 +457,7 @@ export class RecordIndexer {
       return refused('invalid-change', error);
     }
     try {
-      return await this.applyLocked(handled, unknown, mode, ctx);
+      return await this.applyLocked(handled, unknown, mode, ctx, writeHeads);
     } catch (error) {
       if (error instanceof RecordRuleError) {
         return { ...refused('rule', error), code: error.code };
@@ -458,7 +470,8 @@ export class RecordIndexer {
     handled: readonly { change: RecordChange; handler: RecordTypeHandler }[],
     unknown: number,
     mode: ApplyMode,
-    ctx: RequestContext
+    ctx: RequestContext,
+    writeHeads: boolean
   ): Promise<IngestOutcome> {
     const headKeyOf = (change: RecordChange): RecordHeadKey => ({
       owner: change.owner,
@@ -470,15 +483,17 @@ export class RecordIndexer {
       // Lock every head first, in one order, so two records sharing keys
       // cannot deadlock; then apply in the record's own item order (a
       // rename's new name before the old name's unset, as the client wrote
-      // them), the same order a rebuild applies.
+      // them), the same order a rebuild applies. Imported state that keeps
+      // no head (`heads: false`) only reads them: live never puts it
+      // through the indexer, so it leaves no row.
       const byLockOrder = [...handled].sort((a, b) =>
-        headId(a.change) < headId(b.change)
-          ? -1
-          : Number(headId(a.change) > headId(b.change))
+        byCodeUnit(headId(a.change), headId(b.change))
       );
       const isNewer = new Map<RecordChange, boolean>();
       for (const { change } of byLockOrder) {
-        const head = await this.deps.heads.lock(headKeyOf(change), txCtx);
+        const head = writeHeads
+          ? await this.deps.heads.lock(headKeyOf(change), txCtx)
+          : await this.deps.heads.read(headKeyOf(change), txCtx);
         isNewer.set(change, !head || compareOrderKeys(change.order, head) > 0);
       }
       let applied = 0;
@@ -489,7 +504,9 @@ export class RecordIndexer {
           continue;
         }
         await handler.apply(change, mode, txCtx);
-        await this.deps.heads.put(headKeyOf(change), change.order, txCtx);
+        if (writeHeads) {
+          await this.deps.heads.put(headKeyOf(change), change.order, txCtx);
+        }
         applied++;
       }
       return { kind: 'applied' as const, changes: applied, stale, unknown };

@@ -97,6 +97,7 @@ import {
   waveScoreService,
   WaveScoreDirtyRefreshReason
 } from './wave-score.service';
+import { legacySettingsWrite } from '@/api/signed-records/legacy-settings-write';
 
 const router = asyncRouter();
 
@@ -331,6 +332,7 @@ router.delete(
 router.post(
   '/:id/subscriptions',
   needsAuthenticatedUser(),
+  legacySettingsWrite,
   async (
     req: Request<{ id: string }, any, ApiWaveSubscriptionActions, any, any>,
     res: Response<ApiResponse<ApiWaveSubscriptionActions>>
@@ -371,17 +373,22 @@ router.post(
   }
 );
 
-router.post('/:id/pins', needsAuthenticatedUser(), async (req, res) => {
-  await handleSimpleWaveAction(
-    req,
-    res,
-    (waveId, ctx) => waveApiService.pinWave({ waveId }, ctx),
-    {
-      disallowProxy: true,
-      proxyErrorMessage: `Proxy is not allowed to pin waves`
-    }
-  );
-});
+router.post(
+  '/:id/pins',
+  needsAuthenticatedUser(),
+  legacySettingsWrite,
+  async (req, res) => {
+    await handleSimpleWaveAction(
+      req,
+      res,
+      (waveId, ctx) => waveApiService.pinWave({ waveId }, ctx),
+      {
+        disallowProxy: true,
+        proxyErrorMessage: `Proxy is not allowed to pin waves`
+      }
+    );
+  }
+);
 
 router.post(
   '/:id/pinned-drop',
@@ -402,17 +409,22 @@ router.post(
   }
 );
 
-router.delete('/:id/pins', needsAuthenticatedUser(), async (req, res) => {
-  await handleSimpleWaveAction(
-    req,
-    res,
-    (waveId, ctx) => waveApiService.unPinWave({ waveId }, ctx),
-    {
-      disallowProxy: true,
-      proxyErrorMessage: `Proxy is not allowed to unpin waves`
-    }
-  );
-});
+router.delete(
+  '/:id/pins',
+  needsAuthenticatedUser(),
+  legacySettingsWrite,
+  async (req, res) => {
+    await handleSimpleWaveAction(
+      req,
+      res,
+      (waveId, ctx) => waveApiService.unPinWave({ waveId }, ctx),
+      {
+        disallowProxy: true,
+        proxyErrorMessage: `Proxy is not allowed to unpin waves`
+      }
+    );
+  }
+);
 
 router.post('/:id/mute', needsAuthenticatedUser(), async (req, res) => {
   await handleSimpleWaveAction(
@@ -441,6 +453,7 @@ router.delete('/:id/mute', needsAuthenticatedUser(), async (req, res) => {
 router.delete(
   '/:id/subscriptions',
   needsAuthenticatedUser(),
+  legacySettingsWrite,
   async (
     req: Request<{ id: string }, any, ApiWaveSubscriptionActions, any, any>,
     res: Response<ApiResponse<ApiWaveSubscriptionActions>>

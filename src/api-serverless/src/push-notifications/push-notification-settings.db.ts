@@ -5,6 +5,7 @@ import {
   PushNotificationSettingsEntity
 } from '../../../entities/IPushNotificationSettings';
 import {
+  ConnectionWrapper,
   dbSupplier,
   LazyDbAccessCompatibleService
 } from '../../../sql-executor';
@@ -51,7 +52,21 @@ export class PushNotificationSettingsDb extends LazyDbAccessCompatibleService {
       deviceId
     );
     const mergedSettings = { ...currentSettings, ...settings };
+    await this.replacePushNotificationSettings(
+      profileId,
+      deviceId,
+      mergedSettings
+    );
+    return mergedSettings;
+  }
 
+  /** Writes every setting of one device, in `connection`'s transaction when given. */
+  public async replacePushNotificationSettings(
+    profileId: string,
+    deviceId: string,
+    settings: PushNotificationSettingsData,
+    connection?: ConnectionWrapper<any>
+  ): Promise<void> {
     await this.db.execute(
       `
         INSERT INTO ${PUSH_NOTIFICATION_SETTINGS_TABLE} (
@@ -99,11 +114,24 @@ export class PushNotificationSettingsDb extends LazyDbAccessCompatibleService {
       {
         profileId,
         deviceId,
-        ...mergedSettings
-      }
+        ...settings
+      },
+      connection ? { wrappedConnection: connection } : undefined
     );
+  }
 
-    return mergedSettings;
+  /** Back to the defaults: removes the device's row. */
+  public async deletePushNotificationSettings(
+    profileId: string,
+    deviceId: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<void> {
+    await this.db.execute(
+      `DELETE FROM ${PUSH_NOTIFICATION_SETTINGS_TABLE}
+       WHERE profile_id = :profileId AND device_id = :deviceId`,
+      { profileId, deviceId },
+      connection ? { wrappedConnection: connection } : undefined
+    );
   }
 }
 
