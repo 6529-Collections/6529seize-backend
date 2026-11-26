@@ -6,12 +6,29 @@ import {
 } from '@/drop-forge/drop-forge.payment';
 import { testLaunchData } from '@/drop-forge/drop-forge.test-fixtures';
 import { RESEARCH_DELAY_SECONDS } from '@/drop-forge/drop-forge.research';
+import {
+  IDENTITY_SUBSCRIPTION_TABLES,
+  LEGACY_SUBSCRIPTION_TABLES,
+  subscriptionTables
+} from '@/subscriptions-identity/identity/subscription-tables';
 
 jest.mock('@/sql-executor', () => ({
   ...jest.requireActual<typeof import('@/sql-executor')>('@/sql-executor'),
   sqlExecutor: { oneOrNull: jest.fn() }
 }));
-beforeEach(() => jest.mocked(sqlExecutor.oneOrNull).mockReset());
+jest.mock('@/subscriptions-identity/identity/subscription-tables', () => ({
+  ...jest.requireActual<
+    typeof import('@/subscriptions-identity/identity/subscription-tables')
+  >('@/subscriptions-identity/identity/subscription-tables'),
+  subscriptionTables: jest.fn()
+}));
+beforeEach(() => {
+  jest.mocked(sqlExecutor.oneOrNull).mockReset();
+  jest
+    .mocked(subscriptionTables)
+    .mockReset()
+    .mockResolvedValue(LEGACY_SUBSCRIPTION_TABLES);
+});
 
 const recipient = '0x' + '66'.repeat(20);
 function fixture() {
@@ -40,6 +57,38 @@ it('uses exact wei and the existing 50% split across paid mints and subscription
     paid_count: 3,
     subscriptions_count: 1
   });
+});
+it('counts the redemptions in the table the subscriptions switch names', async () => {
+  const before = fixture();
+  await artistPaymentQuote(before.data, 10, 100);
+  expect(before.read.mock.calls[2][0]).toContain(
+    `FROM ${LEGACY_SUBSCRIPTION_TABLES.redeemed} sr `
+  );
+
+  before.read.mockReset();
+  jest
+    .mocked(subscriptionTables)
+    .mockResolvedValue(IDENTITY_SUBSCRIPTION_TABLES);
+  const after = fixture();
+  expect(await artistPaymentQuote(after.data, 10, 100)).toEqual({
+    recipient,
+    amount_wei: '200',
+    paid_count: 3,
+    subscriptions_count: 1
+  });
+  expect(after.read.mock.calls[2][0]).toContain(
+    `FROM ${IDENTITY_SUBSCRIPTION_TABLES.redeemed} sr `
+  );
+});
+it('pays nothing when the subscriptions switch cannot be read', async () => {
+  const { data, read } = fixture();
+  jest
+    .mocked(subscriptionTables)
+    .mockRejectedValue(new Error('state unreadable'));
+  await expect(artistPaymentQuote(data, 10, 100)).rejects.toThrow(
+    'state unreadable'
+  );
+  expect(read).toHaveBeenCalledTimes(2);
 });
 it('waits for confirmed mint indexing rather than paying an incomplete total', async () => {
   const { data } = fixture();

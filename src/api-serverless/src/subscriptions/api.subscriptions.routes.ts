@@ -70,12 +70,13 @@ import {
   fetchTopUpsForConsolidationKey,
   fetchUpcomingMemeSubscriptionCounts,
   fetchUpcomingMemeSubscriptionStatusForConsolidationKey,
-  fetchUpcomingMemeSubscriptions,
-  updateSubscribeAllEditions,
-  updateSubscription,
-  updateSubscriptionCount,
-  updateSubscriptionMode
+  fetchUpcomingMemeSubscriptions
 } from '@/api/subscriptions/api.subscriptions.db';
+import { SIGNED_RECORDS_HEADER } from '@/signed-records/record-event';
+import { isPrincipalId } from '@/subscriptions-identity/identity/identity-directory';
+import { subscriptionReadScope } from '@/subscriptions-identity/identity/subscription-tables';
+import type { SubscriptionChange } from '@/subscriptions-identity/records/subscription-records';
+import { subscriptionChangeWriter } from '@/subscriptions-identity/records/subscription-writes';
 
 const allowlistLogger = Logger.get('SUBSCRIPTIONS_ALLOWLIST');
 const CACHE_EVICTION_TIMEOUT_MS = 1_500;
@@ -243,24 +244,21 @@ router.post(
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
 
-    const isAuthenticated = await isAuthenticatedForConsolidationKey(
-      req,
-      consolidationKey
-    );
-    if (!isAuthenticated) {
-      throw new ForbiddenException(
-        `User can only change subscription mode for their own consolidation`
-      );
-    }
+    const walletInKey = await writeAccessOf(req, consolidationKey);
     const requestPayload = getValidatedByJoiOrThrow(
       req.body,
       Joi.object({
         automatic: Joi.boolean().required()
       })
     );
-    const response = await updateSubscriptionMode(
+    const response = await writeSubscriptionChange(
+      req,
       consolidationKey,
-      requestPayload.automatic
+      walletInKey,
+      {
+        type: 'subs.mode',
+        automatic: requestPayload.automatic
+      }
     );
     await invalidateSubscriptionCache(consolidationKey);
     res.status(201).send(response);
@@ -286,29 +284,67 @@ router.post(
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
 
-    const isAuthenticated = await isAuthenticatedForConsolidationKey(
-      req,
-      consolidationKey
-    );
-    if (!isAuthenticated) {
-      throw new ForbiddenException(
-        `User can only change subscription mode for their own consolidation`
-      );
-    }
+    const walletInKey = await writeAccessOf(req, consolidationKey);
     const requestPayload = getValidatedByJoiOrThrow(
       req.body,
       Joi.object({
         subscribe_all_editions: Joi.boolean().required()
       })
     );
-    const response = await updateSubscribeAllEditions(
+    const response = await writeSubscriptionChange(
+      req,
       consolidationKey,
-      requestPayload.subscribe_all_editions
+      walletInKey,
+      {
+        type: 'subs.all-editions',
+        all: requestPayload.subscribe_all_editions
+      }
     );
     await invalidateSubscriptionCache(consolidationKey);
     res.status(201).send(response);
   }
 );
+
+/**
+ * A person's change, after the route's own checks: today's write, or the
+ * signed record in the `x-6529-signed-records` header, by the switch state
+ * (subscription-writes.ts).
+ */
+function writeSubscriptionChange(
+  req: Request<any, any, any, any, any>,
+  consolidationKey: string,
+  walletInKey: boolean,
+  change: SubscriptionChange
+) {
+  return subscriptionChangeWriter.write({
+    routeKey: consolidationKey,
+    wallet: getWalletOrThrow(req),
+    walletInKey,
+    signedRecords: req.get(SIGNED_RECORDS_HEADER),
+    change
+  });
+}
+
+/**
+ * Whether the signed-in wallet is one of the key's wallets. A principal id
+ * (after the switch an identity's own key) goes on to the change writer,
+ * which checks the wallet's identity against it; any other key the wallet
+ * is not in gets 403, as before.
+ */
+async function writeAccessOf(
+  req: Request<any, any, any, any, any>,
+  consolidationKey: string
+): Promise<boolean> {
+  if (await isAuthenticatedForConsolidationKey(req, consolidationKey)) {
+    return true;
+  }
+  if (isPrincipalId(consolidationKey)) {
+    return false;
+  }
+  throw new ForbiddenException(
+    `User can only change subscription mode for their own consolidation`
+  );
+}
 
 async function isAuthenticatedForConsolidationKey(
   req: Request,
@@ -515,15 +551,7 @@ router.post(
     res: Response
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
-    const isAuthenticated = await isAuthenticatedForConsolidationKey(
-      req,
-      consolidationKey
-    );
-    if (!isAuthenticated) {
-      throw new ForbiddenException(
-        `User can only change subscription mode for their own consolidation`
-      );
-    }
+    const walletInKey = await writeAccessOf(req, consolidationKey);
     const requestPayload = getValidatedByJoiOrThrow(
       req.body,
       subscriptionToggleRequestSchema
@@ -532,11 +560,16 @@ router.post(
     if (nft) {
       throw new BadRequestException('NFT already released');
     }
-    const response = await updateSubscription(
+    const response = await writeSubscriptionChange(
+      req,
       consolidationKey,
-      requestPayload.contract,
-      requestPayload.token_id,
-      requestPayload.subscribed
+      walletInKey,
+      {
+        type: 'subs.card',
+        contract: requestPayload.contract,
+        tokenId: requestPayload.token_id,
+        subscribed: requestPayload.subscribed
+      }
     );
     await invalidateSubscriptionCache(consolidationKey);
     res.status(201).send(response);
@@ -563,15 +596,7 @@ router.post(
     res: Response
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
-    const isAuthenticated = await isAuthenticatedForConsolidationKey(
-      req,
-      consolidationKey
-    );
-    if (!isAuthenticated) {
-      throw new ForbiddenException(
-        `User can only change subscription mode for their own consolidation`
-      );
-    }
+    const walletInKey = await writeAccessOf(req, consolidationKey);
     const requestPayload = getValidatedByJoiOrThrow(
       req.body,
       subscriptionCountRequestSchema
@@ -580,11 +605,16 @@ router.post(
     if (nft) {
       throw new BadRequestException('NFT already released');
     }
-    const response = await updateSubscriptionCount(
+    const response = await writeSubscriptionChange(
+      req,
       consolidationKey,
-      requestPayload.contract,
-      requestPayload.token_id,
-      requestPayload.count
+      walletInKey,
+      {
+        type: 'subs.count',
+        contract: requestPayload.contract,
+        tokenId: requestPayload.token_id,
+        count: requestPayload.count
+      }
     );
     await invalidateSubscriptionCache(consolidationKey);
     res.status(201).send(response);
@@ -677,8 +707,12 @@ router.get(
     >
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
-    const result =
-      await fetchAirdropAddressForConsolidationKey(consolidationKey);
+    // After the identity switch the key may be a principal id; the airdrop
+    // rule still reads the identity's consolidation key.
+    const scope = await subscriptionReadScope(consolidationKey);
+    const result = await fetchAirdropAddressForConsolidationKey(
+      scope.consolidationKey
+    );
     const ensTdhWallet = await fetchEns(result.tdh_wallet);
     const ensAirdrop = await fetchEns(result.airdrop_address);
     return res.json({

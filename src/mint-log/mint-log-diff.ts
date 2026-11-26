@@ -28,6 +28,7 @@ export function emptyCardState(): MintCardState {
     claim_actions: [],
     card_mapping: [],
     subscription_phases: [],
+    subscription_phases_identity: [],
     nextgen_allowlists: [],
     nextgen_allowlist_rows: [],
     nextgen_allowlist_burn_rows: [],
@@ -110,6 +111,15 @@ function diffMerkle(
   return { upsert, delete: deleted };
 }
 
+/**
+ * A part's rows in a state. A state written before the part existed (a
+ * genesis file from an earlier version) lacks it: it was not captured, which
+ * is what an empty part means.
+ */
+function partRows(state: MintCardState, part: MintRowPart): MintRow[] {
+  return state[part] ?? [];
+}
+
 /** The row changes that turn `before` into `after`, part by part. */
 export function diffCardState(
   before: MintCardState,
@@ -117,7 +127,11 @@ export function diffCardState(
 ): MintCardEffects {
   const effects: Record<string, MintRowDiff | MintMerkleDiff> = {};
   for (const part of MINT_ROW_PARTS) {
-    const diff = diffRows(MINT_ROW_PART_SPECS[part], before[part], after[part]);
+    const diff = diffRows(
+      MINT_ROW_PART_SPECS[part],
+      partRows(before, part),
+      partRows(after, part)
+    );
     if (diff) effects[part] = diff;
   }
   const merkle = diffMerkle(before.merkle, after.merkle);
@@ -155,7 +169,7 @@ export function applyEffectsToState(
   for (const part of MINT_ROW_PARTS) {
     rows[part] = applyRowDiff(
       MINT_ROW_PART_SPECS[part],
-      state[part],
+      partRows(state, part),
       effects[part]
     );
   }
@@ -177,7 +191,7 @@ export function applyEffectsToState(
 export function differingParts(a: MintCardState, b: MintCardState): MintPart[] {
   const parts: MintPart[] = [];
   for (const part of MINT_ROW_PARTS) {
-    if (!same(a[part], b[part])) parts.push(part);
+    if (!same(partRows(a, part), partRows(b, part))) parts.push(part);
   }
   if (!same(a.merkle, b.merkle)) parts.push('merkle');
   return parts;
