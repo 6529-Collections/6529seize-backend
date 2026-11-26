@@ -78,7 +78,7 @@ export async function artistPaymentQuote(
     );
   // The redemptions the subscriptions switch names. After it, the identity
   // table: it holds every redemption (go-live copies the legacy ones), and
-  // the legacy copy lacks the airdrops of subscribers it can't hold.
+  // the legacy copy has none for the airdrops to subscribers it can't hold.
   const redeemed = (await subscriptionTables()).redeemed;
   const subscriptions = await sqlExecutor.oneOrNull<{ count: string }>(
     `SELECT COALESCE(SUM(sr.count), 0) AS count FROM ${redeemed} sr WHERE sr.contract = :contract AND sr.token_id = :claim AND EXISTS (SELECT 1 FROM ${TRANSACTIONS_TABLE} t WHERE t.transaction = sr.transaction AND t.contract = sr.contract AND t.token_id = sr.token_id AND t.block <= :block)`,

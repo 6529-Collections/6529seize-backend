@@ -42,13 +42,24 @@ function launch() {
     testPlan,
     {
       ...testSource,
-      rows: [KEPT, NOT_KEPT].map((wallet) => ({
-        phase: 'Phase 0',
-        wallet,
-        count: 1,
-        count_airdrop: 1,
-        count_allowlist: 0
-      }))
+      // One subscription airdrop each; an allowlist phase needs a row of
+      // its own to have a root.
+      rows: [
+        {
+          phase: 'Phase 0',
+          wallet: KEPT,
+          count: 2,
+          count_airdrop: 1,
+          count_allowlist: 1
+        },
+        {
+          phase: 'Phase 0',
+          wallet: NOT_KEPT,
+          count: 1,
+          count_airdrop: 1,
+          count_allowlist: 0
+        }
+      ]
     },
     0
   );
@@ -209,8 +220,10 @@ describeWithSeed(
         paysBoth
       );
 
-      // The legacy table is short by that airdrop: before the switch, and
-      // after a rollback, the payment waits instead of paying.
+      // In every other mode the payment counts the legacy table, which has
+      // no redemption for that airdrop, so it waits instead of paying.
+      // After a rollback that is a known limit; before the switch such an
+      // airdrop doesn't happen, since the list is the legacy one.
       for (const mode of ['OFF', 'SHADOW', 'SUSPENDED'] as const) {
         await setSwitch(mode);
         await expect(artistPaymentQuote(launch(), 5, BLOCK)).rejects.toThrow(
@@ -219,7 +232,10 @@ describeWithSeed(
       }
     });
 
-    it('pays the same for a card charged before the switch, either side of it', async () => {
+    // Go-live copies every legacy redemption into the identity table, so a
+    // card charged before the switch has the same rows in both; the copy
+    // itself is tested with the opening.
+    it('pays the same either side of the switch when both tables hold the charges', async () => {
       for (const [hash, address] of [
         [AIRDROP_TO_KEPT, KEPT],
         [AIRDROP_TO_NOT_KEPT, NOT_KEPT]
