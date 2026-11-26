@@ -1564,11 +1564,14 @@ watermark.
 The API exposes currency-specific quoted depth for an individual token and a
 merged feed of canonical transactions and market actions. Quoted quantities can
 share inventory or funding and are not a verified executable security budget.
-The activity feed uses the read replica, including partition discovery and
+The activity feed uses the API read pool, including partition discovery and
 history metadata. Token activity selects bounded token and collection-event
 pages separately using the existing token/time index, then merges their IDs
-before fetching public event fields. Order-book snapshots, critical partition
-discovery and order-status validation continue to use the writer.
+before fetching public event fields. Collection-level cancellations for a single
+collection and wallet select bounded maker and taker pages with wallet/time
+indexes and deduplicate the IDs before fetching the final page. Order-book
+snapshots, critical partition discovery and order-status validation continue to
+use the writer.
 See the [market depth runbook](../ops/runbooks/market-depth.md) for interpretation,
 provider limitations, deployment order and verification.
 

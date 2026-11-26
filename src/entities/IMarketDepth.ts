@@ -253,7 +253,26 @@ export class MarketDepthCurrentOrderEntity {
   executable_caveats!: MarketDepthJsonValue | null;
 }
 
+export const MARKET_DEPTH_MAKER_ACTIVITY_INDEX = {
+  name: 'idx_market_depth_events_maker_occurred',
+  columns: ['chain_id', 'contract', 'maker', 'occurred_at', 'event_id']
+};
+export const MARKET_DEPTH_TAKER_ACTIVITY_INDEX = {
+  name: 'idx_market_depth_events_taker_occurred',
+  columns: ['chain_id', 'contract', 'taker', 'occurred_at', 'event_id']
+};
+
 @Entity(MARKET_DEPTH_EVENTS_TABLE)
+@Index(
+  MARKET_DEPTH_MAKER_ACTIVITY_INDEX.name,
+  MARKET_DEPTH_MAKER_ACTIVITY_INDEX.columns,
+  { synchronize: false }
+)
+@Index(
+  MARKET_DEPTH_TAKER_ACTIVITY_INDEX.name,
+  MARKET_DEPTH_TAKER_ACTIVITY_INDEX.columns,
+  { synchronize: false }
+)
 @Index('idx_market_depth_events_collection_time', [
   'chain_id',
   'contract',
