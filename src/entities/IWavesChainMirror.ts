@@ -103,6 +103,11 @@ export class ChainDocEntity {
  * judged again each run; deleting the row has it judged again. A delay (the
  * manifest not in the store yet, moderation unavailable, over its hourly
  * limit, the author suspended) waits until retry_at, longer each time.
+ *
+ * A wave description moderation held back has its row here too, under the
+ * description drop id, with competition_id '': refused until the wave's
+ * document changes the description, or deferred until retry_at. A rebuild
+ * of the mirror reads these rows as its moderation and never writes them.
  */
 @Entity(CHAIN_ENTRY_HOLDS_TABLE)
 export class ChainEntryHoldEntity {
@@ -207,7 +212,9 @@ export class WavesChainMirrorWaveEntity {
   @Column({ type: 'text', nullable: true, default: null })
   readonly metadata_keys!: string | null;
 
-  // Why the wave, or its description, is held back; null when nothing is.
+  // Why the wave is held back, or a copy of its description's hold (the
+  // hold itself is in chain_entry_holds) that schedules a deferral's retry;
+  // null when nothing is.
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
   readonly held!: string | null;
 

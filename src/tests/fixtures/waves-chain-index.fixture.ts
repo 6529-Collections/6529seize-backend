@@ -235,6 +235,8 @@ function byId(field: string) {
 export class FakeChain implements WavesChainApi {
   height = 100;
   completed = true;
+  /** The import's start (startMs) the import's answer gives. */
+  importStartedAt: number | null = 1_763_990_000_000;
   network: string | null = 'net-1';
   /** Feed heights below this answer `gone`. */
   goneBelow = 0;
@@ -1219,7 +1221,7 @@ export class FakeChain implements WavesChainApi {
 
   async importState(_at: number): Promise<WavesImportState | null> {
     this.call('importState');
-    return { completed: this.completed };
+    return { completed: this.completed, startedAt: this.importStartedAt };
   }
 
   async listGroups(after: string | null, at: number) {

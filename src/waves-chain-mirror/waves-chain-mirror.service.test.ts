@@ -304,6 +304,42 @@ describe('WavesChainMirror: when it runs', () => {
   });
 });
 
+describe('WavesChainMirror: legacy ids', () => {
+  it("leaves out a decision or an entry whose legacy id isn't an RFC 4122 UUID, counted once, and goes on", async () => {
+    const { store, index } = world();
+    // A made-up id with a version digit of 0: uuid v5 refuses it.
+    const bad = '00000000-5662-01f5-4000-8000000001f5';
+    store.chain.set(
+      D2,
+      aChainDecisionState(aChainDecision({ decisionId: D2, legacyId: bad }))
+    );
+    store.chain.set(
+      D1,
+      aChainDecisionState(aChainDecision({ decisionId: D1, legacyId: C1 }), {
+        entries: [
+          aChainEntry({
+            entryId: chainId('e1'),
+            decisionId: D1,
+            legacyId: uuid(11)
+          }),
+          aChainEntry({ entryId: chainId('e2'), decisionId: D1, legacyId: bad })
+        ]
+      })
+    );
+    const m = mirror(store, index, REPORT);
+    const report = await m.run({ budgetMs: 10_000 });
+    expect(report.decisions).toMatchObject({
+      skipped: { legacy_id_invalid: 1 },
+      failed: 0
+    });
+    expect(report.invalidLegacyIds).toBe(2);
+    // The entry left out is not waited for as one without a row.
+    expect(report.waiting).toEqual({ entry_without_row: 1 });
+    // Counted once each, run after run.
+    expect((await m.run({ budgetMs: 10_000 })).invalidLegacyIds).toBe(2);
+  });
+});
+
 describe('WavesChainMirror: report only', () => {
   it('plans every decision and writes nothing, not even its state', async () => {
     const { store, index } = world();

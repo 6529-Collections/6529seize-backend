@@ -1213,10 +1213,15 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     };
   }
 
+  /**
+   * A wave's hub row. `withoutMetrics` reads waves alone (last_drop_time
+   * 0), for a reader that must not depend on wave_metrics.
+   */
   public async findWaveHubById(
     id: string,
     forUpdate: boolean,
-    ctx: RequestContext
+    ctx: RequestContext,
+    options: { readonly withoutMetrics?: boolean } = {}
   ): Promise<WaveEntityWithLastDropTime | null> {
     const timerName = `${this.constructor.name}->findWaveHubById`;
     ctx.timer?.start(timerName);
@@ -1226,7 +1231,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       }
       const row = await withoutLegacyCompetitionGetFacade(() =>
         this.db.oneOrNull<RawWaveEntityWithLastDropTime>(
-          `select ${waveHubSelectColumns()}, coalesce(wm.latest_drop_timestamp,0) as last_drop_time
+          options.withoutMetrics
+            ? `select ${waveHubSelectColumns()}, 0 as last_drop_time
+         from ${WAVES_TABLE} w
+         where w.id=:id ${forUpdate ? 'for update' : ''}`
+            : `select ${waveHubSelectColumns()}, coalesce(wm.latest_drop_timestamp,0) as last_drop_time
          from ${WAVES_TABLE} w
          left join ${WAVE_METRICS_TABLE} wm on wm.wave_id=w.id
          where w.id=:id ${forUpdate ? 'for update' : ''}`,

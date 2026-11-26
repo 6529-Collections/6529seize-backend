@@ -152,6 +152,14 @@ describe('WavesChainMirror: the claim of a chain-made Main Stage winner', () => 
         reason: 'entry created on the chain: no 6529.io drop'
       }
     ]);
+    expect(await db.skippedClaimBuilds(D)).toHaveLength(1);
+    // A rebuild writes no claim builds, so it reads none.
+    expect(
+      await new WavesChainMirrorDb(
+        () => sqlExecutor,
+        'rebuild'
+      ).skippedClaimBuilds(D)
+    ).toEqual([]);
 
     const report = await mirror(NOW).run({ budgetMs: 60_000 });
     expect(report.changes).toMatchObject({

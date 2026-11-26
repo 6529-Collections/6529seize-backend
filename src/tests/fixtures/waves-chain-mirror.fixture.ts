@@ -463,6 +463,10 @@ export class FakeMirrorStore implements MirrorStore {
   async releasedVotes() {
     return new Map<string, Map<string, string>>();
   }
+  /** A live store: no rebuild's imported rows. */
+  async writeImportedDecisionRows() {
+    return {};
+  }
   /** The event log a decision's VOTE events are read again from. */
   logged: () => readonly ChainEvent[] = () => [];
   replayReads: { decisionId: string; after: string | null }[] = [];

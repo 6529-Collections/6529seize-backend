@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { keccak256, toUtf8Bytes } from 'ethers';
+import { validate as isRfcUuid } from 'uuid';
 import {
   legacyCompetitionDecisionId,
   legacyCompetitionEntryId,
@@ -47,6 +48,65 @@ export function legacyIdOf(value: unknown): string | null {
     return `${text.slice(0, 8)}-${text.slice(8, 12)}-${text.slice(12, 16)}-${text.slice(16, 20)}-${text.slice(20)}`;
   }
   return null;
+}
+
+/**
+ * A chain object's legacy id as 6529.io's ids are derived from it (uuid v5
+ * takes only an RFC 4122 UUID): `ok` with the id, or null for none; not ok
+ * for one that isn't such a UUID (a made-up id, a version digit of 0).
+ */
+export function readLegacyId(
+  value: unknown
+):
+  | { readonly ok: true; readonly id: string | null }
+  | { readonly ok: false; readonly text: string } {
+  if (value === null || value === undefined || value === '') {
+    return { ok: true, id: null };
+  }
+  const id = legacyIdOf(value);
+  return id && isRfcUuid(id)
+    ? { ok: true, id }
+    : { ok: false, text: String(value) };
+}
+
+/**
+ * The chain's objects whose legacy id isn't an RFC 4122 UUID: each is left
+ * out (it never stops a run), logged once and counted.
+ */
+export class InvalidLegacyIds {
+  /** Each object left out (its kind and chain id), with its legacy id. */
+  private readonly seen = new Map<string, string>();
+
+  constructor(private readonly log: (message: string) => void) {}
+
+  /**
+   * An object's legacy id, or null when it has none; undefined when it is
+   * left out for one that isn't an RFC 4122 UUID.
+   */
+  of(kind: string, chainId: string, value: unknown): string | null | undefined {
+    const read = readLegacyId(value);
+    if (read.ok) return read.id;
+    const key = `${kind} ${chainId}`;
+    if (!this.seen.has(key)) {
+      this.seen.set(key, read.text);
+      this.log(
+        `${key} left out: its legacy id ${read.text} is not an RFC 4122 UUID`
+      );
+    }
+    return undefined;
+  }
+
+  /** The objects left out so far. */
+  get count(): number {
+    return this.seen.size;
+  }
+
+  /** The first objects left out, each with its legacy id. */
+  first(n: number): string[] {
+    return Array.from(this.seen)
+      .slice(0, n)
+      .map(([key, text]) => `${key} (${text})`);
+  }
 }
 
 /** 6529.io's id of a decision made on the chain. */
