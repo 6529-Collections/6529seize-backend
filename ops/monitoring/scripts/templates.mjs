@@ -1046,8 +1046,12 @@ function platformAlarm(name, metric, environment) {
 }
 
 function sourceTemplate(environment) {
-  const services = observedServices.filter((service) =>
-    inSourceRegion(service, environment)
+  // Signed Record Log is live on staging. Enroll its production log groups
+  // after the independent signedRecordLogLoop rollout creates them.
+  const services = observedServices.filter(
+    (service) =>
+      inSourceRegion(service, environment) &&
+      !(environment === 'prod' && service.name === 'signedRecordLogLoop')
   );
   const otherRegions = observedServices.filter(
     (service) =>

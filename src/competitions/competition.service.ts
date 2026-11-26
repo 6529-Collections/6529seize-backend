@@ -662,8 +662,13 @@ export class CompetitionService {
     const authenticationContext = ctx.authenticationContext;
     const fullyAuthenticated =
       authenticationContext?.isUserFullyAuthenticated() === true;
+    // A decision the 6529 chain counts (it has a chain id) takes its
+    // entries and votes on the chain: it shows the same eligibility an
+    // imported one does, though 6529.io's runtime never runs one made on the
+    // chain (its execution_mode stays DISABLED). These flags drive what a
+    // reader is offered; 6529.io's own write routes still check the mode.
     const writesAvailable =
-      competition.execution_mode === 'ACTIVE' &&
+      (competition.execution_mode === 'ACTIVE' || !!competition.chain_id) &&
       competition.lifecycle === CompetitionLifecycle.PUBLISHED;
     const administer = this.canAdminister(wave, eligibleGroups, ctx);
     const originalRulesEditable =

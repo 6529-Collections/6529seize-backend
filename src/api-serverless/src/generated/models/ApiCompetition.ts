@@ -38,6 +38,10 @@ export class ApiCompetition {
     'your_active_entries_count'?: number | null;
     'presentation'?: Array<ApiCreateWaveMetadataRequest>;
     'id': string;
+    /**
+    * The decision\'s id on the 6529 chain (lowercase), for an imported decision too. Null while 6529.io doesn\'t know it. Every route that takes a competition id also takes this id.
+    */
+    'chain_id'?: string | null;
     'wave_id': string;
     'type': ApiCompetitionType;
     'title': string;
@@ -93,6 +97,12 @@ export class ApiCompetition {
             "baseName": "id",
             "type": "string",
             "format": "uuid"
+        },
+        {
+            "name": "chain_id",
+            "baseName": "chain_id",
+            "type": "string",
+            "format": ""
         },
         {
             "name": "wave_id",
