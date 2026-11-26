@@ -288,6 +288,22 @@ export type MirrorStore = Pick<
 
 export type MirrorIndex = Pick<WavesChainIndexDb, 'loadState' | 'readEvents'>;
 
+/**
+ * The height the groups and waves pass reads the chain at: the chain
+ * index's read height, the highest height an index run read at, so at or
+ * above every row the index holds and the freshest pin. A full read can
+ * hold rows read above feedNext - 1 while the feed lags behind it, and a
+ * read below such a row could answer "no" about it. An index state with no
+ * read height yet: feedNext - 1.
+ */
+export function chainReadHeight(index: {
+  readonly readHeight: number | null;
+  readonly feedNext: number | null;
+}): number | null {
+  if (index.readHeight !== null) return index.readHeight;
+  return index.feedNext === null ? null : index.feedNext - 1;
+}
+
 export function isDeadlock(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
   const { code, errno } = error as { code?: unknown; errno?: unknown };
@@ -363,7 +379,7 @@ export class WavesChainMirror {
     if (settings.write) {
       await this.writeRun(report, index, settings, deadline);
     } else {
-      await this.reportAll(report, settings, deadline);
+      await this.reportAll(report, settings, deadline, chainReadHeight(index));
     }
     report.invalidLegacyIds = this.legacyIds.count;
     return report;
@@ -378,9 +394,10 @@ export class WavesChainMirror {
   private async reportAll(
     report: WavesChainMirrorReport,
     settings: WavesChainMirrorSettings,
-    deadline: number
+    deadline: number,
+    readHeight: number | null
   ) {
-    await this.mirrorObjects(false, report, deadline);
+    await this.mirrorObjects(false, report, deadline, readHeight);
     // A pass that didn't finish goes on where it stopped, in the next run.
     report.full.running = true;
     report.full.started = 'report';
@@ -510,7 +527,7 @@ export class WavesChainMirror {
 
     // Groups and waves first: a decision's rows and the drop index's drops
     // need them.
-    await this.mirrorObjects(true, report, deadline);
+    await this.mirrorObjects(true, report, deadline, chainReadHeight(index));
     // Decisions that changed or move with time, then the full pass.
     const run: MirrorRun = {
       write: true,
@@ -651,7 +668,8 @@ export class WavesChainMirror {
   private async mirrorObjects(
     write: boolean,
     report: WavesChainMirrorReport,
-    deadline: number
+    deadline: number,
+    readHeight: number | null
   ): Promise<void> {
     if (!this.objects) return;
     const counter = new PlanCounter();
@@ -661,7 +679,9 @@ export class WavesChainMirror {
         documents: this.documents(write),
         counter,
         outOfTime: () => this.outOfTime(deadline),
-        legacyIds: this.legacyIds
+        legacyIds: this.legacyIds,
+        // The index's read height: the pass's chain reads see what it saw.
+        height: readHeight
       });
     } catch (error) {
       logger.error(`[WAVES CHAIN MIRROR] groups and waves failed: ${error}`);

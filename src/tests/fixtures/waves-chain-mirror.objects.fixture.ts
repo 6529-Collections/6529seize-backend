@@ -346,6 +346,17 @@ export class FakeObjectsStore implements ObjectsStore {
   async waveIdOfChainWave(chainWaveId: string) {
     return this.chainWaveLegacyIds.get(chainWaveId) ?? chainWaveId;
   }
+  /**
+   * The chain id of a wave 6529.io holds: a chain wave row by its id or
+   * legacy id; null when none holds it.
+   */
+  async chainWaveIdOf(waveId: string) {
+    const id = waveId.toLowerCase();
+    const row = this.chainWaves.find(
+      (w) => w.wave_id.toLowerCase() === id || w.legacy_id === id
+    );
+    return row ? row.wave_id.toLowerCase() : null;
+  }
   async blockTimeAt(height: number) {
     return this.blockTimes.get(height) ?? null;
   }
@@ -407,19 +418,21 @@ export function aWaveRow(
 }
 
 export function fakeObjectEffects(): jest.Mocked<ObjectEffects> & {
-  eligible: string[];
+  manages: boolean | null;
 } {
-  const state = { eligible: [] as string[] };
+  // The chain's answer to every rights read: no manager unless a test says
+  // so; null is a read that failed.
+  const state = { manages: false as boolean | null };
   const effects = {
-    get eligible() {
-      return state.eligible;
+    get manages() {
+      return state.manages;
     },
-    set eligible(value: string[]) {
-      state.eligible = value;
+    set manages(value: boolean | null) {
+      state.manages = value;
     },
     groupsChanged: jest.fn().mockResolvedValue(undefined),
     waveChanged: jest.fn().mockResolvedValue(undefined),
-    eligibleGroups: jest.fn(async (): Promise<string[]> => state.eligible),
+    waveManager: jest.fn(async (): Promise<boolean | null> => state.manages),
     newWaveEntity: jest.fn(
       async (input: Parameters<ObjectEffects['newWaveEntity']>[0]) => ({
         ...aWave(
@@ -448,7 +461,7 @@ export function fakeObjectEffects(): jest.Mocked<ObjectEffects> & {
     decisionCreatedAt: jest.fn().mockResolvedValue(null)
   };
   return effects as unknown as jest.Mocked<ObjectEffects> & {
-    eligible: string[];
+    manages: boolean | null;
   };
 }
 

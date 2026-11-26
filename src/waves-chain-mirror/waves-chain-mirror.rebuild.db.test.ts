@@ -50,6 +50,7 @@ import {
   WAVES_METADATA_TABLE,
   WAVES_TABLE
 } from '@/constants';
+import { userGroupsService } from '@/api/community-members/user-groups.service';
 import { sqlExecutor } from '@/sql-executor';
 import {
   clearMirrorTables,
@@ -103,6 +104,8 @@ const V2 = chainWord('b2');
 const UNMAPPED = chainWord('b9');
 const G = chainWord('0a');
 const W = chainWord('0b');
+/** A subwave of W made on the chain by V1 (seedWorld's `subwave`). */
+const SUBWAVE = chainWord('5c');
 const D = chainWord('d1');
 const IMPORTED = chainWord('d2');
 const E1 = chainWord('e1');
@@ -386,7 +389,7 @@ describe("the mirror's rebuild", () => {
    * `badLegacyIds`, an imported wave and decision whose legacy ids aren't
    * RFC 4122 UUIDs too.
    */
-  async function seedWorld({ badLegacyIds = false } = {}) {
+  async function seedWorld({ badLegacyIds = false, subwave = false } = {}) {
     await clearMirrorTables(sqlExecutor);
     await sqlExecutor.execute(`delete from ${PROFILES_TABLE}`);
     await sqlExecutor.execute(`delete from ${PROFILE_GROUP_CHANGES}`);
@@ -643,10 +646,38 @@ describe("the mirror's rebuild", () => {
       60
     );
     if (badLegacyIds) await seedBadLegacyIds(entry);
+    if (subwave) {
+      // V1 makes a subwave of W: V1 is neither W's creator nor in a group
+      // of 6529.io's, so 6529.io's own eligibility would leave W out.
+      const doc = bytesOf(aWaveDoc({ name: 'A subwave', parent_wave: W }));
+      await saveDocument(rawCidHexOf(doc), DOC_CLASS.WAVE, doc);
+      const child = aChainWaveRow(SUBWAVE, {
+        controller: V1,
+        metadataCid: rawCidHexOf(doc)
+      });
+      await index.upsert(
+        'waves',
+        [
+          waveRow({
+            ...(child.data as ChainObject),
+            legacyId: null,
+            origin: 'native',
+            status: 'open',
+            readGroup: { groupId: ZERO },
+            postGroup: { groupId: ZERO },
+            adminGroup: { groupId: ZERO }
+          })
+        ],
+        stamp
+      );
+    }
     await index.writeEvents(
       [
         anEvent(18, { kind: 'GROUP_CREATED', groupId: G }),
         anEvent(19, { kind: 'WAVE_CREATED', waveId: W }),
+        ...(subwave
+          ? [anEvent(20, { kind: 'WAVE_CREATED', waveId: SUBWAVE, actor: V1 })]
+          : []),
         ...[50, 51, 52].map((height) =>
           anEvent(height, {
             kind: 'VOTE',
@@ -987,6 +1018,84 @@ describe("the mirror's rebuild", () => {
         }
       )
     ).toEqual([{ id: archived }]);
+  });
+
+  it("keeps a subwave's parent by the chain's rights at the index's height, never 6529.io's eligibility", async () => {
+    // The gateway's rights answer (in a run, the recording's at its mark);
+    // every other read goes through as it would.
+    const original = ChainGatewayClient.prototype.read;
+    const rightsReads: string[] = [];
+    let isManager: boolean | null = true;
+    const read = jest
+      .spyOn(ChainGatewayClient.prototype, 'read')
+      .mockImplementation(function (
+        this: ChainGatewayClient,
+        ...args: Parameters<ChainGatewayClient['read']>
+      ) {
+        if (args[0].includes('/rights/')) {
+          rightsReads.push(`${args[0]}@${args[2]?.height}`);
+          // null: the node's not_found.
+          return Promise.resolve(
+            isManager === null ? null : ({ data: { isManager } } as never)
+          );
+        }
+        return original.apply(this, args);
+      });
+    const eligibility = jest.spyOn(
+      userGroupsService,
+      'getGroupsUserIsEligibleFor'
+    );
+    try {
+      for (const manager of [true, false]) {
+        isManager = manager;
+        await seedWorld({ subwave: true });
+        await forgetDocuments();
+        await rebuildWavesChainMirror(
+          rebuildCtx,
+          () => sqlExecutor,
+          { CHAIN_GATEWAY_URL: GATEWAY },
+          { fetchImpl: filesFetch as unknown as typeof fetch }
+        );
+        // profile-1's identity has TDH 0, and V1's profile has none: the
+        // chain's answer alone decides.
+        expect(
+          await sqlExecutor.execute(
+            `select parent_wave_id from ${WAVES_TABLE} where id = :id`,
+            { id: SUBWAVE }
+          )
+        ).toEqual([{ parent_wave_id: manager ? W : null }]);
+      }
+      // A not_found: the subwave waits, counted, never written without its
+      // parent.
+      isManager = null;
+      await seedWorld({ subwave: true });
+      await forgetDocuments();
+      const waited = await rebuildWavesChainMirror(
+        rebuildCtx,
+        () => sqlExecutor,
+        { CHAIN_GATEWAY_URL: GATEWAY },
+        { fetchImpl: filesFetch as unknown as typeof fetch }
+      );
+      expect(
+        await sqlExecutor.execute(
+          `select id from ${WAVES_TABLE} where id = :id`,
+          { id: SUBWAVE }
+        )
+      ).toEqual([]);
+      expect(waited.last.waiting).toMatchObject({
+        wave_parent_rights_unavailable: 1
+      });
+      // The parent's chain id and the creator's principal, at the index's
+      // read height (feedNext 61: height 60); 6529.io's eligibility never
+      // asked.
+      expect(new Set(rightsReads)).toEqual(
+        new Set([`/v1/waves/${W}/rights/${V1}@60`])
+      );
+      expect(eligibility).not.toHaveBeenCalled();
+    } finally {
+      read.mockRestore();
+      eligibility.mockRestore();
+    }
   });
 
   it('reads no wave_metrics in a rebuild, where the live mirror reads the hub with them', async () => {

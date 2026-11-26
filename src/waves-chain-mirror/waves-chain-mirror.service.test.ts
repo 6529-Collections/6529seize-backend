@@ -18,6 +18,7 @@ import { GateVerdict } from './waves-chain-mirror.gate';
 import { NativeEntryContent } from './waves-chain-mirror.native-entries';
 import { PlanCounter } from './waves-chain-mirror.plan-support';
 import {
+  chainReadHeight,
   FULL_PASS_EVERY_MS,
   mirrorSettingsFromEnv,
   nextReplayFrom,
@@ -282,6 +283,43 @@ describe('WavesChainMirror: when it runs', () => {
       expect(report.changes.waves).toEqual({ insert: 1, update: 0, delete: 0 });
       expect(report.waiting).toMatchObject({ wave_group_not_mirrored: 1 });
     }
+  });
+
+  it("reads the chain for groups and waves at the index's read height, above a lagging feed", async () => {
+    for (const settings of [WRITE, REPORT]) {
+      const { store, index } = world();
+      const heights: (number | null | undefined)[] = [];
+      const objects = {
+        run: jest.fn(async (input: { height?: number | null }) => {
+          heights.push(input.height);
+          return null as never;
+        })
+      };
+      const run = () =>
+        new WavesChainMirror(
+          store,
+          index,
+          () => settings,
+          () => NOW,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          objects
+        ).run({ budgetMs: 10_000 });
+      // A full read held rows at 175 while the feed lags at 100: the
+      // pass reads at 175, the height the index read its rows at.
+      index.state = { ...index.state, feedNext: 101, readHeight: 175 };
+      const report = await run();
+      expect(report.height).toBe(100);
+      // An index state with no read height yet: the feed's.
+      index.state = { ...index.state, readHeight: null };
+      await run();
+      expect(heights).toEqual([175, 100]);
+    }
+    expect(chainReadHeight({ readHeight: 175, feedNext: 101 })).toBe(175);
+    expect(chainReadHeight({ readHeight: null, feedNext: 101 })).toBe(100);
+    expect(chainReadHeight({ readHeight: null, feedNext: null })).toBeNull();
   });
 
   it('goes on to the decisions when the groups and waves pass fails', async () => {

@@ -73,13 +73,18 @@ function world() {
     gate,
     () => now
   );
-  const run = async (write = true, outOfTime = () => false) => {
+  const run = async (
+    write = true,
+    outOfTime = () => false,
+    height: number | null = null
+  ) => {
     const counter = new PlanCounter();
     const report = await mirror.run({
       write,
       documents,
       counter,
-      outOfTime
+      outOfTime,
+      height
     });
     return { report, counter };
   };
@@ -501,23 +506,92 @@ describe('WavesChainObjectsMirror: waves', () => {
     expect(store.writes()).toBe(0);
   });
 
-  it('keeps a parent wave only as 6529.io would let the creator name it', async () => {
-    const parent = 'parent-wave';
-    const { store, effects, run } = nativeWave(
-      aWaveDoc({ parent_wave: parent })
+  it('keeps a parent wave only when the chain counts the creator its manager', async () => {
+    // An imported parent: 6529.io's row under its legacy id, on the chain
+    // under its chain id.
+    const PARENT = '00000000-0000-4000-8000-0000000000e1';
+    const CHAIN_PARENT = chainWord('0e');
+    const child = (manages: boolean | null, onChain = true) => {
+      const w = nativeWave(aWaveDoc({ parent_wave: PARENT }));
+      w.store.waves.set(
+        PARENT,
+        aWaveRow(PARENT, {
+          created_by: 'someone-else',
+          admin_group_id: 'admins'
+        })
+      );
+      if (onChain) {
+        w.store.chainWaves.push(
+          aChainWaveRow(CHAIN_PARENT, { origin: 'legacy', legacyId: PARENT })
+        );
+      }
+      w.effects.manages = manages;
+      return w;
+    };
+
+    // A manager on the chain: kept. The chain is asked about the parent's
+    // chain id and the creator's principal, at the index's read height the
+    // run is given, never about 6529.io's groups.
+    const kept = child(true);
+    await kept.run(true, () => false, 4_200);
+    expect(kept.store.waveCreates[0].entity.parent_wave_id).toBe(PARENT);
+    expect(kept.effects.waveManager).toHaveBeenCalledWith({
+      waveId: CHAIN_PARENT,
+      principal: P1,
+      height: 4_200
+    });
+    // A run with no index height: the client's pin.
+    const unpinned = child(true);
+    await unpinned.run();
+    expect(unpinned.effects.waveManager).toHaveBeenCalledWith({
+      waveId: CHAIN_PARENT,
+      principal: P1,
+      height: null
+    });
+
+    // Not a manager: written without it, counted.
+    const refused = child(false);
+    const second = await refused.run();
+    expect(refused.store.waveCreates[0].entity.parent_wave_id).toBeNull();
+    expect(second.counter.waiting).toMatchObject({
+      wave_parent_not_managed: 1
+    });
+
+    // The chain's answer unread: the wave waits, counted, and is written
+    // with its parent once a run reads it.
+    const unread = child(null);
+    const third = await unread.run();
+    expect(third.report.waves).toMatchObject({ mirrored: 0, waiting: 1 });
+    expect(third.counter.waiting).toEqual({
+      wave_parent_rights_unavailable: 1
+    });
+    expect(unread.store.waveCreates).toEqual([]);
+    unread.effects.manages = true;
+    await unread.run();
+    expect(
+      unread.store.waveCreates.map((c) => c.entity.parent_wave_id)
+    ).toEqual([PARENT]);
+
+    // A parent the chain doesn't hold (it stays on 6529.io): written without
+    // it, counted, and nothing asked.
+    const staying = child(true, false);
+    const fourth = await staying.run();
+    expect(staying.store.waveCreates[0].entity.parent_wave_id).toBeNull();
+    expect(fourth.counter.waiting).toMatchObject({
+      wave_parent_not_on_chain: 1
+    });
+    expect(staying.effects.waveManager).not.toHaveBeenCalled();
+
+    // A parent with a parent of its own: left out, nothing asked.
+    const nested = child(true);
+    nested.store.waves.set(
+      PARENT,
+      aWaveRow(PARENT, { created_by: 'someone-else', parent_wave_id: 'grand' })
     );
-    store.waves.set(
-      parent,
-      aWaveRow(parent, { created_by: 'someone-else', admin_group_id: 'admins' })
-    );
-    await run();
-    expect(store.waveCreates[0].entity.parent_wave_id).toBeNull();
-    store.waveCreates = [];
-    store.waves.delete(W);
-    store.waveRecords.clear();
-    effects.eligible = ['admins'];
-    await run();
-    expect(store.waveCreates[0].entity.parent_wave_id).toBe(parent);
+    const fifth = await nested.run();
+    expect(nested.store.waveCreates[0].entity.parent_wave_id).toBeNull();
+    expect(fifth.counter.waiting).toMatchObject({ wave_parent_left_out: 1 });
+    expect(nested.effects.waveManager).not.toHaveBeenCalled();
   });
 
   it('keeps a parent made on the chain that the run reaches after its child', async () => {
@@ -525,7 +599,7 @@ describe('WavesChainObjectsMirror: waves', () => {
     const PARENT = chainWord('0c');
     const w = nativeWave(aWaveDoc({ parent_wave: PARENT }));
     // The creator is in G, so it can see the parent it names.
-    w.effects.eligible = [G];
+    w.effects.manages = true;
     w.store.chainWaves = [
       aChainWaveRow(W, { read: G, admin: G, metadataCid: CID }),
       aChainWaveRow(PARENT, { read: G, admin: G, metadataCid: CID2 })
@@ -553,7 +627,7 @@ describe('WavesChainObjectsMirror: waves', () => {
     // A parent held for a retry (its document still on its way): the child
     // waits for it, run after run, and is created with it once it is.
     const held = nativeWave(aWaveDoc({ parent_wave: PARENT }));
-    held.effects.eligible = [G];
+    held.effects.manages = true;
     // Made a minute ago: within the day a child waits for its parent.
     held.store.events[0] = { ...held.store.events[0], time: NOW - 60_000 };
     held.store.chainWaves = [
@@ -592,7 +666,7 @@ describe('WavesChainObjectsMirror: waves', () => {
   it('creates a child on its own once its parent made on the chain is still not written a day after it was made', async () => {
     const PARENT = chainWord('0c');
     const w = nativeWave(aWaveDoc({ parent_wave: PARENT }));
-    w.effects.eligible = [G];
+    w.effects.manages = true;
     w.store.events[0] = { ...w.store.events[0], time: NOW - 60_000 };
     // The parent's creator has no profile: it waits, with no record.
     w.store.chainWaves = [
@@ -635,7 +709,7 @@ describe('WavesChainObjectsMirror: waves', () => {
     const CID3 = `0x01551220${'cf'.repeat(32)}`;
     const w = nativeWave(aWaveDoc({ parent_wave: PARENT }));
     // The creator is in G, so it can see the parent it names.
-    w.effects.eligible = [G];
+    w.effects.manages = true;
     w.store.chainWaves = [
       aChainWaveRow(W, { read: G, admin: G, metadataCid: CID }),
       aChainWaveRow(PARENT, { read: G, admin: G, metadataCid: CID2 }),

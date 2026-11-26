@@ -1,5 +1,8 @@
 import { chainGatewayClient } from '@/chain-gateway/chain-gateway.client';
-import { decisionCreatedAt } from './waves-chain-mirror.objects.effects';
+import {
+  decisionCreatedAt,
+  waveManagerOf
+} from './waves-chain-mirror.objects.effects';
 
 const D = `0x${'d1'.repeat(32)}`;
 
@@ -39,5 +42,42 @@ describe('decisionCreatedAt', () => {
       .spyOn(chainGatewayClient, 'read')
       .mockResolvedValue({ data: { policies: [{ version: 1 }] } } as never);
     expect(await decisionCreatedAt(D)).toBeNull();
+  });
+});
+
+describe('waveManagerOf', () => {
+  const WAVE = `0x${'0e'.repeat(32)}`;
+  const PRINCIPAL = `0x${'11'.repeat(32)}`;
+  const PATH = `/v1/waves/${WAVE}/rights/${PRINCIPAL}`;
+  afterEach(() => jest.restoreAllMocks());
+
+  it("reads the chain's rights at the index's height, isManager", async () => {
+    const read = jest.spyOn(chainGatewayClient, 'read').mockResolvedValue({
+      data: { waveId: WAVE, principalId: PRINCIPAL, isManager: true }
+    } as never);
+    expect(await waveManagerOf(WAVE, PRINCIPAL, 4_200)).toBe(true);
+    read.mockResolvedValue({ data: { isManager: false } } as never);
+    expect(await waveManagerOf(WAVE, PRINCIPAL, 4_200)).toBe(false);
+    // Without a height: the client's pin.
+    expect(await waveManagerOf(WAVE, PRINCIPAL)).toBe(false);
+    expect(read.mock.calls).toEqual([
+      [PATH, {}, { height: 4_200 }],
+      [PATH, {}, { height: 4_200 }],
+      [PATH, {}, {}]
+    ]);
+  });
+
+  it("is null when the gateway can't say, its not_found included", async () => {
+    const read = jest.spyOn(chainGatewayClient, 'read');
+    // The node's not_found: a read behind the index, never a "no" (a
+    // parent left out would be for good).
+    read.mockResolvedValue(null);
+    expect(await waveManagerOf(WAVE, PRINCIPAL, 4_200)).toBeNull();
+    // An answer without isManager.
+    read.mockResolvedValue({ data: { canRead: true } } as never);
+    expect(await waveManagerOf(WAVE, PRINCIPAL, 4_200)).toBeNull();
+    // A failed read (503 unavailable, a height gone, any error).
+    read.mockRejectedValue(new Error('unavailable'));
+    expect(await waveManagerOf(WAVE, PRINCIPAL, 4_200)).toBeNull();
   });
 });
