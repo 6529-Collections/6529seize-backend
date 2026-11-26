@@ -28,6 +28,7 @@ import {
   PushNotificationOutboxDb
 } from '@/notifications/push-notification-outbox.db';
 import { deployerDropper, DeployerDropper } from '@/deployer-dropper';
+import { CommittedDropSignatures } from '@/api/device-signing/bot-device-signer';
 import { enqueueClaimBuild } from '@/waves/claims-builder-publisher';
 import { env } from '@/env';
 import { RequestContext } from '@/request.context';
@@ -324,6 +325,8 @@ export class CompetitionEventDispatcher {
         });
       const waves = this.announcementWaves();
       if (!waves.length) continue;
+      // Signed after the effect's transaction commits.
+      const signatures = new CommittedDropSignatures();
       const pendingIds = await this.repository.applyEffect(
         event.event_id,
         `announce:${winner.entry_id}`,
@@ -340,11 +343,13 @@ export class CompetitionEventDispatcher {
           const url = `https://6529.io/waves/${encodeURIComponent(event.wave_id)}/competitions/${encodeURIComponent(event.competition_id)}?entry=${encodeURIComponent(winner.entry_id)}`;
           return this.announcements.drop(
             { waves, message: `🏆 New Main Stage Winner!\n${url}` },
-            tx
+            tx,
+            signatures
           );
         },
         ctx
       );
+      await signatures.signCommitted(ctx);
       await this.push(pendingIds);
     }
   }

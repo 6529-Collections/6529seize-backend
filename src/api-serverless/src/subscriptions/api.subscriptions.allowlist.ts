@@ -685,116 +685,150 @@ async function journalPhaseReset(
   );
 }
 
-export async function resetAllowlist(contract: string, tokenId: number) {
-  const contractLower = contract.toLowerCase();
-  const mode = await subscriptionsIdentitySwitch.writeModeOrFail();
-  // After the switch both final tables reset together. In shadow the
-  // identity table is reset afterwards, on its own, so a failure there
-  // never undoes the legacy reset.
-  const finals =
-    mode === 'TRUTH'
-      ? [SUBSCRIPTIONS_NFTS_FINAL_TABLE, IDENTITY_SUBSCRIPTION_TABLES.final]
-      : [SUBSCRIPTIONS_NFTS_FINAL_TABLE];
-  await resetDistributionPreparation(
-    contract,
-    tokenId,
-    async ({ connection: wrappedConnection }) => {
-      const resetBefore =
-        mode === 'TRUTH'
-          ? await phaseResetBefore(contract, tokenId, { wrappedConnection })
-          : null;
-      for (const final of finals) {
+/**
+ * In shadow, resets the card's identity final rows on their own, after the
+ * legacy reset has committed: a failure here never undoes the legacy reset.
+ * It holds the card's Drop Forge preparation row, as the pulls and their
+ * shadow splits do, so a pull can't land between its read and its write.
+ */
+async function shadowResetIdentityRows(
+  contract: string,
+  tokenId: number
+): Promise<void> {
+  try {
+    await sqlExecutor.executeNativeQueriesInTransaction(
+      async (wrappedConnection) => {
         await sqlExecutor.execute(
-          `UPDATE ${final}
+          `SELECT id FROM ${DROP_FORGE_PREPARATIONS_TABLE} WHERE id = :id FOR UPDATE`,
+          { id: `${contract.toLowerCase()}:${tokenId}` },
+          { wrappedConnection }
+        );
+        const resetBefore = await phaseResetBefore(contract, tokenId, {
+          wrappedConnection
+        });
+        await sqlExecutor.execute(
+          `UPDATE ${IDENTITY_SUBSCRIPTION_TABLES.final}
             SET phase = NULL, phase_subscriptions = -1, phase_position = -1
             WHERE contract = :contract AND token_id = :tokenId`,
           { contract, tokenId },
           { wrappedConnection }
         );
-      }
-      if (resetBefore) {
         await journalPhaseReset(contract, tokenId, resetBefore, {
           wrappedConnection
         });
       }
+    );
+  } catch (error) {
+    shadowLogger.error('[SHADOW ALLOWLIST RESET FAILED]', error);
+  }
+}
 
-      await sqlExecutor.execute(
-        `DELETE FROM ${DISTRIBUTION_TABLE}
+/**
+ * Clears a card's distribution: the subscriptions' phase columns, its
+ * distribution rows (automatic airdrops stay), merkle roots and proofs, and
+ * normalized rows, on the caller's connection. Run it inside Drop Forge's
+ * reset, as resetAllowlist and the logged reset route do, so its checks
+ * come first.
+ *
+ * After the subscriptions switch both final tables are reset here, and the
+ * identity rows' reset is journaled, in the caller's transaction. In shadow
+ * the legacy table is reset here, and the identity table once the caller's
+ * transaction has committed (afterCommitAwaited), never after it rolls back.
+ */
+export async function resetAllowlistRows(
+  contract: string,
+  tokenId: number,
+  ctx: RequestContext
+): Promise<void> {
+  const wrappedConnection = ctx.connection;
+  if (!wrappedConnection) {
+    // The rows go together or not at all.
+    return sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+      resetAllowlistRows(contract, tokenId, { ...ctx, connection })
+    );
+  }
+  const contractLower = contract.toLowerCase();
+  const mode = await subscriptionsIdentitySwitch.writeModeOrFail();
+  const finals =
+    mode === 'TRUTH'
+      ? [SUBSCRIPTIONS_NFTS_FINAL_TABLE, IDENTITY_SUBSCRIPTION_TABLES.final]
+      : [SUBSCRIPTIONS_NFTS_FINAL_TABLE];
+  const resetBefore =
+    mode === 'TRUTH'
+      ? await phaseResetBefore(contract, tokenId, { wrappedConnection })
+      : null;
+  for (const final of finals) {
+    await sqlExecutor.execute(
+      `UPDATE ${final}
+        SET phase = NULL, phase_subscriptions = -1, phase_position = -1
+        WHERE contract = :contract AND token_id = :tokenId`,
+      { contract, tokenId },
+      { wrappedConnection }
+    );
+  }
+  if (resetBefore) {
+    await journalPhaseReset(contract, tokenId, resetBefore, {
+      wrappedConnection
+    });
+  }
+
+  await sqlExecutor.execute(
+    `DELETE FROM ${DISTRIBUTION_TABLE}
+       WHERE contract = :contract
+         AND card_id = :tokenId
+         AND phase NOT IN (:automaticAirdropPhases)`,
+    {
+      contract: contractLower,
+      tokenId,
+      automaticAirdropPhases: [...DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES]
+    },
+    { wrappedConnection }
+  );
+
+  await sqlExecutor.execute(
+    `DELETE FROM ${MINTING_MERKLE_PROOFS_TABLE}
+       WHERE merkle_root IN (
+         SELECT merkle_root
+         FROM ${MINTING_MERKLE_ROOTS_TABLE}
          WHERE contract = :contract
            AND card_id = :tokenId
-           AND phase NOT IN (:automaticAirdropPhases)`,
-        {
-          contract: contractLower,
-          tokenId,
-          automaticAirdropPhases: [...DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES]
-        },
-        { wrappedConnection }
-      );
-
-      await sqlExecutor.execute(
-        `DELETE FROM ${MINTING_MERKLE_PROOFS_TABLE}
-         WHERE merkle_root IN (
-           SELECT merkle_root
-           FROM ${MINTING_MERKLE_ROOTS_TABLE}
-           WHERE contract = :contract
-             AND card_id = :tokenId
-         )`,
-        {
-          contract: contractLower,
-          tokenId
-        },
-        { wrappedConnection }
-      );
-
-      await sqlExecutor.execute(
-        `DELETE FROM ${MINTING_MERKLE_ROOTS_TABLE}
-         WHERE contract = :contract
-           AND card_id = :tokenId`,
-        {
-          contract: contractLower,
-          tokenId
-        },
-        { wrappedConnection }
-      );
-
-      await sqlExecutor.execute(
-        `DELETE FROM ${DISTRIBUTION_NORMALIZED_TABLE} WHERE contract = :contract AND card_id = :tokenId`,
-        {
-          contract: contractLower,
-          tokenId
-        },
-        { wrappedConnection }
-      );
-    }
+       )`,
+    {
+      contract: contractLower,
+      tokenId
+    },
+    { wrappedConnection }
   );
+
+  await sqlExecutor.execute(
+    `DELETE FROM ${MINTING_MERKLE_ROOTS_TABLE}
+       WHERE contract = :contract
+         AND card_id = :tokenId`,
+    {
+      contract: contractLower,
+      tokenId
+    },
+    { wrappedConnection }
+  );
+
+  await sqlExecutor.execute(
+    `DELETE FROM ${DISTRIBUTION_NORMALIZED_TABLE} WHERE contract = :contract AND card_id = :tokenId`,
+    {
+      contract: contractLower,
+      tokenId
+    },
+    { wrappedConnection }
+  );
+
   if (mode === 'SHADOW') {
-    try {
-      await sqlExecutor.executeNativeQueriesInTransaction(
-        async (wrappedConnection) => {
-          // Held as the pulls and their shadow splits hold it, so a pull
-          // can't land between this reset's read and its write.
-          await sqlExecutor.execute(
-            `SELECT id FROM ${DROP_FORGE_PREPARATIONS_TABLE} WHERE id = :id FOR UPDATE`,
-            { id: `${contractLower}:${tokenId}` },
-            { wrappedConnection }
-          );
-          const resetBefore = await phaseResetBefore(contract, tokenId, {
-            wrappedConnection
-          });
-          await sqlExecutor.execute(
-            `UPDATE ${IDENTITY_SUBSCRIPTION_TABLES.final}
-              SET phase = NULL, phase_subscriptions = -1, phase_position = -1
-              WHERE contract = :contract AND token_id = :tokenId`,
-            { contract, tokenId },
-            { wrappedConnection }
-          );
-          await journalPhaseReset(contract, tokenId, resetBefore, {
-            wrappedConnection
-          });
-        }
-      );
-    } catch (error) {
-      shadowLogger.error('[SHADOW ALLOWLIST RESET FAILED]', error);
-    }
+    await afterCommitAwaited(wrappedConnection, () =>
+      shadowResetIdentityRows(contract, tokenId)
+    );
   }
+}
+
+export async function resetAllowlist(contract: string, tokenId: number) {
+  await resetDistributionPreparation(contract, tokenId, (ctx) =>
+    resetAllowlistRows(contract, tokenId, ctx)
+  );
 }
