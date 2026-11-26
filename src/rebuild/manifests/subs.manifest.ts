@@ -304,6 +304,10 @@ const SUBS_LEGACY_HISTORY_REBUILD: RebuildStep = {
     'subscriptions_logs'
   ],
   after: ['subs.identity'],
+  // The mint area's rebuilders read the legacy rows this step creates: the
+  // mint log sets the final rows' phases by id, and the mint stats read
+  // the redemptions.
+  before: ['mint.log', 'mint.stats'],
   sources: ['repo'],
   timeoutMinutes: 10
 };
