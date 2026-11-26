@@ -1,14 +1,16 @@
 import type { RequestContext } from '@/request.context';
 
-jest.mock('@/drop-forge/drop-forge.preparation.repository', () => ({
-  dropForgePreparationRepository: {
-    run: (
-      _contract: string,
-      _claim: number,
-      prepare: (results: object, ctx: RequestContext) => unknown,
-      ctx: RequestContext
-    ) => prepare({}, ctx)
-  }
+// The route runs its write inside Drop Forge's preparation transaction, with
+// the mint log; here only the write itself.
+jest.mock('@/mint-log/mint-log-preparation', () => ({
+  loggedPreparationWrite: (args: {
+    write: (ctx: RequestContext) => unknown;
+    ctx?: RequestContext;
+  }) => args.write(args.ctx ?? {}),
+  loggedPreparationReset: (args: {
+    reset: (ctx: RequestContext) => unknown;
+    ctx?: RequestContext;
+  }) => args.reset(args.ctx ?? {})
 }));
 
 const mockCacheStore = new Map<string, string>();
@@ -68,7 +70,7 @@ jest.mock('@/api/subscriptions/api.subscriptions.allowlist', () => ({
   getPublicSubscriptions: mockGetPublicSubscriptions,
   fetchPhaseName: jest.fn(),
   fetchPhaseResults: jest.fn(),
-  resetAllowlist: jest.fn(),
+  resetAllowlistRows: jest.fn(),
   splitAllowlistResults: jest.fn()
 }));
 

@@ -1,10 +1,15 @@
 import { INDEFINITE_COMPETITION_PAUSE_END } from './competition-phase';
+import {
+  chainIdOf,
+  nativeCompetitionId
+} from '@/waves-chain-mirror/waves-chain-mirror.ids';
 import { competitionEntryVisibleSql } from '@/competitions/competition-entry-visibility';
 import {
   anonymousCompetitionEntrySql,
   competitionAnonymityViewerId
 } from '@/competitions/competition-anonymity';
 import {
+  CHAIN_DECISIONS_TABLE,
   COMPETITION_CAPABILITIES_TABLE,
   COMPETITION_CONFIG_VERSIONS_TABLE,
   COMPETITION_DECISIONS_TABLE,
@@ -196,6 +201,46 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
         dbOptions(ctx)
       )
     );
+  }
+
+  /**
+   * The chain's id of an imported competition, from the chain index's
+   * row; null when the index has none.
+   */
+  public async findImportedChainDecisionId(
+    competitionId: string,
+    ctx: RequestContext
+  ): Promise<string | null> {
+    const row = await this.timed(ctx, 'findImportedChainDecisionId', () =>
+      this.db.oneOrNull<{ decision_id: string }>(
+        `select decision_id from ${CHAIN_DECISIONS_TABLE}
+          where legacy_id = :competitionId limit 1`,
+        { competitionId },
+        dbOptions(ctx)
+      )
+    );
+    return chainIdOf(row?.decision_id);
+  }
+
+  /**
+   * 6529.io's id of a competition named by its chain id: an imported
+   * decision's own id, else the id a decision made on the chain is stored
+   * under.
+   */
+  public async findCompetitionIdOfChainId(
+    chainId: string,
+    ctx: RequestContext
+  ): Promise<string> {
+    const decisionId = chainId.toLowerCase();
+    const row = await this.timed(ctx, 'findCompetitionIdOfChainId', () =>
+      this.db.oneOrNull<{ legacy_id: string | null }>(
+        `select legacy_id from ${CHAIN_DECISIONS_TABLE}
+          where decision_id = :decisionId`,
+        { decisionId },
+        dbOptions(ctx)
+      )
+    );
+    return row?.legacy_id ?? nativeCompetitionId(decisionId);
   }
 
   public async findCompetitionRecordById(

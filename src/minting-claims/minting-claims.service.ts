@@ -287,6 +287,20 @@ export class MintingClaimsService {
     return currentSeason;
   }
 
+  /**
+   * The claim id a build for this drop writes: the drop's existing claim, or
+   * the next one. Read under the mint log's lock, which every claim build
+   * holds, so it equals the id the build then takes.
+   */
+  async claimIdForDrop(dropId: string, ctx: RequestContext): Promise<number> {
+    const existing = await this.mintingClaimsDb.findClaimIdByDropId(
+      MEMES_CONTRACT,
+      dropId,
+      ctx.connection
+    );
+    return existing ?? this.resolveNextClaimId(ctx);
+  }
+
   private async resolveNextClaimId(ctx: RequestContext): Promise<number> {
     const maxClaimId = await this.mintingClaimsDb.getMaxClaimId(
       MEMES_CONTRACT,

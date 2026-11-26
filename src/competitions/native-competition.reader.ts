@@ -3,6 +3,7 @@ import {
   CompetitionType
 } from '@/entities/ICompetition';
 import { RequestContext } from '@/request.context';
+import { chainIdOf } from '@/waves-chain-mirror/waves-chain-mirror.ids';
 import {
   Competition,
   CompetitionDecision,
@@ -72,8 +73,12 @@ export class NativeCompetitionReader implements CompetitionReader {
       competition.type === CompetitionType.RANK &&
       competition.decisions.next_decision_time !== null &&
       competition.decisions.next_decision_time < now;
+    const chainId =
+      chainIdOf((raw as { chain_id?: unknown }).chain_id) ??
+      (await this.repository.findImportedChainDecisionId(record.id, this.ctx));
     return {
       ...competition,
+      chain_id: chainId,
       presentation,
       configuration_activated_at: configurationActivatedAt,
       ...(needsDecisionPauses

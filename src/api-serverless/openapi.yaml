@@ -29925,6 +29925,14 @@ components:
         id:
           type: string
           format: uuid
+        chain_id:
+          type: string
+          nullable: true
+          pattern: ^0x[0-9a-f]{64}$
+          description: >-
+            The decision's id on the 6529 chain (lowercase), for an imported
+            decision too. Null while 6529.io doesn't know it. Every route that
+            takes a competition id also takes this id.
         wave_id:
           type: string
         type:
@@ -45663,6 +45671,14 @@ components:
         id:
           description: The ID of the wave
           type: string
+        chain_id:
+          type: string
+          nullable: true
+          pattern: ^0x[0-9a-f]{64}$
+          description: >-
+            The wave's id on the 6529 chain (lowercase), for an imported wave
+            too; a wave made on the chain has it as its id. Null while 6529.io
+            doesn't know it.
         serial_no:
           description: Sequence number of the wave in Seize
           type: number

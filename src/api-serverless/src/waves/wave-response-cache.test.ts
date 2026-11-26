@@ -147,6 +147,10 @@ describe('viewer-state schema drift', () => {
         'id',
         'serial_no',
         'author',
+        // Per wave, not per viewer: the wave's own id when it is a chain id,
+        // else its chain id looked up by wave id
+        // (wavesApiDb.findChainIdsOfImportedWaves), the same for every viewer.
+        'chain_id',
         'name',
         'picture',
         'created_at',
