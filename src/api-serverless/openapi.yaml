@@ -19246,6 +19246,59 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiAvailableRatingCredit"
+  /rememes/add:
+    post:
+      tags:
+        - ReMemes
+      summary: Add ReMemes
+      description: >-
+        Registers NFTs from one Ethereum mainnet contract as ReMemes. The
+        signing wallet must be the contract deployer or meet the configured TDH
+        minimum. A wallet signature authorizes the request without a bearer
+        token. Password-protected deployments also require `x-6529-auth`. A
+        verified structured signature consumes its nonce before the NFT and
+        eligibility checks. Use a fresh signature for each attempt.
+      operationId: addRememe
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiAddRememeRequest"
+      responses:
+        "201":
+          description: ReMemes added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiAddRememeResponse"
+        "400":
+          description: >-
+            Request, signature, contract, or eligibility errors have a top-level
+            error. Per-token validation failures have contract and NFT results,
+            including an error for each affected token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiAddRememeBadRequest"
+              examples:
+                invalidSignature:
+                  value:
+                    valid: false
+                    error: Invalid signature
+                tokenValidationFailed:
+                  value:
+                    valid: false
+                    contract:
+                      address: "0x1000000000000000000000000000000000000000"
+                    nfts:
+                      - tokenId: "123"
+                        raw:
+                          error: Rememe already exists
+                      - metadataError: >-
+                          Error fetching metadata for token_id 124: metadata
+                          unavailable
   /subscriptions/consolidation/coverage/{consolidation_key}:
     get:
       tags:
@@ -24114,6 +24167,131 @@ components:
           type: string
         device_signature:
           $ref: "#/components/schemas/ApiDeviceSignature"
+    ApiAddRememeBadRequest:
+      oneOf:
+        - $ref: "#/components/schemas/ApiAddRememeError"
+        - $ref: "#/components/schemas/ApiAddRememeTokenErrors"
+    ApiAddRememeError:
+      type: object
+      additionalProperties: false
+      required:
+        - valid
+        - error
+      properties:
+        valid:
+          type: boolean
+          enum:
+            - false
+        error:
+          type: string
+    ApiAddRememeRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - address
+        - signature
+        - rememe
+      properties:
+        address:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Ethereum address of the signing wallet.
+        signature:
+          type: string
+          minLength: 1
+          maxLength: 10000
+          description: >-
+            Ethereum personal-sign signature over the exact text of
+            `signature_message`. Structured messages support externally owned
+            accounts and EIP-1271 contract wallets.
+        signature_message:
+          type: string
+          nullable: true
+          minLength: 1
+          maxLength: 10000
+          description: |-
+            Version 2 action message. Fill in the placeholders and join these
+            lines with LF before signing.
+
+            ```text
+            6529 Action
+            Version: 2
+            Audience: <API host, e.g. api.6529.io>
+            Domain: <client host>
+            Wallet: <address>
+            Chain ID: 1
+            Issued At: <ISO 8601 UTC timestamp>
+            Expiration Time: <ISO 8601 UTC timestamp>
+            Nonce: <fresh UUID>
+            Action: add_rememe
+            Payload Hash: <64 lowercase hex characters>
+            Purpose: Sign this message to add a 6529 ReMeme.
+            ```
+
+            Compute the payload hash from the `rememe` object alone. Use
+            compact JSON with recursively sorted object keys and the original
+            array order. Hash the UTF-8 bytes with SHA-256 and encode the digest
+            as lowercase hex. Send `references` as JSON numbers so the signed
+            values match the validated payload.
+
+            Use a five-minute expiration as the web frontend does. The server
+            accepts a lifetime of up to ten minutes and checks expiry and
+            single use.
+
+            If strict structured signatures are disabled, an externally owned
+            account may omit this field or send null and personal-sign
+            `JSON.stringify(rememe)` with the same key order as the request.
+        rememe:
+          $ref: "#/components/schemas/ApiRememePayload"
+    ApiAddRememeResponse:
+      type: object
+      required:
+        - valid
+        - address
+        - references
+        - contract
+        - nfts
+      properties:
+        valid:
+          type: boolean
+          enum:
+            - true
+        address:
+          type: string
+          description: Wallet that submitted the ReMemes.
+        references:
+          type: array
+          items:
+            type: number
+        contract:
+          $ref: "#/components/schemas/ApiRememeContractMetadata"
+        nfts:
+          type: array
+          description: Alchemy NFT metadata in request order.
+          items:
+            $ref: "#/components/schemas/ApiRememeNftMetadata"
+    ApiAddRememeTokenErrors:
+      type: object
+      additionalProperties: false
+      required:
+        - valid
+        - contract
+        - nfts
+      properties:
+        valid:
+          type: boolean
+          enum:
+            - false
+        contract:
+          $ref: "#/components/schemas/ApiRememeContractMetadata"
+        nfts:
+          type: array
+          description: Results in request order, with at least one token error.
+          items:
+            oneOf:
+              - $ref: "#/components/schemas/ApiRememeNftLookupError"
+              - $ref: "#/components/schemas/ApiRememeNftMetadata"
     ApiAggregatedActivity:
       type: object
       required:
@@ -43816,6 +43994,71 @@ components:
         platform:
           type: string
           description: Optional platform (ios, android, web)
+    ApiRememeContractMetadata:
+      type: object
+      description: Contract metadata from Alchemy. Additional fields may vary.
+      additionalProperties: true
+      required:
+        - address
+      properties:
+        address:
+          type: string
+        contractDeployer:
+          type: string
+    ApiRememeNftLookupError:
+      type: object
+      additionalProperties: false
+      required:
+        - metadataError
+      properties:
+        metadataError:
+          type: string
+          description: The token lookup failed before returning metadata.
+    ApiRememeNftMetadata:
+      type: object
+      description: NFT metadata from Alchemy. Additional fields may vary.
+      additionalProperties: true
+      required:
+        - tokenId
+      properties:
+        tokenId:
+          type: string
+        raw:
+          type: object
+          additionalProperties: true
+          properties:
+            error:
+              type: string
+              description: >-
+                A provider metadata error or Rememe already exists for a
+                previously registered token.
+    ApiRememePayload:
+      type: object
+      additionalProperties: false
+      required:
+        - contract
+        - token_ids
+        - references
+      properties:
+        contract:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Ethereum mainnet NFT contract address.
+        token_ids:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: string
+            minLength: 1
+            maxLength: 100
+        references:
+          type: array
+          description: Referenced Meme IDs. The array may be empty.
+          maxItems: 1000
+          items:
+            type: number
     ApiRenameDeviceRequest:
       type: object
       required:
