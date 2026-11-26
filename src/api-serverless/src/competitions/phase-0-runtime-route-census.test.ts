@@ -25,6 +25,7 @@ const RETIRED_NEXTGEN_GET_ROUTES = [
 ];
 
 const RETIRED_GET_ROUTES = new Set([
+  '/api/delegations/minting/:wallet',
   '/api/groups_im_eligible_for',
   ...RETIRED_NEXTGEN_GET_ROUTES,
   '/deploy/release-bus/controls',
@@ -180,7 +181,7 @@ describe('Phase 0 permanent mounted GET route census', () => {
     expect(manifest.baseline.counts.runtime_route_shapes).toBe(288);
     expect(manifest.baseline.counts.openapi_get_operations).toBe(183);
     expect(manifestPaths.size).toBe(288);
-    expect(RETIRED_GET_ROUTES.size).toBe(12);
+    expect(RETIRED_GET_ROUTES.size).toBe(13);
     expect(
       Array.from(RETIRED_GET_ROUTES).filter(
         (route) => !manifestPaths.has(route)
@@ -188,7 +189,7 @@ describe('Phase 0 permanent mounted GET route census', () => {
     ).toEqual([]);
     expect(
       manifest.routes.filter((route) => !RETIRED_GET_ROUTES.has(route.path))
-    ).toHaveLength(276);
+    ).toHaveLength(275);
   });
 
   it('excludes all four retired NextGen paths from the NextGen router', () => {
