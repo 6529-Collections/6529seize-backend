@@ -31,6 +31,9 @@ const logger = Logger.get('SUBSCRIPTIONS_LEGACY_COPY');
  * log's legacy part, the owners balances loop's quantity sync and the
  * identity redemption writer's comparison with the legacy side), so they
  * are rebuilt from the identity tables the way the dual write fills them.
+ * The identity top-up writer reads the legacy top-up rows too; those come
+ * back from Ethereum (subs.top-ups), not from this copy.
+ *
  * The copy is exact only where a legacy key and an identity are one to
  * one: a legacy key the opening merged into another identity, or one whose
  * wallets now span identities, has no row of its own here, and the rows'
