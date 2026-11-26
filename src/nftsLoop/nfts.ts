@@ -61,6 +61,12 @@ import { withArweaveFallback } from '@/arweave-gateway-fallback';
 import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-media';
 import { normalizeMetadataUri } from '@/nft-links/lib/uri';
 import axios from 'axios';
+import { appFeatures } from '@/app-features';
+import { isRebuildingEthereumIndexes } from '@/holdings/rebuild-mode';
+// The Memes edition-size floors as 6529.io holds them, token id -> floor.
+// A migration set the floors of Memes minted before 2 Jul 2026 once; nothing
+// refetches them, so a rebuild from empty reads them from this file.
+import MEMES_EDITION_SIZE_FLOORS from './memes-edition-size-floors.json';
 import { ethers } from 'ethers';
 import { EntityManager, In, MoreThan } from 'typeorm';
 
@@ -381,7 +387,9 @@ async function runDiscoverOrRefreshMode({
 
   logInfo(`🔄 Refreshing existing ${EntityClass.name}s`);
   await refreshExistingNFTs(nftMap, provider, health);
-  await populateMintStatsForEligibleNFTs(nftMap);
+  // Mint stats belong to the minting tables, which rebuild on their own.
+  if (!isRebuildingEthereumIndexes())
+    await populateMintStatsForEligibleNFTs(nftMap);
 }
 
 async function saveAndPostProcessNfts({
@@ -437,7 +445,7 @@ async function saveAndPostProcessNfts({
   return true;
 }
 
-function buildS3UploaderJobsForMode({
+export function buildS3UploaderJobsForMode({
   mode,
   newlyDiscoveredNfts,
   nftMap,
@@ -448,7 +456,7 @@ function buildS3UploaderJobsForMode({
   nftMap: Map<string, NftProcessingEntry>;
   collectionType: S3UploaderCollectionType;
 }): S3UploaderJob[] {
-  if (!isS3UploaderEnabledForEnvironment()) {
+  if (isRebuildingEthereumIndexes() || !isS3UploaderEnabledForEnvironment()) {
     return [];
   }
 
@@ -512,7 +520,7 @@ async function persistS3UploaderOutboxJobs(
   );
 }
 
-async function maybeAnnounceNewDiscoveries({
+export async function maybeAnnounceNewDiscoveries({
   mode,
   EntityClass,
   newlyDiscoveredNfts
@@ -521,7 +529,11 @@ async function maybeAnnounceNewDiscoveries({
   EntityClass: typeof NFT | typeof LabNFT;
   newlyDiscoveredNfts: Array<NFT | LabNFT>;
 }) {
-  if (mode !== NFT_MODE.DISCOVER || EntityClass !== NFT) {
+  if (
+    isRebuildingEthereumIndexes() ||
+    mode !== NFT_MODE.DISCOVER ||
+    EntityClass !== NFT
+  ) {
     return;
   }
 
@@ -1137,7 +1149,13 @@ async function updateEditionSizeFloorsForNfts(
 
 export function resolveNftEditionSizeFloor(
   nft: Pick<NFT, 'contract' | 'id' | 'supply' | 'edition_size_floor'>,
-  memeEditionSizeFloors: Record<number, number>
+  memeEditionSizeFloors: Record<number, number>,
+  recordedFloors: Record<
+    string,
+    number
+  > = appFeatures.isEthIndexRebuildFixesEnabled()
+    ? MEMES_EDITION_SIZE_FLOORS
+    : {}
 ): number {
   if (!equalIgnoreCase(nft.contract, MEMES_CONTRACT)) {
     return nft.supply;
@@ -1147,7 +1165,9 @@ export function resolveNftEditionSizeFloor(
     nft.edition_size_floor && nft.edition_size_floor > 0
       ? nft.edition_size_floor
       : nft.supply;
-  return memeEditionSizeFloors[nft.id] ?? existingFloor;
+  return (
+    memeEditionSizeFloors[nft.id] ?? recordedFloors[nft.id] ?? existingFloor
+  );
 }
 
 function updateHodlRatesForNfts(
@@ -1319,7 +1339,8 @@ export async function processNFTs(mode: NFT_MODE, health?: NftsLoopHealth) {
       false,
       health
     );
-    await publishPendingS3UploaderOutboxJobs(mode);
+    if (!isRebuildingEthereumIndexes())
+      await publishPendingS3UploaderOutboxJobs(mode);
     if (mode === NFT_MODE.REFRESH) {
       await syncArtists();
     }

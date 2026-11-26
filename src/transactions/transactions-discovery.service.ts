@@ -1,3 +1,4 @@
+import { isRebuildingEthereumIndexes } from '@/holdings/rebuild-mode';
 import {
   transactionsDb,
   TransactionsDiscoveryDb
@@ -68,12 +69,15 @@ export class TransactionsDiscoveryService {
             transactions.length
           } transactions (blocks ${minBlock}-${maxBlock}) in ${start.diffFromNow()}`
         );
-        this.logger.info(`Registering new addresses for ENS`);
-        const ensStart = Time.now();
-        await discoverEns(now);
-        this.logger.info(
-          `New addresses registered for ENS in ${ensStart.diffFromNow()}`
-        );
+        // ENS names are a provider cache, refilled on their own.
+        if (!isRebuildingEthereumIndexes()) {
+          this.logger.info(`Registering new addresses for ENS`);
+          const ensStart = Time.now();
+          await discoverEns(now);
+          this.logger.info(
+            `New addresses registered for ENS in ${ensStart.diffFromNow()}`
+          );
+        }
       }
     }
     this.logger.info(

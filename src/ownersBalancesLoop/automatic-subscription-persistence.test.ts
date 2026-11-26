@@ -11,6 +11,7 @@ import {
   ConsolidatedOwnerBalancesMemes
 } from '@/entities/IOwnerBalances';
 import { persistConsolidatedOwnerBalances } from './db.owners_balances';
+import { whileRebuildingEthereumIndexes } from '@/holdings/rebuild-mode';
 
 jest.mock('@/db', () => ({ getDataSource: jest.fn() }));
 jest.mock('@/orm_helpers', () => ({
@@ -224,4 +225,19 @@ it('keeps incremental coverage refresh scoped to affected balance keys', async (
   await persistConsolidatedOwnerBalances([], [], new Set(['manual']), false);
   expect(invalidate).toHaveBeenCalledWith(['manual', 'auto']);
   expect(markCoverage).toHaveBeenCalledWith(['manual'], 'ELIGIBILITY_CHANGED');
+});
+
+it('leaves subscriptions alone during a rebuild', async () => {
+  for (const reset of [true, false]) {
+    await whileRebuildingEthereumIndexes(() =>
+      persistConsolidatedOwnerBalances([], [], new Set(['wallet']), reset)
+    );
+  }
+  expect(events).toEqual(['commit', 'commit']);
+  expect(synchronize).not.toHaveBeenCalled();
+  expect(
+    synchronizeAutomaticSubscriptionQuantitiesAfterReset
+  ).not.toHaveBeenCalled();
+  expect(invalidate).not.toHaveBeenCalled();
+  expect(markCoverage).not.toHaveBeenCalled();
 });

@@ -44,6 +44,7 @@ import { DropEntity } from '@/entities/IDrop';
 import { applyWaveScoreInputIndexSchema } from './wave-score-input-index-schema';
 import { widenGlobalTdhHistoryBeforeSchemaSync } from './global-tdh-history-schema';
 import { widenConsolidationKeysBeforeSchemaSync } from './consolidation-key-schema';
+import { createMissingUnsyncedHoldingsTables } from './unsynced-holdings-tables-schema';
 import { E2eeBlobChunkEntity, E2eeBlobEntity } from '@/entities/IE2ee';
 import {
   E2EE_BLOB_MIGRATION_SCOPE,
@@ -346,6 +347,7 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
         await synchronizeSchemaBounded(getDataSource(), {
           acknowledgedDestructivePlanSha256
         });
+        await createMissingUnsyncedHoldingsTables();
         await applyWaveScoreInputIndexSchema();
       }
       if (

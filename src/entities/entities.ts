@@ -137,6 +137,8 @@ export {
   NextGenTokenTrait
 } from './INextGen';
 export { LabExtendedData, LabNFT, MemesExtendedData, NFT } from './INFT';
+export { ArtistEntity } from './IArtist';
+export { MemeLabRoyaltyEntity } from './IMemeLabRoyalty';
 export { NFTHistory, NFTHistoryBlock, NFTHistoryClaim } from './INFTHistory';
 export { NFTHistoryEventEntity } from './INFTHistoryEvent';
 export {
