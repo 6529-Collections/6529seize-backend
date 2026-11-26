@@ -238,6 +238,24 @@ function overdueNote(dated: { overdue: boolean }): string {
   return dated.overdue ? ' (overdue: its last day has passed)' : '';
 }
 
+/**
+ * Under a table that differs: each changed row's key with the names of the
+ * columns that changed (never their values), and how many more there are.
+ */
+function changedColumnLines(diff: TableDiff): string {
+  const rows = diff.changedColumns ?? [];
+  if (!rows.length) return '';
+  const more = (diff.changedRows ?? rows.length) - rows.length;
+  return [
+    ...rows.map(
+      (r) => `  - ${r.key}: ${r.columns.join(', ') || 'columns not known'}`
+    ),
+    ...(more > 0 ? [`  - and ${more} more changed rows, not listed`] : [])
+  ]
+    .map((line) => `\n${line}`)
+    .join('');
+}
+
 function section(title: string, lines: string[]): string[] {
   return lines.length ? ['', `## ${title}`, '', ...lines] : [];
 }
@@ -352,7 +370,7 @@ export function renderMarkdown(report: RunReport): string {
         .filter((d) => !d.same)
         .map(
           (d) =>
-            `- ${d.table}: ${d.rowsBefore} rows before, ${d.rowsAfter} after; missing ${d.missing.join(' ') || 'none'}; extra ${d.extra.join(' ') || 'none'}; changed ${d.changed.join(' ') || 'none'}`
+            `- ${d.table}: ${d.rowsBefore} rows before, ${d.rowsAfter} after; missing ${d.missing.join(' ') || 'none'}; extra ${d.extra.join(' ') || 'none'}; changed ${d.changed.join(' ') || 'none'}${changedColumnLines(d)}`
         )
     ),
     ...section(

@@ -1380,7 +1380,8 @@ class RebuildRun {
           rows,
           key,
           new Set(this.volatileOf(table)),
-          this.scopedOf(table)
+          this.scopedOf(table),
+          false
         ).keys;
       for (const [step, plan] of plans) {
         if (!rebuilt) {
@@ -1555,7 +1556,7 @@ class RebuildRun {
         undefined,
         scoped.map((c) => c.where)
       );
-      const { keys } = snapshotRows(table, rows, key, volatile, scoped);
+      const { keys } = snapshotRows(table, rows, key, volatile, scoped, false);
       rebuilt = new Map(keys.map((k, i) => [k, rows[i]]));
     }
     const { excused, counts } = columnPlanDecision({

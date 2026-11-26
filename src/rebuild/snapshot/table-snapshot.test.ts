@@ -143,6 +143,9 @@ describe('table snapshots', () => {
         read(wave(163, '0xdef', 'c'), true)
       );
       expect(diffSnapshots(before, imported).changed).toEqual(['["w-161"]']);
+      expect(diffSnapshots(before, imported).changedColumns).toEqual([
+        { key: '["w-161"]', columns: ['serial_no'] }
+      ]);
       // A row the condition matches on one side only is compared there.
       const oneSide = snap(
         read(wave(161, 'w-161', 'a'), false),
@@ -150,6 +153,11 @@ describe('table snapshots', () => {
         read(wave(5001, '0xdef', 'c'), true)
       );
       expect(diffSnapshots(before, oneSide).changed).toEqual(['["0xabc"]']);
+      // There the scoped column is the change: it is named.
+      expect(diffSnapshots(before, oneSide).changedColumns).toEqual([
+        { key: '["0xabc"]', columns: ['serial_no'] }
+      ]);
+      expect(diffSnapshots(before, renumbered).changedColumns).toEqual([]);
       expect(scopeCounts(before, oneSide)).toEqual([
         { column: 'serial_no', before: 2, after: 1, oneSide: 1 }
       ]);
@@ -206,9 +214,51 @@ describe('table snapshots', () => {
       plannedColumns: [],
       plannedColumnRows: 0,
       extra: ['[4]'],
-      changed: ['[3]']
+      changed: ['[3]'],
+      changedRows: 1,
+      changedColumns: [{ key: '[3]', columns: ['v'] }]
     });
     expect(diffSnapshots(before, before).same).toBe(true);
+  });
+
+  it('names the columns each changed row differs in, never their values, up to the limit', () => {
+    const at = (n: number, a: string, b: string, when: number): Row => ({
+      id: n,
+      a,
+      b,
+      updated_at: when
+    });
+    const volatile = new Set(['updated_at']);
+    const before = snapshotRows(
+      't',
+      [at(1, 'x', 'y', 1), at(2, 'x', 'y', 1), at(3, 'x', 'y', 1)],
+      ['id'],
+      volatile
+    );
+    const after = snapshotRows(
+      't',
+      [at(1, 'X', 'y', 2), at(2, 'X', 'Y', 2), at(3, 'x', 'y', 2)],
+      ['id'],
+      volatile
+    );
+    const diff = diffSnapshots(before, after);
+    expect(diff.changedRows).toBe(2);
+    expect(diff.changedColumns).toEqual([
+      { key: '[1]', columns: ['a'] },
+      { key: '[2]', columns: ['a', 'b'] }
+    ]);
+    // Names only: no value of either side is anywhere in the diff.
+    expect(JSON.stringify(diff)).not.toMatch(/"X"|"Y"|"x"|"y"/);
+    const capped = diffSnapshots(before, after, 1);
+    expect(capped.changedRows).toBe(2);
+    expect(capped.changedColumns).toEqual([{ key: '[1]', columns: ['a'] }]);
+    // A table without a key shows a changed row as missing and extra.
+    const unkeyed = diffSnapshots(
+      snapshotRows('t', [{ a: 1 }], []),
+      snapshotRows('t', [{ a: 2 }], [])
+    );
+    expect(unkeyed).toMatchObject({ changedRows: 0, changedColumns: [] });
+    expect(unkeyed.missing).toHaveLength(1);
   });
 
   describe('planned rows', () => {
@@ -235,7 +285,9 @@ describe('table snapshots', () => {
         plannedColumns: [],
         plannedColumnRows: 0,
         extra: [],
-        changed: []
+        changed: [],
+        changedRows: 0,
+        changedColumns: []
       });
     });
 
@@ -271,6 +323,7 @@ describe('table snapshots', () => {
       ).toMatchObject({
         same: false,
         changed: ['[2]'],
+        changedColumns: [{ key: '[2]', columns: ['v'] }],
         plannedColumns: ['[3]'],
         plannedColumnRows: 1
       });

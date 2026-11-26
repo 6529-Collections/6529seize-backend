@@ -221,6 +221,77 @@ describe('rebuild report', () => {
     expect(renderMarkdown(report())).not.toContain('second try');
   });
 
+  it('names the columns each changed row differs in, and how many rows are not listed', () => {
+    const base = report();
+    const differing = report({
+      tables: {
+        ...base.tables,
+        diffs: [
+          {
+            table: 'team',
+            rowsBefore: 3,
+            rowsAfter: 3,
+            same: false,
+            missing: [],
+            planned: [],
+            plannedRows: 0,
+            plannedColumns: [],
+            plannedColumnRows: 0,
+            extra: [],
+            changed: ['["1"]', '["2"]'],
+            changedRows: 5,
+            changedColumns: [
+              { key: '["1"]', columns: ['status'] },
+              { key: '["2"]', columns: ['attempts', 'status'] }
+            ]
+          }
+        ]
+      }
+    });
+    expect(renderMarkdown(differing)).toContain(
+      [
+        '- team: 3 rows before, 3 after; missing none; extra none; changed ["1"] ["2"]',
+        '  - ["1"]: status',
+        '  - ["2"]: attempts, status',
+        '  - and 3 more changed rows, not listed'
+      ].join('\n')
+    );
+    // Every changed row listed: no count of more.
+    const all = renderMarkdown(
+      report({
+        tables: {
+          ...base.tables,
+          diffs: [
+            {
+              ...differing.tables.diffs[0],
+              changed: ['["1"]'],
+              changedRows: 1,
+              changedColumns: [{ key: '["1"]', columns: ['status'] }]
+            }
+          ]
+        }
+      })
+    );
+    expect(all).toContain('changed ["1"]\n  - ["1"]: status\n');
+    expect(all).not.toContain('more changed rows');
+    const unknown = renderMarkdown(
+      report({
+        tables: {
+          ...base.tables,
+          diffs: [
+            {
+              ...differing.tables.diffs[0],
+              changed: ['["1"]'],
+              changedRows: 1,
+              changedColumns: [{ key: '["1"]', columns: [] }]
+            }
+          ]
+        }
+      })
+    );
+    expect(unknown).toContain('  - ["1"]: columns not known');
+  });
+
   it('counts and lists owned columns left out, with why', () => {
     const base = report();
     const leftOut = report({
