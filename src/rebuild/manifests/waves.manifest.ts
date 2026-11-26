@@ -1,28 +1,4 @@
-import { AreaManifest, TableEntry } from '@/rebuild/manifest.types';
-
-/** The chain index's tables and its state, and its event log. */
-export const WAVES_CHAIN_INDEX_TABLES = [
-  'chain_waves',
-  'chain_groups',
-  'chain_wave_roles',
-  'chain_polls',
-  'chain_wave_rep',
-  'chain_decisions',
-  'chain_entries',
-  'chain_votes',
-  'chain_results',
-  'chain_decision_leaderboards',
-  'chain_leaderboard_rows',
-  'chain_events',
-  // The index's cursor and full-read state, rebuilt with its rows: kept,
-  // it would tell the index the emptied tables are up to date.
-  'waves_chain_index_state'
-] as const;
-
-const CHAIN_INDEX_TABLE_ENTRIES: Record<string, TableEntry> =
-  Object.fromEntries(
-    WAVES_CHAIN_INDEX_TABLES.map((table) => [table, { class: 'INDEX' }])
-  );
+import { AreaManifest } from '@/rebuild/manifest.types';
 
 /**
  * Waves: waves, drops, reactions, mentions, polls, curations, decisions,
@@ -32,6 +8,24 @@ export const wavesManifest: AreaManifest = {
   area: 'waves',
   flags: {},
   tables: {
+    // Materialized answers from the chain API and its change feed.
+    chain_waves: { class: 'INDEX' },
+    chain_groups: { class: 'INDEX' },
+    chain_wave_roles: { class: 'INDEX' },
+    chain_decisions: { class: 'INDEX' },
+    chain_entries: { class: 'INDEX' },
+    chain_votes: { class: 'INDEX' },
+    chain_results: { class: 'INDEX' },
+    chain_polls: { class: 'INDEX' },
+    chain_wave_rep: { class: 'INDEX' },
+    chain_decision_leaderboards: { class: 'INDEX' },
+    chain_leaderboard_rows: { class: 'INDEX' },
+    // Its cursors and completion marker must be rebuilt with the indexed rows.
+    waves_chain_index_state: { class: 'INDEX' },
+    wave_relay_cursors: {
+      class: 'EPHEMERAL',
+      why: 'Per-relay publication cursors and delivery retry diagnostics.'
+    },
     official_waves: { class: 'INDEX' },
     profile_waves: { class: 'INDEX' },
     waves: { class: 'INDEX' },
@@ -291,27 +285,17 @@ export const wavesManifest: AreaManifest = {
     content_moderation_roles: { class: 'INDEX' },
     art_curation_token_watch_drops: { class: 'INDEX' },
     art_curation_token_watches: { class: 'INDEX' },
-    // 6529.io's index of the chain's waves and its event log
-    // (src/waves-chain-index), rebuilt from the gateway; its rebuilder
-    // comes later.
-    ...CHAIN_INDEX_TABLE_ENTRIES,
-    // The event log is planned until its code is in this tree.
+    // The tables of the waves changes still to come, each planned until its
+    // code is in this tree. The chain index's event log and its claim-build
+    // outbox (src/waves-chain-index):
     chain_events: { class: 'INDEX', origin: 'planned' },
     chain_claim_builds: {
       class: 'EPHEMERAL',
       origin: 'planned',
       why: 'Outbox of Main Stage claim-build messages: a kept row stops a second send. The rebuild queues none.'
     },
-    // Relay publishing and the drop index (src/wave-relay-publish,
-    // src/wave-drop-index); the drop index's tables are planned until its
-    // code is in this tree.
-    wave_relay_cursors: {
-      class: 'EPHEMERAL',
-      why: 'Relay publishing cursor: the relays already hold what it passed, and a lost cursor only publishes copies they drop.'
-    },
-    // received_at is compared: the rebuild stores when the relays first
-    // held each event (their receipts), as the seed does, so it must come
-    // back the same.
+    // The drop index (src/wave-drop-index). wave_relay_events' received_at
+    // is compared: the relays' receipts give when they first held each event.
     wave_relay_events: {
       class: 'INDEX',
       origin: 'planned',
@@ -339,8 +323,7 @@ export const wavesManifest: AreaManifest = {
         { column: 'updated_at', reason: 'When the cursor last moved.' }
       ]
     },
-    // The settlement sender (src/waves-settlement); planned until its code
-    // is in this tree.
+    // The settlement sender (src/waves-settlement).
     waves_settlement_sends: {
       class: 'EPHEMERAL',
       origin: 'planned',
@@ -352,10 +335,9 @@ export const wavesManifest: AreaManifest = {
     waves_chain_mirror_events: { class: 'INDEX', origin: 'planned' },
     chain_docs: { class: 'INDEX', origin: 'planned' },
     // A rebuild must never release a hold (entries', and a chain-made wave's
-    // description's, keyed by its description drop id), and a final run
-    // fails while these holds have no source outside MySQL. When each hold
-    // and release is a signed record keyed by its id (newest wins), the
-    // table becomes INDEX with a rebuilder.
+    // description's, keyed by its description drop id). When each hold and
+    // release is a signed record keyed by its id (newest wins), the table
+    // becomes INDEX with a rebuilder.
     chain_entry_holds: {
       class: 'EXEMPT',
       why: "6529.io's moderation holds on chain entries; kept as they are until the moderation service records each hold and release as a signed record, as content_moderation_items' decisions already are.",
