@@ -312,7 +312,7 @@ export class MintLogRecorder {
       const current = spec.readCurrent
         ? new Set<string>(MINT_KIND_PARTS[spec.kind])
         : undefined;
-      const before = await this.reader.capture(card, connection, current);
+      const before = await this.reader.capture(card, connection, { current });
       return { head, captured: { card, before, inputs, current } };
     });
     const value = await run();
@@ -576,11 +576,9 @@ export class MintLogRecorder {
     head: MintLogHead,
     connection: ConnectionWrapper<any>
   ): Promise<MintLogEntryBody | null> {
-    const after = await this.reader.capture(
-      captured.card,
-      connection,
-      captured.current
-    );
+    const after = await this.reader.capture(captured.card, connection, {
+      current: captured.current
+    });
     const effects = diffCardState(captured.before, after);
     if (!needsEntry(spec, outcome, effects)) return null;
     const replay = this.features.isMintLogReplayCheckEnabled()
@@ -708,20 +706,16 @@ export class MintLogRecorder {
       const mismatches: string[] = [];
       const undo = diffCardState(after, captured.before);
       await this.writer.apply(captured.card, undo, connection);
-      const undone = await this.reader.capture(
-        captured.card,
-        connection,
-        captured.current
-      );
+      const undone = await this.reader.capture(captured.card, connection, {
+        current: captured.current
+      });
       mismatches.push(
         ...differingParts(undone, captured.before).map((part) => `undo:${part}`)
       );
       await this.writer.apply(captured.card, effects, connection);
-      const redone = await this.reader.capture(
-        captured.card,
-        connection,
-        captured.current
-      );
+      const redone = await this.reader.capture(captured.card, connection, {
+        current: captured.current
+      });
       mismatches.push(
         ...differingParts(redone, after).map((part) => `redo:${part}`)
       );

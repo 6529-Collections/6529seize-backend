@@ -608,8 +608,8 @@ describe('MintLogRecorder.writeWithin', () => {
       await log.writeWithin(spec, connection, async () => {
         fake.addRow(1);
       });
-      return capture.mock.calls.map(([, , current]) =>
-        current ? Array.from(current) : null
+      return capture.mock.calls.map(([, , options]) =>
+        options?.current ? Array.from(options.current) : null
       );
     };
 

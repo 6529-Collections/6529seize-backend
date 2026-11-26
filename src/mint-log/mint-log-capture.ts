@@ -26,6 +26,12 @@ import {
   MintRowPart
 } from './mint-log.types';
 
+/** What one logged write already knows when it captures a card. */
+export interface MintCaptureOptions {
+  /** Parts read with FOR UPDATE: the write's own parts (readCurrent). */
+  readonly current?: ReadonlySet<string>;
+}
+
 const NO_PARTS: ReadonlySet<string> = new Set();
 
 /** Reads everything the minting tables hold for one card, in logged form. */
@@ -36,18 +42,19 @@ export class MintStateReader {
   ) {}
 
   /**
-   * The card's rows in every logged part. Parts in `current` are read with
-   * FOR UPDATE: the latest committed rows, which a transaction's DELETEs and
-   * UPDATEs act on even when its snapshot is older (MintWriteSpec.readCurrent).
-   * Exclusive from the start, so the write that follows needs no upgrade: a
-   * shared lock upgraded to an exclusive one deadlocks with any writer that
-   * queued in between.
+   * The card's rows in every logged part. Parts in `options.current` are read
+   * with FOR UPDATE: the latest committed rows, which a transaction's DELETEs
+   * and UPDATEs act on even when its snapshot is older
+   * (MintWriteSpec.readCurrent). Exclusive from the start, so the write that
+   * follows needs no upgrade: a shared lock upgraded to an exclusive one
+   * deadlocks with any writer that queued in between.
    */
   async capture(
     card: MintCardRef,
     connection: ConnectionWrapper<any>,
-    current: ReadonlySet<string> = NO_PARTS
+    options: MintCaptureOptions = {}
   ): Promise<MintCardState> {
+    const current = options.current ?? NO_PARTS;
     const rows = {} as Record<MintRowPart, MintRow[]>;
     for (const part of MINT_ROW_PARTS) {
       rows[part] = await this.captureRows(
