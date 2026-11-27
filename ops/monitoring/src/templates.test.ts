@@ -480,7 +480,11 @@ test('source catalog coverage is complete and monitoring delivery has no applica
       ...retained.services
     ].filter((s: CatalogService) => s.allowed_environments.includes(env));
     const targets: string[] = deployed
-      .filter((s) => s.aws_region[env] === sourceRegion)
+      .filter(
+        (s) =>
+          s.aws_region[env] === sourceRegion &&
+          !(env === 'prod' && s.name === 'signedRecordLogLoop')
+      )
       .flatMap((s) => s.verification_targets);
     // A service deployed outside the single source region is listed apart and
     // gets no relay subscription in the regional source stack.
@@ -710,6 +714,27 @@ test('NFT incidents use completed outcomes, sample gates, sustained failures and
       resources.nftLinkRefresherLoopErrors.Properties.EvaluationPeriods,
       1
     );
+  }
+});
+
+test('source coverage enrolls both Drop Forge workers and defers Signed Record Log only in production', () => {
+  for (const env of ['prod', 'staging']) {
+    const { Resources } = JSON.parse(
+      readFileSync(new URL(`../source-${env}.json`, import.meta.url), 'utf8')
+    );
+    for (const name of ['dropForgeLaunchHandler', 'memesDistributionHandler']) {
+      assert.equal(
+        Resources[`${name}ErrorLogs`]?.Properties.LogGroupName,
+        `/aws/lambda/${name}`
+      );
+    }
+    for (const name of ['signedRecordLogCloser', 'signedRecordLogArchiver']) {
+      assert.equal(Boolean(Resources[`${name}ErrorLogs`]), env === 'staging');
+      assert.equal(Boolean(Resources[`${name}Errors`]), env === 'staging');
+      assert.equal(Boolean(Resources[`${name}Throttles`]), env === 'staging');
+    }
+    assert.equal(Resources.rpcProxyErrors, undefined);
+    assert.equal(Resources.rpcProxyThrottles, undefined);
   }
 });
 

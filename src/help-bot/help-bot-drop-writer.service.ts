@@ -1,3 +1,8 @@
+import {
+  BotDeviceSigner,
+  botDeviceSigner,
+  signedBodyOfDropModel
+} from '@/api/device-signing/bot-device-signer';
 import { ApiDrop } from '@/api/generated/models/ApiDrop';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 import {
@@ -29,7 +34,8 @@ export class HelpBotDropWriterService {
     private readonly createOrUpdateDrop: CreateOrUpdateDropUseCase,
     private readonly dropsDb: DropsDb,
     private readonly dropsService: DropsApiService,
-    private readonly wsListenersNotifier: WsListenersNotifier
+    private readonly wsListenersNotifier: WsListenersNotifier,
+    private readonly botSigner: BotDeviceSigner = botDeviceSigner
   ) {}
 
   public async reply(
@@ -98,45 +104,54 @@ export class HelpBotDropWriterService {
     };
 
     const { drop, pendingPushNotificationIds } =
-      await this.dropsDb.executeNativeQueriesInTransaction(
-        async (connection) => {
-          const { drop_id, pending_push_notification_ids } =
-            await this.createOrUpdateDrop.execute(model, false, {
-              timer: ctx.timer,
-              connection,
-              // The bot is a system author: its replies skip pre-publication
-              // review and the posting-allowed check, and carry no media.
-              prePublication: { trustedSystem: true },
-              // Link-disabled waves only accept CDN/GIF links, so answers
-              // with canonical 6529.io help links need this. The content was
-              // filtered above, so every remaining link is on 6529.io.
-              bypassChatLinkRestrictions: true,
-              // Each reply answers one participant drop that already passed
-              // slow mode; the bot's own cooldown would otherwise reject the
-              // answer to a second participant after the model work is done.
-              // Volume is bounded by the per-wave daily answer limit.
-              bypassChatSlowModeRestrictions: true
-            });
-          await this.dropsDb.updateHideLinkPreview(
-            { drop_id, hide_link_preview: true },
-            { timer: ctx.timer, connection }
-          );
-          const apiDrop = await this.dropsService.findDropByIdOrThrow(
-            {
-              dropId: drop_id,
-              skipEligibilityCheck: true
-            },
-            {
-              timer: ctx.timer,
-              connection,
-              authenticationContext: botCtx.authenticationContext
-            }
-          );
-          return {
-            drop: apiDrop,
-            pendingPushNotificationIds: pending_push_notification_ids
-          };
-        }
+      await this.botSigner.createDrop(
+        botProfileId,
+        {
+          waveId,
+          replyToDropId,
+          body: { ...signedBodyOfDropModel(model), hide_link_preview: true }
+        },
+        () =>
+          this.dropsDb.executeNativeQueriesInTransaction(async (connection) => {
+            const { drop_id, pending_push_notification_ids } =
+              await this.createOrUpdateDrop.execute(model, false, {
+                timer: ctx.timer,
+                connection,
+                // The bot is a system author: its replies skip pre-publication
+                // review and the posting-allowed check, and carry no media.
+                prePublication: { trustedSystem: true },
+                // Link-disabled waves only accept CDN/GIF links, so answers
+                // with canonical 6529.io help links need this. The content was
+                // filtered above, so every remaining link is on 6529.io.
+                bypassChatLinkRestrictions: true,
+                // Each reply answers one participant drop that already passed
+                // slow mode; the bot's own cooldown would otherwise reject the
+                // answer to a second participant after the model work is done.
+                // Volume is bounded by the per-wave daily answer limit.
+                bypassChatSlowModeRestrictions: true
+              });
+            await this.dropsDb.updateHideLinkPreview(
+              { drop_id, hide_link_preview: true },
+              { timer: ctx.timer, connection }
+            );
+            const apiDrop = await this.dropsService.findDropByIdOrThrow(
+              {
+                dropId: drop_id,
+                skipEligibilityCheck: true
+              },
+              {
+                timer: ctx.timer,
+                connection,
+                authenticationContext: botCtx.authenticationContext
+              }
+            );
+            return {
+              id: drop_id,
+              drop: apiDrop,
+              pendingPushNotificationIds: pending_push_notification_ids
+            };
+          }),
+        ctx
       );
 
     await waveScoreService.requestWaveScoreRefreshBestEffort(

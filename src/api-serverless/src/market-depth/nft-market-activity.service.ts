@@ -280,6 +280,11 @@ export class NftMarketActivityService extends LazyDbAccessCompatibleService {
   ): Promise<ApiNftActivityEvent[]> {
     const kinds = selectedMarketKinds(selection.filter);
     if (kinds?.length === 0) return [];
+    const splitByWalletRole =
+      selection.filter === 'cancellations' &&
+      !selection.tokenId &&
+      selection.contracts.length === 1 &&
+      selection.wallets.length === 1;
     const date = 'e.occurred_at';
     // Older order-book events are purged; the few kept for live orders would
     // otherwise appear before the reported market history start.
@@ -289,7 +294,7 @@ export class NftMarketActivityService extends LazyDbAccessCompatibleService {
       'LOWER(e.kind) NOT IN (:chainKinds)',
       `${date} >= :historyCutoff`
     ];
-    if (selection.walletRequested)
+    if (selection.walletRequested && !splitByWalletRole)
       conditions.push('(e.maker IN (:wallets) OR e.taker IN (:wallets))');
     if (kinds) conditions.push('LOWER(e.kind) IN (:kinds)');
     if (selection.cursor)
@@ -304,16 +309,33 @@ export class NftMarketActivityService extends LazyDbAccessCompatibleService {
       `SELECT e.event_id, e.occurred_at FROM ${MARKET_DEPTH_EVENTS_TABLE} e
        WHERE ${conditions.join(' AND ')} AND ${scope}
        ORDER BY e.occurred_at DESC, e.event_id DESC LIMIT :rowLimit`;
-    // Each disjoint scope can walk the token/time index and stop at one page.
-    // Apply every filter before each LIMIT; merge only the bounded candidates
-    // and fetch public columns after choosing the final marketplace page.
-    const collectionEvents = Boolean(selection.slugs?.length);
-    const sql = selection.tokenId
-      ? `WITH token_events AS (${candidateQuery('e.token_id=:tokenId')})
-         ${collectionEvents ? `, collection_events AS (${candidateQuery('e.token_id IS NULL AND e.collection_slug IN (:slugs)')})` : ''},
+    const scopes: [name: string, predicate: string][] = [];
+    if (selection.tokenId) {
+      scopes.push(['token_events', 'e.token_id=:tokenId']);
+      if (selection.slugs?.length)
+        scopes.push([
+          'collection_events',
+          'e.token_id IS NULL AND e.collection_slug IN (:slugs)'
+        ]);
+    } else if (splitByWalletRole) {
+      scopes.push(
+        ['maker_events', 'e.maker IN (:wallets)'],
+        ['taker_events', 'e.taker IN (:wallets)']
+      );
+    }
+    // Apply all filters before each branch limit. The same event can match
+    // both wallet roles, so deduplicate their IDs before the final limit.
+    const branches = scopes
+      .map(([name, predicate]) => `${name} AS (${candidateQuery(predicate)})`)
+      .join(', ');
+    const union = splitByWalletRole ? ' UNION DISTINCT ' : ' UNION ALL ';
+    const candidateIds = scopes
+      .map(([name]) => `SELECT event_id, occurred_at FROM ${name}`)
+      .join(union);
+    const sql = scopes.length
+      ? `WITH ${branches},
          selected_events AS (
-           SELECT event_id, occurred_at FROM token_events
-           ${collectionEvents ? 'UNION ALL SELECT event_id, occurred_at FROM collection_events' : ''}
+           ${candidateIds}
            ORDER BY occurred_at DESC, event_id DESC LIMIT :rowLimit
          )
          SELECT ${columns} FROM selected_events selected

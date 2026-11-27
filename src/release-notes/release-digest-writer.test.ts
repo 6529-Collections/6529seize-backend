@@ -8,6 +8,7 @@ import {
   ReleaseDigestWriter,
   toReleaseDigestDraft
 } from './release-digest.writer';
+import { hasLoneSurrogate } from '@/strings';
 
 const entries: ReleaseDigestSourceEntry[] = [
   {
@@ -152,6 +153,28 @@ describe('release digest writer', () => {
     expect(draft.behindTheScenesKeys).toEqual(['E3']);
     expect(draft.behindTheScenes).toBe('Test tooling upgrades.');
     expect(draft.buildersNote).toBe('Backend: DROP_MAX_PARTS limits.');
+  });
+
+  it('cuts long text without splitting an emoji', () => {
+    const draft = toReleaseDigestDraft(
+      {
+        headline: `${'h'.repeat(159)}😀`,
+        sections: [],
+        known_issues: [],
+        behind_the_scenes: { text: '', entry_ids: [] },
+        builders_note: `${'n'.repeat(599)}🚀 more`
+      },
+      entries
+    );
+    expect(draft.headline).toBe('h'.repeat(159));
+    expect(draft.buildersNote).toBe('n'.repeat(599));
+    expect(hasLoneSurrogate(draft.headline + draft.buildersNote)).toBe(false);
+    // The model's input keeps whole emoji too (JSON would escape a half).
+    const prompt = buildReleaseDigestPrompt([
+      { ...entries[0], title: `${'t'.repeat(299)}😀` }
+    ]);
+    expect(prompt).toContain('t'.repeat(299));
+    expect(prompt).not.toMatch(/\\ud83d/i);
   });
 
   it('requires a headline', () => {

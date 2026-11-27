@@ -36,8 +36,49 @@ import {
   validateNextgen,
   validateNextgenBurn
 } from './validation';
+import { MINT_AUTHORITY } from '@/mint-log/mint-log-http';
+import { mintCard } from '@/mint-log/mint-log-parts';
+import { mintLogRecorder, MintWriteSpec } from '@/mint-log/mint-log-recorder';
+import { NEXTGEN_CARD_CONTRACT } from '@/mint-log/mint-log.types';
 
 const logger = Logger.get('NEXTGEN_API');
+
+const CREATE_ALLOWLIST_ROUTE = 'POST /nextgen/create_allowlist';
+const REGISTER_BURN_ROUTE = 'POST /nextgen/register_burn_collection';
+
+/**
+ * A NextGen admin upload as one mint log write. The admin's wallet signed
+ * the request (the route checked it), so the entry keeps that signature and
+ * the CSV's sha256 instead of a device record.
+ */
+export function nextgenWriteSpec(
+  kind: 'nextgen.allowlist' | 'nextgen.burn',
+  route: string,
+  body: {
+    collection_id: number;
+    signed: { wallet: string; [key: string]: unknown };
+    allowlist_sha256?: string;
+    merkle?: { merkle_root: string };
+  }
+): MintWriteSpec {
+  return {
+    kind,
+    card: mintCard(NEXTGEN_CARD_CONTRACT, body.collection_id),
+    actor: {
+      type: 'admin',
+      wallet: body.signed.wallet.toLowerCase(),
+      authority: MINT_AUTHORITY.nextgenAdmin
+    },
+    intent: { route, params: {}, body: body.signed },
+    walletSigned: true,
+    inputs: async () => ({
+      ...(body.allowlist_sha256
+        ? { allowlist_sha256: body.allowlist_sha256 }
+        : {}),
+      ...(body.merkle ? { merkle_root: body.merkle.merkle_root } : {})
+    })
+  };
+}
 
 const router = asyncRouter();
 
@@ -74,7 +115,10 @@ router.post(
     res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
     res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
     if (valid) {
-      await persistAllowlist(body);
+      await mintLogRecorder.write(
+        nextgenWriteSpec('nextgen.allowlist', CREATE_ALLOWLIST_ROUTE, body),
+        () => persistAllowlist(body)
+      );
       res
         .status(200)
         .send(JSON.stringify({ merkle_root: body.merkle.merkle_root }));
@@ -98,8 +142,13 @@ router.post(
     res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
     res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
     if (valid) {
-      await persistCollectionBurn(body);
-      res.status(200).send(JSON.stringify({ body }));
+      await mintLogRecorder.write(
+        nextgenWriteSpec('nextgen.burn', REGISTER_BURN_ROUTE, body),
+        () => persistCollectionBurn(body)
+      );
+      // The response stays as before: the signed request is only logged.
+      const { signed: _signed, ...registered } = body;
+      res.status(200).send(JSON.stringify({ body: registered }));
       res.end();
     } else {
       res.status(400).send(JSON.stringify(body));
@@ -151,18 +200,6 @@ router.get(
   }
 );
 
-router.get(`/proofs`, async function (req: any, res: any) {
-  const pageSize = getPageSize(req);
-  const page = getPage(req);
-  const addresses = req.query.address;
-
-  db.fetchNextGenProofs(addresses, pageSize, page).then((result) => {
-    res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-    res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
-    res.end(JSON.stringify(result));
-  });
-});
-
 router.get(
   `/proofs/:merkle_root/:address`,
   async function (req: any, res: any) {
@@ -194,18 +231,6 @@ router.get(
     });
   }
 );
-
-router.get(`/allowlist_phases`, async function (req: any, res: any) {
-  const pageSize = getPageSize(req);
-  const page = getPage(req);
-
-  logger.info(
-    `[FETCHING ALLOWLIST PHASES FOR ALL COLLECTIONS] : [PAGE SIZE ${pageSize}] : [PAGE ${page}]`
-  );
-  await db.fetchAllAllowlistPhases(pageSize, page).then(async (result) => {
-    return returnPaginatedResult(result, req, res);
-  });
-});
 
 router.get(
   `/allowlist_phases/:collection_id`,
@@ -309,29 +334,6 @@ router.get(
       .then(async (result) => {
         return returnPaginatedResult(result, req, res);
       });
-  }
-);
-
-router.get(
-  `/collections/:id/tokens/:token`,
-  validateCollectionId,
-  cacheRequest(),
-  async function (req: any, res: any) {
-    const id: number = req.params.id;
-    const token = numbers.parseIntOrNull(req.params.token);
-
-    if (token === null) {
-      throw new BadRequestException('Token must be a number.');
-    }
-
-    const tokenId = id * 10000000000 + token;
-    await db.fetchNextGenToken(tokenId).then(async (result) => {
-      if (result.id) {
-        return res.json(result);
-      } else {
-        return res.status(404).send({});
-      }
-    });
   }
 );
 
@@ -478,26 +480,6 @@ router.get(`/tokens/:id`, cacheRequest(), async function (req: any, res: any) {
 });
 
 router.get(
-  `/tokens/:id/transactions`,
-  cacheRequest(),
-  async function (req: any, res: any) {
-    const id = numbers.parseIntOrNull(req.params.id);
-    if (id === null) {
-      throw new BadRequestException('Token ID must be a number.');
-    }
-
-    const pageSize = getPageSize(req);
-    const page = getPage(req);
-
-    await db
-      .fetchNextGenTokenTransactions(id, pageSize, page)
-      .then(async (result) => {
-        return res.json(result);
-      });
-  }
-);
-
-router.get(
   `/tokens/:id/traits`,
   cacheRequest(),
   async function (req: any, res: any) {
@@ -528,7 +510,7 @@ router.get(`/tdh`, cacheRequest(), async function (req: any, res: any) {
     });
 });
 
-async function persistAllowlist(body: {
+export async function persistAllowlist(body: {
   collection_id: number;
   added_by: string;
   al_type: string;

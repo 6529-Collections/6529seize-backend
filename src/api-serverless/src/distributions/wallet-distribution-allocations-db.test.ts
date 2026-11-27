@@ -1,9 +1,13 @@
 import {
   DISTRIBUTION_NORMALIZED_TABLE,
+  SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE
 } from '@/constants';
 import { Timer } from '@/time';
 import { WalletDistributionAllocationsDb } from './wallet-distribution-allocations.db';
+
+/** The final table before the subscriptions switch. */
+const legacyFinal = async () => SUBSCRIPTIONS_NFTS_FINAL_TABLE;
 
 describe('WalletDistributionAllocationsDb', () => {
   it('returns phase and Public allocations when distribution is published', async () => {
@@ -35,7 +39,8 @@ describe('WalletDistributionAllocationsDb', () => {
         { subscribed_count: null }
       ]);
     const db = new WalletDistributionAllocationsDb(
-      () => ({ oneOrNull, execute }) as any
+      () => ({ oneOrNull, execute }) as any,
+      legacyFinal
     );
     const timer = new Timer('test');
     const timerStart = jest.spyOn(timer, 'start');
@@ -99,7 +104,8 @@ describe('WalletDistributionAllocationsDb', () => {
       .mockResolvedValueOnce({ allowlist: [] });
     const execute = jest.fn().mockResolvedValue([]);
     const db = new WalletDistributionAllocationsDb(
-      () => ({ oneOrNull, execute }) as any
+      () => ({ oneOrNull, execute }) as any,
+      legacyFinal
     );
 
     await db.findByWallet('0xConTrAcT', 534, '0xWaLlEt', {});
@@ -144,7 +150,8 @@ describe('WalletDistributionAllocationsDb', () => {
       .mockResolvedValueOnce({ allowlist });
     const execute = jest.fn().mockResolvedValue([]);
     const db = new WalletDistributionAllocationsDb(
-      () => ({ oneOrNull, execute }) as any
+      () => ({ oneOrNull, execute }) as any,
+      legacyFinal
     );
 
     await expect(
@@ -156,11 +163,31 @@ describe('WalletDistributionAllocationsDb', () => {
     });
   });
 
+  it('reads the Public airdrops from the final table the subscriptions switch names', async () => {
+    const oneOrNull = jest
+      .fn()
+      .mockResolvedValueOnce({ has_distribution: 1 })
+      .mockResolvedValueOnce({ allowlist: [] });
+    const execute = jest.fn().mockResolvedValue([{ subscribed_count: 2 }]);
+    const db = new WalletDistributionAllocationsDb(
+      () => ({ oneOrNull, execute }) as any,
+      async () => SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE
+    );
+
+    await expect(
+      db.findByWallet('0xcontract', 534, '0xwallet', {})
+    ).resolves.toEqual(expect.objectContaining({ publicAirdropCount: 2 }));
+    expect(execute.mock.calls[0][0]).toContain(
+      `FROM ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE}`
+    );
+  });
+
   it('does not query wallet allocations before distribution is published', async () => {
     const oneOrNull = jest.fn().mockResolvedValue({ has_distribution: 0 });
     const execute = jest.fn();
     const db = new WalletDistributionAllocationsDb(
-      () => ({ oneOrNull, execute }) as any
+      () => ({ oneOrNull, execute }) as any,
+      legacyFinal
     );
 
     await expect(

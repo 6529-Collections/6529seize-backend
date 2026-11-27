@@ -17,6 +17,8 @@ import {
   canonicalRememeMemeId,
   MAX_REMEME_MEME_ID_DIGITS
 } from '@/rememe-meme-id';
+import { mintLogRecorder } from '@/mint-log/mint-log-recorder';
+import { rememeAddSpec } from './rememe-add-log';
 
 const router = asyncRouter();
 
@@ -127,7 +129,10 @@ router.post(`/add`, validateRememeAdd, async function (req: any, res: any) {
   res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
   res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
   if (valid) {
-    await db.addRememe(req.body.address, body);
+    await mintLogRecorder.write(
+      rememeAddSpec(req.body, String(body.contract.address)),
+      () => db.addRememe(req.body.address, body)
+    );
     res.status(201).send(JSON.stringify(body));
     res.end();
   } else {

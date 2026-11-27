@@ -32,6 +32,8 @@
     "wallet-transfer-analysis": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/wallet-transfer-analysis/cli.ts",
     "identity:export": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/identity-export/cli.ts",
     "wallet-transfer-backfill": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/wallet-transfer-analysis/backfill.ts",
+    "subscriptions:parity": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/subscriptions-identity/parity/cli.ts",
+    "subscriptions:opening": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/subscriptions-identity/opening/cli.ts",
     "check": "node scripts/require-6529-command.cjs && ./bin/6529 run format && ./bin/6529 run lint && ./bin/6529 run build",
     "check:changed": "node scripts/require-6529-command.cjs && node scripts/check-changed.mjs",
     "ci:assert-source-clean": "node scripts/require-6529-command.cjs && node scripts/assert-pr-ci-source-clean.mjs",
@@ -41,6 +43,7 @@
     "lint": "node scripts/require-6529-command.cjs && NODE_OPTIONS=--max-old-space-size=8192 eslint \"src/**/*.ts\" --fix --max-warnings=0",
     "lint:check": "node scripts/require-6529-command.cjs && NODE_OPTIONS=--max-old-space-size=8192 eslint \"src/**/*.ts\" --max-warnings=0",
     "competition:capability": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/competitions/competition-capability.cli.ts",
+    "mint-log:genesis": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/mint-log/mint-log-genesis.cli.ts",
     "rebuild:check": "node scripts/require-6529-command.cjs && ts-node --transpile-only -r tsconfig-paths/register src/rebuild/cli.ts",
     "waves:export": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/waves-export/cli.ts",
     "calendar:check": "node scripts/require-6529-command.cjs && node scripts/memes-calendar.mjs check",
@@ -48,7 +51,8 @@
     "profile-cms:export": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/profile-cms/chain/profile-cms-export.cli.ts",
     "profile-cms:log-existing-rows": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/profile-cms/personal-log/profile-cms-log-existing-rows.cli.ts",
     "ws:delivery-probe": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/ws-delivery/delivery-probe/delivery-probe.cli.ts",
-    "signed-records:service-setup": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/signed-records/record-log/service-setup.cli.ts"
+    "signed-records:service-setup": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/signed-records/record-log/service-setup.cli.ts",
+    "waves:bot-device-grant": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/api-serverless/src/device-signing/bot-device-grant.cli.ts"
   },
   "keywords": [],
   "author": "",

@@ -115,7 +115,7 @@ router.get(
 );
 
 router.post(
-  ['/read', '/all/read'],
+  '/read',
   needsAuthenticatedUser(),
   async (
     req: Request<any, any, any, any, any>,
@@ -160,38 +160,6 @@ router.post(
     const id = req.params.id;
     if (numbers.parseIntOrNull(id) !== null) {
       await notificationsApiService.markNotificationAsRead({
-        id: parseInt(id),
-        identity_id: authenticationContext.getActingAsId()!
-      });
-    } else {
-      throw new BadRequestException(
-        `Invalid notification id: ${id}. Supply a correct one or 'all' to mark all as read.`
-      );
-    }
-    res.send({});
-  }
-);
-
-router.post(
-  '/:id/unread',
-  needsAuthenticatedUser(),
-  async (
-    req: Request<{ id: string }, any, any, any, any>,
-    res: Response<ApiResponse<any>>
-  ) => {
-    const authenticationContext = await getAuthenticationContext(req);
-    if (!authenticationContext.getActingAsId()) {
-      throw new ForbiddenException(
-        `You need to create a profile before you can access notifications`
-      );
-    }
-    rejectProxySession(
-      authenticationContext,
-      `Proxies cannot access notifications`
-    );
-    const id = req.params.id;
-    if (numbers.parseIntOrNull(id) !== null) {
-      await notificationsApiService.markNotificationAsUnread({
         id: parseInt(id),
         identity_id: authenticationContext.getActingAsId()!
       });

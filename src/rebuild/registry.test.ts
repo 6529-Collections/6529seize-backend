@@ -59,6 +59,14 @@ describe('rebuild registry', () => {
           'owners_balances_memes_consolidation',
           'meme_lab_royalties'
         ]
+      },
+      {
+        step: 'mint.announcements',
+        tables: [
+          'mint_announcements_done_meme_tokens',
+          'mint_end_announcements_done_meme_tokens',
+          'public_phase_ending_soon_announcements_done_meme_tokens'
+        ]
       }
     ]);
   });
