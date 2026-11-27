@@ -6,7 +6,10 @@ import {
   ClaimActionWrite,
   writeDropForgeClaimAction
 } from '@/mint-log/mint-log-drop-forge';
-import { addLaunchEvent } from '@/drop-forge/drop-forge.repository';
+import {
+  addLaunchEvent,
+  type DropForgeRepository
+} from '@/drop-forge/drop-forge.repository';
 import { Logger } from '@/logging';
 import { MINTING_CLAIM_ACTIONS_TABLE } from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
@@ -34,7 +37,7 @@ function failureReason(error: unknown): string {
 const failedFlagEvent = (flag: string) =>
   `completion flag ${flag} was not written`;
 
-/** The start of the one alert for a flag an ended launch still lacks. */
+/** The start of the one alert for a flag still unwritten after the set time. */
 const unwrittenFlagAlert = (flag: string) =>
   `completion flag ${flag} is still not written`;
 
@@ -71,27 +74,44 @@ async function flagNotWritten(
 ): Promise<void> {
   const completed = record.data.completion_flags ?? [];
   record.data.completion_flags = completed.filter((it) => it !== flag);
-  const first = record.data.events.find((event) =>
-    event.content.includes(failedFlagEvent(flag))
-  );
-  if (!first) {
+  if (!firstMiss(record, flag)) {
     addLaunchEvent(
       record,
       `Claim #${record.data.claim_id}: ${failedFlagEvent(flag)} (${reason}); Drop Forge writes it on a later delivery of the launch.`
     );
-  } else if (
-    Date.now() - first.at >= FLAG_ALERT_AFTER_MS &&
-    !record.data.events.some((event) =>
-      event.content.includes(unwrittenFlagAlert(flag))
-    )
-  ) {
-    addLaunchEvent(
-      record,
-      `Claim #${record.data.claim_id}: ${unwrittenFlagAlert(flag)} ${FLAG_ALERT_AFTER_MS / 60_000} minutes after it was first missed (${reason}); set it by hand: ${setFlagByHand(record, flag)}.`,
-      true
-    );
+  } else {
+    alertIfOverdue(record, flag);
   }
   await save(record, ctx);
+}
+
+/** The flag's first-miss event on the launch, if a pass ever missed it. */
+function firstMiss(record: LaunchRecord, flag: string) {
+  return record.data.events.find((event) =>
+    event.content.includes(failedFlagEvent(flag))
+  );
+}
+
+/**
+ * Adds the one alert for a flag still unwritten FLAG_ALERT_AFTER_MS after
+ * its first miss. Returns whether it did.
+ */
+function alertIfOverdue(record: LaunchRecord, flag: string): boolean {
+  const first = firstMiss(record, flag);
+  if (
+    !first ||
+    Date.now() - first.at < FLAG_ALERT_AFTER_MS ||
+    record.data.events.some((event) =>
+      event.content.includes(unwrittenFlagAlert(flag))
+    )
+  )
+    return false;
+  addLaunchEvent(
+    record,
+    `Claim #${record.data.claim_id}: ${unwrittenFlagAlert(flag)} ${FLAG_ALERT_AFTER_MS / 60_000} minutes after it was first missed; set it by hand: ${setFlagByHand(record, flag)}.`,
+    true
+  );
+  return true;
 }
 
 async function flagFailed(
@@ -187,43 +207,76 @@ function completedFlags(record: LaunchRecord): string[] {
 }
 
 /**
- * Whether the launch has a completed group whose supported flag isn't in
- * its completion_flags: a flag a pass deferred or failed to write. Read
- * from the launch record alone.
+ * The flags a pass missed (its "was not written" event is on the launch)
+ * and no pass has written since: a completed group's supported flag that
+ * isn't in completion_flags. Read from the launch record alone, so a
+ * launch's other missing flags (one from before this change) stay as on
+ * main.
  */
-export function hasUnwrittenFlags(record: LaunchRecord): boolean {
+function unwrittenFlags(record: LaunchRecord): string[] {
   const completed = record.data.completion_flags ?? [];
-  return completedFlags(record).some(
+  return completedFlags(record).filter(
     (flag) =>
       !completed.includes(flag) &&
-      isSupportedMintingClaimActionType(record.data.contract, flag)
+      isSupportedMintingClaimActionType(record.data.contract, flag) &&
+      !!firstMiss(record, flag)
   );
 }
 
-/** How a pass writes a flag: as a mirror always has, or only where absent. */
-interface MirrorOptions {
-  /** A later delivery's retry: an existing row (an admin's) stays. */
-  readonly keepExisting?: boolean;
+export function hasUnwrittenFlags(record: LaunchRecord): boolean {
+  return unwrittenFlags(record).length > 0;
 }
 
 /**
- * Whether this write of the flag is a retry, with the mint log on: a
- * later delivery's (keepExisting), or one of a flag that a pass missed
- * before, as its event on the launch shows. A retry never overwrites the
- * claim's row; a first write upserts, as a mirror always has.
+ * With the mint log on, adds the one alert for each flag still unwritten
+ * FLAG_ALERT_AFTER_MS after its first miss, even when no pass gets to try
+ * it (another launch holds the signer, or a manual transaction isn't
+ * confirmed yet). Returns whether it added one. The launch handler calls
+ * it on each delivery.
  */
-function isRetry(
-  record: LaunchRecord,
-  flag: string,
-  options: MirrorOptions
-): boolean {
+export function alertOverdueFlags(record: LaunchRecord): boolean {
   if (mintLogRecorder.mode() === 'off') return false;
-  return (
-    !!options.keepExisting ||
-    record.data.events.some((event) =>
-      event.content.includes(failedFlagEvent(flag))
-    )
+  let added = false;
+  for (const flag of unwrittenFlags(record))
+    added = alertIfOverdue(record, flag) || added;
+  return added;
+}
+
+/**
+ * The launch handler's step, on each delivery: with the mint log on, reads
+ * the launch and, only when an alert is due, adds it (alertOverdueFlags).
+ * With the mint log off it reads nothing.
+ */
+export async function alertOverdueLaunchFlags(
+  id: string,
+  repository: Pick<DropForgeRepository, 'find' | 'change'>
+): Promise<void> {
+  if (mintLogRecorder.mode() === 'off') return;
+  const launch = await repository.find(id, {});
+  if (!launch || !alertOverdueFlags(launch)) return;
+  await repository.change(
+    id,
+    async (latest) => {
+      alertOverdueFlags(latest);
+    },
+    {}
   );
+}
+
+/** How a pass writes its flags: all of them, or only the missed ones. */
+interface MirrorOptions {
+  /** A later delivery's retry: only flags a pass missed before. */
+  readonly missedOnly?: boolean;
+}
+
+/**
+ * Whether this write of the flag is a retry, with the mint log on: one of
+ * a flag that a pass missed before, as its event on the launch shows. A
+ * retry never overwrites the claim's row; a first write upserts, as a
+ * mirror always has.
+ */
+function isRetry(record: LaunchRecord, flag: string): boolean {
+  return mintLogRecorder.mode() !== 'off' && !!firstMiss(record, flag);
 }
 
 async function mirrorFlags(
@@ -241,7 +294,8 @@ async function mirrorFlags(
   let outcome: ClaimActionWrite | null = null;
   if (
     !completed.includes(flag) &&
-    isSupportedMintingClaimActionType(record.data.contract, flag)
+    isSupportedMintingClaimActionType(record.data.contract, flag) &&
+    (!options.missedOnly || !!firstMiss(record, flag))
   ) {
     // With the mint log on, held back to the end of the signer transaction,
     // then logged (writeDropForgeClaimAction); with it off, written now.
@@ -251,7 +305,7 @@ async function mirrorFlags(
       action: flag,
       wallet: record.data.signer
     };
-    const retry = isRetry(record, flag, options);
+    const retry = isRetry(record, flag);
     outcome = await writeDropForgeClaimAction(ctx, {
       contract: record.data.contract,
       claim: record.data.claim_id,

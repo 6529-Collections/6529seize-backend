@@ -144,7 +144,7 @@ it('rejects malformed queue payloads rather than scanning unrelated jobs', () =>
     revision: 2
   });
 });
-it('keeps delivering to an ended launch with an unwritten completion flag while the mint log is on, and not with it off', async () => {
+it('keeps delivering to an ended launch with a missed, unwritten completion flag while the mint log is on, and not with it off or for a flag no pass missed', async () => {
   const launch = record();
   launch.data.events = [];
   launch.state = 'CANCELLED';
@@ -166,11 +166,28 @@ it('keeps delivering to an ended launch with an unwritten completion flag while 
       .mock.calls.filter(([command]) => command instanceof SendMessageCommand)
       .length;
 
-  // Mint log off: as on main, an ended launch gets no more deliveries.
+  // Mint log on, but no pass missed the flag (an old launch): as on main.
+  const mode = jest.spyOn(mintLogRecorder, 'mode').mockReturnValue('shadow');
   await continueLaunch(launch, 1000, true);
   expect(wakes()).toBe(0);
 
-  jest.spyOn(mintLogRecorder, 'mode').mockReturnValue('shadow');
+  // A pass missed it (its event, posted, is on the launch).
+  launch.data.events = [
+    {
+      id: 'launch:missed',
+      content:
+        'Claim #1: completion flag PAY_ARTIST was not written (ER_LOCK_WAIT_TIMEOUT); Drop Forge writes it on a later delivery of the launch.',
+      error: false,
+      at: 0,
+      drop_id: 'posted'
+    }
+  ];
+  // Mint log off: as on main, an ended launch gets no more deliveries.
+  mode.mockReturnValue('off');
+  await continueLaunch(launch, 1000, true);
+  expect(wakes()).toBe(0);
+
+  mode.mockReturnValue('shadow');
   await continueLaunch(launch, 1000, true);
   expect(wakes()).toBe(1);
 

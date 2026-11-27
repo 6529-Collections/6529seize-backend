@@ -310,7 +310,7 @@ export class DropForgeWorker {
       // delivering while one is left). An existing row, an admin's, stays
       // as it is.
       await mirrorCompletion(record, ctx, this.saveLaunch, {
-        keepExisting: true
+        missedOnly: true
       });
       await this.repository.save(record, ctx);
     }

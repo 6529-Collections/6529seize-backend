@@ -1,4 +1,5 @@
 import {
+  alertOverdueLaunchFlags,
   completionFlagRows,
   FLAG_ALERT_AFTER_MS,
   hasUnwrittenFlags,
@@ -157,7 +158,7 @@ it('leaves a held flag that failed to write unmirrored, raises one plain event, 
     expect(events()).toHaveLength(2);
     expect(events()[1]).toMatchObject({ error: true });
     expect(events()[1].content).toContain(
-      `completion flag PAY_ARTIST is still not written 10 minutes after it was first missed (ER_LOCK_WAIT_TIMEOUT); ${byHand}`
+      `completion flag PAY_ARTIST is still not written 10 minutes after it was first missed; ${byHand}`
     );
   } finally {
     jest.restoreAllMocks();
@@ -242,7 +243,7 @@ it("with the mint log on, writes every retry of a flag only where the claim has 
     insert.mockClear();
     upsert.mockClear();
     await mirrorCompletion(record, {}, jest.fn(), options);
-    await writes[0].write({});
+    await writes[0]?.write({});
   };
   const missed = {
     id: 'launch:missed',
@@ -252,34 +253,114 @@ it("with the mint log on, writes every retry of a flag only where the claim has 
     at: 1
   };
   try {
-    // A later delivery's retry.
-    await writeOnce({ keepExisting: true });
-    expect(insert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: 'PAY_ARTIST',
-        claim_id: record.data.claim_id
-      }),
-      {}
-    );
-    expect(upsert).not.toHaveBeenCalled();
-    expect(hasUnwrittenFlags(record)).toBe(false);
-
     // A first write upserts, as a mirror always has.
     await writeOnce();
     expect(upsert).toHaveBeenCalledTimes(1);
     expect(insert).not.toHaveBeenCalled();
 
-    // A flag a pass missed before is a retry on any path: insert-only.
+    // A later delivery's retry writes only flags a pass missed: none yet.
+    await writeOnce({ missedOnly: true });
+    expect(writes).toEqual([]);
+    expect(hasUnwrittenFlags(record)).toBe(false);
+
+    // A flag a pass missed is a retry on any path: insert-only.
     record.data.events.push(missed);
-    await writeOnce();
-    expect(insert).toHaveBeenCalledTimes(1);
-    expect(upsert).not.toHaveBeenCalled();
+    expect(hasUnwrittenFlags(record)).toBe(true);
+    for (const options of [{}, { missedOnly: true }]) {
+      await writeOnce(options);
+      expect(insert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'PAY_ARTIST',
+          claim_id: record.data.claim_id
+        }),
+        {}
+      );
+      expect(upsert).not.toHaveBeenCalled();
+    }
+    expect(hasUnwrittenFlags(record)).toBe(false);
 
     // With the mint log off, a mirror upserts, as on main.
     mode.mockReturnValue('off');
-    await writeOnce({ keepExisting: true });
+    await writeOnce();
     expect(upsert).toHaveBeenCalledTimes(1);
     expect(insert).not.toHaveBeenCalled();
+  } finally {
+    jest.restoreAllMocks();
+  }
+});
+
+it('alerts once for a missed flag still unwritten after the set time, without a write, and reads nothing with the mint log off', async () => {
+  const record: LaunchRecord = {
+    id: 'launch',
+    revision: 1,
+    state: 'RUNNING',
+    error: null,
+    updated_at: 1,
+    data: testLaunchData()
+  };
+  record.data.actions = [
+    {
+      ...record.data.actions[0],
+      id: 'pay',
+      kind: 'PAY_ARTIST',
+      state: 'CONFIRMED'
+    }
+  ];
+  record.data.completion_flags = [];
+  jest
+    .spyOn(supported, 'isSupportedMintingClaimActionType')
+    .mockReturnValue(true);
+  let now = 1_000_000;
+  jest.spyOn(Date, 'now').mockImplementation(() => now);
+  const mode = jest.spyOn(mintLogRecorder, 'mode').mockReturnValue('off');
+  const repository = {
+    find: jest.fn(async () => structuredClone(record)),
+    change: jest.fn(
+      async (_id: string, fn: (launch: LaunchRecord) => unknown) => {
+        await fn(record);
+      }
+    )
+  };
+  const alerts = () =>
+    record.data.events.filter((event) =>
+      event.content.includes('completion flag PAY_ARTIST is still not written')
+    );
+  try {
+    // With the mint log off: no read, no write.
+    await alertOverdueLaunchFlags('launch', repository as never);
+    expect(repository.find).not.toHaveBeenCalled();
+
+    // A flag no pass missed: nothing to alert, nothing written.
+    mode.mockReturnValue('shadow');
+    await alertOverdueLaunchFlags('launch', repository as never);
+    expect(repository.change).not.toHaveBeenCalled();
+
+    // Missed, within the set time: still nothing written.
+    record.data.events.push({
+      id: 'launch:missed',
+      content:
+        'Claim #1: completion flag PAY_ARTIST was not written (ER_LOCK_WAIT_TIMEOUT); Drop Forge writes it on a later delivery of the launch.',
+      error: false,
+      at: now
+    });
+    now += FLAG_ALERT_AFTER_MS - 1;
+    await alertOverdueLaunchFlags('launch', repository as never);
+    expect(repository.change).not.toHaveBeenCalled();
+
+    // Past it: one alert with the mention, written once, then no more.
+    now += 1;
+    await alertOverdueLaunchFlags('launch', repository as never);
+    await alertOverdueLaunchFlags('launch', repository as never);
+    expect(repository.change).toHaveBeenCalledTimes(1);
+    expect(alerts()).toEqual([expect.objectContaining({ error: true })]);
+
+    // A written flag needs none.
+    record.data.events = record.data.events.filter(
+      (event) => !event.content.includes('is still not written')
+    );
+    record.data.completion_flags = ['PAY_ARTIST'];
+    await alertOverdueLaunchFlags('launch', repository as never);
+    expect(repository.change).toHaveBeenCalledTimes(1);
   } finally {
     jest.restoreAllMocks();
   }
