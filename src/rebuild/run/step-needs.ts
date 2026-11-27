@@ -74,11 +74,19 @@ export interface ReachedStepSkip extends StepSkip {
   readonly kind: 'seed' | 'rebuilder';
 }
 
-/** A skip's line for the log and the report. */
-export function stepSkipLine(skip: StepSkip): string {
-  return `${skip.step} needs ${skip.needs}, ${
+/**
+ * Why a skipped step doesn't run, after its id: the step it needs and why,
+ * as an owned column's note gives its owner's reason.
+ */
+export function stepSkipReason(skip: StepSkip): string {
+  return `needs ${skip.needs}, ${
     skip.why === 'outside'
       ? 'outside this area run'
       : 'which is skipped as planned'
   } (${skip.reason})`;
+}
+
+/** A skip's line for the log and the report. */
+export function stepSkipLine(skip: StepSkip): string {
+  return `${skip.step} ${stepSkipReason(skip)}`;
 }

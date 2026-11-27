@@ -113,6 +113,7 @@ import {
   ReachedStepSkip,
   StepSkip,
   stepSkipLine,
+  stepSkipReason,
   stepsSkippedForSteps
 } from '@/rebuild/run/step-needs';
 import {
@@ -1816,7 +1817,8 @@ class RebuildRun {
       rebuilders.filter((s) => !this.stepRunsHere(s)).flatMap(rowWrittenTables)
     );
     // Owned columns whose owner doesn't run here: another area's, or
-    // skipped. The row comparison leaves them out, and a final run fails.
+    // skipped (its code, a table it needs, or a step it needs). The row
+    // comparison leaves them out, and a final run fails.
     const steps = new Map(
       this.o.manifests.flatMap((m) => m.rebuilders).map((s) => [s.id, s])
     );
@@ -1827,9 +1829,10 @@ class RebuildRun {
       if (!this.stepCodeHere(step))
         return 'planned, its code is not in this tree';
       const missing = this.missingNeeds(step);
-      return missing.length
-        ? `waits for ${missing.map((need) => need.table).join(', ')}`
-        : null;
+      if (missing.length)
+        return `waits for ${missing.map((need) => need.table).join(', ')}`;
+      const skip = this.stepSkips.get(id);
+      return skip ? stepSkipReason(skip) : null;
     };
     this.unrunOwnedColumns = Array.from(this.columnOwners()).flatMap(
       ([table, owners]) =>

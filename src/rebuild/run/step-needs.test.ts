@@ -1,5 +1,9 @@
 import { RebuildStep } from '@/rebuild/manifest.types';
-import { stepsSkippedForSteps, stepSkipLine } from '@/rebuild/run/step-needs';
+import {
+  stepsSkippedForSteps,
+  stepSkipLine,
+  stepSkipReason
+} from '@/rebuild/run/step-needs';
 import { orderSeeds, orderSteps } from '@/rebuild/step-order';
 
 function step(
@@ -56,6 +60,10 @@ describe('steps skipped for the steps they need', () => {
     expect(stepSkipLine(skipped.get('subs.redemptions')!)).toBe(
       'subs.redemptions needs holdings.seed, which is skipped as planned (needs holdings.seed)'
     );
+    // The reason alone, as an owned column's note gives it after the owner.
+    expect(stepSkipReason(skipped.get('subs.redemptions')!)).toBe(
+      'needs holdings.seed, which is skipped as planned (needs holdings.seed)'
+    );
   });
 
   it('carries a skip down a chain, whatever order the steps come in', () => {
@@ -82,6 +90,9 @@ describe('steps skipped for the steps they need', () => {
     ]);
     expect(stepSkipLine(skipped.get('subs.top-ups')!)).toBe(
       'subs.top-ups needs mint.log, outside this area run (needs mint.log)'
+    );
+    expect(stepSkipReason(skipped.get('subs.top-ups')!)).toBe(
+      'needs mint.log, outside this area run (needs mint.log)'
     );
   });
 

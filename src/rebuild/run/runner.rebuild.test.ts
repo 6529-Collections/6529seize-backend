@@ -598,6 +598,63 @@ describe('rebuild check, end to end', () => {
       ]);
     });
 
+    it('leaves out the column of an owner skipped through a step it needs, and a final run fails on it', async () => {
+      // The owner needs a planned rebuilder whose code isn't here, so it is
+      // skipped as planned while the row writer runs: its column is saved
+      // and brought back after the rows are rewritten, and the comparison
+      // leaves it out with the skip's reason. Without that, the rewritten
+      // rows lose the seeded dates and the table differs.
+      const later: RebuildStep = {
+        ...step('self-check.later-dates', 'rebuildTeam', []),
+        run: {
+          module: 'src/rebuild/run/not-here.steps',
+          exportName: 'rebuildTeam'
+        },
+        origin: 'planned'
+      };
+      const owner = (id: string): RebuildStep => ({
+        ...dated(id, 'dateTeam'),
+        needsSteps: [
+          { step: 'self-check.later-dates', reason: 'it writes the dates' }
+        ]
+      });
+      const why =
+        'needs self-check.later-dates, which is skipped as planned (it writes the dates)';
+      const { report } = await run('mint', {
+        seed: teamSeed,
+        rebuilder: undated,
+        more: [owner('self-check.needs-dated'), later],
+        tables
+      });
+      expect(report.failures).toEqual([]);
+      expect(report.verdict).toBe('PASS');
+      expect(report.steps.map((s) => s.id)).not.toContain(
+        'self-check.needs-dated'
+      );
+      expect(report.tables.diffs.map((d) => [d.table, d.same])).toEqual([
+        ['team', true]
+      ]);
+      expect(report.tables.ownedColumnsLeftOut).toEqual([
+        {
+          table: 'team',
+          column: 'created_at',
+          owner: 'self-check.needs-dated',
+          why
+        }
+      ]);
+      const final = await run('mint', {
+        seed: teamSeed,
+        rebuilder: undated,
+        more: [owner('self-check.needs-dated-final'), later],
+        final: true,
+        tables
+      });
+      expect(final.report.verdict).toBe('FAIL');
+      expect(final.report.failures.join(' ')).toContain(
+        `team.created_at (self-check.needs-dated-final, ${why})`
+      );
+    });
+
     it('leaves an exempt column out of the comparison, with its reason', async () => {
       const { report } = await run('mint', {
         seed: teamSeed,

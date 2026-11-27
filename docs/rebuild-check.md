@@ -213,8 +213,9 @@ export const mintManifest: AreaManifest = {
     run, the run saves its columns with each row's key before the
     drop and puts them back after the last running row writer, so the
     API's answers keep them; they are still left out of the comparison and
-    listed with why (another area's, planned, or waiting for a table), as
-    planned tables are, and a final run fails on them.
+    listed with why (another area's, planned, waiting for a table, or
+    needing a step that doesn't run), as planned tables are, and a final
+    run fails on them.
   - A rebuilder can list
     `plannedRows: [{ table, where, reason, until, change }]`: rows of a
     table it writes that only a later change rebuilds, such as rows
@@ -295,9 +296,16 @@ export const mintManifest: AreaManifest = {
     starts only its areas' rebuilders and empties only their tables, so a
     rebuilder that needs another area's rebuilder is skipped there
     ("outside this area run"): run in it, that rebuilder would write onto
-    that area's rows, which were seeded and never emptied. The registry refuses an unknown step, a
-    step that needs itself, a seed that needs a rebuilder (every seed runs
-    before the rebuilders) and a need without a reason.
+    that area's rows, which were seeded and never emptied. So a column
+    owner orders itself after its table's row writer with `after`, not
+    `needsSteps`: a need on another area's row writer would skip the owner
+    in its own area's runs. Unlike `after`, a need may cross kinds one
+    way: a rebuilder may need a seed, which every run has run by then. A
+    need names a step some manifest declares: an id no manifest has fails
+    as unknown, even with another area's prefix, where an `after` on it
+    is an unresolved cross-area edge. The registry refuses an unknown
+    step, a step that needs itself, a seed that needs a rebuilder (every
+    seed runs before the rebuilders) and a need without a reason.
   - A seed with `last: true` runs after every seed without it, in the
     usual order among the last ones. A chain indexer uses it to catch up
     on blocks other seeds mined after it first ran, so the tables it seeds
