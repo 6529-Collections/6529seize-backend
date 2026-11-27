@@ -46,6 +46,8 @@ function run(
     full?: boolean;
     /** The area declares ABSENT, a planned table no code creates. */
     absent?: boolean;
+    /** More seeds of the area, after `seed`. */
+    moreSeeds?: RebuildStep[];
   }
 ) {
   // Only the self-check's own steps and probe: the areas' steps and probes
@@ -64,7 +66,7 @@ function run(
                 }
               }
             : manifest.tables,
-          seeds: [parts.seed],
+          seeds: [parts.seed, ...(parts.moreSeeds ?? [])],
           rebuilders: [parts.rebuilder, ...(parts.more ?? [])],
           probes: parts.probes ?? []
         }
@@ -118,6 +120,110 @@ describe('rebuild check, end to end', () => {
       report.steps.find((s) => s.kind === 'rebuilder')?.rowsWritten
     ).toEqual({ team: 3 });
     expect(report.probes.stoppedBefore).toBeNull();
+  });
+
+  it('skips a seed whose needed seed is planned, notes it, and passes', async () => {
+    // If the needing seed ran, it would insert the team rows twice and fail.
+    const plannedSeed: RebuildStep = {
+      ...step('self-check.planned-seed', 'seedTeam', ['team']),
+      run: { module: 'src/rebuild/run/not-here.steps', exportName: 'seedTeam' },
+      origin: 'planned'
+    };
+    const needing: RebuildStep = {
+      ...step('self-check.needs-planned', 'seedTeam', ['team']),
+      needsSteps: [
+        { step: 'self-check.planned-seed', reason: 'it mints the cards' }
+      ]
+    };
+    const { report } = await run('mint', {
+      seed: teamSeed,
+      moreSeeds: [plannedSeed, needing],
+      rebuilder: step('self-check.same', 'rebuildTeam', ['team'])
+    });
+    expect(report.failures).toEqual([]);
+    expect(report.verdict).toBe('PASS');
+    expect(report.steps.map((s) => s.id)).not.toContain(
+      'self-check.needs-planned'
+    );
+    expect(report.notes.join(' ')).toContain(
+      "1 steps were skipped as planned because a step they need doesn't run: self-check.needs-planned needs self-check.planned-seed, which is skipped as planned (it mints the cards)"
+    );
+  });
+
+  it('skips a rebuilder whose needed rebuilder is planned, keeps its table, and a final run fails on it', async () => {
+    const plannedRebuilder: RebuildStep = {
+      ...step('self-check.planned-rebuilder', 'rebuildTeam', []),
+      run: {
+        module: 'src/rebuild/run/not-here.steps',
+        exportName: 'rebuildTeam'
+      },
+      origin: 'planned'
+    };
+    const needing = (id: string): RebuildStep => ({
+      ...step(id, 'rebuildTeam', ['team']),
+      needsSteps: [
+        { step: 'self-check.planned-rebuilder', reason: 'it writes the heads' }
+      ]
+    });
+    const { report } = await run('mint', {
+      seed: teamSeed,
+      rebuilder: needing('self-check.needs-rebuilder'),
+      more: [plannedRebuilder]
+    });
+    expect(report.failures).toEqual([]);
+    expect(report.verdict).toBe('PASS');
+    expect(report.steps.map((s) => s.id)).not.toContain(
+      'self-check.needs-rebuilder'
+    );
+    // Its table was kept, like a planned rebuilder's: nothing was rebuilt.
+    expect(report.tables.rebuilt).toEqual([]);
+    expect(report.notes.join(' ')).toContain(
+      'self-check.needs-rebuilder needs self-check.planned-rebuilder, which is skipped as planned (it writes the heads)'
+    );
+    const final = await run('mint', {
+      seed: teamSeed,
+      rebuilder: needing('self-check.needs-rebuilder-final'),
+      more: [plannedRebuilder],
+      final: true
+    });
+    expect(final.report.verdict).toBe('FAIL');
+    expect(final.report.failures.join(' ')).toContain(
+      'self-check.needs-rebuilder-final needs self-check.planned-rebuilder, which is skipped as planned'
+    );
+  });
+
+  it("skips a rebuilder whose needed rebuilder is another area's in an area run, keeps its table, and a final run fails on it", async () => {
+    const other = step('self-check.other-area', 'rebuildTeam', []);
+    const needing = (id: string): RebuildStep => ({
+      ...step(id, 'rebuildTeam', ['team']),
+      needsSteps: [
+        { step: 'self-check.other-area', reason: 'it reads its rows' }
+      ]
+    });
+    const { report } = await run('mint', {
+      seed: teamSeed,
+      rebuilder: needing('self-check.needs-other-area'),
+      others: { tdh: [other] }
+    });
+    expect(report.failures).toEqual([]);
+    expect(report.verdict).toBe('PASS');
+    expect(report.steps.map((s) => s.id)).not.toContain(
+      'self-check.needs-other-area'
+    );
+    expect(report.tables.rebuilt).toEqual([]);
+    expect(report.notes.join(' ')).toContain(
+      'self-check.needs-other-area needs self-check.other-area, outside this area run (it reads its rows)'
+    );
+    const final = await run('mint', {
+      seed: teamSeed,
+      rebuilder: needing('self-check.needs-other-area-final'),
+      others: { tdh: [other] },
+      final: true
+    });
+    expect(final.report.verdict).toBe('FAIL');
+    expect(final.report.failures.join(' ')).toContain(
+      'self-check.needs-other-area-final needs self-check.other-area, outside this area run'
+    );
   });
 
   it('reports rows that differ after the rebuild, and passes', async () => {

@@ -16,14 +16,23 @@ export interface OrderedSteps<T extends RebuildStep> {
 }
 
 /**
- * The steps each step waits on: those its `after` names, and those that
- * name it in their `before`.
+ * The steps each step waits on: those its `after` and `needsSteps` name,
+ * and those that name it in their `before`.
  */
 export function waitsOn(
   steps: readonly RebuildStep[]
 ): Map<string, readonly string[]> {
   const waits = new Map<string, string[]>(
-    steps.map((step) => [step.id, [...(step.after ?? [])]])
+    steps.map((step) => [
+      step.id,
+      [
+        ...(step.after ?? []),
+        // A step that needs itself is the registry's problem, not a cycle.
+        ...(step.needsSteps ?? [])
+          .map((need) => need.step)
+          .filter((id) => id !== step.id)
+      ]
+    ])
   );
   for (const step of steps) {
     for (const id of step.before ?? []) waits.get(id)?.push(step.id);
@@ -32,9 +41,9 @@ export function waitsOn(
 }
 
 /**
- * Orders steps so each runs after the steps it waits on (`after`, and the
- * `before` of others). Ties keep the input order, so the order is the
- * same on every run.
+ * Orders steps so each runs after the steps it waits on (`after`,
+ * `needsSteps`, and the `before` of others). Ties keep the input order, so
+ * the order is the same on every run.
  */
 export function orderSteps<T extends RebuildStep>(
   steps: readonly T[]
@@ -74,8 +83,8 @@ export function orderSteps<T extends RebuildStep>(
  * Seeds in run order: as {@link orderSteps}, then the seeds marked `last`
  * after every other one, in the same order among themselves. A seed that
  * isn't last never waits on one that is (the registry refuses an `after`
- * onto a last seed and a last seed's `before` onto one that isn't), so
- * each seed still runs after the seeds it waits on.
+ * or a need onto a last seed, and a last seed's `before` onto one that
+ * isn't), so each seed still runs after the seeds it waits on.
  */
 export function orderSeeds<T extends RebuildStep>(
   seeds: readonly T[]
