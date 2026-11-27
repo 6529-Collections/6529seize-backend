@@ -125,11 +125,11 @@ describe("the world's actors' rows and ids", () => {
 // profile id the world already holds is a second profile under that id. The
 // world's actors' rows are identity.probe-profiles', the records service's
 // among them: the mint, publish and subscriptions seeds read it by its
-// wallet and write no profile. The identity rebuilder restores the untaken placeholders'
-// profiles from the freeze file. Any other raw write, anywhere under src,
-// fails here until it is reviewed and listed. Counted: SQL that inserts or
-// replaces into the table; a write helper (insert, upsert, write, put)
-// handed the table in any argument; a row set tagged with the table
+// wallet and write no profile. The identity rebuilder restores the untaken
+// placeholders' profiles from the freeze file. Any other raw write, anywhere
+// under src, fails here until it is reviewed and listed. Counted: SQL that
+// inserts or replaces into the table; a write helper (insert, upsert, write,
+// put) handed the table in any argument; a row set tagged with the table
 // (`table: PROFILES_TABLE`, or the table's name in quotes or backticks: the
 // test fixtures' and the planted references' forms, which generic writers
 // insert as given); and a call of withProfiles, which builds one. Out of
