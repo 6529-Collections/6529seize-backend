@@ -1,8 +1,8 @@
 import { shouldCaptureRawBody } from './raw-body-paths';
 
 describe('shouldCaptureRawBody', () => {
-  it('does not capture ordinary deploy routes', () => {
-    expect(shouldCaptureRawBody('/deploy/ui/dispatch')).toBe(false);
+  it('does not capture ordinary API requests', () => {
+    expect(shouldCaptureRawBody('/api/drops')).toBe(false);
   });
 
   it('preserves the existing signed webhook paths', () => {

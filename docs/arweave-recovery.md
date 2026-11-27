@@ -35,6 +35,8 @@ path and is not appended to the raw endpoint. The original input is tried first.
 
 ## Upload identity and recovery
 
+Caller-supplied tags are applied before signing, including subscription opening/history discovery tags. Gateway retries and saved resumes retain the original signed tags.
+
 `ArweaveUploadSession` is the shared uploader, extracted from the existing TDH
 engine. It signs once, submits the same public transaction header to each
 required gateway, and retries identical chunk proofs and bytes. Each gateway's

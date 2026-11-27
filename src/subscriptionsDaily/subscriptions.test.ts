@@ -3,7 +3,7 @@ import fc from 'fast-check';
 import {
   resolveFinalSubscriptionCount,
   resolveRequestedSubscriptionCount
-} from './subscriptions';
+} from './subscription-final-count';
 
 describe('subscriptionsDaily', () => {
   describe('resolveRequestedSubscriptionCount', () => {

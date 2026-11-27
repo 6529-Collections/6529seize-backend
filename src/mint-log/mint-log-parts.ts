@@ -6,6 +6,7 @@ import {
   MEMES_CONTRACT,
   MINTING_CLAIM_ACTIONS_TABLE,
   MINTING_CLAIMS_TABLE,
+  SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE
 } from '@/constants';
 import {
@@ -57,6 +58,11 @@ export interface MintRowPartSpec {
   readonly insertDefaults?: (
     row: MintRow
   ) => Record<string, string | number | null>;
+  /**
+   * Captured only while the subscriptions switch names the identity tables
+   * as the truth; before it (and after a suspend) the part is empty.
+   */
+  readonly identitySubscriptions?: true;
   /** False when this part does not exist for the card's contract. */
   readonly appliesTo?: (card: MintCardRef) => boolean;
 }
@@ -168,6 +174,22 @@ export const MINT_ROW_PART_SPECS: Readonly<
     // The row id, not the consolidation key: the daily loop re-keys rows
     // in place when wallets consolidate, and keeps their ids. The
     // subscriptions rebuild must keep the ids too.
+    key: ['id'],
+    excluded: [],
+    only: ['id', 'phase', 'phase_subscriptions', 'phase_position'],
+    mode: 'update-only'
+  },
+  // After the subscriptions switch the identity final rows are the truth,
+  // and a phase pull writes them beside the legacy copy (which lacks the
+  // rows of keys too long for its columns). Same ids, same columns. A
+  // genesis taken after the switch captures this part too (MINT_PARTS).
+  subscription_phases_identity: {
+    part: 'subscription_phases_identity',
+    // The identity final table holds memes rows only.
+    appliesTo: (card) => card.contract === MEMES_CONTRACT.toLowerCase(),
+    identitySubscriptions: true,
+    table: SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+    scope: 'contract = :contract and token_id = :card_id',
     key: ['id'],
     excluded: [],
     only: ['id', 'phase', 'phase_subscriptions', 'phase_position'],

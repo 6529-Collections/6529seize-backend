@@ -24,6 +24,17 @@ export class AppFeatures {
     return this.isFeatureEnabled('SUBSCRIPTION_DEFERRED_REPLAY');
   }
 
+  /**
+   * The subscriptions re-key fallback: every fifth minute the top-up loop
+   * re-keys legacy subscription keys whose wallets the identity mirror now
+   * groups otherwise (subscription-rekey-fallback). Turn it on if nothing
+   * else re-keys subscriptions after the mirror's first run. Rollback: unset
+   * it; keys stay as they are until the next re-key.
+   */
+  public isSubscriptionRekeyOnMirrorEnabled(): boolean {
+    return this.isFeatureEnabled('SUBSCRIPTIONS_REKEY_ON_MIRROR');
+  }
+
   public isExperimentalBulkRepEnabled(): boolean {
     return this.isFeatureEnabled('EXPERIMENTAL_BULK_REP');
   }

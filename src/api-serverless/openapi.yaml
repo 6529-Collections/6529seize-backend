@@ -3330,10 +3330,10 @@ paths:
       summary: The stream owner each wallet's records use
       description: >-
         For each wallet, the owner that names it in signed records: its
-        principal id at the latest finalized height, or the wallet itself
-        while it is bound to no principal. Clients use it for the targets of
-        follows, mutes, blocks, artwork alerts and mention shortcuts. 1 to 50
-        wallets. 503 while the chain gateway is unavailable.
+        principal id at the latest finalized height, or the wallet itself while
+        it is bound to no principal. Clients use it for the targets of follows,
+        mutes, blocks, artwork alerts and mention shortcuts. 1 to 50 wallets.
+        503 while the chain gateway is unavailable.
       operationId: getSignedRecordsOwners
       security:
         - {}
@@ -15758,7 +15758,7 @@ paths:
           required: true
           schema:
             type: string
-          description: Notification ID or string "all" to mark all notifications as read
+          description: Notification ID
       responses:
         "201":
           description: successful operation
@@ -19246,6 +19246,59 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiAvailableRatingCredit"
+  /rememes/add:
+    post:
+      tags:
+        - ReMemes
+      summary: Add ReMemes
+      description: >-
+        Registers NFTs from one Ethereum mainnet contract as ReMemes. The
+        signing wallet must be the contract deployer or meet the configured TDH
+        minimum. A wallet signature authorizes the request without a bearer
+        token. Password-protected deployments also require `x-6529-auth`. A
+        verified structured signature consumes its nonce before the NFT and
+        eligibility checks. Use a fresh signature for each attempt.
+      operationId: addRememe
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiAddRememeRequest"
+      responses:
+        "201":
+          description: ReMemes added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiAddRememeResponse"
+        "400":
+          description: >-
+            Request, signature, contract, or eligibility errors have a top-level
+            error. Per-token validation failures have contract and NFT results,
+            including an error for each affected token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiAddRememeBadRequest"
+              examples:
+                invalidSignature:
+                  value:
+                    valid: false
+                    error: Invalid signature
+                tokenValidationFailed:
+                  value:
+                    valid: false
+                    contract:
+                      address: "0x1000000000000000000000000000000000000000"
+                    nfts:
+                      - tokenId: "123"
+                        raw:
+                          error: Rememe already exists
+                      - metadataError: >-
+                          Error fetching metadata for token_id 124: metadata
+                          unavailable
   /subscriptions/consolidation/coverage/{consolidation_key}:
     get:
       tags:
@@ -19734,6 +19787,20 @@ paths:
           required: true
           schema:
             type: string
+        - name: x-6529-signed-records
+          in: header
+          required: false
+          description: >-
+            The change as one signed record: base64url of the UTF-8 JSON array
+            of one signed record event, a kind 9 RECORD in the owner's ps stream
+            (the principal, or the wallet while it is bound to none) of type
+            subs.mode, subs.all-editions, subs.card or subs.count, stating the
+            same change as the body and signed with the signed-in wallet's
+            device key. After the switch to identities a change needs it; before
+            it, the change is made unsigned and a record sent with it is only
+            compared in shadow.
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -19748,9 +19815,24 @@ paths:
               schema:
                 $ref: "#/components/schemas/SubscriptionModeResponse"
         "400":
-          description: Not enough balance
+          description: >-
+            Not enough balance. A signed record that does not verify or does not
+            state the request gets INVALID_SIGNED_RECORD, with the reason in
+            `reason`.
         "403":
           description: User can only change subscription mode for their own consolidation
+        "409":
+          description: >-
+            Subscription changes are signed now and none was sent
+            (SIGNED_RECORD_REQUIRED); a newer change to this choice is already
+            saved (STALE_SIGNED_RECORD); or the key's wallets belong to more
+            than one identity.
+        "503":
+          description: >-
+            Subscription changes are paused for a few minutes, or the anchor
+            height or the wallet binding needed to check a signed record is
+            unavailable (ANCHOR_UNAVAILABLE, BINDING_UNAVAILABLE). Try again
+            shortly.
   /subscriptions/{consolidation_key}/subscribe-all-editions:
     post:
       tags:
@@ -19767,6 +19849,20 @@ paths:
           required: true
           schema:
             type: string
+        - name: x-6529-signed-records
+          in: header
+          required: false
+          description: >-
+            The change as one signed record: base64url of the UTF-8 JSON array
+            of one signed record event, a kind 9 RECORD in the owner's ps stream
+            (the principal, or the wallet while it is bound to none) of type
+            subs.mode, subs.all-editions, subs.card or subs.count, stating the
+            same change as the body and signed with the signed-in wallet's
+            device key. After the switch to identities a change needs it; before
+            it, the change is made unsigned and a record sent with it is only
+            compared in shadow.
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -19780,8 +19876,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SubscribeAllEditionsResponse"
+        "400":
+          description: >-
+            A signed record that does not verify or does not state the request
+            gets INVALID_SIGNED_RECORD, with the reason in `reason`.
         "403":
           description: User can only change subscription mode for their own consolidation
+        "409":
+          description: >-
+            Subscription changes are signed now and none was sent
+            (SIGNED_RECORD_REQUIRED); a newer change to this choice is already
+            saved (STALE_SIGNED_RECORD); or the key's wallets belong to more
+            than one identity.
+        "503":
+          description: >-
+            Subscription changes are paused for a few minutes, or the anchor
+            height or the wallet binding needed to check a signed record is
+            unavailable (ANCHOR_UNAVAILABLE, BINDING_UNAVAILABLE). Try again
+            shortly.
   /subscriptions/{consolidation_key}/subscription:
     post:
       tags:
@@ -19798,6 +19910,20 @@ paths:
           required: true
           schema:
             type: string
+        - name: x-6529-signed-records
+          in: header
+          required: false
+          description: >-
+            The change as one signed record: base64url of the UTF-8 JSON array
+            of one signed record event, a kind 9 RECORD in the owner's ps stream
+            (the principal, or the wallet while it is bound to none) of type
+            subs.mode, subs.all-editions, subs.card or subs.count, stating the
+            same change as the body and signed with the signed-in wallet's
+            device key. After the switch to identities a change needs it; before
+            it, the change is made unsigned and a record sent with it is only
+            compared in shadow.
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -19812,9 +19938,24 @@ paths:
               schema:
                 $ref: "#/components/schemas/SubscriptionResponse"
         "400":
-          description: Not enough balance or NFT already released
+          description: >-
+            Not enough balance or NFT already released. A signed record that
+            does not verify or does not state the request gets
+            INVALID_SIGNED_RECORD, with the reason in `reason`.
         "403":
           description: User can only change subscription mode for their own consolidation
+        "409":
+          description: >-
+            Subscription changes are signed now and none was sent
+            (SIGNED_RECORD_REQUIRED); a newer change to this choice is already
+            saved (STALE_SIGNED_RECORD); or the key's wallets belong to more
+            than one identity.
+        "503":
+          description: >-
+            Subscription changes are paused for a few minutes, or the anchor
+            height or the wallet binding needed to check a signed record is
+            unavailable (ANCHOR_UNAVAILABLE, BINDING_UNAVAILABLE). Try again
+            shortly.
   /subscriptions/{consolidation_key}/subscription-count:
     post:
       tags:
@@ -19831,6 +19972,20 @@ paths:
           required: true
           schema:
             type: string
+        - name: x-6529-signed-records
+          in: header
+          required: false
+          description: >-
+            The change as one signed record: base64url of the UTF-8 JSON array
+            of one signed record event, a kind 9 RECORD in the owner's ps stream
+            (the principal, or the wallet while it is bound to none) of type
+            subs.mode, subs.all-editions, subs.card or subs.count, stating the
+            same change as the body and signed with the signed-in wallet's
+            device key. After the switch to identities a change needs it; before
+            it, the change is made unsigned and a record sent with it is only
+            compared in shadow.
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -19845,9 +20000,24 @@ paths:
               schema:
                 $ref: "#/components/schemas/SubscriptionCountResponse"
         "400":
-          description: Not enough balance, NFT already released, or exceeds eligibility
+          description: >-
+            Not enough balance, NFT already released, or exceeds eligibility. A
+            signed record that does not verify or does not state the request
+            gets INVALID_SIGNED_RECORD, with the reason in `reason`.
         "403":
           description: User can only change subscription mode for their own consolidation
+        "409":
+          description: >-
+            Subscription changes are signed now and none was sent
+            (SIGNED_RECORD_REQUIRED); a newer change to this choice is already
+            saved (STALE_SIGNED_RECORD); or the key's wallets belong to more
+            than one identity.
+        "503":
+          description: >-
+            Subscription changes are paused for a few minutes, or the anchor
+            height or the wallet binding needed to check a signed record is
+            unavailable (ANCHOR_UNAVAILABLE, BINDING_UNAVAILABLE). Try again
+            shortly.
   /identity-subscriptions/outgoing/{target_type}:
     get:
       tags:
@@ -23965,6 +24135,131 @@ components:
           type: string
         device_signature:
           $ref: "#/components/schemas/ApiDeviceSignature"
+    ApiAddRememeBadRequest:
+      oneOf:
+        - $ref: "#/components/schemas/ApiAddRememeError"
+        - $ref: "#/components/schemas/ApiAddRememeTokenErrors"
+    ApiAddRememeError:
+      type: object
+      additionalProperties: false
+      required:
+        - valid
+        - error
+      properties:
+        valid:
+          type: boolean
+          enum:
+            - false
+        error:
+          type: string
+    ApiAddRememeRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - address
+        - signature
+        - rememe
+      properties:
+        address:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Ethereum address of the signing wallet.
+        signature:
+          type: string
+          minLength: 1
+          maxLength: 10000
+          description: >-
+            Ethereum personal-sign signature over the exact text of
+            `signature_message`. Structured messages support externally owned
+            accounts and EIP-1271 contract wallets.
+        signature_message:
+          type: string
+          nullable: true
+          minLength: 1
+          maxLength: 10000
+          description: |-
+            Version 2 action message. Fill in the placeholders and join these
+            lines with LF before signing.
+
+            ```text
+            6529 Action
+            Version: 2
+            Audience: <API host, e.g. api.6529.io>
+            Domain: <client host>
+            Wallet: <address>
+            Chain ID: 1
+            Issued At: <ISO 8601 UTC timestamp>
+            Expiration Time: <ISO 8601 UTC timestamp>
+            Nonce: <fresh UUID>
+            Action: add_rememe
+            Payload Hash: <64 lowercase hex characters>
+            Purpose: Sign this message to add a 6529 ReMeme.
+            ```
+
+            Compute the payload hash from the `rememe` object alone. Use
+            compact JSON with recursively sorted object keys and the original
+            array order. Hash the UTF-8 bytes with SHA-256 and encode the digest
+            as lowercase hex. Send `references` as JSON numbers so the signed
+            values match the validated payload.
+
+            Use a five-minute expiration as the web frontend does. The server
+            accepts a lifetime of up to ten minutes and checks expiry and
+            single use.
+
+            If strict structured signatures are disabled, an externally owned
+            account may omit this field or send null and personal-sign
+            `JSON.stringify(rememe)` with the same key order as the request.
+        rememe:
+          $ref: "#/components/schemas/ApiRememePayload"
+    ApiAddRememeResponse:
+      type: object
+      required:
+        - valid
+        - address
+        - references
+        - contract
+        - nfts
+      properties:
+        valid:
+          type: boolean
+          enum:
+            - true
+        address:
+          type: string
+          description: Wallet that submitted the ReMemes.
+        references:
+          type: array
+          items:
+            type: number
+        contract:
+          $ref: "#/components/schemas/ApiRememeContractMetadata"
+        nfts:
+          type: array
+          description: Alchemy NFT metadata in request order.
+          items:
+            $ref: "#/components/schemas/ApiRememeNftMetadata"
+    ApiAddRememeTokenErrors:
+      type: object
+      additionalProperties: false
+      required:
+        - valid
+        - contract
+        - nfts
+      properties:
+        valid:
+          type: boolean
+          enum:
+            - false
+        contract:
+          $ref: "#/components/schemas/ApiRememeContractMetadata"
+        nfts:
+          type: array
+          description: Results in request order, with at least one token error.
+          items:
+            oneOf:
+              - $ref: "#/components/schemas/ApiRememeNftLookupError"
+              - $ref: "#/components/schemas/ApiRememeNftMetadata"
     ApiAggregatedActivity:
       type: object
       required:
@@ -33206,55 +33501,6 @@ components:
           type: integer
           format: int64
           nullable: true
-    ApiSignedRecordsOwner:
-      type: object
-      required:
-        - wallet
-        - owner
-      properties:
-        wallet:
-          type: string
-          description: Lowercase wallet.
-        owner:
-          type: string
-          description: Its principal id, or the wallet while it is bound to none.
-    ApiSignedRecordsOwners:
-      type: object
-      required:
-        - anchor
-        - owners
-      properties:
-        anchor:
-          type: integer
-          format: int64
-          description: The finalized height the owners were read at.
-        owners:
-          type: array
-          items:
-            $ref: "#/components/schemas/ApiSignedRecordsOwner"
-    ApiSignedRecordsAnchor:
-      type: object
-      required:
-        - anchor
-        - head_height
-        - finalized_time
-        - max_anchor_lag
-      properties:
-        anchor:
-          type: integer
-          format: int64
-          description: The latest finalized height; sign it as the record's anchor.
-        head_height:
-          type: integer
-          format: int64
-        finalized_time:
-          type: integer
-          format: int64
-          description: The finalized block's slot start, epoch milliseconds.
-        max_anchor_lag:
-          type: integer
-          format: int64
-          description: How many heights behind the finalized head a submitted anchor may be.
     ApiDeviceGrantProof:
       type: object
       allOf:
@@ -43667,6 +43913,71 @@ components:
         platform:
           type: string
           description: Optional platform (ios, android, web)
+    ApiRememeContractMetadata:
+      type: object
+      description: Contract metadata from Alchemy. Additional fields may vary.
+      additionalProperties: true
+      required:
+        - address
+      properties:
+        address:
+          type: string
+        contractDeployer:
+          type: string
+    ApiRememeNftLookupError:
+      type: object
+      additionalProperties: false
+      required:
+        - metadataError
+      properties:
+        metadataError:
+          type: string
+          description: The token lookup failed before returning metadata.
+    ApiRememeNftMetadata:
+      type: object
+      description: NFT metadata from Alchemy. Additional fields may vary.
+      additionalProperties: true
+      required:
+        - tokenId
+      properties:
+        tokenId:
+          type: string
+        raw:
+          type: object
+          additionalProperties: true
+          properties:
+            error:
+              type: string
+              description: >-
+                A provider metadata error or Rememe already exists for a
+                previously registered token.
+    ApiRememePayload:
+      type: object
+      additionalProperties: false
+      required:
+        - contract
+        - token_ids
+        - references
+      properties:
+        contract:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Ethereum mainnet NFT contract address.
+        token_ids:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: string
+            minLength: 1
+            maxLength: 100
+        references:
+          type: array
+          description: Referenced Meme IDs. The array may be empty.
+          maxItems: 1000
+          items:
+            type: number
     ApiRenameDeviceRequest:
       type: object
       required:
@@ -44323,6 +44634,57 @@ components:
           nullable: true
           minLength: 1
           maxLength: 50
+    ApiSignedRecordsAnchor:
+      type: object
+      required:
+        - anchor
+        - head_height
+        - finalized_time
+        - max_anchor_lag
+      properties:
+        anchor:
+          type: integer
+          format: int64
+          description: The latest finalized height; sign it as the record's anchor.
+        head_height:
+          type: integer
+          format: int64
+        finalized_time:
+          type: integer
+          format: int64
+          description: The finalized block's slot start, epoch milliseconds.
+        max_anchor_lag:
+          type: integer
+          format: int64
+          description: >-
+            How many heights behind the finalized head a submitted anchor may
+            be.
+    ApiSignedRecordsOwner:
+      type: object
+      required:
+        - wallet
+        - owner
+      properties:
+        wallet:
+          type: string
+          description: Lowercase wallet.
+        owner:
+          type: string
+          description: Its principal id, or the wallet while it is bound to none.
+    ApiSignedRecordsOwners:
+      type: object
+      required:
+        - anchor
+        - owners
+      properties:
+        anchor:
+          type: integer
+          format: int64
+          description: The finalized height the owners were read at.
+        owners:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiSignedRecordsOwner"
     ApiStartMultipartMediaUploadResponse:
       required:
         - upload_id

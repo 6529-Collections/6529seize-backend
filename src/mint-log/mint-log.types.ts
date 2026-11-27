@@ -54,6 +54,7 @@ export type MintRowPart =
   | 'claim_actions'
   | 'card_mapping'
   | 'subscription_phases'
+  | 'subscription_phases_identity'
   | 'nextgen_allowlists'
   | 'nextgen_allowlist_rows'
   | 'nextgen_allowlist_burn_rows'
@@ -74,6 +75,7 @@ export const MINT_ROW_PARTS: readonly MintRowPart[] = [
   'claim_actions',
   'card_mapping',
   'subscription_phases',
+  'subscription_phases_identity',
   'nextgen_allowlists',
   'nextgen_allowlist_rows',
   'nextgen_allowlist_burn_rows',
@@ -208,9 +210,20 @@ export const MINT_KIND_PARTS: Readonly<
   'claim.media-request': [],
   'claim.media': ['claim'],
   'claim.action': ['claim_actions'],
-  'dist.phase': ['distribution', 'merkle', 'subscription_phases'],
-  'dist.public': ['subscription_phases'],
-  'dist.reset': ['distribution', 'merkle', 'normalized', 'subscription_phases'],
+  'dist.phase': [
+    'distribution',
+    'merkle',
+    'subscription_phases',
+    'subscription_phases_identity'
+  ],
+  'dist.public': ['subscription_phases', 'subscription_phases_identity'],
+  'dist.reset': [
+    'distribution',
+    'merkle',
+    'normalized',
+    'subscription_phases',
+    'subscription_phases_identity'
+  ],
   'dist.airdrops': ['distribution'],
   'dist.normalize': ['normalized'],
   'dist.photos': ['photos'],
