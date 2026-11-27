@@ -81,7 +81,7 @@ describe('Drop Forge phase network and replay boundary', () => {
   it("evicts the claim's cached reads only once the job commits", async () => {
     let committed: (() => unknown) | undefined;
     const registered = jest
-      .spyOn(transactions, 'afterCommit')
+      .spyOn(transactions, 'afterCommitAwaited')
       .mockImplementation(async (_connection, callback) => {
         committed = callback;
       });

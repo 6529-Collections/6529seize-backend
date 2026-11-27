@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { appFeatures, AppFeatures } from '@/app-features';
-import { afterCommit } from '@/db/after-commit';
+import { afterCommitAwaited } from '@/db/after-commit';
 import { CustomApiCompliantException } from '@/exceptions';
 import { Logger } from '@/logging';
 import { sendPriorityAlertIfConfigured } from '@/priority-alerts.context';
@@ -281,16 +281,17 @@ export class MintLogRecorder {
   /**
    * As alert, but the priority alert, a network call, goes out once the
    * caller's transaction commits, so it isn't made while the caller's locks
-   * and the mint log's head are held. The error is logged at once. If the
-   * transaction rolls back, the write it was about is gone with it, and so
-   * is the alert.
+   * and the mint log's head are held, and the commit waits for it in full,
+   * so a Lambda invocation doesn't end first. The error is logged at once.
+   * If the transaction rolls back, the write it was about is gone with it,
+   * and so is the alert.
    */
   private async alertAfterCommit(
     message: string,
     connection: ConnectionWrapper<any>
   ): Promise<void> {
     logger.error(message);
-    await afterCommit(connection, () => this.sendAlert(message));
+    await afterCommitAwaited(connection, () => this.sendAlert(message));
   }
 
   /**
@@ -361,7 +362,7 @@ export class MintLogRecorder {
         connection
       )
     );
-    if (entry) await this.report(entry);
+    if (entry) await this.report(entry, connection);
     return value;
   }
 
@@ -871,7 +872,14 @@ export class MintLogRecorder {
     );
   }
 
-  private async report(entry: MintLogEntryBody): Promise<void> {
+  /**
+   * Alerts an entry's problems. Given the caller's connection (writeWithin),
+   * the priority alert waits for the caller's commit, as a shadow failure's.
+   */
+  private async report(
+    entry: MintLogEntryBody,
+    connection?: ConnectionWrapper<any>
+  ): Promise<void> {
     const problems = [
       ...entry.checks.undeclared.map((part) => `undeclared part ${part}`),
       ...entry.checks.merkle_raw.map((phase) => `raw proofs kept for ${phase}`),
@@ -879,9 +887,12 @@ export class MintLogRecorder {
     ];
     if (!problems.length) return;
     const card = entry.card ? cardLabel(entry.card) : 'none';
-    await this.alert(
-      `[MINT_LOG_MISMATCH] [${entry.chain} ${entry.seq}] [${entry.kind}] [card ${card}] ${problems.join('; ')}`
-    );
+    const message = `[MINT_LOG_MISMATCH] [${entry.chain} ${entry.seq}] [${entry.kind}] [card ${card}] ${problems.join('; ')}`;
+    if (connection) {
+      await this.alertAfterCommit(message, connection);
+      return;
+    }
+    await this.alert(message);
   }
 }
 

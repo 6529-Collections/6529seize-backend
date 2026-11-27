@@ -746,6 +746,26 @@ describe('MintLogRecorder.writeWithin', () => {
     expect(sendPriorityAlertIfConfigured).toHaveBeenCalledTimes(1);
   });
 
+  it("sends a replay mismatch's priority alert only once the caller's transaction commits", async () => {
+    const fake = new Fake();
+    fake.applyBug = true;
+    const { log } = within(fake, { shadow: true, replay: true });
+    const tracked = { connection: {} } as any;
+    openAfterCommitScope(tracked.connection);
+    await expect(
+      log.writeWithin(respondSpec(), tracked, async () => {
+        fake.addRow(2);
+        return 'ok';
+      })
+    ).resolves.toBe('ok');
+    expect(fake.entries()[0].checks.replay).toBe('mismatch');
+    // The entry is logged; its alert waits for the caller's commit.
+    expect(sendPriorityAlertIfConfigured).not.toHaveBeenCalled();
+
+    await runAfterCommitCallbacks(closeAfterCommitScope(tracked.connection));
+    expect(sendPriorityAlertIfConfigured).toHaveBeenCalledTimes(1);
+  });
+
   it('fails the caller transaction when the log fails in primary mode', async () => {
     const fake = new Fake();
     fake.failAppends = 1;
