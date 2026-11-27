@@ -2,7 +2,10 @@ import { LaunchRecord } from '@/drop-forge/drop-forge.types';
 import { RequestContext } from '@/request.context';
 import { mintingClaimActionsDb } from '@/api/minting-claims/minting-claim-actions.db';
 import { isSupportedMintingClaimActionType } from '@/minting-claims/minting-claim-actions';
-import { writeDropForgeClaimAction } from '@/mint-log/mint-log-drop-forge';
+import {
+  ClaimActionWrite,
+  writeDropForgeClaimAction
+} from '@/mint-log/mint-log-drop-forge';
 import { addLaunchEvent } from '@/drop-forge/drop-forge.repository';
 import { Logger } from '@/logging';
 
@@ -37,8 +40,10 @@ const setFlagByHand = (record: LaunchRecord, flag: string) =>
 /**
  * A flag that failed to write is bookkeeping, not chain safety: it is left
  * unmirrored, so the next pass that mirrors the launch writes it again, and
- * its first failure shows as a warning event in the launch's reports. The
- * rest of the transaction, reservations and sent actions included, commits.
+ * its first failure shows as an event in the launch's reports, an error
+ * with the alert mention only on a launch that has ended, where it needs an
+ * operator. The rest of the transaction, reservations and sent actions
+ * included, commits.
  * A running launch isn't completed while it has a flag to write (the
  * worker's reserve), so it gets that pass; a paused or blocked one only
  * once it runs again, since the worker mirrors only launches it runs (or
@@ -69,7 +74,7 @@ async function flagFailed(
         (ended
           ? `the launch has ended, so set it by hand: ${setFlagByHand(record, flag)}.`
           : `Drop Forge writes it again on a later pass, before the launch completes (a paused or blocked launch only once it runs again). If the launch ends first, set it by hand: ${setFlagByHand(record, flag)}.`),
-      true
+      ended
     );
   }
   await save(record, ctx);
@@ -123,18 +128,19 @@ async function mirrorFlags(
   ctx: RequestContext,
   save: SaveLaunch,
   index = 0,
-  mirrored = false
+  pending = false
 ): Promise<boolean> {
-  if (index >= flags.length) return mirrored;
+  if (index >= flags.length) return pending;
   const flag = flags[index];
   const completed = record.data.completion_flags!;
-  const write =
+  let outcome: ClaimActionWrite | null = null;
+  if (
     !completed.includes(flag) &&
-    isSupportedMintingClaimActionType(record.data.contract, flag);
-  if (write) {
-    // Held back to the end of the signer transaction, then logged in the
-    // mint log (writeDropForgeClaimAction).
-    await writeDropForgeClaimAction(ctx, {
+    isSupportedMintingClaimActionType(record.data.contract, flag)
+  ) {
+    // With the mint log on, held back to the end of the signer transaction,
+    // then logged (writeDropForgeClaimAction); with it off, written now.
+    outcome = await writeDropForgeClaimAction(ctx, {
       contract: record.data.contract,
       claim: record.data.claim_id,
       action: flag,
@@ -151,16 +157,26 @@ async function mirrorFlags(
         ),
       failed: (error) => flagFailed(record, flag, error, ctx, save)
     });
-    completed.push(flag);
+    // A deferred flag stays unmirrored, for the next pass.
+    if (outcome !== 'deferred') completed.push(flag);
   }
-  return mirrorFlags(record, flags, ctx, save, index + 1, mirrored || write);
+  return mirrorFlags(
+    record,
+    flags,
+    ctx,
+    save,
+    index + 1,
+    pending || outcome === 'held' || outcome === 'deferred'
+  );
 }
 
 /**
  * Mirrors the launch's completed actions into the claim's action flags.
- * In the signer transaction the writes are held to its end; `save` stores
- * the launch record again if one of them fails there. Returns whether it
- * wrote or held any flag.
+ * With the mint log on, in the signer transaction the writes are held to
+ * its end; `save` stores the launch record again if one of them fails
+ * there. Returns whether a flag is still to be written: held to the end of
+ * this pass, or left for the next one. With the mint log off every flag is
+ * written here, and it returns false.
  */
 export async function mirrorCompletion(
   record: LaunchRecord,

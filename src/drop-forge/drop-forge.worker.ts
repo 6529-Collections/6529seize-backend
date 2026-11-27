@@ -423,9 +423,11 @@ export class DropForgeWorker {
       return null;
     }
     if (record.data.actions.every(isLaunchActionSettled)) {
-      // The flags are written at the end of this pass. A launch completes on
-      // a pass with none left to write, so one that fails to write is
-      // retried on the next pass instead of left behind a completed launch.
+      // With the mint log on, the flags are written at the end of this pass,
+      // or on the next one past the pass's cap. A launch completes on a pass
+      // with none left to write, so one that fails to write is retried on
+      // the next pass instead of left behind a completed launch. With the
+      // mint log off they were written above, and `flagged` is false.
       if (flagged) {
         await this.repository.save(record, ctx);
         return null;

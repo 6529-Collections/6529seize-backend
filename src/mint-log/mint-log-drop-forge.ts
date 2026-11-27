@@ -1,4 +1,5 @@
 import { afterCommitMark, dropAfterCommitSince } from '@/db/after-commit';
+import { markProxySessionPinned } from '@/db/proxy-session-pinning';
 import { Logger } from '@/logging';
 import type { RequestContext } from '@/request.context';
 import { sqlExecutor, type ConnectionWrapper } from '@/sql-executor';
@@ -114,13 +115,15 @@ function dropForgeClaimActionSpec<T>(args: {
  * Logs a Drop Forge write inside the transaction it already runs in, after
  * Drop Forge's own locks: the order every path takes is Drop Forge's locks,
  * then the mint log's head. A rollback of that transaction, or of the job's
- * savepoint, drops the entry with the rows.
+ * savepoint, drops the entry with the rows. With the mint log off it only
+ * runs the write, as Drop Forge did before the mint log.
  */
 export async function logDropForgeWrite<T>(
   writeSpec: MintWriteSpec<T>,
   ctx: RequestContext,
   write: () => Promise<T>
 ): Promise<T> {
+  if (mintLogRecorder.mode() === 'off') return write();
   if (!ctx.connection) {
     throw new Error(
       `Drop Forge logs ${writeSpec.kind} inside its own transaction; none was given`
@@ -220,6 +223,10 @@ const logger = Logger.get('MINT_LOG_DROP_FORGE');
  * left of it, but at least HELD_FLAG_MIN_LOCK_WAIT_SECONDS. A flag that
  * gives up: in primary mode it fails, is unmirrored and is written on a
  * later pass; in shadow mode it commits unlogged, and the mint log alerts.
+ * This relies on innodb_rollback_on_timeout being OFF, MySQL's default: a
+ * timeout then undoes only its statement, and the flag's savepoint the
+ * rest. With it ON, a timeout rolls back the whole pass, as a deadlock
+ * does, and the pass fails and runs again.
  */
 export const HELD_FLAG_LOCK_WAIT_SECONDS = 15;
 
@@ -233,8 +240,9 @@ export const HELD_FLAG_MIN_LOCK_WAIT_SECONDS = 1;
  * session's own value. A later flag then waits past the budget by less than
  * the minimum, so a pass waits for the head at most the budget plus the
  * minimum for each later flag. The session's own value is put back at the
- * end, so the signer's last UPDATE and the pooled connection's next user
- * wait as before.
+ * end, so the signer's last UPDATE waits as before. A session variable set
+ * by hand pins the connection's RDS Proxy session, so the connection is
+ * marked pinned, and is retired instead of reused (proxy-session-pinning).
  */
 async function writeHeldFlags(
   items: readonly QueuedClaimAction[],
@@ -270,6 +278,10 @@ async function writeHeldFlags(
       if (seconds !== current) {
         await setWait(seconds);
         current = seconds;
+        const handle = connection.connection;
+        if (handle && typeof handle === 'object') {
+          markProxySessionPinned(handle, { reason: 'session_settings' });
+        }
       }
       await writeHeld(item, ctx, connection);
     }
@@ -285,6 +297,13 @@ async function writeHeldFlags(
 }
 
 /**
+ * The most completion flags one signer pass holds. Each costs its captures
+ * and may wait for the head, with the signer's rows locked; a flag past
+ * this waits for the next pass, which the launch gets before it completes.
+ */
+export const HELD_FLAGS_PER_PASS = 2;
+
+/**
  * Runs `fn` in Drop Forge's signer transaction with its claim-action writes
  * held back, then writes them, each logged, before returning, so the
  * caller commits them with the rest. The mint log's head is then taken only
@@ -293,11 +312,15 @@ async function writeHeldFlags(
  * failed(), and the rest of the transaction commits. A write queued while
  * the held ones are being written throws, so none is committed unwritten
  * and unreported. After the hold ends, a write goes ahead at once.
+ *
+ * With the mint log off nothing is held: `fn` runs as it did before the
+ * mint log, and each flag is written where it is mirrored.
  */
 export async function withDropForgeClaimActions<T>(
   ctx: RequestContext,
   fn: () => Promise<T>
 ): Promise<T> {
+  if (mintLogRecorder.mode() === 'off') return fn();
   const connection = ctx.connection;
   if (!connection) {
     throw new Error('Drop Forge holds claim actions only inside a transaction');
@@ -325,14 +348,22 @@ export async function withDropForgeClaimActions<T>(
 }
 
 /**
+ * What became of a completion flag's write: held to the end of the signer
+ * transaction, left for the next pass (the pass already holds
+ * HELD_FLAGS_PER_PASS), or written now.
+ */
+export type ClaimActionWrite = 'held' | 'deferred' | 'written';
+
+/**
  * A completion flag's write: held back to the end of the signer transaction
  * when one is open (withDropForgeClaimActions), otherwise written and
- * logged at once, in the caller's transaction or in its own.
+ * logged at once, in the caller's transaction or in its own. A flag the
+ * pass has no room for is not written; the caller leaves it unmirrored.
  */
 export async function writeDropForgeClaimAction(
   ctx: RequestContext,
   item: QueuedClaimAction
-): Promise<void> {
+): Promise<ClaimActionWrite> {
   const queue = ctx.connection
     ? claimActionQueues.get(queueKey(ctx.connection))
     : undefined;
@@ -342,16 +373,23 @@ export async function writeDropForgeClaimAction(
         `Claim action ${item.action} queued after the transaction's claim actions were written`
       );
     }
+    if (queue.items.length >= HELD_FLAGS_PER_PASS) {
+      logger.info(
+        `[DROP_FORGE_FLAG_DEFERRED] [${item.contract.toLowerCase()} ${item.claim}] [${item.action}] waits for the next pass`
+      );
+      return 'deferred';
+    }
     queue.items.push(item);
-    return;
+    return 'held';
   }
   if (ctx.connection) {
     await logDropForgeWrite(dropForgeClaimActionSpec(item), ctx, () =>
       item.write(ctx)
     );
-    return;
+    return 'written';
   }
   await mintLogRecorder.write(dropForgeClaimActionSpec(item), () =>
     item.write(ctx)
   );
+  return 'written';
 }

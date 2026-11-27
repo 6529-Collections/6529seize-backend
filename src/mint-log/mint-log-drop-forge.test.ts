@@ -8,11 +8,13 @@ import {
   closeAfterCommitScope,
   openAfterCommitScope
 } from '@/db/after-commit';
+import { isProxySessionPinned } from '@/db/proxy-session-pinning';
 import type { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 import {
   HELD_FLAG_LOCK_WAIT_SECONDS,
   HELD_FLAG_MIN_LOCK_WAIT_SECONDS,
+  HELD_FLAGS_PER_PASS,
   withDropForgeClaimActions,
   writeDropForgeClaimAction
 } from './mint-log-drop-forge';
@@ -51,6 +53,8 @@ describe('held claim actions', () => {
   beforeEach(() => {
     statements = [];
     jest.mocked(sqlExecutor.execute).mockReset();
+    // Flags are held only with the mint log on.
+    jest.spyOn(mintLogRecorder, 'mode').mockReturnValue('shadow');
   });
   afterEach(() => jest.restoreAllMocks());
 
@@ -117,6 +121,7 @@ describe('held claim actions', () => {
   });
 
   it('never raises a shorter lock wait, and touches none when no flag is held', async () => {
+    const ctx = { connection: { connection: {} } } as unknown as RequestContext;
     database(3);
     jest
       .spyOn(mintLogRecorder, 'writeWithin')
@@ -133,42 +138,97 @@ describe('held claim actions', () => {
       'SAVEPOINT drop_forge_claim_action',
       'RELEASE SAVEPOINT drop_forge_claim_action'
     ]);
+    // No session variable was set, so the proxy session isn't pinned.
+    expect(isProxySessionPinned(ctx.connection!.connection)).toBe(false);
   });
 
   it('gives the whole pass one lock-wait budget: a later flag waits what is left of it, at least the minimum', async () => {
+    const ctx = { connection: { connection: {} } } as unknown as RequestContext;
     database(50);
     let now = 1_000_000;
     jest.spyOn(Date, 'now').mockImplementation(() => now);
-    // Each flag takes this long, its wait for the head included.
-    const took = [9_400, 6_000, 0];
+    // How long each flag takes, its wait for the head included.
+    const took = [9_400, 0, 15_400, 0];
     jest
       .spyOn(mintLogRecorder, 'writeWithin')
       .mockImplementation(async (_spec, _connection, write) => {
         now += took.shift()!;
         return write();
       });
+    const pass = () =>
+      withDropForgeClaimActions(ctx, async () => {
+        for (const action of ['FIRST', 'SECOND']) {
+          await writeDropForgeClaimAction(ctx, held(action, jest.fn()));
+        }
+      });
+    const flag = [
+      'SAVEPOINT drop_forge_claim_action',
+      'RELEASE SAVEPOINT drop_forge_claim_action'
+    ];
 
-    await withDropForgeClaimActions(ctx, async () => {
-      for (const action of ['FIRST', 'SECOND', 'THIRD']) {
-        await writeDropForgeClaimAction(ctx, held(action, jest.fn()));
-      }
-    });
-
-    // 15 s for the first flag; 5.6 s left, rounded up, for the second;
-    // none left for the third, which still gets the minimum.
+    // 15 s for the first flag; 5.6 s left, rounded up, for the second.
+    await pass();
+    expect(statements.splice(0)).toEqual([
+      SELECT_WAIT,
+      `${SET_WAIT} ${HELD_FLAG_LOCK_WAIT_SECONDS}`,
+      ...flag,
+      `${SET_WAIT} 6`,
+      ...flag,
+      `${SET_WAIT} 50`
+    ]);
+    // None left after the first: the second still gets the minimum.
+    await pass();
     expect(statements).toEqual([
       SELECT_WAIT,
       `${SET_WAIT} ${HELD_FLAG_LOCK_WAIT_SECONDS}`,
-      'SAVEPOINT drop_forge_claim_action',
-      'RELEASE SAVEPOINT drop_forge_claim_action',
-      `${SET_WAIT} 6`,
-      'SAVEPOINT drop_forge_claim_action',
-      'RELEASE SAVEPOINT drop_forge_claim_action',
+      ...flag,
       `${SET_WAIT} ${HELD_FLAG_MIN_LOCK_WAIT_SECONDS}`,
-      'SAVEPOINT drop_forge_claim_action',
-      'RELEASE SAVEPOINT drop_forge_claim_action',
+      ...flag,
       `${SET_WAIT} 50`
     ]);
+    // The SET pins the RDS Proxy session; the connection is retired, not reused.
+    expect(isProxySessionPinned(ctx.connection!.connection)).toBe(true);
+  });
+
+  it(`holds at most ${HELD_FLAGS_PER_PASS} flags a pass and defers the rest, unwritten`, async () => {
+    database(50);
+    jest
+      .spyOn(mintLogRecorder, 'writeWithin')
+      .mockImplementation(async (_spec, _connection, write) => write());
+    const flags = ['FIRST', 'SECOND', 'THIRD'].map((action) =>
+      held(action, jest.fn())
+    );
+    const outcomes: string[] = [];
+
+    await withDropForgeClaimActions(ctx, async () => {
+      for (const flag of flags) {
+        outcomes.push(await writeDropForgeClaimAction(ctx, flag));
+      }
+    });
+
+    expect(outcomes).toEqual(['held', 'held', 'deferred']);
+    expect(flags.map((flag) => flag.write.mock.calls.length)).toEqual([
+      1, 1, 0
+    ]);
+    expect(
+      statements.filter((sql) => sql.startsWith('SAVEPOINT'))
+    ).toHaveLength(HELD_FLAGS_PER_PASS);
+  });
+
+  it('holds nothing with the mint log off: a flag is written where it is mirrored, with no savepoint or lock-wait change', async () => {
+    database(50);
+    jest.spyOn(mintLogRecorder, 'mode').mockReturnValue('off');
+    const flag = held('FIRST', jest.fn());
+    let written: number | undefined;
+
+    await withDropForgeClaimActions(ctx, async () => {
+      expect(await writeDropForgeClaimAction(ctx, flag)).toBe('written');
+      written = flag.write.mock.calls.length;
+    });
+
+    // Written at once, before the transaction's work goes on, as before.
+    expect(written).toBe(1);
+    expect(statements).toEqual([]);
   });
 
   it("drops the after-commit work of a flag its savepoint undid, and keeps a written flag's", async () => {

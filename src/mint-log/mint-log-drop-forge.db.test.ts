@@ -956,8 +956,9 @@ describeWithSeed(
       // Not blocked: the flag is bookkeeping, retried on the next pass.
       expect(afterFailure?.state).toBe('RUNNING');
       expect(afterFailure?.data.completion_flags).toEqual(['ARTIST_AIRDROP']);
+      // A running launch retries it: an event without the alert mention.
       expect(events[events.length - 1]).toMatchObject({
-        error: true,
+        error: false,
         content: expect.stringContaining(
           'completion flag PAY_ARTIST was not written (ER_LOCK_WAIT_TIMEOUT)'
         )
@@ -1061,7 +1062,7 @@ describeWithSeed(
       try {
         const waited = await holdingTheHead(() => timedPass('launch-1', false));
         expect(waited).toBeGreaterThanOrEqual(BOUND_MS - 500);
-        expect(waited).toBeLessThan(BOUND_MS + 4000);
+        expect(waited).toBeLessThan(BOUND_MS + 8000);
         expect(await claimActions()).toEqual([]);
         expect(await entries()).toEqual([]);
         const record = await dropForgeRepository.find('launch-1', {});
@@ -1069,7 +1070,7 @@ describeWithSeed(
         expect(record?.data.completion_flags).toEqual([]);
         const events = record?.data.events ?? [];
         expect(events[events.length - 1]).toMatchObject({
-          error: true,
+          error: false,
           content: expect.stringContaining(
             'completion flag PAY_ARTIST was not written (ER_LOCK_WAIT_TIMEOUT)'
           )
@@ -1096,7 +1097,7 @@ describeWithSeed(
       try {
         const waited = await holdingTheHead(() => timedPass('launch-1', false));
         expect(waited).toBeGreaterThanOrEqual(BOUND_MS - 500);
-        expect(waited).toBeLessThan(BOUND_MS + 4000);
+        expect(waited).toBeLessThan(BOUND_MS + 8000);
         expect(alerts).toHaveBeenCalledTimes(1);
         expect(String(alerts.mock.calls[0][1])).toContain(
           '[MINT_LOG_SHADOW_FAILED] [claim.action]'
@@ -1124,7 +1125,8 @@ describeWithSeed(
         // A bound per flag would let this pass wait twice the budget.
         const pass = BOUND_MS + HELD_FLAG_MIN_LOCK_WAIT_SECONDS * 1000;
         expect(waited).toBeGreaterThanOrEqual(pass - 500);
-        expect(waited).toBeLessThan(pass + 4000);
+        // InnoDB checks lock waits about once a second; a slow runner adds more.
+        expect(waited).toBeLessThan(pass + 8000);
         expect(await claimActions()).toEqual([]);
         expect(await entries()).toEqual([]);
         const record = await dropForgeRepository.find('launch-1', {});
@@ -1133,7 +1135,7 @@ describeWithSeed(
           expect(
             record?.data.events.some(
               (event) =>
-                event.error &&
+                !event.error &&
                 event.content.includes(
                   `completion flag ${flag} was not written (ER_LOCK_WAIT_TIMEOUT)`
                 )
@@ -1156,7 +1158,7 @@ describeWithSeed(
       ]);
     }, 60_000);
 
-    it("lets a second card's held flag wait for the head while the first card's flag holds it, and write within the bound", async () => {
+    it("lets a held flag wait for the head while another card's logged write holds it, and write within the budget", async () => {
       await saveLaunch(launch(['PAY_ARTIST']), {});
       const other = launch(['PAY_ARTIST']);
       await saveLaunch(
@@ -1172,8 +1174,11 @@ describeWithSeed(
       const upsert = mintingClaimActionsDb.upsertAction.bind(
         mintingClaimActionsDb
       );
-      // The first card's flag holds the head while it is written, as a
-      // flag on a large card does while its captures run.
+      // Another card's logged write holds the head while it runs, as a
+      // phase step does. Production has one signer, so that write is a
+      // phase step or an admin's split; here it is another launch's flag,
+      // held open until released, and the waiting pass runs under a second
+      // signer so the two can run at once.
       const slow = jest
         .spyOn(mintingClaimActionsDb, 'upsertAction')
         .mockImplementation(async (param, ctx) => {
@@ -1221,94 +1226,114 @@ describeWithSeed(
       }
     }, 60_000);
 
-    it('measures what one held flag adds to a signer pass on a full memes card, with the replay check on', async () => {
-      // A busy memes card: one phase with WALLETS allowlisted wallets (their
-      // distribution rows, the merkle root and a proof each), its normalized
-      // rows, and SUBSCRIBERS final subscription rows.
-      const WALLETS = 4000;
-      const SUBSCRIBERS = 2000;
-      for (let start = 0; start < SUBSCRIBERS; start += 500) {
-        const rows = Array.from(
-          { length: Math.min(500, SUBSCRIBERS - start) },
-          (_, i) => subscription(10_000 + start + i)
-        );
-        const columns = Object.keys(rows[0]);
-        const values = rows
-          .map(
-            (_, i) =>
-              `(${columns.map((column) => `:${column}_${i}`).join(', ')})`
-          )
-          .join(', ');
-        const params = Object.fromEntries(
-          rows.flatMap((row, i) =>
-            columns.map((column) => [
-              `${column}_${i}`,
-              (row as Record<string, unknown>)[column]
-            ])
-          )
-        );
-        await sqlExecutor.execute(
-          `insert into ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} (${columns.join(', ')}) values ${values}`,
-          params
-        );
-      }
-      await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
-        workerPhase(
-          { connection },
-          Array.from({ length: WALLETS }, (_, i) => phaseResult(100 + i, 1))
-        )
-      );
-      await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
-        finalizeDistribution(CONTRACT, CARD_ID, { connection })
-      );
-      const sizes = {
-        distribution: await count(
-          `select count(*) as n from ${DISTRIBUTION_TABLE}`
-        ),
-        normalized: await count(
-          `select count(*) as n from ${DISTRIBUTION_NORMALIZED_TABLE}`
-        ),
-        proofs: await count(
-          `select count(*) as n from ${MINTING_MERKLE_PROOFS_TABLE}`
-        ),
-        proofBytes: await count(
-          `select sum(length(proofs)) as n from ${MINTING_MERKLE_PROOFS_TABLE}`
-        ),
-        final: await count(
-          `select count(*) as n from ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}`
-        )
-      };
-      expect(sizes.distribution).toBeGreaterThanOrEqual(WALLETS);
-      expect(sizes.proofs).toBeGreaterThanOrEqual(WALLETS);
+    // A benchmark, not a check of behaviour: it runs only when asked for
+    // (MINT_LOG_TIMING=1), so CI doesn't build a 4,000-wallet card each run.
+    const timing = process.env.MINT_LOG_TIMING === '1' ? it : it.skip;
 
-      // The same pass, each with one flag: the mint log off, then in shadow
-      // with the replay check on (four captures of the card).
-      await saveLaunch({ ...launch(['ARTIST_AIRDROP']), id: 'launch-off' }, {});
-      process.env.FEATURE_MINT_LOG_SHADOW = 'false';
-      let off: number;
-      try {
-        off = await timedPass('launch-off', false);
-      } finally {
-        process.env.FEATURE_MINT_LOG_SHADOW = 'true';
-      }
-      await saveLaunch(launch(['PAY_ARTIST']), {});
-      const logged = await timedPass('launch-1', false);
+    timing(
+      'measures what one held flag adds to a signer pass on a full memes card, and how long a phase step and finalize hold the head, with the replay check on',
+      async () => {
+        // A busy memes card: one phase with WALLETS allowlisted wallets (their
+        // distribution rows, the merkle root and a proof each), its normalized
+        // rows, and SUBSCRIBERS final subscription rows.
+        const WALLETS = 4000;
+        const SUBSCRIBERS = 2000;
+        for (let start = 0; start < SUBSCRIBERS; start += 500) {
+          const rows = Array.from(
+            { length: Math.min(500, SUBSCRIBERS - start) },
+            (_, i) => subscription(10_000 + start + i)
+          );
+          const columns = Object.keys(rows[0]);
+          const values = rows
+            .map(
+              (_, i) =>
+                `(${columns.map((column) => `:${column}_${i}`).join(', ')})`
+            )
+            .join(', ');
+          const params = Object.fromEntries(
+            rows.flatMap((row, i) =>
+              columns.map((column) => [
+                `${column}_${i}`,
+                (row as Record<string, unknown>)[column]
+              ])
+            )
+          );
+          await sqlExecutor.execute(
+            `insert into ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} (${columns.join(', ')}) values ${values}`,
+            params
+          );
+        }
+        // Each step's transaction holds the mint log's head from its logged
+        // write to its commit, so its time bounds how long a held flag can
+        // wait behind it.
+        const phaseStarted = Date.now();
+        await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+          workerPhase(
+            { connection },
+            Array.from({ length: WALLETS }, (_, i) => phaseResult(100 + i, 1))
+          )
+        );
+        const phaseMs = Date.now() - phaseStarted;
+        const finalizeStarted = Date.now();
+        await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+          finalizeDistribution(CONTRACT, CARD_ID, { connection })
+        );
+        const finalizeMs = Date.now() - finalizeStarted;
+        const sizes = {
+          distribution: await count(
+            `select count(*) as n from ${DISTRIBUTION_TABLE}`
+          ),
+          normalized: await count(
+            `select count(*) as n from ${DISTRIBUTION_NORMALIZED_TABLE}`
+          ),
+          proofs: await count(
+            `select count(*) as n from ${MINTING_MERKLE_PROOFS_TABLE}`
+          ),
+          proofBytes: await count(
+            `select sum(length(proofs)) as n from ${MINTING_MERKLE_PROOFS_TABLE}`
+          ),
+          final: await count(
+            `select count(*) as n from ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}`
+          )
+        };
+        expect(sizes.distribution).toBeGreaterThanOrEqual(WALLETS);
+        expect(sizes.proofs).toBeGreaterThanOrEqual(WALLETS);
 
-      const flagEntries = (await entries()).filter(
-        (entry) => entry.kind === 'claim.action'
-      );
-      expect(flagEntries).toHaveLength(1);
-      expect(flagEntries[0].checks.replay).toBe('match');
-      Logger.get('MINT_LOG_FLAG_TIMING').info(
-        JSON.stringify({
-          ...sizes,
-          off_ms: off,
-          logged_ms: logged,
-          added_ms: logged - off
-        })
-      );
-      // A guard against a regression, well above what it measures.
-      expect(logged - off).toBeLessThan(30_000);
-    }, 180_000);
+        // The same pass, each with one flag: the mint log off, then in shadow
+        // with the replay check on (four captures of the card).
+        await saveLaunch(
+          { ...launch(['ARTIST_AIRDROP']), id: 'launch-off' },
+          {}
+        );
+        process.env.FEATURE_MINT_LOG_SHADOW = 'false';
+        let off: number;
+        try {
+          off = await timedPass('launch-off', false);
+        } finally {
+          process.env.FEATURE_MINT_LOG_SHADOW = 'true';
+        }
+        await saveLaunch(launch(['PAY_ARTIST']), {});
+        const logged = await timedPass('launch-1', false);
+
+        const flagEntries = (await entries()).filter(
+          (entry) => entry.kind === 'claim.action'
+        );
+        expect(flagEntries).toHaveLength(1);
+        expect(flagEntries[0].checks.replay).toBe('match');
+        Logger.get('MINT_LOG_FLAG_TIMING').info(
+          JSON.stringify({
+            ...sizes,
+            phase_step_ms: phaseMs,
+            finalize_ms: finalizeMs,
+            off_ms: off,
+            logged_ms: logged,
+            added_ms: logged - off
+          })
+        );
+        // A guard against a regression, well above what it measures.
+        expect(logged - off).toBeLessThan(30_000);
+      },
+      180_000
+    );
   }
 );

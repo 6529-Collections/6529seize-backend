@@ -24,6 +24,7 @@ import {
   dropForgePhaseSpec,
   logDropForgeWrite
 } from '@/mint-log/mint-log-drop-forge';
+import { mintLogRecorder } from '@/mint-log/mint-log-recorder';
 
 /** A phase's rows: the public phase, or a split of its allowlist results. */
 async function writePhase(
@@ -156,11 +157,8 @@ export async function prepareDistributionPhase(
     ctx
   );
   // Invalidation is retried by a replay too, after the durable DB result
-  // exists: after the job's commit, so the transaction (and the mint log's
-  // head) isn't held while Redis answers. The commit waits for it, so it
-  // isn't cut off when the invocation ends; each eviction stops at its own
-  // 1.5 s timeout.
-  await afterCommitAwaited(ctx.connection, () =>
+  // exists.
+  const evict = () =>
     Promise.allSettled([
       evictRedisCacheForPathWithTimeout({
         path: `/api/minting-claims/${contract}/${claim}/`
@@ -168,8 +166,15 @@ export async function prepareDistributionPhase(
       evictRedisCacheForPathWithTimeout({
         path: `/api/distributions/${contract}/${claim}/overview`
       })
-    ])
-  );
+    ]);
+  if (mintLogRecorder.mode() === 'off') {
+    await evict();
+  } else {
+    // After the job's commit, so the mint log's head isn't held while Redis
+    // answers. The commit waits for it, so it isn't cut off when the
+    // invocation ends; each eviction stops at its own 1.5 s timeout.
+    await afterCommitAwaited(ctx.connection, evict);
+  }
   return result;
 }
 export async function finalizeDistribution(

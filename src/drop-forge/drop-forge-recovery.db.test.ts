@@ -11,6 +11,13 @@ import {
 import { ApiDropForgeRecoveryRequestOperationEnum as Operation } from '@/api/generated/models/ApiDropForgeRecoveryRequest';
 import { clearDropForgeTestTables } from '@/drop-forge/drop-forge.db-test-fixtures';
 import { LaunchRecord } from '@/drop-forge/drop-forge.types';
+import { mintingClaimActionsDb } from '@/api/minting-claims/minting-claim-actions.db';
+import * as supported from '@/minting-claims/minting-claim-actions';
+import { sqlExecutor } from '@/sql-executor';
+import {
+  MINTING_CLAIM_ACTIONS_TABLE,
+  SIGNED_RECORD_LOG_ENTRIES_TABLE
+} from '@/constants';
 const repository = new DropForgeRepository();
 const walletId = `${testConfig.chainId}:${testConfig.signer.toLowerCase()}`;
 function setupChain() {
@@ -22,9 +29,10 @@ function setupChain() {
     )
   };
 }
-async function start() {
+async function start(label?: string) {
   const data = testLaunchData();
   const action = data.actions[1];
+  if (label) action.label = label;
   action.signed_tx = await testWallet.signTransaction({
     to: data.proxy,
     nonce: 7,
@@ -167,4 +175,72 @@ it('retains a reservation when a winner is mined but not finalized', async () =>
   expect((await repository.find(f.record.id, {}))!.data.actions[1].state).toBe(
     'SIGNED'
   );
+});
+it('with the mint log on, settles a recovery whose completion flag fails to write, and leaves the flag for a later pass', async () => {
+  jest
+    .spyOn(supported, 'isSupportedMintingClaimActionType')
+    .mockReturnValue(true);
+  const saved = process.env.FEATURE_MINT_LOG_SHADOW;
+  process.env.FEATURE_MINT_LOG_SHADOW = 'true';
+  try {
+    // The stuck airdrop is the only one in its group, so settling it
+    // completes the group, and recovery mirrors its flag.
+    const f = await start('Airdrop - Artist');
+    expect(f.action.kind).toBe('AIRDROP');
+    const chain = setupChain();
+    const recovery = new DropForgeRecovery(
+      testConfig,
+      repository,
+      chain as unknown as LaunchChain
+    );
+    await recovery.request(f.record.id, testWallet.address, f.request, {});
+    chain.recoveryEvidence.mockResolvedValue({
+      receipt: {
+        status: 1,
+        blockNumber: 100,
+        blockHash: 'block',
+        confirmations: 12
+      },
+      finalized: true,
+      total: 1
+    });
+    const upsert = jest
+      .spyOn(mintingClaimActionsDb, 'upsertAction')
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Lock wait timeout exceeded'), {
+          code: 'ER_LOCK_WAIT_TIMEOUT'
+        })
+      );
+
+    await recovery.tick(f.record.id);
+
+    expect(upsert).toHaveBeenCalledTimes(1);
+    const settled = (await repository.find(f.record.id, {}))!;
+    expect(settled.data.actions[1].state).toBe('CONFIRMED');
+    expect(settled.data.completion_flags ?? []).not.toContain('ARTIST_AIRDROP');
+    expect(
+      settled.data.events.filter((event) =>
+        event.content.includes('completion flag ARTIST_AIRDROP was not written')
+      )
+    ).toHaveLength(1);
+    await repository.wallet(
+      walletId,
+      async (pending) => {
+        expect(pending.launch_id).toBeNull();
+      },
+      {}
+    );
+    expect(
+      await sqlExecutor.execute(
+        `select action from ${MINTING_CLAIM_ACTIONS_TABLE}`
+      )
+    ).toEqual([]);
+  } finally {
+    if (saved === undefined) delete process.env.FEATURE_MINT_LOG_SHADOW;
+    else process.env.FEATURE_MINT_LOG_SHADOW = saved;
+    await sqlExecutor.execute(`delete from ${MINTING_CLAIM_ACTIONS_TABLE}`);
+    await sqlExecutor.execute(
+      `delete from ${SIGNED_RECORD_LOG_ENTRIES_TABLE} where lane = 'mint'`
+    );
+  }
 });

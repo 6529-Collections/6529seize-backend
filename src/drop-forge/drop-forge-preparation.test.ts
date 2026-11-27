@@ -8,6 +8,7 @@ import * as distributions from '@/api/distributions/api.distributions.service';
 import { RequestContext } from '@/request.context';
 import * as transactions from '@/db/after-commit';
 import * as redis from '@/redis';
+import { mintLogRecorder } from '@/mint-log/mint-log-recorder';
 
 jest.mock('@/api/subscriptions/api.subscriptions.allowlist');
 jest.mock('@/api/distributions/api.distributions.service');
@@ -78,7 +79,18 @@ describe('Drop Forge phase network and replay boundary', () => {
     ).toEqual(result);
     expect(distributions.populateDistribution).toHaveBeenCalledTimes(1);
   });
-  it("evicts the claim's cached reads only once the job commits", async () => {
+  it("evicts the claim's cached reads in line with the mint log off, as before", async () => {
+    const registered = jest.spyOn(transactions, 'afterCommitAwaited');
+    const ctx = { connection: { connection: {} } as never };
+    await prepareDistributionPhase('contract', 1, 'plan', 'phase', 'auth', ctx);
+    expect(registered).not.toHaveBeenCalled();
+    expect(redis.evictRedisCacheForPathWithTimeout).toHaveBeenCalledTimes(2);
+  });
+  it("with the mint log on, evicts the claim's cached reads only once the job commits", async () => {
+    jest.spyOn(mintLogRecorder, 'mode').mockReturnValue('shadow');
+    jest
+      .spyOn(mintLogRecorder, 'writeWithin')
+      .mockImplementation(async (_spec, _connection, run) => run());
     let committed: (() => unknown) | undefined;
     const registered = jest
       .spyOn(transactions, 'afterCommitAwaited')
