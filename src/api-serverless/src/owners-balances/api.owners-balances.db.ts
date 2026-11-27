@@ -14,6 +14,8 @@ import { sqlExecutor } from '../../../sql-executor';
 import { ApiOwnerBalancePage } from '../generated/models/ApiOwnerBalancePage';
 import { ApiOwnerBalance } from '../generated/models/ApiOwnerBalance';
 import { ApiOwnerBalanceMemes } from '../generated/models/ApiOwnerBalanceMemes';
+import type { ApiWalletOwnerBalance } from '@/api/generated/models/ApiWalletOwnerBalance';
+import type { ApiWalletOwnerBalanceMemes } from '@/api/generated/models/ApiWalletOwnerBalanceMemes';
 
 export const fetchAllOwnerBalances = async (
   page: number,
@@ -128,7 +130,12 @@ export const fetchOwnerBalancesForConsolidationKey = async (
   };
 };
 
-export const fetchOwnerBalancesForWallet = async (wallet: string) => {
+export const fetchOwnerBalancesForWallet = async (
+  wallet: string
+): Promise<ApiWalletOwnerBalance | null> => {
+  type RankKey = Extract<keyof ApiWalletOwnerBalance, `${string}_rank`>;
+  type TdhRankKey = Extract<RankKey, `boosted_${string}_rank`>;
+
   const tdhBlock = await fetchLatestTDHBlockNumber();
   const filters = constructFilters(
     '',
@@ -145,7 +152,7 @@ export const fetchOwnerBalancesForWallet = async (wallet: string) => {
 
   const joins = ` LEFT JOIN ${WALLETS_TDH_TABLE} ON ${OWNERS_BALANCES_TABLE}.wallet = ${WALLETS_TDH_TABLE}.wallet AND tdh.block = :tdhBlock`;
 
-  const r = await fetchPaginated(
+  const r = await fetchPaginated<Omit<ApiWalletOwnerBalance, RankKey>>(
     OWNERS_BALANCES_TABLE,
     { wallet, tdhBlock },
     'wallet asc',
@@ -186,7 +193,9 @@ export const fetchOwnerBalancesForWallet = async (wallet: string) => {
         WHERE unique_memelab > :ownersUniqueMemelab) AS unique_memelab_rank
     FROM dual;
   `;
-  const balancesRanks = await sqlExecutor.execute(balancesRanksSql, {
+  const balancesRanks = await sqlExecutor.execute<
+    Pick<ApiWalletOwnerBalance, Exclude<RankKey, TdhRankKey>>
+  >(balancesRanksSql, {
     ownerTotalBalance: result.total_balance,
     ownerMemesBalance: result.memes_balance,
     ownerUniqueMemes: result.unique_memes,
@@ -212,7 +221,9 @@ export const fetchOwnerBalancesForWallet = async (wallet: string) => {
         WHERE block=:tdhBlock AND boosted_nextgen_tdh > :ownerBoostedNextgenTdh) AS boosted_nextgen_tdh_rank
     FROM dual;
   `;
-  const tdhRanks = await sqlExecutor.execute(tdhRanksSql, {
+  const tdhRanks = await sqlExecutor.execute<
+    Pick<ApiWalletOwnerBalance, TdhRankKey>
+  >(tdhRanksSql, {
     ownerBoostedTdh: result.boosted_tdh,
     ownerBoostedMemesTdh: result.boosted_memes_tdh,
     ownerBoostedGradientsTdh: result.boosted_gradients_tdh,
@@ -271,5 +282,5 @@ export async function fetchMemesOwnerBalancesForWallet(wallet: string) {
           AND  t.season = o.season
     WHERE  o.wallet = :wallet;
   `;
-  return sqlExecutor.execute(sql, { wallet });
+  return sqlExecutor.execute<ApiWalletOwnerBalanceMemes>(sql, { wallet });
 }
