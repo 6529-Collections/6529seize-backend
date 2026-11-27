@@ -18,10 +18,7 @@ import {
 } from '@/api/nextgen/nextgen.routes';
 import { splitAllowlistResults } from '@/api/subscriptions/api.subscriptions.allowlist';
 import {
-  ADDRESS_CONSOLIDATION_KEY,
-  IDENTITIES_TABLE,
   MEMES_CONTRACT,
-  PROFILES_TABLE,
   REMEMES_UPLOADS,
   ROYALTIES_UPLOADS_TABLE,
   SIGNED_RECORD_LOG_ENTRIES_TABLE
@@ -39,6 +36,7 @@ import { recordLogDb } from '@/signed-records/record-log/record-log.db';
 import { RecordLogSegmenter } from '@/signed-records/record-log/record-log.service';
 import { LocalRecordsWaveReader } from '@/signed-records/record-log/records-wave-local-reader';
 import { loadProviderKeys } from '@/signed-records/sealed-crypto';
+import { assertRecordsServiceActor } from '@/rebuild/areas/records-service';
 import { sqlExecutor } from '@/sql-executor';
 import { updateDistributionMints } from '@/transactionsProcessingLoop/distribution';
 import { MintContentPort, runMintGenesis } from './mint-log-genesis';
@@ -102,8 +100,7 @@ const W1 = '0x0000000000000000000000000000000000000001';
 const W2 = '0x0000000000000000000000000000000000000002';
 const CONTRACT = MEMES_CONTRACT.toLowerCase();
 const REMEME_CONTRACT = '0x0000000000000000000000000000000000000003';
-/** The records service's handle and wave description drop, as the personal seed writes them. */
-const RECORDS_SERVICE_HANDLE = 'rebuild-records';
+/** The records wave's description drop, as the personal seed writes it. */
 const RECORDS_WAVE_DESCRIPTION_DROP = '00000000-0000-4000-8000-0000000000a2';
 /** The rememe written before the log, so it reaches the rebuild through the genesis. */
 const EARLY_REMEME_CONTRACT = '0x0000000000000000000000000000000000000004';
@@ -407,43 +404,17 @@ function seedFilesContent(dir: string): MintContentPort {
 }
 
 /**
- * The records service of a rebuild run, written as the personal seed writes
- * it when it is missing: its identity and profile, the records wave and the
- * wave's description drop. Personal and publish share this fixture by value,
- * so any of their seeds may run first.
+ * The records service of a rebuild run: the world's actor, read by its
+ * wallet, and the records wave with its description drop, written as the
+ * personal seed writes them when they are missing. Personal and publish
+ * share the wave by value, so any of their seeds may run first.
  */
 async function insertRecordsService(
   waveId: string,
   profileId: string,
   wallet: string
 ): Promise<void> {
-  await sqlExecutor.execute(
-    `insert ignore into ${IDENTITIES_TABLE}
-       (consolidation_key, profile_id, primary_address, handle,
-        normalised_handle, tdh, rep, cic, level_raw, classification,
-        xtdh, produced_xtdh, granted_xtdh, xtdh_rate, basetdh_rate)
-     values (:wallet, :profileId, :wallet, :handle, :handle,
-        0, 0, 0, 0, 'PSEUDONYM', 0, 0, 0, 0, 0)`,
-    { wallet, profileId, handle: RECORDS_SERVICE_HANDLE }
-  );
-  await sqlExecutor.execute(
-    `insert ignore into ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key)
-     values (:wallet, :wallet)`,
-    { wallet }
-  );
-  await sqlExecutor.execute(
-    `insert ignore into ${PROFILES_TABLE}
-       (external_id, handle, normalised_handle, primary_wallet, created_at,
-        created_by_wallet, classification)
-     values (:profileId, :handle, :handle, :wallet, :createdAt, :wallet,
-        'PSEUDONYM')`,
-    {
-      profileId,
-      handle: RECORDS_SERVICE_HANDLE,
-      wallet,
-      createdAt: new Date(SEEDED_AT)
-    }
-  );
+  await assertRecordsServiceActor(profileId, wallet);
   await insertWave({
     id: waveId,
     createdBy: profileId,

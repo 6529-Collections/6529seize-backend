@@ -2,10 +2,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  ADDRESS_CONSOLIDATION_KEY,
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
-  IDENTITIES_TABLE,
   PROFILES_TABLE,
   SIGNED_RECORD_LOG_ENTRIES_TABLE,
   WAVES_TABLE
@@ -40,6 +38,7 @@ import {
   PublishSeedProfile,
   publishSeedSites
 } from '@/rebuild/areas/publish.fixture';
+import { assertRecordsServiceActor } from '@/rebuild/areas/records-service';
 import { probeProfileId } from '@/rebuild/run/probe-fixture.steps';
 import { SignedSiteFixture } from '@/tests/fixtures/profile-cms-chain.fixture';
 import { aWave } from '@/tests/fixtures/wave.fixture';
@@ -276,44 +275,15 @@ async function insertIgnore(
 }
 
 /**
- * The records service of the run, where missing: its identity and profile
- * (handle `rebuild-records`) and its records wave.
+ * The records service of the run: the world's actor, read by its wallet,
+ * and its records wave, where missing.
  */
 async function ensureRecordsService(service: {
   readonly profileId: string;
   readonly wallet: string;
   readonly waveId: string;
 }): Promise<void> {
-  await insertIgnore(IDENTITIES_TABLE, {
-    consolidation_key: service.wallet,
-    profile_id: service.profileId,
-    primary_address: service.wallet,
-    handle: 'rebuild-records',
-    normalised_handle: 'rebuild-records',
-    tdh: 0,
-    rep: 0,
-    cic: 0,
-    level_raw: 0,
-    classification: 'PSEUDONYM',
-    xtdh: 0,
-    produced_xtdh: 0,
-    granted_xtdh: 0,
-    xtdh_rate: 0,
-    basetdh_rate: 0
-  });
-  await insertIgnore(ADDRESS_CONSOLIDATION_KEY, {
-    address: service.wallet,
-    consolidation_key: service.wallet
-  });
-  await insertIgnore(PROFILES_TABLE, {
-    external_id: service.profileId,
-    handle: 'rebuild-records',
-    normalised_handle: 'rebuild-records',
-    primary_wallet: service.wallet,
-    created_at: new Date(SEEDED_AT),
-    created_by_wallet: service.wallet,
-    classification: 'PSEUDONYM'
-  });
+  await assertRecordsServiceActor(service.profileId, service.wallet);
   const { serial_no: _serial, ...wave } = aWave(
     {
       is_direct_message: false,

@@ -65,6 +65,10 @@ turn red because the clock moved. A final run fails on every EXEMPT table
 that names an `until`, whatever the day. The registry refuses an `until`
 on any other class, and one that isn't a real day.
 
+`chain_pending_operations` and `chain_pending_operation_signers` are
+EPHEMERAL: identity joins waiting for a second signature expire within a
+day, and after a rebuild the holder starts the join again.
+
 ## Registering an area's parts
 
 Edit only your area's manifest.
@@ -351,11 +355,13 @@ The steps of a run:
    every file under `src` that holds a raw write into `profiles` (SQL, a
    write helper handed the table, or a row set tagged with it), and how
    many: the profiles and identity mirror write paths,
-   identity.probe-profiles, the test fixtures' profiles row set and its one
-   caller, and the records service's own profile (handle `rebuild-records`),
-   which the mint and publish seeds insert only when it is missing. Any
-   other raw write fails the test until it is reviewed and listed; writes
-   through the ORM are outside it.
+   identity.probe-profiles (its plain rows of the world's actors when the
+   run has no identity world), the identity rebuilder's restore of the
+   untaken placeholders' profiles, and the test fixtures' profiles row set
+   and its one caller. The records service is one of the world's actors:
+   the mint and publish seeds read it by its wallet and write no profile.
+   Any other raw write fails the test until it is reviewed and listed;
+   writes through the ORM are outside it.
 3. Copy the kept tables aside: EPHEMERAL, PROVIDER, EXEMPT, and, unless
    `--final`, INDEX tables no rebuilder writes yet.
 4. Probe the API (pass A).
@@ -474,6 +480,170 @@ Each `--source <name>=<spec>`:
   naming the files), whatever its `PROVENANCE.json` says.
 - A flag value may name a source: `{gateway}`, `{relays}`, `{ethereum}`
   or `{files}` become its URL in the run.
+
+## The identity area
+
+The identity area's seed and rebuilder run the identity mirror against the
+gateway source (`src/identity-chain-mirror/identity-chain-mirror.rebuild.ts`),
+so an identity run needs a gateway whose chain has an identity import, and
+a files source holding the profile documents. The mirror reads each
+document from the files source under its CID's name (`b` and its base32),
+and checks the bytes against the CID: the gateway's document store is not a
+chain read, so a recording of the chain does not hold it. The identity
+world is a devnet's, captured in the shared gateway recording beside the
+waves area's world, with a files directory of the import's documents and an
+identity-world.json that gives the world's wallets, principals, network id
+and mark (`rebuild-world/world-ids.ts` holds them). The keyed wallets come
+from test keys fixed by a label, so they stay the same from one capture to
+the next; the two principals made on the chain change. Run the identity
+area alone with that recording (every gateway recording is provisional):
+
+```text
+6529 run rebuild:check -- --home <dir> --area identity
+  --source gateway=replay:<the shared recording>
+  --source files=<its files directory>
+```
+
+Without a gateway whose chain has an identity import the seed writes the
+world's actors (the probes and the identities other areas' seeds read by
+wallet) as plain rows, so other areas' runs with their own sources keep
+working, and the identity rebuilder fails.
+
+The mirror lists 6529.io's placeholder profiles (handle `id-<wallet>`)
+from `profiles` at its first run; after a drop there are none. The
+rebuilder reads them from the "placeholders at freeze" file instead
+(`src/identity-chain-mirror/placeholder-restore.ts`): every placeholder
+profile as stored at the identity freeze, with its identities row and
+wallets, as gzipped NDJSON, pinned by its SHA-256 in the code and served by
+the files source under that name. From the freeze nothing makes or changes a
+placeholder, and until switch-on nothing takes one, so the file holds the
+set the mirror's first run lists. The rebuilder:
+
+1. lists every placeholder of the file in `identity_chain_placeholders`, as
+   the mirror's first run does, so the founder rule gives an identity made
+   on the chain the same profile id;
+2. runs the mirror to the mark;
+3. restores each placeholder no chain identity took (no mapping): its
+   `profiles` row, and its `identities` and `address_consolidation_keys`
+   rows without the wallets the mirror's rows hold, as the mirror's
+   re-keying leaves another identity's row (none left, no row). Its TDH
+   columns start at 0: only the TDH loop writes TDH onto identities rows,
+   and no rebuilder does yet. It refuses a placeholder whose profile id a
+   `profiles` row already holds, which would be a second profile under that
+   id.
+
+It reads the whole file and refuses it on any line that isn't a
+placeholder, a profile or wallet given twice, or a count that differs.
+1,019,000 made-up placeholders took 28 seconds to list and 10 minutes to
+restore on one connection; with the mirror's runs (35 minutes at most) the
+rebuilder's timeout is 60 minutes.
+
+As the writer of `identities`, `profiles`, `address_consolidation_keys`
+and `identity_chain_principals`, the rebuilder names the rebuilders that
+read them in its `before`: `holdings.ethereum`, `personal.settings`,
+`subs.legacy-history`, `subs.top-ups`, `waves.chain-mirror` and
+`tdh.chain-days`. An edge to a step not yet in the tree is noted, not
+refused.
+
+Until the freeze writes the real file and its SHA-256 is pinned
+(`FREEZE_PLACEHOLDERS_SHA256`), the steps read the world's fixture, which
+the world's code builds from its ids (`rebuild-world/fixture-file.ts`), so
+the repository holds no address. The seed writes it into the run's seed
+files, the run's own world, so any files source serves it. The identity
+steps refuse it on a final run, which needs the real file in the files
+directory (`ctx.final`; the seed `identity.probe-profiles` first, which
+then writes no fixture).
+
+The seed writes 6529.io rows the chain doesn't hold, each on an identity
+only its site probe reads (`rebuild-world/site-rows.ts`): the file's
+placeholder profiles through the site's own code (one the founder rule
+takes, and two none takes, one of them with TDH), a TDH-only identity
+(which step B of the TDH loop makes before switch-on, with a random
+profile id), an address-only identity on the founder's wallet (as a user
+group made with it writes one; the world fixes its id), and TDH on an
+imported identity. It writes
+`tdh_consolidation`, the TDH area's table, for its own wallets; once the
+TDH area's seed writes the shared scenario's TDH rows, it provides those
+too. The run shows what a rebuild from the chain and the file does to each.
+
+The switch-on record (`switch-on-record.ts`) carries the rows no rebuild
+can derive: every identity with no handle and no chain identity, and its
+address keys, as 6529.io holds them right before the identity mirror's
+first run (the 6529.io team takes it then, just before it sets the
+mirror's flag; the format is `tdh-only-record.ts`). Their ids were issued
+at random before switch-on, and the mirror adopts such a row's id for a
+chain identity on the same consolidation key. So the rebuilder loads the
+record's rows first, before the mirror replays, and the mirror adopts the
+same ids again. The seed takes the world's record at the same moment, after
+6529.io's writes before switch-on, and writes its two files (named by their
+SHA-256) and a pins file into the run's seed files. The founder's chain
+identity adopts the address-only row on its wallet, so the run shows an
+adopted id rebuilt as the live one. A final run reads the team's record by
+its pins (`SWITCH_ON_RECORD_PINS`) and refuses the world's.
+
+The record carries a row's `tdh` as taken, not `basetdh_rate` or the xTDH
+columns, so a loaded row starts with `basetdh_rate` 0, as step B and the
+address-only writes leave it. TDH's columns are the TDH area's: its
+`tdh.chain-days` rebuilder, after the mirror, writes `tdh` and
+`basetdh_rate` on every identities row, the record's included, and the xTDH
+columns read 0 from switch-on. Two things for the change that pins the
+team's take: a run on real data shows the record's rows' `basetdh_rate` only
+once `tdh.chain-days` writes it; and runs on the rebuild world keep the
+world's take (its TDH-only row and the founder's adoption), not the team's,
+as the placeholders file needs once `FREEZE_PLACEHOLDERS_SHA256` is pinned.
+
+No rebuilder writes TDH onto identities rows (`tdh`, `basetdh_rate`) yet,
+and the team's record isn't pinned yet, so the rebuilder declares both as
+plans (in its manifest), until 2026-11-30:
+
+- the `identities` and `address_consolidation_keys` rows the record
+  carries, planned rows (`TDH_ONLY_PLANNED_ROWS`), ended when the team's
+  record is pinned and a run on it rebuilds them with nothing differing.
+  The plans select what the record takes, every identity with no handle
+  and no chain identity, TDH or not (address-only ones too), less the ids
+  the mirrors derive from an address after switch-on, which they rebuild.
+  On the world, whose record the rebuild loads, the report notes the plans'
+  rows as rebuilt;
+- `tdh` and `basetdh_rate` on the imported identity and the untaken
+  placeholder, a column plan (`TDH_COLUMN_PLANS`), ended when the TDH area
+  writes identities' tdh from the chain (its tdh.chain-days rebuilder).
+
+The probes `identity.site.tdh` and `identity.site.untaken-placeholder-tdh`
+leave `$.tdh` out for the same reason. Plans don't excuse probe answers, so
+the TDH-only identity has no probe until its rows are seeded. The report
+lists each plan with the rows it matched. A full run can show more, from
+the planted references below.
+
+With the waves world in the recording, the seed also gives four of its
+people 6529.io TDH (`WAVES_PEOPLE_TDH` in `rebuild-world/world-ids.ts`), so
+their votes and wave ratings have credit, which from switch-on is
+`identities.tdh` alone: a consolidated TDH row on each one's consolidation
+key, with that key's wallets, then the scoped metrics sync, as for the site
+rows. A recording without them (an identity-only world) skips this; one
+holding only some is refused. From switch-on 6529.io's TDH mirrors the
+chain's day by day, so the seed models 6529.io at the mark: each value is
+the person's TDH on the chain at the mark's TDH day, 20782 in the v9 and
+v10 captures (…01c2 26,709, …01c3 23,967, …01c4 33,566, and …01c7 28,416
+after its second wallet left). No site TDH above it is seeded. The rebuild
+leaves their `tdh` and `basetdh_rate` at 0, so the four pairs are one
+column plan on `identities` (`TDH_COLUMN_PLANS`), until 2026-11-30,
+ended when the TDH area writes identities' tdh from the chain at the
+mark's day. TDH moves daily: a capture whose mark falls on another TDH
+day needs these values moved with it.
+
+A second seed, `identity.placeholder-references`, plants one row of each
+kind of reference to a profile (follows, mutes, notifications, reactions,
+settings, moderation, proxies and the rest, except encrypted DMs, which the
+DM area rebuilds only from its relay records;
+`rebuild-world/placeholder-references.ts`), each naming the untaken
+placeholder and, where a kind needs another profile, a probe identity by
+the world's fixed id, which `identity.actors-check` proves the world holds
+before this seed runs; the `identity.site.placeholder-*` probes read the
+ones the API shows to others. Each kind is provisional until
+6529.io's own counts of such references come. Most of those tables are
+other areas': a run keeps them as seeded until their areas rebuild them,
+and then a reference their rebuild doesn't bring back shows as a
+difference there.
 
 ## The report
 
