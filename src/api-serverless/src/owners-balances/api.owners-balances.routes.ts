@@ -1,4 +1,6 @@
 import { Request, Response } from 'express';
+import type { ApiWalletOwnerBalance } from '@/api/generated/models/ApiWalletOwnerBalance';
+import type { ApiWalletOwnerBalanceMemes } from '@/api/generated/models/ApiWalletOwnerBalanceMemes';
 import { asyncRouter } from '../async.router';
 
 import { NotFoundException } from '../../../exceptions';
@@ -109,7 +111,7 @@ router.get(
       any,
       any
     >,
-    res: any
+    res: Response<ApiResponse<ApiWalletOwnerBalance>>
   ) {
     const wallet = req.params.wallet;
     const result = await fetchOwnerBalancesForWallet(wallet);
@@ -132,7 +134,7 @@ router.get(
       any,
       any
     >,
-    res: Response<ApiResponse<ApiOwnerBalanceMemes[]>>
+    res: Response<ApiResponse<ApiWalletOwnerBalanceMemes[]>>
   ) {
     const wallet = req.params.wallet;
 
