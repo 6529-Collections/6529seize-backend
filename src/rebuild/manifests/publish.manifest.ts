@@ -1,9 +1,14 @@
 import { createHash } from 'node:crypto';
 import { AreaManifest, Probe, RebuildStep } from '@/rebuild/manifest.types';
-import { PROBE_CALLER, PROBE_WALLETS } from '@/rebuild/manifests/probe-fixture';
+import {
+  PROBE_CALLER,
+  PROBE_WALLETS,
+  worldActorIdentity,
+  worldActorProfileId
+} from '@/rebuild/manifests/probe-fixture';
 import {
   PUBLISH_SEED_IDS,
-  PUBLISH_SEED_PROFILE,
+  PublishSeedProfile,
   publishSeedSites
 } from '@/rebuild/areas/publish.fixture';
 
@@ -26,7 +31,17 @@ const FIXTURE_RECORDS_FLAGS = {
   SIGNED_RECORDS_SERVICE_WALLET: '0x00000000000000000000000000000000000000a1'
 };
 
-const SITES = publishSeedSites();
+/**
+ * The first probe profile as the identity world holds it, since a probe's
+ * path holds literals; the seed reads the same profile by wallet. Were the
+ * two ever to differ, these probes would answer 404 in pass A.
+ */
+const PROBE_PROFILE: PublishSeedProfile = {
+  id: worldActorProfileId('probe-1'),
+  handle: worldActorIdentity('probe-1').handle
+};
+
+const SITES = publishSeedSites(PROBE_PROFILE);
 
 /**
  * The profile-site and CMS answers. The publish seed publishes a site for
@@ -48,12 +63,12 @@ const PROBES: Probe[] = [
   {
     id: 'publish.profile-cms-primary',
     path: '/api/profile-cms/{handle}/primary',
-    each: { handle: [PUBLISH_SEED_PROFILE, PROBE_WALLETS[0]] }
+    each: { handle: [PROBE_PROFILE.handle, PROBE_WALLETS[0]] }
   },
   {
     id: 'publish.profile-cms-packages',
     path: '/api/profile-cms/profiles/{profile_id}/packages',
-    each: { profile_id: [PUBLISH_SEED_PROFILE] }
+    each: { profile_id: [PROBE_PROFILE.id] }
   },
   {
     id: 'publish.profile-cms-package',
@@ -70,7 +85,7 @@ const PROBES: Probe[] = [
     id: 'publish.profile-cms-version',
     path: '/api/profile-cms/profiles/{profile_id}/packages/{package_id}/versions/{version}',
     each: {
-      profile_id: [PUBLISH_SEED_PROFILE],
+      profile_id: [PROBE_PROFILE.id],
       package_id: [SITES.published.cmsPackage.package_id],
       // Only published versions are public.
       version: ['1']

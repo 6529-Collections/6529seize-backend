@@ -5,10 +5,12 @@ import * as path from 'node:path';
 import {
   exchangeKey,
   startHttpRecording,
+  upstreamTarget,
   withRequestIds
 } from '@/rebuild/sources/http-recording';
 import {
   closeServer,
+  errorText,
   listenLoopback,
   readProvenance,
   redactUrl,
@@ -117,6 +119,32 @@ describe('HTTP recording', () => {
     }
   });
 
+  it('answers a failed request with a fixed message and reports the error', async () => {
+    // fetch refuses a URL with credentials before connecting.
+    const recorder = await startHttpRecording({
+      name: 'gateway',
+      dir,
+      upstream: 'http://user:secret@127.0.0.1:9'
+    });
+    try {
+      const answer = await fetch(`${recorder.url}/v1/head`, {
+        method: 'POST',
+        body: rpc(1, 'head')
+      });
+      expect(answer.status).toBe(502);
+      expect(await answer.text()).toBe('{"error":"replay failed"}');
+      const problems = recorder.problems();
+      expect(problems).toEqual([
+        expect.stringMatching(
+          /^gateway: 1 requests failed in the recording's server, first POST \/v1\/head: TypeError: .*http:\/\/127\.0\.0\.1:9\/v1\/head/
+        )
+      ]);
+      expect(problems.join('\n')).not.toContain('secret');
+    } finally {
+      await recorder.stop();
+    }
+  });
+
   it('never counts a gateway or ethereum recording on its label', async () => {
     fs.writeFileSync(path.join(dir, 'recording.jsonl'), '');
     writeProvenance(dir, { made_by: 'devnet example' });
@@ -152,6 +180,124 @@ describe('HTTP recording', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('upstreamTarget', () => {
+  it("puts a request's path and query on the upstream's origin and path", () => {
+    const at = (upstream: string, request: string) =>
+      upstreamTarget(new URL(upstream), request)?.href;
+    expect(at('http://192.0.2.1:8545', '/v1/blocks/7?height=9')).toBe(
+      'http://192.0.2.1:8545/v1/blocks/7?height=9'
+    );
+    expect(at('http://192.0.2.1/v2/key/', '/nft?id=1')).toBe(
+      'http://192.0.2.1/v2/key/nft?id=1'
+    );
+    expect(at('http://192.0.2.1/v2/key', '/')).toBe('http://192.0.2.1/v2/key/');
+    // The upstream's own query stays, the request's after it.
+    expect(at('http://192.0.2.1/v1?key=k', '/x?y=1')).toBe(
+      'http://192.0.2.1/v1/x?key=k&y=1'
+    );
+    expect(at('http://192.0.2.1/v1?key=k', '/x')).toBe(
+      'http://192.0.2.1/v1/x?key=k'
+    );
+  });
+
+  it('refuses a target that would leave the upstream', () => {
+    const upstream = new URL('http://192.0.2.1/v2/key');
+    for (const target of [
+      '//evil.example/x',
+      'http://evil.example/x',
+      '@evil.example',
+      'evil.example/x',
+      '/../..',
+      '/../other',
+      '/x/%2e%2e/%2e%2e/other',
+      '/..\\..\\other',
+      ''
+    ]) {
+      expect([target, upstreamTarget(upstream, target)]).toEqual([
+        target,
+        null
+      ]);
+    }
+    // A target only spelled oddly stays on the upstream.
+    for (const odd of ['/@evil.example', '/\\evil.example']) {
+      expect(upstreamTarget(upstream, odd)?.origin).toBe('http://192.0.2.1');
+    }
+  });
+
+  it('answers a refused target 400 in a recording run, and never fetches it', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rebuild-refused-'));
+    const seen: (string | undefined)[] = [];
+    const upstream = http.createServer((request, response) => {
+      seen.push(request.url);
+      response.end('{}');
+    });
+    const { url: upstreamUrl } = await listenLoopback(upstream);
+    const recorder = await startHttpRecording({
+      name: 'gateway',
+      dir,
+      upstream: `${upstreamUrl}/api`
+    });
+    const send = (target: string) =>
+      new Promise<{ status: number; body: string }>((resolve, reject) => {
+        const { hostname, port } = new URL(recorder.url);
+        const request = http.request(
+          { hostname, port, path: target, method: 'GET' },
+          (response) => {
+            let body = '';
+            response.on('data', (chunk) => (body += chunk));
+            response.on('end', () =>
+              resolve({ status: response.statusCode ?? 0, body })
+            );
+          }
+        );
+        request.on('error', reject);
+        request.end();
+      });
+    try {
+      expect(await send('/v1/head')).toEqual({ status: 200, body: '{}' });
+      for (const target of [
+        'http://evil.example/x',
+        '//evil.example/x',
+        '/../x',
+        '/%2e%2e/x'
+      ]) {
+        expect(await send(target)).toEqual({
+          status: 400,
+          body: '{"error":"not a path under the upstream"}'
+        });
+      }
+      // Only the path under the upstream was fetched.
+      expect(seen).toEqual(['/api/v1/head']);
+      expect(recorder.problems()).toEqual([
+        'gateway: 4 requests refused, not a path under the upstream, first GET http://evil.example/x, GET //evil.example/x, GET /../x'
+      ]);
+    } finally {
+      await recorder.stop();
+      await closeServer(upstream);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('errorText', () => {
+  it("adds a failed fetch's cause", () => {
+    const failed = (cause: unknown) =>
+      Object.assign(new TypeError('fetch failed'), { cause });
+    expect(
+      errorText(failed(new Error('connect ECONNREFUSED 127.0.0.1:9')))
+    ).toBe('TypeError: fetch failed (connect ECONNREFUSED 127.0.0.1:9)');
+    // Every address refused: no message, only a code.
+    expect(
+      errorText(failed(Object.assign(new Error(''), { code: 'ECONNREFUSED' })))
+    ).toBe('TypeError: fetch failed (ECONNREFUSED)');
+    expect(errorText(failed({ message: 'from another realm' }))).toBe(
+      'TypeError: fetch failed (from another realm)'
+    );
+    expect(errorText(new Error('plain'))).toBe('Error: plain');
+    expect(errorText('text')).toBe('text');
   });
 });
 

@@ -161,13 +161,13 @@ export async function getLatestDropForgeProcess(
     req.query,
     Joi.object<{ plan_id?: string }>({ plan_id: Joi.string().max(100) })
   );
-  const job = await dropForgeJobsRepository.latest(
+  const job = await dropForgeJobsRepository.latestStatus(
     contract,
     claim_id,
     query.plan_id,
     { timer: Timer.getFromRequest(req) }
   );
-  return job ? [mapJob({ ...job, result: null })] : [];
+  return job ? [mapJob(job)] : [];
 }
 export async function getDropForgeCompletedList(
   req: GetDropForgeCompletedListRequest
