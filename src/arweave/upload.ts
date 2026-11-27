@@ -200,7 +200,8 @@ export class ArweaveUploadSession {
     private readonly logger: UploadLogger,
     private readonly client: Arweave = createArweaveClient(),
     private readonly timeoutMs = UPLOAD_TIMEOUT_MS,
-    private readonly inlineSmallUploads = false
+    private readonly inlineSmallUploads = false,
+    private readonly tags: Readonly<Record<string, string>> = {}
   ) {}
 
   async upload(
@@ -340,6 +341,9 @@ export class ArweaveUploadSession {
       key
     );
     transaction.addTag('Content-Type', contentType);
+    for (const [name, value] of Object.entries(this.tags)) {
+      transaction.addTag(name, value);
+    }
     await this.client.transactions.sign(transaction, key);
     await transaction.prepareChunks(data);
     this.state = {

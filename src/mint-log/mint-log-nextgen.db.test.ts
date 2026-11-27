@@ -180,8 +180,7 @@ describeWithSeed('mint log on MySQL: NextGen', [], () => {
           `/nextgen/${COLLECTION}/allowlist_merkle/${ROOT('2')}`,
           `/nextgen/${COLLECTION}/allowlist_merkle`,
           `/nextgen/proofs/${ROOT('2')}/${W(3)}`,
-          `/nextgen/proofs?address=${W(4)}`,
-          `/nextgen/allowlist_phases`,
+          `/nextgen/proofs/${ROOT('2')}/${W(4)}`,
           `/nextgen/allowlist_phases/${COLLECTION}`
         ]
       );

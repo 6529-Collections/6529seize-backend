@@ -183,6 +183,7 @@ export class ClaimMediaUploadRecovery {
           await this.save();
         }
       },
+      undefined,
       { signal: this.signal }
     );
     return { url: result.url };

@@ -43,18 +43,21 @@ describe('claim upload durable recovery', () => {
 
   it('persists the signed transaction before submission and resumes its acknowledged prefix', async () => {
     const first = fixture();
-    upload.mockImplementationOnce(async (_bytes, _type, hooks) => {
-      await hooks!.onState(uploadState(0), {
-        signal: new AbortController().signal
-      });
-      expect(
-        first.persisted.at(-1)!.files.animation!.upload!.transaction.id
-      ).toBe(tx);
-      await hooks!.onState(uploadState(735), {
-        signal: new AbortController().signal
-      });
-      throw new Error('network failure');
-    });
+    upload.mockImplementationOnce(
+      async (_bytes, _type, hooks, _tags, options) => {
+        expect(options!.signal).toBe(first.controller.signal);
+        await hooks!.onState(uploadState(0), {
+          signal: new AbortController().signal
+        });
+        expect(
+          first.persisted.at(-1)!.files.animation!.upload!.transaction.id
+        ).toBe(tx);
+        await hooks!.onState(uploadState(735), {
+          signal: new AbortController().signal
+        });
+        throw new Error('network failure');
+      }
+    );
     await first.recovery.begin();
     await expect(
       first.recovery.publishFile(

@@ -84,6 +84,80 @@ describe('durable Arweave uploads', () => {
     expect(isTerminalArweaveUploadError(error)).toBe(true);
   });
 
+  it('signs and publishes caller tags through uploadFile', async () => {
+    const { uploader, sign, post } = setup();
+    const tags = { 'App-Name': '6529-subscriptions', Type: 'opening' };
+    await uploader.uploadFile(bytes, 'application/json', tags);
+
+    const transaction = sign.mock.calls[0][0];
+    const decoded = Object.fromEntries(
+      transaction.tags.map((tag) => [
+        tag.get('name', { decode: true, string: true }),
+        tag.get('value', { decode: true, string: true })
+      ])
+    );
+    expect(decoded).toEqual({ 'Content-Type': 'application/json', ...tags });
+    expect(JSON.parse(post.mock.calls[0][1]).tags).toEqual(
+      transaction.toJSON().tags
+    );
+  });
+
+  it('keeps caller tags in identical signed bytes across gateway retries', async () => {
+    const { uploader, sign, post } = setup();
+    post.mockRejectedValueOnce(new Error('header acknowledgment lost'));
+    const states: ArweaveUploadState[] = [];
+    await uploader.uploadFileWithTransactionId(
+      bytes,
+      'application/json',
+      {
+        onState: async (state) => {
+          states.push(state);
+        }
+      },
+      { 'App-Name': '6529-subscriptions', Type: 'history' }
+    );
+
+    expect(sign).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(post.mock.calls[0][1]).toBe(post.mock.calls[1][1]);
+    expect(JSON.parse(post.mock.calls[1][1]).tags).toEqual(
+      states[0].transaction.tags
+    );
+    expect(states[0].transaction.tags).toHaveLength(3);
+  });
+
+  it('resumes the original signed tags without replacing them or signing again', async () => {
+    const { uploader, sign, create, post } = setup();
+    const states: ArweaveUploadState[] = [];
+    await uploader.uploadFileWithTransactionId(
+      bytes,
+      'application/json',
+      {
+        onState: async (state) => {
+          states.push(state);
+        }
+      },
+      { 'App-Name': '6529-subscriptions', Type: 'opening' }
+    );
+    const savedState = states[0];
+    sign.mockClear();
+    create.mockClear();
+    post.mockClear();
+
+    await uploader.uploadFileWithTransactionId(
+      bytes,
+      'application/json',
+      { savedState, onState: async () => undefined },
+      { 'App-Name': 'replacement-must-not-be-used' }
+    );
+
+    expect(create).not.toHaveBeenCalled();
+    expect(sign).not.toHaveBeenCalled();
+    expect(JSON.parse(post.mock.calls[0][1]).tags).toEqual(
+      savedState.transaction.tags
+    );
+  });
+
   it('preserves the existing uploadFile contract without checkpoint hooks', async () => {
     const { uploader, create, sign, post, status } = setup();
     const file = Buffer.from('prefix-original-file-suffix').subarray(7, 20);
@@ -971,9 +1045,13 @@ describe('compact source-backed Arweave checkpoints', () => {
     const controller = new AbortController();
     controller.abort(new Error('lambda budget exhausted'));
     await expect(
-      f.uploader.uploadFileWithTransactionId(bytes, 'video/mp4', undefined, {
-        signal: controller.signal
-      })
+      f.uploader.uploadFileWithTransactionId(
+        bytes,
+        'video/mp4',
+        undefined,
+        { 'App-Name': '6529-claims' },
+        { signal: controller.signal }
+      )
     ).rejects.toThrow('lambda budget exhausted');
     expect(f.post).not.toHaveBeenCalled();
     expect(f.create).not.toHaveBeenCalled();
