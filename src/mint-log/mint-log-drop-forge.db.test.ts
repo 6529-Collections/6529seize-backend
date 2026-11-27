@@ -44,8 +44,11 @@ import { LaunchRecord, LaunchSafetyError } from '@/drop-forge/drop-forge.types';
 import type { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
+import { Logger } from '@/logging';
+import * as priorityAlerts from '@/priority-alerts.context';
 import {
   dropForgePhaseSpec,
+  HELD_FLAG_LOCK_WAIT_SECONDS,
   withDropForgeClaimActions,
   writeDropForgeClaimAction
 } from './mint-log-drop-forge';
@@ -1057,6 +1060,191 @@ describeWithSeed(
       expect(
         (await dropForgeRepository.find('launch-1', {}))?.data.completion_flags
       ).toEqual(['ARTIST_AIRDROP']);
+    });
+
+    /**
+     * Holds the mint chain's head in a transaction of its own, as another
+     * card's phase step or an admin's split would, while `during` runs.
+     */
+    async function holdingTheHead<T>(during: () => Promise<T>): Promise<T> {
+      const head = (mintLogRecorder as unknown as { head: MintLogHeadDb }).head;
+      const locked = gate();
+      const release = gate();
+      const holder = sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          await head.lock(connection, 'mint');
+          locked.open();
+          await release.opened;
+        }
+      );
+      try {
+        await locked.opened;
+        return await during();
+      } finally {
+        release.open();
+        await holder;
+      }
+    }
+
+    /** A signer pass with its time taken, in milliseconds. */
+    async function timedPass(id: string, capped = true): Promise<number> {
+      const started = Date.now();
+      const pass = signerPass(id);
+      await (capped ? within(pass, 'the signer pass') : pass);
+      return Date.now() - started;
+    }
+
+    const BOUND_MS = HELD_FLAG_LOCK_WAIT_SECONDS * 1000;
+
+    it(`in primary mode, a held flag gives up on a held head after ${HELD_FLAG_LOCK_WAIT_SECONDS} s; the pass commits, the flag is unmirrored and written on the next pass`, async () => {
+      await saveLaunch(launch(['PAY_ARTIST']), {});
+      process.env.FEATURE_MINT_LOG_PRIMARY = 'true';
+      try {
+        const waited = await holdingTheHead(() => timedPass('launch-1'));
+        expect(waited).toBeGreaterThanOrEqual(BOUND_MS - 500);
+        expect(waited).toBeLessThan(BOUND_MS + 4000);
+        expect(await claimActions()).toEqual([]);
+        expect(await entries()).toEqual([]);
+        const record = await dropForgeRepository.find('launch-1', {});
+        expect(record?.state).toBe('RUNNING');
+        expect(record?.data.completion_flags).toEqual([]);
+        const events = record?.data.events ?? [];
+        expect(events[events.length - 1]).toMatchObject({
+          error: true,
+          content: expect.stringContaining(
+            'completion flag PAY_ARTIST was not written (ER_LOCK_WAIT_TIMEOUT)'
+          )
+        });
+
+        await signerPass('launch-1');
+      } finally {
+        process.env.FEATURE_MINT_LOG_PRIMARY = saved.FEATURE_MINT_LOG_PRIMARY;
+      }
+
+      expect(await claimActions()).toEqual([
+        { action: 'PAY_ARTIST', completed: 1, updated_by_wallet: W(8) }
+      ]);
+      expect((await entries()).map((entry) => entry.kind)).toEqual([
+        'claim.action'
+      ]);
+    });
+
+    it(`in shadow mode, a held flag gives up on a held head after ${HELD_FLAG_LOCK_WAIT_SECONDS} s and commits unlogged, alerting once the pass commits`, async () => {
+      await saveLaunch(launch(['PAY_ARTIST']), {});
+      const alerts = jest
+        .spyOn(priorityAlerts, 'sendPriorityAlertIfConfigured')
+        .mockResolvedValue(undefined);
+      try {
+        const waited = await holdingTheHead(() => timedPass('launch-1'));
+        expect(waited).toBeGreaterThanOrEqual(BOUND_MS - 500);
+        expect(waited).toBeLessThan(BOUND_MS + 4000);
+        expect(alerts).toHaveBeenCalledTimes(1);
+        expect(String(alerts.mock.calls[0][1])).toContain(
+          '[MINT_LOG_SHADOW_FAILED] [claim.action]'
+        );
+      } finally {
+        alerts.mockRestore();
+      }
+
+      // The flag is written and mirrored, with no entry: a gap that the
+      // genesis before primary covers.
+      expect(await claimActions()).toEqual([
+        { action: 'PAY_ARTIST', completed: 1, updated_by_wallet: W(8) }
+      ]);
+      expect(await entries()).toEqual([]);
+      expect(
+        (await dropForgeRepository.find('launch-1', {}))?.data.completion_flags
+      ).toEqual(['PAY_ARTIST']);
+    });
+
+    it('measures what one held flag adds to a signer pass on a full memes card, with the replay check on', async () => {
+      // A busy memes card: one phase with WALLETS allowlisted wallets (their
+      // distribution rows, the merkle root and a proof each), its normalized
+      // rows, and SUBSCRIBERS final subscription rows.
+      const WALLETS = 4000;
+      const SUBSCRIBERS = 2000;
+      for (let start = 0; start < SUBSCRIBERS; start += 500) {
+        const rows = Array.from(
+          { length: Math.min(500, SUBSCRIBERS - start) },
+          (_, i) => subscription(10_000 + start + i)
+        );
+        const columns = Object.keys(rows[0]);
+        const values = rows
+          .map(
+            (_, i) =>
+              `(${columns.map((column) => `:${column}_${i}`).join(', ')})`
+          )
+          .join(', ');
+        const params = Object.fromEntries(
+          rows.flatMap((row, i) =>
+            columns.map((column) => [
+              `${column}_${i}`,
+              (row as Record<string, unknown>)[column]
+            ])
+          )
+        );
+        await sqlExecutor.execute(
+          `insert into ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} (${columns.join(', ')}) values ${values}`,
+          params
+        );
+      }
+      await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+        workerPhase(
+          { connection },
+          Array.from({ length: WALLETS }, (_, i) => phaseResult(100 + i, 1))
+        )
+      );
+      await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+        finalizeDistribution(CONTRACT, CARD_ID, { connection })
+      );
+      const sizes = {
+        distribution: await count(
+          `select count(*) as n from ${DISTRIBUTION_TABLE}`
+        ),
+        normalized: await count(
+          `select count(*) as n from ${DISTRIBUTION_NORMALIZED_TABLE}`
+        ),
+        proofs: await count(
+          `select count(*) as n from ${MINTING_MERKLE_PROOFS_TABLE}`
+        ),
+        proofBytes: await count(
+          `select sum(length(proofs)) as n from ${MINTING_MERKLE_PROOFS_TABLE}`
+        ),
+        final: await count(
+          `select count(*) as n from ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}`
+        )
+      };
+      expect(sizes.distribution).toBeGreaterThanOrEqual(WALLETS);
+      expect(sizes.proofs).toBeGreaterThanOrEqual(WALLETS);
+
+      // The same pass, each with one flag: the mint log off, then in shadow
+      // with the replay check on (four captures of the card).
+      await saveLaunch({ ...launch(['ARTIST_AIRDROP']), id: 'launch-off' }, {});
+      process.env.FEATURE_MINT_LOG_SHADOW = 'false';
+      let off: number;
+      try {
+        off = await timedPass('launch-off', false);
+      } finally {
+        process.env.FEATURE_MINT_LOG_SHADOW = 'true';
+      }
+      await saveLaunch(launch(['PAY_ARTIST']), {});
+      const logged = await timedPass('launch-1', false);
+
+      const flagEntries = (await entries()).filter(
+        (entry) => entry.kind === 'claim.action'
+      );
+      expect(flagEntries).toHaveLength(1);
+      expect(flagEntries[0].checks.replay).toBe('match');
+      Logger.get('MINT_LOG_FLAG_TIMING').info(
+        JSON.stringify({
+          ...sizes,
+          off_ms: off,
+          logged_ms: logged,
+          added_ms: logged - off
+        })
+      );
+      // A guard against a regression, well above what it measures.
+      expect(logged - off).toBeLessThan(30_000);
     });
   }
 );

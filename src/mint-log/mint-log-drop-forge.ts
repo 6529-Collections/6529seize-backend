@@ -1,3 +1,4 @@
+import { Logger } from '@/logging';
 import type { RequestContext } from '@/request.context';
 import { sqlExecutor, type ConnectionWrapper } from '@/sql-executor';
 import { distributionCursorBlock, latestTdhBlock } from './mint-log-inputs';
@@ -204,6 +205,58 @@ async function writeHeld(
   await execute(`RELEASE SAVEPOINT ${CLAIM_ACTION_SAVEPOINT}`);
 }
 
+const logger = Logger.get('MINT_LOG_DROP_FORGE');
+
+/**
+ * How long a held flag's statements wait for a lock, the mint log's head
+ * first, before they give up. The signer's and the launch's rows stay
+ * locked meanwhile, and the head may be held by a phase step on another
+ * card or an admin's phase split. Primary: the flag fails, is unmirrored
+ * and is written on a later pass. Shadow: it commits unlogged, and the mint
+ * log alerts.
+ */
+export const HELD_FLAG_LOCK_WAIT_SECONDS = 5;
+
+/**
+ * Runs `fn` with the connection's lock wait cut to
+ * HELD_FLAG_LOCK_WAIT_SECONDS (never raised), then puts the session's own
+ * value back, so the signer's last UPDATE and the pooled connection's next
+ * user wait as before.
+ */
+async function withHeldFlagLockWait<T>(
+  connection: ConnectionWrapper<any>,
+  fn: () => Promise<T>
+): Promise<T> {
+  const options = { wrappedConnection: connection };
+  const [row] = await sqlExecutor.execute<{ seconds: number | string }>(
+    'SELECT @@SESSION.innodb_lock_wait_timeout AS seconds',
+    undefined,
+    options
+  );
+  const previous = Number(row?.seconds);
+  if (!Number.isInteger(previous) || previous < 1) return fn();
+  await sqlExecutor.execute(
+    'SET SESSION innodb_lock_wait_timeout = :seconds',
+    { seconds: Math.min(previous, HELD_FLAG_LOCK_WAIT_SECONDS) },
+    options
+  );
+  try {
+    return await fn();
+  } finally {
+    await sqlExecutor
+      .execute(
+        'SET SESSION innodb_lock_wait_timeout = :seconds',
+        { seconds: previous },
+        options
+      )
+      .catch((error) =>
+        logger.error(
+          `[DROP_FORGE_LOCK_WAIT_NOT_RESTORED] the session's lock wait stays at ${HELD_FLAG_LOCK_WAIT_SECONDS} s: ${error instanceof Error ? error.message : String(error)}`
+        )
+      );
+  }
+}
+
 /**
  * Runs `fn` in Drop Forge's signer transaction with its claim-action writes
  * held back, then writes them, each logged, before returning, so the
@@ -234,8 +287,12 @@ export async function withDropForgeClaimActions<T>(
   try {
     const value = await fn();
     queue.closed = true;
-    for (const item of queue.items) {
-      await writeHeld(item, ctx, connection);
+    if (queue.items.length) {
+      await withHeldFlagLockWait(connection, async () => {
+        for (const item of queue.items) {
+          await writeHeld(item, ctx, connection);
+        }
+      });
     }
     return value;
   } finally {
