@@ -622,8 +622,8 @@ key, with that key's wallets, then the scoped metrics sync, as for the site
 rows. A recording without them (an identity-only world) skips this; one
 holding only some is refused. From switch-on 6529.io's TDH mirrors the
 chain's day by day, so the seed models 6529.io at the mark: each value is
-the person's TDH on the chain at the mark's TDH day, 20782 in the v9 and
-v10 captures (…01c2 26,709, …01c3 23,967, …01c4 33,566, and …01c7 28,416
+the person's TDH on the chain at the mark's TDH day, 20782 in the shared
+gateway capture (…01c2 26,709, …01c3 23,967, …01c4 33,566, and …01c7 28,416
 after its second wallet left). No site TDH above it is seeded. The rebuild
 leaves their `tdh` and `basetdh_rate` at 0, so the four pairs are one
 column plan on `identities` (`TDH_COLUMN_PLANS`), until 2026-11-30,

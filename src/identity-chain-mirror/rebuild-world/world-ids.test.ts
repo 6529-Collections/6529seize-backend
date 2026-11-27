@@ -12,14 +12,14 @@ const DEVNET = [
 ] as const;
 
 /**
- * The capture the world was checked against (v4): the SHA-256 of
+ * The capture the world was checked against: the SHA-256 of
  * JSON.stringify of the [name, address] pairs above, in that order, with
  * each address as its identity world file (identity-world.json) lists it
  * under `wallets`. A hash, so this test holds no address either (the
  * world's placeholders file is built from these wallets at run time); a
  * capture whose harness keys its wallets differently fails here.
  */
-const V4_WALLETS_SHA256 =
+const WORLD_WALLETS_SHA256 =
   '91a5953c3e4269aab974fa96d5d087d95831ad5ca86bd5472d62cd5bb8e188c5';
 
 describe('the devnet wallets', () => {
@@ -27,7 +27,7 @@ describe('the devnet wallets', () => {
     const pairs = DEVNET.map((name) => [name, IDENTITY_WORLD_WALLETS[name]]);
     expect(
       createHash('sha256').update(JSON.stringify(pairs)).digest('hex')
-    ).toBe(V4_WALLETS_SHA256);
+    ).toBe(WORLD_WALLETS_SHA256);
   });
 
   it('are lowercase addresses, one per label, the pair lower first', () => {

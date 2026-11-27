@@ -126,7 +126,7 @@ export const IDENTITY_WORLD_CATEGORIES = {
  * voter's credit from identities.tdh, which from switch-on is TDH alone.
  * From switch-on 6529.io's TDH mirrors the chain's day by day, so each
  * value is what 6529.io holds at the mark: that person's TDH on the chain
- * at the mark's TDH day, 20782 in the v9 and v10 captures (…01c7's after
+ * at the mark's TDH day, 20782 in the shared gateway capture (…01c7's after
  * its second wallet left). No site TDH above it is seeded. One entry each.
  */
 export const WAVES_PEOPLE_TDH = [
