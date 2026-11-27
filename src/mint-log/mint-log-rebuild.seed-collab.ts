@@ -1,7 +1,6 @@
 import {
   MEME_COLLABORATION_INVITATIONS_TABLE,
-  MEME_COLLABORATIONS_TABLE,
-  PROFILES_TABLE
+  MEME_COLLABORATIONS_TABLE
 } from '@/constants';
 import { AuthenticationContext } from '@/auth-context';
 import { DropType } from '@/entities/IDrop';
@@ -26,21 +25,12 @@ import {
  * them on the artwork's own sequence.
  *
  * The wave and the artwork drop are plain rows (mint-log-rebuild.seed-rows.ts).
+ * The two probe profiles are the identity seed's (identity.probe-profiles),
+ * with their handles, which the collaboration service needs; this seed only
+ * takes their ids.
  */
 
 const MAIN_STAGE_DESCRIPTION_DROP = '00000000-0000-4000-8000-0000000000c2';
-
-/** A profiles row for a probe profile, as the personal seed writes it. */
-async function insertProfile(profileId: string, wallet: string): Promise<void> {
-  await sqlExecutor.execute(
-    `insert ignore into ${PROFILES_TABLE}
-       (external_id, handle, normalised_handle, primary_wallet, created_at,
-        created_by_wallet, classification)
-     values (:profileId, :profileId, :profileId, :wallet, :createdAt, :wallet,
-        'PSEUDONYM')`,
-    { profileId, wallet, createdAt: new Date(SEEDED_AT) }
-  );
-}
 
 function signedIn(n: number): AuthenticationContext {
   return new AuthenticationContext({
@@ -54,9 +44,6 @@ function signedIn(n: number): AuthenticationContext {
 export async function seedCollaboration(): Promise<void> {
   const author = probeProfileId(1);
   const invitee = probeProfileId(2);
-  for (let n = 1; n <= PROBE_WALLETS.length; n++) {
-    await insertProfile(probeProfileId(n), PROBE_WALLETS[n - 1]);
-  }
   await insertWave({
     id: PROBE_MAIN_STAGE_WAVE,
     createdBy: author,

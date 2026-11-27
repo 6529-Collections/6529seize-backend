@@ -347,7 +347,15 @@ The steps of a run:
    has the world's fixed profile id under each of its wallets and the
    chain's principal of it, and the two probes, whose ids seeds take
    without reading, are held. An actor the world lacks is noted in the
-   step's log.
+   step's log. A unit test (`src/rebuild/world-actors-guard.test.ts`) pins
+   every file under `src` that holds a raw write into `profiles` (SQL, a
+   write helper handed the table, or a row set tagged with it), and how
+   many: the profiles and identity mirror write paths,
+   identity.probe-profiles, the test fixtures' profiles row set and its one
+   caller, and the records service's own profile (handle `rebuild-records`),
+   which the mint and publish seeds insert only when it is missing. Any
+   other raw write fails the test until it is reviewed and listed; writes
+   through the ORM are outside it.
 3. Copy the kept tables aside: EPHEMERAL, PROVIDER, EXEMPT, and, unless
    `--final`, INDEX tables no rebuilder writes yet.
 4. Probe the API (pass A).
