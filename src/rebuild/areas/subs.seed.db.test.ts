@@ -115,10 +115,21 @@ async function snapshot(
 
 /** The run's files source: the seed files over loopback, as /ar/ and /ipfs/. */
 async function serveFiles(dir: string): Promise<http.Server> {
+  const root = path.resolve(dir);
   const server = http.createServer((req, res) => {
-    const id = decodeURIComponent((req.url ?? '').split('/').pop() ?? '');
-    const file = path.join(dir, id);
-    if (!/^[A-Za-z0-9_-]+$/.test(id) || !fs.existsSync(file)) {
+    let id = '';
+    try {
+      id = decodeURIComponent((req.url ?? '').split('/').pop() ?? '');
+    } catch {
+      // A malformed escape names no file: answered as not found below.
+    }
+    // A plain file name only, and the file must stay inside the directory.
+    const file = path.resolve(root, id);
+    if (
+      !/^[A-Za-z0-9_-]+$/.test(id) ||
+      !file.startsWith(root + path.sep) ||
+      !fs.existsSync(file)
+    ) {
       res.statusCode = 404;
       res.end();
       return;
