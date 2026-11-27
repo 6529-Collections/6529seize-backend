@@ -87,6 +87,12 @@ import {
 } from '@/rebuild/sources/start-sources';
 import { judge, WaitingStep } from '@/rebuild/run/verdict';
 import { stepContext } from '@/rebuild/run/step-context';
+import {
+  ReachedStepSkip,
+  StepSkip,
+  stepSkipLine,
+  stepsSkippedForSteps
+} from '@/rebuild/run/step-needs';
 import { waitForApi } from '@/rebuild/stack/api-ready';
 
 /** A table's partition columns and every tuple its writers own. */
@@ -218,6 +224,13 @@ class RebuildRun {
   private plannedSteps: string[] = [];
   /** Steps skipped as planned because a table they need isn't in the schema. */
   private waitingSteps: WaitingStep[] = [];
+  /**
+   * Steps skipped as planned because a step they need doesn't run here,
+   * decided once the schema is known (step-needs.ts).
+   */
+  private stepSkips = new Map<string, StepSkip>();
+  /** Those of them the run reached and skipped. */
+  private reachedStepSkips: ReachedStepSkip[] = [];
   /** Needs on tables the schema has: the step runs, and the need can go. */
   private staleNeeds: string[] = [];
   /** The fresh schema's base tables. */
@@ -572,6 +585,12 @@ class RebuildRun {
         );
         continue;
       }
+      const skip = this.stepSkips.get(step.id);
+      if (skip) {
+        this.o.log(`${kind} ${step.id}: planned, ${stepSkipLine(skip)}`);
+        this.reachedStepSkips.push({ ...skip, kind });
+        continue;
+      }
       this.o.log(`${kind} ${step.id}`);
       if (!(await this.runStep(kind, areaOf.get(step.id)!, step))) return false;
     }
@@ -782,9 +801,35 @@ class RebuildRun {
     );
   }
 
-  /** Whether a step runs here: its code is here and its tables are. */
+  /**
+   * Whether a step runs here: its code is here, its tables are, and the
+   * steps it needs run here.
+   */
   private stepRunsHere(step: RebuildStep): boolean {
+    return this.stepRunsOnItsOwn(step) && !this.stepSkips.has(step.id);
+  }
+
+  /** Whether a step's code is here and its tables are. */
+  private stepRunsOnItsOwn(step: RebuildStep): boolean {
     return this.stepCodeHere(step) && this.missingNeeds(step).length === 0;
+  }
+
+  /**
+   * The steps skipped because a step they need doesn't run here: every
+   * seed runs in every run, and only the run's areas' rebuilders.
+   */
+  private findStepSkips(): Map<string, StepSkip> {
+    const inRun = new Set(
+      [
+        ...this.o.manifests.flatMap((m) => m.seeds),
+        ...this.scopeManifests.flatMap((m) => m.rebuilders)
+      ].map((step) => step.id)
+    );
+    return stepsSkippedForSteps(
+      this.o.manifests.flatMap((m) => [...m.seeds, ...m.rebuilders]),
+      (step) => this.stepRunsOnItsOwn(step),
+      (id) => inRun.has(id)
+    );
   }
 
   /** The API bundled once per run, as its deploy bundles it. */
@@ -1077,6 +1122,7 @@ class RebuildRun {
       this.live.filter((t) => t.type === 'BASE TABLE').map((t) => t.name)
     );
     this.baseTables = base;
+    this.stepSkips = this.findStepSkips();
     this.staleNeeds = this.findStaleNeeds(base);
     if (!(await this.checkpointColumnsHold())) return;
     if (!(await this.partitionsDisjointInMysql())) return;
@@ -1158,6 +1204,7 @@ class RebuildRun {
       plannedTables: (this.registry?.plannedAbsent ?? []).length,
       plannedSteps: this.plannedSteps,
       waitingSteps: this.waitingSteps,
+      stepSkips: this.reachedStepSkips,
       staleNeeds: this.staleNeeds,
       unownedRows: this.unownedRows,
       heldProbes: this.heldProbes,

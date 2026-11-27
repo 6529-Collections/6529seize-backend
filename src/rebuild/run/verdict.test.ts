@@ -17,6 +17,7 @@ const clean: VerdictInput = {
   plannedTables: 0,
   plannedSteps: [],
   waitingSteps: [],
+  stepSkips: [],
   staleNeeds: [],
   unownedRows: [],
   heldProbes: [],
@@ -66,6 +67,43 @@ const findings: [string, Partial<VerdictInput>, RegExp][] = [
       ]
     },
     /1 steps were skipped as planned because a table they need is not in the schema yet.*a\.seed needs t \(a later branch creates it\)/
+  ],
+  [
+    'steps waiting on a step that does not run',
+    {
+      stepSkips: [
+        {
+          kind: 'seed',
+          step: 'b.seed',
+          needs: 'a.seed',
+          why: 'skipped',
+          reason: 'it mints card 1'
+        },
+        {
+          kind: 'rebuilder',
+          step: 'b.rebuild',
+          needs: 'c.rebuild',
+          why: 'outside',
+          reason: 'it reads its rows'
+        }
+      ]
+    },
+    /2 steps were skipped as planned because a step they need doesn't run, and their rebuilders' tables were (kept|not rebuilt): b\.seed needs a\.seed, which is skipped as planned \(it mints card 1\); b\.rebuild needs c\.rebuild, outside this area run \(it reads its rows\)/
+  ],
+  [
+    'seeds waiting on a step that does not run',
+    {
+      stepSkips: [
+        {
+          kind: 'seed',
+          step: 'b.seed',
+          needs: 'a.seed',
+          why: 'skipped',
+          reason: 'it mints card 1'
+        }
+      ]
+    },
+    /1 steps were skipped as planned because a step they need doesn't run: b\.seed needs a\.seed/
   ],
   [
     'rows no partition owns',
