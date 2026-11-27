@@ -5,8 +5,10 @@ import {
   diffSnapshots,
   differingColumns,
   goneRows,
+  scopeCounts,
   snapshotRows
 } from '@/rebuild/snapshot/table-snapshot';
+import { Row, scopeFlag } from '@/rebuild/stack/mysql-admin';
 
 describe('table snapshots', () => {
   it('canonicalizes column order, buffers and volatile columns', () => {
@@ -78,6 +80,100 @@ describe('table snapshots', () => {
     expect(diff.same).toBe(false);
     expect(diff.missing).toHaveLength(1);
     expect(diff.extra).toHaveLength(1);
+  });
+
+  describe('a declared row key and scoped volatile columns', () => {
+    // waves: serial_no, the primary key, is numbered anew by a rebuild;
+    // id is unique and keys the rows (its rowKey).
+    const wave = (serial: number, id: string, name: string, at = 't1') => ({
+      serial_no: serial,
+      id,
+      name,
+      at
+    });
+
+    it('keys rows by the declared key, so a renumbered serial is the same row changed', () => {
+      const before = snapshotRows(
+        'waves',
+        [wave(161, 'w-161', 'a'), wave(5000, '0xabc', 'b')],
+        ['id']
+      );
+      const after = snapshotRows(
+        'waves',
+        [wave(161, 'w-161', 'a'), wave(162, '0xabc', 'b')],
+        ['id']
+      );
+      expect(before.keys).toEqual(['["w-161"]', '["0xabc"]']);
+      const diff = diffSnapshots(before, after);
+      expect([diff.same, diff.missing, diff.extra, diff.changed]).toEqual([
+        false,
+        [],
+        [],
+        ['["0xabc"]']
+      ]);
+    });
+
+    it('leaves a scoped column out only of the rows its flag marks', () => {
+      const scoped = [{ column: 'serial_no', where: "id LIKE '0x%'" }];
+      const read = (row: Row, on: boolean): Row => ({
+        ...row,
+        [scopeFlag(0)]: on ? '1' : '0'
+      });
+      const snap = (...rows: Row[]) =>
+        snapshotRows('waves', rows, ['id'], new Set(), scoped);
+      const before = snap(
+        read(wave(161, 'w-161', 'a'), false),
+        read(wave(5000, '0xabc', 'b'), true),
+        read(wave(5001, '0xdef', 'c'), true)
+      );
+      // The chain-made waves come back renumbered: the same.
+      const renumbered = snap(
+        read(wave(161, 'w-161', 'a'), false),
+        read(wave(162, '0xabc', 'b'), true),
+        read(wave(163, '0xdef', 'c'), true)
+      );
+      expect(diffSnapshots(before, renumbered).same).toBe(true);
+      expect(before.scoped).toEqual([
+        { column: 'serial_no', keys: ['["0xabc"]', '["0xdef"]'] }
+      ]);
+      // The imported wave's serial is still compared.
+      const imported = snap(
+        read(wave(7, 'w-161', 'a'), false),
+        read(wave(162, '0xabc', 'b'), true),
+        read(wave(163, '0xdef', 'c'), true)
+      );
+      expect(diffSnapshots(before, imported).changed).toEqual(['["w-161"]']);
+      // A row the condition matches on one side only is compared there.
+      const oneSide = snap(
+        read(wave(161, 'w-161', 'a'), false),
+        read(wave(162, '0xabc', 'b'), false),
+        read(wave(5001, '0xdef', 'c'), true)
+      );
+      expect(diffSnapshots(before, oneSide).changed).toEqual(['["0xabc"]']);
+      expect(scopeCounts(before, oneSide)).toEqual([
+        { column: 'serial_no', before: 2, after: 1, oneSide: 1 }
+      ]);
+      expect(scopeCounts(before, renumbered)).toEqual([
+        { column: 'serial_no', before: 2, after: 2, oneSide: 0 }
+      ]);
+      // The flag columns never reach the hash: a row read without scoping
+      // hashes as the scoped read of a row its condition didn't match.
+      expect(
+        snapshotRows('waves', [wave(161, 'w-161', 'a')], ['id']).hashes
+      ).toEqual(snap(read(wave(161, 'w-161', 'a'), false)).hashes);
+    });
+
+    it('takes a key holding a scoped column as no key', () => {
+      const scoped = [{ column: 'serial_no', where: '1 = 1' }];
+      const snap = snapshotRows(
+        'waves',
+        [{ ...wave(1, '0xabc', 'b'), [scopeFlag(0)]: '1' }],
+        ['serial_no'],
+        new Set(),
+        scoped
+      );
+      expect(snap.keys).toEqual(snap.hashes);
+    });
   });
 
   it('reports rows only before, only after and changed, by primary key', () => {

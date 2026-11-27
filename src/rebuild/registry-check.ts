@@ -4,6 +4,7 @@ import {
   PlannedRows,
   RebuildStep,
   TableClass,
+  TableEntry,
   validUntil
 } from '@/rebuild/manifest.types';
 import { modulePathProblem } from '@/rebuild/step-code';
@@ -48,7 +49,17 @@ export type RegistryProblemKind =
    * An exempt column on a table that isn't INDEX, without a column or a
    * reason, or owned by a column owner.
    */
-  | 'BAD_EXEMPT';
+  | 'BAD_EXEMPT'
+  /**
+   * A rowKey on a table that isn't INDEX, without columns, with a column
+   * named twice, or holding a volatile or exempt column.
+   */
+  | 'BAD_ROW_KEY'
+  /**
+   * A volatile column scoped by an empty condition, or by one that names
+   * the column itself.
+   */
+  | 'BAD_VOLATILE';
 
 export interface RegistryProblem {
   readonly kind: RegistryProblemKind;
@@ -240,6 +251,75 @@ function tableProblems(input: RegistryInput): RegistryProblem[] {
           badExempt(`${table}.${column} is exempt without a reason`);
         }
       }
+      problems.push(
+        ...keyAndScopeProblems(table, entry).map((p) => ({
+          ...p,
+          area: manifest.area,
+          table
+        }))
+      );
+    }
+  }
+  return problems;
+}
+
+/**
+ * Whether an SQL condition names `column`, bare or quoted, as a whole
+ * word in any case (MySQL column names are case-insensitive).
+ */
+export function namesColumn(where: string, column: string): boolean {
+  const word = (char: string | undefined) =>
+    char !== undefined && /[A-Za-z0-9_$]/.test(char);
+  const text = where.toLowerCase();
+  const name = column.toLowerCase();
+  for (let at = text.indexOf(name); at >= 0; at = text.indexOf(name, at + 1)) {
+    if (!word(text[at - 1]) && !word(text[at + name.length])) return true;
+  }
+  return false;
+}
+
+/**
+ * A table entry's rowKey and scoped volatile columns, checked without the
+ * schema (the run checks them against it at its start).
+ */
+function keyAndScopeProblems(
+  table: string,
+  entry: TableEntry
+): { kind: RegistryProblemKind; detail: string }[] {
+  const problems: { kind: RegistryProblemKind; detail: string }[] = [];
+  const volatile = (entry.volatileColumns ?? []).map((v) => v.column);
+  const exempt = (entry.exemptColumns ?? []).map((e) => e.column);
+  if (entry.rowKey) {
+    const bad = (detail: string) =>
+      problems.push({ kind: 'BAD_ROW_KEY', detail });
+    if (entry.class !== 'INDEX') {
+      bad(`${table} is ${entry.class}; only an INDEX table has a rowKey`);
+    }
+    if (!entry.rowKey.length) bad(`${table}'s rowKey names no column`);
+    entry.rowKey.forEach((column, i) => {
+      if (!/^[A-Za-z0-9_]+$/.test(column)) {
+        bad(`${table}'s rowKey column '${column}' names no column`);
+      } else if (entry.rowKey!.indexOf(column) !== i) {
+        bad(`${table}'s rowKey names ${column} twice`);
+      } else if (volatile.includes(column) || exempt.includes(column)) {
+        bad(
+          `${table}'s rowKey holds ${column}, ${volatile.includes(column) ? 'a volatile' : 'an exempt'} column: a row key must come back the same`
+        );
+      }
+    });
+  }
+  for (const { column, where } of entry.volatileColumns ?? []) {
+    if (where === undefined) continue;
+    if (!where.trim()) {
+      problems.push({
+        kind: 'BAD_VOLATILE',
+        detail: `${table}.${column} is volatile where nothing: an empty condition`
+      });
+    } else if (namesColumn(where, column)) {
+      problems.push({
+        kind: 'BAD_VOLATILE',
+        detail: `${table}.${column} is volatile where ${where}, which names the column itself: which rows leave it out would change with it`
+      });
     }
   }
   return problems;

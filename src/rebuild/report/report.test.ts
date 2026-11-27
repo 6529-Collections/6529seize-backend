@@ -112,6 +112,7 @@ function report(parts: Partial<RunReport> = {}): RunReport {
           reason: 'Set when the loop writes the row.'
         }
       ],
+      rowKeys: [],
       ownedColumnsLeftOut: [],
       day: '2026-11-24',
       exemptUntil: [],
@@ -202,6 +203,49 @@ describe('rebuild report', () => {
     expect(renderMarkdown(leftOut)).toContain(
       '## Owned columns left out: their owner does not run here\n\n- identities.tdh: tdh.identity-columns, planned, its code is not in this tree'
     );
+  });
+
+  it('lists a scoped volatile column with its counts, and the declared row keys', () => {
+    const base = report();
+    const scoped = report({
+      tables: {
+        ...base.tables,
+        volatileColumns: [
+          {
+            table: 'waves',
+            column: 'serial_no',
+            reason: 'MySQL numbers chain-made waves.',
+            where: "id LIKE '0x%'",
+            scope: {
+              before: 2,
+              rowsBefore: 5,
+              after: 3,
+              rowsAfter: 5,
+              oneSide: 1
+            }
+          },
+          {
+            table: 'waves',
+            column: 'updated_at',
+            reason: 'Not read yet.',
+            where: "id LIKE '0x%'",
+            scope: null
+          }
+        ],
+        rowKeys: [{ table: 'waves', columns: ['id'] }]
+      }
+    });
+    const markdown = renderMarkdown(scoped);
+    expect(markdown).toContain(
+      "- waves.serial_no, only where id LIKE '0x%': 2 of 5 rows before, 3 of 5 after; 1 matched on one side only, so compared there: MySQL numbers chain-made waves."
+    );
+    expect(markdown).toContain(
+      "- waves.updated_at, only where id LIKE '0x%': Not read yet."
+    );
+    expect(markdown).toContain(
+      '## Rows keyed by a declared row key\n\n- waves by id'
+    );
+    expect(renderMarkdown(base)).not.toContain('declared row key');
   });
 
   it('counts planned rows missing from the rebuild, and lists every plan', () => {

@@ -1154,6 +1154,204 @@ describe('rebuild check, end to end', () => {
     });
   });
 
+  describe('a declared row key and a scoped volatile column', () => {
+    // waves_metadatas: id, the primary key, is an auto-increment the
+    // rebuild numbers anew for chain-made waves (0x ids); (wave_id,
+    // data_key) is its UNIQUE key.
+    const SCOPED = "wave_id LIKE '0x%'";
+    const keyed: TableEntry = {
+      class: 'INDEX',
+      rowKey: ['wave_id', 'data_key'],
+      volatileColumns: [
+        {
+          column: 'id',
+          reason: 'MySQL numbers chain-made waves\x27 rows anew',
+          where: SCOPED
+        }
+      ]
+    };
+    const metadataSeed = step('self-check.metadata-seed', 'seedWaveMetadata', [
+      'waves_metadatas'
+    ]);
+    const metadataRun = (
+      rebuilder: RebuildStep,
+      entry: TableEntry = keyed,
+      final = false
+    ) =>
+      run('waves', {
+        seed: metadataSeed,
+        rebuilder,
+        tables: { waves_metadatas: entry },
+        final
+      });
+    const imported = JSON.stringify([
+      '00000000-0000-4000-8000-0000000000a1',
+      'title'
+    ]);
+
+    it('matches renumbered chain-made rows by the row key, and still compares the imported one', async () => {
+      const { report } = await metadataRun(
+        step('self-check.metadata', 'rebuildWaveMetadata', ['waves_metadatas'])
+      );
+      expect(report.failures).toEqual([]);
+      expect(report.verdict).toBe('PASS');
+      expect(
+        report.tables.diffs
+          .filter((d) => d.table === 'waves_metadatas')
+          .map((d) => [d.same, d.rowsBefore, d.rowsAfter])
+      ).toEqual([[true, 3, 3]]);
+      expect(report.tables.rowKeys).toEqual([
+        { table: 'waves_metadatas', columns: ['wave_id', 'data_key'] }
+      ]);
+      expect(
+        report.tables.volatileColumns.find((v) => v.table === 'waves_metadatas')
+      ).toEqual({
+        table: 'waves_metadatas',
+        column: 'id',
+        reason: "MySQL numbers chain-made waves' rows anew",
+        where: SCOPED,
+        scope: { before: 2, rowsBefore: 3, after: 2, rowsAfter: 3, oneSide: 0 }
+      });
+      // The imported wave's row keeps its number: moving it differs.
+      const moved = await metadataRun(
+        step('self-check.metadata-moved', 'rebuildWaveMetadataImportedMoved', [
+          'waves_metadatas'
+        ])
+      );
+      const diff = moved.report.tables.diffs.find(
+        (d) => d.table === 'waves_metadatas'
+      )!;
+      expect([diff.same, diff.missing, diff.extra, diff.changed]).toEqual([
+        false,
+        [],
+        [],
+        [imported]
+      ]);
+    });
+
+    it('treats a scoped column as any volatile one in a final run, and counts a row matched on one side only', async () => {
+      const rebuilder = step(
+        'self-check.metadata-final',
+        'rebuildWaveMetadata',
+        ['waves_metadatas']
+      );
+      const final = await metadataRun(rebuilder, keyed, true);
+      // A final run fails on the area's other tables, never on the scoped
+      // column or the row key: the table is the same.
+      expect(
+        final.report.tables.diffs.find((d) => d.table === 'waves_metadatas')
+          ?.same
+      ).toBe(true);
+      expect(final.report.failures.join(' ')).not.toContain('waves_metadatas');
+      // Scoped by its value: the revalued row matches before only, so its
+      // renumbered id is compared there and it shows as changed.
+      const byValue = await metadataRun(
+        step('self-check.metadata-one-side', 'rebuildWaveMetadataRevalued', [
+          'waves_metadatas'
+        ]),
+        {
+          ...keyed,
+          volatileColumns: [
+            {
+              column: 'id',
+              reason: 'numbered anew',
+              where: "data_value = 'one'"
+            }
+          ]
+        }
+      );
+      const diff = byValue.report.tables.diffs.find(
+        (d) => d.table === 'waves_metadatas'
+      )!;
+      expect(diff.changed).toContain(
+        JSON.stringify(['0x00000000000000000000000000000000000000aa', 'title'])
+      );
+      expect(
+        byValue.report.tables.volatileColumns.find(
+          (v) => v.table === 'waves_metadatas'
+        )?.scope
+      ).toEqual({
+        before: 1,
+        rowsBefore: 3,
+        after: 0,
+        rowsAfter: 3,
+        oneSide: 1
+      });
+    });
+
+    it('lets a column plan find its rows by the row key', async () => {
+      const plan: PlannedRows = {
+        table: 'waves_metadatas',
+        where: "wave_id = '0x00000000000000000000000000000000000000aa'",
+        reason: 'a later change writes its value',
+        until: '9999-12-31',
+        change: 'the value writer',
+        columns: ['data_value']
+      };
+      const rebuilder: RebuildStep = {
+        ...step('self-check.metadata-plan', 'rebuildWaveMetadataRevalued', [
+          'waves_metadatas'
+        ]),
+        plannedRows: [plan]
+      };
+      const { report } = await metadataRun(rebuilder);
+      expect(report.failures).toEqual([]);
+      expect(report.verdict).toBe('PASS');
+      const diff = report.tables.diffs.find(
+        (d) => d.table === 'waves_metadatas'
+      )!;
+      expect([diff.same, diff.plannedColumnRows, diff.changed]).toEqual([
+        true,
+        1,
+        []
+      ]);
+      // With id volatile on every row and no row key, the plan can't
+      // find its rows: the run stops at its start.
+      const unkeyed = await metadataRun(
+        { ...rebuilder, id: 'self-check.metadata-plan-unkeyed' },
+        {
+          class: 'INDEX',
+          volatileColumns: [{ column: 'id', reason: 'numbered anew' }]
+        }
+      );
+      expect(unkeyed.report.verdict).toBe('FAIL');
+      expect(unkeyed.report.failures).toContain(
+        'self-check.metadata-plan-unkeyed plans columns of waves_metadatas, which has no primary key without a volatile column to find its rows by after the rebuild; a declared rowKey can name a unique key without one'
+      );
+    });
+
+    it('refuses at its start a row key no UNIQUE index has, a scoped key column, and a condition MySQL cannot read', async () => {
+      const rebuilder = step('self-check.metadata-bad', 'rebuildWaveMetadata', [
+        'waves_metadatas'
+      ]);
+      const { report } = await metadataRun(rebuilder, {
+        ...keyed,
+        rowKey: ['wave_id']
+      });
+      expect(report.verdict).toBe('FAIL');
+      expect(report.failures).toContain(
+        "waves_metadatas's rowKey (wave_id) is no UNIQUE index of the table: two rows could share it"
+      );
+      const unkeyed = await metadataRun(rebuilder, {
+        class: 'INDEX',
+        volatileColumns: keyed.volatileColumns
+      });
+      expect(unkeyed.report.failures).toContain(
+        "waves_metadatas.id is volatile where a condition holds, but it is in the table's primary key (declare a rowKey without it): rows are found by that key"
+      );
+      const unread = await metadataRun(rebuilder, {
+        ...keyed,
+        volatileColumns: [
+          { column: 'id', reason: 'numbered anew', where: 'no_such_column = 1' }
+        ]
+      });
+      expect(unread.report.verdict).toBe('FAIL');
+      expect(unread.report.failures.join(' ')).toContain(
+        "waves_metadatas.id is volatile where no_such_column = 1, which MySQL can't read"
+      );
+    });
+  });
+
   it('fails a rebuilder that calls a host outside the sources', async () => {
     const { report } = await teamRun(
       step('self-check.outside', 'callOutsideSource', ['team'])

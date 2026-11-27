@@ -69,6 +69,8 @@ import {
   changedKeys,
   diffSnapshots,
   goneRows,
+  scopeCounts,
+  ScopedVolatile,
   snapshotRows,
   snapshotTable,
   TableDiff,
@@ -111,6 +113,11 @@ import {
   ownedColumnProblems,
   unstableColumns
 } from '@/rebuild/run/owned-columns';
+import {
+  rowKeyFacts,
+  rowKeyProblems,
+  ScopeTally
+} from '@/rebuild/run/row-keys';
 import { waitForApi } from '@/rebuild/stack/api-ready';
 
 /** A table's partition columns and every tuple its writers own. */
@@ -316,6 +323,11 @@ class RebuildRun {
    * the area or skipped: left out of the row comparison.
    */
   private unrunOwnedColumns: OwnedColumnLeftOut[] = [];
+  /**
+   * Per scoped volatile column (`table.column`), after the comparison:
+   * the rows its condition matched on each side, and on one side only.
+   */
+  private scopeTallies = new Map<string, ScopeTally>();
   /**
    * The running rebuilders' plans of seeded rows only a later change
    * rebuilds, by table.
@@ -889,7 +901,7 @@ class RebuildRun {
         await this.admin!.saveColumns(
           MAIN_DB,
           table,
-          await this.admin!.primaryKey(MAIN_DB, table),
+          await this.keyOf(table),
           restore,
           KEPT_DB,
           saved
@@ -914,7 +926,7 @@ class RebuildRun {
       await admin.restoreColumns(
         MAIN_DB,
         table,
-        await admin.primaryKey(MAIN_DB, table),
+        await this.keyOf(table),
         plan.restore,
         KEPT_DB,
         plan.saved
@@ -966,6 +978,7 @@ class RebuildRun {
           owners,
           columns: await this.admin!.columnInfo(MAIN_DB, table),
           primaryKey: await this.admin!.primaryKey(MAIN_DB, table),
+          rowKey: entries.get(table)?.entry.rowKey,
           volatile: unstableColumns(entries.get(table)?.entry)
         })
       );
@@ -1252,16 +1265,41 @@ class RebuildRun {
     );
   }
 
-  /** The columns the row comparison leaves out of a table. */
+  /**
+   * The columns the row comparison leaves out of every row of a table
+   * (scoped volatile columns are scopedOf's).
+   */
   private volatileOf(table: string): string[] {
     const entry = this.entries().get(table)?.entry;
     return [
-      ...(entry?.volatileColumns ?? []).map((c) => c.column),
+      ...(entry?.volatileColumns ?? [])
+        .filter((c) => c.where === undefined)
+        .map((c) => c.column),
       ...(entry?.exemptColumns ?? []).map((c) => c.column),
       ...this.unrunOwnedColumns
         .filter((owned) => owned.table === table)
         .map((owned) => owned.column)
     ];
+  }
+
+  /**
+   * A table's volatile columns scoped by a condition: left out only of the
+   * rows it matches.
+   */
+  private scopedOf(table: string): ScopedVolatile[] {
+    return (this.entries().get(table)?.entry.volatileColumns ?? []).flatMap(
+      (c) =>
+        c.where === undefined ? [] : [{ column: c.column, where: c.where }]
+    );
+  }
+
+  /**
+   * The columns that key a table's rows: its declared rowKey, else its
+   * primary key.
+   */
+  private async keyOf(table: string): Promise<string[]> {
+    const rowKey = this.entries().get(table)?.entry.rowKey;
+    return rowKey ? [...rowKey] : this.admin!.primaryKey(MAIN_DB, table);
   }
 
   private async snapshots(
@@ -1277,7 +1315,8 @@ class RebuildRun {
           MAIN_DB,
           table,
           this.volatileOf(table),
-          entries.get(table)?.entry.checkpoint?.column
+          entries.get(table)?.entry.checkpoint?.column,
+          { key: await this.keyOf(table), scoped: this.scopedOf(table) }
         )
       );
     }
@@ -1311,7 +1350,12 @@ class RebuildRun {
       where: string
     ): Promise<Row[] | null> => {
       try {
-        return await this.admin!.rowsWhere(MAIN_DB, table, where);
+        return await this.admin!.rowsWhere(
+          MAIN_DB,
+          table,
+          where,
+          this.scopedOf(table).map((c) => c.where)
+        );
       } catch (error) {
         this.failures.push(
           `${step}'s planned rows of ${table} can't be read (where ${where}): ${error instanceof Error ? error.message : String(error)}`
@@ -1324,12 +1368,15 @@ class RebuildRun {
       this.plannedRows.set(table, found);
       // A table the schema lacks has no seeded rows to plan.
       const rebuilt = this.rebuiltTables.includes(table);
-      const primaryKey = rebuilt
-        ? await this.admin!.primaryKey(MAIN_DB, table)
-        : [];
+      const key = rebuilt ? await this.keyOf(table) : [];
       const keysOf = (rows: readonly Row[]) =>
-        snapshotRows(table, rows, primaryKey, new Set(this.volatileOf(table)))
-          .keys;
+        snapshotRows(
+          table,
+          rows,
+          key,
+          new Set(this.volatileOf(table)),
+          this.scopedOf(table)
+        ).keys;
       for (const [step, plan] of plans) {
         if (!rebuilt) {
           this.notes.push(
@@ -1401,15 +1448,51 @@ class RebuildRun {
   }
 
   /**
-   * Why a plan's columns can't be checked, or null: they must be in the
-   * schema, and the table needs a primary key without a volatile column,
-   * to find each matched row again after the rebuild.
+   * At the run's start: every declared rowKey names a UNIQUE index of its
+   * table, all NOT NULL, and every scoped volatile column has a row key
+   * without it and a condition MySQL can read (see rowKeyProblems).
    */
+  private async rowKeysHold(): Promise<boolean> {
+    const problems: string[] = [];
+    for (const [table, { entry }] of Array.from(this.entries())) {
+      const scoped = (entry.volatileColumns ?? []).filter(
+        (c) => c.where !== undefined
+      );
+      if (!this.baseTables.has(table)) continue;
+      if (!entry.rowKey && !scoped.length) continue;
+      const admin = this.admin!;
+      const found = await rowKeyFacts(admin, MAIN_DB, table);
+      const check = rowKeyProblems({
+        table,
+        rowKey: entry.rowKey,
+        primaryKey: found.primaryKey,
+        uniqueKeys: found.uniqueKeys,
+        columns: found.columns,
+        scoped,
+        // Owned columns can't be in a key (ownedColumnProblems), so the
+        // volatile and exempt ones are all a key can lose.
+        unstable: this.volatileOf(table)
+      });
+      problems.push(...check.problems);
+      this.notes.push(...check.notes);
+      for (const { column, where } of check.problems.length ? [] : scoped) {
+        try {
+          await admin.countWhere(MAIN_DB, table, where!);
+        } catch (error) {
+          problems.push(
+            `${table}.${column} is volatile where ${where}, which MySQL can't read: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }
+    }
+    this.failures.push(...problems);
+    return problems.length === 0;
+  }
+
   /**
    * At the run's start, before the seeds: every column plan of a running
-   * rebuilder names columns its table has, outside the primary key, on a
-   * table whose primary key has no volatile column (see
-   * columnPlanProblem).
+   * rebuilder names columns its table has, outside the row key, on a
+   * table whose row key has no volatile column (see columnPlanProblem).
    */
   private async plannedColumnsHold(): Promise<boolean> {
     const problems: string[] = [];
@@ -1424,8 +1507,12 @@ class RebuildRun {
           table: plan.table,
           columns: plan.columns,
           names: await this.admin!.columnNames(MAIN_DB, plan.table),
-          primaryKey: await this.admin!.primaryKey(MAIN_DB, plan.table),
-          volatile: new Set(this.volatileOf(plan.table))
+          key: await this.keyOf(plan.table),
+          declared: !!this.entries().get(plan.table)?.entry.rowKey,
+          volatile: new Set([
+            ...this.volatileOf(plan.table),
+            ...this.scopedOf(plan.table).map((c) => c.column)
+          ])
         });
         if (problem) problems.push(problem);
       }
@@ -1453,11 +1540,18 @@ class RebuildRun {
     );
     let rebuilt = new Map<string, Row>();
     const volatile = new Set(this.volatileOf(table));
+    const scoped = this.scopedOf(table);
     if (changed.length) {
-      const primaryKey = await this.admin!.primaryKey(MAIN_DB, table);
-      const rows = await this.admin!.orderedRows(MAIN_DB, table, primaryKey);
-      const { keys } = snapshotRows(table, rows, primaryKey, volatile);
-      rebuilt = new Map(keys.map((key, i) => [key, rows[i]]));
+      const key = await this.keyOf(table);
+      const rows = await this.admin!.orderedRows(
+        MAIN_DB,
+        table,
+        key,
+        undefined,
+        scoped.map((c) => c.where)
+      );
+      const { keys } = snapshotRows(table, rows, key, volatile, scoped);
+      rebuilt = new Map(keys.map((k, i) => [k, rows[i]]));
     }
     const { excused, counts } = columnPlanDecision({
       plans: columnPlans.map((p) => ({
@@ -1466,7 +1560,8 @@ class RebuildRun {
       })),
       changed,
       rebuilt,
-      volatile
+      volatile,
+      scoped
     });
     columnPlans.forEach(({ plan }, i) => {
       plan.differing = counts[i].differing;
@@ -1655,6 +1750,7 @@ class RebuildRun {
     if (!(await this.checkpointColumnsHold())) return;
     if (!(await this.partitionsDisjointInMysql())) return;
     if (!(await this.ownedColumnsExist())) return;
+    if (!(await this.rowKeysHold())) return;
     if (!(await this.plannedColumnsHold())) return;
     const all = expandAll(this.o.manifests);
     const waits = (call: ProbeCall) =>
@@ -1732,6 +1828,13 @@ class RebuildRun {
     for (const t of this.rebuiltTables) {
       const before = snapshotsBefore.get(t)!;
       const after = snapshotsAfter.get(t)!;
+      for (const counted of scopeCounts(before, after)) {
+        this.scopeTallies.set(`${t}.${counted.column}`, {
+          ...counted,
+          rowsBefore: before.rows,
+          rowsAfter: after.rows
+        });
+      }
       diffs.push(
         diffSnapshots(
           before,
@@ -1920,11 +2023,28 @@ class RebuildRun {
     return this.rebuiltTables.flatMap((table) => {
       const entry = entries.get(table)?.entry;
       return [
-        ...(entry?.volatileColumns ?? []).map((v) => ({
-          table,
-          column: v.column,
-          reason: v.reason
-        })),
+        ...(entry?.volatileColumns ?? []).map((v) => {
+          const tally = this.scopeTallies.get(`${table}.${v.column}`);
+          return {
+            table,
+            column: v.column,
+            reason: v.reason,
+            ...(v.where === undefined
+              ? {}
+              : {
+                  where: v.where,
+                  scope: tally
+                    ? {
+                        before: tally.before,
+                        rowsBefore: tally.rowsBefore,
+                        after: tally.after,
+                        rowsAfter: tally.rowsAfter,
+                        oneSide: tally.oneSide
+                      }
+                    : null
+                })
+          };
+        }),
         ...(entry?.checkpoint
           ? [
               {
@@ -1940,6 +2060,15 @@ class RebuildRun {
           reason: `exempt: ${e.reason}`
         }))
       ];
+    });
+  }
+
+  /** The rebuilt tables whose rows a declared rowKey keys. */
+  private rowKeys(): RunReport['tables']['rowKeys'] {
+    const entries = this.entries();
+    return this.rebuiltTables.flatMap((table) => {
+      const rowKey = entries.get(table)?.entry.rowKey;
+      return rowKey ? [{ table, columns: [...rowKey] }] : [];
     });
   }
 
@@ -2098,6 +2227,7 @@ class RebuildRun {
         notEmptyAfterDrop: this.notEmptyAfterDrop,
         seededRows: this.seededRows,
         volatileColumns: this.volatileColumns(),
+        rowKeys: this.rowKeys(),
         ownedColumnsLeftOut: this.unrunOwnedColumns,
         day: this.day,
         exemptUntil: this.exemptTablesUntil,

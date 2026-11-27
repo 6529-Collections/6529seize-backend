@@ -1077,6 +1077,63 @@ describe('checkRegistry', () => {
     ]);
   });
 
+  it('checks a rowKey and a scoped volatile column without the schema', () => {
+    const result = checkRegistry({
+      manifests: [
+        area('a', {
+          waves: {
+            class: 'INDEX',
+            rowKey: ['id'],
+            volatileColumns: [
+              { column: 'serial_no', reason: 'r', where: "id LIKE '0x%'" }
+            ]
+          },
+          twice: { class: 'INDEX', rowKey: ['id', 'id'] },
+          empty: { class: 'INDEX', rowKey: [] },
+          moving: {
+            class: 'INDEX',
+            rowKey: ['serial_no', 'at'],
+            volatileColumns: [{ column: 'serial_no', reason: 'r' }],
+            exemptColumns: [{ column: 'at', reason: 'r' }]
+          },
+          kept: { class: 'EPHEMERAL', why: 'a cache', rowKey: ['id'] },
+          self: {
+            class: 'INDEX',
+            rowKey: ['id'],
+            volatileColumns: [
+              { column: 'serial_no', reason: 'r', where: '`SERIAL_NO` > 5' },
+              { column: 'rank', reason: 'r', where: ' ' },
+              // A longer name that holds the column's is no mention of it.
+              { column: 'at', reason: 'r', where: 'updated_at > 0' }
+            ]
+          }
+        })
+      ],
+      codeTables: code('waves', 'twice', 'empty', 'moving', 'kept', 'self')
+    });
+    expect(result.problems.map((p) => [p.kind, p.detail])).toEqual([
+      ['BAD_ROW_KEY', "twice's rowKey names id twice"],
+      ['BAD_ROW_KEY', "empty's rowKey names no column"],
+      [
+        'BAD_ROW_KEY',
+        "moving's rowKey holds serial_no, a volatile column: a row key must come back the same"
+      ],
+      [
+        'BAD_ROW_KEY',
+        "moving's rowKey holds at, an exempt column: a row key must come back the same"
+      ],
+      ['BAD_ROW_KEY', 'kept is EPHEMERAL; only an INDEX table has a rowKey'],
+      [
+        'BAD_VOLATILE',
+        'self.serial_no is volatile where `SERIAL_NO` > 5, which names the column itself: which rows leave it out would change with it'
+      ],
+      [
+        'BAD_VOLATILE',
+        'self.rank is volatile where nothing: an empty condition'
+      ]
+    ]);
+  });
+
   it('lets a step wait only for a table a later branch adds, with a reason', () => {
     const result = checkRegistry({
       manifests: [

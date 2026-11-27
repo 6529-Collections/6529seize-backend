@@ -39,11 +39,28 @@ export interface TableEntry {
    * the check accepts the entry, and a final run fails while it is missing.
    */
   readonly origin?: 'runtime' | 'planned';
-  /** Columns a table diff leaves out, each with its reason. */
+  /**
+   * Columns a table diff leaves out, each with its reason. With `where`
+   * (an SQL condition on the table's columns, as a plan's), only on the
+   * rows it matches: the run reads it on each side, and a row it matches
+   * on one side only is compared there, so it shows as changed. A scoped
+   * column needs a row key without it (see rowKey), and its condition
+   * can't name the column itself.
+   */
   readonly volatileColumns?: readonly {
     readonly column: string;
     readonly reason: string;
+    readonly where?: string;
   }[];
+  /**
+   * INDEX only: the columns that key a row in the table diff, in place of
+   * the primary key, for a table whose primary key holds a volatile column
+   * (an auto-increment number a rebuild gives anew). The schema must have
+   * a UNIQUE index on exactly these columns, all NOT NULL, and none of them
+   * may be volatile or exempt. Planned rows, column plans and owned columns
+   * find their rows by it too.
+   */
+  readonly rowKey?: readonly string[];
   /**
    * INDEX only: columns no step rebuilds, each with why: named clock or
    * random columns a step can't reproduce, each until a dated follow-up

@@ -104,6 +104,36 @@ export const mintManifest: AreaManifest = {
   its rows are compared after the rebuild. A volatile primary-key column,
   such as an auto-increment id the API never shows, also stops keying the
   rows: they match by their other columns.
+- An INDEX table whose primary key holds such a number can declare
+  `rowKey: [...]`, columns that are exactly one of its UNIQUE indexes,
+  all NOT NULL, such as `waves.id` where `serial_no` is the primary key.
+  The comparison then keys its rows by them, so a row whose number moved
+  is the same row, changed in that column, not one row gone and another
+  added. Planned rows, column plans and owned columns find their rows by
+  the row key too. The registry refuses a rowKey on other classes,
+  without columns, with a column named twice, or holding a volatile or
+  exempt column; a run fails at its start when a column isn't spelt as
+  the schema spells it (rows come back under the schema's names), when no
+  UNIQUE index has exactly those columns, or when one may hold NULL (a
+  UNIQUE index lets rows share a NULL), and notes a rowKey that is the
+  primary key. The report
+  lists the tables keyed by a declared row key.
+- A volatile column can name `where`, an SQL condition on the table's
+  columns as a plan's: it is then left out only of the rows the
+  condition matches, such as `serial_no` on the chain-made waves
+  (`id LIKE '0x%'`), so the imported waves' serials are still compared.
+  The run reads the condition on each side, with the main database as
+  default, taking a row as matched where a WHERE would; a row it matches
+  on one side only keeps the column on the other, so it shows as changed
+  even when the value is the same. The table needs a row key without the
+  column or any column left out of every row (its rowKey, or a primary
+  key without them), since the rows are found by key, and the condition
+  can't name the column itself (a name in a string counts too); a run
+  fails at its start on either, on a column not spelt as the schema
+  spells it, and on a condition MySQL can't read. The report lists
+  each scoped column with its condition, the rows it matched of each
+  side's, and those matched on one side only. A final run treats a
+  scoped volatile column as any volatile one.
 - An INDEX table's `exemptColumns` (each with its `reason`) are columns no
   step rebuilds: named clock or random columns a step can't reproduce, each
   until a dated follow-up derives it from block times. The comparison
@@ -169,9 +199,10 @@ export const mintManifest: AreaManifest = {
     row set and every other column, leaving out what MySQL writes itself:
     ON UPDATE and generated columns) before and after it runs, and fails on
     any change. At its start the run fails on an owned column the schema
-    lacks, one in the primary key, a generated one (MySQL writes it), one
-    it can't reset (NOT NULL, with no default, of a type with no zero), and
-    on a table with owners but no primary key or with a volatile or exempt
+    lacks, one in the primary key or the declared row key, a generated one
+    (MySQL writes it), one it can't reset (NOT NULL, with no default, of a
+    type with no zero), and on a table with owners but no row key (its
+    declared rowKey, else its primary key) or with a volatile or exempt
     column in it (a key that changes on a rebuild matches no saved row). A
     writer of the table that reads it doesn't wait on its owners; owners
     run in their `after` order, so one that reads another's columns names
@@ -212,9 +243,10 @@ export const mintManifest: AreaManifest = {
     many of those were left out of the differences, and the keys of the
     rows left out; a plan none of whose rows is missing or changed in its
     columns is noted as one to drop. A run refuses, at its start, a
-    planned column the schema doesn't have or that sits in the primary
-    key, and a column plan on a table without a primary key free of
-    volatile columns, as the rows are found by key. A row that both a
+    planned column the schema doesn't have or that sits in the row key
+    (the declared rowKey, else the primary key), and a column plan on a
+    table without a row key free of volatile columns, as the rows are
+    found by key. A row that both a
     plan of whole rows and a column plan match is refused too: one says
     it may be missing, the other that it must come back. The registry
     refuses a column name that isn't plain, a name twice, and a column
