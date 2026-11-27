@@ -16330,7 +16330,9 @@ paths:
       tags:
         - Owners Balances
       summary: Get owner balances for a wallet
-      description: Returns holdings, ranks, and TDH values for an individual wallet.
+      description: >-
+        Returns holdings, ranks, and TDH values for an individual wallet. TDH
+        values are null when the wallet has no record for the latest TDH block.
       operationId: getOwnerBalanceByWallet
       security: []
       parameters:
@@ -16358,6 +16360,7 @@ paths:
       tags:
         - Owners Balances
       summary: Get a wallet's Memes balances by season
+      description: TDH values are zero when the wallet has no TDH record for a season.
       operationId: getMemesOwnerBalanceByWallet
       security: []
       parameters:
