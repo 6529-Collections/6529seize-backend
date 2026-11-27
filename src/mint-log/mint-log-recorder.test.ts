@@ -539,7 +539,12 @@ describe('MintLogRecorder.writeWithin', () => {
   /** The caller's connection: statements and head keys, in order. */
   function within(
     fake: Fake,
-    flags: { shadow?: boolean; primary?: boolean; collabRecords?: boolean }
+    flags: {
+      shadow?: boolean;
+      primary?: boolean;
+      collabRecords?: boolean;
+      replay?: boolean;
+    }
   ): { log: MintLogRecorder; calls: string[]; transactions: () => number } {
     const calls: string[] = [];
     let transactions = 0;
@@ -574,7 +579,7 @@ describe('MintLogRecorder.writeWithin', () => {
       {
         isMintLogShadowEnabled: () => !!flags.shadow,
         isMintLogPrimaryEnabled: () => !!flags.primary,
-        isMintLogReplayCheckEnabled: () => false,
+        isMintLogReplayCheckEnabled: () => !!flags.replay,
         isMintLogCollabRecordsRequired: () => !!flags.collabRecords
       },
       () => ({ records, log: fake.log }),
@@ -661,39 +666,45 @@ describe('MintLogRecorder.writeWithin', () => {
     expect(await parts(respondSpec({ readCurrent: true }))).toEqual([own, own]);
   });
 
-  it("gives each capture of a memes phase write the switch's answer and its kind's parts", async () => {
-    const fake = new Fake();
-    const { log } = within(fake, { shadow: true });
-    const identityTruthFor = jest.fn(async () => true);
-    Object.assign(fake.reader, { identityTruthFor });
-    const capture = jest.spyOn(fake.reader, 'capture');
-    await log.writeWithin(
-      spec({
-        kind: 'dist.phase',
-        card: { contract: MEMES_CONTRACT.toLowerCase(), card_id: 1 },
-        actor: { type: 'service', wallet: null, authority: 'drop-forge' },
-        readCurrent: true
-      }),
-      connection,
-      async () => {
-        fake.addRow(1);
-      }
-    );
+  it.each([true, false])(
+    "gives each capture of a memes phase write the switch's answer (%s) and its kind's parts",
+    async (truth) => {
+      const fake = new Fake();
+      const { log } = within(fake, { shadow: true, replay: true });
+      const identityTruthFor = jest.fn(async () => truth);
+      Object.assign(fake.reader, { identityTruthFor });
+      const capture = jest.spyOn(fake.reader, 'capture');
+      await log.writeWithin(
+        spec({
+          kind: 'dist.phase',
+          card: { contract: MEMES_CONTRACT.toLowerCase(), card_id: 1 },
+          actor: { type: 'service', wallet: null, authority: 'drop-forge' },
+          readCurrent: true
+        }),
+        connection,
+        async () => {
+          fake.addRow(1);
+        }
+      );
 
-    const parts = [...MINT_KIND_PARTS['dist.phase']];
-    expect(parts).toContain('subscription_phases_identity');
-    // Before and after the write: one answer, read once, and the same parts.
-    expect(identityTruthFor).toHaveBeenCalledTimes(1);
-    expect(
-      capture.mock.calls.map(([, , options]) => ({
-        identityTruth: options?.identityTruth,
-        current: options?.current ? Array.from(options.current) : null
-      }))
-    ).toEqual([
-      { identityTruth: true, current: parts },
-      { identityTruth: true, current: parts }
-    ]);
-  });
+      const parts = [...MINT_KIND_PARTS['dist.phase']];
+      expect(parts).toContain('subscription_phases_identity');
+      // Before and after the write, then the replay check's undo and redo:
+      // one answer, read once, and the same parts.
+      expect(identityTruthFor).toHaveBeenCalledTimes(1);
+      expect(
+        capture.mock.calls.map(([, , options]) => ({
+          identityTruth: options?.identityTruth,
+          current: options?.current ? Array.from(options.current) : null
+        }))
+      ).toEqual(
+        Array.from({ length: 4 }, () => ({
+          identityTruth: truth,
+          current: parts
+        }))
+      );
+    }
+  );
 
   it('keeps the caller write when the log fails in shadow mode', async () => {
     const fake = new Fake();
