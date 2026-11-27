@@ -618,7 +618,8 @@ async function handleVideoScaling(
       txId,
       format: videoFormat.toLowerCase(),
       label: scaledVideoKey,
-      // Kept from the per-URL special case for that one artwork.
+      // Decided from the source URL on purpose: the scale may read a
+      // presigned S3 URL, which never ends in 30.MP4.
       fitWidth: videoUrl.endsWith('30.MP4')
     });
   } catch (err) {
@@ -677,12 +678,13 @@ async function scaleVideoFromBestSource({
     requireNonEmpty: true
   });
   if (original.exists) {
-    const signedUrl = await getSignedUrl(
-      getS3(),
-      new GetObjectCommand({ Bucket: bucket, Key: originalKey }),
-      { expiresIn: 3600 }
-    );
     try {
+      // Signing can fail too; any failure here falls back to the source URL.
+      const signedUrl = await getSignedUrl(
+        getS3(),
+        new GetObjectCommand({ Bucket: bucket, Key: originalKey }),
+        { expiresIn: 3600 }
+      );
       return await scale(signedUrl);
     } catch (err) {
       logger.warn(

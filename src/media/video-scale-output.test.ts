@@ -10,20 +10,27 @@ type Step =
   | { command: 'end' }
   | { command: 'error'; message: string };
 
-/** A fluent-ffmpeg command stand-in that plays `steps` once piped. */
+const nextTurn = () => new Promise((resolve) => setImmediate(resolve));
+
+/**
+ * A fluent-ffmpeg command stand-in that plays `steps` once piped, one event
+ * loop turn apart, so each step's events (an ended output stream emits `end`
+ * on a later tick) have fired before the next step runs.
+ */
 function fakeCommand(steps: Step[]) {
   const command = new EventEmitter() as EventEmitter & {
     pipe: (stream: NodeJS.WritableStream) => void;
   };
   command.pipe = (stream: NodeJS.WritableStream) => {
-    setImmediate(() => {
+    void (async () => {
       for (const step of steps) {
+        await nextTurn();
         if ('write' in step) stream.write(Buffer.from(step.write));
         else if ('endOutput' in step) stream.end();
         else if (step.command === 'end') command.emit('end');
         else command.emit('error', new Error(step.message));
       }
-    });
+    })();
   };
   return command;
 }
