@@ -196,8 +196,17 @@ const SUBS_REDEMPTIONS_SEED: RebuildStep = {
     'wave_dropper_metrics'
   ],
   reads: ['transactions', 'identity_chain_principals'],
-  // The holdings seed's mints, indexed into transactions.
-  after: ['subs.switch', 'holdings.seed'],
+  after: ['subs.switch'],
+  // The holdings seed's mints, indexed into transactions: without them there
+  // is no airdrop to charge, so a run that skips the holdings seed skips
+  // this one too. When the holdings seed has run, the seed itself still
+  // refuses if card 1's airdrop was not charged.
+  needsSteps: [
+    {
+      step: 'holdings.seed',
+      reason: 'it mints and indexes card 1, whose airdrop this seed charges'
+    }
+  ],
   // The mint stats the mint seed writes count this redemption.
   before: ['mint.probes.seed'],
   sources: ['files'],
