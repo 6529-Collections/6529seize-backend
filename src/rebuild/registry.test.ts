@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { AREA_MANIFESTS } from '@/rebuild/manifests';
 import { checkRegistry } from '@/rebuild/registry-check';
@@ -21,6 +22,22 @@ describe('rebuild registry', () => {
     expect(result.problems).toEqual([]);
   });
 
+  it('names relay checks whose modules are in the tree, unless planned', () => {
+    const root = path.resolve(__dirname, '..', '..');
+    const missing = AREA_MANIFESTS.flatMap((manifest) =>
+      (manifest.relayChecks ?? [])
+        .filter(
+          (check) =>
+            check.origin !== 'planned' &&
+            !['.ts', '.js'].some((ext) =>
+              fs.existsSync(path.join(root, `${check.run.module}${ext}`))
+            )
+        )
+        .map((check) => `${manifest.area}: ${check.run.module}`)
+    );
+    expect(missing).toEqual([]);
+  });
+
   it('has the unresolved cross-area order edges listed here', () => {
     // A branch that adds one lists it here: the edge resolves once the
     // other area's step is in the tree.
@@ -31,6 +48,22 @@ describe('rebuild registry', () => {
     // A module that lands, moves or goes changes this list: the order
     // checks then cover its writes.
     expect(result.orderLeftOut).toEqual([
+      {
+        step: 'waves.moderation-audit.personal',
+        tables: ['content_moderation_audit_log']
+      },
+      {
+        step: 'waves.moderation-audit.service',
+        tables: ['content_moderation_audit_log']
+      },
+      {
+        step: 'waves.wave-subscriber-count',
+        tables: ['wave_metrics']
+      },
+      {
+        step: 'waves.wave-scores',
+        tables: ['wave_metrics']
+      },
       {
         step: 'holdings.ethereum',
         tables: [
