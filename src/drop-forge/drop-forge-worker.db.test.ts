@@ -1425,11 +1425,18 @@ describe('Drop Forge durable worker', () => {
       );
     try {
       await inShadow(async () => {
-        // The manual branch throws and blocks the launch, as on main; the
-        // retry still runs, after it, and its write fails: still one event.
+        // The manual branch throws; the cancelled launch stays cancelled and
+        // records the failure, as on main. The retry still runs, after it,
+        // and its write fails: still one flag event.
         await worker.tick(id);
         let record = (await read())!;
-        expect(record.state).toBe('BLOCKED');
+        expect(record.state).toBe('CANCELLED');
+        expect(
+          record.data.events.some(
+            (event) =>
+              event.error && event.content === 'manual evidence unavailable'
+          )
+        ).toBe(true);
         expect(record.data.completion_flags).toEqual([]);
         expect(await flagEvents()).toEqual([
           expect.objectContaining({ error: false })
@@ -1481,7 +1488,7 @@ describe('Drop Forge durable worker', () => {
     try {
       await inShadow(async () => {
         await worker.tick(id);
-        expect((await read())!.data.completion_flags).toEqual([]);
+        expect((await read())!.data.completion_flags ?? []).toEqual([]);
         expect(await overdueAlerts('PAY_ARTIST')).toEqual([]);
         // The launch handler's step, on each delivery.
         await alertOverdueLaunchFlags(id, repository);
@@ -1518,7 +1525,7 @@ describe('Drop Forge durable worker', () => {
     jest.spyOn(manual, 'reconcileManual').mockResolvedValue(false);
     await inShadow(async () => {
       await worker.tick(id);
-      expect((await read())!.data.completion_flags).toEqual([]);
+      expect((await read())!.data.completion_flags ?? []).toEqual([]);
       await alertOverdueLaunchFlags(id, repository);
       expect(await overdueAlerts('PAY_ARTIST')).toEqual([
         expect.objectContaining({ error: true })
