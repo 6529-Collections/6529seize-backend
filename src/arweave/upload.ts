@@ -137,11 +137,36 @@ function providerCode(body: string): string {
 class UploadRequestError extends Error {
   constructor(
     context: string,
-    readonly status: number
+    readonly status: number,
+    readonly retryable = true,
+    readonly code?: string
   ) {
     super(`Arweave request failed ${context}`);
     Object.setPrototypeOf(this, new.target.prototype);
   }
+}
+
+class ArweaveUploadError extends Error {
+  constructor(message: string) {
+    super(message);
+    Object.setPrototypeOf(this, new.target.prototype);
+    this.name = new.target.name;
+  }
+}
+export class ArweaveUploadStateError extends ArweaveUploadError {}
+export class ArweaveUploadDeadlineError extends ArweaveUploadError {}
+
+export function isTerminalArweaveUploadError(error: unknown): boolean {
+  return (
+    error instanceof ArweaveUploadStateError ||
+    (error instanceof UploadRequestError &&
+      (!error.retryable ||
+        (error.status >= 400 &&
+          error.status < 500 &&
+          ['invalid_tx', 'invalid_signature', 'insufficient_funds'].includes(
+            error.code ?? ''
+          ))))
+  );
 }
 
 function providerError(status: number, body: string): GatewayError {
@@ -183,13 +208,24 @@ export class ArweaveUploadSession {
     data: Buffer,
     key: JWKInterface,
     contentType: string,
-    hooks?: ArweaveUploadHooks
+    hooks?: ArweaveUploadHooks,
+    signal?: AbortSignal
   ): Promise<UploadResult> {
     this.hooks = hooks;
+    const cancel = () =>
+      this.stop(
+        signal?.reason instanceof Error
+          ? signal.reason
+          : new ArweaveUploadDeadlineError('Arweave upload cancelled')
+      );
+    signal?.addEventListener('abort', cancel, { once: true });
+    if (signal?.aborted) cancel();
     const deadline = setTimeout(
       () =>
         this.stop(
-          new Error(`Arweave upload exceeded ${this.timeoutMs}ms deadline`)
+          new ArweaveUploadDeadlineError(
+            `Arweave upload exceeded ${this.timeoutMs}ms deadline`
+          )
         ),
       this.timeoutMs
     );
@@ -200,12 +236,20 @@ export class ArweaveUploadSession {
         this.stopped ??
         (error instanceof Error ? error : new Error('Arweave upload failed'));
       this.stop(failure);
-      this.logger.error(
-        `[ARWEAVE UPLOAD FAILED] [TX ${this.transactionId}] [ERROR ${failure.message}]`
-      );
+      if (
+        this.hooks?.useSourceData &&
+        (failure instanceof ArweaveUploadDeadlineError || signal?.aborted)
+      ) {
+        this.logger.info(`[ARWEAVE UPLOAD PAUSED] [TX ${this.transactionId}]`);
+      } else {
+        this.logger.error(
+          `[ARWEAVE UPLOAD FAILED] [TX ${this.transactionId}] [ERROR ${failure.message}]`
+        );
+      }
       throw failure;
     } finally {
       clearTimeout(deadline);
+      signal?.removeEventListener('abort', cancel);
     }
   }
 
@@ -237,12 +281,37 @@ export class ArweaveUploadSession {
   ): Promise<{ transaction: Transaction; data: Buffer }> {
     const saved = this.hooks?.savedState;
     if (saved) {
-      data = Buffer.from(saved.data_base64, 'base64');
-      if (data.toString('base64') !== saved.data_base64)
-        throw new Error('Invalid persisted Arweave upload data');
+      if (this.hooks?.useSourceData) {
+        await this.verifySourceCheckpoint(saved, data, key, contentType);
+      } else {
+        data = Buffer.from(saved.data_base64, 'base64');
+        if (data.toString('base64') !== saved.data_base64)
+          throw new ArweaveUploadStateError(
+            'Invalid persisted Arweave upload data'
+          );
+      }
       // The SDK rebuilds and validates chunk proofs against the signed data root.
-      const restored = await this.client.transactions.getUploader(saved, data);
+      // Rebuild proofs from source bytes, never from internal fields injected
+      // into persisted transaction JSON.
+      const serialized = {
+        ...saved,
+        transaction: new Transaction({
+          ...saved.transaction,
+          data: new Uint8Array(0)
+        }).toJSON()
+      };
+      const restored = await this.client.transactions
+        .getUploader(serialized, data)
+        .catch(() => {
+          throw new ArweaveUploadStateError(
+            'Data mismatch: persisted Arweave data root does not match source'
+          );
+        });
       const transaction = restored.toJSON().transaction;
+      if (this.hooks?.useSourceData && saved.chunkIndex > restored.totalChunks)
+        throw new ArweaveUploadStateError(
+          'Persisted Arweave chunk index exceeds source'
+        );
       // SDK serialization omits data. Reattach the verified saved bytes before
       // an unposted one-chunk transaction is submitted inline.
       transaction.data = data;
@@ -282,7 +351,8 @@ export class ArweaveUploadSession {
         ...transaction,
         data: new Uint8Array(0)
       }).toJSON(),
-      data_base64: this.hooks ? data.toString('base64') : '',
+      data_base64:
+        this.hooks && !this.hooks.useSourceData ? data.toString('base64') : '',
       chunkIndex: 0,
       txPosted: false,
       lastRequestTimeEnd: 0,
@@ -290,6 +360,40 @@ export class ArweaveUploadSession {
       lastResponseError: ''
     };
     return { transaction, data };
+  }
+
+  private async verifySourceCheckpoint(
+    saved: ArweaveUploadState,
+    data: Buffer,
+    key: JWKInterface,
+    contentType: string
+  ): Promise<void> {
+    try {
+      const tx = new Transaction(saved.transaction);
+      const tags = tx.tags.filter(
+        (tag) =>
+          tag.get('name', { decode: true, string: true }) === 'Content-Type'
+      );
+      if (
+        saved.data_base64 !== '' ||
+        !Number.isSafeInteger(saved.chunkIndex) ||
+        saved.chunkIndex < 0 ||
+        typeof saved.txPosted !== 'boolean' ||
+        (!saved.txPosted && saved.chunkIndex !== 0) ||
+        tx.format !== 2 ||
+        tx.data_size !== String(data.length) ||
+        tx.owner !== key.n ||
+        tags.length !== 1 ||
+        tags[0].get('value', { decode: true, string: true }) !== contentType ||
+        !(await this.client.transactions.verify(tx))
+      ) {
+        throw new Error('invalid checkpoint');
+      }
+    } catch {
+      throw new ArweaveUploadStateError(
+        'Persisted Arweave transaction identity is invalid'
+      );
+    }
   }
 
   private async isPersistedTransactionKnown(id: string): Promise<boolean> {
@@ -469,7 +573,12 @@ export class ArweaveUploadSession {
       const context = `[TX ${this.transactionId}] [GATEWAY ${gateway}] [OP ${requestedOperation.method} ${requestedOperation.path}] [CHUNK ${operation.chunk ?? '-'}] [ATTEMPT ${attempt + 1}/${attempts}] [STATUS ${failure.status}] [ERROR ${failure.code}]`;
       this.logger.warn(`[ARWEAVE REQUEST FAILED] ${context}`);
       if (!failure.retryable || attempt + 1 === attempts)
-        throw new UploadRequestError(context, failure.status);
+        throw new UploadRequestError(
+          context,
+          failure.status,
+          failure.retryable,
+          failure.code
+        );
       // Gateway attempts depend on the preceding result; a second chunk round
       // allows fresh headers to propagate, within the overall upload deadline.
       await this.pause(retryDelay(operation, attempt));

@@ -11,10 +11,20 @@ import {
 import * as priorityAlertsContext from '@/priority-alerts.context';
 import { doInDbContext } from '@/secrets';
 import * as sentryContext from '@/sentry.context';
-import type { SQSHandler } from 'aws-lambda';
+import type { SQSHandler, SQSRecord } from 'aws-lambda';
 import { BadRequestException } from '@/exceptions';
 import {
-  CLAIM_MEDIA_UPLOAD_LEASE_MS,
+  ArweaveUploadDeadlineError,
+  isTerminalArweaveUploadError
+} from '@/arweave/upload';
+import {
+  ClaimMediaUploadRecovery,
+  ClaimUploadYieldError,
+  claimUploadInputHash,
+  restoreClaimUploadState
+} from '@/minting-claims/claims-media-upload-recovery';
+import { sqs } from '@/sqs';
+import {
   ClaimMediaUploadLeaseLostError,
   claimsMediaUploadLeaseDb,
   type ClaimMediaUploadLease
@@ -24,7 +34,18 @@ import { mintLogRecorder } from '@/mint-log/mint-log-recorder';
 
 const logger = Logger.get('CLAIMS_MEDIA_ARWEAVE_UPLOADER');
 const ALERT_TITLE = 'Claims Media Arweave Uploader';
-const MAX_RECEIVE_COUNT = 10;
+const HANDOFF_RESERVE_MS = 60000;
+
+export class ClaimUploadRetryError extends Error {
+  constructor(
+    message: string,
+    readonly delaySeconds: number
+  ) {
+    super(message);
+    this.name = 'ClaimUploadRetryError';
+    Object.setPrototypeOf(this, ClaimUploadRetryError.prototype);
+  }
+}
 
 function buildUploadErrorWithContext(
   contract: string,
@@ -45,26 +66,27 @@ function buildUploadErrorWithContext(
 }
 
 function parseRecordBody(body: string): { contract: string; claim_id: number } {
-  const parsed = JSON.parse(body) as { contract?: unknown; claim_id?: unknown };
+  let parsed: { contract?: unknown; claim_id?: unknown };
+  try {
+    parsed = JSON.parse(body);
+    if (parsed === null || typeof parsed !== 'object')
+      throw new Error('invalid');
+  } catch {
+    throw new BadRequestException('Invalid claims upload message payload');
+  }
   const contract =
     typeof parsed.contract === 'string' ? parsed.contract.trim() : '';
   const claimId = Number(parsed.claim_id);
 
   if (!contract || !/^0x[a-fA-F0-9]{40}$/.test(contract)) {
-    throw new Error(`Invalid message payload: ${body}`);
+    throw new BadRequestException('Invalid claims upload message contract');
   }
 
   if (!Number.isInteger(claimId) || claimId < 1) {
-    throw new Error(`Invalid message payload: ${body}`);
+    throw new BadRequestException('Invalid claims upload message claim ID');
   }
 
   return { contract: contract.toLowerCase(), claim_id: claimId };
-}
-
-async function clearUploadLockAfterFailure(
-  lease: ClaimMediaUploadLease
-): Promise<void> {
-  await claimsMediaUploadLeaseDb.update(lease, { media_uploading: false });
 }
 
 async function sendUploadFailureAlert(
@@ -86,135 +108,170 @@ async function sendUploadFailureAlert(
   }
 }
 
-async function handleUploadFailure({
-  lease,
-  receiveCount,
-  error
-}: {
-  lease: ClaimMediaUploadLease;
-  receiveCount: number;
-  error: unknown;
-}): Promise<boolean> {
-  const { contract, claimId } = lease;
-  const isTerminal = error instanceof BadRequestException;
-  const isFinalAttempt = receiveCount >= MAX_RECEIVE_COUNT;
-  if (isTerminal || isFinalAttempt) {
-    try {
-      await clearUploadLockAfterFailure(lease);
-    } catch (rollbackError) {
-      logger.error('Failed to reset media_uploading after upload failure', {
-        contract,
-        claimId,
-        rollbackError
-      });
-      await sendUploadFailureAlert(contract, claimId, error);
-      throw rollbackError;
-    }
-    await sendUploadFailureAlert(contract, claimId, error);
-  }
-  return isTerminal;
+function assertExecutionBudget(remainingMillis: number): void {
+  if (
+    !Number.isFinite(remainingMillis) ||
+    remainingMillis <= 5000 ||
+    remainingMillis > 900000
+  )
+    throw new Error(
+      'Claim upload execution budget is outside the lease safety bound'
+    );
 }
 
-async function uploadOwnedClaim(
-  lease: ClaimMediaUploadLease,
-  claim: MintingClaimRow,
-  receiveCount: number,
-  getRemainingTimeInMillis: () => number
-): Promise<void> {
-  const { contract, claimId } = lease;
-  await claimsMediaUploadLeaseDb.update(lease, {
-    media_uploading: true
-  });
-
-  logger.info(
-    `Uploading claim media to Arweave for contract=${contract} claim_id=${claimId}`
+function retryDelay(failures: number): number {
+  return (
+    Math.min(120, 5 * 2 ** Math.min(failures, 5)) +
+    Math.floor(Math.random() * 4)
   );
+}
 
+async function failOwnedClaim(
+  lease: ClaimMediaUploadLease,
+  recovery: ClaimMediaUploadRecovery | undefined,
+  error: unknown
+): Promise<void> {
+  if (recovery) {
+    recovery.state.status = 'failed';
+    recovery.state.failure =
+      error instanceof BadRequestException
+        ? 'invalid-claim-or-recovery-state'
+        : 'upload-failed';
+    recovery.state.attemptActive = false;
+  }
+  await claimsMediaUploadLeaseDb.update(lease, {
+    media_uploading: false,
+    ...(recovery ? { media_upload_state: recovery.state } : {})
+  });
+  await sendUploadFailureAlert(lease.contract, lease.claimId, error);
+}
+
+async function handleOwnedUploadFailure(
+  lease: ClaimMediaUploadLease,
+  recovery: ClaimMediaUploadRecovery | undefined,
+  error: unknown
+): Promise<void> {
+  await recovery?.drain();
+  if (error instanceof ClaimMediaUploadLeaseLostError)
+    throw new ClaimUploadRetryError(error.message, 30);
+  if (
+    error instanceof BadRequestException ||
+    isTerminalArweaveUploadError(error)
+  ) {
+    await failOwnedClaim(lease, recovery, error);
+    return;
+  }
+  const isHandoff =
+    error instanceof ClaimUploadYieldError ||
+    error instanceof ArweaveUploadDeadlineError;
+  const madeProgress =
+    recovery !== undefined &&
+    recovery.state.progress > recovery.state.attemptStartProgress;
+  if (recovery) {
+    await recovery.finishAttempt(!isHandoff || !madeProgress);
+    try {
+      recovery.assertRecoverable();
+    } catch (error_) {
+      await failOwnedClaim(lease, recovery, error_);
+      return;
+    }
+  }
+  throw new ClaimUploadRetryError(
+    error instanceof Error ? error.message : 'Claim upload retry required',
+    isHandoff && madeProgress ? 2 : retryDelay(recovery?.state.failures ?? 1)
+  );
+}
+
+export async function processMintingClaimUpload(
+  contract: string,
+  claimId: number,
+  _receiveCount: number,
+  getRemainingTimeInMillis: () => number = () => 900000
+): Promise<void> {
+  assertExecutionBudget(getRemainingTimeInMillis());
+  const primary = { forcePool: DbPoolName.WRITE };
+  const existing = await fetchMintingClaimByClaimId(contract, claimId, primary);
+  if (!existing?.media_uploading) return;
+  if (getRemainingTimeInMillis() <= HANDOFF_RESERVE_MS)
+    throw new ClaimUploadRetryError('Claim upload needs a fresh invocation', 2);
+  const lease = await claimsMediaUploadLeaseDb.acquire(
+    contract,
+    claimId,
+    getRemainingTimeInMillis()
+  );
+  if (!lease)
+    throw new ClaimUploadRetryError(
+      'Claim media upload is already owned; retry required',
+      await claimsMediaUploadLeaseDb.retryAfterSeconds(contract, claimId)
+    );
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () =>
+      controller.abort(
+        new ClaimUploadYieldError('Claim upload handoff before Lambda deadline')
+      ),
+    Math.max(1, getRemainingTimeInMillis() - HANDOFF_RESERVE_MS)
+  );
+  let recovery: ClaimMediaUploadRecovery | undefined;
   try {
+    const claim = await fetchMintingClaimByClaimId(contract, claimId, primary);
+    if (!claim?.media_uploading) return;
+    recovery = new ClaimMediaUploadRecovery(
+      restoreClaimUploadState(
+        await claimsMediaUploadLeaseDb.loadState(lease),
+        claimUploadInputHash(claim)
+      ),
+      (state) =>
+        claimsMediaUploadLeaseDb.update(lease, { media_upload_state: state }),
+      controller.signal
+    );
+    await recovery.begin();
     const uploadResult = await uploadMintingClaimToArweave(contract, claim, {
       beforePublish: async () => {
-        assertExecutionBudget(getRemainingTimeInMillis());
+        controller.signal.throwIfAborted();
+        if (getRemainingTimeInMillis() <= HANDOFF_RESERVE_MS)
+          throw new ClaimUploadYieldError(
+            'Claim upload needs a fresh invocation'
+          );
         await claimsMediaUploadLeaseDb.assertHeld(lease);
       },
-      onImageUploaded: async (locationUrl) => {
-        await claimsMediaUploadLeaseDb.update(lease, {
-          image_location: arweaveTxIdFromUrl(locationUrl)
-        });
+      publishFile: recovery.publishFile,
+      beforeSourceFetch: async () => {
+        controller.signal.throwIfAborted();
+        // Safe fetch allows up to 120 seconds including its response body.
+        if (getRemainingTimeInMillis() <= 120000 + HANDOFF_RESERVE_MS)
+          throw new ClaimUploadYieldError(
+            'Claim source fetch needs a fresh invocation'
+          );
+        await claimsMediaUploadLeaseDb.assertHeld(lease);
       },
-      onAnimationUploaded: async (locationUrl) => {
-        await claimsMediaUploadLeaseDb.update(lease, {
+      onImageUploaded: (locationUrl) =>
+        claimsMediaUploadLeaseDb.update(lease, {
+          image_location: arweaveTxIdFromUrl(locationUrl)
+        }),
+      onAnimationUploaded: (locationUrl) =>
+        claimsMediaUploadLeaseDb.update(lease, {
           animation_location: arweaveTxIdFromUrl(locationUrl)
-        });
-      }
+        })
     });
+    await recovery.drain();
     await claimsMediaUploadLeaseDb.update(lease, {
       image_location: arweaveTxIdFromUrl(uploadResult.imageLocationUrl),
       animation_location: uploadResult.animationLocationUrl
         ? arweaveTxIdFromUrl(uploadResult.animationLocationUrl)
         : null,
       metadata_location: arweaveTxIdFromUrl(uploadResult.metadataLocationUrl),
-      media_uploading: false
+      media_uploading: false,
+      media_upload_state: null
     });
   } catch (error) {
-    if (error instanceof ClaimMediaUploadLeaseLostError) throw error;
-    logger.error(
-      `Failed to upload claim media to Arweave for contract=${contract} claim_id=${claimId}, error=${error}`
-    );
-    const isTerminal = await handleUploadFailure({
-      lease,
-      receiveCount,
-      error
-    });
-    if (isTerminal) {
-      return;
-    }
-    throw error;
-  }
-}
-
-function assertExecutionBudget(remainingMillis: number): void {
-  if (
-    !Number.isFinite(remainingMillis) ||
-    remainingMillis <= 5000 ||
-    remainingMillis > CLAIM_MEDIA_UPLOAD_LEASE_MS - 30000
-  ) {
-    throw new Error(
-      'Claim upload execution budget is outside the lease safety bound'
-    );
-  }
-}
-
-export async function processMintingClaimUpload(
-  contract: string,
-  claimId: number,
-  receiveCount: number,
-  getRemainingTimeInMillis: () => number = () => 900000
-): Promise<void> {
-  assertExecutionBudget(getRemainingTimeInMillis());
-  const primary = { forcePool: DbPoolName.WRITE };
-  const existing = await fetchMintingClaimByClaimId(contract, claimId, primary);
-  if (!existing) throw new Error('Claim not found for media upload');
-  if (!existing.media_uploading) return;
-  const lease = await claimsMediaUploadLeaseDb.acquire(contract, claimId);
-  if (!lease)
-    throw new Error('Claim media upload is already owned; retry required');
-  try {
-    // Read again after acquisition to resume the preceding owner's latest checkpoints.
-    const claim = await fetchMintingClaimByClaimId(contract, claimId, primary);
-    if (!claim)
-      throw new Error('Claim disappeared during media upload acquisition');
-    if (!claim.media_uploading) return;
-    await uploadOwnedClaim(
-      lease,
-      claim,
-      receiveCount,
-      getRemainingTimeInMillis
-    );
+    await handleOwnedUploadFailure(lease, recovery, error);
   } finally {
+    clearTimeout(timer);
+    await recovery?.drain();
     try {
       await claimsMediaUploadLeaseDb.release(lease);
     } catch {
-      // Preserve the upload outcome. The bounded lease still permits recovery.
       logger.error(
         'Could not release claim media upload lease; expiry will permit retry'
       );
@@ -222,43 +279,89 @@ export async function processMintingClaimUpload(
   }
 }
 
+async function shouldRetryDelivery(
+  record: SQSRecord,
+  error: unknown
+): Promise<boolean> {
+  if (error instanceof BadRequestException) {
+    // No claim can be owned for malformed input. Acknowledge the poison
+    // message rather than consuming the continuation receive allowance.
+    try {
+      await priorityAlertsContext.sendPriorityAlert(ALERT_TITLE, error);
+    } catch {
+      logger.error('Could not alert on malformed claim upload message');
+    }
+    return false;
+  }
+  if (!(error instanceof ClaimUploadRetryError)) {
+    logger.error('Claim upload delivery failed before a controlled retry', {
+      error
+    });
+  }
+  try {
+    await sqs.changeVisibility({
+      queueName: record.eventSourceARN.slice(
+        record.eventSourceARN.lastIndexOf(':') + 1
+      ),
+      receiptHandle: record.receiptHandle,
+      timeoutSeconds:
+        error instanceof ClaimUploadRetryError ? error.delaySeconds : 30
+    });
+  } catch {
+    logger.error(
+      'Could not adjust claim upload retry visibility; original visibility remains the fallback'
+    );
+  }
+  return true;
+}
+
 const sqsHandler: SQSHandler = async (event, context) => {
+  const batchItemFailures: { itemIdentifier: string }[] = [];
   await doInDbContext(
     async () => {
       for (const record of event.Records) {
-        const message = parseRecordBody(record.body);
-        const receiveCount = Number(record.attributes.ApproximateReceiveCount);
-        // The upload runs for minutes, so the mint log's lock is held only
-        // to capture the claim before and to log the new locations after.
-        await mintLogRecorder.write(
-          {
-            kind: 'claim.media',
-            card: mintCard(message.contract, message.claim_id),
-            actor: { type: 'service', wallet: null, authority: null },
-            intent: {
-              route: 'SQS claims-media-arweave-uploader',
-              params: {
-                contract: message.contract,
-                claim_id: String(message.claim_id)
+        try {
+          const message = parseRecordBody(record.body);
+          const receiveCount = Number(
+            record.attributes.ApproximateReceiveCount
+          );
+          // The upload runs for minutes, so the mint log's lock is held only
+          // to capture the claim before and to log the new locations after.
+          await mintLogRecorder.write(
+            {
+              kind: 'claim.media',
+              card: mintCard(message.contract, message.claim_id),
+              actor: { type: 'service', wallet: null, authority: null },
+              intent: {
+                route: 'SQS claims-media-arweave-uploader',
+                params: {
+                  contract: message.contract,
+                  claim_id: String(message.claim_id)
+                },
+                body: null
               },
-              body: null
+              lockScope: 'capture'
             },
-            lockScope: 'capture'
-          },
-          () =>
-            processMintingClaimUpload(
-              message.contract,
-              message.claim_id,
-              Number.isSafeInteger(receiveCount) && receiveCount > 0
-                ? receiveCount
-                : 1,
-              () => context.getRemainingTimeInMillis()
-            )
-        );
+            () =>
+              processMintingClaimUpload(
+                message.contract,
+                message.claim_id,
+                Number.isSafeInteger(receiveCount) && receiveCount > 0
+                  ? receiveCount
+                  : 1,
+                () => context.getRemainingTimeInMillis()
+              )
+          );
+        } catch (error) {
+          if (await shouldRetryDelivery(record, error)) {
+            batchItemFailures.push({ itemIdentifier: record.messageId });
+          }
+        }
       }
     },
     { logger }
   );
+  return { batchItemFailures };
 };
 
 export const handler = sentryContext.wrapLambdaHandler(sqsHandler);

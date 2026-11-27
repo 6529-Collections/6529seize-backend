@@ -1,4 +1,7 @@
-import { updateMintingClaimIfEditable } from '@/api/minting-claims/api.minting-claims.db';
+import {
+  updateMintingClaimIfEditable,
+  updateMintingClaimIfNotUploading
+} from '@/api/minting-claims/api.minting-claims.db';
 import { sqlExecutor } from '@/sql-executor';
 
 jest.mock('@/sql-executor', () => ({
@@ -92,5 +95,23 @@ describe('updateMintingClaimIfEditable', () => {
     expect(executeMock.mock.calls[0]?.[1]).not.toHaveProperty(
       'expectedAttributes'
     );
+  });
+});
+
+describe('explicit claim publication retry', () => {
+  it('resets recovery budgets without discarding signed transactions', async () => {
+    jest
+      .mocked(sqlExecutor.execute)
+      .mockResolvedValueOnce({ affectedRows: 1 } as never);
+    await expect(
+      updateMintingClaimIfNotUploading('0xabc', 1, { media_uploading: true })
+    ).resolves.toBe(true);
+    const query = jest.mocked(sqlExecutor.execute).mock.calls.at(-1)![0];
+    expect(query).toContain('CASE WHEN media_upload_state IS NULL THEN NULL');
+    expect(query).toContain('ELSE JSON_SET(media_upload_state');
+    expect(query).toContain("'$.failures', 0");
+    expect(query).toContain("'$.newRequest', CAST('true' AS JSON)");
+    expect(query).not.toContain('media_upload_state = NULL');
+    expect(query).toContain('COALESCE(media_uploading, 0) = 0');
   });
 });

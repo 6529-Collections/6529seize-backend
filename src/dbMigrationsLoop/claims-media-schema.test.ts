@@ -7,10 +7,16 @@ const token =
   'ALTER TABLE `minting_claims` ADD `media_upload_lease_token` varchar(36) NULL';
 const until =
   'ALTER TABLE `minting_claims` ADD `media_upload_lease_until` bigint NULL';
+const state = 'ALTER TABLE `minting_claims` ADD `media_upload_state` json NULL';
 const column = (name: string, overrides: Record<string, unknown> = {}) =>
   new TableColumn({
     name,
-    type: name === 'media_upload_lease_token' ? 'varchar' : 'bigint',
+    type:
+      name === 'media_upload_state'
+        ? 'json'
+        : name === 'media_upload_lease_token'
+          ? 'varchar'
+          : 'bigint',
     length: name === 'media_upload_lease_token' ? '36' : '',
     isNullable: true,
     ...overrides
@@ -41,11 +47,11 @@ function fixture(columns: TableColumn[], statements: string[], exists = true) {
 }
 
 describe('claims media live schema plan guard', () => {
-  it('executes only the inspected two additions on the primary', async () => {
-    const f = fixture([], [token, until]);
-    await expect(applyClaimsMediaUploadSchema(f.source)).resolves.toBe(2);
+  it('executes only the inspected three additions on the primary', async () => {
+    const f = fixture([], [token, until, state]);
+    await expect(applyClaimsMediaUploadSchema(f.source)).resolves.toBe(3);
     expect(f.source.createQueryRunner).toHaveBeenCalledWith('master');
-    expect(f.runner.query.mock.calls).toEqual([[token], [until]]);
+    expect(f.runner.query.mock.calls).toEqual([[token], [until], [state]]);
     expect(f.log).toHaveBeenCalledTimes(2);
     expect(f.source.synchronize).not.toHaveBeenCalled();
     expect(f.runner.release).toHaveBeenCalledTimes(1);
@@ -53,7 +59,11 @@ describe('claims media live schema plan guard', () => {
 
   it('accepts an aligned table without any DDL', async () => {
     const f = fixture(
-      [column('media_upload_lease_token'), column('media_upload_lease_until')],
+      [
+        column('media_upload_lease_token'),
+        column('media_upload_lease_until'),
+        column('media_upload_state')
+      ],
       []
     );
     await expect(applyClaimsMediaUploadSchema(f.source)).resolves.toBe(0);
@@ -61,7 +71,10 @@ describe('claims media live schema plan guard', () => {
   });
 
   it('resumes a partial addition without changing the existing column', async () => {
-    const f = fixture([column('media_upload_lease_token')], [until]);
+    const f = fixture(
+      [column('media_upload_lease_token'), column('media_upload_state')],
+      [until]
+    );
     await expect(applyClaimsMediaUploadSchema(f.source)).resolves.toBe(1);
     expect(f.runner.query.mock.calls).toEqual([[until]]);
   });
@@ -76,7 +89,7 @@ describe('claims media live schema plan guard', () => {
   ])(
     'rejects the complete plan before any DDL when it contains %s',
     async (unexpected) => {
-      const f = fixture([], [token, until, unexpected]);
+      const f = fixture([], [token, until, state, unexpected]);
       await expect(applyClaimsMediaUploadSchema(f.source)).rejects.toThrow(
         'unapproved changes'
       );
@@ -120,7 +133,7 @@ describe('claims media live schema plan guard', () => {
   );
 
   it('stops on a concurrent DDL failure without recomputing or dropping anything', async () => {
-    const f = fixture([], [token, until]);
+    const f = fixture([], [token, until, state]);
     const failure = new Error('synthetic concurrent schema change');
     f.runner.query.mockRejectedValueOnce(failure);
     await expect(applyClaimsMediaUploadSchema(f.source)).rejects.toBe(failure);
@@ -130,7 +143,7 @@ describe('claims media live schema plan guard', () => {
   });
 
   it('does not undo the first addition when the second fails; a fresh attempt adds only the remainder', async () => {
-    const f = fixture([], [token, until]);
+    const f = fixture([], [token, until, state]);
     f.runner.query
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error('synthetic second ADD failure'));
@@ -138,18 +151,21 @@ describe('claims media live schema plan guard', () => {
       'second ADD failure'
     );
     expect(f.runner.query.mock.calls).toEqual([[token], [until]]);
-    const retry = fixture([column('media_upload_lease_token')], [until]);
+    const retry = fixture(
+      [column('media_upload_lease_token'), column('media_upload_state')],
+      [until]
+    );
     await expect(applyClaimsMediaUploadSchema(retry.source)).resolves.toBe(1);
     expect(retry.runner.query.mock.calls).toEqual([[until]]);
   });
 
   it('fails acknowledgment if a fresh read finds drift after the approved additions', async () => {
-    const f = fixture([], [token, until]);
+    const f = fixture([], [token, until, state]);
     f.log.mockResolvedValueOnce({ upQueries: [{ query: 'unexpected drift' }] });
     await expect(applyClaimsMediaUploadSchema(f.source)).rejects.toThrow(
       'expected state'
     );
-    expect(f.runner.query.mock.calls).toEqual([[token], [until]]);
+    expect(f.runner.query.mock.calls).toEqual([[token], [until], [state]]);
     expect(f.source.synchronize).not.toHaveBeenCalled();
   });
 });

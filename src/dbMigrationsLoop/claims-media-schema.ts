@@ -4,7 +4,8 @@ import { MINTING_CLAIMS_TABLE } from '@/constants';
 
 const DEFINITIONS = [
   { name: 'media_upload_lease_token', type: 'varchar', length: '36' },
-  { name: 'media_upload_lease_until', type: 'bigint', length: '' }
+  { name: 'media_upload_lease_until', type: 'bigint', length: '' },
+  { name: 'media_upload_state', type: 'json', length: '' }
 ] as const;
 
 function compatible(

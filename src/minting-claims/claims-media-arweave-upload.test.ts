@@ -11,6 +11,13 @@ jest.mock('@/meme-collaborations/meme-collaborations.db', () => ({
       .mockResolvedValue(null)
   }
 }));
+import {
+  ClaimMediaUploadRecovery,
+  ClaimUploadYieldError,
+  claimUploadInputHash,
+  restoreClaimUploadState,
+  type ClaimUploadRecoveryState
+} from '@/minting-claims/claims-media-upload-recovery';
 import { BadRequestException } from '@/exceptions';
 import type { MintingClaimRow } from '@/api/minting-claims/api.minting-claims.db';
 import { arweaveFileUploader } from '@/arweave';
@@ -32,7 +39,8 @@ jest.mock('@/api/minting-claims/api.minting-claims.db', () => ({
 
 jest.mock('@/arweave', () => ({
   arweaveFileUploader: {
-    uploadFile: jest.fn()
+    uploadFile: jest.fn(),
+    uploadFileWithTransactionId: jest.fn()
   }
 }));
 
@@ -1446,5 +1454,91 @@ describe('uploadMintingClaimToArweave', () => {
       'https://cdn.example.com/interactive.html'
     );
     expect(uploadedMetadata.animation_details).toEqual({ format: 'HTML' });
+  });
+
+  it.each([
+    'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi',
+    'https://arweave.net/OI6-rpJ2C3Ab4HiZRWt5A1SumhjnYigmSPBPX0ICBj8'
+  ])(
+    'preserves external-link reuse when recovery is enabled: %s',
+    async (animationUrl) => {
+      const publisher = jest.fn(async (kind: string) => ({
+        url: `https://arweave.net/${kind}-transaction`
+      }));
+      const result = await uploadMintingClaimToArweave(
+        MEMES_CONTRACT,
+        baseClaim({
+          animation_url: animationUrl,
+          animation_details: JSON.stringify({ format: 'HTML' })
+        }),
+        { publishFile: publisher }
+      );
+      expect(result.animationLocationUrl).toBe(animationUrl);
+      expect(publisher.mock.calls.map((call) => call[0])).toEqual([
+        'image',
+        'metadata'
+      ]);
+      expect(fetchPublicUrlToBufferMock).toHaveBeenCalledTimes(1);
+      expect(uploadFileMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it('keeps the original signed metadata after a deadline but refuses a changed resolved meme mapping', async () => {
+    const claim = baseClaim();
+    let durable = restoreClaimUploadState(null, claimUploadInputHash(claim));
+    const persist = async (state: ClaimUploadRecoveryState) => {
+      durable = structuredClone(state);
+    };
+    const transport = jest.mocked(
+      arweaveFileUploader.uploadFileWithTransactionId
+    );
+    transport.mockReset();
+    transport.mockImplementation(async (_bytes, type, hooks) => {
+      const id = (type === 'application/json' ? 'm' : 'i').repeat(43);
+      await hooks!.onState(
+        {
+          transaction: { id },
+          data_base64: '',
+          chunkIndex: type === 'application/json' ? 0 : 1,
+          txPosted: true,
+          lastRequestTimeEnd: 0,
+          lastResponseStatus: 200,
+          lastResponseError: ''
+        },
+        { signal: new AbortController().signal }
+      );
+      if (type === 'application/json')
+        throw new ClaimUploadYieldError('deadline handoff');
+      return { url: `https://arweave.net/${id}`, transaction_id: id };
+    });
+    const recovery = new ClaimMediaUploadRecovery(
+      durable,
+      persist,
+      new AbortController().signal
+    );
+    await recovery.begin();
+    await expect(
+      uploadMintingClaimToArweave(MEMES_CONTRACT, claim, {
+        publishFile: recovery.publishFile
+      })
+    ).rejects.toBeInstanceOf(ClaimUploadYieldError);
+    expect(durable.files.metadata!.upload!.transaction.id).toBe('m'.repeat(43));
+    const frozen = durable.files.metadata!.metadataBytes;
+    fetchMemeIdByMemeNameMock.mockResolvedValueOnce(10);
+    const resumed = new ClaimMediaUploadRecovery(
+      restoreClaimUploadState(durable, claimUploadInputHash(claim)),
+      persist,
+      new AbortController().signal
+    );
+    await resumed.begin();
+    await expect(
+      uploadMintingClaimToArweave(MEMES_CONTRACT, claim, {
+        publishFile: resumed.publishFile
+      })
+    ).rejects.toThrow('source identity changed');
+    expect(
+      transport.mock.calls.filter((call) => call[1] === 'application/json')
+    ).toHaveLength(1);
+    expect(durable.files.metadata!.metadataBytes).toBe(frozen);
   });
 });
