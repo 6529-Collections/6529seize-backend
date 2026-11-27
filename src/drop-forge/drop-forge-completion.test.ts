@@ -132,7 +132,7 @@ it('leaves a held flag that failed to write unmirrored, raises one plain event, 
     // Retried on its own: one plain event, no alert mention.
     expect(events()[0]).toMatchObject({ error: false });
     expect(events()[0].content).toContain(
-      'completion flag PAY_ARTIST was not written (ER_LOCK_WAIT_TIMEOUT); Drop Forge writes it on a later delivery of the launch.'
+      'completion flag PAY_ARTIST was not written (ER_LOCK_WAIT_TIMEOUT); Drop Forge writes it again on a later pass.'
     );
 
     // It fails on every later pass: still one event, a save each time.
@@ -248,7 +248,7 @@ it("with the mint log on, writes every retry of a flag only where the claim has 
   const missed = {
     id: 'launch:missed',
     content:
-      'Claim #1: completion flag PAY_ARTIST was not written (ER_LOCK_WAIT_TIMEOUT); Drop Forge writes it on a later delivery of the launch.',
+      'Claim #1: completion flag PAY_ARTIST was not written (ER_LOCK_WAIT_TIMEOUT); Drop Forge writes it again on a later pass.',
     error: false,
     at: 1
   };
@@ -339,7 +339,7 @@ it('alerts once for a missed flag still unwritten after the set time, without a 
     record.data.events.push({
       id: 'launch:missed',
       content:
-        'Claim #1: completion flag PAY_ARTIST was not written (ER_LOCK_WAIT_TIMEOUT); Drop Forge writes it on a later delivery of the launch.',
+        'Claim #1: completion flag PAY_ARTIST was not written (ER_LOCK_WAIT_TIMEOUT); Drop Forge writes it again on a later pass.',
       error: false,
       at: now
     });
@@ -422,7 +422,7 @@ it('leaves a flag the pass has no room for unmirrored, for the next pass, and ke
     expect(record.data.events.at(-1)).toMatchObject({
       error: false,
       content: expect.stringContaining(
-        'completion flag PHASE2_AIRDROP was not written (the pass already holds two flags); Drop Forge writes it on a later delivery of the launch.'
+        'completion flag PHASE2_AIRDROP was not written (the pass already holds two flags); Drop Forge writes it again on a later pass.'
       )
     });
     expect(hasUnwrittenFlags(record)).toBe(true);

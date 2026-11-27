@@ -168,7 +168,7 @@ describe('Drop Forge durable worker', () => {
         for (const flag of flags)
           record.data.events.push({
             id: `${record.id}:missed-${flag}`,
-            content: `Claim #${record.data.claim_id}: completion flag ${flag} was not written (ER_LOCK_WAIT_TIMEOUT); Drop Forge writes it on a later delivery of the launch.`,
+            content: `Claim #${record.data.claim_id}: completion flag ${flag} was not written (ER_LOCK_WAIT_TIMEOUT); Drop Forge writes it again on a later pass.`,
             error: false,
             at,
             drop_id: `reported-missed-${flag}`
@@ -181,19 +181,7 @@ describe('Drop Forge durable worker', () => {
       event.content.includes(`completion flag ${flag} is still not written`)
     );
   /** Runs `body` with the mint log in shadow mode, then puts the env back. */
-  const inShadow = async (body: () => Promise<void>) => {
-    const saved = process.env.FEATURE_MINT_LOG_SHADOW;
-    process.env.FEATURE_MINT_LOG_SHADOW = 'true';
-    try {
-      await body();
-    } finally {
-      if (saved === undefined) delete process.env.FEATURE_MINT_LOG_SHADOW;
-      else process.env.FEATURE_MINT_LOG_SHADOW = saved;
-      await sqlExecutor.execute(
-        `delete from ${SIGNED_RECORD_LOG_ENTRIES_TABLE} where lane = 'mint'`
-      );
-    }
-  };
+  const inShadow = (body: () => Promise<void>) => withMintLog('shadow', body);
   /** A Pay Artist action, confirmed: the launch's one completion flag. */
   const confirmedPayArtist = () =>
     repository.change(
@@ -1227,13 +1215,12 @@ describe('Drop Forge durable worker', () => {
       blockHash: 'block',
       confirmations: 12
     });
-    const lockWait = () =>
-      Object.assign(new Error('Lock wait timeout exceeded'), {
-        code: 'ER_LOCK_WAIT_TIMEOUT'
-      });
+    // The first write upserts and fails; the retry, insert-only, fails too.
     jest
       .spyOn(mintingClaimActionsDb, 'upsertAction')
-      .mockRejectedValueOnce(lockWait())
+      .mockRejectedValueOnce(lockWait());
+    jest
+      .spyOn(completionFlagRows, 'insertIfAbsent')
       .mockRejectedValueOnce(lockWait());
     const flagEvents = async () =>
       (await read())!.data.events.filter((event) =>

@@ -176,7 +176,7 @@ it('keeps delivering to an ended launch with a missed, unwritten completion flag
     {
       id: 'launch:missed',
       content:
-        'Claim #1: completion flag PAY_ARTIST was not written (ER_LOCK_WAIT_TIMEOUT); Drop Forge writes it on a later delivery of the launch.',
+        'Claim #1: completion flag PAY_ARTIST was not written (ER_LOCK_WAIT_TIMEOUT); Drop Forge writes it again on a later pass.',
       error: false,
       at: 0,
       drop_id: 'posted'

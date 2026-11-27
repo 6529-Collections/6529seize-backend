@@ -216,15 +216,16 @@ async function writeHeld(
 }
 
 /**
- * The lock-wait budget of one pass's held flags. While they wait, the mint
- * log's head first, the signer's and the launch's rows stay locked, and the
- * head may be held by a phase step on another card or an admin's phase
- * split. 10 s is about 1.5 times the longest holder measured: a phase step
- * on a card with 4,000 allowlisted wallets held it 6.5 s, finalize 6.3 s.
- * The first flag may wait the whole budget, each later one what is left of
- * it, but at least HELD_FLAG_MIN_LOCK_WAIT_SECONDS. A flag that gives up:
- * in primary mode it fails, is unmirrored and is written on a later
- * delivery; in shadow mode it commits unlogged, and the mint log alerts.
+ * The lock-wait budget of one pass's held flags. While a flag waits for a
+ * lock, the mint log's head mostly, the signer's and the launch's rows stay
+ * locked. The head may be held by a phase step on another card or an
+ * admin's phase split. 10 s is about 1.5 times the longest holder
+ * measured: a phase step on a card with 4,000 allowlisted wallets held it
+ * 6.5 s, finalize 6.3 s. The first flag may wait the whole budget, each
+ * later one what is left of it, but at least
+ * HELD_FLAG_MIN_LOCK_WAIT_SECONDS. A flag that gives up: in primary mode it
+ * fails, is unmirrored and is written on a later pass; in shadow mode it
+ * commits unlogged, and the mint log alerts.
  * This relies on innodb_rollback_on_timeout being OFF, MySQL's default: a
  * timeout then undoes only its statement, and the flag's savepoint the
  * rest. With it ON, a timeout rolls back the whole pass, as a deadlock
@@ -243,10 +244,11 @@ export const HELD_FLAG_MIN_LOCK_WAIT_SECONDS = 1;
  * the minimum, so a pass waits for the head at most the budget plus the
  * minimum for each later flag. The session's own value is put back at the
  * end, so the signer's last UPDATE waits as before. A session variable set
- * by hand pins the connection's RDS Proxy session. An API pool connection
- * is marked pinned, so the pool retires it when the request ends instead
- * of keeping it (proxy-session-pinning); a Lambda's connection, a TypeORM
- * query runner, isn't marked, and ends with the invocation.
+ * by hand pins the connection's RDS Proxy session, so the connection's
+ * handle is marked pinned. An API pool connection is then retired when the
+ * request ends instead of being kept (proxy-session-pinning); a Lambda's
+ * handle is a TypeORM query runner, where the mark has no effect, and its
+ * connection ends with the invocation.
  */
 async function writeHeldFlags(
   items: readonly QueuedClaimAction[],

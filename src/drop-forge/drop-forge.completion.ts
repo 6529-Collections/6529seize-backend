@@ -33,7 +33,11 @@ function failureReason(error: unknown): string {
   return message.split('\n')[0].slice(0, 120);
 }
 
-/** The start of a flag's first event, to raise it once per flag. */
+/**
+ * The start of a flag's first event, to raise it once per flag. With the
+ * mint log on, it is also how a later pass knows the flag was missed
+ * (firstMiss): keep this wording, or existing misses are no longer seen.
+ */
 const failedFlagEvent = (flag: string) =>
   `completion flag ${flag} was not written`;
 
@@ -58,8 +62,9 @@ const setFlagByHand = (record: LaunchRecord, flag: string) =>
 /**
  * A flag that a pass didn't write (with the mint log on: it failed, or the
  * pass already held its two) is bookkeeping, not chain safety. It is left
- * unmirrored, and a later delivery of the launch writes it, whatever the
- * launch's state (hasUnwrittenFlags keeps the deliveries coming). Its first
+ * unmirrored, and a later pass writes it, the same delivery's next one or a
+ * later delivery's, whatever the launch's state (hasUnwrittenFlags keeps
+ * the deliveries coming). Its first
  * miss posts one plain event in the launch's reports; if the launch still
  * lacks it FLAG_ALERT_AFTER_MS later, one error with the alert mention asks
  * for it by hand (a retry then finds the row and leaves it). The rest of
@@ -77,7 +82,7 @@ async function flagNotWritten(
   if (!firstMiss(record, flag)) {
     addLaunchEvent(
       record,
-      `Claim #${record.data.claim_id}: ${failedFlagEvent(flag)} (${reason}); Drop Forge writes it on a later delivery of the launch.`
+      `Claim #${record.data.claim_id}: ${failedFlagEvent(flag)} (${reason}); Drop Forge writes it again on a later pass.`
     );
   } else {
     alertIfOverdue(record, flag);
@@ -234,7 +239,7 @@ export function hasUnwrittenFlags(record: LaunchRecord): boolean {
  * confirmed yet). Returns whether it added one. The launch handler calls
  * it on each delivery.
  */
-export function alertOverdueFlags(record: LaunchRecord): boolean {
+function alertOverdueFlags(record: LaunchRecord): boolean {
   if (mintLogRecorder.mode() === 'off') return false;
   let added = false;
   for (const flag of unwrittenFlags(record))
@@ -273,7 +278,8 @@ interface MirrorOptions {
  * Whether this write of the flag is a retry, with the mint log on: one of
  * a flag that a pass missed before, as its event on the launch shows. A
  * retry never overwrites the claim's row; a first write upserts, as a
- * mirror always has.
+ * mirror always has. A flag the pass deferred gets its event at once, so
+ * its first actual write is a retry too.
  */
 function isRetry(record: LaunchRecord, flag: string): boolean {
   return mintLogRecorder.mode() !== 'off' && !!firstMiss(record, flag);
