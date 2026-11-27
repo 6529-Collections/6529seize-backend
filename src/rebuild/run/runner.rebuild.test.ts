@@ -10,6 +10,9 @@ import {
 import { AREA_MANIFESTS } from '@/rebuild/manifests';
 import { headline, statusLine } from '@/rebuild/report/report';
 import { runRebuildCheck } from '@/rebuild/run/runner';
+import { acquireHomeLock } from '@/rebuild/stack/home-lock';
+import { startLocalMysqld } from '@/rebuild/stack/local-mysqld';
+import { MysqlAdmin } from '@/rebuild/stack/mysql-admin';
 
 // The harness's end-to-end check: a private mysqld, the schema from code,
 // the API, and single-area runs whose rebuilders pass, differ, read an undeclared
@@ -21,6 +24,41 @@ const HOME =
   path.resolve(__dirname, '..', '..', '..', '.rebuild', 'self-check');
 const PORT = Number(process.env.REBUILD_SELF_CHECK_PORT ?? 3407);
 const MODULE = 'src/rebuild/run/self-check.steps';
+
+/**
+ * team's wallets and dates in the last run's rebuilt database, for a
+ * column the comparison leaves out: read on a mysqld started again on the
+ * run's data once the run has stopped its own, under the home's lock.
+ */
+async function rebuiltTeamDates(): Promise<[string, string][]> {
+  const release = acquireHomeLock(HOME);
+  try {
+    const server = await startLocalMysqld({
+      home: HOME,
+      port: PORT,
+      log: () => undefined
+    });
+    try {
+      const admin = await MysqlAdmin.connect(server.target);
+      try {
+        const rows = await admin.query<{
+          wallet: string;
+          created_at: string;
+        }>(
+          `SELECT wallet, DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS created_at
+             FROM rebuild_main.team ORDER BY wallet`
+        );
+        return rows.map((row) => [row.wallet, row.created_at]);
+      } finally {
+        await admin.close();
+      }
+    } finally {
+      await server.stop();
+    }
+  } finally {
+    release();
+  }
+}
 
 function step(
   id: string,
@@ -602,8 +640,8 @@ describe('rebuild check, end to end', () => {
       // The owner needs a planned rebuilder whose code isn't here, so it is
       // skipped as planned while the row writer runs: its column is saved
       // and brought back after the rows are rewritten, and the comparison
-      // leaves it out with the skip's reason. Without that, the rewritten
-      // rows lose the seeded dates and the table differs.
+      // leaves it out with the skip's reason. Since the comparison leaves the
+      // column out, only reading it back shows the seeded dates survived.
       const later: RebuildStep = {
         ...step('self-check.later-dates', 'rebuildTeam', []),
         run: {
@@ -641,6 +679,15 @@ describe('rebuild check, end to end', () => {
           owner: 'self-check.needs-dated',
           why
         }
+      ]);
+      // The comparison leaves created_at out, so read it back: the seeded
+      // dates came back after the row writer rewrote the rows (it leaves the
+      // column at its default, the time of the insert).
+      const seeded = '2026-01-01 00:00:00';
+      expect(await rebuiltTeamDates()).toEqual([
+        ['0x0000000000000000000000000000000000000001', seeded],
+        ['0x0000000000000000000000000000000000000002', seeded],
+        ['0x0000000000000000000000000000000000000003', seeded]
       ]);
       const final = await run('mint', {
         seed: teamSeed,
