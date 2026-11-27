@@ -1,11 +1,13 @@
-import {
-  DISTRIBUTION_NORMALIZED_TABLE,
-  SUBSCRIPTIONS_NFTS_FINAL_TABLE
-} from '@/constants';
+import { DISTRIBUTION_NORMALIZED_TABLE } from '@/constants';
 import { ApiWalletDistributionAllocationPhaseEnum } from '@/api/generated/models/ApiWalletDistributionAllocation';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
-import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
+import {
+  dbSupplier,
+  LazyDbAccessCompatibleService,
+  SqlExecutor
+} from '@/sql-executor';
+import { subscriptionTables } from '@/subscriptions-identity/identity/subscription-tables';
 
 type NumericDatabaseValue = number | string | null;
 
@@ -146,6 +148,17 @@ function parseAllowlist(
 }
 
 export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleService {
+  public constructor(
+    sqlExecutorGetter: () => SqlExecutor,
+    // The final rows the subscriptions switch names: after it, the identity
+    // rows, which hold every subscriber; the legacy copy lacks the keys too
+    // long for its columns.
+    private readonly finalTable: () => Promise<string> = async () =>
+      (await subscriptionTables()).final
+  ) {
+    super(sqlExecutorGetter);
+  }
+
   public async findByWallet(
     contract: string,
     cardId: number,
@@ -182,6 +195,7 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
         };
       }
 
+      const finalTable = await this.finalTable();
       const [walletDistributionRow, publicSubscriptions] = await Promise.all([
         this.db.oneOrNull<WalletNormalizedDistributionRow>(
           // DistributionNormalized's primary key is card/contract/wallet;
@@ -204,7 +218,7 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
           // Finalized subscriptions are populated independently from
           // DistributionNormalized, so retain case-insensitive predicates.
           `SELECT subscribed_count
-           FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
+           FROM ${finalTable}
            WHERE LOWER(contract) = :contract
              AND token_id = :cardId
              AND LOWER(airdrop_address) = :wallet

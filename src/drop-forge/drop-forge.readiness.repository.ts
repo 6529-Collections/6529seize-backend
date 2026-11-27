@@ -4,9 +4,9 @@ import {
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
   MINTING_MERKLE_ROOTS_TABLE,
-  NFTS_TABLE,
-  SUBSCRIPTIONS_NFTS_FINAL_TABLE
+  NFTS_TABLE
 } from '@/constants';
+import { subscriptionTables } from '@/subscriptions-identity/identity/subscription-tables';
 import { DbPoolName } from '@/db-query.options';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
@@ -47,6 +47,10 @@ export function readinessMerkleRoots(contract: string, claim: number) {
 
 export async function readinessAllocations(contract: string, claim: number) {
   const params = { contract: contract.toLowerCase(), claim };
+  // The final rows the subscriptions switch names: after it, the identity
+  // rows, which hold every subscriber; the legacy copy lacks the keys too
+  // long for its columns.
+  const final = (await subscriptionTables()).final;
   return Promise.all([
     sqlExecutor.execute<ReadinessAllocation>(
       `SELECT phase, LOWER(wallet) AS wallet, SUM(count_airdrop) AS total
@@ -58,7 +62,7 @@ export async function readinessAllocations(contract: string, claim: number) {
     ),
     sqlExecutor.execute<ReadinessAllocation>(
       `SELECT 'Public' AS phase, LOWER(airdrop_address) AS wallet, COUNT(*) AS total
-       FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
+       FROM ${final}
        WHERE contract = :contract AND token_id = :claim
          AND (phase IS NULL OR phase = 'Public')
        GROUP BY LOWER(airdrop_address)`,
