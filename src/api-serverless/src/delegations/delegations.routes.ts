@@ -1,10 +1,6 @@
 import { asyncRouter } from '../async.router';
 
-import {
-  fetchDelegations,
-  fetchDelegationsByUseCase,
-  fetchMintingDelegations
-} from '../../../db-api';
+import { fetchDelegations, fetchDelegationsByUseCase } from '../../../db-api';
 import { getPage, getPageSize, returnPaginatedResult } from '../api-helpers';
 import { cacheRequest } from '../request-cache';
 
@@ -33,21 +29,6 @@ router.get(`/`, cacheRequest(), async function (req: any, res: any) {
     return returnPaginatedResult(result, req, res);
   });
 });
-
-router.get(
-  `/minting/:wallet`,
-  cacheRequest(),
-  async function (req: any, res: any) {
-    const wallet = req.params.wallet;
-
-    const pageSize = getPageSize(req);
-    const page = getPage(req);
-
-    await fetchMintingDelegations(wallet, pageSize, page).then((result) => {
-      return returnPaginatedResult(result, req, res);
-    });
-  }
-);
 
 router.get(`/:wallet`, cacheRequest(), async function (req: any, res: any) {
   const wallet = req.params.wallet;

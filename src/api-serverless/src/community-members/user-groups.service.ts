@@ -55,10 +55,12 @@ import * as mcache from 'memory-cache';
 import { RequestContext } from '@/request.context';
 import { readWaveCatalogueWithDiagnostics } from './wave-catalogue-read-diagnostics';
 import {
+  movingWaveRefusal,
   wavesFreezeAtMs,
   WAVES_FROZEN_GROUP_MESSAGE,
   WAVES_FROZEN_GROUP_VISIBILITY_MESSAGE,
-  WavesFrozenException
+  WAVES_ON_CHAIN_GROUP_MESSAGE,
+  WAVES_ON_CHAIN_GROUP_VISIBILITY_MESSAGE
 } from '@/waves-freeze/waves-freeze';
 import { groupStays } from '@/waves-scope/waves-scope';
 import { isAnyGroupFrozen } from '@/waves-freeze/waves-freeze-scope';
@@ -1738,13 +1740,19 @@ export class UserGroupsService {
     return isAnyGroupFrozen([group_id, old_version_id], ctx);
   }
 
-  /** A replacement is told to save a new group; hiding or showing is not. */
+  /**
+   * A replacement is told to save a new group; hiding or showing is not.
+   * From the switch-on both are WAVES_ON_CHAIN (movingWaveRefusal), with
+   * the group's own words.
+   */
   private frozenGroupChange(change: GroupVisibilityChange) {
-    return new WavesFrozenException(
-      change.old_version_id
-        ? WAVES_FROZEN_GROUP_MESSAGE
-        : WAVES_FROZEN_GROUP_VISIBILITY_MESSAGE
-    );
+    return change.old_version_id
+      ? movingWaveRefusal(WAVES_FROZEN_GROUP_MESSAGE, {
+          onChainMessage: WAVES_ON_CHAIN_GROUP_MESSAGE
+        })
+      : movingWaveRefusal(WAVES_FROZEN_GROUP_VISIBILITY_MESSAGE, {
+          onChainMessage: WAVES_ON_CHAIN_GROUP_VISIBILITY_MESSAGE
+        });
   }
 
   /**

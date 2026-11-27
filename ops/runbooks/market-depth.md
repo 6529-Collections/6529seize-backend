@@ -73,18 +73,23 @@ filters and uses cursor pagination. Marketplace copies of sales and transfers
 do not duplicate canonical transaction rows. Off-chain actions do not require
 a transaction hash. Raw provider payloads are not returned by either API.
 
-Activity reads use the read replica and may briefly lag newly captured events.
-Critical order-book and order-status reads retain the writer. For token activity,
-token-specific and collection-wide events are selected separately in descending
-time/ID order, each limited to the requested page size plus one. Wallet, action
-and cursor predicates apply inside both branches before their limits. At most
+Activity uses the API read pool and may briefly lag newly captured events in
+production. Critical order-book and order-status reads retain the writer. For
+token activity, token-specific and collection-wide events are selected separately
+in descending time/ID order, each limited to the requested page size plus one.
+Wallet, action and cursor predicates apply inside both branches before their limits. At most
 two pages of candidate IDs are merged before fetching the selected public
 fields, using `idx_market_depth_events_token_occurred` without a schema change.
 Request timer reports separate transaction, marketplace-event, history-start
 and activity-partition query timings.
 
-This activity optimization requires only an `api` deployment; the existing
-schema, collectors and frontend remain compatible throughout the rollout.
+Collection-level cancellation requests for a single collection and resolved
+wallet select the maker and taker scopes separately. Each scope applies all
+filters and the cursor before taking the requested page size plus one. The union
+removes duplicate IDs before the final page limit and primary-key lookup. The
+maker/time and taker/time indexes let each scope start at the matching wallet's
+events. Deploy the [wallet activity indexes](../../docs/deployment.md#wallet-filtered-nft-cancellations)
+before the updated `api`.
 
 ## Snapshot publication coordination and timing
 

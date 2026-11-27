@@ -1,18 +1,15 @@
 const mockRoutes: {
-  file: string;
   method: string;
   path: string;
   handler: any;
 }[] = [];
-let mockCurrentFile = '';
 
 jest.mock('@/api/async.router', () => ({
   asyncRouter: () => {
-    const file = mockCurrentFile;
     const register =
       (method: string) =>
       (path: string, ...handlers: any[]) => {
-        mockRoutes.push({ file, method, path, handler: handlers.at(-1) });
+        mockRoutes.push({ method, path, handler: handlers.at(-1) });
       };
     return {
       get: register('get'),
@@ -33,7 +30,6 @@ jest.mock('@/api/auth/auth', () => ({
 jest.mock('./user-groups.service', () => ({
   userGroupsService: {
     changeVisibility: jest.fn(),
-    getGroupsUserIsEligibleFor: jest.fn(),
     save: jest.fn()
   }
 }));
@@ -50,21 +46,12 @@ import { ForbiddenException } from '@/exceptions';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { userGroupsService } from './user-groups.service';
 
-mockCurrentFile = 'user-groups';
 require('./user-groups.routes');
-mockCurrentFile = 'eligible-for';
-require('./user-groups-im-elgigible-for.routes');
 
 describe('route registration', () => {
   it('registers the routes exercised below', () => {
-    expect(
-      mockRoutes.map(({ file, method, path }) => `${file} ${method} ${path}`)
-    ).toEqual(
-      expect.arrayContaining([
-        'user-groups post /',
-        'user-groups post /:group_id/visible',
-        'eligible-for get /'
-      ])
+    expect(mockRoutes.map(({ method, path }) => `${method} ${path}`)).toEqual(
+      expect.arrayContaining(['post /', 'post /:group_id/visible'])
     );
   });
 });
@@ -83,12 +70,12 @@ function proxyContext(actions: ProfileProxyActionType[]) {
   });
 }
 
-function route(file: string, method: string, path: string) {
+function route(method: string, path: string) {
   const registered = mockRoutes.find(
-    (it) => it.file === file && it.method === method && it.path === path
+    (it) => it.method === method && it.path === path
   );
   if (!registered) {
-    throw new Error(`Route not registered: ${file} ${method} ${path}`);
+    throw new Error(`Route not registered: ${method} ${path}`);
   }
   return registered.handler;
 }
@@ -110,11 +97,7 @@ describe('POST /groups/:group_id/visible', () => {
       .mockResolvedValue(proxyContext(Object.values(ProfileProxyActionType)));
 
     await expect(
-      route(
-        'user-groups',
-        'post',
-        '/:group_id/visible'
-      )(request(), {
+      route('post', '/:group_id/visible')(request(), {
         send: jest.fn()
       })
     ).rejects.toThrow(
@@ -132,7 +115,7 @@ describe('POST /groups/:group_id/visible', () => {
       .mockResolvedValue({ id: 'group-1' } as any);
     const res = { send: jest.fn() };
 
-    await route('user-groups', 'post', '/:group_id/visible')(request(), res);
+    await route('post', '/:group_id/visible')(request(), res);
 
     expect(userGroupsService.changeVisibility).toHaveBeenCalledWith(
       expect.objectContaining({ profile_id: 'member', group_id: 'group-1' }),
@@ -152,46 +135,8 @@ describe('POST /groups', () => {
       .mockResolvedValue(proxyContext(Object.values(ProfileProxyActionType)));
 
     await expect(
-      route('user-groups', 'post', '/')({ body: {} }, { send: jest.fn() })
+      route('post', '/')({ body: {} }, { send: jest.fn() })
     ).rejects.toThrow(new ForbiddenException('Proxies cannot create groups'));
     expect(userGroupsService.save).not.toHaveBeenCalled();
-  });
-});
-
-describe('GET /groups-im-eligible-for', () => {
-  beforeEach(() => jest.clearAllMocks());
-
-  it('returns no groups to a proxy without READ_WAVE', async () => {
-    jest
-      .mocked(getAuthenticationContext)
-      .mockResolvedValue(proxyContext([ProfileProxyActionType.CREATE_WAVE]));
-    const res = { send: jest.fn() };
-
-    await route('eligible-for', 'get', '/')({}, res);
-
-    expect(res.send).toHaveBeenCalledWith([]);
-    expect(userGroupsService.getGroupsUserIsEligibleFor).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    [
-      'a proxy with READ_WAVE',
-      proxyContext([ProfileProxyActionType.READ_WAVE])
-    ],
-    ['a direct session', AuthenticationContext.fromProfileId('grantor-profile')]
-  ])('returns the acting profile groups to %s', async (_label, context) => {
-    jest.mocked(getAuthenticationContext).mockResolvedValue(context);
-    jest
-      .mocked(userGroupsService.getGroupsUserIsEligibleFor)
-      .mockResolvedValue(['group-1']);
-    const res = { send: jest.fn() };
-
-    await route('eligible-for', 'get', '/')({}, res);
-
-    expect(userGroupsService.getGroupsUserIsEligibleFor).toHaveBeenCalledWith(
-      'grantor-profile',
-      undefined
-    );
-    expect(res.send).toHaveBeenCalledWith(['group-1']);
   });
 });

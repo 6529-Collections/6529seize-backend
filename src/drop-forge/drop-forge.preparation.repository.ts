@@ -4,9 +4,9 @@ import {
   DROP_FORGE_PREPARATIONS_TABLE,
   DISTRIBUTION_NORMALIZED_TABLE,
   DISTRIBUTION_TABLE,
-  MINTING_MERKLE_ROOTS_TABLE,
-  SUBSCRIPTIONS_NFTS_FINAL_TABLE
+  MINTING_MERKLE_ROOTS_TABLE
 } from '@/constants';
+import { subscriptionTables } from '@/subscriptions-identity/identity/subscription-tables';
 import { LaunchSafetyError } from '@/drop-forge/drop-forge.types';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
@@ -51,7 +51,7 @@ export class DropForgePreparationRepository {
               AND (error IS NULL OR error <> :resetJobError)
           ) THEN 'BACKGROUND'
           WHEN EXISTS (
-            SELECT 1 FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
+            SELECT 1 FROM ${(await subscriptionTables()).final}
             WHERE contract = :contract AND token_id = :claim AND phase IS NOT NULL
           ) OR EXISTS (
             SELECT 1 FROM ${DISTRIBUTION_TABLE}

@@ -10,6 +10,7 @@ import { NotFoundException } from '@/exceptions';
 import { DbPoolName } from '@/db-query.options';
 import { PreparationAuthRequired } from '@/drop-forge/drop-forge.preparation-auth';
 import { wakeDropForge } from '@/drop-forge/drop-forge.wake';
+import { afterCommitMark, dropAfterCommitSince } from '@/db/after-commit';
 
 function storedJobResult(job: DropForgeJobEntity): object | null {
   if (!job.result) return null;
@@ -26,6 +27,23 @@ function retainedAuthorization(
 }
 
 export const resetJobError = 'Distribution reset; process again';
+
+const jobStatusColumns = [
+  'id',
+  'contract',
+  'claim_id',
+  'kind',
+  'phase_ids',
+  'step',
+  'status',
+  'error',
+  'updated_at'
+] as const;
+
+export type DropForgeJobStatus = Pick<
+  DropForgeJobEntity,
+  (typeof jobStatusColumns)[number]
+>;
 
 export class DropForgeJobsRepository {
   async reportOne(
@@ -75,25 +93,58 @@ export class DropForgeJobsRepository {
       ctx.timer?.stop(timer);
     }
   }
-  async latest(
+  latest(
     contract: string,
     claim: number,
     plan: string | undefined,
     ctx: RequestContext
   ): Promise<DropForgeJobEntity | null> {
+    return this.queryLatest<DropForgeJobEntity>(
+      contract,
+      claim,
+      plan,
+      '*',
+      ctx
+    );
+  }
+  latestStatus(
+    contract: string,
+    claim: number,
+    plan: string | undefined,
+    ctx: RequestContext
+  ): Promise<DropForgeJobStatus | null> {
+    return this.queryLatest<DropForgeJobStatus>(
+      contract,
+      claim,
+      plan,
+      jobStatusColumns.join(', '),
+      ctx
+    );
+  }
+  private async queryLatest<T>(
+    contract: string,
+    claim: number,
+    plan: string | undefined,
+    columns: string,
+    ctx: RequestContext
+  ): Promise<T | null> {
     const timer = 'DropForgeJobsRepository->latest';
     ctx.timer?.start(timer);
     try {
-      return await sqlExecutor.oneOrNull<DropForgeJobEntity>(
-        `SELECT * FROM ${DROP_FORGE_JOBS_TABLE}
-         WHERE contract = :contract AND claim_id = :claim AND kind = 'PROCESS_ALL'
-           AND (error IS NULL OR error <> :resetJobError)
-           AND NOT EXISTS (
-             SELECT 1 FROM ${DROP_FORGE_PREPARATIONS_TABLE}
-             WHERE id = :preparationId AND mode IN ('UNSTARTED', 'MANUAL')
-           )
-           ${plan ? 'AND plan_id = :plan' : ''}
-         ORDER BY updated_at DESC, id DESC LIMIT 1`,
+      // Pick the ID before loading the row so the sort never carries the results JSON.
+      return await sqlExecutor.oneOrNull<T>(
+        `SELECT ${columns} FROM ${DROP_FORGE_JOBS_TABLE}
+         WHERE id = (
+           SELECT id FROM ${DROP_FORGE_JOBS_TABLE}
+           WHERE contract = :contract AND claim_id = :claim AND kind = 'PROCESS_ALL'
+             AND (error IS NULL OR error <> :resetJobError)
+             AND NOT EXISTS (
+               SELECT 1 FROM ${DROP_FORGE_PREPARATIONS_TABLE}
+               WHERE id = :preparationId AND mode IN ('UNSTARTED', 'MANUAL')
+             )
+             ${plan ? 'AND plan_id = :plan' : ''}
+           ORDER BY updated_at DESC, id DESC LIMIT 1
+         )`,
         {
           contract: contract.toLowerCase(),
           claim,
@@ -190,6 +241,7 @@ export class DropForgeJobsRepository {
           await sqlExecutor.execute('SAVEPOINT drop_forge_job', undefined, {
             wrappedConnection: connection
           });
+          const savepointMark = afterCommitMark(connection);
           let status = 'COMPLETED';
           let error: string | null = null;
           let result: object | null = null;
@@ -204,6 +256,9 @@ export class DropForgeJobsRepository {
               undefined,
               { wrappedConnection: connection }
             );
+            // The step's after-commit work (a shadow phase split) belongs to
+            // what the savepoint undid; the job's FAILED row still commits.
+            dropAfterCommitSince(connection, savepointMark);
             status =
               error_ instanceof PreparationAuthRequired
                 ? 'AWAITING_AUTH'

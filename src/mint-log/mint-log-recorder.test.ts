@@ -426,6 +426,47 @@ describe('MintLogRecorder', () => {
       expect(fake.state.distribution.map((row) => row.id)).toEqual([1]);
       expect(fake.queue).toEqual([]);
     });
+
+    it('undoes a change whose entry cannot be written, but keeps the identity final rows the subscriptions journal owns', async () => {
+      const fake = new Fake();
+      const row = (phase: string | null) => ({
+        id: 7,
+        phase,
+        phase_subscriptions: phase ? 1 : -1,
+        phase_position: phase ? 1 : -1
+      });
+      fake.addRow(1);
+      fake.state = applyEffectsToState(fake.state, {
+        subscription_phases_identity: { upsert: [row(null)], delete: [] }
+      });
+      fake.failAppends = 2;
+      const errors = jest.spyOn(Logger.prototype, 'error');
+      try {
+        await expect(
+          recorder(fake, { primary: true }).write(
+            spec({ signedRecords: header() }),
+            async () => {
+              fake.addRow(2);
+              fake.state = applyEffectsToState(fake.state, {
+                subscription_phases_identity: {
+                  upsert: [row('Public')],
+                  delete: []
+                }
+              });
+            }
+          )
+        ).rejects.toBeInstanceOf(MintLogUnavailableException);
+        expect(fake.state.distribution.map((r) => r.id)).toEqual([1]);
+        expect(fake.state.subscription_phases_identity).toEqual([
+          row('Public')
+        ]);
+        expect(errors).toHaveBeenCalledWith(
+          expect.stringContaining('[MINT_LOG_REVERT_KEPT_IDENTITY_ROWS]')
+        );
+      } finally {
+        errors.mockRestore();
+      }
+    });
   });
 
   it('keeps a shadow write that has a bad record, logged without it', async () => {

@@ -587,19 +587,6 @@
       ]
     },
     {
-      "service": "signedRecordLogLoop",
-      "region": "us-east-1",
-      "functions": [
-        "signedRecordLogCloser",
-        "signedRecordLogArchiver"
-      ],
-      "coverage": [
-        "structured-error-logs",
-        "lambda-errors",
-        "lambda-throttles"
-      ]
-    },
-    {
       "service": "teamLoop",
       "region": "us-east-1",
       "functions": [
@@ -801,15 +788,6 @@
     {
       "name": "allowlist-token-pool-downloader",
       "owner": "external",
-      "coverage": [
-        "lambda-errors",
-        "lambda-throttles"
-      ],
-      "deployCode": false
-    },
-    {
-      "name": "rpcProxy",
-      "owner": "external-or-legacy",
       "coverage": [
         "lambda-errors",
         "lambda-throttles"

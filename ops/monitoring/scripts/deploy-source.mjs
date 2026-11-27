@@ -2,6 +2,12 @@ import { readFileSync } from 'node:fs';
 import { approvedAwsCli } from './aws-cli.mjs';
 import { runAws } from './aws-run.mjs';
 
+const args = process.argv.slice(2);
+if (args.length > 1 || (args.length === 1 && args[0] !== '--preflight-only')) {
+  throw new Error('Usage: deploy-source.mjs [--preflight-only]');
+}
+const preflightOnly = args.length === 1;
+
 const awsCli = approvedAwsCli();
 
 const environment = process.env.MONITORING_ENVIRONMENT;
@@ -125,43 +131,47 @@ for (const name of coverage.services.flatMap((service) => service.functions)) {
     throw new Error(`No subscription capacity for ${name}`);
   }
 }
-run([
-  'cloudformation',
-  'package',
-  '--template-file',
-  `source-${environment}.json`,
-  '--s3-bucket',
-  bucket,
-  '--s3-prefix',
-  `monitoring-source/${environment}/${sha}`,
-  '--output-template-file',
-  'packaged-source.json'
-]);
-run([
-  'cloudformation',
-  'deploy',
-  '--template-file',
-  'packaged-source.json',
-  '--stack-name',
-  `seize-monitoring-${environment}-source`,
-  '--s3-bucket',
-  bucket,
-  '--s3-prefix',
-  `monitoring-source/${environment}/${sha}`,
-  '--capabilities',
-  'CAPABILITY_NAMED_IAM',
-  'CAPABILITY_AUTO_EXPAND',
-  ...(role ? ['--role-arn', role] : []),
-  '--no-fail-on-empty-changeset',
-  '--parameter-overrides',
-  `Environment=${environment}`,
-  `MonitoringEventBusArn=${bus}`,
-  ...(topic === undefined ? [] : [`ExistingAlarmTopicArn=${topic}`])
-]);
-run([
-  'cloudformation',
-  'update-termination-protection',
-  '--enable-termination-protection',
-  '--stack-name',
-  `seize-monitoring-${environment}-source`
-]);
+if (preflightOnly) {
+  console.log(`Monitoring source preflight passed for ${environment} in ${region}.`);
+} else {
+  run([
+    'cloudformation',
+    'package',
+    '--template-file',
+    `source-${environment}.json`,
+    '--s3-bucket',
+    bucket,
+    '--s3-prefix',
+    `monitoring-source/${environment}/${sha}`,
+    '--output-template-file',
+    'packaged-source.json'
+  ]);
+  run([
+    'cloudformation',
+    'deploy',
+    '--template-file',
+    'packaged-source.json',
+    '--stack-name',
+    `seize-monitoring-${environment}-source`,
+    '--s3-bucket',
+    bucket,
+    '--s3-prefix',
+    `monitoring-source/${environment}/${sha}`,
+    '--capabilities',
+    'CAPABILITY_NAMED_IAM',
+    'CAPABILITY_AUTO_EXPAND',
+    ...(role ? ['--role-arn', role] : []),
+    '--no-fail-on-empty-changeset',
+    '--parameter-overrides',
+    `Environment=${environment}`,
+    `MonitoringEventBusArn=${bus}`,
+    ...(topic === undefined ? [] : [`ExistingAlarmTopicArn=${topic}`])
+  ]);
+  run([
+    'cloudformation',
+    'update-termination-protection',
+    '--enable-termination-protection',
+    '--stack-name',
+    `seize-monitoring-${environment}-source`
+  ]);
+}

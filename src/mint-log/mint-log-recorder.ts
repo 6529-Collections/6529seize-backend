@@ -28,11 +28,13 @@ import {
   MintRecordVerifyResult,
   MintVerifiedRecord
 } from './mint-log-ports';
+import { MINT_ROW_PART_SPECS } from './mint-log-parts';
 import {
   MINT_KIND_CHAIN,
   MINT_KIND_PARTS,
   MINT_LOG_ENTRY_VERSION,
   MINT_LOG_LANE,
+  MINT_ROW_PARTS,
   MintCardEffects,
   MintCardRef,
   MintCardState,
@@ -141,6 +143,11 @@ interface Captured {
   readonly card: MintCardRef;
   readonly before: MintCardState;
   readonly inputs: Record<string, unknown>;
+  /**
+   * Whether the subscriptions switch named the identity tables, read once
+   * for the write; every capture of the write uses it.
+   */
+  readonly identityTruth?: boolean;
   /** Parts read with FOR UPDATE: its kind's parts (readCurrent). */
   readonly current?: ReadonlySet<string>;
 }
@@ -309,11 +316,18 @@ export class MintLogRecorder {
         mintHeadKey(MINT_KIND_CHAIN[spec.kind], card)
       );
       const inputs = spec.inputs ? await spec.inputs(connection) : {};
+      const identityTruth = await this.reader.identityTruthFor?.(card);
       const current = spec.readCurrent
         ? new Set<string>(MINT_KIND_PARTS[spec.kind])
         : undefined;
-      const before = await this.reader.capture(card, connection, { current });
-      return { head, captured: { card, before, inputs, current } };
+      const before = await this.reader.capture(card, connection, {
+        identityTruth,
+        current
+      });
+      return {
+        head,
+        captured: { card, before, inputs, identityTruth, current }
+      };
     });
     const value = await run();
     if (!started) return value;
@@ -481,8 +495,11 @@ export class MintLogRecorder {
               ? await spec.card(connection)
               : spec.card;
           const inputs = spec.inputs ? await spec.inputs(connection) : {};
-          const before = await this.reader.capture(card, connection);
-          const captured: Captured = { card, before, inputs };
+          const identityTruth = await this.reader.identityTruthFor?.(card);
+          const before = await this.reader.capture(card, connection, {
+            identityTruth
+          });
+          const captured: Captured = { card, before, inputs, identityTruth };
           state.captured = captured;
           const outcome = await settle(run);
           state.outcome = outcome;
@@ -557,12 +574,26 @@ export class MintLogRecorder {
           connection,
           mintHeadKey(MINT_KIND_CHAIN[spec.kind], captured.card)
         );
-        const current = await this.reader.capture(captured.card, connection);
-        await this.writer.apply(
-          captured.card,
-          diffCardState(current, captured.before),
-          connection
+        const current = await this.reader.capture(captured.card, connection, {
+          identityTruth: captured.identityTruth
+        });
+        // The identity final rows are the subscriptions journal's: their
+        // phase writes are journaled, so a revert leaves them and says so.
+        // Only recorder.write() reverts, and no route logs a phase pull
+        // through it (the routes use writeWithin, whose writer rolls back
+        // with the log); the rebuild check's probe seed is the one caller.
+        const undo = diffCardState(current, captured.before);
+        const identityParts = MINT_ROW_PARTS.filter(
+          (part) =>
+            MINT_ROW_PART_SPECS[part].identitySubscriptions && undo[part]
         );
+        for (const part of identityParts) {
+          delete (undo as Record<string, unknown>)[part];
+          logger.error(
+            `[MINT_LOG_REVERT_KEPT_IDENTITY_ROWS] [${spec.kind}] [card ${cardLabel(captured.card)}] ${part}`
+          );
+        }
+        await this.writer.apply(captured.card, undo, connection);
       },
       { isolationLevel: 'READ COMMITTED' }
     );
@@ -577,6 +608,7 @@ export class MintLogRecorder {
     connection: ConnectionWrapper<any>
   ): Promise<MintLogEntryBody | null> {
     const after = await this.reader.capture(captured.card, connection, {
+      identityTruth: captured.identityTruth,
       current: captured.current
     });
     const effects = diffCardState(captured.before, after);
@@ -614,7 +646,9 @@ export class MintLogRecorder {
           connection,
           mintHeadKey(MINT_KIND_CHAIN[spec.kind], captured.card)
         );
-        const after = await this.reader.capture(captured.card, connection);
+        const after = await this.reader.capture(captured.card, connection, {
+          identityTruth: captured.identityTruth
+        });
         const diff = diffCardState(captured.before, after);
         const effects =
           spec.lockScope === 'capture' ? declaredOnly(spec.kind, diff) : diff;
@@ -658,8 +692,11 @@ export class MintLogRecorder {
               ? await spec.card(connection)
               : spec.card;
           const inputs = spec.inputs ? await spec.inputs(connection) : {};
-          const before = await this.reader.capture(card, connection);
-          return { card, before, inputs };
+          const identityTruth = await this.reader.identityTruthFor?.(card);
+          const before = await this.reader.capture(card, connection, {
+            identityTruth
+          });
+          return { card, before, inputs, identityTruth };
         },
         { isolationLevel: 'READ COMMITTED' }
       );
@@ -707,6 +744,7 @@ export class MintLogRecorder {
       const undo = diffCardState(after, captured.before);
       await this.writer.apply(captured.card, undo, connection);
       const undone = await this.reader.capture(captured.card, connection, {
+        identityTruth: captured.identityTruth,
         current: captured.current
       });
       mismatches.push(
@@ -714,6 +752,7 @@ export class MintLogRecorder {
       );
       await this.writer.apply(captured.card, effects, connection);
       const redone = await this.reader.capture(captured.card, connection, {
+        identityTruth: captured.identityTruth,
         current: captured.current
       });
       mismatches.push(

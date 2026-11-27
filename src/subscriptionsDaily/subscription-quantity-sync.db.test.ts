@@ -21,7 +21,7 @@ import {
   synchronizeAutomaticSubscriptionQuantitiesAfterReset
 } from './subscription-quantity-sync.db';
 import { invalidateUpcomingSubscriptionCaches } from './subscription-cache';
-import { resolveRequestedSubscriptionCount } from './subscriptions';
+import { resolveRequestedSubscriptionCount } from './subscription-final-count';
 
 jest.mock('@/nftsLoop/db.nfts', () => ({
   getMaxMemeId: jest.fn().mockResolvedValue(556)

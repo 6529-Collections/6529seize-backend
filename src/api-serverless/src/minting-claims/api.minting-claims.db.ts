@@ -5,11 +5,11 @@ import {
   MINTING_CLAIMS_TABLE,
   MINTING_MERKLE_PROOFS_TABLE,
   MINTING_MERKLE_ROOTS_TABLE,
-  SUBSCRIPTIONS_NFTS_FINAL_TABLE,
   MEME_COLLABORATIONS_TABLE
 } from '@/constants';
 import type { DbQueryOptions } from '@/db-query.options';
 import { sqlExecutor } from '@/sql-executor';
+import { subscriptionTables } from '@/subscriptions-identity/identity/subscription-tables';
 import type { AllowlistMerkleProofItem } from './allowlist-merkle';
 
 type StoredMerkleProofs = string | AllowlistMerkleProofItem[] | null;
@@ -245,11 +245,13 @@ export async function fetchMintingAirdrops(
     }
   );
 
+  // The final rows the subscriptions switch names: after it, the identity
+  // rows, which hold every subscriber.
   const publicRows = await sqlExecutor.execute<MintingAirdropPhaseRow>(
     `SELECT 'Public Phase' AS phase,
             COUNT(DISTINCT airdrop_address) AS addresses,
             COUNT(*) AS total
-     FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
+     FROM ${(await subscriptionTables()).final}
      WHERE LOWER(contract) = :contract
        AND token_id = :cardId
        AND phase = 'Public'`,

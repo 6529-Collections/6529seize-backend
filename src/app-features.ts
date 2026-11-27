@@ -24,6 +24,17 @@ export class AppFeatures {
     return this.isFeatureEnabled('SUBSCRIPTION_DEFERRED_REPLAY');
   }
 
+  /**
+   * The subscriptions re-key fallback: every fifth minute the top-up loop
+   * re-keys legacy subscription keys whose wallets the identity mirror now
+   * groups otherwise (subscription-rekey-fallback). Turn it on if nothing
+   * else re-keys subscriptions after the mirror's first run. Rollback: unset
+   * it; keys stay as they are until the next re-key.
+   */
+  public isSubscriptionRekeyOnMirrorEnabled(): boolean {
+    return this.isFeatureEnabled('SUBSCRIPTIONS_REKEY_ON_MIRROR');
+  }
+
   public isExperimentalBulkRepEnabled(): boolean {
     return this.isFeatureEnabled('EXPERIMENTAL_BULK_REP');
   }
@@ -56,6 +67,16 @@ export class AppFeatures {
    */
   public isWavesOnChain(): boolean {
     return this.isFeatureEnabled('WAVES_ON_CHAIN');
+  }
+
+  /**
+   * 6529.io shows polls made on the 6529 chain (the waves chain mirror
+   * writes them into its poll tables). Until this is on, new polls in waves
+   * that moved to the chain are refused from the switch-on
+   * (src/waves-freeze/waves-chain-polls.ts).
+   */
+  public isWavesChainPollsLive(): boolean {
+    return this.isFeatureEnabled('WAVES_CHAIN_POLLS');
   }
 
   /**
@@ -190,6 +211,40 @@ export class AppFeatures {
     return (
       (process.env.FEATURE_PROFILE_CMS_WALLET_GALLERY ?? 'true') === 'true'
     );
+  }
+
+  /**
+   * The wave decision loop also keeps 6529.io's index of the 6529 chain's
+   * waves, decisions and votes (src/waves-chain-index).
+   */
+  public isWavesChainIndexEnabled(): boolean {
+    return this.isFeatureEnabled('WAVES_CHAIN_INDEX');
+  }
+
+  /**
+   * The chain index queues a claim build for the rank-1 entry of a final
+   * result of a Main Stage decision (MAIN_STAGE_DECISION_IDS).
+   */
+  public isWavesChainClaimBuildsEnabled(): boolean {
+    return this.isFeatureEnabled('WAVES_CHAIN_CLAIM_BUILDS');
+  }
+
+  /**
+   * After the chain index, the wave decision loop copies the chain's
+   * decisions into 6529.io's competition tables (src/waves-chain-mirror).
+   * It writes only with WAVES_CHAIN_MIRROR_WRITE=true; otherwise it reports
+   * what it would write.
+   */
+  public isWavesChainMirrorEnabled(): boolean {
+    return this.isFeatureEnabled('WAVES_CHAIN_MIRROR');
+  }
+
+  /**
+   * The wave decision loop also sends a SETTLEMENT_REQUEST for each decision
+   * result due on the 6529 chain (src/waves-settlement).
+   */
+  public isWavesSettlementSenderEnabled(): boolean {
+    return this.isFeatureEnabled('WAVES_SETTLEMENT_SENDER');
   }
 }
 
