@@ -270,7 +270,7 @@ export async function alertOverdueLaunchFlags(
 
 /** How a pass writes its flags: all of them, or only the missed ones. */
 interface MirrorOptions {
-  /** A later delivery's retry: only flags a pass missed before. */
+  /** reconcileInactive's retry: only flags a pass missed before. */
   readonly missedOnly?: boolean;
 }
 
@@ -325,7 +325,7 @@ async function mirrorFlags(
             ),
       failed: (error) => flagFailed(record, flag, error, ctx, save)
     });
-    // A deferred flag stays unmirrored, for a later delivery.
+    // A deferred flag stays unmirrored, for a later pass.
     if (outcome === 'deferred') {
       await flagNotWritten(
         record,

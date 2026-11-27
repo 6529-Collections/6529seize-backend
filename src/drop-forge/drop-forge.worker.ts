@@ -305,7 +305,7 @@ export class DropForgeWorker {
       hasUnwrittenFlags(record)
     ) {
       // With the mint log on, a flag a pass deferred or failed to write is
-      // written by a later delivery, whatever the launch's state, even when
+      // written by a later pass, whatever the launch's state, even when
       // its manual transactions can't be reconciled (the dispatch keeps
       // delivering while one is left). An existing row, an admin's, stays
       // as it is.
