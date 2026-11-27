@@ -26,10 +26,13 @@ let gatewaySettingsChecked = false;
 
 /**
  * Once per cold start, after the secret has loaded: says so when the chain
- * gateway settings can't be used. It changes nothing else. With no usable
- * CHAIN_GATEWAY_URL the client refuses its first read (not_configured), so
- * every chain claim fails and goes back to the queue; native claims never
- * read the gateway.
+ * gateway settings can't be used, and how to recover. It changes nothing
+ * else. With no usable CHAIN_GATEWAY_URL the client refuses its first read
+ * (not_configured), so every chain claim fails. SQS retries it, and after
+ * the queue's 10 receives moves it to claims-builder-dlq; the chain index
+ * sends each claim build once, so only a redrive brings it back. The secret
+ * is read once per container, so a fixed secret takes effect at the next
+ * cold start. Native claims never read the gateway.
  */
 function reportGatewaySettingsOnce(): void {
   if (gatewaySettingsChecked) return;
@@ -39,7 +42,7 @@ function reportGatewaySettingsOnce(): void {
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     logger.error(
-      `[CHAIN GATEWAY NOT CONFIGURED] ${reason}. Chain claims wait until the gateway settings (CHAIN_GATEWAY_URL, CHAIN_GATEWAY_SERVICE_KEY) are fixed: each one is refused and goes back to the queue. Native claims are built as before.`
+      `[CHAIN GATEWAY NOT CONFIGURED] ${reason}. Chain claims are refused; after 10 receives SQS moves each one to claims-builder-dlq. To fix: set CHAIN_GATEWAY_URL in the lambdas secret, update or redeploy claimsBuilder so it starts cold (it reads the secret once), then redrive claims-builder-dlq. Native claims are built as before.`
     );
   }
 }

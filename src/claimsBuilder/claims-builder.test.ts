@@ -34,9 +34,9 @@ const SETTINGS = [
   'FEATURE_MINT_LOG_PRIMARY'
 ];
 
+/** The gateway's URL alone: no CHAIN_GATEWAY_SERVICE_KEY. */
 const CONFIGURED = {
   CHAIN_GATEWAY_URL: GATEWAY_URL,
-  CHAIN_GATEWAY_SERVICE_KEY: 'test-service-key',
   CHAIN_GATEWAY_RETRIES: '0',
   MAIN_STAGE_DECISION_IDS: DECISION
 };
@@ -110,6 +110,61 @@ class FakeResultsChain implements Pick<
   }
 }
 
+const NETWORK = hex('22');
+const FINALIZED = 4200;
+
+function readStamp(height: number, at: 'finalized' | 'head') {
+  return {
+    at,
+    height,
+    finalizedHeight: FINALIZED,
+    headHeight: FINALIZED + 3,
+    network: NETWORK,
+    time: 1_764_547_200_000 + height
+  };
+}
+
+/**
+ * The gateway's HTTP answers to the reads a chain claim makes (the status,
+ * the decision's results, the winner's entry), as fetch gives them.
+ */
+function gatewayAnswers(result: ChainObject) {
+  const head = readStamp(FINALIZED + 3, 'head');
+  const finalized = readStamp(FINALIZED, 'finalized');
+  const answers: Record<string, unknown> = {
+    '/v1/status': {
+      read: head,
+      data: {
+        ready: true,
+        head,
+        finalized,
+        pinnable: { from: FINALIZED - 63, to: FINALIZED }
+      },
+      next: null
+    },
+    [`/v1/decisions/${DECISION}/results`]: {
+      read: finalized,
+      data: [result],
+      next: null
+    },
+    [`/v1/entries/${ENTRY}`]: {
+      read: finalized,
+      data: { entryId: ENTRY, manifestHash: MANIFEST },
+      next: null
+    }
+  };
+  return async (url: string) => {
+    const json = answers[new URL(url).pathname];
+    const bytes = Buffer.from(JSON.stringify(json ?? null));
+    return {
+      status: json === undefined ? 500 : 200,
+      headers: { get: () => null },
+      arrayBuffer: async () =>
+        bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length)
+    };
+  };
+}
+
 interface Lambda {
   run(message: object): Promise<void>;
   readonly claims: {
@@ -164,13 +219,20 @@ function coldStart(
   } else {
     jest.dontMock(DECISION_RESULTS);
   }
-  const { handler } = require('./index') as typeof import('./index');
+  // The lambda's logger is kept by name, so it is spied on before the
+  // lambda loads and gets it.
   const { Logger } = require('@/logging') as typeof import('@/logging');
   const logger = Logger.get('CLAIMS_BUILDER');
-  jest.spyOn(logger, 'info').mockImplementation(() => undefined);
+  const info = jest.spyOn(logger, 'info').mockImplementation(() => undefined);
+  const warn = jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
   const errors = jest
     .spyOn(logger, 'error')
     .mockImplementation(() => undefined);
+  const { handler } = require('./index') as typeof import('./index');
+  // Loading logs nothing: the settings come with the secret, in the handler.
+  expect([info, warn, errors].map((spy) => spy.mock.calls.length)).toEqual([
+    0, 0, 0
+  ]);
   return {
     claims,
     alerts,
@@ -236,7 +298,7 @@ describe('claims builder: chain claims for the Main Stage', () => {
     ['a result still counting', 'scoring', [ENTRY], {}],
     ['an occurrence with no result', 'final', [ENTRY], { occurrence: 3 }]
   ] as const)(
-    'refuses %s, and the message goes back to the queue',
+    'refuses %s: the message fails, for SQS to retry',
     async (_label, stage, ranked, change) => {
       const chain = new FakeResultsChain();
       chain.settle(stage, [...ranked]);
@@ -266,7 +328,47 @@ describe('claims builder: chain claims for the Main Stage', () => {
     expect(lambda.claims.createClaimForDropIfMissing).not.toHaveBeenCalled();
   });
 
-  it('reads the gateway with the settings the secret brings, at the first chain read', async () => {
+  it('builds through the real gateway client with CHAIN_GATEWAY_URL alone, the secret bringing it', async () => {
+    fetchMock.mockImplementation(
+      gatewayAnswers({
+        id: DECISION,
+        occurrence: 2,
+        stage: 'final',
+        winners: [{ entryId: ENTRY, rank: 1 }]
+      })
+    );
+    const lambda = coldStart(CONFIGURED);
+
+    await lambda.run(chainMessage());
+
+    expect(lambda.claims.createClaimForDropIfMissing).toHaveBeenCalledWith(
+      'drop-7',
+      undefined
+    );
+    const requests = fetchMock.mock.calls.map(([url, init]) => ({
+      url: new URL(url),
+      authorization: init.headers.authorization
+    }));
+    expect(requests.map(({ url }) => url.origin + url.pathname)).toEqual([
+      `${GATEWAY_URL}/v1/status`,
+      `${GATEWAY_URL}/v1/decisions/${DECISION}/results`,
+      `${GATEWAY_URL}/v1/entries/${ENTRY}`
+    ]);
+    // The reads are pinned to the finalized height, and carry no key.
+    for (const { url } of requests.slice(1)) {
+      expect(url.searchParams.get('height')).toBe(String(FINALIZED));
+      expect(url.searchParams.get('network')).toBe(NETWORK);
+    }
+    expect(requests.map(({ authorization }) => authorization)).toEqual([
+      undefined,
+      undefined,
+      undefined
+    ]);
+    expect(lambda.errors).not.toHaveBeenCalled();
+    expect(lambda.alerts).not.toHaveBeenCalled();
+  });
+
+  it('refuses a chain claim when the gateway cannot be read', async () => {
     const lambda = coldStart(CONFIGURED);
 
     await expect(lambda.run(chainMessage())).rejects.toThrow(
@@ -274,11 +376,10 @@ describe('claims builder: chain claims for the Main Stage', () => {
     );
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe(`${GATEWAY_URL}/v1/status`);
-    expect(init.headers.authorization).toBe('Bearer test-service-key');
+    expect(fetchMock.mock.calls[0][0]).toBe(`${GATEWAY_URL}/v1/status`);
     expect(lambda.notConfiguredLogs()).toEqual([]);
     expect(lambda.claims.createClaimForDropIfMissing).not.toHaveBeenCalled();
+    expect(lambda.alerts).toHaveBeenCalledTimes(1);
   });
 
   describe.each([
@@ -289,10 +390,11 @@ describe('claims builder: chain claims for the Main Stage', () => {
     ]
   ])('when %s', (reason, secret) => {
     const logged =
-      `${NOT_CONFIGURED} ${reason}. Chain claims wait until the gateway ` +
-      'settings (CHAIN_GATEWAY_URL, CHAIN_GATEWAY_SERVICE_KEY) are fixed: ' +
-      'each one is refused and goes back to the queue. Native claims are ' +
-      'built as before.';
+      `${NOT_CONFIGURED} ${reason}. Chain claims are refused; after 10 ` +
+      'receives SQS moves each one to claims-builder-dlq. To fix: set ' +
+      'CHAIN_GATEWAY_URL in the lambdas secret, update or redeploy ' +
+      'claimsBuilder so it starts cold (it reads the secret once), then ' +
+      'redrive claims-builder-dlq. Native claims are built as before.';
 
     it('logs one error a cold start and refuses every chain claim', async () => {
       const lambda = coldStart(secret);
