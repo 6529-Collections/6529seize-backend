@@ -10,6 +10,65 @@ export interface AdminTarget {
 
 export type Row = Record<string, unknown>;
 
+/** A column as information_schema describes it. */
+export interface ColumnInfo {
+  readonly name: string;
+  /** DATA_TYPE, lower case: int, varchar, datetime, ... */
+  readonly dataType: string;
+  readonly nullable: boolean;
+  /** Whether it has a default, a literal or an expression. */
+  readonly hasDefault: boolean;
+  /** EXTRA: auto_increment, DEFAULT_GENERATED, on update ..., ... GENERATED. */
+  readonly extra: string;
+}
+
+const NUMERIC = new Set([
+  'tinyint',
+  'smallint',
+  'mediumint',
+  'int',
+  'bigint',
+  'decimal',
+  'float',
+  'double',
+  'bit'
+]);
+const TEXTUAL = new Set([
+  'char',
+  'varchar',
+  'tinytext',
+  'text',
+  'mediumtext',
+  'longtext',
+  'binary',
+  'varbinary',
+  'tinyblob',
+  'blob',
+  'mediumblob',
+  'longblob'
+]);
+
+/**
+ * The SQL a column is reset to for its owner to fill again: its default,
+ * NULL for a nullable column without one, and for a NOT NULL column
+ * without one its type's zero (0, or an empty string). A NOT NULL column
+ * of another type without a default has none: null.
+ */
+export function resetValue(column: ColumnInfo): string | null {
+  if (column.hasDefault) return 'DEFAULT';
+  if (column.nullable) return 'NULL';
+  if (NUMERIC.has(column.dataType)) return '0';
+  if (TEXTUAL.has(column.dataType)) return "''";
+  return null;
+}
+
+/** Whether MySQL writes a column itself: on update, or generated. */
+export function writtenByMysql(column: ColumnInfo): boolean {
+  return /on update|generated/i.test(
+    column.extra.replace(/DEFAULT_GENERATED/i, '')
+  );
+}
+
 /** A root connection to the run's private server. Values come back as strings. */
 /**
  * Rows whose `columns` hold one of the tuples bound to its `?`
@@ -23,26 +82,67 @@ function partitionWhere(columns: readonly string[], inside: boolean): string {
     : [...ids.map((id) => `${id} IS NULL`), `NOT (${tuple})`].join(' OR ');
 }
 
-export class MysqlAdmin {
-  private constructor(private readonly connection: mysql.Connection) {}
-
-  static async connect(target: AdminTarget): Promise<MysqlAdmin> {
-    const connection = mysql.createConnection({
-      host: target.host,
-      port: target.port,
-      user: target.user,
-      password: target.password,
-      charset: 'utf8mb4',
-      timezone: 'Z',
-      supportBigNumbers: true,
-      bigNumberStrings: true,
-      dateStrings: true,
-      connectTimeout: 5000
-    });
+/**
+ * A connection to `target`, with `database` as its default when given.
+ * Every admin connection reads values the same way, so rows from one key
+ * and hash like rows from another.
+ */
+async function openConnection(
+  target: AdminTarget,
+  database?: string
+): Promise<mysql.Connection> {
+  const connection = mysql.createConnection({
+    host: target.host,
+    port: target.port,
+    user: target.user,
+    password: target.password,
+    ...(database ? { database } : {}),
+    charset: 'utf8mb4',
+    timezone: 'Z',
+    supportBigNumbers: true,
+    bigNumberStrings: true,
+    dateStrings: true,
+    connectTimeout: 5000
+  });
+  try {
     await new Promise<void>((resolve, reject) =>
       connection.connect((error) => (error ? reject(error) : resolve()))
     );
-    return new MysqlAdmin(connection);
+  } catch (error) {
+    connection.destroy();
+    throw error;
+  }
+  return connection;
+}
+
+export class MysqlAdmin {
+  private constructor(
+    private readonly connection: mysql.Connection,
+    private readonly target: AdminTarget
+  ) {}
+
+  static async connect(target: AdminTarget): Promise<MysqlAdmin> {
+    return new MysqlAdmin(await openConnection(target), target);
+  }
+
+  /**
+   * One query on a connection of its own whose default database is
+   * `database`, closed after, whether the query succeeds or not. A
+   * manifest's condition (a plan's `where`) can then name other tables in
+   * a subquery without their database, while the admin connection keeps
+   * no default database.
+   */
+  private async queryIn<T = Row>(database: string, sql: string): Promise<T[]> {
+    const connection = await openConnection(this.target, database);
+    try {
+      return await new Promise<T[]>((resolve, reject) =>
+        connection.query(sql, [], (error, rows) =>
+          error ? reject(error) : resolve(rows as T[])
+        )
+      );
+    } finally {
+      connection.destroy();
+    }
   }
 
   query<T = Row>(sql: string, params: unknown[] = []): Promise<T[]> {
@@ -241,6 +341,45 @@ export class MysqlAdmin {
   }
 
   /**
+   * A table's rows matching an SQL condition on its columns, evaluated
+   * with `database` as the default (see queryIn).
+   */
+  async rowsWhere(
+    database: string,
+    table: string,
+    where: string
+  ): Promise<Row[]> {
+    return this.queryIn(
+      database,
+      `SELECT * FROM ${mysql.escapeId(database)}.${mysql.escapeId(table)} WHERE (${where})`
+    );
+  }
+
+  /**
+   * How many of a table's rows match an SQL condition on its columns and
+   * lie in a partition: their `columns` hold one of the tuples in `values`.
+   * The condition is evaluated with `database` as the default.
+   */
+  async rowsWhereInPartition(
+    database: string,
+    table: string,
+    where: string,
+    columns: readonly string[],
+    values: readonly (readonly string[])[]
+  ): Promise<number> {
+    // The tuples go in before the condition joins, so a ? in its text is
+    // never taken for a placeholder.
+    const inside = mysql.format(partitionWhere(columns, true), [
+      values.map((v) => [...v])
+    ]);
+    const [row] = await this.queryIn<{ n: string }>(
+      database,
+      `SELECT COUNT(*) AS n FROM ${mysql.escapeId(database)}.${mysql.escapeId(table)} WHERE (${where}) AND ${inside}`
+    );
+    return Number(row.n);
+  }
+
+  /**
    * A table's rows in `orderBy` order. With `newestBy`, only the rows
    * whose column holds its largest value, as MySQL compares it (MAX).
    */
@@ -308,6 +447,101 @@ export class MysqlAdmin {
       await this.query(`DROP TEMPORARY TABLE IF EXISTS ${left}`);
       await this.query(`DROP TEMPORARY TABLE IF EXISTS ${right}`);
     }
+  }
+
+  /** A table's columns, in order; empty when there is no such table. */
+  async columnNames(database: string, table: string): Promise<string[]> {
+    const rows = await this.query<{ name: string }>(
+      `SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+        ORDER BY ORDINAL_POSITION`,
+      [database, table]
+    );
+    return rows.map((row) => row.name);
+  }
+
+  /** What a table's columns are: type, NULL, default, and EXTRA. */
+  async columnInfo(database: string, table: string): Promise<ColumnInfo[]> {
+    const rows = await this.query<{
+      name: string;
+      dataType: string;
+      nullable: string;
+      columnDefault: string | null;
+      extra: string;
+    }>(
+      `SELECT COLUMN_NAME AS name, DATA_TYPE AS dataType,
+              IS_NULLABLE AS nullable, COLUMN_DEFAULT AS columnDefault,
+              EXTRA AS extra
+         FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+        ORDER BY ORDINAL_POSITION`,
+      [database, table]
+    );
+    return rows.map((row) => ({
+      name: row.name,
+      dataType: row.dataType.toLowerCase(),
+      nullable: row.nullable === 'YES',
+      hasDefault: row.columnDefault !== null,
+      extra: row.extra ?? ''
+    }));
+  }
+
+  /** Sets `columns` of every row of a table to what `resetValue` gives. */
+  async resetColumns(
+    database: string,
+    table: string,
+    columns: readonly ColumnInfo[]
+  ): Promise<void> {
+    await this.query(
+      `UPDATE ${mysql.escapeId(database)}.${mysql.escapeId(table)} SET ${columns
+        .map(
+          (column) => `${mysql.escapeId(column.name)} = ${resetValue(column)}`
+        )
+        .join(', ')}`
+    );
+  }
+
+  /**
+   * Copies a table's key and `columns` into `into` (in `toDb`), to put
+   * them back later with `restoreColumns`.
+   */
+  async saveColumns(
+    database: string,
+    table: string,
+    key: readonly string[],
+    columns: readonly string[],
+    toDb: string,
+    into: string
+  ): Promise<void> {
+    const target = `${mysql.escapeId(toDb)}.${mysql.escapeId(into)}`;
+    await this.query(`DROP TABLE IF EXISTS ${target}`);
+    await this.query(
+      `CREATE TABLE ${target} AS SELECT ${[...key, ...columns]
+        .map((column) => mysql.escapeId(column))
+        .join(', ')} FROM ${mysql.escapeId(database)}.${mysql.escapeId(table)}`
+    );
+  }
+
+  /**
+   * Puts saved `columns` back on the rows whose key the copy holds; rows
+   * it doesn't hold keep theirs.
+   */
+  async restoreColumns(
+    database: string,
+    table: string,
+    key: readonly string[],
+    columns: readonly string[],
+    fromDb: string,
+    from: string
+  ): Promise<void> {
+    const t = mysql.escapeId('t');
+    const s = mysql.escapeId('s');
+    await this.query(
+      `UPDATE ${mysql.escapeId(database)}.${mysql.escapeId(table)} ${t}
+         JOIN ${mysql.escapeId(fromDb)}.${mysql.escapeId(from)} ${s}
+           ON ${key.map((c) => `${t}.${mysql.escapeId(c)} = ${s}.${mysql.escapeId(c)}`).join(' AND ')}
+          SET ${columns.map((c) => `${t}.${mysql.escapeId(c)} = ${s}.${mysql.escapeId(c)}`).join(', ')}`
+    );
   }
 
   /** Whether a column may hold NULL; null when the table has no such column. */

@@ -177,6 +177,110 @@ describe('MysqlAdmin on the private mysqld', () => {
     ).toEqual([[0, 0]]);
   });
 
+  it("evaluates a plan's condition with the database as default, and leaves the admin connection without one", async () => {
+    await admin.query(
+      `CREATE TABLE ${FROM}.planned (id INT NOT NULL PRIMARY KEY, kind VARCHAR(10), at DATETIME(3))`
+    );
+    await admin.query(
+      `CREATE TABLE ${FROM}.kept (id INT NOT NULL PRIMARY KEY)`
+    );
+    await admin.query(
+      `INSERT INTO ${FROM}.planned VALUES (1, 'a', '2026-01-01 00:00:00.000'), (2, 'b', NULL), (3, 'a', NULL)`
+    );
+    await admin.query(`INSERT INTO ${FROM}.kept VALUES (1)`);
+    const noDefault = async () =>
+      (await admin.query<{ db: string | null }>('SELECT DATABASE() AS db'))[0]
+        .db;
+    expect(await noDefault()).toBeNull();
+    // A subquery names another table without its database.
+    const rows = await admin.rowsWhere(
+      FROM,
+      'planned',
+      'id NOT IN (SELECT id FROM kept)'
+    );
+    expect(rows).toEqual([
+      { id: 2, kind: 'b', at: null },
+      { id: 3, kind: 'a', at: null }
+    ]);
+    // Values read as the admin connection reads them (dates as strings).
+    expect(
+      await admin.rowsWhere(FROM, 'planned', 'id IN (SELECT id FROM kept)')
+    ).toEqual([{ id: 1, kind: 'a', at: '2026-01-01 00:00:00.000' }]);
+    expect(
+      await admin.rowsWhereInPartition(
+        FROM,
+        'planned',
+        'id NOT IN (SELECT id FROM kept)',
+        ['kind'],
+        [['a']]
+      )
+    ).toBe(1);
+    expect(await noDefault()).toBeNull();
+    // A condition MySQL refuses leaves no default behind either.
+    await expect(
+      admin.rowsWhere(FROM, 'planned', 'id IN (SELECT id FROM no_such_table)')
+    ).rejects.toThrow(/no_such_table/);
+    expect(await noDefault()).toBeNull();
+    await expect(
+      admin.rowsWhereInPartition(FROM, 'planned', 'nope = 1', ['kind'], [['a']])
+    ).rejects.toThrow(/nope/);
+    expect(await noDefault()).toBeNull();
+    // A database the server doesn't have: the open fails, and leaves no
+    // connection behind.
+    const connections = async () =>
+      Number(
+        (
+          await admin.query<{ n: string }>(
+            "SELECT COUNT(*) AS n FROM information_schema.PROCESSLIST WHERE COMMAND <> 'Daemon'"
+          )
+        )[0].n
+      );
+    const open = await connections();
+    await expect(
+      admin.rowsWhere('rebuild_no_such_db', 'planned', '1 = 1')
+    ).rejects.toThrow(/rebuild_no_such_db/);
+    // The server may list a closing connection for a moment: wait up to
+    // a second for the count to come back.
+    let after = await connections();
+    for (let i = 0; i < 10 && after !== open; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      after = await connections();
+    }
+    expect(after).toBe(open);
+    expect(await noDefault()).toBeNull();
+  });
+
+  it("reads a plan's rows as the admin connection reads them, in the same session settings", async () => {
+    await admin.query(
+      `CREATE TABLE ${FROM}.typed (
+         id BIGINT NOT NULL PRIMARY KEY,
+         amount DECIMAL(30, 10) NOT NULL,
+         big BIGINT UNSIGNED NOT NULL,
+         at TIMESTAMP(3) NULL
+       )`
+    );
+    await admin.query(
+      `INSERT INTO ${FROM}.typed VALUES
+         (9007199254740993, 12345678901234567890.0123456789, 18446744073709551615, '2026-01-01 00:00:00.123'),
+         (2, 0.5, 0, NULL)`
+    );
+    const ordered = await admin.orderedRows(FROM, 'typed', ['id']);
+    expect(await admin.rowsWhere(FROM, 'typed', '1 = 1')).toEqual(
+      expect.arrayContaining(ordered)
+    );
+    expect(ordered).toHaveLength(2);
+    // The plan's connection has the admin session's time zone and SQL mode.
+    const [session] = await admin.query<{ tz: string; mode: string }>(
+      'SELECT @@session.time_zone AS tz, @@session.sql_mode AS mode'
+    );
+    const same = await admin.rowsWhere(
+      FROM,
+      'typed',
+      `@@session.time_zone = '${session.tz}' AND @@session.sql_mode = '${session.mode}'`
+    );
+    expect(same).toHaveLength(2);
+  });
+
   it('leaves no pid file once the server stops', async () => {
     const pidFile = path.join(HOME, 'mysql', 'harness-mysqld.pid');
     expect(fs.readFileSync(pidFile, 'utf8').trim()).toBe(String(server.pid));

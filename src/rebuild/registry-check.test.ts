@@ -1,6 +1,7 @@
 import * as fc from 'fast-check';
 import {
   AreaManifest,
+  PlannedRows,
   RebuildStep,
   TableEntry
 } from '@/rebuild/manifest.types';
@@ -390,6 +391,590 @@ describe('checkRegistry', () => {
     });
   });
 
+  describe('column owners', () => {
+    const owner = (
+      id: string,
+      columns: string[],
+      parts: Partial<RebuildStep> = {}
+    ) =>
+      step(id, {
+        writes: [{ table: 'ids', columns, reason: 'its sync writes them' }],
+        ...parts
+      });
+    const check = (rebuilders: RebuildStep[], seeds: RebuildStep[] = []) =>
+      checkRegistry({
+        manifests: [
+          area(
+            'a',
+            { ids: index() },
+            {
+              rebuilders: rebuilders.filter((s) => s.id.startsWith('a.')),
+              seeds
+            }
+          ),
+          area(
+            'b',
+            {},
+            {
+              rebuilders: rebuilders.filter((s) => s.id.startsWith('b.'))
+            }
+          )
+        ],
+        codeTables: code('ids')
+      }).problems.map((p) => [p.kind, p.detail]);
+    const rows = step('a.rows', { writes: ['ids'] });
+
+    it("lets another area own columns of a row writer's table, after it", () => {
+      expect(
+        check([rows, owner('b.tdh', ['tdh', 'xtdh'], { after: ['a.rows'] })])
+      ).toEqual([]);
+    });
+
+    it('refuses overlapping owners, an owner with no row writer, and one that runs first', () => {
+      expect(
+        check([
+          rows,
+          owner('b.tdh', ['tdh'], { after: ['a.rows'] }),
+          owner('b.again', ['tdh', 'level'], { after: ['a.rows'] })
+        ])
+      ).toEqual([
+        [
+          'DOUBLE_WRITER',
+          "ids's column owners overlap: b.tdh and b.again both own tdh"
+        ]
+      ]);
+      expect(check([owner('b.tdh', ['tdh'])])).toEqual([
+        ['DOUBLE_WRITER', 'ids has column owners (b.tdh) but no row writer']
+      ]);
+      expect(check([rows, owner('b.tdh', ['tdh'])])).toEqual([
+        [
+          'BAD_ORDER',
+          "column owner b.tdh of ids must run after its row writer; add after: ['a.rows']"
+        ]
+      ]);
+    });
+
+    it('lets a writer read its table without waiting on the column owners', () => {
+      // The row writer reads its rows, and two owners read the table: none
+      // waits on an owner, and each owner waits on the row writer only.
+      expect(
+        check([
+          step('a.rows', { writes: ['ids'], reads: ['ids'] }),
+          owner('b.tdh', ['tdh'], { after: ['a.rows'], reads: ['ids'] }),
+          owner('b.xtdh', ['xtdh'], { after: ['a.rows'], reads: ['ids'] })
+        ])
+      ).toEqual([]);
+      // Another reader of the table waits on every writer of it.
+      expect(
+        check([
+          rows,
+          owner('b.tdh', ['tdh'], { after: ['a.rows'] }),
+          step('b.reader', { reads: ['ids'], after: ['a.rows'] })
+        ])
+      ).toEqual([
+        [
+          'BAD_ORDER',
+          "rebuilder b.reader reads ids, which b.tdh rebuilds; add after: ['b.tdh']"
+        ]
+      ]);
+    });
+
+    it('refuses a step that writes the rows and owns columns of one table', () => {
+      expect(
+        check([
+          step('a.rows', {
+            writes: ['ids', { table: 'ids', columns: ['tdh'], reason: 'x' }]
+          })
+        ])
+      ).toEqual([
+        [
+          'DOUBLE_WRITER',
+          'a.rows both writes the rows of ids and owns columns of it; a step does one or the other'
+        ]
+      ]);
+    });
+
+    it('refuses a write with both columns and a partition, and owning a partition or checkpoint column', () => {
+      const both = {
+        table: 'ids',
+        columns: ['tdh'],
+        reason: 'x',
+        partition: { columns: ['kind'], values: [['a']], reason: 'x' }
+      };
+      expect(
+        check([
+          rows,
+          step('b.both', { writes: [both], after: ['a.rows'] })
+        ]).map(([, detail]) => detail)
+      ).toContain(
+        'rebuilder b.both declares both columns and a partition of ids; a write is one or the other'
+      );
+      const partitioned = (id: string, value: string) =>
+        step(id, {
+          writes: [
+            {
+              table: 'ids',
+              partition: { columns: ['kind'], values: [[value]], reason: 'x' }
+            }
+          ]
+        });
+      expect(
+        check([
+          partitioned('a.one', 'a'),
+          partitioned('a.two', 'b'),
+          owner('b.kind', ['kind'], { after: ['a.one', 'a.two'] })
+        ])
+      ).toEqual([
+        [
+          'DOUBLE_WRITER',
+          'b.kind owns ids.kind, which says which rows are which (a partition or checkpoint column); only the row writer writes it'
+        ]
+      ]);
+      expect(
+        checkRegistry({
+          manifests: [
+            area(
+              'a',
+              {
+                ids: {
+                  class: 'INDEX',
+                  checkpoint: { column: 'block', reason: 'the newest row' }
+                }
+              },
+              {
+                rebuilders: [
+                  rows,
+                  step('a.block', {
+                    writes: [{ table: 'ids', columns: ['block'], reason: 'x' }],
+                    after: ['a.rows']
+                  })
+                ]
+              }
+            )
+          ],
+          codeTables: code('ids')
+        }).problems.map((p) => p.detail)
+      ).toEqual([
+        'a.block owns ids.block, which says which rows are which (a partition or checkpoint column); only the row writer writes it'
+      ]);
+    });
+
+    it("refuses an owner of a table that isn't INDEX, or without a reason", () => {
+      expect(
+        checkRegistry({
+          manifests: [
+            area(
+              'a',
+              { ids: index(), cache: { class: 'EPHEMERAL', why: 'a cache' } },
+              {
+                rebuilders: [
+                  rows,
+                  step('a.cache', {
+                    writes: [{ table: 'cache', columns: ['x'], reason: 'x' }]
+                  }),
+                  owner('a.bare', ['tdh'], { after: ['a.rows'] })
+                ].map((s) =>
+                  s.id === 'a.bare'
+                    ? {
+                        ...s,
+                        writes: [
+                          { table: 'ids', columns: ['tdh'], reason: ' ' }
+                        ]
+                      }
+                    : s
+                )
+              }
+            )
+          ],
+          codeTables: code('ids', 'cache')
+        }).problems.map((p) => p.detail)
+      ).toEqual([
+        'rebuilder a.cache owns columns of cache, not an INDEX table',
+        "rebuilder a.bare's columns of ids have no reason",
+        'cache has column owners (a.cache) but no row writer'
+      ]);
+    });
+
+    it('checks an owner is a rebuilder with columns and a reason', () => {
+      expect(
+        check(
+          [rows, owner('b.none', [], { after: ['a.rows'] })],
+          [owner('a.seed', ['tdh'])]
+        ).map(([, detail]) => detail)
+      ).toEqual([
+        'seed a.seed declares columns of ids; only a rebuilder owns columns',
+        "rebuilder b.none's columns of ids name no columns"
+      ]);
+    });
+  });
+
+  it('keeps planned rows to a rebuilder of the rows, with where, reason, a last day and a change', () => {
+    const plan = (parts: Partial<PlannedRows> = {}): PlannedRows => ({
+      table: 'ids',
+      where: 'NOT EXISTS (SELECT 1 FROM map m WHERE m.id = ids.id)',
+      reason: 'rows only a later step creates',
+      until: '2026-12-04',
+      change: 'the derived ids',
+      ...parts
+    });
+    const check = (rebuilders: RebuildStep[], seeds: RebuildStep[] = []) =>
+      checkRegistry({
+        manifests: [
+          area('a', { ids: index(), other: index() }, { rebuilders, seeds })
+        ],
+        codeTables: code('ids', 'other')
+      }).problems.map((p) => p.detail);
+    expect(
+      check([step('a.rows', { writes: ['ids'], plannedRows: [plan()] })])
+    ).toEqual([]);
+    expect(
+      check(
+        [
+          step('a.rows', {
+            writes: ['ids'],
+            plannedRows: [
+              plan({ table: 'other' }),
+              plan({ where: ' ', reason: '', until: 'the derived ids' }),
+              plan({ until: '2026-1-5', change: ' ' }),
+              // A manifest written without the type's help.
+              { table: 'ids' } as PlannedRows
+            ]
+          })
+        ],
+        [step('a.seed', { writes: ['ids'], plannedRows: [plan()] })]
+      )
+    ).toEqual([
+      'seed a.seed plans rows of ids; only a rebuilder plans rows',
+      "rebuilder a.rows plans rows of other, whose rows it doesn't write",
+      "rebuilder a.rows's planned rows of ids have no where",
+      "rebuilder a.rows's planned rows of ids have no reason",
+      "rebuilder a.rows's planned rows of ids need an until, their last day written YYYY-MM-DD",
+      "rebuilder a.rows's planned rows of ids need an until, their last day written YYYY-MM-DD",
+      "rebuilder a.rows's planned rows of ids name no change that brings their source",
+      "rebuilder a.rows's planned rows of ids have no where",
+      "rebuilder a.rows's planned rows of ids have no reason",
+      "rebuilder a.rows's planned rows of ids need an until, their last day written YYYY-MM-DD",
+      "rebuilder a.rows's planned rows of ids name no change that brings their source"
+    ]);
+  });
+
+  it("keeps a plan's columns to plain names, each once, that no other rebuilder owns", () => {
+    const plan = (columns: string[]): PlannedRows => ({
+      table: 'ids',
+      where: 'id > 2',
+      reason: 'columns a later change rebuilds',
+      until: '2026-12-04',
+      change: 'the derived ids',
+      columns
+    });
+    const check = (plans: PlannedRows[]) =>
+      checkRegistry({
+        manifests: [
+          area(
+            'a',
+            { ids: index() },
+            {
+              rebuilders: [
+                step('a.rows', { writes: ['ids'], plannedRows: plans }),
+                step('a.ranks', {
+                  writes: [
+                    { table: 'ids', columns: ['rank'], reason: 'ranks' }
+                  ],
+                  after: ['a.rows']
+                })
+              ]
+            }
+          )
+        ],
+        codeTables: code('ids')
+      }).problems.map((p) => p.detail);
+    expect(check([plan(['name', 'updated_at'])])).toEqual([]);
+    expect(
+      check([
+        plan([]),
+        plan(['a b', 'name', 'name']),
+        plan(['rank', 'name']),
+        // MySQL column names compare case-insensitively.
+        plan(['Rank'])
+      ])
+    ).toEqual([
+      "rebuilder a.rows's planned columns of ids name none",
+      "rebuilder a.rows's planned columns of ids name 'a b', not a plain column name",
+      "rebuilder a.rows's planned columns of ids name a column twice",
+      "rebuilder a.rows's planned columns of ids include rank, which a.ranks owns",
+      "rebuilder a.rows's planned columns of ids include Rank, which a.ranks owns"
+    ]);
+  });
+
+  describe('order edges to another area', () => {
+    const check = (writer: Partial<RebuildStep>, readers: RebuildStep[] = []) =>
+      checkRegistry({
+        manifests: [
+          area(
+            'waves',
+            { waves: index() },
+            {
+              rebuilders: [
+                step('waves.mirror', { writes: ['waves'], ...writer })
+              ]
+            }
+          ),
+          area('subs', { subs: index() }, { rebuilders: readers })
+        ],
+        codeTables: code('waves', 'subs')
+      });
+
+    it('notes an edge to a step of another known area that is not here', () => {
+      const result = check({ before: ['subs.identity'], after: ['subs.seed'] });
+      expect(result.problems).toEqual([]);
+      expect(result.crossAreaEdges).toEqual([
+        { step: 'waves.mirror', field: 'after', id: 'subs.seed' },
+        { step: 'waves.mirror', field: 'before', id: 'subs.identity' }
+      ]);
+    });
+
+    it("still fails an unknown id of the step's own area, or of no area", () => {
+      const result = check({ before: ['waves.ghost', 'sbus.identity'] });
+      expect(result.problems.map((p) => p.detail)).toEqual([
+        'rebuilder waves.mirror lists unknown step waves.ghost in `before`',
+        'rebuilder waves.mirror lists unknown step sbus.identity in `before`'
+      ]);
+      expect(result.crossAreaEdges).toEqual([]);
+    });
+
+    it('keeps order within one kind: a seed id is no edge for a rebuilder', () => {
+      const seeded = checkRegistry({
+        manifests: [
+          area(
+            'waves',
+            { waves: index() },
+            {
+              seeds: [
+                step('waves.seed', {
+                  writes: ['waves'],
+                  before: ['subs.identity']
+                })
+              ],
+              rebuilders: [
+                step('waves.mirror', {
+                  writes: ['waves'],
+                  after: ['subs.seed']
+                })
+              ]
+            }
+          ),
+          area(
+            'subs',
+            { subs: index() },
+            {
+              seeds: [step('subs.seed', { writes: ['subs'] })],
+              rebuilders: [step('subs.identity', { writes: ['subs'] })]
+            }
+          )
+        ],
+        codeTables: code('waves', 'subs')
+      });
+      expect(seeded.problems.map((p) => p.detail)).toEqual([
+        'a seed waits on rebuilder subs.identity: order holds within one kind',
+        'a rebuilder waits on seed subs.seed: order holds within one kind'
+      ]);
+      expect(seeded.crossAreaEdges).toEqual([]);
+    });
+
+    it('names a near step of the same kind only', () => {
+      const result = checkRegistry({
+        manifests: [
+          area(
+            'waves',
+            { waves: index() },
+            {
+              rebuilders: [
+                step('waves.mirror', {
+                  writes: ['waves'],
+                  before: ['subs.sed']
+                })
+              ]
+            }
+          ),
+          area(
+            'subs',
+            { subs: index() },
+            { seeds: [step('subs.seed', { writes: ['subs'] })] }
+          )
+        ],
+        codeTables: code('waves', 'subs')
+      });
+      // subs.seed is a seed: no rebuilder can wait on it, so it's no hint.
+      expect(result.crossAreaEdges).toEqual([
+        { step: 'waves.mirror', field: 'before', id: 'subs.sed' }
+      ]);
+    });
+
+    it('refuses an id with an empty part, and names a near step of the target area', () => {
+      const result = check({ before: ['subs.', 'subs.identty'] }, [
+        step('subs.identity', { writes: ['subs'] })
+      ]);
+      expect(result.problems.map((p) => p.detail)).toEqual([
+        'rebuilder waves.mirror lists unknown step subs. in `before`'
+      ]);
+      expect(result.crossAreaEdges).toEqual([
+        {
+          step: 'waves.mirror',
+          field: 'before',
+          id: 'subs.identty',
+          nearest: 'subs.identity'
+        }
+      ]);
+    });
+
+    it('checks a resolved edge in full', () => {
+      const reader = step('subs.identity', {
+        writes: ['subs'],
+        reads: ['waves']
+      });
+      // The writer's before orders the reader after it: no problem.
+      expect(check({ before: ['subs.identity'] }, [reader]).problems).toEqual(
+        []
+      );
+      // Without it, the read of a table the writer rebuilds fails.
+      expect(check({}, [reader]).problems.map((p) => p.kind)).toEqual([
+        'BAD_ORDER'
+      ]);
+      // And an edge both ways is a cycle.
+      expect(
+        check({ before: ['subs.identity'] }, [
+          { ...reader, before: ['waves.mirror'] }
+        ]).problems.map((p) => p.detail)
+      ).toEqual(['rebuilders wait on each other: waves.mirror, subs.identity']);
+    });
+  });
+
+  it('refuses an id a seed and a rebuilder share', () => {
+    expect(
+      checkRegistry({
+        manifests: [
+          area(
+            'a',
+            { ids: index() },
+            {
+              seeds: [step('a.ids', { writes: ['ids'] })],
+              rebuilders: [step('a.ids', { writes: ['ids'] })]
+            }
+          )
+        ],
+        codeTables: code('ids')
+      }).problems.map((p) => p.detail)
+    ).toEqual(['id a.ids names both a seed and a rebuilder']);
+  });
+
+  it('refuses a module path that leaves the repo or names its extension', () => {
+    const at = (module: string) =>
+      step('a.rows', { run: { module, exportName: 'run' }, writes: ['ids'] });
+    expect(
+      checkRegistry({
+        manifests: [
+          area(
+            'a',
+            { ids: index() },
+            {
+              seeds: [at('../outside/seed')],
+              rebuilders: [
+                at('src/ids/ids-rebuild.ts'),
+                at('/abs/ids'),
+                at('src/ids/ids-rebuild.seed')
+              ].map((s, i) => ({ ...s, id: `a.rows${i}`, writes: [] }))
+            }
+          )
+        ],
+        codeTables: code('ids')
+      }).problems.map((p) => p.detail)
+    ).toEqual([
+      "seed a.rows's module ../outside/seed leaves the repo or has an empty part: name a path in the repo without an extension",
+      "rebuilder a.rows0's module src/ids/ids-rebuild.ts carries an extension: name a path in the repo without an extension",
+      "rebuilder a.rows1's module /abs/ids is absolute: name a path in the repo without an extension"
+    ]);
+  });
+
+  describe('a planned rebuilder whose module is not here yet', () => {
+    // The mirror's module lands with a later change; the reader of its
+    // table and the owner of a column of it don't wait on it yet.
+    const mirror = step('a.mirror', {
+      run: { module: 'src/later/mirror', exportName: 'run' },
+      origin: 'planned',
+      writes: ['mirrored', 'drops']
+    });
+    const rebuilders = (planned: RebuildStep) => [
+      step('a.reader', { writes: ['derived'], reads: ['mirrored'] }),
+      step('a.owner', {
+        writes: [{ table: 'drops', columns: ['rank'], reason: 'ranks' }]
+      }),
+      planned
+    ];
+    const check = (codeHere: boolean, planned: RebuildStep = mirror) =>
+      checkRegistry({
+        manifests: [
+          area(
+            'a',
+            { mirrored: index(), drops: index(), derived: index() },
+            { rebuilders: rebuilders(planned) }
+          )
+        ],
+        codeTables: code('mirrored', 'drops', 'derived'),
+        stepCodeHere: (s) => s.origin !== 'planned' || codeHere
+      });
+
+    it('leaves its writes out of the order checks, and names them', () => {
+      const result = check(false);
+      expect(result.problems).toEqual([]);
+      expect(result.orderLeftOut).toEqual([
+        { step: 'a.mirror', tables: ['mirrored', 'drops'] }
+      ]);
+    });
+
+    it('checks them once the module is here', () => {
+      const result = check(true);
+      expect(result.problems.map((p) => [p.kind, p.detail])).toEqual([
+        [
+          'BAD_ORDER',
+          "rebuilder a.reader reads mirrored, which a.mirror rebuilds; add after: ['a.mirror']"
+        ],
+        [
+          'BAD_ORDER',
+          "column owner a.owner of drops must run after its row writer; add after: ['a.mirror']"
+        ]
+      ]);
+      expect(result.orderLeftOut).toEqual([]);
+      // As without a check of the code: every write is checked.
+      expect(
+        checkRegistry({
+          manifests: [
+            area(
+              'a',
+              { mirrored: index(), drops: index(), derived: index() },
+              { rebuilders: rebuilders(mirror) }
+            )
+          ],
+          codeTables: code('mirrored', 'drops', 'derived')
+        }).problems.map((p) => p.kind)
+      ).toEqual(['BAD_ORDER', 'BAD_ORDER']);
+    });
+
+    it('still fails an unknown id in its after or before', () => {
+      const result = check(false, {
+        ...mirror,
+        after: ['a.nowhere'],
+        before: ['b.nowhere']
+      });
+      expect(result.problems.map((p) => [p.kind, p.detail])).toEqual([
+        ['BAD_ORDER', 'a rebuilder waits on unknown step a.nowhere'],
+        [
+          'BAD_ORDER',
+          'rebuilder a.mirror lists unknown step b.nowhere in `before`'
+        ]
+      ]);
+    });
+  });
+
   it('keeps a checkpoint to INDEX tables, with a column and a reason', () => {
     const result = checkRegistry({
       manifests: [
@@ -415,6 +1000,80 @@ describe('checkRegistry', () => {
       ],
       ['BAD_CHECKPOINT', "bare's checkpoint names no column"],
       ['BAD_CHECKPOINT', "bare's checkpoint has no reason"]
+    ]);
+  });
+
+  it('keeps exempt columns to INDEX tables, with a reason, and no owner', () => {
+    const result = checkRegistry({
+      manifests: [
+        area(
+          'a',
+          {
+            ids: {
+              class: 'INDEX',
+              exemptColumns: [
+                {
+                  column: 'xtdh',
+                  reason: 'the retired feature, kept by backups'
+                },
+                { column: 'tdh', reason: 'no step rebuilds it' },
+                { column: 'level', reason: ' ' }
+              ]
+            },
+            kept: {
+              class: 'EPHEMERAL',
+              why: 'a cache',
+              exemptColumns: [{ column: 'x', reason: 'y' }]
+            }
+          },
+          {
+            rebuilders: [
+              step('a.rows', { writes: ['ids'] }),
+              step('a.tdh', {
+                writes: [{ table: 'ids', columns: ['tdh'], reason: 'x' }],
+                after: ['a.rows']
+              })
+            ]
+          }
+        )
+      ],
+      codeTables: code('ids', 'kept')
+    });
+    expect(result.problems.map((p) => [p.kind, p.detail])).toEqual([
+      ['BAD_EXEMPT', 'ids.level is exempt without a reason'],
+      [
+        'BAD_EXEMPT',
+        'kept is EPHEMERAL; only an INDEX table has exempt columns'
+      ],
+      [
+        'BAD_EXEMPT',
+        'ids.tdh is exempt and owned by a.tdh; an exempt column has no owner'
+      ]
+    ]);
+  });
+
+  it('takes an until only on an EXEMPT table, and only as a real day', () => {
+    const result = checkRegistry({
+      manifests: [
+        area('a', {
+          held: { class: 'EXEMPT', why: 'held entries', until: '2026-12-04' },
+          bad_day: { class: 'EXEMPT', why: 'x', until: '2026-02-30' },
+          bad_form: { class: 'EXEMPT', why: 'x', until: '4 Dec 2026' },
+          kept: { class: 'EPHEMERAL', why: 'a cache', until: '2026-12-04' }
+        })
+      ],
+      codeTables: code('held', 'bad_day', 'bad_form', 'kept')
+    });
+    expect(result.problems.map((p) => [p.kind, p.detail])).toEqual([
+      [
+        'BAD_EXEMPT',
+        "bad_day's until '2026-02-30' is not a day written YYYY-MM-DD"
+      ],
+      [
+        'BAD_EXEMPT',
+        "bad_form's until '4 Dec 2026' is not a day written YYYY-MM-DD"
+      ],
+      ['BAD_EXEMPT', 'kept is EPHEMERAL; only an EXEMPT table has an until']
     ]);
   });
 

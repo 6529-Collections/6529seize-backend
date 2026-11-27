@@ -1,7 +1,14 @@
 import * as path from 'node:path';
-import { AreaManifest, Probe, RebuildStep } from '@/rebuild/manifest.types';
+import {
+  AreaManifest,
+  PlannedRows,
+  Probe,
+  RebuildStep,
+  TableEntry,
+  validUntil
+} from '@/rebuild/manifest.types';
 import { AREA_MANIFESTS } from '@/rebuild/manifests';
-import { headline } from '@/rebuild/report/report';
+import { headline, statusLine } from '@/rebuild/report/report';
 import { runRebuildCheck } from '@/rebuild/run/runner';
 
 // The harness's end-to-end check: a private mysqld, the schema from code,
@@ -44,10 +51,21 @@ function run(
     more?: RebuildStep[];
     /** A full run of every area, instead of the area's run. */
     full?: boolean;
+    /** Table entries that replace the manifests' own. */
+    tables?: Readonly<Record<string, TableEntry>>;
+    /** The run's day, when not the day it starts. */
+    today?: string;
     /** The area declares ABSENT, a planned table no code creates. */
     absent?: boolean;
   }
 ) {
+  const tables = (manifest: AreaManifest) =>
+    Object.fromEntries(
+      Object.entries(manifest.tables).map(([table, entry]) => [
+        table,
+        parts.tables?.[table] ?? entry
+      ])
+    );
   // Only the self-check's own steps and probe: the areas' steps and probes
   // answer for the areas, in area and integration runs, not for the
   // harness, and one area's steps may wait on another's.
@@ -57,19 +75,20 @@ function run(
           ...manifest,
           tables: parts.absent
             ? {
-                ...manifest.tables,
+                ...tables(manifest),
                 [ABSENT]: {
                   class: 'INDEX' as const,
                   origin: 'planned' as const
                 }
               }
-            : manifest.tables,
+            : tables(manifest),
           seeds: [parts.seed],
           rebuilders: [parts.rebuilder, ...(parts.more ?? [])],
           probes: parts.probes ?? []
         }
       : {
           ...manifest,
+          tables: tables(manifest),
           seeds: [],
           rebuilders: parts.others?.[manifest.area] ?? [],
           probes: []
@@ -87,7 +106,8 @@ function run(
     sources: {},
     chainHeight: null,
     ethBlock: null,
-    log: () => undefined
+    log: () => undefined,
+    today: parts.today
   });
 }
 
@@ -323,6 +343,815 @@ describe('rebuild check, end to end', () => {
         report.tables.diffs.map((d) => [d.table, d.same, d.rowsAfter])
       ).toEqual([['team', true, 3]]);
     }
+  });
+
+  describe('column owners', () => {
+    const dated = (id: string, exportName: string): RebuildStep => ({
+      ...step(id, exportName, []),
+      writes: [
+        {
+          table: 'team',
+          columns: ['created_at'],
+          reason: 'the owner dates every row'
+        }
+      ],
+      after: ['self-check.undated']
+    });
+    const undated = step('self-check.undated', 'rebuildTeamUndated', ['team']);
+    // team's manifest leaves created_at out of the comparison: here it is
+    // compared, so a run passes only if the owner filled it.
+    const tables = { team: { class: 'INDEX' as const } };
+    const ownedRun = (rows: RebuildStep, owner: RebuildStep) =>
+      run('mint', { seed: teamSeed, rebuilder: rows, more: [owner], tables });
+
+    it('passes when the row writer leaves the column to its owner', async () => {
+      const { report } = await ownedRun(
+        undated,
+        dated('self-check.dated', 'dateTeam')
+      );
+      expect(report.failures).toEqual([]);
+      expect(report.verdict).toBe('PASS');
+      expect(report.tables.diffs.map((d) => [d.table, d.same])).toEqual([
+        ['team', true]
+      ]);
+    });
+
+    it('lets the row writer delete rows under column grants', async () => {
+      const { report } = await ownedRun(
+        {
+          ...undated,
+          run: { module: MODULE, exportName: 'rebuildTeamUndatedAfterDelete' }
+        },
+        dated('self-check.dated', 'dateTeam')
+      );
+      expect(report.failures).toEqual([]);
+      expect(report.verdict).toBe('PASS');
+    });
+
+    it("keeps the rows when the row writer doesn't run, and refills the owned column", async () => {
+      // A tdh-only run: team's row writer is mint's, so team keeps its
+      // seeded rows and created_at goes back to its default for the owner.
+      const rows = { mint: [undated] };
+      const owner = (id: string, exportName: string) =>
+        run('tdh', {
+          seed: teamSeed,
+          rebuilder: dated(id, exportName),
+          others: rows,
+          tables
+        });
+      const refilled = await owner('self-check.dated', 'dateTeam');
+      expect(refilled.report.failures).toEqual([]);
+      expect(refilled.report.verdict).toBe('PASS');
+      expect(
+        refilled.report.tables.diffs.map((d) => [d.table, d.same, d.rowsAfter])
+      ).toEqual([['team', true, 3]]);
+      // Dating only the MEMES rows leaves the other at the default: the
+      // column was reset, not kept as seeded, and the rows differ.
+      const partly = await owner('self-check.memes-dated', 'dateMemesTeam');
+      expect(
+        partly.report.tables.diffs.map((d) => [d.table, d.rowsAfter, d.changed])
+      ).toEqual([
+        // The changed row's key, as the report writes it.
+        [
+          'team',
+          3,
+          [JSON.stringify(['0x0000000000000000000000000000000000000002'])]
+        ]
+      ]);
+      // A mint-only run leaves the tdh owner's column out, and says so.
+      const { report } = await run('mint', {
+        seed: teamSeed,
+        rebuilder: undated,
+        others: { tdh: [dated('self-check.dated', 'dateTeam')] },
+        tables
+      });
+      expect(report.failures).toEqual([]);
+      expect(report.verdict).toBe('PASS');
+      expect(report.notes.join(' ')).toContain(
+        "team.created_at (self-check.dated, another area's)"
+      );
+      expect(report.tables.ownedColumnsLeftOut).toEqual([
+        {
+          table: 'team',
+          column: 'created_at',
+          owner: 'self-check.dated',
+          why: "another area's"
+        }
+      ]);
+      // A planned owner whose code isn't here: its column is left out the
+      // same way, says why, and fails a final run.
+      const planned = await run('mint', {
+        seed: teamSeed,
+        rebuilder: undated,
+        more: [
+          {
+            ...dated('self-check.later', 'dateTeam'),
+            origin: 'planned',
+            run: { module: 'src/rebuild/run/not-here', exportName: 'dateTeam' }
+          }
+        ],
+        final: true,
+        tables
+      });
+      expect(planned.report.verdict).toBe('FAIL');
+      expect(planned.report.failures.join(' ')).toContain(
+        'team.created_at (self-check.later, planned, its code is not in this tree)'
+      );
+    });
+
+    it('refills the owned column of a table kept for a skipped row writer', async () => {
+      // The row writer waits for a planned table no code creates, so team is
+      // kept for it, and the kept copy brings back the seeded dates. The
+      // owner's column still goes back to its default after the copy:
+      // dating only the MEMES rows leaves the other row at the default.
+      const { report } = await run('mint', {
+        seed: teamSeed,
+        rebuilder: {
+          ...undated,
+          needs: [
+            {
+              table: ABSENT,
+              reason: 'a later branch creates it'
+            }
+          ]
+        },
+        more: [dated('self-check.memes-dated', 'dateMemesTeam')],
+        tables,
+        absent: true
+      });
+      expect(report.failures).toEqual([]);
+      expect(report.steps.map((s) => s.id)).not.toContain('self-check.undated');
+      expect(
+        report.tables.diffs.map((d) => [d.table, d.rowsAfter, d.changed])
+      ).toEqual([
+        [
+          'team',
+          3,
+          [JSON.stringify(['0x0000000000000000000000000000000000000002'])]
+        ]
+      ]);
+    });
+
+    it('leaves an exempt column out of the comparison, with its reason', async () => {
+      const { report } = await run('mint', {
+        seed: teamSeed,
+        rebuilder: undated,
+        tables: {
+          team: {
+            class: 'INDEX',
+            exemptColumns: [
+              { column: 'created_at', reason: 'no step rebuilds it' }
+            ]
+          }
+        }
+      });
+      expect(report.failures).toEqual([]);
+      expect(report.verdict).toBe('PASS');
+      expect(report.tables.diffs.map((d) => [d.table, d.same])).toEqual([
+        ['team', true]
+      ]);
+      expect(report.tables.volatileColumns).toContainEqual({
+        table: 'team',
+        column: 'created_at',
+        reason: 'exempt: no step rebuilds it'
+      });
+    });
+
+    it('lets a row writer insert an owned column, and resets it before the owner', async () => {
+      // name is NOT NULL with no default: its reset is the empty string.
+      const naming = (id: string, exportName: string): RebuildStep => ({
+        ...step(id, exportName, []),
+        writes: [
+          { table: 'team', columns: ['name'], reason: 'it names the rows' }
+        ],
+        after: ['self-check.rows']
+      });
+      const rows = step('self-check.rows', 'rebuildTeam', ['team']);
+      const named = await ownedRun(
+        rows,
+        naming('self-check.named', 'nameTeam')
+      );
+      expect(named.report.failures).toEqual([]);
+      expect(named.report.tables.diffs.map((d) => [d.table, d.same])).toEqual([
+        ['team', true]
+      ]);
+      // The row writer's own names were reset: the owner that names only
+      // the MEMES rows leaves the other row empty.
+      const partly = await ownedRun(
+        rows,
+        naming('self-check.memes-named', 'nameMemesTeam')
+      );
+      expect(partly.report.failures).toEqual([]);
+      expect(
+        partly.report.tables.diffs.map((d) => [d.table, d.changed])
+      ).toEqual([
+        [
+          'team',
+          [JSON.stringify(['0x0000000000000000000000000000000000000002'])]
+        ]
+      ]);
+    });
+
+    it('fails a row writer that updates an owned column', async () => {
+      const { report } = await ownedRun(
+        {
+          ...undated,
+          run: { module: MODULE, exportName: 'rebuildTeamThenDate' }
+        },
+        dated('self-check.dated', 'dateTeam')
+      );
+      expect(report.verdict).toBe('FAIL');
+      expect(report.failures).toContain(
+        'self-check.undated may not UPDATE column created_at of team: a column owner owns it'
+      );
+    });
+
+    it('resets owned columns on rows kept for a skipped partition writer, or left by another area', async () => {
+      const part = (collection: string) => ({
+        table: 'team',
+        partition: {
+          columns: ['collection'],
+          values: [[collection]],
+          reason: `the ${collection} rows`
+        }
+      });
+      const memesRows: RebuildStep = {
+        ...step('self-check.memes-rows', 'rebuildMemesTeamUndated', []),
+        writes: [part('MEMES')]
+      };
+      const otherRows: RebuildStep = {
+        ...step('self-check.other-rows', 'rebuildTeam', []),
+        writes: [part('6529')]
+      };
+      const owner = (after: string[]): RebuildStep => ({
+        ...dated('self-check.memes-dated', 'dateMemesTeam'),
+        after
+      });
+      const sixFiveTwoNine = [
+        'team',
+        [JSON.stringify(['0x0000000000000000000000000000000000000002'])]
+      ];
+      // The 6529 writer is skipped, so team is kept for it: the owner's
+      // column is still reset on the kept 6529 row.
+      const kept = await run('mint', {
+        seed: teamSeed,
+        rebuilder: memesRows,
+        more: [
+          {
+            ...otherRows,
+            needs: [
+              {
+                table: ABSENT,
+                reason: 'a later branch creates it'
+              }
+            ]
+          },
+          owner(['self-check.memes-rows', 'self-check.other-rows'])
+        ],
+        tables,
+        absent: true
+      });
+      expect(kept.report.failures).toEqual([]);
+      expect(kept.report.steps.map((s) => s.id)).not.toContain(
+        'self-check.other-rows'
+      );
+      expect(kept.report.tables.diffs.map((d) => [d.table, d.changed])).toEqual(
+        [sixFiveTwoNine]
+      );
+      // The 6529 writer is another area's: the same in a final area run.
+      const other = await run('mint', {
+        seed: teamSeed,
+        rebuilder: memesRows,
+        more: [owner(['self-check.memes-rows', 'self-check.other-rows'])],
+        others: { tdh: [otherRows] },
+        tables,
+        final: true
+      });
+      expect(
+        other.report.tables.diffs.map((d) => [d.table, d.changed])
+      ).toEqual([sixFiveTwoNine]);
+    });
+
+    it("keeps an absent owner's column for the API: a probe that reads it passes", async () => {
+      const seasonsSeed = step('self-check.seasons-seed', 'seedSeasons', [
+        'memes_seasons'
+      ]);
+      const dater: RebuildStep = {
+        ...step('self-check.seasons-dater', 'dateSeasons', []),
+        writes: [
+          {
+            table: 'memes_seasons',
+            columns: ['created_at'],
+            reason: 'the owner dates the seasons'
+          }
+        ],
+        after: ['self-check.seasons-undated']
+      };
+      const { report } = await run('holdings', {
+        seed: seasonsSeed,
+        rebuilder: step('self-check.seasons-undated', 'rebuildSeasonsUndated', [
+          'memes_seasons'
+        ]),
+        others: { tdh: [dater] },
+        probes: [{ id: 'self-check.seasons', path: '/api/new_memes_seasons' }]
+      });
+      expect(report.failures).toEqual([]);
+      expect(report.verdict).toBe('PASS');
+      expect(report.probes.differences).toEqual([]);
+      expect(report.tables.ownedColumnsLeftOut).toEqual([
+        {
+          table: 'memes_seasons',
+          column: 'created_at',
+          owner: 'self-check.seasons-dater',
+          why: "another area's"
+        }
+      ]);
+    });
+
+    it("names a table a step's writes don't name", async () => {
+      const { report } = await teamRun(
+        step('self-check.undeclared', 'rebuildTeamAndWriteUndeclared', ['team'])
+      );
+      expect(report.verdict).toBe('FAIL');
+      expect(report.failures).toContain(
+        "self-check.undeclared may not INSERT memes_seasons: the table isn't in its writes"
+      );
+    });
+
+    it('fails an owner that adds a row', async () => {
+      const { report } = await ownedRun(
+        undated,
+        dated('self-check.adds', 'dateTeamAndAddRow')
+      );
+      expect(report.verdict).toBe('FAIL');
+      expect(report.failures).toContain(
+        'self-check.adds may not INSERT team: it owns only columns there'
+      );
+    });
+
+    it('fails an owner that writes another column', async () => {
+      const { report } = await ownedRun(
+        undated,
+        dated('self-check.renames', 'dateTeamAndRename')
+      );
+      expect(report.verdict).toBe('FAIL');
+      expect(report.failures).toContain(
+        'self-check.renames may not UPDATE column name of team: it owns only created_at there'
+      );
+    });
+  });
+
+  describe('planned rows', () => {
+    const PLAN = {
+      table: 'team',
+      // A subquery naming a table without its database, as a manifest
+      // writes it: the condition runs with the main database as default.
+      where:
+        "wallet IN (SELECT t.wallet FROM team t WHERE t.collection = '6529')",
+      reason: 'a later change writes the 6529 rows',
+      until: '9999-12-31',
+      change: 'the 6529 writer'
+    };
+    const planning = (
+      id: string,
+      exportName: string,
+      plans: PlannedRows[] = [PLAN]
+    ): RebuildStep => ({
+      ...step(id, exportName, ['team']),
+      plannedRows: plans
+    });
+    const listed = (stepId: string, seeded: number, missing: number) => ({
+      step: stepId,
+      where: PLAN.where,
+      reason: PLAN.reason,
+      until: PLAN.until,
+      change: PLAN.change,
+      seeded,
+      missing,
+      overdue: false
+    });
+
+    it('names a planned row missing from the rebuild, and fails a final run on it', async () => {
+      // The rebuilder writes only the MEMES rows; the 6529 row is planned.
+      const { report } = await teamRun(
+        planning('self-check.planned', 'rebuildMemesTeam')
+      );
+      expect(report.failures).toEqual([]);
+      expect(report.verdict).toBe('PASS');
+      expect(
+        report.tables.diffs.map((d) => [d.table, d.same, d.plannedRows])
+      ).toEqual([['team', true, 1]]);
+      expect(report.tables.plannedRows).toEqual([
+        {
+          table: 'team',
+          rows: 1,
+          keys: [
+            JSON.stringify(['0x0000000000000000000000000000000000000002'])
+          ],
+          columnRows: 0,
+          columnKeys: [],
+          plans: [listed('self-check.planned', 1, 1)]
+        }
+      ]);
+      expect(report.notes.join(' ')).toContain(
+        '1 plans of planned rows, seeded rows only a later change rebuilds'
+      );
+      const final = await teamRun(
+        planning('self-check.planned-final', 'rebuildMemesTeam'),
+        true
+      );
+      expect(final.report.verdict).toBe('FAIL');
+      expect(final.report.failures).toContain(
+        '1 plans of planned rows, seeded rows only a later change rebuilds; a final run fails on every plan: team by self-check.planned-final: seeded 1, missing 1, until 9999-12-31 (the 6529 writer)'
+      );
+    });
+
+    it('still differs on a planned row the rebuild writes differently', async () => {
+      const { report } = await teamRun(
+        planning('self-check.planned-changed', 'rebuildTeamDifferently')
+      );
+      const [diff] = report.tables.diffs;
+      expect(diff.same).toBe(false);
+      expect(diff.changed).toHaveLength(3);
+      expect(diff.plannedRows).toBe(0);
+      expect(report.tables.plannedRows).toEqual([
+        {
+          table: 'team',
+          rows: 0,
+          keys: [],
+          columnRows: 0,
+          columnKeys: [],
+          plans: [listed('self-check.planned-changed', 1, 0)]
+        }
+      ]);
+    });
+
+    it('notes a plan that matched no seeded rows, and one whose rows the rebuild writes now', async () => {
+      const nowhere = { ...PLAN, where: "collection = 'none'" };
+      const { report } = await teamRun(
+        planning('self-check.planned-stale', 'rebuildTeam', [PLAN, nowhere])
+      );
+      expect(report.failures).toEqual([]);
+      expect(report.verdict).toBe('PASS');
+      expect(report.tables.diffs.map((d) => [d.same, d.plannedRows])).toEqual([
+        [true, 0]
+      ]);
+      expect(report.tables.plannedRows[0].plans.map((p) => p.seeded)).toEqual([
+        1, 0
+      ]);
+      expect(report.notes).toEqual(
+        expect.arrayContaining([
+          'Planned rows of team by self-check.planned-stale: the rebuild writes these rows now: drop the plan',
+          'Planned rows of team by self-check.planned-stale: plan matched no seeded rows'
+        ])
+      );
+    });
+
+    it('excuses a planned column only on the rows its plan matched', async () => {
+      const names = { ...PLAN, columns: ['name'] };
+      // Only the 6529 row comes back renamed, and its plan covers the name.
+      const { report } = await teamRun(
+        planning('self-check.planned-name', 'rebuildTeamRenaming6529', [names])
+      );
+      expect(report.failures).toEqual([]);
+      expect(report.verdict).toBe('PASS');
+      expect(
+        report.tables.diffs.map((d) => [
+          d.same,
+          d.changed.length,
+          d.plannedColumnRows,
+          d.plannedRows
+        ])
+      ).toEqual([[true, 0, 1, 0]]);
+      expect(report.tables.plannedRows).toEqual([
+        {
+          table: 'team',
+          rows: 0,
+          keys: [],
+          columnRows: 1,
+          columnKeys: [
+            JSON.stringify(['0x0000000000000000000000000000000000000002'])
+          ],
+          plans: [
+            {
+              ...listed('self-check.planned-name', 1, 0),
+              columns: ['name'],
+              differing: 1,
+              excused: 1,
+              differingByColumn: { name: 1 }
+            }
+          ]
+        }
+      ]);
+      // Every row renamed: the MEMES rows, which no plan matched, differ.
+      const all = await teamRun(
+        planning('self-check.planned-name-all', 'rebuildTeamDifferently', [
+          names
+        ])
+      );
+      const [diff] = all.report.tables.diffs;
+      expect([diff.same, diff.changed.length, diff.plannedColumnRows]).toEqual([
+        false,
+        2,
+        1
+      ]);
+      // The 6529 row renamed and changed in a column the plan doesn't name
+      // (created_at, compared in this run): it still differs.
+      const team = AREA_MANIFESTS.find((m) => m.area === 'mint')!.tables.team;
+      const unplanned = await run('mint', {
+        seed: teamSeed,
+        rebuilder: planning(
+          'self-check.planned-name-undated',
+          'rebuildTeamRenaming6529Undated',
+          [names]
+        ),
+        tables: { team: { ...team, volatileColumns: [] } }
+      });
+      const [changed] = unplanned.report.tables.diffs;
+      expect([
+        changed.same,
+        changed.changed,
+        changed.plannedColumnRows
+      ]).toEqual([
+        false,
+        [JSON.stringify(['0x0000000000000000000000000000000000000002'])],
+        0
+      ]);
+      expect(unplanned.report.tables.plannedRows[0].plans[0]).toMatchObject({
+        differing: 1,
+        excused: 0,
+        differingByColumn: { name: 1 }
+      });
+      // A column the schema doesn't have stops the run at its start.
+      const unknown = await teamRun(
+        planning('self-check.planned-nothing', 'rebuildTeam', [
+          { ...PLAN, columns: ['no_such_column'] }
+        ])
+      );
+      expect(unknown.report.verdict).toBe('FAIL');
+      expect(unknown.report.failures).toContain(
+        "self-check.planned-nothing plans columns no_such_column of team, which the schema doesn't have"
+      );
+      // At its start: the schema was built, and no seed or rebuilder ran.
+      expect(unknown.report.steps.map((s) => s.kind)).toEqual(['schema']);
+    });
+
+    it('takes a NOT EXISTS against another table in a row plan and a column plan, beside another writer', async () => {
+      // Each partition's writer plans its own rows: the 6529 writer writes
+      // nothing yet, the MEMES writer renames its rows. Both conditions
+      // read another table, unqualified, and the partition check runs.
+      const empty = 'NOT EXISTS (SELECT 1 FROM distribution_photo)';
+      const { report } = await run('mint', {
+        seed: teamSeed,
+        rebuilder: {
+          ...memes,
+          id: 'self-check.memes-renamed',
+          run: { module: MODULE, exportName: 'rebuildMemesTeamRenamed' },
+          plannedRows: [
+            {
+              ...PLAN,
+              where: `collection = 'MEMES' AND ${empty}`,
+              columns: ['name']
+            }
+          ]
+        },
+        others: {
+          tdh: [
+            {
+              ...step('self-check.later-6529', 'writeNothing', []),
+              writes: [partition('6529')],
+              plannedRows: [
+                { ...PLAN, where: `collection = '6529' AND ${empty}` }
+              ]
+            }
+          ]
+        },
+        full: true
+      });
+      expect(report.failures).toEqual([]);
+      expect(report.verdict).toBe('PASS');
+      expect(
+        report.tables.diffs
+          .filter((d) => d.table === 'team')
+          .map((d) => [d.same, d.plannedRows, d.plannedColumnRows])
+      ).toEqual([[true, 1, 2]]);
+      const plans = report.tables.plannedRows.find(
+        (p) => p.table === 'team'
+      )!.plans;
+      expect(
+        plans
+          .map((p) => [p.step, p.seeded, p.missing, p.differing, p.excused])
+          .sort()
+      ).toEqual([
+        ['self-check.later-6529', 1, 1, undefined, undefined],
+        ['self-check.memes-renamed', 2, 0, 2, 2]
+      ]);
+    });
+
+    it("fails a run on a planned condition MySQL can't read", async () => {
+      const { report } = await teamRun(
+        planning('self-check.planned-bad', 'rebuildMemesTeam', [
+          { ...PLAN, where: 'no_such_column = 1' }
+        ])
+      );
+      expect(report.verdict).toBe('FAIL');
+      expect(report.failures.join(' ')).toContain(
+        "self-check.planned-bad's planned rows of team can't be read (where no_such_column = 1)"
+      );
+    });
+
+    it("refuses a planned row in another running writer's partition", async () => {
+      // The MEMES writer plans the 6529 row, which the other writer
+      // rebuilds: in a full run both run.
+      const { report } = await run('mint', {
+        seed: teamSeed,
+        rebuilder: {
+          ...memes,
+          id: 'self-check.memes-plans',
+          plannedRows: [PLAN]
+        },
+        others: {
+          tdh: [
+            {
+              ...step('self-check.other-6529', 'rebuildTeam', []),
+              writes: [partition('6529')]
+            }
+          ]
+        },
+        full: true
+      });
+      expect(report.verdict).toBe('FAIL');
+      expect(report.failures).toContain(
+        "self-check.memes-plans's planned rows of team include 1 rows of self-check.other-6529's partition; a plan covers only rows its rebuilder writes"
+      );
+    });
+  });
+
+  describe('a planned rebuilder whose module is not here yet', () => {
+    // It writes a table the team rebuilder reads, and the reader doesn't
+    // wait on it: the order check leaves its writes out until its module
+    // lands. Both registry checks of a run must know that, or the run
+    // stops at the first with BAD_ORDER.
+    const writer: RebuildStep = {
+      ...step('self-check.later-writer', 'rebuildTeam', ['distribution_photo']),
+      run: { module: 'src/rebuild/run/no-such-steps', exportName: 'run' },
+      origin: 'planned',
+      // A step of another area this run doesn't carry.
+      before: ['subs.identity']
+    };
+    const reader = (id: string): RebuildStep =>
+      step(id, 'rebuildTeam', ['team'], ['distribution_photo']);
+    const leftOut =
+      '1 planned rebuilders, of every area, had their writes left out of the order check while their module is not in this tree: self-check.later-writer (distribution_photo)';
+
+    it('runs with a note, and a final run fails on the planned step', async () => {
+      const { report } = await run('mint', {
+        seed: teamSeed,
+        rebuilder: reader('self-check.reads-later'),
+        more: [writer]
+      });
+      expect(report.failures).toEqual([]);
+      expect(report.verdict).toBe('PASS');
+      expect(report.notes).toContain(leftOut);
+      expect(report.notes.join(' ')).toContain(
+        '1 planned steps were skipped because their code is not in this tree'
+      );
+      expect(report.unresolvedEdges).toEqual([
+        'self-check.later-writer before subs.identity'
+      ]);
+      expect(report.notes).toContain(
+        "1 unresolved cross-area edges, of every area: order edges to another area's step that isn't in this tree, which a final run fails on: self-check.later-writer before subs.identity"
+      );
+      // With a plan that matches no seeded row, which a final run fails on
+      // too.
+      const final = await run('mint', {
+        seed: teamSeed,
+        rebuilder: {
+          ...reader('self-check.reads-later-final'),
+          plannedRows: [
+            {
+              table: 'team',
+              where: "collection = 'none'",
+              reason: 'no such rows',
+              until: '9999-12-31',
+              change: 'none'
+            }
+          ]
+        },
+        more: [writer],
+        final: true
+      });
+      expect(final.report.verdict).toBe('FAIL');
+      expect(final.report.notes).toContain(leftOut);
+      expect(final.report.failures.join(' ')).toContain(
+        '1 planned steps were skipped because their code is not in this tree'
+      );
+      expect(final.report.failures.join(' ')).toContain(
+        '1 unresolved cross-area edges'
+      );
+      expect(final.report.failures).toContain(
+        '1 plans of planned rows, seeded rows only a later change rebuilds; a final run fails on every plan: team by self-check.reads-later-final: seeded 0, missing 0, until 9999-12-31 (none)'
+      );
+      expect(final.report.notes).toContain(
+        'Planned rows of team by self-check.reads-later-final: plan matched no seeded rows'
+      );
+    });
+  });
+
+  describe('EXEMPT tables exempt until a day', () => {
+    const artdoc = AREA_MANIFESTS.find((m) => m.area === 'artdoc')!.tables;
+    const tables: Readonly<Record<string, TableEntry>> = {
+      artwork_documentation_artist_records: {
+        ...artdoc.artwork_documentation_artist_records,
+        until: '2000-01-01'
+      },
+      artwork_documentation_assets: {
+        ...artdoc.artwork_documentation_assets,
+        until: '9999-12-31'
+      }
+    };
+    const overdue =
+      'EXEMPT overdue: artwork_documentation_artist_records since 2000-01-01';
+    // A run lists the EXEMPT tables with a day of every area's manifest,
+    // not only its own area's: here the test's two and any other area's.
+    const days = new Map<string, string>();
+    for (const manifest of AREA_MANIFESTS) {
+      for (const [table, entry] of Object.entries(manifest.tables)) {
+        const used = tables[table] ?? entry;
+        if (
+          used.class === 'EXEMPT' &&
+          used.until !== undefined &&
+          validUntil(used.until)
+        ) {
+          days.set(table, used.until);
+        }
+      }
+    }
+    const withDay = Array.from(days.keys()).sort();
+    const ours = (table: string) =>
+      Object.prototype.hasOwnProperty.call(tables, table);
+
+    it('notes the overdue one on the headline and the status line, and passes', async () => {
+      const { report } = await run('mint', {
+        seed: teamSeed,
+        rebuilder: step('self-check.exempt-days', 'rebuildTeam', ['team']),
+        tables,
+        today: '2000-01-02'
+      });
+      expect(report.failures).toEqual([]);
+      expect(report.verdict).toBe('PASS');
+      expect(report.tables.day).toBe('2000-01-02');
+      // On 2000-01-02 only the first of the test's two is past its day.
+      expect(
+        report.tables.exemptUntil.map((e) => [e.table, e.until, e.overdue])
+      ).toEqual(
+        withDay.map((table) => [
+          table,
+          days.get(table),
+          '2000-01-02' > days.get(table)!
+        ])
+      );
+      // The floor, whatever the manifests hold: the test's two, their days.
+      expect(
+        report.tables.exemptUntil
+          .filter((e) => ours(e.table))
+          .map((e) => [e.table, e.until, e.overdue])
+      ).toEqual([
+        ['artwork_documentation_artist_records', '2000-01-01', true],
+        ['artwork_documentation_assets', '9999-12-31', false]
+      ]);
+      expect(headline(report)).toContain(overdue);
+      expect(statusLine(report, 'runs/x')).toContain(`; ${overdue}. runs/x`);
+    });
+
+    it('fails a final run on every EXEMPT table with an until', async () => {
+      const { report } = await run('mint', {
+        seed: teamSeed,
+        rebuilder: step('self-check.exempt-days-final', 'rebuildTeam', [
+          'team'
+        ]),
+        tables,
+        final: true
+      });
+      expect(report.verdict).toBe('FAIL');
+      // The one failure that lists them, starting with the exact count.
+      const listed = report.failures.find((f) =>
+        f.includes(' EXEMPT tables are exempt only until a day')
+      );
+      // Compared as a prefix, so a failure shows the count the run gave.
+      const prefix = `${withDay.length} EXEMPT tables are exempt only until a day, so a final run fails on them: `;
+      expect(listed?.slice(0, prefix.length)).toBe(prefix);
+      for (const table of withDay) {
+        expect(listed).toContain(`${table} until ${days.get(table)}`);
+      }
+      // The floor, whatever the manifests hold: the test's two, their days.
+      expect(listed).toContain(
+        'artwork_documentation_artist_records until 2000-01-01'
+      );
+      expect(listed).toContain('artwork_documentation_assets until 9999-12-31');
+      // Without a day given, the run's day is the day it started.
+      expect(report.tables.day).toBe(report.startedAt.slice(0, 10));
+    });
   });
 
   it('fails a rebuilder that calls a host outside the sources', async () => {

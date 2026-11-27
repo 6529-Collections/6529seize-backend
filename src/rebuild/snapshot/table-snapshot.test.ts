@@ -1,7 +1,10 @@
 import * as fc from 'fast-check';
 import {
   canonicalRow,
+  changedKeys,
   diffSnapshots,
+  differingColumns,
+  goneRows,
   snapshotRows
 } from '@/rebuild/snapshot/table-snapshot';
 
@@ -102,9 +105,231 @@ describe('table snapshots', () => {
       rowsAfter: 3,
       same: false,
       missing: ['[1]'],
+      planned: [],
+      plannedRows: 0,
+      plannedColumns: [],
+      plannedColumnRows: 0,
       extra: ['[4]'],
       changed: ['[3]']
     });
     expect(diffSnapshots(before, before).same).toBe(true);
+  });
+
+  describe('planned rows', () => {
+    const rows = (...list: [number, string][]) =>
+      snapshotRows(
+        't',
+        list.map(([id, v]) => ({ id, v })),
+        ['id']
+      );
+    const seeded = rows([1, 'a'], [2, 'b'], [3, 'c']);
+    const planned = ['[3]'];
+
+    it('lists a planned row missing apart, and the table is the same', () => {
+      expect(
+        diffSnapshots(seeded, rows([1, 'a'], [2, 'b']), 20, planned)
+      ).toEqual({
+        table: 't',
+        rowsBefore: 3,
+        rowsAfter: 2,
+        same: true,
+        missing: [],
+        planned: ['[3]'],
+        plannedRows: 1,
+        plannedColumns: [],
+        plannedColumnRows: 0,
+        extra: [],
+        changed: []
+      });
+    });
+
+    it('still differs on an extra row, a changed planned row, or a missing row not planned', () => {
+      const diff = (after: ReturnType<typeof rows>) =>
+        diffSnapshots(seeded, after, 20, planned);
+      // The rebuild has a row matching the plan that the seed doesn't.
+      expect(diff(rows([1, 'a'], [2, 'b'], [4, 'c']))).toMatchObject({
+        same: false,
+        planned: ['[3]'],
+        extra: ['[4]']
+      });
+      // A planned row on both sides that changed.
+      expect(diff(rows([1, 'a'], [2, 'b'], [3, 'changed']))).toMatchObject({
+        same: false,
+        planned: [],
+        changed: ['[3]']
+      });
+      // A row the plan doesn't cover.
+      expect(diff(rows([2, 'b']))).toMatchObject({
+        same: false,
+        missing: ['[1]'],
+        planned: ['[3]']
+      });
+    });
+
+    it("leaves out rows that changed only in a plan's columns, and nothing else", () => {
+      const after = rows([1, 'a'], [2, 'B'], [3, 'C']);
+      expect(changedKeys(seeded, after)).toEqual(['[2]', '[3]']);
+      // The runner decides which changed rows a column plan covers.
+      expect(
+        diffSnapshots(seeded, after, 20, [], new Set(['[3]']))
+      ).toMatchObject({
+        same: false,
+        changed: ['[2]'],
+        plannedColumns: ['[3]'],
+        plannedColumnRows: 1
+      });
+      expect(
+        diffSnapshots(seeded, after, 20, [], new Set(['[2]', '[3]']))
+      ).toMatchObject({ same: true, changed: [], plannedColumnRows: 2 });
+      // A row a column plan covers must still come back.
+      expect(
+        diffSnapshots(
+          seeded,
+          rows([1, 'a'], [2, 'b']),
+          20,
+          [],
+          new Set(['[3]'])
+        )
+      ).toMatchObject({ same: false, missing: ['[3]'], plannedColumnRows: 0 });
+    });
+
+    it('names the columns two versions of a row differ in, leaving out volatile ones', () => {
+      const at = new Date('2026-11-24T00:00:00Z');
+      expect(
+        differingColumns(
+          { id: 1, name: 'a', at, blob: Buffer.from('x'), gone: 1 },
+          {
+            id: 1,
+            name: 'b',
+            at: new Date(at.getTime()),
+            blob: Buffer.from('y'),
+            added: 2
+          },
+          new Set(['added'])
+        )
+      ).toEqual(['blob', 'gone', 'name']);
+      expect(differingColumns({ id: 1, v: null }, { id: 1, v: null })).toEqual(
+        []
+      );
+    });
+
+    describe('rows without a key, which match by hash', () => {
+      const keyless = (...values: string[]) =>
+        snapshotRows(
+          't',
+          values.map((v) => ({ v })),
+          []
+        );
+      // One key per planned row, as the run takes a plan's rows.
+      const plannedOf = (...values: string[]) => keyless(...values).keys;
+      const [hashA] = plannedOf('a');
+      const [hashB] = plannedOf('b');
+
+      it('keeps them apart by count, not only by hash', () => {
+        const before = keyless('a', 'a', 'b');
+        // One of the two equal rows is gone and isn't planned: it differs.
+        expect(
+          diffSnapshots(before, keyless('a'), 20, plannedOf('b'))
+        ).toMatchObject({
+          same: false,
+          missing: [hashA],
+          planned: [hashB],
+          plannedRows: 1
+        });
+        expect(
+          diffSnapshots(before, keyless('a', 'a'), 20, plannedOf('b'))
+        ).toMatchObject({ same: true, missing: [], plannedRows: 1 });
+      });
+
+      it('compares the count of every hash, not the set of hashes', () => {
+        // P,A,A,B to A,B,B with P planned: one A gone, one B more.
+        const moved = diffSnapshots(
+          keyless('p', 'a', 'a', 'b'),
+          keyless('a', 'b', 'b'),
+          20,
+          plannedOf('p')
+        );
+        expect(moved).toMatchObject({
+          same: false,
+          missing: [hashA],
+          extra: [hashB],
+          plannedRows: 1
+        });
+        // X,X,Y to Y with one X planned: the other X is missing.
+        const [hashX] = plannedOf('x');
+        expect(
+          diffSnapshots(
+            keyless('x', 'x', 'y'),
+            keyless('y'),
+            20,
+            plannedOf('x')
+          )
+        ).toMatchObject({
+          same: false,
+          missing: [hashX],
+          planned: [hashX],
+          plannedRows: 1
+        });
+        // With both X planned, the rebuild lacks only planned rows.
+        expect(
+          diffSnapshots(
+            keyless('x', 'x', 'y'),
+            keyless('y'),
+            20,
+            plannedOf('x', 'x')
+          )
+        ).toMatchObject({ same: true, missing: [], plannedRows: 2 });
+      });
+
+      it('counts like a multiset: only rows no plan covers differ', () => {
+        const value = fc.constantFrom('a', 'b', 'c');
+        const flags = fc.array(fc.boolean(), { minLength: 8, maxLength: 8 });
+        fc.assert(
+          fc.property(
+            fc.array(value, { maxLength: 8 }),
+            flags,
+            flags,
+            value,
+            (seeded, isPlanned, isGone, one) => {
+              const planned = seeded.filter((_, i) => isPlanned[i]);
+              // The rebuild lacks some of the planned rows.
+              const gone = seeded.filter((_, i) => isPlanned[i] && isGone[i]);
+              const kept = seeded.filter(
+                (_, i) => !(isPlanned[i] && isGone[i])
+              );
+              const before = keyless(...seeded);
+              const keys = plannedOf(...planned);
+              const count = (list: string[], v: string) =>
+                list.filter((x) => x === v).length;
+              const diff = diffSnapshots(before, keyless(...kept), 20, keys);
+              expect(diff).toMatchObject({
+                same: true,
+                missing: [],
+                extra: [],
+                plannedRows: gone.length
+              });
+              expect(goneRows(before, keyless(...kept), keys)).toBe(
+                gone.length
+              );
+              // One more row of a value lacking: equal rows can't be told
+              // apart, so it differs only once that value's planned rows
+              // are all gone.
+              const at = kept.indexOf(one);
+              if (at >= 0) {
+                const fewer = kept.filter((_, i) => i !== at);
+                expect(
+                  diffSnapshots(before, keyless(...fewer), 20, keys).same
+                ).toBe(count(planned, one) > count(gone, one));
+              }
+              // One more row of a value: the same only while it stands for
+              // a planned row the rebuild lacked.
+              expect(
+                diffSnapshots(before, keyless(...kept, one), 20, keys).same
+              ).toBe(count(gone, one) > 0);
+            }
+          )
+        );
+      });
+    });
   });
 });

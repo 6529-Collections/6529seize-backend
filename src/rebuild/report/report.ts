@@ -2,6 +2,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { TableClass } from '@/rebuild/manifest.types';
 import { RegistryProblem } from '@/rebuild/registry-check';
+import { ExemptUntil, overdueLine } from '@/rebuild/run/exempt-until';
+import { PlannedRowsPlan } from '@/rebuild/run/verdict';
 import { SourceViolation } from '@/rebuild/guard/source-guard';
 import { ProbeDifference } from '@/rebuild/probes/probe-runner';
 import { TableDiff } from '@/rebuild/snapshot/table-snapshot';
@@ -113,7 +115,43 @@ export interface RunReport {
       column: string;
       reason: string;
     }[];
+    /**
+     * Owned columns of the rebuilt tables left out of the comparison
+     * because their owner doesn't run here, with why.
+     */
+    readonly ownedColumnsLeftOut: {
+      table: string;
+      column: string;
+      owner: string;
+      why: string;
+    }[];
+    /** The run's day (UTC), YYYY-MM-DD, that `until` days are judged against. */
+    readonly day: string;
+    /** EXEMPT tables exempt only until a day (see TableEntry.until). */
+    readonly exemptUntil: ExemptUntil[];
+    /**
+     * Every plan of the running rebuilders' planned rows (seeded rows only
+     * a later change rebuilds), by table: the planned rows missing from
+     * the rebuild, up to 20 of their keys, and each plan.
+     */
+    readonly plannedRows: {
+      table: string;
+      rows: number;
+      keys: string[];
+      /**
+       * Rows changed only in the columns of the column plans that matched
+       * them, and up to 20 of their keys.
+       */
+      columnRows: number;
+      columnKeys: string[];
+      plans: PlannedRowsPlan[];
+    }[];
   };
+  /**
+   * Order edges to another area's step this tree doesn't have, each as
+   * "<step> <field> <id>".
+   */
+  readonly unresolvedEdges: string[];
   readonly failures: string[];
   readonly notes: string[];
 }
@@ -128,6 +166,13 @@ const COUNT_ORDER: TableClass[] = [
   'EXEMPT'
 ];
 
+/** Every plan of planned rows, each with its table. */
+function plansOf(report: RunReport): (PlannedRowsPlan & { table: string })[] {
+  return report.tables.plannedRows.flatMap((p) =>
+    p.plans.map((plan) => ({ ...plan, table: p.table }))
+  );
+}
+
 /** The first lines of a report: what ran and the verdict. */
 export function headline(report: RunReport): string[] {
   const total = COUNT_ORDER.reduce((n, c) => n + report.classes[c], 0);
@@ -137,18 +182,40 @@ export function headline(report: RunReport): string[] {
   const rebuilt = report.tables.rebuilt.length;
   const differing = report.tables.diffs.filter((d) => !d.same).length;
   const failed = report.steps.filter((s) => s.exitCode !== 0).length;
+  const leftOut = report.tables.ownedColumnsLeftOut.length;
+  const planned = report.tables.plannedRows.reduce((n, p) => n + p.rows, 0);
+  const plannedColumns = report.tables.plannedRows.reduce(
+    (n, p) => n + p.columnRows,
+    0
+  );
+  const overdue = overdueLine(report.tables.exemptUntil, plansOf(report));
   const provisional = Object.entries(report.sources)
     .filter(([, info]) => info.provisional)
     .map(([name]) => name);
   return [
     `${report.scope}, mark ${report.mark}${report.final ? ', final' : ''}, backend ${report.backendHead ?? 'unknown'}: ${report.verdict}`,
-    `tables ${total}: ${classes}; rebuilt ${rebuilt}, pending ${report.pending.length}, planned ${report.planned.length}, differing ${differing}`,
+    `tables ${total}: ${classes}; rebuilt ${rebuilt}, pending ${report.pending.length}, planned ${report.planned.length}, differing ${differing}${leftOut ? `; owned columns left out ${leftOut}` : ''}${planned ? `; planned rows missing ${planned}` : ''}${plannedColumns ? `; rows changed only in planned columns ${plannedColumns}` : ''}`,
     report.probes.stoppedBefore === null
       ? `probes ${report.probes.calls}: differ ${report.probes.differences.length}, unproven ${report.probes.unproven.length}; INDEX tables no probe read ${report.probes.unreadTables.length}`
       : `probes ${report.probes.calls}: not compared: the run stopped before pass B (${report.probes.stoppedBefore})`,
     `GET routes ${report.routes.documented}: probed ${report.routes.probed}, waived ${report.routes.waived}, open ${report.routes.open.length}`,
-    `steps ${report.steps.length}: failed ${failed}; source violations ${report.violations.length}; provisional sources ${provisional.length ? provisional.join(', ') : 'none'}`
+    `steps ${report.steps.length}: failed ${failed}; source violations ${report.violations.length}; provisional sources ${provisional.length ? provisional.join(', ') : 'none'}; unresolved cross-area edges ${report.unresolvedEdges.length}`,
+    // Seen on every run, not left in the body.
+    ...(overdue ? [overdue] : [])
   ];
+}
+
+/** A column plan's differing rows per column, as " (a 2, b 1)". */
+function byColumn(plan: PlannedRowsPlan): string {
+  const counts = Object.entries(plan.differingByColumn ?? {});
+  return counts.length
+    ? ` (${counts.map(([column, n]) => `${column} ${n}`).join(', ')})`
+    : '';
+}
+
+/** After an `until` day the run is past. */
+function overdueNote(dated: { overdue: boolean }): string {
+  return dated.overdue ? ' (overdue: its last day has passed)' : '';
 }
 
 function section(title: string, lines: string[]): string[] {
@@ -281,6 +348,32 @@ export function renderMarkdown(report: RunReport): string {
       report.routes.open.length ? [report.routes.open.join(', ')] : []
     ),
     ...section(
+      'EXEMPT tables exempt only until a day',
+      report.tables.exemptUntil.map(
+        (e) => `- ${e.table}: until ${e.until}${overdueNote(e)}; ${e.why}`
+      )
+    ),
+    ...section(
+      'Planned rows: seeded rows only a later change rebuilds',
+      report.tables.plannedRows.flatMap((p) => [
+        `- ${p.table}: ${p.rows} planned rows missing from the rebuild${p.keys.length ? `, keys ${p.keys.join(' ')}` : ''}${p.columnRows ? `; ${p.columnRows} rows changed only in planned columns, keys ${p.columnKeys.join(' ')}` : ''}`,
+        ...p.plans.map(
+          (plan) =>
+            `  - planned by ${plan.step}${plan.columns ? `, columns ${plan.columns.join(', ')}` : ''}: seeded ${plan.seeded ?? 'not read'}, ${plan.columns ? `differing ${plan.differing ?? 'not compared'}${byColumn(plan)}, excused ${plan.excused ?? 'not compared'}, ` : ''}missing ${plan.missing ?? 'not compared'}; until ${plan.until}${overdueNote(plan)}, ${plan.change}; ${plan.reason}; where ${plan.where}`
+        )
+      ])
+    ),
+    ...section(
+      'Unresolved cross-area order edges',
+      report.unresolvedEdges.map((edge) => `- ${edge}`)
+    ),
+    ...section(
+      'Owned columns left out: their owner does not run here',
+      report.tables.ownedColumnsLeftOut.map(
+        (o) => `- ${o.table}.${o.column}: ${o.owner}, ${o.why}`
+      )
+    ),
+    ...section(
       'Planned tables whose code is not in this tree',
       areaLists(report.planned)
     ),
@@ -302,7 +395,8 @@ export function renderMarkdown(report: RunReport): string {
 
 /** One line per run for the status file. */
 export function statusLine(report: RunReport, runDir: string): string {
-  return `- ${report.finishedAt} ${report.scope}: ${report.verdict}, rebuilt ${report.tables.rebuilt.length}, pending ${report.pending.length}, ${report.probes.stoppedBefore === null ? `probe differences ${report.probes.differences.length}` : 'probes not compared'}, failures ${report.failures.length}. ${runDir}`;
+  const overdue = overdueLine(report.tables.exemptUntil, plansOf(report));
+  return `- ${report.finishedAt} ${report.scope}: ${report.verdict}, rebuilt ${report.tables.rebuilt.length}, pending ${report.pending.length}, ${report.probes.stoppedBefore === null ? `probe differences ${report.probes.differences.length}` : 'probes not compared'}, failures ${report.failures.length}${overdue ? `; ${overdue}` : ''}${report.unresolvedEdges.length ? `; unresolved cross-area edges ${report.unresolvedEdges.length}` : ''}. ${runDir}`;
 }
 
 export function writeReport(

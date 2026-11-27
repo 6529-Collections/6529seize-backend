@@ -95,6 +95,10 @@ function report(parts: Partial<RunReport> = {}): RunReport {
           rowsAfter: 3,
           same: true,
           missing: [],
+          planned: [],
+          plannedRows: 0,
+          plannedColumns: [],
+          plannedColumnRows: 0,
           extra: [],
           changed: []
         }
@@ -107,8 +111,13 @@ function report(parts: Partial<RunReport> = {}): RunReport {
           column: 'created_at',
           reason: 'Set when the loop writes the row.'
         }
-      ]
+      ],
+      ownedColumnsLeftOut: [],
+      day: '2026-11-24',
+      exemptUntil: [],
+      plannedRows: []
     },
+    unresolvedEdges: [],
     failures: [],
     notes: [],
     ...parts
@@ -122,8 +131,30 @@ describe('rebuild report', () => {
       'tables 3: index 2, ephemeral 1, provider 0, schema 0, view 0, retired 0, exempt 0; rebuilt 1, pending 1, planned 1, differing 0',
       'probes 2: differ 0, unproven 0; INDEX tables no probe read 0',
       'GET routes 3: probed 1, waived 1, open 1',
-      'steps 1: failed 0; source violations 0; provisional sources relays'
+      'steps 1: failed 0; source violations 0; provisional sources relays; unresolved cross-area edges 0'
     ]);
+  });
+
+  it('counts and lists unresolved cross-area edges', () => {
+    const edged = report({
+      unresolvedEdges: [
+        'waves.chain-mirror before subs.identity',
+        'waves.chain-mirror before mint.log'
+      ]
+    });
+    expect(headline(edged)[4]).toMatch(/; unresolved cross-area edges 2$/);
+    expect(statusLine(edged, 'runs/x')).toContain(
+      '; unresolved cross-area edges 2. runs/x'
+    );
+    expect(statusLine(report(), 'runs/x')).not.toContain('cross-area');
+    expect(renderMarkdown(edged)).toContain(
+      [
+        '## Unresolved cross-area order edges',
+        '',
+        '- waves.chain-mirror before subs.identity',
+        '- waves.chain-mirror before mint.log'
+      ].join('\n')
+    );
   });
 
   it('says the answers were not compared when the run stopped before pass B', () => {
@@ -147,6 +178,141 @@ describe('rebuild report', () => {
     expect(markdown).not.toContain('differ 0, unproven 0');
     expect(statusLine(stopped, 'runs/x')).toContain('probes not compared');
     expect(statusLine(report(), 'runs/x')).toContain('probe differences 0');
+  });
+
+  it('counts and lists owned columns left out, with why', () => {
+    const base = report();
+    const leftOut = report({
+      tables: {
+        ...base.tables,
+        ownedColumnsLeftOut: [
+          {
+            table: 'identities',
+            column: 'tdh',
+            owner: 'tdh.identity-columns',
+            why: 'planned, its code is not in this tree'
+          }
+        ]
+      }
+    });
+    expect(headline(leftOut)[1]).toMatch(
+      /differing 0; owned columns left out 1$/
+    );
+    expect(headline(base)[1]).not.toContain('owned columns');
+    expect(renderMarkdown(leftOut)).toContain(
+      '## Owned columns left out: their owner does not run here\n\n- identities.tdh: tdh.identity-columns, planned, its code is not in this tree'
+    );
+  });
+
+  it('counts planned rows missing from the rebuild, and lists every plan', () => {
+    const base = report();
+    const plan = {
+      step: 'identity.mirror',
+      where: 'profile_id IS NULL',
+      reason: 'TDH-only identities',
+      until: '2026-12-04',
+      change: 'the derived ids',
+      seeded: 2,
+      missing: 2,
+      overdue: false
+    };
+    const planned = report({
+      tables: {
+        ...base.tables,
+        plannedRows: [
+          {
+            table: 'identities',
+            rows: 2,
+            keys: ['["k1"]', '["k2"]'],
+            columnRows: 0,
+            columnKeys: [],
+            plans: [plan]
+          },
+          // A plan whose rows the rebuild writes now: none missing.
+          {
+            table: 'waves',
+            rows: 0,
+            keys: [],
+            columnRows: 1,
+            columnKeys: ['[7]'],
+            plans: [
+              {
+                ...plan,
+                step: 'waves.mirror',
+                columns: ['updated_at', 'cancelled_at'],
+                differing: 1,
+                excused: 1,
+                differingByColumn: { updated_at: 1 },
+                where: 'id > 9',
+                missing: 0,
+                until: '2026-11-20',
+                overdue: true
+              }
+            ]
+          }
+        ]
+      }
+    });
+    expect(headline(planned)[1]).toMatch(
+      /; planned rows missing 2; rows changed only in planned columns 1$/
+    );
+    expect(headline(base)[1]).not.toContain('planned rows');
+    expect(renderMarkdown(planned)).toContain(
+      [
+        '## Planned rows: seeded rows only a later change rebuilds',
+        '',
+        '- identities: 2 planned rows missing from the rebuild, keys ["k1"] ["k2"]',
+        '  - planned by identity.mirror: seeded 2, missing 2; until 2026-12-04, the derived ids; TDH-only identities; where profile_id IS NULL',
+        '- waves: 0 planned rows missing from the rebuild; 1 rows changed only in planned columns, keys [7]',
+        '  - planned by waves.mirror, columns updated_at, cancelled_at: seeded 2, differing 1 (updated_at 1), excused 1, missing 0; until 2026-11-20 (overdue: its last day has passed), the derived ids; TDH-only identities; where id > 9'
+      ].join('\n')
+    );
+    // An overdue plan goes on the headline and the status line.
+    expect(headline(planned)).toContain(
+      'planned rows overdue: waves since 2026-11-20'
+    );
+    expect(statusLine(planned, 'runs/x')).toContain(
+      '; planned rows overdue: waves since 2026-11-20. runs/x'
+    );
+  });
+
+  it('puts overdue exemptions on the headline and the status line, and lists every dated one', () => {
+    const base = report();
+    const dated = report({
+      tables: {
+        ...base.tables,
+        exemptUntil: [
+          {
+            table: 'chain_entry_holds',
+            until: '2026-12-04',
+            why: 'held entries move later',
+            overdue: true
+          },
+          {
+            table: 'later_holds',
+            until: '2027-01-31',
+            why: 'a later ruling',
+            overdue: false
+          }
+        ]
+      }
+    });
+    expect(headline(dated)).toContain(
+      'EXEMPT overdue: chain_entry_holds since 2026-12-04'
+    );
+    expect(headline(base).join()).not.toContain('EXEMPT overdue');
+    expect(statusLine(dated, 'runs/x')).toContain(
+      '; EXEMPT overdue: chain_entry_holds since 2026-12-04. runs/x'
+    );
+    const markdown = renderMarkdown(dated);
+    expect(markdown).toContain(
+      [
+        '## EXEMPT tables exempt only until a day',
+        '',
+        '- chain_entry_holds: until 2026-12-04 (overdue: its last day has passed); held entries move later',
+        '- later_holds: until 2027-01-31; a later ruling'
+      ].join('\n')
+    );
   });
 
   it('says why a source is provisional when it knows', () => {

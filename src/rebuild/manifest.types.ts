@@ -45,6 +45,17 @@ export interface TableEntry {
     readonly reason: string;
   }[];
   /**
+   * INDEX only: columns no step rebuilds, each with why: named clock or
+   * random columns a step can't reproduce, each until a dated follow-up
+   * derives it from block times. The row comparison leaves them out like
+   * volatile ones, and the report lists each with its reason. A column
+   * can't be both exempt and owned by a column owner.
+   */
+  readonly exemptColumns?: readonly {
+    readonly column: string;
+    readonly reason: string;
+  }[];
+  /**
    * INDEX only, for a table whose readers take only its one newest row by
    * `column` (a checkpoint each run writes): the row diff compares only
    * the rows holding the column's largest value (MAX, as MySQL compares
@@ -56,6 +67,23 @@ export interface TableEntry {
     readonly column: string;
     readonly reason: string;
   };
+  /**
+   * EXEMPT only: the last day of the exemption, YYYY-MM-DD. The report
+   * lists the table with its day and notes it as overdue once the run's
+   * day is past it; a final run fails on any EXEMPT table with one,
+   * whatever the day, so an exemption with an end is never final.
+   */
+  readonly until?: string;
+}
+
+/**
+ * Whether `until` (an EXEMPT table's or a plan's last day) is a real
+ * calendar day written YYYY-MM-DD.
+ */
+export function validUntil(until: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(until)) return false;
+  const day = new Date(`${until}T00:00:00Z`);
+  return !Number.isNaN(day.getTime()) && day.toISOString().startsWith(until);
 }
 
 export interface ReasonedPath {
@@ -111,10 +139,54 @@ export interface RebuildStep {
    * mined after it first ran.
    */
   readonly last?: boolean;
+  /**
+   * Rebuilders only: rows of a table the step writes that only a later
+   * change rebuilds. Seeded rows matching `where` may be missing from the
+   * rebuild, or, with `columns`, come back with only those columns
+   * changed; each one is named in the report, and a final run fails on
+   * every plan. A row the rebuild adds, or changes outside a plan's
+   * columns, still differs, whether or not it matches.
+   */
+  readonly plannedRows?: readonly PlannedRows[];
+}
+
+export interface PlannedRows {
+  readonly table: string;
+  /**
+   * An SQL condition on the table's columns, such as a NOT EXISTS against
+   * another table, evaluated on the seeded rows only.
+   */
+  readonly where: string;
+  readonly reason: string;
+  /**
+   * The last day of the plan, YYYY-MM-DD. Once the run's day is past it,
+   * the plan is noted as overdue on the headline and the status line.
+   */
+  readonly until: string;
+  /** The later change that brings the source of these rows. */
+  readonly change: string;
+  /**
+   * Only these columns of the matching rows: the rows must come back,
+   * and may differ only in these columns; every other column of them is
+   * compared. Without it, the matching rows may be missing.
+   */
+  readonly columns?: readonly string[];
 }
 
 /** A table a step writes: all of it, or a rebuilder's partition of it. */
-export type WrittenTable = string | PartitionedWrite;
+export type WrittenTable = string | PartitionedWrite | ColumnsWrite;
+
+/**
+ * A column owner's write: only `columns` of the rows another step (the
+ * table's row writer) writes. The owner runs after the row writer and may
+ * only update its own columns on existing rows; the row writer may not
+ * touch them.
+ */
+export interface ColumnsWrite {
+  readonly table: string;
+  readonly columns: readonly string[];
+  readonly reason: string;
+}
 
 /**
  * A rebuilder's part of a table other rebuilders write too: the rows whose
