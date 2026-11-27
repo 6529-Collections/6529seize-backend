@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { canonicalStringify } from '@/rebuild/probes/canonical';
 import {
   closeServer,
+  errorText,
   listenLoopback,
   readBody,
   readProvenance,
@@ -133,12 +134,38 @@ function textBody(buffer: Buffer, contentType: string | null) {
     : { body: buffer.toString('base64'), encoding: 'base64' as const };
 }
 
+/**
+ * Where a recording run sends a request: the request's path and query on
+ * the upstream's origin, under the upstream's path. Null for a request
+ * target that isn't an absolute path (an absolute URL, `//host`, `@host`)
+ * or that resolves outside the upstream's path through dot segments,
+ * encoded or not, so no request can send the run to another host or path.
+ */
+export function upstreamTarget(upstream: URL, requestUrl: string): URL | null {
+  if (!requestUrl.startsWith('/') || requestUrl.startsWith('//')) return null;
+  const query = requestUrl.indexOf('?');
+  const requestPath = query === -1 ? requestUrl : requestUrl.slice(0, query);
+  const prefix = upstream.pathname.replace(/\/$/, '');
+  const target = new URL(upstream.href);
+  target.pathname = `${prefix}${requestPath}`;
+  // The upstream's own query (a key, say) stays, the request's after it.
+  const asked = query === -1 ? '' : requestUrl.slice(query + 1);
+  if (asked) {
+    target.search = upstream.search
+      ? `${upstream.search.slice(1)}&${asked}`
+      : asked;
+  }
+  const underUpstream =
+    target.pathname === prefix || target.pathname.startsWith(`${prefix}/`);
+  return target.origin === upstream.origin && underUpstream ? target : null;
+}
+
 async function forward(
-  upstream: string,
+  target: URL,
   request: http.IncomingMessage,
   body: Buffer
 ): Promise<{ status: number; contentType: string | null; body: Buffer }> {
-  const response = await fetch(`${upstream.replace(/\/$/, '')}${request.url}`, {
+  const response = await fetch(target.href, {
     method: request.method,
     headers: {
       'content-type': String(
@@ -158,7 +185,12 @@ async function forward(
 /**
  * Serves a recording (replay) or proxies to `upstream` and saves each new
  * answer (record). In replay an unrecorded request answers 599 and is
- * reported, so a run never silently reaches past its recording.
+ * reported, so a run never silently reaches past its recording. In record,
+ * a request whose target isn't a path under the upstream (see
+ * upstreamTarget) answers 400 and is reported, and nothing is fetched. A
+ * request the server fails on answers 502 with a fixed message; the error
+ * itself goes to the source's problems, so it reaches the run's report and
+ * log.
  *
  * Nothing verifies a recording's answers yet, a gateway's or an Ethereum
  * node's, and a label is never a basis: a recording is provisional
@@ -173,6 +205,9 @@ export async function startHttpRecording(options: {
 }): Promise<RunningSource> {
   const recording = loadRecording(options.dir);
   const unrecorded: string[] = [];
+  const failed: string[] = [];
+  const refused: string[] = [];
+  const upstream = options.upstream ? new URL(options.upstream) : null;
   // Recording adds to the files; a recording someone marked as written by
   // hand stays marked so, whatever this run adds to it.
   if (options.upstream && readProvenance(options.dir)?.made_by !== 'hand') {
@@ -183,6 +218,8 @@ export async function startHttpRecording(options: {
   }
   const provenance = readProvenance(options.dir);
   const server = http.createServer(async (request, response) => {
+    // The URL a recording run fetched, which an error may quote, key and all.
+    let fetched: string | null = null;
     try {
       const body = await readBody(request);
       const key = exchangeKey(
@@ -191,8 +228,18 @@ export async function startHttpRecording(options: {
         body
       );
       let exchange = recording.get(key);
-      if (!exchange && options.upstream) {
-        const answer = await forward(options.upstream, request, body);
+      if (!exchange && upstream) {
+        const target = upstreamTarget(upstream, request.url ?? '/');
+        if (!target) {
+          refused.push(`${request.method} ${request.url}`);
+          response.writeHead(400, { 'content-type': 'application/json' });
+          response.end(
+            JSON.stringify({ error: 'not a path under the upstream' })
+          );
+          return;
+        }
+        fetched = target.href;
+        const answer = await forward(target, request, body);
         exchange = {
           key,
           method: request.method ?? 'GET',
@@ -222,8 +269,13 @@ export async function startHttpRecording(options: {
       });
       response.end(payload);
     } catch (error) {
+      const text = [fetched, options.upstream].reduce<string>(
+        (said, url) => (url ? said.split(url).join(redactUrl(url)) : said),
+        errorText(error)
+      );
+      failed.push(`${request.method} ${request.url}: ${text}`);
       response.writeHead(502, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ error: String(error) }));
+      response.end(JSON.stringify({ error: 'replay failed' }));
     }
   });
   const { url } = await listenLoopback(server);
@@ -237,12 +289,23 @@ export async function startHttpRecording(options: {
       provisional: true,
       provisionalWhy: 'answers not verified'
     },
-    problems: () =>
-      unrecorded.length
+    problems: () => [
+      ...(unrecorded.length
         ? [
             `${options.name}: ${unrecorded.length} requests not in the recording, first ${unrecorded.slice(0, 5).join(', ')}`
           ]
-        : [],
+        : []),
+      ...(failed.length
+        ? [
+            `${options.name}: ${failed.length} requests failed in the recording's server, first ${failed.slice(0, 3).join('; ')}`
+          ]
+        : []),
+      ...(refused.length
+        ? [
+            `${options.name}: ${refused.length} requests refused, not a path under the upstream, first ${refused.slice(0, 3).join(', ')}`
+          ]
+        : [])
+    ],
     stop: () => closeServer(server)
   };
 }

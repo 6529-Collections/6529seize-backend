@@ -38,6 +38,33 @@ describe('step grants', () => {
     expect(dropUserStatement('rb_1')).toBe("DROP USER IF EXISTS 'rb_1'@'%'");
   });
 
+  it('holds a table with column owners to columns: the row writer and the owner', () => {
+    const grants = stepGrantStatements({
+      user: 'rb_1',
+      password: 'x',
+      database: 'db',
+      writes: ['identities', 'team'],
+      reads: ['identities'],
+      columns: [
+        {
+          table: 'identities',
+          insert: ['profile_id', 'handle'],
+          update: ['profile_id', 'handle'],
+          delete: true
+        },
+        { table: 'tdh', insert: [], update: ['tdh', 'xtdh'], delete: false }
+      ]
+    }).slice(4);
+    expect(grants).toEqual([
+      "GRANT SELECT, INSERT, UPDATE, DELETE ON `db`.`team` TO 'rb_1'@'%'",
+      "GRANT SELECT, DELETE ON `db`.`identities` TO 'rb_1'@'%'",
+      "GRANT INSERT (`profile_id`, `handle`) ON `db`.`identities` TO 'rb_1'@'%'",
+      "GRANT UPDATE (`profile_id`, `handle`) ON `db`.`identities` TO 'rb_1'@'%'",
+      "GRANT SELECT ON `db`.`tdh` TO 'rb_1'@'%'",
+      "GRANT UPDATE (`tdh`, `xtdh`) ON `db`.`tdh` TO 'rb_1'@'%'"
+    ]);
+  });
+
   it('escapes table names', () => {
     const [, , , , grant] = stepGrantStatements({
       user: 'rb_1',

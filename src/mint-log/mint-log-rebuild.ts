@@ -19,9 +19,32 @@ import {
   MintGenesisCard
 } from './mint-log-genesis';
 import { MintLogHeadDb, mintHeadKey, mintLogHeadDb } from './mint-log-head.db';
-import { mintCard, MintRowPartSpec } from './mint-log-parts';
+import {
+  mintCard,
+  MINT_ROW_PART_SPECS,
+  MintRowPartSpec
+} from './mint-log-parts';
 import { entrySha256 } from './mint-log-recorder';
-import type { MintCardRef, MintLogEntryBody } from './mint-log.types';
+import {
+  MINT_ROW_PARTS,
+  MintCardEffects,
+  MintCardRef,
+  MintLogEntryBody
+} from './mint-log.types';
+
+/**
+ * An entry's effects without the identity final rows' phases. Those rows
+ * have one owner, the subscriptions journal, which holds every phase write
+ * to them: a rebuild gets them from the subscriptions rebuild, never from
+ * the mint log, which only logs them (and checks them in its replay).
+ */
+function withoutIdentityParts(effects: MintCardEffects): MintCardEffects {
+  const kept: Record<string, unknown> = { ...effects };
+  for (const part of MINT_ROW_PARTS) {
+    if (MINT_ROW_PART_SPECS[part].identitySubscriptions) delete kept[part];
+  }
+  return kept as MintCardEffects;
+}
 
 const logger = Logger.get('MINT_LOG_REBUILD');
 
@@ -106,7 +129,11 @@ export class MintLogRebuilder {
         if (entry.kind === 'mint.genesis') {
           await this.applyGenesis(entry, bases, connection);
         } else if (entry.card) {
-          await this.writer.apply(entry.card, entry.effects, connection);
+          await this.writer.apply(
+            entry.card,
+            withoutIdentityParts(entry.effects),
+            connection
+          );
           // A normalize restarts every minted count of the card at zero,
           // even when the rows it rewrote are otherwise unchanged.
           if (entry.kind === 'dist.normalize' && !entry.writer_error) {
@@ -175,10 +202,14 @@ export class MintLogRebuilder {
         file.card.card_id,
         file.card.key
       );
-      const current = await this.reader.capture(card, connection);
+      // The identity rows are not the mint log's to write: no switch read,
+      // no capture of them, and the file's identity part is left out.
+      const current = await this.reader.capture(card, connection, {
+        identityTruth: false
+      });
       await this.writer.apply(
         card,
-        diffCardState(current, file.state),
+        withoutIdentityParts(diffCardState(current, file.state)),
         connection
       );
       await this.writer.applyRows(

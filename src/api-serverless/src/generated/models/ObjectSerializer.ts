@@ -6,6 +6,12 @@ export * from '../models/AllowlistNormalizedEntry';
 export * from '../models/ApiActiveWaveVote';
 export * from '../models/ApiActiveWaveVotesPage';
 export * from '../models/ApiAddReactionToDropRequest';
+export * from '../models/ApiAddRememeBadRequest';
+export * from '../models/ApiAddRememeError';
+export * from '../models/ApiAddRememeRequest';
+export * from '../models/ApiAddRememeResponse';
+export * from '../models/ApiAddRememeTokenErrors';
+export * from '../models/ApiAddRememeTokenErrorsNftsInner';
 export * from '../models/ApiAggregatedActivity';
 export * from '../models/ApiAggregatedActivityMemes';
 export * from '../models/ApiAggregatedActivityPage';
@@ -769,6 +775,11 @@ export * from '../models/ApiRefreshPushInstallationBadgeRequest';
 export * from '../models/ApiRefreshPushInstallationBadgeResponse';
 export * from '../models/ApiRegisterDeviceGrantRequest';
 export * from '../models/ApiRegisterPushNotificationTokenRequest';
+export * from '../models/ApiRememeContractMetadata';
+export * from '../models/ApiRememeNftLookupError';
+export * from '../models/ApiRememeNftMetadata';
+export * from '../models/ApiRememeNftMetadataRaw';
+export * from '../models/ApiRememePayload';
 export * from '../models/ApiRenameDeviceRequest';
 export * from '../models/ApiRepCategoriesPage';
 export * from '../models/ApiRepCategory';
@@ -869,8 +880,12 @@ export * from '../models/ApiValidateProfileCmsAgentPatchRequest';
 export * from '../models/ApiValidateProfileCmsPackageRequest';
 export * from '../models/ApiVotingCreditReleaseReason';
 export * from '../models/ApiWallet';
+export * from '../models/ApiWalletAggregatedActivity';
+export * from '../models/ApiWalletAggregatedActivityMemes';
 export * from '../models/ApiWalletDistributionAllocation';
 export * from '../models/ApiWalletDistributionAllocations';
+export * from '../models/ApiWalletOwnerBalance';
+export * from '../models/ApiWalletOwnerBalanceMemes';
 export * from '../models/ApiWave';
 export * from '../models/ApiWaveAllMentionCount';
 export * from '../models/ApiWaveChatConfig';
@@ -1037,6 +1052,12 @@ import { AllowlistNormalizedEntry } from '../models/AllowlistNormalizedEntry';
 import { ApiActiveWaveVote } from '../models/ApiActiveWaveVote';
 import { ApiActiveWaveVotesPage } from '../models/ApiActiveWaveVotesPage';
 import { ApiAddReactionToDropRequest } from '../models/ApiAddReactionToDropRequest';
+import { ApiAddRememeBadRequestClass } from '../models/ApiAddRememeBadRequest';
+import { ApiAddRememeError } from '../models/ApiAddRememeError';
+import { ApiAddRememeRequest } from '../models/ApiAddRememeRequest';
+import { ApiAddRememeResponse } from '../models/ApiAddRememeResponse';
+import { ApiAddRememeTokenErrors } from '../models/ApiAddRememeTokenErrors';
+import { ApiAddRememeTokenErrorsNftsInnerClass } from '../models/ApiAddRememeTokenErrorsNftsInner';
 import { ApiAggregatedActivity } from '../models/ApiAggregatedActivity';
 import { ApiAggregatedActivityMemes } from '../models/ApiAggregatedActivityMemes';
 import { ApiAggregatedActivityPage } from '../models/ApiAggregatedActivityPage';
@@ -1800,6 +1821,11 @@ import { ApiRefreshPushInstallationBadgeRequest } from '../models/ApiRefreshPush
 import { ApiRefreshPushInstallationBadgeResponse } from '../models/ApiRefreshPushInstallationBadgeResponse';
 import { ApiRegisterDeviceGrantRequest } from '../models/ApiRegisterDeviceGrantRequest';
 import { ApiRegisterPushNotificationTokenRequest } from '../models/ApiRegisterPushNotificationTokenRequest';
+import { ApiRememeContractMetadata } from '../models/ApiRememeContractMetadata';
+import { ApiRememeNftLookupError } from '../models/ApiRememeNftLookupError';
+import { ApiRememeNftMetadata } from '../models/ApiRememeNftMetadata';
+import { ApiRememeNftMetadataRaw } from '../models/ApiRememeNftMetadataRaw';
+import { ApiRememePayload } from '../models/ApiRememePayload';
 import { ApiRenameDeviceRequest } from '../models/ApiRenameDeviceRequest';
 import { ApiRepCategoriesPage } from '../models/ApiRepCategoriesPage';
 import { ApiRepCategory } from '../models/ApiRepCategory';
@@ -1900,8 +1926,12 @@ import { ApiValidateProfileCmsAgentPatchRequest } from '../models/ApiValidatePro
 import { ApiValidateProfileCmsPackageRequest } from '../models/ApiValidateProfileCmsPackageRequest';
 import { ApiVotingCreditReleaseReason } from '../models/ApiVotingCreditReleaseReason';
 import { ApiWallet } from '../models/ApiWallet';
+import { ApiWalletAggregatedActivity } from '../models/ApiWalletAggregatedActivity';
+import { ApiWalletAggregatedActivityMemes } from '../models/ApiWalletAggregatedActivityMemes';
 import { ApiWalletDistributionAllocation, ApiWalletDistributionAllocationPhaseEnum     } from '../models/ApiWalletDistributionAllocation';
 import { ApiWalletDistributionAllocations } from '../models/ApiWalletDistributionAllocations';
+import { ApiWalletOwnerBalance } from '../models/ApiWalletOwnerBalance';
+import { ApiWalletOwnerBalanceMemes } from '../models/ApiWalletOwnerBalanceMemes';
 import { ApiWave } from '../models/ApiWave';
 import { ApiWaveAllMentionCount } from '../models/ApiWaveAllMentionCount';
 import { ApiWaveChatConfig } from '../models/ApiWaveChatConfig';
@@ -2389,6 +2419,12 @@ let typeMap: {[index: string]: any} = {
     "ApiActiveWaveVote": ApiActiveWaveVote,
     "ApiActiveWaveVotesPage": ApiActiveWaveVotesPage,
     "ApiAddReactionToDropRequest": ApiAddReactionToDropRequest,
+    "ApiAddRememeBadRequest": ApiAddRememeBadRequestClass,
+    "ApiAddRememeError": ApiAddRememeError,
+    "ApiAddRememeRequest": ApiAddRememeRequest,
+    "ApiAddRememeResponse": ApiAddRememeResponse,
+    "ApiAddRememeTokenErrors": ApiAddRememeTokenErrors,
+    "ApiAddRememeTokenErrorsNftsInner": ApiAddRememeTokenErrorsNftsInnerClass,
     "ApiAggregatedActivity": ApiAggregatedActivity,
     "ApiAggregatedActivityMemes": ApiAggregatedActivityMemes,
     "ApiAggregatedActivityPage": ApiAggregatedActivityPage,
@@ -3094,6 +3130,11 @@ let typeMap: {[index: string]: any} = {
     "ApiRefreshPushInstallationBadgeResponse": ApiRefreshPushInstallationBadgeResponse,
     "ApiRegisterDeviceGrantRequest": ApiRegisterDeviceGrantRequest,
     "ApiRegisterPushNotificationTokenRequest": ApiRegisterPushNotificationTokenRequest,
+    "ApiRememeContractMetadata": ApiRememeContractMetadata,
+    "ApiRememeNftLookupError": ApiRememeNftLookupError,
+    "ApiRememeNftMetadata": ApiRememeNftMetadata,
+    "ApiRememeNftMetadataRaw": ApiRememeNftMetadataRaw,
+    "ApiRememePayload": ApiRememePayload,
     "ApiRenameDeviceRequest": ApiRenameDeviceRequest,
     "ApiRepCategoriesPage": ApiRepCategoriesPage,
     "ApiRepCategory": ApiRepCategory,
@@ -3182,8 +3223,12 @@ let typeMap: {[index: string]: any} = {
     "ApiValidateProfileCmsAgentPatchRequest": ApiValidateProfileCmsAgentPatchRequest,
     "ApiValidateProfileCmsPackageRequest": ApiValidateProfileCmsPackageRequest,
     "ApiWallet": ApiWallet,
+    "ApiWalletAggregatedActivity": ApiWalletAggregatedActivity,
+    "ApiWalletAggregatedActivityMemes": ApiWalletAggregatedActivityMemes,
     "ApiWalletDistributionAllocation": ApiWalletDistributionAllocation,
     "ApiWalletDistributionAllocations": ApiWalletDistributionAllocations,
+    "ApiWalletOwnerBalance": ApiWalletOwnerBalance,
+    "ApiWalletOwnerBalanceMemes": ApiWalletOwnerBalanceMemes,
     "ApiWave": ApiWave,
     "ApiWaveAllMentionCount": ApiWaveAllMentionCount,
     "ApiWaveChatConfig": ApiWaveChatConfig,

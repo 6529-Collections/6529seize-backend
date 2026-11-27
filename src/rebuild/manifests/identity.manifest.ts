@@ -11,11 +11,11 @@ export const identityManifest: AreaManifest = {
   area: 'identity',
   flags: {},
   tables: {
-    // The seed identity.probe-profiles writes the probe fixture's profiles
-    // (rebuild-probe-1 for 0x...01, rebuild-probe-2 for 0x...02) here and in
-    // address_consolidation_keys. The identity rebuilder must bring them
-    // back from its sources, or every probe that signs in answers
-    // differently after the drop.
+    // The seed identity.probe-profiles writes the world's actors (the probe
+    // fixture's profiles and the identities other areas' seeds read) here,
+    // in profiles, address_consolidation_keys and identity_chain_principals.
+    // The identity rebuilder must bring them back from its sources, or every
+    // probe that signs in answers differently after the drop.
     identities: { class: 'INDEX' },
     profiles: { class: 'INDEX' },
     profiles_archive: { class: 'INDEX' },
@@ -127,9 +127,10 @@ export const identityManifest: AreaManifest = {
       why: 'The signatures a held identity join waits for (chain_pending_operations).'
     }
   },
-  // A profile for each probe fixture wallet (probe-fixture.ts), for the
-  // probes that sign in, written as identity rows. Identity's rebuilder
-  // must bring them back from its sources.
+  // The world's actors (probe-fixture.ts): the probes, which sign in, and
+  // the identities other areas' seeds read by wallet, written as the
+  // identity world holds them. Identity's rebuilder must bring them back
+  // from its sources.
   seeds: [
     {
       id: 'identity.probe-profiles',
@@ -137,7 +138,31 @@ export const identityManifest: AreaManifest = {
         module: 'src/rebuild/run/probe-fixture.steps',
         exportName: 'seedProbeIdentities'
       },
-      writes: ['identities', 'address_consolidation_keys'],
+      writes: [
+        'profiles',
+        'identities',
+        'address_consolidation_keys',
+        'identity_chain_principals'
+      ],
+      sources: ['repo'],
+      timeoutMinutes: 5
+    },
+    {
+      // Before any other seed: each actor the world holds has the world's
+      // fixed profile id and the chain's principal of it, and the probes,
+      // whose ids probeProfileId gives without reading, are held.
+      id: 'identity.actors-check',
+      run: {
+        module: 'src/rebuild/run/probe-fixture.steps',
+        exportName: 'checkWorldActorsStep'
+      },
+      writes: [],
+      reads: [
+        'identities',
+        'address_consolidation_keys',
+        'identity_chain_principals'
+      ],
+      after: ['identity.probe-profiles'],
       sources: ['repo'],
       timeoutMinutes: 5
     }

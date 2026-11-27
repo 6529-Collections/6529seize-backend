@@ -9,7 +9,6 @@ import aggregatedActivityRoutes from './aggregated-activity/api.aggregated-activ
 import authRoutes from './auth/auth.routes';
 import attachmentsRoutes from './attachments/attachments.routes';
 import communityMembersRoutes from './community-members/community-members.routes';
-import userGroupsImEligibleForRoutes from './community-members/user-groups-im-elgigible-for.routes';
 import userGroupsRoutes from './community-members/user-groups.routes';
 import communityMetricsRoutes from './community-metrics/community-metrics.routes';
 import delegationsRoutes from './delegations/delegations.routes';
@@ -116,7 +115,6 @@ import {
 } from '@/api/app-initialization';
 import { describeE2eeSuiteTransition } from '@/e2ee/e2ee-suite-policy';
 import { parseTdhResultsFromDB } from '@/sql_helpers';
-import deployRoutes from '@/api/deploy/deploy.routes';
 import alchemyProxyRoutes from './alchemy-proxy/alchemy-proxy.routes';
 import {
   DEFAULT_PAGE_SIZE,
@@ -1359,7 +1357,6 @@ function wireApp() {
     res.send({});
   });
 
-  rootRouter.use('/deploy', deployRoutes);
   rootRouter.use('/ci-pipeline-alerts', ciPipelineAlertRoutes);
 
   rootRouter.get('/health/ui', async (req, res) => {
@@ -1415,7 +1412,6 @@ function wireApp() {
   apiRouter.use(`/community-members`, communityMembersRoutes);
   apiRouter.use(`/community-metrics`, communityMetricsRoutes);
   apiRouter.use(`/groups`, userGroupsRoutes);
-  apiRouter.use(`/groups_im_eligible_for`, userGroupsImEligibleForRoutes);
   apiRouter.use(`/auth`, authRoutes);
   apiRouter.use(`/rememes`, rememesRoutes);
   apiRouter.use(`/nextgen`, nextgenRoutes);
@@ -1446,7 +1442,6 @@ function wireApp() {
   apiRouter.use(`/distribution_photos`, distributionPhotosRoutes);
   apiRouter.use(``, distributionsRoutes);
   apiRouter.use(`/minting-claims`, mintingClaimsRoutes);
-  apiRouter.use(`/wave`, waveQuickVoteRoutes);
   apiRouter.use(`/waves`, waveQuickVoteRoutes);
   apiRouter.use(`/waves`, wavesRoutes);
   apiRouter.use(`/public/waves`, publicWavesRoutes);
