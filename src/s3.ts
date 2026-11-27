@@ -5,7 +5,6 @@ import {
   MEMELAB_CONTRACT,
   MEMES_CONTRACT
 } from '@/constants';
-import { Stream } from 'stream';
 import { Logger } from './logging';
 import axios from 'axios';
 import axiosRetry from 'axios-retry';
@@ -24,6 +23,13 @@ import { withArweaveFallback } from '@/arweave-gateway-fallback';
 import { downloadImageBuffer } from '@/media/image-download';
 import { assertUnreachable } from '@/assertions';
 import { REWRITABLE_MEDIA_CACHE_CONTROL } from '@/media/media-cache-control';
+import {
+  collectVideoScaleOutput,
+  withoutSignedQuery
+} from '@/media/video-scale-output';
+import { GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { getS3 } from './s3.client';
 
 const logger = Logger.get('S3');
 const limit = pLimit(3);
@@ -424,7 +430,10 @@ async function processNftVideos(
   const videoKey = `videos/${n.contract}/${n.id}.${videoFormat}`;
 
   if (requestedVariants.has(S3UploaderVideoVariant.ORIGINAL)) {
-    const videoExists = await s3ObjectExists(myBucket, videoKey, videoTxId);
+    // An empty original is a failed earlier upload, not a finished one.
+    const videoExists = await s3ObjectExists(myBucket, videoKey, videoTxId, {
+      requireNonEmpty: true
+    });
     if (videoExists.exists) {
       logger.info(
         `[SKIP VIDEO ORIGINAL] [KEY ${videoKey}] [reason=already_exists]`
@@ -455,7 +464,14 @@ async function processNftVideos(
   }
 
   if (requestedVariants.has(S3UploaderVideoVariant.SCALED_750)) {
-    await handleVideoScaling(n, videoUrl, videoFormat, myBucket, videoTxId);
+    await handleVideoScaling(
+      n,
+      videoUrl,
+      videoFormat,
+      myBucket,
+      videoTxId,
+      videoKey
+    );
   } else {
     logger.info(
       `[SKIP VIDEO SCALED_750] [${n.contract}#${n.id}] [reason=variant_not_requested]`
@@ -568,11 +584,15 @@ async function handleVideoScaling(
   videoUrl: string,
   videoFormat: string,
   myBucket: string,
-  txId: string
+  txId: string,
+  originalKey: string
 ) {
   const scaledVideoKey = `videos/${n.contract}/scaledx750/${n.id}.${videoFormat}`;
 
-  const videoExists = await s3ObjectExists(myBucket, scaledVideoKey, txId);
+  // An empty scaled video is a failed earlier attempt, not a finished one.
+  const videoExists = await s3ObjectExists(myBucket, scaledVideoKey, txId, {
+    requireNonEmpty: true
+  });
   if (videoExists.exists) {
     logger.info(
       `[SKIP VIDEO SCALED] [KEY ${scaledVideoKey}] [reason=already_exists]`
@@ -581,51 +601,38 @@ async function handleVideoScaling(
   }
 
   logger.info(`[MISSING SCALED ${videoFormat}] [KEY ${scaledVideoKey}]`);
-
   logger.info(`[SCALING ${scaledVideoKey}]`);
-  let resizedVideoStream: NodeJS.ReadableStream;
+
+  let scaled: Buffer;
   try {
-    resizedVideoStream = await scaleVideo(videoUrl, videoFormat.toLowerCase());
+    scaled = await scaleVideoFromBestSource({
+      bucket: myBucket,
+      originalKey,
+      videoUrl,
+      txId,
+      format: videoFormat.toLowerCase(),
+      label: scaledVideoKey,
+      // Kept from the per-URL special case for that one artwork.
+      fitWidth: videoUrl.endsWith('30.MP4')
+    });
   } catch (err) {
-    logger.error(`[scaleVideo FAILED] [${scaledVideoKey}]`, err);
+    logger.error(`[SCALING FAILED ${scaledVideoKey}]`, err);
     throw err instanceof Error ? err : new Error(String(err));
   }
+  logger.info(`[S3] [SCALED ${scaledVideoKey}] [bytes ${scaled.length}]`);
 
-  logger.info(`[ACQUIRED SCALED STREAM ${scaledVideoKey}]`);
-
-  let totalChunks = 0;
-  let totalBytes = 0;
-  const countingStream = new Stream.Transform({
-    transform(chunk, _encoding, callback) {
-      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      totalChunks++;
-      totalBytes += buf.length;
-      callback(null, buf);
-    }
-  });
-
-  resizedVideoStream.on('error', (err) => {
-    logger.error(
-      `[resizedVideoStream] [SCALING FAILED ${scaledVideoKey}]`,
-      err
-    );
-    countingStream.destroy(err instanceof Error ? err : new Error(String(err)));
-  });
-  resizedVideoStream.pipe(countingStream, { end: true });
-
+  // Uploaded only once ffmpeg has finished cleanly, so a failed scale never
+  // leaves an empty or partial object behind.
   try {
     const uploadedScaledVideo = await s3UploadObject({
       bucket: myBucket,
       key: scaledVideoKey,
-      body: countingStream,
+      body: scaled,
       contentType: `video/${videoFormat.toLowerCase()}`,
       txId,
+      contentLength: scaled.length,
       cacheControl: REWRITABLE_MEDIA_CACHE_CONTROL
     });
-
-    logger.info(
-      `[S3] [SCALING STREAM SUMMARY ${scaledVideoKey}] [chunks ${totalChunks}] [bytes ${totalBytes}]`
-    );
     logger.info(
       `[KEY UPLOADED ${scaledVideoKey}] [ETAG ${uploadedScaledVideo.ETag}]`
     );
@@ -636,10 +643,52 @@ async function handleVideoScaling(
   }
 }
 
-async function scaleVideo(
-  url: string,
-  format: string
-): Promise<NodeJS.ReadableStream> {
+/**
+ * Scales the video from the copy already stored in S3 when there is one
+ * (the same bytes, and no public gateway in the way), else from its source
+ * URL and, for Arweave, the other gateways in turn.
+ */
+async function scaleVideoFromBestSource({
+  bucket,
+  originalKey,
+  videoUrl,
+  txId,
+  format,
+  label,
+  fitWidth
+}: {
+  bucket: string;
+  originalKey: string;
+  videoUrl: string;
+  txId: string;
+  format: string;
+  label: string;
+  fitWidth: boolean;
+}): Promise<Buffer> {
+  const scale = (url: string) =>
+    collectVideoScaleOutput(scaleVideo(url, format, fitWidth), label);
+  const original = await s3ObjectExists(bucket, originalKey, txId, {
+    requireNonEmpty: true
+  });
+  if (original.exists) {
+    const signedUrl = await getSignedUrl(
+      getS3(),
+      new GetObjectCommand({ Bucket: bucket, Key: originalKey }),
+      { expiresIn: 3600 }
+    );
+    try {
+      return await scale(signedUrl);
+    } catch (err) {
+      logger.warn(
+        `[SCALE FROM S3 FAILED] [${label}] [source=${originalKey}] trying the source URL`,
+        withoutSignedQuery(err)
+      );
+    }
+  }
+  return withArweaveFallback(videoUrl, scale);
+}
+
+function scaleVideo(url: string, format: string, fitWidth: boolean) {
   const ff = ffmpeg({ source: url })
     .videoCodec('libx264')
     .audioCodec('aac')
@@ -650,7 +699,7 @@ async function scaleVideo(
       '-crf 25',
       '-movflags frag_keyframe+empty_moov'
     ]);
-  if (url.endsWith('30.MP4')) {
+  if (fitWidth) {
     logger.info(`[SPECIAL CASE 30.MP4`);
     ff.outputOptions(['-filter:v scale=750:-1']);
   }
