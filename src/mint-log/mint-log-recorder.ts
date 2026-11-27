@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { appFeatures, AppFeatures } from '@/app-features';
+import { afterCommit } from '@/db/after-commit';
 import { CustomApiCompliantException } from '@/exceptions';
 import { Logger } from '@/logging';
 import { sendPriorityAlertIfConfigured } from '@/priority-alerts.context';
@@ -267,10 +268,29 @@ export class MintLogRecorder {
 
   private async alert(message: string): Promise<void> {
     logger.error(message);
+    await this.sendAlert(message);
+  }
+
+  private async sendAlert(message: string): Promise<void> {
     await sendPriorityAlertIfConfigured('Mint log', new Error(message)).catch(
       (alertError) =>
         logger.warn(`[MINT_LOG_ALERT_FAILED] ${errorText(alertError)}`)
     );
+  }
+
+  /**
+   * As alert, but the priority alert, a network call, goes out once the
+   * caller's transaction commits, so it isn't made while the caller's locks
+   * and the mint log's head are held. The error is logged at once. If the
+   * transaction rolls back, the write it was about is gone with it, and so
+   * is the alert.
+   */
+  private async alertAfterCommit(
+    message: string,
+    connection: ConnectionWrapper<any>
+  ): Promise<void> {
+    logger.error(message);
+    await afterCommit(connection, () => this.sendAlert(message));
   }
 
   /**
@@ -369,8 +389,9 @@ export class MintLogRecorder {
       await execute(`ROLLBACK TO SAVEPOINT ${WITHIN_SAVEPOINT}`).catch(() => {
         throw error;
       });
-      await this.alert(
-        `[MINT_LOG_SHADOW_FAILED] [${spec.kind}] ${errorText(error)}`
+      await this.alertAfterCommit(
+        `[MINT_LOG_SHADOW_FAILED] [${spec.kind}] ${errorText(error)}`,
+        connection
       );
       return null;
     }

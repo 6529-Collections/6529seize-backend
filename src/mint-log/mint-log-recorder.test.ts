@@ -3,6 +3,11 @@ jest.mock('@/priority-alerts.context', () => ({
 }));
 
 import { MEMES_CONTRACT } from '@/constants';
+import {
+  closeAfterCommitScope,
+  openAfterCommitScope,
+  runAfterCommitCallbacks
+} from '@/db/after-commit';
 import { Logger } from '@/logging';
 import { sendPriorityAlertIfConfigured } from '@/priority-alerts.context';
 import type { MintStateWriter } from './mint-log-apply';
@@ -719,6 +724,25 @@ describe('MintLogRecorder.writeWithin', () => {
     expect(calls).toContain('ROLLBACK TO SAVEPOINT mint_log_within');
     expect(fake.state.distribution.map((row) => row.id)).toEqual([1]);
     expect(fake.queue).toEqual([]);
+    expect(sendPriorityAlertIfConfigured).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends a shadow failure's priority alert only once the caller's transaction commits", async () => {
+    const fake = new Fake();
+    fake.failAppends = 1;
+    const { log } = within(fake, { shadow: true });
+    const tracked = { connection: {} } as any;
+    openAfterCommitScope(tracked.connection);
+    await expect(
+      log.writeWithin(respondSpec(), tracked, async () => {
+        fake.addRow(1);
+        return 'ok';
+      })
+    ).resolves.toBe('ok');
+    // The caller still holds its locks and the head: no network call yet.
+    expect(sendPriorityAlertIfConfigured).not.toHaveBeenCalled();
+
+    await runAfterCommitCallbacks(closeAfterCommitScope(tracked.connection));
     expect(sendPriorityAlertIfConfigured).toHaveBeenCalledTimes(1);
   });
 
