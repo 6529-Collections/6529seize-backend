@@ -18,10 +18,13 @@ import {
 import { createHash } from 'node:crypto';
 import {
   caughtUp,
+  caughtUpWithChain,
   docsFromFiles,
-  MIRROR_RUNS_AT_MOST_MS,
+  MIRROR_AT_MOST_MS,
   mirrorToMark,
   MirrorToMarkDeps,
+  WALK_AT_MOST_MS,
+  WALK_RUN_BUDGET_MS,
   rebuildIdentityMirror,
   seedIdentityMirror,
   seedPlaceholderReferences
@@ -288,7 +291,8 @@ function setUp(
     env: { CHAIN_GATEWAY_URL: `${GATEWAY}/` },
     mirrorEnabled: () => true,
     budgetMs: 60_000,
-    maxRuns: 3
+    maxRuns: 3,
+    identitiesCount: jest.fn(async () => 50_000)
   };
   return { run, mirror, db, gateway, deps };
 }
@@ -309,9 +313,16 @@ describe('caughtUp', () => {
     [
       'keys to try again',
       state({ retry: { principals: ['0x01'], targets: [], wallets: [] } })
-    ]
+    ],
+    ['the level walk short of the end', state({ off_chain_after: '0x10' })]
   ])('does not hold with %s', (_name, given) => {
     expect(caughtUp(given, HEIGHT)).toBe(false);
+  });
+
+  it('is caught up with the chain while the level walk goes on', () => {
+    const walking = state({ off_chain_after: '0x10' });
+    expect(caughtUpWithChain(walking, HEIGHT)).toBe(true);
+    expect(caughtUp(walking, HEIGHT)).toBe(false);
   });
 });
 
@@ -369,8 +380,111 @@ describe('mirrorToMark', () => {
     );
     expect(mirrorSteps).toHaveLength(2);
     for (const step of mirrorSteps) {
-      expect(MIRROR_RUNS_AT_MOST_MS).toBeLessThan(step.timeoutMinutes * 60_000);
+      expect(MIRROR_AT_MOST_MS).toBeLessThan(step.timeoutMinutes * 60_000);
     }
+    // The rebuilder also lists and restores the placeholders: 1,019,000
+    // made-up ones took 28 s and 10 minutes, and the file is read once
+    // more before each; 15 minutes covers that.
+    const rebuilder = mirrorSteps.find(
+      (step) =>
+        'module' in step.run && step.run.exportName === 'rebuildIdentityMirror'
+    )!;
+    expect(MIRROR_AT_MOST_MS + 15 * 60_000).toBeLessThan(
+      rebuilder.timeoutMinutes * 60_000
+    );
+  });
+
+  describe('the level walk', () => {
+    const walking = (cursor: string | null) =>
+      state({ off_chain_after: cursor });
+
+    it('runs on, once caught up with the chain, until the walk reaches the end', async () => {
+      const { run, deps } = setUp([
+        { report: report(), state: walking('0x10') },
+        { report: report(), state: walking('0x20') },
+        { report: report(), state: walking('0x30') },
+        { report: report(), state: walking(null) }
+      ]);
+      const result = await mirrorToMark(ctx(), deps);
+      expect(result).toMatchObject({ runs: 1, walkRuns: 3 });
+      expect(run).toHaveBeenCalledTimes(4);
+      expect(run).toHaveBeenNthCalledWith(1, { budgetMs: 60_000 });
+      expect(run).toHaveBeenNthCalledWith(2, { budgetMs: WALK_RUN_BUDGET_MS });
+      expect(deps.identitiesCount).toHaveBeenCalledTimes(1);
+    });
+
+    it('needs no walk run when the walk ended with the catching up', async () => {
+      const { run, deps } = setUp([{ report: report(), state: state() }]);
+      const result = await mirrorToMark(ctx(), deps);
+      expect(result).toMatchObject({ runs: 1, walkRuns: 0 });
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(deps.identitiesCount).not.toHaveBeenCalled();
+    });
+
+    it('fails when a run leaves the cursor where it was', async () => {
+      const { deps } = setUp([
+        { report: report(), state: walking('0x10') },
+        { report: report(), state: walking('0x10') }
+      ]);
+      await expect(mirrorToMark(ctx(), deps)).rejects.toThrow(
+        /did not move past 0x10 in walk run 1/
+      );
+    });
+
+    it('holds the walk runs to the rows over 20,000 a run, plus one', async () => {
+      const { run, deps } = setUp([
+        { report: report(), state: walking('0x10') },
+        { report: report(), state: walking('0x20') },
+        { report: report(), state: walking('0x30') },
+        { report: report(), state: walking('0x40') },
+        { report: report(), state: walking(null) }
+      ]);
+      // 20,000 rows: one run's walk, so two runs at most.
+      (deps.identitiesCount as jest.Mock).mockResolvedValue(20_000);
+      await expect(mirrorToMark(ctx(), deps)).rejects.toThrow(
+        /end of 20000 identities rows after 2 runs/
+      );
+      expect(run).toHaveBeenCalledTimes(3);
+    });
+
+    it('starts no walk run after its time is up', async () => {
+      const { run, deps } = setUp([
+        { report: report(), state: walking('0x10') },
+        { report: report(), state: walking('0x20') },
+        { report: report(), state: walking(null) }
+      ]);
+      // Each reading of the clock four minutes on: the second walk run
+      // would start 12 minutes in.
+      let clock = 0;
+      const now = () => (clock += 4 * 60_000);
+      await expect(mirrorToMark(ctx(), { ...deps, now })).rejects.toThrow(
+        new RegExp(`after ${WALK_AT_MOST_MS / 60_000} minutes \\(1 runs`)
+      );
+      expect(run).toHaveBeenCalledTimes(2);
+    });
+
+    it('fails when a walk run leaves the mirror behind the chain', async () => {
+      const { deps } = setUp([
+        { report: report(), state: walking('0x10') },
+        {
+          report: report(),
+          state: state({ off_chain_after: '0x20', level_sweep_day: 26 })
+        }
+      ]);
+      await expect(mirrorToMark(ctx(), deps)).rejects.toThrow(
+        /walk run 1 left the mirror behind the chain/
+      );
+    });
+
+    it('fails when identities fail in a walk run', async () => {
+      const { deps } = setUp([
+        { report: report(), state: walking('0x10') },
+        { report: report({ failed: ['0x11: no'] }), state: walking('0x20') }
+      ]);
+      await expect(mirrorToMark(ctx(), deps)).rejects.toThrow(
+        /walk run 1 left the mirror behind the chain: .*0x11: no/
+      );
+    });
   });
 
   it('takes the source height when the run names no mark', async () => {
@@ -520,10 +634,13 @@ describe('seedIdentityMirror', () => {
       return RECORD;
     });
     (writeSwitchOnRecordFixture as jest.Mock).mockImplementation(
-      (_dir: string, formatted: FormattedTdhOnlyRecord) => ({
-        identitiesSha256: formatted.identitiesSha256,
-        keysSha256: formatted.keysSha256
-      })
+      (_dir: string, formatted: FormattedTdhOnlyRecord) => {
+        order.push('record fixture');
+        return {
+          identitiesSha256: formatted.identitiesSha256,
+          keysSha256: formatted.keysSha256
+        };
+      }
     );
     (chainGatewayClient.getStatus as jest.Mock).mockResolvedValue({
       import: { completed: true }
@@ -548,11 +665,13 @@ describe('seedIdentityMirror', () => {
       process.env = saved;
     }
     // The record is taken where the team takes it: after 6529.io's last
-    // writes before switch-on, right before the mirror's first run.
+    // writes before switch-on, right before the mirror's first run, and
+    // written into the seed files before the mirror runs.
     expect(order).toEqual([
       'fixture',
       'before',
       'record taken',
+      'record fixture',
       'mirror',
       'after',
       'waves people'

@@ -522,7 +522,9 @@ set the mirror's first run lists. The rebuilder:
 1. lists every placeholder of the file in `identity_chain_placeholders`, as
    the mirror's first run does, so the founder rule gives an identity made
    on the chain the same profile id;
-2. runs the mirror to the mark;
+2. runs the mirror to the mark, then on until the walk that gives the rows
+   off the chain a level of REP + TDH has reached the end of the
+   identities, as the delegations loop's runs do over time;
 3. restores each placeholder no chain identity took (no mapping): its
    `profiles` row, and its `identities` and `address_consolidation_keys`
    rows without the wallets the mirror's rows hold, as the mirror's
@@ -532,11 +534,27 @@ set the mirror's first run lists. The rebuilder:
    `profiles` row already holds, which would be a second profile under that
    id.
 
-It reads the whole file and refuses it on any line that isn't a
-placeholder, a profile or wallet given twice, or a count that differs.
+It checks the whole file before it writes anything, and refuses it on any
+line that isn't a placeholder, a profile, wallet or identity wallet given
+twice, or a count that differs.
+
+Each mirror run walks 20,000 `identities` rows (20 chunks of 1,000 keys).
+While the mirror runs, the table holds the switch-on record's rows and the
+rows the mirror writes for chain identities; the placeholders' rows come
+back only afterwards, with `level_raw` = REP, the walk's rule with TDH at 0.
+So the walk needs ceil(N / 20,000) runs for N rows, one more when it starts
+mid-table: 6 for 100,000 rows, 16 for 300,000, 57 for 1.1 million. N is
+known only once the team's record and the chain's identities exist. These
+walk runs come after the five runs that catch up with the chain, are held
+to ceil(N / 20,000) + 1 with N counted once, each must move the walk's
+cursor, and none starts after 10 minutes; each one's time is logged. A walk
+run's time is an estimate (a few seconds), not measured: at 1.1 million rows
+the 57 runs fit the 10 minutes only at under about 10.5 seconds a run, and
+the first run on real data logs the figure.
+
 1,019,000 made-up placeholders took 28 seconds to list and 10 minutes to
-restore on one connection; with the mirror's runs (35 minutes at most) the
-rebuilder's timeout is 60 minutes.
+restore on one connection. With the mirror's runs (47 minutes at most: 35
+to catch up, 12 for the walk) the rebuilder's timeout is 75 minutes.
 
 As the writer of `identities`, `profiles`, `address_consolidation_keys`
 and `identity_chain_principals`, the rebuilder names the rebuilders that

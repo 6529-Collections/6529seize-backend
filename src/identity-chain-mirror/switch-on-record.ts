@@ -59,6 +59,8 @@ function refuse(message: string): never {
  * The record as 6529.io's database holds it now: the team's two read-only
  * queries (every identities row with no handle whose profile id is no
  * chain principal's, and those rows' address keys), in the record's order.
+ * Both read in one REPEATABLE READ transaction, so they see one state: the
+ * second read sees the snapshot of the first. The transaction only reads.
  */
 export async function takeSwitchOnRecord(
   db: SqlExecutor = dbSupplier()
@@ -66,19 +68,28 @@ export async function takeSwitchOnRecord(
   const selected = `i.handle is null
        and not exists (select 1 from ${IDENTITY_CHAIN_PRINCIPALS_TABLE} m
                         where m.profile_id = i.profile_id)`;
-  const rows = await db.execute<TdhOnlyIdentityRow>(
-    `select i.consolidation_key, i.profile_id, i.primary_address,
-            i.tdh, i.rep, i.cic, i.level_raw
-       from ${IDENTITIES_TABLE} i
-      where ${selected}
-      order by i.consolidation_key`
-  );
-  const keys = await db.execute<TdhOnlyAddressKey>(
-    `select a.address, a.consolidation_key
-       from ${ADDRESS_CONSOLIDATION_KEY} a
-       join ${IDENTITIES_TABLE} i on i.consolidation_key = a.consolidation_key
-      where ${selected}
-      order by a.address`
+  const { rows, keys } = await db.executeNativeQueriesInTransaction(
+    async (conn) => ({
+      rows: await db.execute<TdhOnlyIdentityRow>(
+        `select i.consolidation_key, i.profile_id, i.primary_address,
+                i.tdh, i.rep, i.cic, i.level_raw
+           from ${IDENTITIES_TABLE} i
+          where ${selected}
+          order by i.consolidation_key`,
+        undefined,
+        { wrappedConnection: conn }
+      ),
+      keys: await db.execute<TdhOnlyAddressKey>(
+        `select a.address, a.consolidation_key
+           from ${ADDRESS_CONSOLIDATION_KEY} a
+           join ${IDENTITIES_TABLE} i on i.consolidation_key = a.consolidation_key
+          where ${selected}
+          order by a.address`,
+        undefined,
+        { wrappedConnection: conn }
+      )
+    }),
+    { isolationLevel: 'REPEATABLE READ' }
   );
   return {
     rows: rows.map((it) => ({

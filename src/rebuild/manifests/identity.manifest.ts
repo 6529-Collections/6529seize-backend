@@ -676,7 +676,8 @@ const SEED: RebuildStep = {
   run: { module: MIRROR_MODULE, exportName: 'seedIdentityMirror' },
   writes: [...MIRROR_TABLES, 'profile_activity_logs', 'tdh_consolidation'],
   sources: ['gateway', 'files', 'repo'],
-  timeoutMinutes: 40
+  // The mirror's runs at most (MIRROR_AT_MOST_MS, 47 minutes), with room.
+  timeoutMinutes: 50
 };
 
 const ACTORS_CHECK_SEED: RebuildStep = {
@@ -724,9 +725,12 @@ const REFERENCES_SEED: RebuildStep = {
 /**
  * The mirror's tables from empty, from the 6529 chain and the placeholders
  * file (placeholder-restore.ts). The timeout: the mirror's runs at most
- * (MIRROR_RUNS_AT_MOST_MS, 35 minutes), and the placeholders: 1,019,000
- * made-up ones took 28 s to list and 10 minutes to restore on one
- * connection. About 46 minutes in all, with room left.
+ * (MIRROR_AT_MOST_MS, 47 minutes: 35 to catch up with the chain, then at
+ * most 12 for the level walk), and the placeholders: 1,019,000 made-up
+ * ones took 28 s to list and 10 minutes to restore on one connection, and
+ * the file is read through once more before each (a check of all of it
+ * before any write). About 59 minutes in all, with the switch-on record's
+ * load (not measured); 75 leaves room.
  */
 const REBUILDER: RebuildStep = {
   id: 'identity.chain-mirror',
@@ -746,7 +750,7 @@ const REBUILDER: RebuildStep = {
     'tdh.chain-days'
   ],
   plannedRows: [...TDH_ONLY_PLANNED_ROWS, ...TDH_COLUMN_PLANS],
-  timeoutMinutes: 60
+  timeoutMinutes: 75
 };
 
 /**

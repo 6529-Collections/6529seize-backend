@@ -143,6 +143,15 @@ describe('the placeholders file', () => {
       /wallet .* again/
     ],
     [
+      'an identity wallet twice, on two lines',
+      () =>
+        fileOf([
+          line('a', wallet(1), { wallets: [wallet(1), wallet(9)] }),
+          line('b', wallet(2), { wallets: [wallet(2), wallet(9)] })
+        ]),
+      /Line 3: identity wallet 0x0+9 again/
+    ],
+    [
       'a profile that is no placeholder',
       () => fileOf([{ ...line('a', wallet(1)), normalised_handle: 'someone' }]),
       /Line 2: someone is not the placeholder handle/
@@ -178,6 +187,30 @@ describe('the placeholders file', () => {
     const error = await readAll(make()).catch((e) => e);
     expect(error).toBeInstanceOf(PlaceholdersFileRefused);
     expect(error.message).toMatch(message);
+  });
+
+  it('hands on no batch from a file it refuses, however late the refusal', async () => {
+    const lines = [line('a', wallet(1)), line('b', wallet(2))];
+    const cases = [
+      // A count above the lines: found only after the last line.
+      fileOf(lines, { ...HEADER, count: 3 }),
+      // A bad line after full batches.
+      fileOf([...lines, { ...line('c', wallet(3)), normalised_handle: 'x' }])
+    ];
+    for (const file of cases) {
+      const batches: PlaceholderAtFreezeLine[][] = [];
+      await expect(
+        readPlaceholdersFile(
+          file.bytes,
+          file.sha,
+          async (batch) => {
+            batches.push(batch);
+          },
+          1
+        )
+      ).rejects.toBeInstanceOf(PlaceholdersFileRefused);
+      expect(batches).toEqual([]);
+    }
   });
 
   it('refuses bytes of another SHA-256', async () => {

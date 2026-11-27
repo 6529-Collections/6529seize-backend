@@ -1,4 +1,5 @@
 import { appFeatures } from '@/app-features';
+import { IDENTITIES_TABLE } from '@/constants';
 import {
   bytesMatchCid,
   ChainGatewayClient,
@@ -10,6 +11,7 @@ import {
 import { Logger } from '@/logging';
 import { RebuildContext } from '@/rebuild/manifest.types';
 import { seedProbeIdentities } from '@/rebuild/run/probe-fixture.steps';
+import { dbSupplier } from '@/sql-executor';
 import {
   identityChainMirrorDb,
   IdentityChainMirrorDb,
@@ -94,9 +96,35 @@ export const MAX_RUNS = 5;
  * least (the service's RATING_EVENTS_FLOOR_MS).
  */
 const RUN_OVERRUN_MS = 60 * 1000;
-/** The longest the runs of one step take: within its step timeout. */
+/** The longest the catching-up runs of one step take. */
 export const MIRROR_RUNS_AT_MOST_MS =
   MAX_RUNS * (RUN_BUDGET_MS + RUN_OVERRUN_MS);
+/**
+ * The identities rows one run's level walk covers: the service's 20
+ * chunks a run (OFF_CHAIN_CHUNKS_A_RUN) of 1,000 keys each (the db's
+ * fixLevelsOffTheChain chunk).
+ */
+export const OFF_CHAIN_ROWS_A_RUN = 20 * 1_000;
+/**
+ * One walk run's budget: once caught up, a run has only the walk to do,
+ * and 20 chunks are 20 indexed reads and 20 range updates.
+ */
+export const WALK_RUN_BUDGET_MS = 60 * 1000;
+/**
+ * The walk runs' time: no run starts after it. An estimate of a few
+ * seconds a run, not measured: 57 runs for 1.1M rows would take minutes.
+ */
+export const WALK_AT_MOST_MS = 10 * 60 * 1000;
+/**
+ * The longest mirrorToMark takes: the catching-up runs, then the walk
+ * runs (the last may start just inside WALK_AT_MOST_MS and take its
+ * budget and the overrun). Within both mirror steps' timeouts.
+ */
+export const MIRROR_AT_MOST_MS =
+  MIRROR_RUNS_AT_MOST_MS +
+  WALK_AT_MOST_MS +
+  WALK_RUN_BUDGET_MS +
+  RUN_OVERRUN_MS;
 /** Regrouped wallets taken off the queue at a time. */
 const REGROUPS_BATCH = 5_000;
 
@@ -111,6 +139,15 @@ export interface MirrorToMarkDeps {
   readonly mirrorEnabled: () => boolean;
   readonly budgetMs: number;
   readonly maxRuns: number;
+  /** The identities rows, which bound the level walk's runs. */
+  readonly identitiesCount: () => Promise<number>;
+}
+
+async function countIdentities(): Promise<number> {
+  const [row] = await dbSupplier().execute<{ n: number | string }>(
+    `select count(*) as n from ${IDENTITIES_TABLE}`
+  );
+  return Number(row?.n ?? 0);
 }
 
 const DEFAULT_DEPS: MirrorToMarkDeps = {
@@ -120,13 +157,17 @@ const DEFAULT_DEPS: MirrorToMarkDeps = {
   env: process.env,
   mirrorEnabled: () => appFeatures.isIdentityChainMirrorEnabled(),
   budgetMs: RUN_BUDGET_MS,
-  maxRuns: MAX_RUNS
+  maxRuns: MAX_RUNS,
+  identitiesCount: countIdentities
 };
 
 export interface MirrorToMarkResult {
   /** The finalized height the mirror read to: the mark. */
   readonly height: number;
+  /** Runs to catch up with the chain. */
   readonly runs: number;
+  /** Runs after those, to finish the level walk. */
+  readonly walkRuns: number;
   readonly last: MirrorRunReport;
   /** Regrouped wallets taken off the queue at the end. */
   readonly regroupsDrained: number;
@@ -270,12 +311,28 @@ function retryLeft(state: MirrorState): number {
 }
 
 /**
- * The mirror is at `height` with nothing left: a full sync ended and none
- * is under way, the feed, the wallet bindings and the rating events are
- * past the height, no level sweep or ledger rebuild is under way, and no
- * key waits to be tried again.
+ * The mirror is at `height` with nothing left: caught up with the chain
+ * (caughtUpWithChain), and the walk that gives the rows off the chain a
+ * level of REP + TDH has reached the end of the identities (its cursor
+ * cleared). The full sync's own fix of those rows leaves out the rows of
+ * identities waiting to be retried; the walk reaches them later, so until
+ * it ends, such a row past the cursor keeps an older level.
  */
 export function caughtUp(state: MirrorState | null, height: number): boolean {
+  return caughtUpWithChain(state, height) && state!.off_chain_after === null;
+}
+
+/**
+ * The mirror is at `height` with nothing left but the level walk: a full
+ * sync ended and none is under way, the feed, the wallet bindings and the
+ * rating events are past the height, no level sweep or ledger rebuild is
+ * under way, and no key waits to be tried again. With no key waiting, each
+ * run walks on (the service skips the walk only while keys wait).
+ */
+export function caughtUpWithChain(
+  state: MirrorState | null,
+  height: number
+): boolean {
   if (!state) return false;
   const next = height + 1;
   return (
@@ -323,7 +380,8 @@ function summary(report: MirrorRunReport): string {
  * chain at its finalized height, so a source past the mark would rebuild
  * past it. A recording stays at its height; a live devnet must be stopped
  * there. The height is read again at the end: a source that moved on
- * fails the step.
+ * fails the step. Once caught up with the chain, it runs on until the
+ * level walk has reached the end of the identities (finishLevelWalk).
  */
 export async function mirrorToMark(
   ctx: RebuildContext,
@@ -349,19 +407,10 @@ export async function mirrorToMark(
   for (let run = 1; run <= deps.maxRuns; run++) {
     const report = await mirror.run({ budgetMs: deps.budgetMs });
     logger.info(`[${ctx.stepId}] [RUN ${run}] ${summary(report)}`);
-    if (report.skipped) {
-      throw new Error(`${ctx.stepId}: the mirror skipped: ${report.skipped}`);
-    }
-    if (report.error) {
-      throw new Error(`${ctx.stepId}: the mirror stopped: ${report.error}`);
-    }
-    if (report.ratingEventsStuck) {
-      throw new Error(`${ctx.stepId}: ${report.ratingEventsStuck}`);
-    }
-    if (
-      report.failed.length === 0 &&
-      caughtUp(await deps.db.getState(), height)
-    ) {
+    checkRun(ctx, report);
+    const state = await deps.db.getState();
+    if (report.failed.length === 0 && caughtUpWithChain(state, height)) {
+      const walk = await finishLevelWalk(ctx, deps, mirror, state!, height);
       const after = (await deps.gateway.getHead(true)).finalizedHeight;
       if (after !== height) {
         throw new Error(
@@ -372,11 +421,87 @@ export async function mirrorToMark(
       logger.info(
         `[${ctx.stepId}] [${regroupsDrained} REGROUPED WALLETS OFF THE QUEUE]`
       );
-      return { height, runs: run, last: report, regroupsDrained };
+      return {
+        height,
+        runs: run,
+        walkRuns: walk.runs,
+        last: walk.last ?? report,
+        regroupsDrained
+      };
     }
   }
   throw new Error(
     `${ctx.stepId}: the mirror had not caught up with height ${height} after ${deps.maxRuns} runs`
+  );
+}
+
+/** A run that skipped, stopped or found its rating events stuck fails the step. */
+function checkRun(ctx: RebuildContext, report: MirrorRunReport): void {
+  if (report.skipped) {
+    throw new Error(`${ctx.stepId}: the mirror skipped: ${report.skipped}`);
+  }
+  if (report.error) {
+    throw new Error(`${ctx.stepId}: the mirror stopped: ${report.error}`);
+  }
+  if (report.ratingEventsStuck) {
+    throw new Error(`${ctx.stepId}: ${report.ratingEventsStuck}`);
+  }
+}
+
+/**
+ * Runs the mirror on, once caught up with the chain, until the walk that
+ * gives the rows off the chain their level (REP + TDH) has reached the end
+ * of the identities, as the delegations loop's runs do over time. Each run
+ * walks OFF_CHAIN_ROWS_A_RUN rows, so the runs are held to
+ * ceil(rows / OFF_CHAIN_ROWS_A_RUN) + 1 (the walk may start mid-table),
+ * the rows counted once; each run must move the cursor (the walk only goes
+ * forward, to the end, while no key waits), and none starts after
+ * WALK_AT_MOST_MS. Every run's time is logged.
+ */
+async function finishLevelWalk(
+  ctx: RebuildContext,
+  deps: MirrorToMarkDeps,
+  mirror: Pick<IdentityChainMirror, 'run'>,
+  caught: MirrorState,
+  height: number
+): Promise<{ runs: number; last: MirrorRunReport | null }> {
+  let cursor = caught.off_chain_after;
+  if (cursor === null) return { runs: 0, last: null };
+  const rows = await deps.identitiesCount();
+  const cap = Math.ceil(rows / OFF_CHAIN_ROWS_A_RUN) + 1;
+  logger.info(
+    `[${ctx.stepId}] [LEVEL WALK UNFINISHED AT ${cursor}] [${rows} IDENTITIES ROWS] [AT MOST ${cap} RUNS, ${WALK_AT_MOST_MS / 60_000} MINUTES]`
+  );
+  const started = deps.now();
+  for (let run = 1; run <= cap; run++) {
+    if (deps.now() - started >= WALK_AT_MOST_MS) {
+      throw new Error(
+        `${ctx.stepId}: the level walk had not reached the end of the identities after ${WALK_AT_MOST_MS / 60_000} minutes (${run - 1} runs, at ${cursor})`
+      );
+    }
+    const at = deps.now();
+    const report = await mirror.run({ budgetMs: WALK_RUN_BUDGET_MS });
+    checkRun(ctx, report);
+    const state = await deps.db.getState();
+    logger.info(
+      `[${ctx.stepId}] [WALK RUN ${run}] [${deps.now() - at} MS] [CURSOR ${state?.off_chain_after ?? 'END'}]`
+    );
+    if (report.failed.length || !caughtUpWithChain(state, height)) {
+      throw new Error(
+        `${ctx.stepId}: walk run ${run} left the mirror behind the chain: ${summary(report)}`
+      );
+    }
+    const next = state!.off_chain_after;
+    if (next === null) return { runs: run, last: report };
+    if (next === cursor) {
+      throw new Error(
+        `${ctx.stepId}: the level walk did not move past ${cursor} in walk run ${run}`
+      );
+    }
+    cursor = next;
+  }
+  throw new Error(
+    `${ctx.stepId}: the level walk had not reached the end of ${rows} identities rows after ${cap} runs (at ${cursor})`
   );
 }
 

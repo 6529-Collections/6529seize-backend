@@ -230,10 +230,10 @@ function parse(line: string, where: string): unknown {
  * Reads the file's bytes (gzipped NDJSON) a batch of lines at a time,
  * checking all of it: the SHA-256, the header, every line, the order by
  * profile id (rising strictly, as the writer checks it, so no profile
- * twice), no wallet twice, and the header's count. A file that fails any
- * check is refused, at the line that fails; batches before it were handed
- * on, so a caller writes inside the step, which fails with it. Returns the
- * header.
+ * twice), no wallet twice, no identity wallet twice, and the header's
+ * count. The whole file is checked before the first batch is handed on, so
+ * a file that fails any check is refused, at the line that fails, with
+ * nothing written. Returns the header.
  */
 export async function readPlaceholdersFile(
   bytes: Buffer,
@@ -247,12 +247,27 @@ export async function readPlaceholdersFile(
       `The placeholders file's SHA-256 is ${actual}, not ${expectedSha256}`
     );
   }
+  // First every check, with no batch handed on; then the same bytes (the
+  // SHA-256 above holds them) again, batch by batch.
+  await scanPlaceholdersFile(bytes, null, batchSize);
+  return await scanPlaceholdersFile(bytes, onBatch, batchSize);
+}
+
+/** One pass over the file's lines, every check made, batches to `onBatch` when given. */
+async function scanPlaceholdersFile(
+  bytes: Buffer,
+  onBatch: ((lines: PlaceholderAtFreezeLine[]) => Promise<void>) | null,
+  batchSize: number
+): Promise<PlaceholdersAtFreezeHeader> {
   const input = Readable.from([bytes]).pipe(createGunzip());
   const reader = createInterface({ input, crlfDelay: Infinity });
   let header: PlaceholdersAtFreezeHeader | null = null;
   let lineNumber = 0;
   let previous: string | null = null;
   const wallets = new Set<string>();
+  // An address has one key in address_consolidation_keys, so one identity:
+  // given twice, which identity keeps it would depend on the batches.
+  const identityWallets = new Set<string>();
   let batch: PlaceholderAtFreezeLine[] = [];
   let lines = 0;
   for await (const text of reader) {
@@ -274,7 +289,15 @@ export async function readPlaceholdersFile(
     const wallet = line.wallet.toLowerCase();
     if (wallets.has(wallet)) refuse(`${where}: wallet ${wallet} again`);
     wallets.add(wallet);
+    for (const it of line.identity?.wallets ?? []) {
+      const address = it.toLowerCase();
+      if (identityWallets.has(address)) {
+        refuse(`${where}: identity wallet ${address} again`);
+      }
+      identityWallets.add(address);
+    }
     lines++;
+    if (!onBatch) continue;
     batch.push(line);
     if (batch.length >= batchSize) {
       await onBatch(batch);
@@ -287,7 +310,7 @@ export async function readPlaceholdersFile(
       `The header counts ${header.count} placeholders; the file has ${lines}`
     );
   }
-  if (batch.length) await onBatch(batch);
+  if (onBatch && batch.length) await onBatch(batch);
   return header;
 }
 

@@ -255,6 +255,20 @@ describe('takeSwitchOnRecord', () => {
     expect(statements[0].sql).toMatch(/order by i\.consolidation_key/);
     expect(statements[1].sql).toMatch(/order by a\.address/);
   });
+
+  it('reads both in one REPEATABLE READ transaction, so they see one state', async () => {
+    const { db, statements } = fakeDb([[], []]);
+    await takeSwitchOnRecord(db);
+    expect(db.executeNativeQueriesInTransaction).toHaveBeenCalledTimes(1);
+    expect(db.executeNativeQueriesInTransaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      { isolationLevel: 'REPEATABLE READ' }
+    );
+    expect(statements.map((it) => it.connection)).toEqual([
+      'the transaction',
+      'the transaction'
+    ]);
+  });
 });
 
 describe('loadSwitchOnRecord', () => {
