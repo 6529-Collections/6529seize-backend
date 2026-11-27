@@ -24,13 +24,35 @@ describe('rebuild registry', () => {
   it('has the unresolved cross-area order edges listed here', () => {
     // A branch that adds one lists it here: the edge resolves once the
     // other area's step is in the tree.
-    expect(result.crossAreaEdges).toEqual([]);
+    expect(result.crossAreaEdges).toEqual([
+      {
+        step: 'identity.chain-mirror',
+        field: 'before',
+        id: 'personal.settings'
+      },
+      {
+        step: 'identity.chain-mirror',
+        field: 'before',
+        id: 'subs.legacy-history'
+      },
+      { step: 'identity.chain-mirror', field: 'before', id: 'subs.top-ups' },
+      {
+        step: 'identity.chain-mirror',
+        field: 'before',
+        id: 'waves.chain-mirror'
+      },
+      { step: 'identity.chain-mirror', field: 'before', id: 'tdh.chain-days' }
+    ]);
   });
 
   it('leaves out of the order checks only the planned rebuilders listed here', () => {
     // A module that lands, moves or goes changes this list: the order
     // checks then cover its writes.
     expect(result.orderLeftOut).toEqual([
+      {
+        step: 'identity.nftdelegation-logs-after-freeze',
+        tables: ['nftdelegation_logs_after_freeze']
+      },
       {
         step: 'holdings.ethereum',
         tables: [

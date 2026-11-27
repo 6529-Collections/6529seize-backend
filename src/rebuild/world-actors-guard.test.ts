@@ -123,37 +123,35 @@ describe("the world's actors' rows and ids", () => {
 // A raw write into profiles lives only in the files listed below. profiles
 // is keyed by its normalised handle, not its id, so a seed's own row for a
 // profile id the world already holds is a second profile under that id. The
-// world's actors' rows are identity.probe-profiles'; the records service's
-// profile is a fixture the mint and publish seeds write, by value, when it
-// is missing. Any other raw write, anywhere under src, fails here until it
-// is reviewed and listed. Counted: SQL that inserts or replaces into the
-// table; a write helper (insert, upsert, write, put) handed the table in
-// any argument; a row set tagged with the table (`table: PROFILES_TABLE`,
-// the test fixtures' form, which generic writers insert as given); and a
-// call of withProfiles, which builds one. Out of this scan's reach: ORM
-// writes (a Profile repository's insert or save), and aliases of the table
-// made in another file, by let or by destructuring; there are none today.
+// world's actors' rows are identity.probe-profiles', the records service's
+// among them: the mint and publish seeds read it by its wallet and write no
+// profile. The identity rebuilder restores the untaken placeholders'
+// profiles from the freeze file. Any other raw write, anywhere under src,
+// fails here until it is reviewed and listed. Counted: SQL that inserts or
+// replaces into the table; a write helper (insert, upsert, write, put)
+// handed the table in any argument; a row set tagged with the table
+// (`table: PROFILES_TABLE`, or the table's name in quotes or backticks: the
+// test fixtures' and the planted references' forms, which generic writers
+// insert as given); and a call of withProfiles, which builds one. Out of
+// this scan's reach: ORM writes (a Profile repository's insert or save), and
+// aliases of the table made in another file, by let or by destructuring;
+// there are none today.
 const PROBE_PROFILES_SEED = 'identity.probe-profiles';
-const RECORDS_SERVICE_HANDLE = 'rebuild-records';
 
 /** The files that may hold a raw profiles write, and how many each holds. */
 const PROFILES_WRITERS: Record<string, number> = {
   // The profiles and identity mirror write paths.
   'profiles/profiles.db.ts': 2,
   'identity-chain-mirror/identity-chain-mirror.db.ts': 1,
-  // identity.probe-profiles: the world's actors.
+  // identity.probe-profiles: the world's actors as plain rows, when the run
+  // has no identity world (identity's seed calls seedProbeIdentities).
   'rebuild/run/probe-fixture.steps.ts': 1,
-  // The records service's fixture; each write must be the fixture.
-  'mint-log/mint-log-rebuild.seed.ts': 1,
-  'rebuild/areas/publish.seed.ts': 1,
+  // The identity rebuilder: the untaken placeholders' profiles, restored.
+  'identity-chain-mirror/placeholder-restore.ts': 1,
   // The test fixtures' profiles row set, and its one caller outside a test.
   'tests/fixtures/profile.fixture.ts': 1,
   'tests/fixtures/identity-metrics-sync.fixture.ts': 1
 };
-const RECORDS_SERVICE_FIXTURES = [
-  'mint-log/mint-log-rebuild.seed.ts',
-  'rebuild/areas/publish.seed.ts'
-];
 
 /** The source tree's non-test files, as read once above. */
 const NON_TEST_SOURCES = Array.from(SOURCES)
@@ -190,31 +188,8 @@ function closeOf(text: string, open: number): number {
 }
 
 /**
- * The SQL's call, whole: back to the call's open parenthesis and on to its
- * close. SQL outside any call (a SQL constant) runs to the end of its own
- * statement, never into a later call.
- */
-function sqlCall(text: string, at: number): string {
-  let depth = 0;
-  for (let i = at - 1; i >= 0; i--) {
-    const c = text[i];
-    if (c === ')') {
-      depth++;
-    } else if (c === '(') {
-      if (depth === 0) return text.slice(i, closeOf(text, i) + 1);
-      depth--;
-    } else if (depth === 0 && (c === ';' || c === '{' || c === '}')) {
-      break;
-    }
-  }
-  const end = text.indexOf(';', at);
-  return text.slice(at, end === -1 ? undefined : end + 1);
-}
-
-/**
- * Each raw profiles write in a text, whole: the call an insert's SQL sits
- * in, a write helper's call from its name, a row set's tag, or a
- * withProfiles call.
+ * Each raw profiles write in a text: an insert's SQL, a write helper's call
+ * from its name, a row set's tag, or a withProfiles call.
  */
 function profilesWrites(text: string): string[] {
   const table = tableNames(text);
@@ -226,9 +201,7 @@ function profilesWrites(text: string): string[] {
   const argument = new RegExp(
     `(?<!\\$\\{\\s*)\\b${table}|['"\`]profiles['"\`]`
   );
-  const writes = Array.from(text.matchAll(sql), (match) =>
-    sqlCall(text, match.index ?? 0)
-  );
+  const writes = Array.from(text.matchAll(sql), (match) => match[0]);
   for (const match of Array.from(text.matchAll(WRITE_HELPER))) {
     const index = match.index ?? 0;
     const open = index + match[0].length - 1;
@@ -238,7 +211,9 @@ function profilesWrites(text: string): string[] {
     }
   }
   for (const match of Array.from(
-    text.matchAll(new RegExp(`\\btable:\\s*${table}`, 'g'))
+    text.matchAll(
+      new RegExp(`\\btable:\\s*(?:${table}|['"\`]profiles['"\`])`, 'g')
+    )
   )) {
     writes.push(match[0]);
   }
@@ -247,43 +222,6 @@ function profilesWrites(text: string): string[] {
     writes.push(text.slice(match.index ?? 0, closeOf(text, open) + 1));
   }
   return writes;
-}
-
-/** A value an insert gives a column: in the SQL, or by the named parameter. */
-function columnValue(call: string, column: string): string | null {
-  const property = (name: string) =>
-    new RegExp(`\\b${name}:\\s*(RECORDS_SERVICE_HANDLE\\b|'[^']*')`).exec(
-      call
-    )?.[1] ?? null;
-  const sql = /\(([^()]*)\)\s*values\s*\(([^()]*)\)/i.exec(call);
-  if (!sql) return property(column);
-  const columns = sql[1].split(',').map((name) => name.trim());
-  const value = sql[2].split(',').map((part) => part.trim())[
-    columns.indexOf(column)
-  ];
-  if (value === undefined) return null;
-  return value.startsWith(':') ? property(value.slice(1)) : value;
-}
-
-/**
- * The records service's fixture: an insert only if missing, whose handle
- * and normalised handle are both the records service's handle.
- */
-function isRecordsServiceFixture(call: string, text: string): boolean {
-  const ifMissing =
-    /\binsert\s+ignore\s+into\b/i.test(call) ||
-    /^\s*insertIgnore\s*\(/.test(call);
-  const isHandle = (value: string | null) =>
-    value === `'${RECORDS_SERVICE_HANDLE}'` ||
-    (value === 'RECORDS_SERVICE_HANDLE' &&
-      text.includes(
-        `const RECORDS_SERVICE_HANDLE = '${RECORDS_SERVICE_HANDLE}';`
-      ));
-  return (
-    ifMissing &&
-    isHandle(columnValue(call, 'handle')) &&
-    isHandle(columnValue(call, 'normalised_handle'))
-  );
 }
 
 /** How many raw profiles writes each file holds, for files with any. */
@@ -311,18 +249,10 @@ const OLD_PROBE_PROFILE = [
 ].join('\n');
 
 describe('raw writes into profiles', () => {
-  it('are only where the list allows, the records service only as its fixture', () => {
+  it('are only where the list allows', () => {
     // The scan reached this tree.
     expect(NON_TEST_SOURCES.length).toBeGreaterThan(1000);
     expect(profilesWriteCounts(NON_TEST_SOURCES)).toEqual(PROFILES_WRITERS);
-    for (const name of RECORDS_SERVICE_FIXTURES) {
-      const text = SOURCES.get(name)!;
-      const writes = profilesWrites(text);
-      expect(writes).toHaveLength(PROFILES_WRITERS[name]);
-      for (const write of writes) {
-        expect(isRecordsServiceFixture(write, text)).toBe(true);
-      }
-    }
   });
 
   it('count a write moved out of a seed into any other file', () => {
@@ -347,52 +277,26 @@ describe('raw writes into profiles', () => {
     const step = AREA_MANIFESTS.flatMap((manifest) => manifest.seeds).find(
       (seed: RebuildStep) => seed.id === PROBE_PROFILES_SEED
     )!;
+    // Identity's own seed: the mirror writes the actors' profiles from the
+    // identity world, and without one it calls seedProbeIdentities, whose
+    // raw write is the listed one.
     expect('module' in step.run && `${step.run.module}.ts`).toBe(
-      'src/rebuild/run/probe-fixture.steps.ts'
+      'src/identity-chain-mirror/identity-chain-mirror.rebuild.ts'
     );
+    expect(
+      SOURCES.get('identity-chain-mirror/identity-chain-mirror.rebuild.ts')
+    ).toMatch(/\bseedProbeIdentities\(\)/);
     const name = 'rebuild/run/probe-fixture.steps.ts';
     expect(PROFILES_WRITERS[name]).toBe(1);
-    // It is listed for itself: its insert isn't the records service's.
-    const text = SOURCES.get(name)!;
-    const [write] = profilesWrites(text);
-    expect(isRecordsServiceFixture(write, text)).toBe(false);
   });
 
-  it("let the records service's fixture through, in either form", () => {
-    const sql = [
-      `const RECORDS_SERVICE_HANDLE = 'rebuild-records';`,
-      'await sqlExecutor.execute(',
-      '  `insert ignore into ${PROFILES_TABLE} (external_id, handle, normalised_handle)',
-      '   values (:id, :handle, :handle)`,',
-      '  { id, handle: RECORDS_SERVICE_HANDLE }',
-      ');'
-    ].join('\n');
-    const helper = [
-      'await insertIgnore(PROFILES_TABLE, {',
-      '  external_id: id,',
-      "  handle: 'rebuild-records',",
-      "  normalised_handle: 'rebuild-records'",
-      '});'
-    ].join('\n');
-    for (const text of [sql, helper]) {
-      const writes = profilesWrites(text);
-      expect(writes).toHaveLength(1);
-      expect(isRecordsServiceFixture(writes[0], text)).toBe(true);
-    }
-  });
-
-  it('find every other raw insert and refuse it as the fixture', () => {
-    const records = `const RECORDS_SERVICE_HANDLE = 'rebuild-records';\n`;
-    const others = [
+  it('find each raw insert form once', () => {
+    const forms = [
       OLD_PROBE_PROFILE,
       "await insertIgnore(PROFILES_TABLE, { handle: 'someone', normalised_handle: 'someone' });",
-      // The handle's name, without the records service's value.
-      `const RECORDS_SERVICE_HANDLE = 'someone';\nawait insertIgnore(PROFILES_TABLE, { handle: RECORDS_SERVICE_HANDLE, normalised_handle: RECORDS_SERVICE_HANDLE });`,
-      // The records service's handle, but its key from another value.
-      "await insertIgnore(PROFILES_TABLE, { handle: 'rebuild-records', normalised_handle: 'other' });",
-      // Not only if missing.
-      `${records}await db.execute(\`insert into \${PROFILES_TABLE} (handle, normalised_handle) values (:handle, :handle)\`, { handle: RECORDS_SERVICE_HANDLE });`,
-      `${records}await db.execute(\`replace into \${PROFILES_TABLE} (handle, normalised_handle) values (:handle, :handle)\`, { handle: RECORDS_SERVICE_HANDLE });`,
+      "const HANDLE = 'someone';\nawait insertIgnore(PROFILES_TABLE, { handle: HANDLE, normalised_handle: HANDLE });",
+      'await db.execute(`insert into ${PROFILES_TABLE} (handle, normalised_handle) values (:handle, :handle)`, { handle });',
+      'await db.execute(`replace into ${PROFILES_TABLE} (handle, normalised_handle) values (:handle, :handle)`, { handle });',
       "await db.execute('INSERT INTO profiles (external_id) VALUES (?)', [id]);",
       "await db.execute('INSERT LOW_PRIORITY INTO profiles (external_id) VALUES (?)', [id]);",
       'await db.execute(`insert delayed ignore into ${PROFILES_TABLE} (external_id) values (:id)`, { id });',
@@ -401,19 +305,28 @@ describe('raw writes into profiles', () => {
       'await upsertRow(PROFILES_TABLE, { external_id: id });',
       'await insertRows(connection, PROFILES_TABLE, [{ external_id: id }]);',
       'await bulkPut(connection, PROFILES_TABLE, rows);',
-      // A SQL constant: its statement ends before a later call's parameters.
-      `${records}const SQL = \`insert ignore into \${PROFILES_TABLE} (handle, normalised_handle) values (:handle, :handle)\`;\nawait db.execute(SQL, { handle: RECORDS_SERVICE_HANDLE });`
+      // A SQL constant, then the call that runs it: one write.
+      'const SQL = `insert ignore into ${PROFILES_TABLE} (handle, normalised_handle) values (:handle, :handle)`;\nawait db.execute(SQL, { handle });'
     ];
-    for (const text of others) {
-      const writes = profilesWrites(text);
-      expect(writes).toHaveLength(1);
-      expect(isRecordsServiceFixture(writes[0], text)).toBe(false);
+    for (const text of forms) {
+      expect(profilesWrites(text)).toHaveLength(1);
     }
   });
 
   it('count row sets tagged with the table and withProfiles calls', () => {
     expect(
       profilesWrites('export const seed = { table: PROFILES_TABLE, rows };')
+    ).toHaveLength(1);
+    // The table by its name, as a list of row sets fed to a generic writer
+    // holds it.
+    expect(
+      profilesWrites("const sets = [{ table: 'profiles', rows }];")
+    ).toHaveLength(1);
+    expect(
+      profilesWrites('const sets = [{ table: "profiles", rows }];')
+    ).toHaveLength(1);
+    expect(
+      profilesWrites('const sets = [{ table: `profiles`, rows }];')
     ).toHaveLength(1);
     expect(
       profilesWrites('await seedDatabase([withProfiles([profile])]);')

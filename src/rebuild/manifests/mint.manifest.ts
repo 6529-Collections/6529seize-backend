@@ -9,7 +9,9 @@ import {
   PROBE_CALLER,
   PROBE_MEME_IDS,
   PROBE_MEMES_CONTRACT,
-  PROBE_WALLETS
+  PROBE_WALLETS,
+  worldActorProfileId,
+  worldActorWallet
 } from '@/rebuild/manifests/probe-fixture';
 
 /**
@@ -25,10 +27,12 @@ const saveTeamFromFile = (id: string): RebuildStep => ({
 });
 
 /**
- * The records service of a rebuild run, as the personal area's manifest
- * sets it (the run refuses two different values for one flag): the records
- * wave the mint rebuild reads the record log's heads from, and a provider
- * key made only for the rebuild check, derived from a public label.
+ * The records service of a rebuild run, as every manifest that sets these
+ * flags sets it (the run refuses two different values for one flag): the
+ * world's records-service actor, which the identity seed writes; the
+ * records wave the mint rebuild reads the record log's heads from; and a
+ * provider key made only for the rebuild check, derived from a public
+ * label.
  */
 const FIXTURE_RECORDS_FLAGS = {
   SIGNED_RECORDS_PROVIDER_KEYS: JSON.stringify([
@@ -40,8 +44,8 @@ const FIXTURE_RECORDS_FLAGS = {
     }
   ]),
   SIGNED_RECORDS_WAVE_ID: '00000000-0000-4000-8000-0000000000e1',
-  SIGNED_RECORDS_SERVICE_PROFILE_ID: 'rebuild-records-service',
-  SIGNED_RECORDS_SERVICE_WALLET: '0x00000000000000000000000000000000000000a1'
+  SIGNED_RECORDS_SERVICE_PROFILE_ID: worldActorProfileId('records-service'),
+  SIGNED_RECORDS_SERVICE_WALLET: worldActorWallet('records-service')
 };
 
 /**
@@ -95,15 +99,12 @@ const MINT_PROBES_SEED: RebuildStep = {
     'memes_mint_stats',
     'signed_record_log_entries',
     'signed_record_log_segments',
-    // The records service (identity, profile, records wave) when it is
-    // missing, as personal's seed writes it; the Main Stage wave, the
+    // The records wave when it is missing (the records service itself is
+    // the world's actor, read by wallet); the Main Stage wave, the
     // collaboration's artwork and the records wave's head drops, with what
     // creating them writes (follows, the creator's group, the drop metrics;
     // not the subscriber count a follow adds); and the collaboration's
     // notifications.
-    'identities',
-    'address_consolidation_keys',
-    'profiles',
     'waves',
     'drops',
     'drops_parts',
@@ -126,8 +127,9 @@ const MINT_PROBES_SEED: RebuildStep = {
     'subscriptions_id_nfts_final'
   ],
   // The holdings fixture's mints first: the mint stats and the minted
-  // counts count them.
-  after: ['holdings.seed'],
+  // counts count them. And the world's actors, proven held: the seed reads
+  // the probes by their fixed ids and the records service by wallet.
+  after: ['holdings.seed', 'identity.actors-check'],
   sources: ['files', 'ethereum'],
   timeoutMinutes: 10
 };
