@@ -22,6 +22,8 @@ import { sqlExecutor } from '../../../sql-executor';
 import { ApiAggregatedActivity } from '../generated/models/ApiAggregatedActivity';
 import { ApiAggregatedActivityMemes } from '../generated/models/ApiAggregatedActivityMemes';
 import { ApiAggregatedActivityPage } from '../generated/models/ApiAggregatedActivityPage';
+import type { ApiWalletAggregatedActivity } from '@/api/generated/models/ApiWalletAggregatedActivity';
+import type { ApiWalletAggregatedActivityMemes } from '@/api/generated/models/ApiWalletAggregatedActivityMemes';
 
 function getSearchFilters(search: string) {
   let walletFilters = '';
@@ -286,7 +288,7 @@ export const fetchMemesAggregatedActivityForConsolidationKey = async (
 };
 
 export async function fetchAggregatedActivityForWallet(wallet: string) {
-  return fetchSingleAggregatedActivity<ApiAggregatedActivity>(
+  return fetchSingleAggregatedActivity<ApiWalletAggregatedActivity>(
     'wallet',
     wallet,
     AGGREGATED_ACTIVITY_TABLE
@@ -294,7 +296,7 @@ export async function fetchAggregatedActivityForWallet(wallet: string) {
 }
 
 export async function fetchMemesAggregatedActivityForWallet(wallet: string) {
-  return fetchMemesAggregatedActivity<ApiAggregatedActivityMemes>(
+  return fetchMemesAggregatedActivity<ApiWalletAggregatedActivityMemes>(
     'wallet',
     wallet,
     AGGREGATED_ACTIVITY_MEMES_TABLE
@@ -309,7 +311,7 @@ async function fetchSingleAggregatedActivity<T>(
   const sql = `
     SELECT * from ${table} where ${key} = :value
     `;
-  const result = await sqlExecutor.execute(sql, { value });
+  const result = await sqlExecutor.execute<T>(sql, { value });
   if (result.length !== 1) {
     return null;
   }

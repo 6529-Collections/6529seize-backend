@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import * as Joi from 'joi';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
+import type { ApiWalletAggregatedActivity } from '@/api/generated/models/ApiWalletAggregatedActivity';
+import type { ApiWalletAggregatedActivityMemes } from '@/api/generated/models/ApiWalletAggregatedActivityMemes';
 import { asyncRouter } from '../async.router';
 
 import { enums } from '../../../enums';
@@ -190,7 +192,7 @@ router.get(
       any,
       any
     >,
-    res: any
+    res: Response<ApiResponse<ApiWalletAggregatedActivity>>
   ) {
     const wallet = req.params.wallet;
 
@@ -216,7 +218,7 @@ router.get(
       any,
       any
     >,
-    res: Response<ApiResponse<ApiAggregatedActivityMemes[]>>
+    res: Response<ApiResponse<ApiWalletAggregatedActivityMemes[]>>
   ) {
     const wallet = req.params.wallet;
 
