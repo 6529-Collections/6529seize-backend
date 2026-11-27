@@ -292,10 +292,11 @@ const saveLaunch = (record: LaunchRecord, ctx: RequestContext) =>
 /** One signer pass over the launch, as the worker runs it: lock, mirror, save. */
 function signerPass(
   id: string,
-  during: (ctx: RequestContext) => Promise<void> = async () => undefined
+  during: (ctx: RequestContext) => Promise<void> = async () => undefined,
+  signer = SIGNER
 ) {
   return dropForgeRepository.wallet(
-    SIGNER,
+    signer,
     async (_, ctx) => {
       // The signer's snapshot: its first plain read (find() for a targeted
       // tick) comes after the signer lock, before the launch lock and head.
@@ -1100,7 +1101,7 @@ describeWithSeed(
       await saveLaunch(launch(['PAY_ARTIST']), {});
       process.env.FEATURE_MINT_LOG_PRIMARY = 'true';
       try {
-        const waited = await holdingTheHead(() => timedPass('launch-1'));
+        const waited = await holdingTheHead(() => timedPass('launch-1', false));
         expect(waited).toBeGreaterThanOrEqual(BOUND_MS - 500);
         expect(waited).toBeLessThan(BOUND_MS + 4000);
         expect(await claimActions()).toEqual([]);
@@ -1135,7 +1136,7 @@ describeWithSeed(
         .spyOn(priorityAlerts, 'sendPriorityAlertIfConfigured')
         .mockResolvedValue(undefined);
       try {
-        const waited = await holdingTheHead(() => timedPass('launch-1'));
+        const waited = await holdingTheHead(() => timedPass('launch-1', false));
         expect(waited).toBeGreaterThanOrEqual(BOUND_MS - 500);
         expect(waited).toBeLessThan(BOUND_MS + 4000);
         expect(alerts).toHaveBeenCalledTimes(1);
@@ -1155,6 +1156,71 @@ describeWithSeed(
       expect(
         (await dropForgeRepository.find('launch-1', {}))?.data.completion_flags
       ).toEqual(['PAY_ARTIST']);
+    });
+
+    it("lets a second card's held flag wait for the head while the first card's flag holds it, and write within the bound", async () => {
+      await saveLaunch(launch(['PAY_ARTIST']), {});
+      const other = launch(['PAY_ARTIST']);
+      await saveLaunch(
+        {
+          ...other,
+          id: 'launch-other',
+          data: { ...other.data, claim_id: OTHER_CARD }
+        },
+        {}
+      );
+      const reached = gate();
+      const release = gate();
+      const upsert = mintingClaimActionsDb.upsertAction.bind(
+        mintingClaimActionsDb
+      );
+      // The first card's flag holds the head while it is written, as a
+      // flag on a large card does while its captures run.
+      const slow = jest
+        .spyOn(mintingClaimActionsDb, 'upsertAction')
+        .mockImplementation(async (param, ctx) => {
+          if (param.claim_id === CARD_ID) {
+            reached.open();
+            await release.opened;
+          }
+          return upsert(param, ctx);
+        });
+      let waited = 0;
+      try {
+        const first = signerPass('launch-1');
+        await reached.opened;
+        const started = Date.now();
+        const second = signerPass(
+          'launch-other',
+          undefined,
+          'test-signer-other'
+        );
+        await waitingOn(WAITS_ON_HEAD);
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        release.open();
+        await Promise.all([first, second]);
+        waited = Date.now() - started;
+      } finally {
+        release.open();
+        slow.mockRestore();
+      }
+
+      expect(waited).toBeGreaterThanOrEqual(3000);
+      expect(waited).toBeLessThan(BOUND_MS);
+      const logged = await entries();
+      expect(logged.map((entry) => [entry.kind, entry.card?.card_id])).toEqual([
+        ['claim.action', CARD_ID],
+        ['claim.action', OTHER_CARD]
+      ]);
+      expect(logged.map((entry) => entry.checks.replay)).toEqual([
+        'match',
+        'match'
+      ]);
+      for (const id of ['launch-1', 'launch-other']) {
+        const record = await dropForgeRepository.find(id, {});
+        expect(record?.data.completion_flags).toEqual(['PAY_ARTIST']);
+        expect(record?.data.events.some((event) => event.error)).toBe(false);
+      }
     });
 
     it('measures what one held flag adds to a signer pass on a full memes card, with the replay check on', async () => {

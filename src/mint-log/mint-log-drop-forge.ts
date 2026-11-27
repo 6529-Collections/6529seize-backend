@@ -215,7 +215,7 @@ const logger = Logger.get('MINT_LOG_DROP_FORGE');
  * and is written on a later pass. Shadow: it commits unlogged, and the mint
  * log alerts.
  */
-export const HELD_FLAG_LOCK_WAIT_SECONDS = 5;
+export const HELD_FLAG_LOCK_WAIT_SECONDS = 15;
 
 /**
  * Runs `fn` with the connection's lock wait cut to
