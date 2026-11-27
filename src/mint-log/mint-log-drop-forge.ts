@@ -243,9 +243,10 @@ export const HELD_FLAG_MIN_LOCK_WAIT_SECONDS = 1;
  * the minimum, so a pass waits for the head at most the budget plus the
  * minimum for each later flag. The session's own value is put back at the
  * end, so the signer's last UPDATE waits as before. A session variable set
- * by hand pins the connection's RDS Proxy session, so the connection is
- * marked pinned: the pool retires it when the request or invocation ends
- * instead of keeping it (proxy-session-pinning).
+ * by hand pins the connection's RDS Proxy session. An API pool connection
+ * is marked pinned, so the pool retires it when the request ends instead
+ * of keeping it (proxy-session-pinning); a Lambda's connection, a TypeORM
+ * query runner, isn't marked, and ends with the invocation.
  */
 async function writeHeldFlags(
   items: readonly QueuedClaimAction[],

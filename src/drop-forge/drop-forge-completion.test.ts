@@ -9,6 +9,7 @@ import * as supported from '@/minting-claims/minting-claim-actions';
 import * as held from '@/mint-log/mint-log-drop-forge';
 import { testLaunchData } from '@/drop-forge/drop-forge.test-fixtures';
 import { LaunchRecord } from '@/drop-forge/drop-forge.types';
+import { mintLogRecorder } from '@/mint-log/mint-log-recorder';
 
 it('mirrors only complete airdrop groups and does not duplicate shared completion flags', async () => {
   const record: LaunchRecord = {
@@ -75,7 +76,7 @@ it('mirrors only complete airdrop groups and does not duplicate shared completio
   }
 });
 
-it('leaves a held flag that failed to write unmirrored, raises one plain event, and alerts once on an ended launch still without it after the set time', async () => {
+it('leaves a held flag that failed to write unmirrored, raises one plain event, and alerts once if it is still unwritten after the set time', async () => {
   const record: LaunchRecord = {
     id: 'launch',
     revision: 1,
@@ -141,8 +142,7 @@ it('leaves a held flag that failed to write unmirrored, raises one plain event, 
     expect(events()).toHaveLength(1);
     expect(save).toHaveBeenCalledTimes(4);
 
-    // The launch ends without it; within the set time, still no alert.
-    record.state = 'CANCELLED';
+    // Within the set time of its first miss, still no alert.
     now += FLAG_ALERT_AFTER_MS - 1;
     await mirrorCompletion(record, {}, save);
     await flushFailing();
@@ -202,7 +202,7 @@ it('gives the code as the reason only when it is a string', async () => {
   }
 });
 
-it("writes a retried flag only where the claim has no row, so an admin's row stays", async () => {
+it("with the mint log on, writes every retry of a flag only where the claim has no row, so an admin's row stays; a first write upserts", async () => {
   const record: LaunchRecord = {
     id: 'launch',
     revision: 1,
@@ -235,9 +235,25 @@ it("writes a retried flag only where the claim has no row, so an admin's row sta
   const upsert = jest
     .spyOn(mintingClaimActionsDb, 'upsertAction')
     .mockResolvedValue();
-  try {
-    await mirrorCompletion(record, {}, jest.fn(), { keepExisting: true });
+  const mode = jest.spyOn(mintLogRecorder, 'mode').mockReturnValue('shadow');
+  const writeOnce = async (options = {}) => {
+    record.data.completion_flags = [];
+    writes.length = 0;
+    insert.mockClear();
+    upsert.mockClear();
+    await mirrorCompletion(record, {}, jest.fn(), options);
     await writes[0].write({});
+  };
+  const missed = {
+    id: 'launch:missed',
+    content:
+      'Claim #1: completion flag PAY_ARTIST was not written (ER_LOCK_WAIT_TIMEOUT); Drop Forge writes it on a later delivery of the launch.',
+    error: false,
+    at: 1
+  };
+  try {
+    // A later delivery's retry.
+    await writeOnce({ keepExisting: true });
     expect(insert).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'PAY_ARTIST',
@@ -247,6 +263,23 @@ it("writes a retried flag only where the claim has no row, so an admin's row sta
     );
     expect(upsert).not.toHaveBeenCalled();
     expect(hasUnwrittenFlags(record)).toBe(false);
+
+    // A first write upserts, as a mirror always has.
+    await writeOnce();
+    expect(upsert).toHaveBeenCalledTimes(1);
+    expect(insert).not.toHaveBeenCalled();
+
+    // A flag a pass missed before is a retry on any path: insert-only.
+    record.data.events.push(missed);
+    await writeOnce();
+    expect(insert).toHaveBeenCalledTimes(1);
+    expect(upsert).not.toHaveBeenCalled();
+
+    // With the mint log off, a mirror upserts, as on main.
+    mode.mockReturnValue('off');
+    await writeOnce({ keepExisting: true });
+    expect(upsert).toHaveBeenCalledTimes(1);
+    expect(insert).not.toHaveBeenCalled();
   } finally {
     jest.restoreAllMocks();
   }

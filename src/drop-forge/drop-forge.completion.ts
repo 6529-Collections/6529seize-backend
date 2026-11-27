@@ -11,6 +11,7 @@ import { Logger } from '@/logging';
 import { MINTING_CLAIM_ACTIONS_TABLE } from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
 import { Time } from '@/time';
+import { mintLogRecorder } from '@/mint-log/mint-log-recorder';
 import { randomUUID } from 'node:crypto';
 
 const logger = Logger.get('DROP_FORGE_COMPLETION');
@@ -38,8 +39,8 @@ const unwrittenFlagAlert = (flag: string) =>
   `completion flag ${flag} is still not written`;
 
 /**
- * How long a flag on a completed or cancelled launch may stay unwritten,
- * retried on each delivery, before its event asks an operator for it.
+ * How long a flag may stay unwritten, retried on each delivery, before an
+ * event asks an operator for it.
  */
 export const FLAG_ALERT_AFTER_MS = 10 * 60 * 1000;
 
@@ -51,18 +52,15 @@ export const FLAG_ALERT_AFTER_MS = 10 * 60 * 1000;
 const setFlagByHand = (record: LaunchRecord, flag: string) =>
   `POST /api/minting-claims/actions/${record.data.contract}/${record.data.claim_id} with {"action":"${flag}","completed":true}, as a claims admin (in primary mode with the admin's signed record, x-6529-signed-records)`;
 
-const launchEnded = (record: LaunchRecord) =>
-  record.state === 'COMPLETED' || record.state === 'CANCELLED';
-
 /**
  * A flag that a pass didn't write (with the mint log on: it failed, or the
  * pass already held its two) is bookkeeping, not chain safety. It is left
  * unmirrored, and a later delivery of the launch writes it, whatever the
  * launch's state (hasUnwrittenFlags keeps the deliveries coming). Its first
- * miss posts one plain event in the launch's reports; on a completed or
- * cancelled launch that still lacks it FLAG_ALERT_AFTER_MS later, one
- * error with the alert mention asks for it by hand. The rest of the
- * transaction, reservations and sent actions included, commits.
+ * miss posts one plain event in the launch's reports; if the launch still
+ * lacks it FLAG_ALERT_AFTER_MS later, one error with the alert mention asks
+ * for it by hand (a retry then finds the row and leaves it). The rest of
+ * the transaction, reservations and sent actions included, commits.
  */
 async function flagNotWritten(
   record: LaunchRecord,
@@ -82,7 +80,6 @@ async function flagNotWritten(
       `Claim #${record.data.claim_id}: ${failedFlagEvent(flag)} (${reason}); Drop Forge writes it on a later delivery of the launch.`
     );
   } else if (
-    launchEnded(record) &&
     Date.now() - first.at >= FLAG_ALERT_AFTER_MS &&
     !record.data.events.some((event) =>
       event.content.includes(unwrittenFlagAlert(flag))
@@ -115,7 +112,7 @@ async function flagFailed(
  * A flag's row, written only where the claim has none: an admin's row for
  * it, set or unset (the claim action route upserts a row with completed
  * false to unset, api.minting-claims.actions.routes.ts; nothing deletes
- * one), stays as it is. Used when a later delivery retries a flag.
+ * one), stays as it is. Used for every retry of a flag.
  */
 export const completionFlagRows = {
   async insertIfAbsent(
@@ -209,6 +206,26 @@ interface MirrorOptions {
   readonly keepExisting?: boolean;
 }
 
+/**
+ * Whether this write of the flag is a retry, with the mint log on: a
+ * later delivery's (keepExisting), or one of a flag that a pass missed
+ * before, as its event on the launch shows. A retry never overwrites the
+ * claim's row; a first write upserts, as a mirror always has.
+ */
+function isRetry(
+  record: LaunchRecord,
+  flag: string,
+  options: MirrorOptions
+): boolean {
+  if (mintLogRecorder.mode() === 'off') return false;
+  return (
+    !!options.keepExisting ||
+    record.data.events.some((event) =>
+      event.content.includes(failedFlagEvent(flag))
+    )
+  );
+}
+
 async function mirrorFlags(
   record: LaunchRecord,
   flags: string[],
@@ -234,12 +251,13 @@ async function mirrorFlags(
       action: flag,
       wallet: record.data.signer
     };
+    const retry = isRetry(record, flag, options);
     outcome = await writeDropForgeClaimAction(ctx, {
       contract: record.data.contract,
       claim: record.data.claim_id,
       action: flag,
       write: (txCtx) =>
-        options.keepExisting
+        retry
           ? completionFlagRows.insertIfAbsent(row, txCtx)
           : mintingClaimActionsDb.upsertAction(
               { ...row, completed: true },

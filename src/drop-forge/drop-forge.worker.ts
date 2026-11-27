@@ -270,6 +270,7 @@ export class DropForgeWorker {
     record: LaunchRecord,
     ctx: RequestContext
   ): Promise<void> {
+    let mirrored = false;
     if (record.data.manual_transactions?.some((it) => it.state === 'PENDING')) {
       try {
         await reconcileManual(
@@ -285,6 +286,7 @@ export class DropForgeWorker {
           ).metadata
         );
         await mirrorCompletion(record, ctx, this.saveLaunch);
+        mirrored = true;
       } catch (error) {
         if (error instanceof LaunchRpcUnavailableError) throw error;
         setLaunchState(
@@ -296,11 +298,17 @@ export class DropForgeWorker {
         );
       }
       await this.repository.save(record, ctx);
-    } else if (mintLogRecorder.mode() !== 'off' && hasUnwrittenFlags(record)) {
+    }
+    if (
+      !mirrored &&
+      mintLogRecorder.mode() !== 'off' &&
+      hasUnwrittenFlags(record)
+    ) {
       // With the mint log on, a flag a pass deferred or failed to write is
-      // written by a later delivery, whatever the launch's state (the
-      // dispatch keeps delivering while one is left). An existing row, an
-      // admin's, stays as it is.
+      // written by a later delivery, whatever the launch's state, even when
+      // its manual transactions can't be reconciled (the dispatch keeps
+      // delivering while one is left). An existing row, an admin's, stays
+      // as it is.
       await mirrorCompletion(record, ctx, this.saveLaunch, {
         keepExisting: true
       });

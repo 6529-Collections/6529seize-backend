@@ -13,8 +13,10 @@ import {
 } from '@/drop-forge/drop-forge.chain';
 import {
   LaunchWalletBlockError,
-  LaunchRpcUnavailableError
+  LaunchRpcUnavailableError,
+  LaunchSafetyError
 } from '@/drop-forge/drop-forge.types';
+import * as manual from '@/drop-forge/drop-forge.manual';
 import {
   testConfig,
   testLaunchData,
@@ -32,7 +34,11 @@ import { mintingClaimActionsDb } from '@/api/minting-claims/minting-claim-action
 import * as supported from '@/minting-claims/minting-claim-actions';
 import { sqlExecutor } from '@/sql-executor';
 import { mintLogRecorder } from '@/mint-log/mint-log-recorder';
-import { hasUnwrittenFlags } from '@/drop-forge/drop-forge.completion';
+import {
+  completionFlagRows,
+  FLAG_ALERT_AFTER_MS,
+  hasUnwrittenFlags
+} from '@/drop-forge/drop-forge.completion';
 import { buildLaunchPlan } from '@/drop-forge/drop-forge.plan';
 import { updateForgeSettings } from '@/drop-forge/drop-forge.settings';
 import { formatLaunchReport } from '@/drop-forge/drop-forge.reports';
@@ -85,6 +91,74 @@ describe('Drop Forge durable worker', () => {
   });
   afterEach(() => jest.restoreAllMocks());
   const read = () => repository.find(id, {});
+  /** Runs `body` with the mint log in `mode`, then puts the env back. */
+  const withMintLog = async (
+    mode: 'shadow' | 'primary',
+    body: () => Promise<void>
+  ) => {
+    const name =
+      mode === 'shadow'
+        ? 'FEATURE_MINT_LOG_SHADOW'
+        : 'FEATURE_MINT_LOG_PRIMARY';
+    const saved = process.env[name];
+    process.env[name] = 'true';
+    try {
+      await body();
+    } finally {
+      if (saved === undefined) delete process.env[name];
+      else process.env[name] = saved;
+      await sqlExecutor.execute(
+        `delete from ${SIGNED_RECORD_LOG_ENTRIES_TABLE} where lane = 'mint'`
+      );
+    }
+  };
+  /** An ended launch with one completed group and a pending manual transaction. */
+  const cancelledWithManual = () =>
+    repository.change(
+      id,
+      async (record) => {
+        record.data.actions = [
+          {
+            ...record.data.actions[0],
+            id: 'pay',
+            kind: 'PAY_ARTIST',
+            state: 'CONFIRMED' as const,
+            hash: 'hash-pay',
+            block_hash: 'block'
+          }
+        ];
+        record.data.completion_flags = [];
+        record.data.manual_transactions = [
+          { state: 'PENDING' }
+        ] as unknown as typeof record.data.manual_transactions;
+        record.state = 'CANCELLED';
+      },
+      {}
+    );
+  const flagRows = async () =>
+    (
+      await sqlExecutor.execute<{ action: string; completed: number }>(
+        `select action, completed from ${MINTING_CLAIM_ACTIONS_TABLE} order by action`
+      )
+    ).map((row) => [row.action, Number(row.completed)]);
+  /** An admin unsets the flag by hand: a row with completed false. */
+  const adminUnsets = async (action: string) => {
+    const launch = (await read())!;
+    await mintingClaimActionsDb.upsertAction(
+      {
+        contract: launch.data.contract,
+        claim_id: launch.data.claim_id,
+        action,
+        completed: false,
+        wallet: '0x0000000000000000000000000000000000000007'
+      },
+      {}
+    );
+  };
+  const lockWait = () =>
+    Object.assign(new Error('Lock wait timeout exceeded'), {
+      code: 'ER_LOCK_WAIT_TIMEOUT'
+    });
   /** Runs `body` with the mint log in shadow mode, then puts the env back. */
   const inShadow = async (body: () => Promise<void>) => {
     const saved = process.env.FEATURE_MINT_LOG_SHADOW;
@@ -1176,87 +1250,202 @@ describe('Drop Forge durable worker', () => {
       await sqlExecutor.execute(`delete from ${MINTING_CLAIM_ACTIONS_TABLE}`);
     }
   });
-  it("with the mint log on, writes a cancelled launch's deferred flag on its next delivery, and keeps an admin's unset row", async () => {
+  it.each(['shadow', 'primary'] as const)(
+    "with the mint log in %s mode, writes a cancelled launch's deferred flag on its next delivery, and keeps an admin's unset row",
+    async (mode) => {
+      jest
+        .spyOn(supported, 'isSupportedMintingClaimActionType')
+        .mockReturnValue(true);
+      // Three completed groups, so one pass defers the third flag.
+      await repository.change(
+        id,
+        async (record) => {
+          const template = record.data.actions[0];
+          const confirmed = (
+            actionId: string,
+            extra: Partial<typeof template>
+          ) => ({
+            ...template,
+            ...extra,
+            id: actionId,
+            state: 'CONFIRMED' as const,
+            hash: `hash-${actionId}`,
+            block_hash: 'block'
+          });
+          record.data.actions = [
+            confirmed('pay', { kind: 'PAY_ARTIST' }),
+            confirmed('artist', { kind: 'AIRDROP', label: 'Airdrop - Artist' }),
+            confirmed('team', { kind: 'AIRDROP', label: 'Airdrop - Team' })
+          ];
+          record.data.completion_flags = [];
+          record.state = 'CANCELLED';
+        },
+        {}
+      );
+      const launch = (await read())!;
+      // An admin unset the team flag by hand: a row with completed false.
+      await mintingClaimActionsDb.upsertAction(
+        {
+          contract: launch.data.contract,
+          claim_id: launch.data.claim_id,
+          action: 'TEAM_AIRDROP',
+          completed: false,
+          wallet: '0x0000000000000000000000000000000000000007'
+        },
+        {}
+      );
+      const rows = () =>
+        sqlExecutor.execute<{ action: string; completed: number }>(
+          `select action, completed from ${MINTING_CLAIM_ACTIONS_TABLE} order by action`
+        );
+
+      try {
+        await withMintLog(mode, async () => {
+          await worker.tick(id);
+          let record = (await read())!;
+          expect(record.data.completion_flags).toEqual([
+            'PAY_ARTIST',
+            'ARTIST_AIRDROP'
+          ]);
+          expect(
+            record.data.events.filter((event) =>
+              event.content.includes(
+                'completion flag TEAM_AIRDROP was not written'
+              )
+            )
+          ).toEqual([expect.objectContaining({ error: false })]);
+          expect(hasUnwrittenFlags(record)).toBe(true);
+
+          // The next delivery's pass writes it: the admin's row stays unset.
+          await worker.tick(id);
+          record = (await read())!;
+          expect(record.data.completion_flags).toEqual([
+            'PAY_ARTIST',
+            'ARTIST_AIRDROP',
+            'TEAM_AIRDROP'
+          ]);
+          expect(hasUnwrittenFlags(record)).toBe(false);
+          expect(record.state).toBe('CANCELLED');
+          expect(
+            (await rows()).map((row) => [row.action, Number(row.completed)])
+          ).toEqual([
+            ['ARTIST_AIRDROP', 1],
+            ['PAY_ARTIST', 1],
+            ['TEAM_AIRDROP', 0]
+          ]);
+        });
+      } finally {
+        await sqlExecutor.execute(`delete from ${MINTING_CLAIM_ACTIONS_TABLE}`);
+      }
+    }
+  );
+  it("with the mint log on, a running launch's retried flag keeps a row an admin unset after its first miss", async () => {
     jest
       .spyOn(supported, 'isSupportedMintingClaimActionType')
       .mockReturnValue(true);
-    // Three completed groups, so one pass defers the third flag.
-    await repository.change(
-      id,
-      async (record) => {
-        const template = record.data.actions[0];
-        const confirmed = (
-          actionId: string,
-          extra: Partial<typeof template>
-        ) => ({
-          ...template,
-          ...extra,
-          id: actionId,
-          state: 'CONFIRMED' as const,
-          hash: `hash-${actionId}`,
-          block_hash: 'block'
-        });
-        record.data.actions = [
-          confirmed('pay', { kind: 'PAY_ARTIST' }),
-          confirmed('artist', { kind: 'AIRDROP', label: 'Airdrop - Artist' }),
-          confirmed('team', { kind: 'AIRDROP', label: 'Airdrop - Team' })
-        ];
-        record.data.completion_flags = [];
-        record.state = 'CANCELLED';
-      },
-      {}
-    );
-    const launch = (await read())!;
-    // An admin unset the team flag by hand: a row with completed false.
-    await mintingClaimActionsDb.upsertAction(
-      {
-        contract: launch.data.contract,
-        claim_id: launch.data.claim_id,
-        action: 'TEAM_AIRDROP',
-        completed: false,
-        wallet: '0x0000000000000000000000000000000000000007'
-      },
-      {}
-    );
-    const rows = () =>
-      sqlExecutor.execute<{ action: string; completed: number }>(
-        `select action, completed from ${MINTING_CLAIM_ACTIONS_TABLE} order by action`
-      );
-
+    await confirmedPayArtist();
+    chain.receipt.mockResolvedValue({
+      status: 1,
+      blockNumber: 100,
+      blockHash: 'block',
+      confirmations: 12
+    });
+    jest
+      .spyOn(mintingClaimActionsDb, 'upsertAction')
+      .mockRejectedValueOnce(lockWait());
+    try {
+      await inShadow(async () => {
+        // The first write fails: one plain event.
+        await worker.tick(id);
+        expect((await read())!.data.completion_flags).toEqual([]);
+        await adminUnsets('PAY_ARTIST');
+        await acknowledgeReports();
+        // The retry finds the admin's row and leaves it.
+        await worker.tick(id);
+        expect((await read())!.data.completion_flags).toEqual(['PAY_ARTIST']);
+        expect(await flagRows()).toEqual([['PAY_ARTIST', 0]]);
+        await worker.tick(id);
+        expect((await read())!.state).toBe('COMPLETED');
+        expect(await flagRows()).toEqual([['PAY_ARTIST', 0]]);
+      });
+    } finally {
+      await sqlExecutor.execute(`delete from ${MINTING_CLAIM_ACTIONS_TABLE}`);
+    }
+  });
+  it("with the mint log on, an ended launch's manual branch retries a missed flag insert-only, keeping an admin's unset row", async () => {
+    jest
+      .spyOn(supported, 'isSupportedMintingClaimActionType')
+      .mockReturnValue(true);
+    await cancelledWithManual();
+    jest.spyOn(manual, 'reconcileManual').mockResolvedValue(true);
+    jest
+      .spyOn(mintingClaimActionsDb, 'upsertAction')
+      .mockRejectedValueOnce(lockWait());
     try {
       await inShadow(async () => {
         await worker.tick(id);
+        expect((await read())!.data.completion_flags).toEqual([]);
+        await adminUnsets('PAY_ARTIST');
+        await worker.tick(id);
+        const record = (await read())!;
+        expect(record.data.completion_flags).toEqual(['PAY_ARTIST']);
+        expect(record.state).toBe('CANCELLED');
+        expect(await flagRows()).toEqual([['PAY_ARTIST', 0]]);
+      });
+    } finally {
+      await sqlExecutor.execute(`delete from ${MINTING_CLAIM_ACTIONS_TABLE}`);
+    }
+  });
+  it('with the mint log on, writes a flag even when the manual transactions fail to reconcile, and alerts once if the write keeps failing', async () => {
+    jest
+      .spyOn(supported, 'isSupportedMintingClaimActionType')
+      .mockReturnValue(true);
+    await cancelledWithManual();
+    jest
+      .spyOn(manual, 'reconcileManual')
+      .mockRejectedValue(new LaunchSafetyError('manual evidence unavailable'));
+    const insert = jest
+      .spyOn(completionFlagRows, 'insertIfAbsent')
+      .mockRejectedValueOnce(lockWait());
+    const flagEvents = async () =>
+      (await read())!.data.events.filter((event) =>
+        event.content.includes('completion flag PAY_ARTIST')
+      );
+    try {
+      await inShadow(async () => {
+        // The manual branch throws and blocks the launch, as on main; the
+        // retry still runs, after it, and its write fails: one plain event.
+        await worker.tick(id);
         let record = (await read())!;
-        expect(record.data.completion_flags).toEqual([
-          'PAY_ARTIST',
-          'ARTIST_AIRDROP'
+        expect(record.state).toBe('BLOCKED');
+        expect(record.data.completion_flags).toEqual([]);
+        expect(await flagEvents()).toEqual([
+          expect.objectContaining({ error: false })
         ]);
-        expect(
-          record.data.events.filter((event) =>
-            event.content.includes(
-              'completion flag TEAM_AIRDROP was not written'
-            )
-          )
-        ).toEqual([expect.objectContaining({ error: false })]);
-        expect(hasUnwrittenFlags(record)).toBe(true);
-
-        // The next delivery's pass writes it: the admin's row stays unset.
+        // Ten minutes after that first miss, a failing write alerts once.
+        insert.mockRejectedValue(lockWait());
+        await repository.change(
+          id,
+          async (launch) => {
+            for (const event of launch.data.events)
+              if (event.content.includes('completion flag PAY_ARTIST'))
+                event.at -= FLAG_ALERT_AFTER_MS;
+          },
+          {}
+        );
+        await worker.tick(id);
+        await worker.tick(id);
+        const events = await flagEvents();
+        expect(events.map((event) => event.error)).toEqual([false, true]);
+        expect(events[1].content).toContain(
+          'completion flag PAY_ARTIST is still not written 10 minutes after it was first missed (ER_LOCK_WAIT_TIMEOUT); set it by hand: POST /api/minting-claims/actions/'
+        );
+        // Once the write goes through, the flag is written and mirrored.
+        insert.mockRestore();
         await worker.tick(id);
         record = (await read())!;
-        expect(record.data.completion_flags).toEqual([
-          'PAY_ARTIST',
-          'ARTIST_AIRDROP',
-          'TEAM_AIRDROP'
-        ]);
-        expect(hasUnwrittenFlags(record)).toBe(false);
-        expect(record.state).toBe('CANCELLED');
-        expect(
-          (await rows()).map((row) => [row.action, Number(row.completed)])
-        ).toEqual([
-          ['ARTIST_AIRDROP', 1],
-          ['PAY_ARTIST', 1],
-          ['TEAM_AIRDROP', 0]
-        ]);
+        expect(record.data.completion_flags).toEqual(['PAY_ARTIST']);
+        expect(await flagRows()).toEqual([['PAY_ARTIST', 1]]);
       });
     } finally {
       await sqlExecutor.execute(`delete from ${MINTING_CLAIM_ACTIONS_TABLE}`);

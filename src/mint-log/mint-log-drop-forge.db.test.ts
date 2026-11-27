@@ -1121,6 +1121,48 @@ describeWithSeed(
       ).toEqual(['PAY_ARTIST']);
     }, 60_000);
 
+    it('in primary mode, fails a phase step whose head lock times out, leaving no rows and no entry', async () => {
+      process.env.FEATURE_MINT_LOG_PRIMARY = 'true';
+      try {
+        await holdingTheHead(async () => {
+          await expect(
+            sqlExecutor.executeNativeQueriesInTransaction(
+              async (connection) => {
+                const options = { wrappedConnection: connection };
+                const [row] = await sqlExecutor.execute<{ seconds: number }>(
+                  'SELECT @@SESSION.innodb_lock_wait_timeout AS seconds',
+                  undefined,
+                  options
+                );
+                // A short wait, so the step gives up on the held head quickly;
+                // the pooled connection gets its own value back after.
+                await sqlExecutor.execute(
+                  'SET SESSION innodb_lock_wait_timeout = 1',
+                  undefined,
+                  options
+                );
+                try {
+                  await workerPhase({ connection }, [phaseResult(1, 1)]);
+                } finally {
+                  await sqlExecutor.execute(
+                    'SET SESSION innodb_lock_wait_timeout = :seconds',
+                    { seconds: Number(row.seconds) },
+                    options
+                  );
+                }
+              }
+            )
+          ).rejects.toThrow(/Lock wait timeout/);
+        });
+      } finally {
+        restoreEnv('FEATURE_MINT_LOG_PRIMARY');
+      }
+      expect(await entries()).toEqual([]);
+      expect(
+        await count(`select count(*) as n from ${DISTRIBUTION_TABLE}`)
+      ).toBe(0);
+    }, 60_000);
+
     it(`gives a pass's held flags one ${HELD_FLAG_LOCK_WAIT_SECONDS} s budget for the head: the second flag waits ${HELD_FLAG_MIN_LOCK_WAIT_SECONDS} s more, not ${HELD_FLAG_LOCK_WAIT_SECONDS} s`, async () => {
       await saveLaunch(launch(['PAY_ARTIST', 'ARTIST_AIRDROP']), {});
       process.env.FEATURE_MINT_LOG_PRIMARY = 'true';

@@ -117,12 +117,13 @@ controls require supplying their hashes for reconciliation; minted supply alone
 cannot prove which recipient/category received an airdrop. Unknown state blocks
 execution rather than assuming allocations were delivered. Automation writes
 completed category flags into the existing manual UI after all batches confirm.
-With the mint log on (shadow or primary), the flags are written, each logged,
-at the end of the signer transaction, at most two a pass. A flag that fails to
-write, or that the pass has no room for, is undone alone and written by a later
-delivery of the launch, in any state; a running launch completes only on a pass
-with no flag left to write, and a retry never overwrites a row an admin set or
-unset. Its first miss posts one plain event; a completed or cancelled launch
+With the mint log on (shadow or primary), the flags are written at the end of
+the signer transaction, at most two a pass, and logged (in shadow mode a flag
+that gives up on the mint log's head is written unlogged). A flag that fails to
+write is undone alone; it, or a flag the pass had no room for, is written by a
+later delivery of the launch, in any state. A running launch completes only on
+a pass with no flag left to write, and a retry never overwrites a row an admin
+set or unset. Its first miss posts one plain event; a completed or cancelled launch
 still without it 10 minutes later posts one alert asking for it by hand. With
 the mint log off they are written where they are mirrored, in the same
 transaction.
