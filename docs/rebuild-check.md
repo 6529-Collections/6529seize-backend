@@ -383,7 +383,8 @@ The steps of a run:
    run has no identity world), the identity rebuilder's restore of the
    untaken placeholders' profiles, and the test fixtures' profiles row set
    and its one caller. The records service is one of the world's actors:
-   the mint and publish seeds read it by its wallet and write no profile.
+   the mint, publish and subscriptions seeds read it by its wallet and
+   write no profile.
    Any other raw write fails the test until it is reviewed and listed;
    writes through the ORM are outside it.
 3. Copy the kept tables aside: EPHEMERAL, PROVIDER, EXEMPT, and, unless

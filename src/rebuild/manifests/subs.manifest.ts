@@ -5,14 +5,17 @@ import {
   PROBE_CONSOLIDATION_KEYS,
   PROBE_MEME_IDS,
   PROBE_MEMES_CONTRACT,
-  PROBE_UPCOMING_MEME_ID
+  PROBE_UPCOMING_MEME_ID,
+  worldActorProfileId,
+  worldActorWallet
 } from '@/rebuild/manifests/probe-fixture';
 
 /**
- * The records service identity of a rebuild run: a fake wave, profile and
- * wallet, and a provider key made only for the rebuild check, derived from
- * a public label so it can never be mistaken for a real one. The same
- * values in every area that writes the shared record log.
+ * The records service of a rebuild run: the world's records-service actor,
+ * which the identity seed writes, a fake records wave, and a provider key
+ * made only for the rebuild check, derived from a public label so it can
+ * never be mistaken for a real one. The same values in every area that
+ * writes the shared record log.
  */
 const FIXTURE_PROVIDER_KEY = `0x${createHash('sha256')
   .update('6529 rebuild check: fixture provider key, never a real one')
@@ -22,8 +25,8 @@ const FIXTURE_RECORDS_FLAGS = {
     { id: 'rebuild-fixture', private_key: FIXTURE_PROVIDER_KEY }
   ]),
   SIGNED_RECORDS_WAVE_ID: '00000000-0000-4000-8000-0000000000e1',
-  SIGNED_RECORDS_SERVICE_PROFILE_ID: 'rebuild-records-service',
-  SIGNED_RECORDS_SERVICE_WALLET: '0x00000000000000000000000000000000000000a1'
+  SIGNED_RECORDS_SERVICE_PROFILE_ID: worldActorProfileId('records-service'),
+  SIGNED_RECORDS_SERVICE_WALLET: worldActorWallet('records-service')
 };
 
 /**
@@ -91,15 +94,13 @@ const SUBS_SEED: RebuildStep = {
   writes: [
     ...LEGACY_WRITES,
     'subscriptions_top_up_latest_block',
-    'transactions_processed_subscriptions_blocks',
-    // The wide identity (subs.wide-identity.ts), its profile and its
-    // wallets' key.
-    'identities',
-    'profiles',
-    'address_consolidation_keys'
+    'transactions_processed_subscriptions_blocks'
   ],
-  // The probe wallets' keys.
-  after: ['identity.probe-profiles'],
+  // The probe wallets' keys, and the wide identity (the world's subs-wide
+  // actor), read by its wallet.
+  reads: ['identities', 'address_consolidation_keys'],
+  // The world's actors, written and then checked.
+  after: ['identity.probe-profiles', 'identity.actors-check'],
   // Before any card is minted: the redemption loop's block is the chain's
   // head before the holdings seed mints card 1.
   before: ['holdings.seed'],
@@ -138,11 +139,6 @@ const SUBS_SWITCH_SEED: RebuildStep = {
     'signed_record_log_segments',
     // The signed choice's head, in the subscriptions' (ps, subs.*) types.
     'signed_record_heads',
-    'identities',
-    'address_consolidation_keys',
-    // The wide identity's principal, which the cut keys it by.
-    'identity_chain_principals',
-    'profiles',
     'waves',
     'drops',
     'drops_parts',
@@ -152,10 +148,14 @@ const SUBS_SWITCH_SEED: RebuildStep = {
     'wave_metrics',
     'wave_dropper_metrics'
   ],
+  // The records service and the wide identity's principal, the world's
+  // actors, which the identity seed writes.
   reads: [
     'nfts',
     'transactions_processed_subscriptions_blocks',
     'subscriptions_top_up_latest_block',
+    'identities',
+    'address_consolidation_keys',
     'identity_chain_principals'
   ],
   after: ['subs.seed'],

@@ -4,13 +4,10 @@ import fetch from 'node-fetch';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
-  ADDRESS_CONSOLIDATION_KEY,
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
-  IDENTITIES_TABLE,
   NFTS_TABLE,
   MEMES_CONTRACT,
-  PROFILES_TABLE,
   SUBSCRIPTIONS_ADDRESS,
   SIGNED_RECORD_LOG_ENTRIES_TABLE,
   SUBSCRIPTIONS_ID_NFTS_FINAL_UPLOAD_TABLE,
@@ -28,13 +25,9 @@ import { dropsDb } from '@/drops/drops.db';
 import { DropType } from '@/entities/IDrop';
 import type { RebuildContext } from '@/rebuild/manifest.types';
 import { PROBE_CONSOLIDATION_KEYS } from '@/rebuild/manifests/probe-fixture';
-import {
-  WIDE_KEY,
-  WIDE_PRINCIPAL,
-  WIDE_PROFILE_ID,
-  WIDE_TOP_UP,
-  WIDE_WALLETS
-} from '@/rebuild/areas/subs.wide-identity';
+import { assertRecordsServiceActor } from '@/rebuild/areas/records-service';
+import { WIDE_TOP_UP } from '@/rebuild/areas/subs.wide-identity';
+import { profileIdByWallet } from '@/rebuild/run/probe-fixture.steps';
 import { encodeSignedRecordsHeader } from '@/signed-records/record-event';
 import { familyWave } from '@/signed-records/record-families';
 import { RecordKind } from '@/signed-records/record-kinds';
@@ -96,8 +89,8 @@ import { redeemSubscriptions } from '@/transactionsProcessingLoop/subscriptions'
  * - the transactions loop's processed block, at the chain's head.
  *
  * `seedSubscriptionsSwitch`, which needs the identity mirror:
- * - the records service identity and the records wave, only if another
- *   seed has not made them (the same fixture values every area uses);
+ * - the records service, the world's actor, read by its wallet, and the
+ *   records wave where missing;
  * - the switch: `go-live` cuts, verifies, loads, compares and publishes
  *   the opening files into the run's seed files, and journals its opening
  *   entry;
@@ -230,95 +223,15 @@ async function insertRow(
 }
 
 /**
- * The wide identity's rows (subs.wide-identity.ts), as 6529.io holds them:
- * its identity, under its consolidation key, its profile (an identity with
- * a profile id has its profile) and each wallet's key. The top-up loop
- * reads the sender's key from here. Plain inserts: a row another fixture
- * already wrote fails the seed instead of being skipped.
+ * The records service of the run: the world's actor, read by its wallet,
+ * and its records wave, where missing.
  */
-async function seedWideIdentity(): Promise<void> {
-  await sqlExecutor.execute(
-    `insert into ${IDENTITIES_TABLE}
-       (consolidation_key, profile_id, primary_address, handle,
-        normalised_handle, tdh, rep, cic, level_raw, classification,
-        xtdh, produced_xtdh, granted_xtdh, xtdh_rate, basetdh_rate)
-     values (:key, :profileId, :wallet, :handle, :handle,
-        0, 0, 0, 0, 'PSEUDONYM', 0, 0, 0, 0, 0)`,
-    {
-      key: WIDE_KEY,
-      profileId: WIDE_PROFILE_ID,
-      wallet: WIDE_WALLETS[0],
-      handle: WIDE_PROFILE_ID
-    }
-  );
-  await sqlExecutor.execute(
-    `insert into ${PROFILES_TABLE}
-       (external_id, handle, normalised_handle, primary_wallet, created_at,
-        created_by_wallet, classification)
-     values (:profileId, :handle, :handle, :wallet, :createdAt, :wallet,
-        'PSEUDONYM')`,
-    {
-      profileId: WIDE_PROFILE_ID,
-      handle: WIDE_PROFILE_ID,
-      wallet: WIDE_WALLETS[0],
-      createdAt: new Date(SEEDED_AT)
-    }
-  );
-  for (const wallet of WIDE_WALLETS) {
-    await sqlExecutor.execute(
-      `insert into ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key)
-       values (:wallet, :key)`,
-      { wallet, key: WIDE_KEY }
-    );
-  }
-}
-
-/**
- * The wide identity's principal, in the identity mirror's table, which the
- * cut reads to key the identity's wallets to it.
- */
-async function bindWideIdentity(): Promise<void> {
-  await insertRow('identity_chain_principals', {
-    principal_id: WIDE_PRINCIPAL,
-    profile_id: WIDE_PROFILE_ID,
-    origin: 'LEGACY',
-    created_at: SEEDED_AT
-  });
-}
-
-/** The records service's identity, profile and wave, if they are missing. */
 async function ensureRecordsService(
   waveId: string,
   profileId: string,
   wallet: string
 ): Promise<void> {
-  await sqlExecutor.execute(
-    `insert ignore into ${IDENTITIES_TABLE}
-       (consolidation_key, profile_id, primary_address, handle,
-        normalised_handle, tdh, rep, cic, level_raw, classification,
-        xtdh, produced_xtdh, granted_xtdh, xtdh_rate, basetdh_rate)
-     values (:wallet, :profileId, :wallet, :handle, :handle,
-        0, 0, 0, 0, 'PSEUDONYM', 0, 0, 0, 0, 0)`,
-    { wallet, profileId, handle: 'rebuild-records' }
-  );
-  await sqlExecutor.execute(
-    `insert ignore into ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key)
-     values (:wallet, :wallet)`,
-    { wallet }
-  );
-  await sqlExecutor.execute(
-    `insert ignore into ${PROFILES_TABLE}
-       (external_id, handle, normalised_handle, primary_wallet, created_at,
-        created_by_wallet, classification)
-     values (:profileId, :handle, :handle, :wallet, :createdAt, :wallet,
-        'PSEUDONYM')`,
-    {
-      profileId,
-      handle: 'rebuild-records',
-      wallet,
-      createdAt: new Date(SEEDED_AT)
-    }
-  );
+  await assertRecordsServiceActor(profileId, wallet);
   const { serial_no: _serial, ...wave } = aWave(
     { is_direct_message: false, created_by: profileId, created_at: SEEDED_AT },
     { id: waveId, name: waveId }
@@ -604,7 +517,9 @@ export async function seedSubscriptions(
   for (const top of BEFORE_TOP_UPS) {
     await deps.topUp(top.wallet, top.amount);
   }
-  await seedWideIdentity();
+  // The wide identity is the world's subs-wide actor: read by its wallet,
+  // it must be there before its top-up.
+  await profileIdByWallet(WIDE_TOP_UP.wallet);
   await deps.topUp(WIDE_TOP_UP.wallet, WIDE_TOP_UP.amount);
   await markRedemptionLoopRun(await deps.head());
   await updateSubscribeAllEditions(PROBE_CONSOLIDATION_KEYS[0], true);
@@ -635,10 +550,6 @@ export async function seedSubscriptionsSwitch(
     records.serviceProfileId,
     records.serviceWallet
   );
-
-  // The cut credits the wide identity's queued top-up to its principal and
-  // keys the identity by the queue entry's key.
-  await bindWideIdentity();
 
   // The record log's closer does not run in a seed, so go-live's posting
   // probe is answered here: the seed closes the segment itself below.

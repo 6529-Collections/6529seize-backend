@@ -6,9 +6,16 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { MEMES_CONTRACT, NULL_ADDRESS } from '@/constants';
 import type { RebuildContext } from '@/rebuild/manifest.types';
-import { PROBE_CONSOLIDATION_KEYS } from '@/rebuild/manifests/probe-fixture';
+import {
+  PROBE_CONSOLIDATION_KEYS,
+  worldActorIdentity
+} from '@/rebuild/manifests/probe-fixture';
 import { subsManifest } from '@/rebuild/manifests/subs.manifest';
-import { seedProbeIdentities } from '@/rebuild/run/probe-fixture.steps';
+import {
+  importedPrincipalId,
+  seedProbeIdentities
+} from '@/rebuild/run/probe-fixture.steps';
+import { consolidationTools } from '@/consolidation-tools';
 import { connect, disconnect, execSQLWithParams, getDataSource } from '@/db';
 import { DbQueryOptions } from '@/db-query.options';
 import * as Entities from '@/entities/entities';
@@ -35,12 +42,14 @@ import {
   SubscriptionsSeedDeps,
   seedSubscriptionsSwitch
 } from './subs.seed';
-import {
-  WIDE_KEY,
-  WIDE_PRINCIPAL,
-  WIDE_TOP_UP,
-  WIDE_WALLETS
-} from './subs.wide-identity';
+import { WIDE_TOP_UP } from './subs.wide-identity';
+
+// The wide identity: the identity world's subs-wide actor, its wallets,
+// its consolidation key (644 characters) and its principal.
+const WIDE = worldActorIdentity('subs-wide');
+const WIDE_WALLETS = WIDE.wallets;
+const WIDE_KEY = consolidationTools.buildConsolidationKey(WIDE_WALLETS);
+const WIDE_PRINCIPAL = importedPrincipalId(WIDE.profileId);
 
 jest.mock('@/subscriptionsDaily/subscription-cache', () => ({
   invalidateUpcomingSubscriptionCaches: jest.fn()
