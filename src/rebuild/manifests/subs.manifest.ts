@@ -146,14 +146,16 @@ const SUBS_SWITCH_SEED: RebuildStep = {
     // metrics, as drop creation does.
     'identity_subscriptions',
     'wave_metrics',
-    'wave_dropper_metrics'
+    'wave_dropper_metrics',
+    // The top-up after the switch runs the top-up loop's discovery, which
+    // moves its cursor.
+    'subscriptions_top_up_latest_block'
   ],
   // The records service and the wide identity's principal, the world's
   // actors, which the identity seed writes.
   reads: [
     'nfts',
     'transactions_processed_subscriptions_blocks',
-    'subscriptions_top_up_latest_block',
     'identities',
     'address_consolidation_keys',
     'identity_chain_principals'

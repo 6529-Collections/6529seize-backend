@@ -158,19 +158,28 @@ async function rpc<T>(url: string, method: string, params: unknown[]) {
 /**
  * Top-ups on the run's anvil: the transfer, blocks past the top-up loop's
  * finality gap, then the loop's own discovery, which credits as it does in
- * production.
+ * production. The wallet is impersonated only for the transfer: a failed
+ * balance or transfer call stops the impersonation too, and its own error
+ * is the one thrown.
  */
-function anvilTopUps(url: string): SeedTopUp {
+export function anvilTopUps(url: string): SeedTopUp {
   return async (wallet, amountEth) => {
     await rpc(url, 'anvil_impersonateAccount', [wallet]);
-    await rpc(url, 'anvil_setBalance', [wallet, toBeHex(parseEther('10'))]);
-    await rpc<string>(url, 'eth_sendTransaction', [
-      {
-        from: wallet,
-        to: SUBSCRIPTIONS_ADDRESS,
-        value: toBeHex(parseEther(amountEth))
-      }
-    ]);
+    try {
+      await rpc(url, 'anvil_setBalance', [wallet, toBeHex(parseEther('10'))]);
+      await rpc<string>(url, 'eth_sendTransaction', [
+        {
+          from: wallet,
+          to: SUBSCRIPTIONS_ADDRESS,
+          value: toBeHex(parseEther(amountEth))
+        }
+      ]);
+    } catch (error) {
+      await rpc(url, 'anvil_stopImpersonatingAccount', [wallet]).catch(
+        () => undefined
+      );
+      throw error;
+    }
     await rpc(url, 'anvil_stopImpersonatingAccount', [wallet]);
     await rpc(url, 'anvil_mine', [toBeHex(DISCOVERY_CONFIRMATIONS)]);
     await discoverTopUps();

@@ -194,14 +194,16 @@ class TypeOrmExecutor extends SqlExecutor {
     executable: (connection: ConnectionWrapper<any>) => Promise<T>
   ): Promise<T> {
     const runner = getDataSource().createQueryRunner();
-    await runner.connect();
-    await runner.startTransaction();
+    let started = false;
     try {
+      await runner.connect();
+      await runner.startTransaction();
+      started = true;
       const result = await executable({ connection: runner });
       await runner.commitTransaction();
       return result;
     } catch (error) {
-      await runner.rollbackTransaction();
+      if (started) await runner.rollbackTransaction();
       throw error;
     } finally {
       await runner.release();
@@ -554,13 +556,17 @@ describeWithSeed('the subscriptions rebuild check', [], () => {
       await redeemed('subscriptions_redeemed')
     );
     const [charged] = await sqlExecutor.execute<{
-      legacy: number;
-      identity: number;
+      legacy: number | null;
+      identity: number | null;
     }>(
       `select (select balance from subscriptions_balances where consolidation_key = :key) as legacy,
               (select balance from subscriptions_id_balances where identity_key = :principal) as identity`,
       { key: PROBE_CONSOLIDATION_KEYS[0], principal: PROBE_PRINCIPAL }
     );
+    // Both balance rows exist: a missing row reads as null, which Number()
+    // would turn into a zero balance.
+    expect(charged.legacy).not.toBeNull();
+    expect(charged.identity).not.toBeNull();
     expect(Number(charged.identity)).toBeLessThan(0.25);
     expect(Number(charged.legacy)).toBe(Number(charged.identity));
 

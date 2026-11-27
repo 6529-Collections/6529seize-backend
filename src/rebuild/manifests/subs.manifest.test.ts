@@ -1,10 +1,28 @@
 import { AREA_MANIFESTS } from '@/rebuild/manifests';
 import { stepsSkippedForSteps } from '@/rebuild/run/step-needs';
 import { orderSeeds } from '@/rebuild/step-order';
+import { writtenTables } from '@/rebuild/step-writes';
 
 /** Every area's seeds: every run starts each of them. */
 const SEEDS = AREA_MANIFESTS.flatMap((manifest) => manifest.seeds);
 const inEveryRun = () => true;
+
+describe("the top-up loop's cursor in the subscriptions seeds", () => {
+  // Both seeds top up on anvil, and each top-up runs the loop's discovery,
+  // which moves subscriptions_top_up_latest_block.
+  it.each(['subs.seed', 'subs.switch'])(
+    '%s declares it as a write, not a read',
+    (id) => {
+      const step = SEEDS.find((seed) => seed.id === id)!;
+      expect(writtenTables(step)).toContain(
+        'subscriptions_top_up_latest_block'
+      );
+      expect(step.reads ?? []).not.toContain(
+        'subscriptions_top_up_latest_block'
+      );
+    }
+  );
+});
 
 describe("the subscriptions redemption seed's need of the holdings seed", () => {
   it('is skipped as planned, and no other subscriptions seed, in a run where the holdings seed is', () => {
