@@ -219,16 +219,18 @@ async function writeHeld(
  * The lock-wait budget of one pass's held flags. While they wait, the mint
  * log's head first, the signer's and the launch's rows stay locked, and the
  * head may be held by a phase step on another card or an admin's phase
- * split. The first flag may wait the whole budget, each later one what is
- * left of it, but at least HELD_FLAG_MIN_LOCK_WAIT_SECONDS. A flag that
- * gives up: in primary mode it fails, is unmirrored and is written on a
- * later pass; in shadow mode it commits unlogged, and the mint log alerts.
+ * split. 10 s is about 1.5 times the longest holder measured: a phase step
+ * on a card with 4,000 allowlisted wallets held it 6.5 s, finalize 6.3 s.
+ * The first flag may wait the whole budget, each later one what is left of
+ * it, but at least HELD_FLAG_MIN_LOCK_WAIT_SECONDS. A flag that gives up:
+ * in primary mode it fails, is unmirrored and is written on a later
+ * delivery; in shadow mode it commits unlogged, and the mint log alerts.
  * This relies on innodb_rollback_on_timeout being OFF, MySQL's default: a
  * timeout then undoes only its statement, and the flag's savepoint the
  * rest. With it ON, a timeout rolls back the whole pass, as a deadlock
  * does, and the pass fails and runs again.
  */
-export const HELD_FLAG_LOCK_WAIT_SECONDS = 15;
+export const HELD_FLAG_LOCK_WAIT_SECONDS = 10;
 
 /** InnoDB's shortest lock wait: a later flag still tries the head once. */
 export const HELD_FLAG_MIN_LOCK_WAIT_SECONDS = 1;

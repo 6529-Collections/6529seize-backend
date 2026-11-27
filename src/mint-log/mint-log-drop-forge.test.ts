@@ -148,7 +148,7 @@ describe('held claim actions', () => {
     let now = 1_000_000;
     jest.spyOn(Date, 'now').mockImplementation(() => now);
     // How long each flag takes, its wait for the head included.
-    const took = [9_400, 0, 15_400, 0];
+    const took = [4_400, 0, 10_400, 0];
     jest
       .spyOn(mintLogRecorder, 'writeWithin')
       .mockImplementation(async (_spec, _connection, write) => {
@@ -166,7 +166,7 @@ describe('held claim actions', () => {
       'RELEASE SAVEPOINT drop_forge_claim_action'
     ];
 
-    // 15 s for the first flag; 5.6 s left, rounded up, for the second.
+    // 10 s for the first flag; 5.6 s left, rounded up, for the second.
     await pass();
     expect(statements.splice(0)).toEqual([
       SELECT_WAIT,
