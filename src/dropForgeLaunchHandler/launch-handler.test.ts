@@ -76,6 +76,10 @@ it("raises a missed flag's overdue alert on each delivery, before the passes", a
     .mockResolvedValue();
   await runLaunchDelivery({ id: current.id, revision: 5 });
   expect(alert).toHaveBeenCalledWith(current.id, dropForgeRepository);
+  // Before the first report, so the passes don't wait for its post.
+  expect(alert.mock.invocationCallOrder[0]).toBeLessThan(
+    jest.mocked(reportLaunchEvents).mock.invocationCallOrder[0]
+  );
   expect(alert.mock.invocationCallOrder[0]).toBeLessThan(
     tick.mock.invocationCallOrder[0]
   );

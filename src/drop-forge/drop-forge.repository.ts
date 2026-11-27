@@ -243,8 +243,9 @@ export class DropForgeRepository {
             { wrappedConnection: connection }
           );
           if (!row) throw new Error('Signer coordination row missing');
-          // Completion flags are written, and logged in the mint log, after
-          // fn: the mint log's head is then never held across a chain call.
+          // With the mint log on, completion flags are written, and logged,
+          // after fn: the mint log's head is then never held across a chain
+          // call.
           const result = await withDropForgeClaimActions(ctx, () =>
             fn(row, ctx)
           );

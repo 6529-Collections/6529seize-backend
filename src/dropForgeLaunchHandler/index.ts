@@ -64,15 +64,15 @@ export async function runLaunchDelivery(
       chain,
       new KmsTransactionSigner(config.keyId, config.signer)
     );
+    // With the mint log on, a missed flag still unwritten after the set time
+    // alerts once, even when no pass gets to try it; the reports below post
+    // it before the passes, so none of them waits for it.
+    await alertOverdueLaunchFlags(record.id, dropForgeRepository);
     let reportsDelivered = await reportLaunchEvents(
       config,
       dropForgeRepository,
       record.id
     );
-    // With the mint log on, a missed flag still unwritten after the set time
-    // alerts once, even when no pass gets to try it; the reports below post
-    // it.
-    await alertOverdueLaunchFlags(record.id, dropForgeRepository);
     for (let cycle = 0; cycle < 3; cycle++) {
       await worker.tick(record.id);
       reportsDelivered =

@@ -64,11 +64,11 @@ const setFlagByHand = (record: LaunchRecord, flag: string) =>
  * pass already held its two) is bookkeeping, not chain safety. It is left
  * unmirrored, and a later pass writes it, the same delivery's next one or a
  * later delivery's, whatever the launch's state (hasUnwrittenFlags keeps
- * the deliveries coming). Its first
- * miss posts one plain event in the launch's reports; if the launch still
- * lacks it FLAG_ALERT_AFTER_MS later, one error with the alert mention asks
- * for it by hand (a retry then finds the row and leaves it). The rest of
- * the transaction, reservations and sent actions included, commits.
+ * the deliveries coming). Its first miss posts one plain event in the
+ * launch's reports; if the launch still lacks it FLAG_ALERT_AFTER_MS later,
+ * one error with the alert mention asks for it by hand (a retry then finds
+ * the row and leaves it). The rest of the transaction, reservations and
+ * sent actions included, commits.
  */
 async function flagNotWritten(
   record: LaunchRecord,
@@ -149,23 +149,29 @@ export const completionFlagRows = {
     },
     ctx: RequestContext
   ): Promise<void> {
-    const now = Time.currentMillis();
-    const wallet = row.wallet.toLowerCase();
-    await sqlExecutor.execute(
-      `insert into ${MINTING_CLAIM_ACTIONS_TABLE}
-         (id, contract, claim_id, action, completed, created_by_wallet, updated_by_wallet, created_at, updated_at)
-       values (:id, :contract, :claim_id, :action, true, :wallet, :wallet, :now, :now)
-       on duplicate key update id = id`,
-      {
-        id: randomUUID(),
-        contract: row.contract.toLowerCase(),
-        claim_id: row.claim_id,
-        action: row.action,
-        wallet,
-        now
-      },
-      { wrappedConnection: ctx.connection }
-    );
+    const timer = 'completionFlagRows->insertIfAbsent';
+    ctx.timer?.start(timer);
+    try {
+      const now = Time.currentMillis();
+      const wallet = row.wallet.toLowerCase();
+      await sqlExecutor.execute(
+        `insert into ${MINTING_CLAIM_ACTIONS_TABLE}
+           (id, contract, claim_id, action, completed, created_by_wallet, updated_by_wallet, created_at, updated_at)
+         values (:id, :contract, :claim_id, :action, true, :wallet, :wallet, :now, :now)
+         on duplicate key update id = id`,
+        {
+          id: randomUUID(),
+          contract: row.contract.toLowerCase(),
+          claim_id: row.claim_id,
+          action: row.action,
+          wallet,
+          now
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timer);
+    }
   }
 };
 

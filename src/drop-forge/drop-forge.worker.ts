@@ -155,7 +155,7 @@ export class DropForgeWorker {
     private readonly signer: { sign(unsigned: string): Promise<string> }
   ) {}
 
-  /** Stores a launch again when a held completion flag fails to write. */
+  /** Stores a launch again when a completion flag is missed (failed or deferred). */
   private readonly saveLaunch = (record: LaunchRecord, ctx: RequestContext) =>
     this.repository.save(record, ctx);
 

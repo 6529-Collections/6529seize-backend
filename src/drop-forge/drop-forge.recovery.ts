@@ -59,7 +59,7 @@ export class DropForgeRecovery {
   ) {
     this.walletId = `${config.chainId}:${config.signer.toLowerCase()}`;
   }
-  /** Stores a launch again when a held completion flag fails to write. */
+  /** Stores a launch again when a completion flag is missed (failed or deferred). */
   private readonly saveLaunch = (record: LaunchRecord, ctx: RequestContext) =>
     this.repository.save(record, ctx);
   async request(

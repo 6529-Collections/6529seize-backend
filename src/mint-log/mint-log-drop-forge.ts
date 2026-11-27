@@ -240,7 +240,7 @@ export const HELD_FLAG_MIN_LOCK_WAIT_SECONDS = 1;
  * Writes the held flags under one lock-wait budget. Before each flag the
  * session's lock wait is set to what is left of HELD_FLAG_LOCK_WAIT_SECONDS,
  * in whole seconds rounded up, never below the minimum and never above the
- * session's own value. A later flag then waits past the budget by less than
+ * session's own value. A later flag then waits past the budget by at most
  * the minimum, so a pass waits for the head at most the budget plus the
  * minimum for each later flag. The session's own value is put back at the
  * end, so the signer's last UPDATE waits as before. A session variable set
