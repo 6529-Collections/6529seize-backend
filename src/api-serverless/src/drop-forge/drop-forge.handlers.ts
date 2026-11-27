@@ -22,7 +22,10 @@ import {
   mapLaunch,
   putLaunch
 } from '@/drop-forge/drop-forge.service';
-import { dropForgeJobsRepository } from '@/drop-forge/drop-forge.jobs.repository';
+import {
+  dropForgeJobsRepository,
+  type DropForgeJobStatus
+} from '@/drop-forge/drop-forge.jobs.repository';
 import {
   LaunchSafetyError,
   LaunchRevisionConflict
@@ -178,7 +181,9 @@ export async function controlDropForgeLaunch(
     );
   });
 }
-export function mapJob(job: DropForgeJobEntity): ApiDropForgeJob {
+export function mapJob(
+  job: DropForgeJobStatus & Partial<Pick<DropForgeJobEntity, 'result'>>
+): ApiDropForgeJob {
   let resultJson: string | null = null;
   if (job.result && job.kind !== 'PROCESS_ALL')
     resultJson =

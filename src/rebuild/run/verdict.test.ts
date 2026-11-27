@@ -1,4 +1,4 @@
-import { judge, VerdictInput } from '@/rebuild/run/verdict';
+import { judge, PlannedRowsPlan, VerdictInput } from '@/rebuild/run/verdict';
 
 const clean: VerdictInput = {
   final: false,
@@ -12,18 +12,41 @@ const clean: VerdictInput = {
   differingTables: 0,
   unseededTables: [],
   exemptTables: 0,
+  exemptUntil: [],
   sourceProblems: [],
   provisionalSources: [],
   plannedTables: 0,
   plannedSteps: [],
+  plannedStepsHere: [],
+  orderLeftOut: [],
+  unresolvedEdges: [],
   waitingSteps: [],
   stepSkips: [],
   staleNeeds: [],
   unownedRows: [],
+  unrunOwnedColumns: [],
+  plannedRows: [],
   heldProbes: [],
   notInSchema: [],
   openRoutes: 0
 };
+
+function plan(
+  parts: Partial<PlannedRowsPlan & { table: string }> = {}
+): PlannedRowsPlan & { table: string } {
+  return {
+    table: 'identities',
+    step: 'identity.mirror',
+    where: 'id > 2',
+    reason: 'rows only the derived ids bring',
+    until: '2026-12-04',
+    change: 'the derived ids',
+    seeded: 2,
+    missing: 2,
+    overdue: false,
+    ...parts
+  };
+}
 
 /** One finding at a time, in a normal run and in a final one. */
 const findings: [string, Partial<VerdictInput>, RegExp][] = [
@@ -119,6 +142,40 @@ const findings: [string, Partial<VerdictInput>, RegExp][] = [
     },
     /1 needs name tables the schema already has, so they hold nothing back: subs\.switch needs identity_chain_principals/
   ],
+  [
+    'owned columns no owner rebuilt',
+    { unrunOwnedColumns: ['identities.tdh (tdh.rebuild)'] },
+    /1 owned columns were left out of the row comparison.*identities\.tdh \(tdh\.rebuild\)/
+  ],
+  [
+    'plans of planned rows',
+    { plannedRows: [plan({ seeded: 2, missing: 2 })] },
+    /^1 plans of planned rows, seeded rows only a later change rebuilds; a final run fails on every plan: identities by identity\.mirror: seeded 2, missing 2, until 2026-12-04 \(the derived ids\)$/
+  ],
+  [
+    'unresolved cross-area edges',
+    { unresolvedEdges: ['waves.chain-mirror before subs.identity'] },
+    /^1 unresolved cross-area edges, of every area: order edges to another area's step that isn't in this tree, which a final run fails on: waves\.chain-mirror before subs\.identity$/
+  ],
+  [
+    'steps marked planned whose code is here',
+    { plannedStepsHere: ['identity.mirror'] },
+    /^1 steps are marked planned though their code is in this tree; drop origin 'planned': identity\.mirror$/
+  ],
+  [
+    'EXEMPT tables with an until',
+    {
+      exemptUntil: [
+        {
+          table: 'chain_entry_holds',
+          until: '2026-12-04',
+          why: 'held entries move later',
+          overdue: false
+        }
+      ]
+    },
+    /1 EXEMPT tables are exempt only until a day, so a final run fails on them: chain_entry_holds until 2026-12-04 \(held entries move later\)/
+  ],
   ['held probes', { heldProbes: ['a.p'] }, /planned probes were held/],
   [
     'tables a fresh schema lacks',
@@ -128,6 +185,119 @@ const findings: [string, Partial<VerdictInput>, RegExp][] = [
 ];
 
 describe('the verdict', () => {
+  it('notes an overdue exemption in a normal run and fails it in a final one', () => {
+    const overdue = {
+      exemptUntil: [
+        {
+          table: 'chain_entry_holds',
+          until: '2026-12-04',
+          why: 'held entries move later',
+          overdue: true
+        }
+      ]
+    };
+    const normal = judge({ ...clean, ...overdue });
+    expect(normal.failures).toEqual([]);
+    expect(normal.notes).toContain(
+      'EXEMPT overdue: chain_entry_holds since 2026-12-04'
+    );
+    const final = judge({ ...clean, ...overdue, final: true });
+    expect(final.failures.join()).toMatch(
+      /1 EXEMPT tables are exempt only until a day, so a final run fails on them/
+    );
+  });
+
+  it('notes a plan that matched no seeded rows, and one whose rows the rebuild writes now', () => {
+    const plans = {
+      plannedRows: [
+        plan({ table: 'a', seeded: 0, missing: 0 }),
+        plan({ table: 'b', seeded: 3, missing: 0 }),
+        // The run stopped before the rows were compared.
+        plan({ table: 'c', seeded: 3, missing: null }),
+        plan({ table: 'd', until: '2026-11-01', overdue: true }),
+        // Not read: its table isn't in the schema, or its step didn't run.
+        plan({ table: 'e', seeded: null, missing: null })
+      ]
+    };
+    const notes = [
+      'Planned rows of a by identity.mirror: plan matched no seeded rows',
+      'Planned rows of b by identity.mirror: the rebuild writes these rows now: drop the plan'
+    ];
+    const listed =
+      /^5 plans of planned rows.*a by identity\.mirror: seeded 0, missing 0.*c by identity\.mirror: seeded 3, missing not compared.*d by identity\.mirror: seeded 2, missing 2, until 2026-11-01.*e by identity\.mirror: seeded not read, missing not compared/;
+    const normal = judge({ ...clean, ...plans });
+    expect(normal.failures).toEqual([]);
+    expect(normal.notes).toEqual([
+      'planned rows overdue: d since 2026-11-01',
+      expect.stringMatching(listed),
+      ...notes
+    ]);
+    // A final run fails on every plan, whatever it matched.
+    const final = judge({ ...clean, ...plans, final: true });
+    expect(final.failures).toEqual([expect.stringMatching(listed)]);
+    expect(final.notes).toEqual([
+      'planned rows overdue: d since 2026-11-01',
+      ...notes
+    ]);
+  });
+
+  it('lists a column plan with its columns and differing rows, and notes one the rebuild writes now', () => {
+    const columns = {
+      columns: ['updated_at', 'cancelled_at'],
+      differingByColumn: { updated_at: 3 }
+    };
+    const plans = {
+      plannedRows: [
+        plan({
+          table: 'competitions',
+          ...columns,
+          differing: 3,
+          excused: 2,
+          missing: 0
+        }),
+        plan({
+          table: 'waves',
+          ...columns,
+          differing: 0,
+          excused: 0,
+          missing: 0
+        }),
+        // Rows missing: the plan still matters, though none came back changed.
+        plan({
+          table: 'drops',
+          ...columns,
+          differing: 0,
+          excused: 0,
+          missing: 2
+        })
+      ]
+    };
+    const normal = judge({ ...clean, ...plans });
+    expect(normal.notes).toEqual([
+      expect.stringMatching(
+        /^3 plans of planned rows.*competitions columns updated_at, cancelled_at by identity\.mirror: seeded 2, differing 3, excused 2, missing 0, until 2026-12-04 \(the derived ids\); waves columns updated_at, cancelled_at by identity\.mirror: seeded 2, differing 0, excused 0, missing 0.*drops columns updated_at, cancelled_at by identity\.mirror: seeded 2, differing 0, excused 0, missing 2/
+      ),
+      'Planned columns of waves by identity.mirror: the rebuild writes these columns now: drop the plan'
+    ]);
+    expect(judge({ ...clean, ...plans, final: true }).failures).toEqual([
+      expect.stringMatching(/^3 plans of planned rows/)
+    ]);
+  });
+
+  it('notes the planned writes left out of the order check, in every run', () => {
+    const finding = { orderLeftOut: ['waves.mirror (waves_mirror, drops)'] };
+    const note =
+      '1 planned rebuilders, of every area, had their writes left out of the order check while their module is not in this tree: waves.mirror (waves_mirror, drops)';
+    expect(judge({ ...clean, ...finding })).toEqual({
+      failures: [],
+      notes: [note]
+    });
+    expect(judge({ ...clean, ...finding, final: true })).toEqual({
+      failures: [],
+      notes: [note]
+    });
+  });
+
   it('passes a clean run with nothing to note', () => {
     expect(judge(clean)).toEqual({ failures: [], notes: [] });
     expect(judge({ ...clean, final: true })).toEqual({

@@ -2,6 +2,7 @@ import * as http from 'node:http';
 import { AbiCoder } from 'ethers';
 import {
   closeServer,
+  errorText,
   listenLoopback,
   readBody
 } from '@/rebuild/sources/running-source';
@@ -290,7 +291,9 @@ async function collectTransfers(
 /**
  * Starts the shim on loopback in front of `nodeUrl`. Standard JSON-RPC
  * methods go to the node unchanged; the NFT API and other alchemy_* methods
- * are refused and reported as the source's problems.
+ * are refused and reported as the source's problems. A call the shim fails
+ * on answers a JSON-RPC error with a fixed message; the error itself goes
+ * to the source's problems, so it reaches the run's report and log.
  */
 export async function startAlchemyShim(nodeUrl: string): Promise<{
   readonly url: string;
@@ -298,6 +301,7 @@ export async function startAlchemyShim(nodeUrl: string): Promise<{
   stop(): Promise<void>;
 }> {
   const unsupported: string[] = [];
+  const failed: string[] = [];
   const rpc: Rpc = async (method, params) => {
     const response = await fetch(nodeUrl, {
       method: 'POST',
@@ -377,22 +381,34 @@ export async function startAlchemyShim(nodeUrl: string): Promise<{
       const result = selectTransfers(await collectTransfers(rpc, query), query);
       send(200, { jsonrpc: '2.0', id: call.id, result });
     } catch (error) {
+      failed.push(errorText(error));
+      // A passthrough answer whose body failed has its headers out already.
+      if (response.headersSent) {
+        response.destroy();
+        return;
+      }
       send(200, {
         jsonrpc: '2.0',
         id: null,
-        error: { code: -32000, message: String(error) }
+        error: { code: -32000, message: 'shim error' }
       });
     }
   });
   const { url } = await listenLoopback(server);
   return {
     url,
-    problems: () =>
-      unsupported.length
+    problems: () => [
+      ...(unsupported.length
         ? [
             `ethereum: ${unsupported.length} Alchemy calls the run doesn't serve (the NFT API or enhanced methods); first ${unsupported.slice(0, 3).join(', ')}`
           ]
-        : [],
+        : []),
+      ...(failed.length
+        ? [
+            `ethereum: ${failed.length} calls failed in the Alchemy stand-in, first ${failed.slice(0, 3).join('; ')}`
+          ]
+        : [])
+    ],
     stop: () => closeServer(server)
   };
 }

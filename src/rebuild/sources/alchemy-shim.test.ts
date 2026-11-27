@@ -207,4 +207,25 @@ describe('the Alchemy stand-in', () => {
       await shim.stop();
     }
   });
+
+  it('answers a failed call with a fixed message and reports the error', async () => {
+    const shim = await startAlchemyShim('http://127.0.0.1:9');
+    try {
+      const answer = await fetch(`${shim.url}/v2/key`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: 'not json'
+      });
+      expect(await answer.text()).toBe(
+        '{"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"shim error"}}'
+      );
+      expect(shim.problems()).toEqual([
+        expect.stringMatching(
+          /^ethereum: 1 calls failed in the Alchemy stand-in, first SyntaxError: /
+        )
+      ]);
+    } finally {
+      await shim.stop();
+    }
+  });
 });
