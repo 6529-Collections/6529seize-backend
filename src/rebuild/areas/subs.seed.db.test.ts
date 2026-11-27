@@ -638,7 +638,7 @@ describeWithSeed('the subscriptions rebuild check', [], () => {
         env
       )
     ).rejects.toThrow(
-      "charged no airdrop: card 1 isn't minted: holdings.seed hasn't run (it lands with #2551)"
+      "charged no airdrop: card 1 isn't minted: holdings.seed mints the cards and must run first"
     );
   });
 

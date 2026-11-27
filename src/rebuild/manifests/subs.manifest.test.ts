@@ -1,12 +1,13 @@
 import { AREA_MANIFESTS } from '@/rebuild/manifests';
 import { stepsSkippedForSteps } from '@/rebuild/run/step-needs';
+import { orderSeeds } from '@/rebuild/step-order';
 
 /** Every area's seeds: every run starts each of them. */
 const SEEDS = AREA_MANIFESTS.flatMap((manifest) => manifest.seeds);
 const inEveryRun = () => true;
 
 describe("the subscriptions redemption seed's need of the holdings seed", () => {
-  it('is skipped as planned in a run where the holdings seed is', () => {
+  it('is skipped as planned, and no other subscriptions seed, in a run where the holdings seed is', () => {
     // Main before the holdings seed's code lands: that seed is planned.
     const skipped = stepsSkippedForSteps(
       SEEDS,
@@ -19,16 +20,20 @@ describe("the subscriptions redemption seed's need of the holdings seed", () => 
       why: 'skipped',
       reason: 'it mints and indexes card 1, whose airdrop this seed charges'
     });
-    // The seeds before the holdings seed run as before.
-    expect(skipped.has('subs.seed')).toBe(false);
-    expect(skipped.has('subs.switch')).toBe(false);
+    expect(
+      Array.from(skipped.keys()).filter((id) => id.startsWith('subs.'))
+    ).toEqual(['subs.redemptions']);
   });
 
-  it('runs once the holdings seed runs, and then refuses on its own when no airdrop was charged', () => {
-    // With the holdings seed here, nothing skips the redemption seed; the
-    // seed's own refusal of a run where card 1's airdrop wasn't charged is
-    // tested against MySQL in src/rebuild/areas/subs.seed.db.test.ts.
-    const skipped = stepsSkippedForSteps(SEEDS, () => true, inEveryRun);
-    expect(skipped.has('subs.redemptions')).toBe(false);
+  it('orders the redemption seed after the holdings seed and before the mint seed', () => {
+    // The need is the only edge that puts the holdings seed first.
+    const order = orderSeeds(SEEDS).order.map((step) => step.id);
+    expect(order.indexOf('holdings.seed')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('holdings.seed')).toBeLessThan(
+      order.indexOf('subs.redemptions')
+    );
+    expect(order.indexOf('subs.redemptions')).toBeLessThan(
+      order.indexOf('mint.probes.seed')
+    );
   });
 });

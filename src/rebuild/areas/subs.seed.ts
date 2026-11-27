@@ -722,10 +722,11 @@ export async function seedSubscriptionRedemptions(
     { contract: MEMES_CONTRACT, card: LIST_CARD }
   );
   if (!Number(charged?.identity) || !Number(charged?.legacy)) {
-    // No card at all: the holdings seed, which mints them, hasn't run.
+    // No card at all: the holdings seed mints them, and this seed needs it
+    // to have run first (a run that skips it skips this seed too).
     if ((await newestMemeCard()) === 0) {
       throw new Error(
-        `The subscriptions redemption seed charged no airdrop: card ${LIST_CARD} isn't minted: holdings.seed hasn't run (it lands with #2551)`
+        `The subscriptions redemption seed charged no airdrop: card ${LIST_CARD} isn't minted: holdings.seed mints the cards and must run first`
       );
     }
     throw new Error(

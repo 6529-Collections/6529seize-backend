@@ -199,8 +199,8 @@ const SUBS_REDEMPTIONS_SEED: RebuildStep = {
   after: ['subs.switch'],
   // The holdings seed's mints, indexed into transactions: without them there
   // is no airdrop to charge, so a run that skips the holdings seed skips
-  // this one too. When the holdings seed has run, the seed itself still
-  // refuses if card 1's airdrop was not charged.
+  // this one too. When the holdings seed has run, this seed still refuses
+  // if card 1's airdrop was not charged.
   needsSteps: [
     {
       step: 'holdings.seed',
