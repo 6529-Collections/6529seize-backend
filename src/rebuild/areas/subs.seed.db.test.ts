@@ -51,6 +51,12 @@ const WIDE_WALLETS = WIDE.wallets;
 const WIDE_KEY = consolidationTools.buildConsolidationKey(WIDE_WALLETS);
 const WIDE_PRINCIPAL = importedPrincipalId(WIDE.profileId);
 
+// The first probe wallet's identity: a world actor with a principal, so the
+// identity side keys its balance by that principal, not by the wallet.
+const PROBE_PRINCIPAL = importedPrincipalId(
+  worldActorIdentity('probe-1').profileId
+);
+
 jest.mock('@/subscriptionsDaily/subscription-cache', () => ({
   invalidateUpcomingSubscriptionCaches: jest.fn()
 }));
@@ -552,8 +558,8 @@ describeWithSeed('the subscriptions rebuild check', [], () => {
       identity: number;
     }>(
       `select (select balance from subscriptions_balances where consolidation_key = :key) as legacy,
-              (select balance from subscriptions_id_balances where identity_key = :key) as identity`,
-      { key: PROBE_CONSOLIDATION_KEYS[0] }
+              (select balance from subscriptions_id_balances where identity_key = :principal) as identity`,
+      { key: PROBE_CONSOLIDATION_KEYS[0], principal: PROBE_PRINCIPAL }
     );
     expect(Number(charged.identity)).toBeLessThan(0.25);
     expect(Number(charged.legacy)).toBe(Number(charged.identity));
