@@ -9,7 +9,6 @@ import aggregatedActivityRoutes from './aggregated-activity/api.aggregated-activ
 import authRoutes from './auth/auth.routes';
 import attachmentsRoutes from './attachments/attachments.routes';
 import communityMembersRoutes from './community-members/community-members.routes';
-import userGroupsImEligibleForRoutes from './community-members/user-groups-im-elgigible-for.routes';
 import userGroupsRoutes from './community-members/user-groups.routes';
 import communityMetricsRoutes from './community-metrics/community-metrics.routes';
 import delegationsRoutes from './delegations/delegations.routes';
@@ -26,6 +25,7 @@ import lightDropsRoutes from './drops/light-drops.routes';
 import feedRoutes from './feed/feed.routes';
 import gasRoutes from './gas/gas.routes';
 import generatedOpenApiRoutes from './generated/routes/openapi-generated.routes';
+import { competitionChainIdPaths } from './competitions/competition-chain-id.middleware';
 import { validateDocumentationRawJson } from '@/artwork-documentation/artwork-documentation.raw-json';
 import { documentationErrorMiddleware } from '@/api/artwork-documentation/artwork-documentation.http';
 import { marketErrorMiddleware } from '@/api/marketplace/marketplace.http';
@@ -102,6 +102,7 @@ import { TDHBlock } from '@/entities/ITDH';
 import { Upload } from '@/entities/IUpload';
 import { env, loadLocalConfig, loadSecrets } from '@/env';
 import { Logger } from '@/logging';
+import { describeMintLogReadiness } from '@/mint-log/mint-log-readiness';
 import { getRedisClient, initRedis } from '@/redis';
 import {
   processSentryAlertWebhook,
@@ -113,7 +114,6 @@ import {
 } from '@/api/app-initialization';
 import { describeE2eeSuiteTransition } from '@/e2ee/e2ee-suite-policy';
 import { parseTdhResultsFromDB } from '@/sql_helpers';
-import deployRoutes from '@/api/deploy/deploy.routes';
 import alchemyProxyRoutes from './alchemy-proxy/alchemy-proxy.routes';
 import {
   DEFAULT_PAGE_SIZE,
@@ -145,7 +145,10 @@ import {
   formatGitHubWebhookKind,
   parseGitHubWebhookEvent
 } from '@/api/github/github-webhook-event';
-import { githubIssueDropService } from './github/github-issue-drop.service';
+import {
+  GitHubDropRefusedError,
+  githubIssueDropService
+} from './github/github-issue-drop.service';
 import { LOGO_SVG, renderHealthUI } from './health/health-ui.renderer';
 import { getCachedHealthData } from './health/health.service';
 import { DEFAULT_MAX_SIZE } from './page-request';
@@ -543,6 +546,9 @@ async function initializeApp() {
   // D172: the effective suite window. A malformed setting is reported
   // (ERROR log, EMF metric) and treated as not started; nothing else changes.
   logger.info(describeE2eeSuiteTransition());
+  // What the mint log can do as configured; PRIMARY without bound principal
+  // bindings refuses every admin minting write from the site.
+  logger.info(describeMintLogReadiness());
   await initRedis({ failFast: API_REDIS_FAIL_FAST_OPTIONS });
   // Plain-text sign-in challenges issued before this build stay valid for a
   // short transition that starts with the first instance of the build. Not
@@ -1296,6 +1302,7 @@ function wireApp() {
       logger.info(
         `GitHub ${targetKind} was ${webhookEvent.action}: ${webhookEvent.htmlUrl}`
       );
+      let refused = false;
       try {
         await githubIssueDropService.postGhIssueDrop(
           webhookEvent.htmlUrl,
@@ -1321,6 +1328,7 @@ function wireApp() {
         logger.error(
           `Failed to post drop for GitHub ${targetKind} ${webhookEvent.htmlUrl}: ${err}`
         );
+        refused = err instanceof GitHubDropRefusedError;
       } finally {
         if (redis && lockAcquired) {
           try {
@@ -1332,11 +1340,21 @@ function wireApp() {
           }
         }
       }
+      if (refused) {
+        // A failed delivery can be delivered again; answering 200 would lose
+        // the drop. GitHub doesn't redeliver by itself: someone does, from
+        // the webhook's delivery log (it keeps recent deliveries only).
+        logger.error(
+          `GitHub webhook delivery ${req.get('x-github-delivery') ?? 'unknown'} for ${webhookEvent.htmlUrl} refused: the API requires a device signature the GitHub bot could not give. Redeliver it from the webhook's delivery log once the bot can sign.`
+        );
+        return res
+          .status(503)
+          .send({ error: 'The drop was refused; deliver it again later' });
+      }
     }
     res.send({});
   });
 
-  rootRouter.use('/deploy', deployRoutes);
   rootRouter.use('/ci-pipeline-alerts', ciPipelineAlertRoutes);
 
   rootRouter.get('/health/ui', async (req, res) => {
@@ -1392,7 +1410,6 @@ function wireApp() {
   apiRouter.use(`/community-members`, communityMembersRoutes);
   apiRouter.use(`/community-metrics`, communityMetricsRoutes);
   apiRouter.use(`/groups`, userGroupsRoutes);
-  apiRouter.use(`/groups_im_eligible_for`, userGroupsImEligibleForRoutes);
   apiRouter.use(`/auth`, authRoutes);
   apiRouter.use(`/rememes`, rememesRoutes);
   apiRouter.use(`/nextgen`, nextgenRoutes);
@@ -1423,7 +1440,6 @@ function wireApp() {
   apiRouter.use(`/distribution_photos`, distributionPhotosRoutes);
   apiRouter.use(``, distributionsRoutes);
   apiRouter.use(`/minting-claims`, mintingClaimsRoutes);
-  apiRouter.use(`/wave`, waveQuickVoteRoutes);
   apiRouter.use(`/waves`, waveQuickVoteRoutes);
   apiRouter.use(`/waves`, wavesRoutes);
   apiRouter.use(`/public/waves`, publicWavesRoutes);
@@ -1431,6 +1447,8 @@ function wireApp() {
   apiRouter.use(`/push-notifications`, pushNotificationsRoutes);
   apiRouter.use(`/xtdh`, xtdhRoutes);
   apiRouter.use(`/nft-link`, nftLinksRoutes);
+  // A decision's chain id in place of its competition id (v3 routes).
+  apiRouter.use(competitionChainIdPaths());
   apiRouter.use(``, generatedOpenApiRoutes);
 
   rootRouter.use(BASE_PATH, apiRouter);
