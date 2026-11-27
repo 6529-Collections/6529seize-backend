@@ -11,8 +11,7 @@ import {
 import { CLOUDFRONT_LINK } from '@/constants';
 import { resizeImageBufferToHeight } from '@/media/image-resize';
 import { IMMUTABLE_MEDIA_CACHE_CONTROL } from '@/media/media-cache-control';
-import { withArweaveFallback } from '@/arweave-gateway-fallback';
-import { publicFetch } from '@/http/public-fetch';
+import { fetchRememeMedia } from '@/rememe-media-download';
 import { detectRasterImageFormat } from '@/media/raster-image-format';
 import {
   detectStorableVideoContentType,
@@ -30,11 +29,7 @@ const ICON_HEIGHT = 60;
 const THUMBNAIL_HEIGHT = 450;
 const SCALED_HEIGHT = 1000;
 const REMEME_CONCURRENCY = 5;
-const FETCH_TIMEOUT_MS = 30_000;
-const FETCH_DEADLINE_MS = 5 * 60_000;
-const FETCH_MAX_REDIRECTS = 5;
 const LIST_OBJECTS_MAX_KEYS = 25;
-const MAX_REMEME_MEDIA_BYTES = 100 * 1024 * 1024;
 const PROCESSING_ERROR_MAX_LENGTH = 1000;
 
 const RASTER_IMAGE_FORMATS = new Set(['gif', 'jpeg', 'jpg', 'png', 'webp']);
@@ -411,31 +406,6 @@ function mergeAssetKeys(
     thumbnail: preferred.thumbnail ?? fallback.thumbnail,
     icon: preferred.icon ?? fallback.icon
   };
-}
-
-async function fetchRememeMedia(
-  imageUrl: string,
-  expectedFormat: string
-): Promise<Buffer> {
-  return withArweaveFallback(
-    imageUrl,
-    async (candidate, signal) => {
-      const response = await publicFetch(candidate, {
-        method: 'GET',
-        signal,
-        maxBytes: MAX_REMEME_MEDIA_BYTES,
-        maxRedirects: FETCH_MAX_REDIRECTS,
-        requestTimeoutMs: FETCH_TIMEOUT_MS,
-        timeoutMs: FETCH_DEADLINE_MS
-      });
-      if (!response.ok)
-        throw new Error(
-          `Failed to fetch rememe ${expectedFormat} media: ${response.status}`
-        );
-      return response.body;
-    },
-    { timeoutMs: FETCH_DEADLINE_MS, attemptTimeoutMs: FETCH_TIMEOUT_MS }
-  );
 }
 
 async function persistRememeS3Result(

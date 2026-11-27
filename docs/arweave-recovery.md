@@ -146,3 +146,11 @@ metadata and media, including a real `READY` preview or accurate policy outcome.
 Compare a full day of processing successes and final failures, accounting for
 traffic, before evaluating Discord volume. Size-limit increases and broader
 persisted backoff for ordinary failures remain separate follow-ups.
+
+Malformed HTTP-200 responses are gateway failures: TDH history validates a
+nonempty snapshot, required fields, block/date and JSON arrays before accepting
+a response. Optional historical TDH columns retain their defaults. Rememe media
+validates raster format and decodes the first frame, or checks a supported video
+container, inside each gateway attempt. Later animation-frame failures retain
+the existing derivative retry path. These changes preserve media byte limits
+and terminal-failure reporting.

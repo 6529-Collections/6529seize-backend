@@ -20,6 +20,8 @@ module.exports = {
     '<rootDir>/src/media/image-download.test.ts',
     '<rootDir>/src/nft-history/metadata*.test.ts',
     '<rootDir>/src/s3-rememes.test.ts',
+    '<rootDir>/src/rememe-media-download.test.ts',
+    '<rootDir>/src/tdhHistoryLoop/tdh-history-csv.test.ts',
     '<rootDir>/src/s3.test.ts',
     '<rootDir>/src/s3-image-recovery.test.ts',
     '<rootDir>/src/nft-links/adapters/*.test.ts',

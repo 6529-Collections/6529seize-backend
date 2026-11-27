@@ -1,6 +1,5 @@
 import { RequestInfo, RequestInit } from 'node-fetch';
-import { Readable } from 'stream';
-import { withArweaveFallback } from '@/arweave-gateway-fallback';
+import { fetchConsolidatedTdhCsv } from '@/tdhHistoryLoop/tdh-history-csv';
 import {
   HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE,
   TDH_BLOCKS_TABLE
@@ -22,8 +21,6 @@ import { sqlExecutor } from '@/sql-executor';
 import { parseTdhDataFromDB } from '@/sql_helpers';
 import { Time } from '@/time';
 import { calculateConsolidationChangePlan } from './tdh-history-consolidation-changes';
-
-const csvParser = require('csv-parser');
 
 const logger = Logger.get('TDH_HISTORY_LOOP');
 const ALERT_TITLE = 'TDH History Loop';
@@ -150,69 +147,7 @@ async function fetchConsolidatedTDH(block: number): Promise<ConsolidatedTDH[]> {
       `[BLOCK ${block}] [FOUND ARWEAVE URL] [${uploadEntry.url}] [FETCHING CSV DATA]`
     );
 
-    const csvData = await withArweaveFallback(
-      uploadEntry.url,
-      async (candidate, signal) => {
-        const response = await fetch(candidate, { signal });
-        if (!response.ok)
-          throw new Error(
-            `Failed to fetch CSV from arweave: ${response.status}`
-          );
-        return parseCsvFromText(await response.text());
-      }
-    );
-
-    // Convert CSV rows to ConsolidatedTDH format
-    const consolidatedTdh: ConsolidatedTDH[] = csvData.map((row: any) => {
-      // Map CSV fields to ConsolidatedTDH structure
-      const tdh: any = {
-        block: Number.parseInt(row.block) || block,
-        date: new Date(
-          row.date
-            ? `${row.date.substring(0, 4)}-${row.date.substring(4, 6)}-${row.date.substring(6, 8)}`
-            : new Date()
-        ),
-        consolidation_key: row.consolidation_key || '',
-        consolidation_display: row.consolidation_display || '',
-        wallets: row.wallets || '[]',
-        balance: Number.parseInt(row.total_balance) || 0,
-        unique_memes: Number.parseInt(row.unique_memes) || 0,
-        memes_cards_sets: Number.parseInt(row.memes_cards_sets) || 0,
-        tdh: Number.parseInt(row.tdh) || 0,
-        boost: Number.parseFloat(row.boost) || 0,
-        boosted_tdh: Number.parseInt(row.boosted_tdh) || 0,
-        tdh__raw: Number.parseInt(row.tdh__raw) || 0,
-        tdh_rank: Number.parseInt(row.tdh_rank) || 0,
-        tdh_rank_memes: Number.parseInt(row.tdh_rank_memes) || 0,
-        tdh_rank_gradients: Number.parseInt(row.tdh_rank_gradients) || 0,
-        tdh_rank_nextgen: 0, // Not in CSV, default to 0
-        genesis: Number.parseInt(row.genesis) || 0,
-        nakamoto: Number.parseInt(row.nakamoto) || 0,
-        boosted_memes_tdh: Number.parseInt(row.boosted_memes_tdh) || 0,
-        memes_tdh: Number.parseInt(row.memes_tdh) || 0,
-        memes_tdh__raw: Number.parseInt(row.memes_tdh__raw) || 0,
-        memes_balance: Number.parseInt(row.memes_balance) || 0,
-        memes: row.memes || '[]',
-        memes_ranks: '[]', // Not in CSV, default to empty array
-        gradients_balance: Number.parseInt(row.gradients_balance) || 0,
-        boosted_gradients_tdh: Number.parseInt(row.boosted_gradients_tdh) || 0,
-        gradients_tdh: Number.parseInt(row.gradients_tdh) || 0,
-        gradients_tdh__raw: Number.parseInt(row.gradients_tdh__raw) || 0,
-        gradients: row.gradients || '[]',
-        gradients_ranks: '[]', // Not in CSV, default to empty array
-        nextgen_balance: Number.parseInt(row.nextgen_balance) || 0,
-        boosted_nextgen_tdh: Number.parseInt(row.boosted_nextgen_tdh) || 0,
-        nextgen_tdh: Number.parseInt(row.nextgen_tdh) || 0,
-        nextgen_tdh__raw: Number.parseInt(row.nextgen_tdh__raw) || 0,
-        nextgen: row.nextgen || '[]',
-        nextgen_ranks: '[]', // Not in CSV, default to empty array
-        boost_breakdown: row.boost_breakdown || '{}'
-      };
-      return tdh;
-    });
-
-    // Apply parseTdhDataFromDB to parse JSON fields
-    return consolidatedTdh.map(parseTdhDataFromDB);
+    return await fetchConsolidatedTdhCsv(uploadEntry.url, block);
   } catch (error: any) {
     logger.error(
       `[BLOCK ${block}] [FALLBACK FAILED] [${error.message}] [THROWING ERROR]`
@@ -221,19 +156,6 @@ async function fetchConsolidatedTDH(block: number): Promise<ConsolidatedTDH[]> {
       `No results found in historic_tdh_consolidation table and no valid arweave URL from uploads endpoint for block ${block}: ${error.message}`
     );
   }
-}
-
-async function parseCsvFromText(csvText: string): Promise<any[]> {
-  return new Promise((resolve, reject) => {
-    const results: any[] = [];
-    const stream = Readable.from([csvText]);
-
-    stream
-      .pipe(csvParser())
-      .on('data', (data: any) => results.push(data))
-      .on('end', () => resolve(results))
-      .on('error', reject);
-  });
 }
 
 async function tdhHistory(date: Date) {

@@ -31,6 +31,14 @@ jest.mock('@/http/public-fetch', () => ({
   publicFetch: jest.fn()
 }));
 
+jest.mock('sharp', () =>
+  jest.fn(() => ({
+    resize: () => ({
+      raw: () => ({ toBuffer: async () => Buffer.from('decoded') })
+    })
+  }))
+);
+
 jest.mock('@/media/raster-image-format', () => ({
   detectRasterImageFormat: jest.fn()
 }));
@@ -404,7 +412,7 @@ describe('persistRememesS3', () => {
     }
   );
 
-  it('does not store a video original whose bytes are not a known container', async () => {
+  it('records a failed source download when video bytes are not a known container', async () => {
     mockS3Objects({});
     jest.mocked(mediaChecker.getContentType).mockResolvedValue('video/mp4');
     jest
@@ -417,7 +425,8 @@ describe('persistRememesS3', () => {
     expect(persistRememes).toHaveBeenCalledWith([
       expect.objectContaining({
         s3_image_original: null,
-        s3_image_processing_status: RememeS3ProcessingStatus.UNSUPPORTED
+        s3_image_processing_status: RememeS3ProcessingStatus.TRANSIENT_ERROR,
+        s3_image_processing_error: 'Rememe media is not a supported video'
       })
     ]);
   });
