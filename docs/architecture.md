@@ -1564,11 +1564,14 @@ watermark.
 The API exposes currency-specific quoted depth for an individual token and a
 merged feed of canonical transactions and market actions. Quoted quantities can
 share inventory or funding and are not a verified executable security budget.
-The activity feed uses the read replica, including partition discovery and
+The activity feed uses the API read pool, including partition discovery and
 history metadata. Token activity selects bounded token and collection-event
 pages separately using the existing token/time index, then merges their IDs
-before fetching public event fields. Order-book snapshots, critical partition
-discovery and order-status validation continue to use the writer.
+before fetching public event fields. Collection-level cancellations for a single
+collection and wallet select bounded maker and taker pages with wallet/time
+indexes and deduplicate the IDs before fetching the final page. Order-book
+snapshots, critical partition discovery and order-status validation continue to
+use the writer.
 See the [market depth runbook](../ops/runbooks/market-depth.md) for interpretation,
 provider limitations, deployment order and verification.
 
@@ -1726,6 +1729,10 @@ Rolling fleet counters distinguish widespread throttling, a persistent outage ev
 ## API Boundary
 
 The API is organized by domain routers under `src/api-serverless/src`. The OpenAPI file defines the public contract and generated models. Legacy routes are wired manually, while newer OpenAPI operations can opt into generated route wiring through `x-6529-router` and thin domain handlers.
+
+The approved Phase 0 compatibility exception retires
+`GET /api/groups_im_eligible_for`. Wave and competition access evaluates group
+eligibility internally. Roll out this route removal by deploying `api`.
 
 `/e2ee/...` is the end-to-end encrypted messaging delivery service (D109),
 behind `E2EE_DMS_ENABLED` (off in production). It is a ciphertext-only

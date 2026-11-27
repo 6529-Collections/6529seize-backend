@@ -17,7 +17,8 @@ type GetCall = {
   readonly cache: ManifestRoute['cache'] | null;
 };
 
-const RETIRED_OPERATIONAL_ROUTES = new Set([
+const RETIRED_ROUTES = new Set([
+  '/api/groups_im_eligible_for',
   '/deploy/release-bus/controls',
   '/deploy/release-candidates',
   '/deploy/release-trains',
@@ -180,17 +181,15 @@ describe('Phase 0 permanent mounted GET route census', () => {
     expect(manifest.baseline.counts.openapi_get_operations).toBe(183);
     expect(new Set(manifest.routes.map((route) => route.path)).size).toBe(296);
     expect(
-      manifest.routes.filter(
-        (route) => !RETIRED_OPERATIONAL_ROUTES.has(route.path)
-      )
-    ).toHaveLength(287);
+      manifest.routes.filter((route) => !RETIRED_ROUTES.has(route.path))
+    ).toHaveLength(286);
   });
 
   it('keeps every non-retired route declaration mounted in its owning source', () => {
     const callsBySource = new Map<string, GetCall[]>();
     const failures: string[] = [];
     for (const route of manifest.routes.filter(
-      (entry) => !RETIRED_OPERATIONAL_ROUTES.has(entry.path)
+      (entry) => !RETIRED_ROUTES.has(entry.path)
     )) {
       const acceptedSource =
         ACCEPTED_ROUTE_SOURCE_MOVES.get(route.path) ?? route.source;
