@@ -2,6 +2,7 @@ jest.mock('@/priority-alerts.context', () => ({
   sendPriorityAlertIfConfigured: jest.fn().mockResolvedValue(undefined)
 }));
 
+import { MEMES_CONTRACT } from '@/constants';
 import { Logger } from '@/logging';
 import { sendPriorityAlertIfConfigured } from '@/priority-alerts.context';
 import type { MintStateWriter } from './mint-log-apply';
@@ -658,6 +659,40 @@ describe('MintLogRecorder.writeWithin', () => {
     expect(await parts(respondSpec())).toEqual([null, null]);
     const own = [...MINT_KIND_PARTS['collab.respond']];
     expect(await parts(respondSpec({ readCurrent: true }))).toEqual([own, own]);
+  });
+
+  it("gives each capture of a memes phase write the switch's answer and its kind's parts", async () => {
+    const fake = new Fake();
+    const { log } = within(fake, { shadow: true });
+    const identityTruthFor = jest.fn(async () => true);
+    Object.assign(fake.reader, { identityTruthFor });
+    const capture = jest.spyOn(fake.reader, 'capture');
+    await log.writeWithin(
+      spec({
+        kind: 'dist.phase',
+        card: { contract: MEMES_CONTRACT.toLowerCase(), card_id: 1 },
+        actor: { type: 'service', wallet: null, authority: 'drop-forge' },
+        readCurrent: true
+      }),
+      connection,
+      async () => {
+        fake.addRow(1);
+      }
+    );
+
+    const parts = [...MINT_KIND_PARTS['dist.phase']];
+    expect(parts).toContain('subscription_phases_identity');
+    // Before and after the write: one answer, read once, and the same parts.
+    expect(identityTruthFor).toHaveBeenCalledTimes(1);
+    expect(
+      capture.mock.calls.map(([, , options]) => ({
+        identityTruth: options?.identityTruth,
+        current: options?.current ? Array.from(options.current) : null
+      }))
+    ).toEqual([
+      { identityTruth: true, current: parts },
+      { identityTruth: true, current: parts }
+    ]);
   });
 
   it('keeps the caller write when the log fails in shadow mode', async () => {
