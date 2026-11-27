@@ -73,9 +73,11 @@ export async function persistTopUps(
         continue;
       }
 
+      // The sender is a bound value, never part of the SQL text.
       let consolidationKey = (
         await manager.query(
-          `SELECT consolidation_key FROM ${ADDRESS_CONSOLIDATION_KEY} WHERE address = '${topUp.from_wallet}'`
+          `SELECT consolidation_key FROM ${ADDRESS_CONSOLIDATION_KEY} WHERE address = ?`,
+          [topUp.from_wallet]
         )
       )[0]?.consolidation_key;
 

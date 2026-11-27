@@ -94,6 +94,22 @@ class TypeOrmExecutor extends SqlExecutor {
   }
 }
 
+/**
+ * Whether a query runner call is the top-up's key lookup for `wallet`: the
+ * read of the consolidation key mapping by one address, with the wallet as
+ * its bound parameter. The balance lock's read of the same table (`IN`,
+ * FOR SHARE) doesn't match, so a hook never runs while that lock is held.
+ */
+function looksUpKeyOf(args: unknown[], wallet: string): boolean {
+  const [sql, params] = args;
+  return (
+    String(sql).includes(ADDRESS_CONSOLIDATION_KEY) &&
+    /WHERE address = \?/.test(String(sql)) &&
+    Array.isArray(params) &&
+    params.some((param) => String(param).toLowerCase() === wallet.toLowerCase())
+  );
+}
+
 /** In a describe body: each test runs on the TypeORM executor. */
 function onTypeOrmExecutor() {
   let previous: SqlExecutor;
@@ -501,11 +517,7 @@ describeWithSeed(
           ...args: unknown[]
         ) => {
           const result = await query(...args);
-          if (
-            !merged &&
-            String(args[0]).includes(ADDRESS_CONSOLIDATION_KEY) &&
-            String(args[0]).includes(`'${A}'`)
-          ) {
+          if (!merged && looksUpKeyOf(args, A)) {
             merged = true;
             await sqlExecutor.execute(
               `UPDATE ${ADDRESS_CONSOLIDATION_KEY} SET consolidation_key = :key`,
@@ -534,6 +546,57 @@ describeWithSeed(
       expect(await sqlExecutor.execute(BALANCES_UNDER_A_MERGED_KEY)).toEqual(
         []
       );
+    });
+  }
+);
+
+// The sender is a value in the key lookup, never SQL text. Written into the
+// query, a quote in it would end the string, and the rest would match every
+// mapped address: the top-up would credit whichever key came back first.
+describeWithSeed(
+  'Real MySQL: the top-up key lookup takes the sender as a value',
+  [
+    {
+      table: ADDRESS_CONSOLIDATION_KEY,
+      rows: [{ address: B, consolidation_key: B }]
+    },
+    {
+      table: SUBSCRIPTIONS_BALANCES_TABLE,
+      rows: [{ consolidation_key: B, balance: 3 }]
+    }
+  ],
+  () => {
+    onTypeOrmExecutor();
+
+    it('credits a sender with a quote in it under its own key, not a mapped one', async () => {
+      const sender = `${A}' OR '1'='1`;
+      await persistTopUps([
+        {
+          hash: TOP_UP,
+          block: 1,
+          transaction_date: new Date('2026-11-20T00:00:00Z'),
+          from_wallet: sender,
+          amount: 1
+        }
+      ]);
+
+      // No mapping holds the sender, so it is its own key. B keeps its 3.
+      expect(await balances()).toEqual([
+        [sender, 1],
+        [B, 3]
+      ]);
+      // The top-up row and the automatic mode a first top-up turns on are
+      // the sender's too.
+      expect(
+        await sqlExecutor.execute(
+          `SELECT from_wallet FROM ${SUBSCRIPTIONS_TOP_UP_TABLE}`
+        )
+      ).toEqual([{ from_wallet: sender }]);
+      expect(
+        await sqlExecutor.execute(
+          `SELECT consolidation_key FROM ${SUBSCRIPTIONS_MODE_TABLE}`
+        )
+      ).toEqual([{ consolidation_key: sender }]);
     });
   }
 );
@@ -579,11 +642,7 @@ describeWithSeed(
           const result = await query(...args);
           // Right after the top-up reads the wallet's own key, the identity
           // sync puts the wallet in a fourteen-wallet identity.
-          if (
-            !moved &&
-            String(args[0]).includes(ADDRESS_CONSOLIDATION_KEY) &&
-            String(args[0]).includes(`'${WIDE_WALLETS[0]}'`)
-          ) {
+          if (!moved && looksUpKeyOf(args, WIDE_WALLETS[0])) {
             moved = true;
             for (const address of WIDE_WALLETS) {
               await sqlExecutor.execute(

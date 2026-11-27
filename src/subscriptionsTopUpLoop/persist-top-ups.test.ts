@@ -1,6 +1,6 @@
 import { updateSubscriptionMode } from '@/api/subscriptions/api.subscriptions.db';
 import { InsufficientSubscriptionBalanceException } from '@/api/subscriptions/insufficient-subscription-balance.exception';
-import { MEMES_MINT_PRICE } from '@/constants';
+import { ADDRESS_CONSOLIDATION_KEY, MEMES_MINT_PRICE } from '@/constants';
 import {
   SubscriptionBalance,
   SubscriptionTopUp
@@ -143,6 +143,24 @@ it('evicts and schedules coverage only after successful top-up and mode synchron
   );
   expect(sendDiscordUpdate).toHaveBeenCalledTimes(1);
   expect(sendSubscriptionTopUpWaveUpdate).toHaveBeenCalledTimes(1);
+});
+
+it("looks up the sender's key with the sender as a bound value", async () => {
+  await persistTopUps([topUp]);
+
+  // The key lookup by one address; the balance lock's `IN` read isn't one.
+  const lookup = new RegExp(
+    `FROM ${ADDRESS_CONSOLIDATION_KEY}\\s+WHERE address\\s*=`
+  );
+  const lookups = manager.query.mock.calls.filter(([sql]) =>
+    lookup.test(String(sql))
+  );
+  expect(lookups).toEqual([
+    [
+      `SELECT consolidation_key FROM ${ADDRESS_CONSOLIDATION_KEY} WHERE address = ?`,
+      ['wallet']
+    ]
+  ]);
 });
 
 describe('first top-up for a consolidation without a balance', () => {
