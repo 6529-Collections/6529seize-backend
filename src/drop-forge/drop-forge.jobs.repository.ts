@@ -10,6 +10,7 @@ import { NotFoundException } from '@/exceptions';
 import { DbPoolName } from '@/db-query.options';
 import { PreparationAuthRequired } from '@/drop-forge/drop-forge.preparation-auth';
 import { wakeDropForge } from '@/drop-forge/drop-forge.wake';
+import { afterCommitMark, dropAfterCommitSince } from '@/db/after-commit';
 
 function storedJobResult(job: DropForgeJobEntity): object | null {
   if (!job.result) return null;
@@ -190,6 +191,7 @@ export class DropForgeJobsRepository {
           await sqlExecutor.execute('SAVEPOINT drop_forge_job', undefined, {
             wrappedConnection: connection
           });
+          const savepointMark = afterCommitMark(connection);
           let status = 'COMPLETED';
           let error: string | null = null;
           let result: object | null = null;
@@ -204,6 +206,9 @@ export class DropForgeJobsRepository {
               undefined,
               { wrappedConnection: connection }
             );
+            // The step's after-commit work (a shadow phase split) belongs to
+            // what the savepoint undid; the job's FAILED row still commits.
+            dropAfterCommitSince(connection, savepointMark);
             status =
               error_ instanceof PreparationAuthRequired
                 ? 'AWAITING_AUTH'

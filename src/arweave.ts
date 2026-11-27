@@ -44,11 +44,14 @@ export class ArweaveFileUploader {
 
   public async uploadFile(
     fileBuffer: Buffer,
-    contentType: string
+    contentType: string,
+    tags?: Readonly<Record<string, string>>
   ): Promise<{ url: string }> {
     const { url } = await this.uploadFileWithTransactionId(
       fileBuffer,
-      contentType
+      contentType,
+      undefined,
+      tags
     );
     return { url };
   }
@@ -56,7 +59,8 @@ export class ArweaveFileUploader {
   public async uploadFileWithTransactionId(
     fileBuffer: Buffer,
     contentType: string,
-    hooks?: ArweaveUploadHooks
+    hooks?: ArweaveUploadHooks,
+    tags?: Readonly<Record<string, string>>
   ): Promise<{ url: string; transaction_id: string }> {
     const { arweave, key: arweaveKey } = this.arweaveAndKeySupplier();
     const result = await new ArweaveUploadSession(
@@ -64,7 +68,7 @@ export class ArweaveFileUploader {
       arweave,
       600_000,
       true
-    ).upload(fileBuffer, arweaveKey as JWKInterface, contentType, hooks);
+    ).upload(fileBuffer, arweaveKey as JWKInterface, contentType, hooks, tags);
     return {
       url: arweaveContentUrl(result.transactionId),
       transaction_id: result.transactionId

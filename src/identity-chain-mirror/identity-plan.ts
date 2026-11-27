@@ -129,6 +129,8 @@ export interface IdentityPlan {
    * ratings and follows are not moved; the mirror logs them.
    */
   readonly orphanedProfiles: string[];
+  /** Each orphaned profile's wallets, all of which joined this identity. */
+  readonly orphanedWallets: Readonly<Record<string, readonly string[]>>;
 }
 
 export interface WalletPair {
@@ -288,10 +290,12 @@ function rekeyOtherRows(
   rows: IdentityRowState[];
   wallets: Record<string, string[]>;
   orphaned: string[];
+  orphanedWallets: Record<string, string[]>;
 } {
   const rows: IdentityRowState[] = [];
   const wallets: Record<string, string[]> = {};
   const orphaned: string[] = [];
+  const orphanedWallets: Record<string, string[]> = {};
   for (const row of state.rows) {
     if (!row.profile_id || row.profile_id === chain.profileId) continue;
     const remaining = uniqueSorted(
@@ -301,6 +305,9 @@ function rekeyOtherRows(
     );
     if (!remaining.length) {
       orphaned.push(row.profile_id);
+      orphanedWallets[row.profile_id] = uniqueSorted(
+        state.walletsByKey[row.consolidation_key] ?? []
+      );
       continue;
     }
     const key = consolidationKeyOf(remaining);
@@ -312,7 +319,7 @@ function rekeyOtherRows(
     });
     wallets[key] = remaining;
   }
-  return { rows, wallets, orphaned };
+  return { rows, wallets, orphaned, orphanedWallets };
 }
 
 /** The wallets whose key differs from the row they were in. */
@@ -426,6 +433,7 @@ export function planIdentity(
     releaseHandle,
     statements: doc === undefined ? null : (doc?.statements ?? []),
     orphanedProfiles: uniqueSorted(rekeyed.orphaned),
+    orphanedWallets: rekeyed.orphanedWallets,
     pairWallets: uniqueSorted([...wallets, ...oldWallets]),
     pairs: [
       ...pairsOf(wallets),

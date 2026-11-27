@@ -3746,6 +3746,44 @@ line. Other writes that no longer apply (a card already dropped, a row
 already there) are marked skipped too. Replay is off by default. Rollback:
 unset the flag; the queue keeps every write.
 
+**Re-key fallback.** The legacy subscription tables follow consolidation
+keys because the delegations loop re-keys them (`consolidateSubscriptions`)
+when it changes a grouping. Once the identity mirror writes
+`address_consolidation_keys`, a grouping can change with no delegation
+event. With `FEATURE_SUBSCRIPTIONS_REKEY_ON_MIRROR=true` (off by default),
+the `subscriptionsTopUpLoop`, before its top-up scan, finds each balance key
+with a wallet the table now keys otherwise and calls
+`consolidateSubscriptions` for those wallets, as the delegations loop would.
+It runs when 4.5 minutes have passed since its last run and no run holds
+the lease (15 minutes, the loop's timeout), both kept in
+`subscription_rekey_fallback_state` (one row, ephemeral). So a late run is
+made up on the next minute, and a slow run never overlaps the next. A
+partial mirror table must not split balances, so:
+
+- a wallet with no row in `address_consolidation_keys` is skipped, not
+  taken as its own key;
+- above 50 stale keys, or above 5% of the keys, the run logs them, alerts
+  (`SUBSCRIPTIONS_REKEY_HALTED`) and changes nothing;
+- a key is re-keyed only when it was stale on the run before too, so each
+  is logged a run before anything changes it;
+- just before the call, a key waits while it, or a key sharing one of its
+  wallets, has a wallet with no row, since `consolidateSubscriptions`
+  re-keys every key sharing a wallet and takes a wallet with no row as its
+  own key.
+
+`SUBSCRIPTIONS_REKEY_MAX_STALE` (a count) and
+`SUBSCRIPTIONS_REKEY_MAX_STALE_PCT` (a percentage of the keys) replace the
+two limits; each run's log line shows the limits in force. Raise them for
+a planned regrouping: when a run halts after the mirror first fills the
+table at the identity switch-on, set them above the stale count its alert
+line gives. Unset them once a run logs `"stale":0`. The two-run rule and
+the alerts hold at any limits.
+
+A key whose re-key the key-width guard already holds back is left to the
+guard's replay. A key still stale after three runs that were due to
+re-key it alerts (`SUBSCRIPTIONS_REKEY_STUCK`), and again about hourly. A failure is logged
+and never stops the scan. Rollback: unset the flag.
+
 **Rebuild.** Every entry can be derived again from its source:
 
 - top-ups from Ethereum, once the top-up loop's cursor
@@ -3760,6 +3798,331 @@ unset the flag; the queue keeps every write.
 
 A key with a final row fits every table, so a redemption waits only if the
 key columns are narrowed again, or behind an earlier write of the same key.
+
+## Subscriptions by identity: tables and opening file
+
+`src/subscriptions-identity` holds the identity-keyed subscription path. The
+`subscriptions_id_*` tables repeat the legacy `subscriptions_*` tables column
+for column, keyed by `identity_key`: a 6529 chain principal id for a bound
+wallet, else the wallet. History rows (final lists, redemptions, logs) also
+keep the consolidation key they were written under. `IdentityDirectory`
+resolves wallets to identities from the identity mirror's tables
+(`address_consolidation_keys`, `identities`, `identity_chain_principals`).
+
+**Opening file.** `./bin/6529 run subscriptions:opening -- cut` reads every
+legacy table and the wallets' identities in one REPEATABLE READ transaction
+and writes two canonical JSON files named by their sha256: the opening file
+(balances, modes, open choices, top-ups, final lists, uploads, redemptions,
+the key map, totals) and the history file (log lines, choices for dropped
+cards) it names by hash. Current state goes to the identity a key's wallets
+belong to. Keys of one identity (a re-key the key-width guard held back) are
+merged by the legacy merge rules, and top-ups still waiting in the guard's
+queue are credited to the sender's identity with the legacy top-up
+arithmetic; both are listed in the file. A key whose wallets belong to
+several identities (a split, which only the legacy re-key can make) or a
+waiting redemption blocks the cut: the load refuses the file. History rows go
+to the sender (top-ups), the airdrop address's identity (final rows and
+redemptions of a split key) or every spanned identity (logs); each rule-based
+choice is listed in the file. Final rows keep their legacy ids in
+`subscriptions_id_nfts_final`, because the mint log records phase changes by
+final row id.
+
+- `verify` checks the files with no database: canonical form, the history
+  link, totals, one row per identity, and, with fixtures, every top-up and
+  redemption against Ethereum. Balances that top-ups and redemptions don't
+  explain beyond five-decimal rounding are listed as adjustments.
+- `load` empties the identity tables and loads the files in one transaction.
+- `compare` is the opening comparison: the identity tables must hold exactly the files, and the
+  legacy tables, cut again, must give the same files. Only then is the
+  opening state marked verified.
+
+**Writers.** While the identity tables are kept up to date (after the
+switch, or before it with `FEATURE_SUBSCRIPTIONS_SHADOW=true` and an opening
+loaded), each legacy loop also writes them:
+
+- the top-up loop folds wallets that bound to an identity after the opening
+  into it, then credits new top-ups, including those the key-width guard
+  holds back, to the sender's identity. A first top-up that covers a card
+  turns automatic mode on as the legacy mode change does (the mode line,
+  upcoming cards subscribed again, all-editions counts set to the
+  eligibility), at the top-up's transaction time;
+- the daily loop builds the card's list from the identity tables with the
+  legacy rules (the engine's `buildFinalList`), reading modes, choices and
+  balances from one snapshot;
+- the transactions loop matches airdrop mints against the identity final
+  rows from its own cursor: in shadow up to the block the legacy loop has
+  processed, so both sides match the same airdrops; after the switch up to
+  the highest memes block in the transactions table, read once at the start
+  of the run, with the airdrops above the legacy loop's block named in the
+  comparison as not compared;
+- a phase pull splits the identity rows.
+
+After the switch the identity list is the one published (with an identity
+column), and each final row has one id in both tables: the identity table
+allocates it and the legacy dual write copies it, so the mint log keys phase
+rows by the same id before and after. Two legacy keys of one identity (a
+re-key the key-width guard held back) can't share an id: the first takes it
+and the other is not written, and the list report names it. A phase pull writes the same phase to
+both tables by id. In shadow the legacy side publishes and allocates, and the
+identity side is built beside it with the same ids and compared. Every
+comparison (a card's list; a card's phase; each card's redemptions, with the
+touched identities' balances) is kept in `subscriptions_id_reports` with a
+MATCH or DIFF verdict. In shadow, a row only the identity side has takes an
+id from 1,000,000,000 up, which the legacy table never reaches. In shadow the
+identity side runs after the legacy side's own work and notices, a failure is
+logged, and a loop's identity writer that can't read the switch state skips
+the run and catches up on the next. The daily build, phase pulls and the
+read routes fail instead of guessing, and the write routes read the state
+row uncached at every write. After the switch an identity writer's failure
+fails the run, a failed legacy dual write is logged, and redemption warnings
+are posted from the identity side; the legacy loop only logs its own. A
+failed legacy step (the redemption run, or the top-up discovery and legacy
+credit) alerts (`SUBSCRIPTIONS_LEGACY_DUAL_WRITE_FAILED`) and the identity
+writer still runs. A fold whose wallet brings no mode leaves the identity's
+mode row as it was.
+Person-made changes (subscribe, count, mode, editions) reach the identity
+tables only as signed records (below); an unsigned change in shadow reaches
+the legacy tables alone, so a shadow list differs for anyone who made one
+since the opening, and go-live cuts again. A shadow build or phase split
+that fails saves a FAILED report, which the go-live gate counts as a
+difference.
+
+**Signed changes.** The four write routes keep their own checks (the key's
+wallet, the body, a released card; a principal id the wallet's legacy key
+doesn't name goes on, and is taken only after the switch, from a wallet the
+identity mirror has in that identity) and then hand the change to
+`SubscriptionChangeWriter` (`records/subscription-writes.ts`), which reads
+the path uncached at every write (`subscriptionWritePathNow`): PAUSED (503)
+while go-live runs, IDENTITY after the switch, SHADOW before it with
+`FEATURE_SUBSCRIPTIONS_SHADOW=true` and an opening loaded, else LEGACY
+(today's write; the header is ignored). A change is a kind 9 RECORD in the
+owner's `ps` stream (`ps/<principal>`, or `ps/<wallet>` while the wallet
+is bound to none) of type `subs.mode`, `subs.all-editions`, `subs.card` or
+`subs.count`, sent in the `x-6529-signed-records` header, one record per
+request. It is verified (device grant with the `post` scope, signature,
+anchor within 120 heights of the finalized head, claimed time within 10
+minutes, author bound to the owner at the anchor) and must state the
+request's change, be signed for the signed-in wallet and name the identity
+of the route's key; otherwise 400 `INVALID_SIGNED_RECORD` with the reason.
+If the anchor or the author's binding can't be read from the chain gateway,
+the answer is 503 `ANCHOR_UNAVAILABLE` or `BINDING_UNAVAILABLE`.
+A record in a bare wallet's stream whose wallet has bound to a principal
+since its anchor still counts: it writes the rows that hold the wallet's
+state at write time, the wallet's own until the top-up loop's fold moves
+them, then the identity's, and the journal entry names that key
+(`inputs.identity_key`). When it goes to the identity, an empty fold of
+the wallet into the identity is journaled first, in the same transaction,
+unless the opening's key map has the wallet in that identity: a wallet with
+no rows of its own is never folded, so otherwise nothing would tie it to
+the rows. Any history the wallet has (log lines, top-ups, final and redeemed
+rows) moves to the identity then, as in any fold, and the fold's rekey moves
+it the same way in a rebuild. Where the fold writer already folded the
+wallet, this repeats the link, a no-op for the rebuild.
+In one transaction the event goes to the record log (lane `subs`, with
+its grant proof), the record index applies it if it is newer than the
+stored head for its choice (else 409), `makeChoice` works it out with the
+legacy route's checks and words (400 with code BALANCE, CLOSED,
+NOT_SUBSCRIBED or OVER_ELIGIBILITY) from the identity's rows read FOR
+UPDATE, writes it, checks the cutoff again, and its journal entry
+(kind `choice`: the record's event id, owner, type, key, anchor and claimed
+time, and the mode, choice and log rows it changed, each before and after)
+follows the event. The event always goes to lane `subs`; the journal entry
+goes to `subs` or `subs-shadow` like any other write. After
+the switch an unsigned change gets 409 `SIGNED_RECORD_REQUIRED`; an applied
+one is then written to the legacy tables under the identity's consolidation
+key (a failure alarms, `SUBSCRIPTIONS_LEGACY_DUAL_WRITE_FAILED`, and coverage
+is marked). In shadow today's write goes
+first with its own refusals; a record that came with it is applied to the
+identity tables, and the rows the change is about and the log lines each
+side added are compared. Every signed change in shadow leaves a `RECORD`
+report naming rows and fields but no values: MATCH; DIFF when the rows
+differ or the identity side's rules refused what today's write took;
+FAILED on an error; REFUSED when the record itself was not taken (it did
+not verify or state the request, was stale, or the anchor or the author's
+binding was unavailable).
+Nothing on the identity side fails the request. The go-live gate counts
+every DIFF and FAILED, and skips REFUSED within a share of all the signed
+records compared (see Switch), so one person's bad header can't hold the
+switch back. A route key whose wallets span identities for now (mid
+re-key) is REFUSED too. A
+rebuild writes a choice back from its journal entry like any other write;
+the event before it can be verified against the grant proof it carries.
+
+**One merge rule.** Subscription states that come to belong to one identity
+are merged by one function, `identity-merge.ts` (owner question O2): the cut
+uses it for keys of one identity whose re-key was held back, and the top-up
+loop for a wallet that binds later. Balances are summed; a fresh mode row is
+written at the merge time, automatic and all editions kept if any part had
+them; choices for one card are combined as `mergeUpcomingSubscriptions`
+does. A wallet that leaves an identity takes nothing. Eligibility and the
+airdrop rule read by the identity's consolidation key, whichever key a route
+was given.
+
+**Journal and rebuild.** Every write to the identity tables after a load
+(a top-up, a fold, a daily build, a phase pull or reset, a redemption run, a
+person's signed choice, a list upload) appends its changed rows to the
+shared record log, public chain, in the same transaction as the write (`timeline/journal.ts`): lane
+`subs` once the tables are the truth, `subs-shadow` before. So the log holds
+every change in commit order, and an entry exists exactly when its write
+does.
+
+- **What an entry holds.** The facts the write acted on (a top-up's hash,
+  block, wallet and the identity it was credited to; a redemption's charges)
+  and the rows the write changed, each as `before` and `after`. Writers read
+  `before` FOR UPDATE ahead of the write and `after` in their own
+  transaction, so no entry carries a snapshot's stale row. Unchanged rows
+  are not journaled, so entries stay small however long a history grows; a
+  write's changes are split into parts of at most 1 MB, all appended in its
+  transaction. A redemption run charges at most 200 airdrops (whole blocks)
+  and the next run goes on.
+- **Order.** Each write takes the next `n` from a counter row as its last
+  step, so `n` follows commit order.
+- **Checkpoint.** After the daily build, the counter is locked for a moment
+  while a second connection opens a consistent snapshot; the snapshot is
+  hashed with no locks and the hash is appended for that `n`, under the
+  opening the snapshot holds (if the opening changed meanwhile, no
+  checkpoint is written).
+- **Behind the posted journal.** The daily check of the posted journal
+  first compares live's counter with the posted journal's highest `n` for
+  the loaded opening. Behind it, as after a restore from an older backup,
+  live would reuse posted numbers: it sets a marker row, alerts
+  (`SUBSCRIPTIONS_JOURNAL_BEHIND`), and every journaled write refuses until
+  a new opening's load deletes the marker. The check needs a bound records
+  wave reader, so until then the guard is the runbook: after a restore,
+  `suspend`, then `go-live`, before the writers run.
+- **Posting.** Entries reach the records wave when the record log's closer
+  seals a segment (every 5 minutes, with `FEATURE_SIGNED_RECORD_LOG=true`).
+  Until then they are only in MySQL. go-live refuses unless the closer is on
+  and no journal entry has waited unposted more than 10 minutes, and the
+  top-up loop alerts (`SUBSCRIPTIONS_JOURNAL_STALE`) when one has. An entry
+  counts as unposted until its segment's head is posted, sealed into a
+  segment or not. A failed append fails its write and alerts
+  (`SUBSCRIPTIONS_JOURNAL_APPEND_FAILED`).
+- **Suspend.** `subscriptions:opening -- suspend` journals a `suspend`
+  entry in the transaction that sets it; if the entry can't be written the
+  tables are suspended anyway, and it alerts.
+- **Opening.** `go-live` uploads the opening and history files (Arweave,
+  tagged with the app name, kind and sha256) and writes the journal's
+  `opening` entry, naming both by URI and sha256, in the switch's
+  transaction. The load gives every row a fixed id: final rows and the first
+  copy of a log line keep their legacy ids, other copies and queued lines
+  take ids above them in file order.
+
+`subscriptions:opening -- rebuild` rebuilds the identity tables from the
+opening and the journal alone, read through a bound record log source (the
+records wave reader). It pauses the write routes (the marker renewed every
+minute while it reads, verifies and writes back), takes
+the last `opening` entry, fetches and checks both files, verifies that
+opening's journal (below), loads the files
+suspended (no writer writes meanwhile), and writes back every write of that
+opening in `n` order, each with all its parts. Every `n` from the
+opening's first write to its last must be in the log, as its own entry or
+another opening's it skips: an `n` with no entry is a write never posted,
+so the rebuild stops before loading anything, and `verify-journal` fails
+on it. A part posted twice with the same contents (entries unposted at a
+restore point are posted again) is read once; posted again with other
+contents, it stops the rebuild. A change's captured `before`
+must equal the rebuilt row, and each checkpoint must match once the writes
+up to its `n` are in, so a write that was never journaled stops the rebuild
+at the first row or checkpoint it shows in. Nothing is read from MySQL
+sources or the identity mirror: a top-up stays with the identity it was
+credited to. Each choice entry's signed record order key goes back into
+`signed_record_heads`, so a lost heads table never lets an older record be
+replayed. When the live database is there, the journal's last `n` is
+compared with live's counter; a missing tail (entries not yet posted) is
+reported and alerted (`SUBSCRIPTIONS_JOURNAL_TAIL_MISSING`), and the tables
+stay suspended; a last write posted only in part while the live database is
+there is reported with a warning, since the closer posts the rest. Over
+tables that are loaded and not suspended the rebuild suspends them first
+and waits out the writers' 60 s state cache; over tables that are the
+truth it refuses. A rebuild of an opening the journal shows suspended
+leaves the tables suspended. Otherwise they end verified and in shadow, not the truth;
+with `--go-live` they become the truth through go-live's own switch, in the
+same pause, and only if at least one checkpoint matched. `--go-live` is for
+a lost database: it refuses while the state row or any identity row is
+there, while the legacy subscription tables hold rows unless
+`--lost-database` is given, and for an opening the journal shows suspended.
+While the identity tables are suspended, writes land only in the
+legacy tables, with no journal, so after a suspend only `go-live`, which
+cuts from the legacy tables, switches again. `--opening --history`
+rehearses from local files. People's own changes come as signed records,
+journaled the same way (Signed changes, above). After the
+switch a comparison with the legacy dual write that isn't a MATCH alerts
+(`SUBSCRIPTIONS_TRUTH_COMPARISON_DIFF`).
+
+**Journal verifier.** A rebuild proves it repeats what live wrote, not that
+live wrote the right money. `timeline/journal-verify.ts` checks that, and
+`subscriptions:opening -- verify-journal` runs it on its own (exit 2 on a
+failure). For one opening:
+
+- each entry, from its own rows: a change's `before` and `after` are the
+  row its key names (`applyJournalBody` refuses any other); a top-up of a
+  positive amount moves the balance by it, rounded to five decimals, or
+  opens it at the amount; a redemption moves it by the mint price per
+  charge, and the redeemed counts by the charges; a fold sums the two
+  balances and moves only the wallet's history; no other kind changes a
+  balance, and no kind changes a table it may not;
+- across the journal: each balance's `before` is what the opening file or
+  the previous entry left; a choice changes only rows of its owner, of
+  any identity the opening file lists for the owner's key, or of one a
+  later fold moved it to; each top-up hash is credited once, and not
+  again after the opening file; no mint is charged more tokens than it
+  delivered, counting the opening's charges of that mint; a signed event
+  makes one choice; `n` increases in log order and every write has all its
+  parts, which repeat the same inputs except a redemption's charges: those
+  are spread across the parts, and the verifier takes their union in part
+  order;
+- each top-up against its transfer (sender, recipient, block, value) and
+  each mint against its receipt, through the backend's Ethereum client and
+  config, reading each block's top-ups and each receipt once;
+- when the record log source verifies signed records (`replayRecordLog`,
+  `replayedJournalSource`), each choice against its record in lane `subs`:
+  type, key and owner, and a body.
+
+`--no-ethereum` leaves Ethereum out, for rehearsals, and the output says
+what was not checked. A rebuild with `--go-live` refuses it. Without
+`--opening --history`, `verify-journal` fetches the opening file the
+journal names, as a rebuild does. In a rebuild, a failure, or a provider
+error that leaves the journal unchecked, alerts
+(`SUBSCRIPTIONS_JOURNAL_VERIFY_FAILED`) and stops it before it loads
+anything. `verify-journal` alerts on a failure and exits 2; a provider
+error ends it with exit 1. `verifyEntryMoney` is the per-entry part alone,
+and pure.
+
+**Switch.** The switch is one row, `subscriptions_id_state`, so one write
+moves every service. `subscriptions:opening -- go-live --signed-writes-live`
+does it in one step (`go-live.ts`). It refuses unless, for the last minted
+card, the last list comparison matched and at least one phase and one
+redemption comparison exist, with no shadow comparison of any kind
+differing since that card's first list. In the same window at least
+`SUBSCRIPTIONS_GO_LIVE_MIN_SIGNED_MATCHES` signed records (default 3) must
+have matched, and refused ones must stay under
+`SUBSCRIPTIONS_GO_LIVE_MAX_REFUSED_PERCENT` of the signed records compared
+(default 20): one bad header doesn't block the switch, but a signer failing
+for a group of people does. go-live prints the counts and the refusals by
+reason, and `--accept-report-diffs` overrides these as it does the other
+comparisons. go-live, a rebuild and the CLI's `load` each take the pause
+marker atomically and refuse while another run holds one younger than the
+switch window; each lifts only its own, so a run that outlived the window
+can't lift the pause of the run that took over. go-live then pauses the write routes (503), waits 10 s so a
+write that read its path just before the pause commits, cuts, verifies, loads, compares, publishes the files,
+sets the switch time with the journal's opening entry and reopens the
+routes, which then answer 409 to unsigned writes. The load keeps the pause
+marker; a marker older than the switch window (a go-live that died) is
+ignored, and `open-writes` deletes it. Each step checks that the cut is still inside the switch
+window, so a slow day stops early; on any failure the routes reopen and the
+legacy tables stay the truth. go-live refuses `--identities`: the truth is
+keyed by the identity mirror, as the writers are. The identity tables are
+the truth from the switch time while the load is verified and not
+suspended, and only for a cut taken at most 15 minutes before it. A missing
+state table or column (code deployed before the schema sync) reads as
+nothing loaded. `load` refuses to replace
+tables that are, or are set to become, the truth, and a cut whose redemption
+loop never ran. Readers re-read the row at least every 60 seconds, so
+`suspend` rolls every lambda back to the legacy tables within 60 seconds,
+about 2 minutes counting the API cache. Going forward again takes a new
+go-live. After the switch an unsigned change gets a 409, so go-live asks
+for `--signed-writes-live`: the site must sign the four changes by then.
 
 ## Cross-wave message search
 

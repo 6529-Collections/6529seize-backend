@@ -182,7 +182,8 @@ export class ArweaveUploadSession {
     data: Buffer,
     key: JWKInterface,
     contentType: string,
-    hooks?: ArweaveUploadHooks
+    hooks?: ArweaveUploadHooks,
+    tags?: Readonly<Record<string, string>>
   ): Promise<UploadResult> {
     this.hooks = hooks;
     const deadline = setTimeout(
@@ -193,7 +194,7 @@ export class ArweaveUploadSession {
       this.timeoutMs
     );
     try {
-      return await this.publish(data, key, contentType);
+      return await this.publish(data, key, contentType, tags);
     } catch (error) {
       const failure =
         this.stopped ??
@@ -232,7 +233,8 @@ export class ArweaveUploadSession {
   private async prepare(
     data: Buffer,
     key: JWKInterface,
-    contentType: string
+    contentType: string,
+    tags?: Readonly<Record<string, string>>
   ): Promise<{ transaction: Transaction; data: Buffer }> {
     const saved = this.hooks?.savedState;
     if (saved) {
@@ -271,6 +273,9 @@ export class ArweaveUploadSession {
       key
     );
     transaction.addTag('Content-Type', contentType);
+    for (const [name, value] of Object.entries(tags ?? {})) {
+      transaction.addTag(name, value);
+    }
     await this.client.transactions.sign(transaction, key);
     await transaction.prepareChunks(data);
     this.state = {
@@ -308,9 +313,10 @@ export class ArweaveUploadSession {
   private async publish(
     data: Buffer,
     key: JWKInterface,
-    contentType: string
+    contentType: string,
+    tags?: Readonly<Record<string, string>>
   ): Promise<UploadResult> {
-    const prepared = await this.prepare(data, key, contentType);
+    const prepared = await this.prepare(data, key, contentType, tags);
     const transaction = prepared.transaction;
     data = prepared.data;
     this.transactionId = transaction.id;
