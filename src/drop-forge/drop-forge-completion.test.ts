@@ -120,7 +120,7 @@ it('leaves a held flag that failed to write unmirrored, warns once, and asks for
     expect(warnings()).toHaveLength(1);
     expect(warnings()[0]).toMatchObject({ error: true });
     expect(warnings()[0].content).toContain(
-      `(ER_LOCK_WAIT_TIMEOUT); Drop Forge writes it again on a later pass, before the launch completes. If the launch ends first, set it by hand: POST /api/minting-claims/actions/${record.data.contract}/${record.data.claim_id} with {"action":"PAY_ARTIST","completed":true}, as a claims admin (in primary mode with the admin's signed record, x-6529-signed-records).`
+      `(ER_LOCK_WAIT_TIMEOUT); Drop Forge writes it again on a later pass, before the launch completes (a paused or blocked launch only once it runs again). If the launch ends first, set it by hand: POST /api/minting-claims/actions/${record.data.contract}/${record.data.claim_id} with {"action":"PAY_ARTIST","completed":true}, as a claims admin (in primary mode with the admin's signed record, x-6529-signed-records).`
     );
 
     // The next pass holds it again; a second failure saves, warns no more.

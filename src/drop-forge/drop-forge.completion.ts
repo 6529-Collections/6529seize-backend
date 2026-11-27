@@ -40,8 +40,10 @@ const setFlagByHand = (record: LaunchRecord, flag: string) =>
  * its first failure shows as a warning event in the launch's reports. The
  * rest of the transaction, reservations and sent actions included, commits.
  * A running launch isn't completed while it has a flag to write (the
- * worker's reserve), so it gets that pass; one that has ended doesn't, and
- * its event says how to set the flag by hand.
+ * worker's reserve), so it gets that pass; a paused or blocked one only
+ * once it runs again, since the worker mirrors only launches it runs (or
+ * one with manual transactions to reconcile); one that has ended doesn't,
+ * and its event says how to set the flag by hand.
  */
 async function flagFailed(
   record: LaunchRecord,
@@ -66,7 +68,7 @@ async function flagFailed(
       `Claim #${record.data.claim_id}: ${failedFlagEvent(flag)} (${reason}); ` +
         (ended
           ? `the launch has ended, so set it by hand: ${setFlagByHand(record, flag)}.`
-          : `Drop Forge writes it again on a later pass, before the launch completes. If the launch ends first, set it by hand: ${setFlagByHand(record, flag)}.`),
+          : `Drop Forge writes it again on a later pass, before the launch completes (a paused or blocked launch only once it runs again). If the launch ends first, set it by hand: ${setFlagByHand(record, flag)}.`),
       true
     );
   }
