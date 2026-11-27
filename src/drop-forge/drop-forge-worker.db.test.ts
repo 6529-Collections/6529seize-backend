@@ -1130,26 +1130,29 @@ describe('Drop Forge durable worker', () => {
         `select action from ${MINTING_CLAIM_ACTIONS_TABLE}`
       );
 
-    // The completing pass holds the flag, and its write fails: the launch
-    // isn't completed, isn't blocked, and says so once.
-    await worker.tick(id);
-    expect(['COMPLETED', 'BLOCKED']).not.toContain((await read())!.state);
-    expect((await read())!.data.completion_flags).toEqual([]);
-    expect(await flagEvents()).toHaveLength(1);
-    expect((await flagEvents())[0].error).toBe(true);
-    await acknowledgeReports();
-    // It fails again on the next pass, with no second event.
-    await worker.tick(id);
-    expect(['COMPLETED', 'BLOCKED']).not.toContain((await read())!.state);
-    expect(await flagEvents()).toHaveLength(1);
-    // Then it is written; the launch completes on the pass after.
-    await worker.tick(id);
-    expect(await flags()).toEqual([{ action: 'PAY_ARTIST' }]);
-    expect((await read())!.data.completion_flags).toEqual(['PAY_ARTIST']);
-    expect(['COMPLETED', 'BLOCKED']).not.toContain((await read())!.state);
-    await worker.tick(id);
-    expect((await read())!.state).toBe('COMPLETED');
-    await sqlExecutor.execute(`delete from ${MINTING_CLAIM_ACTIONS_TABLE}`);
+    try {
+      // The completing pass holds the flag, and its write fails: the launch
+      // isn't completed, isn't blocked, and says so once.
+      await worker.tick(id);
+      expect(['COMPLETED', 'BLOCKED']).not.toContain((await read())!.state);
+      expect((await read())!.data.completion_flags).toEqual([]);
+      expect(await flagEvents()).toHaveLength(1);
+      expect((await flagEvents())[0].error).toBe(true);
+      await acknowledgeReports();
+      // It fails again on the next pass, with no second event.
+      await worker.tick(id);
+      expect(['COMPLETED', 'BLOCKED']).not.toContain((await read())!.state);
+      expect(await flagEvents()).toHaveLength(1);
+      // Then it is written; the launch completes on the pass after.
+      await worker.tick(id);
+      expect(await flags()).toEqual([{ action: 'PAY_ARTIST' }]);
+      expect((await read())!.data.completion_flags).toEqual(['PAY_ARTIST']);
+      expect(['COMPLETED', 'BLOCKED']).not.toContain((await read())!.state);
+      await worker.tick(id);
+      expect((await read())!.state).toBe('COMPLETED');
+    } finally {
+      await sqlExecutor.execute(`delete from ${MINTING_CLAIM_ACTIONS_TABLE}`);
+    }
   });
   it('commits a confirmed receipt and releases the signer when the flag written with it fails', async () => {
     jest
