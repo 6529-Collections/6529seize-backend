@@ -143,9 +143,10 @@ export interface RebuildStep {
    * Rebuilders only: rows of a table the step writes that only a later
    * change rebuilds. Seeded rows matching `where` may be missing from the
    * rebuild, or, with `columns`, come back with only those columns
-   * changed; each one is named in the report, and a final run fails on
-   * every plan. A row the rebuild adds, or changes outside a plan's
-   * columns, still differs, whether or not it matches.
+   * changed, or, with `keep`, are kept through the drop; each one is named
+   * in the report, and a final run fails on every plan. A row the rebuild
+   * adds, or changes outside a plan's columns, still differs, whether or
+   * not it matches.
    */
   readonly plannedRows?: readonly PlannedRows[];
 }
@@ -171,6 +172,15 @@ export interface PlannedRows {
    * compared. Without it, the matching rows may be missing.
    */
   readonly columns?: readonly string[];
+  /**
+   * Keep the matching rows instead: they are copied aside before the drop
+   * and put back after it, before any rebuilder runs, so the steps that
+   * read them find them. They must come back unchanged, or the run fails;
+   * the report lists them as kept, not rebuilt. For rows other steps read
+   * whose source doesn't exist yet: `until` and `change` name it. Never
+   * with `columns`.
+   */
+  readonly keep?: true;
 }
 
 /** A table a step writes: all of it, or a rebuilder's partition of it. */

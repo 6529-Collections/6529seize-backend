@@ -203,6 +203,22 @@ describe('the verdict', () => {
     ]);
   });
 
+  it('lists a keep plan as kept, not rebuilt, and fails a final run on it', () => {
+    const keep = {
+      plannedRows: [
+        plan({ table: 'drops', seeded: 2, missing: 0, keep: true, kept: 2 })
+      ]
+    };
+    const listed =
+      '1 plans of planned rows, seeded rows only a later change rebuilds; a final run fails on every plan: drops by identity.mirror: seeded 2, kept 2, not rebuilt, missing 0, until 2026-12-04 (the derived ids)';
+    // Its rows are back whatever the rebuild writes: no note to drop it.
+    const normal = judge({ ...clean, ...keep });
+    expect(normal.failures).toEqual([]);
+    expect(normal.notes).toEqual([listed]);
+    const final = judge({ ...clean, ...keep, final: true });
+    expect(final.failures).toEqual([listed]);
+  });
+
   it('lists a column plan with its columns and differing rows, and notes one the rebuild writes now', () => {
     const columns = {
       columns: ['updated_at', 'cancelled_at'],

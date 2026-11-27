@@ -2,6 +2,7 @@ import * as fc from 'fast-check';
 import {
   columnPlanDecision,
   columnPlanProblem,
+  keptPlanOverlap,
   rowAndColumnPlanOverlap
 } from '@/rebuild/run/column-plans';
 import { differingColumns } from '@/rebuild/snapshot/table-snapshot';
@@ -217,6 +218,38 @@ describe('column plans', () => {
         { step: 'waves.a', keys: ['[1]'] },
         { step: 'waves.b', columns: ['name'], keys: ['[3]'] },
         { step: 'waves.c', columns: ['at'], keys: ['[3]'] }
+      ])
+    ).toBeNull();
+  });
+
+  it('refuses a kept row that another plan matches, and lets keep plans share rows', () => {
+    expect(
+      keptPlanOverlap('drops', [
+        { step: 'waves.a', keep: true, keys: ['[1]', '[2]'] },
+        { step: 'waves.b', keys: ['[3]', '[2]'] }
+      ])
+    ).toBe(
+      "planned rows of drops: waves.a's keep plan and waves.b's plan both match the row [2]; a kept row comes back unchanged, so no other plan may match it"
+    );
+    expect(
+      keptPlanOverlap('drops', [
+        { step: 'waves.b', keys: ['[3]'] },
+        { step: 'waves.a', keep: true, keys: ['[1]', '[3]'] }
+      ])
+    ).toMatch(/both match the row \[3\]/);
+    expect(
+      keptPlanOverlap('drops', [
+        { step: 'waves.a', keep: true, keys: ['[1]', '[2]'] },
+        { step: 'waves.c', keep: true, keys: ['[2]'] },
+        { step: 'waves.b', keys: ['[3]'] }
+      ])
+    ).toBeNull();
+    const many = (from: number) =>
+      Array.from({ length: 50_000 }, (_, i) => `[${from + i}]`);
+    expect(
+      keptPlanOverlap('audit', [
+        { step: 'audit.keep', keep: true, keys: many(0) },
+        { step: 'audit.rows', keys: many(50_000) }
       ])
     ).toBeNull();
   });

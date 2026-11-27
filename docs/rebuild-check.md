@@ -219,6 +219,29 @@ export const mintManifest: AreaManifest = {
     it may be missing, the other that it must come back. The registry
     refuses a column name that isn't plain, a name twice, and a column
     another rebuilder owns, compared without regard to case.
+    A plan with `keep: true` keeps the rows it matches instead: for rows
+    other steps read whose source doesn't exist yet (`until` and
+    `change` name it). The run copies the seeded rows its `where` matches
+    into the kept database before the drop, each row once however many
+    keep plans match it, and puts them back after the drop, before any
+    rebuilder runs, so later steps find them. They excuse nothing: a kept
+    row must come back unchanged, and a run in which a step deletes or
+    changes one fails, final or not, naming the rows. The report lists
+    each such plan as kept, with the rows it put back, on the headline
+    too ("rows kept, not rebuilt <n>"), and a final run fails on it like
+    on every plan. Owners of the table's columns that run here reset
+    those columns on every row once the row writers are done, kept rows
+    included, and must fill them again the same. Kept rows go back
+    before the rebuilders, so on a table with an AUTO_INCREMENT column
+    the comparison doesn't leave out, the rows a rebuilder inserts
+    without a value number after them; the run notes such a table. Only
+    the step that writes a table's rows keeps them: the registry refuses
+    keep on a table the step doesn't write the rows of (a table no
+    rebuilder writes is kept whole already), keep with `columns` (a kept
+    row comes back whole), and keep on a checkpoint table (its older
+    rows are never compared). A run
+    refuses a row that a keep plan and another plan both match, and a
+    partition writer's keep plan on rows outside its partition.
     Plans don't excuse probe answers: a probe over planned rows would
     answer differently while they are missing, so it stays a planned
     probe, held by its `needs`, until the rows' source exists.
@@ -316,7 +339,8 @@ The steps of a run:
 5. Snapshot the rebuilt tables row by row.
 6. Drop: the full run drops the database, builds the schema again and
    restores the kept tables; an `--area` run empties that area's rebuilt
-   tables and restores the kept ones.
+   tables and restores the kept ones. Then the rows keep plans keep go
+   back into their tables.
 7. Run the rebuilders in `after` and `before` order, each as its own MySQL
    user and under the source guard.
 8. Probe again (pass B), snapshot again, and compare.
@@ -327,10 +351,11 @@ answers against the rebuilt ones.
 A run passes when the registry is clean, every step exits 0 in its time, no
 step connects outside the sources, no source reports a problem (a request a
 recording lacks or its server failed on, a call the Alchemy stand-in failed
-on, a file that doesn't match its hash), the rebuilt tables were
-empty after the drop, and every probe answers the same in both passes. A
-probe whose first pass gets no answer, a 5xx, or not the `expectStatus` it
-names fails every run, and so does one whose two answers differ.
+on, a file that doesn't match its hash), the rebuilt tables were empty
+after the drop, kept rows came back unchanged, and every probe answers
+the same in both passes. A probe whose first pass gets no answer, a 5xx,
+or not the `expectStatus` it names fails every run, and so does one
+whose two answers differ.
 
 A probe whose answers match but whose first answer is a 4xx, or a 2xx that
 is empty, not JSON, or carries no data (an empty list, a page whose lists
@@ -466,8 +491,13 @@ an owner that adds a row or writes another column, fails. An exempt
 column is left out of the comparison with its reason; an owner that
 doesn't run here, another area's or a planned one, has its column left
 out and noted, and a planned one fails a final run; a table a step
-writes but its writes don't name is named. Three runs go through the
-API: two compare its answers before and after the rebuild, and one reads
-an owned column whose owner is absent. Its home is `.rebuild/self-check`
-unless `REBUILD_SELF_CHECK_HOME` names another; `REBUILD_SELF_CHECK_PORT`
-sets the `mysqld` port (default 3407). Each run takes a minute or two.
+writes but its writes don't name is named. Keep plans: a rebuilder
+rewrites one group of rows and a later reader finds the group a plan
+keeps, in an area run and a full run; a rebuilder that changes or
+deletes a kept row fails the run, a final run fails on the plan, and a
+partition writer can't keep another partition's rows. Three runs go
+through the API: two compare its answers before and after the rebuild,
+and one reads an owned column whose owner is absent. Its home is
+`.rebuild/self-check` unless `REBUILD_SELF_CHECK_HOME` names another;
+`REBUILD_SELF_CHECK_PORT` sets the `mysqld` port (default 3407). Each run
+takes a minute or two.

@@ -144,6 +144,11 @@ export interface RunReport {
        */
       columnRows: number;
       columnKeys: string[];
+      /**
+       * Rows keep plans kept through the drop, put back rather than
+       * rebuilt; absent when no keep plan kept any.
+       */
+      keptRows?: number;
       plans: PlannedRowsPlan[];
     }[];
   };
@@ -188,13 +193,17 @@ export function headline(report: RunReport): string[] {
     (n, p) => n + p.columnRows,
     0
   );
+  const kept = report.tables.plannedRows.reduce(
+    (n, p) => n + (p.keptRows ?? 0),
+    0
+  );
   const overdue = overdueLine(report.tables.exemptUntil, plansOf(report));
   const provisional = Object.entries(report.sources)
     .filter(([, info]) => info.provisional)
     .map(([name]) => name);
   return [
     `${report.scope}, mark ${report.mark}${report.final ? ', final' : ''}, backend ${report.backendHead ?? 'unknown'}: ${report.verdict}`,
-    `tables ${total}: ${classes}; rebuilt ${rebuilt}, pending ${report.pending.length}, planned ${report.planned.length}, differing ${differing}${leftOut ? `; owned columns left out ${leftOut}` : ''}${planned ? `; planned rows missing ${planned}` : ''}${plannedColumns ? `; rows changed only in planned columns ${plannedColumns}` : ''}`,
+    `tables ${total}: ${classes}; rebuilt ${rebuilt}, pending ${report.pending.length}, planned ${report.planned.length}, differing ${differing}${leftOut ? `; owned columns left out ${leftOut}` : ''}${planned ? `; planned rows missing ${planned}` : ''}${plannedColumns ? `; rows changed only in planned columns ${plannedColumns}` : ''}${kept ? `; rows kept, not rebuilt ${kept}` : ''}`,
     report.probes.stoppedBefore === null
       ? `probes ${report.probes.calls}: differ ${report.probes.differences.length}, unproven ${report.probes.unproven.length}; INDEX tables no probe read ${report.probes.unreadTables.length}`
       : `probes ${report.probes.calls}: not compared: the run stopped before pass B (${report.probes.stoppedBefore})`,
@@ -356,10 +365,10 @@ export function renderMarkdown(report: RunReport): string {
     ...section(
       'Planned rows: seeded rows only a later change rebuilds',
       report.tables.plannedRows.flatMap((p) => [
-        `- ${p.table}: ${p.rows} planned rows missing from the rebuild${p.keys.length ? `, keys ${p.keys.join(' ')}` : ''}${p.columnRows ? `; ${p.columnRows} rows changed only in planned columns, keys ${p.columnKeys.join(' ')}` : ''}`,
+        `- ${p.table}: ${p.rows} planned rows missing from the rebuild${p.keys.length ? `, keys ${p.keys.join(' ')}` : ''}${p.columnRows ? `; ${p.columnRows} rows changed only in planned columns, keys ${p.columnKeys.join(' ')}` : ''}${p.keptRows ? `; ${p.keptRows} rows kept, not rebuilt` : ''}`,
         ...p.plans.map(
           (plan) =>
-            `  - planned by ${plan.step}${plan.columns ? `, columns ${plan.columns.join(', ')}` : ''}: seeded ${plan.seeded ?? 'not read'}, ${plan.columns ? `differing ${plan.differing ?? 'not compared'}${byColumn(plan)}, excused ${plan.excused ?? 'not compared'}, ` : ''}missing ${plan.missing ?? 'not compared'}; until ${plan.until}${overdueNote(plan)}, ${plan.change}; ${plan.reason}; where ${plan.where}`
+            `  - ${plan.keep ? 'kept' : 'planned'} by ${plan.step}${plan.columns ? `, columns ${plan.columns.join(', ')}` : ''}: seeded ${plan.seeded ?? 'not read'}, ${plan.columns ? `differing ${plan.differing ?? 'not compared'}${byColumn(plan)}, excused ${plan.excused ?? 'not compared'}, ` : ''}${plan.keep ? `kept ${plan.kept ?? 'not yet'}, not rebuilt, ` : ''}missing ${plan.missing ?? 'not compared'}; until ${plan.until}${overdueNote(plan)}, ${plan.change}; ${plan.reason}; where ${plan.where}`
         )
       ])
     ),

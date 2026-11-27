@@ -175,6 +175,14 @@ export async function rebuildMemesTeamTouchingOthers(): Promise<void> {
   );
 }
 
+/** Restores the MEMES rows, and deletes another partition's row. */
+export async function rebuildMemesTeamDeletingOthers(): Promise<void> {
+  await insertTeam(false, 'MEMES');
+  await dbSupplier().execute(
+    `DELETE FROM ${TEAM_TABLE} WHERE collection = '6529'`
+  );
+}
+
 /** Restores the rows with different names. */
 export async function rebuildTeamDifferently(): Promise<void> {
   await insertTeam(true);
@@ -208,6 +216,19 @@ export async function rebuildTeamRenaming6529Undated(): Promise<void> {
 export async function rebuildTeamRenaming6529(): Promise<void> {
   await insertTeam(false, 'MEMES');
   await insertTeam(true, '6529');
+}
+
+/**
+ * Reads the 6529 row, which the table's rebuilder doesn't write: a later
+ * step that needs rows a keep plan keeps. Fails when it isn't there.
+ */
+export async function readKeptTeamRow(): Promise<void> {
+  const [row] = await dbSupplier().execute<{ n: number | string }>(
+    `SELECT COUNT(*) AS n FROM ${TEAM_TABLE} WHERE collection = '6529'`
+  );
+  if (Number(row?.n) !== 1) {
+    throw new Error("The 6529 team row isn't there for its reader");
+  }
 }
 
 /** Reads a table its manifest entry doesn't declare. */

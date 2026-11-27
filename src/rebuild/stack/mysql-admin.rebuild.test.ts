@@ -281,6 +281,47 @@ describe('MysqlAdmin on the private mysqld', () => {
     expect(same).toHaveLength(2);
   });
 
+  it('copies the rows a condition matches aside and puts them back as they were', async () => {
+    await admin.query(
+      `CREATE TABLE ${FROM}.keepable (
+         id INT NOT NULL PRIMARY KEY,
+         kind VARCHAR(10) NOT NULL,
+         created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+         doubled INT AS (id * 2) STORED
+       )`
+    );
+    await admin.query(`CREATE TABLE ${FROM}.kinds (kind VARCHAR(10))`);
+    await admin.query(
+      `INSERT INTO ${FROM}.keepable (id, kind, created_at) VALUES
+         (1, 'records', '2026-01-01 00:00:00.000'),
+         (2, 'chain', '2026-01-02 00:00:00.000'),
+         (3, 'records', '2026-01-03 00:00:00.000')`
+    );
+    await admin.query(`INSERT INTO ${FROM}.kinds VALUES ('records')`);
+    const seeded = await admin.orderedRows(FROM, 'keepable', ['id']);
+    // A subquery names another table without its database.
+    const where = 'kind IN (SELECT kind FROM kinds)';
+    expect(
+      await admin.copyRowsWhere(FROM, 'keepable', TO, 'keep_1', where)
+    ).toBe(2);
+    expect(
+      (await admin.query<{ db: string | null }>('SELECT DATABASE() AS db'))[0]
+        .db
+    ).toBeNull();
+    await admin.truncate(FROM, ['keepable']);
+    expect(await admin.putRowsBack(TO, 'keep_1', FROM, 'keepable')).toBe(2);
+    // Values, timestamps and the generated column as before.
+    expect(await admin.orderedRows(FROM, 'keepable', ['id'])).toEqual([
+      seeded[0],
+      seeded[2]
+    ]);
+    // A condition MySQL refuses fails the copy, and says why.
+    await expect(
+      admin.copyRowsWhere(FROM, 'keepable', TO, 'keep_2', 'nope = 1')
+    ).rejects.toThrow(/nope/);
+    expect(await admin.rowCount(TO, 'keep_2')).toBe(0);
+  });
+
   it('leaves no pid file once the server stops', async () => {
     const pidFile = path.join(HOME, 'mysql', 'harness-mysqld.pid');
     expect(fs.readFileSync(pidFile, 'utf8').trim()).toBe(String(server.pid));

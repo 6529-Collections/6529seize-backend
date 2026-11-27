@@ -42,6 +42,13 @@ export interface PlannedRowsPlan {
    */
   readonly excused?: number | null;
   readonly differingByColumn?: Readonly<Record<string, number>>;
+  /**
+   * A keep plan: its matched rows are kept through the drop, not rebuilt,
+   * and must come back unchanged.
+   */
+  readonly keep?: true;
+  /** A keep plan's rows put back after the drop; null before the drop. */
+  readonly kept?: number | null;
 }
 
 /** A step skipped as planned: a table it needs isn't in the schema. */
@@ -252,7 +259,7 @@ export function judge(input: VerdictInput): Verdict {
       `${input.plannedRows.length} plans of planned rows, seeded rows only a later change rebuilds; a final run fails on every plan: ${input.plannedRows
         .map(
           (p) =>
-            `${p.table}${p.columns ? ` columns ${p.columns.join(', ')}` : ''} by ${p.step}: seeded ${p.seeded ?? 'not read'}, ${p.columns ? `differing ${p.differing ?? 'not compared'}, excused ${p.excused ?? 'not compared'}, ` : ''}missing ${p.missing ?? 'not compared'}, until ${p.until} (${p.change})`
+            `${p.table}${p.columns ? ` columns ${p.columns.join(', ')}` : ''} by ${p.step}: seeded ${p.seeded ?? 'not read'}, ${p.columns ? `differing ${p.differing ?? 'not compared'}, excused ${p.excused ?? 'not compared'}, ` : ''}${p.keep ? `kept ${p.kept ?? 'not yet'}, not rebuilt, ` : ''}missing ${p.missing ?? 'not compared'}, until ${p.until} (${p.change})`
         )
         .join('; ')}`
     );
@@ -268,7 +275,8 @@ export function judge(input: VerdictInput): Verdict {
           `Planned columns of ${p.table} by ${p.step}: the rebuild writes these columns now: drop the plan`
         );
       }
-    } else if (p.seeded !== null && p.missing === 0) {
+    } else if (!p.keep && p.seeded !== null && p.missing === 0) {
+      // A kept row is back whatever the rebuild writes.
       notes.push(
         `Planned rows of ${p.table} by ${p.step}: the rebuild writes these rows now: drop the plan`
       );

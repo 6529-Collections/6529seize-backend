@@ -123,7 +123,7 @@ function counts(keys: readonly string[]): Map<string, number> {
 }
 
 /** Per key, how many more rows `before` holds than `after`. */
-function goneCounts(
+export function goneCounts(
   before: TableSnapshot,
   after: TableSnapshot
 ): Map<string, number> {

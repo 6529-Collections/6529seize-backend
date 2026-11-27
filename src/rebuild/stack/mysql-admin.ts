@@ -308,6 +308,55 @@ export class MysqlAdmin {
     );
   }
 
+  /**
+   * Copies the rows of `from.table` that match an SQL condition into a new
+   * table `to.into` shaped like it, and returns how many. The condition is
+   * evaluated with `from` as the default database, as a plan's is.
+   */
+  async copyRowsWhere(
+    from: string,
+    table: string,
+    to: string,
+    into: string,
+    where: string
+  ): Promise<number> {
+    const source = `${mysql.escapeId(from)}.${mysql.escapeId(table)}`;
+    const target = `${mysql.escapeId(to)}.${mysql.escapeId(into)}`;
+    await this.query(`DROP TABLE IF EXISTS ${target}`);
+    await this.query(`CREATE TABLE ${target} LIKE ${source}`);
+    const columns = (await this.insertableColumns(to, into))
+      .map((column) => mysql.escapeId(column))
+      .join(', ');
+    if (columns) {
+      await this.queryIn(
+        from,
+        `INSERT INTO ${target} (${columns}) SELECT ${columns} FROM ${source} WHERE (${where})`
+      );
+    }
+    return this.rowCount(to, into);
+  }
+
+  /**
+   * Inserts every row of `from.copy` (made by copyRowsWhere) into the
+   * existing `to.table`, and returns how many.
+   */
+  async putRowsBack(
+    from: string,
+    copy: string,
+    to: string,
+    table: string
+  ): Promise<number> {
+    const columns = (await this.insertableColumns(to, table))
+      .map((column) => mysql.escapeId(column))
+      .join(', ');
+    if (!columns) return 0;
+    const result = (await this.query(
+      `INSERT INTO ${mysql.escapeId(to)}.${mysql.escapeId(table)} (${columns})
+       SELECT ${columns} FROM ${mysql.escapeId(from)}.${mysql.escapeId(copy)}`
+    )) as unknown as { affectedRows: number };
+    return result.affectedRows;
+  }
+
   async truncate(database: string, tables: readonly string[]): Promise<void> {
     for (const table of tables) {
       await this.query(
