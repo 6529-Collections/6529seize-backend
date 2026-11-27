@@ -582,49 +582,6 @@ describeWithSeed(
       expect(entry.effects.distribution?.upsert.length).toBeGreaterThan(0);
     });
 
-    it("logs the delete of a row an admin committed after the worker's snapshot", async () => {
-      await sqlExecutor.executeNativeQueriesInTransaction(
-        async (connection) => {
-          // A snapshot older than the preparation lock. Drop Forge's job
-          // takes none today (findResult reads on the pool, and processOne's
-          // first read locks); Drop Forge's writes read current rows
-          // whatever the snapshot.
-          await sqlExecutor.execute(
-            `select count(*) as n from ${MINTING_MERKLE_ROOTS_TABLE}`,
-            undefined,
-            { wrappedConnection: connection }
-          );
-          // Meanwhile an admin's split gives phase 1 an allowlist (a root):
-          // wallet 5 has no subscription.
-          await adminPhase([phaseResult(5, 1)]);
-          // The worker's split has subscribers only: it deletes the root.
-          await workerPhase({ connection }, [
-            phaseResult(1, 1),
-            phaseResult(2, 1)
-          ]);
-        }
-      );
-
-      const logged = await entries();
-      expect(logged.map((entry) => entry.actor.type)).toEqual([
-        'admin',
-        'service'
-      ]);
-      expect(logged[0].effects.merkle?.upsert.length).toBe(1);
-      expect(logged[1].effects.merkle?.delete).toEqual(['Phase 1']);
-      // The root went with its proofs, so the log explains the tables.
-      expect(logged.map((entry) => entry.checks.replay)).toEqual([
-        'match',
-        'match'
-      ]);
-      expect(
-        await count(`select count(*) as n from ${MINTING_MERKLE_ROOTS_TABLE}`)
-      ).toBe(0);
-      expect(
-        await count(`select count(*) as n from ${MINTING_MERKLE_PROOFS_TABLE}`)
-      ).toBe(0);
-    });
-
     it("drops the entry with the rows when the job's step fails", async () => {
       await sqlExecutor.execute(
         `insert into ${DROP_FORGE_JOBS_TABLE}

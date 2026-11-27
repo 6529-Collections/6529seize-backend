@@ -46,12 +46,8 @@ export async function deleteMintingMerkleForPhase(
 ): Promise<void> {
   const opts = wrappedConnection ? { wrappedConnection } : {};
   const contractLower = contract.toLowerCase();
-  // A locking read, like the roots DELETE at the end, so it finds the roots
-  // that DELETE removes. A plain read in a REPEATABLE READ transaction reads its
-  // snapshot: one taken before the preparation lock would miss a root
-  // committed since, and that root's proofs would stay behind.
   const roots = await sqlExecutor.execute<{ merkle_root: string }>(
-    `SELECT merkle_root FROM ${MINTING_MERKLE_ROOTS_TABLE} WHERE contract = :contract AND card_id = :cardId AND phase = :phase FOR UPDATE`,
+    `SELECT merkle_root FROM ${MINTING_MERKLE_ROOTS_TABLE} WHERE contract = :contract AND card_id = :cardId AND phase = :phase`,
     { contract: contractLower, cardId, phase },
     opts
   );
