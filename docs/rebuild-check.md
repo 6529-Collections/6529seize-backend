@@ -35,7 +35,9 @@ test shards and fails when:
   write, or without a `where`, a reason or an `until`;
 - a step reads a table no manifest has, or needs an unknown table, a
   VIEW, RETIRED or SCHEMA table, or one without a reason; a rebuilder is
-  marked `last`, or a seed that isn't last waits on one that is;
+  marked `last`, or a seed that isn't last waits on or needs one that is;
+- a step needs an unknown step, itself, or one without a reason, or a
+  seed needs a rebuilder;
 - a probe repeats an id, has a path without a leading `/`, or a placeholder
   with no values.
 
@@ -211,8 +213,9 @@ export const mintManifest: AreaManifest = {
     run, the run saves its columns with each row's key before the
     drop and puts them back after the last running row writer, so the
     API's answers keep them; they are still left out of the comparison and
-    listed with why (another area's, planned, or waiting for a table), as
-    planned tables are, and a final run fails on them.
+    listed with why (another area's, planned, waiting for a table, or
+    needing a step that doesn't run), as planned tables are, and a final
+    run fails on them.
   - A rebuilder can list
     `plannedRows: [{ table, where, reason, until, change }]`: rows of a
     table it writes that only a later change rebuilds, such as rows
@@ -282,12 +285,33 @@ export const mintManifest: AreaManifest = {
     drop, and a final run fails on it.
     A step that waits on a skipped one and touches the same tables should
     declare the same needs.
+  - A step with `needsSteps: [{ step, reason }]` needs those steps to have
+    run before it in the same run. It waits on each, as with `after`, and
+    runs only when each runs: while one is skipped as planned (its code
+    isn't here, a table it needs is missing, or a step it needs doesn't
+    run), runs skip it the same way, keep its tables like a skipped
+    step's, and the report names the step, the step it needs and the
+    reason; a final run fails. Every seed runs in every run, so a seed's
+    needs depend only on whether the seeds it needs run. An area run
+    starts only its areas' rebuilders and empties only their tables, so a
+    rebuilder that needs another area's rebuilder is skipped there
+    ("outside this area run"): run in it, that rebuilder would write onto
+    that area's rows, which were seeded and never emptied. So a column
+    owner orders itself after its table's row writer with `after`, not
+    `needsSteps`: a need on another area's row writer would skip the owner
+    in its own area's runs. Unlike `after`, a need may cross kinds one
+    way: a rebuilder may need a seed, which every run has run by then. A
+    need names a step some manifest declares: an id no manifest has fails
+    as unknown, even with another area's prefix, where an `after` on it
+    is an unresolved cross-area edge. The registry refuses an unknown
+    step, a step that needs itself, a seed that needs a rebuilder (every
+    seed runs before the rebuilders) and a need without a reason.
   - A seed with `last: true` runs after every seed without it, in the
     usual order among the last ones. A chain indexer uses it to catch up
     on blocks other seeds mined after it first ran, so the tables it seeds
     reach the chain's head before the first pass. The registry refuses
-    `last` on a rebuilder, and an `after` from a seed that isn't last onto
-    one that is.
+    `last` on a rebuilder, and an `after` or a need from a seed that isn't
+    last onto one that is.
   - `before: [step ids]` is the mirror of `after`: the named steps wait for
     this one, so an area can order its step ahead of another area's
     without editing that area's manifest. The registry refuses an unknown

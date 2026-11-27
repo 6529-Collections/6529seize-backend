@@ -57,6 +57,8 @@ function run(
     today?: string;
     /** The area declares ABSENT, a planned table no code creates. */
     absent?: boolean;
+    /** More seeds of the area, after `seed`. */
+    moreSeeds?: RebuildStep[];
   }
 ) {
   const tables = (manifest: AreaManifest) =>
@@ -82,7 +84,7 @@ function run(
                 }
               }
             : tables(manifest),
-          seeds: [parts.seed],
+          seeds: [parts.seed, ...(parts.moreSeeds ?? [])],
           rebuilders: [parts.rebuilder, ...(parts.more ?? [])],
           probes: parts.probes ?? []
         }
@@ -138,6 +140,110 @@ describe('rebuild check, end to end', () => {
       report.steps.find((s) => s.kind === 'rebuilder')?.rowsWritten
     ).toEqual({ team: 3 });
     expect(report.probes.stoppedBefore).toBeNull();
+  });
+
+  it('skips a seed whose needed seed is planned, notes it, and passes', async () => {
+    // If the needing seed ran, it would insert the team rows twice and fail.
+    const plannedSeed: RebuildStep = {
+      ...step('self-check.planned-seed', 'seedTeam', ['team']),
+      run: { module: 'src/rebuild/run/not-here.steps', exportName: 'seedTeam' },
+      origin: 'planned'
+    };
+    const needing: RebuildStep = {
+      ...step('self-check.needs-planned', 'seedTeam', ['team']),
+      needsSteps: [
+        { step: 'self-check.planned-seed', reason: 'it mints the cards' }
+      ]
+    };
+    const { report } = await run('mint', {
+      seed: teamSeed,
+      moreSeeds: [plannedSeed, needing],
+      rebuilder: step('self-check.same', 'rebuildTeam', ['team'])
+    });
+    expect(report.failures).toEqual([]);
+    expect(report.verdict).toBe('PASS');
+    expect(report.steps.map((s) => s.id)).not.toContain(
+      'self-check.needs-planned'
+    );
+    expect(report.notes.join(' ')).toContain(
+      "1 steps were skipped as planned because a step they need doesn't run: self-check.needs-planned needs self-check.planned-seed, which is skipped as planned (it mints the cards)"
+    );
+  });
+
+  it('skips a rebuilder whose needed rebuilder is planned, keeps its table, and a final run fails on it', async () => {
+    const plannedRebuilder: RebuildStep = {
+      ...step('self-check.planned-rebuilder', 'rebuildTeam', []),
+      run: {
+        module: 'src/rebuild/run/not-here.steps',
+        exportName: 'rebuildTeam'
+      },
+      origin: 'planned'
+    };
+    const needing = (id: string): RebuildStep => ({
+      ...step(id, 'rebuildTeam', ['team']),
+      needsSteps: [
+        { step: 'self-check.planned-rebuilder', reason: 'it writes the heads' }
+      ]
+    });
+    const { report } = await run('mint', {
+      seed: teamSeed,
+      rebuilder: needing('self-check.needs-rebuilder'),
+      more: [plannedRebuilder]
+    });
+    expect(report.failures).toEqual([]);
+    expect(report.verdict).toBe('PASS');
+    expect(report.steps.map((s) => s.id)).not.toContain(
+      'self-check.needs-rebuilder'
+    );
+    // Its table was kept, like a planned rebuilder's: nothing was rebuilt.
+    expect(report.tables.rebuilt).toEqual([]);
+    expect(report.notes.join(' ')).toContain(
+      'self-check.needs-rebuilder needs self-check.planned-rebuilder, which is skipped as planned (it writes the heads)'
+    );
+    const final = await run('mint', {
+      seed: teamSeed,
+      rebuilder: needing('self-check.needs-rebuilder-final'),
+      more: [plannedRebuilder],
+      final: true
+    });
+    expect(final.report.verdict).toBe('FAIL');
+    expect(final.report.failures.join(' ')).toContain(
+      'self-check.needs-rebuilder-final needs self-check.planned-rebuilder, which is skipped as planned'
+    );
+  });
+
+  it("skips a rebuilder whose needed rebuilder is another area's in an area run, keeps its table, and a final run fails on it", async () => {
+    const other = step('self-check.other-area', 'rebuildTeam', []);
+    const needing = (id: string): RebuildStep => ({
+      ...step(id, 'rebuildTeam', ['team']),
+      needsSteps: [
+        { step: 'self-check.other-area', reason: 'it reads its rows' }
+      ]
+    });
+    const { report } = await run('mint', {
+      seed: teamSeed,
+      rebuilder: needing('self-check.needs-other-area'),
+      others: { tdh: [other] }
+    });
+    expect(report.failures).toEqual([]);
+    expect(report.verdict).toBe('PASS');
+    expect(report.steps.map((s) => s.id)).not.toContain(
+      'self-check.needs-other-area'
+    );
+    expect(report.tables.rebuilt).toEqual([]);
+    expect(report.notes.join(' ')).toContain(
+      'self-check.needs-other-area needs self-check.other-area, outside this area run (it reads its rows)'
+    );
+    const final = await run('mint', {
+      seed: teamSeed,
+      rebuilder: needing('self-check.needs-other-area-final'),
+      others: { tdh: [other] },
+      final: true
+    });
+    expect(final.report.verdict).toBe('FAIL');
+    expect(final.report.failures.join(' ')).toContain(
+      'self-check.needs-other-area-final needs self-check.other-area, outside this area run'
+    );
   });
 
   it('reports rows that differ after the rebuild, and passes', async () => {
@@ -490,6 +596,63 @@ describe('rebuild check, end to end', () => {
           [JSON.stringify(['0x0000000000000000000000000000000000000002'])]
         ]
       ]);
+    });
+
+    it('leaves out the column of an owner skipped through a step it needs, and a final run fails on it', async () => {
+      // The owner needs a planned rebuilder whose code isn't here, so it is
+      // skipped as planned while the row writer runs: its column is saved
+      // and brought back after the rows are rewritten, and the comparison
+      // leaves it out with the skip's reason. Without that, the rewritten
+      // rows lose the seeded dates and the table differs.
+      const later: RebuildStep = {
+        ...step('self-check.later-dates', 'rebuildTeam', []),
+        run: {
+          module: 'src/rebuild/run/not-here.steps',
+          exportName: 'rebuildTeam'
+        },
+        origin: 'planned'
+      };
+      const owner = (id: string): RebuildStep => ({
+        ...dated(id, 'dateTeam'),
+        needsSteps: [
+          { step: 'self-check.later-dates', reason: 'it writes the dates' }
+        ]
+      });
+      const why =
+        'needs self-check.later-dates, which is skipped as planned (it writes the dates)';
+      const { report } = await run('mint', {
+        seed: teamSeed,
+        rebuilder: undated,
+        more: [owner('self-check.needs-dated'), later],
+        tables
+      });
+      expect(report.failures).toEqual([]);
+      expect(report.verdict).toBe('PASS');
+      expect(report.steps.map((s) => s.id)).not.toContain(
+        'self-check.needs-dated'
+      );
+      expect(report.tables.diffs.map((d) => [d.table, d.same])).toEqual([
+        ['team', true]
+      ]);
+      expect(report.tables.ownedColumnsLeftOut).toEqual([
+        {
+          table: 'team',
+          column: 'created_at',
+          owner: 'self-check.needs-dated',
+          why
+        }
+      ]);
+      const final = await run('mint', {
+        seed: teamSeed,
+        rebuilder: undated,
+        more: [owner('self-check.needs-dated-final'), later],
+        final: true,
+        tables
+      });
+      expect(final.report.verdict).toBe('FAIL');
+      expect(final.report.failures.join(' ')).toContain(
+        `team.created_at (self-check.needs-dated-final, ${why})`
+      );
     });
 
     it('leaves an exempt column out of the comparison, with its reason', async () => {

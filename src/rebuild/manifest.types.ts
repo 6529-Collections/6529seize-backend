@@ -151,6 +151,12 @@ export interface RebuildStep {
    */
   readonly needs?: readonly NeededTable[];
   /**
+   * Steps this step needs to have run before it in the same run, each with
+   * its reason. The step waits on each (as with `after`), and is skipped as
+   * planned when one doesn't run in the run (src/rebuild/run/step-needs.ts).
+   */
+  readonly needsSteps?: readonly NeededStep[];
+  /**
    * Seeds only: run after every seed without it, in the usual order among
    * themselves. A chain indexer uses it to catch up on blocks other seeds
    * mined after it first ran.
@@ -224,6 +230,12 @@ export interface PartitionedWrite {
 /** A table a step needs in the run's schema, and why. */
 export interface NeededTable {
   readonly table: string;
+  readonly reason: string;
+}
+
+export interface NeededStep {
+  /** The id of a step that must run before this one, in the same run. */
+  readonly step: string;
   readonly reason: string;
 }
 

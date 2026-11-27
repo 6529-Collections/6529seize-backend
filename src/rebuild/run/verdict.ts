@@ -1,4 +1,5 @@
 import { ExemptUntil, overdueLine } from '@/rebuild/run/exempt-until';
+import { ReachedStepSkip, stepSkipLine } from '@/rebuild/run/step-needs';
 
 /**
  * A running rebuilder's plan of planned rows (seeded rows only a later
@@ -96,6 +97,8 @@ export interface VerdictInput {
   readonly unresolvedEdges: readonly string[];
   /** Steps skipped as planned, one entry per table they need and lack. */
   readonly waitingSteps: readonly WaitingStep[];
+  /** Steps skipped as planned because a step they need doesn't run. */
+  readonly stepSkips: readonly ReachedStepSkip[];
   /** Needs on tables the schema already has, each naming its step. */
   readonly staleNeeds: readonly string[];
   /** Partitioned tables with rows no writer's partition owns. */
@@ -234,6 +237,17 @@ export function judge(input: VerdictInput): Verdict {
     finalOnly(
       `${steps.size} steps were skipped as planned because a table they need is not in the schema yet, and ${skippedTables}: ${input.waitingSteps
         .map((w) => `${w.step} needs ${w.table} (${w.reason})`)
+        .join('; ')}`
+    );
+  }
+  if (input.stepSkips.length) {
+    // Only a rebuilder has tables to keep or leave unrebuilt.
+    const tables = input.stepSkips.some((skip) => skip.kind === 'rebuilder')
+      ? `, and ${skippedTables}`
+      : '';
+    finalOnly(
+      `${input.stepSkips.length} steps were skipped as planned because a step they need doesn't run${tables}: ${input.stepSkips
+        .map(stepSkipLine)
         .join('; ')}`
     );
   }

@@ -676,16 +676,25 @@ function lastProblems(manifests: readonly AreaManifest[]): RegistryProblem[] {
     ),
     ...seeds
       .filter((seed) => !seed.last)
-      .flatMap((seed) =>
-        (seed.after ?? [])
+      .flatMap((seed) => [
+        ...(seed.after ?? [])
           .filter((id) => last.has(id))
           .map(
             (id): RegistryProblem => ({
               kind: 'BAD_ORDER',
               detail: `seed ${seed.id} waits on last seed ${id}; mark it last too`
             })
+          ),
+        ...(seed.needsSteps ?? [])
+          .map((need) => need.step)
+          .filter((id) => last.has(id))
+          .map(
+            (id): RegistryProblem => ({
+              kind: 'BAD_ORDER',
+              detail: `seed ${seed.id} needs last seed ${id}; mark it last too`
+            })
           )
-      ),
+      ]),
     ...seeds
       .filter((seed) => seed.last)
       .flatMap((seed) =>
@@ -699,6 +708,54 @@ function lastProblems(manifests: readonly AreaManifest[]): RegistryProblem[] {
           )
       )
   ];
+}
+
+/**
+ * Each step's needs on other steps: a known step, never itself, with a
+ * reason; a seed may need only seeds, since every seed runs before the
+ * rebuilders. A need is also an order edge, which orderProblems checks.
+ */
+function needStepProblems(
+  manifests: readonly AreaManifest[]
+): RegistryProblem[] {
+  const seeds = new Set(manifests.flatMap((m) => m.seeds.map((s) => s.id)));
+  const rebuilders = new Set(
+    manifests.flatMap((m) => m.rebuilders.map((s) => s.id))
+  );
+  const problems: RegistryProblem[] = [];
+  for (const manifest of manifests) {
+    for (const [kind, steps] of [
+      ['seed', manifest.seeds],
+      ['rebuilder', manifest.rebuilders]
+    ] as const) {
+      for (const step of steps) {
+        for (const need of step.needsSteps ?? []) {
+          const problem = (kindOf: RegistryProblem['kind'], detail: string) =>
+            problems.push({ kind: kindOf, area: manifest.area, detail });
+          if (need.step === step.id) {
+            problem('BAD_ORDER', `${kind} ${step.id} needs itself`);
+          } else if (!seeds.has(need.step) && !rebuilders.has(need.step)) {
+            problem(
+              'BAD_ORDER',
+              `${kind} ${step.id} needs unknown step ${need.step}`
+            );
+          } else if (kind === 'seed' && !seeds.has(need.step)) {
+            problem(
+              'BAD_ORDER',
+              `seed ${step.id} needs rebuilder ${need.step}; every seed runs before the rebuilders`
+            );
+          }
+          if (!need.reason?.trim()) {
+            problem(
+              'BAD_STEP',
+              `${kind} ${step.id} needs step ${need.step} without a reason`
+            );
+          }
+        }
+      }
+    }
+  }
+  return problems;
 }
 
 /** An id names one step: a seed and a rebuilder never share one. */
@@ -1099,6 +1156,7 @@ export function checkRegistry(input: RegistryInput): RegistryResult {
       { label: 'rebuilder', ids: new Set(rebuilders.map((s) => s.id)) }
     ),
     ...lastProblems(input.manifests),
+    ...needStepProblems(input.manifests),
     ...readOrderProblems(rebuilders, leftOut),
     ...columnOrderProblems(rebuilders, leftOut),
     // Unknown ids in `after` and `before` fail whether or not the step's

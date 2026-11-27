@@ -1265,6 +1265,76 @@ describe('checkRegistry', () => {
     ]);
   });
 
+  it('refuses a seed that needs a last seed unless it is last too', () => {
+    const need = { step: 'a.last', reason: 'it catches up' };
+    const result = checkRegistry({
+      manifests: [
+        area(
+          'a',
+          {},
+          {
+            seeds: [
+              step('a.last', { last: true }),
+              step('a.early', { needsSteps: [need] }),
+              step('a.late', { needsSteps: [need], last: true })
+            ]
+          }
+        )
+      ],
+      codeTables: code()
+    });
+    expect(result.problems.map((p) => [p.kind, p.detail])).toEqual([
+      ['BAD_ORDER', 'seed a.early needs last seed a.last; mark it last too']
+    ]);
+  });
+
+  it('checks the steps a step needs', () => {
+    const need = (stepId: string, reason = 'a reason') => ({
+      step: stepId,
+      reason
+    });
+    const result = checkRegistry({
+      manifests: [
+        area(
+          'a',
+          { t1: index() },
+          {
+            seeds: [
+              step('a.seed'),
+              step('a.needs-seed', { needsSteps: [need('a.seed')] }),
+              step('a.needs-rebuilder', { needsSteps: [need('a.rebuild')] }),
+              step('a.needs-itself', { needsSteps: [need('a.needs-itself')] }),
+              step('a.needs-nothing-known', {
+                needsSteps: [need('a.nowhere'), need('a.seed', ' ')]
+              })
+            ],
+            rebuilders: [
+              step('a.rebuild', { writes: ['t1'] }),
+              step('a.needs-both', {
+                needsSteps: [need('a.seed'), need('a.rebuild')]
+              })
+            ]
+          }
+        )
+      ],
+      codeTables: code('t1')
+    });
+    // The whole list: a step that needs itself is refused once, not also
+    // as a cycle.
+    expect(result.problems.map((p) => [p.kind, p.detail])).toEqual([
+      [
+        'BAD_ORDER',
+        'seed a.needs-rebuilder needs rebuilder a.rebuild; every seed runs before the rebuilders'
+      ],
+      ['BAD_ORDER', 'seed a.needs-itself needs itself'],
+      ['BAD_ORDER', 'seed a.needs-nothing-known needs unknown step a.nowhere'],
+      [
+        'BAD_STEP',
+        'seed a.needs-nothing-known needs step a.seed without a reason'
+      ]
+    ]);
+  });
+
   it("refuses flags that would set the run's own variables", () => {
     const result = checkRegistry({
       manifests: [
