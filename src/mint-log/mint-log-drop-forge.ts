@@ -1,3 +1,4 @@
+import { afterCommitMark, dropAfterCommitSince } from '@/db/after-commit';
 import { Logger } from '@/logging';
 import type { RequestContext } from '@/request.context';
 import { sqlExecutor, type ConnectionWrapper } from '@/sql-executor';
@@ -188,6 +189,7 @@ async function writeHeld(
   const execute = (sql: string) =>
     sqlExecutor.execute(sql, undefined, { wrappedConnection: connection });
   await execute(`SAVEPOINT ${CLAIM_ACTION_SAVEPOINT}`);
+  const mark = afterCommitMark(connection);
   try {
     await logDropForgeWrite(dropForgeClaimActionSpec(item), ctx, () =>
       item.write(ctx)
@@ -199,6 +201,9 @@ async function writeHeld(
         throw error;
       }
     );
+    // What the savepoint undid has no after-commit work left: a shadow
+    // alert for a flag that is not written now is dropped with it.
+    dropAfterCommitSince(connection, mark);
     await item.failed(error);
     return;
   }
@@ -208,25 +213,34 @@ async function writeHeld(
 const logger = Logger.get('MINT_LOG_DROP_FORGE');
 
 /**
- * How long a held flag's statements wait for a lock, the mint log's head
- * first, before they give up. The signer's and the launch's rows stay
- * locked meanwhile, and the head may be held by a phase step on another
- * card or an admin's phase split. Primary: the flag fails, is unmirrored
- * and is written on a later pass. Shadow: it commits unlogged, and the mint
- * log alerts.
+ * The lock-wait budget of one pass's held flags. While they wait, the mint
+ * log's head first, the signer's and the launch's rows stay locked, and the
+ * head may be held by a phase step on another card or an admin's phase
+ * split. The first flag may wait the whole budget, each later one what is
+ * left of it, but at least HELD_FLAG_MIN_LOCK_WAIT_SECONDS. A flag that
+ * gives up: in primary mode it fails, is unmirrored and is written on a
+ * later pass; in shadow mode it commits unlogged, and the mint log alerts.
  */
 export const HELD_FLAG_LOCK_WAIT_SECONDS = 15;
 
+/** InnoDB's shortest lock wait: a later flag still tries the head once. */
+export const HELD_FLAG_MIN_LOCK_WAIT_SECONDS = 1;
+
 /**
- * Runs `fn` with the connection's lock wait cut to
- * HELD_FLAG_LOCK_WAIT_SECONDS (never raised), then puts the session's own
- * value back, so the signer's last UPDATE and the pooled connection's next
- * user wait as before.
+ * Writes the held flags under one lock-wait budget. Before each flag the
+ * session's lock wait is set to what is left of HELD_FLAG_LOCK_WAIT_SECONDS,
+ * in whole seconds rounded up, never below the minimum and never above the
+ * session's own value. A later flag then waits past the budget by less than
+ * the minimum, so a pass waits for the head at most the budget plus the
+ * minimum for each later flag. The session's own value is put back at the
+ * end, so the signer's last UPDATE and the pooled connection's next user
+ * wait as before.
  */
-async function withHeldFlagLockWait<T>(
-  connection: ConnectionWrapper<any>,
-  fn: () => Promise<T>
-): Promise<T> {
+async function writeHeldFlags(
+  items: readonly QueuedClaimAction[],
+  ctx: RequestContext,
+  connection: ConnectionWrapper<any>
+): Promise<void> {
   const options = { wrappedConnection: connection };
   const [row] = await sqlExecutor.execute<{ seconds: number | string }>(
     'SELECT @@SESSION.innodb_lock_wait_timeout AS seconds',
@@ -234,26 +248,39 @@ async function withHeldFlagLockWait<T>(
     options
   );
   const previous = Number(row?.seconds);
-  if (!Number.isInteger(previous) || previous < 1) return fn();
-  await sqlExecutor.execute(
-    'SET SESSION innodb_lock_wait_timeout = :seconds',
-    { seconds: Math.min(previous, HELD_FLAG_LOCK_WAIT_SECONDS) },
-    options
-  );
+  if (!Number.isInteger(previous) || previous < 1) {
+    for (const item of items) await writeHeld(item, ctx, connection);
+    return;
+  }
+  const setWait = (seconds: number) =>
+    sqlExecutor.execute(
+      'SET SESSION innodb_lock_wait_timeout = :seconds',
+      { seconds },
+      options
+    );
+  const deadline = Date.now() + HELD_FLAG_LOCK_WAIT_SECONDS * 1000;
+  let current = previous;
   try {
-    return await fn();
+    for (const item of items) {
+      const left = Math.ceil((deadline - Date.now()) / 1000);
+      const seconds = Math.min(
+        previous,
+        Math.max(HELD_FLAG_MIN_LOCK_WAIT_SECONDS, left)
+      );
+      if (seconds !== current) {
+        await setWait(seconds);
+        current = seconds;
+      }
+      await writeHeld(item, ctx, connection);
+    }
   } finally {
-    await sqlExecutor
-      .execute(
-        'SET SESSION innodb_lock_wait_timeout = :seconds',
-        { seconds: previous },
-        options
-      )
-      .catch((error) =>
+    if (current !== previous) {
+      await setWait(previous).catch((error) =>
         logger.error(
-          `[DROP_FORGE_LOCK_WAIT_NOT_RESTORED] the session's lock wait stays at ${HELD_FLAG_LOCK_WAIT_SECONDS} s: ${error instanceof Error ? error.message : String(error)}`
+          `[DROP_FORGE_LOCK_WAIT_NOT_RESTORED] the session's lock wait stays at ${current} s: ${error instanceof Error ? error.message : String(error)}`
         )
       );
+    }
   }
 }
 
@@ -288,11 +315,7 @@ export async function withDropForgeClaimActions<T>(
     const value = await fn();
     queue.closed = true;
     if (queue.items.length) {
-      await withHeldFlagLockWait(connection, async () => {
-        for (const item of queue.items) {
-          await writeHeld(item, ctx, connection);
-        }
-      });
+      await writeHeldFlags(queue.items, ctx, connection);
     }
     return value;
   } finally {

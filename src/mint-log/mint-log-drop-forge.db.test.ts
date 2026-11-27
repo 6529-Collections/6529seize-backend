@@ -49,6 +49,7 @@ import * as priorityAlerts from '@/priority-alerts.context';
 import {
   dropForgePhaseSpec,
   HELD_FLAG_LOCK_WAIT_SECONDS,
+  HELD_FLAG_MIN_LOCK_WAIT_SECONDS,
   withDropForgeClaimActions,
   writeDropForgeClaimAction
 } from './mint-log-drop-forge';
@@ -1128,7 +1129,7 @@ describeWithSeed(
       expect((await entries()).map((entry) => entry.kind)).toEqual([
         'claim.action'
       ]);
-    });
+    }, 60_000);
 
     it(`in shadow mode, a held flag gives up on a held head after ${HELD_FLAG_LOCK_WAIT_SECONDS} s and commits unlogged, alerting once the pass commits`, async () => {
       await saveLaunch(launch(['PAY_ARTIST']), {});
@@ -1156,7 +1157,47 @@ describeWithSeed(
       expect(
         (await dropForgeRepository.find('launch-1', {}))?.data.completion_flags
       ).toEqual(['PAY_ARTIST']);
-    });
+    }, 60_000);
+
+    it(`gives a pass's held flags one ${HELD_FLAG_LOCK_WAIT_SECONDS} s budget for the head: the second flag waits ${HELD_FLAG_MIN_LOCK_WAIT_SECONDS} s more, not ${HELD_FLAG_LOCK_WAIT_SECONDS} s`, async () => {
+      await saveLaunch(launch(['PAY_ARTIST', 'ARTIST_AIRDROP']), {});
+      process.env.FEATURE_MINT_LOG_PRIMARY = 'true';
+      try {
+        const waited = await holdingTheHead(() => timedPass('launch-1', false));
+        // A bound per flag would let this pass wait twice the budget.
+        const pass = BOUND_MS + HELD_FLAG_MIN_LOCK_WAIT_SECONDS * 1000;
+        expect(waited).toBeGreaterThanOrEqual(pass - 500);
+        expect(waited).toBeLessThan(pass + 4000);
+        expect(await claimActions()).toEqual([]);
+        expect(await entries()).toEqual([]);
+        const record = await dropForgeRepository.find('launch-1', {});
+        expect(record?.data.completion_flags).toEqual([]);
+        for (const flag of ['PAY_ARTIST', 'ARTIST_AIRDROP']) {
+          expect(
+            record?.data.events.some(
+              (event) =>
+                event.error &&
+                event.content.includes(
+                  `completion flag ${flag} was not written (ER_LOCK_WAIT_TIMEOUT)`
+                )
+            )
+          ).toBe(true);
+        }
+
+        await signerPass('launch-1');
+      } finally {
+        process.env.FEATURE_MINT_LOG_PRIMARY = saved.FEATURE_MINT_LOG_PRIMARY;
+      }
+
+      expect((await claimActions()).map((row) => row.action)).toEqual([
+        'ARTIST_AIRDROP',
+        'PAY_ARTIST'
+      ]);
+      expect((await entries()).map((entry) => entry.kind)).toEqual([
+        'claim.action',
+        'claim.action'
+      ]);
+    }, 60_000);
 
     it("lets a second card's held flag wait for the head while the first card's flag holds it, and write within the bound", async () => {
       await saveLaunch(launch(['PAY_ARTIST']), {});
@@ -1221,7 +1262,7 @@ describeWithSeed(
         expect(record?.data.completion_flags).toEqual(['PAY_ARTIST']);
         expect(record?.data.events.some((event) => event.error)).toBe(false);
       }
-    });
+    }, 60_000);
 
     it('measures what one held flag adds to a signer pass on a full memes card, with the replay check on', async () => {
       // A busy memes card: one phase with WALLETS allowlisted wallets (their
@@ -1311,6 +1352,6 @@ describeWithSeed(
       );
       // A guard against a regression, well above what it measures.
       expect(logged - off).toBeLessThan(30_000);
-    });
+    }, 180_000);
   }
 );

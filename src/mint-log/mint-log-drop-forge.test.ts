@@ -3,10 +3,16 @@ jest.mock('@/sql-executor', () => ({
   sqlExecutor: { execute: jest.fn() }
 }));
 
+import {
+  afterCommit,
+  closeAfterCommitScope,
+  openAfterCommitScope
+} from '@/db/after-commit';
 import type { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 import {
   HELD_FLAG_LOCK_WAIT_SECONDS,
+  HELD_FLAG_MIN_LOCK_WAIT_SECONDS,
   withDropForgeClaimActions,
   writeDropForgeClaimAction
 } from './mint-log-drop-forge';
@@ -124,10 +130,73 @@ describe('held claim actions', () => {
     });
     expect(statements).toEqual([
       SELECT_WAIT,
-      `${SET_WAIT} 3`,
+      'SAVEPOINT drop_forge_claim_action',
+      'RELEASE SAVEPOINT drop_forge_claim_action'
+    ]);
+  });
+
+  it('gives the whole pass one lock-wait budget: a later flag waits what is left of it, at least the minimum', async () => {
+    database(50);
+    let now = 1_000_000;
+    jest.spyOn(Date, 'now').mockImplementation(() => now);
+    // Each flag takes this long, its wait for the head included.
+    const took = [9_400, 6_000, 0];
+    jest
+      .spyOn(mintLogRecorder, 'writeWithin')
+      .mockImplementation(async (_spec, _connection, write) => {
+        now += took.shift()!;
+        return write();
+      });
+
+    await withDropForgeClaimActions(ctx, async () => {
+      for (const action of ['FIRST', 'SECOND', 'THIRD']) {
+        await writeDropForgeClaimAction(ctx, held(action, jest.fn()));
+      }
+    });
+
+    // 15 s for the first flag; 5.6 s left, rounded up, for the second;
+    // none left for the third, which still gets the minimum.
+    expect(statements).toEqual([
+      SELECT_WAIT,
+      `${SET_WAIT} ${HELD_FLAG_LOCK_WAIT_SECONDS}`,
       'SAVEPOINT drop_forge_claim_action',
       'RELEASE SAVEPOINT drop_forge_claim_action',
-      `${SET_WAIT} 3`
+      `${SET_WAIT} 6`,
+      'SAVEPOINT drop_forge_claim_action',
+      'RELEASE SAVEPOINT drop_forge_claim_action',
+      `${SET_WAIT} ${HELD_FLAG_MIN_LOCK_WAIT_SECONDS}`,
+      'SAVEPOINT drop_forge_claim_action',
+      'RELEASE SAVEPOINT drop_forge_claim_action',
+      `${SET_WAIT} 50`
     ]);
+  });
+
+  it("drops the after-commit work of a flag its savepoint undid, and keeps a written flag's", async () => {
+    database(50);
+    openAfterCommitScope(ctx.connection!.connection);
+    const undone = jest.fn();
+    const kept = jest.fn();
+    const error = new Error('the flag write failed');
+    jest
+      .spyOn(mintLogRecorder, 'writeWithin')
+      // As a shadow failure does: the alert is registered, then the write
+      // itself fails, and the savepoint undoes both.
+      .mockImplementationOnce(async (_spec, connection) => {
+        await afterCommit(connection, undone);
+        throw error;
+      })
+      .mockImplementationOnce(async (_spec, connection, write) => {
+        await afterCommit(connection, kept);
+        return write();
+      });
+    const failed = jest.fn().mockResolvedValue(undefined);
+
+    await withDropForgeClaimActions(ctx, async () => {
+      await writeDropForgeClaimAction(ctx, held('FIRST', failed));
+      await writeDropForgeClaimAction(ctx, held('SECOND', jest.fn()));
+    });
+
+    expect(failed).toHaveBeenCalledWith(error);
+    expect(closeAfterCommitScope(ctx.connection!.connection)).toEqual([kept]);
   });
 });
