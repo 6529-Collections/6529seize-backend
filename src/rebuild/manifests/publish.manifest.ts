@@ -4,7 +4,8 @@ import {
   PROBE_CALLER,
   PROBE_WALLETS,
   worldActorIdentity,
-  worldActorProfileId
+  worldActorProfileId,
+  worldActorWallet
 } from '@/rebuild/manifests/probe-fixture';
 import {
   PUBLISH_SEED_IDS,
@@ -13,11 +14,12 @@ import {
 } from '@/rebuild/areas/publish.fixture';
 
 /**
- * The records service of a rebuild run: a fake wave, profile and wallet,
- * and a provider key made only for the rebuild check, derived from a
- * public label so it can never be mistaken for a real one. The same
- * values as the personal area's: the run refuses a flag two manifests set
- * differently, so the two can't drift apart.
+ * The records service of a rebuild run: a fake wave, the world's
+ * records-service actor (its profile and wallet, which the identity seed
+ * writes), and a provider key made only for the rebuild check, derived
+ * from a public label so it can never be mistaken for a real one. Every
+ * manifest that sets these flags sets the same values: the run refuses a
+ * flag two manifests set differently, so they can't drift apart.
  */
 const FIXTURE_PROVIDER_KEY = `0x${createHash('sha256')
   .update('6529 rebuild check: fixture provider key, never a real one')
@@ -27,8 +29,8 @@ const FIXTURE_RECORDS_FLAGS = {
     { id: 'rebuild-fixture', private_key: FIXTURE_PROVIDER_KEY }
   ]),
   SIGNED_RECORDS_WAVE_ID: '00000000-0000-4000-8000-0000000000e1',
-  SIGNED_RECORDS_SERVICE_PROFILE_ID: 'rebuild-records-service',
-  SIGNED_RECORDS_SERVICE_WALLET: '0x00000000000000000000000000000000000000a1'
+  SIGNED_RECORDS_SERVICE_PROFILE_ID: worldActorProfileId('records-service'),
+  SIGNED_RECORDS_SERVICE_WALLET: worldActorWallet('records-service')
 };
 
 /**
@@ -167,9 +169,6 @@ const PUBLISH_SEED: RebuildStep = {
     'signed_record_log_entries',
     'signed_record_log_segments',
     'identity_subscriptions',
-    'identities',
-    'address_consolidation_keys',
-    'profiles',
     'waves',
     'drops',
     'drops_parts',
@@ -177,8 +176,9 @@ const PUBLISH_SEED: RebuildStep = {
     'wave_dropper_metrics'
   ],
   reads: ['profile_cms_chain_heads'],
-  // The first probe profile's identity first.
-  after: ['identity.probe-profiles'],
+  // The world's actors first, proven held: the first probe profile, by
+  // its fixed id, and the records service, read by wallet.
+  after: ['identity.actors-check'],
   sources: ['files', 'repo'],
   timeoutMinutes: 10
 };
