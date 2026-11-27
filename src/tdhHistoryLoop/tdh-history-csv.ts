@@ -113,11 +113,11 @@ function parseSnapshotRow(row: TdhCsvRow, block: number): ConsolidatedTDH {
   const parsed = parseTdhDataFromDB(tdh) as ConsolidatedTDH;
   for (const column of ['wallets', 'memes', 'gradients', 'nextgen'] as const) {
     if (!Array.isArray(parsed[column])) {
-      throw new Error(`TDH CSV ${column} must be a JSON array`);
+      throw new TypeError(`TDH CSV ${column} must be a JSON array`);
     }
   }
   if (!parsed.wallets.every((wallet: unknown) => typeof wallet === 'string')) {
-    throw new Error('TDH CSV wallets must contain strings');
+    throw new TypeError('TDH CSV wallets must contain strings');
   }
   return parsed;
 }
