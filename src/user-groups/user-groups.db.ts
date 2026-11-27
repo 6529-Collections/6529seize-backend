@@ -26,7 +26,7 @@ import {
   XTDH_GRANT_TOKENS_TABLE,
   XTDH_GRANTS_TABLE
 } from '@/constants';
-import { CustomApiCompliantException } from '@/exceptions';
+import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
 import { UserGroupVisibilityRequestEntity } from '@/entities/IUserGroupVisibilityRequest';
 import { RateMatter } from '../entities/IRating';
 import { randomUUID } from 'crypto';
@@ -301,9 +301,11 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     connection: ConnectionWrapper<any>
   ): Promise<{ profile_group_id: string }> {
     const profile_group_id = randomUUID();
-    const distinctAddresses = collections.distinct(
-      addresses.map((w) => w.toLowerCase())
-    );
+    // In address order, so two writers listing the same addresses give them
+    // identities, and lock them, in the same order.
+    const distinctAddresses = collections
+      .distinct(addresses.map((w) => w.toLowerCase()))
+      .sort((a, b) => (a < b ? -1 : Number(a > b)));
     if (addresses.length) {
       const chunkSize = 100;
       for (let i = 0; i < distinctAddresses.length; i += chunkSize) {
@@ -313,23 +315,34 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
             chunkOfAddresses,
             connection
           );
+        // An address with no identity, or whose row has no profile id, gets
+        // one; a group never lists a null profile id.
         const missingIdentities = chunkOfAddresses.filter(
-          (a) => !identities[a]
+          (a) => !identities[a]?.identity.profile_id
         );
-        await identitiesDb.insertIdentitiesOnAddressesOnly(
+        const given = await identitiesDb.insertIdentitiesOnAddressesOnly(
           missingIdentities,
-          connection
+          connection,
+          Time.currentMillis()
         );
-        const profileIds = await identitiesDb
-          .getEverythingRelatedToIdentitiesByAddresses(
+        const current =
+          await identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
             chunkOfAddresses,
             connection
-          )
-          .then((it) =>
-            collections.distinct(
-              Object.values(it).map((it) => it.identity.profile_id!)
-            )
           );
+        const profileIdOf = (a: string) =>
+          given.get(a) ?? current[a]?.identity.profile_id ?? null;
+        // An address held by an identity of several wallets that has no
+        // profile id can't be listed: refused, never left out.
+        const withoutProfile = chunkOfAddresses.filter((a) => !profileIdOf(a));
+        if (withoutProfile.length) {
+          throw new BadRequestException(
+            `These addresses have no profile to list in a group: ${withoutProfile.join(', ')}`
+          );
+        }
+        const profileIds = collections.distinct(
+          chunkOfAddresses.map((a) => profileIdOf(a)!)
+        );
         const alreadyInsertedProfileIds = await this.db
           .execute<{
             profile_id: string;

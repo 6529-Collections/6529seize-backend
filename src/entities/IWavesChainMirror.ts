@@ -63,6 +63,22 @@ export class WavesChainMirrorStateEntity {
   @Column({ type: 'text', nullable: true, default: null })
   readonly last_error!: string | null;
 
+  // The groups_held row: groups waiting for the identity mirror to stand at
+  // their height. When the hold began (ms), the oldest held group's height
+  // and how many are held at the last run, and whether the hold was
+  // reported (its WARN written). No row: none held.
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly held_since!: number | null;
+
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly held_height!: number | null;
+
+  @Column({ type: 'int', nullable: true, default: null })
+  readonly held_count!: number | null;
+
+  @Column({ type: 'boolean', nullable: false, default: false })
+  readonly held_reported!: boolean;
+
   @Column({ type: 'bigint', nullable: false })
   readonly updated_at!: number;
 }

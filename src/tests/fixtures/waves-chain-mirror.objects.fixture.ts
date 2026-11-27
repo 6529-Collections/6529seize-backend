@@ -40,6 +40,8 @@ export function aChainGroupRow(
     legacyId?: string | null;
     controller?: string;
     activeFrom?: number;
+    /** The chain height the index wrote the row at. */
+    height?: number;
   } = {}
 ): ChainGroupRow {
   const version = fields.version ?? 1;
@@ -48,6 +50,7 @@ export function aChainGroupRow(
     legacy_id: fields.legacyId ?? null,
     version,
     origin: fields.origin ?? 'native',
+    height: fields.height ?? 20,
     data: {
       groupId,
       version,
@@ -127,6 +130,20 @@ export class FakeObjectsStore implements ObjectsStore {
   }[] = [];
   descriptions: { dropId: string; parts: readonly WaveDocumentPart[] }[] = [];
   addedIdentities: string[] = [];
+  /** The block time each address-only identity was given at. */
+  identityTimes = new Map<string, number>();
+  /**
+   * The chain height the identity mirror stands at; null (the default):
+   * at every height.
+   */
+  identityHeight: number | null = null;
+  /** The groups_held state row, as the store keeps it. */
+  held: {
+    since: number;
+    height: number | null;
+    count: number;
+    reported: boolean;
+  } | null = null;
   transactions = 0;
 
   async chainGroupsToMirror() {
@@ -255,11 +272,50 @@ export class FakeObjectsStore implements ObjectsStore {
         .map((a) => [a, this.addressProfiles.get(a)!])
     );
   }
-  async addAddressIdentities(addresses: readonly string[]) {
+  async addAddressIdentities(
+    addresses: readonly string[],
+    _connection?: unknown,
+    idTimeMillis?: number
+  ) {
+    const out = new Map<string, string>();
     for (const address of addresses) {
-      this.addedIdentities.push(address);
-      this.addressProfiles.set(address, `profile-of-${address.slice(2, 8)}`);
+      if (!this.addressProfiles.has(address)) {
+        this.addedIdentities.push(address);
+        this.addressProfiles.set(address, `profile-of-${address.slice(2, 8)}`);
+        if (idTimeMillis !== undefined) {
+          this.identityTimes.set(address, idTimeMillis);
+        }
+      }
+      out.set(address, this.addressProfiles.get(address)!);
     }
+    return out;
+  }
+  /** Addresses whose own row has no profile id. */
+  rowsWithoutProfile = new Set<string>();
+  async ownRowsWithoutProfile(addresses: readonly string[]) {
+    return new Set(addresses.filter((a) => this.rowsWithoutProfile.has(a)));
+  }
+  async identityRowsReached(height: number) {
+    return this.identityHeight === null || this.identityHeight >= height;
+  }
+  async groupsHeld(
+    held: { readonly count: number; readonly oldestHeight: number | null },
+    now: number
+  ) {
+    if (!held.count) {
+      this.held = null;
+      return null;
+    }
+    this.held = {
+      since: this.held?.since ?? now,
+      height: held.oldestHeight,
+      count: held.count,
+      reported: this.held?.reported ?? false
+    };
+    return { since: this.held.since, reported: this.held.reported };
+  }
+  async groupsHeldReported() {
+    if (this.held) this.held = { ...this.held, reported: true };
   }
   async groupRow(id: string) {
     return this.groups.get(id) ?? null;
