@@ -454,14 +454,18 @@ describeWithSeed(
   ],
   () => {
     const saved = { ...process.env };
+    /** Puts a flag back as it was: unset when it was unset. */
+    const restoreEnv = (name: string) => {
+      if (saved[name] === undefined) delete process.env[name];
+      else process.env[name] = saved[name];
+    };
     beforeAll(() => {
       process.env.FEATURE_MINT_LOG_SHADOW = 'true';
       process.env.FEATURE_MINT_LOG_REPLAY_CHECK = 'true';
     });
     afterAll(() => {
-      process.env.FEATURE_MINT_LOG_SHADOW = saved.FEATURE_MINT_LOG_SHADOW;
-      process.env.FEATURE_MINT_LOG_REPLAY_CHECK =
-        saved.FEATURE_MINT_LOG_REPLAY_CHECK;
+      restoreEnv('FEATURE_MINT_LOG_SHADOW');
+      restoreEnv('FEATURE_MINT_LOG_REPLAY_CHECK');
     });
 
     it("rebuilds the card from Drop Forge's own entries alone: a phase split, the public phase, finalize and a held flag", async () => {
@@ -998,7 +1002,7 @@ describeWithSeed(
       try {
         await signerPass('launch-1');
       } finally {
-        process.env.FEATURE_MINT_LOG_PRIMARY = saved.FEATURE_MINT_LOG_PRIMARY;
+        restoreEnv('FEATURE_MINT_LOG_PRIMARY');
         failing.mockRestore();
       }
 
@@ -1078,7 +1082,7 @@ describeWithSeed(
 
         await signerPass('launch-1');
       } finally {
-        process.env.FEATURE_MINT_LOG_PRIMARY = saved.FEATURE_MINT_LOG_PRIMARY;
+        restoreEnv('FEATURE_MINT_LOG_PRIMARY');
       }
 
       expect(await claimActions()).toEqual([
@@ -1145,7 +1149,7 @@ describeWithSeed(
 
         await signerPass('launch-1');
       } finally {
-        process.env.FEATURE_MINT_LOG_PRIMARY = saved.FEATURE_MINT_LOG_PRIMARY;
+        restoreEnv('FEATURE_MINT_LOG_PRIMARY');
       }
 
       expect((await claimActions()).map((row) => row.action)).toEqual([

@@ -32,6 +32,7 @@ import { mintingClaimActionsDb } from '@/api/minting-claims/minting-claim-action
 import * as supported from '@/minting-claims/minting-claim-actions';
 import { sqlExecutor } from '@/sql-executor';
 import { mintLogRecorder } from '@/mint-log/mint-log-recorder';
+import { hasUnwrittenFlags } from '@/drop-forge/drop-forge.completion';
 import { buildLaunchPlan } from '@/drop-forge/drop-forge.plan';
 import { updateForgeSettings } from '@/drop-forge/drop-forge.settings';
 import { formatLaunchReport } from '@/drop-forge/drop-forge.reports';
@@ -1175,6 +1176,92 @@ describe('Drop Forge durable worker', () => {
       await sqlExecutor.execute(`delete from ${MINTING_CLAIM_ACTIONS_TABLE}`);
     }
   });
+  it("with the mint log on, writes a cancelled launch's deferred flag on its next delivery, and keeps an admin's unset row", async () => {
+    jest
+      .spyOn(supported, 'isSupportedMintingClaimActionType')
+      .mockReturnValue(true);
+    // Three completed groups, so one pass defers the third flag.
+    await repository.change(
+      id,
+      async (record) => {
+        const template = record.data.actions[0];
+        const confirmed = (
+          actionId: string,
+          extra: Partial<typeof template>
+        ) => ({
+          ...template,
+          ...extra,
+          id: actionId,
+          state: 'CONFIRMED' as const,
+          hash: `hash-${actionId}`,
+          block_hash: 'block'
+        });
+        record.data.actions = [
+          confirmed('pay', { kind: 'PAY_ARTIST' }),
+          confirmed('artist', { kind: 'AIRDROP', label: 'Airdrop - Artist' }),
+          confirmed('team', { kind: 'AIRDROP', label: 'Airdrop - Team' })
+        ];
+        record.data.completion_flags = [];
+        record.state = 'CANCELLED';
+      },
+      {}
+    );
+    const launch = (await read())!;
+    // An admin unset the team flag by hand: a row with completed false.
+    await mintingClaimActionsDb.upsertAction(
+      {
+        contract: launch.data.contract,
+        claim_id: launch.data.claim_id,
+        action: 'TEAM_AIRDROP',
+        completed: false,
+        wallet: '0x0000000000000000000000000000000000000007'
+      },
+      {}
+    );
+    const rows = () =>
+      sqlExecutor.execute<{ action: string; completed: number }>(
+        `select action, completed from ${MINTING_CLAIM_ACTIONS_TABLE} order by action`
+      );
+
+    try {
+      await inShadow(async () => {
+        await worker.tick(id);
+        let record = (await read())!;
+        expect(record.data.completion_flags).toEqual([
+          'PAY_ARTIST',
+          'ARTIST_AIRDROP'
+        ]);
+        expect(
+          record.data.events.filter((event) =>
+            event.content.includes(
+              'completion flag TEAM_AIRDROP was not written'
+            )
+          )
+        ).toEqual([expect.objectContaining({ error: false })]);
+        expect(hasUnwrittenFlags(record)).toBe(true);
+
+        // The next delivery's pass writes it: the admin's row stays unset.
+        await worker.tick(id);
+        record = (await read())!;
+        expect(record.data.completion_flags).toEqual([
+          'PAY_ARTIST',
+          'ARTIST_AIRDROP',
+          'TEAM_AIRDROP'
+        ]);
+        expect(hasUnwrittenFlags(record)).toBe(false);
+        expect(record.state).toBe('CANCELLED');
+        expect(
+          (await rows()).map((row) => [row.action, Number(row.completed)])
+        ).toEqual([
+          ['ARTIST_AIRDROP', 1],
+          ['PAY_ARTIST', 1],
+          ['TEAM_AIRDROP', 0]
+        ]);
+      });
+    } finally {
+      await sqlExecutor.execute(`delete from ${MINTING_CLAIM_ACTIONS_TABLE}`);
+    }
+  });
   it('with the mint log off, writes the flag in the completing pass and completes the launch in it, as before', async () => {
     expect(mintLogRecorder.mode()).toBe('off');
     jest
@@ -1376,9 +1463,13 @@ describe('Drop Forge durable worker', () => {
         checks: { replay: 'match' }
       });
     } finally {
-      process.env.FEATURE_MINT_LOG_SHADOW = env.FEATURE_MINT_LOG_SHADOW;
-      process.env.FEATURE_MINT_LOG_REPLAY_CHECK =
-        env.FEATURE_MINT_LOG_REPLAY_CHECK;
+      for (const name of [
+        'FEATURE_MINT_LOG_SHADOW',
+        'FEATURE_MINT_LOG_REPLAY_CHECK'
+      ] as const) {
+        if (env[name] === undefined) delete process.env[name];
+        else process.env[name] = env[name];
+      }
       await sqlExecutor.execute(`delete from ${MINTING_CLAIM_ACTIONS_TABLE}`);
       await sqlExecutor.execute(
         `delete from ${SIGNED_RECORD_LOG_ENTRIES_TABLE} where lane = 'mint'`

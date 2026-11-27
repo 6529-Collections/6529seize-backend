@@ -18,6 +18,8 @@ import {
 import { testLaunchData } from '@/drop-forge/drop-forge.test-fixtures';
 import { LaunchRecord } from '@/drop-forge/drop-forge.types';
 import { parseForgeDelivery } from '@/drop-forge/drop-forge.wake';
+import { mintLogRecorder } from '@/mint-log/mint-log-recorder';
+import * as supported from '@/minting-claims/minting-claim-actions';
 
 let send: jest.SpyInstance;
 const previous = { ...process.env };
@@ -141,4 +143,39 @@ it('rejects malformed queue payloads rather than scanning unrelated jobs', () =>
     id: 'x',
     revision: 2
   });
+});
+it('keeps delivering to an ended launch with an unwritten completion flag while the mint log is on, and not with it off', async () => {
+  const launch = record();
+  launch.data.events = [];
+  launch.state = 'CANCELLED';
+  launch.data.completion_flags = [];
+  launch.data.actions = [
+    {
+      ...launch.data.actions[0],
+      id: 'pay',
+      kind: 'PAY_ARTIST',
+      state: 'CONFIRMED'
+    }
+  ];
+  jest
+    .spyOn(supported, 'isSupportedMintingClaimActionType')
+    .mockReturnValue(true);
+  const wakes = () =>
+    jest
+      .mocked(SQSClient.prototype.send)
+      .mock.calls.filter(([command]) => command instanceof SendMessageCommand)
+      .length;
+
+  // Mint log off: as on main, an ended launch gets no more deliveries.
+  await continueLaunch(launch, 1000, true);
+  expect(wakes()).toBe(0);
+
+  jest.spyOn(mintLogRecorder, 'mode').mockReturnValue('shadow');
+  await continueLaunch(launch, 1000, true);
+  expect(wakes()).toBe(1);
+
+  // Once the flag is written, the deliveries stop.
+  launch.data.completion_flags = ['PAY_ARTIST'];
+  await continueLaunch(launch, 1000, true);
+  expect(wakes()).toBe(1);
 });

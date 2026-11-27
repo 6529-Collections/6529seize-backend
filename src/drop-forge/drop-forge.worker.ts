@@ -14,7 +14,11 @@ import { Transaction } from 'ethers';
 import { DropForgeConfig } from '@/drop-forge/drop-forge.config';
 import { LaunchChain, ChainReceipt } from '@/drop-forge/drop-forge.chain';
 import { LaunchAttempt } from '@/drop-forge/drop-forge.attempt';
-import { mirrorCompletion } from '@/drop-forge/drop-forge.completion';
+import {
+  hasUnwrittenFlags,
+  mirrorCompletion
+} from '@/drop-forge/drop-forge.completion';
+import { mintLogRecorder } from '@/mint-log/mint-log-recorder';
 import { reconcileManual } from '@/drop-forge/drop-forge.manual';
 import { recordWalletBlock } from '@/drop-forge/drop-forge.wallet-retry';
 import {
@@ -291,6 +295,15 @@ export class DropForgeWorker {
             : 'Manual transaction reconciliation failed'
         );
       }
+      await this.repository.save(record, ctx);
+    } else if (mintLogRecorder.mode() !== 'off' && hasUnwrittenFlags(record)) {
+      // With the mint log on, a flag a pass deferred or failed to write is
+      // written by a later delivery, whatever the launch's state (the
+      // dispatch keeps delivering while one is left). An existing row, an
+      // admin's, stays as it is.
+      await mirrorCompletion(record, ctx, this.saveLaunch, {
+        keepExisting: true
+      });
       await this.repository.save(record, ctx);
     }
   }

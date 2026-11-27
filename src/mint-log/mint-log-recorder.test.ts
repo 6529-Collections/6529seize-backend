@@ -746,6 +746,35 @@ describe('MintLogRecorder.writeWithin', () => {
     expect(sendPriorityAlertIfConfigured).toHaveBeenCalledTimes(1);
   });
 
+  it("sends a skipped write's priority alert only once the caller's transaction commits", async () => {
+    const fake = new Fake();
+    const log = new MintLogRecorder(
+      {
+        isMintLogShadowEnabled: () => true,
+        isMintLogPrimaryEnabled: () => false,
+        isMintLogReplayCheckEnabled: () => false,
+        isMintLogCollabRecordsRequired: () => false
+      },
+      () => {
+        throw new Error('the record log is down');
+      },
+      fake.db,
+      fake.reader,
+      fake.writer,
+      fake.headDb
+    );
+    const tracked = { connection: {} } as any;
+    openAfterCommitScope(tracked.connection);
+    await expect(
+      log.writeWithin(respondSpec(), tracked, async () => 'ok')
+    ).resolves.toBe('ok');
+    // The write ran unlogged; the alert waits for the caller's commit.
+    expect(sendPriorityAlertIfConfigured).not.toHaveBeenCalled();
+
+    await runAfterCommitCallbacks(closeAfterCommitScope(tracked.connection));
+    expect(sendPriorityAlertIfConfigured).toHaveBeenCalledTimes(1);
+  });
+
   it("sends a replay mismatch's priority alert only once the caller's transaction commits", async () => {
     const fake = new Fake();
     fake.applyBug = true;

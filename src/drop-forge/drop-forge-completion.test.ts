@@ -1,4 +1,9 @@
-import { mirrorCompletion } from '@/drop-forge/drop-forge.completion';
+import {
+  completionFlagRows,
+  FLAG_ALERT_AFTER_MS,
+  hasUnwrittenFlags,
+  mirrorCompletion
+} from '@/drop-forge/drop-forge.completion';
 import { mintingClaimActionsDb } from '@/api/minting-claims/minting-claim-actions.db';
 import * as supported from '@/minting-claims/minting-claim-actions';
 import * as held from '@/mint-log/mint-log-drop-forge';
@@ -70,7 +75,7 @@ it('mirrors only complete airdrop groups and does not duplicate shared completio
   }
 });
 
-it('leaves a held flag that failed to write unmirrored, warns once, and asks for it by hand on an ended launch', async () => {
+it('leaves a held flag that failed to write unmirrored, raises one plain event, and alerts once on an ended launch still without it after the set time', async () => {
   const record: LaunchRecord = {
     id: 'launch',
     revision: 1,
@@ -91,6 +96,8 @@ it('leaves a held flag that failed to write unmirrored, warns once, and asks for
   jest
     .spyOn(supported, 'isSupportedMintingClaimActionType')
     .mockReturnValue(true);
+  let now = 1_000_000;
+  jest.spyOn(Date, 'now').mockImplementation(() => now);
   const queued: Parameters<typeof held.writeDropForgeClaimAction>[1][] = [];
   jest
     .spyOn(held, 'writeDropForgeClaimAction')
@@ -109,40 +116,137 @@ it('leaves a held flag that failed to write unmirrored, warns once, and asks for
     }
   };
   const save = jest.fn().mockResolvedValue(undefined);
-  const warnings = () =>
+  const events = () =>
     record.data.events
       .slice(before)
-      .filter((event) =>
-        event.content.includes('completion flag PAY_ARTIST was not written')
-      );
+      .filter((event) => event.content.includes('completion flag PAY_ARTIST'));
+  const byHand = `set it by hand: POST /api/minting-claims/actions/${record.data.contract}/${record.data.claim_id} with {"action":"PAY_ARTIST","completed":true}, as a claims admin (in primary mode with the admin's signed record, x-6529-signed-records).`;
   try {
     expect(await mirrorCompletion(record, {}, save)).toBe(true);
     await flushFailing();
     expect(record.data.completion_flags).toEqual([]);
-    expect(warnings()).toHaveLength(1);
-    // A running launch retries it: an event without the alert mention.
-    expect(warnings()[0]).toMatchObject({ error: false });
-    expect(warnings()[0].content).toContain(
-      `(ER_LOCK_WAIT_TIMEOUT); Drop Forge writes it again on a later pass, before the launch completes (a paused or blocked launch only once it runs again). If the launch ends first, set it by hand: POST /api/minting-claims/actions/${record.data.contract}/${record.data.claim_id} with {"action":"PAY_ARTIST","completed":true}, as a claims admin (in primary mode with the admin's signed record, x-6529-signed-records).`
+    expect(hasUnwrittenFlags(record)).toBe(true);
+    expect(events()).toHaveLength(1);
+    // Retried on its own: one plain event, no alert mention.
+    expect(events()[0]).toMatchObject({ error: false });
+    expect(events()[0].content).toContain(
+      'completion flag PAY_ARTIST was not written (ER_LOCK_WAIT_TIMEOUT); Drop Forge writes it on a later delivery of the launch.'
     );
 
-    // The next pass holds it again; a second failure saves, warns no more.
-    expect(await mirrorCompletion(record, {}, save)).toBe(true);
-    await flushFailing();
-    expect(warnings()).toHaveLength(1);
-    expect(save).toHaveBeenCalledTimes(2);
+    // It fails on every later pass: still one event, a save each time.
+    for (let pass = 0; pass < 3; pass++) {
+      expect(await mirrorCompletion(record, {}, save)).toBe(true);
+      await flushFailing();
+    }
+    expect(events()).toHaveLength(1);
+    expect(save).toHaveBeenCalledTimes(4);
 
-    // On a launch that has ended, the warning asks for the flag by hand.
-    record.state = 'COMPLETED';
-    record.data.events = record.data.events.slice(0, before);
+    // The launch ends without it; within the set time, still no alert.
+    record.state = 'CANCELLED';
+    now += FLAG_ALERT_AFTER_MS - 1;
     await mirrorCompletion(record, {}, save);
     await flushFailing();
-    // It needs an operator now: an error, with the alert mention. It names
-    // the route, the action and the fields to send.
-    expect(warnings()[0]).toMatchObject({ error: true });
-    expect(warnings()[0].content).toContain(
-      `the launch has ended, so set it by hand: POST /api/minting-claims/actions/${record.data.contract}/${record.data.claim_id} with {"action":"PAY_ARTIST","completed":true}, as a claims admin (in primary mode with the admin's signed record, x-6529-signed-records).`
+    expect(events()).toHaveLength(1);
+
+    // Past it, one error with the alert mention asks for it by hand, once.
+    now += 1;
+    for (let pass = 0; pass < 2; pass++) {
+      await mirrorCompletion(record, {}, save);
+      await flushFailing();
+    }
+    expect(events()).toHaveLength(2);
+    expect(events()[1]).toMatchObject({ error: true });
+    expect(events()[1].content).toContain(
+      `completion flag PAY_ARTIST is still not written 10 minutes after it was first missed (ER_LOCK_WAIT_TIMEOUT); ${byHand}`
     );
+  } finally {
+    jest.restoreAllMocks();
+  }
+});
+
+it('gives the code as the reason only when it is a string', async () => {
+  const record: LaunchRecord = {
+    id: 'launch',
+    revision: 1,
+    state: 'RUNNING',
+    error: null,
+    updated_at: 1,
+    data: testLaunchData()
+  };
+  record.data.actions = [
+    {
+      ...record.data.actions[0],
+      id: 'pay',
+      kind: 'PAY_ARTIST',
+      state: 'CONFIRMED'
+    }
+  ];
+  jest
+    .spyOn(supported, 'isSupportedMintingClaimActionType')
+    .mockReturnValue(true);
+  jest
+    .spyOn(held, 'writeDropForgeClaimAction')
+    .mockImplementation(async (_ctx, item) => {
+      await item.failed(
+        Object.assign(new Error('the write failed'), { code: undefined })
+      );
+      return 'held';
+    });
+  try {
+    await mirrorCompletion(record, {}, jest.fn().mockResolvedValue(undefined));
+    expect(record.data.events.at(-1)?.content).toContain(
+      'completion flag PAY_ARTIST was not written (the write failed);'
+    );
+  } finally {
+    jest.restoreAllMocks();
+  }
+});
+
+it("writes a retried flag only where the claim has no row, so an admin's row stays", async () => {
+  const record: LaunchRecord = {
+    id: 'launch',
+    revision: 1,
+    state: 'CANCELLED',
+    error: null,
+    updated_at: 1,
+    data: testLaunchData()
+  };
+  record.data.actions = [
+    {
+      ...record.data.actions[0],
+      id: 'pay',
+      kind: 'PAY_ARTIST',
+      state: 'CONFIRMED'
+    }
+  ];
+  jest
+    .spyOn(supported, 'isSupportedMintingClaimActionType')
+    .mockReturnValue(true);
+  const writes: Parameters<typeof held.writeDropForgeClaimAction>[1][] = [];
+  jest
+    .spyOn(held, 'writeDropForgeClaimAction')
+    .mockImplementation(async (_ctx, item) => {
+      writes.push(item);
+      return 'held';
+    });
+  const insert = jest
+    .spyOn(completionFlagRows, 'insertIfAbsent')
+    .mockResolvedValue();
+  const upsert = jest
+    .spyOn(mintingClaimActionsDb, 'upsertAction')
+    .mockResolvedValue();
+  try {
+    await mirrorCompletion(record, {}, jest.fn(), { keepExisting: true });
+    await writes[0].write({});
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'PAY_ARTIST',
+        claim_id: record.data.claim_id
+      }),
+      {}
+    );
+    expect(upsert).not.toHaveBeenCalled();
+    expect(hasUnwrittenFlags(record)).toBe(false);
   } finally {
     jest.restoreAllMocks();
   }
@@ -199,6 +303,16 @@ it('leaves a flag the pass has no room for unmirrored, for the next pass, and ke
       'ARTIST_AIRDROP'
     ]);
 
+    // One plain event says so, and the launch is saved with it.
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(record.data.events.at(-1)).toMatchObject({
+      error: false,
+      content: expect.stringContaining(
+        'completion flag PHASE2_AIRDROP was not written (the pass already holds two flags); Drop Forge writes it on a later delivery of the launch.'
+      )
+    });
+    expect(hasUnwrittenFlags(record)).toBe(true);
+
     // The next pass writes the deferred flag alone.
     expect(await mirrorCompletion(record, {}, save)).toBe(true);
     expect(actions.slice(3)).toEqual(['PHASE2_AIRDROP']);
@@ -207,7 +321,7 @@ it('leaves a flag the pass has no room for unmirrored, for the next pass, and ke
       'ARTIST_AIRDROP',
       'PHASE2_AIRDROP'
     ]);
-    expect(save).not.toHaveBeenCalled();
+    expect(hasUnwrittenFlags(record)).toBe(false);
   } finally {
     jest.restoreAllMocks();
   }

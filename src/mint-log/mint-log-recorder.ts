@@ -259,11 +259,15 @@ export class MintLogRecorder {
    */
   private async skipped<T>(
     spec: MintWriteSpec<T>,
-    error: unknown
+    error: unknown,
+    connection?: ConnectionWrapper<any>
   ): Promise<void> {
-    await this.alert(
-      `[MINT_LOG_SHADOW_SKIPPED] [${spec.kind}] the write ran unlogged: ${errorText(error)}`
-    );
+    const message = `[MINT_LOG_SHADOW_SKIPPED] [${spec.kind}] the write ran unlogged: ${errorText(error)}`;
+    if (connection) {
+      await this.alertAfterCommit(message, connection);
+      return;
+    }
+    await this.alert(message);
   }
 
   private async alert(message: string): Promise<void> {
@@ -314,7 +318,7 @@ export class MintLogRecorder {
       ports = this.ports();
     } catch (error) {
       if (mode === 'primary') throw error;
-      await this.skipped(spec, error);
+      await this.skipped(spec, error, connection);
       return run();
     }
     if (!ports.log) {

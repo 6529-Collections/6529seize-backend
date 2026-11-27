@@ -8,6 +8,8 @@ import { mintCard } from './mint-log-parts';
 import { mintLogRecorder, MintWriteSpec } from './mint-log-recorder';
 import type { MintLogActor, MintLogKind } from './mint-log.types';
 
+const logger = Logger.get('MINT_LOG_DROP_FORGE');
+
 /** Drop Forge's worker: a service, acting on what an admin queued. */
 const DROP_FORGE_ACTOR: MintLogActor = {
   type: 'service',
@@ -213,8 +215,6 @@ async function writeHeld(
   await execute(`RELEASE SAVEPOINT ${CLAIM_ACTION_SAVEPOINT}`);
 }
 
-const logger = Logger.get('MINT_LOG_DROP_FORGE');
-
 /**
  * The lock-wait budget of one pass's held flags. While they wait, the mint
  * log's head first, the signer's and the launch's rows stay locked, and the
@@ -242,7 +242,8 @@ export const HELD_FLAG_MIN_LOCK_WAIT_SECONDS = 1;
  * minimum for each later flag. The session's own value is put back at the
  * end, so the signer's last UPDATE waits as before. A session variable set
  * by hand pins the connection's RDS Proxy session, so the connection is
- * marked pinned, and is retired instead of reused (proxy-session-pinning).
+ * marked pinned: the pool retires it when the request or invocation ends
+ * instead of keeping it (proxy-session-pinning).
  */
 async function writeHeldFlags(
   items: readonly QueuedClaimAction[],
