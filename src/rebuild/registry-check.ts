@@ -1,11 +1,21 @@
 import {
   AreaManifest,
   Probe,
+  PlannedRows,
   RebuildStep,
-  TableClass
+  TableClass,
+  TableEntry,
+  validUntil
 } from '@/rebuild/manifest.types';
+import { modulePathProblem } from '@/rebuild/step-code';
 import { orderSteps, waitsOn } from '@/rebuild/step-order';
-import { partitionsOf, writersOf, writtenTables } from '@/rebuild/step-writes';
+import {
+  columnWritesOf,
+  partitionsOf,
+  rowWrittenTables,
+  writersOf,
+  writtenTables
+} from '@/rebuild/step-writes';
 import { CodeTables, LiveTable } from '@/rebuild/table-discovery';
 import { protectedFlagNames } from '@/rebuild/stack/child-env';
 
@@ -34,7 +44,22 @@ export type RegistryProblemKind =
   /** A flag that would set one of the run's own variables. */
   | 'BAD_FLAG'
   /** A checkpoint on a table that isn't INDEX, or without a column or reason. */
-  | 'BAD_CHECKPOINT';
+  | 'BAD_CHECKPOINT'
+  /**
+   * An exempt column on a table that isn't INDEX, without a column or a
+   * reason, or owned by a column owner.
+   */
+  | 'BAD_EXEMPT'
+  /**
+   * A rowKey on a table that isn't INDEX, without columns, with a column
+   * named twice, or holding a volatile or exempt column.
+   */
+  | 'BAD_ROW_KEY'
+  /**
+   * A volatile column scoped by an empty condition, or by one that names
+   * the column itself.
+   */
+  | 'BAD_VOLATILE';
 
 export interface RegistryProblem {
   readonly kind: RegistryProblemKind;
@@ -51,13 +76,61 @@ export interface RegistryResult {
   readonly classes: Record<TableClass, number>;
   /** Tables marked `planned` that code doesn't name yet. */
   readonly plannedAbsent: { area: string; table: string }[];
+  /**
+   * Planned rebuilders whose module isn't in the tree, with the tables
+   * they write: the order checks leave those writes out until the module
+   * is here.
+   */
+  readonly orderLeftOut: { step: string; tables: string[] }[];
+  /**
+   * `after` and `before` ids naming a step of another area that this tree
+   * doesn't have yet: unresolved, noted, and a final run fails on them.
+   */
+  readonly crossAreaEdges: CrossAreaEdge[];
 }
+
+/** An order edge from a step to another area's step that isn't here. */
+export interface CrossAreaEdge {
+  readonly step: string;
+  readonly field: 'after' | 'before';
+  readonly id: string;
+  /** A step of the target area whose id is a small edit away: a typo? */
+  readonly nearest?: string;
+}
+
+/** Edits (insert, delete, replace) between two strings. */
+function editDistance(a: string, b: string): number {
+  let previous = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      current[j] = Math.min(
+        previous[j] + 1,
+        current[j - 1] + 1,
+        previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+    }
+    previous = current;
+  }
+  return previous[b.length];
+}
+
+/** How close an id must be to another to suggest it. */
+const NEAR = 2;
 
 export interface RegistryInput {
   readonly manifests: readonly AreaManifest[];
   readonly codeTables: CodeTables;
   /** When given, the live schema is checked against the classes too. */
   readonly liveTables?: readonly LiveTable[];
+  /**
+   * Whether a step's code is in the tree (see stepCodeIn). A planned
+   * rebuilder whose module isn't here yet writes nothing a run could
+   * wait on, so the order checks leave its writes out; once the module
+   * is here, they check them. Without it, every step's code counts as
+   * here.
+   */
+  readonly stepCodeHere?: (step: RebuildStep) => boolean;
 }
 
 const PLACEHOLDER = /\{([a-zA-Z0-9_]+)\}/g;
@@ -113,6 +186,23 @@ function tableProblems(input: RegistryInput): RegistryProblem[] {
           detail: `${table} is named nowhere in code`
         });
       }
+      if (entry.until !== undefined) {
+        if (entry.class !== 'EXEMPT') {
+          problems.push({
+            kind: 'BAD_EXEMPT',
+            area: manifest.area,
+            table,
+            detail: `${table} is ${entry.class}; only an EXEMPT table has an until`
+          });
+        } else if (!validUntil(entry.until)) {
+          problems.push({
+            kind: 'BAD_EXEMPT',
+            area: manifest.area,
+            table,
+            detail: `${table}'s until '${entry.until}' is not a day written YYYY-MM-DD`
+          });
+        }
+      }
       if (entry.class !== 'INDEX' && !entry.why?.trim()) {
         problems.push({
           kind: 'NO_REASON',
@@ -141,6 +231,95 @@ function tableProblems(input: RegistryInput): RegistryProblem[] {
           bad(`${table}'s checkpoint has no reason`);
         }
       }
+      const exempt = entry.exemptColumns ?? [];
+      const badExempt = (detail: string) =>
+        problems.push({
+          kind: 'BAD_EXEMPT',
+          area: manifest.area,
+          table,
+          detail
+        });
+      if (exempt.length && entry.class !== 'INDEX') {
+        badExempt(
+          `${table} is ${entry.class}; only an INDEX table has exempt columns`
+        );
+      }
+      for (const { column, reason } of exempt) {
+        if (!/^[A-Za-z0-9_]+$/.test(column)) {
+          badExempt(`${table}'s exempt column '${column}' names no column`);
+        } else if (!reason.trim()) {
+          badExempt(`${table}.${column} is exempt without a reason`);
+        }
+      }
+      problems.push(
+        ...keyAndScopeProblems(table, entry).map((p) => ({
+          ...p,
+          area: manifest.area,
+          table
+        }))
+      );
+    }
+  }
+  return problems;
+}
+
+/**
+ * Whether an SQL condition names `column`, bare or quoted, as a whole
+ * word in any case (MySQL column names are case-insensitive).
+ */
+export function namesColumn(where: string, column: string): boolean {
+  const word = (char: string | undefined) =>
+    char !== undefined && /[A-Za-z0-9_$]/.test(char);
+  const text = where.toLowerCase();
+  const name = column.toLowerCase();
+  for (let at = text.indexOf(name); at >= 0; at = text.indexOf(name, at + 1)) {
+    if (!word(text[at - 1]) && !word(text[at + name.length])) return true;
+  }
+  return false;
+}
+
+/**
+ * A table entry's rowKey and scoped volatile columns, checked without the
+ * schema (the run checks them against it at its start).
+ */
+function keyAndScopeProblems(
+  table: string,
+  entry: TableEntry
+): { kind: RegistryProblemKind; detail: string }[] {
+  const problems: { kind: RegistryProblemKind; detail: string }[] = [];
+  const volatile = (entry.volatileColumns ?? []).map((v) => v.column);
+  const exempt = (entry.exemptColumns ?? []).map((e) => e.column);
+  if (entry.rowKey) {
+    const bad = (detail: string) =>
+      problems.push({ kind: 'BAD_ROW_KEY', detail });
+    if (entry.class !== 'INDEX') {
+      bad(`${table} is ${entry.class}; only an INDEX table has a rowKey`);
+    }
+    if (!entry.rowKey.length) bad(`${table}'s rowKey names no column`);
+    entry.rowKey.forEach((column, i) => {
+      if (!/^[A-Za-z0-9_]+$/.test(column)) {
+        bad(`${table}'s rowKey column '${column}' names no column`);
+      } else if (entry.rowKey!.indexOf(column) !== i) {
+        bad(`${table}'s rowKey names ${column} twice`);
+      } else if (volatile.includes(column) || exempt.includes(column)) {
+        bad(
+          `${table}'s rowKey holds ${column}, ${volatile.includes(column) ? 'a volatile' : 'an exempt'} column: a row key must come back the same`
+        );
+      }
+    });
+  }
+  for (const { column, where } of entry.volatileColumns ?? []) {
+    if (where === undefined) continue;
+    if (!where.trim()) {
+      problems.push({
+        kind: 'BAD_VOLATILE',
+        detail: `${table}.${column} is volatile where nothing: an empty condition`
+      });
+    } else if (namesColumn(where, column)) {
+      problems.push({
+        kind: 'BAD_VOLATILE',
+        detail: `${table}.${column} is volatile where ${where}, which names the column itself: which rows leave it out would change with it`
+      });
     }
   }
   return problems;
@@ -217,9 +396,41 @@ function stepProblems(
   for (const step of steps) {
     for (const write of step.writes) {
       const table = typeof write === 'string' ? write : write.table;
-      const partition = typeof write === 'string' ? null : write.partition;
+      const partition =
+        typeof write !== 'string' && 'partition' in write
+          ? write.partition
+          : null;
+      const owned =
+        typeof write !== 'string' && 'columns' in write ? write : null;
       const bad = (detail: string) =>
         problems.push({ kind: 'BAD_STEP', area: manifest.area, table, detail });
+      if (owned) {
+        // A column owner may own columns of any area's INDEX table.
+        if ('partition' in owned) {
+          bad(
+            `${kind} ${step.id} declares both columns and a partition of ${table}; a write is one or the other`
+          );
+        }
+        if (kind === 'seed') {
+          bad(
+            `seed ${step.id} declares columns of ${table}; only a rebuilder owns columns`
+          );
+        } else if (classOf(table) !== 'INDEX') {
+          bad(
+            `rebuilder ${step.id} owns columns of ${table}, not an INDEX table`
+          );
+        }
+        if (
+          !owned.columns.length ||
+          !owned.columns.every((column) => /^[A-Za-z0-9_]+$/.test(column))
+        ) {
+          bad(`rebuilder ${step.id}'s columns of ${table} name no columns`);
+        }
+        if (!owned.reason.trim()) {
+          bad(`rebuilder ${step.id}'s columns of ${table} have no reason`);
+        }
+        continue;
+      }
       if (partition) {
         // A partition may be of any area's INDEX table: its writers share it.
         if (kind === 'seed') {
@@ -294,12 +505,111 @@ function stepProblems(
         problem(`${kind} ${step.id} needs ${need.table} without a reason`);
       }
     }
+    for (const plan of step.plannedRows ?? []) {
+      const problem = (detail: string) =>
+        problems.push({
+          kind: 'BAD_STEP',
+          area: manifest.area,
+          table: plan.table,
+          detail
+        });
+      if (kind === 'seed') {
+        problem(
+          `seed ${step.id} plans rows of ${plan.table}; only a rebuilder plans rows`
+        );
+      } else if (!rowWrittenTables(step).includes(plan.table)) {
+        problem(
+          `rebuilder ${step.id} plans rows of ${plan.table}, whose rows it doesn't write`
+        );
+      }
+      if (!plan.where?.trim()) {
+        problem(
+          `${kind} ${step.id}'s planned rows of ${plan.table} have no where`
+        );
+      }
+      if (!plan.reason?.trim()) {
+        problem(
+          `${kind} ${step.id}'s planned rows of ${plan.table} have no reason`
+        );
+      }
+      if (plan.until === undefined || !validUntil(plan.until)) {
+        problem(
+          `${kind} ${step.id}'s planned rows of ${plan.table} need an until, their last day written YYYY-MM-DD`
+        );
+      }
+      if (!plan.change?.trim()) {
+        problem(
+          `${kind} ${step.id}'s planned rows of ${plan.table} name no change that brings their source`
+        );
+      }
+      if (plan.columns !== undefined) {
+        problems.push(
+          ...plannedColumnProblems(step, plan, input.manifests).map(
+            (detail): RegistryProblem => ({
+              kind: 'BAD_STEP',
+              area: manifest.area,
+              table: plan.table,
+              detail
+            })
+          )
+        );
+      }
+    }
     if (step.timeoutMinutes <= 0) {
       problems.push({
         kind: 'BAD_STEP',
         area: manifest.area,
         detail: `${kind} ${step.id} has no time limit`
       });
+    }
+    const pathProblem =
+      'module' in step.run ? modulePathProblem(step.run.module) : null;
+    if ('module' in step.run && pathProblem) {
+      problems.push({
+        kind: 'BAD_STEP',
+        area: manifest.area,
+        detail: `${kind} ${step.id}'s module ${step.run.module} ${pathProblem}: name a path in the repo without an extension`
+      });
+    }
+  }
+  return problems;
+}
+
+/**
+ * A plan's columns: plain names, each once, and none another rebuilder
+ * owns (its owner rebuilds that column, so its differences are the
+ * owner's). Whether the table has them is checked when a run starts.
+ */
+function plannedColumnProblems(
+  step: RebuildStep,
+  plan: PlannedRows,
+  manifests: readonly AreaManifest[]
+): string[] {
+  const columns = plan.columns ?? [];
+  const at = `rebuilder ${step.id}'s planned columns of ${plan.table}`;
+  const problems: string[] = [];
+  if (!columns.length) problems.push(`${at} name none`);
+  for (const column of columns) {
+    if (!/^[A-Za-z0-9_]+$/.test(column)) {
+      problems.push(`${at} name '${column}', not a plain column name`);
+    }
+  }
+  if (new Set(columns).size !== columns.length) {
+    problems.push(`${at} name a column twice`);
+  }
+  for (const other of manifests.flatMap((m) => m.rebuilders)) {
+    if (other.id === step.id) continue;
+    for (const write of columnWritesOf(other)) {
+      if (write.table !== plan.table) continue;
+      // MySQL column names compare case-insensitively.
+      const owned = columns.filter((column) =>
+        write.columns.some((c) => c.toLowerCase() === column.toLowerCase())
+      );
+      if (owned.length) {
+        problems.push(
+          `${at} include ${owned.join(', ')}, which ${other.id} owns`
+        );
+      }
     }
   }
   return problems;
@@ -308,17 +618,27 @@ function stepProblems(
 /**
  * A rebuilder that reads a table another rebuilder writes must run after
  * it, or it reads an empty table (holdings reads identity's consolidation
- * keys, for example).
+ * keys, for example). Writes of the steps in `leftOut` (planned, their
+ * module not here yet) are left out until the module is here.
  */
 function readOrderProblems(
-  rebuilders: readonly RebuildStep[]
+  rebuilders: readonly RebuildStep[],
+  leftOut: ReadonlySet<string>
 ): RegistryProblem[] {
-  const writers = writersOf(rebuilders);
+  const writers = writersOf(rebuilders.filter((s) => !leftOut.has(s.id)));
   const waits = waitsOn(rebuilders);
   const problems: RegistryProblem[] = [];
   for (const step of rebuilders) {
     for (const table of step.reads ?? []) {
-      for (const { step: writer } of writers.get(table) ?? []) {
+      const writesIt = writtenTables(step).includes(table);
+      for (const { step: writer, columns } of writers.get(table) ?? []) {
+        // A writer of the table that reads it waits on none of its column
+        // owners (they run after the row writer, and in their own `after`
+        // order), and an owner's wait on the row writer is checked with
+        // the owners.
+        if (writesIt && (columns || !rowWrittenTables(step).includes(table))) {
+          continue;
+        }
         if (
           writer !== step.id &&
           !(waits.get(step.id) ?? []).includes(writer)
@@ -356,16 +676,25 @@ function lastProblems(manifests: readonly AreaManifest[]): RegistryProblem[] {
     ),
     ...seeds
       .filter((seed) => !seed.last)
-      .flatMap((seed) =>
-        (seed.after ?? [])
+      .flatMap((seed) => [
+        ...(seed.after ?? [])
           .filter((id) => last.has(id))
           .map(
             (id): RegistryProblem => ({
               kind: 'BAD_ORDER',
               detail: `seed ${seed.id} waits on last seed ${id}; mark it last too`
             })
+          ),
+        ...(seed.needsSteps ?? [])
+          .map((need) => need.step)
+          .filter((id) => last.has(id))
+          .map(
+            (id): RegistryProblem => ({
+              kind: 'BAD_ORDER',
+              detail: `seed ${seed.id} needs last seed ${id}; mark it last too`
+            })
           )
-      ),
+      ]),
     ...seeds
       .filter((seed) => seed.last)
       .flatMap((seed) =>
@@ -381,10 +710,87 @@ function lastProblems(manifests: readonly AreaManifest[]): RegistryProblem[] {
   ];
 }
 
+/**
+ * Each step's needs on other steps: a known step, never itself, with a
+ * reason; a seed may need only seeds, since every seed runs before the
+ * rebuilders. A need is also an order edge, which orderProblems checks.
+ */
+function needStepProblems(
+  manifests: readonly AreaManifest[]
+): RegistryProblem[] {
+  const seeds = new Set(manifests.flatMap((m) => m.seeds.map((s) => s.id)));
+  const rebuilders = new Set(
+    manifests.flatMap((m) => m.rebuilders.map((s) => s.id))
+  );
+  const problems: RegistryProblem[] = [];
+  for (const manifest of manifests) {
+    for (const [kind, steps] of [
+      ['seed', manifest.seeds],
+      ['rebuilder', manifest.rebuilders]
+    ] as const) {
+      for (const step of steps) {
+        for (const need of step.needsSteps ?? []) {
+          const problem = (kindOf: RegistryProblem['kind'], detail: string) =>
+            problems.push({ kind: kindOf, area: manifest.area, detail });
+          if (need.step === step.id) {
+            problem('BAD_ORDER', `${kind} ${step.id} needs itself`);
+          } else if (!seeds.has(need.step) && !rebuilders.has(need.step)) {
+            problem(
+              'BAD_ORDER',
+              `${kind} ${step.id} needs unknown step ${need.step}`
+            );
+          } else if (kind === 'seed' && !seeds.has(need.step)) {
+            problem(
+              'BAD_ORDER',
+              `seed ${step.id} needs rebuilder ${need.step}; every seed runs before the rebuilders`
+            );
+          }
+          if (!need.reason?.trim()) {
+            problem(
+              'BAD_STEP',
+              `${kind} ${step.id} needs step ${need.step} without a reason`
+            );
+          }
+        }
+      }
+    }
+  }
+  return problems;
+}
+
+/** An id names one step: a seed and a rebuilder never share one. */
+function sharedIdProblems(
+  manifests: readonly AreaManifest[]
+): RegistryProblem[] {
+  const seeds = new Set(manifests.flatMap((m) => m.seeds.map((s) => s.id)));
+  return manifests
+    .flatMap((m) => m.rebuilders)
+    .filter((step) => seeds.has(step.id))
+    .map(
+      (step): RegistryProblem => ({
+        kind: 'BAD_STEP',
+        detail: `id ${step.id} names both a seed and a rebuilder`
+      })
+    );
+}
+
+/**
+ * Duplicate ids, unknown ids in `after` and `before`, and cycles among
+ * one kind of step. An unknown id whose prefix (up to its first dot) is
+ * another known area than the declaring step's is a cross-area edge to a
+ * step a later branch brings: it goes to `edges`, not to the problems.
+ * An unknown id of the step's own area, or with a prefix that names no
+ * area (a misspelled area), fails.
+ */
 function orderProblems(
   label: string,
-  steps: readonly RebuildStep[]
+  manifests: readonly AreaManifest[],
+  stepsOf: (manifest: AreaManifest) => readonly RebuildStep[],
+  edges: CrossAreaEdge[],
+  /** The other kind of step: its ids are known, but out of this order. */
+  other: { readonly label: string; readonly ids: ReadonlySet<string> }
 ): RegistryProblem[] {
+  const steps = manifests.flatMap(stepsOf);
   const problems: RegistryProblem[] = [];
   const seen = new Set<string>();
   for (const step of steps) {
@@ -396,7 +802,52 @@ function orderProblems(
     }
     seen.add(step.id);
   }
-  const { unknown, cyclic } = orderSteps(steps);
+  const known = new Set(steps.map((step) => step.id));
+  const areas = new Map(manifests.map((manifest) => [manifest.area, manifest]));
+  const unknown: { step: string; field: 'after' | 'before'; id: string }[] = [];
+  const otherKind = new Set<string>();
+  for (const manifest of manifests) {
+    for (const step of stepsOf(manifest)) {
+      for (const field of ['after', 'before'] as const) {
+        for (const id of step[field] ?? []) {
+          if (known.has(id)) continue;
+          // Order holds within one kind: seeds run before rebuilders.
+          if (other.ids.has(id)) {
+            otherKind.add(id);
+            continue;
+          }
+          const parts = id.split('.');
+          const target = areas.get(parts[0]);
+          if (
+            parts.length > 1 &&
+            !parts.includes('') &&
+            target &&
+            target.area !== manifest.area
+          ) {
+            // Steps of the same kind only: order holds within one kind.
+            const near = stepsOf(target)
+              .map((s) => s.id)
+              .filter((s) => editDistance(s, id) <= NEAR)
+              .sort((a, b) => editDistance(a, id) - editDistance(b, id));
+            edges.push({
+              step: step.id,
+              field,
+              id,
+              ...(near.length ? { nearest: near[0] } : {})
+            });
+          } else {
+            unknown.push({ step: step.id, field, id });
+          }
+        }
+      }
+    }
+  }
+  for (const id of Array.from(otherKind)) {
+    problems.push({
+      kind: 'BAD_ORDER',
+      detail: `a ${label} waits on ${other.label} ${id}: order holds within one kind`
+    });
+  }
   const details = unknown.map(({ step, field, id }) =>
     field === 'after'
       ? `a ${label} waits on unknown step ${id}`
@@ -405,6 +856,7 @@ function orderProblems(
   for (const detail of Array.from(new Set(details))) {
     problems.push({ kind: 'BAD_ORDER', detail });
   }
+  const { cyclic } = orderSteps(steps);
   if (cyclic.length) {
     problems.push({
       kind: 'BAD_ORDER',
@@ -468,15 +920,106 @@ function foldLikeCollation(value: string): string {
 }
 
 /**
+ * A column owner updates rows its table's row writer wrote, so it runs
+ * after every row writer of the table. As for reads, writes of the steps
+ * in `leftOut` are left out.
+ */
+function columnOrderProblems(
+  rebuilders: readonly RebuildStep[],
+  leftOut: ReadonlySet<string>
+): RegistryProblem[] {
+  const waits = waitsOn(rebuilders);
+  const problems: RegistryProblem[] = [];
+  const writing = rebuilders.filter((s) => !leftOut.has(s.id));
+  writersOf(writing).forEach((writers, table) => {
+    const rowWriters = writers.filter((w) => !w.columns);
+    for (const owner of writers.filter((w) => w.columns)) {
+      for (const writer of rowWriters) {
+        if (writer.step === owner.step) continue;
+        if (!(waits.get(owner.step) ?? []).includes(writer.step)) {
+          problems.push({
+            kind: 'BAD_ORDER',
+            table,
+            detail: `column owner ${owner.step} of ${table} must run after its row writer; add after: ['${writer.step}']`
+          });
+        }
+      }
+    }
+  });
+  return problems;
+}
+
+/**
  * One rebuilder per table, unless every writer of the table declares a
  * partition on the same columns and no two partitions share a tuple.
  */
 function writerProblems(manifests: readonly AreaManifest[]): RegistryProblem[] {
-  const writers = writersOf(manifests.flatMap((m) => m.rebuilders));
+  const all = writersOf(manifests.flatMap((m) => m.rebuilders));
   const problems: RegistryProblem[] = [];
   const double = (table: string, detail: string) =>
     problems.push({ kind: 'DOUBLE_WRITER', table, detail });
-  for (const [table, list] of Array.from(writers)) {
+  for (const [table, writers] of Array.from(all)) {
+    // Column owners: disjoint columns, and a row writer for the rows.
+    const owners = writers.filter((w) => w.columns);
+    const list = writers.filter((w) => !w.columns);
+    if (owners.length && !list.length) {
+      double(
+        table,
+        `${table} has column owners (${owners.map((w) => w.step).join(', ')}) but no row writer`
+      );
+    }
+    for (const owner of owners) {
+      if (list.some((w) => w.step === owner.step)) {
+        double(
+          table,
+          `${owner.step} both writes the rows of ${table} and owns columns of it; a step does one or the other`
+        );
+      }
+    }
+    // Columns no owner may take: the partition writers' and the
+    // checkpoint's, which say which rows are which.
+    const entry = manifests.map((m) => m.tables[table]).find(Boolean);
+    const rowColumns = new Set([
+      ...list.flatMap((w) => w.partition?.columns ?? []),
+      ...(entry?.checkpoint ? [entry.checkpoint.column] : [])
+    ]);
+    for (const owner of owners) {
+      for (const column of owner.columns!) {
+        if (rowColumns.has(column)) {
+          double(
+            table,
+            `${owner.step} owns ${table}.${column}, which says which rows are which (a partition or checkpoint column); only the row writer writes it`
+          );
+        }
+      }
+    }
+    const ownerOf = new Map<string, string>();
+    for (const owner of owners) {
+      for (const column of owner.columns!) {
+        const other = ownerOf.get(column);
+        if (other && other !== owner.step) {
+          double(
+            table,
+            `${table}'s column owners overlap: ${other} and ${owner.step} both own ${column}`
+          );
+        }
+        ownerOf.set(column, owner.step);
+      }
+    }
+    const exempt = new Set(
+      (
+        manifests.map((m) => m.tables[table]).find(Boolean)?.exemptColumns ?? []
+      ).map((e) => e.column)
+    );
+    ownerOf.forEach((owner, column) => {
+      if (exempt.has(column)) {
+        problems.push({
+          kind: 'BAD_EXEMPT',
+          table,
+          detail: `${table}.${column} is exempt and owned by ${owner}; an exempt column has no owner`
+        });
+      }
+    });
     if (list.length < 2) continue;
     const ids = list.map((w) => w.step).join(', ');
     if (list.some((w) => !w.partition)) {
@@ -530,8 +1073,10 @@ function pendingTables(
     )
   );
   for (const manifest of manifests) {
+    // Owning columns rebuilds no rows: only a row writer makes a table
+    // written.
     const written = new Set([
-      ...manifest.rebuilders.flatMap(writtenTables),
+      ...manifest.rebuilders.flatMap(rowWrittenTables),
       ...Array.from(partitioned)
     ]);
     for (const [table, entry] of Object.entries(manifest.tables)) {
@@ -575,6 +1120,13 @@ export function checkRegistry(input: RegistryInput): RegistryResult {
     input.manifests.flatMap((manifest) => Object.keys(manifest.tables))
   );
   const seenProbes = new Set<string>();
+  const rebuilders = input.manifests.flatMap((manifest) => manifest.rebuilders);
+  const codeHere = input.stepCodeHere ?? (() => true);
+  const notHere = rebuilders.filter(
+    (step) => step.origin === 'planned' && !codeHere(step)
+  );
+  const leftOut = new Set(notHere.map((step) => step.id));
+  const crossAreaEdges: CrossAreaEdge[] = [];
   const problems = [
     ...tableProblems(input),
     ...liveProblems(input),
@@ -598,16 +1150,28 @@ export function checkRegistry(input: RegistryInput): RegistryResult {
     ]),
     ...orderProblems(
       'seed',
-      input.manifests.flatMap((manifest) => manifest.seeds)
+      input.manifests,
+      (manifest) => manifest.seeds,
+      crossAreaEdges,
+      { label: 'rebuilder', ids: new Set(rebuilders.map((s) => s.id)) }
     ),
     ...lastProblems(input.manifests),
-    ...readOrderProblems(
-      input.manifests.flatMap((manifest) => manifest.rebuilders)
-    ),
+    ...needStepProblems(input.manifests),
+    ...readOrderProblems(rebuilders, leftOut),
+    ...columnOrderProblems(rebuilders, leftOut),
+    // Unknown ids in `after` and `before` fail whether or not the step's
+    // code is here.
     ...orderProblems(
       'rebuilder',
-      input.manifests.flatMap((manifest) => manifest.rebuilders)
+      input.manifests,
+      (manifest) => manifest.rebuilders,
+      crossAreaEdges,
+      {
+        label: 'seed',
+        ids: new Set(input.manifests.flatMap((m) => m.seeds.map((s) => s.id)))
+      }
     ),
+    ...sharedIdProblems(input.manifests),
     ...writerProblems(input.manifests)
   ];
   return {
@@ -621,6 +1185,10 @@ export function checkRegistry(input: RegistryInput): RegistryResult {
             entry.origin === 'planned' && !input.codeTables.has(table)
         )
         .map(([table]) => ({ area: manifest.area, table }))
-    )
+    ),
+    orderLeftOut: notHere
+      .map((step) => ({ step: step.id, tables: writtenTables(step) }))
+      .filter((entry) => entry.tables.length),
+    crossAreaEdges
   };
 }

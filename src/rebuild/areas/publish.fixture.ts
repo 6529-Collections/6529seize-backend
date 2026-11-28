@@ -1,11 +1,17 @@
-import { probeProfileId } from '@/rebuild/run/probe-fixture.steps';
 import {
   aSignedProfileSite,
   SignedSiteFixture
 } from '@/tests/fixtures/profile-cms-chain.fixture';
 
-/** The profile the publish seed's sites belong to: the first probe profile. */
-export const PUBLISH_SEED_PROFILE = probeProfileId(1);
+/**
+ * The profile the publish seed's sites belong to: the first probe profile.
+ * The seed reads it by wallet; the manifest's probes take the identity
+ * world's values, since a probe's path holds literals.
+ */
+export interface PublishSeedProfile {
+  readonly id: string;
+  readonly handle: string;
+}
 
 /** The ids the publish seed writes and its probes ask about. */
 export const PUBLISH_SEED_IDS = {
@@ -14,18 +20,19 @@ export const PUBLISH_SEED_IDS = {
 } as const;
 
 /**
- * The publish seed's sites, signed by the fixture wallet: version 1,
- * published; version 2, a draft; and an agent's candidate for version 2.
+ * The publish seed's sites for `profile`, signed by the fixture wallet:
+ * version 1, published; version 2, a draft; and an agent's candidate for
+ * version 2.
  */
-export function publishSeedSites(): {
+export function publishSeedSites(profile: PublishSeedProfile): {
   readonly published: SignedSiteFixture;
   readonly draft: SignedSiteFixture;
   readonly candidate: SignedSiteFixture;
 } {
   const site = (version: number, title: string, draftId: string) =>
     aSignedProfileSite({
-      profileId: PUBLISH_SEED_PROFILE,
-      handle: PUBLISH_SEED_PROFILE,
+      profileId: profile.id,
+      handle: profile.handle,
       draftId,
       version,
       title

@@ -1,18 +1,25 @@
 import { createHash } from 'node:crypto';
 import { AreaManifest, Probe, RebuildStep } from '@/rebuild/manifest.types';
-import { PROBE_CALLER, PROBE_WALLETS } from '@/rebuild/manifests/probe-fixture';
+import {
+  PROBE_CALLER,
+  PROBE_WALLETS,
+  worldActorIdentity,
+  worldActorProfileId,
+  worldActorWallet
+} from '@/rebuild/manifests/probe-fixture';
 import {
   PUBLISH_SEED_IDS,
-  PUBLISH_SEED_PROFILE,
+  PublishSeedProfile,
   publishSeedSites
 } from '@/rebuild/areas/publish.fixture';
 
 /**
- * The records service of a rebuild run: a fake wave, profile and wallet,
- * and a provider key made only for the rebuild check, derived from a
- * public label so it can never be mistaken for a real one. The same
- * values as the personal area's: the run refuses a flag two manifests set
- * differently, so the two can't drift apart.
+ * The records service of a rebuild run: a fake wave, the world's
+ * records-service actor (its profile and wallet, which the identity seed
+ * writes), and a provider key made only for the rebuild check, derived
+ * from a public label so it can never be mistaken for a real one. Every
+ * manifest that sets these flags sets the same values: the run refuses a
+ * flag two manifests set differently, so they can't drift apart.
  */
 const FIXTURE_PROVIDER_KEY = `0x${createHash('sha256')
   .update('6529 rebuild check: fixture provider key, never a real one')
@@ -22,11 +29,21 @@ const FIXTURE_RECORDS_FLAGS = {
     { id: 'rebuild-fixture', private_key: FIXTURE_PROVIDER_KEY }
   ]),
   SIGNED_RECORDS_WAVE_ID: '00000000-0000-4000-8000-0000000000e1',
-  SIGNED_RECORDS_SERVICE_PROFILE_ID: 'rebuild-records-service',
-  SIGNED_RECORDS_SERVICE_WALLET: '0x00000000000000000000000000000000000000a1'
+  SIGNED_RECORDS_SERVICE_PROFILE_ID: worldActorProfileId('records-service'),
+  SIGNED_RECORDS_SERVICE_WALLET: worldActorWallet('records-service')
 };
 
-const SITES = publishSeedSites();
+/**
+ * The first probe profile as the identity world holds it, since a probe's
+ * path holds literals; the seed reads the same profile by wallet. Were the
+ * two ever to differ, these probes would answer 404 in pass A.
+ */
+const PROBE_PROFILE: PublishSeedProfile = {
+  id: worldActorProfileId('probe-1'),
+  handle: worldActorIdentity('probe-1').handle
+};
+
+const SITES = publishSeedSites(PROBE_PROFILE);
 
 /**
  * The profile-site and CMS answers. The publish seed publishes a site for
@@ -48,12 +65,12 @@ const PROBES: Probe[] = [
   {
     id: 'publish.profile-cms-primary',
     path: '/api/profile-cms/{handle}/primary',
-    each: { handle: [PUBLISH_SEED_PROFILE, PROBE_WALLETS[0]] }
+    each: { handle: [PROBE_PROFILE.handle, PROBE_WALLETS[0]] }
   },
   {
     id: 'publish.profile-cms-packages',
     path: '/api/profile-cms/profiles/{profile_id}/packages',
-    each: { profile_id: [PUBLISH_SEED_PROFILE] }
+    each: { profile_id: [PROBE_PROFILE.id] }
   },
   {
     id: 'publish.profile-cms-package',
@@ -70,7 +87,7 @@ const PROBES: Probe[] = [
     id: 'publish.profile-cms-version',
     path: '/api/profile-cms/profiles/{profile_id}/packages/{package_id}/versions/{version}',
     each: {
-      profile_id: [PUBLISH_SEED_PROFILE],
+      profile_id: [PROBE_PROFILE.id],
       package_id: [SITES.published.cmsPackage.package_id],
       // Only published versions are public.
       version: ['1']
@@ -152,9 +169,6 @@ const PUBLISH_SEED: RebuildStep = {
     'signed_record_log_entries',
     'signed_record_log_segments',
     'identity_subscriptions',
-    'identities',
-    'address_consolidation_keys',
-    'profiles',
     'waves',
     'drops',
     'drops_parts',
@@ -162,8 +176,9 @@ const PUBLISH_SEED: RebuildStep = {
     'wave_dropper_metrics'
   ],
   reads: ['profile_cms_chain_heads'],
-  // The first probe profile's identity first.
-  after: ['identity.probe-profiles'],
+  // The world's actors first, proven held: the first probe profile, by
+  // its fixed id, and the records service, read by wallet.
+  after: ['identity.actors-check'],
   sources: ['files', 'repo'],
   timeoutMinutes: 10
 };

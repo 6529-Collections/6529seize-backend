@@ -2,7 +2,11 @@ import * as emma from '@/api/subscriptions/api.subscriptions.allowlist';
 import { randomUUID } from 'node:crypto';
 import { DROP_FORGE_JOBS_TABLE } from '@/constants';
 import { DropForgeJobEntity } from '@/entities/IDropForgeLaunch';
-import { createProcess, processStep } from '@/drop-forge/drop-forge.workflow';
+import {
+  createProcess,
+  decodeProcessResult,
+  processStep
+} from '@/drop-forge/drop-forge.workflow';
 import { dropForgeJobsRepository } from '@/drop-forge/drop-forge.jobs.repository';
 import * as preparation from '@/drop-forge/drop-forge.preparation';
 import { clearDropForgeTestTables } from '@/drop-forge/drop-forge.db-test-fixtures';
@@ -62,6 +66,19 @@ it('deduplicates Process clicks and discovers the same workflow after refresh', 
   ).rejects.toThrow('different processing');
 });
 it('checkpoints each phase and completes only after public processing and finalization', async () => {
+  const phaseTwoRows = Array.from({ length: 9_154 }, (_, index) => ({
+    id: `result-${index}`,
+    wallet: `0x${index.toString(16).padStart(40, '0')}`,
+    phaseId: 'two',
+    allowlistId: 'plan',
+    phaseComponentId: 'collectors',
+    amount: 1
+  }));
+  jest
+    .mocked(emma.fetchPhaseResults)
+    .mockImplementation(async (_, __, id) =>
+      id === 'two' ? phaseTwoRows : []
+    );
   const first = await createProcess(job(), {}, 'Bearer operator-token');
   const prepare = jest
     .spyOn(preparation, 'prepareDistributionPhase')
@@ -82,11 +99,37 @@ it('checkpoints each phase and completes only after public processing and finali
       (next, ctx) => processStep(next, 'auth', ctx),
       {}
     );
-    const current = await dropForgeJobsRepository.find(first.id, {});
-    expect(current.status).toBe(step === 4 ? 'COMPLETED' : 'PENDING');
-    expect(current.step).toBe(Math.min(step + 1, 4));
-    expect(current.encrypted_auth).toBeNull();
+    const status = await dropForgeJobsRepository.latestStatus(
+      first.contract,
+      first.claim_id,
+      'plan',
+      {}
+    );
+    expect(status).toMatchObject({
+      id: first.id,
+      status: step === 4 ? 'COMPLETED' : 'PENDING',
+      step: Math.min(step + 1, 4)
+    });
+    expect(status).not.toHaveProperty('result');
+    expect(status).not.toHaveProperty('encrypted_auth');
+    expect(
+      (await dropForgeJobsRepository.find(first.id, {})).encrypted_auth
+    ).toBeNull();
   }
+  const completed = await dropForgeJobsRepository.latest(
+    first.contract,
+    first.claim_id,
+    undefined,
+    {}
+  );
+  expect(completed).toMatchObject({
+    id: first.id,
+    status: 'COMPLETED',
+    encrypted_auth: null
+  });
+  expect(completed && decodeProcessResult(completed)?.inputs?.two.rows).toEqual(
+    phaseTwoRows
+  );
   expect(prepare.mock.calls.map((call) => call[3])).toEqual([
     'zero',
     'one',
