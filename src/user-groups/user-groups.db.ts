@@ -37,6 +37,7 @@ import { collections } from '../collections';
 import { Time } from '../time';
 import { DbPoolName } from '../db-query.options';
 import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
+import { toRuleNeutralLevelBounds } from '@/groups/group-level-bounds';
 
 const mysql = require('mysql');
 
@@ -291,7 +292,9 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
                   :is_beneficiary_of_grant_id,
                   :is_beneficiary_of_grant_match_mode)
     `,
-      { ...entity },
+      // Every group save goes through here. Level bounds are stored in a
+      // form that keeps the group's members when levels go above 100.
+      { ...entity, ...toRuleNeutralLevelBounds(entity) },
       { wrappedConnection: connection }
     );
   }
