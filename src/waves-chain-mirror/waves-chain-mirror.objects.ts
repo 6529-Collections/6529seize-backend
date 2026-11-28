@@ -168,6 +168,7 @@ export type ObjectsStore = Pick<
   | 'addAddressIdentities'
   | 'identityRowsReached'
   | 'ownRowsWithoutProfile'
+  | 'addressesMappedElsewhere'
   | 'groupsHeld'
   | 'groupsHeldReported'
   | 'groupRow'
@@ -253,6 +254,18 @@ type ParentChoice =
   | typeof WAIT_FOR_PARENT;
 /** A child waits this long after it was made for a parent made on the chain. */
 export const PARENT_WAIT_MS = 24 * 60 * 60_000;
+
+/**
+ * Whether a group's definition lists an address: only such a group can be
+ * held for the identity mirror.
+ */
+function listsAddresses(group: ChainGroup): boolean {
+  const def = group.definition;
+  return (
+    !!def &&
+    [...def.includes, ...def.excludes].some((m) => m.kind === 'address')
+  );
+}
 
 /** Whether a decision made on the chain has a policy version to write. */
 function decisionDue(
@@ -396,6 +409,8 @@ export class WavesChainObjectsMirror {
     );
     // The chain heights of the groups held for the identity mirror this run.
     const held: number[] = [];
+    // Groups listing addresses (the only ones that can be held) that failed.
+    let failedListing = 0;
     for (const group of groups) {
       const record = groupRecords.get(group.groupId);
       if (record && record.version === group.version) {
@@ -406,14 +421,29 @@ export class WavesChainObjectsMirror {
         report.groups.left++;
         continue;
       }
+      const failed = report.groups.failed;
       await this.count(report.groups, `group ${group.groupId}`, () =>
         this.mirrorGroup(group, record, { ...input, held }, now)
       );
+      if (report.groups.failed > failed && listsAddresses(group)) {
+        failedListing++;
+      }
     }
-    // Only a writing run keeps the hold (its state row and WARN); one that
-    // left groups for later keeps a hold it can't see the end of.
-    if (input.write && (held.length || !report.groups.left)) {
-      await this.reportHeldGroups(held, now);
+    // Only a writing run keeps the hold (its state row and WARN). One that
+    // left groups for later, or failed to look at one listing addresses,
+    // may have missed a held group: it keeps a hold it can't see the end
+    // of, and the count of the last run that looked at them all.
+    const complete = !report.groups.left && !failedListing;
+    if (input.write && (held.length || complete)) {
+      try {
+        await this.reportHeldGroups(held, complete, now);
+      } catch (error) {
+        // The hold's record only: the pass goes on, and the next writing
+        // run tries it again.
+        logger.error(
+          `[WAVES CHAIN MIRROR] groups held for identity rows not kept: ${error}`
+        );
+      }
     }
     // A rebuild matches every imported group the chain never replaced to
     // 6529.io's row, keeping the match (the rows it can't make are these).
@@ -635,21 +665,32 @@ export class WavesChainObjectsMirror {
    * hold has lasted GROUPS_HELD_REPORT_MS writes one WARN naming the oldest
    * held height (again only after a hold clears and builds up again). A
    * held group only delays 6529.io's copy of it; a hold that lasts means
-   * the identity mirror is behind or stopped.
+   * the identity mirror is behind or stopped. A run that didn't look at
+   * every group that can be held (`complete` false) keeps the count and
+   * height a hold already has; a hold it starts takes its own, which may
+   * fall short (its oldest height need not be the oldest). The WARN names
+   * the kept ones.
    */
-  private async reportHeldGroups(held: readonly number[], now: number) {
-    const oldestHeight = held.length ? Math.min(...held) : null;
+  private async reportHeldGroups(
+    held: readonly number[],
+    complete: boolean,
+    now: number
+  ) {
     const hold = await this.store.groupsHeld(
-      { count: held.length, oldestHeight },
+      {
+        count: held.length,
+        oldestHeight: held.length ? Math.min(...held) : null,
+        complete
+      },
       now
     );
     if (!hold || hold.reported || now - hold.since < GROUPS_HELD_REPORT_MS) {
       return;
     }
     logger.warn(
-      `[WAVES CHAIN MIRROR] [GROUPS HELD FOR IDENTITY ROWS] [OLDEST HEIGHT ${oldestHeight}] [HELD SINCE ${new Date(
+      `[WAVES CHAIN MIRROR] [GROUPS HELD FOR IDENTITY ROWS] [OLDEST HEIGHT ${hold.oldestHeight}] [HELD SINCE ${new Date(
         hold.since
-      ).toISOString()}] [GROUPS ${held.length}]`
+      ).toISOString()}] [GROUPS ${hold.count}]`
     );
     await this.store.groupsHeldReported();
   }
@@ -754,6 +795,16 @@ export class WavesChainObjectsMirror {
     const idTime = group.activeFrom;
     if (unknown.length && idTime === null) {
       return wait('group_without_block_time');
+    }
+    // An address mapped to another row (an identity of several wallets)
+    // that has no profile id is given none, so the write would roll back
+    // (AddressesWithoutProfile): the group waits, in a report-only run as
+    // in a writing one.
+    if (
+      unknown.length &&
+      (await this.store.addressesMappedElsewhere(unknown)).size
+    ) {
+      return wait('group_address_without_profile');
     }
     counter.change('community_groups', existing ? 'update' : 'insert');
     counter.change(

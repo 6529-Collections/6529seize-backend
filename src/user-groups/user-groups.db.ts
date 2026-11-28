@@ -356,7 +356,9 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
           (it) => !alreadyInsertedProfileIds.includes(it)
         );
         if (missingProfileIds.length) {
-          await this.insertGroupChanges(missingProfileIds);
+          // On the group's connection: a later chunk refused rolls these
+          // back with the memberships.
+          await this.insertGroupChanges(missingProfileIds, connection);
           let sql = `insert into ${PROFILE_GROUPS_TABLE} (profile_group_id, profile_id)
                  values `;
           for (const profileId of missingProfileIds) {
@@ -1296,14 +1298,18 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
       });
   }
 
-  async insertGroupChanges(profileIds: string[]) {
+  async insertGroupChanges(
+    profileIds: string[],
+    connection?: ConnectionWrapper<any>
+  ) {
     if (!profileIds.length) return null;
     const currentMillis = Time.currentMillis();
     const chunkSize = 1000;
+    const opts = connection ? { wrappedConnection: connection } : undefined;
     for (let i = 0; i < profileIds.length; i += chunkSize) {
       const chunk = profileIds.slice(i, i + chunkSize);
       const sql = `INSERT INTO ${PROFILE_GROUP_CHANGES} (profile_id, chg_time) values ${chunk.map((profileId) => `(${mysql.escape(profileId)}, ${currentMillis})`).join(', ')}`;
-      await this.db.execute(sql);
+      await this.db.execute(sql, undefined, opts);
     }
   }
 

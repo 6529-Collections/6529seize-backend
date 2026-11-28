@@ -279,6 +279,8 @@ export class FakeObjectsStore implements ObjectsStore {
   ) {
     const out = new Map<string, string>();
     for (const address of addresses) {
+      // Left as it is, and without a profile id.
+      if (this.mappedElsewhere.has(address)) continue;
       if (!this.addressProfiles.has(address)) {
         this.addedIdentities.push(address);
         this.addressProfiles.set(address, `profile-of-${address.slice(2, 8)}`);
@@ -295,24 +297,42 @@ export class FakeObjectsStore implements ObjectsStore {
   async ownRowsWithoutProfile(addresses: readonly string[]) {
     return new Set(addresses.filter((a) => this.rowsWithoutProfile.has(a)));
   }
+  /**
+   * Addresses mapped to an identity of several wallets that has no profile
+   * id: never given one.
+   */
+  mappedElsewhere = new Set<string>();
+  async addressesMappedElsewhere(addresses: readonly string[]) {
+    return new Set(addresses.filter((a) => this.mappedElsewhere.has(a)));
+  }
   async identityRowsReached(height: number) {
     return this.identityHeight === null || this.identityHeight >= height;
   }
   async groupsHeld(
-    held: { readonly count: number; readonly oldestHeight: number | null },
+    held: {
+      readonly count: number;
+      readonly oldestHeight: number | null;
+      readonly complete: boolean;
+    },
     now: number
   ) {
     if (!held.count) {
       this.held = null;
       return null;
     }
+    const kept = held.complete ? null : this.held;
     this.held = {
       since: this.held?.since ?? now,
-      height: held.oldestHeight,
-      count: held.count,
+      height: kept ? kept.height : held.oldestHeight,
+      count: kept ? kept.count : held.count,
       reported: this.held?.reported ?? false
     };
-    return { since: this.held.since, reported: this.held.reported };
+    return {
+      since: this.held.since,
+      reported: this.held.reported,
+      count: this.held.count,
+      oldestHeight: this.held.height
+    };
   }
   async groupsHeldReported() {
     if (this.held) this.held = { ...this.held, reported: true };

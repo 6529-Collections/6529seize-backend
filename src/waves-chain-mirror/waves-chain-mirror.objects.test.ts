@@ -231,6 +231,31 @@ describe('WavesChainObjectsMirror: groups', () => {
     expect(store.groupRecords.has(G)).toBe(false);
   });
 
+  it.each([
+    ['report-only', false],
+    ['writing', true]
+  ])(
+    '%s: waits with a group listing an address an identity of several wallets without a profile id holds, counting no write',
+    async (_, write) => {
+      const { store, run } = world();
+      store.mappedElsewhere.add(A2);
+      store.chainGroups = [
+        aChainGroupRow(G, {
+          includes: [
+            { kind: 'address', value: A1 },
+            { kind: 'address', value: A2 }
+          ]
+        })
+      ];
+      const { report, counter } = await run(write);
+      expect(report.groups).toMatchObject({ mirrored: 0, waiting: 1 });
+      expect(counter.waiting).toEqual({ group_address_without_profile: 1 });
+      expect(counter.changes).toEqual({});
+      expect(store.addedIdentities).toEqual([]);
+      expect(store.writes()).toBe(0);
+    }
+  );
+
   it.each(['live', 'rebuild'] as const)(
     '%s: reports a hold once it has lasted 15 minutes, naming the oldest held height, and again only after a new hold',
     async (mode) => {
@@ -317,6 +342,151 @@ describe('WavesChainObjectsMirror: groups', () => {
     at(NOW + 60_000);
     await run(true, () => true);
     expect(store.held).toMatchObject({ since: NOW, height: 30, count: 1 });
+  });
+
+  it('keeps a hold through a run whose look at a held group failed, and clears it once a full look finds none', async () => {
+    const error = jest
+      .spyOn(Logger.get('WAVES_CHAIN_MIRROR_OBJECTS'), 'error')
+      .mockImplementation(() => undefined);
+    try {
+      const { store, run, at } = world();
+      store.identityHeight = 10;
+      store.chainGroups = [
+        aChainGroupRow(
+          G,
+          { includes: [{ kind: 'address', value: A1 }] },
+          { height: 30 }
+        )
+      ];
+      await run();
+      at(NOW + 60_000);
+      jest
+        .spyOn(store, 'identityRowsReached')
+        .mockRejectedValueOnce(new Error('identity state unreadable'));
+      const failed = await run();
+      expect(failed.report.groups.failed).toBe(1);
+      expect(store.held).toMatchObject({ since: NOW, height: 30, count: 1 });
+
+      // The identity rows catch up: a full look clears the hold.
+      store.identityHeight = null;
+      await run();
+      expect(store.held).toBeNull();
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it('clears a hold, and reports the next one, while a group listing no address fails every run', async () => {
+    const log = Logger.get('WAVES_CHAIN_MIRROR_OBJECTS');
+    const error = jest.spyOn(log, 'error').mockImplementation(() => undefined);
+    const warn = jest.spyOn(log, 'warn').mockImplementation(() => undefined);
+    try {
+      const { store, run, at } = world();
+      const BROKEN = chainWord('0e');
+      const groupRow = store.groupRow.bind(store);
+      jest.spyOn(store, 'groupRow').mockImplementation(async (id) => {
+        if (id === BROKEN) throw new Error('group row unreadable');
+        return groupRow(id);
+      });
+      store.identityHeight = 10;
+      store.chainGroups = [
+        aChainGroupRow(
+          G,
+          { includes: [{ kind: 'address', value: A1 }] },
+          { height: 30 }
+        ),
+        aChainGroupRow(BROKEN, { includes: [{ kind: 'principal', value: P2 }] })
+      ];
+      const heldWarns = () =>
+        warn.mock.calls.filter(([line]) =>
+          String(line).includes('[GROUPS HELD FOR IDENTITY ROWS]')
+        );
+      await run();
+      at(NOW + GROUPS_HELD_REPORT_MS);
+      await run();
+      expect(store.held).toMatchObject({ count: 1, reported: true });
+      expect(heldWarns()).toHaveLength(1);
+
+      // The identity rows catch up: the hold clears, the failing group
+      // listing no address notwithstanding.
+      store.identityHeight = null;
+      at(NOW + 2 * GROUPS_HELD_REPORT_MS);
+      const caughtUp = await run();
+      expect(caughtUp.report.groups).toMatchObject({ mirrored: 1, failed: 1 });
+      expect(store.held).toBeNull();
+
+      // A new hold is reported once it lasts.
+      store.chainGroups.push(
+        aChainGroupRow(
+          chainWord('0d'),
+          { includes: [{ kind: 'address', value: A2 }] },
+          { height: 40 }
+        )
+      );
+      store.identityHeight = 39;
+      const start = NOW + 3 * GROUPS_HELD_REPORT_MS;
+      at(start);
+      await run();
+      at(start + GROUPS_HELD_REPORT_MS);
+      await run();
+      expect(heldWarns()).toHaveLength(2);
+      expect(heldWarns()[1][0]).toContain(
+        `[OLDEST HEIGHT 40] [HELD SINCE ${new Date(start).toISOString()}] [GROUPS 1]`
+      );
+    } finally {
+      error.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  it('keeps the held count and oldest height of the last full look when the budget runs out after the first held group', async () => {
+    const warn = jest
+      .spyOn(Logger.get('WAVES_CHAIN_MIRROR_OBJECTS'), 'warn')
+      .mockImplementation(() => undefined);
+    try {
+      const { store, run, at } = world();
+      store.identityHeight = 10;
+      store.chainGroups = [
+        aChainGroupRow(
+          G,
+          { includes: [{ kind: 'address', value: A1 }] },
+          { height: 30 }
+        ),
+        aChainGroupRow(
+          chainWord('0c'),
+          { includes: [{ kind: 'address', value: A2 }] },
+          { height: 25 }
+        )
+      ];
+      await run();
+      expect(store.held).toMatchObject({ since: NOW, height: 25, count: 2 });
+
+      // Time for one group: G is looked at, still held; the other is left.
+      at(NOW + GROUPS_HELD_REPORT_MS);
+      let looks = 0;
+      const partial = await run(true, () => ++looks > 1);
+      expect(partial.report.groups).toMatchObject({ waiting: 1, left: 1 });
+      expect(store.held).toEqual({
+        since: NOW,
+        height: 25,
+        count: 2,
+        reported: true
+      });
+      // Its WARN names the last full look's count and height.
+      expect(
+        warn.mock.calls.filter(([line]) =>
+          String(line).includes('[GROUPS HELD FOR IDENTITY ROWS]')
+        )
+      ).toEqual([
+        [
+          `[WAVES CHAIN MIRROR] [GROUPS HELD FOR IDENTITY ROWS] [OLDEST HEIGHT 25] [HELD SINCE ${new Date(
+            NOW
+          ).toISOString()}] [GROUPS 2]`
+        ]
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('counts a held group in a report-only run, but keeps no hold and writes no WARN', async () => {
@@ -695,6 +865,56 @@ describe('WavesChainObjectsMirror: waves', () => {
     expect(again.report.waves).toMatchObject({ mirrored: 0, unchanged: 1 });
     expect(store.waveCreates).toHaveLength(1);
   });
+
+  it.each(['groupsHeld', 'groupsHeldReported'] as const)(
+    'writes the waves when keeping the groups hold fails (%s), and the next run keeps it',
+    async (method) => {
+      const log = Logger.get('WAVES_CHAIN_MIRROR_OBJECTS');
+      const error = jest
+        .spyOn(log, 'error')
+        .mockImplementation(() => undefined);
+      const warn = jest.spyOn(log, 'warn').mockImplementation(() => undefined);
+      try {
+        const { store, run } = nativeWave();
+        store.identityHeight = 10;
+        store.chainGroups.push(
+          aChainGroupRow(
+            chainWord('0c'),
+            { includes: [{ kind: 'address', value: A1 }] },
+            { height: 30 }
+          )
+        );
+        // A hold that has lasted 15 minutes, its WARN not written yet.
+        const since = NOW - GROUPS_HELD_REPORT_MS;
+        store.held = { since, height: 30, count: 1, reported: false };
+        jest
+          .spyOn(store, method)
+          .mockRejectedValueOnce(new Error('state row unavailable'));
+        const { report } = await run();
+        expect(report.groups).toMatchObject({
+          mirrored: 1,
+          waiting: 1,
+          failed: 0
+        });
+        expect(report.waves).toMatchObject({ mirrored: 1, failed: 0 });
+        expect(store.waveCreates).toHaveLength(1);
+        expect(error).toHaveBeenCalledWith(
+          expect.stringContaining('state row unavailable')
+        );
+
+        await run();
+        expect(store.held).toEqual({
+          since,
+          height: 30,
+          count: 1,
+          reported: true
+        });
+      } finally {
+        error.mockRestore();
+        warn.mockRestore();
+      }
+    }
+  );
 
   it('waits with a wave until its group is written', async () => {
     const { store, principals, run } = nativeWave();

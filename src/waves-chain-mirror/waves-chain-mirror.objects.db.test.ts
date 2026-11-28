@@ -124,7 +124,8 @@ describe('WavesChainObjectsMirror in the database', () => {
 
   const run = async (
     verdict: GateVerdict = { kind: 'allowed' },
-    store: WavesChainObjectsDb = objectsDb
+    store: WavesChainObjectsDb = objectsDb,
+    write = true
   ) => {
     const counter = new PlanCounter();
     const report = await new WavesChainObjectsMirror(
@@ -134,7 +135,7 @@ describe('WavesChainObjectsMirror in the database', () => {
       { check: jest.fn().mockResolvedValue(verdict) },
       () => NOW
     ).run({
-      write: true,
+      write,
       documents: new StoredDocuments(
         db,
         { getDocument: jest.fn().mockResolvedValue(null) },
@@ -614,27 +615,127 @@ describe('WavesChainObjectsMirror in the database', () => {
   );
 
   it('keeps when a hold began across runs, marks it reported, and starts again after it clears', async () => {
-    expect(
-      await objectsDb.groupsHeld({ count: 2, oldestHeight: 25 }, NOW)
-    ).toEqual({ since: NOW, reported: false });
-    expect(
-      await objectsDb.groupsHeld({ count: 1, oldestHeight: 30 }, NOW + 1_000)
-    ).toEqual({ since: NOW, reported: false });
+    const full = (count: number, oldestHeight: number | null) => ({
+      count,
+      oldestHeight,
+      complete: true
+    });
+    expect(await objectsDb.groupsHeld(full(2, 25), NOW)).toEqual({
+      since: NOW,
+      reported: false,
+      count: 2,
+      oldestHeight: 25
+    });
+    expect(await objectsDb.groupsHeld(full(1, 30), NOW + 1_000)).toEqual({
+      since: NOW,
+      reported: false,
+      count: 1,
+      oldestHeight: 30
+    });
     expect(await groupsHeldRow()).toEqual([
       { held_since: NOW, held_height: 30, held_count: 1, held_reported: false }
     ]);
     await objectsDb.groupsHeldReported();
-    expect(
-      await objectsDb.groupsHeld({ count: 1, oldestHeight: 30 }, NOW + 2_000)
-    ).toEqual({ since: NOW, reported: true });
-    expect(
-      await objectsDb.groupsHeld({ count: 0, oldestHeight: null }, NOW + 3_000)
-    ).toBeNull();
+    expect(await objectsDb.groupsHeld(full(1, 30), NOW + 2_000)).toEqual({
+      since: NOW,
+      reported: true,
+      count: 1,
+      oldestHeight: 30
+    });
+    expect(await objectsDb.groupsHeld(full(0, null), NOW + 3_000)).toBeNull();
     expect(await groupsHeldRow()).toEqual([]);
-    expect(
-      await objectsDb.groupsHeld({ count: 1, oldestHeight: 40 }, NOW + 4_000)
-    ).toEqual({ since: NOW + 4_000, reported: false });
+    expect(await objectsDb.groupsHeld(full(1, 40), NOW + 4_000)).toEqual({
+      since: NOW + 4_000,
+      reported: false,
+      count: 1,
+      oldestHeight: 40
+    });
   });
+
+  it("keeps a hold's count and oldest height through a run that didn't look at every group", async () => {
+    const partial = (count: number, oldestHeight: number) => ({
+      count,
+      oldestHeight,
+      complete: false
+    });
+    // No hold yet: the run's own count starts it.
+    expect(await objectsDb.groupsHeld(partial(1, 30), NOW)).toEqual({
+      since: NOW,
+      reported: false,
+      count: 1,
+      oldestHeight: 30
+    });
+    await objectsDb.groupsHeld(
+      { count: 2, oldestHeight: 25, complete: true },
+      NOW + 1_000
+    );
+    expect(await objectsDb.groupsHeld(partial(1, 30), NOW + 2_000)).toEqual({
+      since: NOW,
+      reported: false,
+      count: 2,
+      oldestHeight: 25
+    });
+    expect(await groupsHeldRow()).toEqual([
+      { held_since: NOW, held_height: 25, held_count: 2, held_reported: false }
+    ]);
+  });
+
+  it('finds the addresses mapped to another identities row', async () => {
+    // OWN: mapped to its own row. ELSEWHERE: mapped to a row of two wallets.
+    const [OWN, ELSEWHERE] = ['c5', 'c6'].map((b) => `0x${b.repeat(20)}`);
+    await sqlExecutor.execute(
+      `insert into ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key)
+       values (:own, :own), (:elsewhere, :pair)`,
+      { own: OWN, elsewhere: ELSEWHERE, pair: `${ELSEWHERE}-${A1}` }
+    );
+    expect(
+      Array.from(
+        await objectsDb.addressesMappedElsewhere([
+          OWN,
+          ELSEWHERE.toUpperCase().replace('0X', '0x'),
+          A2
+        ])
+      )
+    ).toEqual([ELSEWHERE]);
+  });
+
+  it.each([
+    ['report-only', false],
+    ['writing', true]
+  ])(
+    '%s: waits with a group listing a wallet of an identity of several wallets without a profile id, writing nothing',
+    async (_, write) => {
+      const PAIR = `${A2}-0x${'c7'.repeat(20)}`;
+      await ensurePrincipalMap(sqlExecutor);
+      await mapPrincipals(sqlExecutor, { [P1]: 'profile-1' });
+      await identityMirrorAt(sqlExecutor, 20);
+      await sqlExecutor.execute(
+        `insert into ${IDENTITIES_TABLE}
+           (profile_id, consolidation_key, primary_address, tdh, rep, cic, level_raw)
+         values (null, :pair, :a, 0, 0, 0, 0)`,
+        { pair: PAIR, a: A2 }
+      );
+      await sqlExecutor.execute(
+        `insert into ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key)
+         values (:a, :pair)`,
+        { pair: PAIR, a: A2 }
+      );
+      await seedGroup(
+        aChainGroupRow(G, {
+          includes: [
+            { kind: 'address', value: A1 },
+            { kind: 'address', value: A2 }
+          ]
+        })
+      );
+      const { report, counter } = await run(undefined, objectsDb, write);
+      expect(report.groups).toMatchObject({ mirrored: 0, waiting: 1 });
+      expect(counter.waiting).toEqual({ group_address_without_profile: 1 });
+      expect(counter.changes).toEqual({});
+      expect(await groups.getByIdWithoutVisibilityCheck(G)).toBeNull();
+      expect(await profileIdOf(A1)).toEqual([]);
+    }
+  );
 
   it("counts as updates only the own rows without a profile id that the identities' write gives one", async () => {
     // MAPPED: its own row, mapped to it. UNMAPPED: its own row, no mapping.
