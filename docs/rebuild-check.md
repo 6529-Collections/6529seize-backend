@@ -490,9 +490,10 @@ Each `--source <name>=<spec>`:
 - The files server answers `/ipfs/<id>`, `/ar/<id>`, `/docs/<id>` and
   `/<id>` from the directory, and checks every file against
   `<dir>/files.json` (id to SHA-256). It derives an id from the content
-  only for a SHA-256 name (below): an Arweave id is a transaction's, not a
-  hash of the file, so for other names `files.json` is what ties each id
-  to its bytes. A seed can add files: it writes them into
+  only for a SHA-256 or a Keccak-256 name (below): an Arweave id is a
+  transaction's, not a hash of the file, so for other names `files.json`
+  is what ties each id to its bytes. Startup reads and hashes every file
+  of the directory, which it then serves from memory. A seed can add files: it writes them into
   `ctx.seedFilesDir` and lists them in that directory's own `files.json`;
   the server checks each one's hash when it is asked for.
   The seeds' files are the run's own world. Files in `<dir>` come from
@@ -502,6 +503,34 @@ Each `--source <name>=<spec>`:
   with other bytes fails the run. For any other file nothing checks its id
   yet, so a directory that holds one is provisional ("ids not verified",
   naming the files), whatever its `PROVENANCE.json` says.
+  A file named `keccak256-<64 lowercase hex>` has its Keccak-256 checked
+  against its bytes the same way; another name that starts `keccak256-`
+  in any case (capitals, an extension) fails the run. Such a file counts
+  as verified only when the chain vouches for its name:
+  - the Waves v1 file is the one named by the `fileHash` of the chain's
+    import answer, which the run reads from the gateway's recording: an
+    exchange keyed as a GET of `/v1/waves/import`, answered 200 with
+    `completed: true`. If those answers name more than one file, none
+    counts. It must be a Waves v1 file (schema `0x411D`, version 1). In
+    record mode a fresh recording holds no such answer yet, so the import
+    files wait;
+  - the drop archives' index (`drop-archives`, the snapshot tool's
+    `archives/index.json`) is accepted only when the root over its
+    (waveId, hash) pairs, strictly ascending by waveId, equals that Waves
+    v1 file's dropArchiveRoot, its own `dropArchiveRoot` (when it gives
+    one) is that root, and each entry's 6529.io wave UUID derives its
+    waveId; its `file` and `drops` are informative and aren't checked;
+  - an archive counts once the checked index names it, at the size
+    (`bytes`) the index lists.
+
+  The root is computed here from the chain spec's definition, not by the
+  code that reads the archives. All of them count only while the gateway
+  source is verified: a name from a gateway answer that isn't verified
+  yet vouches for nothing, and the reason says so. Until an import answer
+  names a Waves v1 file that is served, the Waves v1 file, the index and
+  its archives stay provisional, with the reason, and fail nothing. A
+  fault in the index, a root that differs, or an archive of another size
+  fails the run. Any other Keccak-named file stays provisional.
 - A flag value may name a source: `{gateway}`, `{relays}`, `{ethereum}`
   or `{files}` become its URL in the run.
 

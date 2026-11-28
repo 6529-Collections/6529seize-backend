@@ -1,0 +1,22 @@
+{
+ "dropArchiveRoot": "58a1e875f80c8a0918524a158aa1e296c2c9ec9e1b9a1ceb64420c9fd837327d",
+ "archives": [
+  {
+   "waveId": "bcae0ad924b2565bc4c96405e2c3e66f9f1ff30e959f657ab419e0e0298a0cee",
+   "legacyWave": "22222222-2222-4222-8222-000000000001",
+   "file": "bcae0ad924b2565bc4c96405e2c3e66f9f1ff30e959f657ab419e0e0298a0cee.jsonl",
+   "drops": 2,
+   "bytes": 40,
+   "hash": "a1b75cb952cb0387544ab98d16779f9bc99c8ab0ec4c30ba1ea5e975e48ab874"
+  },
+  {
+   "waveId": "f776cf6e58f415903662f759dba2776ee0a4e942e7149fa1c25a1bc553b37bc4",
+   "legacyWave": "22222222-2222-4222-8222-000000000002",
+   "file": "f776cf6e58f415903662f759dba2776ee0a4e942e7149fa1c25a1bc553b37bc4.jsonl",
+   "drops": 1,
+   "bytes": 20,
+   "hash": "9412256b957bdafafe9df36d02688506988a38d7b3fcf39bc79c26aaa5725099"
+  }
+ ],
+ "drops": 3
+}
