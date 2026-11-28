@@ -464,6 +464,7 @@ async function wsHandler(
             };
           }
           case WsMessageType.SUBSCRIBE_TO_WAVE: {
+            controlOperation = WsMessageType.SUBSCRIBE_TO_WAVE;
             const waveId = message.wave_id?.toString() ?? null;
             if (waveId && !ids.isValidUuid(waveId)) {
               return {
@@ -484,6 +485,7 @@ async function wsHandler(
             };
           }
           case WsMessageType.SET_OPEN_WAVE: {
+            controlOperation = WsMessageType.SET_OPEN_WAVE;
             const waveId = message.wave_id?.toString() ?? null;
             if (waveId && !ids.isValidUuid(waveId)) {
               return {

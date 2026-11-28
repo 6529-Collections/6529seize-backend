@@ -1608,6 +1608,7 @@ function wireApp() {
                 break;
               }
               case WsMessageType.SUBSCRIBE_TO_WAVE: {
+                controlOperation = WsMessageType.SUBSCRIBE_TO_WAVE;
                 const waveId = message.wave_id?.toString() ?? null;
                 if (waveId && !ids.isValidUuid(waveId)) {
                   socket.send(
@@ -1625,6 +1626,7 @@ function wireApp() {
                 break;
               }
               case WsMessageType.SET_OPEN_WAVE: {
+                controlOperation = WsMessageType.SET_OPEN_WAVE;
                 const waveId = message.wave_id?.toString() ?? null;
                 if (waveId && !ids.isValidUuid(waveId)) {
                   socket.send(JSON.stringify({ error: 'Invalid wave id' }));

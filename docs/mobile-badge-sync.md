@@ -364,6 +364,51 @@ the API. Secure-storage failure prevents local credential removal; clearing app
 data can lose the pending outbox. This client outbox does not change the separate
 best-effort queue handoff for ordinary notification read operations.
 
+### After the push tables are emptied
+
+Push device rows, installations and fences are ephemeral in the sense that an
+empty table must not strand an installed app. Without a flag, it can. A
+re-created installation row starts at revision 0, so a phone that ever logged
+out presents a higher revision and gets 409 on every registration. A queued
+logout past revision 1 gets 409 too. A token cleanup whose token no
+registration row holds needs a session proof it can never send, so it retries
+forever.
+
+`PUSH_INSTALLATION_ADOPT_REVISION=true` changes only rows the server no longer
+holds:
+
+- Registration that claims an unowned installation takes the client's revision
+  when it is above the stored one (zero, or a surviving fence). A fence still
+  refuses any lower revision.
+- A logout for an unowned installation, or one claimed in the same request by
+  legacy token proof, may skip revisions. An early logout still needs a live
+  native session; an app that signs in again proves it through its
+  reconciliation sessions, so the fence is still written at the new revision.
+- A token cleanup with no fence for its credential, no session proof and no
+  push registration row holding its token is acknowledged and writes nothing:
+  the transaction rolls back, including the placeholder installation row the
+  lock inserted. An installation row that already existed stays as it was,
+  with its last token. The answer does not depend on whether the device ID has
+  other rows, so a token cleanup reveals nothing about the device; logout
+  errors still differ, as before. The cleanup path keeps its
+  exact-next-revision rule.
+
+Installations the server holds keep the exact-next-revision rule and the
+credential checks.
+
+Never empty these tables on purpose. After a wipe, any signed-in user who
+knows a device ID can register it first with their own credential. The
+phone's registrations are then refused as an invalid credential, and the app
+has no path today to recover from that on its own. This race exists without
+the flag too; the flag does not widen it.
+
+Set the flag where the API reads its configuration: the shared runtime secret
+when the API loads secrets, otherwise the API's runtime environment. Each API
+instance reads it once when it starts, so running instances keep the old value
+until they recycle. To apply a change everywhere at once, turning it on or
+rolling it back, redeploy the `api` service after changing it. Rollback: unset
+it. Nothing it wrote needs undoing.
+
 APNs references: [payload keys](https://developer.apple.com/library/archive/documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/PayloadKeyReference.html)
 and [push request headers](https://developer.apple.com/documentation/usernotifications/sending-notification-requests-to-apns).
 

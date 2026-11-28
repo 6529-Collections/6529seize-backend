@@ -18,6 +18,7 @@ import {
   WS_NOTIFICATION_SUBSCRIPTIONS_TABLE
 } from '@/constants';
 import { CustomApiCompliantException } from '@/exceptions';
+import { DbPoolName } from '@/db-query.options';
 import { Logger } from '@/logging';
 import { RequestContext } from '../../../request.context';
 import { WaveCreditScope, WaveCreditType } from '../../../entities/IWave';
@@ -177,17 +178,20 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
    * Records the wave the tab has open (SET_OPEN_WAVE, waves 1.3). Delivery
    * only reads it with WS_AUDIENCE_FOLLOWERS on. Before dbMigrationsLoop has
    * added the column this is a no-op, never an error for the client.
+   * Returns the driver's affected-row count, or undefined without the column.
+   * A count is a hint only: callers confirm a zero before acting on it.
    */
   public async updateOpenWaveId(
     params: { connectionId: string; waveId: string | null },
     ctx: RequestContext
-  ): Promise<void> {
+  ): Promise<number | undefined> {
     try {
-      await this.db.execute(
+      const result = await this.db.execute(
         `update ${WS_CONNECTIONS_TABLE} set open_wave_id = :waveId where connection_id = :connectionId`,
         params,
         { wrappedConnection: ctx.connection }
       );
+      return this.db.getAffectedRows(result);
     } catch (error) {
       const code = (error as { code?: unknown } | null)?.code;
       if (code !== 'ER_BAD_FIELD_ERROR') throw error;
@@ -197,15 +201,20 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     }
   }
 
+  /**
+   * Returns the driver's affected-row count. A count is a hint only: callers
+   * confirm a zero before acting on it.
+   */
   public async updateWaveId(
     params: { connectionId: string; waveId: string | null },
     ctx: RequestContext
-  ) {
-    await this.db.execute(
+  ): Promise<number> {
+    const result = await this.db.execute(
       `update ${WS_CONNECTIONS_TABLE} set wave_id = :waveId where connection_id = :connectionId`,
       params,
       { wrappedConnection: ctx.connection }
     );
+    return this.db.getAffectedRows(result);
   }
 
   public async updateIdentityForConnection(
@@ -485,6 +494,26 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       { connectionId },
       { wrappedConnection: ctx.connection, bindInvocationContext: true }
     );
+  }
+
+  /**
+   * Whether this connection has a row, read by primary key from the writer
+   * so replica lag never reports a fresh row as missing.
+   */
+  public async existsOnWriter(
+    connectionId: string,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const rows = await this.db.execute<{ connection_id: string }>(
+      `select connection_id from ${WS_CONNECTIONS_TABLE} where connection_id = :connectionId limit 1`,
+      { connectionId },
+      {
+        wrappedConnection: ctx.connection,
+        forcePool: DbPoolName.WRITE,
+        bindInvocationContext: true
+      }
+    );
+    return rows.length > 0;
   }
 
   public async getByConnectionId(

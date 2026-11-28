@@ -198,7 +198,7 @@ describe('WsConnectionRepository', () => {
         )
         .mockResolvedValue([]);
       const repo = new WsConnectionRepository(
-        () => ({ execute }) as any,
+        () => ({ execute, getAffectedRows: () => 1 }) as any,
         {} as any
       );
       const warn = jest

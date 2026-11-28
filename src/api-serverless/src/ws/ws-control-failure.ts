@@ -4,9 +4,17 @@ import { WsMessageType } from '@/api/ws/ws-message';
 
 export type WebSocketControlOperation =
   | WsMessageType.AUTHENTICATE
-  | WsMessageType.SYNC_NOTIFICATION_IDENTITIES;
+  | WsMessageType.SYNC_NOTIFICATION_IDENTITIES
+  | WsMessageType.SUBSCRIBE_TO_WAVE
+  | WsMessageType.SET_OPEN_WAVE;
 
 const logger = Logger.get('WS_CONTROL');
+
+const REPORTED_OPERATIONS: ReadonlySet<WebSocketControlOperation> =
+  new Set<WebSocketControlOperation>([
+    WsMessageType.AUTHENTICATE,
+    WsMessageType.SYNC_NOTIFICATION_IDENTITIES
+  ]);
 
 function isUnavailable(error: unknown): boolean {
   try {
@@ -38,7 +46,11 @@ export async function recoverUnavailableWebSocket(
 ): Promise<boolean> {
   if (operation === undefined) return false;
   if (!isUnavailable(error)) {
-    reportFailure(operation, 'operation');
+    // Wave updates fail as plain 5xx, as before; only the credential
+    // operations report here.
+    if (REPORTED_OPERATIONS.has(operation)) {
+      reportFailure(operation, 'operation');
+    }
     return false;
   }
   try {
