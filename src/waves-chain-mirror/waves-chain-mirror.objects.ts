@@ -255,6 +255,18 @@ type ParentChoice =
 /** A child waits this long after it was made for a parent made on the chain. */
 export const PARENT_WAIT_MS = 24 * 60 * 60_000;
 
+/**
+ * Whether a group's definition lists an address: only such a group can be
+ * held for the identity mirror.
+ */
+function listsAddresses(group: ChainGroup): boolean {
+  const def = group.definition;
+  return (
+    !!def &&
+    [...def.includes, ...def.excludes].some((m) => m.kind === 'address')
+  );
+}
+
 /** Whether a decision made on the chain has a policy version to write. */
 function decisionDue(
   decision: ChainNativeDecision,
@@ -397,6 +409,8 @@ export class WavesChainObjectsMirror {
     );
     // The chain heights of the groups held for the identity mirror this run.
     const held: number[] = [];
+    // Groups listing addresses (the only ones that can be held) that failed.
+    let failedListing = 0;
     for (const group of groups) {
       const record = groupRecords.get(group.groupId);
       if (record && record.version === group.version) {
@@ -407,15 +421,19 @@ export class WavesChainObjectsMirror {
         report.groups.left++;
         continue;
       }
+      const failed = report.groups.failed;
       await this.count(report.groups, `group ${group.groupId}`, () =>
         this.mirrorGroup(group, record, { ...input, held }, now)
       );
+      if (report.groups.failed > failed && listsAddresses(group)) {
+        failedListing++;
+      }
     }
     // Only a writing run keeps the hold (its state row and WARN). One that
-    // left groups for later, or failed to look at one, may have missed a
-    // held group: it keeps a hold it can't see the end of, and the count of
-    // the last run that looked at them all.
-    const complete = !report.groups.left && !report.groups.failed;
+    // left groups for later, or failed to look at one listing addresses,
+    // may have missed a held group: it keeps a hold it can't see the end
+    // of, and the count of the last run that looked at them all.
+    const complete = !report.groups.left && !failedListing;
     if (input.write && (held.length || complete)) {
       try {
         await this.reportHeldGroups(held, complete, now);
@@ -648,8 +666,10 @@ export class WavesChainObjectsMirror {
    * held height (again only after a hold clears and builds up again). A
    * held group only delays 6529.io's copy of it; a hold that lasts means
    * the identity mirror is behind or stopped. A run that didn't look at
-   * every group (`complete` false) leaves the count and height as a full
-   * run kept them, and the WARN names those.
+   * every group that can be held (`complete` false) keeps the count and
+   * height a hold already has; a hold it starts takes its own, which may
+   * fall short (its oldest height need not be the oldest). The WARN names
+   * the kept ones.
    */
   private async reportHeldGroups(
     held: readonly number[],

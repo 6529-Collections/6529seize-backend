@@ -376,6 +376,69 @@ describe('WavesChainObjectsMirror: groups', () => {
     }
   });
 
+  it('clears a hold, and reports the next one, while a group listing no address fails every run', async () => {
+    const log = Logger.get('WAVES_CHAIN_MIRROR_OBJECTS');
+    const error = jest.spyOn(log, 'error').mockImplementation(() => undefined);
+    const warn = jest.spyOn(log, 'warn').mockImplementation(() => undefined);
+    try {
+      const { store, run, at } = world();
+      const BROKEN = chainWord('0e');
+      const groupRow = store.groupRow.bind(store);
+      jest.spyOn(store, 'groupRow').mockImplementation(async (id) => {
+        if (id === BROKEN) throw new Error('group row unreadable');
+        return groupRow(id);
+      });
+      store.identityHeight = 10;
+      store.chainGroups = [
+        aChainGroupRow(
+          G,
+          { includes: [{ kind: 'address', value: A1 }] },
+          { height: 30 }
+        ),
+        aChainGroupRow(BROKEN, { includes: [{ kind: 'principal', value: P2 }] })
+      ];
+      const heldWarns = () =>
+        warn.mock.calls.filter(([line]) =>
+          String(line).includes('[GROUPS HELD FOR IDENTITY ROWS]')
+        );
+      await run();
+      at(NOW + GROUPS_HELD_REPORT_MS);
+      await run();
+      expect(store.held).toMatchObject({ count: 1, reported: true });
+      expect(heldWarns()).toHaveLength(1);
+
+      // The identity rows catch up: the hold clears, the failing group
+      // listing no address notwithstanding.
+      store.identityHeight = null;
+      at(NOW + 2 * GROUPS_HELD_REPORT_MS);
+      const caughtUp = await run();
+      expect(caughtUp.report.groups).toMatchObject({ mirrored: 1, failed: 1 });
+      expect(store.held).toBeNull();
+
+      // A new hold is reported once it lasts.
+      store.chainGroups.push(
+        aChainGroupRow(
+          chainWord('0d'),
+          { includes: [{ kind: 'address', value: A2 }] },
+          { height: 40 }
+        )
+      );
+      store.identityHeight = 39;
+      const start = NOW + 3 * GROUPS_HELD_REPORT_MS;
+      at(start);
+      await run();
+      at(start + GROUPS_HELD_REPORT_MS);
+      await run();
+      expect(heldWarns()).toHaveLength(2);
+      expect(heldWarns()[1][0]).toContain(
+        `[OLDEST HEIGHT 40] [HELD SINCE ${new Date(start).toISOString()}] [GROUPS 1]`
+      );
+    } finally {
+      error.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
   it('keeps the held count and oldest height of the last full look when the budget runs out after the first held group', async () => {
     const warn = jest
       .spyOn(Logger.get('WAVES_CHAIN_MIRROR_OBJECTS'), 'warn')
