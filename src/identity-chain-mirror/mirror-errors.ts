@@ -16,9 +16,14 @@ export function messageOf(error: unknown): string {
 export class ChainReadRetryLater extends Error {
   readonly retryLater = true;
 
+  /**
+   * `gatewayError`: the gateway's answer this was made from (orRetryLater),
+   * for a reader that handles the gateway not answering itself.
+   */
   constructor(
     message: string,
-    readonly reason: string
+    readonly reason: string,
+    readonly gatewayError?: ChainGatewayError
   ) {
     super(message);
     Object.setPrototypeOf(this, new.target.prototype);
@@ -49,7 +54,8 @@ export async function orRetryLater<T>(read: () => Promise<T>): Promise<T> {
     const gatewayError = error as ChainGatewayError;
     throw new ChainReadRetryLater(
       gatewayError.message,
-      String(gatewayError.code)
+      String(gatewayError.code),
+      gatewayError
     );
   }
 }

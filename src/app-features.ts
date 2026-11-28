@@ -88,6 +88,14 @@ export class AppFeatures {
   }
 
   /**
+   * Identity lookups by wallet, handle and profile id, login and handle
+   * availability read the 6529 chain (src/identity-chain-mirror).
+   */
+  public isIdentityReadsFromChainEnabled(): boolean {
+    return this.isFeatureEnabled('IDENTITY_READS_FROM_CHAIN');
+  }
+
+  /**
    * Identities move to the 6529 chain: profiles, handles, statements, REP
    * and NIC are read-only here while this is on (src/identity-freeze).
    */

@@ -159,7 +159,10 @@ import {
 import { createAccessTokenStrategy } from '@/api/auth/access-token-strategy';
 import { startStringFormTransition } from '@/api/auth/legacy-text-challenge';
 import { setNoStoreHeaders } from '@/api/response-headers';
-import { requestLogMiddleware } from '@/api/request-log.middleware';
+import {
+  identitySourceHeaderMiddleware,
+  requestLogMiddleware
+} from '@/api/request-log.middleware';
 import {
   validateCmsAgentRawBody,
   cmsAgentErrorMiddleware,
@@ -563,6 +566,7 @@ async function initializeApp() {
 function wireApp() {
   app.use(cmsAgentPrivateHeadersMiddleware);
   app.use(requestLogMiddleware());
+  app.use(identitySourceHeaderMiddleware());
   app.use(compression());
   app.use(
     cors(

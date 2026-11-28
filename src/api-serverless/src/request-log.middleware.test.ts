@@ -1,7 +1,11 @@
 import express from 'express';
 import { AddressInfo } from 'node:net';
 import { loggerContext } from '@/logger-context';
-import { requestLogMiddleware } from '@/api/request-log.middleware';
+import { IDENTITY_SOURCE_HEADER } from '@/api/api-constants';
+import {
+  identitySourceHeaderMiddleware,
+  requestLogMiddleware
+} from '@/api/request-log.middleware';
 import { DbPoolName } from '@/db-query.options';
 import { SqlOperationTiming } from '@/db/sql-operation-timing';
 
@@ -157,5 +161,56 @@ describe('requestLogMiddleware', () => {
     expect(logged).not.toContain('probe-token');
     expect(logged).not.toContain('ProbeAgent');
     expect(logged).not.toContain('127.0.0.1');
+  });
+});
+
+describe('identitySourceHeaderMiddleware', () => {
+  let baseUrl = '';
+  let server: ReturnType<ReturnType<typeof express>['listen']>;
+
+  beforeAll(async () => {
+    const app = express();
+    app.use(requestLogMiddleware());
+    app.use(identitySourceHeaderMiddleware());
+    app.get('/api/from-mirror', async (_req, res) => {
+      // Marked after an await, as a lookup marks it.
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      loggerContext.setIdentitySource('mirror');
+      res.json({ ok: true });
+    });
+    app.get('/api/from-chain', async (_req, res) => {
+      await Promise.resolve();
+      res.json({ ok: true });
+    });
+    app.get('/api/from-mirror-then-error', async (_req, res) => {
+      loggerContext.setIdentitySource('mirror');
+      res.status(500).end();
+    });
+    await new Promise<void>((resolve) => {
+      server = app.listen(0, () => resolve());
+    });
+    baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it('marks a response that used an identity answered from the mirror', async () => {
+    const response = await fetch(`${baseUrl}/api/from-mirror`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get(IDENTITY_SOURCE_HEADER)).toBe('mirror');
+    expect(response.headers.get('x-request-id')).toBeTruthy();
+    const failed = await fetch(`${baseUrl}/api/from-mirror-then-error`);
+    expect(failed.headers.get(IDENTITY_SOURCE_HEADER)).toBe('mirror');
+  });
+
+  it('leaves every other response unmarked, also one at the same time', async () => {
+    const [plain, marked] = await Promise.all([
+      fetch(`${baseUrl}/api/from-chain`),
+      fetch(`${baseUrl}/api/from-mirror`)
+    ]);
+    expect(plain.headers.get(IDENTITY_SOURCE_HEADER)).toBeNull();
+    expect(marked.headers.get(IDENTITY_SOURCE_HEADER)).toBe('mirror');
   });
 });

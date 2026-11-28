@@ -19,6 +19,7 @@ import {
   RATINGS_TABLE,
   USE_CASE_CONSOLIDATION
 } from '@/constants';
+import { DbPoolName } from '@/db-query.options';
 import { HELP_BOT_CREDIT_CATEGORY } from '@/help-bot/help-bot.config';
 import {
   addressIdentityId,
@@ -297,6 +298,35 @@ function sameDelegation(a: DelegationRowWrite, b: DelegationRowWrite) {
 export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
   // ---------------------------------------------------------------- state
 
+  /**
+   * The chain the mirror's tables are of, when its placeholder profiles
+   * were listed (null before) and when it last saved its state (ms); null
+   * before the mirror has a state. Only these three columns: the state
+   * row's retry list can be large. The identity reads keep the answer for
+   * the gateway's head time (ChainIdentityReads).
+   */
+  async mirrorChainState(): Promise<{
+    chainId: string | null;
+    placeholdersAt: number | null;
+    updatedAt: number | null;
+  } | null> {
+    const row = await this.db.oneOrNull<{
+      chain_id: string | null;
+      placeholders_at: number | string | null;
+      updated_at: number | string | null;
+    }>(
+      `select chain_id, placeholders_at, updated_at from ${IDENTITY_CHAIN_MIRROR_STATE_TABLE} where id = :id`,
+      { id: STATE_ID }
+    );
+    return row
+      ? {
+          chainId: row.chain_id,
+          placeholdersAt: numberOrNull(row.placeholders_at),
+          updatedAt: numberOrNull(row.updated_at)
+        }
+      : null;
+  }
+
   async getState(conn?: Conn): Promise<MirrorState | null> {
     const row = await this.db.oneOrNull<
       Omit<MirrorState, 'retry' | 'bindings_exact'> & {
@@ -406,14 +436,20 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
 
   // ---------------------------------------------------------------- mapping
 
+  /**
+   * The profile id a principal is mapped to; null when it has none. A
+   * caller that must see a mapping made a moment ago asks the writer
+   * (`forcePool: DbPoolName.WRITE`): a read replica may not have it yet.
+   */
   async profileIdOfPrincipal(
     principalId: string,
-    conn?: Conn
+    conn?: Conn,
+    options: { forcePool?: DbPoolName } = {}
   ): Promise<string | null> {
     const row = await this.db.oneOrNull<{ profile_id: string }>(
       `select profile_id from ${IDENTITY_CHAIN_PRINCIPALS_TABLE} where principal_id = :principalId`,
       { principalId },
-      conn ? { wrappedConnection: conn } : undefined
+      conn ? { wrappedConnection: conn } : { forcePool: options.forcePool }
     );
     return row?.profile_id ?? null;
   }
@@ -813,7 +849,7 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
    * no profiles row, whose id no principal holds. 6529.io made them before
    * switch-on (the TDH sync's step B, a group listing an address) with an
    * id ratings, follows and groups may already name. An identity whose key
-   * equals one of them takes its id (ProfileIds.chooseProfileId).
+   * equals one of them takes its id (ProfileIdChoice.adoptedProfileId).
    */
   async handlelessRowsOf(
     wallets: readonly string[],

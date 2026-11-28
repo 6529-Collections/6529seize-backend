@@ -1,4 +1,5 @@
 import { NextFunction, Request, Response } from 'express';
+import { IDENTITY_SOURCE_HEADER } from '@/api/api-constants';
 import { isCmsAgentRequest } from '@/api/profile-cms/profile-cms-agent.http';
 import { ids } from '@/ids';
 import { Logger } from '@/logging';
@@ -106,5 +107,32 @@ export function requestLogMiddleware() {
       });
       next();
     });
+  };
+}
+
+/**
+ * `X-6529-Identity-Source: mirror` on a response that used an identity
+ * lookup answered from the identity mirror's tables because the chain
+ * gateway couldn't answer (ChainIdentityReads). Mounted right after
+ * requestLogMiddleware, inside its logger context: it takes the request's
+ * context here and reads it just before the headers go out (res.writeHead
+ * wrapped, as the on-headers package does), when the lookups have run.
+ */
+export function identitySourceHeaderMiddleware() {
+  return (_request: Request, response: Response, next: NextFunction) => {
+    const context = loggerContext.get();
+    if (context) {
+      const writeHead = response.writeHead;
+      response.writeHead = function (
+        this: Response,
+        ...args: Parameters<Response['writeHead']>
+      ) {
+        if (context.identitySource === 'mirror' && !this.headersSent) {
+          this.setHeader(IDENTITY_SOURCE_HEADER, 'mirror');
+        }
+        return writeHead.apply(this, args);
+      } as Response['writeHead'];
+    }
+    next();
   };
 }

@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { sqlExecutor } from '@/sql-executor';
+import { DbPoolName } from '@/db-query.options';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
 import { aProfile, withProfiles } from '@/tests/fixtures/profile.fixture';
@@ -130,39 +131,60 @@ describeWithSeed(
   () => {
     it('keeps the mirror state and the principal mapping', async () => {
       expect(await db.getState()).toBeNull();
-      await db.saveState(
-        {
-          next_height: 101,
-          sync_from_height: null,
-          sync_phase: null,
-          sync_after: null,
-          last_full_sync_at: 5,
-          bindings_next_height: null,
-          chain_id: null,
-          placeholders_at: null,
-          bindings_exact: false,
-          levels_tdh_day: null,
-          level_sweep_day: null,
-          level_sweep_after: null,
-          levels_day_height: null,
-          sync_use_case: null,
-          sync_wallet_after: null,
-          pin_floor: null,
-          off_chain_after: null,
-          events_next_height: null,
-          events_rebuild_height: null,
-          events_rebuild_after: null,
-          events_gone_at: null,
-          events_stuck_runs: 0,
-          retry: NO_RETRY
-        },
-        9
-      );
+      expect(await db.mirrorChainState()).toBeNull();
+      const saved = {
+        next_height: 101,
+        sync_from_height: null,
+        sync_phase: null,
+        sync_after: null,
+        last_full_sync_at: 5,
+        bindings_next_height: null,
+        chain_id: null,
+        placeholders_at: null,
+        bindings_exact: false,
+        levels_tdh_day: null,
+        level_sweep_day: null,
+        level_sweep_after: null,
+        levels_day_height: null,
+        sync_use_case: null,
+        sync_wallet_after: null,
+        pin_floor: null,
+        off_chain_after: null,
+        events_next_height: null,
+        events_rebuild_height: null,
+        events_rebuild_after: null,
+        events_gone_at: null,
+        events_stuck_runs: 0,
+        retry: NO_RETRY
+      };
+      await db.saveState(saved, 9);
       expect(await db.getState()).toEqual(
         expect.objectContaining({ next_height: 101, last_full_sync_at: 5 })
       );
+      expect(await db.mirrorChainState()).toEqual({
+        chainId: null,
+        placeholdersAt: null,
+        updatedAt: 9
+      });
+      await db.saveState(
+        { ...saved, chain_id: 'chain', placeholders_at: 7 },
+        10
+      );
+      // The chain, the placeholders' listing and the last save alone,
+      // without the rest.
+      expect(await db.mirrorChainState()).toEqual({
+        chainId: 'chain',
+        placeholdersAt: 7,
+        updatedAt: 10
+      });
       await inTx((conn) => db.insertMapping(P, ALICE, 'LEGACY', 1, conn));
       expect(await db.profileIdOfPrincipal(P)).toBe(ALICE);
+      // Asked of the writer, as the reads ask right after a choice.
+      expect(
+        await db.profileIdOfPrincipal(P, undefined, {
+          forcePool: DbPoolName.WRITE
+        })
+      ).toBe(ALICE);
       expect(await db.principalOfProfile(ALICE)).toBe(P);
       expect(await db.principalsOfWallets([B])).toEqual([P]);
     });
