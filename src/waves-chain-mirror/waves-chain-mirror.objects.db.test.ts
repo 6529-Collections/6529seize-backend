@@ -1138,10 +1138,15 @@ describe('WavesChainObjectsMirror in the database', () => {
         await run();
         await bindZ([WZ, B]);
         const logged = (await changeLog()).length;
-        // Time runs out after the first group's lists.
-        // (The first look is before the lists are read.)
-        let looks = 0;
-        const cut = await run(undefined, objectsDb, true, () => ++looks > 2);
+        // Time runs out once G's lists are written: G2's have no time left.
+        const written = jest.spyOn(objectsDb, 'rewriteGroupLists');
+        const cut = await run(
+          undefined,
+          objectsDb,
+          true,
+          () => written.mock.calls.length > 0
+        );
+        written.mockRestore();
         expect(cut.report.remap).toMatchObject({ groups: 2, left: 1 });
         expect(await listOf(INCLUDE)).toEqual([Z]);
         expect(await listOf(INCLUDE2)).toEqual(

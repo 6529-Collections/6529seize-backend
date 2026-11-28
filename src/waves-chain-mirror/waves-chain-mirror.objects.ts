@@ -660,10 +660,15 @@ export class WavesChainObjectsMirror {
 
   /**
    * The 6529.io rows a report-only run found for imported groups (none:
-   * null), kept in this process: such a run keeps no records, and looking
-   * each group up again every run would take its whole time.
+   * null), kept in this process, with when they were looked for: such a run
+   * keeps no records, and looking each group up again every run would take
+   * its whole time. One no row matched is looked for again a day later, as
+   * a writing run's record is.
    */
-  private readonly importedRowsFound = new Map<string, string | null>();
+  private readonly importedRowsFound = new Map<
+    string,
+    { readonly groupId: string | null; readonly at: number }
+  >();
 
   async run(input: {
     readonly write: boolean;
@@ -1268,6 +1273,15 @@ export class WavesChainObjectsMirror {
         `[WAVES CHAIN MIRROR] imported groups' member lists not read: ${error}`
       );
     }
+    if (input.outOfTime()) {
+      // Out of time once matched: no list is read this run. The groups made
+      // on the chain are left for the next run, and the imported ones whose
+      // rows were read count pending, as those not matched in time do.
+      remap.left += native.length;
+      remap.imported.pending += imported.length;
+      this.logImportedLists(remap);
+      return;
+    }
     try {
       await this.checkLists([...native, ...imported], input, remap, now);
     } finally {
@@ -1395,21 +1409,34 @@ export class WavesChainObjectsMirror {
     for (const group of groups) {
       const record = records.get(group.groupId);
       let groupId = record?.groupId || null;
-      const found = this.importedRowsFound.get(group.groupId);
-      if (!groupId && !input.write && found !== undefined) {
-        groupId = found;
+      const found = input.write
+        ? undefined
+        : this.importedRowsFound.get(group.groupId);
+      if (
+        !groupId &&
+        found &&
+        (found.groupId !== null || now - found.at < UNMATCHED_RETRY_MS)
+      ) {
+        groupId = found.groupId;
       } else if (!groupId) {
         if (input.outOfTime()) {
           remap.imported.pending++;
           continue;
         }
         groupId = await this.importedGroupId(group, record, input.write, now);
-        if (!input.write) this.importedRowsFound.set(group.groupId, groupId);
+        if (!input.write) {
+          this.importedRowsFound.set(group.groupId, { groupId, at: now });
+        }
       }
       if (groupId) matched.push({ group, groupId });
       else remap.imported.unmatched++;
     }
     if (remap.imported.pending) return [];
+    // Out of time once matched: their rows and lists are read next run.
+    if (input.outOfTime()) {
+      remap.imported.pending += matched.length;
+      return [];
+    }
     const rows = await this.store.groupRows(matched.map((m) => m.groupId));
     const out: GroupToCheck[] = [];
     for (const { group, groupId } of matched) {

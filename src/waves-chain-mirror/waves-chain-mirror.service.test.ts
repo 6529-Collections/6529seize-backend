@@ -313,22 +313,37 @@ describe('WavesChainMirror: when it runs', () => {
         return null as never;
       })
     };
-    const env: NodeJS.ProcessEnv = { WAVES_CHAIN_MIRROR_WRITE: 'true' };
-    const run = () =>
-      new WavesChainMirror(
+    const names = [
+      'WAVES_CHAIN_MIRROR_WRITE',
+      'FEATURE_WAVES_FROZEN',
+      'WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP'
+    ];
+    const saved = names.map((name) => process.env[name]);
+    try {
+      process.env.WAVES_CHAIN_MIRROR_WRITE = 'true';
+      process.env.FEATURE_WAVES_FROZEN = 'true';
+      delete process.env.WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP;
+      // One mirror, with the settings it reads by default.
+      const mirror = new WavesChainMirror(
         store,
         index,
-        (now) => ({ ...mirrorSettingsFromEnv(env, now), frozen: true }),
+        undefined,
         () => NOW,
         undefined,
         undefined,
         undefined,
         undefined,
         objects
-      ).run({ budgetMs: 10_000 });
-    await run();
-    env.WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP = '300';
-    await run();
+      );
+      await mirror.run({ budgetMs: 10_000 });
+      process.env.WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP = '300';
+      await mirror.run({ budgetMs: 10_000 });
+    } finally {
+      names.forEach((name, i) => {
+        if (saved[i] === undefined) delete process.env[name];
+        else process.env[name] = saved[i];
+      });
+    }
     expect(caps).toEqual([50, 300]);
   });
 

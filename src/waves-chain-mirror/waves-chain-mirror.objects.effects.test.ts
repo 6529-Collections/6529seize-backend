@@ -88,25 +88,38 @@ describe('waveManagerOf', () => {
 describe('defaultObjectEffects.groupsChanged', () => {
   afterEach(() => jest.restoreAllMocks());
 
-  it("logs a group change for each profile, then clears the groups' caches", async () => {
-    const order: string[] = [];
+  it("clears the groups' caches only once each profile's change is logged", async () => {
+    let logged!: () => void;
     const log = jest
       .spyOn(userGroupsDb, 'insertGroupChanges')
-      .mockImplementation(async (profiles) => {
-        order.push(`log:${profiles.join(',')}`);
-        return null;
-      });
+      .mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            logged = () => resolve(null);
+          })
+      );
     const clear = jest
       .spyOn(userGroupsService, 'onWaveRelatedGroupsChanged')
-      .mockImplementation(async (groupIds) => {
-        order.push(`clear:${groupIds.join(',')}`);
-      });
-    await defaultObjectEffects.groupsChanged(['g'], ['p1', 'p2']);
-    expect(order).toEqual(['log:p1,p2', 'clear:g']);
-    order.length = 0;
+      .mockResolvedValue(undefined);
+    const changed = defaultObjectEffects.groupsChanged(['g'], ['p1', 'p2']);
+    // Let everything not waiting on the log run.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(log).toHaveBeenCalledWith(['p1', 'p2']);
+    expect(clear).not.toHaveBeenCalled();
+    logged();
+    await changed;
+    expect(clear).toHaveBeenCalledWith(['g'], {});
+  });
+
+  it("clears the groups' caches with no change to log when no profile is given", async () => {
+    const log = jest
+      .spyOn(userGroupsDb, 'insertGroupChanges')
+      .mockResolvedValue(null);
+    const clear = jest
+      .spyOn(userGroupsService, 'onWaveRelatedGroupsChanged')
+      .mockResolvedValue(undefined);
     await defaultObjectEffects.groupsChanged(['g'], []);
-    expect(order).toEqual(['clear:g']);
-    expect(log).toHaveBeenCalledTimes(1);
-    expect(clear).toHaveBeenCalledTimes(2);
+    expect(log).not.toHaveBeenCalled();
+    expect(clear).toHaveBeenCalledWith(['g'], {});
   });
 });

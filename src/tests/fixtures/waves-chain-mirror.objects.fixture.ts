@@ -355,12 +355,21 @@ export class FakeObjectsStore implements ObjectsStore {
       ...write.row,
       is_pure_profile_group: false
     });
-    for (const listId of write.oldListIds) this.lists.delete(listId);
     for (const [listId, profiles] of [
       [write.row.profile_group_id, write.includes],
       [write.row.excluded_profile_group_id, write.excludes]
     ] as const) {
       if (listId) this.lists.set(listId, new Set(profiles));
+    }
+    // As the store: an old list goes once no group names it.
+    const named = (listId: string) =>
+      Array.from(this.groups.values()).some(
+        (g) =>
+          g.profile_group_id === listId ||
+          g.excluded_profile_group_id === listId
+      );
+    for (const listId of write.oldListIds) {
+      if (!named(listId)) this.lists.delete(listId);
     }
     return [...write.includes, ...write.excludes];
   }

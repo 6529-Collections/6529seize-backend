@@ -51,6 +51,7 @@ import {
   WAVES_TABLE
 } from '@/constants';
 import { userGroupsService } from '@/api/community-members/user-groups.service';
+import { Logger } from '@/logging';
 import { sqlExecutor } from '@/sql-executor';
 import { UserGroupsDb } from '@/user-groups/user-groups.db';
 import {
@@ -1029,6 +1030,49 @@ describe("the mirror's rebuild", () => {
         "[IMPORTED GROUP LISTS CAPPED] [GROUPS 1] [CAP 0] imported groups' member lists left as 6529.io holds them (WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP): a mirror under a cap they fit holds them rewritten, a difference by the cap, not drift"
       );
       expect(await listed()).toEqual(['profile-only-here']);
+    });
+  });
+
+  describe('when its groups and waves pass fails', () => {
+    const STOPPED =
+      "The mirror's rebuild had no groups and waves report in run 1: that pass failed. Its error is logged above ([WAVES CHAIN MIRROR] groups and waves failed); fix that, then run the rebuild again";
+    const logs = () => ({
+      warn: jest
+        .spyOn(Logger.get('WAVES_CHAIN_MIRROR_REBUILD'), 'warn')
+        .mockImplementation(() => undefined),
+      error: jest
+        .spyOn(Logger.get('WAVES_CHAIN_MIRROR_REBUILD'), 'error')
+        .mockImplementation(() => undefined)
+    });
+    const lines = (spy: jest.SpyInstance) =>
+      spy.mock.calls
+        .map(([line]) => String(line))
+        .filter((line) => line.includes('groups and waves report'));
+
+    it('stops, not done, at the first run without its report', async () => {
+      await seedWorld();
+      await forgetDocuments();
+      // Only the first pass fails: the rebuild stops there all the same.
+      const objects = jest
+        .spyOn(WavesChainObjectsMirror.prototype, 'run')
+        .mockRejectedValueOnce(new Error('groups and waves down'));
+      const log = logs();
+      try {
+        const failure = await rebuild().then(
+          () => null,
+          (error: Error) => error.message
+        );
+        expect(failure).toBe(STOPPED);
+        expect(objects).toHaveBeenCalledTimes(1);
+        expect(lines(log.error)).toEqual([
+          `[REBUILD RUN 1] [STOPPED] ${STOPPED}`
+        ]);
+        expect(lines(log.warn)).toEqual([]);
+      } finally {
+        objects.mockRestore();
+        log.warn.mockRestore();
+        log.error.mockRestore();
+      }
     });
   });
 

@@ -487,9 +487,12 @@ describe('WavesChainObjectsMirror: groups', () => {
       expect(store.held).toMatchObject({ since: NOW, height: 25, count: 2 });
 
       // Time for one group: G is looked at, still held; the other is left.
+      // The time runs out once G's identity rows have been checked.
       at(NOW + GROUPS_HELD_REPORT_MS);
-      let looks = 0;
-      const partial = await run(true, () => ++looks > 1);
+      const checked = jest.spyOn(store, 'identityRowsReached');
+      const partial = await run(true, () => checked.mock.calls.length > 0);
+      expect(checked).toHaveBeenCalledTimes(1);
+      expect(checked).toHaveBeenCalledWith(30);
       expect(partial.report.groups).toMatchObject({ waiting: 1, left: 1 });
       expect(store.held).toEqual({
         since: NOW,
@@ -1610,6 +1613,136 @@ describe("WavesChainObjectsMirror: imported groups' member lists", () => {
     expect(importedListsCappedNote(remap)).toBe(
       "[IMPORTED GROUP LISTS CAPPED] [GROUPS 56] [CAP 50] imported groups' member lists left as 6529.io holds them (WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP): a mirror under a cap they fit holds them rewritten, a difference by the cap, not drift"
     );
+  });
+
+  it('reads no imported row or list once matching has used up the time, counting the groups pending', async () => {
+    const { store, run } = imported(['profile-1', 'profile-a1']);
+    const lookups = jest.spyOn(store, 'importedGroupId');
+    const reads = [
+      jest.spyOn(store, 'groupRows'),
+      jest.spyOn(store, 'groupListMembers')
+    ];
+    // The time runs out with the lookup.
+    const { report } = await run(true, () => lookups.mock.calls.length >= 1);
+    expect(lookups).toHaveBeenCalledTimes(1);
+    expect(report.remap.imported).toMatchObject({ groups: 0, pending: 1 });
+    reads.forEach((read) => expect(read).not.toHaveBeenCalled());
+    expect(store.listRewrites).toEqual([]);
+
+    // The next run, with time, reads the kept match's row and its list.
+    const next = await run();
+    expect(lookups).toHaveBeenCalledTimes(1);
+    expect(next.report.remap.imported).toMatchObject({ groups: 0, pending: 0 });
+    reads.forEach((read) => expect(read).toHaveBeenCalledTimes(1));
+  });
+
+  it('counts the imported groups pending when the time runs out while their rows are read', async () => {
+    const { store, run } = imported(['profile-1', 'profile-a1']);
+    const rows = jest.spyOn(store, 'groupRows');
+    const lists = jest.spyOn(store, 'groupListMembers');
+    // The time runs out with the read of the rows.
+    const { report } = await run(true, () => rows.mock.calls.length >= 1);
+    expect(rows).toHaveBeenCalledTimes(1);
+    expect(report.remap.imported).toMatchObject({ groups: 0, pending: 1 });
+    expect(lists).not.toHaveBeenCalled();
+    expect(store.listRewrites).toEqual([]);
+  });
+
+  it("reads no list of the chain's own groups once matching the imported ones has used up the time, leaving them for the next run", async () => {
+    const { store, run } = world();
+    // A group made on the chain, written with A1, which then moves.
+    store.addressProfiles.set(A1, 'profile-a1');
+    store.chainGroups = [
+      aChainGroupRow(G, { includes: [{ kind: 'address', value: A1 }] })
+    ];
+    await run();
+    store.addressProfiles.set(A1, 'profile-z');
+    // An imported group listing A1, not matched yet.
+    store.importedGroups.set(LEGACY_GROUP, IMPORTED_GROUP_ID);
+    store.groups.set(
+      IMPORTED_GROUP_ID,
+      aRow(IMPORTED_GROUP_ID, 'Readers', { include: LIST, exclude: null })
+    );
+    store.chainGroups.push(
+      aChainGroupRow(
+        GI,
+        { includes: [{ kind: 'address', value: A1 }] },
+        { origin: 'legacy', legacyId: LEGACY_GROUP }
+      )
+    );
+    const lookups = jest.spyOn(store, 'importedGroupId');
+    const reads = [
+      jest.spyOn(store, 'identityRowsReached'),
+      jest.spyOn(store, 'groupListMembers'),
+      jest.spyOn(store, 'profilesOfAddresses')
+    ];
+    // The time runs out with the lookup.
+    const { report } = await run(true, () => lookups.mock.calls.length >= 1);
+    expect(report.remap).toMatchObject({ groups: 0, left: 1 });
+    expect(report.remap.imported).toMatchObject({ pending: 1 });
+    reads.forEach((read) => expect(read).not.toHaveBeenCalled());
+    expect(store.listRewrites).toEqual([]);
+  });
+
+  it("looks again a day later, in report-only runs, for an imported group's row it didn't find", async () => {
+    const DAY = 24 * 60 * 60_000;
+    const { store, run, at } = imported(['profile-1', 'profile-a1']);
+    // No 6529.io row matches yet.
+    store.importedGroups.delete(LEGACY_GROUP);
+    const lookups = jest.spyOn(store, 'importedGroupId');
+    expect((await run(false)).report.remap.imported).toMatchObject({
+      unmatched: 1
+    });
+    at(NOW + DAY - 1);
+    await run(false);
+    expect(lookups).toHaveBeenCalledTimes(1);
+    // The row turns up; a day after the first look it is found.
+    store.importedGroups.set(LEGACY_GROUP, IMPORTED_GROUP_ID);
+    at(NOW + DAY);
+    const later = await run(false);
+    expect(lookups).toHaveBeenCalledTimes(2);
+    expect(later.report.remap.imported).toMatchObject({ unmatched: 0 });
+    expect(store.groupRecords.size).toBe(0);
+  });
+
+  it('keeps a list another group still names when a group that named it is replaced', async () => {
+    const { store, run } = world();
+    store.addressProfiles.set(A1, 'profile-a1');
+    store.addressProfiles.set(A2, 'profile-a2');
+    // Two 6529.io groups share one list; the chain replaces the first.
+    store.importedGroups.set(LEGACY_GROUP, IMPORTED_GROUP_ID);
+    store.groups.set(
+      IMPORTED_GROUP_ID,
+      aRow(IMPORTED_GROUP_ID, 'Readers', {
+        include: 'shared-list',
+        exclude: null
+      })
+    );
+    store.lists.set('shared-list', new Set(['profile-a1']));
+    const other = anImported(
+      store,
+      2,
+      [{ kind: 'address', value: A1 }],
+      ['profile-a1']
+    );
+    store.groups.set(
+      other.id,
+      aRow(other.id, 'Others', { include: 'shared-list', exclude: null })
+    );
+    store.chainGroups.push(
+      aChainGroupRow(
+        GI,
+        { includes: [{ kind: 'address', value: A2 }] },
+        { version: 2, origin: 'legacy', legacyId: LEGACY_GROUP }
+      )
+    );
+    await run();
+    expect(store.groups.get(IMPORTED_GROUP_ID)?.profile_group_id).toBe(
+      groupListId(GI, 2, 'include')
+    );
+    // The second group still names the list, so it stays as it was.
+    expect(listed(store, 'shared-list')).toEqual(['profile-a1']);
+    expect(store.listRewrites).toEqual([]);
   });
 
   it('looks each imported group up once in report-only runs, keeping what it found in the process', async () => {
