@@ -54,6 +54,11 @@ export interface ChainWave {
   readonly readGroupId: string | null;
   readonly postGroupId: string | null;
   readonly adminGroupId: string | null;
+  /**
+   * Its group refs (of the three) that pin a group version; version 0
+   * follows the group's current one.
+   */
+  readonly pinnedGroupRefs: number;
 }
 
 export function chainWaveOf(row: ChainWaveRow): ChainWave {
@@ -63,6 +68,11 @@ export function chainWaveOf(row: ChainWaveRow): ChainWave {
     /^0x[0-9a-fA-F]{2,}$/.test(data.metadataCid)
       ? data.metadataCid.toLowerCase()
       : null;
+  const refs: [string | null, unknown][] = [
+    [row.read_group_id, data.readGroup],
+    [row.post_group_id, data.postGroup],
+    [row.admin_group_id, data.adminGroup]
+  ];
   return {
     waveId: row.wave_id.toLowerCase(),
     legacyId: legacyIdOf(row.legacy_id),
@@ -73,7 +83,10 @@ export function chainWaveOf(row: ChainWaveRow): ChainWave {
     metadataCid: cid,
     readGroupId: chainIdOf(row.read_group_id),
     postGroupId: chainIdOf(row.post_group_id),
-    adminGroupId: chainIdOf(row.admin_group_id)
+    adminGroupId: chainIdOf(row.admin_group_id),
+    pinnedGroupRefs: refs.filter(
+      ([groupId, ref]) => !!groupId && Number(jsonObjectOf(ref).version) > 0
+    ).length
   };
 }
 

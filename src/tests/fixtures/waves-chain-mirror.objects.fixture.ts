@@ -279,6 +279,8 @@ export class FakeObjectsStore implements ObjectsStore {
   ) {
     const out = new Map<string, string>();
     for (const address of addresses) {
+      // Left as it is, and without a profile id.
+      if (this.mappedElsewhere.has(address)) continue;
       if (!this.addressProfiles.has(address)) {
         this.addedIdentities.push(address);
         this.addressProfiles.set(address, `profile-of-${address.slice(2, 8)}`);
@@ -295,24 +297,42 @@ export class FakeObjectsStore implements ObjectsStore {
   async ownRowsWithoutProfile(addresses: readonly string[]) {
     return new Set(addresses.filter((a) => this.rowsWithoutProfile.has(a)));
   }
+  /**
+   * Addresses mapped to an identity of several wallets that has no profile
+   * id: never given one.
+   */
+  mappedElsewhere = new Set<string>();
+  async addressesMappedElsewhere(addresses: readonly string[]) {
+    return new Set(addresses.filter((a) => this.mappedElsewhere.has(a)));
+  }
   async identityRowsReached(height: number) {
     return this.identityHeight === null || this.identityHeight >= height;
   }
   async groupsHeld(
-    held: { readonly count: number; readonly oldestHeight: number | null },
+    held: {
+      readonly count: number;
+      readonly oldestHeight: number | null;
+      readonly complete: boolean;
+    },
     now: number
   ) {
     if (!held.count) {
       this.held = null;
       return null;
     }
+    const kept = held.complete ? null : this.held;
     this.held = {
       since: this.held?.since ?? now,
-      height: held.oldestHeight,
-      count: held.count,
+      height: kept ? kept.height : held.oldestHeight,
+      count: kept ? kept.count : held.count,
       reported: this.held?.reported ?? false
     };
-    return { since: this.held.since, reported: this.held.reported };
+    return {
+      since: this.held.since,
+      reported: this.held.reported,
+      count: this.held.count,
+      oldestHeight: this.held.height
+    };
   }
   async groupsHeldReported() {
     if (this.held) this.held = { ...this.held, reported: true };
@@ -335,7 +355,79 @@ export class FakeObjectsStore implements ObjectsStore {
       ...write.row,
       is_pure_profile_group: false
     });
+    for (const [listId, profiles] of [
+      [write.row.profile_group_id, write.includes],
+      [write.row.excluded_profile_group_id, write.excludes]
+    ] as const) {
+      if (listId) this.lists.set(listId, new Set(profiles));
+    }
+    // As the store: an old list goes once no group names it.
+    const named = (listId: string) =>
+      Array.from(this.groups.values()).some(
+        (g) =>
+          g.profile_group_id === listId ||
+          g.excluded_profile_group_id === listId
+      );
+    for (const listId of write.oldListIds) {
+      if (!named(listId)) this.lists.delete(listId);
+    }
     return [...write.includes, ...write.excludes];
+  }
+  /** profile_groups: each list's profiles, by list id. */
+  lists = new Map<string, Set<string>>();
+  /** The member lists' rewrites, with whether a transaction was open. */
+  listRewrites: {
+    lists: { listId: string; added: string[]; removed: string[] }[];
+    profiles: string[];
+    inTransaction: boolean;
+  }[] = [];
+  /** profile_group_changes, as the store writes it (a rebuild writes none). */
+  groupChanges: string[] = [];
+  /**
+   * Every imported row (the store narrows them to those listing an address
+   * at version 1; the pass checks each again).
+   */
+  async chainImportedGroupsListingAddresses() {
+    return this.chainGroups.filter((g) => g.origin !== 'native');
+  }
+  async groupRows(ids: readonly string[]) {
+    return new Map(
+      ids
+        .filter((id) => this.groups.has(id))
+        .map((id) => [id, this.groups.get(id)!])
+    );
+  }
+  async groupListMembers(ids: readonly string[]) {
+    return new Map(
+      ids
+        .filter((id) => this.lists.has(id))
+        .map((id) => [id, new Set(this.lists.get(id))])
+    );
+  }
+  async rewriteGroupLists(
+    lists: readonly {
+      listId: string;
+      added: readonly string[];
+      removed: readonly string[];
+    }[],
+    profiles: readonly string[]
+  ) {
+    this.listRewrites.push({
+      lists: lists.map(({ listId, added, removed }) => ({
+        listId,
+        added: [...added],
+        removed: [...removed]
+      })),
+      profiles: [...profiles],
+      inTransaction: this.open > 0
+    });
+    for (const { listId, added, removed } of lists) {
+      const members = this.lists.get(listId) ?? new Set<string>();
+      removed.forEach((p) => members.delete(p));
+      added.forEach((p) => members.add(p));
+      this.lists.set(listId, members);
+    }
+    if (this.mode !== 'rebuild') this.groupChanges.push(...profiles);
   }
   async createWave(write: WaveCreate) {
     this.waveCreates.push(write);
@@ -385,8 +477,15 @@ export class FakeObjectsStore implements ObjectsStore {
   }
   async inTransaction<T>(fn: (connection: any) => Promise<T>): Promise<T> {
     this.transactions++;
-    return fn({ connection: 'fake' });
+    this.open++;
+    try {
+      return await fn({ connection: 'fake' });
+    } finally {
+      this.open--;
+    }
   }
+  /** Transactions open now. */
+  private open = 0;
 
   chainDecisions: ChainDecisionRowRead[] = [];
   /** chain_waves' legacy ids: an imported wave's 6529.io id. */
@@ -442,7 +541,8 @@ export class FakeObjectsStore implements ObjectsStore {
       this.waveCreates.length +
       this.waveEdits.length +
       this.descriptions.length +
-      this.competitionWrites.length
+      this.competitionWrites.length +
+      this.listRewrites.length
     );
   }
 }

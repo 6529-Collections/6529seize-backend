@@ -1,5 +1,6 @@
 import { Logger } from '@/logging';
 import type { ConnectionWrapper } from '@/sql-executor';
+import { UserGroupEntity } from '@/entities/IUserGroup';
 import { WaveEntity } from '@/entities/IWave';
 import { InsertWaveEntity } from '@/api/waves/waves.api.db';
 import { ApiCreateNewWave } from '@/api/generated/models/ApiCreateNewWave';
@@ -12,6 +13,7 @@ import {
   CompetitionType
 } from '@/entities/ICompetition';
 import { BadRequestException } from '@/exceptions';
+import { hasGroupGotAnyNonIdentityConditions } from '@/groups/user-group-predicates';
 import {
   ChainNativeDecision,
   chainNativeDecisionOf,
@@ -83,6 +85,82 @@ export interface ObjectCounts {
   left: number;
 }
 
+/** Member lists that differ from what their members resolve to now. */
+export interface ListCounts {
+  /** Groups with such a list (written unless failed, left or capped). */
+  groups: number;
+  readonly include: { added: number; removed: number };
+  readonly exclude: { added: number; removed: number };
+}
+
+/** How a run brought groups' member lists to current wallet bindings. */
+export interface RemapCounts extends ListCounts {
+  /**
+   * Why the lists weren't looked at this run: the identity mirror hadn't
+   * reached a group's height, was running a full sync, or had identities
+   * or wallets to try again. Null when they were, or none could move.
+   */
+  skipped: 'identity_rows_not_reached' | null;
+  /**
+   * Groups whose lists wait: all of them while the identity mirror is
+   * behind, else those with a member that doesn't resolve.
+   */
+  waiting: number;
+  /** Groups whose lists failed to be read or written. */
+  failed: number;
+  /** Groups the run had no time left for. */
+  left: number;
+  /**
+   * Imported groups the chain never replaced, counted apart from the rest
+   * (above: groups made on the chain or replaced by it).
+   */
+  readonly imported: ListCounts & {
+    /** Over the cap: none of their lists was written this run. */
+    capped: boolean;
+    /** The cap the run read (WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP). */
+    cap: number;
+    /** Ones that list addresses but no 6529.io group matched. */
+    unmatched: number;
+    /**
+     * Ones the run had no time for: to match to a 6529.io group, or (out
+     * of time before the re-check began) to look at at all. While any is,
+     * no imported group's lists are looked at or written: the cap is
+     * applied to the count of them all, never to part of them.
+     */
+    pending: number;
+    /**
+     * Ones left as they are because the chain holds them as a list of
+     * members where 6529.io holds criteria (staticOnChain): never written,
+     * and not weighed against the cap.
+     */
+    skippedStatic: number;
+  };
+}
+
+/** How many imported groups' lists one run may write, by default. */
+export const IMPORTED_REMAP_CAP = 50;
+
+/**
+ * WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP (a whole number, 0 or more), else
+ * IMPORTED_REMAP_CAP. Read from the environment each run, not when the
+ * module loads, so a changed value applies in a new container.
+ */
+export function importedRemapCapOf(env: NodeJS.ProcessEnv): number {
+  const text = env.WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP?.trim();
+  const value = text ? Number(text) : NaN;
+  return Number.isSafeInteger(value) && value >= 0 ? value : IMPORTED_REMAP_CAP;
+}
+
+/**
+ * What to say of a run that held imported groups' lists by the cap: a
+ * mirror run under a cap they fit holds them rewritten, so the two differ
+ * there by the cap, not by drift. Null when none was held.
+ */
+export function importedListsCappedNote(remap: RemapCounts): string | null {
+  if (!remap.imported.capped) return null;
+  return `[IMPORTED GROUP LISTS CAPPED] [GROUPS ${remap.imported.groups}] [CAP ${remap.imported.cap}] imported groups' member lists left as 6529.io holds them (WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP): a mirror under a cap they fit holds them rewritten, a difference by the cap, not drift`;
+}
+
 export interface ObjectsReport {
   readonly groups: ObjectCounts;
   readonly waves: ObjectCounts;
@@ -91,6 +169,14 @@ export interface ObjectsReport {
    * rebuild, imported ones 6529.io has none of).
    */
   readonly decisions: ObjectCounts;
+  /** The written groups' member lists, following wallet bindings. */
+  readonly remap: RemapCounts;
+  /**
+   * The waves' read, post and admin group refs that pin a group version:
+   * 6529.io maps a wave's groups by id alone, so it follows the group's
+   * current version where the chain keeps the pinned one.
+   */
+  pinnedWaveGroupRefs: number;
 }
 
 export function emptyObjectsReport(): ObjectsReport {
@@ -101,7 +187,31 @@ export function emptyObjectsReport(): ObjectsReport {
     failed: 0,
     left: 0
   });
-  return { groups: counts(), waves: counts(), decisions: counts() };
+  return {
+    groups: counts(),
+    waves: counts(),
+    decisions: counts(),
+    remap: {
+      skipped: null,
+      groups: 0,
+      include: { added: 0, removed: 0 },
+      exclude: { added: 0, removed: 0 },
+      waiting: 0,
+      failed: 0,
+      left: 0,
+      imported: {
+        groups: 0,
+        include: { added: 0, removed: 0 },
+        exclude: { added: 0, removed: 0 },
+        capped: false,
+        cap: IMPORTED_REMAP_CAP,
+        unmatched: 0,
+        pending: 0,
+        skippedStatic: 0
+      }
+    },
+    pinnedWaveGroupRefs: 0
+  };
 }
 
 /** 6529.io's effects after a write commits, and its services the pass asks. */
@@ -168,9 +278,14 @@ export type ObjectsStore = Pick<
   | 'addAddressIdentities'
   | 'identityRowsReached'
   | 'ownRowsWithoutProfile'
+  | 'addressesMappedElsewhere'
   | 'groupsHeld'
   | 'groupsHeldReported'
   | 'groupRow'
+  | 'groupListMembers'
+  | 'groupRows'
+  | 'rewriteGroupLists'
+  | 'chainImportedGroupsListingAddresses'
   | 'waveRow'
   | 'dropParts'
   | 'waveMetadata'
@@ -253,6 +368,176 @@ type ParentChoice =
   | typeof WAIT_FOR_PARENT;
 /** A child waits this long after it was made for a parent made on the chain. */
 export const PARENT_WAIT_MS = 24 * 60 * 60_000;
+
+/**
+ * Whether a group's definition lists an address: only such a group can be
+ * held for the identity mirror.
+ */
+function listsAddresses(group: ChainGroup): boolean {
+  const def = group.definition;
+  return (
+    !!def &&
+    [...def.includes, ...def.excludes].some((m) => m.kind === 'address')
+  );
+}
+
+/** A member list that names an address, as its group defines it. */
+interface ListToCheck {
+  readonly kind: 'include' | 'exclude';
+  readonly listId: string;
+  readonly members: readonly GroupMember[];
+}
+
+/** A group whose member lists may move with wallet bindings. */
+interface GroupToCheck {
+  /** 6529.io's id of the group. */
+  readonly groupId: string;
+  readonly chainGroupId: string;
+  readonly height: number;
+  /**
+   * An imported group the chain never replaced: its lists are 6529.io's
+   * own rows, brought whole to the chain's members.
+   */
+  readonly imported: boolean;
+  readonly lists: readonly ListToCheck[];
+}
+
+/**
+ * A group's lists, under these list ids, that name an address. A list of
+ * principals alone never moves (a principal's profile id doesn't change),
+ * so it isn't looked at.
+ */
+function listsToCheck(
+  group: ChainGroup,
+  listIds: { readonly include: string | null; readonly exclude: string | null }
+): ListToCheck[] {
+  const shape = group.definition ? groupShapeOf(group.definition) : null;
+  if (!shape?.ok) return [];
+  const lists: ListToCheck[] = [];
+  for (const [kind, listId, members] of [
+    ['include', listIds.include, shape.includes ?? []],
+    ['exclude', listIds.exclude, shape.excludes]
+  ] as const) {
+    if (listId && members.some((m) => m.kind === 'address')) {
+      lists.push({ kind, listId, members });
+    }
+  }
+  return lists;
+}
+
+/**
+ * The groups made or replaced on the chain whose written lists may move:
+ * written at their current version, under that version's list ids.
+ */
+function groupsToCheck(
+  groups: readonly ChainGroup[],
+  records: ReadonlyMap<string, MirroredGroup>
+): GroupToCheck[] {
+  const out: GroupToCheck[] = [];
+  for (const group of groups) {
+    const record = records.get(group.groupId);
+    if (!record?.groupId || record.version !== group.version) continue;
+    if (group.height === null) continue;
+    const lists = listsToCheck(group, {
+      include: record.includeListId,
+      exclude: record.excludeListId
+    });
+    if (lists.length) {
+      out.push({
+        groupId: record.groupId,
+        chainGroupId: group.groupId,
+        height: group.height,
+        imported: false,
+        lists
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Whether an imported group came onto the chain as a list of its members:
+ * its 6529.io row has a criterion the chain can't run (6529.io's own test,
+ * hasGroupGotAnyNonIdentityConditions) while the chain's definition has no
+ * clauses. The chain then lists every member the criteria gave at the
+ * freeze, and the row's own include list only its explicit ones, so the
+ * two are never compared: that would add each of those members to it.
+ */
+function staticOnChain(group: ChainGroup, row: UserGroupEntity): boolean {
+  return (
+    hasGroupGotAnyNonIdentityConditions(row) &&
+    !group.definition?.clauses.length
+  );
+}
+
+/**
+ * Whether the re-check takes this group as an imported one: imported, never
+ * replaced by the chain (version 1), and listing an address.
+ */
+function importedToCheck(group: ChainGroup): boolean {
+  return (
+    group.origin !== 'native' &&
+    group.version <= 1 &&
+    group.height !== null &&
+    listsAddresses(group)
+  );
+}
+
+/** The stored lists, and the members' profiles now. */
+interface ListsRead {
+  readonly stored: ReadonlyMap<string, ReadonlySet<string>>;
+  readonly byAddress: ReadonlyMap<string, string>;
+  readonly byPrincipal: ReadonlyMap<string, string>;
+}
+
+/** What a list gains and loses. */
+interface ListChange {
+  readonly kind: 'include' | 'exclude';
+  readonly listId: string;
+  readonly added: string[];
+  readonly removed: string[];
+}
+
+/**
+ * A list against its members now: the profiles its addresses resolve to
+ * now, and its principals' profiles. A profile stays while a principal or
+ * an address still gives it, so one a principal gives stays when an
+ * address that gave it too moves away, and a profile no member gives goes.
+ * The lists the mirror wrote hold every principal's profile; one that
+ * doesn't is left as it is (a wait) rather than a principal re-mapped. An
+ * imported group's list is 6529.io's own, so a principal's profile it
+ * lacks is added. A wait reason when a member resolves to no profile.
+ */
+function listChange(
+  list: ListToCheck,
+  imported: boolean,
+  stored: ReadonlySet<string>,
+  byAddress: ReadonlyMap<string, string>,
+  byPrincipal: ReadonlyMap<string, string>
+): ListChange | string {
+  const members = new Set<string>();
+  for (const member of list.members) {
+    const profile =
+      member.kind === 'address'
+        ? byAddress.get(member.value)
+        : byPrincipal.get(member.value);
+    if (!profile) {
+      return member.kind === 'address'
+        ? 'group_remap_address_without_profile'
+        : 'group_remap_principal_unmapped';
+    }
+    if (member.kind === 'principal' && !imported && !stored.has(profile)) {
+      return 'group_remap_principal_not_stored';
+    }
+    members.add(profile);
+  }
+  return {
+    kind: list.kind,
+    listId: list.listId,
+    added: Array.from(members).filter((p) => !stored.has(p)),
+    removed: Array.from(stored).filter((p) => !members.has(p))
+  };
+}
 
 /** Whether a decision made on the chain has a policy version to write. */
 function decisionDue(
@@ -351,8 +636,10 @@ function descriptionContent(
  * first (a wave names them), then waves. Each run takes every group and
  * wave the chain owns (made on the chain, or an imported one the chain
  * replaced) and passes over those whose chain state is the one it last
- * wrote, so a run costs two reads when nothing moved. A report-only run
- * counts what it would write and writes nothing.
+ * wrote. The member lists of the groups it wrote follow wallet bindings:
+ * each run reads them again against the identities their addresses
+ * belong to now, so a run costs a few batched reads when nothing moved. A
+ * report-only run counts what it would write and writes nothing.
  */
 export class WavesChainObjectsMirror {
   constructor(
@@ -364,6 +651,24 @@ export class WavesChainObjectsMirror {
     private readonly gate: ContentGate,
     private readonly clock: () => number
   ) {}
+
+  /**
+   * Since when the member lists have waited for the identity mirror, in this
+   * process, and whether that wait has been reported (one WARN a wait).
+   */
+  private listsWait: { since: number; reported: boolean } | null = null;
+
+  /**
+   * The 6529.io rows a report-only run found for imported groups (none:
+   * null), kept in this process, with when they were looked for: such a run
+   * keeps no records, and looking each group up again every run would take
+   * its whole time. One no row matched is looked for again a day later, as
+   * a writing run's record is.
+   */
+  private readonly importedRowsFound = new Map<
+    string,
+    { readonly groupId: string | null; readonly at: number }
+  >();
 
   async run(input: {
     readonly write: boolean;
@@ -379,6 +684,11 @@ export class WavesChainObjectsMirror {
      * absent: at the gateway client's pin.
      */
     readonly height?: number | null;
+    /**
+     * How many imported groups' lists the run may write
+     * (importedRemapCapOf); absent: IMPORTED_REMAP_CAP.
+     */
+    readonly importedRemapCap?: number;
   }): Promise<ObjectsReport> {
     const report = emptyObjectsReport();
     const now = this.clock();
@@ -396,6 +706,8 @@ export class WavesChainObjectsMirror {
     );
     // The chain heights of the groups held for the identity mirror this run.
     const held: number[] = [];
+    // Groups listing addresses (the only ones that can be held) that failed.
+    let failedListing = 0;
     for (const group of groups) {
       const record = groupRecords.get(group.groupId);
       if (record && record.version === group.version) {
@@ -406,15 +718,35 @@ export class WavesChainObjectsMirror {
         report.groups.left++;
         continue;
       }
+      const failed = report.groups.failed;
       await this.count(report.groups, `group ${group.groupId}`, () =>
         this.mirrorGroup(group, record, { ...input, held }, now)
       );
+      if (report.groups.failed > failed && listsAddresses(group)) {
+        failedListing++;
+      }
     }
-    // Only a writing run keeps the hold (its state row and WARN); one that
-    // left groups for later keeps a hold it can't see the end of.
-    if (input.write && (held.length || !report.groups.left)) {
-      await this.reportHeldGroups(held, now);
+    // Only a writing run keeps the hold (its state row and WARN). One that
+    // left groups for later, or failed to look at one listing addresses,
+    // may have missed a held group: it keeps a hold it can't see the end
+    // of, and the count of the last run that looked at them all.
+    const complete = !report.groups.left && !failedListing;
+    if (input.write && (held.length || complete)) {
+      try {
+        await this.reportHeldGroups(held, complete, now);
+      } catch (error) {
+        // The hold's record only: the pass goes on, and the next writing
+        // run tries it again.
+        logger.error(
+          `[WAVES CHAIN MIRROR] groups held for identity rows not kept: ${error}`
+        );
+      }
     }
+    // The lists of the groups written before, and of the imported groups,
+    // follow the wallets' current identities (a group written this run has
+    // its old version in the records read above, so it isn't looked at
+    // again).
+    await this.remapGroups(groups, groupRecords, input, report, now);
     // A rebuild matches every imported group the chain never replaced to
     // 6529.io's row, keeping the match (the rows it can't make are these).
     const imported = (await this.store.chainImportedGroups()).map(chainGroupOf);
@@ -446,6 +778,10 @@ export class WavesChainObjectsMirror {
       // A rebuild takes every imported wave: it writes the rows 6529.io
       // has none of.
       .filter((w) => this.store.mode === 'rebuild' || isChainOwnedWave(w));
+    report.pinnedWaveGroupRefs = waves.reduce(
+      (n, w) => n + w.pinnedGroupRefs,
+      0
+    );
     const waveRecords = await this.store.mirroredWaves(
       waves.map((w) => w.waveId)
     );
@@ -635,21 +971,32 @@ export class WavesChainObjectsMirror {
    * hold has lasted GROUPS_HELD_REPORT_MS writes one WARN naming the oldest
    * held height (again only after a hold clears and builds up again). A
    * held group only delays 6529.io's copy of it; a hold that lasts means
-   * the identity mirror is behind or stopped.
+   * the identity mirror is behind or stopped. A run that didn't look at
+   * every group that can be held (`complete` false) keeps the count and
+   * height a hold already has; a hold it starts takes its own, which may
+   * fall short (its oldest height need not be the oldest). The WARN names
+   * the kept ones.
    */
-  private async reportHeldGroups(held: readonly number[], now: number) {
-    const oldestHeight = held.length ? Math.min(...held) : null;
+  private async reportHeldGroups(
+    held: readonly number[],
+    complete: boolean,
+    now: number
+  ) {
     const hold = await this.store.groupsHeld(
-      { count: held.length, oldestHeight },
+      {
+        count: held.length,
+        oldestHeight: held.length ? Math.min(...held) : null,
+        complete
+      },
       now
     );
     if (!hold || hold.reported || now - hold.since < GROUPS_HELD_REPORT_MS) {
       return;
     }
     logger.warn(
-      `[WAVES CHAIN MIRROR] [GROUPS HELD FOR IDENTITY ROWS] [OLDEST HEIGHT ${oldestHeight}] [HELD SINCE ${new Date(
+      `[WAVES CHAIN MIRROR] [GROUPS HELD FOR IDENTITY ROWS] [OLDEST HEIGHT ${hold.oldestHeight}] [HELD SINCE ${new Date(
         hold.since
-      ).toISOString()}] [GROUPS ${held.length}]`
+      ).toISOString()}] [GROUPS ${hold.count}]`
     );
     await this.store.groupsHeldReported();
   }
@@ -737,10 +1084,12 @@ export class WavesChainObjectsMirror {
       .filter((m) => m.kind === 'address')
       .map((m) => m.value);
     if (addresses.length) {
-      // Listed addresses are resolved to identities only once the identity
-      // mirror stands at the group's height, live and in a rebuild alike, so
-      // both resolve them the same way and no address-only row is made for
-      // a wallet an identity already holds there.
+      // A new version's listed addresses are resolved only once the identity
+      // mirror stands at the group's height, so no address-only row is made
+      // for a wallet an identity already holds there. Later runs resolve
+      // them again as wallets move (remapGroups), so a live mirror's lists
+      // and a rebuild's agree once their identity mirrors stand at the same
+      // height.
       if (group.height === null) return wait('group_without_height');
       if (!(await this.store.identityRowsReached(group.height))) {
         input.held.push(group.height);
@@ -754,6 +1103,16 @@ export class WavesChainObjectsMirror {
     const idTime = group.activeFrom;
     if (unknown.length && idTime === null) {
       return wait('group_without_block_time');
+    }
+    // An address mapped to another row (an identity of several wallets)
+    // that has no profile id is given none, so the write would roll back
+    // (AddressesWithoutProfile): the group waits, in a report-only run as
+    // in a writing one.
+    if (
+      unknown.length &&
+      (await this.store.addressesMappedElsewhere(unknown)).size
+    ) {
+      return wait('group_address_without_profile');
     }
     counter.change('community_groups', existing ? 'update' : 'insert');
     counter.change(
@@ -857,6 +1216,349 @@ export class WavesChainObjectsMirror {
         connection
       );
     });
+  }
+
+  /**
+   * Brings groups' member lists to the profiles their listed addresses
+   * resolve to now: the chain matches an address member against the
+   * wallets its principal holds at each check, so a wallet that joins,
+   * leaves or moves to another identity moves the membership with it.
+   * Groups made or replaced on the chain are checked at their current
+   * version's lists (older versions' aren't looked at). Imported groups the
+   * chain never replaced are checked at their 6529.io rows' lists once
+   * every one of them is matched to its row, and a run writes them only
+   * while no more of them change than the cap allows. A
+   * list that resolves to what it holds isn't written. No identity row is
+   * made here: a wallet that left an identity has the row the identity
+   * mirror gave it, and one never bound the row it was listed with. A list
+   * that can't be resolved stays as it is this run (a wait).
+   */
+  private async remapGroups(
+    groups: readonly ChainGroup[],
+    records: ReadonlyMap<string, MirroredGroup>,
+    input: {
+      readonly write: boolean;
+      readonly counter: PlanCounter;
+      readonly outOfTime: () => boolean;
+      readonly importedRemapCap?: number;
+    },
+    report: ObjectsReport,
+    now: number
+  ): Promise<void> {
+    const { remap } = report;
+    remap.imported.cap = input.importedRemapCap ?? IMPORTED_REMAP_CAP;
+    const native = groupsToCheck(groups, records);
+    if (input.outOfTime()) {
+      // A run out of time reads nothing more but the imported groups' rows,
+      // to count them pending: a rebuild doesn't call itself done with
+      // their lists unchecked.
+      remap.left += native.length;
+      try {
+        remap.imported.pending += (await this.importedCandidates()).length;
+      } catch (error) {
+        remap.failed++;
+        logger.error(
+          `[WAVES CHAIN MIRROR] imported groups' member lists not read: ${error}`
+        );
+      }
+      this.logImportedLists(remap);
+      return;
+    }
+    let imported: GroupToCheck[] = [];
+    try {
+      imported = await this.importedGroupsToCheck(input, remap, now);
+    } catch (error) {
+      remap.failed++;
+      logger.error(
+        `[WAVES CHAIN MIRROR] imported groups' member lists not read: ${error}`
+      );
+    }
+    if (input.outOfTime()) {
+      // Out of time once matched: no list is read this run. The groups made
+      // on the chain are left for the next run, and the imported ones whose
+      // rows were read count pending, as those not matched in time do.
+      remap.left += native.length;
+      remap.imported.pending += imported.length;
+      this.logImportedLists(remap);
+      return;
+    }
+    try {
+      await this.checkLists([...native, ...imported], input, remap, now);
+    } finally {
+      this.logImportedLists(remap);
+    }
+  }
+
+  /**
+   * The lists of these groups, read once the identity mirror stands at
+   * their heights, written where they changed (imported ones while within
+   * the cap).
+   */
+  private async checkLists(
+    due: readonly GroupToCheck[],
+    input: {
+      readonly write: boolean;
+      readonly counter: PlanCounter;
+      readonly outOfTime: () => boolean;
+      readonly importedRemapCap?: number;
+    },
+    remap: RemapCounts,
+    now: number
+  ): Promise<void> {
+    if (!due.length) {
+      this.listsWait = null;
+      return;
+    }
+    let read: ListsRead;
+    try {
+      // The identity mirror must stand at the highest height these groups'
+      // rows were read at, the height each group's own write waits for. Not
+      // the index's read height: that is the chain's newest block when the
+      // index last ran, and the identity mirror, which runs on its own
+      // schedule, has seldom reached it by then. While it is behind, the
+      // lists wait for a later run, and nothing is held.
+      const height = due.reduce((max, g) => Math.max(max, g.height), 0);
+      if (!(await this.store.identityRowsReached(height))) {
+        remap.skipped = 'identity_rows_not_reached';
+        remap.waiting += due.length;
+        this.reportListsWait(height, due.length, now);
+        return;
+      }
+      this.listsWait = null;
+      read = await this.readLists(due);
+    } catch (error) {
+      remap.failed += due.length;
+      logger.error(
+        `[WAVES CHAIN MIRROR] group member lists not read: ${error}`
+      );
+      return;
+    }
+    const changed: { group: GroupToCheck; changes: ListChange[] }[] = [];
+    for (const group of due) {
+      const changes = this.listChanges(group, read, input.counter);
+      if (!changes) {
+        remap.waiting++;
+        continue;
+      }
+      if (!changes.length) continue;
+      const counts = group.imported ? remap.imported : remap;
+      counts.groups++;
+      for (const change of changes) {
+        counts[change.kind].added += change.added.length;
+        counts[change.kind].removed += change.removed.length;
+      }
+      changed.push({ group, changes });
+    }
+    const { cap } = remap.imported;
+    if (remap.imported.groups > cap) {
+      remap.imported.capped = true;
+      logger.error(
+        `[WAVES CHAIN MIRROR] [IMPORTED GROUP LISTS OVER CAP] [GROUPS ${remap.imported.groups}] [CAP ${cap}] no imported group's lists written this run (WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP)`
+      );
+    }
+    for (const { group, changes } of changed) {
+      if (group.imported && remap.imported.capped) continue;
+      if (input.write && input.outOfTime()) {
+        remap.left++;
+        continue;
+      }
+      for (const change of changes) {
+        input.counter.change('profile_groups', 'insert', change.added.length);
+        input.counter.change('profile_groups', 'delete', change.removed.length);
+      }
+      if (input.write) await this.writeLists(group, changes, remap);
+    }
+  }
+
+  /** The imported groups the chain never replaced that list an address. */
+  private async importedCandidates(): Promise<ChainGroup[]> {
+    return (await this.store.chainImportedGroupsListingAddresses())
+      .map(chainGroupOf)
+      .filter(importedToCheck);
+  }
+
+  /** The imported groups' counts, on a line of their own, when any. */
+  private logImportedLists(remap: RemapCounts) {
+    const { groups, pending, skippedStatic } = remap.imported;
+    if (groups || pending || skippedStatic) {
+      logger.info(
+        `[WAVES CHAIN MIRROR] [IMPORTED GROUP LISTS] ${JSON.stringify(remap.imported)}`
+      );
+    }
+  }
+
+  /**
+   * The imported groups the chain never replaced that list an address,
+   * each matched to its 6529.io row as the waves pass matches one (a
+   * writing run keeps the match; one no row matched is looked for again a
+   * day later), with that row's lists. None while any is left to match
+   * (`pending`): their lists are looked at only all together, so the cap
+   * weighs every change at once rather than a run's share of them.
+   */
+  private async importedGroupsToCheck(
+    input: { readonly write: boolean; readonly outOfTime: () => boolean },
+    remap: RemapCounts,
+    now: number
+  ): Promise<GroupToCheck[]> {
+    const groups = await this.importedCandidates();
+    if (!groups.length) return [];
+    const records = await this.store.mirroredGroups(
+      groups.map((g) => g.groupId)
+    );
+    const matched: { group: ChainGroup; groupId: string }[] = [];
+    for (const group of groups) {
+      const record = records.get(group.groupId);
+      let groupId = record?.groupId || null;
+      const found = input.write
+        ? undefined
+        : this.importedRowsFound.get(group.groupId);
+      if (
+        !groupId &&
+        found &&
+        (found.groupId !== null || now - found.at < UNMATCHED_RETRY_MS)
+      ) {
+        groupId = found.groupId;
+      } else if (!groupId) {
+        if (input.outOfTime()) {
+          remap.imported.pending++;
+          continue;
+        }
+        groupId = await this.importedGroupId(group, record, input.write, now);
+        if (!input.write) {
+          this.importedRowsFound.set(group.groupId, { groupId, at: now });
+        }
+      }
+      if (groupId) matched.push({ group, groupId });
+      else remap.imported.unmatched++;
+    }
+    if (remap.imported.pending) return [];
+    // Out of time once matched: their rows and lists are read next run.
+    if (input.outOfTime()) {
+      remap.imported.pending += matched.length;
+      return [];
+    }
+    const rows = await this.store.groupRows(matched.map((m) => m.groupId));
+    const out: GroupToCheck[] = [];
+    for (const { group, groupId } of matched) {
+      const row = rows.get(groupId);
+      if (!row) continue;
+      if (staticOnChain(group, row)) {
+        remap.imported.skippedStatic++;
+        continue;
+      }
+      const lists = listsToCheck(group, {
+        include: row.profile_group_id,
+        exclude: row.excluded_profile_group_id
+      });
+      if (lists.length) {
+        out.push({
+          groupId,
+          chainGroupId: group.groupId,
+          height: group.height!,
+          imported: true,
+          lists
+        });
+      }
+    }
+    return out;
+  }
+
+  /** The stored lists, and their members' profiles now. */
+  private async readLists(due: readonly GroupToCheck[]): Promise<ListsRead> {
+    const members = due.flatMap((g) => g.lists.flatMap((l) => l.members));
+    const valuesOf = (kind: GroupMember['kind']) =>
+      Array.from(
+        new Set(members.filter((m) => m.kind === kind).map((m) => m.value))
+      );
+    const principals = valuesOf('principal');
+    return {
+      stored: await this.store.groupListMembers(
+        due.flatMap((g) => g.lists.map((l) => l.listId))
+      ),
+      byAddress: await this.store.profilesOfAddresses(valuesOf('address')),
+      byPrincipal: principals.length
+        ? await this.principals(principals)
+        : new Map()
+    };
+  }
+
+  /** A group's lists' changes; null when one of them waits (counted). */
+  private listChanges(
+    group: GroupToCheck,
+    read: ListsRead,
+    counter: PlanCounter
+  ): ListChange[] | null {
+    const changes: ListChange[] = [];
+    for (const list of group.lists) {
+      const change = listChange(
+        list,
+        group.imported,
+        read.stored.get(list.listId) ?? new Set(),
+        read.byAddress,
+        read.byPrincipal
+      );
+      if (typeof change === 'string') {
+        counter.wait(change);
+        return null;
+      }
+      if (change.added.length || change.removed.length) changes.push(change);
+    }
+    return changes;
+  }
+
+  /**
+   * One group's lists: both written in one transaction with the change log
+   * of every profile that gained or lost membership, so a run cut short
+   * leaves no group half done and the next run finishes the rest. Its
+   * caches are cleared after the commit.
+   */
+  private async writeLists(
+    group: GroupToCheck,
+    changes: readonly ListChange[],
+    remap: RemapCounts
+  ): Promise<void> {
+    const profiles = Array.from(
+      new Set(changes.flatMap((c) => [...c.added, ...c.removed]))
+    );
+    try {
+      await this.store.inTransaction((connection) =>
+        this.store.rewriteGroupLists(changes, profiles, connection)
+      );
+    } catch (error) {
+      remap.failed++;
+      logger.error(
+        `[WAVES CHAIN MIRROR] group ${group.chainGroupId} member lists failed: ${error}`
+      );
+      return;
+    }
+    try {
+      // The change is logged again after the commit: an eligibility read
+      // that began after the first rows' time but read the lists before the
+      // commit could otherwise keep its answer cached. Readers take a
+      // profile's latest change time, so a second row does no harm.
+      await this.effects.groupsChanged([group.groupId], profiles);
+    } catch (error) {
+      logger.error(
+        `[WAVES CHAIN MIRROR] group ${group.chainGroupId} caches not cleared after its member lists were written: ${error}`
+      );
+    }
+  }
+
+  /**
+   * Keeps when the lists began to wait for the identity mirror, and once
+   * they have waited GROUPS_HELD_REPORT_MS writes one WARN (again only after
+   * a wait ends and a new one lasts). Kept in this process: a new one
+   * starts the count again.
+   */
+  private reportListsWait(height: number, groups: number, now: number) {
+    const wait = (this.listsWait ??= { since: now, reported: false });
+    if (wait.reported || now - wait.since < GROUPS_HELD_REPORT_MS) return;
+    wait.reported = true;
+    logger.warn(
+      `[WAVES CHAIN MIRROR] [GROUP LISTS WAIT FOR IDENTITY ROWS] [HEIGHT ${height}] [WAITING SINCE ${new Date(
+        wait.since
+      ).toISOString()}] [GROUPS ${groups}]`
+    );
   }
 
   /** An imported group's community_groups id, kept once found. */

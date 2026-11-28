@@ -715,9 +715,35 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
   }
 
   /**
+   * The addresses here mapped to another identities row (an identity of
+   * several wallets): a group giving them identities leaves them as they
+   * are (insertIdentitiesOnAddressesOnly), so one whose row has no profile
+   * id can't be listed. Read for the addresses without a profile id, so a
+   * plan waits with the group as the write does.
+   */
+  async addressesMappedElsewhere(
+    addresses: readonly string[]
+  ): Promise<Set<string>> {
+    const out = new Set<string>();
+    for (const chunk of statementChunks(
+      Array.from(new Set(addresses.map((a) => a.toLowerCase()))),
+      () => 48
+    )) {
+      const rows = await this.db.execute<{ address: string }>(
+        `select address from ${ADDRESS_CONSOLIDATION_KEY}
+          where address in (:addresses) and consolidation_key <> address`,
+        { addresses: chunk }
+      );
+      rows.forEach((row) => out.add(row.address.toLowerCase()));
+    }
+    return out;
+  }
+
+  /**
    * Whether the identity mirror's identities rows and wallets stand as of
    * this chain height (identityRowsReached): a group's listed addresses are
-   * resolved only then, live and in a rebuild alike.
+   * resolved only then, when its version is written and when its lists are
+   * read again as wallets move.
    */
   async identityRowsReached(height: number): Promise<boolean> {
     return identityRowsReached(await this.identityState.getState(), height);
@@ -727,12 +753,23 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
    * The groups held for the identity mirror this run: their count and the
    * oldest one's chain height (0 groups: none held). Keeps when a hold
    * began, so it lasts across runs, and returns it with whether the hold
-   * has been reported (the WARN); a run without one clears it.
+   * has been reported (the WARN) and the count and height kept; a run
+   * without one clears it. A run that didn't look at every group
+   * (`complete` false) keeps the count and height a hold already has.
    */
   async groupsHeld(
-    held: { readonly count: number; readonly oldestHeight: number | null },
+    held: {
+      readonly count: number;
+      readonly oldestHeight: number | null;
+      readonly complete: boolean;
+    },
     now: number
-  ): Promise<{ since: number; reported: boolean } | null> {
+  ): Promise<{
+    since: number;
+    reported: boolean;
+    count: number;
+    oldestHeight: number | null;
+  } | null> {
     if (!held.count) {
       await this.db.execute(
         `delete from ${WAVES_CHAIN_MIRROR_STATE_TABLE} where name = :name`,
@@ -740,12 +777,14 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
       );
       return null;
     }
+    const summary = held.complete
+      ? `held_height = values(held_height), held_count = values(held_count),`
+      : '';
     await this.db.execute(
       `insert into ${WAVES_CHAIN_MIRROR_STATE_TABLE}
          (name, held_since, held_height, held_count, held_reported, updated_at)
        values (:name, :now, :height, :count, false, :now)
-       on duplicate key update held_height = values(held_height),
-         held_count = values(held_count), updated_at = values(updated_at)`,
+       on duplicate key update ${summary} updated_at = values(updated_at)`,
       {
         name: GROUPS_HELD_STATE_NAME,
         now,
@@ -755,16 +794,20 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
     );
     const row = await this.db.oneOrNull<{
       held_since: number | string | null;
+      held_height: number | string | null;
+      held_count: number | string | null;
       held_reported: number | boolean | null;
     }>(
-      `select held_since, held_reported from ${WAVES_CHAIN_MIRROR_STATE_TABLE}
-        where name = :name`,
+      `select held_since, held_height, held_count, held_reported
+         from ${WAVES_CHAIN_MIRROR_STATE_TABLE} where name = :name`,
       { name: GROUPS_HELD_STATE_NAME }
     );
     if (!row) return null;
     return {
       since: Number(row.held_since ?? now),
-      reported: !!Number(row.held_reported ?? 0)
+      reported: !!Number(row.held_reported ?? 0),
+      count: Number(row.held_count ?? held.count),
+      oldestHeight: row.held_height === null ? null : Number(row.held_height)
     };
   }
 
@@ -874,17 +917,7 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
         opts(connection)
       );
       const distinct = Array.from(new Set(profiles));
-      for (const chunk of statementChunks(distinct, () => ID_BYTES * 2)) {
-        await this.db.execute(
-          `insert into ${PROFILE_GROUPS_TABLE} (profile_group_id, profile_id)
-           values ${chunk.map((_, i) => `(:listId, :p${i})`).join(', ')}`,
-          {
-            listId,
-            ...Object.fromEntries(chunk.map((p, i) => [`p${i}`, p]))
-          },
-          opts(connection)
-        );
-      }
+      await this.insertListMembers(listId, distinct, connection);
       distinct.forEach((p) => touched.add(p));
     }
     if (write.replaces) await this.groups.deleteById(write.row.id, connection);
@@ -918,6 +951,110 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
       );
     }
     return Array.from(touched);
+  }
+
+  /**
+   * These community_groups rows, hidden ones too, by id; a missing row is
+   * absent.
+   */
+  async groupRows(
+    groupIds: readonly string[]
+  ): Promise<Map<string, UserGroupEntity>> {
+    const out = new Map<string, UserGroupEntity>();
+    for (const chunk of statementChunks(
+      Array.from(new Set(groupIds)),
+      () => ID_BYTES
+    )) {
+      const rows = await this.db.execute<UserGroupEntity>(
+        `select * from ${USER_GROUPS_TABLE} where id in (:ids)`,
+        { ids: chunk }
+      );
+      for (const row of rows) out.set(row.id, row);
+    }
+    return out;
+  }
+
+  /** The profiles in each of these profile_groups lists (none: absent). */
+  async groupListMembers(
+    listIds: readonly string[]
+  ): Promise<Map<string, Set<string>>> {
+    const out = new Map<string, Set<string>>();
+    for (const chunk of statementChunks(
+      Array.from(new Set(listIds)),
+      () => ID_BYTES
+    )) {
+      const rows = await this.db.execute<{
+        profile_group_id: string;
+        profile_id: string;
+      }>(
+        `select profile_group_id, profile_id from ${PROFILE_GROUPS_TABLE}
+          where profile_group_id in (:ids)`,
+        { ids: chunk }
+      );
+      for (const row of rows) {
+        const members = out.get(row.profile_group_id) ?? new Set<string>();
+        members.add(row.profile_id);
+        out.set(row.profile_group_id, members);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * A group's lists brought to their members' current profiles, in place
+   * under their ids: each list's `removed` go and its `added` come. The
+   * live mirror logs a group change of each of `profiles` (those that
+   * gained or lost membership) on the same connection, so the log commits
+   * with the lists; a rebuild writes no change log.
+   */
+  async rewriteGroupLists(
+    lists: readonly {
+      readonly listId: string;
+      readonly added: readonly string[];
+      readonly removed: readonly string[];
+    }[],
+    profiles: readonly string[],
+    connection: Conn
+  ): Promise<void> {
+    for (const { listId, added, removed } of lists) {
+      for (const chunk of statementChunks(
+        Array.from(new Set(removed)),
+        () => ID_BYTES
+      )) {
+        await this.db.execute(
+          `delete from ${PROFILE_GROUPS_TABLE}
+            where profile_group_id = :listId and profile_id in (:profiles)`,
+          { listId, profiles: chunk },
+          opts(connection)
+        );
+      }
+      await this.insertListMembers(
+        listId,
+        Array.from(new Set(added)),
+        connection
+      );
+    }
+    if (this.mode !== 'rebuild' && profiles.length) {
+      await this.groups.insertGroupChanges(Array.from(profiles), connection);
+    }
+  }
+
+  private async insertListMembers(
+    listId: string,
+    profiles: readonly string[],
+    connection: Conn
+  ): Promise<void> {
+    for (const chunk of statementChunks(profiles, () => ID_BYTES * 2)) {
+      await this.db.execute(
+        `insert into ${PROFILE_GROUPS_TABLE} (profile_group_id, profile_id)
+         values ${chunk.map((_, i) => `(:listId, :p${i})`).join(', ')}`,
+        {
+          listId,
+          ...Object.fromEntries(chunk.map((p, i) => [`p${i}`, p]))
+        },
+        opts(connection)
+      );
+    }
   }
 
   /**
@@ -1343,6 +1480,24 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
       `select group_id, legacy_id, version, origin, height, data
          from ${CHAIN_GROUPS_TABLE}
         where origin = 'legacy' and version <= 1
+        order by group_id`
+    );
+  }
+
+  /**
+   * The imported groups the chain never replaced (version 1) whose
+   * definition lists an address, live and in a rebuild: the member lists
+   * that follow wallet bindings. The pass checks each again.
+   */
+  async chainImportedGroupsListingAddresses(): Promise<ChainGroupRow[]> {
+    return this.db.execute<ChainGroupRow>(
+      `select group_id, legacy_id, version, origin, height, data
+         from ${CHAIN_GROUPS_TABLE}
+        where origin = 'legacy' and version <= 1
+          and (json_search(data, 'one', 'address', null,
+                 '$.definition.includes[*].kind') is not null
+            or json_search(data, 'one', 'address', null,
+                 '$.definition.excludes[*].kind') is not null)
         order by group_id`
     );
   }

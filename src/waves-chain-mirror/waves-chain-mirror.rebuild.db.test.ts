@@ -51,7 +51,9 @@ import {
   WAVES_TABLE
 } from '@/constants';
 import { userGroupsService } from '@/api/community-members/user-groups.service';
+import { Logger } from '@/logging';
 import { sqlExecutor } from '@/sql-executor';
+import { UserGroupsDb } from '@/user-groups/user-groups.db';
 import {
   clearMirrorTables,
   ensurePrincipalMap,
@@ -87,7 +89,11 @@ import {
 import { WavesChainMirrorDb } from './waves-chain-mirror.db';
 import { DOC_CLASS, docCommitment } from './waves-chain-mirror.docs';
 import { GateVerdict } from './waves-chain-mirror.gate';
-import { waveDescriptionDropId } from './waves-chain-mirror.ids';
+import { groupRowOf, NO_CRITERIA } from './waves-chain-mirror.groups';
+import {
+  groupShortIdOf,
+  waveDescriptionDropId
+} from './waves-chain-mirror.ids';
 import { WavesChainObjectsMirror } from './waves-chain-mirror.objects';
 import { WavesChainObjectsDb } from './waves-chain-mirror.objects.db';
 import { defaultObjectEffects } from './waves-chain-mirror.objects.effects';
@@ -938,6 +944,153 @@ describe("the mirror's rebuild", () => {
         path.join(filesDir, `${waveDoc}.away`),
         path.join(filesDir, waveDoc)
       );
+    }
+  });
+
+  describe("an imported group's own lists", () => {
+    const LEGACY = '6f1c2a5e-3b4d-4e8f-9a0b-1c2d3e4f5a6b';
+    const ID = `readers-${groupShortIdOf(LEGACY)}`;
+
+    /** 6529.io's imported group listing a profile the chain doesn't. */
+    async function seedImported() {
+      await seedWorld();
+      await forgetDocuments();
+      await new UserGroupsDb(() => sqlExecutor).save(
+        groupRowOf({
+          id: ID,
+          name: 'Readers',
+          createdAt: new Date(T),
+          createdBy: 'profile-1',
+          criteria: NO_CRITERIA,
+          repUser: null,
+          includeListId: 'readers-include',
+          excludeListId: null,
+          visible: true,
+          isPrivate: false
+        }),
+        undefined as never
+      );
+      await sqlExecutor.execute(
+        `insert into ${PROFILE_GROUPS_TABLE} (profile_group_id, profile_id)
+         values ('readers-include', 'profile-only-here')`
+      );
+      // The chain's version 1 of it lists the world's address.
+      const row = aChainGroupRow(
+        chainWord('1e'),
+        { includes: [{ kind: 'address', value: ADDRESS }] },
+        { origin: 'legacy', legacyId: LEGACY, controller: P1 }
+      );
+      await index.upsert(
+        'groups',
+        [groupRow({ ...(row.data as ChainObject), legacyId: LEGACY })],
+        stamp
+      );
+    }
+    const listed = async () =>
+      (
+        await sqlExecutor.execute<{ profile_id: string }>(
+          `select profile_id from ${PROFILE_GROUPS_TABLE}
+            where profile_group_id = 'readers-include'`
+        )
+      ).map((r) => r.profile_id);
+    const rebuildUnder = (cap: string | null) =>
+      rebuildWavesChainMirror(
+        rebuildCtx,
+        () => sqlExecutor,
+        {
+          CHAIN_GATEWAY_URL: GATEWAY,
+          ...(cap === null
+            ? {}
+            : { WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP: cap })
+        },
+        { fetchImpl: filesFetch as unknown as typeof fetch }
+      );
+
+    it("brings them to the chain's members under a cap they fit, naming nothing", async () => {
+      await seedImported();
+      const rebuilt = await rebuildUnder(null);
+      expect(rebuilt.importedListsCapped).toBeNull();
+      expect(rebuilt.last.objects?.remap.imported).toMatchObject({
+        capped: false,
+        pending: 0
+      });
+      const [address] = await sqlExecutor.execute<{ profile_id: string }>(
+        `select i.profile_id from ${IDENTITIES_TABLE} i
+           join ${ADDRESS_CONSOLIDATION_KEY} a on a.consolidation_key = i.consolidation_key
+          where a.address = :address`,
+        { address: ADDRESS }
+      );
+      expect(await listed()).toEqual([address.profile_id]);
+    });
+
+    it('names the difference when the cap held them, so it is never read as drift', async () => {
+      await seedImported();
+      const rebuilt = await rebuildUnder('0');
+      expect(rebuilt.importedListsCapped).toBe(
+        "[IMPORTED GROUP LISTS CAPPED] [GROUPS 1] [CAP 0] imported groups' member lists left as 6529.io holds them (WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP): a mirror under a cap they fit holds them rewritten, a difference by the cap, not drift"
+      );
+      expect(await listed()).toEqual(['profile-only-here']);
+    });
+  });
+
+  describe('when its groups and waves pass fails', () => {
+    const STOPPED =
+      "The mirror's rebuild had no groups and waves report in run 1: that pass failed. Its error is logged above ([WAVES CHAIN MIRROR] groups and waves failed); fix that, then run the rebuild again";
+    const logs = () => ({
+      warn: jest
+        .spyOn(Logger.get('WAVES_CHAIN_MIRROR_REBUILD'), 'warn')
+        .mockImplementation(() => undefined),
+      error: jest
+        .spyOn(Logger.get('WAVES_CHAIN_MIRROR_REBUILD'), 'error')
+        .mockImplementation(() => undefined)
+    });
+    const lines = (spy: jest.SpyInstance) =>
+      spy.mock.calls
+        .map(([line]) => String(line))
+        .filter((line) => line.includes('groups and waves report'));
+
+    it('stops, not done, at the first run without its report', async () => {
+      await seedWorld();
+      await forgetDocuments();
+      // Only the first pass fails: the rebuild stops there all the same.
+      const objects = jest
+        .spyOn(WavesChainObjectsMirror.prototype, 'run')
+        .mockRejectedValueOnce(new Error('groups and waves down'));
+      const log = logs();
+      try {
+        const failure = await rebuild().then(
+          () => null,
+          (error: Error) => error.message
+        );
+        expect(failure).toBe(STOPPED);
+        expect(objects).toHaveBeenCalledTimes(1);
+        expect(lines(log.error)).toEqual([
+          `[REBUILD RUN 1] [STOPPED] ${STOPPED}`
+        ]);
+        expect(lines(log.warn)).toEqual([]);
+      } finally {
+        objects.mockRestore();
+        log.warn.mockRestore();
+        log.error.mockRestore();
+      }
+    });
+  });
+
+  it("fails when its groups' member lists can't be read", async () => {
+    await seedWorld();
+    await forgetDocuments();
+    const lists = jest
+      .spyOn(WavesChainObjectsDb.prototype, 'groupListMembers')
+      .mockRejectedValue(new Error('lists not read'));
+    try {
+      const failure = await rebuild().then(
+        () => null,
+        (error: Error) => error.message
+      );
+      expect(failure).toMatch(/^The mirror's rebuild left \d+ failure\(s\)/);
+      expect(lists).toHaveBeenCalled();
+    } finally {
+      lists.mockRestore();
     }
   });
 

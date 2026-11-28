@@ -14,6 +14,7 @@ import { ContentGate, GateVerdict } from './waves-chain-mirror.gate';
 import { InvalidLegacyIds } from './waves-chain-mirror.ids';
 import { DropArchivesImport } from './waves-chain-mirror.legacy-rows';
 import {
+  importedListsCappedNote,
   ObjectEffects,
   WavesChainObjectsMirror
 } from './waves-chain-mirror.objects';
@@ -48,7 +49,14 @@ const logger = Logger.get('WAVES_CHAIN_MIRROR_REBUILD');
  *   the identity mirror's rebuild stands at the group's height
  *   (group_identity_rows_not_reached), then gives an address still
  *   without an identity its address-only row as live does: from switch-on
- *   its derived id, so the rebuild gives the id live gave.
+ *   its derived id, so the rebuild gives the id live gave. Its lists are
+ *   resolved once, to the identities the addresses belong to at the mark;
+ *   the live mirror resolves its lists again each run as wallets move, so
+ *   it holds the same lists once its identity mirror stands there too. A
+ *   wallet that left an identity has the row the identity mirror's rebuild
+ *   gives it, by the removal's block time, as live. Imported groups' lists
+ *   that name an address are brought to the chain's members as live does,
+ *   under the same cap.
  * - Moderation is read from the holds the live mirror kept in
  *   chain_entry_holds (entries' and wave descriptions'), never asked again;
  *   a rebuild never writes them.
@@ -97,6 +105,12 @@ export interface MirrorRebuildResult {
   readonly missingDocuments: number;
   /** What deps.importDropArchives gave; undefined without one. */
   readonly dropArchives?: DropArchivesImport;
+  /**
+   * When the cap held imported groups' member lists, what that means
+   * (importedListsCappedNote): those lists differ from a mirror's run under
+   * a cap they fit by the cap, not by drift. Null when none was held.
+   */
+  readonly importedListsCapped: string | null;
 }
 
 /** What a rebuild reads besides the database (a test gives its own). */
@@ -117,6 +131,38 @@ export interface MirrorRebuildDeps {
     db: () => SqlExecutor,
     height: number | null
   ) => Promise<DropArchivesImport>;
+}
+
+/**
+ * What a rebuild's run leaves: 'again' while the event log, a full pass,
+ * a decision or an imported group's match is left; 'no_objects' when the
+ * run has no groups and waves report (that pass failed), which is never
+ * read as nothing left; else 'done'.
+ */
+export function rebuildRunEnd(
+  last: WavesChainMirrorReport
+): 'again' | 'no_objects' | 'done' {
+  if (last.full.running || last.events !== 0 || last.decisions.left) {
+    return 'again';
+  }
+  if (!last.objects) return 'no_objects';
+  return last.objects.remap.imported.pending ? 'again' : 'done';
+}
+
+/**
+ * Why a rebuild's run stops the rebuild: it has no groups and waves report
+ * (that pass failed). Null for a run with one, done or not. The rebuild's
+ * clock stands still, so a later run whose pass gave a report would start
+ * no new full pass, and the decisions passed over while the groups and
+ * waves were missing would stay unwritten: done then would be a false done.
+ */
+export function rebuildRunStop(
+  last: WavesChainMirrorReport,
+  pass: string,
+  run: number
+): string | null {
+  if (last.objects) return null;
+  return `The mirror's ${pass} had no groups and waves report in run ${run}: that pass failed. Its error is logged above ([WAVES CHAIN MIRROR] groups and waves failed); fix that, then run the ${pass} again`;
 }
 
 /** Runs the mirror reads at most, before a rebuild gives up. */
@@ -399,14 +445,25 @@ async function mirrorFromIndex(
     logger.info(
       `[${pass.toUpperCase()} RUN ${run}] events ${last.events}, full ${JSON.stringify(last.full)}, decisions ${JSON.stringify(last.decisions)}`
     );
-    // Done when the log is read to its end, no full pass is under way
-    // and nothing failed.
-    if (!last.full.running && last.events === 0 && !last.decisions.left) {
+    // A run whose groups and waves pass failed stops the rebuild; only
+    // running it again starts another.
+    const stop = rebuildRunStop(last, pass, run);
+    if (stop) {
+      logger.error(`[${pass.toUpperCase()} RUN ${run}] [STOPPED] ${stop}`);
+      throw new Error(stop);
+    }
+    // Done when the log is read to its end, no full pass is under way,
+    // the groups and waves pass gave its report with every imported group
+    // listing an address matched (its lists are looked at only then), and
+    // nothing failed.
+    const end = rebuildRunEnd(last);
+    if (end === 'done' && last.objects) {
       const failed =
         last.decisions.failed +
-        (last.objects?.groups.failed ?? 0) +
-        (last.objects?.waves.failed ?? 0) +
-        (last.objects?.decisions.failed ?? 0);
+        last.objects.groups.failed +
+        last.objects.waves.failed +
+        last.objects.decisions.failed +
+        last.objects.remap.failed;
       if (failed) {
         throw new Error(
           `The mirror's ${pass} left ${failed} failure(s): ${JSON.stringify(last)}`
@@ -418,11 +475,15 @@ async function mirrorFromIndex(
           `The mirror's ${pass} left out ${legacyIds.count} object(s) whose legacy id isn't an RFC 4122 UUID: ${legacyIds.first(5).join(', ')}`
         );
       }
+      const capped = importedListsCappedNote(last.objects.remap);
+      // Named, so a difference the cap makes is never read as drift.
+      if (capped) logger.warn(`[${pass.toUpperCase()}] ${capped}`);
       return {
         runs: run,
         at,
         last,
         missingDocuments: files.missing.size,
+        importedListsCapped: capped,
         ...(deps.importDropArchives ? { dropArchives } : {})
       };
     }

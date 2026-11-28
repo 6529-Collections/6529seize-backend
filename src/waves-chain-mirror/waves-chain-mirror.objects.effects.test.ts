@@ -1,6 +1,9 @@
+import { userGroupsService } from '@/api/community-members/user-groups.service';
 import { chainGatewayClient } from '@/chain-gateway/chain-gateway.client';
+import { userGroupsDb } from '@/user-groups/user-groups.db';
 import {
   decisionCreatedAt,
+  defaultObjectEffects,
   waveManagerOf
 } from './waves-chain-mirror.objects.effects';
 
@@ -79,5 +82,44 @@ describe('waveManagerOf', () => {
     // A failed read (503 unavailable, a height gone, any error).
     read.mockRejectedValue(new Error('unavailable'));
     expect(await waveManagerOf(WAVE, PRINCIPAL, 4_200)).toBeNull();
+  });
+});
+
+describe('defaultObjectEffects.groupsChanged', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it("clears the groups' caches only once each profile's change is logged", async () => {
+    let logged!: () => void;
+    const log = jest
+      .spyOn(userGroupsDb, 'insertGroupChanges')
+      .mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            logged = () => resolve(null);
+          })
+      );
+    const clear = jest
+      .spyOn(userGroupsService, 'onWaveRelatedGroupsChanged')
+      .mockResolvedValue(undefined);
+    const changed = defaultObjectEffects.groupsChanged(['g'], ['p1', 'p2']);
+    // Let everything not waiting on the log run.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(log).toHaveBeenCalledWith(['p1', 'p2']);
+    expect(clear).not.toHaveBeenCalled();
+    logged();
+    await changed;
+    expect(clear).toHaveBeenCalledWith(['g'], {});
+  });
+
+  it("clears the groups' caches with no change to log when no profile is given", async () => {
+    const log = jest
+      .spyOn(userGroupsDb, 'insertGroupChanges')
+      .mockResolvedValue(null);
+    const clear = jest
+      .spyOn(userGroupsService, 'onWaveRelatedGroupsChanged')
+      .mockResolvedValue(undefined);
+    await defaultObjectEffects.groupsChanged(['g'], []);
+    expect(log).not.toHaveBeenCalled();
+    expect(clear).toHaveBeenCalledWith(['g'], {});
   });
 });

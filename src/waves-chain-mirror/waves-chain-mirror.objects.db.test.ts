@@ -1,8 +1,10 @@
 import 'reflect-metadata';
+import { userGroupsService } from '@/api/community-members/user-groups.service';
 import {
   ACTIVITY_EVENTS_TABLE,
   ADDRESS_CONSOLIDATION_KEY,
   CHAIN_ENTRY_HOLDS_TABLE,
+  CONSOLIDATIONS_TABLE,
   CONTENT_MODERATION_PRE_PUBLICATION_CHECKS_TABLE,
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
@@ -11,6 +13,7 @@ import {
   IDENTITY_SUBSCRIPTIONS_TABLE,
   PROFILE_GROUP_CHANGES,
   PROFILE_GROUPS_TABLE,
+  PROFILES_TABLE,
   USER_GROUPS_TABLE,
   WAVE_GROUP_NOTIFICATION_SUBSCRIPTIONS_TABLE,
   WAVES_CHAIN_MIRROR_GROUPS_TABLE,
@@ -31,6 +34,9 @@ import {
   mapPrincipals
 } from '@/tests/fixtures/waves-chain-mirror.db.fixture';
 import { addressIdentityId } from '@/identities/address-identity-id';
+import { IdentityChainMirrorDb } from '@/identity-chain-mirror/identity-chain-mirror.db';
+import { planIdentity } from '@/identity-chain-mirror/identity-plan';
+import { EMPTY_PROFILE_DOC_FIELDS } from '@/identity-chain-mirror/profile-doc';
 import {
   aChainGroupRow,
   aChainWaveRow,
@@ -124,7 +130,9 @@ describe('WavesChainObjectsMirror in the database', () => {
 
   const run = async (
     verdict: GateVerdict = { kind: 'allowed' },
-    store: WavesChainObjectsDb = objectsDb
+    store: WavesChainObjectsDb = objectsDb,
+    write = true,
+    outOfTime: () => boolean = () => false
   ) => {
     const counter = new PlanCounter();
     const report = await new WavesChainObjectsMirror(
@@ -134,17 +142,21 @@ describe('WavesChainObjectsMirror in the database', () => {
       { check: jest.fn().mockResolvedValue(verdict) },
       () => NOW
     ).run({
-      write: true,
+      write,
       documents: new StoredDocuments(
         db,
         { getDocument: jest.fn().mockResolvedValue(null) },
         true
       ),
       counter,
-      outOfTime: () => false
+      outOfTime
     });
     return { report, counter };
   };
+  const changeLog = () =>
+    sqlExecutor.execute<{ profile_id: string }>(
+      `select profile_id from ${PROFILE_GROUP_CHANGES} order by id`
+    );
 
   const seedGroup = (row: ReturnType<typeof aChainGroupRow>) =>
     index.upsert(
@@ -313,10 +325,14 @@ describe('WavesChainObjectsMirror in the database', () => {
     ]);
 
     const first = await dumpTables(sqlExecutor, TABLES);
+    const logged = await changeLog();
     const again = await run();
     expect(again.report.groups).toMatchObject({ mirrored: 0, unchanged: 1 });
     expect(again.report.waves).toMatchObject({ mirrored: 0, unchanged: 1 });
+    // Its lists, read again, resolve as written: no write, no change logged.
+    expect(again.report.remap).toMatchObject({ skipped: null, groups: 0 });
     expect(await dumpTables(sqlExecutor, TABLES)).toEqual(first);
+    expect(await changeLog()).toEqual(logged);
   });
 
   it("applies the chain's replaced group and policy to an imported group and wave, visibility included", async () => {
@@ -614,27 +630,127 @@ describe('WavesChainObjectsMirror in the database', () => {
   );
 
   it('keeps when a hold began across runs, marks it reported, and starts again after it clears', async () => {
-    expect(
-      await objectsDb.groupsHeld({ count: 2, oldestHeight: 25 }, NOW)
-    ).toEqual({ since: NOW, reported: false });
-    expect(
-      await objectsDb.groupsHeld({ count: 1, oldestHeight: 30 }, NOW + 1_000)
-    ).toEqual({ since: NOW, reported: false });
+    const full = (count: number, oldestHeight: number | null) => ({
+      count,
+      oldestHeight,
+      complete: true
+    });
+    expect(await objectsDb.groupsHeld(full(2, 25), NOW)).toEqual({
+      since: NOW,
+      reported: false,
+      count: 2,
+      oldestHeight: 25
+    });
+    expect(await objectsDb.groupsHeld(full(1, 30), NOW + 1_000)).toEqual({
+      since: NOW,
+      reported: false,
+      count: 1,
+      oldestHeight: 30
+    });
     expect(await groupsHeldRow()).toEqual([
       { held_since: NOW, held_height: 30, held_count: 1, held_reported: false }
     ]);
     await objectsDb.groupsHeldReported();
-    expect(
-      await objectsDb.groupsHeld({ count: 1, oldestHeight: 30 }, NOW + 2_000)
-    ).toEqual({ since: NOW, reported: true });
-    expect(
-      await objectsDb.groupsHeld({ count: 0, oldestHeight: null }, NOW + 3_000)
-    ).toBeNull();
+    expect(await objectsDb.groupsHeld(full(1, 30), NOW + 2_000)).toEqual({
+      since: NOW,
+      reported: true,
+      count: 1,
+      oldestHeight: 30
+    });
+    expect(await objectsDb.groupsHeld(full(0, null), NOW + 3_000)).toBeNull();
     expect(await groupsHeldRow()).toEqual([]);
-    expect(
-      await objectsDb.groupsHeld({ count: 1, oldestHeight: 40 }, NOW + 4_000)
-    ).toEqual({ since: NOW + 4_000, reported: false });
+    expect(await objectsDb.groupsHeld(full(1, 40), NOW + 4_000)).toEqual({
+      since: NOW + 4_000,
+      reported: false,
+      count: 1,
+      oldestHeight: 40
+    });
   });
+
+  it("keeps a hold's count and oldest height through a run that didn't look at every group", async () => {
+    const partial = (count: number, oldestHeight: number) => ({
+      count,
+      oldestHeight,
+      complete: false
+    });
+    // No hold yet: the run's own count starts it.
+    expect(await objectsDb.groupsHeld(partial(1, 30), NOW)).toEqual({
+      since: NOW,
+      reported: false,
+      count: 1,
+      oldestHeight: 30
+    });
+    await objectsDb.groupsHeld(
+      { count: 2, oldestHeight: 25, complete: true },
+      NOW + 1_000
+    );
+    expect(await objectsDb.groupsHeld(partial(1, 30), NOW + 2_000)).toEqual({
+      since: NOW,
+      reported: false,
+      count: 2,
+      oldestHeight: 25
+    });
+    expect(await groupsHeldRow()).toEqual([
+      { held_since: NOW, held_height: 25, held_count: 2, held_reported: false }
+    ]);
+  });
+
+  it('finds the addresses mapped to another identities row', async () => {
+    // OWN: mapped to its own row. ELSEWHERE: mapped to a row of two wallets.
+    const [OWN, ELSEWHERE] = ['c5', 'c6'].map((b) => `0x${b.repeat(20)}`);
+    await sqlExecutor.execute(
+      `insert into ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key)
+       values (:own, :own), (:elsewhere, :pair)`,
+      { own: OWN, elsewhere: ELSEWHERE, pair: `${ELSEWHERE}-${A1}` }
+    );
+    expect(
+      Array.from(
+        await objectsDb.addressesMappedElsewhere([
+          OWN,
+          ELSEWHERE.toUpperCase().replace('0X', '0x'),
+          A2
+        ])
+      )
+    ).toEqual([ELSEWHERE]);
+  });
+
+  it.each([
+    ['report-only', false],
+    ['writing', true]
+  ])(
+    '%s: waits with a group listing a wallet of an identity of several wallets without a profile id, writing nothing',
+    async (_, write) => {
+      const PAIR = `${A2}-0x${'c7'.repeat(20)}`;
+      await ensurePrincipalMap(sqlExecutor);
+      await mapPrincipals(sqlExecutor, { [P1]: 'profile-1' });
+      await identityMirrorAt(sqlExecutor, 20);
+      await sqlExecutor.execute(
+        `insert into ${IDENTITIES_TABLE}
+           (profile_id, consolidation_key, primary_address, tdh, rep, cic, level_raw)
+         values (null, :pair, :a, 0, 0, 0, 0)`,
+        { pair: PAIR, a: A2 }
+      );
+      await sqlExecutor.execute(
+        `insert into ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key)
+         values (:a, :pair)`,
+        { pair: PAIR, a: A2 }
+      );
+      await seedGroup(
+        aChainGroupRow(G, {
+          includes: [
+            { kind: 'address', value: A1 },
+            { kind: 'address', value: A2 }
+          ]
+        })
+      );
+      const { report, counter } = await run(undefined, objectsDb, write);
+      expect(report.groups).toMatchObject({ mirrored: 0, waiting: 1 });
+      expect(counter.waiting).toEqual({ group_address_without_profile: 1 });
+      expect(counter.changes).toEqual({});
+      expect(await groups.getByIdWithoutVisibilityCheck(G)).toBeNull();
+      expect(await profileIdOf(A1)).toEqual([]);
+    }
+  );
 
   it("counts as updates only the own rows without a profile id that the identities' write gives one", async () => {
     // MAPPED: its own row, mapped to it. UNMAPPED: its own row, no mapping.
@@ -777,6 +893,470 @@ describe('WavesChainObjectsMirror in the database', () => {
           `select profile_id from ${PROFILE_GROUPS_TABLE} where profile_id is null`
         )
       ).toEqual([]);
+    });
+
+    describe('member lists that follow wallet bindings', () => {
+      /** Identity Z's principal, profile and first wallet. */
+      const PZ = chainWord('5a');
+      const Z = 'profile-z';
+      const WZ = `0x${'5a'.repeat(20)}`;
+      /** A wallet the groups list, unbound when they are written. */
+      const B = `0x${'b4'.repeat(20)}`;
+      const identity = new IdentityChainMirrorDb(() => sqlExecutor);
+      const INCLUDE = groupListId(G, 1, 'include');
+      const INCLUDE2 = groupListId(G2, 1, 'include');
+
+      beforeEach(async () => {
+        for (const table of [PROFILES_TABLE, CONSOLIDATIONS_TABLE]) {
+          await sqlExecutor.execute(`delete from ${table}`);
+        }
+      });
+
+      /** The identity mirror's write of Z holding `wallets`. */
+      const bindZ = (wallets: string[], eventTime = switchOn + 120_000) =>
+        sqlExecutor.executeNativeQueriesInTransaction(async (conn) => {
+          const state = await identity.readIdentityState(
+            wallets,
+            Z,
+            null,
+            WZ,
+            conn
+          );
+          const plan = planIdentity(
+            {
+              principalId: PZ,
+              profileId: Z,
+              handle: null,
+              wallets,
+              primary: WZ,
+              doc: { ...EMPTY_PROFILE_DOC_FIELDS },
+              rep: 0,
+              cic: 0,
+              levelRaw: 0
+            },
+            state
+          );
+          await identity.applyIdentityPlan(plan, 1, NOW, conn, () => eventTime);
+        });
+
+      /** G lists B; G2 lists Z's principal and B. */
+      const seedGroups = async () => {
+        await ensurePrincipalMap(sqlExecutor);
+        await mapPrincipals(sqlExecutor, { [P1]: 'profile-1', [PZ]: Z });
+        await identityMirrorAt(sqlExecutor, 20);
+        await bindZ([WZ], switchOn + 30_000);
+        const at = { controller: P1, activeFrom: switchOn + 60_000 };
+        await seedGroup(
+          aChainGroupRow(G, { includes: [{ kind: 'address', value: B }] }, at)
+        );
+        await seedGroup(
+          aChainGroupRow(
+            G2,
+            {
+              includes: [
+                { kind: 'principal', value: PZ },
+                { kind: 'address', value: B }
+              ]
+            },
+            at
+          )
+        );
+      };
+      const listOf = async (listId: string) =>
+        (
+          await sqlExecutor.execute<{ profile_id: string }>(
+            `select profile_id from ${PROFILE_GROUPS_TABLE}
+              where profile_group_id = :listId order by profile_id`,
+            { listId }
+          )
+        ).map((r) => r.profile_id);
+      const rowsOf = async () => ({
+        lists: await sqlExecutor.execute(
+          `select profile_group_id, profile_id from ${PROFILE_GROUPS_TABLE}
+            order by profile_group_id, profile_id`
+        ),
+        identities: await sqlExecutor.execute(
+          `select consolidation_key, profile_id, primary_address
+             from ${IDENTITIES_TABLE} order by consolidation_key`
+        ),
+        keys: await sqlExecutor.execute(
+          `select address, consolidation_key from ${ADDRESS_CONSOLIDATION_KEY}
+            order by address`
+        )
+      });
+
+      it('moves a listed wallet to the identity it joins and back to its own row when it leaves, making no row; a rebuild gives the same rows', async () => {
+        await seedGroups();
+        expect((await run()).report.groups).toMatchObject({
+          mirrored: 2,
+          failed: 0
+        });
+        // Unbound: the groups' write gave B its own row.
+        const own = addressIdentityId(B);
+        expect(await profileIdOf(B)).toEqual([own]);
+        expect(await listOf(INCLUDE)).toEqual([own]);
+        expect(await listOf(INCLUDE2)).toEqual([own, Z].sort());
+
+        // B joins Z: its own row goes, and the lists follow it.
+        await bindZ([WZ, B]);
+        const logged = (await changeLog()).length;
+        const joined = await run();
+        expect(joined.report.remap).toMatchObject({
+          groups: 2,
+          include: { added: 1, removed: 2 }
+        });
+        expect(await listOf(INCLUDE)).toEqual([Z]);
+        // Z stays in G2 by its principal; only B's own row goes.
+        expect(await listOf(INCLUDE2)).toEqual([Z]);
+        // Each group's change is logged by three writers in turn: with its
+        // lists, inside their transaction (rewriteGroupLists,
+        // objects.db.ts:1048); again after the commit (groupsChanged,
+        // objects.effects.ts:24); then every current member of the list, by
+        // 6529.io's cache clear for a group of an include list alone
+        // (objects.effects.ts:25, user-groups.service.ts:2065 and
+        // :2007-2023).
+        expect(
+          (await changeLog()).slice(logged).map((r) => r.profile_id)
+        ).toEqual([
+          // G: inside the transaction, after the commit, its members.
+          Z,
+          own,
+          Z,
+          own,
+          Z,
+          // G2: inside the transaction, after the commit, its members.
+          own,
+          own,
+          Z
+        ]);
+
+        // B leaves Z at a later block: the identity mirror gives it its own
+        // row again, by the removal's time; the lists follow, and the waves
+        // mirror makes no row of its own.
+        await bindZ([WZ], switchOn + 180_000);
+        expect(await profileIdOf(B)).toEqual([own]);
+        const left = await run();
+        expect(left.report.remap).toMatchObject({
+          groups: 2,
+          include: { added: 2, removed: 1 }
+        });
+        expect(await listOf(INCLUDE)).toEqual([own]);
+        expect(await listOf(INCLUDE2)).toEqual([own, Z].sort());
+        expect(
+          await sqlExecutor.execute(
+            `select profile_id from ${IDENTITIES_TABLE} where primary_address = :b`,
+            { b: B }
+          )
+        ).toEqual([{ profile_id: own }]);
+        const live = await rowsOf();
+
+        // A rebuild at the same bindings: the identity mirror's rows first,
+        // then the groups, resolved once.
+        await clearMirrorTables(sqlExecutor);
+        await sqlExecutor.execute(`delete from ${PROFILES_TABLE}`);
+        await sqlExecutor.execute(`delete from ${CONSOLIDATIONS_TABLE}`);
+        await seedGroups();
+        await bindZ([WZ, B]);
+        await bindZ([WZ], switchOn + 180_000);
+        const rebuilt = await run(
+          undefined,
+          new WavesChainObjectsDb(() => sqlExecutor, 'rebuild')
+        );
+        expect(rebuilt.report.groups).toMatchObject({ mirrored: 2, failed: 0 });
+        expect(await rowsOf()).toEqual(live);
+      });
+
+      it('takes the group from the whole identity an excluded wallet joins', async () => {
+        await ensurePrincipalMap(sqlExecutor);
+        await mapPrincipals(sqlExecutor, { [P1]: 'profile-1' });
+        await identityMirrorAt(sqlExecutor, 20);
+        await bindZ([WZ], switchOn + 30_000);
+        // Everyone but B.
+        await seedGroup(
+          aChainGroupRow(
+            G,
+            {
+              predicateMode: 'all_clauses',
+              excludes: [{ kind: 'address', value: B }]
+            },
+            { controller: P1, activeFrom: switchOn + 60_000 }
+          )
+        );
+        // A wave that reads and is administered with G: eligibility looks
+        // only at the groups waves, decisions and curations use.
+        const cid = await seedDocument(aWaveDoc());
+        await seedWave(
+          aChainWaveRow(W, { read: G, admin: G, metadataCid: cid })
+        );
+        await index.writeEvents([waveCreated(W)], 21, UNKNOWN_SCAN);
+        await run();
+        expect((await waves.findWaveById(W))?.visibility_group_id).toBe(G);
+        expect(await userGroupsService.getGroupsUserIsEligibleFor(Z)).toContain(
+          G
+        );
+
+        await bindZ([WZ, B]);
+        await run();
+        expect(await listOf(groupListId(G, 1, 'exclude'))).toEqual([Z]);
+        expect(
+          await userGroupsService.getGroupsUserIsEligibleFor(Z)
+        ).not.toContain(G);
+      });
+
+      it('reads no list while the identity mirror is behind, holding nothing; then counts a report-only run and writes', async () => {
+        await seedGroups();
+        await run();
+        await bindZ([WZ, B]);
+        const before = await rowsOf();
+
+        await identityMirrorAt(sqlExecutor, 19);
+        const behind = await run();
+        expect(behind.report.remap.skipped).toBe('identity_rows_not_reached');
+        expect(behind.counter.waiting).toEqual({});
+        expect(await groupsHeldRow()).toEqual([]);
+        expect(await rowsOf()).toEqual(before);
+
+        await identityMirrorAt(sqlExecutor, 20);
+        const dry = await run(undefined, objectsDb, false);
+        expect(dry.report.remap).toMatchObject({
+          skipped: null,
+          groups: 2,
+          include: { added: 1, removed: 2 }
+        });
+        expect(dry.counter.changes).toEqual({
+          profile_groups: { insert: 1, update: 0, delete: 2 }
+        });
+        expect(await rowsOf()).toEqual(before);
+
+        const writing = await run();
+        expect(writing.report.remap).toEqual(dry.report.remap);
+        expect(await listOf(INCLUDE)).toEqual([Z]);
+      });
+
+      it('finishes in the next run the group a run had no time for, writing none twice', async () => {
+        await seedGroups();
+        await run();
+        await bindZ([WZ, B]);
+        const logged = (await changeLog()).length;
+        // Time runs out once G's lists are written: G2's have no time left.
+        const written = jest.spyOn(objectsDb, 'rewriteGroupLists');
+        const cut = await run(
+          undefined,
+          objectsDb,
+          true,
+          () => written.mock.calls.length > 0
+        );
+        written.mockRestore();
+        expect(cut.report.remap).toMatchObject({ groups: 2, left: 1 });
+        expect(await listOf(INCLUDE)).toEqual([Z]);
+        expect(await listOf(INCLUDE2)).toEqual(
+          [addressIdentityId(B), Z].sort()
+        );
+        const next = await run();
+        expect(next.report.remap).toMatchObject({ groups: 1, left: 0 });
+        expect(await listOf(INCLUDE2)).toEqual([Z]);
+        const own = addressIdentityId(B);
+        // Each group written once, its change logged by the three writers:
+        // inside the transaction (objects.db.ts:1048), after the commit
+        // (objects.effects.ts:24), and its list's current members
+        // (objects.effects.ts:25, user-groups.service.ts:2065 and
+        // :2007-2023).
+        expect(
+          (await changeLog()).slice(logged).map((r) => r.profile_id)
+        ).toEqual([
+          // G, in the run cut short.
+          Z,
+          own,
+          Z,
+          own,
+          Z,
+          // G2, in the next run.
+          own,
+          own,
+          Z
+        ]);
+        expect((await run()).report.remap.groups).toBe(0);
+      });
+
+      it("stops a profile posting in a wave's chat on the first read after the lists drop it", async () => {
+        await seedGroups();
+        // A wave whose chat group is G.
+        const cid = await seedDocument(aWaveDoc());
+        await seedWave(
+          aChainWaveRow(W, { post: G, admin: G, metadataCid: cid })
+        );
+        await index.writeEvents([waveCreated(W)], 21, UNKNOWN_SCAN);
+        await bindZ([WZ, B]);
+        await run();
+        const wave = await waves.findWaveById(W);
+        expect(wave?.chat_group_id).toBe(G);
+        // As drop creation asks: Z may post, by B. Database tests run with
+        // Redis off, so nothing is cached here: this shows the lists' change
+        // reaching eligibility. The cache is tested apart, in
+        // waves-chain-mirror.eligibility.test.ts.
+        expect(await userGroupsService.getGroupsUserIsEligibleFor(Z)).toContain(
+          wave!.chat_group_id
+        );
+        const logged = (await changeLog()).length;
+
+        // B leaves Z: G's list drops Z.
+        await bindZ([WZ], switchOn + 180_000);
+        await run();
+        expect(await listOf(INCLUDE)).toEqual([addressIdentityId(B)]);
+        // Z's rows: G's change inside its transaction (objects.db.ts:1048)
+        // and after the commit (objects.effects.ts:24), the row that ends
+        // an answer cached for Z before the commit; then G2's members, Z
+        // among them by its principal (objects.effects.ts:25,
+        // user-groups.service.ts:2065 and :2007-2023).
+        expect(
+          (await changeLog()).slice(logged).filter((r) => r.profile_id === Z)
+        ).toHaveLength(3);
+        expect(
+          await userGroupsService.getGroupsUserIsEligibleFor(Z)
+        ).not.toContain(wave!.chat_group_id);
+      });
+
+      it("brings an imported group's own lists to the chain's members, leaving a group of principals alone and one the chain holds as a static list, then follows its wallet", async () => {
+        const GI = chainWord('1e');
+        const GO = chainWord('1f');
+        const GS = chainWord('1d');
+        const LEGACY_OTHER = '6f1c2a5e-3b4d-4e8f-9a0b-1c2d3e4f5a6c';
+        const OTHER_ID = `others-${groupShortIdOf(LEGACY_OTHER)}`;
+        const LEGACY_HOLDERS = '6f1c2a5e-3b4d-4e8f-9a0b-1c2d3e4f5a6d';
+        const HOLDERS_ID = `holders-${groupShortIdOf(LEGACY_HOLDERS)}`;
+        /** The id 6529.io gave B's own row before switch-on. */
+        const PRE = '00000000-0000-4000-8000-0000000000b4';
+        await ensurePrincipalMap(sqlExecutor);
+        await mapPrincipals(sqlExecutor, { [P1]: 'profile-1', [PZ]: Z });
+        await identityMirrorAt(sqlExecutor, 20);
+        await bindZ([WZ], switchOn + 30_000);
+        await sqlExecutor.execute(
+          `insert into ${IDENTITIES_TABLE}
+             (profile_id, consolidation_key, primary_address, tdh, rep, cic, level_raw)
+           values (:pre, :b, :b, 0, 0, 0, 0)`,
+          { pre: PRE, b: B }
+        );
+        await sqlExecutor.execute(
+          `insert into ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key)
+           values (:b, :b)`,
+          { b: B }
+        );
+        // 6529.io's imported groups, each with its own list: B's row and a
+        // profile only 6529.io lists, without Z's principal; and a group of
+        // principals alone, drifted the same way.
+        for (const [id, listId] of [
+          [IMPORTED_GROUP_ID, 'readers-include'],
+          [OTHER_ID, 'others-include']
+        ]) {
+          await groups.save(
+            groupRowOf({
+              id,
+              name: 'Readers',
+              createdAt: new Date(CREATED_AT),
+              createdBy: 'profile-1',
+              criteria: NO_CRITERIA,
+              repUser: null,
+              includeListId: listId,
+              excludeListId: null,
+              visible: true,
+              isPrivate: false
+            }),
+            undefined as never
+          );
+        }
+        // A criteria group (TDH of 100 or more) with an explicit include
+        // list, which the chain holds as the freeze's list of its members.
+        await groups.save(
+          groupRowOf({
+            id: HOLDERS_ID,
+            name: 'Holders',
+            createdAt: new Date(CREATED_AT),
+            createdBy: 'profile-1',
+            criteria: { ...NO_CRITERIA, tdh_min: 100 },
+            repUser: null,
+            includeListId: 'holders-include',
+            excludeListId: null,
+            visible: true,
+            isPrivate: false
+          }),
+          undefined as never
+        );
+        await sqlExecutor.execute(
+          `insert into ${PROFILE_GROUPS_TABLE} (profile_group_id, profile_id)
+           values ('readers-include', :pre), ('readers-include', 'profile-only-here'),
+                  ('others-include', 'profile-only-here'),
+                  ('holders-include', 'profile-explicit')`,
+          { pre: PRE }
+        );
+        // The chain's version 1 of both.
+        const imported = { origin: 'legacy', controller: P1 };
+        await seedGroup(
+          aChainGroupRow(
+            GI,
+            {
+              includes: [
+                { kind: 'principal', value: PZ },
+                { kind: 'address', value: B }
+              ]
+            },
+            { ...imported, legacyId: LEGACY_GROUP }
+          )
+        );
+        await seedGroup(
+          aChainGroupRow(
+            GO,
+            { includes: [{ kind: 'principal', value: PZ }] },
+            { ...imported, legacyId: LEGACY_OTHER }
+          )
+        );
+        await seedGroup(
+          aChainGroupRow(
+            GS,
+            {
+              includes: [
+                { kind: 'principal', value: PZ },
+                { kind: 'address', value: B }
+              ]
+            },
+            { ...imported, legacyId: LEGACY_HOLDERS }
+          )
+        );
+
+        const first = await run();
+        expect(first.report.remap).toMatchObject({
+          groups: 0,
+          imported: {
+            groups: 1,
+            include: { added: 1, removed: 1 },
+            capped: false,
+            unmatched: 0,
+            skippedStatic: 1
+          }
+        });
+        expect(await listOf('readers-include')).toEqual([PRE, Z].sort());
+        expect(await listOf('others-include')).toEqual(['profile-only-here']);
+        expect(await listOf('holders-include')).toEqual(['profile-explicit']);
+        // The match is kept; the row itself is 6529.io's, as it was.
+        expect((await objectsDb.mirroredGroups([GI])).get(GI)).toMatchObject({
+          groupId: IMPORTED_GROUP_ID,
+          version: null
+        });
+        expect((await objectsDb.mirroredGroups([GO])).has(GO)).toBe(false);
+        expect(
+          await groups.getByIdWithoutVisibilityCheck(IMPORTED_GROUP_ID)
+        ).toMatchObject({
+          name: 'Readers',
+          profile_group_id: 'readers-include'
+        });
+        // No row of its own for B, which has 6529.io's.
+        expect(await profileIdOf(B)).toEqual([PRE]);
+
+        // B joins Z after switch-on: the list follows it.
+        await bindZ([WZ, B]);
+        await run();
+        expect(await listOf('readers-include')).toEqual([Z]);
+        expect(await listOf('holders-include')).toEqual(['profile-explicit']);
+      });
     });
   });
 });

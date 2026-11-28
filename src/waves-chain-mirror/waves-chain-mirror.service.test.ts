@@ -16,6 +16,7 @@ import { EventCursorError } from '@/waves-chain-index/waves-chain-index.events';
 import { StoredDocuments } from './waves-chain-mirror.docs';
 import { GateVerdict } from './waves-chain-mirror.gate';
 import { NativeEntryContent } from './waves-chain-mirror.native-entries';
+import { emptyObjectsReport } from './waves-chain-mirror.objects';
 import { PlanCounter } from './waves-chain-mirror.plan-support';
 import {
   chainReadHeight,
@@ -224,29 +225,10 @@ describe('WavesChainMirror: when it runs', () => {
             order.push(`objects:${input.write}`);
             input.counter.change('waves', 'insert');
             input.counter.wait('wave_group_not_mirrored');
-            return {
-              groups: {
-                mirrored: 1,
-                unchanged: 0,
-                waiting: 0,
-                failed: 0,
-                left: 0
-              },
-              waves: {
-                mirrored: 0,
-                unchanged: 0,
-                waiting: 1,
-                failed: 0,
-                left: 0
-              },
-              decisions: {
-                mirrored: 0,
-                unchanged: 0,
-                waiting: 0,
-                failed: 0,
-                left: 0
-              }
-            };
+            const report = emptyObjectsReport();
+            report.groups.mirrored = 1;
+            report.waves.waiting = 1;
+            return report;
           }
         )
       };
@@ -320,6 +302,49 @@ describe('WavesChainMirror: when it runs', () => {
     expect(chainReadHeight({ readHeight: 175, feedNext: 101 })).toBe(175);
     expect(chainReadHeight({ readHeight: null, feedNext: 101 })).toBe(100);
     expect(chainReadHeight({ readHeight: null, feedNext: null })).toBeNull();
+  });
+
+  it("hands the groups and waves pass the imported groups' cap, read from the environment each run", async () => {
+    const { store, index } = world();
+    const caps: (number | undefined)[] = [];
+    const objects = {
+      run: jest.fn(async (input: { importedRemapCap?: number }) => {
+        caps.push(input.importedRemapCap);
+        return null as never;
+      })
+    };
+    const names = [
+      'WAVES_CHAIN_MIRROR_WRITE',
+      'FEATURE_WAVES_FROZEN',
+      'WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP'
+    ];
+    const saved = names.map((name) => process.env[name]);
+    try {
+      process.env.WAVES_CHAIN_MIRROR_WRITE = 'true';
+      process.env.FEATURE_WAVES_FROZEN = 'true';
+      delete process.env.WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP;
+      // One mirror, with the settings it reads by default.
+      const mirror = new WavesChainMirror(
+        store,
+        index,
+        undefined,
+        () => NOW,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        objects
+      );
+      await mirror.run({ budgetMs: 10_000 });
+      process.env.WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP = '300';
+      await mirror.run({ budgetMs: 10_000 });
+    } finally {
+      names.forEach((name, i) => {
+        if (saved[i] === undefined) delete process.env[name];
+        else process.env[name] = saved[i];
+      });
+    }
+    expect(caps).toEqual([50, 300]);
   });
 
   it('goes on to the decisions when the groups and waves pass fails', async () => {
