@@ -953,33 +953,23 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
     return Array.from(touched);
   }
 
-  /** The list ids of these community_groups rows; a missing row is absent. */
-  async groupListIds(
+  /**
+   * These community_groups rows, hidden ones too, by id; a missing row is
+   * absent.
+   */
+  async groupRows(
     groupIds: readonly string[]
-  ): Promise<Map<string, { include: string | null; exclude: string | null }>> {
-    const out = new Map<
-      string,
-      { include: string | null; exclude: string | null }
-    >();
+  ): Promise<Map<string, UserGroupEntity>> {
+    const out = new Map<string, UserGroupEntity>();
     for (const chunk of statementChunks(
       Array.from(new Set(groupIds)),
       () => ID_BYTES
     )) {
-      const rows = await this.db.execute<{
-        id: string;
-        profile_group_id: string | null;
-        excluded_profile_group_id: string | null;
-      }>(
-        `select id, profile_group_id, excluded_profile_group_id
-           from ${USER_GROUPS_TABLE} where id in (:ids)`,
+      const rows = await this.db.execute<UserGroupEntity>(
+        `select * from ${USER_GROUPS_TABLE} where id in (:ids)`,
         { ids: chunk }
       );
-      for (const row of rows) {
-        out.set(row.id, {
-          include: row.profile_group_id ?? null,
-          exclude: row.excluded_profile_group_id ?? null
-        });
-      }
+      for (const row of rows) out.set(row.id, row);
     }
     return out;
   }

@@ -381,20 +381,11 @@ export class FakeObjectsStore implements ObjectsStore {
   async chainImportedGroupsListingAddresses() {
     return this.chainGroups.filter((g) => g.origin !== 'native');
   }
-  async groupListIds(ids: readonly string[]) {
+  async groupRows(ids: readonly string[]) {
     return new Map(
       ids
         .filter((id) => this.groups.has(id))
-        .map((id) => {
-          const row = this.groups.get(id)!;
-          return [
-            id,
-            {
-              include: row.profile_group_id,
-              exclude: row.excluded_profile_group_id
-            }
-          ];
-        })
+        .map((id) => [id, this.groups.get(id)!])
     );
   }
   async groupListMembers(ids: readonly string[]) {

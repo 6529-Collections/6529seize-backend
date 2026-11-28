@@ -1211,11 +1211,14 @@ describe('WavesChainObjectsMirror in the database', () => {
         ).not.toContain(wave!.chat_group_id);
       });
 
-      it("brings an imported group's own lists to the chain's members, leaving a group of principals alone, then follows its wallet", async () => {
+      it("brings an imported group's own lists to the chain's members, leaving a group of principals alone and one the chain holds as a static list, then follows its wallet", async () => {
         const GI = chainWord('1e');
         const GO = chainWord('1f');
+        const GS = chainWord('1d');
         const LEGACY_OTHER = '6f1c2a5e-3b4d-4e8f-9a0b-1c2d3e4f5a6c';
         const OTHER_ID = `others-${groupShortIdOf(LEGACY_OTHER)}`;
+        const LEGACY_HOLDERS = '6f1c2a5e-3b4d-4e8f-9a0b-1c2d3e4f5a6d';
+        const HOLDERS_ID = `holders-${groupShortIdOf(LEGACY_HOLDERS)}`;
         /** The id 6529.io gave B's own row before switch-on. */
         const PRE = '00000000-0000-4000-8000-0000000000b4';
         await ensurePrincipalMap(sqlExecutor);
@@ -1256,10 +1259,28 @@ describe('WavesChainObjectsMirror in the database', () => {
             undefined as never
           );
         }
+        // A criteria group (TDH of 100 or more) with an explicit include
+        // list, which the chain holds as the freeze's list of its members.
+        await groups.save(
+          groupRowOf({
+            id: HOLDERS_ID,
+            name: 'Holders',
+            createdAt: new Date(CREATED_AT),
+            createdBy: 'profile-1',
+            criteria: { ...NO_CRITERIA, tdh_min: 100 },
+            repUser: null,
+            includeListId: 'holders-include',
+            excludeListId: null,
+            visible: true,
+            isPrivate: false
+          }),
+          undefined as never
+        );
         await sqlExecutor.execute(
           `insert into ${PROFILE_GROUPS_TABLE} (profile_group_id, profile_id)
            values ('readers-include', :pre), ('readers-include', 'profile-only-here'),
-                  ('others-include', 'profile-only-here')`,
+                  ('others-include', 'profile-only-here'),
+                  ('holders-include', 'profile-explicit')`,
           { pre: PRE }
         );
         // The chain's version 1 of both.
@@ -1283,6 +1304,18 @@ describe('WavesChainObjectsMirror in the database', () => {
             { ...imported, legacyId: LEGACY_OTHER }
           )
         );
+        await seedGroup(
+          aChainGroupRow(
+            GS,
+            {
+              includes: [
+                { kind: 'principal', value: PZ },
+                { kind: 'address', value: B }
+              ]
+            },
+            { ...imported, legacyId: LEGACY_HOLDERS }
+          )
+        );
 
         const first = await run();
         expect(first.report.remap).toMatchObject({
@@ -1291,11 +1324,13 @@ describe('WavesChainObjectsMirror in the database', () => {
             groups: 1,
             include: { added: 1, removed: 1 },
             capped: false,
-            unmatched: 0
+            unmatched: 0,
+            skippedStatic: 1
           }
         });
         expect(await listOf('readers-include')).toEqual([PRE, Z].sort());
         expect(await listOf('others-include')).toEqual(['profile-only-here']);
+        expect(await listOf('holders-include')).toEqual(['profile-explicit']);
         // The match is kept; the row itself is 6529.io's, as it was.
         expect((await objectsDb.mirroredGroups([GI])).get(GI)).toMatchObject({
           groupId: IMPORTED_GROUP_ID,
@@ -1315,6 +1350,7 @@ describe('WavesChainObjectsMirror in the database', () => {
         await bindZ([WZ, B]);
         await run();
         expect(await listOf('readers-include')).toEqual([Z]);
+        expect(await listOf('holders-include')).toEqual(['profile-explicit']);
       });
     });
   });

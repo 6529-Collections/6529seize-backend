@@ -1,5 +1,6 @@
 import { Logger } from '@/logging';
 import type { ConnectionWrapper } from '@/sql-executor';
+import { UserGroupEntity } from '@/entities/IUserGroup';
 import { WaveEntity } from '@/entities/IWave';
 import { InsertWaveEntity } from '@/api/waves/waves.api.db';
 import { ApiCreateNewWave } from '@/api/generated/models/ApiCreateNewWave';
@@ -12,6 +13,7 @@ import {
   CompetitionType
 } from '@/entities/ICompetition';
 import { BadRequestException } from '@/exceptions';
+import { hasGroupGotAnyNonIdentityConditions } from '@/groups/user-group-predicates';
 import {
   ChainNativeDecision,
   chainNativeDecisionOf,
@@ -126,6 +128,12 @@ export interface RemapCounts extends ListCounts {
      * applied to the count of them all, never to part of them.
      */
     pending: number;
+    /**
+     * Ones left as they are because the chain holds them as a list of
+     * members where 6529.io holds criteria (staticOnChain): never written,
+     * and not weighed against the cap.
+     */
+    skippedStatic: number;
   };
 }
 
@@ -198,7 +206,8 @@ export function emptyObjectsReport(): ObjectsReport {
         capped: false,
         cap: IMPORTED_REMAP_CAP,
         unmatched: 0,
-        pending: 0
+        pending: 0,
+        skippedStatic: 0
       }
     },
     pinnedWaveGroupRefs: 0
@@ -274,7 +283,7 @@ export type ObjectsStore = Pick<
   | 'groupsHeldReported'
   | 'groupRow'
   | 'groupListMembers'
-  | 'groupListIds'
+  | 'groupRows'
   | 'rewriteGroupLists'
   | 'chainImportedGroupsListingAddresses'
   | 'waveRow'
@@ -444,6 +453,21 @@ function groupsToCheck(
     }
   }
   return out;
+}
+
+/**
+ * Whether an imported group came onto the chain as a list of its members:
+ * its 6529.io row has a criterion the chain can't run (6529.io's own test,
+ * hasGroupGotAnyNonIdentityConditions) while the chain's definition has no
+ * clauses. The chain then lists every member the criteria gave at the
+ * freeze, and the row's own include list only its explicit ones, so the
+ * two are never compared: that would add each of those members to it.
+ */
+function staticOnChain(group: ChainGroup, row: UserGroupEntity): boolean {
+  return (
+    hasGroupGotAnyNonIdentityConditions(row) &&
+    !group.definition?.clauses.length
+  );
 }
 
 /**
@@ -1341,7 +1365,8 @@ export class WavesChainObjectsMirror {
 
   /** The imported groups' counts, on a line of their own, when any. */
   private logImportedLists(remap: RemapCounts) {
-    if (remap.imported.groups || remap.imported.pending) {
+    const { groups, pending, skippedStatic } = remap.imported;
+    if (groups || pending || skippedStatic) {
       logger.info(
         `[WAVES CHAIN MIRROR] [IMPORTED GROUP LISTS] ${JSON.stringify(remap.imported)}`
       );
@@ -1385,13 +1410,19 @@ export class WavesChainObjectsMirror {
       else remap.imported.unmatched++;
     }
     if (remap.imported.pending) return [];
-    const listIds = await this.store.groupListIds(
-      matched.map((m) => m.groupId)
-    );
+    const rows = await this.store.groupRows(matched.map((m) => m.groupId));
     const out: GroupToCheck[] = [];
     for (const { group, groupId } of matched) {
-      const ids = listIds.get(groupId);
-      const lists = ids ? listsToCheck(group, ids) : [];
+      const row = rows.get(groupId);
+      if (!row) continue;
+      if (staticOnChain(group, row)) {
+        remap.imported.skippedStatic++;
+        continue;
+      }
+      const lists = listsToCheck(group, {
+        include: row.profile_group_id,
+        exclude: row.excluded_profile_group_id
+      });
       if (lists.length) {
         out.push({
           groupId,

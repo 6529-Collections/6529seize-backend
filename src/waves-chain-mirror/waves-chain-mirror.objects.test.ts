@@ -35,6 +35,11 @@ import {
   WavesChainObjectsMirror
 } from './waves-chain-mirror.objects';
 import { WavesChainObjectsDb } from './waves-chain-mirror.objects.db';
+import {
+  GroupCriteria,
+  groupRowOf,
+  NO_CRITERIA
+} from './waves-chain-mirror.groups';
 import { PlanCounter, retryDelayMs } from './waves-chain-mirror.plan-support';
 import {
   EMPTY_DESCRIPTION,
@@ -1096,6 +1101,27 @@ describe("WavesChainObjectsMirror: imported groups' member lists", () => {
     `00000000-0000-4000-8000-${n.toString(16).padStart(12, '0')}`;
   const listed = (store: FakeObjectsStore, listId: string) =>
     Array.from(store.lists.get(listId) ?? []).sort();
+  /** A 6529.io group row as its table holds one. */
+  const aRow = (
+    id: string,
+    name: string,
+    lists: { include: string | null; exclude: string | null },
+    criteria: GroupCriteria = NO_CRITERIA
+  ): UserGroupEntity => ({
+    ...groupRowOf({
+      id,
+      name,
+      createdAt: new Date(1_700_000_000_000),
+      createdBy: 'group-creator',
+      criteria,
+      repUser: null,
+      includeListId: lists.include,
+      excludeListId: lists.exclude,
+      visible: true,
+      isPrivate: false
+    }),
+    is_pure_profile_group: false
+  });
   /**
    * 6529.io's imported group `id` (its row and its include list as it
    * holds them) and the chain's version 1 of it, `chainId`.
@@ -1110,12 +1136,13 @@ describe("WavesChainObjectsMirror: imported groups' member lists", () => {
     const id = `imported-${n}`;
     const chainId = chainWord((0x20 + n).toString(16));
     store.importedGroups.set(legacyOf(n), id);
-    store.groups.set(id, {
+    store.groups.set(
       id,
-      name: `Imported ${n}`,
-      profile_group_id: `${id}-include`,
-      excluded_profile_group_id: excludes.length ? `${id}-exclude` : null
-    } as unknown as UserGroupEntity);
+      aRow(id, `Imported ${n}`, {
+        include: `${id}-include`,
+        exclude: excludes.length ? `${id}-exclude` : null
+      })
+    );
     store.lists.set(`${id}-include`, new Set(stored));
     store.chainGroups.push(
       aChainGroupRow(
@@ -1131,12 +1158,10 @@ describe("WavesChainObjectsMirror: imported groups' member lists", () => {
     const w = world();
     w.store.addressProfiles.set(A1, 'profile-a1');
     w.store.importedGroups.set(LEGACY_GROUP, IMPORTED_GROUP_ID);
-    w.store.groups.set(IMPORTED_GROUP_ID, {
-      id: IMPORTED_GROUP_ID,
-      name: 'Readers',
-      profile_group_id: LIST,
-      excluded_profile_group_id: null
-    } as unknown as UserGroupEntity);
+    w.store.groups.set(
+      IMPORTED_GROUP_ID,
+      aRow(IMPORTED_GROUP_ID, 'Readers', { include: LIST, exclude: null })
+    );
     w.store.lists.set(LIST, new Set(stored));
     w.store.chainGroups = [
       aChainGroupRow(
@@ -1260,6 +1285,78 @@ describe("WavesChainObjectsMirror: imported groups' member lists", () => {
     expect(lookups).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [
+      'leaves as it is, counted, a group the chain holds as a list of members while 6529.io holds criteria',
+      [],
+      0,
+      ['profile-explicit']
+    ],
+    [
+      "still checks a criteria group whose chain definition has the criteria's clauses",
+      [
+        {
+          metric: 'tdh',
+          category: null,
+          rater: null,
+          min: '100',
+          max: String(Number.MAX_SAFE_INTEGER)
+        }
+      ],
+      undefined,
+      ['profile-a1']
+    ]
+  ])('%s', async (_, clauses, cap, list) => {
+    const { store, run } = world();
+    store.addressProfiles.set(A1, 'profile-a1');
+    store.importedGroups.set(LEGACY_GROUP, IMPORTED_GROUP_ID);
+    // TDH of 100 or more, plus an explicit include list of one profile.
+    store.groups.set(
+      IMPORTED_GROUP_ID,
+      aRow(
+        IMPORTED_GROUP_ID,
+        'Holders',
+        { include: LIST, exclude: null },
+        { ...NO_CRITERIA, tdh_min: 100 }
+      )
+    );
+    store.lists.set(LIST, new Set(['profile-explicit']));
+    // The chain's version 1 lists A1 (with clauses, or as the freeze's
+    // list of every member).
+    store.chainGroups = [
+      aChainGroupRow(
+        GI,
+        {
+          predicateMode: clauses.length ? 'all_clauses' : 'list_only',
+          clauses,
+          includes: [{ kind: 'address', value: A1 }]
+        },
+        { origin: 'legacy', legacyId: LEGACY_GROUP }
+      )
+    ];
+    const info = jest
+      .spyOn(Logger.get('WAVES_CHAIN_MIRROR_OBJECTS'), 'info')
+      .mockImplementation(() => undefined);
+    try {
+      // A cap of 0 for the first: a skipped group isn't weighed against it.
+      const { report } = await run(true, () => false, null, cap);
+      const checked = clauses.length ? 1 : 0;
+      expect(report.remap.imported).toMatchObject({
+        groups: checked,
+        skippedStatic: 1 - checked,
+        capped: false
+      });
+      expect(store.listRewrites).toHaveLength(checked);
+      expect(listed(store, LIST)).toEqual(list);
+      // On the imported groups' line, a skipped group alone too.
+      expect(info).toHaveBeenCalledWith(
+        `[WAVES CHAIN MIRROR] [IMPORTED GROUP LISTS] ${JSON.stringify(report.remap.imported)}`
+      );
+    } finally {
+      info.mockRestore();
+    }
+  });
+
   it('checks an imported group the chain replaced once, as one the chain wrote, never as an imported one', async () => {
     const { store, run } = world();
     store.addressProfiles.set(A1, 'profile-a1');
@@ -1368,7 +1465,8 @@ describe("WavesChainObjectsMirror: imported groups' member lists", () => {
         capped: true,
         cap: 0,
         unmatched: 0,
-        pending: 0
+        pending: 0,
+        skippedStatic: 0
       };
       expect(report.remap).toMatchObject({ groups: 0, imported: counts });
       expect(counter.changes).toEqual({});
@@ -1432,7 +1530,8 @@ describe("WavesChainObjectsMirror: imported groups' member lists", () => {
             capped: false,
             cap,
             unmatched: 0,
-            pending: 1
+            pending: 1,
+            skippedStatic: 0
           })}`
         );
         expect(errors).not.toHaveBeenCalled();
