@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { appFeatures, AppFeatures } from '@/app-features';
+import { afterCommitAwaited } from '@/db/after-commit';
 import { CustomApiCompliantException } from '@/exceptions';
 import { Logger } from '@/logging';
 import { sendPriorityAlertIfConfigured } from '@/priority-alerts.context';
@@ -95,6 +96,15 @@ export interface MintWriteSpec<T = unknown> {
    * since other writes in between log their own changes.
    */
   readonly lockScope?: 'write' | 'capture';
+  /**
+   * writeWithin only: read its kind's parts with FOR UPDATE. For a
+   * caller whose transaction may hold a snapshot older than its locks (Drop
+   * Forge's job and signer transactions run at the server's REPEATABLE
+   * READ): its DELETEs and UPDATEs act on the latest rows, and a plain read
+   * would miss rows committed in between: a delete of such a row would go
+   * unlogged, and an update would be logged against a stale before.
+   */
+  readonly readCurrent?: boolean;
 }
 
 export class InvalidSignedRecordException extends CustomApiCompliantException {
@@ -139,6 +149,8 @@ interface Captured {
    * for the write; every capture of the write uses it.
    */
   readonly identityTruth?: boolean;
+  /** Parts read with FOR UPDATE: its kind's parts (readCurrent). */
+  readonly current?: ReadonlySet<string>;
 }
 
 /**
@@ -247,19 +259,43 @@ export class MintLogRecorder {
    */
   private async skipped<T>(
     spec: MintWriteSpec<T>,
-    error: unknown
+    error: unknown,
+    connection?: ConnectionWrapper<any>
   ): Promise<void> {
-    await this.alert(
-      `[MINT_LOG_SHADOW_SKIPPED] [${spec.kind}] the write ran unlogged: ${errorText(error)}`
-    );
+    const message = `[MINT_LOG_SHADOW_SKIPPED] [${spec.kind}] the write ran unlogged: ${errorText(error)}`;
+    if (connection) {
+      await this.alertAfterCommit(message, connection);
+      return;
+    }
+    await this.alert(message);
   }
 
   private async alert(message: string): Promise<void> {
     logger.error(message);
+    await this.sendAlert(message);
+  }
+
+  private async sendAlert(message: string): Promise<void> {
     await sendPriorityAlertIfConfigured('Mint log', new Error(message)).catch(
       (alertError) =>
         logger.warn(`[MINT_LOG_ALERT_FAILED] ${errorText(alertError)}`)
     );
+  }
+
+  /**
+   * As alert, but the priority alert, a network call, goes out once the
+   * caller's transaction commits, so it isn't made while the caller's locks
+   * and the mint log's head are held, and the commit waits for it in full,
+   * so a Lambda invocation doesn't end first. The error is logged at once.
+   * If the transaction rolls back, the write it was about is gone with it,
+   * and so is the alert.
+   */
+  private async alertAfterCommit(
+    message: string,
+    connection: ConnectionWrapper<any>
+  ): Promise<void> {
+    logger.error(message);
+    await afterCommitAwaited(connection, () => this.sendAlert(message));
   }
 
   /**
@@ -282,7 +318,7 @@ export class MintLogRecorder {
       ports = this.ports();
     } catch (error) {
       if (mode === 'primary') throw error;
-      await this.skipped(spec, error);
+      await this.skipped(spec, error, connection);
       return run();
     }
     if (!ports.log) {
@@ -306,10 +342,17 @@ export class MintLogRecorder {
       );
       const inputs = spec.inputs ? await spec.inputs(connection) : {};
       const identityTruth = await this.reader.identityTruthFor?.(card);
+      const current = spec.readCurrent
+        ? new Set<string>(MINT_KIND_PARTS[spec.kind])
+        : undefined;
       const before = await this.reader.capture(card, connection, {
-        identityTruth
+        identityTruth,
+        current
       });
-      return { head, captured: { card, before, inputs, identityTruth } };
+      return {
+        head,
+        captured: { card, before, inputs, identityTruth, current }
+      };
     });
     const value = await run();
     if (!started) return value;
@@ -323,7 +366,7 @@ export class MintLogRecorder {
         connection
       )
     );
-    if (entry) await this.report(entry);
+    if (entry) await this.report(entry, connection);
     return value;
   }
 
@@ -351,8 +394,9 @@ export class MintLogRecorder {
       await execute(`ROLLBACK TO SAVEPOINT ${WITHIN_SAVEPOINT}`).catch(() => {
         throw error;
       });
-      await this.alert(
-        `[MINT_LOG_SHADOW_FAILED] [${spec.kind}] ${errorText(error)}`
+      await this.alertAfterCommit(
+        `[MINT_LOG_SHADOW_FAILED] [${spec.kind}] ${errorText(error)}`,
+        connection
       );
       return null;
     }
@@ -590,7 +634,8 @@ export class MintLogRecorder {
     connection: ConnectionWrapper<any>
   ): Promise<MintLogEntryBody | null> {
     const after = await this.reader.capture(captured.card, connection, {
-      identityTruth: captured.identityTruth
+      identityTruth: captured.identityTruth,
+      current: captured.current
     });
     const effects = diffCardState(captured.before, after);
     if (!needsEntry(spec, outcome, effects)) return null;
@@ -725,14 +770,16 @@ export class MintLogRecorder {
       const undo = diffCardState(after, captured.before);
       await this.writer.apply(captured.card, undo, connection);
       const undone = await this.reader.capture(captured.card, connection, {
-        identityTruth: captured.identityTruth
+        identityTruth: captured.identityTruth,
+        current: captured.current
       });
       mismatches.push(
         ...differingParts(undone, captured.before).map((part) => `undo:${part}`)
       );
       await this.writer.apply(captured.card, effects, connection);
       const redone = await this.reader.capture(captured.card, connection, {
-        identityTruth: captured.identityTruth
+        identityTruth: captured.identityTruth,
+        current: captured.current
       });
       mismatches.push(
         ...differingParts(redone, after).map((part) => `redo:${part}`)
@@ -829,7 +876,14 @@ export class MintLogRecorder {
     );
   }
 
-  private async report(entry: MintLogEntryBody): Promise<void> {
+  /**
+   * Alerts an entry's problems. Given the caller's connection (writeWithin),
+   * the priority alert waits for the caller's commit, as a shadow failure's.
+   */
+  private async report(
+    entry: MintLogEntryBody,
+    connection?: ConnectionWrapper<any>
+  ): Promise<void> {
     const problems = [
       ...entry.checks.undeclared.map((part) => `undeclared part ${part}`),
       ...entry.checks.merkle_raw.map((phase) => `raw proofs kept for ${phase}`),
@@ -837,9 +891,12 @@ export class MintLogRecorder {
     ];
     if (!problems.length) return;
     const card = entry.card ? cardLabel(entry.card) : 'none';
-    await this.alert(
-      `[MINT_LOG_MISMATCH] [${entry.chain} ${entry.seq}] [${entry.kind}] [card ${card}] ${problems.join('; ')}`
-    );
+    const message = `[MINT_LOG_MISMATCH] [${entry.chain} ${entry.seq}] [${entry.kind}] [card ${card}] ${problems.join('; ')}`;
+    if (connection) {
+      await this.alertAfterCommit(message, connection);
+      return;
+    }
+    await this.alert(message);
   }
 }
 

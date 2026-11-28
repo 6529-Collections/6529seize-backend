@@ -20,6 +20,8 @@ import { disabledActionReason } from '@/drop-forge/drop-forge.settings';
 import { DropForgeSettingsEntity } from '@/entities/IDropForgeSettings';
 import { RECEIPT_POLL_SECONDS } from '@/drop-forge/drop-forge.plan';
 import { POST_MINT_PREVIEW_DELAY } from '@/drop-forge/drop-forge.preview';
+import { hasUnwrittenFlags } from '@/drop-forge/drop-forge.completion';
+import { mintLogRecorder } from '@/mint-log/mint-log-recorder';
 
 const scheduler = new SchedulerClient({});
 const sqs = new SQSClient({});
@@ -182,12 +184,17 @@ export async function continueLaunch(
   const canContinue =
     actions.some((action) => !isLaunchActionSettled(action)) ||
     record.data.actions.every(isLaunchActionSettled);
+  // With the mint log on, a launch with a flag a pass deferred or failed to
+  // write gets another delivery, in any state, until the flag is written.
+  const unwrittenFlags =
+    mintLogRecorder.mode() !== 'off' && hasUnwrittenFlags(record);
   if (
     launchNeedsContinuation(
       enabled,
       now,
       scheduled && canContinue && actions.length > 0
-    )
+    ) ||
+    unwrittenFlags
   )
     await wakeDropForge(
       { id: record.id, revision: record.revision },

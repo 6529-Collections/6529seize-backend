@@ -22,6 +22,7 @@ import { doInDbContext } from '@/secrets';
 import { wrapLambdaHandler } from '@/sentry.context';
 import { runReadinessDelivery } from '@/drop-forge/drop-forge.readiness';
 import { recordPostMintPreview } from '@/drop-forge/drop-forge.preview';
+import { alertOverdueLaunchFlags } from '@/drop-forge/drop-forge.completion';
 
 const logger = Logger.get('DROP_FORGE_LAUNCH_HANDLER');
 export async function runLaunchDelivery(
@@ -63,6 +64,10 @@ export async function runLaunchDelivery(
       chain,
       new KmsTransactionSigner(config.keyId, config.signer)
     );
+    // With the mint log on, a missed flag still unwritten after the set time
+    // alerts once, even when no pass gets to try it; the reports below post
+    // it before the passes, so none of them waits for it.
+    await alertOverdueLaunchFlags(record.id, dropForgeRepository);
     let reportsDelivered = await reportLaunchEvents(
       config,
       dropForgeRepository,

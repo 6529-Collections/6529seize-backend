@@ -10,6 +10,7 @@ import {
   testLaunchData
 } from '@/drop-forge/drop-forge.test-fixtures';
 import { LaunchRecord } from '@/drop-forge/drop-forge.types';
+import * as completion from '@/drop-forge/drop-forge.completion';
 
 jest.mock('@/drop-forge/drop-forge.settings', () => ({
   ...jest.requireActual('@/drop-forge/drop-forge.settings'),
@@ -68,6 +69,20 @@ it('rejects early delivery before its committed revision without creating schedu
   ).rejects.toThrow('not committed');
   expect(dispatch.scheduleLaunchGroups).not.toHaveBeenCalled();
   expect(tick).not.toHaveBeenCalled();
+});
+it("raises a missed flag's overdue alert on each delivery, before the passes", async () => {
+  const alert = jest
+    .spyOn(completion, 'alertOverdueLaunchFlags')
+    .mockResolvedValue();
+  await runLaunchDelivery({ id: current.id, revision: 5 });
+  expect(alert).toHaveBeenCalledWith(current.id, dropForgeRepository);
+  // Before the first report, so the passes don't wait for its post.
+  expect(alert.mock.invocationCallOrder[0]).toBeLessThan(
+    jest.mocked(reportLaunchEvents).mock.invocationCallOrder[0]
+  );
+  expect(alert.mock.invocationCallOrder[0]).toBeLessThan(
+    tick.mock.invocationCallOrder[0]
+  );
 });
 it('installs independent groups and a crash watchdog before targeted transaction processing', async () => {
   await runLaunchDelivery({ id: current.id, revision: 5 });

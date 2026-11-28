@@ -2,6 +2,12 @@ jest.mock('@/priority-alerts.context', () => ({
   sendPriorityAlertIfConfigured: jest.fn().mockResolvedValue(undefined)
 }));
 
+import { MEMES_CONTRACT } from '@/constants';
+import {
+  closeAfterCommitScope,
+  openAfterCommitScope,
+  runAfterCommitCallbacks
+} from '@/db/after-commit';
 import { Logger } from '@/logging';
 import { sendPriorityAlertIfConfigured } from '@/priority-alerts.context';
 import type { MintStateWriter } from './mint-log-apply';
@@ -25,10 +31,11 @@ import {
   MintLogUnavailableException,
   MintWriteSpec
 } from './mint-log-recorder';
-import type {
-  MintCardEffects,
-  MintCardState,
-  MintLogEntryBody
+import {
+  MINT_KIND_PARTS,
+  type MintCardEffects,
+  type MintCardState,
+  type MintLogEntryBody
 } from './mint-log.types';
 
 const ADMIN = '0x0000000000000000000000000000000000000001';
@@ -537,7 +544,12 @@ describe('MintLogRecorder.writeWithin', () => {
   /** The caller's connection: statements and head keys, in order. */
   function within(
     fake: Fake,
-    flags: { shadow?: boolean; primary?: boolean; collabRecords?: boolean }
+    flags: {
+      shadow?: boolean;
+      primary?: boolean;
+      collabRecords?: boolean;
+      replay?: boolean;
+    }
   ): { log: MintLogRecorder; calls: string[]; transactions: () => number } {
     const calls: string[] = [];
     let transactions = 0;
@@ -572,7 +584,7 @@ describe('MintLogRecorder.writeWithin', () => {
       {
         isMintLogShadowEnabled: () => !!flags.shadow,
         isMintLogPrimaryEnabled: () => !!flags.primary,
-        isMintLogReplayCheckEnabled: () => false,
+        isMintLogReplayCheckEnabled: () => !!flags.replay,
         isMintLogCollabRecordsRequired: () => !!flags.collabRecords
       },
       () => ({ records, log: fake.log }),
@@ -640,6 +652,65 @@ describe('MintLogRecorder.writeWithin', () => {
     });
   });
 
+  it("reads its kind's parts with a locking read only when its spec asks for current rows", async () => {
+    const parts = async (spec: MintWriteSpec) => {
+      const fake = new Fake();
+      const { log } = within(fake, { shadow: true });
+      const capture = jest.spyOn(fake.reader, 'capture');
+      await log.writeWithin(spec, connection, async () => {
+        fake.addRow(1);
+      });
+      return capture.mock.calls.map(([, , options]) =>
+        options?.current ? Array.from(options.current) : null
+      );
+    };
+
+    // Before and after the write.
+    expect(await parts(respondSpec())).toEqual([null, null]);
+    const own = [...MINT_KIND_PARTS['collab.respond']];
+    expect(await parts(respondSpec({ readCurrent: true }))).toEqual([own, own]);
+  });
+
+  it.each([true, false])(
+    "gives each capture of a memes phase write the switch's answer (%s) and its kind's parts",
+    async (truth) => {
+      const fake = new Fake();
+      const { log } = within(fake, { shadow: true, replay: true });
+      const identityTruthFor = jest.fn(async () => truth);
+      Object.assign(fake.reader, { identityTruthFor });
+      const capture = jest.spyOn(fake.reader, 'capture');
+      await log.writeWithin(
+        spec({
+          kind: 'dist.phase',
+          card: { contract: MEMES_CONTRACT.toLowerCase(), card_id: 1 },
+          actor: { type: 'service', wallet: null, authority: 'drop-forge' },
+          readCurrent: true
+        }),
+        connection,
+        async () => {
+          fake.addRow(1);
+        }
+      );
+
+      const parts = [...MINT_KIND_PARTS['dist.phase']];
+      expect(parts).toContain('subscription_phases_identity');
+      // Before and after the write, then the replay check's undo and redo:
+      // one answer, read once, and the same parts.
+      expect(identityTruthFor).toHaveBeenCalledTimes(1);
+      expect(
+        capture.mock.calls.map(([, , options]) => ({
+          identityTruth: options?.identityTruth,
+          current: options?.current ? Array.from(options.current) : null
+        }))
+      ).toEqual(
+        Array.from({ length: 4 }, () => ({
+          identityTruth: truth,
+          current: parts
+        }))
+      );
+    }
+  );
+
   it('keeps the caller write when the log fails in shadow mode', async () => {
     const fake = new Fake();
     fake.failAppends = 1;
@@ -653,6 +724,74 @@ describe('MintLogRecorder.writeWithin', () => {
     expect(calls).toContain('ROLLBACK TO SAVEPOINT mint_log_within');
     expect(fake.state.distribution.map((row) => row.id)).toEqual([1]);
     expect(fake.queue).toEqual([]);
+    expect(sendPriorityAlertIfConfigured).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends a shadow failure's priority alert only once the caller's transaction commits", async () => {
+    const fake = new Fake();
+    fake.failAppends = 1;
+    const { log } = within(fake, { shadow: true });
+    const tracked = { connection: {} } as any;
+    openAfterCommitScope(tracked.connection);
+    await expect(
+      log.writeWithin(respondSpec(), tracked, async () => {
+        fake.addRow(1);
+        return 'ok';
+      })
+    ).resolves.toBe('ok');
+    // The caller still holds its locks and the head: no network call yet.
+    expect(sendPriorityAlertIfConfigured).not.toHaveBeenCalled();
+
+    await runAfterCommitCallbacks(closeAfterCommitScope(tracked.connection));
+    expect(sendPriorityAlertIfConfigured).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends a skipped write's priority alert only once the caller's transaction commits", async () => {
+    const fake = new Fake();
+    const log = new MintLogRecorder(
+      {
+        isMintLogShadowEnabled: () => true,
+        isMintLogPrimaryEnabled: () => false,
+        isMintLogReplayCheckEnabled: () => false,
+        isMintLogCollabRecordsRequired: () => false
+      },
+      () => {
+        throw new Error('the record log is down');
+      },
+      fake.db,
+      fake.reader,
+      fake.writer,
+      fake.headDb
+    );
+    const tracked = { connection: {} } as any;
+    openAfterCommitScope(tracked.connection);
+    await expect(
+      log.writeWithin(respondSpec(), tracked, async () => 'ok')
+    ).resolves.toBe('ok');
+    // The write ran unlogged; the alert waits for the caller's commit.
+    expect(sendPriorityAlertIfConfigured).not.toHaveBeenCalled();
+
+    await runAfterCommitCallbacks(closeAfterCommitScope(tracked.connection));
+    expect(sendPriorityAlertIfConfigured).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends a replay mismatch's priority alert only once the caller's transaction commits", async () => {
+    const fake = new Fake();
+    fake.applyBug = true;
+    const { log } = within(fake, { shadow: true, replay: true });
+    const tracked = { connection: {} } as any;
+    openAfterCommitScope(tracked.connection);
+    await expect(
+      log.writeWithin(respondSpec(), tracked, async () => {
+        fake.addRow(2);
+        return 'ok';
+      })
+    ).resolves.toBe('ok');
+    expect(fake.entries()[0].checks.replay).toBe('mismatch');
+    // The entry is logged; its alert waits for the caller's commit.
+    expect(sendPriorityAlertIfConfigured).not.toHaveBeenCalled();
+
+    await runAfterCommitCallbacks(closeAfterCommitScope(tracked.connection));
     expect(sendPriorityAlertIfConfigured).toHaveBeenCalledTimes(1);
   });
 

@@ -59,6 +59,9 @@ export class DropForgeRecovery {
   ) {
     this.walletId = `${config.chainId}:${config.signer.toLowerCase()}`;
   }
+  /** Stores a launch again when a completion flag is missed (failed or deferred). */
+  private readonly saveLaunch = (record: LaunchRecord, ctx: RequestContext) =>
+    this.repository.save(record, ctx);
   async request(
     id: string,
     wallet: string,
@@ -513,7 +516,7 @@ export class DropForgeRecovery {
       record.data.metadata = action.target_metadata!;
     pending.launch_id = null;
     pending.action_id = null;
-    await mirrorCompletion(record, ctx);
+    await mirrorCompletion(record, ctx, this.saveLaunch);
     setLaunchState(
       record,
       recovery.resume_scheduled ? 'RUNNING' : 'PAUSED',

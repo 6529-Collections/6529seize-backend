@@ -6,6 +6,9 @@ import {
 import * as emma from '@/api/subscriptions/api.subscriptions.allowlist';
 import * as distributions from '@/api/distributions/api.distributions.service';
 import { RequestContext } from '@/request.context';
+import * as transactions from '@/db/after-commit';
+import * as redis from '@/redis';
+import { mintLogRecorder } from '@/mint-log/mint-log-recorder';
 
 jest.mock('@/api/subscriptions/api.subscriptions.allowlist');
 jest.mock('@/api/distributions/api.distributions.service');
@@ -39,7 +42,11 @@ describe('Drop Forge phase network and replay boundary', () => {
         ) => {
           locked = true;
           try {
-            return await fn(cache, ctx);
+            // As run() does, the callback gets the preparation's connection.
+            return await fn(cache, {
+              ...ctx,
+              connection: ctx.connection ?? ({} as never)
+            });
           } finally {
             locked = false;
           }
@@ -72,6 +79,34 @@ describe('Drop Forge phase network and replay boundary', () => {
     ).toEqual(result);
     expect(distributions.populateDistribution).toHaveBeenCalledTimes(1);
   });
+  it("evicts the claim's cached reads in line with the mint log off, as before", async () => {
+    const registered = jest.spyOn(transactions, 'afterCommitAwaited');
+    const ctx = { connection: { connection: {} } as never };
+    await prepareDistributionPhase('contract', 1, 'plan', 'phase', 'auth', ctx);
+    expect(registered).not.toHaveBeenCalled();
+    expect(redis.evictRedisCacheForPathWithTimeout).toHaveBeenCalledTimes(2);
+  });
+  it("with the mint log on, evicts the claim's cached reads only once the job commits", async () => {
+    jest.spyOn(mintLogRecorder, 'mode').mockReturnValue('shadow');
+    jest
+      .spyOn(mintLogRecorder, 'writeWithin')
+      .mockImplementation(async (_spec, _connection, run) => run());
+    let committed: (() => unknown) | undefined;
+    const registered = jest
+      .spyOn(transactions, 'afterCommitAwaited')
+      .mockImplementation(async (_connection, callback) => {
+        committed = callback;
+      });
+    const ctx = { connection: { connection: {} } as never };
+    await prepareDistributionPhase('contract', 1, 'plan', 'phase', 'auth', ctx);
+    expect(registered).toHaveBeenCalledWith(
+      ctx.connection,
+      expect.any(Function)
+    );
+    expect(redis.evictRedisCacheForPathWithTimeout).not.toHaveBeenCalled();
+    await committed?.();
+    expect(redis.evictRedisCacheForPathWithTimeout).toHaveBeenCalledTimes(2);
+  });
   it('stores an empty phase named with an alias under its canonical name', async () => {
     await expect(
       prepareDistributionPhase(
@@ -92,14 +127,14 @@ describe('Drop Forge phase network and replay boundary', () => {
       1,
       'Phase 0',
       [],
-      {}
+      { connection: {} }
     );
     expect(distributions.populateDistribution).toHaveBeenCalledWith(
       'contract',
       1,
       'Phase 0',
       expect.objectContaining(result),
-      {}
+      { connection: {} }
     );
   });
   it('recovers a committed result without requiring EMMA to be available', async () => {

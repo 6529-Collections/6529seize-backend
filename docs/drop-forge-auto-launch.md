@@ -117,6 +117,16 @@ controls require supplying their hashes for reconciliation; minted supply alone
 cannot prove which recipient/category received an airdrop. Unknown state blocks
 execution rather than assuming allocations were delivered. Automation writes
 completed category flags into the existing manual UI after all batches confirm.
+With the mint log on (shadow or primary), the flags are written at the end of
+the signer transaction, at most two a pass, and logged (in shadow mode a flag
+that gives up on the mint log's head is written unlogged). A flag that fails to
+write is undone alone; it, or a flag the pass had no room for, is written by a
+later pass, in any state of the launch. A running launch completes only on a
+pass with no flag left to write, and a retry never overwrites a row an admin
+set or unset. Its first miss posts one plain event; a launch still without it
+10 minutes later, in any state, posts one alert asking for it by hand. With
+the mint log off they are written where they are mirrored, in the same
+transaction.
 
 The fixed schedule uses `Europe/Athens` wall time with DST: Phase 0
 17:40–18:20, Phase 1 18:30–18:50, Phase 2 19:00–19:20, and public
@@ -264,7 +274,9 @@ finalized evidence is rechecked. A pre-finality reorg retains the reservation an
 continues reconciliation. Unavailable/unknown evidence never releases the wallet.
 
 Winning evidence, action outcome, manual completion flags, wallet release and
-wave outbox entry commit atomically. Original or speed-up success credits the
+wave outbox entry commit atomically; with the mint log on, a completion flag
+that fails to write is undone alone and written by a later pass, and the rest
+still commits. Original or speed-up success credits the
 action once, even when late. Cancellation/revert credits nothing and leaves
 outstanding allocations visible. Later scheduled groups resume after finalized settlement when recovery interrupted automatic execution; an explicit operator pause remains paused. Unsuccessful actions still require reviewed recovery, never automatic replay.
 `RETRY` permits reviewed outstanding work within its original execution window;
