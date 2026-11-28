@@ -390,7 +390,11 @@ export class DeleteDropUseCase {
             : []),
           () => this.dropsDb.deleteDropFeedItems(dropId, { timer, connection }),
           () =>
-            this.dropsDb.deleteDropNotifications(dropId, { timer, connection }),
+            this.dropsDb.deleteDropNotifications(
+              dropId,
+              { timer, connection },
+              { edit: !isPermanentDelete }
+            ),
           () =>
             this.dropsDb.deleteDropSubscriptions(dropId, { timer, connection }),
           () => this.dropBookmarksDb.deleteBookmarksByDropId(dropId, connection)

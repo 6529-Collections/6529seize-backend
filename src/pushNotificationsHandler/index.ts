@@ -26,7 +26,12 @@ import { WaveReaderMetricEntity } from '../entities/IWaveReaderMetric';
 import { Logger } from '../logging';
 import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
-import { sendIdentityNotificationsBatch } from '@/pushNotificationsHandler/identityPushNotifications';
+import {
+  sendIdentityNotificationsBatch,
+  sendViewNotificationsBatch
+} from '@/pushNotificationsHandler/identityPushNotifications';
+import type { ViewNotificationKey } from '@/notifications/view/notification-view-push.db';
+import { viewPushKey } from '@/pushNotificationsHandler/push-key';
 import {
   E2eeWakeRequest,
   parseE2eeWakeMessage,
@@ -51,6 +56,18 @@ async function refreshInstallationRecords(
 }
 
 type E2eeWakeRecord = { messageId: string; wake: E2eeWakeRequest };
+
+/** `{view_notification: {identity_id, source_key}}`, as the outbox publisher writes it. */
+function parseViewNotificationKey(value: unknown): ViewNotificationKey | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const { identity_id, source_key } = value as Record<string, unknown>;
+  return typeof identity_id === 'string' &&
+    identity_id.trim() &&
+    typeof source_key === 'string' &&
+    /^[0-9a-f]{64}$/.test(source_key)
+    ? { identity_id, source_key }
+    : null;
+}
 
 function parseE2eeWakeBody(body: string): E2eeWakeRequest | null {
   try {
@@ -97,6 +114,10 @@ const sqsHandler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
         messageId: string;
         identityNotificationId: number;
       }[] = [];
+      const viewNotificationRecords: {
+        messageId: string;
+        key: ViewNotificationKey;
+      }[] = [];
       const badgeRecords: { messageId: string; profileId: string }[] = [];
       const installationRecords: { messageId: string; deviceId: string }[] = [];
       const { wakes: e2eeWakeRecords, others } = partitionE2eeWakeRecords(
@@ -107,6 +128,9 @@ const sqsHandler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
       for (const record of others) {
         try {
           const notification = JSON.parse(record.body);
+          const viewKey = parseViewNotificationKey(
+            notification.view_notification
+          );
           if (
             notification.type === 'badge_refresh' &&
             typeof notification.profile_id === 'string' &&
@@ -124,6 +148,11 @@ const sqsHandler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
             installationRecords.push({
               messageId: record.messageId,
               deviceId: notification.device_id
+            });
+          } else if (viewKey) {
+            viewNotificationRecords.push({
+              messageId: record.messageId,
+              key: viewKey
             });
           } else if (notification.identity_notification_id) {
             identityNotificationRecords.push({
@@ -156,6 +185,21 @@ const sqsHandler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
             .map((record) => ({
               itemIdentifier: record.messageId
             }))
+        );
+      }
+
+      if (viewNotificationRecords.length) {
+        const failedKeys = new Set(
+          (
+            await sendViewNotificationsBatch(
+              viewNotificationRecords.map((record) => record.key)
+            )
+          ).map(viewPushKey)
+        );
+        failures.push(
+          ...viewNotificationRecords
+            .filter((record) => failedKeys.has(viewPushKey(record.key)))
+            .map((record) => ({ itemIdentifier: record.messageId }))
         );
       }
 

@@ -84,9 +84,5 @@ export function isDuplicateKeyError(error: unknown): boolean {
   return code === 'ER_DUP_ENTRY' || errno === 1062;
 }
 
-/** InnoDB deadlock victims, including sanitized private-family errors. */
-export function isDeadlockError(error: unknown): boolean {
-  if (!error || typeof error !== 'object') return false;
-  const { code, errno } = error as { code?: unknown; errno?: unknown };
-  return code === 'ER_LOCK_DEADLOCK' || errno === 1213;
-}
+// Moved to the shared module; kept here for the e2ee callers' imports.
+export { isDeadlockError } from '@/db-errors';

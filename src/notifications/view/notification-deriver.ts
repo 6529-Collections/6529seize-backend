@@ -1,0 +1,412 @@
+import { isActivated } from '@/api/push-notifications/push-notifications.service';
+import { DELETED_DROPS_TABLE } from '@/constants';
+import { NotificationViewOrigin } from '@/entities/INotificationView';
+import {
+  identityNotificationsDb,
+  IdentityNotificationsDb
+} from '@/notifications/identity-notifications.db';
+import { PushNotificationOutboxDb } from '@/notifications/push-notification-outbox.db';
+import { RequestContext } from '@/request.context';
+import { ConnectionWrapper, dbSupplier, SqlExecutor } from '@/sql-executor';
+import { Time } from '@/time';
+import { canonicalizeJson } from '@/profile-cms/protocol/v1/canonical-json';
+import type {
+  DerivedGroup,
+  DerivedNotification
+} from '@/notifications/view/derived-notification';
+import {
+  notificationSourceKey,
+  notificationViewId
+} from '@/notifications/view/notification-view-ids';
+import {
+  notificationViewDb,
+  NotificationViewDb,
+  NotificationViewRow,
+  StoredViewRow
+} from '@/notifications/view/notification-view.db';
+import {
+  notificationViewPushDb,
+  NotificationViewPushDb
+} from '@/notifications/view/notification-view-push.db';
+import {
+  notifyViewMode,
+  writesLegacyCopy,
+  writesViewRow
+} from '@/notifications/view/notify-view-flags';
+
+/** A derived row is pushed only while it is this fresh, by its event's time. */
+export const PUSH_LIVE_WINDOW_MS = 15 * 60 * 1000;
+
+export interface DeriveOptions {
+  /**
+   * `live` for new source events; `replay` for a rebuild or a catch-up over
+   * events already seen. A replay never pushes.
+   */
+  readonly mode: 'live' | 'replay';
+  /** The clock for the live window (tests). */
+  readonly now?: number;
+  /** The live window for this source's rows; PUSH_LIVE_WINDOW_MS if unset. */
+  readonly pushWindowMs?: number;
+}
+
+export interface DeriveCounts {
+  readonly written: number;
+  readonly removed: number;
+  readonly legacyCopies: number;
+  readonly pushed: number;
+}
+
+export interface DeriveResult extends DeriveCounts {
+  /** Everyone whose rows were written or removed, once each. */
+  readonly changedIdentityIds: readonly string[];
+}
+
+interface KeyedRow {
+  readonly derived: DerivedNotification;
+  readonly view: NotificationViewRow;
+}
+
+const rowKey = (row: { identity_id: string; source_key: string }) =>
+  `${row.identity_id}\u0000${row.source_key}`;
+
+/** MySQL's JSON column reorders keys, so compare the canonical forms. */
+const sameJson = (a: string, b: string): boolean =>
+  canonicalizeJson(JSON.parse(a)) === canonicalizeJson(JSON.parse(b));
+
+/** The columns a re-derivation may change; read state and ids are not among them. */
+const COMPARED_COLUMNS = [
+  'cause',
+  'created_at',
+  'additional_identity_id',
+  'related_drop_id',
+  'related_drop_part_no',
+  'related_drop_2_id',
+  'related_drop_2_part_no',
+  'visibility_group_id',
+  'wave_id'
+] as const;
+
+/** Whether a stored row differs from its re-derived row. */
+function changed(stored: StoredViewRow, next: NotificationViewRow): boolean {
+  return (
+    COMPARED_COLUMNS.some((column) => stored[column] !== next[column]) ||
+    !sameJson(stored.additional_data, next.additional_data)
+  );
+}
+
+/**
+ * Writes what the rules derive. Each group replaces the rows of its
+ * (family, ref) in notification_view, so applying it again, or applying a
+ * later group with fewer rows, converges on the same table. For a cause in
+ * NOTIFY_DERIVED_CAUSES it also keeps identity_notifications current, which
+ * readers use until the mode is `on` and which a rollback returns to.
+ */
+export class NotificationDeriver {
+  constructor(
+    private readonly db: () => SqlExecutor,
+    private readonly viewDb: NotificationViewDb,
+    private readonly notificationsDb: IdentityNotificationsDb,
+    private readonly outbox: PushNotificationOutboxDb,
+    private readonly viewPushes: NotificationViewPushDb,
+    private readonly pushActivated: () => boolean = isActivated
+  ) {}
+
+  async apply(
+    groups: readonly DerivedGroup[],
+    options: DeriveOptions,
+    ctx: RequestContext
+  ): Promise<DeriveResult> {
+    const totals = { written: 0, removed: 0, legacyCopies: 0, pushed: 0 };
+    if (notifyViewMode() === 'off' || !groups.length) {
+      return { ...totals, changedIdentityIds: [] };
+    }
+    if (!ctx.connection) {
+      return this.db().executeNativeQueriesInTransaction((connection) =>
+        this.apply(groups, options, { ...ctx, connection })
+      );
+    }
+    const changed = new Set<string>();
+    for (const group of groups) {
+      const result = await this.applyGroup(group, options, ctx.connection);
+      totals.written += result.written;
+      totals.removed += result.removed;
+      totals.legacyCopies += result.legacyCopies;
+      totals.pushed += result.pushed;
+      result.changedIdentityIds.forEach((id) => changed.add(id));
+    }
+    return { ...totals, changedIdentityIds: Array.from(changed) };
+  }
+
+  private async applyGroup(
+    group: DerivedGroup,
+    options: DeriveOptions,
+    connection: ConnectionWrapper<any>
+  ): Promise<DeriveResult> {
+    // The view keeps every row the rule derives, except rows that name a
+    // deleted drop. Mutes, blocks, moderation and preferences apply when the
+    // view is read, so applying a group again, or rebuilding, never depends
+    // on their state now. Copies and pushes apply them when they are
+    // written, as the old writers do.
+    const keyed = this.keyRows(
+      group,
+      await this.withoutDeletedDrops(
+        group.rows.filter((row) => writesViewRow(row.cause, row.created_at)),
+        connection
+      )
+    );
+    const stored = new Map(
+      (
+        await this.viewDb.findGroupForUpdate(
+          group.family,
+          group.ref,
+          connection
+        )
+      ).map((row) => [rowKey(row), row])
+    );
+    const nextKeys = new Set(keyed.map(({ view }) => rowKey(view)));
+    const removed = Array.from(stored.values()).filter(
+      (row) => !nextKeys.has(rowKey(row))
+    );
+    await this.viewDb.deleteRows(removed, connection);
+    await this.notificationsDb.deleteDerivedCopies(
+      removed.flatMap((row) => (row.legacy_id === null ? [] : [row.legacy_id])),
+      connection
+    );
+    const toWrite = keyed.filter(({ view }) => {
+      const before = stored.get(rowKey(view));
+      return !before || changed(before, view);
+    });
+    await this.viewDb.upsertRows(
+      toWrite.map(({ view }) => view),
+      connection
+    );
+    const added = keyed.filter(({ view }) => !stored.has(rowKey(view)));
+    const deliverable = await this.deliverable(added, options, connection);
+    const viewPushes = await this.queueViewPushes(
+      added.filter((row) => deliverable.has(row.derived)),
+      options,
+      connection
+    );
+    const copies = await this.writeLegacyCopies(
+      keyed,
+      stored,
+      deliverable,
+      options,
+      connection
+    );
+    return {
+      written: toWrite.length,
+      removed: removed.length,
+      legacyCopies: copies.written,
+      pushed: copies.pushed + viewPushes,
+      changedIdentityIds: [
+        ...toWrite.map(({ view }) => view.identity_id),
+        ...removed.map((row) => row.identity_id)
+      ]
+    };
+  }
+
+  /**
+   * A deleted drop's rows went with it (push-notification-cancellations),
+   * and deletion is final, so a rule applied again, or a rebuild, does not
+   * bring back a row that names one.
+   */
+  private async withoutDeletedDrops(
+    rows: readonly DerivedNotification[],
+    connection: ConnectionWrapper<any>
+  ): Promise<DerivedNotification[]> {
+    const dropIds = Array.from(
+      new Set(
+        rows.flatMap((row) =>
+          [row.related_drop_id, row.related_drop_2_id].filter(
+            (id): id is string => id !== null
+          )
+        )
+      )
+    );
+    if (!dropIds.length) return [...rows];
+    const deleted = new Set(
+      (
+        await this.db().execute<{ id: string }>(
+          `select id from ${DELETED_DROPS_TABLE} where id in (:dropIds)`,
+          { dropIds },
+          { wrappedConnection: connection }
+        )
+      ).map((row) => row.id)
+    );
+    return rows.filter(
+      (row) =>
+        !deleted.has(row.related_drop_id ?? '') &&
+        !deleted.has(row.related_drop_2_id ?? '')
+    );
+  }
+
+  /**
+   * The new rows today's write filters (mutes, blocks, moderation,
+   * preferences) let through, decided once, when a row first appears: they
+   * gate its identity_notifications copy and its push. The filters return
+   * the rows they keep, so the set holds those objects.
+   */
+  private async deliverable(
+    added: readonly KeyedRow[],
+    options: DeriveOptions,
+    connection: ConnectionWrapper<any>
+  ): Promise<ReadonlySet<DerivedNotification>> {
+    const candidates = added
+      .map(({ derived }) => derived)
+      .filter(
+        (row) =>
+          (options.mode === 'live' &&
+            writesLegacyCopy(row.cause, row.created_at)) ||
+          (notifyViewMode() === 'on' &&
+            this.isPushable(row.created_at, options))
+      );
+    if (!candidates.length) return new Set();
+    return new Set(
+      await this.notificationsDb.filterDerivedRowsForWrite(
+        candidates,
+        connection
+      )
+    );
+  }
+
+  /** A row of a live event young enough to push, while pushes are on. */
+  private isPushable(createdAt: number, options: DeriveOptions): boolean {
+    const now = options.now ?? Time.currentMillis();
+    return (
+      options.mode === 'live' &&
+      this.pushActivated() &&
+      createdAt >= now - (options.pushWindowMs ?? PUSH_LIVE_WINDOW_MS)
+    );
+  }
+
+  /**
+   * In `on` mode a new row is pushed from the view: its key is queued in
+   * this transaction, and its copy in identity_notifications is not pushed.
+   */
+  private async queueViewPushes(
+    rows: readonly KeyedRow[],
+    options: DeriveOptions,
+    connection: ConnectionWrapper<any>
+  ): Promise<number> {
+    if (notifyViewMode() !== 'on') return 0;
+    const keys = rows
+      .filter(({ view }) => this.isPushable(view.created_at, options))
+      .map(({ view }) => ({
+        identity_id: view.identity_id,
+        source_key: view.source_key
+      }));
+    await this.viewPushes.enqueue(keys, connection);
+    return keys.length;
+  }
+
+  private keyRows(
+    group: DerivedGroup,
+    rows: readonly DerivedNotification[]
+  ): KeyedRow[] {
+    const seen = new Set<string>();
+    const keyed: KeyedRow[] = [];
+    for (const derived of rows) {
+      const sourceKey = notificationSourceKey(
+        group.family,
+        group.ref,
+        derived.identity_id
+      );
+      const key = rowKey({
+        identity_id: derived.identity_id,
+        source_key: sourceKey
+      });
+      if (seen.has(key)) {
+        throw new Error(
+          `Rule ${group.family} derived two rows for one recipient of ${group.ref}`
+        );
+      }
+      seen.add(key);
+      keyed.push({
+        derived,
+        view: {
+          identity_id: derived.identity_id,
+          source_key: sourceKey,
+          id: notificationViewId(derived.created_at, sourceKey),
+          source_family: group.family,
+          source_ref: group.ref,
+          origin: NotificationViewOrigin.DERIVED,
+          additional_identity_id: derived.additional_identity_id,
+          related_drop_id: derived.related_drop_id,
+          related_drop_part_no: derived.related_drop_part_no,
+          related_drop_2_id: derived.related_drop_2_id,
+          related_drop_2_part_no: derived.related_drop_2_part_no,
+          cause: derived.cause,
+          additional_data: JSON.stringify(derived.additional_data ?? {}),
+          created_at: derived.created_at,
+          visibility_group_id: derived.visibility_group_id,
+          wave_id: derived.wave_id
+        }
+      });
+    }
+    return keyed;
+  }
+
+  /**
+   * identity_notifications copies of derived causes, as the old writer
+   * would write them: once, when the row first appears in the view and the
+   * write filters let it through; updated when a re-derivation changes the
+   * row; in `shadow` pushed when live and fresh. A row the view held
+   * before its cause was derived keeps the old writer's row instead. A
+   * replay covers events a live run has seen, so it leaves copies alone.
+   */
+  private async writeLegacyCopies(
+    keyed: readonly KeyedRow[],
+    stored: ReadonlyMap<string, StoredViewRow>,
+    deliverable: ReadonlySet<DerivedNotification>,
+    options: DeriveOptions,
+    connection: ConnectionWrapper<any>
+  ): Promise<{ written: number; pushed: number }> {
+    if (options.mode === 'replay') return { written: 0, pushed: 0 };
+    const fresh: KeyedRow[] = [];
+    for (const row of keyed) {
+      if (!writesLegacyCopy(row.derived.cause, row.derived.created_at)) {
+        continue;
+      }
+      const before = stored.get(rowKey(row.view));
+      if (!before) {
+        if (deliverable.has(row.derived)) fresh.push(row);
+      } else if (before.legacy_id !== null && changed(before, row.view)) {
+        await this.notificationsDb.updateDerivedCopy(
+          before.legacy_id,
+          row.derived,
+          connection
+        );
+      }
+    }
+    if (!fresh.length) return { written: 0, pushed: 0 };
+    const ids = await this.notificationsDb.insertDerivedCopies(
+      fresh.map(({ derived }) => derived),
+      connection
+    );
+    await this.viewDb.setLegacyIds(
+      fresh.map(({ view }, index) => ({
+        identity_id: view.identity_id,
+        source_key: view.source_key,
+        legacy_id: ids[index]
+      })),
+      connection
+    );
+    const pushIds =
+      notifyViewMode() === 'on'
+        ? []
+        : ids.filter((_, index) =>
+            this.isPushable(fresh[index].derived.created_at, options)
+          );
+    await this.outbox.enqueueMany(pushIds, { connection });
+    return { written: ids.length, pushed: pushIds.length };
+  }
+}
+
+export const notificationDeriver = new NotificationDeriver(
+  dbSupplier,
+  notificationViewDb,
+  identityNotificationsDb,
+  new PushNotificationOutboxDb(dbSupplier),
+  notificationViewPushDb
+);

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { getRedisClient } from '@/redis';
 import { PushRedisOperationError } from '@/pushNotificationsHandler/push-send-diagnostics';
 import type { BadgeDevice } from '@/pushNotificationsHandler/device-badge';
+import type { PushKey } from '@/pushNotificationsHandler/push-key';
 
 const RECEIPT_SECONDS = 8 * 86400;
 const QUARANTINE_SECONDS = 86400;
@@ -58,33 +59,34 @@ export async function isPushTargetQuarantined(
   return (await redisOperation(() => redis().get(targetKey))) !== null;
 }
 
-function receiptKey(deviceId: string, notificationId: number): string {
-  // Token rotation must not replay an already accepted notification on the same device.
-  return key('delivered', [deviceId, notificationId]);
+function receiptKey(deviceId: string, pushKey: PushKey): string {
+  // Token rotation must not replay an already accepted notification on the
+  // same device. An old id hashes as it always has; a view key is a string.
+  return key('delivered', [deviceId, pushKey]);
 }
 
 /** Called under the device lock; failures fail closed before another provider send. */
 export async function deliveredPushIds(
   deviceId: string,
-  ids: number[]
-): Promise<Set<number>> {
-  if (!ids.length) return new Set();
-  const keys = ids.map((id) => receiptKey(deviceId, id));
+  pushKeys: PushKey[]
+): Promise<Set<PushKey>> {
+  if (!pushKeys.length) return new Set();
+  const keys = pushKeys.map((pushKey) => receiptKey(deviceId, pushKey));
   // Independent keys may occupy different Redis Cluster slots. Keep the v1
   // keys so existing receipts still prevent duplicate sends after this upgrade.
   const values = await redisOperation(() => {
     const client = redis();
     return Promise.all(keys.map((receipt) => client.get(receipt)));
   });
-  return new Set(ids.filter((_id, index) => values[index] === '1'));
+  return new Set(pushKeys.filter((_key, index) => values[index] === '1'));
 }
 
 /** Record provider-accepted targets before returning any partial batch failure. */
 export async function recordDeliveredPush(
   deviceId: string,
-  notificationId: number
+  pushKey: PushKey
 ): Promise<void> {
-  const targetKey = receiptKey(deviceId, notificationId);
+  const targetKey = receiptKey(deviceId, pushKey);
   await redisOperation(() =>
     redis().set(targetKey, '1', { EX: RECEIPT_SECONDS })
   );

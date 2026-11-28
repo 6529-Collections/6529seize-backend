@@ -9,6 +9,7 @@ import {
   quarantinePushTarget
 } from '@/pushNotificationsHandler/push-delivery-state';
 import { isIosPushPlatform } from './push-platform';
+import type { PushKey } from './push-key';
 import {
   deviceBadgeKey,
   getDeviceBadgeState,
@@ -22,6 +23,8 @@ import {
 
 export interface IdentityPushNotificationMessage {
   input: PushNotificationMessageInput;
+  /** The queued row's key: delivery is remembered and retried by it. */
+  pushKey: PushKey;
   identityId: string;
   device: PushNotificationDevice;
   requiresCompetitionSupport?: boolean;
@@ -30,7 +33,7 @@ export interface IdentityPushNotificationMessage {
 type ResultHandler = (
   messages: IdentityPushNotificationMessage[],
   results: PushNotificationSendResult[]
-) => Promise<number[]>;
+) => Promise<PushKey[]>;
 
 function groupByDevice(messages: IdentityPushNotificationMessage[]) {
   const groups = new Map<string, IdentityPushNotificationMessage[]>();
@@ -98,16 +101,14 @@ async function currentMessages(group: IdentityPushNotificationMessage[]) {
 async function sendPending(
   current: IdentityPushNotificationMessage[],
   handleSendResults: ResultHandler
-): Promise<number[]> {
+): Promise<PushKey[]> {
   if (!current.length) return [];
   const device = current[0].device;
   const delivered = await deliveredPushIds(
     device.device_id,
-    current.map((message) => message.input.notification_id)
+    current.map((message) => message.pushKey)
   );
-  const pending = current.filter(
-    (message) => !delivered.has(message.input.notification_id)
-  );
+  const pending = current.filter((message) => !delivered.has(message.pushKey));
   if (!pending.length) return [];
   const results = await sendMessages(pending.map((message) => message.input));
   if (
@@ -121,11 +122,11 @@ async function sendPending(
     throw new Error('Push send results do not match pending inputs');
   }
   await Promise.all(
-    results
-      .filter((result) => result.response.success)
-      .map((result) =>
-        recordDeliveredPush(device.device_id, result.input.notification_id)
-      )
+    results.flatMap((result, index) =>
+      result.response.success
+        ? [recordDeliveredPush(device.device_id, pending[index].pushKey)]
+        : []
+    )
   );
   if (results.some((result) => isSenderMismatch(result.response.error))) {
     await quarantinePushTarget(device);
@@ -144,7 +145,7 @@ async function sendPending(
 async function sendGroup(
   group: IdentityPushNotificationMessage[],
   handleSendResults: ResultHandler
-): Promise<number[]> {
+): Promise<PushKey[]> {
   const device = group[0].device;
   try {
     return await withDeviceBadgeLock(device, async () => {
@@ -153,21 +154,21 @@ async function sendGroup(
     });
   } catch (error) {
     reportPushDeliveryFailure(error, 'delivery');
-    return group.map((message) => message.input.notification_id);
+    return group.map((message) => message.pushKey);
   }
 }
 
 export async function sendIdentityPushGroups(
   messages: IdentityPushNotificationMessage[],
   handleSendResults: ResultHandler
-): Promise<number[]> {
+): Promise<PushKey[]> {
   // Serialize token variants within a device; independent devices can progress together.
   const failed = await Promise.all(
     groupByDevice(messages).map(async (groups) => {
-      const ids: number[] = [];
+      const keys: PushKey[] = [];
       for (const group of groups)
-        ids.push(...(await sendGroup(group, handleSendResults)));
-      return ids;
+        keys.push(...(await sendGroup(group, handleSendResults)));
+      return keys;
     })
   );
   return Array.from(new Set(failed.flat()));

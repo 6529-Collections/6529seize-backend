@@ -78,6 +78,16 @@ import {
   createPushSendDiagnostic,
   reportPushSendDiagnostic
 } from '@/pushNotificationsHandler/push-send-diagnostics';
+import { notifyViewMode } from '@/notifications/view/notify-view-flags';
+import {
+  notificationViewPushDb,
+  type ViewNotificationKey
+} from '@/notifications/view/notification-view-push.db';
+import {
+  type PushKey,
+  viewPushKey,
+  viewRowAsNotification
+} from '@/pushNotificationsHandler/push-key';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_IDENTITY');
 const SKIP_NOTIFICATION_PUSH = Symbol('SKIP_NOTIFICATION_PUSH');
@@ -270,6 +280,18 @@ async function getSharedDeviceTokenKeysForOtherProfiles(
   }, new Map<string, Set<string>>());
 }
 
+/** A queued row to push, and the key its delivery is remembered under. */
+interface PushRequest {
+  readonly key: PushKey;
+  readonly notification: IdentityNotificationEntity;
+}
+
+/**
+ * Pushes queued identity_notifications ids. In `on` mode the notifications
+ * feed shows the view, so a row the view holds (by legacy_id) is pushed as
+ * the view has it: with the view id and the view's read state. A row the
+ * view does not hold yet (queued before the switch copied it) goes as before.
+ */
 export async function sendIdentityNotificationsBatch(
   ids: number[]
 ): Promise<number[]> {
@@ -280,27 +302,122 @@ export async function sendIdentityNotificationsBatch(
 
   logger.info(`Sending identity notifications: ${uniqueIds.join(',')}`);
 
+  const notificationsById = await findQueuedNotifications(uniqueIds);
+  const requests = uniqueIds.flatMap((id) => {
+    const notification = notificationsById.get(id);
+    return notification ? [{ key: id, notification }] : [];
+  });
+  const failed = await sendPushRequests({
+    requests,
+    allKeys: uniqueIds,
+    // These rows are already durable and visible in the authenticated REST
+    // feed. Mobile push mute/device/delivery rules do not suppress feed
+    // notifications, so realtime invalidation remains independent and
+    // idempotent.
+    announce: true,
+    settleMissing: () =>
+      handleMissingNotifications(
+        uniqueIds.filter((id) => !notificationsById.has(id))
+      )
+  });
+  return failed.filter((key): key is number => typeof key === 'number');
+}
+
+async function findQueuedNotifications(
+  ids: number[]
+): Promise<Map<number, IdentityNotificationEntity>> {
   const notifications = await getDataSource()
     .getRepository(IdentityNotificationEntity)
-    .find({ where: { id: In(uniqueIds) } });
-  const notificationsById = new Map(
+    .find({ where: { id: In(ids) } });
+  const byId = new Map(
     notifications.map((notification) => [Number(notification.id), notification])
   );
-  // These rows are already durable and visible in the authenticated REST feed.
-  // Mobile push mute/device/delivery rules do not suppress feed notifications,
-  // so realtime invalidation intentionally remains independent and idempotent.
-  await wsListenersNotifier.notifyAboutIdentityNotificationsChanged(
-    notifications.map((notification) => notification.identity_id)
+  if (notifyViewMode() === 'on') {
+    for (const row of await notificationViewPushDb.findRowsByLegacyIds(ids)) {
+      byId.set(Number(row.legacy_id), viewRowAsNotification(row));
+    }
+  }
+  return byId;
+}
+
+/**
+ * Pushes notification_view rows the deriver queued by key (in `on` mode).
+ * A row missing from the view was removed after it was queued (a
+ * tombstone, a moderation hide, a re-derivation), so it is acknowledged
+ * without a push. The feed runner announced these rows when it wrote them.
+ */
+export async function sendViewNotificationsBatch(
+  keys: ViewNotificationKey[]
+): Promise<ViewNotificationKey[]> {
+  const uniqueKeys = Array.from(
+    new Map(keys.map((key) => [viewPushKey(key), key])).values()
   );
-  let mutedNotificationIds: Set<number>;
+  if (uniqueKeys.length === 0) {
+    return [];
+  }
+  logger.info(
+    `Sending view notifications: ${uniqueKeys.map(viewPushKey).join(',')}`
+  );
+  const rows = new Map(
+    (await notificationViewPushDb.findRows(uniqueKeys)).map((row) => [
+      viewPushKey(row),
+      row
+    ])
+  );
+  const requests = uniqueKeys.flatMap((key) => {
+    const row = rows.get(viewPushKey(key));
+    return row
+      ? [{ key: viewPushKey(key), notification: viewRowAsNotification(row) }]
+      : [];
+  });
+  const failed = new Set(
+    await sendPushRequests({
+      requests,
+      allKeys: uniqueKeys.map(viewPushKey),
+      announce: false,
+      settleMissing: async () => {
+        uniqueKeys
+          .filter((key) => !rows.has(viewPushKey(key)))
+          .forEach((key) =>
+            logger.info(`[${viewPushKey(key)}] Removed before its push`)
+          );
+        return [];
+      }
+    })
+  );
+  return uniqueKeys.filter((key) => failed.has(viewPushKey(key)));
+}
+
+/**
+ * Builds and sends the pushes of one batch, and returns the keys to retry:
+ * every key when the visibility filters fail, the missing keys
+ * `settleMissing` returns, and the rows whose build or send failed.
+ */
+async function sendPushRequests({
+  requests,
+  allKeys,
+  announce,
+  settleMissing
+}: {
+  readonly requests: readonly PushRequest[];
+  readonly allKeys: readonly PushKey[];
+  readonly announce: boolean;
+  readonly settleMissing: () => Promise<PushKey[]>;
+}): Promise<PushKey[]> {
+  if (announce) {
+    await wsListenersNotifier.notifyAboutIdentityNotificationsChanged(
+      requests.map(({ notification }) => notification.identity_id)
+    );
+  }
+  let mutedKeys: Set<PushKey>;
   let resolveCompetitionActor: CompetitionNotificationActorResolver;
   const privacyContext: RequestContext = {};
   try {
-    mutedNotificationIds = await findMutedNotificationIds(notifications);
+    mutedKeys = await findMutedPushKeys(requests);
     resolveCompetitionActor = await createCompetitionNotificationActorResolver(
-      notifications.filter(
-        (notification) => !mutedNotificationIds.has(Number(notification.id))
-      ),
+      requests
+        .filter(({ key }) => !mutedKeys.has(key))
+        .map(({ notification }) => notification),
       privacyContext
     );
   } catch (error) {
@@ -308,21 +425,15 @@ export async function sendIdentityNotificationsBatch(
       'Failed to apply notification visibility filters; retrying push notifications',
       error
     );
-    return uniqueIds;
+    return [...allKeys];
   }
 
-  const failedIds = await handleMissingNotifications(
-    uniqueIds.filter((id) => !notificationsById.has(id))
-  );
+  const failedKeys = await settleMissing();
   const waveAccessCache = new Map<string, Promise<boolean>>();
   const wavePresentationResolver = createWavePresentationResolver();
   const messagesByNotification = await Promise.all(
-    uniqueIds.map(async (id) => {
-      const notification = notificationsById.get(id);
-      if (!notification) {
-        return [];
-      }
-      if (mutedNotificationIds.has(Number(notification.id))) {
+    requests.map(async ({ key, notification }) => {
+      if (mutedKeys.has(key)) {
         logger.info(
           `[ID ${notification.id}] Identity ${notification.additional_identity_id} is muted by user ${notification.identity_id}`
         );
@@ -330,14 +441,15 @@ export async function sendIdentityNotificationsBatch(
       }
       try {
         return await buildIdentityNotificationMessages(
+          key,
           notification,
           waveAccessCache,
           wavePresentationResolver,
           resolveCompetitionActor
         );
       } catch (error) {
-        logger.error(`Failed to build notification ${id}: ${error}`);
-        failedIds.push(id);
+        logger.error(`Failed to build notification ${key}: ${error}`);
+        failedKeys.push(key);
         return [];
       }
     })
@@ -345,21 +457,23 @@ export async function sendIdentityNotificationsBatch(
   const messages = messagesByNotification.flat();
 
   if (messages.length === 0) {
-    return failedIds;
+    return failedKeys;
   }
 
-  failedIds.push(
+  failedKeys.push(
     ...(await sendIdentityPushGroups(messages, handleSendResults))
   );
 
-  return Array.from(new Set(failedIds));
+  return Array.from(new Set(failedKeys));
 }
 
-async function findMutedNotificationIds(
-  notifications: IdentityNotificationEntity[]
-): Promise<Set<number>> {
-  const notificationRows = notifications.map((notification) => ({
-    notification_id: Number(notification.id),
+async function findMutedPushKeys(
+  requests: readonly PushRequest[]
+): Promise<Set<PushKey>> {
+  // The filters return the rows they keep. Rows are told apart by their
+  // place in the batch: view ids repeat across people.
+  const notificationRows = requests.map(({ notification }, index) => ({
+    notification_id: index,
     identity_id: notification.identity_id,
     additional_identity_id: notification.additional_identity_id,
     cause: notification.cause,
@@ -374,17 +488,14 @@ async function findMutedNotificationIds(
     await contentModerationDb.filterUnavailableDropNotificationRows(
       deliverableRows
     );
-  const unmutedNotificationIds = new Set(
-    visibleRows.map((row) => row.notification_id)
-  );
+  const visible = new Set(visibleRows.map((row) => row.notification_id));
   return new Set(
-    notificationRows
-      .filter((row) => !unmutedNotificationIds.has(row.notification_id))
-      .map((row) => row.notification_id)
+    requests.filter((_, index) => !visible.has(index)).map(({ key }) => key)
   );
 }
 
 async function buildIdentityNotificationMessages(
+  pushKey: PushKey,
   notification: IdentityNotificationEntity,
   waveAccessCache: Map<string, Promise<boolean>>,
   wavePresentationResolver: WavePresentationResolver,
@@ -519,6 +630,7 @@ async function buildIdentityNotificationMessages(
               imageUrl: imageUrl ?? undefined,
               ...grouping
             },
+            pushKey,
             identityId: notification.identity_id,
             requiresCompetitionSupport: [
               IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED,
@@ -536,9 +648,9 @@ async function buildIdentityNotificationMessages(
 export async function handleSendResults(
   messages: IdentityPushNotificationMessage[],
   results: PushNotificationSendResult[]
-): Promise<number[]> {
-  const outcomesByNotificationId = new Map<
-    number,
+): Promise<PushKey[]> {
+  const outcomesByPushKey = new Map<
+    PushKey,
     {
       hasSuccess: boolean;
       hasRetryableFailure: boolean;
@@ -547,18 +659,17 @@ export async function handleSendResults(
   >();
   await Promise.all(
     results.map(async (result, index) => {
-      const notificationId = result.input.notification_id;
-      const outcome = outcomesByNotificationId.get(notificationId) ?? {
+      const message = messages[index];
+      const outcome = outcomesByPushKey.get(message.pushKey) ?? {
         hasSuccess: false,
         hasRetryableFailure: false,
         hasCleanupFailure: false
       };
-      outcomesByNotificationId.set(notificationId, outcome);
+      outcomesByPushKey.set(message.pushKey, outcome);
       if (result.response.success) {
         outcome.hasSuccess = true;
         return;
       }
-      const message = messages[index];
       const error = result.response.error;
       if (
         error?.code === 'messaging/registration-token-not-registered' ||
@@ -592,13 +703,13 @@ export async function handleSendResults(
     })
   );
 
-  return Array.from(outcomesByNotificationId.entries())
+  return Array.from(outcomesByPushKey.entries())
     .filter(
       ([, outcome]) =>
         outcome.hasCleanupFailure ||
         (!outcome.hasSuccess && outcome.hasRetryableFailure)
     )
-    .map(([notificationId]) => notificationId);
+    .map(([pushKey]) => pushKey);
 }
 
 async function generateNotificationData(

@@ -110,6 +110,11 @@ export {
   ContentModerationRoleEntity
 } from './IContentModeration';
 export { IdentityNotificationEntity } from './IIdentityNotification';
+export {
+  NotificationViewCursorEntity,
+  NotificationViewEntity,
+  NotificationViewPushOutboxEntity
+} from './INotificationView';
 export { IdentitySubscriptionEntity } from './IIdentitySubscription';
 export { ProfilePreferencesEntity } from './IProfilePreferences';
 export { MentionAliasEntity, MentionAliasMemberEntity } from './IMentionAlias';

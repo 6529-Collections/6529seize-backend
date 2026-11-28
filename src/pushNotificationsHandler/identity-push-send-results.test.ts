@@ -32,6 +32,7 @@ function input(
 function messages(inputs: PushNotificationMessageInput[]) {
   return inputs.map((value, index) => ({
     input: value,
+    pushKey: value.notification_id,
     identityId: 'profile',
     device: {
       profile_id: 'profile',

@@ -17,6 +17,7 @@ import {
   COMPETITION_PAUSES_TABLE,
   IDENTITY_MUTES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
+  NOTIFICATION_VIEW_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
   NFTS_TABLE,
   OFFICIAL_WAVES_TABLE,
@@ -122,6 +123,8 @@ import {
   viewerGroupsWorthSharing
 } from '@/waves/viewer-groups-cte';
 import { viewerGroupSets } from '@/waves/viewer-group-sets';
+import { notifyViewMode } from '@/notifications/view/notify-view-flags';
+import { notificationArchive } from '@/notifications/view/notification-archive';
 
 const logger = Logger.get('WAVES_API_DB');
 
@@ -3180,6 +3183,21 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       param,
       { wrappedConnection: ctx.connection }
     );
+    if (notifyViewMode() !== 'off') {
+      await this.db.execute(
+        `update ${NOTIFICATION_VIEW_TABLE}
+         set visibility_group_id = :newVisibilityGroupId
+         where wave_id = :waveId`,
+        param,
+        { wrappedConnection: ctx.connection }
+      );
+      // A rebuild applies it to the rows the archive sealed before.
+      await notificationArchive.recordVisibility(
+        param.waveId,
+        param.newVisibilityGroupId,
+        ctx
+      );
+    }
     ctx.timer?.stop('wavesApiDb->updateVisibilityInNotifications');
   }
 

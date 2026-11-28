@@ -6,6 +6,7 @@ import {
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
+  NOTIFICATION_VIEW_TABLE,
   PUSH_NOTIFICATION_CANCELLATIONS_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_METRICS_TABLE,
@@ -27,6 +28,14 @@ import {
   NOTIFICATIONS_FOR_DROPS,
   type LegacyDmDropStep
 } from './legacy-dm-purge.inventory';
+import {
+  NotificationReference,
+  notifyDeleteEntries
+} from '@/notifications/view/notification-archive';
+import { notifyViewMode } from '@/notifications/view/notify-view-flags';
+import { RecordLogDb } from '@/signed-records/record-log/record-log.db';
+import { RecordLogWriter } from '@/signed-records/record-log/record-log.service';
+import type { SqlExecutor } from '@/sql-executor';
 import { relayWaveKey } from '@/wave-drop-index/relay-wave-key';
 
 /**
@@ -188,13 +197,16 @@ export async function planLegacyDmPurge(
       await count(`select count(*) as c from ${step.table} where ${where}`)
     );
   }
-  add(
-    IDENTITY_NOTIFICATIONS_TABLE,
-    await count(
-      `select count(*) as c from ${IDENTITY_NOTIFICATIONS_TABLE}
-       where wave_id in (${DM_WAVES_SQL}) or ${replaceEvery(NOTIFICATIONS_FOR_DROPS, '(?)', `(${dmDropIds})`)}`
-    )
-  );
+  // notification_view has identity_notifications' columns.
+  for (const table of [IDENTITY_NOTIFICATIONS_TABLE, NOTIFICATION_VIEW_TABLE]) {
+    add(
+      table,
+      await count(
+        `select count(*) as c from ${table}
+         where wave_id in (${DM_WAVES_SQL}) or ${replaceEvery(NOTIFICATIONS_FOR_DROPS, '(?)', `(${dmDropIds})`)}`
+      )
+    );
+  }
   for (const step of LEGACY_DM_WAVE_STEPS) {
     const where = replaceEvery(step.where, '= ?', `in (${DM_WAVES_SQL})`);
     add(
@@ -475,12 +487,64 @@ function pushUploads(
   }
 }
 
+/**
+ * Appends the notification archive's record of a delete through the
+ * purge's own transaction, so a rebuild of notification_view doesn't bring
+ * back rows the archive sealed before.
+ */
+async function logViewDelete(
+  tx: LegacyDmSql,
+  deleted: { reference: NotificationReference; values: readonly string[] }
+): Promise<void> {
+  const writer = new RecordLogWriter(recordLogStoreIn(tx), {
+    findGrantProofs: async () => []
+  });
+  await writer.append(
+    notifyDeleteEntries(deleted.reference, deleted.values),
+    {}
+  );
+}
+
+/**
+ * The record log's own store over the purge's transaction, which takes
+ * positional parameters: the store's statements name theirs, so each name
+ * becomes a `?` with its value, in order. A name is a `:word` after a space,
+ * a comma or a parenthesis, as the store writes them; one without a value
+ * fails the purge rather than write a wrong row.
+ */
+function recordLogStoreIn(tx: LegacyDmSql): RecordLogDb {
+  const execute = (sql: string, params: Record<string, unknown> = {}) => {
+    const values: unknown[] = [];
+    const positional = sql.replace(
+      /([\s,(]):(\w+)/g,
+      (_, before: string, name: string) => {
+        if (!(name in params)) throw new Error(`No value for :${name}`);
+        values.push(params[name]);
+        return `${before}?`;
+      }
+    );
+    return tx.execute(positional, values);
+  };
+  return new RecordLogDb(() => ({ execute }) as unknown as SqlExecutor);
+}
+
 async function cancelNotifications(
   tx: LegacyDmSql,
   where: string,
   params: readonly unknown[],
+  deleted: { reference: NotificationReference; values: readonly string[] },
   add: (table: string, affected: number) => void
 ): Promise<void> {
+  // The view's rows go too, in every notification mode. A view row's push
+  // is queued by its key, and a key whose row is gone is not pushed.
+  add(
+    NOTIFICATION_VIEW_TABLE,
+    await tx.execute(
+      `delete from ${NOTIFICATION_VIEW_TABLE} where ${where}`,
+      params
+    )
+  );
+  if (notifyViewMode() !== 'off') await logViewDelete(tx, deleted);
   const ids = (
     await tx.query<{ id: unknown }>(
       `select id from ${IDENTITY_NOTIFICATIONS_TABLE} where ${where} order by id`,
@@ -520,7 +584,13 @@ async function purgeDropBatch(
   if (!batch.length) return 0;
   const ids = batch.map((d) => d.id);
   const attachmentIds = await captureMedia(tx, ids, onMedia);
-  await cancelNotifications(tx, NOTIFICATIONS_FOR_DROPS, [ids, ids], add);
+  await cancelNotifications(
+    tx,
+    NOTIFICATIONS_FOR_DROPS,
+    [ids, ids],
+    { reference: 'drop', values: ids },
+    add
+  );
   for (const step of LEGACY_DM_DROP_STEPS) {
     add(
       step.table,
@@ -594,6 +664,7 @@ async function purgeWaveLevel(
     tx,
     NOTIFICATIONS_FOR_DROPS,
     [description, description],
+    { reference: 'drop', values: description },
     add
   );
   for (const step of LEGACY_DM_DROP_STEPS) {
@@ -648,7 +719,13 @@ async function purgeWaveLevel(
     `update ${DROPS_TABLE} set title = null, parts_count = 1 where id = ? and wave_id = ?`,
     [wave.descriptionDropId, wave.id]
   );
-  await cancelNotifications(tx, 'wave_id = ?', [wave.id], add);
+  await cancelNotifications(
+    tx,
+    'wave_id = ?',
+    [wave.id],
+    { reference: 'wave', values: [wave.id] },
+    add
+  );
   for (const step of LEGACY_DM_WAVE_STEPS) {
     add(
       `${step.table} (by wave)`,
