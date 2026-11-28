@@ -16,6 +16,7 @@ import { EventCursorError } from '@/waves-chain-index/waves-chain-index.events';
 import { StoredDocuments } from './waves-chain-mirror.docs';
 import { GateVerdict } from './waves-chain-mirror.gate';
 import { NativeEntryContent } from './waves-chain-mirror.native-entries';
+import { emptyObjectsReport } from './waves-chain-mirror.objects';
 import { PlanCounter } from './waves-chain-mirror.plan-support';
 import {
   chainReadHeight,
@@ -224,29 +225,10 @@ describe('WavesChainMirror: when it runs', () => {
             order.push(`objects:${input.write}`);
             input.counter.change('waves', 'insert');
             input.counter.wait('wave_group_not_mirrored');
-            return {
-              groups: {
-                mirrored: 1,
-                unchanged: 0,
-                waiting: 0,
-                failed: 0,
-                left: 0
-              },
-              waves: {
-                mirrored: 0,
-                unchanged: 0,
-                waiting: 1,
-                failed: 0,
-                left: 0
-              },
-              decisions: {
-                mirrored: 0,
-                unchanged: 0,
-                waiting: 0,
-                failed: 0,
-                left: 0
-              }
-            };
+            const report = emptyObjectsReport();
+            report.groups.mirrored = 1;
+            report.waves.waiting = 1;
+            return report;
           }
         )
       };

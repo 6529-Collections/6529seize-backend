@@ -742,7 +742,8 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
   /**
    * Whether the identity mirror's identities rows and wallets stand as of
    * this chain height (identityRowsReached): a group's listed addresses are
-   * resolved only then, live and in a rebuild alike.
+   * resolved only then, when its version is written and when its lists are
+   * read again as wallets move.
    */
   async identityRowsReached(height: number): Promise<boolean> {
     return identityRowsReached(await this.identityState.getState(), height);
@@ -916,17 +917,7 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
         opts(connection)
       );
       const distinct = Array.from(new Set(profiles));
-      for (const chunk of statementChunks(distinct, () => ID_BYTES * 2)) {
-        await this.db.execute(
-          `insert into ${PROFILE_GROUPS_TABLE} (profile_group_id, profile_id)
-           values ${chunk.map((_, i) => `(:listId, :p${i})`).join(', ')}`,
-          {
-            listId,
-            ...Object.fromEntries(chunk.map((p, i) => [`p${i}`, p]))
-          },
-          opts(connection)
-        );
-      }
+      await this.insertListMembers(listId, distinct, connection);
       distinct.forEach((p) => touched.add(p));
     }
     if (write.replaces) await this.groups.deleteById(write.row.id, connection);
@@ -960,6 +951,89 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
       );
     }
     return Array.from(touched);
+  }
+
+  /** The profiles in each of these profile_groups lists (none: absent). */
+  async groupListMembers(
+    listIds: readonly string[]
+  ): Promise<Map<string, Set<string>>> {
+    const out = new Map<string, Set<string>>();
+    for (const chunk of statementChunks(
+      Array.from(new Set(listIds)),
+      () => ID_BYTES
+    )) {
+      const rows = await this.db.execute<{
+        profile_group_id: string;
+        profile_id: string;
+      }>(
+        `select profile_group_id, profile_id from ${PROFILE_GROUPS_TABLE}
+          where profile_group_id in (:ids)`,
+        { ids: chunk }
+      );
+      for (const row of rows) {
+        const members = out.get(row.profile_group_id) ?? new Set<string>();
+        members.add(row.profile_id);
+        out.set(row.profile_group_id, members);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * A group's lists brought to their members' current profiles, in place
+   * under their ids: each list's `removed` go and its `added` come. The
+   * live mirror logs a group change of each of `profiles` (those that
+   * gained or lost membership) on the same connection, so the log commits
+   * with the lists; a rebuild writes no change log.
+   */
+  async rewriteGroupLists(
+    lists: readonly {
+      readonly listId: string;
+      readonly added: readonly string[];
+      readonly removed: readonly string[];
+    }[],
+    profiles: readonly string[],
+    connection: Conn
+  ): Promise<void> {
+    for (const { listId, added, removed } of lists) {
+      for (const chunk of statementChunks(
+        Array.from(new Set(removed)),
+        () => ID_BYTES
+      )) {
+        await this.db.execute(
+          `delete from ${PROFILE_GROUPS_TABLE}
+            where profile_group_id = :listId and profile_id in (:profiles)`,
+          { listId, profiles: chunk },
+          opts(connection)
+        );
+      }
+      await this.insertListMembers(
+        listId,
+        Array.from(new Set(added)),
+        connection
+      );
+    }
+    if (this.mode !== 'rebuild' && profiles.length) {
+      await this.groups.insertGroupChanges(Array.from(profiles), connection);
+    }
+  }
+
+  private async insertListMembers(
+    listId: string,
+    profiles: readonly string[],
+    connection: Conn
+  ): Promise<void> {
+    for (const chunk of statementChunks(profiles, () => ID_BYTES * 2)) {
+      await this.db.execute(
+        `insert into ${PROFILE_GROUPS_TABLE} (profile_group_id, profile_id)
+         values ${chunk.map((_, i) => `(:listId, :p${i})`).join(', ')}`,
+        {
+          listId,
+          ...Object.fromEntries(chunk.map((p, i) => [`p${i}`, p]))
+        },
+        opts(connection)
+      );
+    }
   }
 
   /**

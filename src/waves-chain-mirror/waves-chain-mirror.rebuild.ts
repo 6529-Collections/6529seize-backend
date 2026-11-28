@@ -48,7 +48,12 @@ const logger = Logger.get('WAVES_CHAIN_MIRROR_REBUILD');
  *   the identity mirror's rebuild stands at the group's height
  *   (group_identity_rows_not_reached), then gives an address still
  *   without an identity its address-only row as live does: from switch-on
- *   its derived id, so the rebuild gives the id live gave.
+ *   its derived id, so the rebuild gives the id live gave. Its lists are
+ *   resolved once, to the identities the addresses belong to at the mark;
+ *   the live mirror resolves its lists again each run as wallets move, so
+ *   it holds the same lists once its identity mirror stands there too. A
+ *   wallet that left an identity has the row the identity mirror's rebuild
+ *   gives it, by the removal's block time, as live.
  * - Moderation is read from the holds the live mirror kept in
  *   chain_entry_holds (entries' and wave descriptions'), never asked again;
  *   a rebuild never writes them.

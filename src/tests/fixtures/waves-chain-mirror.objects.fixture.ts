@@ -355,7 +355,56 @@ export class FakeObjectsStore implements ObjectsStore {
       ...write.row,
       is_pure_profile_group: false
     });
+    for (const listId of write.oldListIds) this.lists.delete(listId);
+    for (const [listId, profiles] of [
+      [write.row.profile_group_id, write.includes],
+      [write.row.excluded_profile_group_id, write.excludes]
+    ] as const) {
+      if (listId) this.lists.set(listId, new Set(profiles));
+    }
     return [...write.includes, ...write.excludes];
+  }
+  /** profile_groups: each list's profiles, by list id. */
+  lists = new Map<string, Set<string>>();
+  /** The member lists' rewrites, with whether a transaction was open. */
+  listRewrites: {
+    lists: { listId: string; added: string[]; removed: string[] }[];
+    profiles: string[];
+    inTransaction: boolean;
+  }[] = [];
+  /** profile_group_changes, as the store writes it (a rebuild writes none). */
+  groupChanges: string[] = [];
+  async groupListMembers(ids: readonly string[]) {
+    return new Map(
+      ids
+        .filter((id) => this.lists.has(id))
+        .map((id) => [id, new Set(this.lists.get(id))])
+    );
+  }
+  async rewriteGroupLists(
+    lists: readonly {
+      listId: string;
+      added: readonly string[];
+      removed: readonly string[];
+    }[],
+    profiles: readonly string[]
+  ) {
+    this.listRewrites.push({
+      lists: lists.map(({ listId, added, removed }) => ({
+        listId,
+        added: [...added],
+        removed: [...removed]
+      })),
+      profiles: [...profiles],
+      inTransaction: this.open > 0
+    });
+    for (const { listId, added, removed } of lists) {
+      const members = this.lists.get(listId) ?? new Set<string>();
+      removed.forEach((p) => members.delete(p));
+      added.forEach((p) => members.add(p));
+      this.lists.set(listId, members);
+    }
+    if (this.mode !== 'rebuild') this.groupChanges.push(...profiles);
   }
   async createWave(write: WaveCreate) {
     this.waveCreates.push(write);
@@ -405,8 +454,15 @@ export class FakeObjectsStore implements ObjectsStore {
   }
   async inTransaction<T>(fn: (connection: any) => Promise<T>): Promise<T> {
     this.transactions++;
-    return fn({ connection: 'fake' });
+    this.open++;
+    try {
+      return await fn({ connection: 'fake' });
+    } finally {
+      this.open--;
+    }
   }
+  /** Transactions open now. */
+  private open = 0;
 
   chainDecisions: ChainDecisionRowRead[] = [];
   /** chain_waves' legacy ids: an imported wave's 6529.io id. */
@@ -462,7 +518,8 @@ export class FakeObjectsStore implements ObjectsStore {
       this.waveCreates.length +
       this.waveEdits.length +
       this.descriptions.length +
-      this.competitionWrites.length
+      this.competitionWrites.length +
+      this.listRewrites.length
     );
   }
 }
