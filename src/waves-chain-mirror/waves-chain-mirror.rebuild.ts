@@ -53,7 +53,9 @@ const logger = Logger.get('WAVES_CHAIN_MIRROR_REBUILD');
  *   the live mirror resolves its lists again each run as wallets move, so
  *   it holds the same lists once its identity mirror stands there too. A
  *   wallet that left an identity has the row the identity mirror's rebuild
- *   gives it, by the removal's block time, as live.
+ *   gives it, by the removal's block time, as live. Imported groups' lists
+ *   that name an address are brought to the chain's members as live does,
+ *   under the same cap.
  * - Moderation is read from the holds the live mirror kept in
  *   chain_entry_holds (entries' and wave descriptions'), never asked again;
  *   a rebuild never writes them.
@@ -411,7 +413,8 @@ async function mirrorFromIndex(
         last.decisions.failed +
         (last.objects?.groups.failed ?? 0) +
         (last.objects?.waves.failed ?? 0) +
-        (last.objects?.decisions.failed ?? 0);
+        (last.objects?.decisions.failed ?? 0) +
+        (last.objects?.remap.failed ?? 0);
       if (failed) {
         throw new Error(
           `The mirror's ${pass} left ${failed} failure(s): ${JSON.stringify(last)}`

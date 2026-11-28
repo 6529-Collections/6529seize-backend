@@ -941,6 +941,24 @@ describe("the mirror's rebuild", () => {
     }
   });
 
+  it("fails when its groups' member lists can't be read", async () => {
+    await seedWorld();
+    await forgetDocuments();
+    const lists = jest
+      .spyOn(WavesChainObjectsDb.prototype, 'groupListMembers')
+      .mockRejectedValue(new Error('lists not read'));
+    try {
+      const failure = await rebuild().then(
+        () => null,
+        (error: Error) => error.message
+      );
+      expect(failure).toMatch(/^The mirror's rebuild left \d+ failure\(s\)/);
+      expect(lists).toHaveBeenCalled();
+    } finally {
+      lists.mockRestore();
+    }
+  });
+
   it("rebuilds the rest past objects whose legacy ids aren't RFC 4122 UUIDs, then fails naming them; the live mirror only counts them", async () => {
     await seedWorld({ badLegacyIds: true });
     // Live, each run left them out, counted, and went on.

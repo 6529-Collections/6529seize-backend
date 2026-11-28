@@ -1008,9 +1008,10 @@ describe('WavesChainObjectsMirror in the database', () => {
         expect(await listOf(INCLUDE)).toEqual([Z]);
         // Z stays in G2 by its principal; only B's own row goes.
         expect(await listOf(INCLUDE2)).toEqual([Z]);
+        // Logged with each group's lists, and again after its commit.
         expect(
           (await changeLog()).slice(logged).map((r) => r.profile_id)
-        ).toEqual([Z, own, own]);
+        ).toEqual([Z, own, Z, own, own, own]);
 
         // B leaves Z at a later block: the identity mirror gives it its own
         // row again, by the removal's time; the lists follow, and the waves
@@ -1113,9 +1114,10 @@ describe('WavesChainObjectsMirror in the database', () => {
         await bindZ([WZ, B]);
         const logged = (await changeLog()).length;
         // Time runs out after the first group's lists.
+        // (The first look is before the lists are read.)
         let looks = 0;
-        const cut = await run(undefined, objectsDb, true, () => ++looks > 1);
-        expect(cut.report.remap).toMatchObject({ groups: 1, left: 1 });
+        const cut = await run(undefined, objectsDb, true, () => ++looks > 2);
+        expect(cut.report.remap).toMatchObject({ groups: 2, left: 1 });
         expect(await listOf(INCLUDE)).toEqual([Z]);
         expect(await listOf(INCLUDE2)).toEqual(
           [addressIdentityId(B), Z].sort()
@@ -1126,8 +1128,147 @@ describe('WavesChainObjectsMirror in the database', () => {
         const own = addressIdentityId(B);
         expect(
           (await changeLog()).slice(logged).map((r) => r.profile_id)
-        ).toEqual([Z, own, own]);
+        ).toEqual([Z, own, Z, own, own, own]);
         expect((await run()).report.remap.groups).toBe(0);
+      });
+
+      it("stops a profile posting in a wave's chat on the first read after the lists drop it", async () => {
+        await seedGroups();
+        // A wave whose chat group is G.
+        const cid = await seedDocument(aWaveDoc());
+        await seedWave(
+          aChainWaveRow(W, { post: G, admin: G, metadataCid: cid })
+        );
+        await index.writeEvents([waveCreated(W)], 21, UNKNOWN_SCAN);
+        await bindZ([WZ, B]);
+        await run();
+        const wave = await waves.findWaveById(W);
+        expect(wave?.chat_group_id).toBe(G);
+        // As drop creation asks: Z may post, by B. With Redis on, this
+        // answer is the one cached for Z.
+        expect(await userGroupsService.getGroupsUserIsEligibleFor(Z)).toContain(
+          wave!.chat_group_id
+        );
+        const logged = (await changeLog()).length;
+
+        // B leaves Z: G's list drops Z.
+        await bindZ([WZ], switchOn + 180_000);
+        await run();
+        expect(await listOf(INCLUDE)).toEqual([addressIdentityId(B)]);
+        // Z's change is logged with the lists and again after the commit, so
+        // an answer cached for Z before either is no longer read.
+        expect(
+          (await changeLog()).slice(logged).filter((r) => r.profile_id === Z)
+        ).toHaveLength(2);
+        expect(
+          await userGroupsService.getGroupsUserIsEligibleFor(Z)
+        ).not.toContain(wave!.chat_group_id);
+      });
+
+      it("brings an imported group's own lists to the chain's members, leaving a group of principals alone, then follows its wallet", async () => {
+        const GI = chainWord('1e');
+        const GO = chainWord('1f');
+        const LEGACY_OTHER = '6f1c2a5e-3b4d-4e8f-9a0b-1c2d3e4f5a6c';
+        const OTHER_ID = `others-${groupShortIdOf(LEGACY_OTHER)}`;
+        /** The id 6529.io gave B's own row before switch-on. */
+        const PRE = '00000000-0000-4000-8000-0000000000b4';
+        await ensurePrincipalMap(sqlExecutor);
+        await mapPrincipals(sqlExecutor, { [P1]: 'profile-1', [PZ]: Z });
+        await identityMirrorAt(sqlExecutor, 20);
+        await bindZ([WZ], switchOn + 30_000);
+        await sqlExecutor.execute(
+          `insert into ${IDENTITIES_TABLE}
+             (profile_id, consolidation_key, primary_address, tdh, rep, cic, level_raw)
+           values (:pre, :b, :b, 0, 0, 0, 0)`,
+          { pre: PRE, b: B }
+        );
+        await sqlExecutor.execute(
+          `insert into ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key)
+           values (:b, :b)`,
+          { b: B }
+        );
+        // 6529.io's imported groups, each with its own list: B's row and a
+        // profile only 6529.io lists, without Z's principal; and a group of
+        // principals alone, drifted the same way.
+        for (const [id, listId] of [
+          [IMPORTED_GROUP_ID, 'readers-include'],
+          [OTHER_ID, 'others-include']
+        ]) {
+          await groups.save(
+            groupRowOf({
+              id,
+              name: 'Readers',
+              createdAt: new Date(CREATED_AT),
+              createdBy: 'profile-1',
+              criteria: NO_CRITERIA,
+              repUser: null,
+              includeListId: listId,
+              excludeListId: null,
+              visible: true,
+              isPrivate: false
+            }),
+            undefined as never
+          );
+        }
+        await sqlExecutor.execute(
+          `insert into ${PROFILE_GROUPS_TABLE} (profile_group_id, profile_id)
+           values ('readers-include', :pre), ('readers-include', 'profile-only-here'),
+                  ('others-include', 'profile-only-here')`,
+          { pre: PRE }
+        );
+        // The chain's version 1 of both.
+        const imported = { origin: 'legacy', controller: P1 };
+        await seedGroup(
+          aChainGroupRow(
+            GI,
+            {
+              includes: [
+                { kind: 'principal', value: PZ },
+                { kind: 'address', value: B }
+              ]
+            },
+            { ...imported, legacyId: LEGACY_GROUP }
+          )
+        );
+        await seedGroup(
+          aChainGroupRow(
+            GO,
+            { includes: [{ kind: 'principal', value: PZ }] },
+            { ...imported, legacyId: LEGACY_OTHER }
+          )
+        );
+
+        const first = await run();
+        expect(first.report.remap).toMatchObject({
+          groups: 0,
+          imported: {
+            groups: 1,
+            include: { added: 1, removed: 1 },
+            capped: false,
+            unmatched: 0
+          }
+        });
+        expect(await listOf('readers-include')).toEqual([PRE, Z].sort());
+        expect(await listOf('others-include')).toEqual(['profile-only-here']);
+        // The match is kept; the row itself is 6529.io's, as it was.
+        expect((await objectsDb.mirroredGroups([GI])).get(GI)).toMatchObject({
+          groupId: IMPORTED_GROUP_ID,
+          version: null
+        });
+        expect((await objectsDb.mirroredGroups([GO])).has(GO)).toBe(false);
+        expect(
+          await groups.getByIdWithoutVisibilityCheck(IMPORTED_GROUP_ID)
+        ).toMatchObject({
+          name: 'Readers',
+          profile_group_id: 'readers-include'
+        });
+        // No row of its own for B, which has 6529.io's.
+        expect(await profileIdOf(B)).toEqual([PRE]);
+
+        // B joins Z after switch-on: the list follows it.
+        await bindZ([WZ, B]);
+        await run();
+        expect(await listOf('readers-include')).toEqual([Z]);
       });
     });
   });

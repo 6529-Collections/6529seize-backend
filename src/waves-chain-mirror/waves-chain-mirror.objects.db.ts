@@ -953,6 +953,37 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
     return Array.from(touched);
   }
 
+  /** The list ids of these community_groups rows; a missing row is absent. */
+  async groupListIds(
+    groupIds: readonly string[]
+  ): Promise<Map<string, { include: string | null; exclude: string | null }>> {
+    const out = new Map<
+      string,
+      { include: string | null; exclude: string | null }
+    >();
+    for (const chunk of statementChunks(
+      Array.from(new Set(groupIds)),
+      () => ID_BYTES
+    )) {
+      const rows = await this.db.execute<{
+        id: string;
+        profile_group_id: string | null;
+        excluded_profile_group_id: string | null;
+      }>(
+        `select id, profile_group_id, excluded_profile_group_id
+           from ${USER_GROUPS_TABLE} where id in (:ids)`,
+        { ids: chunk }
+      );
+      for (const row of rows) {
+        out.set(row.id, {
+          include: row.profile_group_id ?? null,
+          exclude: row.excluded_profile_group_id ?? null
+        });
+      }
+    }
+    return out;
+  }
+
   /** The profiles in each of these profile_groups lists (none: absent). */
   async groupListMembers(
     listIds: readonly string[]
@@ -1459,6 +1490,24 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
       `select group_id, legacy_id, version, origin, height, data
          from ${CHAIN_GROUPS_TABLE}
         where origin = 'legacy' and version <= 1
+        order by group_id`
+    );
+  }
+
+  /**
+   * The imported groups the chain never replaced (version 1) whose
+   * definition lists an address, live and in a rebuild: the member lists
+   * that follow wallet bindings. The pass checks each again.
+   */
+  async chainImportedGroupsListingAddresses(): Promise<ChainGroupRow[]> {
+    return this.db.execute<ChainGroupRow>(
+      `select group_id, legacy_id, version, origin, height, data
+         from ${CHAIN_GROUPS_TABLE}
+        where origin = 'legacy' and version <= 1
+          and (json_search(data, 'one', 'address', null,
+                 '$.definition.includes[*].kind') is not null
+            or json_search(data, 'one', 'address', null,
+                 '$.definition.excludes[*].kind') is not null)
         order by group_id`
     );
   }

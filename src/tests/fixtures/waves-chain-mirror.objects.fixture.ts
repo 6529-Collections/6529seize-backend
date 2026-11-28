@@ -374,6 +374,29 @@ export class FakeObjectsStore implements ObjectsStore {
   }[] = [];
   /** profile_group_changes, as the store writes it (a rebuild writes none). */
   groupChanges: string[] = [];
+  /**
+   * Every imported row (the store narrows them to those listing an address
+   * at version 1; the pass checks each again).
+   */
+  async chainImportedGroupsListingAddresses() {
+    return this.chainGroups.filter((g) => g.origin !== 'native');
+  }
+  async groupListIds(ids: readonly string[]) {
+    return new Map(
+      ids
+        .filter((id) => this.groups.has(id))
+        .map((id) => {
+          const row = this.groups.get(id)!;
+          return [
+            id,
+            {
+              include: row.profile_group_id,
+              exclude: row.excluded_profile_group_id
+            }
+          ];
+        })
+    );
+  }
   async groupListMembers(ids: readonly string[]) {
     return new Map(
       ids

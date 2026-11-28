@@ -28,6 +28,8 @@ import {
 import {
   emptyObjectsReport,
   GROUPS_HELD_REPORT_MS,
+  IMPORTED_REMAP_CAP,
+  importedRemapCapOf,
   PARENT_WAIT_MS,
   WavesChainObjectsMirror
 } from './waves-chain-mirror.objects';
@@ -82,7 +84,8 @@ function world() {
   const run = async (
     write = true,
     outOfTime = () => false,
-    height: number | null = null
+    height: number | null = null,
+    importedRemapCap?: number
   ) => {
     const counter = new PlanCounter();
     const report = await mirror.run({
@@ -90,7 +93,8 @@ function world() {
       documents,
       counter,
       outOfTime,
-      height
+      height,
+      importedRemapCap
     });
     return { report, counter };
   };
@@ -692,8 +696,11 @@ describe('WavesChainObjectsMirror: member lists follow wallet bindings', () => {
       version: 1,
       includeListId: INCLUDE
     });
-    // Logged with the lists: the effect after the commit clears caches only.
-    expect(effects.groupsChanged).toHaveBeenLastCalledWith([G], []);
+    // Logged with the lists, and again by the effect after the commit.
+    expect(effects.groupsChanged).toHaveBeenLastCalledWith(
+      [G],
+      ['profile-z', 'profile-a1']
+    );
     expect(report.remap).toEqual({
       ...emptyObjectsReport().remap,
       groups: 1,
@@ -719,7 +726,7 @@ describe('WavesChainObjectsMirror: member lists follow wallet bindings', () => {
     expect(counter.waiting).toEqual({
       group_remap_address_without_profile: 1
     });
-    expect(report.remap.groups).toBe(0);
+    expect(report.remap).toMatchObject({ groups: 0, waiting: 1 });
     expect(store.listRewrites).toEqual([]);
     expect(store.addedIdentities).toEqual([]);
     expect(listed(store, INCLUDE)).toEqual(['profile-2', 'profile-a1']);
@@ -867,7 +874,7 @@ describe('WavesChainObjectsMirror: member lists follow wallet bindings', () => {
     store.addressProfiles.set(A2, 'profile-z');
     // Time runs out once the first group's lists are written.
     const cut = await run(true, () => store.listRewrites.length > 0);
-    expect(cut.report.remap).toMatchObject({ groups: 1, left: 1 });
+    expect(cut.report.remap).toMatchObject({ groups: 2, left: 1 });
     expect(store.listRewrites.map((r) => r.lists[0].listId)).toEqual([INCLUDE]);
     const next = await run();
     expect(next.report.remap).toMatchObject({ groups: 1, left: 0 });
@@ -882,8 +889,8 @@ describe('WavesChainObjectsMirror: member lists follow wallet bindings', () => {
       'profile-a2'
     ]);
     expect(effects.groupsChanged.mock.calls.slice(2)).toEqual([
-      [[G], []],
-      [[G2], []]
+      [[G], ['profile-z', 'profile-a1']],
+      [[G2], ['profile-z', 'profile-a2']]
     ]);
     expect((await run()).report.remap.groups).toBe(0);
     expect(store.listRewrites).toHaveLength(2);
@@ -914,7 +921,8 @@ describe('WavesChainObjectsMirror: member lists follow wallet bindings', () => {
     expect(behind.report.groups).toMatchObject({ unchanged: 2, waiting: 0 });
     expect(behind.report.remap).toEqual({
       ...emptyObjectsReport().remap,
-      skipped: 'identity_rows_not_reached'
+      skipped: 'identity_rows_not_reached',
+      waiting: 2
     });
     expect(behind.counter.waiting).toEqual({});
     expect(listsRead).not.toHaveBeenCalled();
@@ -948,6 +956,83 @@ describe('WavesChainObjectsMirror: member lists follow wallet bindings', () => {
     expect(writing.report.remap).toEqual(dry.report.remap);
     expect(writing.counter.changes).toEqual(dry.counter.changes);
     expect(listed(store, INCLUDE)).toEqual(['profile-2', 'profile-z']);
+  });
+
+  it('reads nothing in a run already out of time, leaving its groups for the next', async () => {
+    const { store, run } = await written('profile-a1');
+    store.addressProfiles.set(A1, 'profile-z');
+    const reads = [
+      jest.spyOn(store, 'identityRowsReached'),
+      jest.spyOn(store, 'groupListMembers'),
+      jest.spyOn(store, 'chainImportedGroupsListingAddresses')
+    ];
+    const { report } = await run(true, () => true);
+    expect(report.remap).toMatchObject({ groups: 0, left: 1 });
+    reads.forEach((read) => expect(read).not.toHaveBeenCalled());
+    expect(store.listRewrites).toEqual([]);
+  });
+
+  it('reports once that the lists have waited 15 minutes for the identity mirror, and again only after a new wait lasts', async () => {
+    const warn = jest
+      .spyOn(Logger.get('WAVES_CHAIN_MIRROR_OBJECTS'), 'warn')
+      .mockImplementation(() => undefined);
+    try {
+      const { store, run, at } = await written('profile-a1');
+      const waits = () =>
+        warn.mock.calls.filter(([line]) =>
+          String(line).includes('[GROUP LISTS WAIT FOR IDENTITY ROWS]')
+        );
+      store.identityHeight = 19;
+      await run();
+      at(NOW + GROUPS_HELD_REPORT_MS - 1);
+      await run();
+      expect(waits()).toEqual([]);
+      at(NOW + GROUPS_HELD_REPORT_MS);
+      await run();
+      at(NOW + 2 * GROUPS_HELD_REPORT_MS);
+      await run();
+      expect(waits()).toEqual([
+        [
+          `[WAVES CHAIN MIRROR] [GROUP LISTS WAIT FOR IDENTITY ROWS] [HEIGHT 20] [WAITING SINCE ${new Date(
+            NOW
+          ).toISOString()}] [GROUPS 1]`
+        ]
+      ]);
+      // The identity mirror catches up, and the wait ends.
+      store.identityHeight = null;
+      await run();
+      store.identityHeight = 19;
+      const start = NOW + 3 * GROUPS_HELD_REPORT_MS;
+      at(start);
+      await run();
+      at(start + GROUPS_HELD_REPORT_MS);
+      await run();
+      expect(waits()).toHaveLength(2);
+      expect(waits()[1][0]).toContain(
+        `[WAITING SINCE ${new Date(start).toISOString()}]`
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("doesn't count a group as failed when its caches aren't cleared after its lists are written", async () => {
+    const errors = jest
+      .spyOn(Logger.get('WAVES_CHAIN_MIRROR_OBJECTS'), 'error')
+      .mockImplementation(() => undefined);
+    try {
+      const { store, effects, run } = await written('profile-a1');
+      store.addressProfiles.set(A1, 'profile-z');
+      effects.groupsChanged.mockRejectedValueOnce(new Error('cache down'));
+      const { report } = await run();
+      expect(report.remap).toMatchObject({ groups: 1, failed: 0 });
+      expect(listed(store, INCLUDE)).toEqual(['profile-2', 'profile-z']);
+      expect(errors.mock.calls.map(([line]) => line)).toEqual([
+        `[WAVES CHAIN MIRROR] group ${G} caches not cleared after its member lists were written: Error: cache down`
+      ]);
+    } finally {
+      errors.mockRestore();
+    }
   });
 
   it('reads the lists of 1,121 groups listing addresses in one batch of each kind', async () => {
@@ -990,6 +1075,329 @@ describe('WavesChainObjectsMirror: member lists follow wallet bindings', () => {
     expect(reads.lists.mock.calls[0][0]).toHaveLength(2 * 1_121);
     expect(reads.addresses).toHaveBeenCalledTimes(1);
     expect(reads.addresses.mock.calls[0][0]).toHaveLength(4 * 1_121);
+  });
+});
+
+describe("WavesChainObjectsMirror: imported groups' member lists", () => {
+  const GI = chainWord('1e');
+  const LIST = 'imported-include';
+  const legacyOf = (n: number) =>
+    `00000000-0000-4000-8000-${n.toString(16).padStart(12, '0')}`;
+  const listed = (store: FakeObjectsStore, listId: string) =>
+    Array.from(store.lists.get(listId) ?? []).sort();
+  /**
+   * 6529.io's imported group `id` (its row and its include list as it
+   * holds them) and the chain's version 1 of it, `chainId`.
+   */
+  const anImported = (
+    store: FakeObjectsStore,
+    n: number,
+    includes: readonly Record<string, string>[],
+    stored: readonly string[],
+    excludes: readonly Record<string, string>[] = []
+  ) => {
+    const id = `imported-${n}`;
+    const chainId = chainWord((0x20 + n).toString(16));
+    store.importedGroups.set(legacyOf(n), id);
+    store.groups.set(id, {
+      id,
+      name: `Imported ${n}`,
+      profile_group_id: `${id}-include`,
+      excluded_profile_group_id: excludes.length ? `${id}-exclude` : null
+    } as unknown as UserGroupEntity);
+    store.lists.set(`${id}-include`, new Set(stored));
+    store.chainGroups.push(
+      aChainGroupRow(
+        chainId,
+        { includes, excludes },
+        { origin: 'legacy', legacyId: legacyOf(n) }
+      )
+    );
+    return { id, chainId, list: `${id}-include` };
+  };
+  /** One imported group listing P1 and A1, as 6529.io holds it. */
+  const imported = (stored: readonly string[]) => {
+    const w = world();
+    w.store.addressProfiles.set(A1, 'profile-a1');
+    w.store.importedGroups.set(LEGACY_GROUP, IMPORTED_GROUP_ID);
+    w.store.groups.set(IMPORTED_GROUP_ID, {
+      id: IMPORTED_GROUP_ID,
+      name: 'Readers',
+      profile_group_id: LIST,
+      excluded_profile_group_id: null
+    } as unknown as UserGroupEntity);
+    w.store.lists.set(LIST, new Set(stored));
+    w.store.chainGroups = [
+      aChainGroupRow(
+        GI,
+        {
+          includes: [
+            { kind: 'principal', value: P1 },
+            { kind: 'address', value: A1 }
+          ]
+        },
+        { origin: 'legacy', legacyId: LEGACY_GROUP }
+      )
+    ];
+    return w;
+  };
+
+  it("brings 6529.io's own list to the chain's members: a missing principal added, a profile no member gives removed", async () => {
+    const { store, effects, run } = imported([
+      'profile-a1',
+      'profile-only-here'
+    ]);
+    const { report, counter } = await run();
+    expect(store.groupRecords.get(GI)).toMatchObject({
+      groupId: IMPORTED_GROUP_ID,
+      version: null
+    });
+    expect(listed(store, LIST)).toEqual(['profile-1', 'profile-a1']);
+    expect(store.listRewrites).toEqual([
+      {
+        lists: [
+          { listId: LIST, added: ['profile-1'], removed: ['profile-only-here'] }
+        ],
+        profiles: ['profile-1', 'profile-only-here'],
+        inTransaction: true
+      }
+    ]);
+    expect(store.groupChanges).toEqual(['profile-1', 'profile-only-here']);
+    expect(effects.groupsChanged).toHaveBeenCalledWith(
+      [IMPORTED_GROUP_ID],
+      ['profile-1', 'profile-only-here']
+    );
+    // The row is 6529.io's: only its list is written.
+    expect(store.groupWrites).toEqual([]);
+    expect(report.remap).toMatchObject({
+      groups: 0,
+      imported: {
+        groups: 1,
+        include: { added: 1, removed: 1 },
+        exclude: { added: 0, removed: 0 },
+        capped: false,
+        unmatched: 0
+      }
+    });
+    expect(counter.changes).toEqual({
+      profile_groups: { insert: 1, update: 0, delete: 1 }
+    });
+  });
+
+  it('leaves a group untouched since the import, whose unbound wallet still has the row 6529.io gave it before switch-on, then follows that wallet when it joins an identity', async () => {
+    const { store, run } = imported(['profile-1', 'profile-a1']);
+    expect((await run()).report.remap.imported.groups).toBe(0);
+    expect(store.listRewrites).toEqual([]);
+    store.addressProfiles.set(A1, 'profile-z');
+    await run();
+    expect(listed(store, LIST)).toEqual(['profile-1', 'profile-z']);
+    expect(store.listRewrites.map((r) => r.lists)).toEqual([
+      [{ listId: LIST, added: ['profile-z'], removed: ['profile-a1'] }]
+    ]);
+  });
+
+  it('waits with an imported group whose listed wallet has no profile, making no row for it', async () => {
+    const { store, run } = imported(['profile-1', 'profile-a1']);
+    store.addressProfiles.delete(A1);
+    const { report, counter } = await run();
+    expect(counter.waiting).toEqual({
+      group_remap_address_without_profile: 1
+    });
+    expect(report.remap).toMatchObject({ waiting: 1 });
+    expect(store.addedIdentities).toEqual([]);
+    expect(store.listRewrites).toEqual([]);
+  });
+
+  it("looks only at imported lists that name an address, and at no group 6529.io's rows don't match", async () => {
+    const { store, run } = world();
+    store.addressProfiles.set(A1, 'profile-a1');
+    // An include list of principals alone, beside an exclude list naming
+    // A1: only the exclude list is looked at.
+    const mixed = anImported(
+      store,
+      1,
+      [{ kind: 'principal', value: P1 }],
+      ['profile-only-here'],
+      [{ kind: 'address', value: A1 }]
+    );
+    store.lists.set(`${mixed.id}-exclude`, new Set(['profile-a1']));
+    // A group of principals alone, its list drifted: not looked at.
+    const principalsOnly = anImported(
+      store,
+      2,
+      [{ kind: 'principal', value: P2 }],
+      ['profile-only-here']
+    );
+    // A group 6529.io has no row of.
+    store.chainGroups.push(
+      aChainGroupRow(
+        chainWord('2f'),
+        { includes: [{ kind: 'address', value: A1 }] },
+        { origin: 'legacy', legacyId: legacyOf(99) }
+      )
+    );
+    const { report } = await run();
+    expect(store.listRewrites).toEqual([]);
+    expect(listed(store, mixed.list)).toEqual(['profile-only-here']);
+    expect(listed(store, principalsOnly.list)).toEqual(['profile-only-here']);
+    expect(store.groupRecords.has(principalsOnly.chainId)).toBe(false);
+    expect(report.remap.imported).toMatchObject({ groups: 0, unmatched: 1 });
+    // Kept unmatched: not looked for again within a day.
+    const lookups = jest.spyOn(store, 'importedGroupId');
+    await run();
+    expect(lookups).not.toHaveBeenCalled();
+  });
+
+  it('checks an imported group the chain replaced once, as one the chain wrote, never as an imported one', async () => {
+    const { store, run } = world();
+    store.addressProfiles.set(A1, 'profile-a1');
+    store.importedGroups.set(LEGACY_GROUP, IMPORTED_GROUP_ID);
+    store.groups.set(IMPORTED_GROUP_ID, {
+      id: IMPORTED_GROUP_ID,
+      name: 'Readers',
+      created_at: new Date(1_700_000_000_000),
+      created_by: 'group-creator',
+      profile_group_id: 'old-list',
+      excluded_profile_group_id: null
+    } as unknown as UserGroupEntity);
+    store.chainGroups = [
+      aChainGroupRow(
+        GI,
+        { includes: [{ kind: 'address', value: A1 }] },
+        { version: 2, origin: 'legacy', legacyId: LEGACY_GROUP }
+      )
+    ];
+    await run();
+    store.addressProfiles.set(A1, 'profile-z');
+    const { report } = await run();
+    expect(report.remap).toMatchObject({
+      groups: 1,
+      imported: { groups: 0 }
+    });
+    expect(store.listRewrites.map((r) => r.lists)).toEqual([
+      [
+        {
+          listId: groupListId(GI, 2, 'include'),
+          added: ['profile-z'],
+          removed: ['profile-a1']
+        }
+      ]
+    ]);
+  });
+
+  it('writes no imported list in a run where more change than the cap, logging one ERROR, while the other groups write', async () => {
+    const errors = jest
+      .spyOn(Logger.get('WAVES_CHAIN_MIRROR_OBJECTS'), 'error')
+      .mockImplementation(() => undefined);
+    try {
+      const { store, run } = world();
+      store.addressProfiles.set(A1, 'profile-a1');
+      store.chainGroups = [
+        aChainGroupRow(G, { includes: [{ kind: 'address', value: A1 }] })
+      ];
+      await run();
+      store.addressProfiles.set(A1, 'profile-z');
+      const lists = [1, 2, 3].map(
+        (n) =>
+          anImported(
+            store,
+            n,
+            [{ kind: 'address', value: A1 }],
+            [`profile-only-here-${n}`]
+          ).list
+      );
+      const capped = await run(true, () => false, null, 2);
+      expect(capped.report.remap).toMatchObject({
+        groups: 1,
+        imported: { groups: 3, capped: true }
+      });
+      expect(store.listRewrites.map((r) => r.lists[0].listId)).toEqual([
+        groupListId(G, 1, 'include')
+      ]);
+      expect(capped.counter.changes).toEqual({
+        profile_groups: { insert: 1, update: 0, delete: 1 }
+      });
+      expect(errors.mock.calls.map(([line]) => line)).toEqual([
+        "[WAVES CHAIN MIRROR] [IMPORTED GROUP LISTS OVER CAP] [GROUPS 3] [CAP 2] no imported group's lists written this run (WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP)"
+      ]);
+      lists.forEach((list, i) =>
+        expect(listed(store, list)).toEqual([`profile-only-here-${i + 1}`])
+      );
+
+      // A cap the count doesn't pass: all of them written.
+      const raised = await run(true, () => false, null, 3);
+      expect(raised.report.remap.imported).toMatchObject({
+        groups: 3,
+        capped: false
+      });
+      lists.forEach((list) =>
+        expect(listed(store, list)).toEqual(['profile-z'])
+      );
+      expect(errors).toHaveBeenCalledTimes(1);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  it('counts the imported lists apart in a report-only run, over the cap too, and logs them on a line of their own', async () => {
+    const info = jest
+      .spyOn(Logger.get('WAVES_CHAIN_MIRROR_OBJECTS'), 'info')
+      .mockImplementation(() => undefined);
+    const errors = jest
+      .spyOn(Logger.get('WAVES_CHAIN_MIRROR_OBJECTS'), 'error')
+      .mockImplementation(() => undefined);
+    try {
+      const { store, run } = imported(['profile-a1', 'profile-only-here']);
+      const { report, counter } = await run(false, () => false, null, 0);
+      const counts = {
+        groups: 1,
+        include: { added: 1, removed: 1 },
+        exclude: { added: 0, removed: 0 },
+        capped: true,
+        unmatched: 0
+      };
+      expect(report.remap).toMatchObject({ groups: 0, imported: counts });
+      expect(counter.changes).toEqual({});
+      expect(store.listRewrites).toEqual([]);
+      expect(info).toHaveBeenCalledWith(
+        `[WAVES CHAIN MIRROR] [IMPORTED GROUP LISTS] ${JSON.stringify(counts)}`
+      );
+      // Over the cap in a report-only run too: the ERROR says so.
+      expect(errors).toHaveBeenCalledTimes(1);
+    } finally {
+      info.mockRestore();
+      errors.mockRestore();
+    }
+  });
+
+  it('looks each imported group up once in report-only runs, keeping what it found in the process', async () => {
+    const { store, run } = imported(['profile-1', 'profile-a1']);
+    const lookups = jest.spyOn(store, 'importedGroupId');
+    await run(false);
+    await run(false);
+    expect(lookups).toHaveBeenCalledTimes(1);
+    expect(store.groupRecords.size).toBe(0);
+    // A writing run keeps the match in its records.
+    await run();
+    expect(store.groupRecords.get(GI)).toMatchObject({
+      groupId: IMPORTED_GROUP_ID
+    });
+  });
+
+  it('reads the cap from the environment', () => {
+    expect(importedRemapCapOf({})).toBe(IMPORTED_REMAP_CAP);
+    expect(IMPORTED_REMAP_CAP).toBe(50);
+    expect(
+      importedRemapCapOf({ WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP: ' 120 ' })
+    ).toBe(120);
+    expect(
+      importedRemapCapOf({ WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP: '0' })
+    ).toBe(0);
+    for (const bad of ['', '-1', '1.5', 'many']) {
+      expect(
+        importedRemapCapOf({ WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP: bad })
+      ).toBe(IMPORTED_REMAP_CAP);
+    }
   });
 });
 

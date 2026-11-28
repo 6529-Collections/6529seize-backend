@@ -300,6 +300,34 @@ describe('WavesChainMirror: when it runs', () => {
       expect(heights).toEqual([175, 100]);
     }
     expect(chainReadHeight({ readHeight: 175, feedNext: 101 })).toBe(175);
+  });
+
+  it("hands the groups and waves pass the imported groups' cap, read from the environment each run", async () => {
+    const { store, index } = world();
+    const caps: (number | undefined)[] = [];
+    const objects = {
+      run: jest.fn(async (input: { importedRemapCap?: number }) => {
+        caps.push(input.importedRemapCap);
+        return null as never;
+      })
+    };
+    const env: NodeJS.ProcessEnv = { WAVES_CHAIN_MIRROR_WRITE: 'true' };
+    const run = () =>
+      new WavesChainMirror(
+        store,
+        index,
+        (now) => ({ ...mirrorSettingsFromEnv(env, now), frozen: true }),
+        () => NOW,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        objects
+      ).run({ budgetMs: 10_000 });
+    await run();
+    env.WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP = '300';
+    await run();
+    expect(caps).toEqual([50, 300]);
     expect(chainReadHeight({ readHeight: null, feedNext: 101 })).toBe(100);
     expect(chainReadHeight({ readHeight: null, feedNext: null })).toBeNull();
   });

@@ -1,6 +1,9 @@
+import { userGroupsService } from '@/api/community-members/user-groups.service';
 import { chainGatewayClient } from '@/chain-gateway/chain-gateway.client';
+import { userGroupsDb } from '@/user-groups/user-groups.db';
 import {
   decisionCreatedAt,
+  defaultObjectEffects,
   waveManagerOf
 } from './waves-chain-mirror.objects.effects';
 
@@ -79,5 +82,31 @@ describe('waveManagerOf', () => {
     // A failed read (503 unavailable, a height gone, any error).
     read.mockRejectedValue(new Error('unavailable'));
     expect(await waveManagerOf(WAVE, PRINCIPAL, 4_200)).toBeNull();
+  });
+});
+
+describe('defaultObjectEffects.groupsChanged', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it("logs a group change for each profile, then clears the groups' caches", async () => {
+    const order: string[] = [];
+    const log = jest
+      .spyOn(userGroupsDb, 'insertGroupChanges')
+      .mockImplementation(async (profiles) => {
+        order.push(`log:${profiles.join(',')}`);
+        return null;
+      });
+    const clear = jest
+      .spyOn(userGroupsService, 'onWaveRelatedGroupsChanged')
+      .mockImplementation(async (groupIds) => {
+        order.push(`clear:${groupIds.join(',')}`);
+      });
+    await defaultObjectEffects.groupsChanged(['g'], ['p1', 'p2']);
+    expect(order).toEqual(['log:p1,p2', 'clear:g']);
+    order.length = 0;
+    await defaultObjectEffects.groupsChanged(['g'], []);
+    expect(order).toEqual(['clear:g']);
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(clear).toHaveBeenCalledTimes(2);
   });
 });

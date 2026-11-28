@@ -61,6 +61,7 @@ import {
   TableChanges
 } from './waves-chain-mirror.plan-support';
 import {
+  importedRemapCapOf,
   ObjectsReport,
   WavesChainObjectsMirror
 } from './waves-chain-mirror.objects';
@@ -157,6 +158,11 @@ export interface WavesChainMirrorSettings {
   readonly keepMainStage: boolean;
   /** MAIN_STAGE_WAVE_ID: the freeze flag's fallback Main Stage wave. */
   readonly mainStageWaveId: string | null;
+  /**
+   * WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP: how many imported groups' member
+   * lists one run may write (importedRemapCapOf); absent, its default.
+   */
+  readonly importedRemapCap?: number;
 }
 
 export function mirrorSettingsFromEnv(
@@ -167,7 +173,8 @@ export function mirrorSettingsFromEnv(
     write: env.WAVES_CHAIN_MIRROR_WRITE === 'true',
     frozen: isWavesFrozenAt(env, now),
     keepMainStage: env.FEATURE_WAVES_FREEZE_KEEP_MAIN_STAGE === 'true',
-    mainStageWaveId: env.MAIN_STAGE_WAVE_ID?.trim() || null
+    mainStageWaveId: env.MAIN_STAGE_WAVE_ID?.trim() || null,
+    importedRemapCap: importedRemapCapOf(env)
   };
 }
 
@@ -397,7 +404,7 @@ export class WavesChainMirror {
     deadline: number,
     readHeight: number | null
   ) {
-    await this.mirrorObjects(false, report, deadline, readHeight);
+    await this.mirrorObjects(false, report, deadline, readHeight, settings);
     // A pass that didn't finish goes on where it stopped, in the next run.
     report.full.running = true;
     report.full.started = 'report';
@@ -527,7 +534,13 @@ export class WavesChainMirror {
 
     // Groups and waves first: a decision's rows and the drop index's drops
     // need them.
-    await this.mirrorObjects(true, report, deadline, chainReadHeight(index));
+    await this.mirrorObjects(
+      true,
+      report,
+      deadline,
+      chainReadHeight(index),
+      settings
+    );
     // Decisions that changed or move with time, then the full pass.
     const run: MirrorRun = {
       write: true,
@@ -669,7 +682,8 @@ export class WavesChainMirror {
     write: boolean,
     report: WavesChainMirrorReport,
     deadline: number,
-    readHeight: number | null
+    readHeight: number | null,
+    settings: WavesChainMirrorSettings
   ): Promise<void> {
     if (!this.objects) return;
     const counter = new PlanCounter();
@@ -681,7 +695,8 @@ export class WavesChainMirror {
         outOfTime: () => this.outOfTime(deadline),
         legacyIds: this.legacyIds,
         // The index's read height: the pass's chain reads see what it saw.
-        height: readHeight
+        height: readHeight,
+        importedRemapCap: settings.importedRemapCap
       });
     } catch (error) {
       logger.error(`[WAVES CHAIN MIRROR] groups and waves failed: ${error}`);
