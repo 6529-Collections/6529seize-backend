@@ -300,6 +300,8 @@ describe('WavesChainMirror: when it runs', () => {
       expect(heights).toEqual([175, 100]);
     }
     expect(chainReadHeight({ readHeight: 175, feedNext: 101 })).toBe(175);
+    expect(chainReadHeight({ readHeight: null, feedNext: 101 })).toBe(100);
+    expect(chainReadHeight({ readHeight: null, feedNext: null })).toBeNull();
   });
 
   it("hands the groups and waves pass the imported groups' cap, read from the environment each run", async () => {
@@ -328,8 +330,6 @@ describe('WavesChainMirror: when it runs', () => {
     env.WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP = '300';
     await run();
     expect(caps).toEqual([50, 300]);
-    expect(chainReadHeight({ readHeight: null, feedNext: 101 })).toBe(100);
-    expect(chainReadHeight({ readHeight: null, feedNext: null })).toBeNull();
   });
 
   it('goes on to the decisions when the groups and waves pass fails', async () => {

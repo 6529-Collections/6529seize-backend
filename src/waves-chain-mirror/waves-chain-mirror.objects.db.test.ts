@@ -1144,8 +1144,10 @@ describe('WavesChainObjectsMirror in the database', () => {
         await run();
         const wave = await waves.findWaveById(W);
         expect(wave?.chat_group_id).toBe(G);
-        // As drop creation asks: Z may post, by B. With Redis on, this
-        // answer is the one cached for Z.
+        // As drop creation asks: Z may post, by B. Database tests run with
+        // Redis off, so nothing is cached here: this shows the lists' change
+        // reaching eligibility. The cache is tested apart, in
+        // waves-chain-mirror.eligibility.test.ts.
         expect(await userGroupsService.getGroupsUserIsEligibleFor(Z)).toContain(
           wave!.chat_group_id
         );
@@ -1155,8 +1157,8 @@ describe('WavesChainObjectsMirror in the database', () => {
         await bindZ([WZ], switchOn + 180_000);
         await run();
         expect(await listOf(INCLUDE)).toEqual([addressIdentityId(B)]);
-        // Z's change is logged with the lists and again after the commit, so
-        // an answer cached for Z before either is no longer read.
+        // Z's change is logged with the lists and again after the commit,
+        // the row that ends an answer cached for Z before the commit.
         expect(
           (await changeLog()).slice(logged).filter((r) => r.profile_id === Z)
         ).toHaveLength(2);

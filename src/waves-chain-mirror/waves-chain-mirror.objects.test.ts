@@ -959,16 +959,26 @@ describe('WavesChainObjectsMirror: member lists follow wallet bindings', () => {
     expect(listed(store, INCLUDE)).toEqual(['profile-2', 'profile-z']);
   });
 
-  it('reads nothing in a run already out of time, leaving its groups for the next', async () => {
+  it('reads no list in a run already out of time, leaving its groups for the next and counting the imported ones pending', async () => {
     const { store, run } = await written('profile-a1');
     store.addressProfiles.set(A1, 'profile-z');
+    // An imported group listing A1, never matched.
+    store.chainGroups.push(
+      aChainGroupRow(
+        chainWord('1e'),
+        { includes: [{ kind: 'address', value: A1 }] },
+        { origin: 'legacy', legacyId: LEGACY_GROUP }
+      )
+    );
     const reads = [
       jest.spyOn(store, 'identityRowsReached'),
       jest.spyOn(store, 'groupListMembers'),
-      jest.spyOn(store, 'chainImportedGroupsListingAddresses')
+      jest.spyOn(store, 'importedGroupId')
     ];
     const { report } = await run(true, () => true);
     expect(report.remap).toMatchObject({ groups: 0, left: 1 });
+    // Not matched, not looked at: a rebuild isn't done while it is pending.
+    expect(report.remap.imported).toMatchObject({ groups: 0, pending: 1 });
     reads.forEach((read) => expect(read).not.toHaveBeenCalled());
     expect(store.listRewrites).toEqual([]);
   });
@@ -1177,6 +1187,7 @@ describe("WavesChainObjectsMirror: imported groups' member lists", () => {
         include: { added: 1, removed: 1 },
         exclude: { added: 0, removed: 0 },
         capped: false,
+        cap: IMPORTED_REMAP_CAP,
         unmatched: 0
       }
     });
@@ -1355,6 +1366,7 @@ describe("WavesChainObjectsMirror: imported groups' member lists", () => {
         include: { added: 1, removed: 1 },
         exclude: { added: 0, removed: 0 },
         capped: true,
+        cap: 0,
         unmatched: 0,
         pending: 0
       };
@@ -1418,6 +1430,7 @@ describe("WavesChainObjectsMirror: imported groups' member lists", () => {
             include: { added: 0, removed: 0 },
             exclude: { added: 0, removed: 0 },
             capped: false,
+            cap,
             unmatched: 0,
             pending: 1
           })}`
@@ -1491,10 +1504,11 @@ describe("WavesChainObjectsMirror: imported groups' member lists", () => {
 
   it('names a run whose imported lists the cap held', () => {
     const remap = emptyObjectsReport().remap;
-    expect(importedListsCappedNote(remap, 50)).toBeNull();
+    expect(importedListsCappedNote(remap)).toBeNull();
     remap.imported.groups = 56;
     remap.imported.capped = true;
-    expect(importedListsCappedNote(remap, 50)).toBe(
+    remap.imported.cap = 50;
+    expect(importedListsCappedNote(remap)).toBe(
       "[IMPORTED GROUP LISTS CAPPED] [GROUPS 56] [CAP 50] imported groups' member lists left as 6529.io holds them (WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP): a mirror under a cap they fit holds them rewritten, a difference by the cap, not drift"
     );
   });

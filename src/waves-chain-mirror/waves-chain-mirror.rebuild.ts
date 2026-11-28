@@ -14,7 +14,6 @@ import { ContentGate, GateVerdict } from './waves-chain-mirror.gate';
 import { InvalidLegacyIds } from './waves-chain-mirror.ids';
 import { DropArchivesImport } from './waves-chain-mirror.legacy-rows';
 import {
-  IMPORTED_REMAP_CAP,
   importedListsCappedNote,
   ObjectEffects,
   WavesChainObjectsMirror
@@ -441,10 +440,7 @@ async function mirrorFromIndex(
         );
       }
       const capped = last.objects
-        ? importedListsCappedNote(
-            last.objects.remap,
-            settings.importedRemapCap ?? IMPORTED_REMAP_CAP
-          )
+        ? importedListsCappedNote(last.objects.remap)
         : null;
       // Named, so a difference the cap makes is never read as drift.
       if (capped) logger.warn(`[${pass.toUpperCase()}] ${capped}`);

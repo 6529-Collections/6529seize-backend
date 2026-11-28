@@ -115,10 +115,13 @@ export interface RemapCounts extends ListCounts {
   readonly imported: ListCounts & {
     /** Over the cap: none of their lists was written this run. */
     capped: boolean;
+    /** The cap the run read (WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP). */
+    cap: number;
     /** Ones that list addresses but no 6529.io group matched. */
     unmatched: number;
     /**
-     * Ones the run had no time to match to a 6529.io group. While any is,
+     * Ones the run had no time for: to match to a 6529.io group, or (out
+     * of time before the re-check began) to look at at all. While any is,
      * no imported group's lists are looked at or written: the cap is
      * applied to the count of them all, never to part of them.
      */
@@ -145,12 +148,9 @@ export function importedRemapCapOf(env: NodeJS.ProcessEnv): number {
  * mirror run under a cap they fit holds them rewritten, so the two differ
  * there by the cap, not by drift. Null when none was held.
  */
-export function importedListsCappedNote(
-  remap: RemapCounts,
-  cap: number
-): string | null {
+export function importedListsCappedNote(remap: RemapCounts): string | null {
   if (!remap.imported.capped) return null;
-  return `[IMPORTED GROUP LISTS CAPPED] [GROUPS ${remap.imported.groups}] [CAP ${cap}] imported groups' member lists left as 6529.io holds them (WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP): a mirror under a cap they fit holds them rewritten, a difference by the cap, not drift`;
+  return `[IMPORTED GROUP LISTS CAPPED] [GROUPS ${remap.imported.groups}] [CAP ${remap.imported.cap}] imported groups' member lists left as 6529.io holds them (WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP): a mirror under a cap they fit holds them rewritten, a difference by the cap, not drift`;
 }
 
 export interface ObjectsReport {
@@ -196,6 +196,7 @@ export function emptyObjectsReport(): ObjectsReport {
         include: { added: 0, removed: 0 },
         exclude: { added: 0, removed: 0 },
         capped: false,
+        cap: IMPORTED_REMAP_CAP,
         unmatched: 0,
         pending: 0
       }
@@ -1216,10 +1217,22 @@ export class WavesChainObjectsMirror {
     now: number
   ): Promise<void> {
     const { remap } = report;
+    remap.imported.cap = input.importedRemapCap ?? IMPORTED_REMAP_CAP;
     const native = groupsToCheck(groups, records);
-    // A run out of time reads nothing more.
     if (input.outOfTime()) {
+      // A run out of time reads nothing more but the imported groups' rows,
+      // to count them pending: a rebuild doesn't call itself done with
+      // their lists unchecked.
       remap.left += native.length;
+      try {
+        remap.imported.pending += (await this.importedCandidates()).length;
+      } catch (error) {
+        remap.failed++;
+        logger.error(
+          `[WAVES CHAIN MIRROR] imported groups' member lists not read: ${error}`
+        );
+      }
+      this.logImportedLists(remap);
       return;
     }
     let imported: GroupToCheck[] = [];
@@ -1298,7 +1311,7 @@ export class WavesChainObjectsMirror {
       }
       changed.push({ group, changes });
     }
-    const cap = input.importedRemapCap ?? IMPORTED_REMAP_CAP;
+    const { cap } = remap.imported;
     if (remap.imported.groups > cap) {
       remap.imported.capped = true;
       logger.error(
@@ -1317,6 +1330,13 @@ export class WavesChainObjectsMirror {
       }
       if (input.write) await this.writeLists(group, changes, remap);
     }
+  }
+
+  /** The imported groups the chain never replaced that list an address. */
+  private async importedCandidates(): Promise<ChainGroup[]> {
+    return (await this.store.chainImportedGroupsListingAddresses())
+      .map(chainGroupOf)
+      .filter(importedToCheck);
   }
 
   /** The imported groups' counts, on a line of their own, when any. */
@@ -1341,9 +1361,7 @@ export class WavesChainObjectsMirror {
     remap: RemapCounts,
     now: number
   ): Promise<GroupToCheck[]> {
-    const groups = (await this.store.chainImportedGroupsListingAddresses())
-      .map(chainGroupOf)
-      .filter(importedToCheck);
+    const groups = await this.importedCandidates();
     if (!groups.length) return [];
     const records = await this.store.mirroredGroups(
       groups.map((g) => g.groupId)
