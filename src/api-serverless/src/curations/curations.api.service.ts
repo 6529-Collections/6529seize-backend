@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { keepingWaveScope } from '@/waves-freeze/waves-freeze-scope';
 import {
   BadRequestException,
   ForbiddenException,
@@ -112,7 +113,11 @@ export class CurationsApiService {
           updated_at: now,
           priority_order: priorityOrder
         };
-        await this.curationsDb.insertWaveCuration(entity, txCtx);
+        // Curation groups stay open through the waves freeze, but a new one
+        // must not change whether the wave stays on 6529.io.
+        await keepingWaveScope(wave.id, txCtx, () =>
+          this.curationsDb.insertWaveCuration(entity, txCtx)
+        );
 
         return { curation: this.waveCurationToApi(entity), group };
       }
@@ -194,16 +199,20 @@ export class CurationsApiService {
             txCtx
           );
         }
-        await this.curationsDb.updateWaveCuration(
-          {
-            id: curationId,
-            wave_id: wave.id,
-            name: validatedName,
-            community_group_id: group.id,
-            updated_at: Time.currentMillis(),
-            priority_order: nextPriorityOrder
-          },
-          txCtx
+        // Curation groups stay open through the waves freeze, but a changed
+        // one must not change whether the wave stays on 6529.io.
+        await keepingWaveScope(wave.id, txCtx, () =>
+          this.curationsDb.updateWaveCuration(
+            {
+              id: curationId,
+              wave_id: wave.id,
+              name: validatedName,
+              community_group_id: group.id,
+              updated_at: Time.currentMillis(),
+              priority_order: nextPriorityOrder
+            },
+            txCtx
+          )
         );
         const updated = await this.curationsDb.findWaveCurationById(
           { id: curationId, wave_id: wave.id },
@@ -248,9 +257,13 @@ export class CurationsApiService {
           curationId,
           txCtx
         );
-        await this.curationsDb.deleteWaveCuration(
-          { id: curationId, wave_id: wave.id },
-          txCtx
+        // Curation groups stay open through the waves freeze, but removing
+        // one must not change whether the wave stays on 6529.io.
+        await keepingWaveScope(wave.id, txCtx, () =>
+          this.curationsDb.deleteWaveCuration(
+            { id: curationId, wave_id: wave.id },
+            txCtx
+          )
         );
         if (currentPriorityOrder < lockedCurations.length) {
           await this.curationsDb.decrementWaveCurationPriorityOrderRange(

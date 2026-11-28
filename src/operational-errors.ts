@@ -7,12 +7,34 @@ const CONDITIONS = [
   'SUBSCRIPTION_BALANCE_NOT_FOUND',
   'SUBSCRIPTION_BALANCE_INSUFFICIENT',
   'SUBSCRIPTION_KEY_DEFERRED',
+  'SUBSCRIPTIONS_REKEY_HALTED',
+  'SUBSCRIPTIONS_REKEY_STUCK',
+  'SUBSCRIPTIONS_JOURNAL_APPEND_FAILED',
+  'SUBSCRIPTIONS_JOURNAL_BEHIND',
+  'SUBSCRIPTIONS_JOURNAL_CHECKPOINT_FAILED',
+  'SUBSCRIPTIONS_JOURNAL_STALE',
+  'SUBSCRIPTIONS_JOURNAL_TAIL_MISSING',
+  'SUBSCRIPTIONS_JOURNAL_VERIFY_FAILED',
+  'SUBSCRIPTIONS_LEGACY_DUAL_WRITE_FAILED',
+  'SUBSCRIPTIONS_TRUTH_COMPARISON_DIFF',
   'PUSH_SENDER_MISMATCH',
   'PUSH_PROVIDER_TRANSIENT',
   'PUSH_DELIVERY_FAILED',
-  'PUSH_RETRY_EXHAUSTED'
+  'PUSH_RETRY_EXHAUSTED',
+  'PROFILE_SITE_CHANGE_STALLED'
 ] as const;
 export type OperationalCondition = (typeof CONDITIONS)[number];
+/**
+ * The conditions the monitoring contract names in alerts
+ * (ops/monitoring/src/contract.ts); the others only separate fingerprints.
+ */
+const NAMED_CONDITIONS: readonly OperationalCondition[] = [
+  'PUSH_SENDER_MISMATCH',
+  'PUSH_PROVIDER_TRANSIENT',
+  'PUSH_DELIVERY_FAILED',
+  'PUSH_RETRY_EXHAUSTED',
+  'PROFILE_SITE_CHANGE_STALLED'
+];
 
 export type FailureCategory =
   | 'HTTP_ERROR'
@@ -304,7 +326,7 @@ export function operationalError(
       code,
       fingerprint,
       diagnostic: detail,
-      ...(discriminator.startsWith('PUSH_')
+      ...(NAMED_CONDITIONS.some((named) => named === discriminator)
         ? { condition: discriminator }
         : {}),
       ...(correlationId ? { correlationId } : {}),

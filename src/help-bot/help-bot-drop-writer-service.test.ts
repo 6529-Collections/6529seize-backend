@@ -1,5 +1,6 @@
 import { DropType } from '@/entities/IDrop';
 import { waveScoreService } from '@/api/waves/wave-score.service';
+import { signingBot } from '@/tests/fixtures/bot-device-signing.fixture';
 import { HelpBotDropWriterService } from './help-bot-drop-writer.service';
 
 describe('HelpBotDropWriterService', () => {
@@ -153,5 +154,66 @@ describe('HelpBotDropWriterService', () => {
     expect(createOrUpdateDrop.execute.mock.calls[0][0].parts[0].content).toBe(
       'Ask all or devs6529. See [TDH](https://6529.io/network/tdh) and claim.'
     );
+  });
+
+  it('signs the reply when the bot has a device key', async () => {
+    const { signer, store } = await signingBot({ profileId: 'bot-profile' });
+    const createOrUpdateDrop = {
+      execute: jest.fn().mockResolvedValue({
+        drop_id: 'reply-drop',
+        pending_push_notification_ids: []
+      })
+    };
+    jest
+      .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
+      .mockResolvedValue(undefined);
+    const service = new HelpBotDropWriterService(
+      createOrUpdateDrop as never,
+      {
+        executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+          callback({})
+        ),
+        updateHideLinkPreview: jest.fn().mockResolvedValue(true)
+      } as never,
+      {
+        findDropByIdOrThrow: jest.fn().mockResolvedValue({ id: 'reply-drop' })
+      } as never,
+      { notifyAboutDropUpdate: jest.fn() } as never,
+      signer
+    );
+
+    await expect(
+      service.reply(
+        {
+          botProfileId: 'bot-profile',
+          waveId: 'wave-1',
+          replyToDropId: 'source-drop',
+          interactionId: 'interaction-1',
+          message: 'See [TDH](https://6529.io/network/tdh).'
+        },
+        {}
+      )
+    ).resolves.toEqual({ id: 'reply-drop' });
+
+    expect(createOrUpdateDrop.execute).toHaveBeenCalledTimes(1);
+    expect(store.events).toHaveLength(1);
+    const event = store.events[0];
+    expect(event).toMatchObject({
+      kind: 1,
+      wave_id: 'wave-1',
+      drop_id: 'reply-drop',
+      profile_id: 'bot-profile',
+      refs: JSON.stringify(['source-drop'])
+    });
+    expect(JSON.parse(event.body!)).toMatchObject({
+      wave_id: 'wave-1',
+      reply_to: { drop_id: 'source-drop', drop_part_id: 1 },
+      parts: [{ content: 'See [TDH](https://6529.io/network/tdh).' }],
+      metadata: [
+        { data_key: 'help_bot_interaction_id', data_value: 'interaction-1' }
+      ],
+      hide_link_preview: true
+    });
+    expect(store.authorSignatures.get('reply-drop')).toBe(event.id);
   });
 });

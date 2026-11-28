@@ -13,7 +13,11 @@ import { DropMediaUploadStatus } from '@/entities/IDropMediaUpload';
 import { dropsMappers } from '@/api/drops/drops.mappers';
 import { moderationReviewDb } from '@/content-moderation/moderation-review.db';
 import { moderationFingerprint } from '@/content-moderation/moderation-review.types';
-import { sanitizeDropStructuredFields } from '@/drops/create-or-update-drop.use-case';
+import {
+  dropModerationFingerprint,
+  sanitizeDropStructuredFields
+} from '@/drops/create-or-update-drop.use-case';
+import { stubWavesScope } from '@/tests/fixtures/waves-scope.fixture';
 
 jest.mock('@/api/waves/wave-unread-cache', () => ({
   // After-commit bumps from the DB chokepoints (drop insert/delete, reader
@@ -96,6 +100,11 @@ function makeService({
     wsListenersNotifier
   };
 }
+
+// Waves scope lookups read the database; here every wave moves.
+beforeEach(() => {
+  stubWavesScope();
+});
 
 describe('DropCreationApiService.setDropReplyCollapse', () => {
   function setup({
@@ -1022,12 +1031,41 @@ describe('DropCreationApiService bounded chat history purge', () => {
         waveId: 'wave',
         authorId: 'author',
         cutoffSerialNo: 60000,
-        pinnedDropId: 'pin'
+        pinnedDropId: 'pin',
+        keepPolls: false
       },
       expect.anything()
     );
     expect(deletion.execute).not.toHaveBeenCalled();
     expect(deletion.executeChatHistoryBatch).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps drops with a poll out of the batch while waves are frozen', async () => {
+    const original = process.env.FEATURE_WAVES_FROZEN;
+    process.env.FEATURE_WAVES_FROZEN = 'true';
+    try {
+      const { service, ctx, purgeDb, waves } = setup();
+      await service.deleteMyWaveChatHistory({ waveId: 'wave' }, ctx as never);
+      expect(purgeDb.findBatchForUpdate).toHaveBeenLastCalledWith(
+        expect.objectContaining({ keepPolls: true }),
+        expect.anything()
+      );
+      // Direct messages are chat: their polls go with them.
+      waves.findWaveByIdForUpdate.mockResolvedValue({
+        id: 'wave',
+        description_drop_id: 'pin',
+        visibility_group_id: null,
+        is_direct_message: true
+      });
+      await service.deleteMyWaveChatHistory({ waveId: 'wave' }, ctx as never);
+      expect(purgeDb.findBatchForUpdate).toHaveBeenLastCalledWith(
+        expect.objectContaining({ keepPolls: false }),
+        expect.anything()
+      );
+    } finally {
+      if (original === undefined) delete process.env.FEATURE_WAVES_FROZEN;
+      else process.env.FEATURE_WAVES_FROZEN = original;
+    }
   });
 
   it('refuses an oversized legacy purge before mutation', async () => {
@@ -1507,6 +1545,311 @@ describe('DropCreationApiService.createDrop media upload ids on a replay (R11-2)
     ).resolves.toEqual({ id: 'drop-1', wave_id: 'wave-1' });
     expect(findDropByIdOrThrow).toHaveBeenCalledWith(
       { dropId: 'drop-1' },
+      expect.anything()
+    );
+    expect(execute).not.toHaveBeenCalled();
+  });
+});
+
+describe('DropCreationApiService notify flag (history from the relays)', () => {
+  beforeEach(() => {
+    (sendIdentityPushNotifications as jest.Mock).mockResolvedValue(undefined);
+    jest
+      .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
+      .mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.clearAllMocks();
+  });
+
+  const chat = {
+    wave_id: 'wave-1',
+    drop_type: 'CHAT',
+    title: null,
+    parts: [{ content: 'gm', quoted_drop: null, media: [] }],
+    referenced_nfts: [],
+    mentioned_users: [],
+    metadata: []
+  };
+
+  function aService() {
+    const execute = jest.fn().mockResolvedValue({
+      drop_id: 'drop-1',
+      pending_push_notification_ids: []
+    });
+    const preparePrePublication = jest.fn().mockResolvedValue({});
+    const service = new DropCreationApiService(
+      {
+        findDropByIdOrThrow: jest
+          .fn()
+          .mockResolvedValue({ id: 'drop-1', wave_id: 'wave-1' })
+      } as never,
+      {
+        executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+          callback({})
+        ),
+        findDropById: jest.fn().mockResolvedValue({
+          id: 'drop-1',
+          wave_id: 'wave-1',
+          author_id: 'author-profile',
+          drop_type: DropType.CHAT,
+          reply_to_drop_id: null,
+          is_additional_action_promised: null
+        })
+      } as never,
+      dropsMappers,
+      {
+        preResolveIdentityNomination: jest.fn().mockResolvedValue(null),
+        preparePrePublication,
+        execute
+      } as never,
+      {} as never,
+      {
+        notifyAboutDropUpdate: jest.fn().mockResolvedValue(undefined)
+      } as never,
+      { findByDropId: jest.fn().mockResolvedValue([]) } as never,
+      {} as never,
+      { createPollForDrop: jest.fn().mockResolvedValue(undefined) } as never
+    );
+    return { service, execute, preparePrePublication };
+  }
+
+  it.each([
+    [false, false],
+    [true, undefined],
+    [undefined, undefined]
+  ])(
+    'creates with notify %s: the model carries notify %s',
+    async (notify, expected) => {
+      const { service, execute, preparePrePublication } = aService();
+      await service.createDrop(
+        {
+          createDropRequest: chat as never,
+          authorId: 'author-profile',
+          representativeId: 'author-profile',
+          ...(notify === undefined ? {} : { notify })
+        },
+        { timer: undefined } as never
+      );
+      const model = execute.mock.calls[0][0];
+      expect(model.notify).toBe(expected);
+      expect('notify' in model).toBe(notify === false);
+      expect(preparePrePublication.mock.calls[0][0].notify).toBe(expected);
+    }
+  );
+
+  it.each([false, true])('edits with notify %s', async (notify) => {
+    const { service, execute } = aService();
+    await service.updateDrop(
+      {
+        dropId: 'drop-1',
+        request: {
+          parts: chat.parts,
+          title: null,
+          referenced_nfts: [],
+          mentioned_users: [],
+          metadata: []
+        } as never,
+        authorId: 'author-profile',
+        representativeId: 'author-profile',
+        notify
+      },
+      { timer: undefined } as never
+    );
+    const model = execute.mock.calls[0][0];
+    expect(model.drop_id).toBe('drop-1');
+    expect(model.notify).toBe(notify ? undefined : false);
+  });
+});
+
+describe('DropCreationApiService signed posts under their event id', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.clearAllMocks();
+  });
+
+  const request = {
+    wave_id: 'wave-1',
+    drop_type: 'CHAT',
+    title: null,
+    parts: [{ content: 'gm', quoted_drop: null, media: [] }],
+    referenced_nfts: [],
+    mentioned_users: [],
+    metadata: []
+  };
+
+  it.each([
+    ['the author', 'author-profile', { id: 'event-drop' }],
+    ['another profile', 'other-profile', null]
+  ])(
+    "finds a drop on the writer only when it is %s's",
+    async (_who, authorId, expected) => {
+      const findDropByIdOrThrow = jest
+        .fn()
+        .mockResolvedValue({ id: 'event-drop' });
+      const executeNativeQueriesInTransaction = jest.fn(
+        async (callback: (connection: unknown) => unknown) =>
+          callback({ tx: 1 })
+      );
+      const findDropById = jest.fn().mockResolvedValue({
+        id: 'event-drop',
+        author_id: 'author-profile'
+      });
+      const service = new DropCreationApiService(
+        { findDropByIdOrThrow } as never,
+        { executeNativeQueriesInTransaction, findDropById } as never,
+        {} as never,
+        {} as never,
+        {} as never,
+        {} as never,
+        {} as never,
+        {} as never,
+        {} as never
+      );
+
+      await expect(
+        service.findAuthorsDrop({ dropId: 'event-drop', authorId }, {})
+      ).resolves.toEqual(expected);
+      expect(findDropById).toHaveBeenCalledWith('event-drop', { tx: 1 });
+      expect(executeNativeQueriesInTransaction).toHaveBeenCalledWith(
+        expect.any(Function),
+        { isolationLevel: 'READ COMMITTED' }
+      );
+      if (expected) {
+        expect(findDropByIdOrThrow).toHaveBeenCalledWith(
+          { dropId: 'event-drop', skipEligibilityCheck: true },
+          expect.objectContaining({ connection: { tx: 1 } })
+        );
+      } else {
+        expect(findDropByIdOrThrow).not.toHaveBeenCalled();
+      }
+    }
+  );
+
+  it('finds no drop when there is none', async () => {
+    const service = new DropCreationApiService(
+      { findDropByIdOrThrow: jest.fn() } as never,
+      {
+        executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+          callback({})
+        ),
+        findDropById: jest.fn().mockResolvedValue(null)
+      } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+    await expect(
+      service.findAuthorsDrop(
+        { dropId: 'missing', authorId: 'author-profile' },
+        {}
+      )
+    ).resolves.toBeNull();
+  });
+
+  it('writes and moderates a new drop under the id it is given', async () => {
+    jest
+      .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
+      .mockResolvedValue(undefined);
+    const execute = jest.fn().mockResolvedValue({
+      drop_id: 'event-drop',
+      pending_push_notification_ids: []
+    });
+    const preparePrePublication = jest.fn().mockResolvedValue({});
+    const service = new DropCreationApiService(
+      {
+        findDropByIdOrThrow: jest
+          .fn()
+          .mockResolvedValue({ id: 'event-drop', wave_id: 'wave-1' })
+      } as never,
+      {
+        executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+          callback({})
+        )
+      } as never,
+      dropsMappers,
+      {
+        preResolveIdentityNomination: jest.fn().mockResolvedValue(null),
+        preparePrePublication,
+        execute
+      } as never,
+      {} as never,
+      {
+        notifyAboutDropUpdate: jest.fn().mockResolvedValue(undefined)
+      } as never,
+      { findByDropId: jest.fn().mockResolvedValue([]) } as never,
+      {} as never,
+      { createPollForDrop: jest.fn().mockResolvedValue(undefined) } as never
+    );
+
+    await service.createDrop(
+      {
+        createDropRequest: request as never,
+        authorId: 'author-profile',
+        representativeId: 'author-profile',
+        newDropId: 'event-drop'
+      },
+      { timer: undefined } as never
+    );
+
+    expect(preparePrePublication.mock.calls[0][0].new_drop_id).toBe(
+      'event-drop'
+    );
+    expect(execute.mock.calls[0][0].new_drop_id).toBe('event-drop');
+  });
+
+  it('returns the published drop to a resend after review signed anew (another event, another id)', async () => {
+    // The first send was held for review and published under its event's id.
+    const firstModel = {
+      ...dropsMappers.createDropApiToUseCaseModel({
+        request: request as never,
+        authorId: 'author-profile'
+      }),
+      new_drop_id: 'first-event-drop'
+    };
+    jest.spyOn(moderationReviewDb, 'savedRequest').mockResolvedValue({
+      published_subject_id: 'first-event-drop',
+      scope: { context_fingerprint: dropModerationFingerprint(firstModel) }
+    } as never);
+    const findDropByIdOrThrow = jest
+      .fn()
+      .mockResolvedValue({ id: 'first-event-drop', wave_id: 'wave-1' });
+    const execute = jest.fn();
+    const service = new DropCreationApiService(
+      { findDropByIdOrThrow } as never,
+      { executeNativeQueriesInTransaction: jest.fn() } as never,
+      dropsMappers,
+      {
+        preResolveIdentityNomination: jest.fn(),
+        preparePrePublication: jest.fn(),
+        execute
+      } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+
+    await expect(
+      service.createDrop(
+        {
+          createDropRequest: request as never,
+          authorId: 'author-profile',
+          representativeId: 'author-profile',
+          newDropId: 'second-event-drop'
+        },
+        { timer: undefined, moderationRequestId: 'request-1' } as never
+      )
+    ).resolves.toEqual({ id: 'first-event-drop', wave_id: 'wave-1' });
+    expect(findDropByIdOrThrow).toHaveBeenCalledWith(
+      { dropId: 'first-event-drop' },
       expect.anything()
     );
     expect(execute).not.toHaveBeenCalled();

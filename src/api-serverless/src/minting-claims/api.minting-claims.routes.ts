@@ -49,6 +49,13 @@ import {
 import { isMemesContract } from '@/minting-claims/external-url';
 import { numbers } from '@/numbers';
 import { equalIgnoreCase } from '@/strings';
+import {
+  adminWriteSpec,
+  MINT_ADMIN_ROUTES,
+  MINT_AUTHORITY,
+  mintCard
+} from '@/mint-log/mint-log-http';
+import { mintLogRecorder } from '@/mint-log/mint-log-recorder';
 import { NextFunction, Request, Response } from 'express';
 import * as Joi from 'joi';
 
@@ -320,11 +327,16 @@ router.patch(
         : RelaxedMintingClaimUpdateRequestSchema;
       const body = getValidatedByJoiOrThrow(req.body ?? {}, bodySchema);
 
-      const updated = await patchMintingClaim(
-        params.contract,
-        claimId,
-        body,
-        memesContract
+      const updated = await mintLogRecorder.write(
+        adminWriteSpec({
+          req,
+          kind: 'claim.edit',
+          route: MINT_ADMIN_ROUTES.claimEdit,
+          card: mintCard(params.contract, claimId),
+          authority: MINT_AUTHORITY.distributionAdmins,
+          body: req.body
+        }),
+        () => patchMintingClaim(params.contract, claimId, body, memesContract)
       );
       if (updated === null) {
         return res.status(404).json({ error: 'Claim not found' });
@@ -416,7 +428,19 @@ router.post(
     }
 
     await assertCanStartArweaveUpload(claim, params.contract);
-    await queueArweaveUploadOrRollback(params.contract, claimId);
+    // Only the upload lease changes here, and the lease is not logged; the
+    // entry records the admin's request. The uploader logs the locations.
+    await mintLogRecorder.write(
+      adminWriteSpec({
+        req,
+        kind: 'claim.media-request',
+        route: MINT_ADMIN_ROUTES.claimMediaRequest,
+        card: mintCard(params.contract, claimId),
+        authority: MINT_AUTHORITY.distributionAdmins,
+        body: req.body
+      }),
+      () => queueArweaveUploadOrRollback(params.contract, claimId)
+    );
 
     return res.status(202).json(
       rowToMintingClaim({

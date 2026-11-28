@@ -1,5 +1,9 @@
 # Backend staging deployment permissions
 
+The shared-role inventory below records the retired staging account. The
+[Drop Forge deployment policies](#drop-forge-deployment-policies) section
+documents the dedicated role in the active staging account.
+
 These customer-managed policies are intended only for
 `arn:aws:iam::987989283142:role/gha-backend-deploy-staging`.
 The role trusts GitHub OIDC for the backend repository's `staging` environment.
@@ -150,6 +154,26 @@ References:
 ## WebSocket recovery worker
 
 `WebSocketDeliveryDeployment.json` is an additional narrowly scoped inline policy for the existing deployment role. An administrative identity installs it before deploying `webSocketDeliveryLoop`; the GitHub role cannot modify its own permissions. It permits only the new worker function/versions, its environment-specific CloudFormation stack, deployment-bucket prefix, schedule, log group and alarms. Existing managed policies and their ten attachments are unchanged. The deployment-bucket prefix allows CloudFormation's truncated stack component and generated suffix (for example, `websocketdeliveryloop-sta-serverlessdeploymentbuck-...` on staging); it does not grant application-data access. Validate the document with Access Analyzer and simulate new-worker operations and unrelated denials before installation. Deploy through the ordinary GitHub workflow afterward.
+
+## Drop Forge deployment policies
+
+In active staging account `296096934726` in `eu-west-1`, create
+`gha-backend-deploy-drop-forge-staging` with `DropForgeDeployTrust.json`.
+Attach these customer-managed policies and set the GitHub `staging`
+environment's `AWS_DROP_FORGE_DEPLOY_ROLE_ARN` to the dedicated role ARN.
+
+| Policy | Document |
+| --- | --- |
+| `DropForgeStagingHandlersDeployment` | `DropForgeHandlersDeployment.json` |
+| `DropForgeStagingDispatchDeployment` | `DropForgeDispatchDeployment.json` |
+
+The role deploys `dropForgeLaunchHandler` and `memesDistributionHandler`.
+Each worker role can be passed only to its named Lambda function. Artifact
+operations on existing buckets and objects require staging account ownership.
+Serverless reads three named SSM parameters for the subnets, security groups
+and alarm topic. The Scheduler role covers the four readiness schedules. See the
+[setup guide](../../../docs/drop-forge-auto-launch-setup.md) for runtime roles
+and queue-producer permissions.
 
 ## Voting credit return worker
 

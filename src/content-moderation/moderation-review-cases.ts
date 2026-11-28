@@ -13,8 +13,8 @@ export function moderationCaseIdSql(prefix = ''): string {
 
 // Compare the JSON flag as text. Comparing a COALESCE-wrapped JSON boolean
 // with SQL false can coerce both true and false to zero and include admin work.
-export function moderationNonAdministrativeSql(): string {
-  return "coalesce(json_unquote(json_extract(scope,'$.administrative')),'false')<>'true'";
+export function moderationReviewableChecksSql(): string {
+  return "subject_type<>'GROUP_NAME' and coalesce(json_unquote(json_extract(scope,'$.administrative')),'false')<>'true'";
 }
 
 // All consumers (queue, summary, sidebar) derive their cases from this same set.
@@ -26,7 +26,7 @@ export function moderationCaseWorkSql(): string {
       id check_id, null report_id, created_at
     from ${CONTENT_MODERATION_ITEMS_TABLE}
     where review_status='NEEDS_REVIEW' and outcome<>'PENDING'
-      and ${moderationNonAdministrativeSql()}
+      and ${moderationReviewableChecksSql()}
     union all
     select sha2(concat('DROP:',drop_id),256) case_id, 'DROP' subject_type,
       null check_id, id report_id, created_at

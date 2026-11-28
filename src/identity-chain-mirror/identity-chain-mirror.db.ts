@@ -22,6 +22,12 @@ import {
 import { DbPoolName } from '@/db-query.options';
 import { HELP_BOT_CREDIT_CATEGORY } from '@/help-bot/help-bot.config';
 import {
+  addressIdentityId,
+  addressIdentityIdsFrom,
+  pickAddressIdentityId
+} from '@/identities/address-identity-id';
+import { identitiesDb } from '@/identities/identities.db';
+import {
   ConnectionWrapper,
   dbSupplier,
   LazyDbAccessCompatibleService
@@ -108,6 +114,9 @@ export interface MirrorRetry {
   readonly targets: readonly string[];
   readonly wallets: readonly string[];
 }
+
+/** Address-only id candidates read at a time (address-identity-id.ts). */
+const ADDRESS_ID_CANDIDATES = 4;
 
 export const NO_RETRY: MirrorRetry = {
   principals: [],
@@ -777,6 +786,98 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     return row?.profile_id ?? null;
   }
 
+  /**
+   * A profile id for each address-only row without one (a wallet that
+   * left an identity): derived from its address, the first candidate no
+   * identities row or profile holds and no other row of the same write
+   * takes, or, before switch-on, a random one.
+   */
+  private async withAddressIds(
+    rows: readonly IdentityRowState[],
+    others: readonly IdentityRowState[],
+    derived: (row: IdentityRowState) => boolean,
+    conn: Conn
+  ): Promise<IdentityRowState[]> {
+    const chosen = new Set<string>(
+      others
+        .map((it) => it.profile_id?.toLowerCase())
+        .filter((it): it is string => !!it)
+    );
+    const out: IdentityRowState[] = [];
+    for (const row of rows) {
+      if (row.profile_id) {
+        out.push(row);
+        chosen.add(row.profile_id.toLowerCase());
+        continue;
+      }
+      let id: string;
+      if (!derived(row)) {
+        id = randomUUID();
+      } else {
+        // A few candidates at a time; more only when all of them are held.
+        const held = new Set<string>();
+        for (let from = 0; ; from += ADDRESS_ID_CANDIDATES) {
+          const candidates = Array.from(
+            { length: ADDRESS_ID_CANDIDATES },
+            (_, i) => addressIdentityId(row.consolidation_key, from + i)
+          );
+          (await identitiesDb.takenProfileIds(candidates, conn)).forEach((it) =>
+            held.add(it)
+          );
+          if (candidates.some((it) => !held.has(it) && !chosen.has(it))) {
+            break;
+          }
+        }
+        id = pickAddressIdentityId(
+          row.consolidation_key,
+          (it) => held.has(it) || chosen.has(it)
+        );
+      }
+      chosen.add(id);
+      out.push({ ...row, profile_id: id });
+    }
+    return out;
+  }
+
+  /**
+   * The handle-less identities rows that hold any of these wallets, or sit
+   * under this consolidation key: rows with a profile id but no handle and
+   * no profiles row, whose id no principal holds. 6529.io made them before
+   * switch-on (the TDH sync's step B, a group listing an address) with an
+   * id ratings, follows and groups may already name. An identity whose key
+   * equals one of them takes its id (ProfileIdChoice.adoptedProfileId).
+   */
+  async handlelessRowsOf(
+    wallets: readonly string[],
+    key: string,
+    conn?: Conn
+  ): Promise<{ consolidation_key: string; profile_id: string }[]> {
+    const addresses = Array.from(new Set(wallets.map((w) => w.toLowerCase())));
+    return await this.db.execute<{
+      consolidation_key: string;
+      profile_id: string;
+    }>(
+      `select distinct i.consolidation_key, i.profile_id
+       from ${IDENTITIES_TABLE} i
+       left join ${PROFILES_TABLE} p on p.external_id = i.profile_id
+       left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} m on m.profile_id = i.profile_id
+       where i.profile_id is not null
+         and i.handle is null
+         and p.external_id is null
+         and m.principal_id is null
+         and (i.consolidation_key = :key
+              or i.consolidation_key in (
+                select a.consolidation_key from ${ADDRESS_CONSOLIDATION_KEY} a
+                where a.address in (:addresses)))
+       order by i.consolidation_key`,
+      {
+        key: key.toLowerCase(),
+        addresses: addresses.length ? addresses : ['']
+      },
+      conn ? { wrappedConnection: conn } : undefined
+    );
+  }
+
   async insertMapping(
     principalId: string,
     profileId: string,
@@ -902,13 +1003,28 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     };
   }
 
+  /**
+   * Writes a plan. `eventTimeOf` gives the block time (ms) of the chain
+   * event a wallet that left the identity follows: the wallet gets its own
+   * row, and if that event is from switch-on the row's id is the address's
+   * derived one (address-identity-id.ts, the first no row or profile
+   * holds), before it a random one. Per event, so a mirror catching up and
+   * a rebuild, whose feed pages split at other heights, give the same ids.
+   */
   async applyIdentityPlan(
     plan: IdentityPlan,
     block: number,
     now: number,
-    conn: Conn
+    conn: Conn,
+    eventTimeOf: (wallet: string) => number
   ) {
     const opts = { wrappedConnection: conn };
+    const soloRows = await this.withAddressIds(
+      plan.soloRows,
+      [plan.identity, ...plan.rekeyedRows],
+      (row) => addressIdentityIdsFrom(eventTimeOf(row.consolidation_key)),
+      conn
+    );
     if (plan.releaseHandle) {
       const params = {
         externalId: plan.releaseHandle.external_id,
@@ -940,7 +1056,7 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
         opts
       );
     }
-    for (const row of [plan.identity, ...plan.rekeyedRows, ...plan.soloRows]) {
+    for (const row of [plan.identity, ...plan.rekeyedRows, ...soloRows]) {
       await this.upsertIdentityRow(row, conn);
     }
     for (const address of plan.addressKeys) {

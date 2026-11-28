@@ -57,6 +57,7 @@ export { MintingMerkleProof } from './IMintingMerkleProof';
 export { MintingMerkleRoot } from './IMintingMerkleRoot';
 export { MintingClaimActionEntity } from './IMintingClaimAction';
 export { MemeCardDropMappingEntity } from './IMemeCardDropMapping';
+export { MintLogCardHeadEntity, MintLogHeadEntity } from './IMintLogHead';
 export {
   DropGroupMentionEntity,
   DropBoostEntity,
@@ -171,6 +172,8 @@ export {
 } from './IProfileCmsPointerEvent';
 export { ProfileCmsPublishSignatureEntity } from './IProfileCmsPublishSignature';
 export { ProfileCmsUploadEntity } from './IProfileCmsUpload';
+export { ProfileCmsChainHeadEntity } from './IProfileCmsChainHead';
+export { ProfileCmsChainParkedEntity } from './IProfileCmsChainParked';
 export { PushNotificationDevice } from './IPushNotification';
 export { PushNotificationSettingsEntity } from './IPushNotificationSettings';
 export { Rating } from './IRating';
@@ -214,6 +217,21 @@ export {
 export { SubscriptionCoverageAlertStateEntity } from './ISubscriptionCoverageAlertState';
 export { SubscriptionCoverageRefreshRequestEntity } from './ISubscriptionCoverageRefreshRequest';
 export { SubscriptionDeferredWriteEntity } from './ISubscriptionDeferredWrite';
+export { SubscriptionRekeyFallbackStateEntity } from './ISubscriptionRekeyFallbackState';
+export {
+  SubscriptionIdBalanceEntity,
+  SubscriptionIdChoiceEntity,
+  SubscriptionIdCursorEntity,
+  SubscriptionIdFinalEntity,
+  SubscriptionIdFinalUploadEntity,
+  SubscriptionIdKeyMapEntity,
+  SubscriptionIdLogEntity,
+  SubscriptionIdModeEntity,
+  SubscriptionIdRedeemedEntity,
+  SubscriptionIdReportEntity,
+  SubscriptionIdStateEntity,
+  SubscriptionIdTopUpEntity
+} from './ISubscriptionIdentity';
 export {
   ConsolidatedTDH,
   ConsolidatedTDHEditions,
@@ -240,7 +258,33 @@ export {
 } from './ITransactionsProcessing';
 export { ConsolidatedTDHUpload, UploadEntity } from './IUpload';
 export { UserGroupEntity } from './IUserGroup';
+export { UserGroupVisibilityRequestEntity } from './IUserGroupVisibilityRequest';
 export { WaveArchiveEntity, WaveEntity } from './IWave';
+export {
+  ChainDecisionEntity,
+  ChainDecisionLeaderboardEntity,
+  ChainLeaderboardRowEntity,
+  ChainEntryEntity,
+  ChainClaimBuildEntity,
+  ChainEventEntity,
+  ChainGroupEntity,
+  ChainPollEntity,
+  ChainResultEntity,
+  ChainVoteEntity,
+  ChainWaveEntity,
+  ChainWaveRepEntity,
+  ChainWaveRoleEntity,
+  WavesChainIndexStateEntity
+} from './IWavesChainIndex';
+export {
+  ChainDocEntity,
+  ChainEntryHoldEntity,
+  WavesChainMirrorDecisionEntity,
+  WavesChainMirrorEventEntity,
+  WavesChainMirrorGroupEntity,
+  WavesChainMirrorStateEntity,
+  WavesChainMirrorWaveEntity
+} from './IWavesChainMirror';
 export { WalletAuthSessionEntity } from './IWalletAuthSession';
 export type { WalletAuthClientType } from './IWalletAuthSession';
 export { WalletConnectionShareEntity } from './IWalletConnectionShare';
@@ -292,6 +336,7 @@ export { PushNotificationCancellationEntity } from './IPushNotificationCancellat
 
 export * from './ICompetitionRuntime';
 export { CompetitionWorkerCursorEntity } from './ICompetitionWorkerCursor';
+export { WavesSettlementSendEntity } from './IWavesSettlementSend';
 
 export * from './ICompetitionCommand';
 export * from './ICompetitionEntryContentVersion';
@@ -299,8 +344,19 @@ export * from './ICompetitionEntryContentVersion';
 export * from './ICompetitionCapabilityAudit';
 export { PushNotificationOutboxEntity } from './IPushNotificationOutbox';
 export { SubscriptionCacheInvalidationEntity } from './ISubscriptionCacheInvalidation';
+
+export * from './IDropForgeLaunch';
+export * from './IDropForgeEvidence';
+export * from './IDropForgeSettings';
+export * from './IDropForgeReadinessCheck';
 export { DeviceGrantEntity } from './IDeviceGrant';
 export { DeviceSignedEventEntity } from './IDeviceSignedEvent';
+export { WaveRelayCursorEntity } from './IWaveRelayCursor';
+export {
+  WaveRelayEventEntity,
+  WaveRelayRejectEntity,
+  WaveRelaySubscriptionEntity
+} from './IWaveRelayIngest';
 export { DropAuthorSignatureEntity } from './IDropAuthorSignature';
 export { SignedRecordHeadEntity } from './ISignedRecordHead';
 export {
@@ -317,6 +373,7 @@ export { TransferReconciliationEntity } from './ITransferReconciliation';
 export { MarketDepthPublicationLockEntity } from './IMarketDepthPublicationLock';
 
 export * from './IVotingCreditRelease';
+export * from './ITransactionScanCheckpoint';
 export { ReleaseNoteRecoveryJobEntity } from './IReleaseNoteRecoveryJob';
 
 export { ArtistArtworkAlertEntity } from './IArtistArtworkAlert';

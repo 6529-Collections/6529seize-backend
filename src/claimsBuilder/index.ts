@@ -1,5 +1,9 @@
 import { Logger } from '@/logging';
-import { mintingClaimsService } from '@/minting-claims/minting-claims.service';
+import {
+  buildClaimLogged,
+  ChainClaimContext,
+  parseChainClaimContext
+} from '@/mint-log/mint-claim-build';
 import * as priorityAlertsContext from '@/priority-alerts.context';
 import { doInDbContext } from '@/secrets';
 import * as sentryContext from '@/sentry.context';
@@ -12,10 +16,12 @@ const ALERT_TITLE = 'Claims Builder';
 function parseRecordBody(body: string): {
   drop_id: string;
   competition?: NativeClaimContext;
+  chain?: ChainClaimContext;
 } {
   const parsed = JSON.parse(body) as {
     drop_id?: unknown;
     competition?: Partial<NativeClaimContext>;
+    chain?: unknown;
   };
   const dropId =
     typeof parsed.drop_id === 'string' ? parsed.drop_id.trim() : '';
@@ -35,16 +41,20 @@ function parseRecordBody(body: string): {
   }
   return {
     drop_id: dropId,
-    ...(competition ? { competition: competition as NativeClaimContext } : {})
+    ...(competition ? { competition: competition as NativeClaimContext } : {}),
+    ...(parsed.chain === undefined
+      ? {}
+      : { chain: parseChainClaimContext(parsed.chain) })
   };
 }
 
 async function processClaimBuild(
   dropId: string,
-  competition?: NativeClaimContext
+  competition?: NativeClaimContext,
+  chain?: ChainClaimContext
 ): Promise<void> {
   logger.info(`Processing claim build for drop_id=${dropId}`);
-  await mintingClaimsService.createClaimForDropIfMissing(dropId, competition);
+  await buildClaimLogged({ dropId, competition, chain });
 }
 
 const sqsHandler: SQSHandler = async (event) => {
@@ -53,7 +63,11 @@ const sqsHandler: SQSHandler = async (event) => {
       for (const record of event.Records) {
         const message = parseRecordBody(record.body);
         try {
-          await processClaimBuild(message.drop_id, message.competition);
+          await processClaimBuild(
+            message.drop_id,
+            message.competition,
+            message.chain
+          );
         } catch (error) {
           logger.error(
             `Failed to build claim for drop_id=${message.drop_id}, error=${error}`

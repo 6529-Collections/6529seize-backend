@@ -1,0 +1,382 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { acquireHomeLock } from '@/rebuild/stack/home-lock';
+import { LocalMysqld, startLocalMysqld } from '@/rebuild/stack/local-mysqld';
+import { stepGrantStatements } from '@/rebuild/guard/db-grants';
+import { MysqlAdmin, scopeFlag } from '@/rebuild/stack/mysql-admin';
+import { compareCodeUnits } from '@/rebuild/code-units';
+
+// MysqlAdmin against the private mysqld: copying a table keeps the values of
+// columns with a default expression and leaves generated columns to the
+// server. Runs with scripts/rebuild-jest.config.cjs.
+
+const HOME =
+  process.env.REBUILD_SELF_CHECK_HOME ??
+  path.resolve(__dirname, '..', '..', '..', '.rebuild', 'self-check');
+const PORT = Number(process.env.REBUILD_SELF_CHECK_PORT ?? 3407);
+const FROM = 'rebuild_admin_check_from';
+const TO = 'rebuild_admin_check_to';
+
+describe('MysqlAdmin on the private mysqld', () => {
+  let release: () => void;
+  let server: LocalMysqld;
+  let admin: MysqlAdmin;
+
+  beforeAll(
+    async () => {
+      release = acquireHomeLock(HOME);
+      server = await startLocalMysqld({
+        home: HOME,
+        port: PORT,
+        log: () => undefined
+      });
+      admin = await MysqlAdmin.connect(server.target);
+      await admin.recreateDatabase(FROM);
+      await admin.recreateDatabase(TO);
+      await admin.query(
+        `CREATE TABLE ${FROM}.rows_with_defaults (
+         id INT NOT NULL PRIMARY KEY,
+         amount INT NOT NULL,
+         created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+         updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+           ON UPDATE CURRENT_TIMESTAMP(3),
+         doubled_virtual INT AS (amount * 2) VIRTUAL,
+         doubled_stored INT AS (amount * 2) STORED
+       )`
+      );
+      await admin.query(
+        `INSERT INTO ${FROM}.rows_with_defaults (id, amount, created_at, updated_at)
+       VALUES (1, 21, '2026-01-01 00:00:00.000', '2026-01-02 00:00:00.000')`
+      );
+    },
+    5 * 60 * 1000
+  );
+
+  afterAll(
+    async () => {
+      try {
+        // The last test stops the server; this covers a failure before it.
+        await server?.stop();
+      } finally {
+        release?.();
+      }
+    },
+    5 * 60 * 1000
+  );
+
+  it('lists default-timestamp columns as insertable and generated ones not', async () => {
+    expect(await admin.insertableColumns(FROM, 'rows_with_defaults')).toEqual([
+      'id',
+      'amount',
+      'created_at',
+      'updated_at'
+    ]);
+  });
+
+  it('copies a table with its timestamps, and the server fills generated columns', async () => {
+    await admin.copyTables(FROM, TO, ['rows_with_defaults']);
+    const rows = await admin.query(
+      `SELECT id, amount, created_at, updated_at, doubled_virtual, doubled_stored
+         FROM ${TO}.rows_with_defaults`
+    );
+    expect(rows).toEqual([
+      {
+        id: 1,
+        amount: 21,
+        created_at: '2026-01-01 00:00:00.000',
+        updated_at: '2026-01-02 00:00:00.000',
+        doubled_virtual: 42,
+        doubled_stored: 42
+      }
+    ]);
+  });
+
+  it('lets a step lock the rows it reads, and change only what it writes', async () => {
+    const user = 'rb_lock_check';
+    const password = 'lock-check-password';
+    for (const statement of stepGrantStatements({
+      user,
+      password,
+      database: FROM,
+      writes: [],
+      reads: ['rows_with_defaults']
+    })) {
+      await admin.query(statement);
+    }
+    const step = await MysqlAdmin.connect({ ...server.target, user, password });
+    try {
+      // A locking read, as production writers do on rows they only read.
+      await expect(
+        step.query(
+          `SELECT id FROM ${FROM}.rows_with_defaults WHERE id = 1 FOR UPDATE`
+        )
+      ).resolves.toEqual([{ id: 1 }]);
+      await expect(
+        step.query(`UPDATE ${FROM}.rows_with_defaults SET amount = 1`)
+      ).rejects.toThrow(/UPDATE command denied/);
+    } finally {
+      await step.close();
+      await admin.query(`DROP USER IF EXISTS '${user}'@'%'`);
+    }
+  });
+
+  it('takes a checkpoint table newest row as MySQL orders it, and finds nullable columns', async () => {
+    await admin.query(
+      `CREATE TABLE ${FROM}.checkpoints (
+         id INT NOT NULL PRIMARY KEY,
+         block DECIMAL(10, 1) NULL,
+         run INT NOT NULL
+       )`
+    );
+    // As text '9.5' sorts after '10.0'; as a number it doesn't. A NULL is
+    // never the newest.
+    await admin.query(
+      `INSERT INTO ${FROM}.checkpoints (id, block, run)
+       VALUES (1, 9.5, 1), (2, 10.0, 2), (3, NULL, 3)`
+    );
+    const newest = await admin.orderedRows(
+      FROM,
+      'checkpoints',
+      ['id'],
+      'block'
+    );
+    expect(newest.map((row) => row.id)).toEqual([2]);
+    expect(await admin.columnNullable(FROM, 'checkpoints', 'block')).toBe(true);
+    expect(await admin.columnNullable(FROM, 'checkpoints', 'run')).toBe(false);
+    expect(await admin.columnNullable(FROM, 'checkpoints', 'nope')).toBeNull();
+  });
+
+  it('compares partition tuples under each column own collation', async () => {
+    await admin.query(
+      `CREATE TABLE ${FROM}.heads (
+         family VARCHAR(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
+         n INT
+       )`
+    );
+    // utf8mb4_0900_ai_ci: case and accents fold, and 'ss' equals U+00DF;
+    // NO PAD, so a trailing space differs. INT compares as numbers.
+    expect(
+      await admin.overlappingTuples(
+        FROM,
+        'heads',
+        ['family'],
+        [['\u00e9'], ['\u00df'], ['a '], ['X']],
+        [['E'], ['ss'], ['a'], ['y']]
+      )
+    ).toEqual([
+      [0, 0],
+      [1, 1]
+    ]);
+    expect(
+      await admin.overlappingTuples(
+        FROM,
+        'heads',
+        ['family', 'n'],
+        [['a', '1']],
+        [['A', '01']]
+      )
+    ).toEqual([[0, 0]]);
+  });
+
+  it("evaluates a plan's condition with the database as default, and leaves the admin connection without one", async () => {
+    await admin.query(
+      `CREATE TABLE ${FROM}.planned (id INT NOT NULL PRIMARY KEY, kind VARCHAR(10), at DATETIME(3))`
+    );
+    await admin.query(
+      `CREATE TABLE ${FROM}.kept (id INT NOT NULL PRIMARY KEY)`
+    );
+    await admin.query(
+      `INSERT INTO ${FROM}.planned VALUES (1, 'a', '2026-01-01 00:00:00.000'), (2, 'b', NULL), (3, 'a', NULL)`
+    );
+    await admin.query(`INSERT INTO ${FROM}.kept VALUES (1)`);
+    const noDefault = async () =>
+      (await admin.query<{ db: string | null }>('SELECT DATABASE() AS db'))[0]
+        .db;
+    expect(await noDefault()).toBeNull();
+    // A subquery names another table without its database.
+    const rows = await admin.rowsWhere(
+      FROM,
+      'planned',
+      'id NOT IN (SELECT id FROM kept)'
+    );
+    expect(rows).toEqual([
+      { id: 2, kind: 'b', at: null },
+      { id: 3, kind: 'a', at: null }
+    ]);
+    // Values read as the admin connection reads them (dates as strings).
+    expect(
+      await admin.rowsWhere(FROM, 'planned', 'id IN (SELECT id FROM kept)')
+    ).toEqual([{ id: 1, kind: 'a', at: '2026-01-01 00:00:00.000' }]);
+    expect(
+      await admin.rowsWhereInPartition(
+        FROM,
+        'planned',
+        'id NOT IN (SELECT id FROM kept)',
+        ['kind'],
+        [['a']]
+      )
+    ).toBe(1);
+    expect(await noDefault()).toBeNull();
+    // A condition MySQL refuses leaves no default behind either.
+    await expect(
+      admin.rowsWhere(FROM, 'planned', 'id IN (SELECT id FROM no_such_table)')
+    ).rejects.toThrow(/no_such_table/);
+    expect(await noDefault()).toBeNull();
+    await expect(
+      admin.rowsWhereInPartition(FROM, 'planned', 'nope = 1', ['kind'], [['a']])
+    ).rejects.toThrow(/nope/);
+    expect(await noDefault()).toBeNull();
+    // A database the server doesn't have: the open fails, and leaves no
+    // connection behind.
+    const connections = async () =>
+      Number(
+        (
+          await admin.query<{ n: string }>(
+            "SELECT COUNT(*) AS n FROM information_schema.PROCESSLIST WHERE COMMAND <> 'Daemon'"
+          )
+        )[0].n
+      );
+    const open = await connections();
+    await expect(
+      admin.rowsWhere('rebuild_no_such_db', 'planned', '1 = 1')
+    ).rejects.toThrow(/rebuild_no_such_db/);
+    // The server may list a closing connection for a moment: wait up to
+    // a second for the count to come back.
+    let after = await connections();
+    for (let i = 0; i < 10 && after !== open; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      after = await connections();
+    }
+    expect(after).toBe(open);
+    expect(await noDefault()).toBeNull();
+  });
+
+  it("reads a plan's rows as the admin connection reads them, in the same session settings", async () => {
+    await admin.query(
+      `CREATE TABLE ${FROM}.typed (
+         id BIGINT NOT NULL PRIMARY KEY,
+         amount DECIMAL(30, 10) NOT NULL,
+         big BIGINT UNSIGNED NOT NULL,
+         at TIMESTAMP(3) NULL
+       )`
+    );
+    await admin.query(
+      `INSERT INTO ${FROM}.typed VALUES
+         (9007199254740993, 12345678901234567890.0123456789, 18446744073709551615, '2026-01-01 00:00:00.123'),
+         (2, 0.5, 0, NULL)`
+    );
+    const ordered = await admin.orderedRows(FROM, 'typed', ['id']);
+    expect(await admin.rowsWhere(FROM, 'typed', '1 = 1')).toEqual(
+      expect.arrayContaining(ordered)
+    );
+    expect(ordered).toHaveLength(2);
+    // The plan's connection has the admin session's time zone and SQL mode.
+    const [session] = await admin.query<{ tz: string; mode: string }>(
+      'SELECT @@session.time_zone AS tz, @@session.sql_mode AS mode'
+    );
+    const same = await admin.rowsWhere(
+      FROM,
+      'typed',
+      `@@session.time_zone = '${session.tz}' AND @@session.sql_mode = '${session.mode}'`
+    );
+    expect(same).toHaveLength(2);
+  });
+
+  it('reads unique keys, scope flags as a WHERE takes them, and carries columns by a declared key', async () => {
+    // waves_metadatas' shape: an auto-increment primary key and a UNIQUE
+    // key on two other columns, plus an index on an expression.
+    await admin.query(
+      `CREATE TABLE ${FROM}.keyed (
+         id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+         wave_id VARCHAR(100) NOT NULL,
+         data_key VARCHAR(100) NOT NULL,
+         data_value TEXT NOT NULL,
+         note VARCHAR(20) NULL,
+         UNIQUE KEY keyed_wave_key (wave_id, data_key),
+         UNIQUE KEY keyed_note (note),
+         UNIQUE KEY keyed_joined ((CONCAT(wave_id, '/', data_key)))
+       )`
+    );
+    expect(
+      (await admin.uniqueKeys(FROM, 'keyed'))
+        .map((k) => k.join(','))
+        .sort(compareCodeUnits)
+    ).toEqual(['id', 'note', 'wave_id,data_key']);
+    await admin.query(
+      `INSERT INTO ${FROM}.keyed (id, wave_id, data_key, data_value)
+       VALUES (101, '0xaa', 'title', 'one'), (7, 'w-1', 'title', 'two')`
+    );
+    // A condition that is true as a WHERE takes it (LOCATE gives 3, not 1)
+    // flags its rows 1, and the rest 0; a subquery names its table bare.
+    const flagged = await admin.orderedRows(
+      FROM,
+      'keyed',
+      ['wave_id', 'data_key'],
+      undefined,
+      [
+        "LOCATE('a', wave_id)",
+        'id IN (SELECT id FROM keyed WHERE data_value = \x27two\x27)'
+      ]
+    );
+    expect(
+      flagged.map((r) =>
+        [r.wave_id, r[scopeFlag(0)], r[scopeFlag(1)]].map(String)
+      )
+    ).toEqual([
+      ['0xaa', '1', '0'],
+      ['w-1', '0', '1']
+    ]);
+    expect(
+      (
+        await admin.rowsWhere(FROM, 'keyed', 'id = 7', ["wave_id LIKE '0x%'"])
+      ).map((r) => String(r[scopeFlag(0)]))
+    ).toEqual(['0']);
+    expect(await admin.countWhere(FROM, 'keyed', "wave_id LIKE '0x%'")).toBe(1);
+    await expect(admin.countWhere(FROM, 'keyed', 'nope = 1')).rejects.toThrow(
+      /nope/
+    );
+    // Owned columns go back by the declared key, whatever number a row
+    // got anew.
+    await admin.saveColumns(
+      FROM,
+      'keyed',
+      ['wave_id', 'data_key'],
+      ['data_value'],
+      TO,
+      'saved'
+    );
+    await admin.query(`DELETE FROM ${FROM}.keyed`);
+    await admin.query(
+      `INSERT INTO ${FROM}.keyed (wave_id, data_key, data_value)
+       VALUES ('0xaa', 'title', ''), ('w-1', 'title', '')`
+    );
+    await admin.restoreColumns(
+      FROM,
+      'keyed',
+      ['wave_id', 'data_key'],
+      ['data_value'],
+      TO,
+      'saved'
+    );
+    expect(
+      (await admin.orderedRows(FROM, 'keyed', ['wave_id'])).map((r) => [
+        r.wave_id,
+        r.data_value,
+        String(r.id) === '101' || String(r.id) === '7'
+      ])
+    ).toEqual([
+      ['0xaa', 'one', false],
+      ['w-1', 'two', false]
+    ]);
+  });
+
+  it('leaves no pid file once the server stops', async () => {
+    const pidFile = path.join(HOME, 'mysql', 'harness-mysqld.pid');
+    expect(fs.readFileSync(pidFile, 'utf8').trim()).toBe(String(server.pid));
+    await admin.query(`DROP DATABASE IF EXISTS ${FROM}`);
+    await admin.query(`DROP DATABASE IF EXISTS ${TO}`);
+    await admin.close();
+    await server.stop();
+    expect(fs.existsSync(pidFile)).toBe(false);
+  });
+});

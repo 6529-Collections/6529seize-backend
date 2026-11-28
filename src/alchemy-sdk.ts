@@ -73,12 +73,58 @@ function requireApiKey(apiKey?: string): string {
   return apiKey;
 }
 
+/** The hosts ALCHEMY_BASE_URL may name: this machine, and nothing else. */
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', '[::1]', 'localhost']);
+
+/**
+ * Alchemy's host for a network. `ALCHEMY_BASE_URL` replaces it for local
+ * runs against a stand-in (the rebuild check), and only with a loopback
+ * host: 127.0.0.1, ::1 or localhost, over http or https, on any port. The
+ * Alchemy key goes in the URL's path, so any other host would be sent it;
+ * any other value throws, naming the setting and not its value, before a
+ * request is made. Unset, Alchemy's own host, as before.
+ */
+export function getAlchemyBaseUrl(network: Network): string {
+  const override = process.env.ALCHEMY_BASE_URL?.trim();
+  return override
+    ? loopbackBaseUrl(override)
+    : `https://${network}.g.alchemy.com`;
+}
+
+/**
+ * The base URL a loopback ALCHEMY_BASE_URL gives, as the URL parser reads
+ * it (so the host checked is the host used), without trailing slashes.
+ */
+function loopbackBaseUrl(value: string): string {
+  const refused = () =>
+    new Error(
+      'ALCHEMY_BASE_URL must be an http or https URL on 127.0.0.1, ::1 or localhost, with no user, query or fragment: the Alchemy key would be sent to its host'
+    );
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw refused();
+  }
+  if (
+    (url.protocol !== 'http:' && url.protocol !== 'https:') ||
+    url.username !== '' ||
+    url.password !== '' ||
+    url.search !== '' ||
+    url.hash !== '' ||
+    !LOOPBACK_HOSTS.has(url.hostname)
+  ) {
+    throw refused();
+  }
+  return `${url.origin}${url.pathname}`.replace(/\/+$/, '');
+}
+
 function getAlchemyIndexedRpcUrl(network: Network, apiKey: string): string {
-  return `https://${network}.g.alchemy.com/v2/${apiKey}`;
+  return `${getAlchemyBaseUrl(network)}/v2/${apiKey}`;
 }
 
 function getNftApiBaseUrl(network: Network, apiKey: string): string {
-  return `https://${network}.g.alchemy.com/nft/v3/${apiKey}`;
+  return `${getAlchemyBaseUrl(network)}/nft/v3/${apiKey}`;
 }
 
 function toNftQueryParams(
@@ -149,7 +195,10 @@ function createAlchemyAxios(
 ): AxiosInstance {
   const instance = axios.create({
     headers: { 'Content-Type': 'application/json' },
-    timeout: timeoutMs
+    timeout: timeoutMs,
+    // A loopback ALCHEMY_BASE_URL goes straight to this machine: a proxy
+    // from the environment would be sent the URL, the key in its path.
+    ...(process.env.ALCHEMY_BASE_URL?.trim() ? { proxy: false as const } : {})
   });
   // axios-retry's CommonJS typings resolve axios's .d.cts declarations.
   axiosRetry(instance as Parameters<typeof axiosRetry>[0], {
@@ -375,6 +424,9 @@ export class Alchemy {
       maxRetries,
       timeoutMs
     };
+    // A base URL that would send the key off this machine refuses here,
+    // when a service makes its client, not only at its first request.
+    getAlchemyBaseUrl(network);
     const http = createAlchemyAxios(maxRetries, timeoutMs);
     this.core = new AlchemyIndexedClient(network, apiKey, http);
     this.nft = new AlchemyNftClient(network, apiKey, http);

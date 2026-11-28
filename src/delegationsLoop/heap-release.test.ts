@@ -5,10 +5,22 @@ import { collectGarbageAfter } from './heap-release';
 
 type GcHolder = { gc?: () => void };
 
-describe('the garbage collection after a reconsolidation', () => {
-  afterEach(() => {
+// A test file run earlier in the same Jest worker may have turned on
+// --expose-gc (v8.setFlagsFromString). Every context made after that has a
+// gc that can be overwritten but not deleted, so each test puts back the gc
+// this file started with, or removes the one it added.
+const startingGc = Object.getOwnPropertyDescriptor(globalThis, 'gc');
+
+function restoreGc() {
+  if (startingGc) {
+    Object.defineProperty(globalThis, 'gc', startingGc);
+  } else {
     delete (globalThis as GcHolder).gc;
-  });
+  }
+}
+
+describe('the garbage collection after a reconsolidation', () => {
+  afterEach(restoreGc);
 
   it('runs a full collection when gc is exposed', () => {
     const gc = jest.fn();
@@ -20,7 +32,14 @@ describe('the garbage collection after a reconsolidation', () => {
   });
 
   it('only logs when gc is not exposed', () => {
-    expect(() => collectGarbageAfter('RECONSOLIDATION')).not.toThrow();
+    (globalThis as GcHolder).gc = undefined;
+    const memory = jest.spyOn(process, 'memoryUsage');
+    try {
+      expect(() => collectGarbageAfter('RECONSOLIDATION')).not.toThrow();
+      expect(memory).not.toHaveBeenCalled();
+    } finally {
+      memory.mockRestore();
+    }
   });
 
   it('never throws, whatever fails inside', () => {

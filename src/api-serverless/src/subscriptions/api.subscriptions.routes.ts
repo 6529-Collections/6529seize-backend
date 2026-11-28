@@ -41,10 +41,21 @@ import {
   fetchPhaseName,
   fetchPhaseResults,
   getPublicSubscriptions,
-  resetAllowlist,
+  resetAllowlistRows,
   splitAllowlistResults,
   validateDistribution
 } from '@/api/subscriptions/api.subscriptions.allowlist';
+import {
+  adminWriteSpec,
+  MINT_ADMIN_ROUTES,
+  MINT_AUTHORITY,
+  mintCard
+} from '@/mint-log/mint-log-http';
+import { latestTdhBlock } from '@/mint-log/mint-log-inputs';
+import {
+  loggedPreparationReset,
+  loggedPreparationWrite
+} from '@/mint-log/mint-log-preparation';
 import {
   fetchConsolidationAddresses,
   fetchDetailsForConsolidationKey,
@@ -59,12 +70,13 @@ import {
   fetchTopUpsForConsolidationKey,
   fetchUpcomingMemeSubscriptionCounts,
   fetchUpcomingMemeSubscriptionStatusForConsolidationKey,
-  fetchUpcomingMemeSubscriptions,
-  updateSubscribeAllEditions,
-  updateSubscription,
-  updateSubscriptionCount,
-  updateSubscriptionMode
+  fetchUpcomingMemeSubscriptions
 } from '@/api/subscriptions/api.subscriptions.db';
+import { SIGNED_RECORDS_HEADER } from '@/signed-records/record-event';
+import { isPrincipalId } from '@/subscriptions-identity/identity/identity-directory';
+import { subscriptionReadScope } from '@/subscriptions-identity/identity/subscription-tables';
+import type { SubscriptionChange } from '@/subscriptions-identity/records/subscription-records';
+import { subscriptionChangeWriter } from '@/subscriptions-identity/records/subscription-writes';
 
 const allowlistLogger = Logger.get('SUBSCRIPTIONS_ALLOWLIST');
 const CACHE_EVICTION_TIMEOUT_MS = 1_500;
@@ -232,24 +244,21 @@ router.post(
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
 
-    const isAuthenticated = await isAuthenticatedForConsolidationKey(
-      req,
-      consolidationKey
-    );
-    if (!isAuthenticated) {
-      throw new ForbiddenException(
-        `User can only change subscription mode for their own consolidation`
-      );
-    }
+    const walletInKey = await writeAccessOf(req, consolidationKey);
     const requestPayload = getValidatedByJoiOrThrow(
       req.body,
       Joi.object({
         automatic: Joi.boolean().required()
       })
     );
-    const response = await updateSubscriptionMode(
+    const response = await writeSubscriptionChange(
+      req,
       consolidationKey,
-      requestPayload.automatic
+      walletInKey,
+      {
+        type: 'subs.mode',
+        automatic: requestPayload.automatic
+      }
     );
     await invalidateSubscriptionCache(consolidationKey);
     res.status(201).send(response);
@@ -275,29 +284,67 @@ router.post(
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
 
-    const isAuthenticated = await isAuthenticatedForConsolidationKey(
-      req,
-      consolidationKey
-    );
-    if (!isAuthenticated) {
-      throw new ForbiddenException(
-        `User can only change subscription mode for their own consolidation`
-      );
-    }
+    const walletInKey = await writeAccessOf(req, consolidationKey);
     const requestPayload = getValidatedByJoiOrThrow(
       req.body,
       Joi.object({
         subscribe_all_editions: Joi.boolean().required()
       })
     );
-    const response = await updateSubscribeAllEditions(
+    const response = await writeSubscriptionChange(
+      req,
       consolidationKey,
-      requestPayload.subscribe_all_editions
+      walletInKey,
+      {
+        type: 'subs.all-editions',
+        all: requestPayload.subscribe_all_editions
+      }
     );
     await invalidateSubscriptionCache(consolidationKey);
     res.status(201).send(response);
   }
 );
+
+/**
+ * A person's change, after the route's own checks: today's write, or the
+ * signed record in the `x-6529-signed-records` header, by the switch state
+ * (subscription-writes.ts).
+ */
+function writeSubscriptionChange(
+  req: Request<any, any, any, any, any>,
+  consolidationKey: string,
+  walletInKey: boolean,
+  change: SubscriptionChange
+) {
+  return subscriptionChangeWriter.write({
+    routeKey: consolidationKey,
+    wallet: getWalletOrThrow(req),
+    walletInKey,
+    signedRecords: req.get(SIGNED_RECORDS_HEADER),
+    change
+  });
+}
+
+/**
+ * Whether the signed-in wallet is one of the key's wallets. A principal id
+ * (after the switch an identity's own key) goes on to the change writer,
+ * which checks the wallet's identity against it; any other key the wallet
+ * is not in gets 403, as before.
+ */
+async function writeAccessOf(
+  req: Request<any, any, any, any, any>,
+  consolidationKey: string
+): Promise<boolean> {
+  if (await isAuthenticatedForConsolidationKey(req, consolidationKey)) {
+    return true;
+  }
+  if (isPrincipalId(consolidationKey)) {
+    return false;
+  }
+  throw new ForbiddenException(
+    `User can only change subscription mode for their own consolidation`
+  );
+}
 
 async function isAuthenticatedForConsolidationKey(
   req: Request,
@@ -504,15 +551,7 @@ router.post(
     res: Response
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
-    const isAuthenticated = await isAuthenticatedForConsolidationKey(
-      req,
-      consolidationKey
-    );
-    if (!isAuthenticated) {
-      throw new ForbiddenException(
-        `User can only change subscription mode for their own consolidation`
-      );
-    }
+    const walletInKey = await writeAccessOf(req, consolidationKey);
     const requestPayload = getValidatedByJoiOrThrow(
       req.body,
       subscriptionToggleRequestSchema
@@ -521,11 +560,16 @@ router.post(
     if (nft) {
       throw new BadRequestException('NFT already released');
     }
-    const response = await updateSubscription(
+    const response = await writeSubscriptionChange(
+      req,
       consolidationKey,
-      requestPayload.contract,
-      requestPayload.token_id,
-      requestPayload.subscribed
+      walletInKey,
+      {
+        type: 'subs.card',
+        contract: requestPayload.contract,
+        tokenId: requestPayload.token_id,
+        subscribed: requestPayload.subscribed
+      }
     );
     await invalidateSubscriptionCache(consolidationKey);
     res.status(201).send(response);
@@ -552,15 +596,7 @@ router.post(
     res: Response
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
-    const isAuthenticated = await isAuthenticatedForConsolidationKey(
-      req,
-      consolidationKey
-    );
-    if (!isAuthenticated) {
-      throw new ForbiddenException(
-        `User can only change subscription mode for their own consolidation`
-      );
-    }
+    const walletInKey = await writeAccessOf(req, consolidationKey);
     const requestPayload = getValidatedByJoiOrThrow(
       req.body,
       subscriptionCountRequestSchema
@@ -569,11 +605,16 @@ router.post(
     if (nft) {
       throw new BadRequestException('NFT already released');
     }
-    const response = await updateSubscriptionCount(
+    const response = await writeSubscriptionChange(
+      req,
       consolidationKey,
-      requestPayload.contract,
-      requestPayload.token_id,
-      requestPayload.count
+      walletInKey,
+      {
+        type: 'subs.count',
+        contract: requestPayload.contract,
+        tokenId: requestPayload.token_id,
+        count: requestPayload.count
+      }
     );
     await invalidateSubscriptionCache(consolidationKey);
     res.status(201).send(response);
@@ -666,8 +707,12 @@ router.get(
     >
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
-    const result =
-      await fetchAirdropAddressForConsolidationKey(consolidationKey);
+    // After the identity switch the key may be a principal id; the airdrop
+    // rule still reads the identity's consolidation key.
+    const scope = await subscriptionReadScope(consolidationKey);
+    const result = await fetchAirdropAddressForConsolidationKey(
+      scope.consolidationKey
+    );
     const ensTdhWallet = await fetchEns(result.tdh_wallet);
     const ensAirdrop = await fetchEns(result.airdrop_address);
     return res.json({
@@ -834,7 +879,21 @@ router.get(
 
     if (phaseId === 'public') {
       allowlistTimer.start('getPublicSubscriptions');
-      const results = await getPublicSubscriptions(contract, tokenId);
+      const results = await loggedPreparationWrite({
+        spec: adminWriteSpec({
+          req,
+          kind: 'dist.public',
+          route: MINT_ADMIN_ROUTES.distPhase,
+          card: mintCard(contract, tokenId),
+          authority: MINT_AUTHORITY.distributionAdmins,
+          body: null
+        }),
+        contract,
+        claim: tokenId,
+        write: (ctx) => getPublicSubscriptions(contract, tokenId, ctx),
+        ctx: { timer: allowlistTimer },
+        start: 'MANUAL'
+      });
       allowlistTimer.stop('getPublicSubscriptions');
       allowlistLogger.info(
         `[GET_PUBLIC_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [${allowlistTimer.getReport()}]`
@@ -853,26 +912,49 @@ router.get(
         }] [${allowlistTimer.getReport()}]`
       );
 
-      allowlistTimer.start('splitAllowlistResults');
-      const results = await splitAllowlistResults(
+      // One logged write: the split sets the subscriptions' phase columns
+      // and the distribution rows and merkle tree follow from it.
+      const results = await loggedPreparationWrite({
+        spec: adminWriteSpec({
+          req,
+          kind: 'dist.phase',
+          route: MINT_ADMIN_ROUTES.distPhase,
+          card: mintCard(contract, tokenId),
+          authority: MINT_AUTHORITY.distributionAdmins,
+          body: null,
+          inputs: async (connection) => ({
+            allowlist_id: allowlistId,
+            phase_id: phaseId,
+            phase_name: phaseName,
+            tdh_block: await latestTdhBlock(connection),
+            allowlist_results: phaseResults.map((result) => [
+              result.wallet.toLowerCase(),
+              result.amount
+            ])
+          })
+        }),
         contract,
-        tokenId,
-        phaseName,
-        phaseResults
-      );
-      allowlistTimer.stop('splitAllowlistResults');
-      allowlistLogger.info(
-        `[GET_SPLIT_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [phase_name ${phaseName}] [airdrops ${
-          results.airdrops.length
-        }] [allowlists ${results.allowlists.length}] [${allowlistTimer.getReport()}]`
-      );
-
-      allowlistTimer.start('populateDistribution');
-      await populateDistribution(contract, tokenId, phaseName, results);
-      allowlistTimer.stop('populateDistribution');
-      allowlistLogger.info(
-        `[GET_POPULATE_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [phase_name ${phaseName}] [${allowlistTimer.getReport()}]`
-      );
+        claim: tokenId,
+        write: async (ctx) => {
+          const allocations = await splitAllowlistResults(
+            contract,
+            tokenId,
+            phaseName,
+            phaseResults,
+            ctx
+          );
+          await populateDistribution(
+            contract,
+            tokenId,
+            phaseName,
+            allocations,
+            ctx
+          );
+          return allocations;
+        },
+        ctx: { timer: allowlistTimer },
+        start: 'MANUAL'
+      });
 
       allowlistTimer.start('invalidateMintingClaimsPhaseCache');
       await invalidateMintingClaimsPhaseCache(contract, tokenId);
@@ -939,7 +1021,26 @@ router.post(
     }
 
     resetTimer.start('resetAllowlist');
-    await resetAllowlist(contract, tokenId);
+    await loggedPreparationReset({
+      spec: adminWriteSpec({
+        req,
+        kind: 'dist.reset',
+        route: MINT_ADMIN_ROUTES.distReset,
+        card: mintCard(contract, tokenId),
+        authority: MINT_AUTHORITY.distributionAdmins,
+        body: req.body
+      }),
+      contract,
+      claim: tokenId,
+      reset: (ctx) => resetAllowlistRows(contract, tokenId, ctx)
+    });
+    await evictCacheWithContextLogging(
+      `[contract ${contract}] [token_id ${tokenId}]`,
+      {
+        label: 'subscription-lists',
+        path: `/api/subscriptions/allowlists/${contract}/${tokenId}/`
+      }
+    );
     resetTimer.stop('resetAllowlist');
     allowlistLogger.info(
       `[RESET_ALLOWLIST_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [${resetTimer.getReport()}]`

@@ -3,6 +3,7 @@ import { DbPoolName } from '@/db-query.options';
 import { ChainIdentity } from '@/chain-gateway/chain-gateway.types';
 import { IdentityEntity } from '@/entities/IIdentity';
 import { ProfileClassification } from '@/entities/IProfile';
+import { Logger } from '@/logging';
 import { ChainIdentityReads } from './chain-identity-reads';
 import { FirstBinding } from './identity-chain-mirror.db';
 import { principalProfileId } from './identity-plan';
@@ -107,6 +108,8 @@ interface Choice {
   importDone?: number;
   /** No node holds the answer to whether the import took a placeholder. */
   legacyLookupNotHeld?: boolean;
+  /** Handle-less identities rows (no handle, no profile, no principal). */
+  handleless?: { consolidation_key: string; profile_id: string }[];
 }
 
 function setup({
@@ -206,6 +209,16 @@ function setup({
         ? placeholder
         : null;
     }),
+    // As the table: rows under the key or holding one of the wallets,
+    // whose id no principal holds.
+    handlelessRowsOf: jest.fn(async (wallets: readonly string[], key: string) =>
+      (choice.handleless ?? []).filter(
+        (it) =>
+          !Array.from(mapping.values()).includes(it.profile_id) &&
+          (it.consolidation_key === key ||
+            it.consolidation_key.split('-').some((w) => wallets.includes(w)))
+      )
+    ),
     firstBindingOf: jest.fn(async (w: string) => ({
       first: choice.firstBindings?.get(w) ?? null,
       exact: choice.bindings?.exact ?? false,
@@ -558,6 +571,9 @@ describe('ChainIdentityReads', () => {
         ...other
       });
     const placeholders = new Map([[W(7), 'p-7']]);
+    /** Handle-less rows' ids: from before switch-on (UUID version 4), after. */
+    const ROW_V4 = '00000000-0000-4000-8000-00000000ad01';
+    const ROW_V5 = '00000000-0000-5000-8000-00000000ad05';
     /** W(7)'s history as the gateway gives it, held from `from`. */
     const historyOf =
       (changes: { height: number; principalId: string | null }[], from = 50) =>
@@ -587,6 +603,41 @@ describe('ChainIdentityReads', () => {
         'made on the chain, no placeholder: derived',
         made(),
         {},
+        'same',
+        principalProfileId(Q)
+      ],
+      [
+        "a handle-less row under its own key, an id from before switch-on: that row's id",
+        made(),
+        {
+          placeholders,
+          handleless: [{ consolidation_key: W(7), profile_id: ROW_V4 }]
+        },
+        'same',
+        ROW_V4
+      ],
+      [
+        'imported, a handle-less row under its key: the legacy id',
+        made({ legacyId: OLD }),
+        { handleless: [{ consolidation_key: W(7), profile_id: ROW_V4 }] },
+        'same',
+        OLD
+      ],
+      [
+        'a handle-less row under another key: not taken',
+        made(),
+        {
+          handleless: [
+            { consolidation_key: `${W(7)}-${W(8)}`, profile_id: ROW_V4 }
+          ]
+        },
+        'same',
+        principalProfileId(Q)
+      ],
+      [
+        'a handle-less row with an id from after switch-on (version 5): not taken',
+        made(),
+        { handleless: [{ consolidation_key: W(7), profile_id: ROW_V5 }] },
         'same',
         principalProfileId(Q)
       ],
@@ -704,6 +755,27 @@ describe('ChainIdentityReads', () => {
       const stored = await mirrorStores(identity);
       expect(read).toBe(id);
       if (expected === 'same') expect(read).toBe(stored);
+    });
+
+    it('notes no handle-less row it leaves: the mirror run does', async () => {
+      const warn = jest.spyOn(Logger.get('IDENTITY_CHAIN_MIRROR'), 'warn');
+      try {
+        const { reads, mirrorDb } = setup({
+          identities: new Map([[Q, made()]]),
+          mapping: new Map(),
+          choice: {
+            handleless: [
+              { consolidation_key: `${W(7)}-${W(8)}`, profile_id: ROW_V4 },
+              { consolidation_key: W(7), profile_id: 'not-a-uuid' }
+            ]
+          }
+        });
+        expect(await reads.profileIdOf(made())).toBe(principalProfileId(Q));
+        expect(mirrorDb.handlelessRowsOf).toHaveBeenCalledTimes(1);
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
     });
 
     it("answers no mapping of the old chain's across a relaunch", async () => {

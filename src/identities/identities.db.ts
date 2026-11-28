@@ -234,6 +234,27 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  /**
+   * The ids of these that an identities row or a profile already holds
+   * (identities.profile_id, profiles.external_id), lowercase: a new
+   * address-only id must be none of them (pickAddressIdentityId).
+   */
+  public async takenProfileIds(
+    ids: readonly string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<Set<string>> {
+    const wanted = Array.from(new Set(ids.map((it) => it.toLowerCase())));
+    if (!wanted.length) return new Set();
+    const rows = await this.db.execute<{ id: string }>(
+      `select profile_id as id from ${IDENTITIES_TABLE} where profile_id in (:ids)
+       union
+       select external_id as id from ${PROFILES_TABLE} where external_id in (:ids)`,
+      { ids: wanted },
+      connection ? { wrappedConnection: connection } : undefined
+    );
+    return new Set(rows.map((it) => it.id.toLowerCase()));
+  }
+
   public async insertIdentitiesOnAddressesOnly(
     addresses: string[],
     connection: ConnectionWrapper<any>

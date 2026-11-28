@@ -39,6 +39,9 @@ import {
 } from '@/sql-executor';
 import { persistTopUps } from '@/subscriptionsTopUpLoop/db.subscriptions_topup';
 import { markSubscriptionCoverageDirty } from '@/subscription-coverage/subscription-coverage-dirty';
+import { toApiCompliantError } from '@/api/api-error-middleware';
+import { SubscriptionKeyHeldBackException } from '@/api/subscriptions/subscription-key-held-back.exception';
+import { apiCompliantErrorBody, BadRequestException } from '@/exceptions';
 import {
   updateSubscription,
   updateSubscriptionMode
@@ -409,6 +412,22 @@ describeWithSeed(
       expect(await keysIn(SUBSCRIPTIONS_NFTS_TABLE)).toEqual([]);
       expect(await keysIn(SUBSCRIPTIONS_MODE_TABLE)).toEqual([]);
       expect(await queue()).toEqual([]);
+    });
+
+    it('answers a held-back change with the same 400 as any bad request: its own type changes nothing for callers', async () => {
+      await migrate();
+      const error = await updateSubscriptionMode(KEY_14, true).catch(
+        (e: unknown) => e
+      );
+      expect(error).toBeInstanceOf(SubscriptionKeyHeldBackException);
+      expect(error).toBeInstanceOf(BadRequestException);
+      // The API's own error mapping, as the routes answer it.
+      const answer = toApiCompliantError(error);
+      expect(answer?.getStatusCode()).toBe(400);
+      expect(apiCompliantErrorBody(answer!)).toEqual({
+        error:
+          'Subscriptions for identities with more than 13 wallets resume after the identity switch.'
+      });
     });
 
     it('keeps a key in order: once it fits, its new writes wait behind its earlier ones, then replay in order, once', async () => {

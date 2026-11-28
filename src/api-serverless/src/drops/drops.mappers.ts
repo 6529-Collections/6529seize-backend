@@ -1,4 +1,5 @@
 import { mapDropMedia } from '@/api/drops/drop-media.mapper';
+import { wavesScopeService } from '@/waves-scope/waves-scope.service';
 import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
 import {
   anonymousCompetitionAuthor,
@@ -102,6 +103,7 @@ import {
   DropPollWithOptions
 } from '@/api/drops/drop-polls.db';
 import { mapDropPollToApi } from '@/api/drops/drop-polls.mappers';
+import { withPollsClosedAtMove } from '@/waves-freeze/waves-moved-polls';
 import {
   contentModerationDb,
   ContentModerationDb,
@@ -324,6 +326,9 @@ export class DropsMappers {
     const { noRightToVote, noRightToParticipate } = getWaveMinPermissionMask(
       effectiveAuthenticationContext
     );
+    const staysOnSiteByWaveId = await timed('wavesStaysOnSite', () =>
+      wavesScopeService.staysForDisplay(waveIds, { connection, timer })
+    );
     return dWoW.map<ApiDrop>((d) => {
       const wave = waveOverviews[d.id];
       const waveMin: ApiWaveMin | null = wave
@@ -338,7 +343,8 @@ export class DropsMappers {
             noRightToParticipate,
             pinned: pinnedWaveIds.has(wave.id),
             identityWave: identityWaveIds.has(wave.id),
-            authenticatedProfileId: readContextProfileId
+            authenticatedProfileId: readContextProfileId,
+            staysOnSite: staysOnSiteByWaveId.get(wave.id) ?? false
           })
         : null;
       return {
@@ -585,14 +591,19 @@ export class DropsMappers {
       timed('rootDropNftLinks', () =>
         this.dropNftLinksDb.findByDropIds(rootDropIds, connection)
       ),
-      timed('dropPollsByDropId', () =>
-        this.dropPollsDb.findPollsByDropIds(allDropIds, {
+      timed('dropPollsByDropId', async () => {
+        const pollsCtx = {
           connection,
           authenticationContext: contextProfileId
             ? AuthenticationContext.fromProfileId(contextProfileId)
             : AuthenticationContext.notAuthenticated()
-        })
-      ),
+        };
+        // A poll still open at the freeze in a moved wave shows closed then.
+        return withPollsClosedAtMove(
+          await this.dropPollsDb.findPollsByDropIds(allDropIds, pollsCtx),
+          pollsCtx
+        );
+      }),
       timed('authorSignedDropIds', () =>
         this.authorSignaturesDb.findAuthorSignedDropIds(allDropIds, {
           connection
@@ -802,6 +813,12 @@ export class DropsMappers {
           ctx.connection
         )
     );
+    const mentionedStaysOnSite = await timed('mentionedWavesStaysOnSite', () =>
+      wavesScopeService.staysForDisplay(
+        mentionedWaveEntities.map((wave) => wave.id),
+        ctx
+      )
+    );
     const mentionedWavesById = mentionedWaveEntities.reduce(
       (acc, wave) => {
         acc[wave.id] = mapWaveToApiWaveMin({
@@ -815,7 +832,8 @@ export class DropsMappers {
           noRightToParticipate,
           pinned: pinnedMentionedWaveIds.has(wave.id),
           identityWave: identityWaveIds.has(wave.id),
-          authenticatedProfileId: contextProfileId
+          authenticatedProfileId: contextProfileId,
+          staysOnSite: mentionedStaysOnSite.get(wave.id) ?? false
         });
         return acc;
       },

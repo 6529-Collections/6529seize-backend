@@ -18,6 +18,13 @@ after lease replacement or explicit invalidation. See
 - SQS and EventBridge as the async execution fabric.
 - S3, CloudFront, Arweave, Ethereum/RPC providers, Firebase, Sentry, CloudWatch, Discord, and SNS around the core.
 
+Cookie-consent country checks prefer the WAF country header on REST API Gateway
+requests, with FindIP retained as a permanent fallback. Before deploying this
+code in an environment, configure every WAF Allow path to overwrite the header.
+This changes the geolocation source without changing sanctions enforcement,
+EU/EEA classification or the response contract. See [country checks](country-check.md).
+Only the `api` service needs deployment.
+
 The six Sharp media packages also accept the exact direct-invocation payload
 `{"operator_action":"verify_media_dependencies_v1"}` for release diagnostics.
 This IAM-invoked path runs fixed synthetic codec operations in memory and
@@ -770,6 +777,8 @@ Database login: both the API pools and the TypeORM data source pick their target
 
 Background Lambdas that read or write application state use a shared `doInDbContext` wrapper. That wrapper prepares environment/secrets, initializes TypeORM-backed DB access, initializes Redis, runs the job, then disconnects. The `dropVideoConversionInvokerLoop` is intentionally environment-only: it reads only its function environment (no shared secret, no VPC), filters the S3 object key, and invokes MediaConvert without opening MySQL or Redis connections. Its production stack runs in `eu-west-1`, next to the media bucket it watches, while other production services run in `us-east-1`.
 
+The API's SQL executor lives in `src/db/api-sql-executor.ts`: the legacy competition GET facade's rewrite, the API's type casting (`CustomTypeCaster`) and its pool factory. `db-api.ts` builds the API's executor from it. A CLI that must read exactly what the public API's mappers read, such as the waves export, runs inside `doInDbContext` and then swaps in the same executor over its own pool (`src/waves-export/waves-export.db.ts`): TypeORM's default executor applies neither the rewrite nor the casting. The DB services keep the executor they first read, so such a swap runs once per process, before any service is used. The export's pool is one read-only pool on `DB_HOST` (`SET SESSION TRANSACTION READ ONLY` on each connection).
+
 MySQL is the integration contract between nearly all modules. API routes, scheduled pollers, queue workers, and derived-data loops all read and write shared tables. Redis is secondary and mostly disposable: API request cache, rate limiting, webhook dedupe, locks, and selected feature caches can fail open or be repopulated from MySQL.
 
 ### API request budgets
@@ -854,7 +863,7 @@ this API support while new clients are deployed; roll back the frontend first.
 
    Other drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception. Drop-video multipart completion can accept a bounded device-generated JPEG, validate and strip its metadata, and store it before completing the original video. Conversion always keeps the existing HLS/MP4 renditions and adds bounded first-frame/one-second JPEGs only if a validated device poster is unavailable. Chat prefers the device image, then the later backend image, falling back to the first for legacy or short clips, and displays it before Play without fetching video bytes. The worker reads and expands the existing MediaConvert template without modifying it; its deployment includes template-scoped read and device-poster access policies. Before a job it skips objects that are gone, superseded or over a configurable size (2 GiB default), and allows one job per object version and a configurable number of jobs per key per window, recorded in a per-key S3 ledger (`_video-conversion-ledger/` in the media bucket) written with conditional writes. The HEAD and the ledger rely on the shared execution role's existing access to that bucket; the function adds no inline grants for them. The API execution role also needs narrow device-poster write and pending-upload read access. Existing uploads need a separate authorized replay. See [chat video previews](chat-video-previews.md) for storage and rollout details.
    The on-demand media resizer spools each S3 source into its own temporary file before metadata inspection and conversion. A shared 256 MiB source limit rejects oversized inputs with HTTP 422. PNG uses measured 100 MP/8-bit and 64 MP/16-bit admission, a 100,000-pixel input-side limit, and disposable Sharp child processes. PNG output is capped at 4096 pixels per side, two million pixels and 10 MiB encoded; ordinary fit/orientation behavior is preserved and oversized results are fitted inside a bounded box. Each PNG child has a 256 MiB JS heap, a 30-second lifetime and a sampled 1 GiB combined parent/child RSS watchdog. These are guards with headroom under the 2 GiB Lambda allocation, not hard native allocation guarantees. Corrupt/over-limit input is permanent; timeout, allocation/worker, monitor and I/O failures remain operational. Source and output files live until upload completes and are removed after success or failure. Non-PNG codecs retain the conservative 512 MiB decoded-work estimate; animated GIF admission counts every frame. Baseline 8-bit JPEG admission accounts conservatively for the decoder shrink used by the requested resize; progressive JPEGs and other codecs retain the full-input estimate. When a GIF animation exceeds the budget, only its first frame is resized if that frame independently fits. Otherwise it remains HTTP 422. Originals are unchanged, and already-posted images can receive previews on demand without re-uploading. Resize, rotation and output contracts are preserved for ordinary accepted inputs. Multipart upload concurrency is one, and the temporary directory is removed after completion or failure. These admission limits reduce resource risk; they do not guarantee a maximum native allocation for every codec. The specific HEIF missing-compression-plugin error is returned as `422 UNSUPPORTED_CODEC`, regardless of the filename or MIME label. One operational report is claimed per original S3 key and source version (VersionId, or ETag for unversioned objects), across resize variants and Lambda instances, using an empty conditional-write marker under `_resize-rejections/v1/` in the existing source bucket. Later requests retain warning logs and the controlled response; replacing the source enables a new report. Marker failures remain operational errors. Detected HEIF/HEVC inputs now use an isolated, pinned WebAssembly HEVC decoder and explicit JPEG output, independent of the source suffix/MIME label. The child has separate source/pixel, JS heap, WASM memory and time budgets. Confirmed permanent HEVC decoder rejections use `_resize-rejections/v2/` markers keyed by source revision and decoder policy: later requests still spool/inspect the source but skip pixel decoding and return HTTP 422. Source or decoder-policy changes permit another attempt. S3/worker/timeout/allocation failures remain operational; the generic Sharp HEIF `(7.0)` error is not broadly suppressed. A source length mismatch remains operational before decoding or caching. See [media-resizer-unsupported-input.md](media-resizer-unsupported-input.md) for decoder, alert and recovery limits.
-   Chat image stripping is lossless when it verifies (pixels and ICC profile unchanged, Orientation kept); decision-entry uploads are never stripped and keep the artist's file name, while chat and wave uploads get neutral `<upload id>.<ext>` public names. See [image-upload-format-validation.md](image-upload-format-validation.md). Chat images published before stripping can be rewritten in place by an operator-run CLI (no Lambda) that skips decision entries, keeps private safety copies in the ingest bucket and batches CloudFront invalidations; see [chat media metadata backfill](chat-media-metadata-backfill.md).
+   Chat image stripping is lossless when it verifies (pixels and ICC profile unchanged, Orientation kept); decision-entry uploads are never stripped and keep the artist's file name, while chat and wave uploads get neutral `<upload id>.<ext>` public names. The Wave picture multipart route accepts WebP alongside JPEG, PNG and GIF. Newly initiated Wave picture uploads always require the shared metadata stripping policy, including when chat-drop stripping is disabled. See [image-upload-format-validation.md](image-upload-format-validation.md). Chat images published before stripping can be rewritten in place by an operator-run CLI (no Lambda) that skips decision entries, keeps private safety copies in the ingest bucket and batches CloudFront invalidations; see [chat media metadata backfill](chat-media-metadata-backfill.md).
 
    Drop/wave image finalization now generates and verifies both legacy `AUTOx450` and `AUTOx1080` previews using the same admission and PNG renderer as on-demand resizing before it can mark media ready. All image source handling and re-encoding privacy stripping are file-based; full source and encoded-original buffers are not retained in the parent, except that lossless stripping reads sources of up to 256 MiB (the upload limit) into memory and frees them before previews are rendered. Its pixel check decodes in bands of at most 64 MiB, so memory does not grow with image size; it is bounded by a 268 MP pixel ceiling, a 64 MP frame cap for whole-frame decoders, the PNG upload limits and a 240-second budget (see [image-upload-format-validation.md](image-upload-format-validation.md#pixel-check-bounds)). PNG original stripping uses an isolated child when the lossless strip does not verify; other original re-encodes must fit the conservative full-decode budget without preview shrink or discarded GIF frames. The original and both derivatives must be stored before the ready transition and ingest deletion. Derivative storage failures remain retryable and never imply ready. A retry regenerates the previews and overwrites the same keys; a ready-message redelivery only retries best-effort private-source deletion. Other formats retain their format/privacy transformations and existing animated-GIF first-frame fallback. The sanitizer reserves 1 GiB ephemeral storage for source, sanitized original and derivatives. Existing ready uploads are not requeued; the corrected on-demand PNG path can populate their missing derivatives without changing source/drop URLs.
    The animation-preview implementation (requires `mediaResizerLoop` deployment) handles versioned GIF requests (`AUTOx450_gifv2`, and the other existing sizes with `_gifv2` appended) with animation-preserving processing instead of the legacy first-frame fallback. The suffix is removed before checking the existing size whitelist and resolving the original key, but retained in the S3 derivative key. AUTO sizes use a sequential native decode and one resize directly to bounded output dimensions; fixed crop sizes retain individually coalesced frames and a repeated-scan guard. The bounded RGBA strip is spooled before encoding; output resolution can shrink further to bound the complete animation. The deployment catalog sets this worker to 2048 MiB for CPU headroom while retaining its processing deadline and source/output safety limits. Frame timing, loop count, and transparency are retained. Admission limits cover source bytes, per-frame pixels, frame count, repeated decoder work, retained output, and processing time. An eligible original that already fits an AUTO dimension is copied unchanged. See [GIF animation previews](gif-animation-previews.md) for limits, rollout, and compatibility. Originals and legacy derivative keys are not overwritten.
@@ -1238,6 +1247,57 @@ loop calls `followProfileSites()`, which runs the followers in
 for at most four minutes: the profile site index's chain reads, served from
 the gateway client and the mirror's profile ids.
 
+The rebuild check (docs/rebuild-check.md) rebuilds the mirror's tables with
+the mirror's own code (`identity-chain-mirror.rebuild.ts`). The rebuilder
+`identity.chain-mirror` runs it from empty tables against the run's gateway
+source, run after run, until a full sync has ended and the feed, the wallet
+bindings and the rating events are past the source's finalized height, which
+must be the mark; a source that moves on during the step fails it. The seed
+`identity.probe-profiles` first writes 6529.io's rows from before switch-on
+that the chain doesn't hold (placeholder profiles, a TDH-only identity, and
+an address-only identity on the founder's wallet), takes the switch-on
+record from them, then runs the mirror the same way, as the delegations
+loop does from switch-on, so the world's actors get their profiles from the
+chain, then 6529.io's own writes after it (TDH on an identity):
+`rebuild-world/site-rows.ts`. The switch-on record (`switch-on-record.ts`,
+in the TDH-only record's format) holds every identities row with no handle
+and no chain identity, and its address keys, as 6529.io held them right
+before the mirror's first run; the rebuilder loads its rows first, so the
+mirror adopts the same ids on equal keys (the founder's chain identity
+takes the address-only row's id on both sides). The rebuilder then reads
+the placeholder profiles from the "placeholders at freeze" file
+(`placeholder-restore.ts`, pinned by its SHA-256), since after a drop the
+mirror has no profiles to list them from: it lists them as the mirror's
+first run does, runs the mirror, then restores each one no chain identity
+took, its profile and, without the wallets bound on the chain, its
+identities row and wallets, refusing one whose profile id a `profiles` row
+already holds. A second seed
+plants one reference of each kind to an untaken placeholder
+(`rebuild-world/placeholder-references.ts`). Neither step calls the
+membership handlers: the holdings queue is the holdings loops' input, and
+the check rebuilds the holdings tables from `address_consolidation_keys`
+itself. For the same reason both take the regrouped wallets off
+`identity_chain_regroups` at their end, as the delegations loop does once
+it has re-keyed them, without the re-keying. Without a gateway whose status
+has an identity import (another area's run, with that area's recording)
+the seed writes the world's actors as plain rows instead
+(`seedProbeIdentities`). The source is a
+devnet's identity world, captured in the shared gateway recording beside
+the waves area's world, with its profile documents in the recording's files
+directory; `rebuild-world/world-ids.ts` holds its ids, from the capture's
+identity-world.json.
+
+What the chain alone does not give back: values the mirror takes from its
+own clock or makes up (ratings' `last_modified`, delegations' and profiles'
+`created_at`, profiles' `updated_at`, consolidations' `created_at` and
+registration times, statements' ids and `crated_at`), EXEMPT by name until
+they come from block times; the placeholder profiles, which the rebuild
+reads from the placeholders file; the rows only the switch-on record
+carries, which the rebuild loads from the rebuild world's own take until the
+team's is pinned (`SWITCH_ON_RECORD_PINS`), planned rows until then; and TDH
+on identities rows (`tdh`, `basetdh_rate`), which only the TDH loop writes,
+column plans until the TDH area's `tdh.chain-days` writes those columns.
+
 ### Ordinary Ethereum RPC boundary
 
 The shared provider in `src/ethereum-rpc/` reads the server-only
@@ -1555,11 +1615,14 @@ watermark.
 The API exposes currency-specific quoted depth for an individual token and a
 merged feed of canonical transactions and market actions. Quoted quantities can
 share inventory or funding and are not a verified executable security budget.
-The activity feed uses the read replica, including partition discovery and
+The activity feed uses the API read pool, including partition discovery and
 history metadata. Token activity selects bounded token and collection-event
 pages separately using the existing token/time index, then merges their IDs
-before fetching public event fields. Order-book snapshots, critical partition
-discovery and order-status validation continue to use the writer.
+before fetching public event fields. Collection-level cancellations for a single
+collection and wallet select bounded maker and taker pages with wallet/time
+indexes and deduplicate the IDs before fetching the final page. Order-book
+snapshots, critical partition discovery and order-status validation continue to
+use the writer.
 See the [market depth runbook](../ops/runbooks/market-depth.md) for interpretation,
 provider limitations, deployment order and verification.
 
@@ -1629,16 +1692,22 @@ stable cursors. There is no continuous review queue or hold-before-publish
 state.
 
 The developer [moderation review API](../ops/docs/developer/moderation-review.md)
-captures REP, About, group-name, signaled pre-publication and reported-content
+captures REP, About, signaled pre-publication and reported-content
 evaluations in `content_moderation_items` and `content_moderation_evaluations`.
 It replaces moderation's Discord notifications with database evidence and
 versioned, idempotent human actions. Existing stricter public-field prompts
 remain separate from permissive wave-content prompts. Exact rejected content
 can receive a seven-day single-use resubmission permit; approval never publishes
-an archived draft. About and group-name suppression uses an exact-revision
-presentation overlay while preserving source values. Routine successes expire
+an archived draft. About suppression uses an exact-revision presentation
+overlay while preserving the source value. Routine successes expire
 after 30 days, resolved evidence after 90 days, and compact history after one
 year; unresolved evidence and active rules retain their required provenance.
+
+Group visibility changes and replacements commit their idempotency receipts in
+`community_group_visibility_requests` alongside the group write. Historical
+group-name reviews remain stored for legacy save replays and exact-revision
+suppression. WatchTower excludes these reviews. Synchronize the additive table
+with `dbMigrationsLoop` before deploying the API.
 
 Standalone moderation capture uses bounded five-second SQL units with at most
 three total attempts; it retries only after acknowledged deadlock rollback.
@@ -1672,7 +1741,10 @@ falls back to a standalone result. Workflows never own Seize drop IDs. See
 [CI Pipeline Alerts](./ci-pipeline-alerts.md) for the request, formatting,
 retention, rerun, and rollout contract.
 
-Notification read/unread mutations also enqueue a `badge_refresh` job with the affected profile ID on the existing `firebase-push-notifications` queue. `pushNotificationsHandler` combines shared-device refreshes within each batch, discovers current iOS registrations, and computes aggregate unread counts from the primary database using the existing push settings, visibility and moderation filters. The API performs only the queue handoff, not device lookup, counting or Firebase delivery. Normal iOS alerts and badge-only refreshes share a per-device Redis lock covering count calculation and submission. Android delivery and installation logout use the same lock to fence removed recipients. Failed or invalid profile contributions never become partial badge totals. See [Mobile badge synchronization](./mobile-badge-sync.md) for the payload, failure handling and rollout boundaries.
+Clients mark all notifications as read with `POST /api/notifications/read`.
+`POST /api/notifications/{id}/read` marks an individual notification as read.
+
+Individual, bulk and wave notification reads enqueue a `badge_refresh` job with the affected profile ID on the existing `firebase-push-notifications` queue. `pushNotificationsHandler` combines shared-device refreshes within each batch, discovers current iOS registrations, and computes aggregate unread counts from the primary database using the existing push settings, visibility and moderation filters. The API performs only the queue handoff, not device lookup, counting or Firebase delivery. Normal iOS alerts and badge-only refreshes share a per-device Redis lock covering count calculation and submission. Android delivery and installation logout use the same lock to fence removed recipients. Failed or invalid profile contributions never become partial badge totals. See [Mobile badge synchronization](./mobile-badge-sync.md) for the payload, failure handling and rollout boundaries.
 
 The push worker's SQS event source is capped at 18 concurrent batches, below the Lambda's reserved concurrency of 20. This leaves two slots of headroom and keeps excess burst traffic queued instead of allowing the poller to exceed the function limit. The same cap applies in staging and production. Batch size remains 10; partial-batch retries, visibility timeout, dead-letter routing, and monitoring thresholds/frequency are unchanged. Queueing can increase during bursts, so queue-age and dead-letter alarms remain important. Deploy only `pushNotificationsHandler` to apply this event-source configuration.
 
@@ -1711,6 +1783,20 @@ Rolling fleet counters distinguish widespread throttling, a persistent outage ev
 ## API Boundary
 
 The API is organized by domain routers under `src/api-serverless/src`. The OpenAPI file defines the public contract and generated models. Legacy routes are wired manually, while newer OpenAPI operations can opt into generated route wiring through `x-6529-router` and thin domain handlers.
+
+The approved Phase 0 compatibility exception retires
+`GET /api/groups_im_eligible_for`. Wave and competition access evaluates group
+eligibility internally. Roll out this route removal by deploying `api`.
+
+`GET /api/delegations/minting/{wallet}` is retired. It served the former NextGen
+Pebbles profile Mints tab. Wallet Checker reads `GET /api/delegations/{wallet}`.
+
+NextGen minting uses `GET /api/nextgen/allowlist_phases/:collection_id` for
+collection phases and `GET /api/nextgen/proofs/:merkle_root/:address` for
+wallet proofs. NextGen token pages use `GET /api/nextgen/tokens/:id` for
+token details and `GET /api/nft-activity` for activity. The
+[route census](../src/competitions/contract-fixtures/phase-0/README.md) lists
+the four retired NextGen GET routes. Roll out their removal by deploying `api`.
 
 `/e2ee/...` is the end-to-end encrypted messaging delivery service (D109),
 behind `E2EE_DMS_ENABLED` (off in production). It is a ciphertext-only
@@ -2093,6 +2179,28 @@ Important API responsibilities:
   and validation diagnostics, and authenticated draft patch validation that
   dry-runs agent proposals without applying changes or bypassing publish
   signing/storage authority.
+- Profile sites on the 6529 chain, behind `FEATURE_PROFILE_CMS_CHAIN_POINTER`
+  (default off). The person's ProfileDoc keys `cms.primary.publication` and
+  `cms.primary.package` name the primary site's signed publication record and
+  content core by CID; `PROFILE_REPLACE` moves them. At the end of each
+  identity mirror run, `src/profile-cms/chain` follows the finalized Profile
+  changes from its own cursor: it reads the documents and files through the
+  chain gateway, checks them, and indexes the pointer and its events in the
+  profile CMS tables, so a rebuild from the change feed writes the same rows. The
+  `profile-cms:export` command builds the import's site keys, archive files
+  and package files at the identity freeze. With the flag on, publish stores
+  the signed publication in the document store and returns its CID for the
+  person's PROFILE_REPLACE, unpublish refuses with 409, rollback answers 409
+  only for a version the chain index would accept (422 otherwise), and legacy
+  `/cms` writes return 410; before that, during the identity freeze, all of
+  them and archive refuse with 423 `IDENTITY_FROZEN`.
+- Profile site private state, behind `FEATURE_PROFILE_CMS_PERSONAL_LOG`
+  (default off): drafts, the pointer events and publish signatures 6529.io's
+  own path writes, and BYO agent grants, proposals and events are appended,
+  row by row in the write's transaction, to the interim record log's private
+  chain (lane `publish`), so the profile CMS tables can be rebuilt from the
+  chain and the record log together. `profile-cms:log-existing-rows` logs the
+  rows that exist once the flag is on.
 - Public decentralized media resolution under `/media/resolve`, which maps
   native `ipfs://`, `ipns://`, and `ar://` references plus recognized gateway
   URLs to canonical native URIs, resolver URLs on the path gateway selected by
@@ -2128,9 +2236,9 @@ flags remain intersected with View eligibility if group criteria later drift.
 
 The waves v2 read boundary keeps timeline, reply-thread, and curation feeds as separate contracts. `/v2/waves/{id}/drops` returns the wave timeline feed, `/v2/drops/{id}/replies` returns the reply thread for a root drop after resolving its owning visible wave, and `/v2/waves/{id}/curations/{curation_id}/drops` returns drops for one wave curation.
 
-Quick Vote's legacy `GET /waves/{id}/undiscovered-drop` remains compatible,
-while `GET /waves/{id}/undiscovered-drops` returns up to four ordered previews
-with one pair of exact counts. Both use the original legacy competition's
+Quick Vote serves `GET /waves/{id}/undiscovered-drop` for the current candidate.
+`GET /waves/{id}/undiscovered-drops` returns up to four ordered previews with
+one pair of exact counts. Both use the original legacy competition's
 active native entries and an indexed fallback for retained participatory drops
 without a projected native status. Votes and skips remain scoped to the acting
 profile; zero allocations are unrated, and either sign of nonzero allocation is
@@ -2773,6 +2881,15 @@ the next dispatch. The service catalog records allowed environments and
 default dependencies. The workflow's environment concurrency avoids overlapping
 backend deployment runs; it does not create a cross-repository scheduler.
 
+Drop Forge handler deployments select a dedicated deploy role through each
+GitHub environment's `AWS_DROP_FORGE_DEPLOY_ROLE_ARN`. The role must be distinct
+from the shared deploy role and belong to the same AWS account. The execution
+roles are selected through versioned `serverless-config/{staging,prod}/drop-forge.js`.
+Only the launch role can sign with the operational KMS key.
+The separate Scheduler delivery role can publish only to the work queues/DLQs.
+Role provisioning, scoped `iam:PassRole` and rollout are covered by the
+maintained [setup guide](drop-forge-auto-launch-setup.md).
+
 Backend deployment uses separate IAM roles through GitHub OIDC in the
 `staging` and `production` GitHub environments, restricted to `1a-staging` and
 `main` respectively. Each environment's `AWS_DEPLOY_ROLE_ARN` selects its role;
@@ -2788,11 +2905,6 @@ pushes to `1a-staging`; frontend production is dispatched through
 automatic E2E validation. For coupled releases, complete backend dependencies
 before merging and deploying dependent frontend changes. Workflows resolve the
 source commit and verify artifact and runtime versions automatically.
-
-The API's authenticated `/deploy/ui` remains a convenience for viewing refs
-and runs and dispatching the ordinary workflows. GitHub authentication and
-repository permissions remain in place. It has no release queue, candidate
-registry, environment-state ledger, or separate deployment authority.
 
 For backend production, each service notification carries the merged PR and
 canonical service group. Earlier services hold publication; the final
@@ -2817,6 +2929,239 @@ Typical deployment order when schema or generated API contracts change:
 4. `api` when routes, OpenAPI models, auth behavior, upload behavior, or user-facing responses changed.
 
 For a documentation-only change, no Lambda redeploy is required.
+
+## Drop Forge Automated Launch
+
+This section describes the internal EMMA and launch execution architecture. Use
+the maintained [setup guide](drop-forge-auto-launch-setup.md) for environment values,
+IAM/KMS provisioning, deployment order and rollout, and the
+[operations guide](drop-forge-auto-launch.md) for manual evidence and recovery.
+
+| Component | Responsibility |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api` | Authorize operator requests, persist revisioned jobs/launches and publish targeted SQS messages under the SQL lock |
+| `memesDistributionHandler` | Consume `memes-distribution`; snapshot the clicking operator's EMMA inputs, process checkpoints and finalize persisted download lists |
+| `dropForgeLaunchHandler` | Consume `drop-forge-launch`; reconcile manual/automatic work, execute due actions, track signed transactions and recover exceptional failures |
+| EventBridge Scheduler | Deliver one-time future group and crash-watchdog messages to SQS; it does not sign or invoke the handlers directly |
+| MySQL | Authoritative job checkpoints, exact allocation evidence, signed-intent/nonce reservations and reporting acknowledgements |
+| Existing `transactionsLoop` | Complete creator transaction discovery, then record bounded finalized scan coverage, including empty blocks, for post-mint accounting |
+| AWS KMS | Hold the operational private key and sign digests only for the dedicated launch role |
+
+Four readiness schedules feed the Launch queue at 17:20, 18:28, 18:58 and
+19:22 Athens time, independently of any launch plan. The consumer resolves the
+claim through the shared mint calendar, reads Ethereum and completion evidence,
+and records the checkpoint together with its signed Mint Watch post in the Ops
+wave. The delivery ledger deduplicates queue retries.
+
+`dropForgeLaunchHandler` and `memesDistributionHandler` consume dedicated SQS
+queues and have default-disabled execution flags. API mutations
+publish under their SQL lock before committing a dispatch revision; consumers retry
+if the revision is not yet committed. This closes the commit-before-publish crash
+gap. Launch installs independent, per-drop one-time Scheduler events for future
+phase/Research groups before opening work. Each active invocation establishes a
+two-minute one-time watchdog before processing and removes it on normal exit;
+hard crashes leave it intact. Outstanding checkpoints/receipts/report backlogs queue
+continuations before acknowledgement. The readiness schedules handle calendar
+checks while execution is idle. One-time Scheduler events delete themselves after delivery;
+stale deliveries check current pause/cancel/action state before any write. Queue
+redelivery uses the existing SQL and signer locks. Each queue has a DLQ and alarm;
+no uncertain nonce or mint allocation is reset during redrive. The API returns a
+single PROCESS_ALL job for EMMA, immediately wakes preparation, and exposes
+read-only completed list pages. The operator's Authorization header is encrypted
+for its specific preparation job using a key derived from the existing JWT secret,
+then cleared when upstream inputs commit or the job fails. Expired or denied
+EMMA access pauses for authenticated resumption of the same job and checkpoints;
+no preconfigured EMMA token is required. Preparation snapshots upstream phase inputs,
+commits ordered phase checkpoints and finalizes. Craft Launch derives the fixed
+mint calendar and arms execution immediately; Craft Update Claim queues a
+metadata-only action without reopening completed allocations.
+The launch stays active through Research, eligible one hour after the
+final mint close (18:00 Europe/Athens the following day). Version 4 plans derive
+the top-up from fresh on-chain total toward `min(310, frozen Craft edition)`,
+verify the on-chain maximum, and reconcile manual Research evidence separately.
+Research shares the launch handler, signer ledger, wave reports and completion
+flags, with its own one-time scheduled wake. Optional artist payment shares its 18:00 eligibility group and the same transaction/recovery ledger.
+
+The comparison uses a covered finalized block no more than five minutes behind
+the finalized tip, so normal indexer cadence does not chase a moving block. Missing,
+older or pre-close coverage defers execution. Recovery winners use the same
+post-mint settlement gate before releasing their reservation.
+
+A separate one-time **17:15 Europe/Athens** wake records a readonly preview once.
+It reports expected Research quantity and optional artist payment without signing;
+normal previews are untagged, while discrepancies alert once without recalculation.
+All new reports use `DROP_FORGE_OPERATIONS_WAVE_ID`; the preexisting
+`DEPLOYER_ANNOUNCEMENTS_WAVE_IDS` destinations are never used by this feature.
+
+Research/payment share `drop-forge.supply.ts`: the configured RPC reads a finalized
+post-close claim at an explicit canonical block hash; DB cumulative mints through
+that block must agree and have completed scan coverage. The new
+`transaction_scan_checkpoints` entity advances monotonically only after an explicit
+bounded scan succeeds. Normal discovery and past data remain in place; explicit
+backfills do not publish that coverage. The existing discovery service remains
+mainnet-only and cannot publish coverage under a test-chain ID. Sepolia post-mint
+exercises need isolated matching transaction data and coverage. The checkpoint assumes existing history
+is complete rather than certifying or rewriting historical data. Subscription
+redemptions are additionally scoped to indexed transactions at the payment cutoff.
+Unsigned discrepancies retry after 1/5/15 minutes within the action window.
+Pre-sign and pre-broadcast checks retain the quantity and exact signed intent.
+Confirmed Research checks mint logs and resulting supply; payment checks its actual
+recipient/value. A lagging DB retains the reservation until finalized settlement;
+unexpected evidence blocks for recovery. Completion, reservation release and the
+operations outbox remain atomic. The API returns optional evidence and retry times
+for the Launch UI. No new Lambda or RPC provider is introduced for these checks.
+
+```mermaid
+flowchart LR
+  EMMA[EMMA Process and Finalize] --> API[Operation APIs]
+  Craft[Craft Launch / Update Claim] --> API
+  Manual[Manual Launch wallet controls] --> API
+  API --> DB[Launch, signer, evidence, preparation and job tables]
+  API --> PrepQueue[Distribution SQS]
+  API --> LaunchQueue[Launch SQS]
+  PrepQueue --> Prep[memesDistributionHandler]
+  LaunchQueue --> Worker[dropForgeLaunchHandler]
+  Worker --> Scheduler[One-time phase / Research / watchdog schedules]
+  Prep --> Scheduler
+  Scheduler --> PrepQueue
+  Scheduler --> LaunchQueue
+  Prep --> DB
+  Worker --> DB
+  Worker --> KMS[AWS KMS secp256k1]
+  Worker --> ReportKMS[AWS KMS Ed25519 report key]
+  Prep --> ReportKMS
+  Worker --> Chain[Creator and lazy claim contracts]
+  Prep --> Wave[Author-signed reports in the operations wave]
+  Worker --> Wave
+  Wave -->|Failures only| Alerts[Configured Drop Forge alert profiles]
+```
+
+### Drop Forge scheduled groups
+
+Craft Launch derives the standard plan from the configured Memes calendar.
+The times below use `Europe/Athens`, including daylight saving time. Phase 1
+and Phase 2 become eligible one minute after the preceding phase closes.
+Public becomes eligible one second after Phase 2 closes. See `buildPhaseActions` in
+[`drop-forge.plan.ts`](../src/drop-forge/drop-forge.plan.ts).
+
+| Group | Eligible time | Actions |
+| -------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Opening | Immediately after accepted Launch, before Phase 0 opens at 17:40 | Initialize, then general/artist/team and Phase 0 subscriber batches |
+| Phase 1 | 18:21; Phase 1 opens at 18:30 | Update claim, then Phase 1 subscriber batches |
+| Phase 2 | 18:51; Phase 2 opens at 19:00 | Update claim, then Phase 2 and Public subscriber batches |
+| Public | 19:20:01; public is scheduled from 19:20 | Update claim after Phase 2 closes; actual public availability follows transaction inclusion |
+| Research and optional Pay Artist | 18:00 the next day, after public closes at 17:00                 | Research tops up toward `min(310, frozen Craft edition)`; artist payment independently sends the final 50% share to the designated payee |
+| Metadata | Immediately after an accepted Craft Update Claim request | Synchronize republished metadata while preserving active phase configuration and completed allocations |
+
+Eligibility is not guaranteed block inclusion or finality. Admission budgets serial
+transactions and confirmations; new submissions stop two minutes before the action's
+deadline. SQS delays handle short continuations, while longer future wakes use
+one-time Scheduler events. Ordinary readiness failures leave independent later
+groups scheduled; a signed or uncertain transaction still holds the signer lock
+until reconciled. Every action checks confirmed completion before sending work.
+
+Manual controls acquire a durable lease before prompting the wallet. Confirmed
+transaction evidence carries the action category and credits exact remaining
+allocations. Compatible initialize/update configuration is observed on chain;
+ambiguous state blocks. Completion is mirrored into existing manual action flags.
+Metadata updates retain current mint configuration and cannot replay airdrops.
+
+The worker reserves an unsigned intent under a signer row lock, persists its
+signed bytes and hash in another commit, and only then broadcasts. Pending
+reports are rechecked at the final signature commit. Candidate selection filters
+by the next unfinished action's due time and report acknowledgement before its
+20-row limit, preventing future launches from starving due work. Fully missed launches stay available for manual reconciliation without occupying scheduled candidate slots. Pending
+receipts reconcile across pause/cancel, with configurable confirmations. Exceptional administrator recovery tracks
+same-nonce replacements and waits for finalized winning evidence; normal scheduling
+does not replace transactions automatically. Each subsequent action checks the latest
+confirmed canonical receipt, frozen source hash, claim configuration, creator-admin
+permission, nonce availability, and gas budgets. Confirmation is distinct from a
+scheduled mint window becoming active. Already-signed transactions cannot be
+revoked or guaranteed to mine before a deadline.
+
+Phase-scoped plans initialize and execute only Phase 0 allocations before its
+window, then update and airdrop each later phase inside its own closed transition
+gap. Gapless public subscriptions share the preceding Phase 2 transition, matching
+the existing launch UI; the public update waits until Phase 2 closes. Updates
+persist a minted-supply checkpoint so legitimate prior-phase mints do not block
+later airdrops. Legacy flattened plans fail closed while outstanding receipts
+remain reconcilable. Late confirmations credit completed work without reopening expired submission windows or stopping later groups.
+
+EMMA phase results, subscription assignments, distribution rows and Merkle
+proofs commit with replayable checkpoints under the preparation lock. The
+PROCESS_ALL job snapshots upstream inputs once and processes each stage in a
+separate invocation. Pending jobs block conflicting preparation/reset operations.
+Finalization shares that lock and chunks normalized-row inserts. A savepoint
+rolls back a failed stage before persisting the failure; invocation loss rolls
+back the stage for SQS redelivery or its one-time watchdog. Legacy synchronous
+endpoints retain their response shapes. Completed downloads are paginated reads
+of persisted results.
+
+Reporting drops and outbox acknowledgements share a DB transaction. Push
+transport runs after commit. `@dropforgeops` resolves configured profile IDs
+through existing visibility and notification rules. Both handlers create their own
+reports in `DROP_FORGE_OPERATIONS_WAVE_ID`; failures tag the group, while successes
+and detected-complete skips do not. Existing subscription alerts retain `@devs6529`
+and their existing wave; those reporting consumers need no redeploy for these
+automation alerts. Initial wave reporting is required before new launch signing;
+receipt reconciliation continues separately.
+See [configuration and recovery](drop-forge-auto-launch.md). The creator owner
+still grants/revokes on-chain admins, and artist payments require the separate opt-in setting and configured payout cap.
+
+Drop Forge launch scheduling groups actions by phase, with independent completed-state and readiness checks. Unsigned action failures and missed windows remain visible without blocking later groups; a persisted signed nonce remains reserved until reconciled. The Launch API exposes groups, attempt errors and observed skips, and each outcome is committed to the operations-wave outbox.
+
+Environment boundaries are regional: staging uses `eu-west-1`, production uses
+`us-east-1`, and each reads its own regional `prod/lambdas` runtime secret. Chain
+selection is explicit and does not follow the deployment environment automatically.
+The two Lambda execution roles and Scheduler delivery role are referenced in
+`serverless-config/{staging,prod}/drop-forge.js`; handler stacks inject the Scheduler
+settings, without feature-specific GitHub role variables. Only the launch role has
+KMS signing authority; the distribution handler uses the clicking operator's
+encrypted EMMA authorization, and the wave posting profile is configured separately
+from the on-chain wallet. All execution flags default to disabled.
+
+### Drop Forge exceptional transaction recovery
+
+The existing Launch API queues revision-checked administrator recovery requests.
+`dropForgeLaunchHandler` tracks same-nonce original, speed-up and cancellation attempts,
+signs with AWS KMS and waits for canonical finalized evidence. Winning ERC-1155
+mint events reconcile exact recipient allocations; receipt-block supply, action
+outcome, completion flags, signer reservation release and wave outbox commit
+atomically. A recovery-only flag permits this path while normal scheduling remains
+disabled. Signed bytes stay server-side. Reviewed fresh-nonce delivery requires
+proven prior nonce settlement; unknown evidence blocks further wallet use.
+
+### Launch settings and funding boundary
+
+The `drop_forge_settings` row is scoped by chain and creator. Automatic launch
+and automatic artist payment default Off. The per-payout cap is nullable and
+stored in wei. API changes use an optimistic revision and row lock. The creator
+owner and configured claims admins can edit these settings. The launch worker
+checks the same row while reserving, committing a signature and submitting the
+transaction. Turning Automatic launch Off retains scheduled skip reporting and
+signed-receipt tracking. Re-enabling wakes eligible active claims.
+
+Distribution administrators choose manual or background preparation in EMMA.
+The claim preparation lock records the first successful manual phase write or
+finalization, or saves background mode with job creation. The distribution
+handler runs queued checkpoints from the durable job. Reset Subscriptions clears
+subscriber results and retires previous jobs under the same preparation lock.
+A reset encountering an active worker step can be retried once that step exits.
+
+The `PAY_ARTIST` action stores the exact wei amount and designated payee in the
+existing launch ledger. Fresh paid-mint/subscription accounting must match confirmed
+indexed supply before reservation, and the positive payout cap is independent of
+gas caps. Manual payment hashes are claim-bound evidence; a completion checkbox
+alone blocks automatic payment. Same-nonce speed-up retains recipient/value;
+cancellation uses zero value. Successful canonical settlement mirrors `PAY_ARTIST`.
+
+All authorized Drop Forge users can view the configured wallet and fund it. Top Up
+ETH is signed by their connected wallet, not KMS. The API verifies sender, network,
+destination and value, then persists a `drop_forge_funding` intent keyed by sending
+wallet/nonce and queues it to the existing launch handler. Replacement hashes remain
+on that intent; canonical receipt evidence chooses the winner. Its wave report and
+acknowledgement commit atomically. ENS is optional display data, forward-checked
+against the pinned address. Funding never grants settings or on-chain admin rights.
 
 ## Architecture Notes
 
@@ -3373,6 +3718,44 @@ line. Other writes that no longer apply (a card already dropped, a row
 already there) are marked skipped too. Replay is off by default. Rollback:
 unset the flag; the queue keeps every write.
 
+**Re-key fallback.** The legacy subscription tables follow consolidation
+keys because the delegations loop re-keys them (`consolidateSubscriptions`)
+when it changes a grouping. Once the identity mirror writes
+`address_consolidation_keys`, a grouping can change with no delegation
+event. With `FEATURE_SUBSCRIPTIONS_REKEY_ON_MIRROR=true` (off by default),
+the `subscriptionsTopUpLoop`, before its top-up scan, finds each balance key
+with a wallet the table now keys otherwise and calls
+`consolidateSubscriptions` for those wallets, as the delegations loop would.
+It runs when 4.5 minutes have passed since its last run and no run holds
+the lease (15 minutes, the loop's timeout), both kept in
+`subscription_rekey_fallback_state` (one row, ephemeral). So a late run is
+made up on the next minute, and a slow run never overlaps the next. A
+partial mirror table must not split balances, so:
+
+- a wallet with no row in `address_consolidation_keys` is skipped, not
+  taken as its own key;
+- above 50 stale keys, or above 5% of the keys, the run logs them, alerts
+  (`SUBSCRIPTIONS_REKEY_HALTED`) and changes nothing;
+- a key is re-keyed only when it was stale on the run before too, so each
+  is logged a run before anything changes it;
+- just before the call, a key waits while it, or a key sharing one of its
+  wallets, has a wallet with no row, since `consolidateSubscriptions`
+  re-keys every key sharing a wallet and takes a wallet with no row as its
+  own key.
+
+`SUBSCRIPTIONS_REKEY_MAX_STALE` (a count) and
+`SUBSCRIPTIONS_REKEY_MAX_STALE_PCT` (a percentage of the keys) replace the
+two limits; each run's log line shows the limits in force. Raise them for
+a planned regrouping: when a run halts after the mirror first fills the
+table at the identity switch-on, set them above the stale count its alert
+line gives. Unset them once a run logs `"stale":0`. The two-run rule and
+the alerts hold at any limits.
+
+A key whose re-key the key-width guard already holds back is left to the
+guard's replay. A key still stale after three runs that were due to
+re-key it alerts (`SUBSCRIPTIONS_REKEY_STUCK`), and again about hourly. A failure is logged
+and never stops the scan. Rollback: unset the flag.
+
 **Rebuild.** Every entry can be derived again from its source:
 
 - top-ups from Ethereum, once the top-up loop's cursor
@@ -3387,6 +3770,331 @@ unset the flag; the queue keeps every write.
 
 A key with a final row fits every table, so a redemption waits only if the
 key columns are narrowed again, or behind an earlier write of the same key.
+
+## Subscriptions by identity: tables and opening file
+
+`src/subscriptions-identity` holds the identity-keyed subscription path. The
+`subscriptions_id_*` tables repeat the legacy `subscriptions_*` tables column
+for column, keyed by `identity_key`: a 6529 chain principal id for a bound
+wallet, else the wallet. History rows (final lists, redemptions, logs) also
+keep the consolidation key they were written under. `IdentityDirectory`
+resolves wallets to identities from the identity mirror's tables
+(`address_consolidation_keys`, `identities`, `identity_chain_principals`).
+
+**Opening file.** `./bin/6529 run subscriptions:opening -- cut` reads every
+legacy table and the wallets' identities in one REPEATABLE READ transaction
+and writes two canonical JSON files named by their sha256: the opening file
+(balances, modes, open choices, top-ups, final lists, uploads, redemptions,
+the key map, totals) and the history file (log lines, choices for dropped
+cards) it names by hash. Current state goes to the identity a key's wallets
+belong to. Keys of one identity (a re-key the key-width guard held back) are
+merged by the legacy merge rules, and top-ups still waiting in the guard's
+queue are credited to the sender's identity with the legacy top-up
+arithmetic; both are listed in the file. A key whose wallets belong to
+several identities (a split, which only the legacy re-key can make) or a
+waiting redemption blocks the cut: the load refuses the file. History rows go
+to the sender (top-ups), the airdrop address's identity (final rows and
+redemptions of a split key) or every spanned identity (logs); each rule-based
+choice is listed in the file. Final rows keep their legacy ids in
+`subscriptions_id_nfts_final`, because the mint log records phase changes by
+final row id.
+
+- `verify` checks the files with no database: canonical form, the history
+  link, totals, one row per identity, and, with fixtures, every top-up and
+  redemption against Ethereum. Balances that top-ups and redemptions don't
+  explain beyond five-decimal rounding are listed as adjustments.
+- `load` empties the identity tables and loads the files in one transaction.
+- `compare` is the opening comparison: the identity tables must hold exactly the files, and the
+  legacy tables, cut again, must give the same files. Only then is the
+  opening state marked verified.
+
+**Writers.** While the identity tables are kept up to date (after the
+switch, or before it with `FEATURE_SUBSCRIPTIONS_SHADOW=true` and an opening
+loaded), each legacy loop also writes them:
+
+- the top-up loop folds wallets that bound to an identity after the opening
+  into it, then credits new top-ups, including those the key-width guard
+  holds back, to the sender's identity. A first top-up that covers a card
+  turns automatic mode on as the legacy mode change does (the mode line,
+  upcoming cards subscribed again, all-editions counts set to the
+  eligibility), at the top-up's transaction time;
+- the daily loop builds the card's list from the identity tables with the
+  legacy rules (the engine's `buildFinalList`), reading modes, choices and
+  balances from one snapshot;
+- the transactions loop matches airdrop mints against the identity final
+  rows from its own cursor: in shadow up to the block the legacy loop has
+  processed, so both sides match the same airdrops; after the switch up to
+  the highest memes block in the transactions table, read once at the start
+  of the run, with the airdrops above the legacy loop's block named in the
+  comparison as not compared;
+- a phase pull splits the identity rows.
+
+After the switch the identity list is the one published (with an identity
+column), and each final row has one id in both tables: the identity table
+allocates it and the legacy dual write copies it, so the mint log keys phase
+rows by the same id before and after. Two legacy keys of one identity (a
+re-key the key-width guard held back) can't share an id: the first takes it
+and the other is not written, and the list report names it. A phase pull writes the same phase to
+both tables by id. In shadow the legacy side publishes and allocates, and the
+identity side is built beside it with the same ids and compared. Every
+comparison (a card's list; a card's phase; each card's redemptions, with the
+touched identities' balances) is kept in `subscriptions_id_reports` with a
+MATCH or DIFF verdict. In shadow, a row only the identity side has takes an
+id from 1,000,000,000 up, which the legacy table never reaches. In shadow the
+identity side runs after the legacy side's own work and notices, a failure is
+logged, and a loop's identity writer that can't read the switch state skips
+the run and catches up on the next. The daily build, phase pulls and the
+read routes fail instead of guessing, and the write routes read the state
+row uncached at every write. After the switch an identity writer's failure
+fails the run, a failed legacy dual write is logged, and redemption warnings
+are posted from the identity side; the legacy loop only logs its own. A
+failed legacy step (the redemption run, or the top-up discovery and legacy
+credit) alerts (`SUBSCRIPTIONS_LEGACY_DUAL_WRITE_FAILED`) and the identity
+writer still runs. A fold whose wallet brings no mode leaves the identity's
+mode row as it was.
+Person-made changes (subscribe, count, mode, editions) reach the identity
+tables only as signed records (below); an unsigned change in shadow reaches
+the legacy tables alone, so a shadow list differs for anyone who made one
+since the opening, and go-live cuts again. A shadow build or phase split
+that fails saves a FAILED report, which the go-live gate counts as a
+difference.
+
+**Signed changes.** The four write routes keep their own checks (the key's
+wallet, the body, a released card; a principal id the wallet's legacy key
+doesn't name goes on, and is taken only after the switch, from a wallet the
+identity mirror has in that identity) and then hand the change to
+`SubscriptionChangeWriter` (`records/subscription-writes.ts`), which reads
+the path uncached at every write (`subscriptionWritePathNow`): PAUSED (503)
+while go-live runs, IDENTITY after the switch, SHADOW before it with
+`FEATURE_SUBSCRIPTIONS_SHADOW=true` and an opening loaded, else LEGACY
+(today's write; the header is ignored). A change is a kind 9 RECORD in the
+owner's `ps` stream (`ps/<principal>`, or `ps/<wallet>` while the wallet
+is bound to none) of type `subs.mode`, `subs.all-editions`, `subs.card` or
+`subs.count`, sent in the `x-6529-signed-records` header, one record per
+request. It is verified (device grant with the `post` scope, signature,
+anchor within 120 heights of the finalized head, claimed time within 10
+minutes, author bound to the owner at the anchor) and must state the
+request's change, be signed for the signed-in wallet and name the identity
+of the route's key; otherwise 400 `INVALID_SIGNED_RECORD` with the reason.
+If the anchor or the author's binding can't be read from the chain gateway,
+the answer is 503 `ANCHOR_UNAVAILABLE` or `BINDING_UNAVAILABLE`.
+A record in a bare wallet's stream whose wallet has bound to a principal
+since its anchor still counts: it writes the rows that hold the wallet's
+state at write time, the wallet's own until the top-up loop's fold moves
+them, then the identity's, and the journal entry names that key
+(`inputs.identity_key`). When it goes to the identity, an empty fold of
+the wallet into the identity is journaled first, in the same transaction,
+unless the opening's key map has the wallet in that identity: a wallet with
+no rows of its own is never folded, so otherwise nothing would tie it to
+the rows. Any history the wallet has (log lines, top-ups, final and redeemed
+rows) moves to the identity then, as in any fold, and the fold's rekey moves
+it the same way in a rebuild. Where the fold writer already folded the
+wallet, this repeats the link, a no-op for the rebuild.
+In one transaction the event goes to the record log (lane `subs`, with
+its grant proof), the record index applies it if it is newer than the
+stored head for its choice (else 409), `makeChoice` works it out with the
+legacy route's checks and words (400 with code BALANCE, CLOSED,
+NOT_SUBSCRIBED or OVER_ELIGIBILITY) from the identity's rows read FOR
+UPDATE, writes it, checks the cutoff again, and its journal entry
+(kind `choice`: the record's event id, owner, type, key, anchor and claimed
+time, and the mode, choice and log rows it changed, each before and after)
+follows the event. The event always goes to lane `subs`; the journal entry
+goes to `subs` or `subs-shadow` like any other write. After
+the switch an unsigned change gets 409 `SIGNED_RECORD_REQUIRED`; an applied
+one is then written to the legacy tables under the identity's consolidation
+key (a failure alarms, `SUBSCRIPTIONS_LEGACY_DUAL_WRITE_FAILED`, and coverage
+is marked). In shadow today's write goes
+first with its own refusals; a record that came with it is applied to the
+identity tables, and the rows the change is about and the log lines each
+side added are compared. Every signed change in shadow leaves a `RECORD`
+report naming rows and fields but no values: MATCH; DIFF when the rows
+differ or the identity side's rules refused what today's write took;
+FAILED on an error; REFUSED when the record itself was not taken (it did
+not verify or state the request, was stale, or the anchor or the author's
+binding was unavailable).
+Nothing on the identity side fails the request. The go-live gate counts
+every DIFF and FAILED, and skips REFUSED within a share of all the signed
+records compared (see Switch), so one person's bad header can't hold the
+switch back. A route key whose wallets span identities for now (mid
+re-key) is REFUSED too. A
+rebuild writes a choice back from its journal entry like any other write;
+the event before it can be verified against the grant proof it carries.
+
+**One merge rule.** Subscription states that come to belong to one identity
+are merged by one function, `identity-merge.ts` (owner question O2): the cut
+uses it for keys of one identity whose re-key was held back, and the top-up
+loop for a wallet that binds later. Balances are summed; a fresh mode row is
+written at the merge time, automatic and all editions kept if any part had
+them; choices for one card are combined as `mergeUpcomingSubscriptions`
+does. A wallet that leaves an identity takes nothing. Eligibility and the
+airdrop rule read by the identity's consolidation key, whichever key a route
+was given.
+
+**Journal and rebuild.** Every write to the identity tables after a load
+(a top-up, a fold, a daily build, a phase pull or reset, a redemption run, a
+person's signed choice, a list upload) appends its changed rows to the
+shared record log, public chain, in the same transaction as the write (`timeline/journal.ts`): lane
+`subs` once the tables are the truth, `subs-shadow` before. So the log holds
+every change in commit order, and an entry exists exactly when its write
+does.
+
+- **What an entry holds.** The facts the write acted on (a top-up's hash,
+  block, wallet and the identity it was credited to; a redemption's charges)
+  and the rows the write changed, each as `before` and `after`. Writers read
+  `before` FOR UPDATE ahead of the write and `after` in their own
+  transaction, so no entry carries a snapshot's stale row. Unchanged rows
+  are not journaled, so entries stay small however long a history grows; a
+  write's changes are split into parts of at most 1 MB, all appended in its
+  transaction. A redemption run charges at most 200 airdrops (whole blocks)
+  and the next run goes on.
+- **Order.** Each write takes the next `n` from a counter row as its last
+  step, so `n` follows commit order.
+- **Checkpoint.** After the daily build, the counter is locked for a moment
+  while a second connection opens a consistent snapshot; the snapshot is
+  hashed with no locks and the hash is appended for that `n`, under the
+  opening the snapshot holds (if the opening changed meanwhile, no
+  checkpoint is written).
+- **Behind the posted journal.** The daily check of the posted journal
+  first compares live's counter with the posted journal's highest `n` for
+  the loaded opening. Behind it, as after a restore from an older backup,
+  live would reuse posted numbers: it sets a marker row, alerts
+  (`SUBSCRIPTIONS_JOURNAL_BEHIND`), and every journaled write refuses until
+  a new opening's load deletes the marker. The check needs a bound records
+  wave reader, so until then the guard is the runbook: after a restore,
+  `suspend`, then `go-live`, before the writers run.
+- **Posting.** Entries reach the records wave when the record log's closer
+  seals a segment (every 5 minutes, with `FEATURE_SIGNED_RECORD_LOG=true`).
+  Until then they are only in MySQL. go-live refuses unless the closer is on
+  and no journal entry has waited unposted more than 10 minutes, and the
+  top-up loop alerts (`SUBSCRIPTIONS_JOURNAL_STALE`) when one has. An entry
+  counts as unposted until its segment's head is posted, sealed into a
+  segment or not. A failed append fails its write and alerts
+  (`SUBSCRIPTIONS_JOURNAL_APPEND_FAILED`).
+- **Suspend.** `subscriptions:opening -- suspend` journals a `suspend`
+  entry in the transaction that sets it; if the entry can't be written the
+  tables are suspended anyway, and it alerts.
+- **Opening.** `go-live` uploads the opening and history files (Arweave,
+  tagged with the app name, kind and sha256) and writes the journal's
+  `opening` entry, naming both by URI and sha256, in the switch's
+  transaction. The load gives every row a fixed id: final rows and the first
+  copy of a log line keep their legacy ids, other copies and queued lines
+  take ids above them in file order.
+
+`subscriptions:opening -- rebuild` rebuilds the identity tables from the
+opening and the journal alone, read through a bound record log source (the
+records wave reader). It pauses the write routes (the marker renewed every
+minute while it reads, verifies and writes back), takes
+the last `opening` entry, fetches and checks both files, verifies that
+opening's journal (below), loads the files
+suspended (no writer writes meanwhile), and writes back every write of that
+opening in `n` order, each with all its parts. Every `n` from the
+opening's first write to its last must be in the log, as its own entry or
+another opening's it skips: an `n` with no entry is a write never posted,
+so the rebuild stops before loading anything, and `verify-journal` fails
+on it. A part posted twice with the same contents (entries unposted at a
+restore point are posted again) is read once; posted again with other
+contents, it stops the rebuild. A change's captured `before`
+must equal the rebuilt row, and each checkpoint must match once the writes
+up to its `n` are in, so a write that was never journaled stops the rebuild
+at the first row or checkpoint it shows in. Nothing is read from MySQL
+sources or the identity mirror: a top-up stays with the identity it was
+credited to. Each choice entry's signed record order key goes back into
+`signed_record_heads`, so a lost heads table never lets an older record be
+replayed. When the live database is there, the journal's last `n` is
+compared with live's counter; a missing tail (entries not yet posted) is
+reported and alerted (`SUBSCRIPTIONS_JOURNAL_TAIL_MISSING`), and the tables
+stay suspended; a last write posted only in part while the live database is
+there is reported with a warning, since the closer posts the rest. Over
+tables that are loaded and not suspended the rebuild suspends them first
+and waits out the writers' 60 s state cache; over tables that are the
+truth it refuses. A rebuild of an opening the journal shows suspended
+leaves the tables suspended. Otherwise they end verified and in shadow, not the truth;
+with `--go-live` they become the truth through go-live's own switch, in the
+same pause, and only if at least one checkpoint matched. `--go-live` is for
+a lost database: it refuses while the state row or any identity row is
+there, while the legacy subscription tables hold rows unless
+`--lost-database` is given, and for an opening the journal shows suspended.
+While the identity tables are suspended, writes land only in the
+legacy tables, with no journal, so after a suspend only `go-live`, which
+cuts from the legacy tables, switches again. `--opening --history`
+rehearses from local files. People's own changes come as signed records,
+journaled the same way (Signed changes, above). After the
+switch a comparison with the legacy dual write that isn't a MATCH alerts
+(`SUBSCRIPTIONS_TRUTH_COMPARISON_DIFF`).
+
+**Journal verifier.** A rebuild proves it repeats what live wrote, not that
+live wrote the right money. `timeline/journal-verify.ts` checks that, and
+`subscriptions:opening -- verify-journal` runs it on its own (exit 2 on a
+failure). For one opening:
+
+- each entry, from its own rows: a change's `before` and `after` are the
+  row its key names (`applyJournalBody` refuses any other); a top-up of a
+  positive amount moves the balance by it, rounded to five decimals, or
+  opens it at the amount; a redemption moves it by the mint price per
+  charge, and the redeemed counts by the charges; a fold sums the two
+  balances and moves only the wallet's history; no other kind changes a
+  balance, and no kind changes a table it may not;
+- across the journal: each balance's `before` is what the opening file or
+  the previous entry left; a choice changes only rows of its owner, of
+  any identity the opening file lists for the owner's key, or of one a
+  later fold moved it to; each top-up hash is credited once, and not
+  again after the opening file; no mint is charged more tokens than it
+  delivered, counting the opening's charges of that mint; a signed event
+  makes one choice; `n` increases in log order and every write has all its
+  parts, which repeat the same inputs except a redemption's charges: those
+  are spread across the parts, and the verifier takes their union in part
+  order;
+- each top-up against its transfer (sender, recipient, block, value) and
+  each mint against its receipt, through the backend's Ethereum client and
+  config, reading each block's top-ups and each receipt once;
+- when the record log source verifies signed records (`replayRecordLog`,
+  `replayedJournalSource`), each choice against its record in lane `subs`:
+  type, key and owner, and a body.
+
+`--no-ethereum` leaves Ethereum out, for rehearsals, and the output says
+what was not checked. A rebuild with `--go-live` refuses it. Without
+`--opening --history`, `verify-journal` fetches the opening file the
+journal names, as a rebuild does. In a rebuild, a failure, or a provider
+error that leaves the journal unchecked, alerts
+(`SUBSCRIPTIONS_JOURNAL_VERIFY_FAILED`) and stops it before it loads
+anything. `verify-journal` alerts on a failure and exits 2; a provider
+error ends it with exit 1. `verifyEntryMoney` is the per-entry part alone,
+and pure.
+
+**Switch.** The switch is one row, `subscriptions_id_state`, so one write
+moves every service. `subscriptions:opening -- go-live --signed-writes-live`
+does it in one step (`go-live.ts`). It refuses unless, for the last minted
+card, the last list comparison matched and at least one phase and one
+redemption comparison exist, with no shadow comparison of any kind
+differing since that card's first list. In the same window at least
+`SUBSCRIPTIONS_GO_LIVE_MIN_SIGNED_MATCHES` signed records (default 3) must
+have matched, and refused ones must stay under
+`SUBSCRIPTIONS_GO_LIVE_MAX_REFUSED_PERCENT` of the signed records compared
+(default 20): one bad header doesn't block the switch, but a signer failing
+for a group of people does. go-live prints the counts and the refusals by
+reason, and `--accept-report-diffs` overrides these as it does the other
+comparisons. go-live, a rebuild and the CLI's `load` each take the pause
+marker atomically and refuse while another run holds one younger than the
+switch window; each lifts only its own, so a run that outlived the window
+can't lift the pause of the run that took over. go-live then pauses the write routes (503), waits 10 s so a
+write that read its path just before the pause commits, cuts, verifies, loads, compares, publishes the files,
+sets the switch time with the journal's opening entry and reopens the
+routes, which then answer 409 to unsigned writes. The load keeps the pause
+marker; a marker older than the switch window (a go-live that died) is
+ignored, and `open-writes` deletes it. Each step checks that the cut is still inside the switch
+window, so a slow day stops early; on any failure the routes reopen and the
+legacy tables stay the truth. go-live refuses `--identities`: the truth is
+keyed by the identity mirror, as the writers are. The identity tables are
+the truth from the switch time while the load is verified and not
+suspended, and only for a cut taken at most 15 minutes before it. A missing
+state table or column (code deployed before the schema sync) reads as
+nothing loaded. `load` refuses to replace
+tables that are, or are set to become, the truth, and a cut whose redemption
+loop never ran. Readers re-read the row at least every 60 seconds, so
+`suspend` rolls every lambda back to the legacy tables within 60 seconds,
+about 2 minutes counting the API cache. Going forward again takes a new
+go-live. After the switch an unsigned change gets a 409, so go-live asks
+for `--signed-writes-live`: the site must sign the four changes by then.
 
 ## Cross-wave message search
 
@@ -3443,6 +4151,18 @@ ready. See `ops/runbooks/voting-credit-returns.md` for activation and rollback.
 
 Craft, subscription coverage and Help Bot calendar answers use the bundled, versioned Memes calendar instead of frontend HTTP calls. See [shared calendar maintenance](shared-memes-calendar.md) for canonical-source synchronization, rollout services and Athens/DST policy. Shared next/current/status queries also back the existing frontend API, preserving its routes and response shapes.
 
+### Drop Forge calendar and environment policy
+
+Launch planning imports the bundled [shared calendar](shared-memes-calendar.md), never
+a frontend endpoint. Accepted managed ledgers store the calendar version, timezone
+and UTC windows. Later code versions and Craft metadata updates preserve those windows.
+The manual Launch UI reads saved phase times for an accepted launch.
+
+`drop-forge.policy.ts` pins stage-specific network and contract bindings, receiver,
+confirmations and gas ceilings. Deployment supplies the stage to API/handlers/indexer;
+wallet/reporting identities remain in regional secrets. Launch and preparation keep
+independent environment switches and default-Off UI controls. Signed-intent recovery
+continues with launch execution Off. A receiver mismatch still blocks execution.
 ### NFT metadata history
 
 `nftHistoryLoop` discovers history by creator contract and verified extension events, independently of transaction sender. Claim initialization, zero-address ERC1155 mint logs (including public paid mints), URI logs, and claim updates share one ordered decoder/planner. Direct zero-value calls to the creator contracts cover eventless top-level `setTokenURI` writes. Creator-scoped claim mappings come from verified initialization receipts and historical claim state, never from an assumption that claim ID equals token ID. Scheduled ingestion starts at the verified metadata initialization. Existing baselines are preserved until a reviewed repair. Finalized blocks are processed in up to five 200-block windows per invocation, with discovery split into 20-block chunks. The checkpoint advances only after every source transaction in a block commits; retries begin at the next block and repeat all transactions of an interrupted block idempotently. Completed block prefixes survive time-budget exhaustion or later failures. A failed decode, missing earlier baseline, or metadata fetch prevents advancement past its block. Unlisted claim logs incidentally present in a mint receipt are ignored; audit-explicit unlisted logs remain failures for review. Mapping and history writes for one scheduled source transaction are atomic and insert-only for baselines.

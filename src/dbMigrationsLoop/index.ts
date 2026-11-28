@@ -38,6 +38,11 @@ import { dbSupplier } from '@/sql-executor';
 import { deleteUnusedViewerGroupSets } from '@/waves/viewer-group-sets';
 import { assertCompetitionSchemaSyncSafe } from '@/competitions/retired-competition-storage';
 import { MarketDepthPublicationLockEntity } from '@/entities/IMarketDepthPublicationLock';
+import { MarketDepthEventEntity } from '@/entities/IMarketDepth';
+import {
+  applyMarketDepthWalletActivityIndexes,
+  MARKET_DEPTH_WALLET_ACTIVITY_INDEXES_SCOPE
+} from './market-depth-wallet-activity-indexes';
 import { NFTHistoryReplayJobEntity } from '@/entities/INFTHistoryReplayJob';
 import { NFTHistoryEventEntity } from '@/entities/INFTHistoryEvent';
 import { DropEntity } from '@/entities/IDrop';
@@ -119,6 +124,7 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
       scope !== 'claims-media-upload' &&
       scope !== 'nft-link-page-retry' &&
       scope !== 'market-depth-publication-lock' &&
+      scope !== MARKET_DEPTH_WALLET_ACTIVITY_INDEXES_SCOPE &&
       scope !== 'voting-credit-returns' &&
       scope !== 'nft-history-events' &&
       scope !== 'nft-history-replay' &&
@@ -292,6 +298,21 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
     logger.info('[FINISHED MARKET DEPTH PUBLICATION LOCK SCHEMA]');
     return { schema_scope: scope };
   }
+  if (scope === MARKET_DEPTH_WALLET_ACTIVITY_INDEXES_SCOPE) {
+    const changedIndexes = await doInDbContext(
+      applyMarketDepthWalletActivityIndexes,
+      {
+        logger,
+        entities: [MarketDepthEventEntity],
+        syncEntities: false,
+        skipRedis: true
+      }
+    );
+    logger.info(
+      `[FINISHED MARKET DEPTH WALLET ACTIVITY INDEXES] changed_indexes=${changedIndexes}`
+    );
+    return { schema_scope: scope, changed_indexes: changedIndexes };
+  }
   if (scope === 'nft-link-page-retry') {
     await doInDbContext(
       async () => {
@@ -347,6 +368,7 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
           acknowledgedDestructivePlanSha256
         });
         await applyWaveScoreInputIndexSchema();
+        await applyMarketDepthWalletActivityIndexes();
       }
       if (
         !scheduledInvocation &&

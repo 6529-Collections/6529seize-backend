@@ -49,10 +49,14 @@ import {
 import { IdentitiesDb, identitiesDb } from '../identities/identities.db';
 import {
   assertIdentityNotFrozen,
+  assertIdentityNotFrozenAtCommit,
   isIdentityFrozen
 } from '../identity-freeze/identity-freeze';
 import { ids } from '../ids';
 import { Logger } from '../logging';
+import { isWavesFrozen, isWavesSwitchedOn } from '../waves-freeze/waves-freeze';
+import { assertWaveWritable } from '../waves-freeze/waves-freeze-scope';
+import { wavesScopeService } from '../waves-scope/waves-scope.service';
 import { metricsRecorder, MetricsRecorder } from '../metrics/MetricsRecorder';
 import { userNotifier } from '../notifications/user.notifier';
 import {
@@ -87,6 +91,37 @@ import {
 } from './ratings.db';
 
 const RATINGS_TRANSFER_PAGE_SIZE = 1000;
+
+/**
+ * Wave REP moves to the 6529 chain with its wave, so it freezes with it:
+ * while waves are frozen no wave REP on a moving wave is given here, and the
+ * chain imports it as it stood at the freeze. Wave REP on a wave that stays
+ * on 6529.io (the rating's matter_target_id is the wave id) can still be
+ * given. The over-rates loop is paused for all wave REP until the switch-on
+ * (isWaveRepOverRatePaused).
+ */
+async function assertWaveRepWritable(
+  request: Pick<UpdateRatingRequest, 'matter' | 'matter_target_id'>,
+  ctx: RequestContext
+): Promise<void> {
+  if (request.matter === RateMatter.WAVE_REP)
+    await assertWaveWritable(request.matter_target_id, ctx);
+}
+
+/**
+ * The over-rates loop leaves all wave REP alone while waves are frozen and
+ * not yet switched on, on moving and staying waves alike: it stands as it
+ * stood at the freeze. After the switch-on it reduces wave REP again, on
+ * staying waves only, against a tally of staying waves' wave REP only; a
+ * wave on the chain keeps its wave REP there.
+ */
+export function isWaveRepOverRatePaused(
+  matter: string,
+  frozen: boolean = isWavesFrozen(),
+  switchedOn: boolean = isWavesSwitchedOn()
+): boolean {
+  return matter === RateMatter.WAVE_REP && frozen && !switchedOn;
+}
 
 /**
  * REP and NIC (CIC) ratings move to the 6529 chain with the identities, so
@@ -159,6 +194,7 @@ export class RatingsService {
     request: UpdateRatingViaApiRequest,
     ctx: RequestContext
   ) {
+    await assertWaveRepWritable(request, ctx);
     try {
       ctx.timer?.start(`${this.constructor.name}->updateRating`);
       if (isIdentityRatingMatter(request.matter)) {
@@ -166,6 +202,9 @@ export class RatingsService {
       }
       return await this.ratingsDb.executeNativeQueriesInTransaction(
         async (connection) => {
+          if (isIdentityRatingMatter(request.matter)) {
+            assertIdentityNotFrozenAtCommit(connection);
+          }
           const { identityUpdates } = await this.updateRatingInternal(request, {
             ...ctx,
             connection
@@ -214,7 +253,8 @@ export class RatingsService {
           changeReason: 'USER_EDIT',
           proxyContext: null,
           connection: ctx.connection!,
-          timer: ctx.timer
+          timer: ctx.timer,
+          refuseFrozenWaveRep: true
         });
         return {
           identityUpdates: identityUpdate ? [identityUpdate] : []
@@ -237,7 +277,8 @@ export class RatingsService {
           changeReason: 'USER_EDIT',
           proxyContext,
           connection: ctx.connection!,
-          timer: ctx.timer
+          timer: ctx.timer,
+          refuseFrozenWaveRep: true
         });
         return {
           identityUpdates: identityUpdate ? [identityUpdate] : []
@@ -272,7 +313,8 @@ export class RatingsService {
     connection,
     skipCreditCheck,
     skipLogCreation,
-    timer
+    timer,
+    refuseFrozenWaveRep
   }: {
     request: UpdateRatingRequest;
     changeReason: string;
@@ -281,6 +323,11 @@ export class RatingsService {
     skipCreditCheck?: boolean;
     skipLogCreation?: boolean;
     timer?: Timer;
+    /**
+     * A rater's own rating: wave REP is refused once waves are frozen. The
+     * profile archival transfers leave it unset (they move wave REP).
+     */
+    refuseFrozenWaveRep?: boolean;
   }): Promise<UpdateRatingUnsafeResult> {
     try {
       timer?.start(`${this.constructor.name}->updateRatingUnsafe`);
@@ -299,6 +346,10 @@ export class RatingsService {
           connection
         );
       }
+      // updateRating checked the freeze before its transaction; the lock
+      // wait can pass the freeze, so check again before writing.
+      if (refuseFrozenWaveRep)
+        await assertWaveRepWritable(request, { timer, connection });
       timer?.start(
         `${this.constructor.name}->updateRatingUnsafe->ratinsDb->getRating`
       );
@@ -656,7 +707,7 @@ export class RatingsService {
     this.logger.info(`Reducing rates for profile ${raterProfileId}`);
     const waveRepTargetsToRefresh = new Set<string>();
     for (const overRatedMatter of profileMatters) {
-      const coefficient = overRatedMatter.rater_credit / overRatedMatter.tally;
+      if (isWaveRepOverRatePaused(overRatedMatter.matter)) continue;
       const changedWaveRepTargetIds =
         await this.ratingsDb.executeNativeQueriesInTransaction(
           async (connection) => {
@@ -670,6 +721,11 @@ export class RatingsService {
               connection
             );
             const changedWaveRepTargetIds: string[] = [];
+            // The lock wait can pass the freeze: wave REP then stays as it
+            // stood, and nothing is read or written.
+            if (isWaveRepOverRatePaused(overRatedMatter.matter)) {
+              return changedWaveRepTargetIds;
+            }
             const ratings = await this.ratingsDb.getRatingsOnMatter(
               {
                 rater_profile_id: raterProfileId,
@@ -677,11 +733,39 @@ export class RatingsService {
               },
               connection
             );
-            let overCredit =
-              Math.abs(overRatedMatter.tally) - overRatedMatter.rater_credit;
+            // After the switch-on, wave REP on a wave the chain holds is the
+            // chain's to judge. The tally counts staying waves' wave REP
+            // only, and only that is reduced, so a rater's REP on moved
+            // waves never drains their staying ratings.
+            const stayingOnly =
+              overRatedMatter.matter === RateMatter.WAVE_REP &&
+              isWavesSwitchedOn();
+            const movedWaveIds = stayingOnly
+              ? await wavesScopeService.movingWaveIds(
+                  ratings.map((rating) => rating.matter_target_id),
+                  { connection }
+                )
+              : new Set<string>();
+            const reducible = ratings.filter(
+              (rating) => !movedWaveIds.has(rating.matter_target_id)
+            );
+            const tally = stayingOnly
+              ? reducible.reduce(
+                  (sum, rating) => sum + Math.abs(rating.rating),
+                  0
+                )
+              : Math.abs(overRatedMatter.tally);
+            if (
+              tally === 0 ||
+              Math.floor(overRatedMatter.rater_credit) >= tally
+            ) {
+              return changedWaveRepTargetIds;
+            }
+            const coefficient = overRatedMatter.rater_credit / tally;
+            let overCredit = tally - overRatedMatter.rater_credit;
             const identityUpdates: IdentityUpdate[] = [];
 
-            for (const rating of ratings) {
+            for (const rating of reducible) {
               if (rating.rating !== 0) {
                 const newRating =
                   Math.floor(Math.abs(rating.rating * coefficient)) *
@@ -1135,6 +1219,9 @@ export class RatingsService {
     }
     const result = await this.ratingsDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        if (isIdentityRatingMatter(String(apiRequest.matter))) {
+          assertIdentityNotFrozenAtCommit(connection);
+        }
         const actingAsId = authContext.getActingAsId();
         if (!actingAsId) {
           throw new ForbiddenException(`Create a profile before you rate`);
@@ -1411,6 +1498,7 @@ export class RatingsService {
     );
     await this.identitiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        assertIdentityNotFrozenAtCommit(connection);
         const ctxWithConnection = { ...ctx, connection };
         // First lock of the transaction, before the rater's ratings are read.
         await this.ratingsDb.lockRaterCreditOnMatter(
