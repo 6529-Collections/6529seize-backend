@@ -1337,18 +1337,18 @@ reads with the flag off, and the response carries
 holds only while the mirror is fresh: it saved its state
 (`identity_chain_mirror_state`) within the last five minutes, and its tables
 are of the network the lookups' client last read (not compared before that
-client has read a head). The save time also moves when only the wallet
-bindings or the rating events follower saves, so a mirror whose identity
-sync fails run after run can still count as fresh. Otherwise the lookup
-answers 503 (`IDENTITY_READS_UNAVAILABLE`). Handle availability never falls
-back: a gateway failure there answers 503. A profile document that can't be
-read (bytes that don't decode, a CID that doesn't match) is left out: the
-identity is answered without it. Any other failure goes through as before.
-A login context with a profile is kept in memory for a minute on the
-instance, so a login answered from the mirror's tables can be reused for
-that minute without the header. Each fallback or 503 logs a WARN, at most
-one a minute per instance for each lookup kind and outcome, with the count
-since the last.
+client has read a head). Otherwise the lookup answers 503
+(`IDENTITY_READS_UNAVAILABLE`). The save time also moves when only the
+wallet bindings or the rating events follower saves, so a mirror whose
+identity sync fails run after run can still count as fresh. Handle
+availability never falls back: a gateway failure there answers 503. A
+profile document that can't be read (bytes that don't decode, a CID that
+doesn't match) is left out: the identity is answered without it. Any other
+failure goes through as before. A login context with a profile is kept in
+memory for a minute on the instance, so a login answered from the mirror's
+tables can be reused for that minute without the header. Each fallback or
+503 logs a WARN, at most one a minute per instance for each lookup kind and
+outcome, with the count since the last.
 The mirror's state row is read only with the flag on or on the fallback
 path, at most once per head time (`CHAIN_GATEWAY_HEAD_TTL_MS`) on each
 instance. With the flag off, the lookups make no gateway call and no
