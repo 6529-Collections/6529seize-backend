@@ -28,6 +28,7 @@ describe('api CORS constants', () => {
     expect(corsOptions.origin).toBe('*');
     expect(corsOptions).not.toHaveProperty('credentials');
     expect(corsOptions.exposedHeaders).toContain('X-Request-Id');
+    expect(corsOptions.exposedHeaders).toContain('X-6529-Identity-Source');
   });
 
   it('lets browsers send device-signed records with a write', () => {
@@ -44,13 +45,17 @@ describe('api CORS constants', () => {
   });
 
   it.each(['/api/identities/profile-id', '/API/E2EE/DEVICES/device-key/'])(
-    'exposes only the lookup cooldown and request id for %s',
+    'exposes only the lookup cooldown, request id and identity source for %s',
     (path) => {
       expect(
         getCorsOptionsForRequest(path, 'https://6529.io', 'api.6529.io')
       ).toEqual({
         ...corsOptions,
-        exposedHeaders: ['X-Request-Id', 'Retry-After']
+        exposedHeaders: [
+          'X-Request-Id',
+          'X-6529-Identity-Source',
+          'Retry-After'
+        ]
       });
     }
   );
@@ -275,7 +280,12 @@ describe('session refresh retry headers', () => {
       ).toMatchObject({
         origin: 'https://6529.io',
         credentials: true,
-        exposedHeaders: ['Retry-After', 'X-RateLimit-Reset', 'X-Request-Id']
+        exposedHeaders: [
+          'Retry-After',
+          'X-RateLimit-Reset',
+          'X-Request-Id',
+          'X-6529-Identity-Source'
+        ]
       });
     }
   );

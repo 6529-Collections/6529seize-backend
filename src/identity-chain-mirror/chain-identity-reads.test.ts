@@ -118,6 +118,8 @@ interface Choice {
   importDone?: number;
   /** No node holds the answer to whether the import took a placeholder. */
   legacyLookupNotHeld?: boolean;
+  /** No node holds the import's entry of an identity. */
+  importEntryNotHeld?: boolean;
   /** Handle-less identities rows (no handle, no profile, no principal). */
   handleless?: { consolidation_key: string; profile_id: string }[];
   /** When the mirror last saved its state (default: now). */
@@ -180,9 +182,14 @@ function setup({
     getMembershipWalletHistory: jest.fn(async (wallet: string) =>
       choice.history ? choice.history(wallet) : null
     ),
-    getImportedIdentity: jest.fn(async (p: string) =>
-      choice.imported?.has(p) ? { legacyId: choice.imported.get(p) } : null
-    ),
+    getImportedIdentity: jest.fn(async (p: string) => {
+      if (choice.importEntryNotHeld) {
+        throw new ChainGatewayError('not here', 404, 'not_held', '/v1');
+      }
+      return choice.imported?.has(p)
+        ? { legacyId: choice.imported.get(p) }
+        : null;
+    }),
     getHandle: jest.fn(async (h: string) => ({
       handle: h,
       valid: h !== 'x',
@@ -390,15 +397,26 @@ describe('ChainIdentityReads', () => {
     expect(left.gateway.getIdentityByLegacyProfileId).toHaveBeenCalledWith(
       ALICE
     );
-    // The node can't say whether the import took the profile: none.
+    // The node can't say whether the import took the profile: the gateway
+    // didn't answer, so the lookup is the mirror's tables', marked.
     const notHeld = setup({
       identities: new Map(),
       mapping: new Map(),
       rows: [unimported],
       choice: { legacyLookupNotHeld: true }
     });
-    expect(await notHeld.reads.byWallet(W(9))).toBeNull();
-    expect(await notHeld.reads.byHandle(`id-${W(9)}`)).toBeNull();
+    for (const lookup of [
+      () => notHeld.reads.byWallet(W(9)),
+      () => notHeld.reads.byHandle(`id-${W(9)}`)
+    ]) {
+      expect(
+        await loggerContext.run({}, async () => ({
+          answer: await lookup(),
+          source: loggerContext.get()?.identitySource
+        }))
+      ).toEqual({ answer: unimported, source: 'mirror' });
+    }
+    expect(notHeld.shadow.mirrorFallback).toHaveBeenCalledTimes(2);
   });
 
   it('finds an identity without a chain handle by its placeholder', async () => {
@@ -707,13 +725,6 @@ describe('ChainIdentityReads', () => {
         principalProfileId(Q)
       ],
       [
-        'no node holds whether the import took the placeholder',
-        made(),
-        { placeholders, legacyLookupNotHeld: true },
-        'none',
-        null
-      ],
-      [
         "the mirror's own bindings say first: the placeholder",
         made(),
         {
@@ -809,6 +820,42 @@ describe('ChainIdentityReads', () => {
         expect(warn).not.toHaveBeenCalled();
       } finally {
         warn.mockRestore();
+      }
+    });
+
+    it("falls back to the mirror's tables when no node holds the import's answer, never guessing an id", async () => {
+      const choices: Choice[] = [
+        // Whether the import took the founder's placeholder.
+        { placeholders, legacyLookupNotHeld: true },
+        // Its legacy id, asked of the import's entry.
+        { importEntryNotHeld: true }
+      ];
+      for (const choice of choices) {
+        const identity = made(
+          choice.importEntryNotHeld
+            ? { legacyId: undefined, createdHeight: 55 }
+            : {}
+        );
+        const { reads, mirrorStores, rowsDb } = setup({
+          identities: new Map([[Q, identity]]),
+          mapping: new Map(),
+          rows: [
+            row({
+              consolidation_key: W(7),
+              profile_id: 'p-7',
+              handle: `id-${W(7)}`,
+              normalised_handle: `id-${W(7)}`
+            })
+          ],
+          choice
+        });
+        await expect(reads.profileIdOf(identity)).rejects.toMatchObject({
+          code: 'not_held'
+        });
+        expect((await reads.byWallet(W(7)))?.profile_id).toBe('p-7');
+        expect(rowsDb.getIdentityByWallet).toHaveBeenLastCalledWith(W(7));
+        // The mirror's run tries again later.
+        expect(await mirrorStores(identity)).toBe('wait');
       }
     });
 
@@ -1154,5 +1201,74 @@ describe("ChainIdentityReads' gateway client", () => {
     // Compared by identity: printing a client reads its settings.
     expect(gateway === identityReadsGatewayClient).toBe(true);
     expect(gateway === chainGatewayClient).toBe(false);
+  });
+});
+
+describe("ChainIdentityReads: an identity's profile document", () => {
+  it("falls back to the mirror's tables when the gateway can't give the document", async () => {
+    for (const error of [
+      new ChainGatewayError('slow', null, 'timeout', '/v1/docs'),
+      new ChainGatewayError('down', 503, 'unavailable', '/v1/docs'),
+      new ChainGatewayError('not the store', 404, 'bad_answer', '/v1/docs')
+    ]) {
+      const { reads, gateway, rowsDb, shadow } = setup();
+      gateway.getProfileDoc.mockRejectedValue(error);
+      const answer = await loggerContext.run({}, async () => ({
+        identity: await reads.byWallet(W(2)),
+        source: loggerContext.get()?.identitySource
+      }));
+      // The index's row as it is, not the chain's identity without its
+      // picture, banners, classification and display name.
+      expect(answer).toEqual({ identity: row(), source: 'mirror' });
+      expect(rowsDb.getIdentityByWallet).toHaveBeenLastCalledWith(W(2));
+      expect(shadow.mirrorFallback).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('answers 503 when the document fails and the mirror is stale', async () => {
+    const { reads, gateway } = setup({
+      choice: { mirrorSavedAt: 1_000_000 - MIRROR_FRESH_MS - 1 }
+    });
+    gateway.getProfileDoc.mockRejectedValue(
+      new ChainGatewayError('slow', null, 'timeout', '/v1/docs')
+    );
+    await expect(reads.byWallet(W(2))).rejects.toThrow(
+      CustomApiCompliantException
+    );
+  });
+
+  it("leaves out a document that can't be read, with one WARN a minute", async () => {
+    const warn = jest
+      .spyOn(Logger.get('CHAIN_IDENTITY_READS'), 'warn')
+      .mockImplementation(() => undefined);
+    try {
+      const { reads, gateway, rowsDb, tick } = setup();
+      // Bytes that aren't a profile document, then a CID that doesn't match.
+      gateway.getProfileDoc
+        .mockResolvedValueOnce(Buffer.from('not a document'))
+        .mockRejectedValueOnce(
+          new ChainGatewayError('mismatch', 200, 'cid_mismatch', '/v1/docs')
+        )
+        .mockResolvedValueOnce(Buffer.from('not a document'));
+      for (let i = 0; i < 2; i++) {
+        const identity = await reads.byWallet(W(2));
+        expect(identity).toMatchObject({
+          profile_id: ALICE,
+          handle: 'alice',
+          pfp: null,
+          banner1: null,
+          classification: null
+        });
+      }
+      expect(rowsDb.getIdentityByWallet).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain('UNREADABLE');
+      tick(60_000);
+      await reads.byWallet(W(2));
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect(warn.mock.calls[1][0]).toContain('[2 SINCE THE LAST LINE]');
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

@@ -326,7 +326,9 @@ export type ProfileIdChoiceGateway = Pick<
  * ProfileIds.profileIdOf), from the chain and the mirror's tables, which it
  * only reads (its table type has no write). This class is a read's, for an
  * identity the mirror hasn't mapped: what the mirror's own state can't
- * decide it leaves undecided (ChainReadRetryLater), and its gateway type
+ * decide it leaves undecided (ChainReadRetryLater; readOnlyProfileId throws
+ * a gateway answer another node may give as the gateway's error), and its
+ * gateway type
  * has no read one node could answer otherwise than the node the mirror's
  * runs get (a wallet's history, the anchor's binding now).
  * MirrorProfileIdChoice, the mirror's own, decides those from the gateway.
@@ -538,14 +540,20 @@ export class ProfileIdChoice {
 
   /**
    * The profile id the mirror will store for an identity it hasn't mapped,
-   * or null while that can't be told from its own state.
+   * or null while that can't be told from its own state. A gateway answer
+   * another node may give (not_held, bad_answer) is thrown as the gateway's
+   * error: the gateway didn't answer, which the caller handles (the identity
+   * reads answer from the mirror's tables), never a guess at the id.
    */
   async readOnlyProfileId(identity: ChainIdentity): Promise<string | null> {
     try {
       const chosen = await this.choose(identity);
       return 'unknowable' in chosen ? null : chosen.profileId;
     } catch (error) {
-      if (error instanceof ChainReadRetryLater) return null;
+      if (error instanceof ChainReadRetryLater) {
+        if (error.gatewayError) throw error.gatewayError;
+        return null;
+      }
       throw error;
     }
   }

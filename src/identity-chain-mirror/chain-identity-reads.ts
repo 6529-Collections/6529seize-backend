@@ -27,7 +27,6 @@ import {
   identityReadsShadow,
   IdentityReadsShadow
 } from './identity-reads-shadow';
-import { isAnotherNodesToGive } from './mirror-errors';
 import { ProfileIdChoice, ProfileIdChoiceDb } from './profile-ids';
 import {
   decodeProfileDoc,
@@ -301,6 +300,14 @@ export class ChainIdentityReads {
     return done;
   }
 
+  /**
+   * The identity's profile document. When the gateway can't answer
+   * (isGatewayUnavailable) the error goes to the lookup, which answers from
+   * the mirror's tables (orMirror), never an identity without its
+   * document. A document that can't be read (bytes that don't decode, a
+   * CID that doesn't match) is left out: the identity without it, and a
+   * WARN at most once a minute.
+   */
   private async docOf(
     identity: ChainIdentity
   ): Promise<ProfileDocFields | null> {
@@ -310,8 +317,12 @@ export class ChainIdentityReads {
       const bytes = await this.gateway.getProfileDoc(cid);
       return bytes ? toProfileDocFields(decodeProfileDoc(bytes)) : null;
     } catch (error) {
-      logger.warn(
-        `[PROFILE DOC ${cid} OF ${identity.principalId} UNREADABLE] ${(error as Error)?.message ?? error}`
+      if (isGatewayUnavailable(error)) throw error;
+      const message = (error as Error)?.message ?? String(error);
+      this.warnAtMostEveryMinute(
+        'profile doc',
+        (count) =>
+          `[PROFILE DOC ${cid} OF ${identity.principalId} UNREADABLE] [${message}] [${count} SINCE THE LAST LINE]`
       );
       return null;
     }
@@ -485,7 +496,21 @@ export class ChainIdentityReads {
     error: ChainGatewayError,
     why: string | null
   ) {
-    const key = `${outcome} ${kind}`;
+    const what =
+      outcome === 'mirror' ? 'ANSWERED FROM THE MIRROR' : 'ANSWERED 503';
+    const status = error.status === null ? '' : ` ${error.status}`;
+    this.warnAtMostEveryMinute(
+      `${outcome} ${kind}`,
+      (count) =>
+        `[IDENTITY LOOKUP ${what}] [${kind}] [GATEWAY ${error.code}${status}]${why ? ` [${why}]` : ''} [${count} SINCE THE LAST LINE]`
+    );
+  }
+
+  /**
+   * A WARN line at most once a minute on this instance for `key`, with the
+   * count of events since the last line (this one included).
+   */
+  private warnAtMostEveryMinute(key: string, line: (count: number) => string) {
     const now = this.now();
     const entry = this.warned.get(key) ?? {
       at: Number.NEGATIVE_INFINITY,
@@ -494,12 +519,7 @@ export class ChainIdentityReads {
     entry.count++;
     this.warned.set(key, entry);
     if (now - entry.at < WARN_EVERY_MS) return;
-    const what =
-      outcome === 'mirror' ? 'ANSWERED FROM THE MIRROR' : 'ANSWERED 503';
-    const status = error.status === null ? '' : ` ${error.status}`;
-    logger.warn(
-      `[IDENTITY LOOKUP ${what}] [${kind}] [GATEWAY ${error.code}${status}]${why ? ` [${why}]` : ''} [${entry.count} SINCE THE LAST LINE]`
-    );
+    logger.warn(line(entry.count));
     entry.at = now;
     entry.count = 0;
   }
@@ -527,8 +547,7 @@ export class ChainIdentityReads {
     const principal = await this.mapping.principalOfProfile(row.profile_id);
     const owner = principal
       ? await this.gateway.getIdentityByPrincipal(principal)
-      : await this.importedFrom(row.profile_id);
-    if (owner === undefined) return null;
+      : await this.gateway.getIdentityByLegacyProfileId(row.profile_id);
     if (owner) {
       return this.isLive(owner) ? await this.toIdentityEntity(owner) : null;
     }
@@ -560,6 +579,8 @@ export class ChainIdentityReads {
    * else nothing: an identity imported from the row's profile is the
    * chain's, reached through it, and the row is a stale one.
    * `importAsked`: the caller has asked the import for the row's profile.
+   * A node that can't say whether the import took the profile (not_held,
+   * bad_answer) fails the lookup like any gateway failure: orMirror.
    */
   private async unmapped(
     row: IdentityEntity | null,
@@ -568,26 +589,13 @@ export class ChainIdentityReads {
     if (!row) return null;
     if (!row.profile_id) return row;
     if (await this.mapping.principalOfProfile(row.profile_id)) return null;
-    if (!importAsked && (await this.importedFrom(row.profile_id)) !== null) {
+    if (
+      !importAsked &&
+      (await this.gateway.getIdentityByLegacyProfileId(row.profile_id)) !== null
+    ) {
       return null;
     }
     return row;
-  }
-
-  /**
-   * The identity the import made from a 6529.io profile, null when none;
-   * undefined when the node that answered doesn't hold the import (another
-   * may): the lookup then answers none rather than a row that may be stale.
-   */
-  private async importedFrom(
-    profileId: string
-  ): Promise<ChainIdentity | null | undefined> {
-    try {
-      return await this.gateway.getIdentityByLegacyProfileId(profileId);
-    } catch (error) {
-      if (isAnotherNodesToGive(error)) return undefined;
-      throw error;
-    }
   }
 
   /**

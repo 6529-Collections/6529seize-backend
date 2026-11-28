@@ -1,8 +1,8 @@
 import express from 'express';
 import { AddressInfo } from 'node:net';
 import { loggerContext } from '@/logger-context';
+import { IDENTITY_SOURCE_HEADER } from '@/api/api-constants';
 import {
-  IDENTITY_SOURCE_HEADER,
   identitySourceHeaderMiddleware,
   requestLogMiddleware
 } from '@/api/request-log.middleware';

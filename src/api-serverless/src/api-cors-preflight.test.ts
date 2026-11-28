@@ -80,7 +80,7 @@ describe('identity lookup retry headers', () => {
       expect(response.status).toBe(429);
       expect(response.headers.get('retry-after')).toBe('17');
       expect(response.headers.get('access-control-expose-headers')).toBe(
-        'X-Request-Id,Retry-After'
+        'X-Request-Id,X-6529-Identity-Source,Retry-After'
       );
       expect(response.headers.get('access-control-allow-origin')).toBe('*');
       expect(
@@ -122,10 +122,10 @@ describe('idempotent API submission preflights', () => {
       expect(
         response.headers.get('access-control-allow-credentials')
       ).toBeNull();
-      // Public routes expose only the request id (C52 request ids), never
+      // Public routes expose the request id and the identity source, never
       // the credentialed auth headers.
       expect(response.headers.get('access-control-expose-headers')).toBe(
-        'X-Request-Id'
+        'X-Request-Id,X-6529-Identity-Source'
       );
       expect(downstream).not.toHaveBeenCalled();
     }
@@ -328,7 +328,7 @@ describe('preflight cache lifetime', () => {
     expect(response.status).toBe(401);
     expect(response.headers.get('access-control-allow-origin')).toBe('*');
     expect(response.headers.get('access-control-expose-headers')).toBe(
-      'X-Request-Id'
+      'X-Request-Id,X-6529-Identity-Source'
     );
     expect(response.headers.get('access-control-max-age')).toBeNull();
     expect(downstream).toHaveBeenCalledTimes(1);

@@ -1,4 +1,5 @@
 import { NextFunction, Request, Response } from 'express';
+import { IDENTITY_SOURCE_HEADER } from '@/api/api-constants';
 import { isCmsAgentRequest } from '@/api/profile-cms/profile-cms-agent.http';
 import { ids } from '@/ids';
 import { Logger } from '@/logging';
@@ -13,9 +14,6 @@ import { Time, Timer } from '@/time';
 const requestLogger = Logger.get('API_REQUEST');
 
 export const REQUEST_ID_HEADER = 'X-Request-Id';
-
-/** On a response that used an identity answered from the mirror's tables. */
-export const IDENTITY_SOURCE_HEADER = 'X-6529-Identity-Source';
 
 type ApiGatewayRequest = Request & {
   readonly apiGateway?: {

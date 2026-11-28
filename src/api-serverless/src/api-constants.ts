@@ -6,6 +6,11 @@ import {
 } from './web-app-origins';
 export const ACCESS_CONTROL_ALLOW_ORIGIN_HEADER = 'Access-Control-Allow-Origin';
 export const CONTENT_TYPE_HEADER = 'Content-Type';
+/**
+ * On a response that used an identity lookup answered from the identity
+ * mirror's tables (identitySourceHeaderMiddleware); exposed to browsers.
+ */
+export const IDENTITY_SOURCE_HEADER = 'X-6529-Identity-Source';
 export const JSON_HEADER_VALUE = 'application/json';
 export const DEFAULT_PAGE_SIZE = 50;
 export const NFTS_PAGE_SIZE = 101;
@@ -38,8 +43,9 @@ export const corsOptions: ApiCorsOptions = {
     // Device-signed records that travel with a write (signed-records module).
     'x-6529-signed-records'
   ],
-  // Lets web clients read the id that matches a response to server logs.
-  exposedHeaders: ['X-Request-Id'],
+  // Lets web clients read the id that matches a response to server logs,
+  // and whether its identities came from the mirror's tables.
+  exposedHeaders: ['X-Request-Id', IDENTITY_SOURCE_HEADER],
   maxAge: CORS_PREFLIGHT_MAX_AGE_SECONDS
 };
 
@@ -83,7 +89,7 @@ export function getCorsOptionsForRequest(
         'If-Match',
         'Idempotency-Key'
       ],
-      exposedHeaders: ['ETag', 'X-Request-Id']
+      exposedHeaders: ['ETag', 'X-Request-Id', IDENTITY_SOURCE_HEADER]
     };
   }
   if (
@@ -110,7 +116,12 @@ export function getCorsOptionsForRequest(
     ...corsOptions,
     origin,
     credentials: true,
-    exposedHeaders: ['Retry-After', 'X-RateLimit-Reset', 'X-Request-Id']
+    exposedHeaders: [
+      'Retry-After',
+      'X-RateLimit-Reset',
+      'X-Request-Id',
+      IDENTITY_SOURCE_HEADER
+    ]
   };
 }
 
