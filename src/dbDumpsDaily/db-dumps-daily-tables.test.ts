@@ -23,4 +23,20 @@ describe('dbDumpsDaily tables', () => {
       'tableName'
     ]);
   });
+
+  it('reads only the reviewed tables, and the mirror state that names their height, for the manifest', () => {
+    const source = readFileSync(join(__dirname, 'db-dumps-sources.ts'), 'utf8');
+    const queried = Array.from(source.matchAll(/FROM \$\{(\w+)\}/g)).map(
+      (m) => m[1]
+    );
+    expect(
+      Array.from(new Set(queried)).sort((a, b) => a.localeCompare(b))
+    ).toEqual([
+      'CONSOLIDATIONS_TABLE',
+      'DELEGATIONS_TABLE',
+      'MIRROR_STATE_TABLE',
+      'NFTDELEGATION_BLOCKS_TABLE',
+      'TRANSACTIONS_TABLE'
+    ]);
+  });
 });

@@ -1,4 +1,5 @@
 import { refreshTransactionUsdAtWrite } from '@/eth-prices/transaction-usd';
+import { appFeatures } from '@/app-features';
 import 'reflect-metadata';
 import {
   SchemaSyncOptions,
@@ -1119,14 +1120,34 @@ export interface NftVolumes {
   total_volume: number;
 }
 
+/**
+ * The 24 hour, 7 day and 1 month volume sums. With
+ * FEATURE_ETH_INDEX_REBUILD_FIXES they count by block time (transaction_date).
+ * By default they count by created_at, the time the row was written, which an
+ * upsert or a rebuild of the transactions index resets.
+ */
+function volumeWindowsSql(): string {
+  const at = appFeatures.isEthIndexRebuildFixesEnabled()
+    ? 'transaction_date'
+    : 'created_at';
+  return [
+    ['24 HOUR', 'total_volume_last_24_hours'],
+    ['7 DAY', 'total_volume_last_7_days'],
+    ['1 MONTH', 'total_volume_last_1_month']
+  ]
+    .map(
+      ([interval, name]) =>
+        `SUM(CASE WHEN ${at} >= DATE_SUB(NOW(), INTERVAL ${interval}) THEN value ELSE 0 END) AS ${name},`
+    )
+    .join(' ');
+}
+
 export async function findVolume(
   nft_id: number,
   contract: string
 ): Promise<NftVolumes> {
   const sql = `SELECT
-      SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) THEN value ELSE 0 END) AS total_volume_last_24_hours,
-      SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN value ELSE 0 END) AS total_volume_last_7_days,
-      SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 1 MONTH) THEN value ELSE 0 END) AS total_volume_last_1_month,
+      ${volumeWindowsSql()}
       SUM(value) AS total_volume
     FROM ${TRANSACTIONS_TABLE}
     WHERE token_id =:token_id and contract =:contract;`;
@@ -1142,9 +1163,7 @@ export async function findVolumesForContract(
 ): Promise<Map<number, NftVolumes>> {
   const sql = `SELECT
       token_id,
-      SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) THEN value ELSE 0 END) AS total_volume_last_24_hours,
-      SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN value ELSE 0 END) AS total_volume_last_7_days,
-      SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 1 MONTH) THEN value ELSE 0 END) AS total_volume_last_1_month,
+      ${volumeWindowsSql()}
       SUM(value) AS total_volume
     FROM ${TRANSACTIONS_TABLE}
     WHERE contract =:contract

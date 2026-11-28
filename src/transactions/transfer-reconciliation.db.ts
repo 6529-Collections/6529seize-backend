@@ -138,6 +138,33 @@ export class TransferReconciliationDb extends LazyDbAccessCompatibleService {
   }
 
   /**
+   * Asks one consumer to recompute these wallets. A wallet already waiting
+   * is left as it is, with its place and its revision, so a run that has
+   * read it and acknowledges it doesn't process it a second time.
+   */
+  async enqueueIfAbsent(
+    wallets: string[],
+    consumer: TransferConsumer,
+    ctx: RequestContext = {}
+  ): Promise<void> {
+    if (!wallets.length) return;
+    const insertMissing = (connectionCtx: RequestContext) =>
+      // No update columns: INSERT IGNORE keeps an existing row untouched.
+      this.db.bulkUpsert(
+        TRANSFER_RECONCILIATIONS_TABLE,
+        requests(wallets, [consumer]),
+        ['consumer', 'wallet', 'revision', 'requested_at'],
+        [],
+        connectionCtx,
+        { chunkSize: BATCH_SIZE }
+      );
+    if (ctx.connection) return insertMissing(ctx);
+    await this.db.executeNativeQueriesInTransaction(async (connection) => {
+      await insertMissing({ ...ctx, connection });
+    });
+  }
+
+  /**
    * Puts wallets back at the tail of one consumer's queue. Deleting their
    * rows first gives them a new enqueue_order, so wallets that keep coming
    * back never hold the head of the queue and block the wallets behind them.
