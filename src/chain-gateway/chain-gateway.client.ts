@@ -66,7 +66,9 @@ import {
  * Settings (environment or the shared secret): CHAIN_GATEWAY_URL (required at
  * first use), CHAIN_GATEWAY_SERVICE_KEY (the service bearer key),
  * CHAIN_GATEWAY_TIMEOUT_MS, CHAIN_GATEWAY_RETRIES, CHAIN_GATEWAY_HEAD_TTL_MS,
- * CHAIN_GATEWAY_CACHE_ENTRIES.
+ * CHAIN_GATEWAY_CACHE_ENTRIES; the identity lookups' own client
+ * (identityReadsGatewayClient) takes its retries and timeout from
+ * CHAIN_GATEWAY_IDENTITY_RETRIES and CHAIN_GATEWAY_IDENTITY_TIMEOUT_MS.
  */
 
 const logger = Logger.get('CHAIN_GATEWAY');
@@ -139,6 +141,17 @@ function isHttpUrl(text: string): boolean {
   }
 }
 
+/**
+ * CHAIN_GATEWAY_HEAD_TTL_MS: how long the client keeps the head (default
+ * 2,000 ms). Read without the rest, so code that only needs the head's
+ * window (counting, caching) never needs the gateway configured.
+ */
+export function chainGatewayHeadTtlMs(
+  env: Record<string, string | undefined> = process.env
+): number {
+  return intOr(env.CHAIN_GATEWAY_HEAD_TTL_MS, 2_000);
+}
+
 export function chainGatewayConfigFromEnv(
   env: Record<string, string | undefined> = process.env
 ): ChainGatewayConfig {
@@ -187,7 +200,7 @@ export function chainGatewayConfigFromEnv(
     // 0 would abort every request at once.
     timeoutMs: intOr(env.CHAIN_GATEWAY_TIMEOUT_MS, 10_000) || 10_000,
     retries: intOr(env.CHAIN_GATEWAY_RETRIES, 3),
-    headTtlMs: intOr(env.CHAIN_GATEWAY_HEAD_TTL_MS, 2_000),
+    headTtlMs: chainGatewayHeadTtlMs(env),
     cacheEntries: intOr(env.CHAIN_GATEWAY_CACHE_ENTRIES, 10_000)
   };
 }
@@ -1077,6 +1090,14 @@ export class ChainGatewayClient {
 
   private now(): number {
     return (this.config().now ?? Date.now)();
+  }
+
+  /**
+   * The network of the last head this client read, without reading one;
+   * null before its first.
+   */
+  lastSeenNetwork(): string | null {
+    return this.head?.value.network ?? null;
   }
 
   /** Drops the cached head and answers (tests, or after a long pause). */
@@ -2833,3 +2854,29 @@ export class ChainGatewayClient {
 
 /** The backend's one gateway client (settings read at first use). */
 export const chainGatewayClient = new ChainGatewayClient();
+
+/**
+ * The settings of the identity lookups' own client: the environment's
+ * (same URL, key, head time and cache size), with a budget for a lookup a
+ * request waits on: CHAIN_GATEWAY_IDENTITY_RETRIES (default 1) and
+ * CHAIN_GATEWAY_IDENTITY_TIMEOUT_MS (default 3,000 ms).
+ */
+export function identityReadsGatewayConfigFromEnv(
+  env: Record<string, string | undefined> = process.env
+): ChainGatewayConfig {
+  return {
+    ...chainGatewayConfigFromEnv(env),
+    retries: intOr(env.CHAIN_GATEWAY_IDENTITY_RETRIES, 1),
+    // 0 would abort every request at once.
+    timeoutMs: intOr(env.CHAIN_GATEWAY_IDENTITY_TIMEOUT_MS, 3_000) || 3_000
+  };
+}
+
+/**
+ * The client of the identity lookups (src/identity-chain-mirror/
+ * chain-identity-reads.ts), with their own retries and timeout. Relayed
+ * submits and every other reader use chainGatewayClient.
+ */
+export const identityReadsGatewayClient = new ChainGatewayClient(() =>
+  identityReadsGatewayConfigFromEnv()
+);

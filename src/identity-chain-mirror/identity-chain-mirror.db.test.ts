@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { sqlExecutor } from '@/sql-executor';
+import { DbPoolName } from '@/db-query.options';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
 import { aProfile, withProfiles } from '@/tests/fixtures/profile.fixture';
@@ -162,19 +163,28 @@ describeWithSeed(
       );
       expect(await db.mirrorChainState()).toEqual({
         chainId: null,
-        placeholdersAt: null
+        placeholdersAt: null,
+        updatedAt: 9
       });
       await db.saveState(
         { ...saved, chain_id: 'chain', placeholders_at: 7 },
         10
       );
-      // The chain and the placeholders' listing alone, without the rest.
+      // The chain, the placeholders' listing and the last save alone,
+      // without the rest.
       expect(await db.mirrorChainState()).toEqual({
         chainId: 'chain',
-        placeholdersAt: 7
+        placeholdersAt: 7,
+        updatedAt: 10
       });
       await inTx((conn) => db.insertMapping(P, ALICE, 'LEGACY', 1, conn));
       expect(await db.profileIdOfPrincipal(P)).toBe(ALICE);
+      // Asked of the writer, as the reads ask right after a choice.
+      expect(
+        await db.profileIdOfPrincipal(P, undefined, {
+          forcePool: DbPoolName.WRITE
+        })
+      ).toBe(ALICE);
       expect(await db.principalOfProfile(ALICE)).toBe(P);
       expect(await db.principalsOfWallets([B])).toEqual([P]);
     });

@@ -1298,6 +1298,101 @@ team's is pinned (`SWITCH_ON_RECORD_PINS`), planned rows until then; and TDH
 on identities rows (`tdh`, `basetdh_rate`), which only the TDH loop writes,
 column plans until the TDH area's `tdh.chain-days` writes those columns.
 
+#### Identity lookups from the chain
+
+`FEATURE_IDENTITY_READS_FROM_CHAIN` moves the lookups of one identity onto
+the chain: by wallet, handle and profile id in the identity fetcher, the
+login context (`getAuthenticationContext`, on every HTTP method) and handle
+availability. `ChainIdentityReads`
+(`src/identity-chain-mirror/chain-identity-reads.ts`) reads them through the
+gateway and answers in 6529.io's identity row shape. The flag merges off and
+stays off at switch-on: with it off, these lookups read the `identities`
+table, which the mirror keeps from the chain, about a minute behind. It is
+turned on later, after a day of the shadow counter's figures (below) and the
+gateway's capacity checks.
+
+To turn it off, set `FEATURE_IDENTITY_READS_FROM_CHAIN` to `false` in the
+API Lambda's own environment: read the function's current environment,
+change that one key, and write the whole environment back (a write of that
+one variable alone replaces all the others). New invocations get new
+instances within about a minute. Never put the flag in the shared Lambda
+secret: the secret is loaded over the environment at cold start, reaches only
+new instances, and would switch the flag on for the other Lambdas that run
+the same code.
+
+The lookups have their own gateway client (`identityReadsGatewayClient`):
+the same URL, key, head time and cache size as `chainGatewayClient`, with
+`CHAIN_GATEWAY_IDENTITY_RETRIES` (default 1) and
+`CHAIN_GATEWAY_IDENTITY_TIMEOUT_MS` (default 3,000 ms), so a request waits
+less on a gateway that doesn't answer. Relayed submits and every other
+reader keep the process-wide client and its settings.
+
+When the gateway can't answer a lookup by wallet, handle or profile id (a
+network error, a timeout, `not_held`, `height_gone`, `bad_answer`,
+`wrong_network`, or HTTP 429, 500, 502, 503 or 504), the lookup is answered
+from the `identities` table, the rows it reads with the flag off, and the
+response carries `X-6529-Identity-Source: mirror`. This holds only while the
+mirror is fresh: it saved its state (`identity_chain_mirror_state`) within
+the last five minutes, and its tables are of the network the lookups' client
+last read (not compared before that client has read a head). Otherwise the
+lookup answers 503 (`IDENTITY_READS_UNAVAILABLE`). Handle availability never
+falls back: a gateway failure there answers 503. Any other failure goes
+through as before. Each fallback or 503 logs a WARN, at most one a minute per
+instance for each lookup kind and outcome, with the count since the last.
+The mirror's state row is read only with the flag on or on the fallback
+path, at most once per head time (`CHAIN_GATEWAY_HEAD_TTL_MS`) on each
+instance. With the flag off, the lookups make no gateway call and no
+database read they didn't make before.
+
+The shadow counter (`src/identity-chain-mirror/identity-reads-shadow.ts`)
+says what the lookups would ask the gateway, with the flag off or on. Each of
+the five call sites notes the lookup's kind (`login`, `by_wallet`,
+`by_handle`, `by_profile_id`, `availability`) and key, in memory only: no
+gateway call, no database read. A lookup is a would-send when its kind and
+key weren't seen on the instance in the current head window (the client
+answers a repeat from its cache), and counts two for a placeholder handle
+(`id-0x...`). Each window with any would-send adds one head read, which
+`would_send` includes. Once a minute each instance logs one line, written by
+the first lookup after the minute ends (there are no timers):
+
+```
+[IDENTITY READS SHADOW] window_start=2026-11-28T10:41:00.000Z window_s=60 flag=off login=12 by_wallet=3 by_handle=40 by_profile_id=7 availability=1 would_send=55 head_reads=4 head_ttl_ms=2000 mirror_fallbacks=0 mirror_503=0
+```
+
+The figures are estimates. An instance's last minute before it is shut down
+isn't logged. A lookup may need more than one read (a profile document, an
+identity the mirror hasn't mapped yet). With the flag off, handle
+availability also runs the fetcher's handle lookup (and the wallet's, when
+signed in), which are counted too, though with the flag on it asks the chain
+once.
+
+To read a day of it, run this in CloudWatch Logs Insights on the API
+Lambda's log group over 24 hours. Each line gives one instance's counts for
+one minute; the first `stats` adds the instances up for each minute, and the
+second gives the median, p95 and max per second over the day. Minutes
+without any lookup have no line and aren't counted.
+
+```sql
+filter @message like /\[IDENTITY READS SHADOW\]/
+| parse @message /window_start=(?<window_start>\S+) window_s=(?<window_s>\d+) flag=(?<flag>\w+) login=(?<login>\d+) by_wallet=(?<by_wallet>\d+) by_handle=(?<by_handle>\d+) by_profile_id=(?<by_profile_id>\d+) availability=(?<availability>\d+) would_send=(?<would_send>\d+) head_reads=(?<head_reads>\d+) head_ttl_ms=(?<head_ttl_ms>\d+) mirror_fallbacks=(?<mirror_fallbacks>\d+) mirror_503=(?<mirror_503>\d+)/
+| fields (login + by_wallet + by_handle + by_profile_id + availability) / window_s as lookups_per_s,
+    would_send / window_s as sends_per_s,
+    head_reads / window_s as head_reads_per_s
+| stats sum(lookups_per_s) as lookups, sum(sends_per_s) as sends,
+    sum(head_reads_per_s) as heads by window_start
+| stats pct(lookups, 50) as lookups_per_s_median,
+    pct(lookups, 95) as lookups_per_s_p95,
+    max(lookups) as lookups_per_s_max,
+    pct(sends, 50) as sends_per_s_median,
+    pct(sends, 95) as sends_per_s_p95,
+    max(sends) as sends_per_s_max,
+    max(heads) as head_reads_per_s_max,
+    count(*) as minutes
+```
+
+`sends_per_s_*` is the figure for the gateway's capacity check: the requests
+a second the lookups would send with the flag on, head reads included.
+
 ### Ordinary Ethereum RPC boundary
 
 The shared provider in `src/ethereum-rpc/` reads the server-only

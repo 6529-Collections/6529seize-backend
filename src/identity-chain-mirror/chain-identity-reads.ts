@@ -1,13 +1,17 @@
 import {
   ChainGatewayClient,
-  chainGatewayClient
+  ChainGatewayError,
+  chainGatewayHeadTtlMs,
+  identityReadsGatewayClient
 } from '@/chain-gateway/chain-gateway.client';
 import { ChainIdentity } from '@/chain-gateway/chain-gateway.types';
 import { appFeatures } from '@/app-features';
 import { IdentityEntity } from '@/entities/IIdentity';
 import { ProfileClassification } from '@/entities/IProfile';
 import { enums } from '@/enums';
+import { CustomApiCompliantException } from '@/exceptions';
 import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
+import { loggerContext } from '@/logger-context';
 import { Logger } from '@/logging';
 import {
   identityChainMirrorDb,
@@ -19,6 +23,10 @@ import {
   placeholderHandle
 } from './identity-plan';
 import { DbPoolName } from '@/db-query.options';
+import {
+  identityReadsShadow,
+  IdentityReadsShadow
+} from './identity-reads-shadow';
 import { isAnotherNodesToGive } from './mirror-errors';
 import { ProfileIdChoice, ProfileIdChoiceDb } from './profile-ids';
 import {
@@ -40,6 +48,7 @@ type Gateway = Pick<
   | 'getMembership'
   | 'getHead'
   | 'getImportedIdentity'
+  | 'lastSeenNetwork'
 >;
 
 /**
@@ -49,6 +58,53 @@ type Gateway = Pick<
  */
 type MirrorDb = ProfileIdChoiceDb &
   Pick<IdentityChainMirrorDb, 'mirrorChainState'>;
+
+type MirrorChainState = Awaited<ReturnType<MirrorDb['mirrorChainState']>>;
+
+/**
+ * How recently the mirror must have saved its state for a lookup to be
+ * answered from its tables while the gateway can't answer.
+ */
+export const MIRROR_FRESH_MS = 5 * 60 * 1000;
+
+/** At most one WARN line a minute per lookup kind and outcome. */
+const WARN_EVERY_MS = 60_000;
+
+const UNAVAILABLE_CODES = new Set([
+  'network',
+  'timeout',
+  'not_held',
+  'height_gone',
+  'bad_answer',
+  'wrong_network'
+]);
+const UNAVAILABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+
+/**
+ * A gateway failure a lookup may answer around (from the mirror's tables,
+ * or a 503): the gateway or its node couldn't answer now. Anything else (a
+ * refusal of the request, a setting missing) propagates.
+ */
+export function isGatewayUnavailable(
+  error: unknown
+): error is ChainGatewayError {
+  return (
+    error instanceof ChainGatewayError &&
+    (UNAVAILABLE_CODES.has(error.code) ||
+      (error.status !== null && UNAVAILABLE_STATUSES.has(error.status)))
+  );
+}
+
+/** The 503 a lookup answers when neither the chain nor the mirror can. */
+function identitiesUnavailable(message: string): CustomApiCompliantException {
+  return new CustomApiCompliantException(
+    503,
+    message,
+    'IDENTITY_READS_UNAVAILABLE'
+  );
+}
+
+type FallbackKind = 'by_wallet' | 'by_handle' | 'by_profile_id';
 
 function heightOf(value: unknown): number | null {
   const n = Number(value);
@@ -85,7 +141,12 @@ function toNumber(value: string | number | null | undefined): number {
  * TDH and xTDH (the TDH loops') and the profile id mapping come from
  * 6529.io's index tables, which the identity mirror rebuilds from the chain.
  * A profile or wallet the chain does not hold (a profile that was never
- * imported) is answered from those tables as before.
+ * imported) is answered from those tables as before. While the gateway
+ * can't answer, a lookup is answered from those tables too, as with the
+ * flag off, if the mirror is fresh (orMirror); handle availability then
+ * answers 503. The reads use their own gateway client
+ * (identityReadsGatewayClient: CHAIN_GATEWAY_IDENTITY_RETRIES and
+ * CHAIN_GATEWAY_IDENTITY_TIMEOUT_MS).
  */
 export class ChainIdentityReads {
   /**
@@ -93,20 +154,61 @@ export class ChainIdentityReads {
    * (it doesn't change then; a relaunch is another network).
    */
   private readonly importsDone = new Map<string, { done: number | null }>();
+  /** The mirror's state, kept for the gateway's head time. */
+  private mirrorState: {
+    at: number;
+    value: Promise<MirrorChainState>;
+  } | null = null;
+  /** The WARN lines' last time and the events since, by kind and outcome. */
+  private readonly warned = new Map<string, { at: number; count: number }>();
 
   constructor(
-    private readonly gateway: Gateway = chainGatewayClient,
+    private readonly gateway: Gateway = identityReadsGatewayClient,
     private readonly mapping: MappingDb = identityChainMirrorDb,
     private readonly rows: RowsDb = identitiesDb,
-    private readonly mirror: MirrorDb = identityChainMirrorDb
+    private readonly mirror: MirrorDb = identityChainMirrorDb,
+    private readonly options: {
+      readonly now?: () => number;
+      readonly headTtlMs?: () => number;
+      readonly shadow?: IdentityReadsShadow;
+    } = {}
   ) {}
+
+  private now(): number {
+    return (this.options.now ?? Date.now)();
+  }
+
+  private get shadow(): IdentityReadsShadow {
+    return this.options.shadow ?? identityReadsShadow;
+  }
+
+  /**
+   * The mirror's state row (its chain, its placeholders' listing, its last
+   * save), read at most once per gateway head time
+   * (CHAIN_GATEWAY_HEAD_TTL_MS) on this instance, not once per lookup; a
+   * failed read isn't kept.
+   */
+  private async mirrorChainState(): Promise<MirrorChainState> {
+    const now = this.now();
+    const ttl = (this.options.headTtlMs ?? chainGatewayHeadTtlMs)();
+    if (!this.mirrorState || now - this.mirrorState.at >= ttl) {
+      const value = this.mirror.mirrorChainState();
+      const kept = { at: now, value };
+      this.mirrorState = kept;
+      value.catch(() => {
+        if (this.mirrorState === kept) this.mirrorState = null;
+      });
+    }
+    return await this.mirrorState.value;
+  }
 
   /**
    * The 6529.io profile id the identity's rows use: its mapping, else the
    * id the identity mirror will store for it, chosen as the mirror chooses
-   * (ProfileIdChoice, read only: legacy id, the founding wallet's
-   * placeholder when the mirror's own bindings say it is that wallet's
-   * first identity, else the derived id). Null while the mirror's tables
+   * (ProfileIdChoice, read only: legacy id, the handle-less row's id under
+   * its own consolidation key, the founding wallet's placeholder when the
+   * mirror's own bindings say it is that wallet's first identity, else the
+   * derived id). Null while the mirror's tables
    * aren't of the chain the gateway serves now or haven't listed the
    * placeholder profiles, or while the choice can't be made from the
    * mirror's own state: the identity is then answered as none, never with
@@ -156,7 +258,7 @@ export class ChainIdentityReads {
    */
   private async mirroredNetwork(): Promise<string | null | false> {
     const [state, head] = await Promise.all([
-      this.mirror.mirrorChainState(),
+      this.mirrorChainState(),
       this.gateway.getHead()
     ]);
     const network = head.network?.toLowerCase() ?? null;
@@ -291,9 +393,118 @@ export class ChainIdentityReads {
    * profile-ids.ts files an imported identity under its legacy id, which
    * is that old row), but the mirror writes no rows for an identity that
    * isn't active, so the row is stale. Only a wallet the chain holds no
-   * identity for is answered from the index (unmapped).
+   * identity for is answered from the index (unmapped). While the gateway
+   * can't answer: orMirror.
    */
   async byWallet(wallet: string): Promise<IdentityEntity | null> {
+    return await this.orMirror(
+      'by_wallet',
+      () => this.chainByWallet(wallet),
+      () => this.rows.getIdentityByWallet(wallet)
+    );
+  }
+
+  /** The identity of a handle (see byWallet for the gateway failing). */
+  async byHandle(handle: string): Promise<IdentityEntity | null> {
+    return await this.orMirror(
+      'by_handle',
+      () => this.chainByHandle(handle),
+      () => this.rows.getIdentityByHandle(handle, {})
+    );
+  }
+
+  /** The identity of a profile id (see byWallet for the gateway failing). */
+  async byProfileId(profileId: string): Promise<IdentityEntity | null> {
+    return await this.orMirror(
+      'by_profile_id',
+      () => this.chainByProfileId(profileId),
+      () => this.rows.getIdentityByProfileId(profileId.toLowerCase())
+    );
+  }
+
+  /**
+   * A lookup from the chain; when the gateway can't answer
+   * (isGatewayUnavailable), from 6529.io's identities table instead: the
+   * rows the lookup reads with the flag off, which the identity mirror keeps
+   * from the chain, about a minute behind. Such a response carries
+   * `X-6529-Identity-Source: mirror` (identitySourceHeaderMiddleware). Only
+   * while the mirror is fresh (mirrorStaleness); otherwise a 503. Either
+   * way a WARN line (at most one a minute per kind and outcome, with the
+   * count since the last) and the shadow line's counts.
+   */
+  private async orMirror(
+    kind: FallbackKind,
+    fromChain: () => Promise<IdentityEntity | null>,
+    fromMirror: () => Promise<IdentityEntity | null>
+  ): Promise<IdentityEntity | null> {
+    try {
+      return await fromChain();
+    } catch (error) {
+      if (!isGatewayUnavailable(error)) throw error;
+      const stale = await this.mirrorStaleness();
+      if (stale !== null) {
+        this.shadow.mirror503();
+        this.warn('503', kind, error, stale);
+        throw identitiesUnavailable(
+          "Identities can't be read right now. Try again in a minute."
+        );
+      }
+      const answer = await fromMirror();
+      loggerContext.setIdentitySource('mirror');
+      this.shadow.mirrorFallback();
+      this.warn('mirror', kind, error, null);
+      return answer;
+    }
+  }
+
+  /**
+   * Why the mirror's tables can't stand in for the chain now, or null when
+   * they can: the mirror saved its state within MIRROR_FRESH_MS of now, and
+   * its tables are of the network this instance's gateway client last read
+   * (not compared before the client has read a head).
+   */
+  private async mirrorStaleness(): Promise<string | null> {
+    const state = await this.mirrorChainState();
+    if (state?.updatedAt === null || state?.updatedAt === undefined) {
+      return 'NO MIRROR STATE';
+    }
+    const age = this.now() - state.updatedAt;
+    if (Math.abs(age) > MIRROR_FRESH_MS) {
+      return `MIRROR SAVED ${Math.round(age / 1000)} S AGO`;
+    }
+    const seen = this.gateway.lastSeenNetwork();
+    if (seen !== null && state.chainId?.toLowerCase() !== seen.toLowerCase()) {
+      return `MIRROR OF ${state.chainId}, GATEWAY ON ${seen}`;
+    }
+    return null;
+  }
+
+  private warn(
+    outcome: 'mirror' | '503',
+    kind: FallbackKind | 'availability',
+    error: ChainGatewayError,
+    why: string | null
+  ) {
+    const key = `${outcome} ${kind}`;
+    const now = this.now();
+    const entry = this.warned.get(key) ?? {
+      at: Number.NEGATIVE_INFINITY,
+      count: 0
+    };
+    entry.count++;
+    this.warned.set(key, entry);
+    if (now - entry.at < WARN_EVERY_MS) return;
+    const what =
+      outcome === 'mirror' ? 'ANSWERED FROM THE MIRROR' : 'ANSWERED 503';
+    const status = error.status === null ? '' : ` ${error.status}`;
+    logger.warn(
+      `[IDENTITY LOOKUP ${what}] [${kind}] [GATEWAY ${error.code}${status}]${why ? ` [${why}]` : ''} [${entry.count} SINCE THE LAST LINE]`
+    );
+    entry.at = now;
+    entry.count = 0;
+  }
+
+  private async chainByWallet(wallet: string): Promise<IdentityEntity | null> {
     const identity = await this.gateway.getIdentityByWallet(wallet);
     if (identity) {
       return this.isLive(identity)
@@ -303,7 +514,7 @@ export class ChainIdentityReads {
     return await this.unmapped(await this.rows.getIdentityByWallet(wallet));
   }
 
-  async byHandle(handle: string): Promise<IdentityEntity | null> {
+  private async chainByHandle(handle: string): Promise<IdentityEntity | null> {
     const identity = await this.gateway.getIdentityByHandle(handle);
     if (this.isLive(identity)) return await this.toIdentityEntity(identity);
     if (!isPlaceholderHandle(handle)) return null;
@@ -324,7 +535,9 @@ export class ChainIdentityReads {
     return principal ? null : row;
   }
 
-  async byProfileId(profileId: string): Promise<IdentityEntity | null> {
+  private async chainByProfileId(
+    profileId: string
+  ): Promise<IdentityEntity | null> {
     const id = profileId.toLowerCase();
     const principal = await this.mapping.principalOfProfile(id);
     const identity = principal
@@ -377,11 +590,25 @@ export class ChainIdentityReads {
     }
   }
 
-  /** The chain's answer on a handle: free to claim now, or why not. */
+  /**
+   * The chain's answer on a handle: free to claim now, or why not. Never
+   * from the mirror: while the gateway can't answer (isGatewayUnavailable),
+   * a 503.
+   */
   async handleAvailability(
     handle: string
   ): Promise<{ available: boolean; message: string }> {
-    const answer = await this.gateway.getHandle(handle);
+    let answer: Awaited<ReturnType<Gateway['getHandle']>>;
+    try {
+      answer = await this.gateway.getHandle(handle);
+    } catch (error) {
+      if (!isGatewayUnavailable(error)) throw error;
+      this.shadow.mirror503();
+      this.warn('503', 'availability', error, null);
+      throw identitiesUnavailable(
+        "Handles can't be checked right now. Try again in a minute."
+      );
+    }
     if (!answer || !answer.valid) {
       return {
         available: false,

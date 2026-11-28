@@ -1,10 +1,20 @@
-import { ChainGatewayError } from '@/chain-gateway/chain-gateway.client';
+import {
+  chainGatewayClient,
+  ChainGatewayError,
+  identityReadsGatewayClient
+} from '@/chain-gateway/chain-gateway.client';
 import { DbPoolName } from '@/db-query.options';
 import { ChainIdentity } from '@/chain-gateway/chain-gateway.types';
 import { IdentityEntity } from '@/entities/IIdentity';
 import { ProfileClassification } from '@/entities/IProfile';
+import { CustomApiCompliantException } from '@/exceptions';
+import { loggerContext } from '@/logger-context';
 import { Logger } from '@/logging';
-import { ChainIdentityReads } from './chain-identity-reads';
+import {
+  chainIdentityReads,
+  ChainIdentityReads,
+  MIRROR_FRESH_MS
+} from './chain-identity-reads';
 import { FirstBinding } from './identity-chain-mirror.db';
 import { principalProfileId } from './identity-plan';
 import { ProfileIds } from './profile-ids';
@@ -110,7 +120,14 @@ interface Choice {
   legacyLookupNotHeld?: boolean;
   /** Handle-less identities rows (no handle, no profile, no principal). */
   handleless?: { consolidation_key: string; profile_id: string }[];
+  /** When the mirror last saved its state (default: now). */
+  mirrorSavedAt?: number | null;
+  /** The network the reads' gateway client last read (default: none). */
+  lastSeen?: string | null;
 }
+
+/** The reads' clock; the gateway's head time is 2,000 ms. */
+const HEAD_TTL = 2_000;
 
 function setup({
   identities = new Map<string, ChainIdentity>([[P, chainIdentity()]]),
@@ -174,8 +191,10 @@ function setup({
       principalId: null,
       since: null,
       reservedUntil: null
-    }))
+    })),
+    lastSeenNetwork: jest.fn(() => choice.lastSeen ?? null)
   };
+  const clock = { now: 1_000_000 };
   const mappingDb = {
     profileIdOfPrincipal: jest.fn(async (p: string) => mapping.get(p) ?? null),
     principalOfProfile: jest.fn(
@@ -232,9 +251,12 @@ function setup({
     founderDecided: jest.fn(readOnly),
     mirrorChainState: jest.fn(async () => ({
       chainId: choice.mirrorChain === undefined ? 'chain' : choice.mirrorChain,
-      placeholdersAt: (choice.placeholdersListed ?? true) ? 1 : null
+      placeholdersAt: (choice.placeholdersListed ?? true) ? 1 : null,
+      updatedAt:
+        choice.mirrorSavedAt === undefined ? clock.now : choice.mirrorSavedAt
     }))
   };
+  const shadow = { mirrorFallback: jest.fn(), mirror503: jest.fn() };
   /**
    * What the mirror's run stores for the identity in the same state: its
    * profileIdOf, with the import's heights the run reads, over a copy of
@@ -279,10 +301,22 @@ function setup({
       gateway as never,
       mappingDb as never,
       rowsDb as never,
-      mirrorDb as never
+      mirrorDb as never,
+      {
+        now: () => clock.now,
+        headTtlMs: () => HEAD_TTL,
+        shadow: shadow as never
+      }
     ),
     gateway,
     mirrorDb,
+    rowsDb,
+    shadow,
+    clock,
+    /** Past the head time: the mirror's state is read again. */
+    tick: (ms = HEAD_TTL) => {
+      clock.now += ms;
+    },
     mirrorStores
   };
 }
@@ -780,11 +814,15 @@ describe('ChainIdentityReads', () => {
 
     it("answers no mapping of the old chain's across a relaunch", async () => {
       const choice: Choice = { network: 'relaunched' };
-      const { reads, mirrorDb } = setup({ choice });
+      const { reads, mirrorDb, tick } = setup({ choice });
       expect(await reads.profileIdOf(chainIdentity())).toBeNull();
       expect(mirrorDb.profileIdOfPrincipal).not.toHaveBeenCalled();
       choice.mirrorChain = 'relaunched';
+      // Within the head time the mirror's state isn't read again.
+      expect(await reads.profileIdOf(chainIdentity())).toBeNull();
+      tick();
       expect(await reads.profileIdOf(chainIdentity())).toBe(ALICE);
+      expect(mirrorDb.mirrorChainState).toHaveBeenCalledTimes(2);
     });
 
     it('answers the mapping the mirror makes while the read chooses', async () => {
@@ -883,7 +921,7 @@ describe('ChainIdentityReads', () => {
         mirrorChain: 'old',
         imported: new Map([[Q, ALICE]])
       };
-      const { reads, mirrorStores } = setup({
+      const { reads, mirrorStores, tick } = setup({
         identities: new Map([[Q, identity]]),
         mapping: new Map(),
         choice
@@ -898,6 +936,7 @@ describe('ChainIdentityReads', () => {
       choice.mirrorChain = 'new';
       choice.importStart = 150;
       choice.importDone = 200;
+      tick();
       expect(await reads.profileIdOf(identity)).toBe(ALICE);
       expect(await mirrorStores(identity)).toBe(ALICE);
     });
@@ -913,5 +952,207 @@ describe('ChainIdentityReads', () => {
     expect((await reads.handleAvailability('x')).message).toContain(
       'Invalid username'
     );
+  });
+});
+
+describe("ChainIdentityReads while the gateway can't answer", () => {
+  const unavailable = (code: string, status: number | null = null) =>
+    new ChainGatewayError(`gateway ${code}`, status, code, '/v1/identities');
+
+  /** Every gateway read fails with `error`; the index has Alice's row. */
+  function failing(error: unknown, choice: Choice = {}) {
+    const ctx = setup({ choice });
+    for (const read of [
+      ctx.gateway.getIdentityByWallet,
+      ctx.gateway.getIdentityByHandle,
+      ctx.gateway.getIdentityByPrincipal,
+      ctx.gateway.getIdentityByLegacyProfileId,
+      ctx.gateway.getHandle,
+      ctx.gateway.getHead
+    ]) {
+      (read as jest.Mock).mockRejectedValue(error);
+    }
+    return ctx;
+  }
+
+  /** The lookup's answer, and whether the request was marked. */
+  async function inRequest<T>(lookup: () => Promise<T>) {
+    return await loggerContext.run({}, async () => {
+      const answer = await lookup();
+      return { answer, source: loggerContext.get()?.identitySource };
+    });
+  }
+
+  it.each<[string, number | null]>([
+    ['network', null],
+    ['timeout', null],
+    ['not_held', 404],
+    ['height_gone', 410],
+    ['bad_answer', 200],
+    ['wrong_network', 200],
+    ['rate_limited', 429],
+    ['internal', 500],
+    ['http_502', 502],
+    ['not_ready', 503],
+    ['http_504', 504]
+  ])(
+    "answers from the mirror's tables, as with the flag off, on %s (%s)",
+    async (code, status) => {
+      const { reads, rowsDb, shadow } = failing(unavailable(code, status));
+      expect(await inRequest(() => reads.byWallet(W(2)))).toEqual({
+        answer: row(),
+        source: 'mirror'
+      });
+      expect(rowsDb.getIdentityByWallet).toHaveBeenLastCalledWith(W(2));
+      expect(await inRequest(() => reads.byHandle('Alice'))).toEqual({
+        answer: row(),
+        source: 'mirror'
+      });
+      expect(rowsDb.getIdentityByHandle).toHaveBeenLastCalledWith('Alice', {});
+      expect(
+        await inRequest(() => reads.byProfileId(ALICE.toUpperCase()))
+      ).toEqual({ answer: row(), source: 'mirror' });
+      expect(rowsDb.getIdentityByProfileId).toHaveBeenLastCalledWith(ALICE);
+      expect(shadow.mirrorFallback).toHaveBeenCalledTimes(3);
+      expect(shadow.mirror503).not.toHaveBeenCalled();
+    }
+  );
+
+  it('lets any other failure through, reading nothing else', async () => {
+    for (const error of [
+      new ChainGatewayError('refused', 400, 'bad_request', '/v1/identities'),
+      new ChainGatewayError('no URL', null, 'not_configured', ''),
+      new Error('something else')
+    ]) {
+      const { reads, rowsDb, mirrorDb, shadow } = failing(error);
+      await expect(reads.byWallet(W(2))).rejects.toBe(error);
+      await expect(reads.byHandle('alice')).rejects.toBe(error);
+      await expect(reads.handleAvailability('free')).rejects.toBe(error);
+      expect(rowsDb.getIdentityByWallet).not.toHaveBeenCalled();
+      expect(rowsDb.getIdentityByHandle).not.toHaveBeenCalled();
+      expect(mirrorDb.mirrorChainState).not.toHaveBeenCalled();
+      expect(shadow.mirrorFallback).not.toHaveBeenCalled();
+      expect(shadow.mirror503).not.toHaveBeenCalled();
+    }
+  });
+
+  it("answers 503 when the mirror hasn't saved its state in five minutes", async () => {
+    const now = 1_000_000;
+    const fresh = failing(unavailable('timeout'), {
+      mirrorSavedAt: now - MIRROR_FRESH_MS
+    });
+    expect((await inRequest(() => fresh.reads.byWallet(W(2)))).source).toBe(
+      'mirror'
+    );
+    const stale = failing(unavailable('timeout'), {
+      mirrorSavedAt: now - MIRROR_FRESH_MS - 1
+    });
+    const refused = await inRequest(() =>
+      stale.reads.byWallet(W(2)).catch((error: unknown) => error)
+    );
+    expect(refused.source).toBeUndefined();
+    expect(refused.answer).toBeInstanceOf(CustomApiCompliantException);
+    expect(
+      (refused.answer as CustomApiCompliantException).getStatusCode()
+    ).toBe(503);
+    expect(stale.rowsDb.getIdentityByWallet).not.toHaveBeenCalled();
+    expect(stale.shadow.mirror503).toHaveBeenCalledTimes(1);
+    expect(stale.shadow.mirrorFallback).not.toHaveBeenCalled();
+    // No state at all: 503 too.
+    const none = failing(unavailable('timeout'));
+    none.mirrorDb.mirrorChainState.mockResolvedValue(null as never);
+    await expect(none.reads.byProfileId(ALICE)).rejects.toThrow(
+      CustomApiCompliantException
+    );
+    expect(none.rowsDb.getIdentityByProfileId).not.toHaveBeenCalled();
+  });
+
+  it("answers 503 when the mirror's tables aren't of the network the client last read", async () => {
+    const other = failing(unavailable('network'), { lastSeen: 'other' });
+    await expect(other.reads.byHandle('alice')).rejects.toThrow(
+      "Identities can't be read right now"
+    );
+    expect(other.rowsDb.getIdentityByHandle).not.toHaveBeenCalled();
+    // The same network, or none read yet: the mirror's tables.
+    for (const lastSeen of ['CHAIN', null]) {
+      const ok = failing(unavailable('network'), { lastSeen });
+      expect(await ok.reads.byHandle('alice')).toEqual(row());
+    }
+  });
+
+  it('answers 503 for handle availability, never from the mirror', async () => {
+    const { reads, rowsDb, mirrorDb, shadow } = failing(unavailable('timeout'));
+    const refused = await reads
+      .handleAvailability('free')
+      .catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(CustomApiCompliantException);
+    expect((refused as CustomApiCompliantException).getStatusCode()).toBe(503);
+    expect((refused as Error).message).toBe(
+      "Handles can't be checked right now. Try again in a minute."
+    );
+    expect(rowsDb.getIdentityByHandle).not.toHaveBeenCalled();
+    expect(mirrorDb.mirrorChainState).not.toHaveBeenCalled();
+    expect(shadow.mirror503).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs at most one WARN a minute per kind and outcome, with the count since the last', async () => {
+    const warn = jest
+      .spyOn(Logger.get('CHAIN_IDENTITY_READS'), 'warn')
+      .mockImplementation(() => undefined);
+    try {
+      const { reads, tick } = failing(unavailable('timeout'));
+      await reads.byWallet(W(2));
+      await reads.byWallet(W(2));
+      await reads.byHandle('alice');
+      tick(30_000);
+      await reads.byWallet(W(2));
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect(warn.mock.calls[0][0]).toBe(
+        '[IDENTITY LOOKUP ANSWERED FROM THE MIRROR] [by_wallet] [GATEWAY timeout] [1 SINCE THE LAST LINE]'
+      );
+      expect(warn.mock.calls[1][0]).toContain('[by_handle]');
+      tick(30_000);
+      await reads.byWallet(W(2));
+      expect(warn).toHaveBeenCalledTimes(3);
+      expect(warn.mock.calls[2][0]).toContain(
+        '[by_wallet] [GATEWAY timeout] [3 SINCE THE LAST LINE]'
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+describe("ChainIdentityReads: the mirror's state", () => {
+  it('is read once per head time, not once per lookup', async () => {
+    const { reads, mirrorDb, tick } = setup();
+    expect((await reads.byWallet(W(2)))?.profile_id).toBe(ALICE);
+    expect((await reads.byHandle('alice'))?.profile_id).toBe(ALICE);
+    expect((await reads.byProfileId(ALICE))?.profile_id).toBe(ALICE);
+    expect(mirrorDb.mirrorChainState).toHaveBeenCalledTimes(1);
+    tick(HEAD_TTL - 1);
+    await reads.byWallet(W(2));
+    expect(mirrorDb.mirrorChainState).toHaveBeenCalledTimes(1);
+    tick(1);
+    await reads.byWallet(W(2));
+    expect(mirrorDb.mirrorChainState).toHaveBeenCalledTimes(2);
+  });
+
+  it('is read again after a failed read', async () => {
+    const { reads, mirrorDb } = setup();
+    mirrorDb.mirrorChainState.mockRejectedValueOnce(new Error('db down'));
+    await expect(reads.byWallet(W(2))).rejects.toThrow('db down');
+    expect((await reads.byWallet(W(2)))?.profile_id).toBe(ALICE);
+    expect(mirrorDb.mirrorChainState).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("ChainIdentityReads' gateway client", () => {
+  it("is the identity lookups' own, not the process-wide one", () => {
+    const gateway = (chainIdentityReads as unknown as { gateway: unknown })
+      .gateway;
+    // Compared by identity: printing a client reads its settings.
+    expect(gateway === identityReadsGatewayClient).toBe(true);
+    expect(gateway === chainGatewayClient).toBe(false);
   });
 });

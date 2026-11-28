@@ -13,6 +13,12 @@ export interface LoggerContextValue {
   requestId?: string;
   jwtSub?: string;
   sql?: RequestSqlTotals;
+  /**
+   * 'mirror' once an identity lookup of this request was answered from the
+   * identity mirror's tables because the chain gateway couldn't answer
+   * (ChainIdentityReads); the response then says so in a header.
+   */
+  identitySource?: 'mirror';
 }
 
 const storage = new AsyncLocalStorage<LoggerContextValue>();
@@ -34,6 +40,12 @@ export const loggerContext = {
     const store = storage.getStore();
     if (store) {
       store.jwtSub = jwtSub;
+    }
+  },
+  setIdentitySource(source: 'mirror') {
+    const store = storage.getStore();
+    if (store) {
+      store.identitySource = source;
     }
   }
 };

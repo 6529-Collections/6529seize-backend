@@ -51,6 +51,7 @@ import {
   chainIdentityReads,
   identityReadsFromChain
 } from '@/identity-chain-mirror/chain-identity-reads';
+import { identityReadsShadow } from '@/identity-chain-mirror/identity-reads-shadow';
 
 const router = asyncRouter();
 
@@ -102,6 +103,7 @@ router.get(
         message: `Invalid username. Use 3-15 letters, numbers, or underscores.`
       });
     }
+    identityReadsShadow.note('availability', proposedHandle);
     if (identityReadsFromChain()) {
       // Handles are claimed on the 6529 chain: its rule decides.
       return res

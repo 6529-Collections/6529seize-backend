@@ -33,6 +33,7 @@ import {
   chainIdentityReads,
   identityReadsFromChain
 } from '@/identity-chain-mirror/chain-identity-reads';
+import { identityReadsShadow } from '@/identity-chain-mirror/identity-reads-shadow';
 
 export type CommunityMemberMinimalSearchSort = 'level';
 
@@ -493,6 +494,7 @@ export class IdentityFetcher {
     handle: string,
     ctx: RequestContext
   ): Promise<ApiIdentity | null> {
+    identityReadsShadow.note('by_handle', handle);
     const identity = identityReadsFromChain()
       ? await chainIdentityReads.byHandle(handle)
       : await this.identitiesDb.getIdentityByHandle(handle, ctx);
@@ -506,6 +508,7 @@ export class IdentityFetcher {
     id: string,
     ctx: RequestContext
   ): Promise<ApiIdentity | null> {
+    identityReadsShadow.note('by_profile_id', id);
     const identity = identityReadsFromChain()
       ? await chainIdentityReads.byProfileId(id)
       : await this.identitiesDb.getIdentityByProfileId(id, ctx.connection);
@@ -553,6 +556,7 @@ export class IdentityFetcher {
     ctx: RequestContext
   ): Promise<ApiIdentity | null> {
     const wallet = query.toLowerCase();
+    identityReadsShadow.note('by_wallet', wallet);
     const identity = identityReadsFromChain()
       ? await chainIdentityReads.byWallet(wallet)
       : await this.identitiesDb.getIdentityByWallet(wallet, ctx.connection);
