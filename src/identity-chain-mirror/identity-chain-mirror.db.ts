@@ -19,6 +19,7 @@ import {
   RATINGS_TABLE,
   USE_CASE_CONSOLIDATION
 } from '@/constants';
+import { DbPoolName } from '@/db-query.options';
 import { HELP_BOT_CREDIT_CATEGORY } from '@/help-bot/help-bot.config';
 import {
   ConnectionWrapper,
@@ -422,14 +423,20 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
 
   // ---------------------------------------------------------------- mapping
 
+  /**
+   * The profile id a principal is mapped to; null when it has none. A
+   * caller that must see a mapping made a moment ago asks the writer
+   * (`forcePool: DbPoolName.WRITE`): a read replica may not have it yet.
+   */
   async profileIdOfPrincipal(
     principalId: string,
-    conn?: Conn
+    conn?: Conn,
+    options: { forcePool?: DbPoolName } = {}
   ): Promise<string | null> {
     const row = await this.db.oneOrNull<{ profile_id: string }>(
       `select profile_id from ${IDENTITY_CHAIN_PRINCIPALS_TABLE} where principal_id = :principalId`,
       { principalId },
-      conn ? { wrappedConnection: conn } : undefined
+      conn ? { wrappedConnection: conn } : { forcePool: options.forcePool }
     );
     return row?.profile_id ?? null;
   }

@@ -283,7 +283,6 @@ export class ProfileIdChoice {
   constructor(
     private readonly gateway: ProfileIdChoiceGateway,
     private readonly db: ProfileIdChoiceDb,
-    protected readonly importStart: number | null,
     private readonly importDone: number | null
   ) {}
 
@@ -345,12 +344,12 @@ export class ProfileIdChoice {
   }
 
   /**
-   * The wallet that made the identity: the gateway's founder field; until
-   * the gateway gives it, the anchor when it has been bound to the identity
-   * since its creation; else none. Its placeholder goes to this identity
-   * only when it is the first the wallet was ever bound to (firstBoundTo),
-   * so that a wallet that made two identities gives it to the first
-   * whatever order a rebuild reads them in.
+   * The wallet that made the identity: the gateway's founder field; without
+   * it, foundingWalletWithoutFounder (here undecided; the mirror's own
+   * choice takes the anchor). Its placeholder goes to this identity only
+   * when it is the first the wallet was ever bound to (firstBoundTo), so
+   * that a wallet that made two identities gives it to the first whatever
+   * order a rebuild reads them in.
    */
   async foundingWalletOf(identity: ChainIdentity): Promise<string | null> {
     if (identity.founder) return identity.founder.toLowerCase();
@@ -461,10 +460,10 @@ export class MirrorProfileIdChoice extends ProfileIdChoice {
   constructor(
     private readonly mirrorGateway: Gateway,
     db: ProfileIdChoiceDb,
-    importStart: number | null,
+    private readonly importStart: number | null,
     importDone: number | null
   ) {
-    super(mirrorGateway, db, importStart, importDone);
+    super(mirrorGateway, db, importDone);
   }
 
   /**

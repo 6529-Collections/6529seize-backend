@@ -18,6 +18,8 @@ import {
   isPlaceholderHandle,
   placeholderHandle
 } from './identity-plan';
+import { DbPoolName } from '@/db-query.options';
+import { isAnotherNodesToGive } from './mirror-errors';
 import { ProfileIdChoice, ProfileIdChoiceDb } from './profile-ids';
 import {
   decodeProfileDoc,
@@ -87,13 +89,10 @@ function toNumber(value: string | number | null | undefined): number {
  */
 export class ChainIdentityReads {
   /**
-   * The import's heights by network, once it completed there (they don't
-   * change then; a relaunch is another network).
+   * The height the import ended at, by network, once it completed there
+   * (it doesn't change then; a relaunch is another network).
    */
-  private readonly imports = new Map<
-    string,
-    { start: number | null; done: number | null }
-  >();
+  private readonly importsDone = new Map<string, { done: number | null }>();
 
   constructor(
     private readonly gateway: Gateway = chainGatewayClient,
@@ -120,14 +119,25 @@ export class ChainIdentityReads {
     if (network !== false) {
       profileId = await this.mapping.profileIdOfPrincipal(principalId);
       if (profileId === null) {
-        const chosen = await this.chosenProfileId(identity, network);
-        // The mirror may have mapped it meanwhile, taking the placeholder
-        // the choice would then no longer see: its mapping wins.
-        profileId =
-          chosen === null
-            ? null
-            : ((await this.mapping.profileIdOfPrincipal(principalId)) ??
-              chosen);
+        let chosen: string | null = null;
+        let failure: { error: unknown } | null = null;
+        try {
+          chosen = await this.chosenProfileId(identity, network);
+        } catch (error) {
+          failure = { error };
+        }
+        // The mirror may have mapped it meanwhile (taking the placeholder
+        // the choice then no longer sees as unmapped): its mapping wins,
+        // read on the writer, as a replica may not have it yet. Only with
+        // no mapping there does the choice, or its failure, stand.
+        const mapped = await this.mapping.profileIdOfPrincipal(
+          principalId,
+          undefined,
+          { forcePool: DbPoolName.WRITE }
+        );
+        if (mapped !== null) profileId = mapped;
+        else if (failure) throw failure.error;
+        else profileId = chosen;
       }
     }
     if (profileId === null) {
@@ -164,33 +174,29 @@ export class ChainIdentityReads {
     identity: ChainIdentity,
     network: string | null
   ): Promise<string | null> {
-    const heights = await this.importHeights(network);
-    if (!heights) return null;
+    const imported = await this.importDone(network);
+    if (!imported) return null;
     return await new ProfileIdChoice(
       this.gateway,
       this.mirror,
-      heights.start,
-      heights.done
+      imported.done
     ).readOnlyProfileId(identity);
   }
 
-  /** The import's heights on the network, once it completed; else null. */
-  private async importHeights(
+  /** The height the import ended at, once it completed; else null. */
+  private async importDone(
     network: string | null
-  ): Promise<{ start: number | null; done: number | null } | null> {
-    const kept = network === null ? undefined : this.imports.get(network);
+  ): Promise<{ done: number | null } | null> {
+    const kept = network === null ? undefined : this.importsDone.get(network);
     if (kept) return kept;
     const membership = await this.gateway.getMembership();
     const imported = membership?.import as
-      | { completed?: boolean; startHeight?: unknown; doneHeight?: unknown }
+      | { completed?: boolean; doneHeight?: unknown }
       | undefined;
     if (!imported?.completed) return null;
-    const heights = {
-      start: heightOf(imported.startHeight),
-      done: heightOf(imported.doneHeight)
-    };
-    if (network !== null) this.imports.set(network, heights);
-    return heights;
+    const done = { done: heightOf(imported.doneHeight) };
+    if (network !== null) this.importsDone.set(network, done);
+    return done;
   }
 
   private async docOf(
@@ -279,10 +285,13 @@ export class ChainIdentityReads {
   }
 
   /**
-   * The identity of a wallet. A wallet of a merged, closing or walletless
-   * identity has none (the mirror files that identity under its own id,
-   * not the wallet's old row); only a wallet the chain holds no identity
-   * for is answered from the index, if unmapped.
+   * The identity of a wallet. A wallet the chain binds to a merged or
+   * closing identity has none. The wallet's row in the index may be the
+   * very row that identity is filed under (profileIdForSites in
+   * profile-ids.ts files an imported identity under its legacy id, which
+   * is that old row), but the mirror writes no rows for an identity that
+   * isn't active, so the row is stale. Only a wallet the chain holds no
+   * identity for is answered from the index (unmapped).
    */
   async byWallet(wallet: string): Promise<IdentityEntity | null> {
     const identity = await this.gateway.getIdentityByWallet(wallet);
@@ -299,14 +308,20 @@ export class ChainIdentityReads {
     if (this.isLive(identity)) return await this.toIdentityEntity(identity);
     if (!isPlaceholderHandle(handle)) return null;
     // A placeholder (`id-0x...`) is 6529.io's name for an identity without a
-    // chain handle: find whose it is in the index, then read that identity.
+    // chain handle: find whose it is in the index, then read that identity:
+    // the mapped one, else the one imported from that profile; a row the
+    // chain holds no identity for (never imported) is answered as it is.
     const row = await this.rows.getIdentityByHandle(handle, {});
-    const principal = row?.profile_id
-      ? await this.mapping.principalOfProfile(row.profile_id)
-      : null;
-    if (!principal) return row;
-    const owner = await this.gateway.getIdentityByPrincipal(principal);
-    return this.isLive(owner) ? await this.toIdentityEntity(owner) : null;
+    if (!row?.profile_id) return row;
+    const principal = await this.mapping.principalOfProfile(row.profile_id);
+    const owner = principal
+      ? await this.gateway.getIdentityByPrincipal(principal)
+      : await this.importedFrom(row.profile_id);
+    if (owner === undefined) return null;
+    if (owner) {
+      return this.isLive(owner) ? await this.toIdentityEntity(owner) : null;
+    }
+    return principal ? null : row;
   }
 
   async byProfileId(profileId: string): Promise<IdentityEntity | null> {
@@ -315,24 +330,51 @@ export class ChainIdentityReads {
     const identity = principal
       ? await this.gateway.getIdentityByPrincipal(principal)
       : await this.gateway.getIdentityByLegacyProfileId(id);
-    if (this.isLive(identity)) return await this.toIdentityEntity(identity);
+    // The chain's identity, if it holds one, live or not: a merged or
+    // closing one has no rows the mirror writes, so the old row is stale.
+    if (identity) {
+      return this.isLive(identity)
+        ? await this.toIdentityEntity(identity)
+        : null;
+    }
     return principal
       ? null
-      : await this.unmapped(await this.rows.getIdentityByProfileId(id));
+      : await this.unmapped(await this.rows.getIdentityByProfileId(id), true);
   }
 
-  /** A row the chain holds no identity for (never imported), else nothing. */
+  /**
+   * A row the chain holds no identity for (never imported, nor mapped),
+   * else nothing: an identity imported from the row's profile is the
+   * chain's, reached through it, and the row is a stale one.
+   * `importAsked`: the caller has asked the import for the row's profile.
+   */
   private async unmapped(
-    row: IdentityEntity | null
+    row: IdentityEntity | null,
+    importAsked = false
   ): Promise<IdentityEntity | null> {
     if (!row) return null;
-    if (
-      row.profile_id &&
-      (await this.mapping.principalOfProfile(row.profile_id))
-    ) {
+    if (!row.profile_id) return row;
+    if (await this.mapping.principalOfProfile(row.profile_id)) return null;
+    if (!importAsked && (await this.importedFrom(row.profile_id)) !== null) {
       return null;
     }
     return row;
+  }
+
+  /**
+   * The identity the import made from a 6529.io profile, null when none;
+   * undefined when the node that answered doesn't hold the import (another
+   * may): the lookup then answers none rather than a row that may be stale.
+   */
+  private async importedFrom(
+    profileId: string
+  ): Promise<ChainIdentity | null | undefined> {
+    try {
+      return await this.gateway.getIdentityByLegacyProfileId(profileId);
+    } catch (error) {
+      if (isAnotherNodesToGive(error)) return undefined;
+      throw error;
+    }
   }
 
   /** The chain's answer on a handle: free to claim now, or why not. */

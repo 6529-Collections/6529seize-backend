@@ -1,4 +1,5 @@
 import { ChainGatewayError } from '@/chain-gateway/chain-gateway.client';
+import { DbPoolName } from '@/db-query.options';
 import { ChainIdentity } from '@/chain-gateway/chain-gateway.types';
 import { IdentityEntity } from '@/entities/IIdentity';
 import { ProfileClassification } from '@/entities/IProfile';
@@ -322,6 +323,37 @@ describe('ChainIdentityReads', () => {
     expect(await after.byWallet(W(2))).toBeNull();
   });
 
+  it('answers an index row only when the chain holds no identity imported from its profile', async () => {
+    const unimported = row({
+      consolidation_key: W(9),
+      profile_id: OLD,
+      handle: `id-${W(9)}`,
+      normalised_handle: `id-${W(9)}`
+    });
+    // Never imported: the row, by wallet and by its placeholder.
+    const never = setup({ rows: [row(), unimported] });
+    expect(await never.reads.byHandle(`id-${W(9)}`)).toEqual(unimported);
+    // W(2) left Alice's imported identity, which isn't mapped yet: her old
+    // row, under her legacy id, is stale.
+    const left = setup({
+      identities: new Map([[P, chainIdentity({ wallets: [W(1)] })]]),
+      mapping: new Map()
+    });
+    expect(await left.reads.byWallet(W(2))).toBeNull();
+    expect(left.gateway.getIdentityByLegacyProfileId).toHaveBeenCalledWith(
+      ALICE
+    );
+    // The node can't say whether the import took the profile: none.
+    const notHeld = setup({
+      identities: new Map(),
+      mapping: new Map(),
+      rows: [unimported],
+      choice: { legacyLookupNotHeld: true }
+    });
+    expect(await notHeld.reads.byWallet(W(9))).toBeNull();
+    expect(await notHeld.reads.byHandle(`id-${W(9)}`)).toBeNull();
+  });
+
   it('finds an identity without a chain handle by its placeholder', async () => {
     const { reads } = setup({
       identities: new Map([[P, chainIdentity({ handle: null })]]),
@@ -353,15 +385,48 @@ describe('ChainIdentityReads', () => {
       ])
     });
     expect(await reads.byProfileId(ALICE)).toBeNull();
-    // Its wallet too: not the wallet's old row in the index, unmapped,
-    // which the mirror doesn't file it under.
-    const unmapped = setup({
-      identities: new Map([
-        [P, chainIdentity({ status: 'merged', mergedInto: Q })]
-      ]),
-      mapping: new Map()
+    // Imported and not mapped, its old row in the index: none by its
+    // wallet, by its legacy id, or by its placeholder handle.
+    for (const inactive of [
+      chainIdentity({ status: 'merged', mergedInto: Q, handle: null }),
+      chainIdentity({ status: 'closing', handle: null })
+    ]) {
+      const unmapped = setup({
+        identities: new Map([[P, inactive]]),
+        mapping: new Map(),
+        rows: [row({ handle: `id-${W(1)}`, normalised_handle: `id-${W(1)}` })]
+      });
+      expect(await unmapped.reads.byWallet(W(1))).toBeNull();
+      expect(await unmapped.reads.byProfileId(ALICE)).toBeNull();
+      expect(await unmapped.reads.byHandle(`id-${W(1)}`)).toBeNull();
+    }
+  });
+
+  it('answers a wallet moved into a live survivor with the survivor', async () => {
+    const merged = chainIdentity({
+      status: 'merged',
+      mergedInto: Q,
+      wallets: []
     });
-    expect(await unmapped.reads.byWallet(W(1))).toBeNull();
+    const survivor = chainIdentity({
+      principalId: Q,
+      legacyId: null,
+      handle: 'bob',
+      anchor: W(3),
+      primary: W(3),
+      wallets: [W(3), W(1), W(2)]
+    });
+    const { reads } = setup({
+      identities: new Map([
+        [P, merged],
+        [Q, survivor]
+      ]),
+      mapping: new Map([[Q, 'p-survivor']])
+    });
+    expect(await reads.byWallet(W(1))).toMatchObject({
+      profile_id: 'p-survivor',
+      primary_address: W(3)
+    });
   });
 
   it('answers an imported identity not mirrored yet with its legacy id', async () => {
@@ -670,6 +735,58 @@ describe('ChainIdentityReads', () => {
         return null;
       });
       expect(await reads.profileIdOf(made())).toBe('p-7');
+      expect(
+        await mirrorDb.unmappedPlaceholderProfile.mock.results[0].value
+      ).toBeNull();
+      // The mapping read twice, again on the writer: a replica may lag.
+      expect(mirrorDb.profileIdOfPrincipal).toHaveBeenCalledTimes(2);
+      expect(mirrorDb.profileIdOfPrincipal).toHaveBeenLastCalledWith(
+        Q,
+        undefined,
+        { forcePool: DbPoolName.WRITE }
+      );
+    });
+
+    it("reads the mapping again when the choice can't be made", async () => {
+      const mapping = new Map<string, string>();
+      // The mirror's own bindings can't tell: no choice. The mirror maps
+      // Q while the read asks them.
+      const { reads, mirrorDb } = setup({
+        identities: new Map([[Q, made()]]),
+        mapping,
+        choice: { placeholders }
+      });
+      mirrorDb.firstBindingOf.mockImplementationOnce(async () => {
+        mapping.set(Q, 'p-7');
+        return { first: null, exact: false, nextHeight: null };
+      });
+      expect(await reads.profileIdOf(made())).toBe('p-7');
+      // The choice saw the placeholder unmapped and couldn't decide.
+      expect(
+        await mirrorDb.unmappedPlaceholderProfile.mock.results[0].value
+      ).toBe('p-7');
+      expect(mirrorDb.firstBindingOf).toHaveBeenCalledTimes(1);
+      expect(mirrorDb.profileIdOfPrincipal).toHaveBeenCalledTimes(2);
+    });
+
+    it('reads the mapping again when the choice fails, and fails only without one', async () => {
+      const mapping = new Map<string, string>();
+      const failing = setup({
+        identities: new Map([[Q, made()]]),
+        mapping
+      });
+      failing.gateway.getMembership.mockRejectedValue(
+        new Error('gateway down')
+      );
+      failing.mirrorDb.profileIdOfPrincipal.mockImplementationOnce(async () => {
+        mapping.set(Q, 'p-7');
+        return null;
+      });
+      expect(await failing.reads.profileIdOf(made())).toBe('p-7');
+      mapping.clear();
+      await expect(failing.reads.profileIdOf(made())).rejects.toThrow(
+        'gateway down'
+      );
     });
 
     it('takes the import as complete as soon as it is', async () => {
