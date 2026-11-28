@@ -16,6 +16,8 @@ it.each([
   'https://10.0.0.5/metadata',
   'https://attacker.example/metadata',
   `https://arweave.net.attacker.example/${id}`,
+  `https://${'a'.repeat(52)}.ar.io.attacker.example/${id}`,
+  `https://${'a'.repeat(51)}.ardrive.net/${id}`,
   `http://arweave.net/${id}`,
   `https://user:secret@arweave.net/${id}`,
   `https://arweave.net:8443/${id}`
@@ -40,17 +42,20 @@ it('checks redirects before fetching their destination', async () => {
   );
 });
 
-it('accepts a gateway redirect to an Arweave sandbox', async () => {
-  const destination = `https://${'a'.repeat(52)}.arweave.net/${id}`;
-  const fetchMock = jest
-    .spyOn(globalThis, 'fetch')
-    .mockResolvedValueOnce(
-      new Response(null, { status: 302, headers: { location: destination } })
-    )
-    .mockResolvedValueOnce(new Response('{"name":"Mint"}'));
-  await expect(download()).resolves.toBe('{"name":"Mint"}');
-  expect(fetchMock.mock.calls[1][0]).toBe(destination);
-});
+it.each(['arweave.net', 'ar.io', 'ardrive.net', 'gateway.arweave.net'])(
+  'accepts a gateway redirect to an approved %s sandbox',
+  async (host) => {
+    const destination = `https://${'a'.repeat(52)}.${host}/${id}`;
+    const fetchMock = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(null, { status: 302, headers: { location: destination } })
+      )
+      .mockResolvedValueOnce(new Response('{"name":"Mint"}'));
+    await expect(download()).resolves.toBe('{"name":"Mint"}');
+    expect(fetchMock.mock.calls[1][0]).toBe(destination);
+  }
+);
 
 it('caps redirect loops', async () => {
   const fetchMock = jest
@@ -99,7 +104,9 @@ it('shares one deadline across Arweave fallback attempts', async () => {
     name: 'fallback'
   });
   expect(fetchMock).toHaveBeenCalledTimes(2);
-  expect(signals[0]).toBe(signals[1]);
+  expect(signals[0]).toBeInstanceOf(AbortSignal);
+  expect(signals[1]).toBeInstanceOf(AbortSignal);
+  expect((signals[0] as AbortSignal).aborted).toBe(true);
 });
 
 it('keeps IPFS metadata on approved gateways', async () => {
@@ -114,4 +121,29 @@ it('keeps IPFS metadata on approved gateways', async () => {
   expect(fetchMock.mock.calls[0][0]).toBe(
     'https://ipfs.io/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi/metadata.json'
   );
+});
+
+it('cancels a stalled IPFS metadata request at the shared 15-second deadline', async () => {
+  jest.useFakeTimers();
+  try {
+    const fetch = jest.spyOn(globalThis, 'fetch').mockImplementation(
+      async (_input, options) =>
+        new Promise((_resolve, reject) => {
+          options?.signal?.addEventListener(
+            'abort',
+            () => reject(new Error('IPFS deadline expired')),
+            { once: true }
+          );
+        })
+    );
+    const result = fetchHistoryMetadata(
+      'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi/metadata.json'
+    ).catch((error) => error);
+    await jest.advanceTimersByTimeAsync(15001);
+    expect(await result).toMatchObject({ message: 'IPFS deadline expired' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][1]?.signal?.aborted).toBe(true);
+  } finally {
+    jest.useRealTimers();
+  }
 });

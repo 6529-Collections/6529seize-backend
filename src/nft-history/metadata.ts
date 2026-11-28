@@ -13,14 +13,24 @@ export async function fetchHistoryMetadata(
   const fetchUri = uri.startsWith('ipfs://')
     ? `https://ipfs.io/ipfs/${uri.slice(7)}`
     : uri;
-  const signal = AbortSignal.timeout(15000);
-  return withArweaveFallback(fetchUri, async (url) => {
-    const metadata = normalizeMetadataPayload(
-      await fetchGatewayMetadata(url, signal)
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(), 15000);
+  try {
+    return await withArweaveFallback(
+      fetchUri,
+      async (url, signal) => {
+        const metadata = normalizeMetadataPayload(
+          await fetchGatewayMetadata(url, signal)
+        );
+        if (!metadata) throw new Error(`Invalid metadata: ${url}`);
+        return metadata;
+      },
+      { signal: controller.signal, timeoutMs: 15000, attemptTimeoutMs: 5000 }
     );
-    if (!metadata) throw new Error(`Invalid metadata: ${url}`);
-    return metadata;
-  });
+  } finally {
+    clearTimeout(deadline);
+    controller.abort();
+  }
 }
 
 function sameValue(a: unknown, b: unknown): boolean {

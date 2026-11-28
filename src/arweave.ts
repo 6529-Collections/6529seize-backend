@@ -1,8 +1,9 @@
+import { arweaveContentUrl } from '@/arweave/gateways';
+import { createArweaveClient } from '@/arweave/client';
+import { ArweaveUploadSession } from '@/arweave/upload';
+import type { JWKInterface } from 'arweave/node/lib/wallet';
 import Arweave from 'arweave';
-import type {
-  SerializedUploader,
-  TransactionUploader
-} from 'arweave/node/lib/transaction-uploader';
+import type { SerializedUploader } from 'arweave/node/lib/transaction-uploader';
 import { Logger } from './logging';
 
 export type ArweaveUploadState = Omit<SerializedUploader, 'transaction'> & {
@@ -12,7 +13,12 @@ export type ArweaveUploadState = Omit<SerializedUploader, 'transaction'> & {
 
 export type ArweaveUploadHooks = {
   savedState?: ArweaveUploadState;
-  onState(state: ArweaveUploadState): Promise<void>;
+  // Persistence must fence writes against replacement attempts: cancellation
+  // releases the caller's wait but cannot undo a write already sent to a DB.
+  onState(
+    state: ArweaveUploadState,
+    context: { signal: AbortSignal }
+  ): Promise<void>;
 };
 
 let arweaveAndKey: { arweave: Arweave; key: any } | null = null;
@@ -23,11 +29,7 @@ export function getArweaveInstance(): { arweave: Arweave; key: any } {
       throw new Error('ARWEAVE_KEY not set');
     }
     const arweaveKey = JSON.parse(process.env.ARWEAVE_KEY);
-    const arweave = Arweave.init({
-      host: 'arweave.net',
-      port: 443,
-      protocol: 'https'
-    });
+    const arweave = createArweaveClient();
     arweaveAndKey = { arweave, key: arweaveKey };
   }
   return arweaveAndKey;
@@ -61,92 +63,18 @@ export class ArweaveFileUploader {
     tags?: Readonly<Record<string, string>>
   ): Promise<{ url: string; transaction_id: string }> {
     const { arweave, key: arweaveKey } = this.arweaveAndKeySupplier();
-    const uploader = hooks?.savedState
-      ? await resumeUpload(arweave, hooks.savedState)
-      : await createSignedUpload(
-          arweave,
-          arweaveKey,
-          fileBuffer,
-          contentType,
-          tags
-        );
-    const dataBase64 = hooks
-      ? Buffer.from(uploader.data).toString('base64')
-      : '';
-    const transactionId = uploader.toJSON().transaction.id;
-
-    // A failed checkpoint must prevent submission. The signed transaction and
-    // its original bytes are the durable identity for every later retry.
-    await hooks?.onState(serializeUpload(uploader, dataBase64));
-
-    while (!uploader.isComplete) {
-      await uploader.uploadChunk();
-      await hooks?.onState(serializeUpload(uploader, dataBase64));
-      this.logger.info(
-        `Arweave upload ${transactionId} ${uploader.pctComplete}% complete, ${uploader.uploadedChunks}/${uploader.totalChunks}`
-      );
-    }
-    const url = `https://arweave.net/${transactionId}`;
-    return { url, transaction_id: transactionId };
+    const result = await new ArweaveUploadSession(
+      this.logger,
+      arweave,
+      600_000,
+      true,
+      tags
+    ).upload(fileBuffer, arweaveKey as JWKInterface, contentType, hooks);
+    return {
+      url: arweaveContentUrl(result.transactionId),
+      transaction_id: result.transactionId
+    };
   }
-}
-
-async function createSignedUpload(
-  arweave: Arweave,
-  key: Parameters<Arweave['createTransaction']>[1],
-  fileBuffer: Buffer,
-  contentType: string,
-  tags: Readonly<Record<string, string>> = {}
-): Promise<TransactionUploader> {
-  const data = new Uint8Array(
-    fileBuffer.buffer,
-    fileBuffer.byteOffset,
-    fileBuffer.byteLength
-  );
-  const transaction = await arweave.createTransaction({ data }, key);
-  transaction.addTag('Content-Type', contentType);
-  for (const [name, value] of Object.entries(tags)) {
-    transaction.addTag(name, value);
-  }
-  await arweave.transactions.sign(transaction, key);
-  return arweave.transactions.getUploader(transaction);
-}
-
-async function resumeUpload(
-  arweave: Arweave,
-  state: ArweaveUploadState
-): Promise<TransactionUploader> {
-  const data = Buffer.from(state.data_base64, 'base64');
-  if (data.toString('base64') !== state.data_base64) {
-    throw new Error('Invalid persisted Arweave upload data');
-  }
-  let txPosted = state.txPosted;
-  if (!txPosted) {
-    const status = await arweave.transactions.getStatus(state.transaction.id);
-    if (status.status === 200 || status.status === 202) txPosted = true;
-    else if (status.status !== 404) {
-      throw new Error(
-        `Unable to verify persisted Arweave transaction: ${status.status}`
-      );
-    }
-  }
-  // getUploader restores the signed transaction, rebuilds chunk proofs from
-  // the saved bytes and validates their data root. Never sign a replacement.
-  return arweave.transactions.getUploader({ ...state, txPosted }, data);
-}
-
-function serializeUpload(
-  uploader: TransactionUploader,
-  dataBase64: string
-): ArweaveUploadState {
-  // Serialize public transaction fields explicitly before cloning; cloning the
-  // library instance itself would bypass its toJSON filtering of internal data.
-  const serialized = uploader.toJSON();
-  return structuredClone({
-    ...serialized,
-    transaction: serialized.transaction.toJSON(),
-    data_base64: dataBase64
-  });
 }
 
 export const arweaveFileUploader = new ArweaveFileUploader(getArweaveInstance);

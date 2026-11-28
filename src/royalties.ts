@@ -1,3 +1,4 @@
+import { arweaveFileUploader } from '@/arweave';
 import { fetchRoyalties, persistRoyaltiesUpload } from './db';
 import { json2csv } from 'json-2-csv';
 import { Logger } from './logging';
@@ -5,8 +6,6 @@ import { ROYALTIES_UPLOADS_TABLE } from './constants';
 import { logPublicationReceipt } from './mint-log/mint-log-receipts';
 
 const logger = Logger.get('ROYALTIES');
-
-const Arweave = require('arweave');
 
 interface Royalty {
   date: string;
@@ -17,12 +16,6 @@ interface Royalty {
   token_count: number;
   received_royalties: number;
 }
-
-const myarweave = Arweave.init({
-  host: 'arweave.net',
-  port: 443,
-  protocol: 'https'
-});
 
 function getDate() {
   const today = new Date();
@@ -102,30 +95,9 @@ async function uploadRoyalties(formattedDate: string, royalties: Royalty[]) {
 
   const csv = json2csv(uploadArray);
 
-  const arweaveKey = process.env.ARWEAVE_KEY
-    ? JSON.parse(process.env.ARWEAVE_KEY)
-    : {};
-
-  const transaction = await myarweave.createTransaction(
-    { data: Buffer.from(csv) },
-    arweaveKey
+  const { url } = await arweaveFileUploader.uploadFile(
+    Buffer.from(csv),
+    'text/csv'
   );
-
-  transaction.addTag('Content-Type', 'text/csv');
-
-  logger.info(`[SIGNING ARWEAVE TRANSACTION]`);
-
-  await myarweave.transactions.sign(transaction, arweaveKey);
-
-  const uploader = await myarweave.transactions.getUploader(transaction);
-
-  while (!uploader.isComplete) {
-    await uploader.uploadChunk();
-    logger.info(
-      `${uploader.pctComplete}% complete, ${uploader.uploadedChunks}/${uploader.totalChunks}`
-    );
-  }
-
-  const url = `https://arweave.net/${transaction.id}`;
   return url;
 }

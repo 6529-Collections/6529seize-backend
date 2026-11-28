@@ -165,7 +165,7 @@ it('shares one deadline across the original download and the fallback', async ()
         })) as never
     );
   await expect(service['downloadRemoteImage'](video, image)).rejects.toThrow(
-    'download deadline exceeded'
+    'overall deadline exceeded'
   );
   expect(download).toHaveBeenCalledTimes(2);
   expect(download.mock.calls[0][1]).toBe(download.mock.calls[1][1]);
@@ -234,4 +234,47 @@ it('preserves unsupported HTML when no fallback image exists', async () => {
     .spyOn(service as never, 'downloadWithinDeadline')
     .mockResolvedValueOnce(html as never);
   await expect(service['downloadRemoteImage'](video)).resolves.toBe(html);
+});
+
+it.each([404, 410])(
+  'keeps metadata-image fallback after primary %s and exhausted alternate 503s',
+  async (status) => {
+    const source = `https://media.6529.io/arweave/${'A'.repeat(43)}`;
+    const service = makeService();
+    const download = jest
+      .spyOn(service as never, 'downloadOneGateway')
+      .mockImplementation((async (candidate: string) => {
+        if (candidate === image)
+          return { bytes, finalUrl: image, contentType: 'image/png' };
+        throw new HttpError(
+          candidate === source ? status : 503,
+          candidate,
+          'unavailable'
+        );
+      }) as never);
+    await expect(
+      service['downloadRemoteImage'](source, image)
+    ).resolves.toMatchObject({ bytes, finalUrl: image });
+    expect(download.mock.calls[0][0]).toBe(source);
+    expect(download.mock.calls.at(-1)?.[0]).toBe(image);
+    expect(download.mock.calls.length).toBeGreaterThan(2);
+  }
+);
+
+it('prefers a successful alternate animation gateway over the metadata image', async () => {
+  const source = `https://media.6529.io/arweave/${'A'.repeat(43)}`;
+  const service = makeService();
+  const recovered = {
+    bytes,
+    finalUrl: 'https://ardrive.net/recovered',
+    contentType: 'image/png'
+  };
+  const download = jest
+    .spyOn(service as never, 'downloadOneGateway')
+    .mockRejectedValueOnce(new HttpError(404, source, 'unavailable') as never)
+    .mockResolvedValueOnce(recovered as never);
+  await expect(service['downloadRemoteImage'](source, image)).resolves.toEqual(
+    recovered
+  );
+  expect(download).toHaveBeenCalledTimes(2);
 });

@@ -1,3 +1,4 @@
+import { arweaveFileUploader } from '@/arweave';
 import { createReadStream, readFileSync } from 'fs';
 import { appFeatures } from '@/app-features';
 import { loadHandListFiles } from './hand-lists';
@@ -7,18 +8,11 @@ import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
 import { doInDbContext } from '../secrets';
 
-const Arweave = require('arweave');
 const csvParser = require('csv-parser');
 
 const logger = Logger.get('TEAM_LOOP');
 
 const FILE_DIR = `${__dirname}/team.csv`;
-
-const myarweave = Arweave.init({
-  host: 'arweave.net',
-  port: 443,
-  protocol: 'https'
-});
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
   await doInDbContext(
@@ -53,35 +47,10 @@ export async function saveTeam() {
 }
 
 async function uploadTeam() {
-  const arweaveKey = process.env.ARWEAVE_KEY
-    ? JSON.parse(process.env.ARWEAVE_KEY)
-    : {};
-
-  const fileData = readFileSync(FILE_DIR);
-
-  logger.info(`[FILE LOADED]`);
-
-  const transaction = await myarweave.createTransaction(
-    { data: Buffer.from(fileData) },
-    arweaveKey
+  const { url } = await arweaveFileUploader.uploadFile(
+    readFileSync(FILE_DIR),
+    'text/csv'
   );
-
-  transaction.addTag('Content-Type', 'text/csv');
-
-  logger.info(`[SIGNING ARWEAVE TRANSACTION]`);
-
-  await myarweave.transactions.sign(transaction, arweaveKey);
-
-  const uploader = await myarweave.transactions.getUploader(transaction);
-
-  while (!uploader.isComplete) {
-    await uploader.uploadChunk();
-    logger.info(
-      `${uploader.pctComplete}% complete, ${uploader.uploadedChunks}/${uploader.totalChunks}`
-    );
-  }
-
-  const url = `https://arweave.net/${transaction.id}`;
   logger.info(`[ARWEAVE LINK ${url}]`);
 }
 

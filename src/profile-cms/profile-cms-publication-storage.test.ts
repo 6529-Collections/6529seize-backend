@@ -1,3 +1,4 @@
+import { routePublicNetworkToFixtures } from '@/tests/fixtures/public-network-fixture';
 import { Response } from 'node-fetch';
 import fetch from 'node-fetch';
 import {
@@ -23,14 +24,92 @@ const receipt: CmsPackageV1['storage'][number] = {
 };
 
 describe('CMS durable storage', () => {
+  let restoreNetwork: () => void;
+  beforeEach(() => {
+    restoreNetwork = routePublicNetworkToFixtures();
+  });
   const originalKey = process.env.ARWEAVE_KEY;
   afterEach(() => {
+    restoreNetwork();
     if (originalKey === undefined) delete process.env.ARWEAVE_KEY;
     else process.env.ARWEAVE_KEY = originalKey;
   });
 
+  it('retains the lease while a cancelled initial checkpoint can still finish', async () => {
+    process.env.ARWEAVE_KEY = 'configured-for-test';
+    let finishWrite!: () => void;
+    const pendingWrite = new Promise<void>((resolve) => {
+      finishWrite = resolve;
+    });
+    let started!: () => void;
+    const checkpointStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const controller = new AbortController();
+    const reason = new Error('upload deadline');
+    let rejectUpload!: (error: Error) => void;
+    let checkpointResult: Promise<unknown> | undefined;
+    const uploads = {
+      reserve: jest.fn().mockResolvedValue({ id: 'id', token: 'lease' }),
+      saveState: jest.fn(async () => {
+        started();
+        await pendingWrite;
+      }),
+      complete: jest.fn(),
+      release: jest.fn()
+    };
+    const uploader = {
+      uploadFileWithTransactionId: jest.fn(
+        async (_bytes: Buffer, _type: string, hooks: ArweaveUploadHooks) => {
+          checkpointResult = hooks
+            .onState(
+              {
+                chunkIndex: 0,
+                transaction: { id: 'a'.repeat(43) },
+                data_base64: bytes.toString('base64'),
+                txPosted: false,
+                lastRequestTimeEnd: 0,
+                lastResponseStatus: 0,
+                lastResponseError: ''
+              },
+              { signal: controller.signal }
+            )
+            .catch((error) => error);
+          return new Promise<never>((_resolve, reject) => {
+            rejectUpload = reject;
+          });
+        }
+      )
+    };
+    const storage = new ProfileCmsPublicationStorage(
+      uploads as unknown as ProfileCmsUploadsDb,
+      uploader as unknown as ArweaveFileUploader
+    );
+    const outcome = storage
+      .upload(
+        {
+          operationKey: 'cancelled-checkpoint',
+          profileId: 'profile',
+          packageDbId: 'draft',
+          bytes
+        },
+        {}
+      )
+      .catch((error) => error);
+    await checkpointStarted;
+    controller.abort(reason);
+    rejectUpload(reason);
+    expect((await outcome).getStatusCode()).toBe(502);
+    expect(uploads.release).not.toHaveBeenCalled();
+    finishWrite();
+    expect(await checkpointResult).toBe(reason);
+    expect(uploads.complete).not.toHaveBeenCalled();
+  });
+
   it('retrieves bounded bytes from an allowlisted gateway and checks their actual hash', async () => {
-    const download = jest.fn().mockResolvedValue(new Response(bytes));
+    const download = jest
+      .fn()
+      .mockImplementation(async () => new Response(bytes));
     const storage = new ProfileCmsPublicationStorage(
       undefined,
       undefined,
@@ -40,7 +119,7 @@ describe('CMS durable storage', () => {
     expect(download).toHaveBeenCalledWith(
       `https://arweave.net/raw/${'a'.repeat(43)}`,
       expect.objectContaining({
-        redirect: 'error',
+        redirect: 'manual',
         timeout: 8000,
         size: CMS_MAX_STORAGE_BYTES,
         signal: expect.any(AbortSignal)
@@ -62,27 +141,26 @@ describe('CMS durable storage', () => {
     });
   });
 
-  it('treats HTTP 202 as pending and verifies the same receipt after propagation', async () => {
+  it('recovers pending HTTP 202 through another gateway without accepting pending bytes', async () => {
     const pending = new Response('pending', { status: 202 });
     const download = jest
       .fn()
       .mockResolvedValueOnce(pending)
-      .mockResolvedValueOnce(new Response(bytes));
+      .mockImplementation(async () => new Response(bytes));
     const storage = new ProfileCmsPublicationStorage(
       undefined,
       undefined,
       download as unknown as typeof fetch
     );
-
-    await expect(storage.verify(receipt)).rejects.toMatchObject({
-      code: 'cms_storage_pending'
-    });
-    expect(pending.bodyUsed).toBe(false);
     await expect(storage.verify(receipt)).resolves.toEqual(bytes);
+    expect(download).toHaveBeenCalledTimes(2);
+    expect(pending.bodyUsed).toBe(false);
   });
 
   it('rejects hash mismatches and unsupported URLs before following redirects or arbitrary hosts', async () => {
-    const download = jest.fn().mockResolvedValue(new Response('different'));
+    const download = jest
+      .fn()
+      .mockImplementation(async () => new Response('different'));
     const storage = new ProfileCmsPublicationStorage(
       undefined,
       undefined,
@@ -125,6 +203,24 @@ describe('CMS durable storage', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('stops at a storage byte-policy rejection while preserving the API error contract', async () => {
+    const download = jest.fn().mockImplementation(
+      async () =>
+        new Response('', {
+          headers: { 'content-length': String(CMS_MAX_STORAGE_BYTES + 1) }
+        })
+    );
+    const storage = new ProfileCmsPublicationStorage(
+      undefined,
+      undefined,
+      download as unknown as typeof fetch
+    );
+    await expect(storage.verify(receipt)).rejects.toMatchObject({
+      code: 'cms_storage_pending'
+    });
+    expect(download).toHaveBeenCalledTimes(1);
   });
 
   it('rejects oversized native identifiers before making a gateway request', async () => {
@@ -217,9 +313,12 @@ describe('CMS durable storage', () => {
             txPosted: false,
             data_base64: body.toString('base64')
           };
-          await hooks.onState(state);
+          await hooks.onState(state, { signal: new AbortController().signal });
           submittedIds.push(state.transaction.id);
-          await hooks.onState({ ...state, txPosted: true });
+          await hooks.onState(
+            { ...state, txPosted: true },
+            { signal: new AbortController().signal }
+          );
           return { transaction_id: state.transaction.id, url: '' };
         }
       )
@@ -268,15 +367,18 @@ describe('CMS durable storage', () => {
     const uploader = {
       uploadFileWithTransactionId: jest.fn(
         async (_body: Buffer, _type: string, hooks: ArweaveUploadHooks) => {
-          await hooks.onState({
-            chunkIndex: 0,
-            transaction: { id: 'a'.repeat(43) },
-            lastRequestTimeEnd: 0,
-            lastResponseError: '',
-            lastResponseStatus: 0,
-            txPosted: false,
-            data_base64: bytes.toString('base64')
-          });
+          await hooks.onState(
+            {
+              chunkIndex: 0,
+              transaction: { id: 'a'.repeat(43) },
+              lastRequestTimeEnd: 0,
+              lastResponseError: '',
+              lastResponseStatus: 0,
+              txPosted: false,
+              data_base64: bytes.toString('base64')
+            },
+            { signal: new AbortController().signal }
+          );
           submit();
           return { transaction_id: 'a'.repeat(43), url: '' };
         }

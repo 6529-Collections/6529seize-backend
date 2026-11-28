@@ -155,20 +155,22 @@ const METADATA_FETCH_TIMEOUT_MS = 10000;
 async function fetchMetadata(uri: string): Promise<any> {
   const url = normalizeMetadataUri(uri) ?? uri;
   try {
-    return await withArweaveFallback(url, (u) =>
-      axios.get(u, { timeout: METADATA_FETCH_TIMEOUT_MS }).then((res) => {
-        const metadata = normalizeMetadataPayload(res.data);
-        if (!metadata) {
-          const contentType = String(
-            res.headers?.['content-type'] ?? 'unknown'
-          );
-          const preview = getPayloadPreview(res.data);
-          throw new Error(
-            `Invalid metadata payload from ${u} (content-type: ${contentType}, preview: ${preview})`
-          );
-        }
-        return metadata;
-      })
+    return await withArweaveFallback(url, (u, signal) =>
+      axios
+        .get(u, { signal, timeout: METADATA_FETCH_TIMEOUT_MS })
+        .then((res) => {
+          const metadata = normalizeMetadataPayload(res.data);
+          if (!metadata) {
+            const contentType = String(
+              res.headers?.['content-type'] ?? 'unknown'
+            );
+            const preview = getPayloadPreview(res.data);
+            throw new Error(
+              `Invalid metadata payload from ${u} (content-type: ${contentType}, preview: ${preview})`
+            );
+          }
+          return metadata;
+        })
     );
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

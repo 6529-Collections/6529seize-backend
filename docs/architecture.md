@@ -4308,3 +4308,22 @@ copying stale state. The earlier isolated candidate tooling remains for offline
 contracts and cannot target the live resources; it is not the production workflow.
 See the [IPFS runbook](../ops/ipfs/README.md) for operation order, authority,
 ownership boundaries and recovery procedures.
+
+### Shared Arweave recovery
+
+Backend Arweave reads, SDK network queries and uploads share the endpoint registry
+and recovery boundary in `src/arweave/`. Content consumers validate status, body
+and content inside each fallback attempt. The reusable upload engine preserves
+TDH's transaction/chunk coordination and supports existing durable upload
+checkpoints; retries never sign replacement transactions. NFT previews retain
+bounded public-network fetching and add gateway failover and body-idle detection.
+Expected size-policy rejection remains persisted without an individual operational
+error. Exhausted genuine failures remain observable. No API/DB/queue contract
+changes are introduced. See [Arweave recovery](arweave-recovery.md) for endpoint
+ownership, per-operation budgets, deployment inventory and verification.
+
+Unposted one-chunk file uploads, including saved resumes, retain inline signed data submission; an ambiguous
+header acknowledgement requires chunk confirmation. Durable checkpoint waits
+share the upload deadline, and CMS's existing row-lock/token fence protects
+replacement attempts from late persistence. Raw gateway recovery preserves raw
+bytes instead of resolving manifest indexes.

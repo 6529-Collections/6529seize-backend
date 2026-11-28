@@ -74,12 +74,15 @@ export async function downloadImageBuffer(url: string): Promise<Buffer> {
     gateway: gatewayHost(url)
   };
   try {
-    return await withArweaveFallback(url, async (candidate) => {
+    return await withArweaveFallback(url, async (candidate, signal) => {
       attempts++;
       const gateway = gatewayHost(candidate);
       let response: AxiosResponse<ArrayBuffer>;
       try {
-        response = await axios.get<ArrayBuffer>(candidate, REQUEST_OPTIONS);
+        response = await axios.get<ArrayBuffer>(candidate, {
+          ...REQUEST_OPTIONS,
+          signal
+        });
       } catch (error) {
         lastFailure = requestFailure(error, gateway);
         logFailure(lastFailure, attempts);
