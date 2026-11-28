@@ -1,4 +1,5 @@
 import { Logger } from '@/logging';
+import type { ConnectionWrapper } from '@/sql-executor';
 import { WaveEntity } from '@/entities/IWave';
 import { InsertWaveEntity } from '@/api/waves/waves.api.db';
 import { ApiCreateNewWave } from '@/api/generated/models/ApiCreateNewWave';
@@ -165,6 +166,10 @@ export type ObjectsStore = Pick<
   | 'importedGroupId'
   | 'profilesOfAddresses'
   | 'addAddressIdentities'
+  | 'identityRowsReached'
+  | 'ownRowsWithoutProfile'
+  | 'groupsHeld'
+  | 'groupsHeldReported'
   | 'groupRow'
   | 'waveRow'
   | 'dropParts'
@@ -195,6 +200,21 @@ export type ObjectsStore = Pick<
 
 /** An imported group no row matched is looked for again after this. */
 const UNMATCHED_RETRY_MS = 24 * 60 * 60_000;
+
+/**
+ * Groups held this long for the identity mirror are reported (one WARN per
+ * hold, tag GROUPS HELD FOR IDENTITY ROWS).
+ */
+export const GROUPS_HELD_REPORT_MS = 15 * 60_000;
+
+/** Listed addresses still without a profile id after their identities. */
+class AddressesWithoutProfile extends Error {
+  constructor(readonly addresses: readonly string[]) {
+    super(`addresses without a profile id: ${addresses.join(', ')}`);
+    // The build's target needs this for instanceof on an Error subclass.
+    Object.setPrototypeOf(this, AddressesWithoutProfile.prototype);
+  }
+}
 
 /**
  * identity_subscriptions.target_id is varchar(50): a wave id longer (a
@@ -374,6 +394,8 @@ export class WavesChainObjectsMirror {
     const groupRecords = await this.store.mirroredGroups(
       groups.map((g) => g.groupId)
     );
+    // The chain heights of the groups held for the identity mirror this run.
+    const held: number[] = [];
     for (const group of groups) {
       const record = groupRecords.get(group.groupId);
       if (record && record.version === group.version) {
@@ -385,8 +407,13 @@ export class WavesChainObjectsMirror {
         continue;
       }
       await this.count(report.groups, `group ${group.groupId}`, () =>
-        this.mirrorGroup(group, record, input, now)
+        this.mirrorGroup(group, record, { ...input, held }, now)
       );
+    }
+    // Only a writing run keeps the hold (its state row and WARN); one that
+    // left groups for later keeps a hold it can't see the end of.
+    if (input.write && (held.length || !report.groups.left)) {
+      await this.reportHeldGroups(held, now);
     }
     // A rebuild matches every imported group the chain never replaced to
     // 6529.io's row, keeping the match (the rows it can't make are these).
@@ -603,10 +630,39 @@ export class WavesChainObjectsMirror {
 
   // ------------------------------------------------------------ groups
 
+  /**
+   * Keeps when groups began to be held for the identity mirror, and once a
+   * hold has lasted GROUPS_HELD_REPORT_MS writes one WARN naming the oldest
+   * held height (again only after a hold clears and builds up again). A
+   * held group only delays 6529.io's copy of it; a hold that lasts means
+   * the identity mirror is behind or stopped.
+   */
+  private async reportHeldGroups(held: readonly number[], now: number) {
+    const oldestHeight = held.length ? Math.min(...held) : null;
+    const hold = await this.store.groupsHeld(
+      { count: held.length, oldestHeight },
+      now
+    );
+    if (!hold || hold.reported || now - hold.since < GROUPS_HELD_REPORT_MS) {
+      return;
+    }
+    logger.warn(
+      `[WAVES CHAIN MIRROR] [GROUPS HELD FOR IDENTITY ROWS] [OLDEST HEIGHT ${oldestHeight}] [HELD SINCE ${new Date(
+        hold.since
+      ).toISOString()}] [GROUPS ${held.length}]`
+    );
+    await this.store.groupsHeldReported();
+  }
+
   private async mirrorGroup(
     group: ChainGroup,
     record: MirroredGroup | undefined,
-    input: { readonly write: boolean; readonly counter: PlanCounter },
+    input: {
+      readonly write: boolean;
+      readonly counter: PlanCounter;
+      /** Heights of the groups held for the identity mirror, as they are. */
+      readonly held: number[];
+    },
     now: number
   ): Promise<Outcome> {
     const { counter } = input;
@@ -680,13 +736,24 @@ export class WavesChainObjectsMirror {
     const addresses = members
       .filter((m) => m.kind === 'address')
       .map((m) => m.value);
+    if (addresses.length) {
+      // Listed addresses are resolved to identities only once the identity
+      // mirror stands at the group's height, live and in a rebuild alike, so
+      // both resolve them the same way and no address-only row is made for
+      // a wallet an identity already holds there.
+      if (group.height === null) return wait('group_without_height');
+      if (!(await this.store.identityRowsReached(group.height))) {
+        input.held.push(group.height);
+        return wait('group_identity_rows_not_reached');
+      }
+    }
     const known = await this.store.profilesOfAddresses(addresses);
     const unknown = addresses.filter((a) => !known.has(a));
-    if (unknown.length && this.store.mode === 'rebuild') {
-      // A rebuild takes address-only identities from the identity area's
-      // own rebuild, never makes them.
-      counter.wait('group_address_identity_missing');
-      return 'waiting';
+    // From switch-on as of the group's write (its block time), a new
+    // address-only row takes the address's derived id.
+    const idTime = group.activeFrom;
+    if (unknown.length && idTime === null) {
+      return wait('group_without_block_time');
     }
     counter.change('community_groups', existing ? 'update' : 'insert');
     counter.change(
@@ -694,56 +761,102 @@ export class WavesChainObjectsMirror {
       'insert',
       (shape.includes?.length ?? 0) + shape.excludes.length
     );
-    counter.change('identities', 'insert', unknown.length);
+    // An address's own row without a profile id is given one (an update);
+    // an address with no row, a row.
+    const withoutProfile = unknown.length
+      ? await this.store.ownRowsWithoutProfile(unknown)
+      : new Set<string>();
+    counter.change('identities', 'update', withoutProfile.size);
+    counter.change(
+      'identities',
+      'insert',
+      unknown.length - withoutProfile.size
+    );
     if (!input.write) return 'mirrored';
-    const touched = await this.store.inTransaction(async (connection) => {
-      let profilesOfAddresses = known;
-      if (unknown.length) {
-        // As 6529.io's group create does for a listed address.
-        await this.store.addAddressIdentities(unknown, connection);
-        profilesOfAddresses = new Map([
-          ...Array.from(known),
-          ...Array.from(
-            await this.store.profilesOfAddresses(unknown, connection)
-          )
-        ]);
+    let touched: string[];
+    try {
+      touched = await this.writeGroupWithIdentities(
+        unknown,
+        idTime,
+        known,
+        async (profilesOfAddresses, connection) => {
+          const profileOf = (m: GroupMember): string | null =>
+            m.kind === 'principal'
+              ? (profiles.get(m.value) ?? null)
+              : (profilesOfAddresses.get(m.value) ?? null);
+          const listOf = (list: readonly GroupMember[] | null) =>
+            (list ?? []).map(profileOf).filter((p): p is string => p !== null);
+          const changed = await this.store.writeGroup(
+            {
+              row,
+              replaces: !!existing,
+              includes: listOf(shape.includes),
+              excludes: listOf(shape.excludes),
+              oldListIds: [
+                existing?.profile_group_id ?? null,
+                existing?.excluded_profile_group_id ?? null,
+                record?.includeListId ?? null,
+                record?.excludeListId ?? null
+              ].filter((id): id is string => !!id)
+            },
+            connection
+          );
+          await this.store.saveMirroredGroup(
+            group.groupId,
+            {
+              groupId: groupId!,
+              version: group.version,
+              includeListId,
+              excludeListId
+            },
+            now,
+            connection
+          );
+          return changed;
+        }
+      );
+    } catch (error) {
+      if (error instanceof AddressesWithoutProfile) {
+        return wait('group_address_without_profile');
       }
-      const profileOf = (m: GroupMember): string | null =>
-        m.kind === 'principal'
-          ? (profiles.get(m.value) ?? null)
-          : (profilesOfAddresses.get(m.value) ?? null);
-      const listOf = (list: readonly GroupMember[] | null) =>
-        (list ?? []).map(profileOf).filter((p): p is string => p !== null);
-      const changed = await this.store.writeGroup(
-        {
-          row,
-          replaces: !!existing,
-          includes: listOf(shape.includes),
-          excludes: listOf(shape.excludes),
-          oldListIds: [
-            existing?.profile_group_id ?? null,
-            existing?.excluded_profile_group_id ?? null,
-            record?.includeListId ?? null,
-            record?.excludeListId ?? null
-          ].filter((id): id is string => !!id)
-        },
-        connection
-      );
-      await this.store.saveMirroredGroup(
-        group.groupId,
-        {
-          groupId: groupId!,
-          version: group.version,
-          includeListId,
-          excludeListId
-        },
-        now,
-        connection
-      );
-      return changed;
-    });
+      throw error;
+    }
     await this.effects.groupsChanged([groupId], touched);
     return 'mirrored';
+  }
+
+  /**
+   * In one transaction: gives the listed addresses without an identity one
+   * (as 6529.io's group create does, from switch-on as of `idTime` with the
+   * address's derived id), then writes the group with every address
+   * resolved. A row another writer made meanwhile is read back, never
+   * written twice. An address still without a profile id (mapped to a row
+   * of several wallets that has none) rolls the write back
+   * (AddressesWithoutProfile): the group waits rather than leave it out.
+   */
+  private async writeGroupWithIdentities<T>(
+    unknown: readonly string[],
+    idTime: number | null,
+    known: ReadonlyMap<string, string>,
+    write: (
+      profilesOfAddresses: ReadonlyMap<string, string>,
+      connection: ConnectionWrapper<any>
+    ) => Promise<T>
+  ): Promise<T> {
+    return this.store.inTransaction(async (connection) => {
+      if (!unknown.length) return write(known, connection);
+      const given = await this.store.addAddressIdentities(
+        unknown,
+        connection,
+        idTime!
+      );
+      const missing = unknown.filter((a) => !given.has(a));
+      if (missing.length) throw new AddressesWithoutProfile(missing);
+      return write(
+        new Map([...Array.from(known), ...Array.from(given)]),
+        connection
+      );
+    });
   }
 
   /** An imported group's community_groups id, kept once found. */

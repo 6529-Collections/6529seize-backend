@@ -10,6 +10,7 @@ import { identityConsolidationEffects } from '@/identity';
 import { dbSupplier, sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { anIdentity } from '@/tests/fixtures/identity.fixture';
+import { Time } from '@/time';
 import { IdentityChainMirrorDb } from './identity-chain-mirror.db';
 import { ProfileIds } from './profile-ids';
 import { consolidatedTdhRow } from './rebuild-world/consolidated-tdh-row';
@@ -134,7 +135,11 @@ describeWithSeed(
           )
         );
         await dbSupplier().executeNativeQueriesInTransaction((connection) =>
-          identitiesDb.insertIdentitiesOnAddressesOnly([GROUPED], connection)
+          identitiesDb.insertIdentitiesOnAddressesOnly(
+            [GROUPED],
+            connection,
+            Time.currentMillis()
+          )
         );
       });
 

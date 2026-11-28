@@ -55,6 +55,7 @@ import { sqlExecutor } from '@/sql-executor';
 import {
   clearMirrorTables,
   ensurePrincipalMap,
+  identityMirrorAt,
   mapPrincipals,
   seedChainDecision,
   seedImportedCompetition
@@ -400,6 +401,8 @@ describe("the mirror's rebuild", () => {
       await sqlExecutor.execute(`delete from ${table}`);
     }
     await ensurePrincipalMap(sqlExecutor);
+    // The identity mirror, live and rebuilt, stands past every height here.
+    await identityMirrorAt(sqlExecutor, 1_000_000);
     await mapPrincipals(sqlExecutor, {
       [P1]: 'profile-1',
       [V1]: 'profile-v1',

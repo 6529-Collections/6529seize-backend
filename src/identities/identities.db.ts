@@ -57,8 +57,18 @@ import {
 } from '@/waves/wave-voting-credit-nfts';
 
 import { creditTdhSql } from '@/rates/rating-credit';
+import {
+  addressIdentityId,
+  addressIdentityIdsFrom,
+  pickAddressIdentityId
+} from '@/identities/address-identity-id';
 
 const mysql = require('mysql');
+
+/** Addresses per statement when giving address-only identities. */
+const ADDRESS_ONLY_CHUNK = 40;
+/** Derived candidates checked per address and round. */
+const ADDRESS_ID_CANDIDATES = 4;
 
 export interface WaveMentionSearchCandidate {
   readonly id: string;
@@ -255,43 +265,219 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     return new Set(rows.map((it) => it.id.toLowerCase()));
   }
 
+  /**
+   * Identities rows for listed addresses that hold none, as 6529.io's group
+   * create gives them, and a profile id for an address's own row (its key
+   * the address) that has none: never a second row for an address.
+   * - From switch-on, as of `idTimeMillis` (a chain writer passes the block
+   *   time of the event that lists the addresses, the API the wall time), an
+   *   address's id is its derived one: the first that no identities row or
+   *   profile holds (address-identity-id.ts). Before it, a random one.
+   * - Addresses are lowercased. One mapped to another row (an identity of
+   *   several wallets) is left as it is.
+   * - A row or mapping another writer made first is left as it is. Rows are
+   *   written in address order, so two writers listing the same addresses
+   *   lock them in the same order.
+   * Returns each address's profile id as it now stands, read with a lock so
+   * a row another writer committed meanwhile is seen; an address whose row
+   * has no id (one mapped to another row) is absent.
+   */
   public async insertIdentitiesOnAddressesOnly(
-    addresses: string[],
-    connection: ConnectionWrapper<any>
-  ) {
-    if (!addresses.length) {
-      return;
+    addresses: readonly string[],
+    connection: ConnectionWrapper<any>,
+    idTimeMillis: number
+  ): Promise<Map<string, string>> {
+    const wanted = collections
+      .distinct(addresses.map((it) => it.toLowerCase()))
+      .sort((a, b) => (a < b ? -1 : Number(a > b)));
+    const out = new Map<string, string>();
+    for (let i = 0; i < wanted.length; i += ADDRESS_ONLY_CHUNK) {
+      const chunk = wanted.slice(i, i + ADDRESS_ONLY_CHUNK);
+      const ids = await this.insertAddressOnlyChunk(
+        chunk,
+        connection,
+        idTimeMillis
+      );
+      ids.forEach((id, address) => out.set(address, id));
     }
-    const identitiesSql = `insert into ${IDENTITIES_TABLE} (
-                                         profile_id,
-                                         consolidation_key,
-                                         primary_address,
-                                         tdh,
-                                         rep,
-                                         cic,
-                                         level_raw)
-        values ${addresses
-          .map(
-            (address) =>
-              `(${mysql.escape(randomUUID())}, ${mysql.escape(
-                address
-              )}, ${mysql.escape(address)}, 0, 0, 0, 0)`
-          )
-          .join(',')}`;
-    const paramsSql = `insert into ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key)
-        values ${addresses
-          .map(
-            (address) => `(${mysql.escape(address)}, ${mysql.escape(address)})`
-          )
-          .join(',')}`;
-    await Promise.all([
-      this.db.execute(identitiesSql, undefined, {
-        wrappedConnection: connection
-      }),
-      this.db.execute(paramsSql, undefined, {
-        wrappedConnection: connection
-      })
-    ]);
+    return out;
+  }
+
+  private async insertAddressOnlyChunk(
+    addresses: readonly string[],
+    connection: ConnectionWrapper<any>,
+    idTimeMillis: number
+  ): Promise<Map<string, string>> {
+    const opts = { wrappedConnection: connection };
+    const own = new Map<string, string | null>(
+      (
+        await this.db.execute<{
+          consolidation_key: string;
+          profile_id: string | null;
+        }>(
+          `select consolidation_key, profile_id from ${IDENTITIES_TABLE}
+            where consolidation_key in (:addresses)`,
+          { addresses },
+          opts
+        )
+      ).map((it) => [it.consolidation_key.toLowerCase(), it.profile_id])
+    );
+    const mappedTo = new Map<string, string>(
+      (
+        await this.db.execute<{ address: string; consolidation_key: string }>(
+          `select address, consolidation_key from ${ADDRESS_CONSOLIDATION_KEY}
+            where address in (:addresses)`,
+          { addresses },
+          opts
+        )
+      ).map((it) => [
+        it.address.toLowerCase(),
+        it.consolidation_key.toLowerCase()
+      ])
+    );
+    const ours = addresses.filter((address) => {
+      const key = mappedTo.get(address);
+      return key === undefined || key === address;
+    });
+    const inserts = ours.filter((address) => !own.has(address));
+    const updates = ours.filter(
+      (address) => own.has(address) && !own.get(address)
+    );
+    const ids = await this.addressOnlyIds(
+      [...inserts, ...updates],
+      connection,
+      idTimeMillis
+    );
+    if (inserts.length) {
+      // A row another writer made first stays as it is.
+      await this.db.execute(
+        `insert into ${IDENTITIES_TABLE}
+           (profile_id, consolidation_key, primary_address, tdh, rep, cic, level_raw)
+         values ${inserts
+           .map(
+             (address) =>
+               `(${mysql.escape(ids.get(address))}, ${mysql.escape(
+                 address
+               )}, ${mysql.escape(address)}, 0, 0, 0, 0)`
+           )
+           .join(', ')}
+         on duplicate key update consolidation_key = consolidation_key`,
+        undefined,
+        opts
+      );
+    }
+    if (updates.length) {
+      // Only a row still without an id: one another writer gave an id keeps it.
+      await this.db.execute(
+        `update ${IDENTITIES_TABLE}
+            set profile_id = case consolidation_key ${updates
+              .map(
+                (address) =>
+                  `when ${mysql.escape(address)} then ${mysql.escape(
+                    ids.get(address)
+                  )}`
+              )
+              .join(' ')} end
+          where consolidation_key in (:updates) and profile_id is null`,
+        { updates },
+        opts
+      );
+    }
+    const unmapped = ours.filter((address) => !mappedTo.has(address));
+    if (unmapped.length) {
+      // Only to a row under the address's own key: an insert left out (its
+      // address another row's primary) maps nothing.
+      await this.db.execute(
+        `insert into ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key)
+         select consolidation_key, consolidation_key from ${IDENTITIES_TABLE}
+          where consolidation_key in (:unmapped)
+         on duplicate key update consolidation_key = ${ADDRESS_CONSOLIDATION_KEY}.consolidation_key`,
+        { unmapped },
+        opts
+      );
+    }
+    if (inserts.length) {
+      // A row this call made that no mapping points to (another writer
+      // mapped its address elsewhere after the reads above) goes again.
+      await this.db.execute(
+        `delete from ${IDENTITIES_TABLE}
+          where (consolidation_key, profile_id) in (${inserts
+            .map(
+              (address) =>
+                `(${mysql.escape(address)}, ${mysql.escape(ids.get(address))})`
+            )
+            .join(', ')})
+            and not exists (
+              select 1 from ${ADDRESS_CONSOLIDATION_KEY} a
+               where a.consolidation_key = ${IDENTITIES_TABLE}.consolidation_key)`,
+        undefined,
+        opts
+      );
+    }
+    const rows = await this.db.execute<{
+      address: string;
+      profile_id: string | null;
+    }>(
+      `select a.address, i.profile_id
+         from ${ADDRESS_CONSOLIDATION_KEY} a
+         join ${IDENTITIES_TABLE} i on i.consolidation_key = a.consolidation_key
+        where a.address in (:addresses)
+        lock in share mode`,
+      { addresses },
+      opts
+    );
+    return new Map(
+      rows
+        .filter((it) => !!it.profile_id)
+        .map((it) => [it.address.toLowerCase(), it.profile_id!])
+    );
+  }
+
+  /**
+   * A new profile id for each address: from switch-on (as of
+   * `idTimeMillis`) its derived one, the first candidate no identities row
+   * or profile holds and no other address here takes; before it, a random
+   * one.
+   */
+  private async addressOnlyIds(
+    addresses: readonly string[],
+    connection: ConnectionWrapper<any>,
+    idTimeMillis: number
+  ): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    if (!addressIdentityIdsFrom(idTimeMillis)) {
+      addresses.forEach((address) => out.set(address, randomUUID()));
+      return out;
+    }
+    const held = new Set<string>();
+    const chosen = new Set<string>();
+    const window = (address: string, from: number) =>
+      Array.from({ length: ADDRESS_ID_CANDIDATES }, (_, i) =>
+        addressIdentityId(address, from + i)
+      );
+    let open = [...addresses];
+    // A few candidates at a time; more only for an address whose candidates
+    // are all held.
+    for (let from = 0; open.length; from += ADDRESS_ID_CANDIDATES) {
+      const taken = await this.takenProfileIds(
+        open.flatMap((address) => window(address, from)),
+        connection
+      );
+      taken.forEach((id) => held.add(id));
+      const isTaken = (id: string) => held.has(id) || chosen.has(id);
+      const next: string[] = [];
+      for (const address of open) {
+        if (window(address, from).every(isTaken)) {
+          next.push(address);
+          continue;
+        }
+        const id = pickAddressIdentityId(address, isTaken);
+        chosen.add(id);
+        out.set(address, id);
+      }
+      open = next;
+    }
+    return out;
   }
 
   async updateIdentityProfile(

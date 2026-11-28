@@ -37,6 +37,8 @@ import { UserGroupEntity } from '@/entities/IUserGroup';
 import { WaveEntity } from '@/entities/IWave';
 import { DropsDb } from '@/drops/drops.db';
 import { IdentitiesDb } from '@/identities/identities.db';
+import { IdentityChainMirrorDb } from '@/identity-chain-mirror/identity-chain-mirror.db';
+import { identityRowsReached } from '@/identity-chain-mirror/mirror-reached';
 import { WaveGroupNotificationSubscriptionsDb } from '@/notifications/wave-group-notification-subscriptions.db';
 import { IdentitySubscriptionsDb } from '@/api/identity-subscriptions/identity-subscriptions.db';
 import { InsertWaveEntity, WavesApiDb } from '@/api/waves/waves.api.db';
@@ -70,6 +72,8 @@ function opts(connection?: Conn) {
 const ID_BYTES = 72;
 /** The mirror's state row that marks the description holds carried over. */
 const DESCRIPTION_HOLDS_STATE_NAME = 'description_holds';
+/** The mirror's state row of groups held for the identity mirror. */
+const GROUPS_HELD_STATE_NAME = 'groups_held';
 const SCAN_PAGE = 5_000;
 
 /** What the mirror last wrote of a decision made on the chain. */
@@ -183,6 +187,7 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
   private readonly groups: UserGroupsDb;
   private readonly drops: DropsDb;
   private readonly identities: IdentitiesDb;
+  private readonly identityState: IdentityChainMirrorDb;
   private readonly subscriptions: IdentitySubscriptionsDb;
   private readonly groupSubscriptions: WaveGroupNotificationSubscriptionsDb;
   private readonly activity: ActivityRecorder;
@@ -205,6 +210,7 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
     this.groups = new UserGroupsDb(supplier);
     this.drops = new DropsDb(supplier);
     this.identities = new IdentitiesDb(supplier);
+    this.identityState = new IdentityChainMirrorDb(supplier);
     this.subscriptions = new IdentitySubscriptionsDb(supplier);
     this.groupSubscriptions = new WaveGroupNotificationSubscriptionsDb(
       supplier
@@ -217,7 +223,7 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
   /** Groups made on the chain, and imported ones it replaced. */
   async chainGroupsToMirror(): Promise<ChainGroupRow[]> {
     return this.db.execute<ChainGroupRow>(
-      `select group_id, legacy_id, version, origin, data
+      `select group_id, legacy_id, version, origin, height, data
          from ${CHAIN_GROUPS_TABLE}
         where origin = 'native' or version > 1
         order by group_id`
@@ -232,7 +238,7 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
     )) {
       out.push(
         ...(await this.db.execute<ChainGroupRow>(
-          `select group_id, legacy_id, version, origin, data
+          `select group_id, legacy_id, version, origin, height, data
              from ${CHAIN_GROUPS_TABLE} where group_id in (:ids)`,
           { ids: chunk }
         ))
@@ -661,17 +667,113 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
   }
 
   /**
-   * Gives addresses no identity has one, as 6529.io's group create does for
-   * a listed address (identitiesDb.insertIdentitiesOnAddressesOnly).
+   * Gives addresses no identity has one, and an address's own row without a
+   * profile id one, as 6529.io's group create does for a listed address
+   * (identitiesDb.insertIdentitiesOnAddressesOnly). `idTimeMillis` is the
+   * block time of the group's write: from switch-on the ids are the
+   * addresses' derived ones. Returns each address's profile id as it now
+   * stands; one without (mapped to a row with none) is absent.
    */
   async addAddressIdentities(
     addresses: readonly string[],
-    connection: Conn
-  ): Promise<void> {
-    if (!addresses.length) return;
-    await this.identities.insertIdentitiesOnAddressesOnly(
+    connection: Conn,
+    idTimeMillis: number
+  ): Promise<Map<string, string>> {
+    if (!addresses.length) return new Map();
+    return this.identities.insertIdentitiesOnAddressesOnly(
+      addresses,
+      connection,
+      idTimeMillis
+    );
+  }
+
+  /**
+   * The addresses here whose own identities row (keyed by it) has no profile
+   * id and that no other row holds: the rows a group giving them identities
+   * updates (insertIdentitiesOnAddressesOnly). An own row whose address is
+   * mapped to another row is left alone, so it isn't one. Read only for a
+   * group that gives addresses rows, to count the plan.
+   */
+  async ownRowsWithoutProfile(
+    addresses: readonly string[]
+  ): Promise<Set<string>> {
+    const out = new Set<string>();
+    for (const chunk of statementChunks(
       Array.from(new Set(addresses.map((a) => a.toLowerCase()))),
-      connection
+      () => 48
+    )) {
+      const rows = await this.db.execute<{ consolidation_key: string }>(
+        `select i.consolidation_key from ${IDENTITIES_TABLE} i
+           left join ${ADDRESS_CONSOLIDATION_KEY} a on a.address = i.consolidation_key
+          where i.consolidation_key in (:keys) and i.profile_id is null
+            and (a.consolidation_key is null or a.consolidation_key = i.consolidation_key)`,
+        { keys: chunk }
+      );
+      rows.forEach((row) => out.add(row.consolidation_key.toLowerCase()));
+    }
+    return out;
+  }
+
+  /**
+   * Whether the identity mirror's identities rows and wallets stand as of
+   * this chain height (identityRowsReached): a group's listed addresses are
+   * resolved only then, live and in a rebuild alike.
+   */
+  async identityRowsReached(height: number): Promise<boolean> {
+    return identityRowsReached(await this.identityState.getState(), height);
+  }
+
+  /**
+   * The groups held for the identity mirror this run: their count and the
+   * oldest one's chain height (0 groups: none held). Keeps when a hold
+   * began, so it lasts across runs, and returns it with whether the hold
+   * has been reported (the WARN); a run without one clears it.
+   */
+  async groupsHeld(
+    held: { readonly count: number; readonly oldestHeight: number | null },
+    now: number
+  ): Promise<{ since: number; reported: boolean } | null> {
+    if (!held.count) {
+      await this.db.execute(
+        `delete from ${WAVES_CHAIN_MIRROR_STATE_TABLE} where name = :name`,
+        { name: GROUPS_HELD_STATE_NAME }
+      );
+      return null;
+    }
+    await this.db.execute(
+      `insert into ${WAVES_CHAIN_MIRROR_STATE_TABLE}
+         (name, held_since, held_height, held_count, held_reported, updated_at)
+       values (:name, :now, :height, :count, false, :now)
+       on duplicate key update held_height = values(held_height),
+         held_count = values(held_count), updated_at = values(updated_at)`,
+      {
+        name: GROUPS_HELD_STATE_NAME,
+        now,
+        height: held.oldestHeight,
+        count: held.count
+      }
+    );
+    const row = await this.db.oneOrNull<{
+      held_since: number | string | null;
+      held_reported: number | boolean | null;
+    }>(
+      `select held_since, held_reported from ${WAVES_CHAIN_MIRROR_STATE_TABLE}
+        where name = :name`,
+      { name: GROUPS_HELD_STATE_NAME }
+    );
+    if (!row) return null;
+    return {
+      since: Number(row.held_since ?? now),
+      reported: !!Number(row.held_reported ?? 0)
+    };
+  }
+
+  /** The current hold has been reported (its WARN written). */
+  async groupsHeldReported(): Promise<void> {
+    await this.db.execute(
+      `update ${WAVES_CHAIN_MIRROR_STATE_TABLE} set held_reported = true
+        where name = :name`,
+      { name: GROUPS_HELD_STATE_NAME }
     );
   }
 
@@ -1238,7 +1340,7 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
   async chainImportedGroups(): Promise<ChainGroupRow[]> {
     if (this.mode !== 'rebuild') return [];
     return this.db.execute<ChainGroupRow>(
-      `select group_id, legacy_id, version, origin, data
+      `select group_id, legacy_id, version, origin, height, data
          from ${CHAIN_GROUPS_TABLE}
         where origin = 'legacy' and version <= 1
         order by group_id`
