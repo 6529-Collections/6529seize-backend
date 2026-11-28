@@ -387,14 +387,24 @@ describe('claims builder: chain claims for the Main Stage', () => {
     [
       'CHAIN_GATEWAY_URL is not an http(s) URL',
       { ...UNCONFIGURED, CHAIN_GATEWAY_URL: 'not-a-url' }
+    ],
+    [
+      'CHAIN_GATEWAY_SERVICE_KEY is not plain visible ASCII',
+      {
+        ...UNCONFIGURED,
+        CHAIN_GATEWAY_URL: GATEWAY_URL,
+        CHAIN_GATEWAY_SERVICE_KEY: 'not a key'
+      }
     ]
   ])('when %s', (reason, secret) => {
     const logged =
       `${NOT_CONFIGURED} ${reason}. Chain claims are refused; after 10 ` +
-      'receives SQS moves each one to claims-builder-dlq. To fix: set ' +
-      'CHAIN_GATEWAY_URL in the lambdas secret, update or redeploy ' +
-      'claimsBuilder so it starts cold (it reads the secret once), then ' +
-      'redrive claims-builder-dlq. Native claims are built as before.';
+      'receives SQS moves each one to claims-builder-dlq. To fix: correct ' +
+      'the setting this error names in the lambdas secret ' +
+      '(CHAIN_GATEWAY_SERVICE_KEY is optional, so removing an invalid one ' +
+      'is enough), update or redeploy claimsBuilder so it starts cold (it ' +
+      'reads the secret once), then redrive claims-builder-dlq. Native ' +
+      'claims are built as before.';
 
     it('logs one error a cold start and refuses every chain claim', async () => {
       const lambda = coldStart(secret);
