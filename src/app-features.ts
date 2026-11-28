@@ -44,6 +44,26 @@ export class AppFeatures {
   }
 
   /**
+   * The chain-day loop reads each TDH day from the 6529 chain, compares it
+   * with the site's own computation and the live tables, and records the
+   * result in tdh_chain_days. It writes no TDH table. Rollback: off.
+   */
+  public isTdhChainShadowEnabled(): boolean {
+    return this.isFeatureEnabled('TDH_CHAIN_SHADOW');
+  }
+
+  /**
+   * The TDH tables are written from the 6529 chain's days by the chain-day
+   * poller, over the day tdhLoop's 00:01 run still computes as the fallback;
+   * the delegations loop's within-day TDH rerun stops. Rollback: off, and
+   * nothing replaces the site's own days; invoke tdhLoop once to recompute
+   * today's day at once (its config sets TDH_RESET, so it does).
+   */
+  public isTdhFromChainEnabled(): boolean {
+    return this.isFeatureEnabled('TDH_FROM_CHAIN');
+  }
+
+  /**
    * Waves, groups and decisions move to the 6529 chain: wave, group and
    * decision writes, entries, votes, wave REP and polls are refused here
    * while this is on (src/waves-freeze). Chat stays open.

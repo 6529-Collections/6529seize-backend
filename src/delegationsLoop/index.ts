@@ -1,6 +1,7 @@
 import { consolidateActivity } from '../aggregatedActivityLoop/aggregated_activity';
 import { identitiesService } from '../api-serverless/src/identities/identities.service';
 import { USE_CASE_PRIMARY_ADDRESS } from '@/constants';
+import { refreshTdhChainSettings } from '@/tdhChain/tdh-chain-flags';
 import {
   fetchAllConsolidatedTdh,
   fetchLatestNftDelegationBlock,
@@ -112,6 +113,8 @@ export const handler = sentryContext.wrapLambdaHandler(
     try {
       return await doInDbContext(
         async () => {
+          // The TDH chain flag decides the within-day TDH rerun below.
+          await refreshTdhChainSettings();
           // Every identities sync in this invocation shares one time budget.
           startIdentitySyncBudget();
           const scopeBackfill = readScopeBackfillConfig();
@@ -604,20 +607,25 @@ async function reconsolidateAffectedWallets(
     const lastTDHCalc = Time.latestUtcMidnight().toDate();
     const walletsArray = Array.from(affectedWallets);
 
-    const { block, blockTimestamp } = await updateTDH(
-      lastTDHCalc,
-      walletsArray
-    );
-    health.committedStage();
-    // Keep the pre-update snapshot for old-membership discovery, but use a
-    // fresh snapshot to choose the exact rows replaced during persistence.
-    const replacementConsolidations = await fetchAllConsolidatedTdh();
-    await consolidateAndPersistTDH(block, blockTimestamp, {
-      mode: 'PARTIAL',
-      wallets: walletsArray,
-      currentConsolidatedTdh: replacementConsolidations
-    });
-    health.committedStage();
+    let block: number | null = null;
+    if (appFeatures.isTdhFromChainEnabled()) {
+      // TDH comes from the 6529 chain's days, grouped as each day's cutoff
+      // groups it; a consolidation change shows from the next day.
+      logger.info(`[TDH FROM THE 6529 CHAIN] [NO WITHIN-DAY TDH RERUN]`);
+    } else {
+      const updated = await updateTDH(lastTDHCalc, walletsArray);
+      block = updated.block;
+      health.committedStage();
+      // Keep the pre-update snapshot for old-membership discovery, but use a
+      // fresh snapshot to choose the exact rows replaced during persistence.
+      const replacementConsolidations = await fetchAllConsolidatedTdh();
+      await consolidateAndPersistTDH(block, updated.blockTimestamp, {
+        mode: 'PARTIAL',
+        wallets: walletsArray,
+        currentConsolidatedTdh: replacementConsolidations
+      });
+      health.committedStage();
+    }
     await consolidateNftOwners(affectedWallets);
     health.committedStage();
     await consolidateOwnerBalances(affectedWallets);

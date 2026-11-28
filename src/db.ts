@@ -44,6 +44,7 @@ import {
   NFTS_TABLE,
   PROFILES_TABLE,
   TDH_BLOCKS_TABLE,
+  TDH_CHAIN_DAYS_TABLE,
   TDH_NFT_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
@@ -1387,18 +1388,51 @@ export async function persistTDH(
         }
       );
     } else {
-      logger.info(`[TDH] [DELETING ALL WALLETS FOR BLOCK ${block}]`);
-      await tdhRepo.delete({ block: block });
-      await deleteAll(tdhMemesRepo);
-      await deleteAll(tdhEditionsRepo);
-      logger.info(`[TDH AND TDH_MEMES CLEARED]`);
-      await insertWithoutUpdate(tdhRepo, tdh);
-      await insertWithoutUpdate(tdhMemesRepo, memesTdh);
-      await insertWithoutUpdate(tdhEditionsRepo, tdhEditions);
+      await replaceWalletTdhRows(manager, block, {
+        tdh,
+        memesTdh,
+        tdhEditions
+      });
     }
   });
 
   logger.info(`[TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
+}
+
+export interface WalletTdhRows {
+  readonly tdh: TDH[];
+  readonly memesTdh: TDHMemes[];
+  readonly tdhEditions: TDHEditions[];
+}
+
+/** A full write of the wallet TDH tables, inside the caller's transaction. */
+async function replaceWalletTdhRows(
+  manager: EntityManager,
+  block: number,
+  { tdh, memesTdh, tdhEditions }: WalletTdhRows
+) {
+  const tdhRepo = manager.getRepository(TDH);
+  const tdhMemesRepo = manager.getRepository(TDHMemes);
+  const tdhEditionsRepo = manager.getRepository(TDHEditions);
+  logger.info(`[TDH] [DELETING ALL WALLETS FOR BLOCK ${block}]`);
+  await tdhRepo.delete({ block: block });
+  await deleteAll(tdhMemesRepo);
+  await deleteAll(tdhEditionsRepo);
+  logger.info(`[TDH AND TDH_MEMES CLEARED]`);
+  await insertWithoutUpdate(tdhRepo, tdh);
+  await insertWithoutUpdate(tdhMemesRepo, memesTdh);
+  await insertWithoutUpdate(tdhEditionsRepo, tdhEditions);
+}
+
+/**
+ * What the chain-day write adds to a full consolidated write, in the same
+ * transaction: the wallet tables, and a last step (the day's own record),
+ * so the day's TDH, its tdh_blocks row, the identities sync marker and the
+ * record of the day commit together or not at all.
+ */
+export interface ConsolidatedTdhWriteExtras {
+  readonly walletTdh?: WalletTdhRows;
+  readonly afterWrite?: (connection: ConnectionWrapper<any>) => Promise<void>;
 }
 
 /** With a transaction's manager, the block row commits with its TDH rows. */
@@ -1425,7 +1459,8 @@ export async function persistTDHBlock(
 }
 
 export type ConsolidatedTdhPersistenceScope =
-  | { readonly mode: 'FULL' }
+  /** `interim`: 6529.io's own day while TDH comes from the 6529 chain. */
+  | { readonly mode: 'FULL'; readonly interim?: boolean }
   | {
       readonly mode: 'PARTIAL';
       readonly wallets: string[];
@@ -1459,8 +1494,12 @@ export async function persistConsolidatedTDH(
   nftTdh: NftTDH[],
   scope: ConsolidatedTdhPersistenceScope,
   blockTimestamp: Date,
-  { writeAllRows }: Pick<PartialTdhWriteOptions, 'writeAllRows'> = {}
+  { writeAllRows }: Pick<PartialTdhWriteOptions, 'writeAllRows'> = {},
+  extras: ConsolidatedTdhWriteExtras = {}
 ) {
+  if (extras.walletTdh && scope.mode !== 'FULL') {
+    throw new Error('wallet rows ride along with a full write only');
+  }
   logger.info(`[CONSOLIDATED TDH] PERSISTING WALLETS TDH [${tdh.length}]`);
   // Fails before any TDH write if the marker table is missing.
   await identityTdhSyncStateDb.ensureRows();
@@ -1511,6 +1550,9 @@ export async function persistConsolidatedTDH(
         }
       );
     } else {
+      if (extras.walletTdh) {
+        await replaceWalletTdhRows(manager, block, extras.walletTdh);
+      }
       logger.info(`[CONSOLIDATED TDH] [DELETING ALL WALLETS]`);
       await deleteAll(tdhRepo);
       await deleteAll(tdhMemesRepo);
@@ -1541,12 +1583,23 @@ export async function persistConsolidatedTDH(
       { writeAllRows }
     );
     await persistTDHBlock(block, blockTimestamp, tdh, manager);
+    // The tables no longer hold the 6529 chain's values for this block if
+    // the chain wrote it: /api/blocks says SITE again. The chain's own write
+    // records its day after this, in `afterWrite`, which clears the mark.
+    await dbSupplier().execute(
+      `update ${TDH_CHAIN_DAYS_TABLE} set superseded_at = :now
+       where block = :block and mode = 'CHAIN' and superseded_at is null`,
+      { block, now: Date.now() },
+      { wrappedConnection: qrHolder }
+    );
     // A full rewrite (tdhLoop) leaves the sync to delegationsLoop and has its
-    // completion announced once the sync is done.
+    // completion announced once the sync is done; an interim one (6529.io's
+    // own day while TDH comes from the 6529 chain) is not announced.
+    const interim = scope.mode === 'FULL' && scope.interim === true;
     const generation = await identityTdhSyncStateDb.markPending(
       block,
       qrHolder,
-      { announceFull: scope.mode === 'FULL' }
+      { announceFull: scope.mode === 'FULL' && !interim, interim }
     );
     // A partial write records the keys it replaced and the keys whose
     // boosted TDH or rate it changed (it rewrites every row, re-ranked), so
@@ -1563,6 +1616,7 @@ export async function persistConsolidatedTDH(
         qrHolder
       );
     }
+    await extras.afterWrite?.(qrHolder);
   });
 
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);

@@ -384,6 +384,7 @@ export {
 } from './IViewerGroupSet';
 export { IdentityTdhSyncStateEntity } from './IIdentityTdhSyncState';
 export { IdentityTdhSyncScopeEntity } from './IIdentityTdhSyncScope';
+export { TdhChainDayEntity } from './ITdhChainDay';
 
 export * from './ICompetitionScoreReset';
 export {

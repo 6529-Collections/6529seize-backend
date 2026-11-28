@@ -335,6 +335,159 @@ describeWithSeed(
       expect(sqs.sendToQueueName).toHaveBeenCalledTimes(1);
     });
 
+    it("holds an interim day's revocations and announcement until the interim is released, then announces it once", async () => {
+      await identityTdhSyncStateDb.ensureRows();
+      await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+        identityTdhSyncStateDb.markPending(BLOCK, connection, {
+          interim: true
+        })
+      );
+      const announce = jest
+        .spyOn(notifier, 'notifyTdhCalculationsDone')
+        .mockResolvedValue(undefined);
+      const revoke = jest.spyOn(
+        overvoteRevocation,
+        'revokeTdhBasedDropWavesOverVotesPerCompetition'
+      );
+      expect(await identityTdhSyncStateDb.isInterim(1)).toBe(true);
+      expect(await identityTdhSyncStateDb.heldInterimBlock()).toBe(BLOCK);
+      expect(await identityTdhSyncStateDb.hasPendingFullAnnouncement()).toBe(
+        false
+      );
+
+      // Identities are synced to the interim day; nothing is revoked or
+      // announced on its values.
+      await expect(syncIdentitiesAfterTdh()).resolves.toBe('SYNCED');
+      expect(revoke).not.toHaveBeenCalled();
+      expect(announce).not.toHaveBeenCalled();
+      expect(sqs.sendToQueueName).not.toHaveBeenCalled();
+      expect(
+        (await identityTdhSyncStateDb.readProgress()).syncedGeneration
+      ).toBe(1);
+
+      // The own-day point releases it once: the caller announces.
+      await expect(
+        identityTdhSyncStateDb.releaseInterim(BLOCK + 1)
+      ).resolves.toEqual({
+        outcome: 'NONE',
+        generation: 0
+      });
+      await expect(
+        identityTdhSyncStateDb.releaseInterim(BLOCK)
+      ).resolves.toEqual({
+        outcome: 'NOTIFY',
+        generation: 1
+      });
+      expect(await identityTdhSyncStateDb.heldInterimBlock()).toBeNull();
+      await expect(
+        identityTdhSyncStateDb.releaseInterim(BLOCK)
+      ).resolves.toEqual({
+        outcome: 'NONE',
+        generation: 0
+      });
+      // A failed announcement puts it back while no newer write came.
+      await identityTdhSyncStateDb.rearmInterim(1, BLOCK);
+      expect(await identityTdhSyncStateDb.isInterim(1)).toBe(true);
+    });
+
+    it('lets the next write end an interim, and arms the announcement of one released before its sync', async () => {
+      await identityTdhSyncStateDb.ensureRows();
+      const pending = (options: {
+        announceFull?: boolean;
+        interim?: boolean;
+      }) =>
+        sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+          identityTdhSyncStateDb.markPending(BLOCK, connection, options)
+        );
+      await pending({ interim: true });
+      // The chain's write: a full write, announced.
+      await pending({ announceFull: true });
+      expect(await identityTdhSyncStateDb.isInterim(1)).toBe(false);
+      await expect(
+        identityTdhSyncStateDb.releaseInterim(BLOCK)
+      ).resolves.toMatchObject({
+        outcome: 'NONE'
+      });
+
+      await pending({ interim: true });
+      expect(await identityTdhSyncStateDb.isInterim(3)).toBe(true);
+      await expect(
+        identityTdhSyncStateDb.releaseInterim(BLOCK)
+      ).resolves.toEqual({
+        outcome: 'ARMED',
+        generation: 3
+      });
+      // No longer interim: its sync revokes and announces as for any full
+      // write.
+      const announce = jest
+        .spyOn(notifier, 'notifyTdhCalculationsDone')
+        .mockResolvedValue(undefined);
+      const revoke = jest.spyOn(
+        overvoteRevocation,
+        'revokeTdhBasedDropWavesOverVotesPerCompetition'
+      );
+      await expect(syncIdentitiesAfterTdh()).resolves.toBe('SYNCED');
+      expect(revoke).toHaveBeenCalledTimes(1);
+      expect(announce).toHaveBeenCalledTimes(1);
+      // A rearm after a newer write does nothing.
+      await identityTdhSyncStateDb.rearmInterim(1, BLOCK);
+      expect(await identityTdhSyncStateDb.isInterim(1)).toBe(false);
+    });
+
+    it("holds D and E when the chain's write lands in the middle of an interim walk", async () => {
+      await identityTdhSyncStateDb.ensureRows();
+      await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+        identityTdhSyncStateDb.markPending(BLOCK, connection, {
+          interim: true
+        })
+      );
+      const announce = jest
+        .spyOn(notifier, 'notifyTdhCalculationsDone')
+        .mockResolvedValue(undefined);
+      const revoke = jest.spyOn(
+        overvoteRevocation,
+        'revokeTdhBasedDropWavesOverVotesPerCompetition'
+      );
+
+      let landed = false;
+      await expect(
+        syncIdentitiesAfterTdh({
+          chunkRows: 3,
+          afterChunk: async (chunk) => {
+            if (chunk !== 1 || landed) return;
+            landed = true;
+            // The chain's day commits between two chunks: a full write,
+            // which ends the interim.
+            await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+              identityTdhSyncStateDb.markPending(BLOCK, connection, {
+                announceFull: true
+              })
+            );
+          }
+        })
+      ).resolves.toBe('SYNCED');
+
+      // Some identities were walked at the interim values: nothing is
+      // revoked or announced for this generation.
+      expect(await identityTdhSyncStateDb.isInterim(1)).toBe(false);
+      expect(revoke).not.toHaveBeenCalled();
+      expect(announce).not.toHaveBeenCalled();
+      expect(sqs.sendToQueueName).not.toHaveBeenCalled();
+      expect(await identityTdhSyncStateDb.readProgress()).toEqual({
+        pendingGeneration: 2,
+        pendingBlock: BLOCK,
+        syncedGeneration: 1
+      });
+
+      // The chain's generation revokes and announces once.
+      await resumePendingIdentityTdhSync();
+      expect(revoke).toHaveBeenCalledTimes(1);
+      expect(announce).toHaveBeenCalledTimes(1);
+      expect(
+        (await identityTdhSyncStateDb.readProgress()).syncedGeneration
+      ).toBe(2);
+    });
+
     it('keeps a full TDH announcement armed when publishing it fails', async () => {
       await identityTdhSyncStateDb.ensureRows();
       await sqlExecutor.executeNativeQueriesInTransaction((connection) =>

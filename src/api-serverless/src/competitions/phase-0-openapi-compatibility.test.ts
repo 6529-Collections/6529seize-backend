@@ -34,7 +34,10 @@ const ACCEPTED_ADDITIVE_ENUM_EXTENSIONS: Readonly<Record<string, string[]>> = {
   // added, so existing clients are unaffected.
   'schema ApiWave.required': ['stays_on_site'],
   'schema ApiWaveMin.required': ['stays_on_site'],
-  'schema ApiGroupFull.required': ['stays_on_site']
+  'schema ApiGroupFull.required': ['stays_on_site'],
+  // TDH blocks gain source: a response field added, so existing clients are
+  // unaffected.
+  'schema ApiBlockItem.required': ['source']
 };
 
 const ACCEPTED_NULLABLE_REFERENCE_EXTENSIONS = new Set([

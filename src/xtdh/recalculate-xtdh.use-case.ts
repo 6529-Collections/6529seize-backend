@@ -1,3 +1,4 @@
+import { isXTdhRetired } from '@/xtdh/xtdh-retired';
 import { RequestContext } from '../request.context';
 import { xTdhRepository, XTdhRepository } from './xtdh.repository';
 import { Logger } from '../logging';
@@ -48,6 +49,12 @@ export class RecalculateXTdhUseCase {
       throw new Error(
         `handleUniversePhase must own the transaction before enqueueing xTDH stats phase`
       );
+    }
+    if (isXTdhRetired()) {
+      // xTDH is retired when identities move to the 6529 Network: nothing
+      // is recalculated from then on.
+      this.logger.info(`xTDH is retired: no recalculation`);
+      return;
     }
     this.getRequiredXTdhLoopQueueUrl();
     await this.recalculateXTdhUniverse(ctx);

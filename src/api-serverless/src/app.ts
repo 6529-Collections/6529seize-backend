@@ -98,7 +98,8 @@ import { Strategy as AnonymousStrategy } from 'passport-anonymous';
 import * as process from 'process';
 import * as SwaggerUI from 'swagger-ui-express';
 import { NFT } from '@/entities/INFT';
-import { TDHBlock } from '@/entities/ITDH';
+import type { TDHBlockWithChainDay } from '../../db-api';
+import { blockSource } from './tdh/tdh-block-source';
 import { Upload } from '@/entities/IUpload';
 import { env, loadLocalConfig, loadSecrets } from '@/env';
 import { Logger } from '@/logging';
@@ -673,10 +674,11 @@ function wireApp() {
       await db.fetchBlocks(pageSize, page).then((result) => {
         return returnPaginatedResult(
           transformPaginatedResponse(
-            (orig: TDHBlock): ApiBlockItem => ({
+            (orig: TDHBlockWithChainDay): ApiBlockItem => ({
               block_number: orig.block_number,
               timestamp: orig.timestamp,
-              created_at: orig.created_at!
+              created_at: orig.created_at!,
+              ...blockSource(orig)
             }),
             result
           ),

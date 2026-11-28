@@ -169,6 +169,78 @@ JSON integers within JavaScript's safe integer range. The width migration
 preserves stored values. Deploy `dbMigrationsLoop` with the full schema scope,
 then deploy `api`.
 
+## TDH days from the 6529 chain
+
+`tdhLoop` can read each TDH day from the 6529 chain over the day it computes
+itself. Two flags, both off by default, choose how. `tdhLoop`,
+`delegationsLoop` and `tdhHistoryLoop` read them, with
+`TDH_CHAIN_GATEWAY_URL`, from the secret on every invocation, so a change
+takes effect without a redeploy.
+
+- `FEATURE_TDH_CHAIN_SHADOW`: compare only. `tdhLoop`'s `chainPoll` schedule
+  events (every 5 minutes from 00:00 to 07:55 UTC, then at :15 and :45 from
+  08:15 to 23:45) read the newest final day from the gateway and check its
+  roots, counts, totals, clusters and cutoff block. They compute the site's
+  TDH at the chain's cutoff block, grouped by the chain's clusters, and
+  compare it with the chain's values exactly; that comparison is the day's
+  verdict. They compare the live tables too, and record those differences
+  split by whether a grouping changed since the cutoff explains them (the
+  delegations loop reruns TDH at the same block after a consolidation
+  change; the chain takes it up the next day). The result goes to
+  `tdh_chain_days`. A verdict MISMATCH raises an alert, and so do live
+  differences no grouping change explains and live tables that can't be
+  compared. No TDH table is written.
+- `FEATURE_TDH_FROM_CHAIN`: the same, then the TDH tables are written with the
+  chain's totals over the site's computation, ranked again. The wallet and
+  consolidated tables, `tdh_blocks`, the identities sync marker and the day's
+  `tdh_chain_days` record commit in one transaction. The day's alerts go out,
+  then follow-up steps run once each and are marked on the record: NFT
+  totals, history for days N-1 and N, metrics, the two dated uploads, and the
+  day files. A failed step is tried again by the next poll, and given up with
+  an alert after 12 failed runs; a retry never writes the tables again. A
+  newer day is written even while an older day's steps are due; the older
+  day's steps that read the tables are then given up, with an alert.
+  The 00:01 `tdhLoop` run and `tdhHistoryLoop`'s 00:30 run go on: they are
+  the fallback, so 6529.io has its own day on time whatever the chain does.
+  In chain mode that day is interim: it is written, and identities are
+  synced to it, but its dated uploads are held, and nothing is revoked or
+  announced on its values (`identity_tdh_sync_state` row `interim`). The
+  chain's day replaces it at the same midnight block once it can be read
+  and verified; that write uploads and announces as a full `tdhLoop` run
+  does. If the chain's day isn't written 4 hours past the boundary (the
+  gateway down, the day not served or not final, a list that doesn't
+  rebuild its root, a failed check, a stalled chain), the poller alerts once
+  an hour and publishes the site's own day once: its uploads, then its
+  announcement. Out of chain mode (a rollback) a day still held is
+  published at the next poll. When the chain's write lands while identities
+  are being synced to the interim day, that sync holds the revocation and
+  the announcement too, and the chain's generation does both. The 00:01 run
+  leaves alone a day the chain already wrote.
+  The delegations loop's within-day TDH rerun stops: it would rewrite the
+  chain's block. An alert also fires while the newest `tdh_blocks` row is
+  more than 30 hours old.
+
+`tdh_chain_days` is an index of the chain: a rebuild reads the same days from
+the gateway. A consolidation whose key is longer than the `consolidation_key`
+columns is left out of the write and queued on the day's record until the
+columns are wider; the day is then written and uploaded again. `/api/blocks`
+says which blocks came from the chain (`source`, `cycle_day`, `wallet_root`).
+When the old path writes a block the chain wrote (a rollback, or the
+delegations loop's rerun after one), the day's record is marked
+`superseded_at` in the same transaction and the block reads SITE again.
+
+Deploy order: `dbMigrationsLoop` with the full schema scope first. It
+creates `tdh_chain_days` and its columns, which the old path's TDH write
+updates and `/api/blocks` joins, so `tdhLoop`, `delegationsLoop` and `api`
+fail without them. Then `tdhLoop`, `delegationsLoop`, `tdhHistoryLoop` and
+`api`, with both flags off. Put `TDH_CHAIN_GATEWAY_URL` in the secret
+before turning a flag on.
+
+Rollback: turn `FEATURE_TDH_FROM_CHAIN` off. The next 00:01 `tdhLoop` run
+computes the day as before. To recompute today's day at once, invoke
+`tdhLoop` with no event: its config sets `TDH_RESET`, so it recomputes the
+day at the same midnight block, which marks the chain's day superseded.
+
 ## Active TDH voting discovery
 
 `GET /v2/waves/active-votes` is an optional-auth read in the existing API Lambda.
@@ -612,6 +684,8 @@ flowchart TD
     SeizeAPI --> WaveDropMetricsDirtyQueue["SQS: wave-drop-metrics-refresh-dirty.fifo"] --> WaveDropMetricsRefreshLoop
     SeizeAPI --> WaveScoreDirtyQueue["SQS: wave-score-refresh-dirty.fifo"] --> WaveScoreRefreshLoop
     TdhLoop --> TdhDoneTopic["SNS: tdh-calculation-done.fifo"]
+    EventBridge -->|chainPoll| TdhLoop
+    TdhLoop -->|TDH days| ChainGateway["6529 chain gateway"]
     TdhDoneTopic --> XTdhQueue["SQS: xtdh-start.fifo"] --> XTdhLoop["xTdhLoop"]
     DelegationsLoop -->|partial TDH persisted| XTdhQueue
     XTdhLoop --> XTdhQueue
@@ -3603,6 +3677,18 @@ the web token picker's own limit) and `XTDH_GRANT_MAX_RANGE_WIDTH` per range
 larger requests get 400. An identity may have at most `XTDH_MAX_PENDING_GRANTS`
 grants waiting for review (default 50); the next one gets 409
 `PENDING_GRANT_LIMIT`.
+
+### xTDH retired with identities
+
+xTDH is retired when identities move to the 6529 Network; the chain takes no
+xTDH and no grants over. `src/xtdh/xtdh-retired.ts` follows the identity
+freeze (`isIdentityFrozen`): the freeze's own settings
+(`FEATURE_IDENTITY_FROZEN`, `IDENTITY_FREEZE_AT`), or the switch-on's
+(`FEATURE_IDENTITY_ON_CHAIN`, `IDENTITY_SWITCH_ON_AT`), which keeps it on for
+good. From then on the grant POSTs answer 423 with the retirement message,
+`xTdhLoop`'s universe phase returns at once, and `xTdhGrantsReviewerLoop`
+reviews nothing. The xTDH columns keep their last values for reads; nothing
+recalculates them.
 
 ### Transfer reconciliation after late indexing
 

@@ -145,7 +145,9 @@ describe('delegations loop and the identity mirror', () => {
     jest.mocked(updateTDH).mockResolvedValue({
       block: 100,
       blockTimestamp: new Date(0),
-      tdh: []
+      tdh: [],
+      memesTdh: [],
+      tdhEditions: []
     });
   });
   afterAll(() => {
