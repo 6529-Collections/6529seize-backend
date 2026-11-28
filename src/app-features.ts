@@ -88,6 +88,22 @@ export class AppFeatures {
   }
 
   /**
+   * Minting, allowlist and airdrop delegations are resolved from the 6529
+   * chain at one finalized height (src/identity-chain-mirror).
+   */
+  public isDelegationsFromChainEnabled(): boolean {
+    return this.isFeatureEnabled('DELEGATIONS_FROM_CHAIN');
+  }
+
+  /**
+   * Identity lookups by wallet, handle and profile id, login and handle
+   * availability read the 6529 chain (src/identity-chain-mirror).
+   */
+  public isIdentityReadsFromChainEnabled(): boolean {
+    return this.isFeatureEnabled('IDENTITY_READS_FROM_CHAIN');
+  }
+
+  /**
    * Identities move to the 6529 chain: profiles, handles, statements, REP
    * and NIC are read-only here while this is on (src/identity-freeze).
    */
