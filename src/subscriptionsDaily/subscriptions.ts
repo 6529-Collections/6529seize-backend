@@ -1102,7 +1102,14 @@ export async function consolidateSubscriptions(
     const uniqueValuesWithKeys = collections.getMapWithKeysAndValuesSwitched(
       replaceConsolidations
     );
-    const newKeys = Array.from(uniqueValuesWithKeys.keys());
+    // A key whose only source is itself did not change: one of its wallets
+    // took part in a consolidation event (for example a one-way registration
+    // the other wallet never confirmed) without the consolidation changing.
+    // Its rows are left exactly as they are, including the timestamps that
+    // order subscription priority.
+    const newKeys = Array.from(uniqueValuesWithKeys.keys()).filter((newKey) =>
+      (uniqueValuesWithKeys.get(newKey) ?? []).some((key) => key !== newKey)
+    );
     for (let index = 0; index < newKeys.length; index++) {
       const newKey = newKeys[index];
       const oldKeys = uniqueValuesWithKeys.get(newKey);
@@ -1202,7 +1209,11 @@ async function mergeSubscriptionsIntoKey(
 
   const modeResult = await manager.query(
     `SELECT SUM(automatic = true) AS automatic_count,
-      SUM(subscribe_all_editions = true) AS all_editions_count
+      SUM(subscribe_all_editions = true) AS all_editions_count,
+      MIN(created_at) AS earliest_created_at,
+      MIN(updated_at) AS earliest_updated_at,
+      MIN(CASE WHEN automatic = true THEN updated_at END)
+        AS earliest_automatic_updated_at
       FROM ${SUBSCRIPTIONS_MODE_TABLE}
       WHERE consolidation_key IN (${placeholders})
       FOR UPDATE`,
@@ -1214,6 +1225,16 @@ async function mergeSubscriptionsIntoKey(
   // including when the preference was saved while that group was in Manual mode.
   const subscribeAllEditions =
     Number(modeResult[0]?.all_editions_count ?? 0) > 0;
+  // The mode row's updated_at orders automatic subscribers for final
+  // allocations. The merged row keeps the earliest position of the automatic
+  // rows (any row when none is automatic), as upcoming card rows keep theirs,
+  // instead of moving to the back of the queue. Without rows the database
+  // defaults apply.
+  const createdAt = modeResult[0]?.earliest_created_at ?? null;
+  const priorityAt =
+    (isSubscribed
+      ? modeResult[0]?.earliest_automatic_updated_at
+      : modeResult[0]?.earliest_updated_at) ?? null;
 
   for (const key of balanceAndModeKeys) {
     await manager.query(
@@ -1235,8 +1256,8 @@ async function mergeSubscriptionsIntoKey(
   );
   await manager.query(
     `INSERT INTO ${SUBSCRIPTIONS_MODE_TABLE}
-      (consolidation_key, automatic, subscribe_all_editions)
-      VALUES (?, ?, ?)`,
-    [newKey, isSubscribed, subscribeAllEditions]
+      (consolidation_key, automatic, subscribe_all_editions, created_at, updated_at)
+      VALUES (?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, CURRENT_TIMESTAMP))`,
+    [newKey, isSubscribed, subscribeAllEditions, createdAt, priorityAt]
   );
 }

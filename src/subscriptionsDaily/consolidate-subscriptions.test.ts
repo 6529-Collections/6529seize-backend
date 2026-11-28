@@ -196,7 +196,94 @@ describe('consolidateSubscriptions', () => {
       balanceInserts.map((q) => [q.params?.[0], q.params?.[1]])
     );
     expect(inserted.get('0xa-0xd')).toBe(3);
-    expect(inserted.get('0xc')).toBe(7);
+    // 0xc's consolidation did not change, so none of its rows are rewritten
+    expect(inserted.has('0xc')).toBe(false);
+    expect(
+      managerQueries.filter((q) => q.params?.includes('0xc'))
+    ).toHaveLength(0);
+  });
+
+  it('writes nothing when no affected consolidation changed (unconfirmed one-way registration)', async () => {
+    // 0xd registered a consolidation to 0xb that 0xb never confirmed: both
+    // wallets are reconsolidated, but 0xb keeps its own key.
+    const executor = new MockSqlExecutor(
+      [{ consolidation_key: '0xb', balance: 4 }],
+      { '0xb': 50 }
+    );
+    setSqlExecutor(executor);
+    mockedFetchWalletConsolidationKeysViewForWallet.mockImplementation(
+      async (addresses) =>
+        addresses.map(
+          (a) =>
+            ({
+              address: a.toLowerCase(),
+              consolidation_key: a.toLowerCase()
+            }) as any
+        )
+    );
+
+    await consolidateSubscriptions(new Set(['0xb', '0xd']));
+
+    expect(managerQueries).toEqual([]);
+  });
+
+  it.each([
+    {
+      name: 'the earliest automatic position',
+      row: {
+        automatic_count: 2,
+        earliest_created_at: '2026-01-01 00:00:00',
+        earliest_updated_at: '2026-02-01 00:00:00',
+        earliest_automatic_updated_at: '2026-03-01 00:00:00'
+      },
+      expected: ['2026-01-01 00:00:00', '2026-03-01 00:00:00']
+    },
+    {
+      name: 'the earliest position when none is automatic',
+      row: {
+        automatic_count: 0,
+        earliest_created_at: '2026-01-01 00:00:00',
+        earliest_updated_at: '2026-02-01 00:00:00',
+        earliest_automatic_updated_at: null
+      },
+      expected: ['2026-01-01 00:00:00', '2026-02-01 00:00:00']
+    },
+    {
+      name: 'database defaults without mode rows',
+      row: { automatic_count: null },
+      expected: [null, null]
+    }
+  ])('keeps $name on the merged mode row', async ({ row, expected }) => {
+    const executor = new MockSqlExecutor(
+      [{ consolidation_key: '0xa-0xb', balance: 3 }],
+      { '0xa-0xd': 100, '0xb': 50 }
+    );
+    setSqlExecutor(executor);
+    fakeManager.query.mockImplementation(
+      async (sql: string, params?: any[]) => {
+        managerQueries.push({ sql, params });
+        if (sql.includes('SUM(balance)')) {
+          return [{ total_balance: 3 }];
+        }
+        if (sql.includes('automatic_count')) {
+          return [row];
+        }
+        return [];
+      }
+    );
+
+    await consolidateSubscriptions(new Set(['0xd']));
+
+    const modeInsert = managerQueries.find((q) =>
+      q.sql.includes('INSERT INTO subscriptions_mode')
+    );
+    expect(modeInsert?.sql).toContain('COALESCE(?, CURRENT_TIMESTAMP)');
+    expect(modeInsert?.params).toEqual([
+      '0xa-0xd',
+      Number(row.automatic_count ?? 0) > 0,
+      false,
+      ...expected
+    ]);
   });
 
   it('combines rows for the same card instead of orphaning the old key', async () => {
@@ -270,6 +357,20 @@ describe('consolidateSubscriptions', () => {
       { '0xa-0xd': 100, '0xb': 50 }
     );
     setSqlExecutor(executor);
+    // 0xc also moves, into a consolidation with 0xe
+    mockedFetchWalletConsolidationKeysViewForWallet.mockImplementation(
+      async (addresses) =>
+        addresses
+          .filter((a) => ['0xa', '0xc'].includes(a.toLowerCase()))
+          .map(
+            (a) =>
+              ({
+                address: a.toLowerCase(),
+                consolidation_key:
+                  a.toLowerCase() === '0xa' ? '0xa-0xd' : '0xc-0xe'
+              }) as any
+          )
+    );
     fakeManager.query.mockImplementation(
       async (sql: string, params?: any[]): Promise<any[]> => {
         managerQueries.push({ sql, params });
@@ -309,7 +410,7 @@ describe('consolidateSubscriptions', () => {
       (q) =>
         q.sql.includes('INSERT INTO') && q.sql.includes('balance') && q.params
     );
-    expect(balanceInserts.map((q) => q.params?.[0])).toEqual(['0xc']);
+    expect(balanceInserts.map((q) => q.params?.[0])).toEqual(['0xc-0xe']);
   });
   it('aborts with the original error when the transaction itself was lost', async () => {
     const executor = new MockSqlExecutor(
