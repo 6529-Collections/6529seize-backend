@@ -77,6 +77,11 @@ export interface ChainGroup {
   readonly controller: string | null;
   /** The block time of the current version's write (ms). */
   readonly activeFrom: number | null;
+  /**
+   * The chain height the index wrote the row at (at or above the current
+   * version's write); null when not read.
+   */
+  readonly height: number | null;
   readonly definition: ChainGroupDefinition | null;
 }
 
@@ -85,6 +90,8 @@ export interface ChainGroupRow {
   readonly legacy_id: string | null;
   readonly version: number | string;
   readonly origin: string;
+  /** The chain height the index wrote the row at. */
+  readonly height?: number | string | null;
   readonly data: unknown;
 }
 
@@ -196,6 +203,10 @@ export function chainGroupOf(row: ChainGroupRow): ChainGroup {
     origin: row.origin,
     controller: wordOf(data.controller),
     activeFrom: timeOf(data.activeFrom),
+    height:
+      row.height === undefined || row.height === null
+        ? null
+        : Number(row.height),
     definition: groupDefinitionOf(data)
   };
 }

@@ -1260,6 +1260,57 @@ loop calls `followProfileSites()`, which runs the followers in
 for at most four minutes: the profile site index's chain reads, served from
 the gateway client and the mirror's profile ids.
 
+The rebuild check (docs/rebuild-check.md) rebuilds the mirror's tables with
+the mirror's own code (`identity-chain-mirror.rebuild.ts`). The rebuilder
+`identity.chain-mirror` runs it from empty tables against the run's gateway
+source, run after run, until a full sync has ended and the feed, the wallet
+bindings and the rating events are past the source's finalized height, which
+must be the mark; a source that moves on during the step fails it. The seed
+`identity.probe-profiles` first writes 6529.io's rows from before switch-on
+that the chain doesn't hold (placeholder profiles, a TDH-only identity, and
+an address-only identity on the founder's wallet), takes the switch-on
+record from them, then runs the mirror the same way, as the delegations
+loop does from switch-on, so the world's actors get their profiles from the
+chain, then 6529.io's own writes after it (TDH on an identity):
+`rebuild-world/site-rows.ts`. The switch-on record (`switch-on-record.ts`,
+in the TDH-only record's format) holds every identities row with no handle
+and no chain identity, and its address keys, as 6529.io held them right
+before the mirror's first run; the rebuilder loads its rows first, so the
+mirror adopts the same ids on equal keys (the founder's chain identity
+takes the address-only row's id on both sides). The rebuilder then reads
+the placeholder profiles from the "placeholders at freeze" file
+(`placeholder-restore.ts`, pinned by its SHA-256), since after a drop the
+mirror has no profiles to list them from: it lists them as the mirror's
+first run does, runs the mirror, then restores each one no chain identity
+took, its profile and, without the wallets bound on the chain, its
+identities row and wallets, refusing one whose profile id a `profiles` row
+already holds. A second seed
+plants one reference of each kind to an untaken placeholder
+(`rebuild-world/placeholder-references.ts`). Neither step calls the
+membership handlers: the holdings queue is the holdings loops' input, and
+the check rebuilds the holdings tables from `address_consolidation_keys`
+itself. For the same reason both take the regrouped wallets off
+`identity_chain_regroups` at their end, as the delegations loop does once
+it has re-keyed them, without the re-keying. Without a gateway whose status
+has an identity import (another area's run, with that area's recording)
+the seed writes the world's actors as plain rows instead
+(`seedProbeIdentities`). The source is a
+devnet's identity world, captured in the shared gateway recording beside
+the waves area's world, with its profile documents in the recording's files
+directory; `rebuild-world/world-ids.ts` holds its ids, from the capture's
+identity-world.json.
+
+What the chain alone does not give back: values the mirror takes from its
+own clock or makes up (ratings' `last_modified`, delegations' and profiles'
+`created_at`, profiles' `updated_at`, consolidations' `created_at` and
+registration times, statements' ids and `crated_at`), EXEMPT by name until
+they come from block times; the placeholder profiles, which the rebuild
+reads from the placeholders file; the rows only the switch-on record
+carries, which the rebuild loads from the rebuild world's own take until the
+team's is pinned (`SWITCH_ON_RECORD_PINS`), planned rows until then; and TDH
+on identities rows (`tdh`, `basetdh_rate`), which only the TDH loop writes,
+column plans until the TDH area's `tdh.chain-days` writes those columns.
+
 ### Ordinary Ethereum RPC boundary
 
 The shared provider in `src/ethereum-rpc/` reads the server-only

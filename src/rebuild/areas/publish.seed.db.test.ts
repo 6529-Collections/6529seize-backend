@@ -14,6 +14,7 @@ import {
   PROFILE_CMS_PACKAGES_TABLE,
   PROFILE_CMS_POINTER_EVENTS_TABLE,
   PROFILE_CMS_PUBLISH_SIGNATURES_TABLE,
+  PROFILES_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_METRICS_TABLE
 } from '@/constants';
@@ -21,6 +22,10 @@ import { ProfileCmsPackageStatus } from '@/entities/IProfileCmsPackage';
 import { rebuildProfileCmsFromChainAndLog } from '@/profile-cms/personal-log/profile-cms-rebuild';
 import { seedProfileSites } from '@/rebuild/areas/publish.seed';
 import { publishManifest } from '@/rebuild/manifests/publish.manifest';
+import {
+  worldActorIdentity,
+  worldActorProfileId
+} from '@/rebuild/manifests/probe-fixture';
 import { RebuildContext } from '@/rebuild/manifest.types';
 import { LocalRecordsWaveReader } from '@/signed-records/record-log/records-wave-local-reader';
 import { loadProviderKeys } from '@/signed-records/sealed-crypto';
@@ -32,6 +37,7 @@ import {
   aSignedProfileSite,
   InMemoryProfileCmsChain
 } from '@/tests/fixtures/profile-cms-chain.fixture';
+import { writeWorldActorsForTests } from '@/tests/fixtures/world-actors.fixture';
 
 const FLAGS = publishManifest.flags;
 
@@ -101,9 +107,12 @@ describeWithSeed('the publish area of the rebuild check', [], () => {
   const saved = { ...process.env };
   let dir: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     Object.assign(process.env, FLAGS);
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'publish-seed-'));
+    // The site's profile and the records service, as the identity world
+    // holds them.
+    await writeWorldActorsForTests(['probe-1', 'records-service']);
   });
 
   afterEach(() => {
@@ -128,6 +137,25 @@ describeWithSeed('the publish area of the rebuild check', [], () => {
       ['rebuild-publish-draft-1', ProfileCmsPackageStatus.PUBLISHED, true],
       ['rebuild-publish-draft-2', ProfileCmsPackageStatus.DRAFT, false]
     ]);
+    // The first probe profile, by its fixed id; the seed writes no profile.
+    const probe = worldActorIdentity('probe-1');
+    expect(
+      (seeded.packages as { profile_id: string; profile_handle: string }[]).map(
+        (row) => [row.profile_id, row.profile_handle]
+      )
+    ).toEqual([
+      [worldActorProfileId('probe-1'), probe.handle],
+      [worldActorProfileId('probe-1'), probe.handle]
+    ]);
+    expect(
+      await sqlExecutor.execute(
+        `select external_id from ${PROFILES_TABLE} order by external_id`
+      )
+    ).toEqual(
+      [probe.profileId, FLAGS.SIGNED_RECORDS_SERVICE_PROFILE_ID]
+        .sort((a, b) => (a < b ? -1 : Number(a > b)))
+        .map((id) => ({ external_id: id }))
+    );
     expect(
       (seeded.events as { event_type: string }[]).map((row) => row.event_type)
     ).toEqual(['PUBLISH', 'SET_PRIMARY']);
@@ -149,27 +177,28 @@ describeWithSeed('the publish area of the rebuild check', [], () => {
     expect(await rows()).toEqual(seeded);
   });
 
-  it('takes the records service as it finds it, so either seed may run first', async () => {
-    const service = {
-      wallet: FLAGS.SIGNED_RECORDS_SERVICE_WALLET,
-      profileId: FLAGS.SIGNED_RECORDS_SERVICE_PROFILE_ID
-    };
-    await sqlExecutor.execute(
-      `insert into ${IDENTITIES_TABLE}
-         (consolidation_key, profile_id, primary_address, handle,
-          normalised_handle, tdh, rep, cic, level_raw, classification,
-          xtdh, produced_xtdh, granted_xtdh, xtdh_rate, basetdh_rate)
-       values (:wallet, :profileId, :wallet, 'rebuild-records',
-          'rebuild-records', 0, 0, 0, 0, 'PSEUDONYM', 0, 0, 0, 0, 0)`,
-      service
-    );
-    await seedProfileSites(seedContext(dir), FLAGS);
-    expect(
-      await sqlExecutor.execute(
+  it('reads the records service by its wallet and writes none of its rows', async () => {
+    const service = { profileId: FLAGS.SIGNED_RECORDS_SERVICE_PROFILE_ID };
+    const held = async () =>
+      sqlExecutor.execute(
         `select profile_id from ${IDENTITIES_TABLE} where profile_id = :profileId`,
         service
-      )
-    ).toHaveLength(1);
+      );
+    const before = await held();
+    await seedProfileSites(seedContext(dir), FLAGS);
+    expect(before).toHaveLength(1);
+    expect(await held()).toEqual(before);
+  });
+
+  it('refuses records flags that name another profile than the wallet holds', async () => {
+    await expect(
+      seedProfileSites(seedContext(dir), {
+        ...FLAGS,
+        SIGNED_RECORDS_SERVICE_PROFILE_ID: 'another-profile'
+      })
+    ).rejects.toThrow(
+      /belongs to profile .*; the records flags name another-profile/
+    );
   });
 
   it("refuses to close another area's open record log entries", async () => {

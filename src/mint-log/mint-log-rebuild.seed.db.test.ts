@@ -9,11 +9,16 @@ import {
   SIGNED_RECORD_LOG_SEGMENTS_TABLE
 } from '@/constants';
 import { DropType } from '@/entities/IDrop';
+import {
+  worldActorProfileId,
+  worldActorWallet
+} from '@/rebuild/manifests/probe-fixture';
 import type { RecordLogEntry } from '@/signed-records/record-log/record-log-format';
 import { recordLogDb } from '@/signed-records/record-log/record-log.db';
 import { RecordLogWriter } from '@/signed-records/record-log/record-log.service';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
+import { writeWorldActorsForTests } from '@/tests/fixtures/world-actors.fixture';
 import { closeRecordLog, recordLogStart } from './mint-log-rebuild.seed';
 import {
   assertLatestDropTimes,
@@ -22,11 +27,14 @@ import {
   SEEDED_AT
 } from './mint-log-rebuild.seed-rows';
 
-/** A records service for the test, with a key made only for it. */
+/**
+ * The records service: the world's actor, with a records wave and a key
+ * made only for the test.
+ */
 const SERVICE = {
   waveId: '00000000-0000-4000-8000-00000000f0a1',
-  profileId: 'mint-seed-test-records-service',
-  wallet: '0x00000000000000000000000000000000000000f1'
+  profileId: worldActorProfileId('records-service'),
+  wallet: worldActorWallet('records-service')
 };
 const ENV = {
   SIGNED_RECORDS_WAVE_ID: SERVICE.waveId,
@@ -140,8 +148,10 @@ async function expectDropMetrics(
 describeWithSeed('the mint seed closing its record log entries', [], () => {
   let dir: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mint-seed-log-'));
+    // The records service, as the identity world holds it.
+    await writeWorldActorsForTests(['records-service']);
   });
 
   afterEach(() => {

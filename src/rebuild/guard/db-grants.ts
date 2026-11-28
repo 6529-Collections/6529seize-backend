@@ -14,6 +14,20 @@ export interface StepGrants {
   readonly writes: readonly string[];
   /** Tables the step may only read. */
   readonly reads: readonly string[];
+  /**
+   * Tables the step may change only in some columns (a table with column
+   * owners): read the whole table, insert and update only `insert` and
+   * `update`, and delete rows only with `delete`. Each replaces any
+   * grant `writes` would give the table.
+   */
+  readonly columns?: readonly ColumnGrant[];
+}
+
+export interface ColumnGrant {
+  readonly table: string;
+  readonly insert: readonly string[];
+  readonly update: readonly string[];
+  readonly delete: boolean;
 }
 
 const WRITE_PRIVILEGES = 'SELECT, INSERT, UPDATE, DELETE';
@@ -35,10 +49,16 @@ export function stepGrantStatements(grants: StepGrants): string[] {
   const who = account(grants.user);
   const database = mysql.escapeId(grants.database);
   const table = (name: string) => `${database}.${mysql.escapeId(name)}`;
-  const writes = Array.from(new Set(grants.writes));
-  const reads = Array.from(new Set(grants.reads)).filter(
-    (name) => !writes.includes(name)
+  const columnGrants = grants.columns ?? [];
+  const limited = new Set(columnGrants.map((grant) => grant.table));
+  const writes = Array.from(new Set(grants.writes)).filter(
+    (name) => !limited.has(name)
   );
+  const reads = Array.from(new Set(grants.reads)).filter(
+    (name) => !writes.includes(name) && !limited.has(name)
+  );
+  const columnList = (columns: readonly string[]) =>
+    columns.map((column) => mysql.escapeId(column)).join(', ');
   return [
     `DROP USER IF EXISTS ${who}`,
     `CREATE USER ${who} IDENTIFIED WITH mysql_native_password BY ${mysql.escape(grants.password)}`,
@@ -47,7 +67,20 @@ export function stepGrantStatements(grants: StepGrants): string[] {
     ...writes.map(
       (name) => `GRANT ${WRITE_PRIVILEGES} ON ${table(name)} TO ${who}`
     ),
-    ...reads.map((name) => `GRANT SELECT ON ${table(name)} TO ${who}`)
+    ...reads.map((name) => `GRANT SELECT ON ${table(name)} TO ${who}`),
+    ...columnGrants.flatMap((grant) => [
+      `GRANT SELECT${grant.delete ? ', DELETE' : ''} ON ${table(grant.table)} TO ${who}`,
+      ...(grant.insert.length
+        ? [
+            `GRANT INSERT (${columnList(grant.insert)}) ON ${table(grant.table)} TO ${who}`
+          ]
+        : []),
+      ...(grant.update.length
+        ? [
+            `GRANT UPDATE (${columnList(grant.update)}) ON ${table(grant.table)} TO ${who}`
+          ]
+        : [])
+    ])
   ];
 }
 
