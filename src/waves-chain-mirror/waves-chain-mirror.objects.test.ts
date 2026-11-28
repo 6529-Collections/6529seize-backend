@@ -1,4 +1,5 @@
 import { UserGroupEntity } from '@/entities/IUserGroup';
+import { Logger } from '@/logging';
 import { BadRequestException } from '@/exceptions';
 import {
   aChainDecisionRow,
@@ -23,6 +24,7 @@ import {
   waveDescriptionDropId
 } from './waves-chain-mirror.ids';
 import {
+  GROUPS_HELD_REPORT_MS,
   PARENT_WAIT_MS,
   WavesChainObjectsMirror
 } from './waves-chain-mirror.objects';
@@ -162,26 +164,230 @@ describe('WavesChainObjectsMirror: groups', () => {
     expect(store.writes()).toBe(0);
   });
 
-  it('makes no identity for a listed address in a rebuild: it waits for the identity area', async () => {
+  it.each(['live', 'rebuild'] as const)(
+    "%s: holds a group listing addresses until the identity mirror stands at the group's height, then gives a missing address its identity at the group's block time",
+    async (mode) => {
+      const { store, run } = world();
+      store.mode = mode;
+      store.identityHeight = 19;
+      store.chainGroups = [
+        aChainGroupRow(
+          G,
+          { includes: [{ kind: 'address', value: A2 }] },
+          { height: 20, activeFrom: 1_764_000_123_000 }
+        )
+      ];
+      const first = await run();
+      expect(first.report.groups.waiting).toBe(1);
+      expect(first.counter.waiting).toEqual({
+        group_identity_rows_not_reached: 1
+      });
+      expect(store.addedIdentities).toEqual([]);
+      expect(store.writes()).toBe(0);
+      expect(store.held).toEqual({
+        since: NOW,
+        height: 20,
+        count: 1,
+        reported: false
+      });
+
+      // The identity mirror reaches the group's height: the group is
+      // written, its address given an identity as of the group's write.
+      store.identityHeight = 20;
+      const second = await run();
+      expect(second.report.groups.mirrored).toBe(1);
+      expect(store.addedIdentities).toEqual([A2]);
+      expect(store.identityTimes.get(A2)).toBe(1_764_000_123_000);
+      expect(store.groupWrites[0].includes).toEqual([
+        `profile-of-${A2.slice(2, 8)}`
+      ]);
+      expect(store.held).toBeNull();
+    }
+  );
+
+  it('never holds a group that lists no address', async () => {
     const { store, run } = world();
-    store.mode = 'rebuild';
+    store.identityHeight = 0;
+    store.chainGroups = [
+      aChainGroupRow(G, { includes: [{ kind: 'principal', value: P2 }] })
+    ];
+    const { report, counter } = await run();
+    expect(report.groups.mirrored).toBe(1);
+    expect(counter.waiting).toEqual({});
+    expect(store.held).toBeNull();
+  });
+
+  it('waits with a group whose listed address is left without a profile id, writing nothing', async () => {
+    const { store, run } = world();
     store.chainGroups = [
       aChainGroupRow(G, { includes: [{ kind: 'address', value: A2 }] })
     ];
-    const first = await run();
-    expect(first.report.groups.waiting).toBe(1);
-    expect(first.counter.waiting).toEqual({
-      group_address_identity_missing: 1
+    // An address mapped to a row of several wallets that has no id.
+    store.addAddressIdentities = async () => new Map();
+    const { report, counter } = await run();
+    expect(report.groups.waiting).toBe(1);
+    expect(counter.waiting).toEqual({ group_address_without_profile: 1 });
+    expect(store.writes()).toBe(0);
+    expect(store.groupRecords.has(G)).toBe(false);
+  });
+
+  it.each(['live', 'rebuild'] as const)(
+    '%s: reports a hold once it has lasted 15 minutes, naming the oldest held height, and again only after a new hold',
+    async (mode) => {
+      const warn = jest
+        .spyOn(Logger.get('WAVES_CHAIN_MIRROR_OBJECTS'), 'warn')
+        .mockImplementation(() => undefined);
+      try {
+        const { store, run, at } = world();
+        store.mode = mode;
+        store.identityHeight = 10;
+        store.chainGroups = [
+          aChainGroupRow(
+            G,
+            { includes: [{ kind: 'address', value: A1 }] },
+            { height: 30 }
+          ),
+          aChainGroupRow(
+            chainWord('0c'),
+            { includes: [{ kind: 'address', value: A2 }] },
+            { height: 25 }
+          )
+        ];
+        const held = () =>
+          warn.mock.calls.filter(([line]) =>
+            String(line).includes('[GROUPS HELD FOR IDENTITY ROWS]')
+          );
+        await run();
+        at(NOW + GROUPS_HELD_REPORT_MS - 1);
+        await run();
+        expect(held()).toEqual([]);
+
+        at(NOW + GROUPS_HELD_REPORT_MS);
+        await run();
+        expect(held()).toEqual([
+          [
+            `[WAVES CHAIN MIRROR] [GROUPS HELD FOR IDENTITY ROWS] [OLDEST HEIGHT 25] [HELD SINCE ${new Date(
+              NOW
+            ).toISOString()}] [GROUPS 2]`
+          ]
+        ]);
+        at(NOW + 2 * GROUPS_HELD_REPORT_MS);
+        await run();
+        expect(held()).toHaveLength(1);
+
+        // The hold clears; a new one is reported once it lasts again.
+        store.identityHeight = null;
+        at(NOW + 3 * GROUPS_HELD_REPORT_MS);
+        await run();
+        expect(store.held).toBeNull();
+        store.chainGroups = [
+          aChainGroupRow(
+            chainWord('0d'),
+            { includes: [{ kind: 'address', value: A2 }] },
+            { height: 40 }
+          )
+        ];
+        store.identityHeight = 39;
+        const start = NOW + 4 * GROUPS_HELD_REPORT_MS;
+        at(start);
+        await run();
+        at(start + GROUPS_HELD_REPORT_MS);
+        await run();
+        expect(held()).toHaveLength(2);
+        expect(held()[1][0]).toContain(
+          `[OLDEST HEIGHT 40] [HELD SINCE ${new Date(start).toISOString()}] [GROUPS 1]`
+        );
+      } finally {
+        warn.mockRestore();
+      }
+    }
+  );
+
+  it('keeps a hold through a run that left groups for later', async () => {
+    const { store, run, at } = world();
+    store.identityHeight = 10;
+    store.chainGroups = [
+      aChainGroupRow(
+        G,
+        { includes: [{ kind: 'address', value: A1 }] },
+        { height: 30 }
+      )
+    ];
+    await run();
+    at(NOW + 60_000);
+    await run(true, () => true);
+    expect(store.held).toMatchObject({ since: NOW, height: 30, count: 1 });
+  });
+
+  it('counts a held group in a report-only run, but keeps no hold and writes no WARN', async () => {
+    const warn = jest
+      .spyOn(Logger.get('WAVES_CHAIN_MIRROR_OBJECTS'), 'warn')
+      .mockImplementation(() => undefined);
+    try {
+      const { store, run, at } = world();
+      store.identityHeight = 10;
+      store.chainGroups = [
+        aChainGroupRow(
+          G,
+          { includes: [{ kind: 'address', value: A1 }] },
+          { height: 30 }
+        )
+      ];
+      const first = await run(false);
+      expect(first.counter.waiting).toEqual({
+        group_identity_rows_not_reached: 1
+      });
+      at(NOW + 2 * GROUPS_HELD_REPORT_MS);
+      await run(false);
+      expect(store.held).toBeNull();
+      expect(
+        warn.mock.calls.filter(([line]) =>
+          String(line).includes('[GROUPS HELD FOR IDENTITY ROWS]')
+        )
+      ).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('waits with a group listing an address without an identity when its write has no block time', async () => {
+    const { store, run } = world();
+    const row = aChainGroupRow(G, {
+      includes: [{ kind: 'address', value: A2 }]
     });
+    (row.data as { activeFrom: number | null }).activeFrom = null;
+    store.chainGroups = [row];
+    // Its creation event dates the row; the list's ids need the write's own time.
+    store.events.push({
+      kind: 'GROUP_CREATED',
+      id: G,
+      time: 1_764_000_000_000,
+      actor: P1
+    });
+    const { report, counter } = await run();
+    expect(report.groups.waiting).toBe(1);
+    expect(counter.waiting).toEqual({ group_without_block_time: 1 });
     expect(store.addedIdentities).toEqual([]);
     expect(store.writes()).toBe(0);
+  });
 
-    // Once the identity area has it, the group is written.
-    store.addressProfiles.set(A2, 'profile-a2');
-    const second = await run();
-    expect(second.report.groups.mirrored).toBe(1);
-    expect(store.groupWrites[0].includes).toEqual(['profile-a2']);
-    expect(store.addedIdentities).toEqual([]);
+  it("counts an address's own row without a profile id as an update, a missing row as an insert", async () => {
+    const { store, run } = world();
+    store.rowsWithoutProfile.add(A1);
+    store.chainGroups = [
+      aChainGroupRow(G, {
+        includes: [
+          { kind: 'address', value: A1 },
+          { kind: 'address', value: A2 }
+        ]
+      })
+    ];
+    const { counter } = await run(false);
+    expect(counter.changes.identities).toEqual({
+      insert: 1,
+      update: 1,
+      delete: 0
+    });
   });
 
   it('rewrites an imported group the chain replaced in place, keeping its name and dropping its old lists', async () => {

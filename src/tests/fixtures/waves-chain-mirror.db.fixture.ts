@@ -34,6 +34,7 @@ import {
   WAVE_METRICS_TABLE,
   WAVES_CHAIN_INDEX_STATE_TABLE,
   WAVES_CHAIN_MIRROR_STATE_TABLE,
+  IDENTITY_CHAIN_MIRROR_STATE_TABLE,
   WAVES_TABLE,
   ACTIVITY_EVENTS_TABLE,
   ADDRESS_CONSOLIDATION_KEY,
@@ -74,6 +75,10 @@ import {
   voteRow
 } from '@/waves-chain-index/waves-chain-index.rows';
 import { IDENTITY_CHAIN_PRINCIPALS } from '@/waves-chain-mirror/waves-chain-mirror.db';
+import {
+  IdentityChainMirrorDb,
+  NO_RETRY
+} from '@/identity-chain-mirror/identity-chain-mirror.db';
 import * as mysql from 'mysql';
 
 /**
@@ -92,6 +97,51 @@ export async function ensurePrincipalMap(db: SqlExecutor): Promise<void> {
        origin varchar(20) not null,
        created_at bigint not null,
        unique key identity_chain_principals_profile_id_idx (profile_id))`
+  );
+}
+
+/**
+ * The identity mirror's state as of a run that stands at chain height
+ * `height` (identityRowsReached holds for it and below): a full sync
+ * ended, the feed and the bindings followed past it, nothing to retry.
+ * Null: no state row (the identity mirror never ran).
+ */
+export async function identityMirrorAt(
+  db: SqlExecutor,
+  height: number | null
+): Promise<void> {
+  const identity = new IdentityChainMirrorDb(() => db);
+  if (height === null) {
+    await db.execute(`delete from ${IDENTITY_CHAIN_MIRROR_STATE_TABLE}`);
+    return;
+  }
+  await identity.saveState(
+    {
+      next_height: height + 1,
+      sync_from_height: null,
+      sync_phase: null,
+      sync_after: null,
+      last_full_sync_at: 1,
+      bindings_next_height: height + 1,
+      chain_id: null,
+      placeholders_at: null,
+      bindings_exact: true,
+      levels_tdh_day: null,
+      level_sweep_day: null,
+      level_sweep_after: null,
+      levels_day_height: null,
+      sync_use_case: null,
+      sync_wallet_after: null,
+      pin_floor: null,
+      off_chain_after: null,
+      events_next_height: null,
+      events_rebuild_height: null,
+      events_rebuild_after: null,
+      events_gone_at: null,
+      events_stuck_runs: 0,
+      retry: NO_RETRY
+    },
+    1
   );
 }
 
@@ -321,6 +371,7 @@ export async function clearMirrorTables(db: SqlExecutor): Promise<void> {
     CHAIN_CLAIM_BUILDS_TABLE,
     WAVES_CHAIN_INDEX_STATE_TABLE,
     WAVES_CHAIN_MIRROR_STATE_TABLE,
+    IDENTITY_CHAIN_MIRROR_STATE_TABLE,
     CHAIN_DOCS_TABLE,
     IDENTITY_CHAIN_PRINCIPALS,
     WAVES_TABLE,

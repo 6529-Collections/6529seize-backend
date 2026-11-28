@@ -27,8 +27,10 @@ import {
   clearMirrorTables,
   dumpTables,
   ensurePrincipalMap,
+  identityMirrorAt,
   mapPrincipals
 } from '@/tests/fixtures/waves-chain-mirror.db.fixture';
+import { addressIdentityId } from '@/identities/address-identity-id';
 import {
   aChainGroupRow,
   aChainWaveRow,
@@ -120,10 +122,13 @@ describe('WavesChainObjectsMirror in the database', () => {
   const groups = new UserGroupsDb(() => sqlExecutor);
   const stamp = { height: 20, generation: 1 };
 
-  const run = async (verdict: GateVerdict = { kind: 'allowed' }) => {
+  const run = async (
+    verdict: GateVerdict = { kind: 'allowed' },
+    store: WavesChainObjectsDb = objectsDb
+  ) => {
     const counter = new PlanCounter();
     const report = await new WavesChainObjectsMirror(
-      objectsDb,
+      store,
       (ids) => db.profilesOfPrincipals(ids),
       defaultObjectEffects,
       { check: jest.fn().mockResolvedValue(verdict) },
@@ -172,6 +177,8 @@ describe('WavesChainObjectsMirror in the database', () => {
 
   it("writes a group and a wave made on the chain as 6529.io's create does, and nothing the second time", async () => {
     await ensurePrincipalMap(sqlExecutor);
+    // The identity mirror stands at the group's height (the index's 20).
+    await identityMirrorAt(sqlExecutor, 20);
     await mapPrincipals(sqlExecutor, { [P1]: 'profile-1', [P2]: 'profile-2' });
     // A1 has an identity on 6529.io; A2 has none.
     await sqlExecutor.execute(
@@ -537,6 +544,240 @@ describe('WavesChainObjectsMirror in the database', () => {
     expect(
       await sqlExecutor.execute(`select 1 from ${CHAIN_ENTRY_HOLDS_TABLE}`)
     ).toEqual([]);
+  });
+
+  /** The profile id an address's identities row holds, through its mapping. */
+  const profileIdOf = async (address: string) =>
+    (
+      await sqlExecutor.execute<{ profile_id: string | null }>(
+        `select i.profile_id from ${IDENTITIES_TABLE} i
+           join ${ADDRESS_CONSOLIDATION_KEY} a on a.consolidation_key = i.consolidation_key
+          where a.address = :address`,
+        { address }
+      )
+    ).map((r) => r.profile_id);
+
+  const groupsHeldRow = () =>
+    sqlExecutor.execute<{
+      held_since: number | string;
+      held_height: number | string;
+      held_count: number;
+      // The repo's type caster reads a TINYINT column as a boolean.
+      held_reported: boolean;
+    }>(
+      `select held_since, held_height, held_count, held_reported
+         from ${WAVES_CHAIN_MIRROR_STATE_TABLE} where name = 'groups_held'`
+    );
+
+  it.each(['live', 'rebuild'] as const)(
+    "%s: holds a group listing an address until the identity mirror stands at the group's height, then writes it",
+    async (mode) => {
+      const store =
+        mode === 'live'
+          ? objectsDb
+          : new WavesChainObjectsDb(() => sqlExecutor, 'rebuild');
+      await ensurePrincipalMap(sqlExecutor);
+      await mapPrincipals(sqlExecutor, { [P1]: 'profile-1' });
+      await identityMirrorAt(sqlExecutor, 19);
+      await seedGroup(
+        aChainGroupRow(G, {
+          includes: [
+            { kind: 'principal', value: P1 },
+            { kind: 'address', value: A2 }
+          ]
+        })
+      );
+
+      const held = await run(undefined, store);
+      expect(held.report.groups).toMatchObject({ mirrored: 0, waiting: 1 });
+      expect(held.counter.waiting).toEqual({
+        group_identity_rows_not_reached: 1
+      });
+      expect(await groups.getByIdWithoutVisibilityCheck(G)).toBeNull();
+      expect(await profileIdOf(A2)).toEqual([]);
+      expect(await groupsHeldRow()).toEqual([
+        {
+          held_since: NOW,
+          held_height: 20,
+          held_count: 1,
+          held_reported: false
+        }
+      ]);
+
+      await identityMirrorAt(sqlExecutor, 20);
+      const released = await run(undefined, store);
+      expect(released.report.groups).toMatchObject({ mirrored: 1, waiting: 0 });
+      expect(await profileIdOf(A2)).toHaveLength(1);
+      expect(await groups.getByIdWithoutVisibilityCheck(G)).not.toBeNull();
+      expect(await groupsHeldRow()).toEqual([]);
+    }
+  );
+
+  it('keeps when a hold began across runs, marks it reported, and starts again after it clears', async () => {
+    expect(
+      await objectsDb.groupsHeld({ count: 2, oldestHeight: 25 }, NOW)
+    ).toEqual({ since: NOW, reported: false });
+    expect(
+      await objectsDb.groupsHeld({ count: 1, oldestHeight: 30 }, NOW + 1_000)
+    ).toEqual({ since: NOW, reported: false });
+    expect(await groupsHeldRow()).toEqual([
+      { held_since: NOW, held_height: 30, held_count: 1, held_reported: false }
+    ]);
+    await objectsDb.groupsHeldReported();
+    expect(
+      await objectsDb.groupsHeld({ count: 1, oldestHeight: 30 }, NOW + 2_000)
+    ).toEqual({ since: NOW, reported: true });
+    expect(
+      await objectsDb.groupsHeld({ count: 0, oldestHeight: null }, NOW + 3_000)
+    ).toBeNull();
+    expect(await groupsHeldRow()).toEqual([]);
+    expect(
+      await objectsDb.groupsHeld({ count: 1, oldestHeight: 40 }, NOW + 4_000)
+    ).toEqual({ since: NOW + 4_000, reported: false });
+  });
+
+  it("counts as updates only the own rows without a profile id that the identities' write gives one", async () => {
+    // MAPPED: its own row, mapped to it. UNMAPPED: its own row, no mapping.
+    // ELSEWHERE: its own row, but mapped to another row, so it is left alone.
+    const [MAPPED, UNMAPPED, ELSEWHERE] = ['c1', 'c2', 'c3'].map(
+      (b) => `0x${b.repeat(20)}`
+    );
+    const other = `${ELSEWHERE}-0x${'c4'.repeat(20)}`;
+    for (const key of [MAPPED, UNMAPPED, ELSEWHERE]) {
+      await sqlExecutor.execute(
+        `insert into ${IDENTITIES_TABLE}
+           (profile_id, consolidation_key, primary_address, tdh, rep, cic, level_raw)
+         values (null, :key, :key, 0, 0, 0, 0)`,
+        { key }
+      );
+    }
+    await sqlExecutor.execute(
+      `insert into ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key)
+       values (:mapped, :mapped), (:elsewhere, :other)`,
+      { mapped: MAPPED, elsewhere: ELSEWHERE, other }
+    );
+    expect(
+      Array.from(
+        await objectsDb.ownRowsWithoutProfile([MAPPED, UNMAPPED, ELSEWHERE, A1])
+      ).sort()
+    ).toEqual([MAPPED, UNMAPPED].sort());
+  });
+
+  describe('across switch-on', () => {
+    const SWITCH_ON = '2026-11-28T00:00:00Z';
+    const switchOn = Date.parse(SWITCH_ON);
+    const B1 = `0x${'b1'.repeat(20)}`;
+    const B2 = `0x${'b2'.repeat(20)}`;
+    const G2 = chainWord('0d');
+    const UUID_V4 =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+    const saved = {
+      at: process.env.IDENTITY_SWITCH_ON_AT,
+      flag: process.env.FEATURE_IDENTITY_ON_CHAIN
+    };
+    beforeEach(() => {
+      process.env.IDENTITY_SWITCH_ON_AT = SWITCH_ON;
+      delete process.env.FEATURE_IDENTITY_ON_CHAIN;
+    });
+    afterEach(() => {
+      for (const [name, value] of [
+        ['IDENTITY_SWITCH_ON_AT', saved.at],
+        ['FEATURE_IDENTITY_ON_CHAIN', saved.flag]
+      ] as const) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    });
+
+    /** Groups listing B1 a minute before switch-on and B2 a minute after. */
+    const seedBoth = async () => {
+      await ensurePrincipalMap(sqlExecutor);
+      await mapPrincipals(sqlExecutor, { [P1]: 'profile-1' });
+      await identityMirrorAt(sqlExecutor, 20);
+      await seedGroup(
+        aChainGroupRow(
+          G,
+          { includes: [{ kind: 'address', value: B1 }] },
+          { controller: P1, activeFrom: switchOn - 60_000 }
+        )
+      );
+      await seedGroup(
+        aChainGroupRow(
+          G2,
+          { includes: [{ kind: 'address', value: B2 }] },
+          { controller: P1, activeFrom: switchOn + 60_000 }
+        )
+      );
+    };
+
+    it("gives each listed address the id of its group's side of switch-on, the same in a rebuild of a mirror that caught up", async () => {
+      // The live mirror catches up over both groups in one run.
+      await seedBoth();
+      const live = await run();
+      expect(live.report.groups).toMatchObject({ mirrored: 2, failed: 0 });
+      const [liveB1] = await profileIdOf(B1);
+      const [liveB2] = await profileIdOf(B2);
+      expect(liveB1).toMatch(UUID_V4);
+      expect(liveB2).toBe(addressIdentityId(B2));
+
+      // The rebuild, from the chain alone.
+      await clearMirrorTables(sqlExecutor);
+      await seedBoth();
+      const rebuilt = await run(
+        undefined,
+        new WavesChainObjectsDb(() => sqlExecutor, 'rebuild')
+      );
+      expect(rebuilt.report.groups).toMatchObject({ mirrored: 2, failed: 0 });
+      const [rebuiltB1] = await profileIdOf(B1);
+      expect(rebuiltB1).toMatch(UUID_V4);
+      expect(rebuiltB1).not.toBe(addressIdentityId(B1));
+      expect(await profileIdOf(B2)).toEqual([liveB2]);
+    });
+
+    it('counts a group written at the switch-on instant as switched on', async () => {
+      const B3 = `0x${'b3'.repeat(20)}`;
+      await ensurePrincipalMap(sqlExecutor);
+      await mapPrincipals(sqlExecutor, { [P1]: 'profile-1' });
+      await identityMirrorAt(sqlExecutor, 20);
+      await seedGroup(
+        aChainGroupRow(
+          G,
+          { includes: [{ kind: 'address', value: B3 }] },
+          { controller: P1, activeFrom: switchOn }
+        )
+      );
+      const { report } = await run();
+      expect(report.groups).toMatchObject({ mirrored: 1, failed: 0 });
+      expect(await profileIdOf(B3)).toEqual([addressIdentityId(B3)]);
+    });
+
+    it("turns a listed address's own row without a profile id into its derived one, never a second row", async () => {
+      await seedBoth();
+      await sqlExecutor.execute(
+        `insert into ${IDENTITIES_TABLE}
+           (profile_id, consolidation_key, primary_address, tdh, rep, cic, level_raw)
+         values (null, :a, :a, 0, 0, 0, 0)`,
+        { a: B2 }
+      );
+      await sqlExecutor.execute(
+        `insert into ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key)
+         values (:a, :a)`,
+        { a: B2 }
+      );
+      const { report } = await run();
+      expect(report.groups).toMatchObject({ mirrored: 2, failed: 0 });
+      expect(
+        await sqlExecutor.execute(
+          `select profile_id from ${IDENTITIES_TABLE} where primary_address = :a`,
+          { a: B2 }
+        )
+      ).toEqual([{ profile_id: addressIdentityId(B2) }]);
+      expect(
+        await sqlExecutor.execute(
+          `select profile_id from ${PROFILE_GROUPS_TABLE} where profile_id is null`
+        )
+      ).toEqual([]);
+    });
   });
 });
 

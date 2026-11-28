@@ -44,9 +44,11 @@ const logger = Logger.get('WAVES_CHAIN_MIRROR_REBUILD');
  *   no claim builds, no artwork collaborations or their invitations, no
  *   collaboration freeze, no follows or activity, no
  *   voters' profile activity logs, no group change log, no socket or
- *   score-refresh effects. Address-only identities are the identity
- *   area's: a group listing an address with none waits for them
- *   (group_address_identity_missing).
+ *   score-refresh effects. A group listing addresses waits, as live, until
+ *   the identity mirror's rebuild stands at the group's height
+ *   (group_identity_rows_not_reached), then gives an address still
+ *   without an identity its address-only row as live does: from switch-on
+ *   its derived id, so the rebuild gives the id live gave.
  * - Moderation is read from the holds the live mirror kept in
  *   chain_entry_holds (entries' and wave descriptions'), never asked again;
  *   a rebuild never writes them.
