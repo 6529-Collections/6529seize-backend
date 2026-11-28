@@ -1008,10 +1008,27 @@ describe('WavesChainObjectsMirror in the database', () => {
         expect(await listOf(INCLUDE)).toEqual([Z]);
         // Z stays in G2 by its principal; only B's own row goes.
         expect(await listOf(INCLUDE2)).toEqual([Z]);
-        // Logged with each group's lists, and again after its commit.
+        // Each group's change is logged by three writers in turn: with its
+        // lists, inside their transaction (rewriteGroupLists,
+        // objects.db.ts:1048); again after the commit (groupsChanged,
+        // objects.effects.ts:24); then every current member of the list, by
+        // 6529.io's cache clear for a group of an include list alone
+        // (objects.effects.ts:25, user-groups.service.ts:2065 and
+        // :2007-2023).
         expect(
           (await changeLog()).slice(logged).map((r) => r.profile_id)
-        ).toEqual([Z, own, Z, own, own, own]);
+        ).toEqual([
+          // G: inside the transaction, after the commit, its members.
+          Z,
+          own,
+          Z,
+          own,
+          Z,
+          // G2: inside the transaction, after the commit, its members.
+          own,
+          own,
+          Z
+        ]);
 
         // B leaves Z at a later block: the identity mirror gives it its own
         // row again, by the removal's time; the lists follow, and the waves
@@ -1065,7 +1082,15 @@ describe('WavesChainObjectsMirror in the database', () => {
             { controller: P1, activeFrom: switchOn + 60_000 }
           )
         );
+        // A wave that reads and is administered with G: eligibility looks
+        // only at the groups waves, decisions and curations use.
+        const cid = await seedDocument(aWaveDoc());
+        await seedWave(
+          aChainWaveRow(W, { read: G, admin: G, metadataCid: cid })
+        );
+        await index.writeEvents([waveCreated(W)], 21, UNKNOWN_SCAN);
         await run();
+        expect((await waves.findWaveById(W))?.visibility_group_id).toBe(G);
         expect(await userGroupsService.getGroupsUserIsEligibleFor(Z)).toContain(
           G
         );
@@ -1126,9 +1151,25 @@ describe('WavesChainObjectsMirror in the database', () => {
         expect(next.report.remap).toMatchObject({ groups: 1, left: 0 });
         expect(await listOf(INCLUDE2)).toEqual([Z]);
         const own = addressIdentityId(B);
+        // Each group written once, its change logged by the three writers:
+        // inside the transaction (objects.db.ts:1048), after the commit
+        // (objects.effects.ts:24), and its list's current members
+        // (objects.effects.ts:25, user-groups.service.ts:2065 and
+        // :2007-2023).
         expect(
           (await changeLog()).slice(logged).map((r) => r.profile_id)
-        ).toEqual([Z, own, Z, own, own, own]);
+        ).toEqual([
+          // G, in the run cut short.
+          Z,
+          own,
+          Z,
+          own,
+          Z,
+          // G2, in the next run.
+          own,
+          own,
+          Z
+        ]);
         expect((await run()).report.remap.groups).toBe(0);
       });
 
@@ -1157,11 +1198,14 @@ describe('WavesChainObjectsMirror in the database', () => {
         await bindZ([WZ], switchOn + 180_000);
         await run();
         expect(await listOf(INCLUDE)).toEqual([addressIdentityId(B)]);
-        // Z's change is logged with the lists and again after the commit,
-        // the row that ends an answer cached for Z before the commit.
+        // Z's rows: G's change inside its transaction (objects.db.ts:1048)
+        // and after the commit (objects.effects.ts:24), the row that ends
+        // an answer cached for Z before the commit; then G2's members, Z
+        // among them by its principal (objects.effects.ts:25,
+        // user-groups.service.ts:2065 and :2007-2023).
         expect(
           (await changeLog()).slice(logged).filter((r) => r.profile_id === Z)
-        ).toHaveLength(2);
+        ).toHaveLength(3);
         expect(
           await userGroupsService.getGroupsUserIsEligibleFor(Z)
         ).not.toContain(wave!.chat_group_id);
