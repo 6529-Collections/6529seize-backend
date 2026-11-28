@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   IDENTITIES_TABLE,
+  PROFILE_GROUP_CHANGES,
   PROFILE_GROUPS_TABLE
 } from '@/constants';
 import { addressIdentityId } from '@/identities/address-identity-id';
@@ -13,6 +14,7 @@ import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
 import { aProfile, withProfiles } from '@/tests/fixtures/profile.fixture';
+import { Time } from '@/time';
 import { UserGroupsDb } from '@/user-groups/user-groups.db';
 
 const W = (n: number) => `0x${n.toString(16).padStart(40, '0')}`;
@@ -420,22 +422,64 @@ describeWithSeed(
       ).toEqual([]);
     });
 
-    it("gives the API group writer's listed addresses random ids before switch-on", async () => {
-      // Wall time is before this switch-on.
-      process.env.IDENTITY_SWITCH_ON_AT = '2099-01-01T00:00:00Z';
+    it('rolls back the change records of the addresses it listed when a later chunk is refused', async () => {
+      // A wallet of an identity of several wallets without a profile id,
+      // listed after a first chunk of 100 addresses that get theirs.
+      const Z1 = W(0xfff1);
+      const ZZ = `${Z1}-${W(0xfff2)}`;
+      await sqlExecutor.execute(
+        `insert into ${IDENTITIES_TABLE}
+           (profile_id, consolidation_key, primary_address, tdh, rep, cic, level_raw)
+         values (null, :key, :z, 0, 0, 0, 0)`,
+        { key: ZZ, z: Z1 }
+      );
+      await sqlExecutor.execute(
+        `insert into ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key)
+         values (:z, :key)`,
+        { key: ZZ, z: Z1 }
+      );
+      const first = Array.from({ length: 100 }, (_, i) => W(0x1000 + i));
       const groups = new UserGroupsDb(() => sqlExecutor);
-      await inTx((conn) => groups.insertGroupEntriesAndGetGroupIds([A], conn));
+      await expect(
+        inTx((conn) =>
+          groups.insertGroupEntriesAndGetGroupIds([...first, Z1], conn)
+        )
+      ).rejects.toThrow(
+        `These addresses have no profile to list in a group: ${Z1}`
+      );
+      expect(await rowsOf(first[0])).toEqual([]);
+      expect(
+        await sqlExecutor.execute(`select 1 from ${PROFILE_GROUP_CHANGES}`)
+      ).toEqual([]);
+      expect(
+        await sqlExecutor.execute(`select 1 from ${PROFILE_GROUPS_TABLE}`)
+      ).toEqual([]);
+    });
+
+    /** Runs `fn` with the wall clock (Time.currentMillis) at `at`. */
+    async function atWallTime<T>(at: number, fn: () => Promise<T>) {
+      const now = jest.spyOn(Time, 'currentMillis').mockReturnValue(at);
+      try {
+        return await fn();
+      } finally {
+        now.mockRestore();
+      }
+    }
+
+    it("gives the API group writer's listed addresses random ids before switch-on", async () => {
+      const groups = new UserGroupsDb(() => sqlExecutor);
+      await atWallTime(BEFORE, () =>
+        inTx((conn) => groups.insertGroupEntriesAndGetGroupIds([A], conn))
+      );
       const [row] = await rowsOf(A);
       expect(row.profile_id).toMatch(UUID_V4);
       expect(row.profile_id).not.toBe(addressIdentityId(A));
     });
 
     it("gives the API group writer's listed addresses ids from wall time, and never lists a null profile id", async () => {
-      // Wall time is after this switch-on.
-      process.env.IDENTITY_SWITCH_ON_AT = '2026-11-24T00:00:00Z';
       const groups = new UserGroupsDb(() => sqlExecutor);
-      const { profile_group_id } = await inTx((conn) =>
-        groups.insertGroupEntriesAndGetGroupIds([A, N, R], conn)
+      const { profile_group_id } = await atWallTime(AFTER, () =>
+        inTx((conn) => groups.insertGroupEntriesAndGetGroupIds([A, N, R], conn))
       );
       const listed = (
         await sqlExecutor.execute<{ profile_id: string | null }>(

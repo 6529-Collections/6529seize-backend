@@ -715,6 +715,31 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
   }
 
   /**
+   * The addresses here mapped to another identities row (an identity of
+   * several wallets): a group giving them identities leaves them as they
+   * are (insertIdentitiesOnAddressesOnly), so one whose row has no profile
+   * id can't be listed. Read for the addresses without a profile id, so a
+   * plan waits with the group as the write does.
+   */
+  async addressesMappedElsewhere(
+    addresses: readonly string[]
+  ): Promise<Set<string>> {
+    const out = new Set<string>();
+    for (const chunk of statementChunks(
+      Array.from(new Set(addresses.map((a) => a.toLowerCase()))),
+      () => 48
+    )) {
+      const rows = await this.db.execute<{ address: string }>(
+        `select address from ${ADDRESS_CONSOLIDATION_KEY}
+          where address in (:addresses) and consolidation_key <> address`,
+        { addresses: chunk }
+      );
+      rows.forEach((row) => out.add(row.address.toLowerCase()));
+    }
+    return out;
+  }
+
+  /**
    * Whether the identity mirror's identities rows and wallets stand as of
    * this chain height (identityRowsReached): a group's listed addresses are
    * resolved only then, live and in a rebuild alike.
@@ -727,12 +752,23 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
    * The groups held for the identity mirror this run: their count and the
    * oldest one's chain height (0 groups: none held). Keeps when a hold
    * began, so it lasts across runs, and returns it with whether the hold
-   * has been reported (the WARN); a run without one clears it.
+   * has been reported (the WARN) and the count and height kept; a run
+   * without one clears it. A run that didn't look at every group
+   * (`complete` false) keeps the count and height a hold already has.
    */
   async groupsHeld(
-    held: { readonly count: number; readonly oldestHeight: number | null },
+    held: {
+      readonly count: number;
+      readonly oldestHeight: number | null;
+      readonly complete: boolean;
+    },
     now: number
-  ): Promise<{ since: number; reported: boolean } | null> {
+  ): Promise<{
+    since: number;
+    reported: boolean;
+    count: number;
+    oldestHeight: number | null;
+  } | null> {
     if (!held.count) {
       await this.db.execute(
         `delete from ${WAVES_CHAIN_MIRROR_STATE_TABLE} where name = :name`,
@@ -740,12 +776,14 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
       );
       return null;
     }
+    const summary = held.complete
+      ? `held_height = values(held_height), held_count = values(held_count),`
+      : '';
     await this.db.execute(
       `insert into ${WAVES_CHAIN_MIRROR_STATE_TABLE}
          (name, held_since, held_height, held_count, held_reported, updated_at)
        values (:name, :now, :height, :count, false, :now)
-       on duplicate key update held_height = values(held_height),
-         held_count = values(held_count), updated_at = values(updated_at)`,
+       on duplicate key update ${summary} updated_at = values(updated_at)`,
       {
         name: GROUPS_HELD_STATE_NAME,
         now,
@@ -755,16 +793,20 @@ export class WavesChainObjectsDb extends LazyDbAccessCompatibleService {
     );
     const row = await this.db.oneOrNull<{
       held_since: number | string | null;
+      held_height: number | string | null;
+      held_count: number | string | null;
       held_reported: number | boolean | null;
     }>(
-      `select held_since, held_reported from ${WAVES_CHAIN_MIRROR_STATE_TABLE}
-        where name = :name`,
+      `select held_since, held_height, held_count, held_reported
+         from ${WAVES_CHAIN_MIRROR_STATE_TABLE} where name = :name`,
       { name: GROUPS_HELD_STATE_NAME }
     );
     if (!row) return null;
     return {
       since: Number(row.held_since ?? now),
-      reported: !!Number(row.held_reported ?? 0)
+      reported: !!Number(row.held_reported ?? 0),
+      count: Number(row.held_count ?? held.count),
+      oldestHeight: row.held_height === null ? null : Number(row.held_height)
     };
   }
 

@@ -1,6 +1,9 @@
 import 'reflect-metadata';
+import { PROFILE_GROUP_CHANGES } from '@/constants';
+import { BadRequestException } from '@/exceptions';
+import { identitiesDb } from '@/identities/identities.db';
 import { UserGroupsDb } from '@/user-groups/user-groups.db';
-import { SqlExecutor } from '@/sql-executor';
+import { ConnectionWrapper, SqlExecutor } from '@/sql-executor';
 
 function buildDb() {
   const execute = jest.fn().mockResolvedValue([]);
@@ -28,6 +31,15 @@ describe('UserGroupsDb insertGroupChanges', () => {
     expect(sql).toContain("('profile-2'");
   });
 
+  it('writes on the connection it is given', async () => {
+    const { db, execute } = buildDb();
+    const connection = { connection: 'tx' } as ConnectionWrapper<any>;
+    await db.insertGroupChanges(['profile-1'], connection);
+    expect(execute).toHaveBeenCalledWith(expect.any(String), undefined, {
+      wrappedConnection: connection
+    });
+  });
+
   it('chunks large lists into multiple statements of at most 1000 rows', async () => {
     const { db, execute } = buildDb();
     const profileIds = Array.from(
@@ -47,5 +59,43 @@ describe('UserGroupsDb insertGroupChanges', () => {
     expect(statements[2]).toContain("('profile-2000'");
     expect(statements[2]).toContain("('profile-2499'");
     expect(countInsertedRows(statements)).toBe(2500);
+  });
+});
+
+describe('UserGroupsDb insertGroupEntriesAndGetGroupIds', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it("writes the change records on the group's connection, so a later chunk refused rolls them back", async () => {
+    const { db, execute } = buildDb();
+    const connection = { connection: 'group' } as ConnectionWrapper<any>;
+    // 100 addresses that get a profile id, then, in the next chunk, one an
+    // identity of several wallets without a profile id holds.
+    const addresses = Array.from(
+      { length: 101 },
+      (_, i) => `0x${i.toString(16).padStart(40, '0')}`
+    );
+    const refused = addresses[100];
+    jest
+      .spyOn(identitiesDb, 'getEverythingRelatedToIdentitiesByAddresses')
+      .mockResolvedValue({});
+    jest
+      .spyOn(identitiesDb, 'insertIdentitiesOnAddressesOnly')
+      .mockImplementation(
+        async (wanted) =>
+          new Map(
+            wanted
+              .filter((a) => a !== refused)
+              .map((a) => [a, `profile-${parseInt(a, 16)}`])
+          )
+      );
+    await expect(
+      db.insertGroupEntriesAndGetGroupIds(addresses, connection)
+    ).rejects.toThrow(BadRequestException);
+    const changes = execute.mock.calls.filter(([sql]) =>
+      String(sql).includes(PROFILE_GROUP_CHANGES)
+    );
+    expect(changes).toHaveLength(1);
+    expect(countInsertedRows([changes[0][0]])).toBe(100);
+    expect(changes[0][2]).toEqual({ wrappedConnection: connection });
   });
 });
