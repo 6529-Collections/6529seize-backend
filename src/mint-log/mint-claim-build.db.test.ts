@@ -225,31 +225,35 @@ describeWithSeed(
                 image_details, attributes
            from ${MINTING_CLAIMS_TABLE}`
       );
-      expect(claims).toHaveLength(1);
-      const [claim] = claims;
-      expect({
-        ...claim,
-        image_details: jsonOf(claim.image_details),
-        attributes: jsonOf(claim.attributes)
-      }).toEqual({
-        drop_id: EN,
-        contract: MEMES_CONTRACT.toLowerCase(),
-        claim_id: expect.any(Number),
-        name: 'A card entered on the chain',
-        description: 'Made up for this test.',
-        image_url: MEDIA_URL,
-        image_details: {
-          bytes: PNG.length,
-          format: 'PNG',
-          sha256: createHash('sha256').update(PNG).digest('hex'),
-          width: 1,
-          height: 1
-        },
-        attributes: expect.arrayContaining([
-          { trait_type: 'Artist', value: 'A made-up artist' }
-        ])
-      });
-      const mapping = [{ meme_card_id: claim.claim_id, drop_id: EN }];
+      // No claim and no meme yet: claim 1, in the calendar's season 1.
+      expect(
+        claims.map((claim) => ({
+          ...claim,
+          image_details: jsonOf(claim.image_details),
+          attributes: jsonOf(claim.attributes)
+        }))
+      ).toEqual([
+        {
+          drop_id: EN,
+          contract: MEMES_CONTRACT.toLowerCase(),
+          claim_id: 1,
+          name: 'A card entered on the chain',
+          description: 'Made up for this test.',
+          image_url: MEDIA_URL,
+          image_details: {
+            bytes: PNG.length,
+            format: 'PNG',
+            sha256: createHash('sha256').update(PNG).digest('hex'),
+            width: 1,
+            height: 1
+          },
+          attributes: [
+            { trait_type: 'Artist', value: 'A made-up artist' },
+            { trait_type: 'Type - Season', value: 1, display_type: 'number' }
+          ]
+        }
+      ]);
+      const mapping = [{ meme_card_id: 1, drop_id: EN }];
       expect(
         await sqlExecutor.execute(
           `select meme_card_id, drop_id from ${MEME_CARD_DROP_MAPPINGS_TABLE}`
@@ -263,7 +267,7 @@ describeWithSeed(
         await sqlExecutor.execute(
           `select drop_id, claim_id from ${MINTING_CLAIMS_TABLE}`
         )
-      ).toEqual([{ drop_id: EN, claim_id: claim.claim_id }]);
+      ).toEqual([{ drop_id: EN, claim_id: 1 }]);
       expect(
         await sqlExecutor.execute(
           `select meme_card_id, drop_id from ${MEME_CARD_DROP_MAPPINGS_TABLE}`

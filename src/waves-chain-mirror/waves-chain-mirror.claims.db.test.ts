@@ -4,6 +4,7 @@ import {
   COMPETITION_ENTRIES_TABLE,
   DROPS_TABLE
 } from '@/constants';
+import { memeCardDropMappingsDb } from '@/minting-claims/meme-card-drop-mappings.db';
 import { sqlExecutor } from '@/sql-executor';
 import {
   ChainDecisionObjects,
@@ -80,145 +81,6 @@ describe('WavesChainMirror: the claim of a chain-made Main Stage winner', () => 
       async (height) => BLOCK_TIME_BASE + height
     );
 
-  it("turns the index's skipped claim build pending, once, when the mirror writes the winner's drop", async () => {
-    await ensurePrincipalMap(sqlExecutor);
-    await mapPrincipals(sqlExecutor, { [AUTHOR]: 'author-profile' });
-    const { competitionId } = await seedImportedCompetition(sqlExecutor, {
-      waveId: WAVE,
-      authorId: 'profile-old',
-      dropIds: [DROP1]
-    });
-    await sqlExecutor.execute(
-      `insert into ${COMPETITION_CAPABILITIES_TABLE}
-         (capability, competition_id, wave_id, assigned_by, assigned_at)
-       values ('MAIN_STAGE', :id, :wave, null, 1)`,
-      { id: competitionId, wave: WAVE }
-    );
-    const doc = entryManifestDoc({
-      nonce: `0x${'5a'.repeat(16)}`,
-      decision: D,
-      wave: chainId('a0'),
-      author: AUTHOR,
-      createdAt: CREATED - 5,
-      fields: { wave_id: WAVE, parts: [{ content: 'The work', media: [] }] }
-    });
-    await db.saveDocument(doc.contentCid, 8, doc.bytes);
-    await seedChainDecision(
-      index,
-      {
-        decision: {
-          decisionId: D,
-          legacyId: competitionId,
-          waveId: chainId('a0'),
-          status: 'published',
-          kind: 'rank',
-          origin: 'legacy',
-          counted: true,
-          nextResultTime: T1 + 86_400_000
-        },
-        entries: [
-          {
-            entryId: EN,
-            legacyId: null,
-            decisionId: D,
-            author: AUTHOR,
-            status: 'winner',
-            total: '9',
-            origin: 'native',
-            manifestHash: doc.manifestHash,
-            contentCid: doc.contentCid,
-            createdMs: CREATED
-          }
-        ],
-        leaderboard: { decisionId: D, by: 'total', rows: [] },
-        results: [
-          {
-            resultTime: T1,
-            occurrence: 3,
-            status: 'decided',
-            stage: 'final',
-            origin: 'native',
-            settledHeight: 40,
-            winners: [{ entryId: EN, rank: 1, score: '9' }]
-          }
-        ]
-      },
-      45
-    );
-    await index.saveState(
-      {
-        ...EMPTY_INDEX_STATE,
-        generation: 1,
-        lastFullAt: 1,
-        feedNext: 46,
-        network: 'net-1'
-      },
-      1
-    );
-    // The index's claim build for the result: skipped, no 6529.io drop then.
-    await index.writeEvents([], 46, UNKNOWN_SCAN, [
-      {
-        network: 'net-1',
-        decisionId: D,
-        occurrence: 3,
-        height: 40,
-        entryId: EN,
-        dropId: null,
-        message: null,
-        status: 'skipped',
-        reason: 'entry created on the chain: no 6529.io drop'
-      }
-    ]);
-    expect(await db.skippedClaimBuilds(D)).toHaveLength(1);
-    // A rebuild writes no claim builds, so it reads none.
-    expect(
-      await new WavesChainMirrorDb(
-        () => sqlExecutor,
-        'rebuild'
-      ).skippedClaimBuilds(D)
-    ).toEqual([]);
-
-    const report = await mirror(NOW).run({ budgetMs: 60_000 });
-    expect(report.changes).toMatchObject({
-      drops: { insert: 1 },
-      chain_claim_builds: { update: 1 }
-    });
-    expect(
-      await sqlExecutor.execute(
-        `select drop_id, status, \`rank\`, decision_id
-           from ${COMPETITION_ENTRIES_TABLE} where drop_id = :id`,
-        { id: EN }
-      )
-    ).toEqual([
-      {
-        drop_id: EN,
-        status: 'WINNER',
-        rank: 1,
-        decision_id: resultDecisionId(competitionId, T1)
-      }
-    ]);
-    const message = {
-      drop_id: EN,
-      chain: {
-        decision_id: D,
-        occurrence: 3,
-        entry_id: EN,
-        height: 40,
-        manifest_hash: doc.manifestHash.toLowerCase()
-      }
-    };
-    expect(await index.pendingClaimBuilds(10)).toEqual([
-      { network: 'net-1', decisionId: D, occurrence: 3, message, attempts: 0 }
-    ]);
-
-    // Again: the row is the index's now; nothing changes.
-    const again = await mirror(NOW + 60_000).run({ budgetMs: 60_000 });
-    expect(again.changes).toEqual({});
-    expect(await index.pendingClaimBuilds(10)).toHaveLength(1);
-  });
-
-  // ------------------------------------- from the index's log to its send
-
   const MAIN_STAGE: ReadonlySet<string> = new Set([D]);
   const RESULT_HEIGHT = 40;
 
@@ -228,9 +90,10 @@ describe('WavesChainMirror: the claim of a chain-made Main Stage winner', () => 
    * T1 and final at RESULT_HEIGHT, won by `winner`. The feed has reached 46
    * (logResultFinal takes the log there).
    */
-  async function seedMainStageResult(
-    winner: ChainObject
-  ): Promise<ChainDecisionObjects> {
+  async function seedMainStageResult(winner: ChainObject): Promise<{
+    competitionId: string;
+    chain: ChainDecisionObjects;
+  }> {
     await ensurePrincipalMap(sqlExecutor);
     await mapPrincipals(sqlExecutor, { [AUTHOR]: 'author-profile' });
     const { competitionId } = await seedImportedCompetition(sqlExecutor, {
@@ -280,7 +143,36 @@ describe('WavesChainMirror: the claim of a chain-made Main Stage winner', () => 
       },
       1
     );
-    return chain;
+    return { competitionId, chain };
+  }
+
+  /**
+   * The entry EN made on the chain (no legacy id), its manifest stored
+   * where the mirror reads it.
+   */
+  async function aChainMadeWinner() {
+    const doc = entryManifestDoc({
+      nonce: `0x${'5a'.repeat(16)}`,
+      decision: D,
+      wave: chainId('a0'),
+      author: AUTHOR,
+      createdAt: CREATED - 5,
+      fields: { wave_id: WAVE, parts: [{ content: 'The work', media: [] }] }
+    });
+    await db.saveDocument(doc.contentCid, 8, doc.bytes);
+    const entry: ChainObject = {
+      entryId: EN,
+      legacyId: null,
+      decisionId: D,
+      author: AUTHOR,
+      status: 'winner',
+      total: '9',
+      origin: 'native',
+      manifestHash: doc.manifestHash,
+      contentCid: doc.contentCid,
+      createdMs: CREATED
+    };
+    return { doc, entry };
   }
 
   /**
@@ -417,31 +309,89 @@ describe('WavesChainMirror: the claim of a chain-made Main Stage winner', () => 
     }));
   }
 
+  /**
+   * Whether the claims builder takes the drop for a Main Stage winner of
+   * WAVE, the check it maps the Meme card by (MintingClaimsService).
+   */
+  const isMainStageWinner = (dropId: string) =>
+    sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+      memeCardDropMappingsDb.isMainStageWinnerDrop(dropId, WAVE, {
+        timer: undefined,
+        connection
+      })
+    );
+
+  it("turns the index's skipped claim build pending, once, when the mirror writes the winner's drop", async () => {
+    const { doc, entry } = await aChainMadeWinner();
+    const { competitionId } = await seedMainStageResult(entry);
+    // The index's claim build for the result: skipped, no 6529.io drop then.
+    await index.writeEvents([], 46, UNKNOWN_SCAN, [
+      {
+        network: 'net-1',
+        decisionId: D,
+        occurrence: 3,
+        height: 40,
+        entryId: EN,
+        dropId: null,
+        message: null,
+        status: 'skipped',
+        reason: 'entry created on the chain: no 6529.io drop'
+      }
+    ]);
+    expect(await db.skippedClaimBuilds(D)).toHaveLength(1);
+    // A rebuild writes no claim builds, so it reads none.
+    expect(
+      await new WavesChainMirrorDb(
+        () => sqlExecutor,
+        'rebuild'
+      ).skippedClaimBuilds(D)
+    ).toEqual([]);
+
+    const report = await mirror(NOW).run({ budgetMs: 60_000 });
+    expect(report.changes).toMatchObject({
+      drops: { insert: 1 },
+      chain_claim_builds: { update: 1 }
+    });
+    expect(
+      await sqlExecutor.execute(
+        `select drop_id, status, \`rank\`, decision_id
+           from ${COMPETITION_ENTRIES_TABLE} where drop_id = :id`,
+        { id: EN }
+      )
+    ).toEqual([
+      {
+        drop_id: EN,
+        status: 'WINNER',
+        rank: 1,
+        decision_id: resultDecisionId(competitionId, T1)
+      }
+    ]);
+    const message = {
+      drop_id: EN,
+      chain: {
+        decision_id: D,
+        occurrence: 3,
+        entry_id: EN,
+        height: 40,
+        manifest_hash: doc.manifestHash.toLowerCase()
+      }
+    };
+    expect(await index.pendingClaimBuilds(10)).toEqual([
+      { network: 'net-1', decisionId: D, occurrence: 3, message, attempts: 0 }
+    ]);
+
+    // Again: the row is the index's now; nothing changes.
+    const again = await mirror(NOW + 60_000).run({ budgetMs: 60_000 });
+    expect(again.changes).toEqual({});
+    expect(await index.pendingClaimBuilds(10)).toHaveLength(1);
+  });
+
   it("sends a chain-made winner's claim build once the mirror has written its drop: named by the entry id, frozen first, sent once", async () => {
     // An entry made on the chain: no legacy id. Its drop's id is the entry
     // id, 66 characters: no 6529.io drop UUID.
     expect(EN).toMatch(/^0x[0-9a-f]{64}$/);
-    const doc = entryManifestDoc({
-      nonce: `0x${'5a'.repeat(16)}`,
-      decision: D,
-      wave: chainId('a0'),
-      author: AUTHOR,
-      createdAt: CREATED - 5,
-      fields: { wave_id: WAVE, parts: [{ content: 'The work', media: [] }] }
-    });
-    await db.saveDocument(doc.contentCid, 8, doc.bytes);
-    const chain = await seedMainStageResult({
-      entryId: EN,
-      legacyId: null,
-      decisionId: D,
-      author: AUTHOR,
-      status: 'winner',
-      total: '9',
-      origin: 'native',
-      manifestHash: doc.manifestHash,
-      contentCid: doc.contentCid,
-      createdMs: CREATED
-    });
+    const { doc, entry } = await aChainMadeWinner();
+    const { chain } = await seedMainStageResult(entry);
     const claims = recordedClaimBuilds();
     const indexer = indexOver(chain, claims.port);
 
@@ -457,6 +407,20 @@ describe('WavesChainMirror: the claim of a chain-made Main Stage winner', () => 
         message: null,
         status: 'skipped',
         reason: 'entry created on the chain: no 6529.io drop'
+      }
+    ]);
+    // Written by the log, before any index run (whose catch-up could
+    // write the same row).
+    expect(await claimBuildRows()).toEqual([
+      {
+        decision_id: D,
+        occurrence: 3,
+        entry_id: EN,
+        drop_id: null,
+        status: 'skipped',
+        reason: 'entry created on the chain: no 6529.io drop',
+        attempts: 0,
+        message_id: null
       }
     ]);
     // The index's run sends nothing for it.
@@ -477,6 +441,9 @@ describe('WavesChainMirror: the claim of a chain-made Main Stage winner', () => 
         { id: EN }
       )
     ).toEqual([{ id: EN }]);
+    // What it wrote makes the drop a Main Stage winner for the claims
+    // builder's card mapping (its own test seeds these rows by hand).
+    expect(await isMainStageWinner(EN)).toBe(true);
     expect(await claimBuildRows()).toEqual([
       expect.objectContaining({ status: 'pending', drop_id: null })
     ]);
@@ -522,7 +489,7 @@ describe('WavesChainMirror: the claim of a chain-made Main Stage winner', () => 
   it("never turns a 'no manifest hash' skipped build pending, nor sends it", async () => {
     // An imported entry (its drop DROP1) whose manifest hash the index
     // doesn't hold: the log's build for its win is skipped with that reason.
-    const chain = await seedMainStageResult({
+    const winner: ChainObject = {
       entryId: EL,
       legacyId: DROP1,
       decisionId: D,
@@ -531,7 +498,8 @@ describe('WavesChainMirror: the claim of a chain-made Main Stage winner', () => 
       total: '9',
       origin: 'legacy',
       createdMs: 1
-    });
+    };
+    const { chain } = await seedMainStageResult(winner);
     const claims = recordedClaimBuilds();
     const indexer = indexOver(chain, claims.port);
     expect(await logResultFinal(EL)).toEqual([
@@ -557,12 +525,22 @@ describe('WavesChainMirror: the claim of a chain-made Main Stage winner', () => 
       attempts: 0,
       message_id: null
     };
+    expect(await claimBuildRows()).toEqual([skipped]);
+    // The index reads the entry's manifest hash later. The mirror would
+    // then find all it needs to turn a build pending: only the row's drop
+    // id keeps the mirror from reading it as a chain-made winner's build.
+    await seedChainDecision(
+      index,
+      { ...chain, entries: [{ ...winner, manifestHash: chainId('5e1') }] },
+      45
+    );
     await indexer.run({ budgetMs: 60_000 });
 
     // The mirror writes the result, and leaves the build as it is.
     const mirrored = await mirror(NOW).run({ budgetMs: 60_000 });
     expect(mirrored.decisions).toMatchObject({ mirrored: 1, failed: 0 });
     expect(mirrored.changes).not.toHaveProperty('chain_claim_builds');
+    expect(mirrored.waiting).not.toHaveProperty('claim_build_without_drop');
     expect(
       await sqlExecutor.execute(
         `select drop_id, status, \`rank\`
