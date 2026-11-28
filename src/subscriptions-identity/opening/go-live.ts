@@ -146,9 +146,11 @@ export async function goLive(params: {
       `published opening ${published.openingUri}, history ${published.historyUri}`
     );
     step('publish');
-    // The journal names the files that went live: a rebuild starts here.
+    // The journal names the files that went live, at the switch time: a
+    // rebuild starts here, and can put the switch back as it was.
+    const switchAt = now();
     const switched = await scheduleIdentitySwitch(
-      now(),
+      switchAt,
       parsed.openingSha256,
       (options) =>
         journal(
@@ -160,7 +162,8 @@ export async function goLive(params: {
               history_uri: published.historyUri,
               history_sha256: parsed.historySha256,
               cut_at: parsed.opening.cut.at
-            }
+            },
+            atMs: switchAt
           },
           options
         ).then(() => undefined)

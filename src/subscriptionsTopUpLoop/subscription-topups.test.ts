@@ -125,6 +125,33 @@ describe('subscription discovery with split providers', () => {
     expect(getAlchemyInstance).not.toHaveBeenCalled();
   });
 
+  it('writes through a persist step of its own when given one, from genesis, to the bound, with no cursor', async () => {
+    getAssetTransfers.mockResolvedValue({
+      transfers: [transfer(3), transfer(9, '0xlater')]
+    });
+    const persist = jest.fn().mockResolvedValue(undefined);
+    await discoverTopUps(true, { persist, checkpoint: false, toBlock: 5 });
+    expect(getLatestSubscriptionTopUpBlock).not.toHaveBeenCalled();
+    expect(getAssetTransfers).toHaveBeenCalledWith(
+      expect.objectContaining({ fromBlock: '0x0', toBlock: '0x5' })
+    );
+    // Only the transfer at or below the bound, through the given step.
+    expect(persist).toHaveBeenCalledWith([
+      expect.objectContaining({ block: 3, hash: '0xtx' })
+    ]);
+    expect(persistTopUps).not.toHaveBeenCalled();
+    expect(persistLatestSubscriptionTopUpBlock).not.toHaveBeenCalled();
+  });
+
+  it("uses the loop's own write and moves its cursor by default", async () => {
+    getAssetTransfers.mockResolvedValue({ transfers: [transfer(101)] });
+    await discoverTopUps();
+    expect(persistTopUps).toHaveBeenCalledWith([
+      expect.objectContaining({ block: 101, hash: '0xtx' })
+    ]);
+    expect(persistLatestSubscriptionTopUpBlock).toHaveBeenCalledWith(105, 1234);
+  });
+
   it('never queries indexed pages or advances progress when the ordinary head fails', async () => {
     getBlockNumber.mockRejectedValue(new Error('RPC unavailable'));
     await expect(discoverTopUps()).rejects.toThrow('RPC unavailable');

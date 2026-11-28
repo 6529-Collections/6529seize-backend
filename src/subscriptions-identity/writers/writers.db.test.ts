@@ -23,6 +23,7 @@ import {
   SUBSCRIPTIONS_ID_CURSORS_TABLE,
   SUBSCRIPTIONS_ID_STATE_TABLE,
   SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+  SUBSCRIPTIONS_ID_NFTS_FINAL_UPLOAD_TABLE,
   SUBSCRIPTIONS_ID_REDEEMED_TABLE,
   SUBSCRIPTIONS_ID_REPORTS_TABLE,
   SUBSCRIPTIONS_ID_TOP_UP_TABLE,
@@ -30,19 +31,29 @@ import {
   SIGNED_RECORD_LOG_ENTRIES_TABLE,
   SUBSCRIPTIONS_MODE_TABLE,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+  SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE,
+  SUBSCRIPTIONS_REDEEMED_TABLE,
   SUBSCRIPTIONS_NFTS_TABLE,
   SUBSCRIPTIONS_TOP_UP_TABLE,
   TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE,
   TRANSACTIONS_TABLE
 } from '@/constants';
-import { connect, disconnect } from '@/db';
+import { connect, disconnect, execSQLWithParams, getDataSource } from '@/db';
+import { DbQueryOptions } from '@/db-query.options';
 import { Logger } from '@/logging';
 import * as Entities from '@/entities/entities';
-import { sqlExecutor } from '@/sql-executor';
 import {
+  ConnectionWrapper,
+  setSqlExecutor,
+  SqlExecutor,
+  sqlExecutor
+} from '@/sql-executor';
+import {
+  deferralReason,
   deferSubscriptionWrites,
   executorSink
 } from '@/subscription-key-width/subscription-deferred-writes';
+import { recordTopUps } from '@/subscriptionsTopUpLoop/db.subscriptions_topup';
 import {
   getPublicSubscriptions,
   resetAllowlist
@@ -77,6 +88,7 @@ import {
   REDEMPTION_CURSOR_ID
 } from '../opening/opening-load';
 import { suspendWithJournal } from '../opening/suspend';
+import { copyLegacyHistory } from '../opening/legacy-copy';
 import {
   JournalSource,
   rebuildIdentityTables,
@@ -165,6 +177,38 @@ jest.mock('@/subscriptionsDaily/subscription-cache', () => ({
 
 const wallet = (n: number) => `0x${n.toString(16).padStart(40, '0')}`;
 
+/**
+ * The top-up loop's write runs on a TypeORM query runner, as in the loop
+ * (doInDbContext); this runs the production executor's statements on the
+ * test's data source.
+ */
+class TypeOrmExecutor extends SqlExecutor {
+  execute<T>(
+    sql: string,
+    params?: Record<string, any>,
+    options?: DbQueryOptions
+  ): Promise<T[]> {
+    return execSQLWithParams(sql, params, options);
+  }
+
+  async executeNativeQueriesInTransaction<T>(
+    executable: (connection: ConnectionWrapper<any>) => Promise<T>
+  ): Promise<T> {
+    const runner = getDataSource().createQueryRunner();
+    await runner.connect();
+    await runner.startTransaction();
+    try {
+      const result = await executable({ connection: runner });
+      await runner.commitTransaction();
+      return result;
+    } catch (error) {
+      await runner.rollbackTransaction();
+      throw error;
+    } finally {
+      await runner.release();
+    }
+  }
+}
 const P1 = `0x${'b1'.padStart(64, '0')}`;
 /** Bound to P1; its key is itself. */
 const A = wallet(1);
@@ -453,8 +497,10 @@ describeWithSeed('identity writers after the switch', [], () => {
     await seed();
     await updateSubscriptions();
 
-    // Published once, with an identity column.
+    // Published once to Arweave, the default uploader, with an identity
+    // column.
     expect(uploadFile).toHaveBeenCalledTimes(1);
+    expect(uploadFile.mock.calls[0][1]).toBe('text/csv');
     expect(String(uploadFile.mock.calls[0][0])).toContain('identity');
     const identityRows = await finalIds(
       SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
@@ -492,6 +538,61 @@ describeWithSeed('identity writers after the switch', [], () => {
         (r) => [Number(r.id), r.phase]
       )
     );
+  });
+
+  it('publishes the list through the uploader it is given in place of Arweave, after the switch and in shadow', async () => {
+    const given = jest.fn(
+      async (bytes: Buffer, _contentType: string): Promise<{ url: string }> => {
+        const url = 'https://example.test/given-1';
+        published.set(url, bytes.toString('utf8'));
+        return { url };
+      }
+    );
+    const uploadsOf = async (table: string) =>
+      (
+        await sqlExecutor.execute<{ upload_url: string }>(
+          `SELECT upload_url FROM ${table} WHERE token_id = :card`,
+          { card: CARD }
+        )
+      ).map((r) => r.upload_url);
+
+    // After the switch: the identity list, with its identity column.
+    await seed();
+    await updateSubscriptions({ uploader: { uploadFile: given } });
+    expect(uploadFile).not.toHaveBeenCalled();
+    expect(given).toHaveBeenCalledTimes(1);
+    expect(given.mock.calls[0][1]).toBe('text/csv');
+    expect(String(given.mock.calls[0][0])).toContain('identity');
+    expect(await uploadsOf(SUBSCRIPTIONS_ID_NFTS_FINAL_UPLOAD_TABLE)).toEqual([
+      'https://example.test/given-1'
+    ]);
+    expect(await uploadsOf(SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE)).toEqual([
+      'https://example.test/given-1'
+    ]);
+  });
+
+  it('in shadow, publishes the legacy list through the uploader it is given in place of Arweave', async () => {
+    const given = jest.fn(async (_bytes: Buffer, _contentType: string) => ({
+      url: 'https://example.test/given'
+    }));
+    await seedLegacy();
+    await cutAndLoad(false);
+    process.env[SHADOW_ENV] = 'true';
+    subscriptionsIdentitySwitch.invalidate();
+    try {
+      await updateSubscriptions({ uploader: { uploadFile: given } });
+      expect(uploadFile).not.toHaveBeenCalled();
+      expect(given).toHaveBeenCalledTimes(1);
+      expect(given.mock.calls[0][1]).toBe('text/csv');
+      expect(String(given.mock.calls[0][0])).not.toContain('identity');
+      const [upload] = await sqlExecutor.execute<{ upload_url: string }>(
+        `SELECT upload_url FROM ${SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE} WHERE token_id = :card`,
+        { card: CARD }
+      );
+      expect(upload.upload_url).toBe('https://example.test/given');
+    } finally {
+      delete process.env[SHADOW_ENV];
+    }
   });
 
   it('in shadow, publishes the legacy list and builds the identity list beside it with the same ids', async () => {
@@ -2338,6 +2439,66 @@ describeWithSeed('identity writers after the switch', [], () => {
     expect(report.verdict).toBe('MATCH');
   });
 
+  it("copies the rollback copy's final rows, list upload and redemptions back from the identity tables exactly", async () => {
+    await seed();
+    await updateSubscriptions();
+    await execute(
+      `INSERT INTO ${TRANSACTIONS_TABLE}
+        (created_at, transaction, block, transaction_date, from_address, to_address,
+         contract, token_id, token_count, value, primary_proceeds, royalties,
+         gas_gwei, gas_price, gas_price_gwei, gas)
+        VALUES (NOW(), '0xmint', 50, '2026-11-26 15:00:00', :null, :lone, :c, :card,
+         1, 0, 0, 0, 0, 0, 0, 0)`,
+      { null: NULL_ADDRESS, lone: LONE, c: MEMES_CONTRACT, card: CARD }
+    );
+    await execute(
+      `INSERT INTO ${TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE} (created_at, block, timestamp)
+        VALUES (NOW(), 49, 0)`
+    );
+    await redeemSubscriptions();
+    await runIdentityRedemptionWriters();
+    // Every column but the rows' own write times on each side (created_at,
+    // and updated_at on final rows), which the manifest marks volatile.
+    const finalsOf = () =>
+      sqlExecutor.execute(
+        `SELECT id, consolidation_key, contract, token_id, subscribed_count,
+                airdrop_address, balance, subscribed_at, phase,
+                phase_subscriptions, phase_position, redeemed_count
+           FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} ORDER BY id`
+      );
+    const redeemedOf = () =>
+      sqlExecutor.execute(
+        `SELECT contract, token_id, address, \`transaction\`, transaction_date,
+                consolidation_key, value, balance_after, count
+           FROM ${SUBSCRIPTIONS_REDEEMED_TABLE}
+          ORDER BY \`transaction\`, consolidation_key`
+      );
+    const uploadsOf = () =>
+      sqlExecutor.execute(
+        `SELECT contract, token_id, date, upload_url
+           FROM ${SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE} ORDER BY token_id`
+      );
+    const finals = await finalsOf();
+    const uploads = await uploadsOf();
+    const redeemed = await redeemedOf();
+    expect(finals.length).toBeGreaterThan(0);
+    expect(uploads).toHaveLength(1);
+    expect(redeemed).toHaveLength(1);
+
+    await execute(`DELETE FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}`);
+    await execute(`DELETE FROM ${SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE}`);
+    await execute(`DELETE FROM ${SUBSCRIPTIONS_REDEEMED_TABLE}`);
+    expect(await copyLegacyHistory()).toEqual({
+      finals: finals.length,
+      uploads: 1,
+      redemptions: 1,
+      leftOut: 0
+    });
+    expect(await finalsOf()).toEqual(finals);
+    expect(await uploadsOf()).toEqual(uploads);
+    expect(await redeemedOf()).toEqual(redeemed);
+  });
+
   it('charges an airdrop once when a load commits after the run read its cursor', async () => {
     await seedLegacy();
     await cutAndLoad(false);
@@ -2678,6 +2839,110 @@ describeWithSeed('identity writers after the switch', [], () => {
       { p: P9 }
     );
     expect(Number(logs.n)).toBe(1);
+  });
+
+  it('credits a top-up queued for a wide key exactly once, live and after the identity tables and the queue are rebuilt', async () => {
+    await seedLegacy();
+    const { W, P9, wideKey } = await seedWideIdentity();
+    const topUp = (hash: string, block: number, amount: number) => ({
+      hash,
+      block,
+      transaction_date: new Date('2026-11-25T10:00:00Z'),
+      from_wallet: W,
+      amount
+    });
+    const afterSwitch = topUp(`0x${'e2'.repeat(32)}`, 70, 0.2);
+    const queued = () =>
+      sqlExecutor.execute(
+        `SELECT kind, consolidation_key, key_hash, key_length, dedupe_key,
+                payload, reason, replayed_at, outcome
+           FROM ${SUBSCRIPTION_DEFERRED_WRITES_TABLE}
+          WHERE kind = 'TOP_UP' ORDER BY dedupe_key`
+      );
+    const credited = () =>
+      sqlExecutor.execute<{ hash: string; amount: number }>(
+        `SELECT hash, amount FROM ${SUBSCRIPTIONS_ID_TOP_UP_TABLE}
+          WHERE from_wallet = :w ORDER BY block`,
+        { w: W }
+      );
+    const journaledCredits = async () =>
+      (
+        await sqlExecutor.execute<{ entry: string }>(
+          `SELECT entry FROM ${SIGNED_RECORD_LOG_ENTRIES_TABLE} WHERE chain = 'public' ORDER BY id`
+        )
+      )
+        .map((row) => journalBodyOf(JSON.parse(row.entry)))
+        .filter((body) => body?.kind === 'top-up')
+        .map((body) => (body!.inputs as { hash: string }).hash);
+    const expectCreditedOnce = async () => {
+      expect(await credited()).toEqual([
+        { hash: afterSwitch.hash, amount: 0.2 }
+      ]);
+      expect(
+        await balance(SUBSCRIPTIONS_ID_BALANCES_TABLE, 'identity_key', P9)
+      ).toBeCloseTo(0.2, 10);
+      // The writer's credit, journaled once.
+      expect(await journaledCredits()).toEqual([afterSwitch.hash]);
+    };
+
+    expect((await goLiveForTest()).switched).toBe(true);
+    // After the switch the loop's write queues the top-up whole (no
+    // legacy row), as persistTopUps does for a key the guard holds back,
+    // and the identity writer credits it.
+    const reason = await deferralReason(wideKey, executorSink());
+    expect(reason?.narrow.length).toBeGreaterThan(0);
+    await deferSubscriptionWrites(
+      [
+        {
+          kind: 'TOP_UP',
+          consolidationKey: wideKey,
+          dedupe: afterSwitch.hash,
+          payload: { topUp: afterSwitch },
+          reason: reason!
+        }
+      ],
+      executorSink()
+    );
+    await runIdentityTopUpWriters();
+    await runIdentityTopUpWriters();
+    await expectCreditedOnce();
+    const queuedBefore = await queued();
+    expect(queuedBefore).toHaveLength(1);
+
+    // The rebuild: the identity tables from the opening and the journal,
+    // and the queue's top-ups from the same top-ups through the loop's
+    // own rule.
+    await loseIdentityTables();
+    await rebuildIdentityTables({
+      source: journalSource,
+      fetch: fetchPublished
+    });
+    await execute(
+      `DELETE FROM ${SUBSCRIPTION_DEFERRED_WRITES_TABLE} WHERE kind = 'TOP_UP'`
+    );
+    // recordTopUps runs on a TypeORM query runner, as the rebuild step
+    // does; only around it, so no service built for the other writes
+    // keeps that executor.
+    const executor = sqlExecutor;
+    setSqlExecutor(new TypeOrmExecutor());
+    try {
+      await recordTopUps([afterSwitch]);
+    } finally {
+      setSqlExecutor(executor);
+    }
+    expect(await queued()).toEqual(queuedBefore);
+    expect(
+      await sqlExecutor.execute(
+        `SELECT hash FROM ${SUBSCRIPTIONS_TOP_UP_TABLE} WHERE from_wallet = :w`,
+        { w: W }
+      )
+    ).toEqual([]);
+    await expectCreditedOnce();
+
+    // The writer runs again over the rebuilt tables and queue: nothing is
+    // credited twice.
+    await runIdentityTopUpWriters();
+    await expectCreditedOnce();
   });
 
   it("credits a new top-up to the sender's identity once", async () => {

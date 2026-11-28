@@ -33,12 +33,6 @@ describe('rebuild registry', () => {
       {
         step: 'identity.chain-mirror',
         field: 'before',
-        id: 'subs.legacy-history'
-      },
-      { step: 'identity.chain-mirror', field: 'before', id: 'subs.top-ups' },
-      {
-        step: 'identity.chain-mirror',
-        field: 'before',
         id: 'waves.chain-mirror'
       },
       { step: 'identity.chain-mirror', field: 'before', id: 'tdh.chain-days' }

@@ -29,7 +29,7 @@ export type DeferredWriteKind =
  * all of them can hold it, so an identity is either fully on the legacy
  * tables or fully waiting: never listed without being charged.
  */
-const SUBSCRIPTION_WRITE_TABLES = [
+export const SUBSCRIPTION_WRITE_TABLES = [
   SUBSCRIPTIONS_BALANCES_TABLE,
   SUBSCRIPTIONS_MODE_TABLE,
   SUBSCRIPTIONS_NFTS_TABLE,

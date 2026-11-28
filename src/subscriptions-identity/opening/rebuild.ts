@@ -866,7 +866,8 @@ async function switchRebuilt(
           history_sha256: opening.historySha256,
           cut_at: opening.opening.cut.at,
           rebuilt: true
-        }
+        },
+        atMs: nowMs
       },
       options
     ).then(() => undefined)

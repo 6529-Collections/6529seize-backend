@@ -50,6 +50,7 @@ import {
   saveReport
 } from '@/subscriptions-identity/writers/identity-reports';
 import { journalCheckpoint } from '@/subscriptions-identity/timeline/journal';
+import type { FileUploader } from '@/subscriptions-identity/opening/published-chain';
 import { verifyPostedJournal } from '@/subscriptions-identity/opening/rebuild';
 import { mirrorIdentityDirectory } from '@/subscriptions-identity/identity/identity-directory';
 import { identityOfLegacyKeys } from '@/subscriptions-identity/writers/legacy-key-identities';
@@ -80,7 +81,15 @@ import {
 
 const logger = Logger.get('SUBSCRIPTIONS');
 
-export async function updateSubscriptions() {
+export interface UpdateSubscriptionsOptions {
+  /** Where the list is published. Arweave unless told otherwise. */
+  readonly uploader?: FileUploader;
+}
+
+export async function updateSubscriptions(
+  options: UpdateSubscriptionsOptions = {}
+) {
+  const uploader = options.uploader ?? arweaveFileUploader;
   // A cold run that can't read the switch fails (Lambda retries it) rather
   // than publish the legacy list after the switch.
   const writeMode = await subscriptionsIdentitySwitch.writeModeOrFail();
@@ -102,6 +111,7 @@ export async function updateSubscriptions() {
   if (writeMode === 'TRUTH') {
     identityList = await buildIdentityList({ tokenId: nextMemeId, buildAtMs });
     identityUpload = await uploadFinalSubscriptions(
+      uploader,
       MEMES_CONTRACT,
       nextMemeId,
       identityList.rows.map(identityRowAsFinal),
@@ -124,7 +134,8 @@ export async function updateSubscriptions() {
       autoSubscriptions,
       identityList && identityUpload
         ? { list: identityList, upload: identityUpload }
-        : null
+        : null,
+      uploader
     );
   } catch (error) {
     // After the switch the legacy tables are the rollback copy: the list
@@ -520,7 +531,8 @@ interface LegacyBuild {
 async function buildFinalSubscription(
   newMeme: number,
   autoSubscriptions: SubscriptionMode[],
-  identity: IdentityTruth | null
+  identity: IdentityTruth | null,
+  uploader: FileUploader
 ): Promise<LegacyBuild> {
   logger.info(`[BUILDING FINAL SUBSCRIPTION FOR MEME #${newMeme}]`);
 
@@ -541,7 +553,7 @@ async function buildFinalSubscription(
     : { rows: split.rows, skipped: [] };
   const upload: NFTFinalSubscriptionUpload = identity
     ? identity.upload
-    : await uploadFinalSubscriptions(MEMES_CONTRACT, newMeme, rows);
+    : await uploadFinalSubscriptions(uploader, MEMES_CONTRACT, newMeme, rows);
 
   const legacyRows = await persistNFTFinalSubscriptions(
     MEMES_CONTRACT,
@@ -751,6 +763,7 @@ async function addFundedFinalSubscription(
 }
 
 async function uploadFinalSubscriptions(
+  uploader: FileUploader,
   contract: string,
   newMeme: number,
   finalSubscriptions: NFTFinalSubscription[],
@@ -784,10 +797,7 @@ async function uploadFinalSubscriptions(
       };
     });
   const csv = json2csv(finalUpload);
-  const { url } = await arweaveFileUploader.uploadFile(
-    Buffer.from(csv),
-    'text/csv'
-  );
+  const { url } = await uploader.uploadFile(Buffer.from(csv), 'text/csv');
 
   return {
     date: Time.now().toIsoDateString(),
