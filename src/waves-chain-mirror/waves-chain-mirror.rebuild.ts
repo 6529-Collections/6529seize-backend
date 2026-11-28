@@ -14,6 +14,8 @@ import { ContentGate, GateVerdict } from './waves-chain-mirror.gate';
 import { InvalidLegacyIds } from './waves-chain-mirror.ids';
 import { DropArchivesImport } from './waves-chain-mirror.legacy-rows';
 import {
+  IMPORTED_REMAP_CAP,
+  importedListsCappedNote,
   ObjectEffects,
   WavesChainObjectsMirror
 } from './waves-chain-mirror.objects';
@@ -104,6 +106,12 @@ export interface MirrorRebuildResult {
   readonly missingDocuments: number;
   /** What deps.importDropArchives gave; undefined without one. */
   readonly dropArchives?: DropArchivesImport;
+  /**
+   * When the cap held imported groups' member lists, what that means
+   * (importedListsCappedNote): those lists differ from a mirror's run under
+   * a cap they fit by the cap, not by drift. Null when none was held.
+   */
+  readonly importedListsCapped: string | null;
 }
 
 /** What a rebuild reads besides the database (a test gives its own). */
@@ -406,9 +414,15 @@ async function mirrorFromIndex(
     logger.info(
       `[${pass.toUpperCase()} RUN ${run}] events ${last.events}, full ${JSON.stringify(last.full)}, decisions ${JSON.stringify(last.decisions)}`
     );
-    // Done when the log is read to its end, no full pass is under way
-    // and nothing failed.
-    if (!last.full.running && last.events === 0 && !last.decisions.left) {
+    // Done when the log is read to its end, no full pass is under way,
+    // every imported group listing an address is matched (its lists are
+    // looked at only then) and nothing failed.
+    if (
+      !last.full.running &&
+      last.events === 0 &&
+      !last.decisions.left &&
+      !last.objects?.remap.imported.pending
+    ) {
       const failed =
         last.decisions.failed +
         (last.objects?.groups.failed ?? 0) +
@@ -426,11 +440,20 @@ async function mirrorFromIndex(
           `The mirror's ${pass} left out ${legacyIds.count} object(s) whose legacy id isn't an RFC 4122 UUID: ${legacyIds.first(5).join(', ')}`
         );
       }
+      const capped = last.objects
+        ? importedListsCappedNote(
+            last.objects.remap,
+            settings.importedRemapCap ?? IMPORTED_REMAP_CAP
+          )
+        : null;
+      // Named, so a difference the cap makes is never read as drift.
+      if (capped) logger.warn(`[${pass.toUpperCase()}] ${capped}`);
       return {
         runs: run,
         at,
         last,
         missingDocuments: files.missing.size,
+        importedListsCapped: capped,
         ...(deps.importDropArchives ? { dropArchives } : {})
       };
     }

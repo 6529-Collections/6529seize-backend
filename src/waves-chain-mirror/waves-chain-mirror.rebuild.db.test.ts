@@ -52,6 +52,7 @@ import {
 } from '@/constants';
 import { userGroupsService } from '@/api/community-members/user-groups.service';
 import { sqlExecutor } from '@/sql-executor';
+import { UserGroupsDb } from '@/user-groups/user-groups.db';
 import {
   clearMirrorTables,
   ensurePrincipalMap,
@@ -87,7 +88,11 @@ import {
 import { WavesChainMirrorDb } from './waves-chain-mirror.db';
 import { DOC_CLASS, docCommitment } from './waves-chain-mirror.docs';
 import { GateVerdict } from './waves-chain-mirror.gate';
-import { waveDescriptionDropId } from './waves-chain-mirror.ids';
+import { groupRowOf, NO_CRITERIA } from './waves-chain-mirror.groups';
+import {
+  groupShortIdOf,
+  waveDescriptionDropId
+} from './waves-chain-mirror.ids';
 import { WavesChainObjectsMirror } from './waves-chain-mirror.objects';
 import { WavesChainObjectsDb } from './waves-chain-mirror.objects.db';
 import { defaultObjectEffects } from './waves-chain-mirror.objects.effects';
@@ -939,6 +944,92 @@ describe("the mirror's rebuild", () => {
         path.join(filesDir, waveDoc)
       );
     }
+  });
+
+  describe("an imported group's own lists", () => {
+    const LEGACY = '6f1c2a5e-3b4d-4e8f-9a0b-1c2d3e4f5a6b';
+    const ID = `readers-${groupShortIdOf(LEGACY)}`;
+
+    /** 6529.io's imported group listing a profile the chain doesn't. */
+    async function seedImported() {
+      await seedWorld();
+      await forgetDocuments();
+      await new UserGroupsDb(() => sqlExecutor).save(
+        groupRowOf({
+          id: ID,
+          name: 'Readers',
+          createdAt: new Date(T),
+          createdBy: 'profile-1',
+          criteria: NO_CRITERIA,
+          repUser: null,
+          includeListId: 'readers-include',
+          excludeListId: null,
+          visible: true,
+          isPrivate: false
+        }),
+        undefined as never
+      );
+      await sqlExecutor.execute(
+        `insert into ${PROFILE_GROUPS_TABLE} (profile_group_id, profile_id)
+         values ('readers-include', 'profile-only-here')`
+      );
+      // The chain's version 1 of it lists the world's address.
+      const row = aChainGroupRow(
+        chainWord('1e'),
+        { includes: [{ kind: 'address', value: ADDRESS }] },
+        { origin: 'legacy', legacyId: LEGACY, controller: P1 }
+      );
+      await index.upsert(
+        'groups',
+        [groupRow({ ...(row.data as ChainObject), legacyId: LEGACY })],
+        stamp
+      );
+    }
+    const listed = async () =>
+      (
+        await sqlExecutor.execute<{ profile_id: string }>(
+          `select profile_id from ${PROFILE_GROUPS_TABLE}
+            where profile_group_id = 'readers-include'`
+        )
+      ).map((r) => r.profile_id);
+    const rebuildUnder = (cap: string | null) =>
+      rebuildWavesChainMirror(
+        rebuildCtx,
+        () => sqlExecutor,
+        {
+          CHAIN_GATEWAY_URL: GATEWAY,
+          ...(cap === null
+            ? {}
+            : { WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP: cap })
+        },
+        { fetchImpl: filesFetch as unknown as typeof fetch }
+      );
+
+    it("brings them to the chain's members under a cap they fit, naming nothing", async () => {
+      await seedImported();
+      const rebuilt = await rebuildUnder(null);
+      expect(rebuilt.importedListsCapped).toBeNull();
+      expect(rebuilt.last.objects?.remap.imported).toMatchObject({
+        capped: false,
+        pending: 0
+      });
+      const [address] = await sqlExecutor.execute<{ profile_id: string }>(
+        `select i.profile_id from ${IDENTITIES_TABLE} i
+           join ${ADDRESS_CONSOLIDATION_KEY} a on a.consolidation_key = i.consolidation_key
+          where a.address = :address`,
+        { address: ADDRESS }
+      );
+      expect(await listed()).toEqual([address.profile_id]);
+    });
+
+    it('names the difference when the cap held them, so it is never read as drift', async () => {
+      await seedImported();
+      const rebuilt = await rebuildUnder('0');
+      expect(rebuilt.importedListsCapped).toBe(
+        "[IMPORTED GROUP LISTS CAPPED] [GROUPS 1] [CAP 0] imported groups' member lists left as 6529.io holds them (WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP): a mirror under a cap they fit holds them rewritten, a difference by the cap, not drift"
+      );
+      expect(await listed()).toEqual(['profile-only-here']);
+    });
   });
 
   it("fails when its groups' member lists can't be read", async () => {

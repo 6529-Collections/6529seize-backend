@@ -117,6 +117,12 @@ export interface RemapCounts extends ListCounts {
     capped: boolean;
     /** Ones that list addresses but no 6529.io group matched. */
     unmatched: number;
+    /**
+     * Ones the run had no time to match to a 6529.io group. While any is,
+     * no imported group's lists are looked at or written: the cap is
+     * applied to the count of them all, never to part of them.
+     */
+    pending: number;
   };
 }
 
@@ -132,6 +138,19 @@ export function importedRemapCapOf(env: NodeJS.ProcessEnv): number {
   const text = env.WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP?.trim();
   const value = text ? Number(text) : NaN;
   return Number.isSafeInteger(value) && value >= 0 ? value : IMPORTED_REMAP_CAP;
+}
+
+/**
+ * What to say of a run that held imported groups' lists by the cap: a
+ * mirror run under a cap they fit holds them rewritten, so the two differ
+ * there by the cap, not by drift. Null when none was held.
+ */
+export function importedListsCappedNote(
+  remap: RemapCounts,
+  cap: number
+): string | null {
+  if (!remap.imported.capped) return null;
+  return `[IMPORTED GROUP LISTS CAPPED] [GROUPS ${remap.imported.groups}] [CAP ${cap}] imported groups' member lists left as 6529.io holds them (WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP): a mirror under a cap they fit holds them rewritten, a difference by the cap, not drift`;
 }
 
 export interface ObjectsReport {
@@ -177,7 +196,8 @@ export function emptyObjectsReport(): ObjectsReport {
         include: { added: 0, removed: 0 },
         exclude: { added: 0, removed: 0 },
         capped: false,
-        unmatched: 0
+        unmatched: 0,
+        pending: 0
       }
     },
     pinnedWaveGroupRefs: 0
@@ -1175,8 +1195,9 @@ export class WavesChainObjectsMirror {
    * leaves or moves to another identity moves the membership with it.
    * Groups made or replaced on the chain are checked at their current
    * version's lists (older versions' aren't looked at). Imported groups the
-   * chain never replaced are checked at their 6529.io rows' lists, which a
-   * run writes only while no more of them change than the cap allows. A
+   * chain never replaced are checked at their 6529.io rows' lists once
+   * every one of them is matched to its row, and a run writes them only
+   * while no more of them change than the cap allows. A
    * list that resolves to what it holds isn't written. No identity row is
    * made here: a wallet that left an identity has the row the identity
    * mirror gave it, and one never bound the row it was listed with. A list
@@ -1210,7 +1231,29 @@ export class WavesChainObjectsMirror {
         `[WAVES CHAIN MIRROR] imported groups' member lists not read: ${error}`
       );
     }
-    const due = [...native, ...imported];
+    try {
+      await this.checkLists([...native, ...imported], input, remap, now);
+    } finally {
+      this.logImportedLists(remap);
+    }
+  }
+
+  /**
+   * The lists of these groups, read once the identity mirror stands at
+   * their heights, written where they changed (imported ones while within
+   * the cap).
+   */
+  private async checkLists(
+    due: readonly GroupToCheck[],
+    input: {
+      readonly write: boolean;
+      readonly counter: PlanCounter;
+      readonly outOfTime: () => boolean;
+      readonly importedRemapCap?: number;
+    },
+    remap: RemapCounts,
+    now: number
+  ): Promise<void> {
     if (!due.length) {
       this.listsWait = null;
       return;
@@ -1262,11 +1305,6 @@ export class WavesChainObjectsMirror {
         `[WAVES CHAIN MIRROR] [IMPORTED GROUP LISTS OVER CAP] [GROUPS ${remap.imported.groups}] [CAP ${cap}] no imported group's lists written this run (WAVES_CHAIN_MIRROR_IMPORTED_REMAP_CAP)`
       );
     }
-    if (remap.imported.groups) {
-      logger.info(
-        `[WAVES CHAIN MIRROR] [IMPORTED GROUP LISTS] ${JSON.stringify(remap.imported)}`
-      );
-    }
     for (const { group, changes } of changed) {
       if (group.imported && remap.imported.capped) continue;
       if (input.write && input.outOfTime()) {
@@ -1281,11 +1319,22 @@ export class WavesChainObjectsMirror {
     }
   }
 
+  /** The imported groups' counts, on a line of their own, when any. */
+  private logImportedLists(remap: RemapCounts) {
+    if (remap.imported.groups || remap.imported.pending) {
+      logger.info(
+        `[WAVES CHAIN MIRROR] [IMPORTED GROUP LISTS] ${JSON.stringify(remap.imported)}`
+      );
+    }
+  }
+
   /**
    * The imported groups the chain never replaced that list an address,
    * each matched to its 6529.io row as the waves pass matches one (a
    * writing run keeps the match; one no row matched is looked for again a
-   * day later), with that row's lists.
+   * day later), with that row's lists. None while any is left to match
+   * (`pending`): their lists are looked at only all together, so the cap
+   * weighs every change at once rather than a run's share of them.
    */
   private async importedGroupsToCheck(
     input: { readonly write: boolean; readonly outOfTime: () => boolean },
@@ -1308,7 +1357,7 @@ export class WavesChainObjectsMirror {
         groupId = found;
       } else if (!groupId) {
         if (input.outOfTime()) {
-          remap.left++;
+          remap.imported.pending++;
           continue;
         }
         groupId = await this.importedGroupId(group, record, input.write, now);
@@ -1317,6 +1366,7 @@ export class WavesChainObjectsMirror {
       if (groupId) matched.push({ group, groupId });
       else remap.imported.unmatched++;
     }
+    if (remap.imported.pending) return [];
     const listIds = await this.store.groupListIds(
       matched.map((m) => m.groupId)
     );
